@@ -16,6 +16,7 @@
 //! `InvalidPhrase` → `false`.
 
 use oxpinyin_core::{LanguageModel, PhraseToken};
+use std::ffi::c_uint;
 use std::ptr;
 
 use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, USER_DICTIONARY, UserStore};
@@ -35,7 +36,7 @@ use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::{pinyin_get_sentence, pinyin_guess_candidates, pinyin_guess_sentence};
 use crate::state::{instance_mut, instance_ref};
 use crate::test_support::{DEFAULT_SORT, TempUserDir, candidate, cstr, open, system_dir};
-use crate::types::{LookupCandidate, PinyinInstance};
+use crate::types::{LookupCandidate, PinyinInstance, lookup_candidate_type_t};
 use crate::user_data::pinyin_remember_user_input;
 
 /// The instance's user store handle (the same connection the entry points
@@ -212,6 +213,102 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
         store_of(instance).next_user_token().unwrap(),
         FIRST_USER_TOKEN + 1
     );
+}
+
+/// §9: the LONGER-candidate choose surface. At a word leaving
+/// `SORT_WITHOUT_LONGER_CANDIDATE` clear (ibus preset 0x1c), the guess
+/// surfaces a type-7 row; choosing it answers cursor 1 (the pin's LONGER
+/// branch, `pinyin.cpp:2521-2530`), records no selection, trains the
+/// row's token `+483` unigram through the overlay, and the `pinyin_train`
+/// that follows walks the live sentence result and writes nothing more.
+#[test]
+fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
+    let user_dir = TempUserDir::new("longer-choose");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+    // ibus preset 1 (the GSettings default): bit 0x2 clear.
+    const IBUS_DEFAULT_SORT: c_uint = 0x1c;
+    // "ni": the w3 mini keys hold two strictly-longer extensions
+    // ("ni'hao" 你好, "ni'men" 你们 — `MINI_KEYS`), and the walk's
+    // 2-key cap admits both; the winner is the max-unigram one.
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("ni").as_ptr()),
+        2,
+        "full input parses"
+    );
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(instance, 0, IBUS_DEFAULT_SORT));
+
+    // Surface the type-7 row.
+    let mut longer: *mut LookupCandidate = std::ptr::null_mut();
+    let mut n: c_uint = 0;
+    assert!(crate::candidates::pinyin_get_n_candidate(
+        instance, &raw mut n
+    ));
+    let mut longer_index = usize::MAX;
+    for i in 0..n {
+        let mut cand: *mut LookupCandidate = std::ptr::null_mut();
+        assert!(crate::candidates::pinyin_get_candidate(
+            instance,
+            i,
+            &raw mut cand
+        ));
+        let mut ctype: lookup_candidate_type_t = lookup_candidate_type_t::NORMAL_CANDIDATE;
+        assert!(crate::candidates::pinyin_get_candidate_type(
+            instance,
+            cand,
+            &raw mut ctype
+        ));
+        if ctype == lookup_candidate_type_t::LONGER_CANDIDATE {
+            longer = cand;
+            longer_index = i as usize;
+            break;
+        }
+    }
+    assert!(
+        !longer.is_null(),
+        "the w3 fixture offers a LONGER row for ni at 0x1c"
+    );
+
+    // The token the row trains.
+    let token = {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`; the borrow ends with this block.
+        let inst = unsafe { instance_ref(instance) };
+        inst.candidates[longer_index]
+            .token
+            .expect("a LONGER row carries its token")
+    };
+
+    // Choose: cursor 1, exactly the pin's LONGER branch.
+    assert_eq!(pinyin_choose_candidate(instance, 0, longer), 1);
+
+    // +483 through the phrase-index overlay (the pin's
+    // `m_phrase_index->add_unigram_frequency`, an in-memory shift the
+    // token getters read back); no user-bigram row anywhere.
+    {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`; the borrow ends before any later call.
+        let inst = unsafe { instance_ref(instance) };
+        assert_eq!(inst.core.dict.unigram_delta(token.value()), Some(483));
+    }
+    assert_eq!(store_of(instance).bigram_total(SENTENCE_START).unwrap(), 0);
+
+    // The train that follows leans on the live sentence result and
+    // writes nothing more: the overlay stays at the choose's 483 and no
+    // bigram row appears (the pin's constraint-free `train_result3`
+    // observes nothing).
+    assert!(pinyin_train(instance, 0));
+    {
+        // SAFETY: `instance` is non-null and was produced by
+        // `pinyin_alloc_instance`; the borrow ends before any later call.
+        let inst = unsafe { instance_ref(instance) };
+        assert_eq!(inst.core.dict.unigram_delta(token.value()), Some(483));
+    }
+    assert_eq!(store_of(instance).bigram_total(SENTENCE_START).unwrap(), 0);
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
 }
 
 #[test]

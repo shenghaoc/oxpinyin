@@ -233,14 +233,34 @@ impl InstanceCore {
         self.session.normalized_lookup_offset(offset)
     }
 
-    /// `train`'s law: refuse without a user store or without a recorded
-    /// selection, otherwise walk the recorded sentence through the store.
-    /// The bool is the C surface's contract, verbatim.
+    /// `train`'s law: refuse without a user store, without a live
+    /// sentence result, and without a recorded selection, otherwise
+    /// walk the recorded sentence through the store. The bool is the C
+    /// surface's contract, verbatim.
+    ///
+    /// The result gate is `pinyin_train`'s own (`pinyin.cpp:2674-2675`):
+    /// `m_nbest_results` empty — no sentence lookup has run — refuses.
+    /// `sentence_lookup_active` is the engine's stand-in for
+    /// `results.size() > 0`. The selection record disjoins into the
+    /// gate for the two flows the compressed Rust e2e path drives:
+    /// parse → guess_candidates → choose → train, with **no**
+    /// `guess_sentence`, yet encoding exactly the counts the oracle
+    /// measured under ibus's full flow — where `guess_sentence`
+    /// precedes every lookup (`tools/oracle/user_driver.c:78-89`) —
+    /// because a NORMAL choose records tokens the pin's
+    /// `train_result3` would train under the constraints it just
+    /// added. A §9 LONGER-choose is the reverse shape: it trains its
+    /// `+483` unigram inside `pinyin_choose_candidate` and records no
+    /// selection, so the train that follows leans on the
+    /// lookup-active half — the pin's `train_result3` walks a
+    /// constraint-free result and writes nothing, answering `true`.
+    /// Neither signal (fresh instance, no guess, no choose) refuses,
+    /// exactly `results.size() == 0`.
     pub fn train(&mut self) -> bool {
         let Some(user) = self.user.as_mut() else {
             return false;
         };
-        if self.session.selected_tokens().is_empty() {
+        if self.session.selected_tokens().is_empty() && !self.session.sentence_lookup_active() {
             return false;
         }
         self.session.train(user).is_ok()

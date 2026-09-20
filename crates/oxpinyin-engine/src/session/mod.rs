@@ -201,7 +201,7 @@ pub struct Session<D, L> {
 
 /// The candidate list and the parse length behind it — the output of one
 /// [`Session::refresh`], anchored at the composition offset.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct Lookup {
     /// The current candidates, in rank order; sentence rows are prepended
     /// once [`Session::guess_sentence`] has run for the composition.
@@ -211,14 +211,39 @@ struct Lookup {
     /// `incomplete-pinyin` setting, not the unfiltered
     /// [`SegmentGraph::consumed`].
     parsed_prefix: usize,
+    /// The last sort-option word applied — upstream's `m_sort_option`
+    /// (`pinyin.cpp:2203`), which `pinyin_guess_candidates` re-stores on
+    /// every call and `pinyin_choose_candidate` later reads. `0x1e` (all
+    /// three sort keys, longer candidates suppressed) is the word the
+    /// pre-§9 surface always behaved as.
+    sort_word: u32,
 }
 
 impl Lookup {
+    /// The pre-§9 parity word: all three sort keys, longer candidates
+    /// suppressed — what every surface behaved as before the sort word
+    /// became an input, so a session that never stores one keeps the
+    /// recorded behavior.
+    const PARITY_SORT_WORD: u32 = 0x1e;
+
     /// Empties the candidate list and the cached parse length — the
-    /// parse-path reset (`reset_composition`).
+    /// parse-path reset (`reset_composition`). The sort word survives:
+    /// upstream's `m_sort_option` is instance state that lives until the
+    /// instance is freed (`pinyin_reset` does not clear it), and the next
+    /// guess re-stores its own word anyway.
     fn reset(&mut self) {
         self.candidates = CandidateList::default();
         self.parsed_prefix = 0;
+    }
+}
+
+impl Default for Lookup {
+    fn default() -> Self {
+        Self {
+            candidates: CandidateList::default(),
+            parsed_prefix: 0,
+            sort_word: Self::PARITY_SORT_WORD,
+        }
     }
 }
 
@@ -851,6 +876,48 @@ struct RankKey {
     pinyin_span: usize,
     /// Real unigram count from the model's frequency table.
     frequency: u64,
+}
+
+/// `sort_option_t::SORT_BY_PHRASE_LENGTH` (`pinyin.h`).
+const SORT_BY_PHRASE_LENGTH: u32 = 0x4;
+/// `sort_option_t::SORT_BY_PINYIN_LENGTH` (`pinyin.h`).
+const SORT_BY_PINYIN_LENGTH: u32 = 0x8;
+/// `sort_option_t::SORT_BY_FREQUENCY` (`pinyin.h`).
+const SORT_BY_FREQUENCY: u32 = 0x10;
+/// `sort_option_t::SORT_WITHOUT_LONGER_CANDIDATE` (`pinyin.h`): set →
+/// the LONGER row is suppressed (`pinyin.cpp:2292-2293`).
+const SORT_WITHOUT_LONGER_CANDIDATE: u32 = 0x2;
+
+impl RankKey {
+    /// The key `compare_item_with_sort_option` sees under `sort_word`
+    /// (`pinyin.cpp:1678-1709` at the pin): a field whose bit is clear
+    /// compares equal for every candidate — zeroed here — so the sort
+    /// orders by the enabled keys only and their ties fall through to the
+    /// collection order the stable sort keeps.
+    const fn for_sort_word(
+        phrase_length: usize,
+        pinyin_span: usize,
+        frequency: u64,
+        sort_word: u32,
+    ) -> Self {
+        Self {
+            phrase_length: if sort_word & SORT_BY_PHRASE_LENGTH != 0 {
+                phrase_length
+            } else {
+                0
+            },
+            pinyin_span: if sort_word & SORT_BY_PINYIN_LENGTH != 0 {
+                pinyin_span
+            } else {
+                0
+            },
+            frequency: if sort_word & SORT_BY_FREQUENCY != 0 {
+                frequency
+            } else {
+                0
+            },
+        }
+    }
 }
 
 /// Keeps the first occurrence of every distinct candidate text, in order.

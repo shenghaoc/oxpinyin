@@ -349,6 +349,44 @@ where
         self.refresh()
     }
 
+    /// Apply the candidate-surface sort-option word — `m_sort_option`
+    /// (`pinyin.cpp:2203` at the pin), re-stored by every
+    /// `pinyin_guess_candidates` and read by `pinyin_choose_candidate`.
+    ///
+    /// The word's bits: `0x1` `SORT_WITHOUT_SENTENCE_CANDIDATE` (a C-ABI
+    /// display filter the engine does not apply — it reads the sentence
+    /// rows from the list the way the pin's prepend does and lets the
+    /// facade drop them), `0x2` `SORT_WITHOUT_LONGER_CANDIDATE` (clear →
+    /// the LONGER row is built and prepended),
+    /// `0x4`/`0x8`/`0x10` `SORT_BY_{PHRASE_LENGTH,PINYIN_LENGTH,FREQUENCY}`
+    /// (each key ordered descending only while its bit is set; a disabled
+    /// key compares equal, so its ties fall to the keys after it and then
+    /// to the collection order).
+    ///
+    /// Refreshes a composing session, exactly `set_options`'s contract:
+    /// the cached list's order and LONGER row are functions of the word.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when a composing session fails to refresh
+    /// under the new word.
+    pub fn set_sort_options(&mut self, sort_word: u32) -> Result<(), EngineError> {
+        if self.lookup.sort_word == sort_word {
+            return Ok(());
+        }
+        self.lookup.sort_word = sort_word;
+        if self.input.is_empty() {
+            return Ok(());
+        }
+        self.refresh()
+    }
+
+    /// The last sort-option word applied ([`Self::set_sort_options`]).
+    #[must_use]
+    pub const fn sort_options(&self) -> u32 {
+        self.lookup.sort_word
+    }
+
     /// Collapses the prepended sentence rows onto the 1-best row — the
     /// libzhuyin display law. Off by default: the pinyin surface keeps one
     /// candidate row per n-best sentence.

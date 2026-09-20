@@ -560,6 +560,8 @@ pub fn oxpinyin_engine::Session<D, L>::set_incomplete_pinyin(&mut self, bool) ->
 pub const fn oxpinyin_engine::Session<D, L>::set_nbest_shape(&mut self, oxpinyin_engine::NbestShape)
 pub fn oxpinyin_engine::Session<D, L>::set_options(&mut self, oxpinyin_core::options::OptionBits) -> core::result::Result<(), oxpinyin_engine::EngineError>
 pub const fn oxpinyin_engine::Session<D, L>::set_scoring_config(&mut self, oxpinyin_core::scoring::ScoringConfig)
+pub fn oxpinyin_engine::Session<D, L>::set_sort_options(&mut self, u32) -> core::result::Result<(), oxpinyin_engine::EngineError>
+pub const fn oxpinyin_engine::Session<D, L>::sort_options(&self) -> u32
 impl<D, L> oxpinyin_engine::Session<D, L> where D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::vocab::SyllableKey, Entry = oxpinyin_core::vocab::PhraseEntry>, <D as oxpinyin_core::Dictionary>::Error: core::fmt::Display, L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::vocab::PhraseToken>, <L as oxpinyin_core::LanguageModel>::Error: core::fmt::Display
 pub fn oxpinyin_engine::Session<D, L>::candidates_at(&mut self, usize) -> core::result::Result<oxpinyin_engine::CandidateList, oxpinyin_engine::EngineError>
 pub fn oxpinyin_engine::Session<D, L>::candidates_ending_at(&mut self, usize) -> core::result::Result<oxpinyin_engine::CandidateList, oxpinyin_engine::EngineError>

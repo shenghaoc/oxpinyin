@@ -292,8 +292,14 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// `docs/findings/addon-choose-promotion.md`): the addon phrase item is copied
 /// across facades, the snapshot candidate becomes a `NORMAL_CANDIDATE` at the
 /// freshly allocated nibble-5 token, and it is that token the constraint
-/// records. The §2.2 special-candidate unigram training (`LONGER_CANDIDATE`,
-/// `SORT_WITHOUT_SENTENCE_CANDIDATE`) has no reachable call site.
+/// records. The §2.2 special-candidate unigram training is reachable from
+/// §9: a chosen `LONGER_CANDIDATE` row trains `+483` unigram through the
+/// phrase-index overlay above and answers cursor `1` — the same law the
+/// pin's LONGER branch applies (`pinyin.cpp:2521-2530`). The
+/// `SORT_WITHOUT_SENTENCE_CANDIDATE` leg of that same call site (a
+/// `NORMAL_CANDIDATE` trained `+483` with the bit set, `:2570-2577`)
+/// remains unreachable: it fires only at words with bit `0x1` set, whose
+/// row shape is register #34 / §11.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_candidate(
     instance: *mut PinyinInstance,
@@ -324,6 +330,25 @@ pub extern "C" fn pinyin_choose_candidate(
     // failure), so that position is NOT the row's position in the
     // window the `select*` calls index. Select by the candidate's
     // recorded source index.
+    //
+    // §9's LONGER branch runs FIRST, exactly as the pin's dispatch
+    // (`pinyin.cpp:2521-2530`): a LONGER row is never a selection — no
+    // constraint, no window, no record change — it only trains the
+    // token's unigram by `initial_seed * unigram_factor = 69 * 7 = 483`
+    // into the phrase-index overlay and answers `true`, which the C
+    // `int` cursor surfaces as `1`. An overlay refusal (the token's
+    // library invisible) answers `-1`, standing in for the pin's
+    // overflow `false`.
+    if inst.candidates[index].candidate_type == lookup_candidate_type_t::LONGER_CANDIDATE {
+        let Some(token) = inst.candidates[index].token else {
+            return -1;
+        };
+        return if inst.core.dict.add_unigram_delta(token.value(), 483) {
+            1
+        } else {
+            -1
+        };
+    }
     let addon_token = try_promote_addon(inst, index);
     let source_index = inst.candidates[index].source_index;
     // Resolve the selection against the window the caller actually saw:
@@ -518,9 +543,9 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
 /// has no n-best sentence results yet.
 ///
 /// Returns `false` when there is no user store (upstream refuses without a
-/// user dir, `pinyin.cpp:2669`), when no candidate has been chosen (upstream
-/// refuses without a sentence result, `pinyin.cpp:2674`), or on a store
-/// failure.
+/// user dir, `pinyin.cpp:2669`), when neither a sentence lookup has run nor
+/// a candidate has been chosen (upstream refuses without a sentence result,
+/// `pinyin.cpp:2674`), or on a store failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, _index: u8) -> bool {
     if instance.is_null() {

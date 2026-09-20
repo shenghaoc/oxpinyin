@@ -322,6 +322,60 @@ impl SystemDictionary {
         visible_extension_exists(&self.pinyin, &self.libraries, &keys, &visible)
     }
 
+    /// `ChewingLargeTable2::search_suggestion` over the default facade's
+    /// pinyin DBM — [`Dictionary::suggest_extension_tokens`]'s system seam:
+    /// every token of a stored pronunciation whose index key strictly
+    /// extends `syllables`' index key, in the pin's `reduce_tokens` order
+    /// (library nibble ascending, cursor order within — the stable sort
+    /// over the ascending-key walk is exactly that grouping).
+    ///
+    /// The query's own index key must exist (the pin's `m_db->Get` gate —
+    /// a query unknown to the DBM walks nothing); the walk then takes the
+    /// rows **after** it, so the query-length row itself never yields a
+    /// token, and each record is kept under the suggestion filter
+    /// `pinyin_compare_with_tones(query, stored, prefix_len) == 0`
+    /// ([`prefix_keys_match`]). A DBM key that starts with the query's
+    /// index-key bytes and is longer than it passes the pin's
+    /// `pinyin_exact_compare2` gate by construction — both projections
+    /// agree on the shared bytes — so the byte-prefix walk needs no
+    /// second comparison.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM walk or a value decode fails.
+    pub fn suggest_extension_tokens(
+        &self,
+        syllables: &[SyllableKey],
+    ) -> Result<Vec<u32>, DictError> {
+        if syllables.is_empty() {
+            return Ok(Vec::new());
+        }
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(Vec::new());
+        };
+        if !self.pinyin.key_exists(&keys)? {
+            return Ok(Vec::new());
+        }
+        let mut tokens: Vec<u32> = Vec::new();
+        self.pinyin.walk_extensions(&keys, &mut |length, items| {
+            // The query-length row is the phrase itself — the pin's cursor
+            // starts one past it (`Jump` + `Next`).
+            if length > keys.len() {
+                tokens.extend(
+                    items
+                        .iter()
+                        .filter(|item| prefix_keys_match(&keys, &item.keys))
+                        .map(|item| item.token),
+                );
+            }
+            Ok(false)
+        })?;
+        // `reduce_tokens`'s library grouping: tokens filed by nibble
+        // ascending, cursor order within a library.
+        tokens.sort_by_key(|token| token >> 24);
+        Ok(tokens)
+    }
+
     fn fill_lookup(
         &self,
         syllables: &[SyllableKey],
@@ -382,6 +436,27 @@ impl Dictionary for SystemDictionary {
             .into_iter()
             .map(PhraseToken::new)
             .collect()
+    }
+
+    /// The system seam of the suggestion walk: tokens of strictly-longer
+    /// pronunciations, `reduce_tokens` order. The `RuntimeDict`
+    /// composition adds the user seam; this impl answers the system DBM
+    /// alone, so the addon facade (which the pin's suggestion facade does
+    /// not consult) is correctly absent.
+    fn suggest_extension_tokens(
+        &self,
+        syllables: &[SyllableKey],
+    ) -> Result<Vec<PhraseToken>, DictError> {
+        Ok(self
+            .suggest_extension_tokens(syllables)?
+            .into_iter()
+            .map(PhraseToken::new)
+            .collect())
+    }
+
+    /// `_token_get_phrase`'s system half: the loaded library item's text.
+    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+        self.libraries.phrase_text(token)
     }
 
     /// The DBM double-indexes each row under both incomplete and complete

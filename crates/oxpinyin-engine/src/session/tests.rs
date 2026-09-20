@@ -106,7 +106,7 @@ use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
     UserModel,
 };
-use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
+use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel, FrequencyFixtureModel};
 
 use super::{KeyOutcome, MAX_INPUT_BYTES, Selection, Session};
 use crate::config::EmptyConfigSource;
@@ -464,6 +464,92 @@ fn configuration_and_paths_are_the_injected_data() {
 fn commit_on_an_empty_session_is_empty_text() {
     let mut session = session();
     assert_eq!(session.commit().expect("no failure"), "");
+}
+
+/// §9's authored vocabulary: a one-key phrase with a two-key extension,
+/// so the suggestion walk has exactly one strictly-longer token to find.
+const LONGER_VOCAB: &str = "token=1\tkeys=fang\ttext=方\tunigram=1000\n\
+token=2\tkeys=fang,mian\ttext=方面\tunigram=800\n\
+token=3\tkeys=fang\ttext=房\tunigram=700\n";
+
+/// The parity word: every gate shut, every key on — the shape the capi
+/// ran before §9 and the one the differentials must not move.
+const SORT_PARITY: u32 = 0x1e;
+/// ibus preset 1 (the GSettings default): LONGER rows surface.
+const SORT_IBUS_DEFAULT: u32 = 0x1c;
+
+#[test]
+fn sort_word_defaults_to_parity_and_sets_cleanly() {
+    let mut session = session();
+    assert_eq!(
+        session.sort_options(),
+        SORT_PARITY,
+        "the engine default is the parity word"
+    );
+    session
+        .set_sort_options(SORT_IBUS_DEFAULT)
+        .expect("set cannot fail");
+    assert_eq!(session.sort_options(), SORT_IBUS_DEFAULT);
+    // The word persists across the scan a guess runs: the pin re-stores
+    // `m_sort_option` per guess call (`pinyin.cpp:2203`), the engine's
+    // word lives on the lookup until the next call re-stores it.
+    type_text(&mut session, "fang");
+    assert_eq!(session.sort_options(), SORT_IBUS_DEFAULT);
+}
+
+#[test]
+fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
+    // FrequencyFixtureModel: the §9 row is built only under the
+    // production frequency-ranked construction
+    // (`has_real_unigrams`, `lookup.rs`).
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
+        FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
+    )
+    .expect("the fixtures open");
+    for character in "fang".chars() {
+        session
+            .process_key(&KeyInput::character(character))
+            .expect("typing cannot fail");
+    }
+    session
+        .set_sort_options(SORT_IBUS_DEFAULT)
+        .expect("set cannot fail");
+    session.guess_sentence().expect("guess cannot fail");
+    eprintln!(
+        "DEBUG candidates={:?}",
+        session
+            .candidates()
+            .iter()
+            .map(|c| (
+                c.text().to_string(),
+                c.token(),
+                c.consumed_bytes(),
+                c.kind()
+            ))
+            .collect::<Vec<_>>()
+    );
+    let longer = session
+        .candidates()
+        .iter()
+        .find(|candidate| candidate.token().is_some() && candidate.consumed_bytes() == 0)
+        .expect("the LONGER row is offered at 0x1c");
+    assert_eq!(longer.text(), "方面");
+    // The pin's prepend leaves m_begin == m_end == 0.
+    assert_eq!(longer.span_start(), 0);
+    // Setting bit 0x2 removes it again.
+    session
+        .set_sort_options(SORT_PARITY)
+        .expect("set cannot fail");
+    assert!(
+        session
+            .candidates()
+            .iter()
+            .all(|candidate| !(candidate.token().is_some() && candidate.consumed_bytes() == 0)),
+        "no LONGER row at the parity word"
+    );
 }
 
 /// Authored mini vocabulary for the training tests: two single-key

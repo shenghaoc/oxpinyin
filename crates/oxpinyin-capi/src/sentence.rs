@@ -259,7 +259,10 @@ pub extern "C" fn pinyin_get_character_offset(
 /// the bit clear, sentence rows guessed by [`pinyin_guess_sentence`]
 /// appear at the head typed `NBEST_MATCH_CANDIDATE` with their tail rank;
 /// with the bit set they are excluded, exactly upstream's gate
-/// (`pinyin.cpp:2292-2293`).
+/// (`pinyin.cpp:2295-2296`). §9 honours the rest of the word:
+/// `SORT_WITHOUT_LONGER_CANDIDATE` clear prepends a `LONGER_CANDIDATE`
+/// row (`:2292-2293`) and the three `SORT_BY_*` bits order the list
+/// (`:1678-1709`), both through the engine's sort word above.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_candidates(
     instance: *mut PinyinInstance,
@@ -274,6 +277,15 @@ pub extern "C" fn pinyin_guess_candidates(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
     if inst.core.session.set_options(inst.core.options()).is_err() {
+        return false;
+    }
+    // §9: the whole sort word, re-stored per call exactly as the pin's
+    // `instance->m_sort_option = sort_option` (`pinyin.cpp:2203`) — the
+    // engine's sort keys, the LONGER gate and the snapshot's LONGER row
+    // are all functions of it. A word that changes the list refreshes a
+    // composing session; the same word is a no-op, so a caller passing a
+    // constant pays nothing per keystroke.
+    if inst.core.session.set_sort_options(sort_option).is_err() {
         return false;
     }
     if !inst.core.session.is_composing() {
@@ -369,6 +381,18 @@ pub extern "C" fn pinyin_guess_candidates(
             },
             |parse| oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes()),
         );
+        // §9: a LONGER row is the engine's token-carrying row with the
+        // zero span the pin's prepend leaves (`m_begin == m_end == 0`,
+        // never set for the type) — a normal phrase row always covers at
+        // least one key, so `token && consumed_bytes == 0` names the type
+        // uniquely on this surface. The RAW span decides the type: under a
+        // transform (double pinyin, the zhuyin keyboards) the exported
+        // `consumed_bytes` is the original-input offset a transform maps
+        // the raw 0 to — nonzero and useless as the LONGER marker there.
+        // `pinyin_get_candidate_type` answers `LONGER_CANDIDATE` (7) for
+        // the row and ibus maps it (`CANDIDATE_LONGER`/
+        // `CANDIDATE_LONGER_USER`, `PYPLibPinyinCandidates.cc:56-62`).
+        let is_longer = cand.token().is_some() && cand.consumed_bytes() == 0;
         inst.candidates.push(CapiCandidate {
             text,
             kind: cand.kind(),
@@ -377,6 +401,9 @@ pub extern "C" fn pinyin_guess_candidates(
                     lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
                 }
                 oxpinyin_engine::CandidateKind::Addon => lookup_candidate_type_t::ADDON_CANDIDATE,
+                oxpinyin_engine::CandidateKind::Phrase
+                | oxpinyin_engine::CandidateKind::Fallback
+                | _ if is_longer => lookup_candidate_type_t::LONGER_CANDIDATE,
                 oxpinyin_engine::CandidateKind::Phrase
                 | oxpinyin_engine::CandidateKind::Fallback
                 | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,

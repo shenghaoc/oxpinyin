@@ -182,11 +182,17 @@ where
                     .drain(..)
                     .zip(frequencies)
                     .map(|(candidate, frequency)| {
-                        let key = RankKey {
-                            phrase_length: candidate.text().chars().count(),
-                            pinyin_span: candidate.consumed_bytes(),
+                        // `compare_item_with_sort_option` compares a key
+                        // only while its bit is set and returns 0 — a tie —
+                        // once it is clear (`pinyin.cpp:1678-1709`): zeroing
+                        // a disabled field makes every candidate equal on
+                        // it, which is that comparator exactly.
+                        let key = RankKey::for_sort_word(
+                            candidate.text().chars().count(),
+                            candidate.consumed_bytes(),
                             frequency,
-                        };
+                            self.lookup.sort_word,
+                        );
                         (key, candidate)
                     }),
             );
@@ -226,6 +232,19 @@ where
             ));
         }
 
+        // §9: the LONGER row, prepended when the word leaves
+        // `SORT_WITHOUT_LONGER_CANDIDATE` clear (`pinyin.cpp:2292-2293`) —
+        // before the sentence prepend, so the n-best rows land above it
+        // exactly as the pin's two prepends order them. The row carries a
+        // zero span: upstream never sets `m_begin`/`m_end` for it
+        // (`_prepend_longer_candidates` leaves both zero), which is also
+        // the marker the C ABI reads back as `LONGER_CANDIDATE`.
+        if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
+            && let Some(candidate) = self.longer_candidate()?
+        {
+            collected.insert(0, candidate);
+        }
+
         // W14: prepend the stored n-best rows, head first, then drop every
         // later candidate with the same text — upstream prepends after the
         // sort and its phrase-string dedup keeps the NBEST row (and the
@@ -244,6 +263,161 @@ where
             window_addon,
         };
         Ok(parsed_prefix)
+    }
+
+    /// The LONGER candidate row — `_prepend_longer_candidates`
+    /// (`pinyin.cpp:1870-1933` at the pin): a suggestion search over the
+    /// whole composition's matrix, its extensions capped at twice the
+    /// parse's key count, the maximum-unigram token of the (char-length
+    /// capped) survivors as the row, typed `LONGER_CANDIDATE` with the
+    /// unigram-only amplified frequency and a zero span.
+    ///
+    /// `None` when the pin would prepend no row: the parse is empty, the
+    /// cap admits no phrase, or no surviving token owns a phrase item.
+    /// The frequency law is `((1−λ) · unigram / total) · 2²⁴` truncated —
+    /// [`amplified_frequency`], the bigram term at exactly `0.0` exactly
+    /// as the pin's LONGER branch computes it (no merged gram there).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the dictionary walk or a model read
+    /// fails — the same surfaces the window scan reads.
+    pub(super) fn longer_candidate(&self) -> Result<Option<Candidate>, EngineError> {
+        if !self.model.has_real_unigrams() {
+            // The pre-frequency construction never runs the pin's prepend:
+            // its candidate rows carry no amplified frequency at all.
+            return Ok(None);
+        }
+        // `prefix_len` is `m_parsed_key_len` — the parser's key count for
+        // the WHOLE composition (`pinyin.cpp:1512`), not the remaining
+        // slice's. The suggestion matrix walk starts at column 0 of the
+        // same matrix regardless of the guess offset
+        // (`search_suggestion_with_matrix`, `phonetic_key_matrix.cpp:504-529`).
+        let graph = self.build_graph_at(0, self.input.as_bytes())?;
+        let selected = graph.fewest_keys(self.settings.incomplete());
+        let prefix_len = selected.len();
+        if prefix_len == 0 || prefix_len >= MAX_PHRASE_LENGTH {
+            return Ok(None);
+        }
+        // The pin's own two caps in one bound: the walk refuses a key path
+        // longer than `MAX_PHRASE_LENGTH` (`cached_keys->len > 16 →
+        // SEARCH_NONE`) and longer than `prefix_len * 2` (`:472-475`).
+        let max_keys = (prefix_len * 2).min(MAX_PHRASE_LENGTH);
+
+        let matrix =
+            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+        let end = graph.consumed();
+        if matrix.first().is_none_or(std::vec::Vec::is_empty) {
+            return Ok(None);
+        }
+
+        // The suggestion walk: every key-path from column 0 to the whole
+        // parse's end, within the cap. The pin's `search_matrix`-shaped
+        // recursion over every column entry (all parses plus the
+        // resplit/divided/fuzzy additions), zero-key separator columns
+        // stepped over without pushing.
+        let mut paths: Vec<SmallVec<[SyllableKey; 16]>> = Vec::new();
+        let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
+        self.collect_suggestion_paths(&matrix, 0, end, max_keys, &mut path, &mut paths);
+
+        let mut winner: Option<(PhraseToken, u64, String)> = None;
+        for keys in &paths {
+            let tokens = self
+                .dictionary
+                .suggest_extension_tokens(keys.as_slice())
+                .map_err(|error| {
+                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+                })?;
+            for token in tokens {
+                // `get_phrase_item` + the char-length cap: a phrase longer
+                // than `prefix_len * 2 + 1` characters is skipped
+                // (`pinyin.cpp:1899-1902`).
+                let Some(text) = self.dictionary.phrase_text_for_token(token.value()) else {
+                    continue;
+                };
+                let phrase_length = text.chars().count();
+                if phrase_length > prefix_len * 2 + 1 {
+                    continue;
+                }
+                // The winner law: the first survivor initializes; a
+                // strictly greater unigram replaces (ties keep the earlier
+                // token — `:1904-1917`). The unigram read carries the
+                // user/training overlay (`add_unigram_frequency` writes
+                // the facade item), which the model's `unigram_freq`
+                // already merges.
+                let unigram = self
+                    .model
+                    .unigram_freq(&token)
+                    .map_err(|error| {
+                        EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+                    })?
+                    .unwrap_or(0);
+                if winner.as_ref().is_none_or(|(_, best, _)| unigram > *best) {
+                    winner = Some((token, unigram, text));
+                }
+            }
+        }
+        let Some((token, _unigram, text)) = winner else {
+            return Ok(None);
+        };
+        // The row's amplified frequency exists only inside the pin's sort
+        // and dedup (`m_freq`); the pin's LONGER prepend runs after the
+        // sort, and the C ABI never reads a candidate's frequency. The
+        // observable surface needs the token (choose trains it), the text
+        // (the row's string and dedup key), and the zero span — carried
+        // here. The number itself would be
+        // `((1−λ)·unigram/total)·2²⁴` truncated ([`amplified_frequency`],
+        // bigram term exactly `0.0`); nothing downstream reads it, so it
+        // is not stored — a divergence in the freq-keyed dedup branch
+        // (LONGER vs a same-text NORMAL whose amplified frequency is
+        // strictly greater under DYNAMIC_ADJUST) is unreachable under the
+        // parity word, which leaves that bit clear.
+        Ok(Some(Candidate::new(
+            compact_str::CompactString::from(text),
+            CandidateKind::Phrase,
+            0,
+            0,
+            0,
+            Some(token),
+            None,
+        )))
+    }
+
+    /// The suggestion walk's path enumeration: every key-path from `node`
+    /// to `end` no longer than `max_keys`, collected into `paths` —
+    /// `search_suggestion_with_matrix_recur`
+    /// (`phonetic_key_matrix.cpp:443-501` at the pin) with the window
+    /// scan's own zero-key column skip.
+    fn collect_suggestion_paths(
+        &self,
+        matrix: &[Vec<ScanKey>],
+        node: usize,
+        end: usize,
+        max_keys: usize,
+        path: &mut SmallVec<[SyllableKey; 16]>,
+        paths: &mut Vec<SmallVec<[SyllableKey; 16]>>,
+    ) {
+        let Some(column) = matrix.get(node) else {
+            return;
+        };
+        if node == end {
+            // The pin's leaf gate: an empty path (apostrophes only)
+            // searches nothing; the length caps were applied on the way
+            // down (`max_keys`).
+            if !path.is_empty() {
+                paths.push(path.clone());
+            }
+            return;
+        }
+        for scan_key in column.iter().copied() {
+            let to = scan_key.to;
+            if to > end || path.len() >= max_keys {
+                continue;
+            }
+            path.push(scan_key.key);
+            self.collect_suggestion_paths(matrix, to, end, max_keys, path, paths);
+            path.pop();
+        }
     }
 
     /// Rebuilds the candidate window anchored at a caller lookup `offset`,

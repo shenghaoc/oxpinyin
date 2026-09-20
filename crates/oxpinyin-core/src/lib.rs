@@ -265,6 +265,53 @@ pub trait Dictionary {
     fn handles_partial_keys(&self) -> bool {
         false
     }
+
+    /// Tokens of phrases whose stored pinyin **strictly extends**
+    /// `syllables` — `ChewingLargeTable2::search_suggestion`
+    /// (`chewing_large_table2_tkrzwdb.cpp:493-535` at the pin `074a2219`),
+    /// the row source of the LONGER candidate
+    /// (`_prepend_longer_candidates`, `pinyin.cpp:1870-1933`).
+    ///
+    /// The pin's walk: the query's index key (tone-zeroed complete, or the
+    /// initial-only incomplete projection when any query syllable is
+    /// partial) must itself exist in the DBM; the cursor then walks the
+    /// rows **after** it, keeping a row when its key is strictly longer
+    /// and its first `prefix_len` keys equal the query under
+    /// `pinyin_compare_with_tones` (an incomplete query syllable accepts
+    /// every final; a zero tone accepts every tone), and each surviving
+    /// record's token is appended in cursor order. Rows at the query's
+    /// own length are the phrase itself and are never returned.
+    ///
+    /// Tokens come out in the pin's `reduce_tokens` order: grouped by
+    /// library nibble ascending, cursor order within a group — the
+    /// winner-selection loop over them keeps the first token on unigram
+    /// ties, so the order is observable. Defaulted to empty so existing
+    /// implementors compile unchanged (`docs/findings/core-trait-seam.md`:
+    /// the seam grows by defaulted methods only) — a dictionary that does
+    /// not override it surfaces no LONGER candidate, the pre-§9 behaviour
+    /// of every fixture double.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the backend cannot serve the walk.
+    fn suggest_extension_tokens(
+        &self,
+        _syllables: &[Self::Syllable],
+    ) -> Result<Vec<PhraseToken>, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    /// The phrase text a token owns, for rows the candidate surface must
+    /// render from the token alone — `_token_get_phrase`
+    /// (`pinyin.cpp:1994-2050` at the pin), which fills a LONGER
+    /// candidate's string from the phrase index item.
+    ///
+    /// Defaulted to `None` so existing implementors compile unchanged;
+    /// a dictionary that does not override it cannot back a LONGER row's
+    /// text (the row is then not built).
+    fn phrase_text_for_token(&self, _token: u32) -> Option<String> {
+        None
+    }
 }
 
 impl<D: Dictionary + ?Sized> Dictionary for &D {
@@ -317,6 +364,17 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn handles_partial_keys(&self) -> bool {
         (**self).handles_partial_keys()
+    }
+
+    fn suggest_extension_tokens(
+        &self,
+        syllables: &[Self::Syllable],
+    ) -> Result<Vec<PhraseToken>, Self::Error> {
+        (**self).suggest_extension_tokens(syllables)
+    }
+
+    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+        (**self).phrase_text_for_token(token)
     }
 }
 
