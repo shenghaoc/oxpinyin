@@ -696,6 +696,45 @@ impl Dictionary for RuntimeDict {
         Ok(self.visible_item_count())
     }
 
+    /// `FacadeChewingTable2::search_suggestion`'s composition: the system
+    /// table's walk, then the user table's, `reduce_tokens` order over
+    /// the union (nibble ascending — system libraries 1–4 before the
+    /// user library 7 — cursor order within a group). The library mask
+    /// drops an unloaded library's tokens, as every other read here
+    /// does; the addon facade is absent because the pin's suggestion
+    /// facade does not consult it.
+    fn suggest_extension_tokens(
+        &self,
+        syllables: &[Self::Syllable],
+    ) -> Result<Vec<PhraseToken>, Self::Error> {
+        let mut tokens: Vec<u32> = self.system.suggest_extension_tokens(syllables)?;
+        tokens.extend(self.user_lookup()?.suggest_extensions(syllables));
+        if self.library_mask.load(Ordering::SeqCst) != 0 {
+            tokens.retain(|token| self.library_visible_token(*token));
+        }
+        tokens.sort_by_key(|token| token >> 24);
+        Ok(tokens.into_iter().map(PhraseToken::new).collect())
+    }
+
+    /// `_token_get_phrase` over the facade: the system libraries' item
+    /// text, else the user store's phrase text (the user library's
+    /// items live there). The library mask hides an unloaded library's
+    /// token, matching the pin's freed sub-index.
+    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+        if !self.library_visible_token(token) {
+            return None;
+        }
+        if let Some(text) = self.system.phrase_text(token) {
+            return Some(text);
+        }
+        let store = self.user.as_ref()?;
+        store
+            .phrase(token)
+            .ok()
+            .flatten()
+            .map(|phrase| phrase.text().to_owned())
+    }
+
     /// Both seams under this facade handle partial-key queries with one
     /// probe: the system dictionary's DBM is double-indexed at datagen time
     /// (see [`SystemDictionary`]), and `UserLookup` mirrors that with a

@@ -268,6 +268,30 @@ impl Dictionary for FixtureDictionary {
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, FixtureError> {
         Ok(self.entries.get(syllables).cloned().unwrap_or_default())
     }
+
+    /// The §9 suggestion walk over the fixture's own table: every entry
+    /// whose key vector strictly extends `syllables` (prefix match), in
+    /// fixture order — the capture order the dictionary itself keeps.
+    fn suggest_extension_tokens(
+        &self,
+        syllables: &[SyllableKey],
+    ) -> Result<Vec<PhraseToken>, FixtureError> {
+        Ok(self
+            .entries
+            .iter()
+            .filter(|(keys, _)| keys.len() > syllables.len() && keys.starts_with(syllables))
+            .flat_map(|(_, entries)| entries.iter().map(|entry| entry.token()))
+            .collect())
+    }
+
+    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+        let token = PhraseToken::new(token);
+        self.entries
+            .values()
+            .flatten()
+            .find(|entry| entry.token() == token)
+            .map(|entry| entry.text().to_owned())
+    }
 }
 
 /// An in-memory interpolated bigram model read from fixtures.

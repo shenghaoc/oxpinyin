@@ -81,18 +81,29 @@ fn train_records_the_pinned_doubling_sequence() {
     close(context, instance);
 }
 
-/// `zhuyin_train` refuses without a selection to train (nothing was
-/// chosen) and without a user store (nowhere to write) — the two false
-/// arms of the facade's train law.
+/// `zhuyin_train` refuses without a sentence result (no guess ran) and
+/// without a user store (nowhere to write) — the two false arms of the
+/// facade's train law, `zhuyin_train`'s own gates
+/// (`zhuyin.cpp:1696-1706`: user dir, then `results.size()`).
 #[test]
 fn train_refuses_without_a_selection_or_a_user_store() {
-    // A guess alone selects nothing: train must refuse.
+    // A guess alone runs the train and writes nothing: the pin's
+    // `train_result3` walks a constraint-free result and answers true
+    // (`phonetic_lookup.h:844-936`), so `zhuyin_train` answers true
+    // after `zhuyin_guess_sentence` with no choose behind it.
     let user_dir = TempUserDir::new("train-noselect");
     let (context, instance) = open_with_user(&user_dir.path);
     let input = cstr("su3cl3");
     assert_eq!(zhuyin_parse_more_chewings(instance, input.as_ptr()), 6);
     assert!(zhuyin_guess_sentence(instance));
-    assert!(!zhuyin_train(instance), "no choose happened yet");
+    assert!(
+        zhuyin_train(instance),
+        "the live sentence result admits the train"
+    );
+    with_store(instance, |store| {
+        // The constraint-free walk writes nothing: no bigram anywhere.
+        assert_eq!(store.bigram_total(SENTENCE_START).unwrap(), 0);
+    });
     close(context, instance);
 
     // No user dir: the corpus driver's shape — training degrades to

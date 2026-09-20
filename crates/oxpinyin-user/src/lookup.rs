@@ -212,6 +212,74 @@ impl UserLookup {
         self.text_tokens.get(text).map_or(&[], Vec::as_slice)
     }
 
+    /// `ChewingLargeTable2::search_suggestion` over the user seam — the
+    /// user chewing table `_add_phrase` populates
+    /// (`pinyin.cpp:599-601` at the pin writes `m_pinyin_table->add_index`,
+    /// whose facade routes to the user table): tokens of pronunciations
+    /// whose pinyin **strictly extends** `syllables`, under the pin's
+    /// walk contract.
+    ///
+    /// The existence gate (`m_db->Get(query_key)`): `add_index` plants a
+    /// marker row for every proper prefix of a stored pronunciation
+    /// (`chewing_large_table2_kyotodb.cpp:311-327`), so "the query key
+    /// exists" is exactly "some stored pronunciation equals or extends
+    /// it" — this lookup's own `phrase_prefix_exists`. The rows after it:
+    /// stored pinyins with **more syllables** whose first
+    /// `syllables.len()` syllables match under
+    /// `pinyin_compare_with_tones` (a complete query syllable equals the
+    /// stored text; an incomplete one shares its initial) — a prefix
+    /// variant of `stored_matches_query`. Order: the stored map's
+    /// pinyin-ascending walk (`exact` / `by_initial` are `BTreeMap`s),
+    /// token-ascending within one pronunciation — the deterministic
+    /// stand-in for the pin table's cursor order over the same
+    /// pronunciation set; the runtime's composition re-groups by library
+    /// nibble the way `reduce_tokens` does.
+    #[must_use]
+    pub fn suggest_extensions(&self, syllables: &[SyllableKey]) -> Vec<u32> {
+        if syllables.is_empty() || !self.phrase_prefix_exists(syllables) {
+            return Vec::new();
+        }
+        let has_incomplete = syllables
+            .iter()
+            .any(|key| key.completeness() == Completeness::Partial);
+        let mut tokens: Vec<u32> = Vec::new();
+        if !has_incomplete {
+            let prefix = index_key(syllables);
+            for (pinyin, entries) in self.exact.range(prefix.clone()..) {
+                if pinyin.as_str() == prefix {
+                    // The query's own row — the pin's cursor starts one
+                    // past it (`Jump` + `Next`).
+                    continue;
+                }
+                if !stored_extends_query(pinyin, syllables) {
+                    break;
+                }
+                tokens.extend(entries.iter().map(|entry| entry.token().value()));
+            }
+        } else {
+            // The incomplete space: stored pronunciations whose syllables
+            // share the query's initials. The initial bucket is keyed by
+            // the FULL initial string of the stored pronunciation, so a
+            // text-prefix scan of the query's initial key finds exactly
+            // the buckets whose pronunciations begin with those initials
+            // — then the with-tones prefix filter keeps the rows.
+            let initial = initial_key(syllables);
+            for (bucket_initial, bucket) in self.by_initial.range(initial.clone()..) {
+                if !bucket_initial.starts_with(initial.as_str()) {
+                    break;
+                }
+                for (pinyin, entry) in bucket {
+                    if stored_extends_query(pinyin, syllables) {
+                        tokens.push(entry.token().value());
+                    }
+                }
+            }
+            tokens.sort_unstable();
+            tokens.dedup();
+        }
+        tokens
+    }
+
     /// Tokens whose phrase text starts with `prefix` and is longer, when
     /// `prefix` itself is a stored phrase.
     ///
@@ -269,6 +337,36 @@ fn stored_matches_query(stored_pinyin: &str, query: &[SyllableKey]) -> bool {
         }
     }
     parts.next().is_none()
+}
+
+/// `stored_matches_query`'s suggestion variant: the stored pronunciation
+/// has **more** syllables than the query and its first
+/// `query.len()` syllables match under `pinyin_compare_with_tones` —
+/// `PrefixLessThanWithTones`'s filter over longer records
+/// (`chewing_large_table2.h:158-178` at the pin). Used as a `BTreeMap`
+/// range-walk predicate over the pinyin-ascending key space, where the
+/// first non-extending key ends the walk (the `break` sites) — that
+/// early exit is only valid in the complete-key space, where a stored
+/// pinyin that shares the query's first syllables prefixes the query's
+/// own key text; callers in the initial-bucket space filter without
+/// breaking.
+fn stored_extends_query(stored_pinyin: &str, query: &[SyllableKey]) -> bool {
+    let mut parts = stored_pinyin.split('\'');
+    for query_key in query {
+        let Some(stored) = parts.next() else {
+            return false;
+        };
+        let matches = if query_key.completeness() == Completeness::Complete {
+            stored == query_key.text()
+        } else {
+            syllable_initial(stored) == Some(query_key.text())
+        };
+        if !matches {
+            return false;
+        }
+    }
+    // Strictly longer: at least one more syllable follows.
+    parts.next().is_some()
 }
 
 fn initial_key(syllables: &[SyllableKey]) -> String {
