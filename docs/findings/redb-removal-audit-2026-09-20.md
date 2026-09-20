@@ -63,8 +63,21 @@ Berkeley DB 4.8.30), so the removal has **no platform consequence**.
   pre-existing BDB gap flagged in Phase 1, completed under the standing
   peer-count-class gate. The equivalent enumerators in
   `run-bisect`/`run-cpp-smoke`/`check-alloc-pairing` scan fixture
-  directories and stay without `db` (no `fixtures/w3/db` exists); that
-  gap remains as flagged.
+  directories and stay without `db` on this member; that gap is an
+  **open item**, not an impossibility — `fixtures/w3/db` does exist (it
+  has since this stack's base commit), so the omission was an unreached
+  case. The member above closes it: its enumerators accept `db` and
+  prefer it, because the default build opens that flavour.
+- **Open item, pre-existing, outside this stack's scope:** the two
+  `.kct`-gated surface differentials — `tools/bisection/run-key-surface-diff.sh`
+  and `tools/bisection/run-phrase-surface-diff.sh` — accept only
+  `.kct`-named system tables (`has_all_kct_tables` checks
+  `$SYSTEM/{pinyin_index,phrase_index,bigram}.kct`), and no producer has
+  written `<stem>.kct` system tables since P6 (`DEFAULT_STORE_EXT`'s
+  `kct` names session scratch and datagen-native containers; datagen's
+  libpinyin-format writer emits libpinyin's own names). Both gates can
+  therefore only ever SKIP. Recorded per the review ruling; they get
+  their own PR after this stack merges.
 - `.kiro/steering/rust-conventions.md`'s Dependencies ruling lost its
   redb worked example ("a Rust library is used as Rust"); the rule's
   force is unchanged, but the tree now has **no example of the rule's
