@@ -17,7 +17,7 @@ and again for rows 35–37:**
 | 6 | #9 n-best row-choose cursor | closed (eca8d43b) |
 | 7 | #15 apostrophe-only consumption | closed (678f3259, 2026-08-26 — predates this plan; the register entry was not updated until 2026-09-06) |
 | 8 | #5b double out-of-enum scheme setter | closed in code (2026-09-15) — half-mutation reproduced: CAPI returns `true`, fallback cleared, shengmu/yunmu intact; contract test pinned |
-| 9 | #32 sort-option input of `pinyin_guess_candidates` | **open** — registered 2026-09-18: bits 0x2/0x4/0x8/0x10 ignored, no longer-candidate row produced; the port owes the pin's longer-candidate production and the three sort keys (§9) |
+| 9 | #32 sort-option input of `pinyin_guess_candidates` | **closed in code** (2026-09-20): the whole sort word reaches the engine (`Session::set_sort_options`); bit `0x2` clear prepends a LONGER row and the three `SORT_BY_*` keys order the list (§9); the choose-a-LONGER-row flow trains `+483` unigram and answers cursor 1, IDENTICAL |
 | 10 | #33 whole-row NBEST choose + train | **open** — registered 2026-09-19 (probe residue B): history fallback trains when no OneStep is present; pin `train_result3` writes nothing (§10) |
 | 11 | #34 imported user phrase after `guess_sentence` | **open** — registered 2026-09-19 (probe residue C): nbest cleared on parse; NBEST-wins dedup before `SORT_WITHOUT_SENTENCE` (§11) |
 | 12 | #35 user-library tokens refused an n-best step cost | **closed in code** (2026-09-19): the presence gate mirrors the pin's `get_phrase_item` over the loaded sub-index — user-file tokens (nibbles 5/6/7) priced from their user delta alone, masked libraries and missing items still refused; phase A/X/D IDENTICAL, the runtime probe's `Some(21392)` measured (§12) |
@@ -242,9 +242,42 @@ land with the measurements.
   IDENTICAL — the special-candidate unigram training whose call site
   `crates/oxpinyin-capi/src/candidates.rs:295-296` records as
   unreachable today becomes reachable with the port and must be measured.
-- **Blocked on:** nothing — the port is unstarted work, not waiting on
-  an ask. The `0x1f` user-row shape is register #34 / §11, separate
-  from this row.
+- **Closed:** all three probes pass (2026-09-20, host measurement:
+  oracle `~/.local/opt/pinyin-oracle` read-only, both sides tkrzw
+  over `/home/sheng/matrix-x86/data-tkrzw`, worktree branch
+  `feat/guess-candidates-sort-options`). The parameterised sweep
+  (`OPTION_SWEEP_SORT`) passes 24/24 at `0x1e`, `0x1c` and `0x14`
+  (0x1e identical to the recorded baseline; 1c/14 flip from
+  STOP-on-every-case). The ABI probe (`ABI_PROBE_SORT`) is
+  byte-identical at `0x1c` and `0x14` — and at `0x1e` (0 diverging
+  lines at every word; `comm` of the sorted ± sets empty both
+  directions), re-measured 2026-09-20 on top of #493 (main
+  `3c21641f`): the pre-#493 26-line `0x1e` residue was A + B + X2 +
+  D, and #493's closure of A (register row 35, `7c9a6923`) took the
+  B/X2 export lines and the extras `token_unigram` line with it —
+  the extras context reuses the probe's user dir, so the old `1610`
+  read was B's trained overlay, now unwritten; rows 33/36's
+  dispositions stay with their own differentials. The LONGER-choose phase
+  (`tools/bisection/abi-probe-diff.c`, runs before choose-train so its
+  user-bigram dump measures this flow alone) prints on both sides:
+  row `方面` at index 2 type 7, `choose(longer)=1`,
+  `train(after-longer)=true` twice, unigram before/after
+  `23253/23736` — the trained `+483` read back through the phrase
+  index on BOTH sides — and bigram rows 0. (The first §9 record said
+  `0/0` with a dropped-write explanation; that was an artifact of the
+  probe's unsequenced `printf` — the read call wrote `f` in one
+  argument while another read it, so both sides printed the pre-call
+  zero. Sequenced 2026-09-20 per the CodeRabbit finding and
+  re-measured: identical `23253 → 23736` on both sides, the direct
+  `+483` observable.) The `0x1f` user-row shape stays §11 (row 34).
+  The facade's train gate widened to the pin's own disjunction
+  (user store present AND (a live sentence result OR a recorded
+  selection) — `pinyin.cpp:2674-2675` reads `results.size()`, and the
+  compressed Rust e2e path records the selection the pin's
+  `train_result3` would walk); the zhuyin train-no-selection test
+  flipped to the pin's law with it.
+- **Landed** with PR #496 (2026-09-20) — no ask was needed. The
+  `0x1f` user-row shape is register #34 / §11, separate from this row.
 
 ### 10 — Whole-row NBEST choose + train (register #33)
 
@@ -447,9 +480,10 @@ land with the measurements.
 
 ## Order to execute
 
-Closed sections stay historical (6, 7, 4, 5, 3, 2, 1, 8). Among the
-open targets: **12, then 14, then 10, then 11, then 9** (maintainer
-rulings 2026-09-19). A (§12) goes first: it is a one-line ordering fix
+Closed sections stay historical (6, 7, 4, 5, 3, 2, 1, 8, 9). Among the
+open targets: **12, then 14, then 10, then 11** (maintainer rulings
+2026-09-19, when §9 was still open; §9 landed with PR #496). A (§12)
+goes first: it is a one-line ordering fix
 inside an invariant the same function already documents for the
 bigram path, it blocks a whole feature — no imported or learned phrase
 can enter a sentence path — rather than perturbing presentation, and
@@ -467,6 +501,6 @@ before C because B corrupts stored state while C is sequence-dependent
 presentation. The order is safe because the common-root experiment
 showed A's fix changes B's export symptom without touching B's defect:
 §10 reads the unigram, never the old export-only gate, once §12 has
-landed. Row 32 (§9) and row 36 (§13) are independent of the other
-four and may land in parallel once they are scheduled. Each lands with its own differential flipped to
+landed. Row 32 (§9) landed with PR #496; row 36 (§13) is independent
+of the other four and may land in parallel once it is scheduled. Each lands with its own differential flipped to
 IDENTICAL and the frozen pins re-measured, per the standing gate.

@@ -143,7 +143,7 @@ it confers no coverage; every symbol's class rests on the D set.
 | 14 | `pinyin_parse_more_chewings` | COVERED | chewing-diff ×8: consumed | exact_scheme.rs:54,101 |
 | 15 | `pinyin_in_chewing_keyboard` | COVERED | chewing-diff table-check ×8: ret + symbol strv per key | — |
 | 16 | `pinyin_guess_sentence` | COVERED | ret + downstream sentence rows in scheme/chewing/live/uncovered/nbest | pipeline.rs:144-197 |
-| 17 | `pinyin_guess_candidates` | **PARTIAL** | rets compared at 0x1e only; the sort-option input diverges at every other word measured (below) — the input dimension is uncovered | guess_offset_tests.rs:143-186 |
+| 17 | `pinyin_guess_candidates` | COVERED | option-sweep at `0x1e`/`0x1c`/`0x14` (2026-09-20): parse/aux and top-10 TEXT/ORDER identical at all three; ABI probe at the same words byte-identical — 0 diverging lines (re-measured 2026-09-20 on top of #493, main `3c21641f`) | guess_offset_tests.rs:143-186, e2e_tests::longer_choose |
 | 18 | `pinyin_guess_predicted_candidates_with_punctuations` | COVERED | predict + punct + pred-order: rets + rows | phrase.rs:210-213 |
 | 19 | `pinyin_get_sentence` | COVERED | scheme/chewing/live/uncovered/nbest: ret + text | pipeline.rs:146-181 |
 | 20 | `pinyin_get_character_offset` | UNCOVERED | nothing (bisect stale; the probe prints it but its run diverges) | sentence.rs:441-499 |
@@ -208,7 +208,7 @@ it confers no coverage; every symbol's class rests on the D set.
 | 78 | `pinyin_load_phrase_library` | COVERED | dict-surface: provisioned indexes + out-of-range false | — |
 | 79 | `pinyin_unload_phrase_library` | COVERED | dict-surface: in-range sweep (false for the non-GBK defaults) | — |
 
-Tally: **64 COVERED · 6 PARTIAL (rows 9, 10, 17, 26, 27, 76) · 9
+Tally: **65 COVERED · 5 PARTIAL (rows 9, 10, 26, 27, 76) · 9
 UNCOVERED (rows 20, 29, 31, 32, 39, 40, 54, 56, 62) — sums to 79.**
 
 ## The oracle runs — measured per sort word
@@ -238,9 +238,9 @@ IDENTICAL at every word; the exception is residue (D) below.
 
 | sort word | verdict | shape |
 |---|---|---|
-| `0x1e` (parity; every runner's word) | both sides complete; 26 diverging lines | residues (A) the nbest-row set and (B) the train/bigram export, below |
-| `0x1c` (ibus preset 1, the GSettings default) | 80 diverging lines | A + B + D plus the **longer-candidate hunks**: the pin prepends LONGER(7) rows (`现代`, `阿尔`, `你们`; `pinyin.cpp:2292-2293`) the capi never produces — the sort-option gap below |
-| `0x14` (ibus preset 0) | 80 diverging lines | same shape; the pin's window differs from 0x1c's (without the 0x8 pinyin-length key `西`/`系` rise — measured), the capi's is unchanged |
+| `0x1e` (parity; every runner's word) | both sides complete; **0 diverging lines** — byte-identical (re-measured 2026-09-20 on top of #493, main `3c21641f`) | was 26 lines = A + B + X2 + D pre-#493; #493 closed A (row 35, `7c9a6923`) and the B/X2 export lines and the extras `token_unigram` line closed with it (the extras context reuses the probe's user dir — the old `1610` read was B's trained overlay; with the write gone both sides read the system `161`). Rows 33/36's dispositions stay with their own differentials |
+| `0x1c` (ibus preset 1, the GSettings default) | 80 diverging lines at registration → 0 diverging lines (2026-09-20, re-measured on top of #493, main `3c21641f`) | was A + B + D plus the **longer-candidate hunks** (the pin prepended LONGER(7) rows the capi never produced) — the longer hunks gone with §9 (register row 32 closed), A with #493 (row 35), and the B/X2/D probe lines with A's closure; the probe is byte-identical at this word |
+| `0x14` (ibus preset 0) | 80 diverging lines at registration → 0 diverging lines (2026-09-20, re-measured on top of #493, main `3c21641f`) | was A + B + D plus the **longer-candidate hunks** and the 0x8 pinyin-length key's window move (the 西/系 rise the capi never made) — the hunks gone with §9 (register row 32 closed), the 0x8 move with §9's ported keys, A with #493 (row 35), and the B/X2/D probe lines with A's closure; the probe is byte-identical at this word |
 | `0x0` (fcitx5-oxpinyin's word) | 78 diverging lines | same plus the unsorted rare-char tails (the keyless comparator returns 0 for every pair, `pinyin.cpp:1678-1709`) |
 | `0x1f` (ibus preset 2) | 60 diverging lines | both sides honour the sentence suppression (the capi reads bit 0x1, `sentence.rs:286-287`); residue (C) below |
 | `0x16` (fcitx's other word) | 36 diverging lines | A + the 0x8 window effect + B + D |
@@ -317,22 +317,31 @@ measured 2026-09-17 in the same container
 drivers IDENTICAL around it. It predates PR #471 and PR #472 and
 belongs with the residues above.
 
-## The sort-option gap (measured; register row drafted in the PR description)
+## The sort-option gap — CLOSED (§9, register row 32, 2026-09-20)
 
 `pinyin_guess_candidates`' `sort_option_t` input, per bit, pin vs
-oxpinyin (source + the measured words above):
+oxpinyin — the state before the §9 port, kept as the record, and the
+closure beside each:
 
-| bit | pin | oxpinyin |
-|---|---|---|
-| `0x1` SORT_WITHOUT_SENTENCE_CANDIDATE | set → sentence rows dropped (`pinyin.cpp:2295-2296`) | honoured (`sentence.rs:286-287`; measured at 0x1f: rows gone on both sides) |
-| `0x2` SORT_WITHOUT_LONGER_CANDIDATE | clear → LONGER rows prepended (`:2292-2293`; measured: 现代/阿尔/你们 at 1c/14/0) | **ignored** — no longer-candidate code exists; the rows are never produced at any word |
-| `0x4` SORT_BY_PHRASE_LENGTH | comparator key 1 (`:1683-1688`) | ignored; the engine's own order matched the pin at 0x1e in every probe window |
-| `0x8` SORT_BY_PINYIN_LENGTH | comparator key 2 (`:1690-1695`) | ignored; measured: the pin's window membership changes without it (0x14/0x16 vs 0x1c), the capi's does not |
-| `0x10` SORT_BY_FREQUENCY | comparator key 3 (`:1697-1702`) | ignored |
+| bit | pin | oxpinyin (pre-§9) | after §9 |
+|---|---|---|---|
+| `0x1` SORT_WITHOUT_SENTENCE_CANDIDATE | set → sentence rows dropped (`pinyin.cpp:2295-2296`) | honoured (`sentence.rs`; measured at 0x1f: rows gone on both sides) | unchanged |
+| `0x2` SORT_WITHOUT_LONGER_CANDIDATE | clear → LONGER rows prepended (`:2292-2293`; measured: 现代/阿尔/你们 at 1c/14/0) | **ignored** — no longer-candidate code existed; the rows were never produced at any word | **ported** — the engine builds the row (`Session::longer_candidate`: the whole-composition suggestion walk, the two length caps, the max-unigram winner), prepends it at every word with the bit clear, and the ABI types it `LONGER_CANDIDATE` (7) by the zero-span marker |
+| `0x4` SORT_BY_PHRASE_LENGTH | comparator key 1 (`:1683-1688`) | ignored; the engine's own order matched the pin at 0x1e in every probe window | **ported** — `RankKey::for_sort_word` zeroes a disabled key, the comparator's own law |
+| `0x8` SORT_BY_PINYIN_LENGTH | comparator key 2 (`:1690-1695`) | ignored; the pin's window membership moved without it (0x14/0x16 vs 0x1c), the capi's did not | **ported** — same key |
+| `0x10` SORT_BY_FREQUENCY | comparator key 3 (`:1697-1702`) | ignored | **ported** — same key |
 
-PR #481's parameterised sweep measures the corpus:
-`OPTION_SWEEP_SORT=1e` passes 21/21; `0x1c` and `0x14` stop on every
-case (the pin's TEXT sets carry the LONGER rows). Consumer
+PR #481's parameterised sweep measured the corpus while the gap stood:
+`OPTION_SWEEP_SORT=1e` passed 21/21; `0x1c` and `0x14` stopped on every
+case (the pin's TEXT sets carried the LONGER rows). After the §9 port
+(2026-09-20) all three words pass 24/24, and the ABI probe's LONGER
+choose phase (`tools/bisection/abi-probe-diff.c`) runs IDENTICAL:
+row `方面` typed 7, `choose=1`, `train=true`, no user-store writes;
+the trained token's unigram reads `23253` before the choose and
+`23736` after — the `+483` read back through the phrase index,
+identical on both sides (the first §9 record's `0/0` was an artifact
+of the probe's unsequenced `printf`, sequenced and re-measured
+2026-09-20). Consumer
 reachability, verified in the pinned consumers: ibus-libpinyin 1.16.5's
 presets are 0x14, 0x1c and 0x1f (`PYPConfig.cc:225-230`) with 0x1c the
 default (`:151`) — presets 0 and 1 both leave `0x2` clear, so
@@ -345,9 +354,11 @@ suppress longer, not exposed. fcitx5-oxpinyin passes literal 0
 that word yields an unsorted list with sentence AND longer rows; it
 only works today because oxpinyin ignores the bits.
 
-Also reported (code comment, no change made): `sentence.rs:258` cites
+~~Also reported (code comment, no change made): `sentence.rs:258` cites
 `pinyin.cpp:2292-2293` as the sentence-candidate gate; the sentence
-gate is `:2295-2296` — `2292-2293` is the longer-candidate gate.
+gate is `:2295-2296` — `2292-2293` is the longer-candidate gate.~~
+(fixed with the §9 port: the doc comment now cites both gates
+correctly.)
 
 ## Amendment — residue classification (2026-09-19 UTC)
 
