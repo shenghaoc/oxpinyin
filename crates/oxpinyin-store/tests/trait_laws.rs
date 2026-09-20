@@ -14,19 +14,19 @@
 //! - **prefix-scan boundaries**: a half-open `range` yields exactly the
 //!   keys whose bytes fall inside it — the plan's `[b"a", b"a\xff"]`
 //!   under `b"a"..b"b"` law;
-//! - **empty key**: LMDB refuses it with `InvalidInput` (its 1..=511
-//!   contract); every other peer stores it, reads it back, and sorts it
+//! - **empty key**: every peer stores it, reads it back, and sorts it
 //!   before all other keys;
-//! - **max key length**: a 511-byte key is legal everywhere; a 512-byte
-//!   key is LMDB's typed `InvalidInput` and round-trips elsewhere;
+//! - **max key length**: a 511-byte and a 512-byte key are legal
+//!   everywhere and round-trip;
 //! - **reopen equality**: rows written through one handle read back
 //!   identically through a fresh `open_read_only` handle;
 //! - **transaction semantics**: read-your-writes inside `write`, and a
 //!   closure returning `Err` rolls the whole transaction back.
 //!
 //! The `-lock` sidecar note from the crate's own unit tests applies
-//! here too: opening a store dirties LMDB's sidecar, so the guard below
-//! removes both shapes on drop and the test never asserts on sidecars.
+//! here too: a writable tkrzw session leaves a `<file>-lock` sidecar,
+//! so the guard below removes both shapes on drop and the test never
+//! asserts on sidecars.
 
 use std::ops::Bound;
 
@@ -67,15 +67,8 @@ fn temp_path(tag: &str) -> TempPath {
     TempPath(path)
 }
 
-/// Whether the compiled backend accepts the empty key. LMDB's contract
-/// is 1..=511 bytes; the other three peers have no such floor.
-const EMPTY_KEY_LEGAL: bool = !cfg!(feature = "lmdb");
-/// Whether the compiled backend accepts a key longer than LMDB's
-/// 511-byte ceiling.
-const LONG_KEY_LEGAL: bool = !cfg!(feature = "lmdb");
-
-/// The assessment's example row set, minus the empty key on peers that
-/// refuse it.
+/// The assessment's example row set. The empty key is storable on
+/// every peer, so the row set is unconditional.
 fn seeded_keys(store: &DefaultStore) {
     store
         .write(|txn| {
@@ -85,9 +78,6 @@ fn seeded_keys(store: &DefaultStore) {
                 (b"b".as_slice(), b"v-b".as_slice()),
                 (b"a".as_slice(), b"v-a".as_slice()),
             ] {
-                if key.is_empty() && !EMPTY_KEY_LEGAL {
-                    continue;
-                }
                 txn.put("laws", key, value)?;
             }
             Ok(())
@@ -111,10 +101,7 @@ fn iteration_is_ordered_and_prefix_scans_respect_boundaries() {
             Ok(())
         })
         .unwrap();
-    let mut expected = vec![b"a".to_vec(), b"a\xff".to_vec(), b"b".to_vec()];
-    if EMPTY_KEY_LEGAL {
-        expected.insert(0, Vec::new());
-    }
+    let expected = vec![Vec::new(), b"a".to_vec(), b"a\xff".to_vec(), b"b".to_vec()];
     assert_eq!(seen, expected, "iteration must be ascending byte order");
 
     // The plan's law: exactly the two `a…` keys, `b` excluded by the
@@ -171,25 +158,18 @@ fn point_reads_round_trip_arbitrary_bytes() {
     assert_eq!(store.get("laws", b"absent").unwrap(), None);
 }
 
-/// The empty key and the 511/512-byte boundary: LMDB's typed refusals
-/// against the other peers' acceptance, at the documented edges.
+/// The empty key and the 511/512-byte boundary, at the documented
+/// edges: every peer accepts all three.
 #[test]
 fn key_length_edges_follow_the_documented_contract() {
     let path = temp_path("key-length");
     let store = DefaultStore::create(&path).unwrap();
 
     // The closure's own Result is the transaction result: a `put` error
-    // (e.g. LMDB's typed refusals) surfaces as `write`'s Err directly.
+    // surfaces as `write`'s Err directly.
     let empty = store.write(|txn| txn.put("laws", b"", b"v"));
-    if EMPTY_KEY_LEGAL {
-        assert!(empty.is_ok(), "the empty key must be storable");
-        assert_eq!(store.get("laws", b"").unwrap(), Some(b"v".to_vec()));
-    } else {
-        assert!(
-            matches!(empty, Err(StoreError::InvalidInput(_))),
-            "LMDB refuses the empty key with InvalidInput"
-        );
-    }
+    assert!(empty.is_ok(), "the empty key must be storable");
+    assert_eq!(store.get("laws", b"").unwrap(), Some(b"v".to_vec()));
 
     let key_511 = vec![b'k'; 511];
     store
@@ -201,19 +181,13 @@ fn key_length_edges_follow_the_documented_contract() {
     );
 
     let key_512 = vec![b'k'; 512];
-    let over = store.write(|txn| txn.put("laws", &key_512, b"edge-512"));
-    if LONG_KEY_LEGAL {
-        assert!(over.is_ok(), "a 512-byte key is legal outside LMDB");
-        assert_eq!(
-            store.get("laws", &key_512).unwrap(),
-            Some(b"edge-512".to_vec())
-        );
-    } else {
-        assert!(
-            matches!(over, Err(StoreError::InvalidInput(_))),
-            "LMDB refuses a 512-byte key with InvalidInput"
-        );
-    }
+    store
+        .write(|txn| txn.put("laws", &key_512, b"edge-512"))
+        .expect("a 512-byte key is legal on every peer");
+    assert_eq!(
+        store.get("laws", &key_512).unwrap(),
+        Some(b"edge-512".to_vec())
+    );
 }
 
 /// Rows written through one handle read back identically through a
@@ -234,14 +208,12 @@ fn rows_survive_reopen_through_a_read_only_handle() {
             Ok(())
         })
         .unwrap();
-    let mut expected = vec![
+    let expected = vec![
+        (Vec::new(), b"v-empty".to_vec()),
         (b"a".to_vec(), b"v-a".to_vec()),
         (b"a\xff".to_vec(), b"v-high".to_vec()),
         (b"b".to_vec(), b"v-b".to_vec()),
     ];
-    if EMPTY_KEY_LEGAL {
-        expected.insert(0, (Vec::new(), b"v-empty".to_vec()));
-    }
     assert_eq!(seen, expected);
     assert_eq!(
         reader.get("laws", b"a\xff").unwrap(),

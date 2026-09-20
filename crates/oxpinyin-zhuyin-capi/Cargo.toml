@@ -45,12 +45,6 @@ tkrzw = [
     "oxpinyin-user/tkrzw",
     "oxpinyin-facade/tkrzw",
 ]
-lmdb = [
-    "oxpinyin-runtime/lmdb",
-    "oxpinyin-data/lmdb",
-    "oxpinyin-user/lmdb",
-    "oxpinyin-facade/lmdb",
-]
 redb = [
     "oxpinyin-runtime/redb",
     "oxpinyin-data/redb",

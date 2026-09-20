@@ -7,8 +7,8 @@
 //! workspace's `unsafe_code = "deny"` would otherwise reject; the
 //! `expect` is scoped to this module alone. Every `unsafe` in the
 //! backend lives below, so `super` stays under the workspace `deny` —
-//! the shape the Kyoto Cabinet shim shares, and one the tkrzw and LMDB
-//! backends cannot have. Because the waiver is an `expect` rather than
+//! the shape the Kyoto Cabinet shim shares, and one the tkrzw backend
+//! cannot have. Because the waiver is an `expect` rather than
 //! an `allow`, an unfulfilled one draws
 //! `unfulfilled_lint_expectations` — warn-by-default, an error only
 //! where warnings are denied, and every supported CI check denies them
@@ -178,7 +178,7 @@ macro_rules! method {
 }
 
 /// A path as libdb wants it: a NUL-terminated byte string, taken from
-/// the platform encoding the same way the LMDB backend takes it.
+/// the platform encoding.
 fn c_path(path: &Path) -> Result<CString, StoreError> {
     CString::new(path.as_os_str().as_encoded_bytes())
         .map_err(|_| StoreError::InvalidInput("path contains NUL"))

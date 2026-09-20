@@ -5,8 +5,6 @@
 [graph]
 # Audit the default build. Feature-gated dependency subtrees (tkrzw,
 # oracle-ffi) are re-checked by the second, --all-features CI invocation.
-# `lmdb` no longer adds a Rust subtree at all: it binds the system
-# liblmdb through bindgen, which the other C backends already pull in.
 all-features = false
 
 [advisories]
@@ -16,10 +14,9 @@ yanked = "deny"
 # review-by date inside the reason string; re-review on that date and
 # either renew or remove the entry.
 # Empty: the one entry this registry carried (RUSTSEC-2025-0141, bincode
-# 1.x unmaintained) reached the graph only through heed-types behind the
-# `lmdb` feature. Its own note said "no fix exists until heed migrates or
-# we drop the LMDB backend" — the LMDB backend now binds the system
-# liblmdb directly and heed is gone from the tree, so bincode is
+# 1.x unmaintained) reached the graph only through heed-types behind a
+# since-removed backend feature. Its own note said "no fix exists until
+# heed migrates" — heed is gone from the tree, so bincode is
 # unreachable under every feature combination and the ignore with it.
 ignore = []
 

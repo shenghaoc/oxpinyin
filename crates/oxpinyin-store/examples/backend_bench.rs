@@ -1,10 +1,10 @@
-//! redb vs LMDB vs tkrzw on the raw store tier traits — identical workloads.
+//! redb vs tkrzw on the raw store tier traits — identical workloads.
 //!
 //! Measurement only; consumes public APIs and touches no parity code.
-//! Run in release, with the LMDB half enabled:
+//! Run in release:
 //!
 //! ```text
-//! cargo run -p oxpinyin-store --release --example backend_bench --features lmdb
+//! cargo run -p oxpinyin-store --release --example backend_bench --features redb
 //! ```
 //!
 //! The tkrzw column needs a working libtkrzw with its C API header
@@ -13,15 +13,14 @@
 //! ```text
 //! PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig \
 //!   cargo run -p oxpinyin-store --release --example backend_bench \
-//!   --features "lmdb tkrzw"
+//!   --features "redb tkrzw"
 //! ```
 //!
-//! Without either feature the example runs redb only and prints a note.
-//! `--features tkrzw` runs redb and tkrzw; the two features compose.
+//! Without the tkrzw feature the example runs redb only and prints a note.
 //! Each (backend, scenario) pair runs in a child process (a re-exec of this
 //! binary), so `/proc/self/status` `VmHWM` measures that pair alone rather
 //! than a process-monotonic high-water mark; the child baseline (runtime
-//! plus binary) is common to both backends, so the redb-vs-lmdb delta is
+//! plus binary) is common to both backends, so the redb-vs-tkrzw delta is
 //! the signal.  Workload rows derive deterministically from the seed, and
 //! every scenario body is one generic function over its tier —
 //! both backends see identical keys, values, and operation order.  Before
@@ -32,13 +31,11 @@
 //! Sizes via env vars (defaults in parentheses): `BACKEND_BENCH_N`
 //! (`100_000` bigram rows; pron = N/2, phrase = N/4), `BACKEND_BENCH_GETS`
 //! (`50_000`), `BACKEND_BENCH_PREFIXES` (128), `BACKEND_BENCH_READONLY`
-//! (`400_000`), `BACKEND_BENCH_SEED`.  The LMDB env map size is fixed at
-//! 1 GiB by the backend, so very large overrides can exhaust it.
+//! (`400_000`), `BACKEND_BENCH_SEED`.
 //!
 //! Compaction is backend-dependent and best-effort: redb rewrites the file
-//! and reclaims pages, LMDB reuses freed pages in place and does not shrink,
-//! and tkrzw rebuilds the `TreeDBM` into a fresh file, so it reclaims like redb
-//! but pays a full rewrite for it. The `save_compact` scenario reports timings
+//! and reclaims pages, and tkrzw rebuilds the `TreeDBM` into a fresh file,
+//! so it reclaims like redb but pays a full rewrite for it. The `save_compact` scenario reports timings
 //! and sizes for every backend; the numbers are not measuring the same
 //! operation, which is the point of reporting them side by side.
 //!
@@ -56,8 +53,6 @@ use std::time::{Duration, Instant};
 use oxpinyin_store::BdbStore;
 #[cfg(feature = "kyotocabinet")]
 use oxpinyin_store::KcStore;
-#[cfg(feature = "lmdb")]
-use oxpinyin_store::LmdbStore;
 #[cfg(feature = "redb")]
 use oxpinyin_store::RedbStore;
 #[cfg(feature = "tkrzw")]
@@ -109,15 +104,10 @@ struct Column {
 
 /// The comparison columns after redb, in print order.
 ///
-/// The lmdb column is always shown, empty when the feature is off, which
-/// is what the two-backend build has always printed. The tkrzw column is
-/// only there under its feature, so builds without it print exactly what
-/// they printed before tkrzw existed.
+/// The tkrzw column is only there under its feature, so builds without
+/// it print the redb column alone.
 fn comparison_columns(scenario: &str) -> Vec<Column> {
-    let mut columns = vec![Column {
-        name: "lmdb",
-        rows: cfg!(feature = "lmdb").then(|| spawn_child("lmdb", scenario)),
-    }];
+    let mut columns = Vec::new();
     if cfg!(feature = "tkrzw") {
         columns.push(Column {
             name: "tkrzw",
@@ -130,24 +120,19 @@ fn comparison_columns(scenario: &str) -> Vec<Column> {
 fn parent() {
     let cfg = config();
     if cfg!(feature = "tkrzw") {
-        println!("backend_bench — redb vs lmdb vs tkrzw on the store tier traits");
+        println!("backend_bench — redb vs tkrzw on the store tier traits");
     } else {
-        println!("backend_bench — redb vs lmdb on the store tier traits");
+        println!("backend_bench — redb on the store tier traits");
     }
     println!(
         "n={} (pron {}/2, phrase {}/4)  gets={}  prefixes={}  readonly={}  seed={:#x}",
         cfg.n, cfg.n, cfg.n, cfg.gets, cfg.prefixes, cfg.readonly, cfg.seed
     );
     println!("one fresh process per (backend, scenario); VmHWM per pair");
-    match (cfg!(feature = "lmdb"), cfg!(feature = "tkrzw")) {
-        (true, true) => println!("backends: redb, lmdb, tkrzw"),
-        (true, false) => println!("backends: redb, lmdb"),
-        (false, true) => {
-            println!("backends: redb, tkrzw — rebuild with --features lmdb for all three");
-        }
-        (false, false) => {
-            println!("backends: redb only — rebuild with --features lmdb for the comparison");
-        }
+    if cfg!(feature = "tkrzw") {
+        println!("backends: redb, tkrzw");
+    } else {
+        println!("backends: redb only — rebuild with --features tkrzw for the comparison");
     }
     println!();
 
@@ -255,8 +240,6 @@ fn run_child(backend: &str, scenario: &str) {
         "kc" | "kyotocabinet" => dispatch::<KcStore>(scenario),
         #[cfg(feature = "redb")]
         "redb" => dispatch::<RedbStore>(scenario),
-        #[cfg(feature = "lmdb")]
-        "lmdb" => dispatch::<LmdbStore>(scenario),
         #[cfg(feature = "tkrzw")]
         "tkrzw" => dispatch::<TkrzwStore>(scenario),
         #[cfg(feature = "bdb")]
@@ -747,7 +730,7 @@ fn remove_db(path: &Path) {
 /// (apparent bytes, allocated bytes) of the data file at `path`.  On Unix,
 /// the values are `st_size` and `st_blocks` × 512.  Elsewhere, allocation is
 /// unavailable without platform-specific APIs and is reported as zero.
-/// The LMDB `-lock` sidecar is not data and is not counted.
+/// The `-lock` sidecar is not data and is not counted.
 #[cfg(unix)]
 fn file_sizes(path: &Path) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt as _;

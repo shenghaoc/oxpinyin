@@ -7,7 +7,7 @@
 //! selects `TreeDBM`, and passing no comparator parameter leaves its
 //! default `LexicalKeyComparator` in place, so records sort by plain
 //! unsigned byte order and oxpinyin's big-endian key codec keeps the
-//! ordering it has under redb and LMDB. No C++ header, class, or
+//! ordering it has under redb. No C++ header, class, or
 //! exception ever crosses the ABI.
 //!
 //! # Zero-copy reads
@@ -83,8 +83,8 @@
 //!
 //! What `TreeDBM` cannot give at any sync level is crash-*atomic*
 //! application: it has no write-ahead log, so a crash *during* the
-//! `ProcessMulti` apply can leave part of a batch on disk. redb and
-//! LMDB (WAL / copy-on-write) roll a torn commit back on the next open;
+//! `ProcessMulti` apply can leave part of a batch on disk. redb (a
+//! write-ahead log) rolls a torn commit back on the next open;
 //! this backend can tear mid-batch. That residual is the documented
 //! contract difference — recorded here rather than papered over,
 //! because closing it would need a WAL tkrzw does not offer without
@@ -328,8 +328,7 @@ impl Drop for Iter {
 /// A tkrzw-backed store implementing both capability tiers.
 ///
 /// Feature-gated behind `tkrzw`. See the module documentation for the
-/// table framing and for how `write`'s atomicity differs from redb's
-/// and LMDB's.
+/// table framing and for how `write`'s atomicity differs from redb's.
 pub struct TkrzwStore {
     db: Db,
     read_only: bool,
@@ -530,7 +529,7 @@ struct Mutation {
 /// mutation's value, or removes the record. A removal of a record that
 /// exists returns the REMOVE sentinel; a removal of an absent record —
 /// signalled by the null `existing_value`, exactly as in
-/// [`get_value`] — returns NOOP, matching the redb and LMDB backends'
+/// [`get_value`] — returns NOOP, matching the redb backend's
 /// no-op `WriteTxn::remove`. The value this returns is copied by
 /// tkrzw before the call completes, so lending `mutation.value`'s
 /// pointer is the whole contract.

@@ -26,7 +26,7 @@
 #               keep resolving (same file name), and are asserted to
 #   --features  the cargo feature list of the build that produced the
 #               staticlib, for the store-backend link flags (same precedence
-#               as the crates: tkrzw > kyotocabinet > bdb > lmdb > redb;
+#               as the crates: tkrzw > kyotocabinet > bdb > redb;
 #               default tkrzw, the workspace default)
 #
 # Linux + GNU ld only: the ELF versioning this implements has no macOS
@@ -93,7 +93,7 @@ done
 BACKEND="tkrzw"
 for feature in $(echo "$FEATURES" | tr ',' ' '); do
   case "$feature" in
-    tkrzw|kyotocabinet|bdb|lmdb|redb) BACKEND="$feature" ;;
+    tkrzw|kyotocabinet|bdb|redb) BACKEND="$feature" ;;
   esac
 done
 
@@ -102,7 +102,6 @@ backend_libs() {
     redb) return 0 ;;
     tkrzw)         pkg-config --libs tkrzw 2>/dev/null || echo -ltkrzw ;;
     kyotocabinet)  pkg-config --libs kyotocabinet 2>/dev/null || echo -lkyotocabinet ;;
-    lmdb)          pkg-config --libs lmdb 2>/dev/null || echo -llmdb ;;
     bdb)           echo -ldb ;;
   esac
 }

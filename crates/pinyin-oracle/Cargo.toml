@@ -27,7 +27,6 @@ oracle-ffi = ["dep:glib-sys"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet"]
 bdb = ["oxpinyin-data/bdb"]
 tkrzw = ["oxpinyin-data/tkrzw"]
-lmdb = ["oxpinyin-data/lmdb"]
 redb = ["oxpinyin-data/redb"]
 
 [lints.rust]

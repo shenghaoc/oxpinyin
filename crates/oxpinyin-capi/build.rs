@@ -134,7 +134,7 @@ fn bake_pkg_config_template() {
 /// fcitx's cmake probe reads the right backend. Otherwise, the active
 /// peer backend feature of THIS crate, matching
 /// `oxpinyin_store::DefaultStore`: Kyoto Cabinet under the default
-/// features, redb / LMDB / tkrzw when their `--no-default-features
+/// features, redb / tkrzw when their `--no-default-features
 /// --features <peer>` is selected.
 fn database_format() -> String {
     if let Ok(explicit) = env::var("LIBPINYIN_DATABASE_FORMAT")
@@ -145,14 +145,12 @@ fn database_format() -> String {
     // `CARGO_FEATURE_<NAME>` is set for each enabled feature of THIS crate,
     // which forwards the backend selection down the chain. The order
     // mirrors `oxpinyin_store::DefaultStore` so a multi-feature build
-    // resolves deterministically (kyotocabinet > tkrzw > lmdb > redb —
+    // resolves deterministically (kyotocabinet > tkrzw > redb —
     // a tie-break, not a hierarchy).
     if env::var_os("CARGO_FEATURE_KYOTOCABINET").is_some() {
         "KyotoCabinet".to_owned()
     } else if env::var_os("CARGO_FEATURE_TKRZW").is_some() {
         "Tkrzw".to_owned()
-    } else if env::var_os("CARGO_FEATURE_LMDB").is_some() {
-        "LMDB".to_owned()
     } else {
         "redb".to_owned()
     }

@@ -22,7 +22,6 @@ fn default_backend_matches_store_default() {
         (cfg!(feature = "kyotocabinet"), Backend::KyotoCabinet),
         (cfg!(feature = "bdb"), Backend::BerkeleyDb),
         (cfg!(feature = "tkrzw"), Backend::Tkrzw),
-        (cfg!(feature = "lmdb"), Backend::Lmdb),
         (cfg!(feature = "redb"), Backend::Redb),
     ]
     .into_iter()
@@ -43,7 +42,6 @@ fn compiled_backend_names_match_the_runtime_reader() {
         (cfg!(feature = "kyotocabinet"), Backend::KyotoCabinet),
         (cfg!(feature = "bdb"), Backend::BerkeleyDb),
         (cfg!(feature = "tkrzw"), Backend::Tkrzw),
-        (cfg!(feature = "lmdb"), Backend::Lmdb),
         (cfg!(feature = "redb"), Backend::Redb),
     ]
     .into_iter()
@@ -86,7 +84,6 @@ fn drop_in_backends_use_libpinyin_file_names() {
         Backend::Redb.dbm_file_name(DbmFile::PinyinIndex),
         "pinyin_index.redb"
     );
-    assert_eq!(Backend::Lmdb.dbm_file_name(DbmFile::Punct), "punct.lmdb");
     assert_eq!(
         Backend::KyotoCabinet.database_format_token(),
         "KyotoCabinet"
@@ -99,11 +96,10 @@ fn drop_in_backends_use_libpinyin_file_names() {
 fn peer_backends_report_their_expected_extensions() {
     assert_eq!(Backend::KyotoCabinet.extension(), "kct");
     assert_eq!(Backend::Redb.extension(), "redb");
-    assert_eq!(Backend::Lmdb.extension(), "lmdb");
     assert_eq!(Backend::Tkrzw.extension(), "tkt");
 }
 
-/// The `--backend` argument parser accepts each of the five peer names
+/// The `--backend` argument parser accepts each of the four peer names
 /// spelled the way the CLI's usage line advertises.
 #[test]
 fn parse_accepts_each_peer_backend_name() {
@@ -112,7 +108,6 @@ fn parse_accepts_each_peer_backend_name() {
         Backend::KyotoCabinet
     );
     assert_eq!(Backend::parse("redb").expect("redb parses"), Backend::Redb);
-    assert_eq!(Backend::parse("lmdb").expect("lmdb parses"), Backend::Lmdb);
     assert_eq!(
         Backend::parse("tkrzw").expect("tkrzw parses"),
         Backend::Tkrzw

@@ -4,9 +4,9 @@
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
 //! emptiness check) and [`WriteStore`] (creation, atomic multi-table
 //! writes, compaction) — and provides five peer implementations behind
-//! it: [`KcStore`] on Kyoto Cabinet, [`RedbStore`] on redb, [`LmdbStore`]
-//! on LMDB, [`TkrzwStore`] on tkrzw, and [`BdbStore`] on Berkeley DB.
-//! All five are first-class and interchangeable: any oxpinyin binary
+//! it: [`KcStore`] on Kyoto Cabinet, [`RedbStore`] on redb,
+//! [`TkrzwStore`] on tkrzw, and [`BdbStore`] on Berkeley DB.
+//! All four are first-class and interchangeable: any oxpinyin binary
 //! picks exactly one at compile time via the cargo features and calls it
 //! through the same trait surface, and a table produced by any of them
 //! satisfies the same logical contract as the others. Tkrzw is the
@@ -19,10 +19,8 @@
 //!
 //! Keys are ordered by ascending **byte** order (`memcmp` on the raw stored
 //! key bytes) and nothing else — the store never decodes a key, so it has no
-//! notion of integer order.  All five backends satisfy exactly this: redb's
-//! `Key for &[u8]` is a byte compare; the LMDB backend sets no integer or
-//! custom comparator (so LMDB's default lexicographic one applies); and the
-//! tkrzw backend installs no comparator, so `TreeDBM` uses its default
+//! notion of integer order.  All four backends satisfy exactly this: redb's
+//! `Key for &[u8]` is a byte compare; the tkrzw backend installs no comparator, so `TreeDBM` uses its default
 //! `LexicalKeyComparator` (plain unsigned byte order); and the Kyoto Cabinet
 //! backend opens `TreeDB` with no `rcomp` tuning parameter, exactly as
 //! libpinyin does, so Kyoto Cabinet's default `LEXICALCOMP` applies — again
@@ -44,13 +42,13 @@
 
 // ── Exactly-one-backend invariant, enforced at compile time ────────────
 //
-// The five store backends (kyotocabinet, redb, lmdb, tkrzw, bdb) are peer
+// The four store backends (kyotocabinet, redb, tkrzw, bdb) are peer
 // implementations behind the store's trait surface, and every oxpinyin
 // build has exactly one of them. Cargo features are additive under
 // unification, so a plausible-looking `cargo build --features redb`
 // silently combines redb with the default tkrzw feature — precisely the
 // slide these guards refuse. Every consumer crate forwards its own
-// `{kyotocabinet, redb, lmdb, tkrzw, bdb}` features onto this crate, so
+// `{kyotocabinet, redb, tkrzw, bdb}` features onto this crate, so
 // this one guard suffices for the whole workspace.
 
 // The zero-backend case is refused too — a build with no backend has no
@@ -61,36 +59,31 @@
 #[cfg(not(any(
     feature = "kyotocabinet",
     feature = "redb",
-    feature = "lmdb",
     feature = "tkrzw",
     feature = "bdb",
 )))]
 compile_error!(
     "oxpinyin-store: no store backend selected. Enable exactly one of \
-     `tkrzw` (the default), `kyotocabinet`, `redb`, `lmdb`, or `bdb`. On the \
+     `tkrzw` (the default), `kyotocabinet`, `redb`, or `bdb`. On the \
      command line: `cargo build` for the default (tkrzw), or \
-     `cargo build --no-default-features --features {kyotocabinet|redb|lmdb|bdb}` \
+     `cargo build --no-default-features --features {kyotocabinet|redb|bdb}` \
      for a peer."
 );
 
 #[cfg(any(
     all(feature = "kyotocabinet", feature = "redb"),
-    all(feature = "kyotocabinet", feature = "lmdb"),
     all(feature = "kyotocabinet", feature = "tkrzw"),
     all(feature = "kyotocabinet", feature = "bdb"),
-    all(feature = "redb", feature = "lmdb"),
     all(feature = "redb", feature = "tkrzw"),
     all(feature = "redb", feature = "bdb"),
-    all(feature = "lmdb", feature = "tkrzw"),
-    all(feature = "lmdb", feature = "bdb"),
     all(feature = "tkrzw", feature = "bdb"),
 ))]
 compile_error!(
     "oxpinyin-store: more than one store backend selected. Exactly one \
-     of `tkrzw`, `kyotocabinet`, `redb`, `lmdb`, `bdb` may be enabled per \
+     of `tkrzw`, `kyotocabinet`, `redb`, `bdb` may be enabled per \
      build. A build that names an alternate peer must also disable the \
      workspace's default feature set: \
-     `cargo build --no-default-features --features {kyotocabinet|redb|lmdb|bdb}`."
+     `cargo build --no-default-features --features {kyotocabinet|redb|bdb}`."
 );
 
 use std::fmt;
@@ -164,16 +157,6 @@ pub trait WriteTxn {
 
     /// Insert or overwrite `key` → `value` in `table`.
     ///
-    /// Backends may bound key length by their storage format; the LMDB
-    /// backend rejects keys outside 1..=511 bytes with
-    /// [`StoreError::InvalidInput`], while the redb backend has no such
-    /// limit.
-    ///
-    /// Backends may also bound the number of distinct tables: the LMDB
-    /// backend caps a store at 32 named tables and rejects writes to a 33rd
-    /// with [`StoreError::InvalidInput`], while the redb backend has no such
-    /// limit.
-    ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend write fails.
@@ -184,7 +167,7 @@ pub trait WriteTxn {
     /// `get_raw` / [`RawReadStore::range_raw`] read back on the same
     /// backend, with no table-name framing.
     ///
-    /// Backends without a flat keyspace (redb, LMDB) delegate to the
+    /// Backends without a flat keyspace (redb) delegate to the
     /// well-known [`RAW_TABLE`], the same delegation the raw reads use,
     /// so the round trip holds on every backend. KC and Tkrzw override
     /// this to write the file's bare keyspace — what libpinyin's own
@@ -313,7 +296,7 @@ pub trait WriteStore: ReadStore {
     /// while its other DBMs are tree containers; datagen writes the
     /// bigram through this constructor so the reader's hash open finds a
     /// hash file. The default implementation delegates to
-    /// [`WriteStore::create`] (correct for redb and LMDB, which have no
+    /// [`WriteStore::create`] (correct for redb, which has no
     /// hash/tree distinction). KC and Tkrzw override this to select the
     /// hash container class.
     ///
@@ -334,9 +317,9 @@ pub trait WriteStore: ReadStore {
     /// Cabinet user bigram is a snapshot stream, produced by filling an
     /// in-memory `StashDB` and calling `dump_snapshot`
     /// (`ngram_kyotodb.cpp:82-101`), not by creating a hash file at the
-    /// path. tkrzw, redb and LMDB all write a genuine container there, so
+    /// path. tkrzw and redb both write a genuine container there, so
     /// the default is [`Self::create_hash`] plus a raw write — what those
-    /// three already did correctly.
+    /// two already did correctly.
     ///
     /// Rows arrive already sorted by key; the container's own order is
     /// what matters on read.
@@ -366,15 +349,16 @@ pub trait WriteStore: ReadStore {
         // The hard sync sits with this `compact`, and only one of
         // this default's users still owes it there: tkrzw's `write`
         // reaches the operating system and its `compact` the device,
-        // so the device sync must land before the rename. redb, LMDB
+        // so the device sync must land before the rename. redb
         // and Berkeley DB already reach stable storage in `write`;
         // their `compact` here is compaction work, not durability.
         store.compact()?;
         drop(store);
         std::fs::rename(&tmp, path).map_err(StoreError::Io)?;
         // The backend may have left a lock sidecar beside the *temporary*
-        // (LMDB creates `<file>-lock` on open); it is stale once the
-        // handle drops and the rename moved only the data file.
+        // (tkrzw creates `<file>-lock` for a writable session; redb keeps
+        // none); it is stale once the handle drops and the rename moved
+        // only the data file.
         if let (Some(name), Some(dir)) = (tmp.file_name().and_then(|n| n.to_str()), tmp.parent()) {
             for suffix in ["-lock", "-shm"] {
                 let _ = std::fs::remove_file(dir.join(format!("{name}{suffix}")));
@@ -398,9 +382,9 @@ pub trait WriteStore: ReadStore {
     /// this one.** The Kyoto Cabinet and tkrzw backends commit with a
     /// soft `kcdbsync` / `Synchronize` and hard-sync in `compact`;
     /// `UserStore::save` calls `compact`, so `pinyin_save` is where the
-    /// user's data reaches the device. redb, LMDB and Berkeley DB exceed
-    /// the floor: redb and LMDB fsync inside their own (WAL /
-    /// copy-on-write) commit, and Berkeley DB has no softer primitive to
+    /// user's data reaches the device. redb and Berkeley DB exceed
+    /// the floor: redb fsyncs inside its own (WAL) commit, and Berkeley
+    /// DB has no softer primitive to
     /// offer — `DB->sync` is the only flush libdb gives an
     /// environment-less handle, while skipping it would strand the
     /// batch in a private mpool no other process can read. Callers must
@@ -418,8 +402,8 @@ pub trait WriteStore: ReadStore {
     ///
     /// One residual difference, documented per backend: a crash
     /// *during* the commit call itself can tear the batch on KC, tkrzw
-    /// and Berkeley DB (no write-ahead log), where redb and LMDB roll a
-    /// torn commit back on the next open. Berkeley DB reaching the
+    /// and Berkeley DB (no write-ahead log), where redb rolls a torn
+    /// commit back on the next open. Berkeley DB reaching the
     /// device on every commit does not buy atomicity back: it applies
     /// the buffered rows one at a time and syncs after, so a crash
     /// mid-apply leaves part of the batch applied — and a crash that
@@ -440,11 +424,9 @@ pub trait WriteStore: ReadStore {
     /// Perform backend-dependent compaction work, and put the store on
     /// **stable storage**.
     ///
-    /// redb rewrites the file and reclaims free pages. LMDB reuses freed pages
-    /// in place, so its successful implementation does not shrink the file.
-    /// Berkeley DB is LMDB's shape here: `DB->compact` wants a
-    /// transaction this backend never opens, so it syncs instead and the
-    /// file does not shrink. Kyoto Cabinet and tkrzw hard-sync here —
+    /// redb rewrites the file and reclaims free pages. Berkeley DB syncs
+    /// instead — `DB->compact` wants a transaction this backend never
+    /// opens — and the file does not shrink. Kyoto Cabinet and tkrzw hard-sync here —
     /// see [`WriteStore::write`]'s durability note, which explains why
     /// the device-level sync sits on this call and not on every commit
     /// for those two. Berkeley DB has already paid it at every commit,
@@ -472,8 +454,8 @@ pub trait WriteStore: ReadStore {
 /// Extends [`ReadStore`] with methods that bypass table-name framing,
 /// matching libpinyin's single-keyspace DBM layout. KC and Tkrzw
 /// backends implement this by calling the underlying library with the
-/// caller's key verbatim; redb and LMDB delegate to a well-known table
-/// name since those backends do not have a flat-keyspace concept.
+/// caller's key verbatim; redb delegates to a well-known table
+/// name since that backend does not have a flat-keyspace concept.
 pub trait RawReadStore: ReadStore {
     /// Read a single raw key. Returns `None` if absent.
     ///
@@ -488,7 +470,7 @@ pub trait RawReadStore: ReadStore {
     /// exactly this for its `search_suggestion` continuation walk
     /// (`phrase_large_table3_tkrzwdb.cpp:155-190`).
     ///
-    /// Backends without a flat keyspace (redb, LMDB) delegate to the
+    /// Backends without a flat keyspace (redb) delegate to the
     /// well-known [`RAW_TABLE`], the same delegation [`Self::get_raw`]
     /// uses; KC and Tkrzw walk the file's real keyspace.
     ///
@@ -532,7 +514,7 @@ pub trait RawReadStore: ReadStore {
     /// libpinyin's `bigram.db` uses KC **`HashDB`** / Tkrzw **`HashDBM`**,
     /// while the other DBM files use TreeDB/TreeDBM. The default
     /// implementation delegates to [`ReadStore::open_read_only`] (correct
-    /// for redb and LMDB, which have no hash/tree distinction). KC and
+    /// for redb, which has no hash/tree distinction). KC and
     /// Tkrzw override this to select the hash container class.
     ///
     /// # Errors
@@ -555,9 +537,9 @@ pub trait RawReadStore: ReadStore {
     /// in-memory `StashDB` (`load_db`'s `load_snapshot`,
     /// `ngram_kyotodb.cpp:54-64`) — magic `KCSS`, which a hash open
     /// rejects with "missing magic data of the file". On tkrzw both are
-    /// genuine hash files (`ngram_tkrzwdb.cpp:48-63`), and redb/LMDB have
+    /// genuine hash files (`ngram_tkrzwdb.cpp:48-63`), and redb has
     /// no hash/tree/snapshot distinction, so the default — the hash
-    /// container — is correct for all three.
+    /// container — is correct for both.
     ///
     /// # Errors
     ///
@@ -743,7 +725,7 @@ impl ReadStore for RedbStore {
 
 /// The well-known table name raw reads use on table-oriented backends.
 ///
-/// redb and LMDB have no flat keyspace: [`RawReadStore::get_raw`]
+/// redb has no flat keyspace: [`RawReadStore::get_raw`]
 /// delegates to this table name so test fixtures written through
 /// `WriteStore::write(|txn| txn.put(RAW_TABLE, key, value))` are
 /// readable by the raw path.
@@ -878,14 +860,14 @@ impl WriteTxn for RedbWriteTxn<'_> {
 
 // ── The default backend: compile-time selection ───────────────────────
 //
-// One backend per oxpinyin binary. The five backend implementations
-// (Kyoto Cabinet, redb, LMDB, tkrzw, Berkeley DB) are peers behind the
+// One backend per oxpinyin binary. The four backend implementations
+// (Kyoto Cabinet, redb, tkrzw, Berkeley DB) are peers behind the
 // store's trait interface, so `DefaultStore` resolves to a single
 // concrete type at compile time and everything above it is already
 // generic over `ReadStore` / `WriteStore`. The cfg chain below is
 // exactly that selection: it picks the enabled backend feature; a
 // multi-feature build resolves deterministically along the chain order
-// (kyotocabinet > tkrzw > lmdb > redb > bdb). The chain order is a
+// (kyotocabinet > tkrzw > redb > bdb). The chain order is a
 // tie-break for the additive unification, not a hierarchy — Tkrzw is
 // only the enabled feature that the workspace's default set carries,
 // and any single `--features <backend>` on `--no-default-features`
@@ -906,11 +888,6 @@ pub type DefaultStore = KcStore;
 #[cfg(feature = "tkrzw")]
 pub type DefaultStore = TkrzwStore;
 
-/// The default store backend — LMDB, on
-/// `--no-default-features --features lmdb`.
-#[cfg(feature = "lmdb")]
-pub type DefaultStore = LmdbStore;
-
 /// The default store backend — redb, on
 /// `--no-default-features --features redb`.
 #[cfg(feature = "redb")]
@@ -929,9 +906,6 @@ pub const DEFAULT_STORE_EXT: &str = "kct";
 /// File extension for [`DefaultStore`]'s native tables (tkrzw `TreeDBM`).
 #[cfg(feature = "tkrzw")]
 pub const DEFAULT_STORE_EXT: &str = "tkt";
-/// File extension for [`DefaultStore`]'s native tables (LMDB).
-#[cfg(feature = "lmdb")]
-pub const DEFAULT_STORE_EXT: &str = "lmdb";
 /// File extension for [`DefaultStore`]'s native tables (redb).
 #[cfg(feature = "redb")]
 pub const DEFAULT_STORE_EXT: &str = "redb";
@@ -956,14 +930,14 @@ pub fn default_store_file(stem: &str) -> String {
 /// For these three, a libpinyin install's data directory *is* this
 /// backend's file set — same container library, same records, same
 /// file names (`pinyin_index.bin`, `bigram.db`, …) — so the runtime opens
-/// it unchanged, and `oxpinyin-datagen` writes the same names. redb and
-/// LMDB hold the same records in their own containers under their own
-/// extensions; no libpinyin build can open those, and none needs to.
+/// it unchanged, and `oxpinyin-datagen` writes the same names. redb
+/// holds the same records in its own container under its own
+/// extension; no libpinyin build can open it, and none needs to.
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = true;
-/// See the Berkeley DB / Kyoto Cabinet / tkrzw definition: redb and LMDB
-/// are oxpinyin-only containers.
-#[cfg(any(feature = "lmdb", feature = "redb"))]
+/// See the Berkeley DB / Kyoto Cabinet / tkrzw definition: redb is an
+/// oxpinyin-only container.
+#[cfg(feature = "redb")]
 pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = false;
 
 /// The backend's `database format:` token — the string `user.conf`'s
@@ -971,16 +945,13 @@ pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = false;
 /// `to/from_table_database_format_type`: exactly `BerkeleyDB`,
 /// `KyotoCabinet`, `Tkrzw` upstream), so a same-backend pair stays
 /// conform and every cross-backend pair answers non-conform. The redb
-/// and LMDB tokens are ours — libpinyin has no such build, which is the
-/// point: nothing it ships can read them.
+/// token is ours — libpinyin has no such build, which is the
+/// point: nothing it ships can read it.
 #[cfg(feature = "kyotocabinet")]
 pub const DEFAULT_STORE_DB_FORMAT: &str = "KyotoCabinet";
 /// See the Kyoto Cabinet definition: tkrzw is upstream's third token.
 #[cfg(feature = "tkrzw")]
 pub const DEFAULT_STORE_DB_FORMAT: &str = "Tkrzw";
-/// See the Kyoto Cabinet definition: LMDB's token is oxpinyin-only.
-#[cfg(feature = "lmdb")]
-pub const DEFAULT_STORE_DB_FORMAT: &str = "LMDB";
 /// See the Kyoto Cabinet definition: redb's token is oxpinyin-only.
 #[cfg(feature = "redb")]
 pub const DEFAULT_STORE_DB_FORMAT: &str = "Redb";
@@ -991,18 +962,8 @@ pub const DEFAULT_STORE_DB_FORMAT: &str = "BerkeleyDB";
 
 /// Helpers shared by the framed and file-backed backends; every item is
 /// gated to the backends that use it (see the module docs).
-#[cfg(any(
-    feature = "kyotocabinet",
-    feature = "tkrzw",
-    feature = "lmdb",
-    feature = "bdb"
-))]
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 mod common;
-
-#[cfg(feature = "lmdb")]
-mod lmdb;
-#[cfg(feature = "lmdb")]
-pub use lmdb::LmdbStore;
 
 #[cfg(feature = "tkrzw")]
 mod tkrzw;
@@ -1080,15 +1041,11 @@ mod tests {
     #[cfg(feature = "tkrzw")]
     use std::ops::Bound;
 
-    #[cfg(feature = "lmdb")]
-    use super::LmdbStore;
-    #[cfg(any(feature = "lmdb", feature = "tkrzw"))]
+    #[cfg(feature = "tkrzw")]
     use super::ReadStore;
-    #[cfg(any(feature = "lmdb", feature = "tkrzw"))]
-    use super::StoreError;
     #[cfg(feature = "tkrzw")]
     use super::TkrzwStore;
-    #[cfg(any(feature = "redb", feature = "lmdb", feature = "tkrzw"))]
+    #[cfg(any(feature = "redb", feature = "tkrzw"))]
     use super::WriteStore;
 
     /// Emits the temp-path plumbing every tier group needs.
@@ -1669,11 +1626,6 @@ mod tests {
     #[cfg(feature = "redb")]
     store_write_tests!(redb_write, RedbStore, "redb");
 
-    #[cfg(feature = "lmdb")]
-    store_read_tests!(lmdb_read, LmdbStore, LmdbStore, "lmdb");
-    #[cfg(feature = "lmdb")]
-    store_write_tests!(lmdb_write, LmdbStore, "lmdb");
-
     #[cfg(feature = "tkrzw")]
     store_read_tests!(tkrzw_read, TkrzwStore, TkrzwStore, "tkrzw");
     #[cfg(feature = "tkrzw")]
@@ -1692,12 +1644,12 @@ mod tests {
     /// Removes the borrowed path on drop, so a panicking test leaves no
     /// file behind in `std::env::temp_dir()`. redb keeps no `-lock`
     /// sidecar, so the single data file is all that needs removing;
-    /// LMDB and tkrzw sidecars are cleaned up separately by their own
-    /// tests. Used by the redb probe and the LMDB concurrency tests.
-    #[cfg(any(feature = "redb", feature = "lmdb"))]
+    /// tkrzw sidecars are cleaned up separately by their own tests.
+    /// Used by the redb probe.
+    #[cfg(feature = "redb")]
     struct RemoveOnDrop<'a>(&'a std::path::Path);
 
-    #[cfg(any(feature = "redb", feature = "lmdb"))]
+    #[cfg(feature = "redb")]
     impl Drop for RemoveOnDrop<'_> {
         fn drop(&mut self) {
             let _ = std::fs::remove_file(self.0);
@@ -1706,7 +1658,7 @@ mod tests {
 
     // ── Default-backend policy: mechanical invariants ──────────────────
     //
-    // The workspace policy: the five peer backends (KC, redb, LMDB,
+    // The workspace policy: the four peer backends (KC, redb,
     // tkrzw, BDB) are equal implementations behind the store's trait
     // surface; tkrzw is the default *selection* (the feature enabled by
     // the workspace's default set), not a privileged one. These tests
@@ -1725,8 +1677,6 @@ mod tests {
         assert_eq!(super::DEFAULT_STORE_EXT, "kct");
         #[cfg(feature = "tkrzw")]
         assert_eq!(super::DEFAULT_STORE_EXT, "tkt");
-        #[cfg(feature = "lmdb")]
-        assert_eq!(super::DEFAULT_STORE_EXT, "lmdb");
         #[cfg(feature = "redb")]
         assert_eq!(super::DEFAULT_STORE_EXT, "redb");
         #[cfg(feature = "bdb")]
@@ -1809,25 +1759,6 @@ mod tests {
         assert_type_eq::<super::TkrzwStore>();
     }
 
-    /// `--no-default-features --features lmdb` resolves `DefaultStore`
-    /// to `LmdbStore` — the LMDB peer.
-    #[cfg(feature = "lmdb")]
-    #[test]
-    fn default_store_is_lmdb_when_only_lmdb_is_on() {
-        fn assert_type_eq<T>()
-        where
-            T: 'static,
-            super::DefaultStore: 'static,
-        {
-            assert_eq!(
-                std::any::TypeId::of::<super::DefaultStore>(),
-                std::any::TypeId::of::<T>(),
-                "DefaultStore must resolve to the expected concrete backend"
-            );
-        }
-        assert_type_eq::<super::LmdbStore>();
-    }
-
     /// `--no-default-features --features bdb` resolves `DefaultStore`
     /// to `BdbStore` — the Berkeley DB peer, libpinyin's original DBM.
     /// The type is `Send` and `Sync` under the `DB_THREAD` +
@@ -1898,7 +1829,7 @@ mod tests {
         // The backend installs no custom comparator, so TreeDBM sorts by
         // its default LexicalKeyComparator. That has to be plain
         // *unsigned* byte order for oxpinyin's big-endian key codec to
-        // keep the order it has under redb and LMDB — a signed-char
+        // keep the order it has under redb — a signed-char
         // comparison would sort 0x80.. before 0x00.., silently reversing
         // every high-token range scan. ASCII fixtures cannot tell the
         // two apart, so probe the high half explicitly.
@@ -2105,318 +2036,6 @@ mod tests {
         drop(store);
     }
 
-    #[cfg(feature = "lmdb")]
-    #[test]
-    fn lmdb_rejects_key_lengths_lmdb_cannot_store() {
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-lmdb-keylen-{}.mdb",
-            std::process::id(),
-        ));
-        let _ = std::fs::remove_file(&path);
-        let lock: std::path::PathBuf = {
-            let mut l = path.clone().into_os_string();
-            l.push("-lock");
-            l.into()
-        };
-        let store = LmdbStore::create(&path).unwrap();
-        assert!(matches!(
-            store.write(|txn| txn.put("t", b"", b"v")),
-            Err(StoreError::InvalidInput("key length must be 1..=511 bytes"))
-        ));
-        let long = [b'k'; 512];
-        assert!(matches!(
-            store.write(|txn| txn.put("t", &long, b"v")),
-            Err(StoreError::InvalidInput("key length must be 1..=511 bytes"))
-        ));
-        let boundary = [b'k'; 511];
-        store
-            .write(|txn| txn.put("t", &boundary, b"v"))
-            .expect("511-byte keys are accepted");
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(&lock);
-    }
-
-    #[cfg(feature = "lmdb")]
-    #[test]
-    fn lmdb_rejects_unaligned_map_size() {
-        // Absolute: heed resolves the path before validating map-size
-        // alignment, and a relative path fails with NotFound first.
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-unaligned-{}.mdb",
-            std::process::id(),
-        ));
-        // 3 is not a multiple of any real system page size.
-        assert!(matches!(
-            LmdbStore::create_with_map_size(&path, 3),
-            Err(StoreError::InvalidInput(
-                "map size must be a multiple of the system page size"
-            ))
-        ));
-        let _ = std::fs::remove_file(&path);
-    }
-
-    #[cfg(feature = "lmdb")]
-    #[test]
-    fn lmdb_rejects_zero_map_size() {
-        let path = std::path::PathBuf::from("oxpinyin-store-zero-map.mdb");
-        assert!(matches!(
-            LmdbStore::create_with_map_size(&path, 0),
-            Err(StoreError::InvalidInput("map size must be nonzero"))
-        ));
-    }
-
-    #[cfg(feature = "lmdb")]
-    #[test]
-    fn lmdb_rejects_nul_path() {
-        let path = std::path::PathBuf::from("oxpinyin-store\0invalid.mdb");
-        assert!(matches!(
-            LmdbStore::create(&path),
-            Err(StoreError::InvalidInput("path contains NUL"))
-        ));
-        assert!(matches!(
-            LmdbStore::open_read_only(&path),
-            Err(StoreError::InvalidInput("path contains NUL"))
-        ));
-    }
-
-    #[cfg(feature = "tkrzw")]
-    #[test]
-    fn tkrzw_rejects_nul_path() {
-        let path = std::path::PathBuf::from("oxpinyin-store\0invalid.tkrzw");
-        assert!(matches!(
-            TkrzwStore::create(&path),
-            Err(StoreError::InvalidInput("path contains NUL"))
-        ));
-        assert!(matches!(
-            TkrzwStore::open_read_only(&path),
-            Err(StoreError::InvalidInput("path contains NUL"))
-        ));
-    }
-
-    #[cfg(feature = "lmdb")]
-    #[test]
-    fn lmdb_rejects_more_than_max_named_tables() {
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-lmdb-maxdbs-{}.mdb",
-            std::process::id(),
-        ));
-        let _ = std::fs::remove_file(&path);
-        let lock: std::path::PathBuf = {
-            let mut l = path.clone().into_os_string();
-            l.push("-lock");
-            l.into()
-        };
-        let store = LmdbStore::create(&path).unwrap();
-        // LMDB caps the environment at 32 named tables; writing past that
-        // must surface as InvalidInput, not an opaque backend error. The
-        // loop runs well beyond 32 so the exact off-by-one does not matter.
-        let result = store.write(|txn| {
-            for i in 0..40 {
-                txn.put(&format!("t{i}"), b"k", b"v")?;
-            }
-            Ok(())
-        });
-        assert!(matches!(
-            result,
-            Err(StoreError::InvalidInput(
-                "too many distinct tables (LMDB caps a store at 32)"
-            ))
-        ));
-        drop(store);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(&lock);
-    }
-
-    #[cfg(feature = "lmdb")]
-    #[test]
-    fn lmdb_open_read_only_with_map_size_roundtrips() {
-        // A store created with a non-default ceiling reopens read-only with
-        // the same ceiling — the path a store grown past the 1 GiB default
-        // needs, since the trait `open_read_only` hardcodes that default.
-        // (Address space is committed sparsely, so the 2 GiB ceiling costs
-        // nothing on disk for one tiny record.)
-        const BIG_MAP: usize = 2 << 30; // 2 GiB, a multiple of the page size
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-lmdb-romap-{}.mdb",
-            std::process::id(),
-        ));
-        let _ = std::fs::remove_file(&path);
-        let lock: std::path::PathBuf = {
-            let mut l = path.clone().into_os_string();
-            l.push("-lock");
-            l.into()
-        };
-        let store = LmdbStore::create_with_map_size(&path, BIG_MAP).unwrap();
-        store.write(|txn| txn.put("t", b"k", b"v")).unwrap();
-        drop(store);
-        let readonly = LmdbStore::open_read_only_with_map_size(&path, BIG_MAP).unwrap();
-        assert_eq!(readonly.get("t", b"k").unwrap(), Some(b"v".to_vec()));
-        assert!(matches!(
-            readonly.write(|txn| txn.put("t", b"k2", b"v2")),
-            Err(StoreError::ReadOnly)
-        ));
-        drop(readonly);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(&lock);
-    }
-
-    #[cfg(feature = "lmdb")]
-    #[test]
-    fn lmdb_concurrent_first_open_of_shared_table_survives() {
-        // The whole reason for the DBI-cache: N threads opening the
-        // same env for the first time and hitting the same fresh
-        // `mdb_dbi_open` window used to race on `env->me_dbxs` writes
-        // and trip glibc's tcache check. With the cache in place the
-        // first thread to reach the miss path opens+commits the DBI
-        // env-wide, and every other thread finds it on the fast path
-        // — no double-alloc, no double-free, no crash.
-        //
-        // Split into two phases so both the "existing DBI, concurrent
-        // reads" and the "first-time creation" contracts are exercised:
-        //
-        // 1. Seed a table via one writer, then hammer it from N reader
-        //    threads on N independent stores of the same path — the
-        //    DBI already lives in `me_dbxs` from the seed's commit, so
-        //    every reader's fast-path lookup should return the same
-        //    cached handle and the reads should run concurrently.
-        // 2. Hammer a *fresh* env from N writers all creating the same
-        //    not-yet-existing table concurrently — the write-side
-        //    serializes on heed's one-writer-per-env, but the point
-        //    is that no read-side probe crossing that write's
-        //    `mdb_txn_end` misreads `me_dbxs`.
-        const THREADS: usize = 8;
-        const OPS_PER_THREAD: usize = 32;
-
-        // Cleanup on drop — a spawned-thread panic (any assertion
-        // inside the closures) unwinds through `h.join().unwrap()`,
-        // and the trailing manual removes would never run.
-        fn lock_sidecar(path: &std::path::Path) -> std::path::PathBuf {
-            let mut lock = path.to_path_buf().into_os_string();
-            lock.push("-lock");
-            lock.into()
-        }
-
-        // Phase 1: existing table, concurrent readers.
-        let read_path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-lmdb-concurrent-read-{}.mdb",
-            std::process::id(),
-        ));
-        let read_lock = lock_sidecar(&read_path);
-        let _ = std::fs::remove_file(&read_path);
-        let _ = std::fs::remove_file(&read_lock);
-        let _read_cleanup = RemoveOnDrop(&read_path);
-        let _read_lock_cleanup = RemoveOnDrop(&read_lock);
-        let writer = LmdbStore::create(&read_path).unwrap();
-        writer
-            .write(|txn| {
-                txn.put("shared", b"k", b"v")?;
-                Ok(())
-            })
-            .unwrap();
-        drop(writer);
-
-        let path_arc = std::sync::Arc::new(read_path.clone());
-        let handles: Vec<_> = (0..THREADS)
-            .map(|_| {
-                let path = std::sync::Arc::clone(&path_arc);
-                std::thread::spawn(move || {
-                    let store = LmdbStore::open_read_only(&path).unwrap();
-                    for _ in 0..OPS_PER_THREAD {
-                        assert_eq!(store.get("shared", b"k").unwrap(), Some(b"v".to_vec()));
-                    }
-                })
-            })
-            .collect();
-        for h in handles {
-            h.join().unwrap();
-        }
-
-        // Phase 2: previously-nonexistent table, concurrent first-time
-        // creation from N writers. LMDB serializes write txns on one
-        // env internally; what we're proving is that the cache never
-        // hands out a DBI a write ended up aborting, and that the
-        // first-time creates all wind up naming the same slot after
-        // they've each committed (`me_dbxs["fresh"]` is single-valued).
-        let write_path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-lmdb-concurrent-write-{}.mdb",
-            std::process::id(),
-        ));
-        let write_lock = lock_sidecar(&write_path);
-        let _ = std::fs::remove_file(&write_path);
-        let _ = std::fs::remove_file(&write_lock);
-        let _write_cleanup = RemoveOnDrop(&write_path);
-        let _write_lock_cleanup = RemoveOnDrop(&write_lock);
-
-        let path_arc = std::sync::Arc::new(write_path.clone());
-        let handles: Vec<_> = (0..THREADS)
-            .map(|tid| {
-                let path = std::sync::Arc::clone(&path_arc);
-                std::thread::spawn(move || {
-                    let store = LmdbStore::create(&path).unwrap();
-                    store
-                        .write(|txn| {
-                            txn.put("fresh", &tid.to_be_bytes(), b"v")?;
-                            Ok(())
-                        })
-                        .unwrap();
-                })
-            })
-            .collect();
-        for h in handles {
-            h.join().unwrap();
-        }
-        // Every writer's key should be visible after the phase — the
-        // table exists exactly once and all N writes reached it.
-        let reader = LmdbStore::open_read_only(&write_path).unwrap();
-        for tid in 0..THREADS {
-            assert_eq!(
-                reader.get("fresh", &tid.to_be_bytes()).unwrap(),
-                Some(b"v".to_vec()),
-                "writer {tid}'s row did not land",
-            );
-        }
-        drop(reader);
-    }
-
-    #[cfg(feature = "lmdb")]
-    #[test]
-    fn lmdb_rejects_a_conflicting_map_size_while_the_env_is_live() {
-        // One env is shared per path, and heed can neither reopen a live
-        // environment at a different ceiling nor resize it — so a mismatching
-        // request must fail up front with InvalidInput instead of silently
-        // handing back the live env's ceiling (writes would then hit
-        // MDB_MAP_FULL at runtime against a ceiling the caller never chose).
-        // With the mismatching handle gone, the new ceiling applies.
-        const BIG_MAP: usize = 2 << 30; // 2 GiB, a multiple of the page size
-        const OTHER_MAP: usize = 4 << 30; // 4 GiB, likewise
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-store-lmdb-mapconflict-{}.mdb",
-            std::process::id(),
-        ));
-        let _ = std::fs::remove_file(&path);
-        let lock: std::path::PathBuf = {
-            let mut l = path.clone().into_os_string();
-            l.push("-lock");
-            l.into()
-        };
-        let store = LmdbStore::create_with_map_size(&path, BIG_MAP).unwrap();
-        assert!(matches!(
-            LmdbStore::create_with_map_size(&path, OTHER_MAP),
-            Err(StoreError::InvalidInput(
-                "this LMDB file is already open in this process with a different map size; \
-                 close those handles before opening it with this ceiling"
-            ))
-        ));
-        // A matching ceiling still shares the live env.
-        assert!(LmdbStore::open_read_only_with_map_size(&path, BIG_MAP).is_ok());
-        drop(store);
-        let reopened = LmdbStore::create_with_map_size(&path, OTHER_MAP).unwrap();
-        drop(reopened);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(&lock);
-    }
-
     // ── per-peer key-ordering conformance ─────────────────────────
     //
     // The byte-order contract must hold *identically* across every
@@ -2424,8 +2043,8 @@ mod tests {
     // byte order must diverge from integer order across the 256
     // boundary. Under the exactly-one-backend invariant the tests
     // cannot cross-compare two peers in one process, so each build
-    // runs them against its own `DefaultStore`. Running all five peer
-    // builds (KC / redb / LMDB / Tkrzw / BDB) through CI gives the same
+    // runs them against its own `DefaultStore`. Running all four peer
+    // builds (KC / redb / Tkrzw / BDB) through CI gives the same
     // coverage the earlier in-process three-way check gave: each peer
     // independently satisfies the byte-order contract, and the
     // expected walk order is computed mathematically (sort the keys)
@@ -2458,7 +2077,7 @@ mod tests {
         type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
         /// Owns a temp store path; removes the data file and any `-lock`
-        /// sidecar (redb keeps none; LMDB and tkrzw do) on drop, so a
+        /// sidecar (redb keeps none; tkrzw does) on drop, so a
         /// panicking test leaves nothing behind.
         struct TempPath(std::path::PathBuf);
 

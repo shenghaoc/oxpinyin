@@ -402,7 +402,7 @@ jobs:
       # deny.toml's advisory ignore list is empty, so nothing here needs a
       # scope assertion to bound it. The guard this replaced existed only
       # to keep the RUSTSEC-2025-0141 (bincode) ignore honest while heed
-      # was in the tree; the LMDB backend binds the system liblmdb now, so
+      # was in the tree; that backend now binds a system C library, so
       # heed, heed-types and bincode are all gone.
 
   fuzz:

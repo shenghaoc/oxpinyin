@@ -115,7 +115,7 @@ fn oxpinyin_trains_and_saves_its_own_profile() {
         "user.conf",
     ] {
         // The name the save used: libpinyin's own on the drop-in set,
-        // the backend-named twin on redb/LMDB. One of the two must
+        // the backend-named twin on redb. One of the two must
         // exist for every file in the pin's inventory.
         let stem = name.trim_end_matches(".db").trim_end_matches(".bin");
         let file = Path::new(&owned).join(name);

@@ -42,17 +42,17 @@
 # ── Backend-extension helpers ────────────────────────────────────────────
 #
 # The peer-backend tables the capi opens carry the compiled backend's own
-# extension (.kct/.tkt/.lmdb/.redb). Runners that copy or gate on those
+# extension (.kct/.tkt/.redb). Runners that copy or gate on those
 # tables use these helpers instead of hard-coding an extension.
 
 # The native table extensions the capi can be compiled against, in the
 # compile-time precedence order of oxpinyin-store's DefaultStore cfg chain
-# (kyotocabinet > tkrzw > lmdb > redb; see "Native data-file naming under
+# (kyotocabinet > tkrzw > redb; see "Native data-file naming under
 # the compile-time backend" in docs/findings/upstream-divergences.md). The
 # order matters only when one directory holds complete sets in several
 # extensions (the old fixtures/w3 flat layout did): the first match is then
 # the default build's backend.
-SYSTEM_DIR_BACKEND_EXTS="kct tkt lmdb redb"
+SYSTEM_DIR_BACKEND_EXTS="kct tkt redb"
 
 # The peer-backend table stems the capi opens from a system directory.
 # The first three are mandatory and must share one extension: the engine
@@ -70,7 +70,7 @@ SYSTEM_DIR_CORE_STEMS="pinyin_index phrase_index bigram"
 # install's data/ — the core trio under libpinyin's own names
 # (pinyin_index.bin, phrase_index.bin, bigram.db), not peer-extension
 # tables. detect_ext reports this layout as the pseudo-extension "bin";
-# lmdb and redb builds have no native path and never see it. The
+# redb builds have no native path and never see it. The
 # backend set is the three libpinyin-native DBMs: Kyoto Cabinet, tkrzw
 # and Berkeley DB (the store's bdb feature; datagen's out-dir "db").
 SYSTEM_DIR_NATIVE_CORE="pinyin_index.bin phrase_index.bin bigram.db"
@@ -118,8 +118,7 @@ system_dir_capi_ext() {
 		sed -n 's/^oxpinyin-store feature "\([a-z]*\)".*/\1/p' | sort -u); do
 		case $feature in
 		kyotocabinet) [[ -z $ext ]] && ext=kct ;;
-		tkrzw) [[ -z $ext || $ext == lmdb || $ext == redb ]] && ext=tkt ;;
-		lmdb) [[ -z $ext || $ext == redb ]] && ext=lmdb ;;
+		tkrzw) [[ -z $ext || $ext == redb ]] && ext=tkt ;;
 		redb) [[ -z $ext ]] && ext=redb ;;
 		bdb) [[ -z $ext ]] && ext=db ;;
 		esac
@@ -142,7 +141,7 @@ system_dir_capi_ext() {
 # the answer is the pseudo-extension "bin"; the fallback needs a known
 # backend because P6 covers the three libpinyin-native DBMs — Kyoto
 # Cabinet, tkrzw and Berkeley DB (the store's bdb feature; datagen's
-# out-dir name: "db") — while lmdb/redb builds cannot open libpinyin's
+# out-dir name: "db") — while redb builds cannot open libpinyin's
 # files, and without cargo there is no built capi to speak of. Echoes
 # nothing and returns 1 when there is no complete core set.
 system_dir_detect_ext() {
@@ -231,7 +230,6 @@ resolve_system_dir() {
 		for candidate in \
 			"$repo_root/target/datagen/kct" \
 			"$repo_root/target/datagen/tkt" \
-			"$repo_root/target/datagen/lmdb" \
 			"$repo_root/target/datagen/redb" \
 			"$repo_root/target/datagen/db" \
 			/tmp/oxpinyin-export; do
@@ -268,7 +266,7 @@ resolve_system_dir() {
 		printf 'Looked at, in order:\n'
 		printf '  $%s          (this runner'"'"'s own variable)\n' "$var_name"
 		printf '  $OXPINYIN_SYSTEM_DIR   (set once for a whole sweep)\n'
-		printf '  %s/target/datagen/{kct,tkt,lmdb,redb,db}\n' "$repo_root"
+		printf '  %s/target/datagen/{kct,tkt,redb,db}\n' "$repo_root"
 		printf '  /tmp/oxpinyin-export\n'
 		printf '\n'
 		printf 'A usable directory is a system data directory for the compiled-in\n'
@@ -300,15 +298,15 @@ system_dir_require_complete() {
 	# A system data directory holds the chunk files, table.conf, and the
 	# DBMs under the compiled-in backend's names: libpinyin's own
 	# (pinyin_index.bin, bigram.db, ...) on Kyoto Cabinet, tkrzw and
-	# Berkeley DB, <stem>.<ext> on redb and LMDB.
+	# Berkeley DB, <stem>.<ext> on redb.
 	for file in gb_char.bin table.conf; do
 		[[ -f $dir/$file ]] || missing+=("$file")
 	done
 	local found_index=
-	for file in pinyin_index.bin pinyin_index.kct pinyin_index.tkt pinyin_index.redb pinyin_index.lmdb; do
+	for file in pinyin_index.bin pinyin_index.kct pinyin_index.tkt pinyin_index.redb; do
 		[[ -f $dir/$file ]] && found_index=$file
 	done
-	[[ -n $found_index ]] || missing+=("pinyin_index.{bin,kct,tkt,redb,lmdb}")
+	[[ -n $found_index ]] || missing+=("pinyin_index.{bin,kct,tkt,redb}")
 	# The core trio must be complete in ONE layout: an index table whose
 	# siblings are missing is a half-assembled directory, refused here
 	# rather than at the first mid-run open failure. The native trio

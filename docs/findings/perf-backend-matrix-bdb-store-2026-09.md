@@ -130,6 +130,16 @@ storage-tier operations (train/write/open) that matrix did not measure.
 
 ## Results
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-lmdb-backends`, commit subject `refactor(store): remove the LMDB backend`).** The `ox-LMDB` column of
+> every table below — and the durability-asymmetry finding that names
+> it (executive summary and "What is NOT measured": only redb and LMDB
+> paid fsync in the timed path while ox-tkrzw and ox-KC commit
+> NOSYNC-class) — measured a backend that no longer exists at HEAD, so
+> those cells are not reproducible as written. Every other column
+> (lp-BDB, lp-KC, lp-tkrzw, ox-redb, ox-tkrzw, ox-KC) stays
+> reproducible through the commands in "Regression protection". The
+> figures stand as measured at the commits this record names.
+
 ### Table 1 — wall-clock (µs, median [95% CI])
 
 | Operation | lp-BDB | lp-KC | lp-tkrzw | ox-redb | ox-LMDB | ox-tkrzw | ox-KC |

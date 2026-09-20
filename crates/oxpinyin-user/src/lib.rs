@@ -1,5 +1,5 @@
 //! ACID store for user data over the compiled-in `DefaultStore` (tkrzw,
-//! Kyoto Cabinet, LMDB or redb — one per binary, selected by feature;
+//! Kyoto Cabinet, Berkeley DB or redb — one per binary, selected by feature;
 //! see `oxpinyin-store`): learning, frequencies, preferences. Internal
 //! crate — the supported public API is `oxpinyin-engine`.
 //!

@@ -26,7 +26,7 @@ fn temp_path() -> PathBuf {
 
 fn cleanup(path: &Path) {
     let _ = std::fs::remove_file(path);
-    // LMDB's NO_SUB_DIR lock sidecar.
+    // A locking backend's `-lock` sidecar.
     let _ = std::fs::remove_file(format!("{}-lock", path.display()));
 }
 

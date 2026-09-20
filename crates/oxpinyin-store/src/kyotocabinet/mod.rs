@@ -19,7 +19,7 @@
 //! `TreeDB` with no `rcomp` tuning parameter uses Kyoto Cabinet's default
 //! record comparator, `LEXICALCOMP` — byte-wise, shorter key first on a
 //! shared prefix. The cross-backend conformance tests in `super` assert
-//! this backend walks identically to redb, LMDB and the others over keys
+//! this backend walks identically to redb and the others over keys
 //! that cross 256 in the first and in a later element — where byte order
 //! and integer order genuinely differ.
 //!
@@ -42,8 +42,8 @@
 //!
 //! A power cut *during* the commit itself can still tear the
 //! transaction — TreeDB writes through no write-ahead log — the same
-//! residual the tkrzw backend documents; redb and LMDB alone roll a
-//! torn commit back on the next open.
+//! residual the tkrzw backend documents; redb alone rolls a torn
+//! commit back on the next open.
 //!
 //! # Threading
 //!
@@ -364,8 +364,8 @@ impl WriteStore for KcStore {
         // Kyoto Cabinet reuses freed regions in place through its own free
         // block pool; there is no in-place rewrite that does not go
         // through a copy of the whole file, which is not what the other
-        // backends' `compact` does either (LMDB's successful `compact`
-        // also does not shrink the file). Making the current state
+        // backends' `compact` does either (Berkeley DB's successful
+        // `compact` also does not shrink the file). Making the current state
         // durable on the device is the honest implementation — and it is
         // the store's one stable-storage point, which `UserStore::save`
         // reaches through `pinyin_save`.

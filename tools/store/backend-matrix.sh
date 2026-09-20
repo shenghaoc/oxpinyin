@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # backend-matrix.sh — prove the exactly-one-backend invariant.
 #
-# The five oxpinyin store backends (kyotocabinet, redb, lmdb, tkrzw,
-# bdb) are peer implementations behind one trait surface, and every build
+# The four oxpinyin store backends (kyotocabinet, redb, tkrzw, bdb)
+# are peer implementations behind one trait surface, and every build
 # has exactly one of them. This script drives that invariant end-to-end:
 #
-#   1. The default selection and each of the five explicit ones is a
+#   1. The default selection and each of the four explicit ones is a
 #      green `cargo check --locked -p oxpinyin-store`.
-#   2. Every one of the ten pairwise combinations, and a four-way
+#   2. Every one of the six pairwise combinations, and a three-way
 #      combination, refuses to compile with the `compile_error!` message
 #      from `crates/oxpinyin-store/src/lib.rs`.
 #   3. The zero-backend build refuses with the same guard.
 #
-# Runs `cargo check`, not `cargo build`, so libtkrzw/liblmdb/etc. do not
+# Runs `cargo check`, not `cargo build`, so libtkrzw/etc. do not
 # have to be linkable in the environment — but the compile-error checks
 # are still meaningful (they fire in the store crate, whose feature
 # combinations are the same for check and build).
@@ -37,7 +37,6 @@ fail=0
 for peer in "" \
     "--no-default-features --features kyotocabinet" \
     "--no-default-features --features redb" \
-    "--no-default-features --features lmdb" \
     "--no-default-features --features tkrzw" \
     "--no-default-features --features bdb"; do
     label=${peer:-default (tkrzw)}
@@ -53,19 +52,15 @@ for peer in "" \
 done
 
 # Every invalid combination must be refused by the compile_error guard.
-# Ten pairs plus a four-way plus a zero-backend case.
+# Six pairs plus a three-way plus a zero-backend case.
 for combo in \
     "kyotocabinet,redb" \
-    "kyotocabinet,lmdb" \
     "kyotocabinet,tkrzw" \
     "kyotocabinet,bdb" \
-    "redb,lmdb" \
     "redb,tkrzw" \
     "redb,bdb" \
-    "lmdb,tkrzw" \
-    "lmdb,bdb" \
     "tkrzw,bdb" \
-    "kyotocabinet,redb,lmdb,bdb"; do
+    "kyotocabinet,redb,bdb"; do
     printf '── invalid: --features %s\n' "$combo"
     if cargo check --locked -p oxpinyin-store --no-default-features --features "$combo" \
         >"$LOG" 2>&1; then

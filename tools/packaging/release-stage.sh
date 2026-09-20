@@ -14,7 +14,7 @@
 # distro's libpinyin ships stripped) and the gates below.
 #
 # Usage: release-stage.sh <backend> --prefix=DIR --libdir=DIR [--dest=DIR]
-#   <backend>  kyotocabinet | tkrzw | lmdb | redb  (exactly one; the store's
+#   <backend>  kyotocabinet | tkrzw | redb  (exactly one; the store's
 #              compile_error! guards refuse any other selection)
 #   --dest     staging root the prefix/libdir are written under;
 #              defaults to target/release-stage/<backend>
@@ -44,7 +44,6 @@ db_format_for() {
   case "$1" in
     kyotocabinet) echo "KyotoCabinet" ;;
     tkrzw)        echo "Tkrzw" ;;
-    lmdb)         echo "LMDB" ;;
     redb)         echo "redb" ;;
     *) return 1 ;;
   esac
@@ -56,12 +55,12 @@ LIBDIR=""
 DEST=""
 
 usage() {
-  echo "usage: $0 <kyotocabinet|tkrzw|lmdb|redb> --prefix=DIR --libdir=DIR [--dest=DIR]" >&2
+  echo "usage: $0 <kyotocabinet|tkrzw|redb> --prefix=DIR --libdir=DIR [--dest=DIR]" >&2
   exit 2
 }
 
 case "${1:-}" in
-  kyotocabinet|tkrzw|lmdb|redb) BACKEND="$1"; shift ;;
+  kyotocabinet|tkrzw|redb) BACKEND="$1"; shift ;;
   *) usage ;;
 esac
 

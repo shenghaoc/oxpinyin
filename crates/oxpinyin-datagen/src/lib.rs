@@ -14,8 +14,8 @@
 //!        │                                                            ├─► differential
 //!        ├──► oxpinyin-datagen (kyotocabinet) ──────────► KC data dir ─┤   (same files)
 //!        ├──► oxpinyin-datagen (tkrzw, default) ────────► Tkrzw data dir┤
-//!        ├──► oxpinyin-datagen (redb) ──────────────────► redb data dir ┤   (same records,
-//!        └──► oxpinyin-datagen (lmdb) ──────────────────► LMDB data dir ┘    own container)
+//!        └──► oxpinyin-datagen (redb) ──────────────────► redb data dir ┘   (same records,
+//!                                                                      own container)
 //! ```
 //!
 //! One semantic read pass ([`system::read_semantic`]) and one set of

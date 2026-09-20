@@ -1,6 +1,6 @@
 //! Helpers shared by the backends that frame every table into one
 //! keyspace (Kyoto Cabinet, tkrzw, Berkeley DB) and by the file-backed
-//! ones that hand a path to a C library (tkrzw, LMDB, Berkeley DB). One
+//! ones that hand a path to a C library (tkrzw, Berkeley DB). One
 //! definition each: the framing scheme, the range-bound test and the
 //! path check used to live once per backend, byte-identical, and a fix
 //! to one copy could miss the others.
@@ -11,10 +11,10 @@
 
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 use std::ops::Bound;
-#[cfg(any(feature = "tkrzw", feature = "lmdb"))]
+#[cfg(feature = "tkrzw")]
 use std::path::Path;
 
-#[cfg(any(feature = "tkrzw", feature = "lmdb"))]
+#[cfg(feature = "tkrzw")]
 use crate::StoreError;
 #[cfg(feature = "tkrzw")]
 use crate::validate_table_name;
@@ -80,8 +80,7 @@ pub(crate) fn unframe<'a>(prefix: &[u8], framed: &'a [u8]) -> Option<&'a [u8]> {
 /// `Bound` every backend's `range` shares. An empty-slice bound needs no
 /// special case here: `key >= []` holds for every key, and `key <= []`
 /// for none but the empty key, which is what the shared read suite pins
-/// (`empty_bounds_never_match_or_error`). LMDB normalises the same
-/// bounds for heed's range API instead of testing keys one by one.
+/// (`empty_bounds_never_match_or_error`).
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
     let above_lo = match lo {
@@ -102,7 +101,7 @@ pub fn in_bounds(key: &[u8], lo: Bound<&[u8]>, hi: Bound<&[u8]>) -> bool {
 /// # Errors
 ///
 /// [`StoreError::InvalidInput`] when the path contains a NUL byte.
-#[cfg(any(feature = "tkrzw", feature = "lmdb"))]
+#[cfg(feature = "tkrzw")]
 pub fn validate_path(path: &Path) -> Result<(), StoreError> {
     if path.as_os_str().as_encoded_bytes().contains(&0) {
         return Err(StoreError::InvalidInput("path contains NUL"));
