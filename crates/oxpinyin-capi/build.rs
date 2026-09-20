@@ -122,6 +122,13 @@ fn bake_pkg_config_template() {
     let out_path = Path::new(&out_dir).join("libpinyin.pc.in.baked");
     fs::write(&out_path, &baked).unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
 
+    // Exported so this crate's own tests can assert what was baked
+    // (`tests/database_format.rs`) without re-deriving OUT_DIR: the
+    // mapping from feature to token is the thing under test, and a test
+    // that recomputed the path would not be testing the artefact the
+    // packager installs.
+    println!("cargo:rustc-env=OXPINYIN_PC_BAKED={}", out_path.display());
+
     // Best-effort mirror to <target>/<profile>; the wrapper falls back to a
     // `find` under the target dir when this is absent.
     if let Some(profile_dir) = target_profile_dir(&out_dir) {
@@ -131,12 +138,18 @@ fn bake_pkg_config_template() {
 
 /// The `@DATABASE_FORMAT@` value. An explicit `LIBPINYIN_DATABASE_FORMAT`
 /// wins — a packager shipping data in another engine's format sets it so
-/// fcitx's cmake probe reads the right backend. Otherwise, the active
-/// peer backend feature of THIS crate, matching
-/// `oxpinyin_store::DefaultStore`: tkrzw under the default features (the
-/// default since 2026-09-05, before that Kyoto Cabinet), kyotocabinet /
-/// redb / bdb when their `--no-default-features --features <peer>` is
-/// selected.
+/// fcitx's cmake probe reads the right backend. Otherwise, the token of
+/// the peer backend feature this crate has enabled: tkrzw under the
+/// default features (the default since 2026-09-05, before that Kyoto
+/// Cabinet), kyotocabinet / bdb / redb when their `--no-default-features
+/// --features <peer>` is selected. The chain below is a fixed precedence
+/// over the arms as written; it is not `oxpinyin_store::DefaultStore`'s
+/// `#[cfg]` order, and does not need to be — the store's
+/// exactly-one-backend guard refuses any build that enables two of these
+/// features, so more than one arm can never be live. The surviving
+/// backends' tokens are upstream's own (`BerkeleyDB` / `KyotoCabinet` /
+/// `Tkrzw`); redb's oxpinyin-only spelling is lowercase because every
+/// other oxpinyin-owned spelling of it on disk is.
 fn database_format() -> String {
     if let Ok(explicit) = env::var("LIBPINYIN_DATABASE_FORMAT")
         && !explicit.trim().is_empty()
@@ -144,10 +157,7 @@ fn database_format() -> String {
         return explicit;
     }
     // `CARGO_FEATURE_<NAME>` is set for each enabled feature of THIS crate,
-    // which forwards the backend selection down the chain. The order
-    // mirrors `oxpinyin_store::DefaultStore` so a multi-feature build
-    // resolves deterministically (kyotocabinet > tkrzw > bdb > redb —
-    // a tie-break, not a hierarchy).
+    // which forwards the backend selection down the chain.
     if env::var_os("CARGO_FEATURE_KYOTOCABINET").is_some() {
         "KyotoCabinet".to_owned()
     } else if env::var_os("CARGO_FEATURE_TKRZW").is_some() {

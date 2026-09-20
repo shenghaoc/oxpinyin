@@ -45,6 +45,7 @@ db_format_for() {
     kyotocabinet) echo "KyotoCabinet" ;;
     tkrzw)        echo "Tkrzw" ;;
     redb)         echo "redb" ;;
+    bdb)          echo "BerkeleyDB" ;;
     *) return 1 ;;
   esac
 }
@@ -55,12 +56,12 @@ LIBDIR=""
 DEST=""
 
 usage() {
-  echo "usage: $0 <kyotocabinet|tkrzw|redb> --prefix=DIR --libdir=DIR [--dest=DIR]" >&2
+  echo "usage: $0 <kyotocabinet|tkrzw|redb|bdb> --prefix=DIR --libdir=DIR [--dest=DIR]" >&2
   exit 2
 }
 
 case "${1:-}" in
-  kyotocabinet|tkrzw|redb) BACKEND="$1"; shift ;;
+  kyotocabinet|tkrzw|redb|bdb) BACKEND="$1"; shift ;;
   *) usage ;;
 esac
 
