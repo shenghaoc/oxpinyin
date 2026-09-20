@@ -234,6 +234,15 @@ jobs:
         # Homebrew tkrzw and test-windows links vcpkg Berkeley DB, so
         # neither of those jobs uses this apt line.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
+      # The w3 fixture manifest is a byte-identity gate that nothing
+      # consumed: no job, test or script checked it, which is how a stale
+      # row survived two members of the stack that produced this step.
+      # `fixtures/w3/README.md` documents a REGENERATION command — running
+      # that in CI would overwrite the very drift this must catch, so this
+      # is a check, run from the repo root because the manifest's paths are
+      # repo-relative.
+      - name: Verify the w3 fixture checksums
+        run: sha256sum -c fixtures/w3/fixtures.sha256
       - run: cargo test --locked --workspace
       - name: C++ pinyin.h smoke gate
         run: tools/bisection/run-cpp-smoke.sh
