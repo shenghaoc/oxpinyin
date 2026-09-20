@@ -360,6 +360,41 @@ gate is `:2295-2296` — `2292-2293` is the longer-candidate gate.~~
 (fixed with the §9 port: the doc comment now cites both gates
 correctly.)
 
+## The train gate under the widened law — pinyin measured, zhuyin an open gap (register row 38, 2026-09-20)
+
+§9's port widened `InstanceCore::train`'s gate to the pin's own
+disjunction — a recorded selection OR a live sentence result
+(`pinyin.cpp:2678-2679`; `sentence_lookup_active` is the engine's
+stand-in for `results.size() > 0`) — and both shipped C surfaces pass
+through it (`pinyin_train`, and `zhuyin_train` over the same facade
+path, whose pin carries the identical law, `zhuyin.cpp:1696-1705`).
+
+The **pinyin** surface is measured: the ABI probe's longer-choose
+phase above runs IDENTICAL, and its `train(after-longer)=true` line —
+a train with a live sentence result and NO recorded selection — is
+exactly the widened arm, on both sides, with no store writes.
+
+The **zhuyin** surface has no differential. Checked 2026-09-20:
+`tools/bisection/run-zhuyin-diff.sh` exists, and
+`tools/bisection/zhuyin-diff.c` contains **no train call** — the only
+occurrences of the letters "train" in it are the word "constrains" in
+two comments (`:227`, `:287`); no other driver calls `zhuyin_train`.
+The in-tree evidence is the zhuyin e2e
+(`crates/oxpinyin-zhuyin-capi/src/e2e_tests.rs::
+train_refuses_without_a_selection_or_a_user_store`), whose assertion
+flipped in the same commit that widened the gate — a measurement of
+the code by the code that changed it, not independent evidence.
+
+What a differential would need to exercise, on both sides: (1)
+guess-sentence-then-train with no choose — the widened arm; the pin
+answers `true` and writes nothing; (2) choose-then-train — the
+selection arm, unchanged by the widening; (3) a fresh instance's train
+with no guess and no choose — still `false` on both; each phase
+dumping the user store's bigram/unigram state as the ABI probe does.
+That differential is owed work under register row 38
+(`compatibility-policy.md`; `revert-plan.md` §15), deliberately not
+built in PR #496.
+
 ## Amendment — residue classification (2026-09-19 UTC)
 
 Diagnosis recorded; classes ruled 2026-09-19 (A by the settling
