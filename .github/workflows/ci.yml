@@ -5,7 +5,7 @@
 # `changes` job computes one `run` flag from the path set below, and
 # every lane carries `if: needs.changes.outputs.run == 'true'`.
 #
-# The skip claim above holds only for a branch level with main: the
+# The skip claim above holds only for a branch up to date with main: the
 # `changes` job computes its flag with a two-dot diff (git diff
 # --name-only "$base" HEAD, where $base is pull_request.base.sha), so a
 # branch behind main sees main's own commits in the gated paths and
