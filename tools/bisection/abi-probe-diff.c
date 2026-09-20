@@ -598,6 +598,117 @@ int main(int argc, char **argv) {
                s.parsed_len(inst));
     }
 
+    /* ── §9: choose a LONGER row, assert the cursor, train, dump ──── */
+    /* Runs BEFORE choose-train on purpose: that phase's whole-row train
+     * leaves the §10 user-bigram residue in the store, and a dump here
+     * after it would re-report those rows instead of measuring this
+     * flow's own writes (the pin's constraint-free train writes none).
+     * The pin's LONGER branch (pinyin.cpp:2521-2530) trains the row's
+     * token +483 unigram through the phrase index and answers cursor 1
+     * (true) without touching the constraints; pinyin_train then walks
+     * a constraint-free result, writes nothing to the user bigram, and
+     * answers true. Sort words with bit 0x2 set (e.g. 0x1e) never
+     * surface a LONGER row: the phase finds the type-7 row when the
+     * running word carries one and reports the skip when it does not,
+     * so the same binary scores every word. */
+    printf("=== phase: longer-choose ===\n");
+    /* "fang": one full-pinyin key whose two-char extensions (方面/方便/
+     * 方向 …) exist in the system tables, so the pin's suggestion walk
+     * finds a strictly-longer phrase and the prepend surfaces a type-7
+     * row at every word with bit 0x2 clear (0x1c and 0x14 included) —
+     * the option-sweep corpus row that showed the gap. */
+    s.parse_full(inst, "fang");
+    s.guess_sentence(inst);
+    s.guess_candidates(inst, 0, sort_word);
+    lookup_candidate_t *longer = NULL;
+    guint longer_at = 0;
+    {
+        guint n = 0;
+        if (s.n_cand(inst, &n)) {
+            for (guint i = 0; i < n && i < 10; i++) {
+                lookup_candidate_t *c = NULL;
+                int type = -1;
+                if (s.get_cand(inst, i, &c) && c &&
+                    s.get_type(inst, c, &type) && type == 7 /* LONGER */) {
+                    longer = c;
+                    longer_at = i;
+                    break;
+                }
+            }
+        }
+    }
+    if (!longer) {
+        printf("longer-row=skipped(no-type7-at-0x%02x)\n", sort_word);
+    } else {
+        const char *ltext = NULL;
+        s.get_str(inst, longer, &ltext);
+        printf("longer-row=%u text=%s\n", longer_at,
+               ltext ? ltext : "(null)");
+        /* The trained observable: the row's phrase tokens' unigrams,
+         * read BEFORE the choose and again after the train so the dump
+         * shows the +483 delta on whichever token the branch trained
+         * (the ABI exports no candidate-token getter, so every token
+         * the phrase resolves to is read — the trained one is among
+         * them and moves by exactly 483; the others must not move). */
+        void *ltoks = NULL;
+        guint nlt = 0;
+        if (ltext) {
+            ltoks = g_array_new_fn(0, 0, 4);
+            bool lt = s.lookup_tokens(inst, ltext, ltoks);
+            nlt = ltoks ? ((GArrayPub *)ltoks)->len : 0;
+            printf("longer-lookup(%s)=%s n=%u\n", ltext, yesno(lt), nlt);
+            for (guint i = 0; i < nlt && i < 10; i++) {
+                phrase_token_t t =
+                    ((phrase_token_t *)((GArrayPub *)ltoks)->data)[i];
+                guint f = 0;
+                /* Sequence the read call before the printf: an argument
+                 * expression that writes f while another reads it is
+                 * unsequenced UB (C11 6.5.2.2p10) and could print the
+                 * pre-call zero instead of the frequency. */
+                bool ok = s.token_unigram(inst, t, &f);
+                printf("longer-unigram[%u](before,0x%08x)=%s/%u\n", i, t,
+                       yesno(ok), f);
+            }
+        }
+        int lcur = s.choose(inst, 0, longer);
+        printf("choose(longer)=%d\n", lcur);
+        printf("train(after-longer)=%s\n", yesno(s.train(inst, 0)));
+        for (guint i = 0; i < nlt && i < 10; i++) {
+            phrase_token_t t =
+                ((phrase_token_t *)((GArrayPub *)ltoks)->data)[i];
+            guint f = 0;
+            bool ok = s.token_unigram(inst, t, &f);
+            printf("longer-unigram[%u](after,0x%08x)=%s/%u\n", i, t,
+                   yesno(ok), f);
+        }
+        if (ltoks)
+            g_array_free_fn(ltoks, 1);
+        /* The user-bigram dump: the constraint-free train must have
+         * written nothing beyond the imported baseline. */
+        bigram_export_iterator_t *lbx = s.begin_bigram(ctx);
+        unsigned lrow = 0;
+        if (lbx) {
+            while (s.bigram_has_next(lbx) && lrow < 20) {
+                char *phrase = NULL, *pinyins = NULL;
+                gint count = 0;
+                if (!s.bigram_get_next(lbx, &phrase, &pinyins, &count))
+                    break;
+                printf("longer-bigram[%u]=%s|%s|%d\n", lrow,
+                       phrase ? phrase : "(null)",
+                       pinyins ? pinyins : "(null)", count);
+                if (phrase)
+                    g_free_fn(phrase);
+                if (pinyins)
+                    g_free_fn(pinyins);
+                lrow++;
+            }
+            s.end_bigram(lbx);
+        }
+        printf("longer-bigram-rows=%u\n", lrow);
+        printf("train(after-longer,2)=%s\n", yesno(s.train(inst, 0)));
+    }
+    printf("reset(longer-choose)=%s\n", yesno(s.reset(inst)));
+
     /* ── choose / nbest / train / remember ──────────────────────────── */
     printf("=== phase: choose-train ===\n");
     size_t consumed = s.parse_full(inst, "nihaoshijie");
