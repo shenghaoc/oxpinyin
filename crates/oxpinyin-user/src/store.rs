@@ -357,12 +357,12 @@ pub struct GenericUserStore<S: WriteStore> {
 }
 
 /// Default user store backed by [`DefaultStore`] — whichever peer
-/// backend (Kyoto Cabinet, redb, LMDB, tkrzw) the build was compiled
-/// against.
+/// backend (Kyoto Cabinet, redb, tkrzw, Berkeley DB) the build was
+/// compiled against.
 ///
 /// tkrzw is the default selection under the workspace's default feature
 /// set; the other three peers are selected with `--no-default-features
-/// --features {kyotocabinet|redb|lmdb}`.
+/// --features {kyotocabinet|redb|bdb}`.
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
@@ -2371,8 +2371,6 @@ mod tests {
     // generic user store's contract over that peer.
     #[cfg(feature = "redb")]
     user_store_tests!(redb, oxpinyin_store::RedbStore, "redb");
-    #[cfg(feature = "lmdb")]
-    user_store_tests!(lmdb, oxpinyin_store::LmdbStore, "lmdb");
     #[cfg(feature = "tkrzw")]
     user_store_tests!(tkrzw, oxpinyin_store::TkrzwStore, "tkrzw");
     #[cfg(feature = "kyotocabinet")]
@@ -2380,14 +2378,14 @@ mod tests {
     #[cfg(feature = "bdb")]
     user_store_tests!(bdb, oxpinyin_store::BdbStore, "db");
 
-    // ── Cross-backend equivalence (one peer per build, five in CI) ──
+    // ── Cross-backend equivalence (one peer per build, four in CI) ──
 
     /// Under exactly-one-backend, cross-peer comparisons cannot happen
     /// in-process. Instead each build proves the *current* peer, driven
     /// through the generic user store, produces bigram walks and
     /// successor scans in ascending (prev, cur) integer order — the
-    /// big-endian key property. Running all five peer builds (KC / redb
-    /// / LMDB / Tkrzw / BDB) through CI gives the same five-way equivalence
+    /// big-endian key property. Running all four peer builds (KC / redb
+    /// / Tkrzw / BDB) through CI gives the same four-way equivalence
     /// coverage the earlier in-process check gave.
     #[test]
     fn bigram_walks_and_successors_follow_be_integer_order() {

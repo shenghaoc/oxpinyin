@@ -28,7 +28,6 @@ default = ["tkrzw"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-user/kyotocabinet"]
 bdb = ["oxpinyin-data/bdb", "oxpinyin-user/bdb"]
 tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
-lmdb = ["oxpinyin-data/lmdb", "oxpinyin-user/lmdb"]
 redb = ["oxpinyin-data/redb", "oxpinyin-user/redb"]
 
 [lints.rust]

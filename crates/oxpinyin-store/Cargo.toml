@@ -32,7 +32,7 @@ criterion = "0.8"
 bindgen = { workspace = true, optional = true }
 
 [features]
-# The five backends (kyotocabinet, redb, lmdb, tkrzw, bdb) are peer
+# The four backends (kyotocabinet, redb, tkrzw, bdb) are peer
 # implementations behind the store's `ReadStore`/`WriteStore` traits.
 # **Exactly one** is compiled in per build; a `compile_error!` in
 # `src/lib.rs` refuses builds that enable zero or two-or-more. The
@@ -42,12 +42,8 @@ bindgen = { workspace = true, optional = true }
 #
 # `tkrzw` is the enabled feature in the workspace's default set,
 # which is what "default" means here — select any peer explicitly with
-# `--no-default-features --features {kyotocabinet|redb|lmdb|tkrzw|bdb}`.
+# `--no-default-features --features {kyotocabinet|redb|tkrzw|bdb}`.
 default = ["tkrzw"]
-# LMDB binds the SYSTEM liblmdb through its own C header; bindgen is
-# build-time only (it needs libclang), exactly as the other C
-# backends use it. No LMDB source is vendored or compiled here.
-lmdb = ["dep:bindgen"]
 tkrzw = ["dep:bindgen"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
 # the runtime dependency is the system libkyotocabinet the distro already
@@ -59,7 +55,7 @@ kyotocabinet = ["dep:bindgen"]
 # libdb-devel), the same library that wrote the files it must read.
 bdb = ["dep:bindgen"]
 # redb, the pure-Rust peer. The `redb` crate itself is optional: no other
-# peer depends on it, so a KC/LMDB/tkrzw/BDB build carries none of redb's
+# peer depends on it, so a KC/tkrzw/BDB build carries none of redb's
 # code or its transitive dependencies.
 redb = ["dep:redb"]
 # `bench-internal` — exposes hidden test/bench-only helpers that would
@@ -69,13 +65,6 @@ redb = ["dep:redb"]
 # can characterise a KC default; nothing in the shipping open path
 # depends on this widening. Never enable this on an artifact that ships.
 bench-internal = []
-
-[[bench]]
-name = "lmdb_bulk_load"
-harness = false
-# The bench drives the LMDB C API directly, so `--all-targets` builds of
-# the other backends skip this target instead of needing liblmdb.
-required-features = ["lmdb"]
 
 [[bench]]
 name = "redb_is_empty"
@@ -92,11 +81,6 @@ required-features = ["redb"]
 name = "backend_matrix_redb"
 harness = false
 required-features = ["redb"]
-
-[[bench]]
-name = "backend_matrix_lmdb"
-harness = false
-required-features = ["lmdb"]
 
 [[bench]]
 name = "backend_matrix_tkrzw"

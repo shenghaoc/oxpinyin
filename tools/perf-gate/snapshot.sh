@@ -41,7 +41,6 @@ done
 case "$BACKEND" in
 tkrzw) EXT=tkt ;;
 kyotocabinet) EXT=kct ;;
-lmdb) EXT=lmdb ;;
 redb) EXT=redb ;;
 *) echo "fatal: unsupported backend '$BACKEND'" >&2; exit 2 ;;
 esac

@@ -1,7 +1,7 @@
 name: Store backends
 
-# Backend coverage for the five peer store backends on a rolling
-# toolchain. The five peers (Kyoto Cabinet, redb, LMDB, tkrzw, Berkeley
+# Backend coverage for the four peer store backends on a rolling
+# toolchain. The four peers (Kyoto Cabinet, redb, tkrzw, Berkeley
 # DB) are equal implementations behind the store's trait surface; tkrzw
 # is the workspace's default selection. Exactly one peer is compiled per
 # build — the exactly-one-backend invariant is enforced at compile
@@ -10,21 +10,21 @@ name: Store backends
 # suite through five separate builds, one per peer.
 #
 # Five jobs:
-#   - store-features is a matrix over the five peer backends. Each child
+#   - store-features is a matrix over the four peer backends. Each child
 #     runs the workspace's backend-relevant crates (everything but the
 #     seven backend-independent training crates — see the test step)
 #     under exactly ONE peer, on its
-#     own runner, so the five sweeps run in PARALLEL (fail-fast: false,
+#     own runner, so the four sweeps run in PARALLEL (fail-fast: false,
 #     max-parallel: 5) instead of sequentially inside one job. Every pass
 #     decodes real queries through the fixture tables, not just the store's
-#     own unit tests. The matrix value only selects one of five fixed,
+#     own unit tests. The matrix value only selects one of the fixed,
 #     repository-controlled cargo invocations (see the case in the test
 #     step); no command is built from untrusted event input.
 #   - backend-matrix is an INDEPENDENT job — it has no needs edge to the
-#     matrix, so it schedules concurrently with all five backend children.
-#     It runs `tools/store/backend-matrix.sh`, which proves the five valid
+#     matrix, so it schedules concurrently with all four backend children.
+#     It runs `tools/store/backend-matrix.sh`, which proves the four valid
 #     peer selections each `cargo check --workspace` cleanly AND that
-#     every one of the ten pairwise combinations plus a four-way
+#     every one of the six pairwise combinations plus a three-way
 #     combination plus the zero-backend build is refused by the
 #     exactly-one-backend `compile_error!` guards. This is what replaced
 #     the old "cross-backend conformance in one binary" job, which is
@@ -138,15 +138,14 @@ jobs:
 
     strategy:
       # fail-fast: false so one backend's failure does not cancel the other
-      # four children — every backend's result is reported independently.
+      # children — every backend's result is reported independently.
       fail-fast: false
-      max-parallel: 5
+      max-parallel: 4
       matrix:
         backend:
           - kyotocabinet
           - redb
           - tkrzw
-          - lmdb
           - bdb
 
     steps:
@@ -181,12 +180,9 @@ jobs:
         # self-contained regardless of scheduling order; the marginal apt
         # cost is deliberate (correctness over shaving install seconds).
         # libtkrzw-dev: the tkrzw child builds against the distro library
-        # through pkg-config; liblmdb-dev is the lmdb child's equivalent —
-        # that backend binds the SYSTEM LMDB and compiles no LMDB source of
-        # its own, so without the -dev package its build fails by design.
-        # Only redb is pure Rust.
+        # through pkg-config. Only redb is pure Rust.
         # libclang-dev: bindgen's runtime dependency for generating the
-        # tkrzw, Kyoto Cabinet and LMDB FFI declarations from their headers.
+        # tkrzw and Kyoto Cabinet FFI declarations from their headers.
         # Debian's libtkrzw-dev builds tkrzw with compression, so tkrzw.pc
         # demands -llzma -llz4 -lzstd -lz at link time; their -dev packages
         # must be present or every final link dies.
@@ -195,9 +191,9 @@ jobs:
         # libdb-dev: the bdb child's equivalent (a metapackage resolving
         # to libdb5.3-dev) — that backend binds the SYSTEM libdb and
         # compiles no Berkeley DB source of its own.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblmdb-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
-      # This child runs exactly one of five fixed cargo invocations, selected
+      # This child runs exactly one of the fixed cargo invocations, selected
       # by the matrix backend through a case over a closed set (fail-closed
       # default). The matrix value is bound to a plain shell variable via env
       # indirection — ${{ }} inside a run: body is a template-injection
@@ -256,9 +252,6 @@ jobs:
             echo "--- tkrzw (the default) ---"
             cargo test --locked --workspace "${excludes[@]}"
             ;;
-          lmdb)
-            echo "--- lmdb (workspace) ---"
-            cargo test --locked --workspace --no-default-features --features lmdb "${excludes[@]}"
             ;;
           bdb)
             echo "--- bdb (workspace) ---"
@@ -331,19 +324,19 @@ jobs:
           rust-cache-key: backend-matrix
 
       - name: Install build dependencies (apt)
-        # The matrix `cargo check`s the five valid peer selections in
+        # The matrix `cargo check`s the four valid peer selections in
         # turn, so it needs every peer's build-time C dependencies:
         # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev
-        # packages) + liblmdb-dev + libdb-dev, and libclang-dev for
-        # bindgen, which generates the four C backends' declarations;
+        # packages) + libdb-dev, and libclang-dev for
+        # bindgen, which generates the three C backends' declarations;
         # only redb is pure Rust. libglib2.0-dev is a Tier-C
         # requirement: `pinyin_lookup_tokens` /
         # `pinyin_token_get_nth_pronunciation` delegate to
         # `g_array_append_vals` / `g_array_set_size`, so the shipped
         # `.so` NEEDS `libglib-2.0`.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblmdb-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
-      - name: Exactly-one-backend invariant (18-case matrix)
+      - name: Exactly-one-backend invariant (13-case matrix)
         id: matrix-test
         run: |
           set -euo pipefail
@@ -366,7 +359,7 @@ jobs:
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| 18-case matrix | ${{ steps.matrix-test.outputs.elapsed || '—' }}s |"
+            echo "| 13-case matrix | ${{ steps.matrix-test.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   store-backends-gate:
@@ -376,13 +369,13 @@ jobs:
     # `ci-aggregate`, `trailer-lint`, and `trailer-test` rather than this
     # job. It
     # builds and tests nothing; it only aggregates the results of the
-    # five backend children and the backend-matrix job via the
+    # backend children and the backend-matrix job via the
     # documented `needs.<job>.result` semantics. For a matrix upstream,
     # that result is success only when EVERY matrix child succeeded, and
-    # failure if any child failed — so this gate is red unless all five
+    # failure if any child failed — so this gate is red unless all four
     # peer builds, the exactly-one-backend gate and both sanitizer jobs
     # are green.
-    name: store backends (kyotocabinet / redb / tkrzw / lmdb / bdb)
+    name: store backends (kyotocabinet / redb / tkrzw / bdb)
     runs-on: ubuntu-latest
     if: ${{ always() }}
     needs:
@@ -418,7 +411,7 @@ jobs:
             echo ""
             echo "| Upstream job | Result |"
             echo "|---|---|"
-            echo "| store-features (matrix, all five peers) | ${FEATURES_RESULT} |"
+            echo "| store-features (matrix, all four peers) | ${FEATURES_RESULT} |"
             echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
             echo "| tkrzw-sanitizers (ASan + UBSan) | ${SANITIZER_RESULT} |"
             echo "| bdb-sanitizers (ASan + UBSan) | ${BDB_SANITIZER_RESULT} |"

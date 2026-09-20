@@ -83,8 +83,6 @@ fn database_format() -> String {
         "KyotoCabinet".to_owned()
     } else if env::var_os("CARGO_FEATURE_TKRZW").is_some() {
         "Tkrzw".to_owned()
-    } else if env::var_os("CARGO_FEATURE_LMDB").is_some() {
-        "LMDB".to_owned()
     } else {
         "redb".to_owned()
     }

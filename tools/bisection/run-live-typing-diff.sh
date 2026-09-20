@@ -26,7 +26,7 @@
 # else the conventional build locations (system-dir.sh — an unresolvable
 # directory with a present oracle is FATAL, never a silent mini-fixture
 # run). The capi side reads that directory through its own compiled-in
-# store backend: peer-extension tables (.kct/.tkt/.lmdb/.redb) or, on
+# store backend: peer-extension tables (.kct/.tkt/.redb) or, on
 # Kyoto Cabinet and tkrzw builds, the P6 native layout (libpinyin's own
 # file names). interpolation2.text must sit beside the tables. Rounds:
 # LIVETYPING_ROUNDS (default 3).
@@ -91,7 +91,7 @@ fi
 # OXPINYIN_SYSTEM_DIR, then the conventional build locations; an
 # unresolvable dir with a present oracle is FATAL rather than a silent
 # skip or a mini-fixture run. The pre-P6 gate hard-coded the
-# peer-extension names (.kct/.redb/.lmdb/.tkt) and could never pass on
+# peer-extension names (.kct/.redb/.tkt) and could never pass on
 # a default (tkrzw) or Kyoto Cabinet build: datagen writes those
 # backends' tables under libpinyin's own names (pinyin_index.bin,
 # bigram.db, ...), which system_dir_detect_ext now accepts as the "bin"

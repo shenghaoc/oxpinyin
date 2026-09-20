@@ -51,9 +51,6 @@ fn compiled_backend() -> Backend {
     if cfg!(feature = "redb") {
         backends.push(Backend::Redb);
     }
-    if cfg!(feature = "lmdb") {
-        backends.push(Backend::Lmdb);
-    }
     if cfg!(feature = "tkrzw") {
         backends.push(Backend::Tkrzw);
     }

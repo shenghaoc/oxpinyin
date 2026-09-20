@@ -51,7 +51,7 @@ use oxpinyin_user::{PinyinKey, UserLookup, UserStore};
 
 /// File name of a *standalone* user store — `user_store.<ext>`, the
 /// extension naming the compiled-in backend (`kct` Kyoto Cabinet, `tkt`
-/// tkrzw, `lmdb` LMDB, `redb` redb).
+/// tkrzw, `redb` redb, `db` Berkeley DB).
 ///
 /// The **runtime's** user store no longer lives in such a file: it
 /// persists in libpinyin's own user-dir file set
@@ -923,7 +923,7 @@ impl Runtime {
     ///
     /// `system_dir` holds the compiled-in backend's DBMs
     /// (`SystemDbm::file_name` — libpinyin's own names on Kyoto Cabinet,
-    /// tkrzw and Berkeley DB, `<stem>.<ext>` on redb and LMDB), the
+    /// tkrzw and Berkeley DB, `<stem>.<ext>` on redb), the
     /// per-library chunk files, and optionally `table.conf` (λ),
     /// `punct.bin`, and the addon DBM pair. On Kyoto Cabinet, tkrzw and
     /// Berkeley DB an unmodified libpinyin install's `data/` opens as is.

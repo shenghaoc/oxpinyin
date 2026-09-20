@@ -43,7 +43,7 @@ pub type ExtensionVisitor<'a> =
 
 /// An abstraction over the DBM access method, so the `ChewingTable` can
 /// read both libpinyin's raw DBM files (KC/Tkrzw with no table framing)
-/// and oxpinyin's store-backed files (redb/LMDB with table framing).
+/// and oxpinyin's store-backed files (redb with table framing).
 pub trait ChewingDbm {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError>;
 
@@ -79,7 +79,7 @@ pub fn prefix_upper_bound(prefix: &[u8]) -> Option<Vec<u8>> {
 ///
 /// KC and Tkrzw backends skip table framing and hand the key straight
 /// to the underlying library, matching libpinyin's flat keyspace. redb
-/// and LMDB delegate to the well-known `"data"` table.
+/// delegates to the well-known `"data"` table.
 pub struct RawChewingDbm<S> {
     store: S,
 }

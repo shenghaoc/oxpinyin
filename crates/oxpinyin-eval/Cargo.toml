@@ -15,7 +15,7 @@ workspace = true
 # Backend selection forwarded through oxpinyin-data to the store chain (one
 # backend per binary): the real-model path opens the system phrase index and
 # pinyin index in the compiled-in backend's format. Tkrzw is the
-# default selection; `--no-default-features --features {kyotocabinet|redb|lmdb}`
+# default selection; `--no-default-features --features {kyotocabinet|redb|bdb}`
 # picks a peer.
 default = ["tkrzw"]
 kyotocabinet = [
@@ -29,7 +29,6 @@ bdb = [
     "oxpinyin-lambda/bdb",
 ]
 tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-counter/tkrzw", "oxpinyin-lambda/tkrzw"]
-lmdb = ["oxpinyin-data/lmdb", "oxpinyin-counter/lmdb", "oxpinyin-lambda/lmdb"]
 redb = ["oxpinyin-data/redb", "oxpinyin-counter/redb", "oxpinyin-lambda/redb"]
 
 [[bin]]

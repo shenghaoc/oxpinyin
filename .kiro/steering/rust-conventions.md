@@ -23,15 +23,15 @@ config). Graphs use index-based arenas.
 **Backend selection:** compile-time only, exactly one backend per binary
 — `DefaultStore` is a `#[cfg]` alias for whichever backend feature is
 enabled (tkrzw in the default set; `--no-default-features --features
-{kyotocabinet|lmdb|redb}` for a peer), following libpinyin's own
+{kyotocabinet|redb|bdb}` for a peer), following libpinyin's own
 `--with-dbm` model. No runtime dispatch and no fallback: `oxpinyin-store`
 emits a `compile_error!` when zero or more than one backend is enabled.
 
 **Dependencies (maintainer, 2026-09-12):** a Rust library is used as Rust
 (redb; `glib-sys` is the C binding of a C library). The non-Rust database
-backends — Kyoto Cabinet, tkrzw, LMDB — are used through the ABIs their
-maintainers provide, which are C: `kclangc.h`, `tkrzw_langc.h`, `lmdb.h`,
-bound with bindgen over the system headers and linked to the
+backends — Kyoto Cabinet, tkrzw, Berkeley DB — are used through the ABIs
+their maintainers provide, which are C: `kclangc.h`, `tkrzw_langc.h`,
+`db.h`, bound with bindgen over the system headers and linked to the
 distribution's own libraries. Nothing vendors or compiles C or C++ into
 oxpinyin, and the C++ interfaces are never used — a Rust program gains
 nothing from them, and they carry no ABI stability across compilers,

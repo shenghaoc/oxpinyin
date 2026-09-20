@@ -47,14 +47,14 @@ format, seamless with a same-backend libpinyin — landed 2026-09-09
 libpinyin's original DBM — landed 2026-09-12
 (`docs/findings/berkeleydb-backend.md`).
 
-**Storage.** Five backends, compile-time selected, exactly one per
+**Storage.** Four backends, compile-time selected, exactly one per
 binary: tkrzw (default since 2026-09-05), Kyoto Cabinet, Berkeley DB
-(2026-09-12), LMDB, redb (pure-Rust portability fallback for
-macOS/Windows). The other four bind system C libraries — Linux is the
-verified platform, and macOS builds all four against Homebrew
+(2026-09-12), redb (pure-Rust portability fallback for
+macOS/Windows). The other three bind system C libraries — Linux is the
+verified platform, and macOS builds all three against Homebrew
 (`docs/runbooks/backends.md`; the CI peer matrix stays on Linux).
 Select a peer with
-`--no-default-features --features {kyotocabinet|bdb|lmdb|redb}`; the
+`--no-default-features --features {kyotocabinet|bdb|redb}`; the
 feature forwards down the crate chain to store. There is no
 no-backend fallback — `oxpinyin-store` refuses a build with zero or more
 than one backend feature at compile time.

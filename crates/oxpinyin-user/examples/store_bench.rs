@@ -14,7 +14,7 @@
 //! ```text
 //! cargo run -p oxpinyin-user --release --example store_bench
 //! cargo run -p oxpinyin-user --release --example store_bench \
-//!     --no-default-features --features lmdb
+//!     --no-default-features --features redb
 //! ```
 //!
 //! Each scenario runs in a child process (a re-exec of this binary) so
@@ -56,7 +56,7 @@ const PREV_DOMAIN: u32 = 512;
 const CUR_DOMAIN: u32 = 8_192;
 
 /// The peer this build is measuring, taken from the store's own
-/// extension — one authoritative name (`kct` / `redb` / `lmdb` / `tkt`).
+/// extension — one authoritative name (`kct` / `redb` / `tkt` / `db`).
 const PEER_LABEL: &str = oxpinyin_store::DEFAULT_STORE_EXT;
 
 fn main() {
@@ -372,7 +372,7 @@ fn remove_db(path: &Path) {
 /// (apparent bytes, allocated bytes) of the data file at `path`.  On Unix,
 /// the values are `st_size` and `st_blocks` × 512.  Elsewhere, allocation is
 /// unavailable without platform-specific APIs and is reported as zero.
-/// The LMDB `-lock` sidecar is not data and is not counted.
+/// The `-lock` sidecar is not data and is not counted.
 #[cfg(unix)]
 fn file_sizes(path: &Path) -> (u64, u64) {
     use std::os::unix::fs::MetadataExt as _;

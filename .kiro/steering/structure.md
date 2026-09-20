@@ -17,8 +17,8 @@ inclusion: always
 | oxpinyin-runtime | concrete assembly shared by consumers (tables+model+user wiring → Session) | forbid | yes | via capi |
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |
 | oxpinyin-dictool | conversions; standalone vocab exporter over the facade's §9 import/export machinery — pure Rust, no C-ABI dependency (portable for real since that edge was cut) | forbid | yes | yes |
-| oxpinyin-store | ordered byte-KV seam; Tkrzw (default since 2026-09-05), Kyoto Cabinet, Berkeley DB (2026-09-12), LMDB, redb backends — one per binary, compile-time selected; KC/tkrzw/lmdb/bdb are system C-library deps, Linux-verified and macOS-buildable via Homebrew, redb is the pure-Rust portability fallback (macOS/Windows CI runs --no-default-features) | deny | yes | via engine |
-| oxpinyin-datagen | model20 → runtime data compiler for every backend, writing libpinyin's own file formats (libpinyin's names on KC/tkrzw/BDB, `<stem>.<ext>` on redb/LMDB); takes the on-disk layouts from `oxpinyin-data` — the `MemoryChunk`/`SubPhraseIndex` constants and checksum from `chunk_format`, the four DBM row schemas and the library name tables from `row_format`/`system_files`, so reader and writer share one definition | forbid | yes | never |
+| oxpinyin-store | ordered byte-KV seam; Tkrzw (default since 2026-09-05), Kyoto Cabinet, Berkeley DB (2026-09-12), redb backends — one per binary, compile-time selected; KC/tkrzw/bdb are system C-library deps, Linux-verified and macOS-buildable via Homebrew, redb is the pure-Rust portability fallback (macOS/Windows CI runs --no-default-features) | deny | yes | via engine |
+| oxpinyin-datagen | model20 → runtime data compiler for every backend, writing libpinyin's own file formats (libpinyin's names on KC/tkrzw/BDB, `<stem>.<ext>` on redb); takes the on-disk layouts from `oxpinyin-data` — the `MemoryChunk`/`SubPhraseIndex` constants and checksum from `chunk_format`, the four DBM row schemas and the library name tables from `row_format`/`system_files`, so reader and writer share one definition | forbid | yes | never |
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | forbid | yes | never |
 | oxpinyin-testsupport | shared test doubles (fixture Dictionary/LanguageModel) plus the model20 cache locator; dev-lane only — its one non-dev consumer is datagen, which itself never ships | forbid | yes | never |
 | oxpinyin-segment | training segmenter (`ngseg`; `spseg`/`mergeseq` per W9 re-audit) | forbid | yes | never |
@@ -54,7 +54,7 @@ checksummed), `bigram.db`, `punct.bin`, the addon DBM pair, λ from
 on Kyoto Cabinet, tkrzw and Berkeley DB that directory can be an
 unmodified libpinyin install's `data/`, and on every backend it is what
 `oxpinyin-datagen compile` writes. The caller supplies the directory
-(`StoragePaths`); no distro layout is auto-detected. A redb or LMDB build
+(`StoragePaths`); no distro layout is auto-detected. A redb build
 reads the same records from its own container (`<stem>.<ext>`) and cannot
 open a libpinyin install directly.
 

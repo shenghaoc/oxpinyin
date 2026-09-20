@@ -52,7 +52,7 @@ pub const UNIGRAM_TOTAL: &str = "user_unigram_total";
 
 /// (stem, libpinyin file name, is-hash) for the six system DBMs — the same
 /// naming `oxpinyin-data`'s `SystemDbm` applies: libpinyin's own names on
-/// the libpinyin DBM backends, `<stem>.<ext>` on redb and LMDB.
+/// the libpinyin DBM backends, `<stem>.<ext>` on redb.
 const SYSTEM_DBMS: [(&str, &str, bool); 6] = [
     ("pinyin_index", "pinyin_index.bin", false),
     ("phrase_index", "phrase_index.bin", false),
@@ -63,7 +63,7 @@ const SYSTEM_DBMS: [(&str, &str, bool); 6] = [
 ];
 
 /// The w3 fixture directory for the compiled-in backend; the directory is
-/// named by the store extension (`kct`, `tkt`, `lmdb`, `redb`).
+/// named by the store extension (`kct`, `tkt`, `redb`).
 pub fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/w3")
@@ -557,8 +557,8 @@ impl Drop for BenchRoot {
     }
 }
 
-/// Removes a store file plus its `-lock` sidecar, the `backend_bench` pattern
-/// (LMDB writes the sidecar on every open).
+/// Removes a store file plus its `-lock` sidecar, the `backend_bench`
+/// pattern (a writable tkrzw session leaves the sidecar behind).
 fn remove_db_files(path: &Path) {
     let _ = std::fs::remove_file(path);
     let mut lock = path.as_os_str().to_os_string();

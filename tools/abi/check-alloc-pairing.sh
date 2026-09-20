@@ -227,15 +227,15 @@ prepare_fixtures() {
 	local fix_root="$REPO_ROOT/fixtures/w3" ext=""
 	if [[ -n ${OXPINYIN_CAPI_BACKEND_EXT:-} ]]; then
 		case "$OXPINYIN_CAPI_BACKEND_EXT" in
-		kct | redb | tkt | lmdb) ext=$OXPINYIN_CAPI_BACKEND_EXT ;;
+		kct | redb | tkt) ext=$OXPINYIN_CAPI_BACKEND_EXT ;;
 		*)
-			echo "fatal: OXPINYIN_CAPI_BACKEND_EXT='$OXPINYIN_CAPI_BACKEND_EXT' is not one of: kct redb tkt lmdb" >&2
+			echo "fatal: OXPINYIN_CAPI_BACKEND_EXT='$OXPINYIN_CAPI_BACKEND_EXT' is not one of: kct redb tkt" >&2
 			exit 2
 			;;
 		esac
 	else
 		local candidate
-		for candidate in tkt kct redb lmdb; do
+		for candidate in tkt kct redb; do
 			[[ -d $fix_root/$candidate ]] && ext=$candidate && break
 		done
 	fi

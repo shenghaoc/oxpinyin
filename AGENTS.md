@@ -184,8 +184,6 @@ points at them:
   export, pin-built tools, opencc) are `#[ignore = "needs …"]` and fail
   on a missing input, never skip: `docs/testing/README.md`. Do not add a
   self-skipping test.
-- **LMDB fixture sidecars** (`*.lmdb-lock`) are gitignored; one in
-  `git status` is a regressed ignore pattern: `docs/runbooks/backends.md`.
 - **Oracle C-API training** goes through `Session::train_top`, never
   `pinyin_train` directly: `docs/runbooks/oracle.md`.
 - **Backend-specific benches** carry `required-features`; run one with

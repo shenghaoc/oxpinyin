@@ -242,7 +242,7 @@ pub fn export_dir() -> PathBuf {
 ///
 /// libpinyin's own on Kyoto Cabinet, tkrzw and Berkeley DB
 /// (`pinyin_index.bin`, `phrase_index.bin`, `bigram.db`),
-/// `<stem>.<ext>` on redb and LMDB (`oxpinyin_data::SystemDbm` is the
+/// `<stem>.<ext>` on redb (`oxpinyin_data::SystemDbm` is the
 /// authority; this crate sits below it).
 #[must_use]
 pub fn system_dbm_names() -> [String; 3] {

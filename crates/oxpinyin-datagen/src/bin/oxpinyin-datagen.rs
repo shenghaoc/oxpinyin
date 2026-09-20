@@ -3,7 +3,7 @@
 //!
 //! ```text
 //! oxpinyin-datagen compile [--model-dir DIR] [--out-dir DIR]
-//!                          [--backend redb|lmdb|tkrzw|kyotocabinet] [--mini]
+//!                          [--backend redb|tkrzw|kyotocabinet] [--mini]
 //!                          [--tables system,addon,punct]
 //! ```
 //!
@@ -12,7 +12,7 @@
 //! `phrase_index.bin`, `bigram.db`, `punct.bin`, the `addon_*` pair, and
 //! `table.conf` — written through the selected backend. On Kyoto Cabinet
 //! and tkrzw the files carry libpinyin's names and are its drop-in set;
-//! on redb and LMDB the same records live in that backend's container
+//! on redb the same records live in that backend's container
 //! under `<stem>.<ext>`. The chunk files are backend-independent.
 //!
 //! The model directory is discovered exactly as the differential harness
@@ -51,7 +51,7 @@ impl Default for Options {
             out_dir: None,
             // Default selection from `Backend::DEFAULT` (Tkrzw), which
             // mirrors `oxpinyin_store::DefaultStore` under the workspace's
-            // default feature set. Each of the peer backends (redb, lmdb,
+            // default feature set. Each of the peer backends (redb,
             // kyotocabinet) is reachable through the corresponding
             // `--no-default-features --features <backend>` build plus
             // `--backend <backend>` at the CLI.
@@ -72,7 +72,7 @@ struct Tables {
 fn usage() -> ! {
     eprintln!(
         "usage: oxpinyin-datagen compile [--model-dir DIR] [--out-dir DIR] \
-         [--backend redb|lmdb|tkrzw|kyotocabinet] [--mini] \
+         [--backend redb|tkrzw|kyotocabinet] [--mini] \
          [--tables system,addon,punct]"
     );
     std::process::exit(2);

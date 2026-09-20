@@ -32,7 +32,7 @@
 #                         `.kct` because this script's own `cargo build
 #                         -p oxpinyin-capi` uses default features → KC,
 #                         so the built `.so`'s compiled-in backend can
-#                         only read `.kct`. Point at a redb/lmdb/tkrzw
+#                         only read `.kct`. Point at a redb/tkrzw
 #                         dir and the driver will fail to open it.
 
 set -u

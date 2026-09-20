@@ -54,7 +54,7 @@ fi
 # works across every differential, so a whole sweep needs one export
 # rather than a different variable per runner (see system-dir.sh).
 # The tables are looked for in the extension the built capi opens
-# (system_dir_detect_ext: .kct by default, .tkt/.lmdb/.redb for an
+# (system_dir_detect_ext: .kct by default, .tkt/.redb for an
 # explicit --features build), not in a hard-coded one.
 SYSTEM="${UNCOVERED_SYSTEM:-${OXPINYIN_SYSTEM_DIR:-}}"
 if [[ -z "$SYSTEM" ]] || ! system_dir_detect_ext "$SYSTEM" >/dev/null; then

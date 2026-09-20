@@ -37,12 +37,12 @@
 //! `0000000102010000` that extends it, and the decoded values run
 //! `0x01000000, 0x00010000, 0x00ff0000, 0x00000100, …`, which is not
 //! ascending. The shared key-ordering suite asserts this backend walks
-//! identically to redb, LMDB, tkrzw and Kyoto Cabinet over exactly
+//! identically to redb, tkrzw and Kyoto Cabinet over exactly
 //! those keys.
 //!
 //! # Atomicity
 //!
-//! Weaker than redb's and LMDB's, and for the same reason as tkrzw's.
+//! Weaker than redb's, and for the same reason as tkrzw's.
 //! libpinyin uses no Berkeley DB environment and no transactions — every
 //! `open` passes `NULL` for both — so a standalone `DB` handle has no
 //! transaction to commit. [`crate::WriteStore::write`] therefore buffers
@@ -368,8 +368,8 @@ impl WriteStore for BdbStore {
         // place; `DB->compact` exists in 5.3 but wants to move data under
         // a transaction, which this backend deliberately does not open
         // (see the module note). Stable storage is what `compact` owes —
-        // `DB->sync` — and the file not shrinking is the same shape as
-        // the LMDB backend's successful compact.
+        // `DB->sync` — and the file not shrinking mirrors Kyoto
+        // Cabinet's compact, which also only syncs.
         self.db.sync()
     }
 }

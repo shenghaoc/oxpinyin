@@ -62,6 +62,15 @@ the bench is for.
 
 ## Results — S5
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-lmdb-backends`, commit subject `refactor(store): remove the LMDB backend`).** S5 was measured with
+> `--no-default-features --features lmdb` (the Harness section below
+> says why): the `lmdb` backend this record timed no longer exists at
+> HEAD, so the S5 rows are not reproducible as written — the mechanism
+> they measure (`export_phrases`'s single-walk pronunciation collection,
+> #341) is backend-agnostic in `oxpinyin-user` and survives; only the
+> measurement vehicle is gone. The figures stand as measured at
+> `ab56dc79`/`a81570d6`.
+
 | Bench ID | Baseline `ab56dc79` | After `a81570d6` | Δ | criterion verdict | stddev / mean |
 |---|---:|---:|---:|---|---|
 | `user_export_phrases/phrases/64` | 40.83 µs | 17.77 µs | −56.5 % | improved (p < 0.05) | 1.3 % / 1.6 % |

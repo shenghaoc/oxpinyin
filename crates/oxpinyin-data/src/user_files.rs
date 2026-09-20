@@ -16,7 +16,7 @@
 //!
 //! On the two backends libpinyin itself builds against (Kyoto Cabinet,
 //! tkrzw) the DBM names are libpinyin's own, so a same-backend pair is
-//! byte-compatible in both directions. On redb and LMDB the same records
+//! byte-compatible in both directions. On redb the same records
 //! live in that backend's container under `<stem>.<ext>` — a libpinyin
 //! those backends never had, which [`UserTableInfo`]'s `database format`
 //! conformance line records explicitly: nothing upstream ships can read
@@ -114,8 +114,7 @@ impl UserDbm {
     }
 
     /// The file name for the compiled-in backend: libpinyin's own on
-    /// Kyoto Cabinet, tkrzw and Berkeley DB, `<stem>.<ext>` on redb and
-    /// LMDB.
+    /// Kyoto Cabinet, tkrzw and Berkeley DB, `<stem>.<ext>` on redb.
     #[must_use]
     pub fn file_name(self) -> String {
         if DEFAULT_STORE_IS_LIBPINYIN_DBM {
@@ -160,7 +159,7 @@ pub struct SystemVersions {
     pub model_data_version: u32,
     /// `database format:` — the DBM the writing libpinyin was built
     /// against (`BerkeleyDB`, `KyotoCabinet`, `Tkrzw`; this build's own
-    /// token on redb/LMDB).
+    /// token on redb).
     pub database_format: &'static str,
 }
 
