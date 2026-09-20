@@ -1,6 +1,6 @@
 # Backends — building under each store backend
 
-`oxpinyin-store` compiles exactly one of four peer backends per binary;
+`oxpinyin-store` compiles exactly one peer backend per binary;
 the store refuses zero or more than one with a `compile_error!`. tkrzw is
 the workspace default. The crate map (`.kiro/steering/structure.md`) and
 `docs/findings/backend-selection-audit.md` carry the why.
@@ -26,8 +26,8 @@ selects tkrzw, and two backends at once is refused.
 | bdb | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg ships no `.pc`, so point the overrides at it: `OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix)/opt/berkeley-db@5/include"` and `OXPINYIN_BDB_LIB_DIR="$(brew --prefix)/opt/berkeley-db@5/lib"` (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
 | redb | none | none |
 
-Three of the four backends bind a **system** C library through its own
-header, and only redb is pure Rust. oxpinyin vendors none of them: there
+All but redb bind a **system** C library through its own header, and
+only redb is pure Rust. oxpinyin vendors none of them: there
 is no copy of Kyoto Cabinet, of tkrzw or of Berkeley DB
 compiled into any oxpinyin artifact, so each library is the one the
 distribution ships and patches. A build with the development package missing fails at

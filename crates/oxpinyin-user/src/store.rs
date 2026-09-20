@@ -361,7 +361,7 @@ pub struct GenericUserStore<S: WriteStore> {
 /// compiled against.
 ///
 /// tkrzw is the default selection under the workspace's default feature
-/// set; the other three peers are selected with `--no-default-features
+/// set; the others are selected with `--no-default-features
 /// --features {kyotocabinet|redb|bdb}`.
 pub type UserStore = GenericUserStore<DefaultStore>;
 
@@ -2366,7 +2366,7 @@ mod tests {
     }
 
     // Exactly-one-backend: the store's compile-time guards refuse
-    // combined builds, so at most one of these five peer test suites
+    // combined builds, so at most one of these peer test suites
     // is compiled per build; each peer's own suite exercises the
     // generic user store's contract over that peer.
     #[cfg(feature = "redb")]
@@ -2378,13 +2378,13 @@ mod tests {
     #[cfg(feature = "bdb")]
     user_store_tests!(bdb, oxpinyin_store::BdbStore, "db");
 
-    // ── Cross-backend equivalence (one peer per build, four in CI) ──
+    // ── Cross-backend equivalence (one peer per build, all peers in CI) ──
 
     /// Under exactly-one-backend, cross-peer comparisons cannot happen
     /// in-process. Instead each build proves the *current* peer, driven
     /// through the generic user store, produces bigram walks and
     /// successor scans in ascending (prev, cur) integer order — the
-    /// big-endian key property. Running all four peer builds (KC / redb
+    /// big-endian key property. Running every peer build (KC / redb
     /// / Tkrzw / BDB) through CI gives the same four-way equivalence
     /// coverage the earlier in-process check gave.
     #[test]

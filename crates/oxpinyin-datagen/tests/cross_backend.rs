@@ -5,7 +5,7 @@
 //! build selects (exactly one per build — the store refuses two), reads
 //! every DBM back row by row through the store, and opens the directory
 //! with `oxpinyin_data::SystemDictionary` — the production reader — for
-//! point lookups. CI runs this once per peer build; together the four
+//! point lookups. CI runs this once per peer build; together the
 //! runs are the backend matrix's data-level row.
 //!
 //! Requires the model cache, so the test is `#[ignore]`d: run it with

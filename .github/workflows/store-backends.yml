@@ -1,28 +1,28 @@
 name: Store backends
 
-# Backend coverage for the four peer store backends on a rolling
-# toolchain. The four peers (Kyoto Cabinet, redb, tkrzw, Berkeley
+# Backend coverage for the peer store backends on a rolling
+# toolchain. The peers (Kyoto Cabinet, redb, tkrzw, Berkeley
 # DB) are equal implementations behind the store's trait surface; tkrzw
 # is the workspace's default selection. Exactly one peer is compiled per
 # build — the exactly-one-backend invariant is enforced at compile
 # time by two `compile_error!` guards in `crates/oxpinyin-store/src/lib.rs`
 # — so cross-peer equivalence is proven by running the SAME test
-# suite through five separate builds, one per peer.
+# suite through separate builds, one per peer.
 #
 # Five jobs:
-#   - store-features is a matrix over the four peer backends. Each child
+#   - store-features is a matrix over the peer backends. Each child
 #     runs the workspace's backend-relevant crates (everything but the
 #     seven backend-independent training crates — see the test step)
 #     under exactly ONE peer, on its
-#     own runner, so the four sweeps run in PARALLEL (fail-fast: false,
+#     own runner, so the sweeps run in PARALLEL (fail-fast: false,
 #     max-parallel: 5) instead of sequentially inside one job. Every pass
 #     decodes real queries through the fixture tables, not just the store's
 #     own unit tests. The matrix value only selects one of the fixed,
 #     repository-controlled cargo invocations (see the case in the test
 #     step); no command is built from untrusted event input.
 #   - backend-matrix is an INDEPENDENT job — it has no needs edge to the
-#     matrix, so it schedules concurrently with all four backend children.
-#     It runs `tools/store/backend-matrix.sh`, which proves the four valid
+#     matrix, so it schedules concurrently with all the backend children.
+#     It runs `tools/store/backend-matrix.sh`, which proves the valid
 #     peer selections each `cargo check --workspace` cleanly AND that
 #     every one of the six pairwise combinations plus a three-way
 #     combination plus the zero-backend build is refused by the
@@ -124,7 +124,7 @@ jobs:
     # step) — a backend that "passes" only in the store's own unit tests
     # and never reaches the decode path does not count. The
     # alternate-backend children name the store's feature with
-    # member/feature syntax because the root manifest is virtual. The four
+    # member/feature syntax because the root manifest is virtual. The
     # children run in parallel; the historical single-job serialisation of
     # these sweeps is gone.
     name: store backend (${{ matrix.backend }})
@@ -164,7 +164,7 @@ jobs:
       # clippy/rustfmt components preserve the toolchain shape this job
       # always installed. Each backend child
       # gets a distinct cache identity via the extra key; without it the
-      # four feature configurations would contend one automatic key. Each
+      # feature configurations would contend one automatic key. Each
       # runner has its own isolated checkout and target dir — no shared
       # writable target across the matrix.
       - uses: ./.github/actions/bootstrap
@@ -286,13 +286,13 @@ jobs:
     # in" build is architecturally impossible (a `compile_error!` in
     # `crates/oxpinyin-store/src/lib.rs` refuses it), so the same
     # `tools/store/backend-matrix.sh` script that developers run locally
-    # runs here instead: it proves the four valid peer selections each
+    # runs here instead: it proves the valid peer selections each
     # `cargo check --workspace` cleanly AND that every one of the six
     # pairwise combinations, a three-way combination, and the
     # zero-backend build are refused by the guards.
     #
     # Independent job: no needs edge to store-features, so it runs
-    # concurrently with the four backend children.
+    # concurrently with the backend children.
     name: backend-matrix (exactly-one-backend gate)
     runs-on: ubuntu-latest
     container:
@@ -323,7 +323,7 @@ jobs:
           rust-cache-key: backend-matrix
 
       - name: Install build dependencies (apt)
-        # The matrix `cargo check`s the four valid peer selections in
+        # The matrix `cargo check`s the valid peer selections in
         # turn, so it needs every peer's build-time C dependencies:
         # libkyotocabinet-dev + libtkrzw-dev (+ its compression -dev
         # packages) + libdb-dev, and libclang-dev for
@@ -351,7 +351,7 @@ jobs:
             echo ""
             echo "Result: **$([ '${{ job.status }}' = 'success' ] && echo 'passed' || echo 'FAILED')**"
             echo ""
-            echo "\`tools/store/backend-matrix.sh\` — proves the four valid"
+            echo "\`tools/store/backend-matrix.sh\` — proves the valid"
             echo "peer selections each \`cargo check --workspace\` cleanly and"
             echo "that every multi-peer combination plus the zero-backend"
             echo "build is refused by the exactly-one-backend guards."
@@ -371,8 +371,8 @@ jobs:
     # backend children and the backend-matrix job via the
     # documented `needs.<job>.result` semantics. For a matrix upstream,
     # that result is success only when EVERY matrix child succeeded, and
-    # failure if any child failed — so this gate is red unless all four
-    # peer builds, the exactly-one-backend gate and both sanitizer jobs
+    # failure if any child failed — so this gate is red unless every
+    # peer build, the exactly-one-backend gate and both sanitizer jobs
     # are green.
     name: store backends (kyotocabinet / redb / tkrzw / bdb)
     runs-on: ubuntu-latest
@@ -410,7 +410,7 @@ jobs:
             echo ""
             echo "| Upstream job | Result |"
             echo "|---|---|"
-            echo "| store-features (matrix, all four peers) | ${FEATURES_RESULT} |"
+            echo "| store-features (matrix, every peer) | ${FEATURES_RESULT} |"
             echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
             echo "| tkrzw-sanitizers (ASan + UBSan) | ${SANITIZER_RESULT} |"
             echo "| bdb-sanitizers (ASan + UBSan) | ${BDB_SANITIZER_RESULT} |"

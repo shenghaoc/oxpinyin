@@ -3,7 +3,7 @@
 //! This crate defines an ordered byte-KV interface split into two
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
 //! emptiness check) and [`WriteStore`] (creation, atomic multi-table
-//! writes, compaction) — and provides four peer implementations behind
+//! writes, compaction) — and provides the peer implementations behind
 //! it: [`KcStore`] on Kyoto Cabinet, [`RedbStore`] on redb,
 //! [`TkrzwStore`] on tkrzw, and [`BdbStore`] on Berkeley DB.
 //! All four are first-class and interchangeable: any oxpinyin binary
@@ -19,7 +19,7 @@
 //!
 //! Keys are ordered by ascending **byte** order (`memcmp` on the raw stored
 //! key bytes) and nothing else — the store never decodes a key, so it has no
-//! notion of integer order.  All four backends satisfy exactly this: redb's
+//! notion of integer order.  Every backend satisfies exactly this: redb's
 //! `Key for &[u8]` is a byte compare; the tkrzw backend installs no comparator, so `TreeDBM` uses its default
 //! `LexicalKeyComparator` (plain unsigned byte order); and the Kyoto Cabinet
 //! backend opens `TreeDB` with no `rcomp` tuning parameter, exactly as
@@ -42,7 +42,7 @@
 
 // ── Exactly-one-backend invariant, enforced at compile time ────────────
 //
-// The four store backends (kyotocabinet, redb, tkrzw, bdb) are peer
+// The store backends (kyotocabinet, redb, tkrzw, bdb) are peer
 // implementations behind the store's trait surface, and every oxpinyin
 // build has exactly one of them. Cargo features are additive under
 // unification, so a plausible-looking `cargo build --features redb`
@@ -860,7 +860,7 @@ impl WriteTxn for RedbWriteTxn<'_> {
 
 // ── The default backend: compile-time selection ───────────────────────
 //
-// One backend per oxpinyin binary. The four backend implementations
+// One backend per oxpinyin binary. The backend implementations
 // (Kyoto Cabinet, redb, tkrzw, Berkeley DB) are peers behind the
 // store's trait interface, so `DefaultStore` resolves to a single
 // concrete type at compile time and everything above it is already
@@ -1034,7 +1034,7 @@ fn map_compaction_error(e: redb::CompactionError) -> StoreError {
 
 #[cfg(test)]
 mod tests {
-    // Each of the five peer backends can produce its own use-line tests
+    // Each peer backend can produce its own use-line tests
     // — the imports below are gated to whichever peer is compiled. Under
     // the exactly-one-backend invariant, at most one peer is enabled per
     // build, so at most one branch of each `cfg` fires.
@@ -1622,7 +1622,7 @@ mod tests {
     // its own fixture writer. A read-only backend would invoke only
     // `store_read_tests!`. Each group is gated by the peer's feature —
     // the exactly-one-backend guards refuse combined builds, so at most
-    // one of these four groups is ever compiled.
+    // one of these groups is ever compiled.
     #[cfg(feature = "redb")]
     store_read_tests!(redb_read, RedbStore, RedbStore, "redb");
     #[cfg(feature = "redb")]
@@ -1674,7 +1674,7 @@ mod tests {
 
     // ── Default-backend policy: mechanical invariants ──────────────────
     //
-    // The workspace policy: the four peer backends (KC, redb,
+    // The workspace policy: the peer backends (KC, redb,
     // tkrzw, BDB) are equal implementations behind the store's trait
     // surface; tkrzw is the default *selection* (the feature enabled by
     // the workspace's default set), not a privileged one. These tests
@@ -2059,8 +2059,8 @@ mod tests {
     // byte order must diverge from integer order across the 256
     // boundary. Under the exactly-one-backend invariant the tests
     // cannot cross-compare two peers in one process, so each build
-    // runs them against its own `DefaultStore`. Running all four peer
-    // builds (KC / redb / Tkrzw / BDB) through CI gives the same
+    // runs them against its own `DefaultStore`. Running every peer
+    // build (KC / redb / Tkrzw / BDB) through CI gives the same
     // coverage the earlier in-process three-way check gave: each peer
     // independently satisfies the byte-order contract, and the
     // expected walk order is computed mathematically (sort the keys)
@@ -2286,8 +2286,8 @@ mod tests {
         //
         // Under exactly-one-backend, cross-peer equivalence cannot be
         // proven in one process. Instead each build proves *its* peer
-        // matches the mathematical byte-ordered sequence; running all
-        // five peer builds through CI proves the five-way equivalence.
+        // matches the mathematical byte-ordered sequence; running every
+        // peer build through CI proves the four-way equivalence.
 
         #[test]
         fn for_each_matches_the_byte_ordered_sequence_le_keys() {
