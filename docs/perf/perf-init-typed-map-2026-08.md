@@ -27,6 +27,9 @@ comparison). rustc 1.97.1, valgrind 3.26.0.
 
 ## Why: the leftover the profiles named
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The typed-map change was measured against redb 4.1 `table.iter()`; the map structure itself is backend-independent. The figures stand as measured at the recorded pin.
+
+
 Post-#129/#121 the W8 8-cycle Callgrind still showed
 `__memcmp_avx2_movbe` at 249.0e6 self-`Ir` (10.75%), and the caller tree
 attributed **83.5e6 of it (3,768,186 calls) to

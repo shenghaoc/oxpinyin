@@ -38,8 +38,7 @@ pub fn repo_root() -> PathBuf {
 /// The exported-table directory, from `PINYIN_EXPORT_DIR` or the default,
 /// when it holds all three tables in the compiled-in backend's format.
 ///
-/// Kyoto Cabinet `.kct` by default, `.redb` under
-/// `--no-default-features --features redb`; `None` otherwise (so callers
+/// Kyoto Cabinet `.kct` by default; `None` otherwise (so callers
 /// can skip).
 #[must_use]
 pub fn export_dir() -> Option<PathBuf> {

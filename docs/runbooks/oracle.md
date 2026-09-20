@@ -47,7 +47,7 @@ The script writes a manifest the differential runners compare against
 The Rust side reads a system data directory it compiled itself:
 
 ```sh
-cargo run -p oxpinyin-datagen --no-default-features --features redb -- compile --backend redb \
+cargo run -p oxpinyin-datagen -- compile \
     --model-dir "$PINYIN_MODEL_DIR" --out-dir /tmp/oxpinyin-export
 export PINYIN_EXPORT_DIR=/tmp/oxpinyin-export
 ```

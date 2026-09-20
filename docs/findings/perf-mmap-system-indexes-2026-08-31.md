@@ -6,6 +6,9 @@ a measurement record** · Continues
 
 ## Disposition (2026-09-01)
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The `load_profile` breakdown was measured on redb (same host, release, full frozen export); the mmap mechanism it argues for is backend-independent. The figures stand as measured at the recorded pin.
+
+
 The custom sysimage format was **rejected because it violates the
 project's same-file-format / direct-replacement requirement**
 (`docs/findings/compatibility-policy.md`: "the same binary interface,

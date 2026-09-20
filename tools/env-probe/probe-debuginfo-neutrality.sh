@@ -8,7 +8,7 @@
 #
 #   bash tools/env-probe/probe-debuginfo-neutrality.sh [backend-feature]
 #
-# Default backend is redb, the pure-Rust peer, so the probe runs on a
+# Default backend is tkrzw (since 2026-09-05), so the probe runs on a
 # host with no DBM development packages installed.
 #
 # The comparison itself (full normalized instruction text for the
@@ -44,7 +44,7 @@
 
 set -euo pipefail
 
-BACKEND=${1:-redb}
+BACKEND=${1:-tkrzw}
 PKG=${PKG:-oxpinyin-capi}
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 LIB="$REPO/tools/bisection/debuginfo-neutrality-lib.sh"

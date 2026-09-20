@@ -48,12 +48,6 @@ tkrzw = [
     "oxpinyin-user/tkrzw",
     "oxpinyin-facade/tkrzw",
 ]
-redb = [
-    "oxpinyin-runtime/redb",
-    "oxpinyin-data/redb",
-    "oxpinyin-user/redb",
-    "oxpinyin-facade/redb",
-]
 # Compiles out the two fixture hooks (`oxpinyin_init_for_fixtures`,
 # `oxpinyin_test_set_user_bigram`) that are not in pinyin.h and exist for
 # the ABI tests and the tools/bisection drivers. Enabled only when building

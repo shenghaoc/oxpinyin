@@ -27,7 +27,6 @@ init/RAM reduction) in progress.
 cargo fmt --all --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
-cargo test --locked --workspace --no-default-features --features redb  # portable fallback
 ```
 
 ## Layout

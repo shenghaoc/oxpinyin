@@ -22,6 +22,9 @@ noise. Criterion medians below are 20 samples after 500 ms warmup.
 
 ## Baseline (serial, one thread)
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The full-table-load and slurp figures were measured over redb; the parse figures are backend-independent. The figures stand as measured.
+
+
 | Work | Result |
 |---|---|
 | W2 batch `type_pinyin` (10 465 inputs) | 1.87–1.99 s |

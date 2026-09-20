@@ -43,4 +43,3 @@ bdb = [
     "oxpinyin-user/bdb",
 ]
 tkrzw = ["oxpinyin-runtime/tkrzw", "oxpinyin-user/tkrzw"]
-redb = ["oxpinyin-runtime/redb", "oxpinyin-user/redb"]

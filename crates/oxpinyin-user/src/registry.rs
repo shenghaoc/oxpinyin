@@ -1,6 +1,6 @@
 //! Process-global live-handle registry for [`crate::UserStore`].
 //!
-//! redb refuses a second write handle to a file already open in this process.
+//! the backend refuses a second write handle to a file already open in this process.
 //! A second [`crate::UserStore::open`] of the same path therefore reuses the
 //! live handle (shared counts and shared §4 dirty flag) instead of failing —
 //! the C ABI's degrade-to-`None` would otherwise silently disable learning.
@@ -75,7 +75,7 @@ pub struct StoreInner<S: WriteStore> {
     pub(crate) phrase_generation: AtomicU64,
     /// First gate on the decode read path: `false` answers `count_delta` and
     /// `unigram_delta` with zero from this one atomic, taking no mutex and
-    /// opening no redb transaction. Recomputed at `open` and maintained only
+    /// opening no store transaction. Recomputed at `open` and maintained only
     /// by `UserStore::mark_committed_write`.
     pub(crate) has_user_data: AtomicBool,
     /// The libpinyin user-dir target when this store persists in the

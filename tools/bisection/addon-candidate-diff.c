@@ -2,7 +2,7 @@
  * addon-candidate-diff.c — W11 addon-candidate differential.
  *
  * Load addon library 4 (art) and print ADDON_CANDIDATE rows for "erhuang".
- * Compared exactly between oxpinyin-capi (public-ABI addon_4_*.redb) and
+ * Compared exactly between oxpinyin-capi (public-ABI addon_4_* tables) and
  * the pin (art.bin via pinyin_load_addon_phrase_library).
  *
  * Usage: ./addon-candidate-diff <path-to-so> <systemdir>

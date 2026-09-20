@@ -1,5 +1,5 @@
 //! Phrase prediction: prefixes → user-bigram successors → prefix suggestions,
-//! then punctuation prepended from the Option A `punct.redb`.
+//! then punctuation prepended from the Option A punct table.
 //!
 //! Reproduces `pinyin_guess_predicted_candidates` (`pinyin.cpp:2411-2451`)
 //! and the punctuation prefix of

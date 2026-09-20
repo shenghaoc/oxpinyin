@@ -12,11 +12,11 @@ description = "model20 → oxpinyin runtime tables compiler for every storage ba
 # Tkrzw is the default selected backend (matching oxpinyin-store's
 # workspace-default feature set) so a plain
 # `cargo run -p oxpinyin-datagen -- compile ...` produces `.tkt` tables.
-# The other three producers (redb, kyotocabinet, bdb) are peer
+# The other producers (kyotocabinet, bdb) are peer
 # implementations behind the same `WriteStore` trait; each is chosen
 # explicitly with `--no-default-features --features
-# {redb|kyotocabinet|bdb}` on the build and `--backend
-# {redb|kyotocabinet|bdb}` on the run. Only the producers whose
+# {kyotocabinet|bdb}` on the build and `--backend
+# {kyotocabinet|bdb}` on the run. Only the producers whose
 # cargo features are enabled are available at runtime.
 default = ["tkrzw"]
 # Enable the Kyoto Cabinet producer (`--backend kyotocabinet`); mirrors
@@ -26,10 +26,6 @@ kyotocabinet = ["oxpinyin-store/kyotocabinet", "oxpinyin-testsupport/kyotocabine
 bdb = ["oxpinyin-store/bdb", "oxpinyin-testsupport/bdb"]
 # Enable the Tkrzw producer (`--backend tkrzw`); mirrors oxpinyin-store.
 tkrzw = ["oxpinyin-store/tkrzw", "oxpinyin-testsupport/tkrzw"]
-# The redb peer producer; forwarded to oxpinyin-store, which now gates
-# redb behind the same feature. Select with
-# `--no-default-features --features redb`.
-redb = ["oxpinyin-store/redb", "oxpinyin-testsupport/redb"]
 
 [lints]
 workspace = true

@@ -25,7 +25,7 @@ fn fixture_root() -> PathBuf {
 /// Opens the committed fixture set the compiled backend reads.
 fn open_context(option_word: u32) -> ContextCore {
     let root = fixture_root();
-    for ext in ["tkt", "kct", "db", "redb"] {
+    for ext in ["tkt", "kct", "db"] {
         let dir = root.join(ext);
         if !dir.is_dir() {
             continue;

@@ -139,6 +139,8 @@ storage-tier operations (train/write/open) that matrix did not measure.
 > (lp-BDB, lp-KC, lp-tkrzw, ox-redb, ox-tkrzw, ox-KC) stays
 > reproducible through the commands in "Regression protection". The
 > figures stand as measured at the commits this record names.
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The `ox-redb` column of every table below — and the fsync-vs-NOSYNC durability asymmetry the executive summary records (redb paid fsync in the timed path) — measured a backend that no longer exists at HEAD; those cells are not reproducible as written. The LMDB note above covers the `ox-LMDB` column; every other column stays reproducible.
+
 
 ### Table 1 — wall-clock (µs, median [95% CI])
 

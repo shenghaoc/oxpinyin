@@ -37,12 +37,12 @@
 //! `0000000102010000` that extends it, and the decoded values run
 //! `0x01000000, 0x00010000, 0x00ff0000, 0x00000100, …`, which is not
 //! ascending. The shared key-ordering suite asserts this backend walks
-//! identically to redb, tkrzw and Kyoto Cabinet over exactly
+//! identically to tkrzw and Kyoto Cabinet over exactly
 //! those keys.
 //!
 //! # Atomicity
 //!
-//! Weaker than redb's, and for the same reason as tkrzw's.
+//! Weak, and for the same reason as tkrzw's.
 //! libpinyin uses no Berkeley DB environment and no transactions — every
 //! `open` passes `NULL` for both — so a standalone `DB` handle has no
 //! transaction to commit. [`crate::WriteStore::write`] therefore buffers

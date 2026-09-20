@@ -9,8 +9,8 @@ set -uo pipefail
 # run-differentials.sh — run the oxpinyin↔libpinyin oracle differentials
 # against a built pinned oracle (libpinyin 2.11.92, Tkrzw backend, verified
 # model20 data). Wires the PINYIN_* env vars the env-gated differential tests
-# read, then runs them with the pure-Rust `redb` backend so no C DBM is needed
-# on the Rust side.
+# read, then runs them with the default tkrzw backend (the host's
+# libtkrzw through pkg-config).
 #
 # Prerequisites (see docs/testing/oracle-environment.md and the build recipe
 # below):
@@ -28,9 +28,8 @@ set -uo pipefail
 #      evals2.text (a segmented, null_token-separated corpus in the system
 #      token space — e.g. the pin's own `ngseg` over raw text) in that dir;
 #      without them the evaluator gate is reported as skipped, not failed.
-#   3. The oxpinyin-format model export (redb), produced by:
-#        cargo run -p oxpinyin-datagen --no-default-features --features redb -- \
-#            compile --backend redb \
+#   3. The oxpinyin-format model export (tkrzw), produced by:
+#        cargo run -p oxpinyin-datagen -- compile \
 #            --model-dir <model20 dir> --out-dir <export dir>
 #
 # Usage:
@@ -95,7 +94,7 @@ need_exe() {
 
 need_dir "$libpinyin" "--libpinyin: built libpinyin 2.11.92 tree"
 need_dir "$data" "--data: built system data dir"
-need_dir "$export_dir" "--export: oxpinyin redb export"
+need_dir "$export_dir" "--export: oxpinyin tkrzw export"
 [[ -n $model ]] && need_dir "$model" "--model: extracted model20 dir"
 ((missing)) && exit 2
 
@@ -108,7 +107,7 @@ need_file "$L/src/.libs/libpinyin.so.15" "the built shared object (make)"
 need_file "$data/table.conf" "system table.conf"
 need_file "$data/phrase_index.bin" "gen_binary_files output"
 need_file "$data/pinyin_index.bin" "gen_binary_files output"
-need_file "$export_dir/datagen-manifest.txt" "oxpinyin-datagen compile --backend redb"
+need_file "$export_dir/datagen-manifest.txt" "oxpinyin-datagen compile"
 [[ -n $model ]] && need_file "$model/interpolation2.text" "model20 export"
 
 # Segment utils.
@@ -153,25 +152,25 @@ export PINYIN_EXPORT_DIR="$export_dir"
 # The evaluator gate: wired only when its two extra inputs exist. The pin
 # side runs in the data dir (its .bin indexes, bigram.db, evals2.text); the
 # native SystemDictionary reads the oxpinyin export of the same model, so
-# the index paths point at the redb export, not the pin's .bin files.
+# the index paths point at the tkrzw export, not the pin's .bin files.
 eval_gate=
 if [[ -f $data/bigram.db && -f $data/evals2.text ]]; then
 	eval_gate=1
 	need_file "$data/interpolation2.text" "the interpolation2.text bigram.db was imported from"
-	need_file "$export_dir/pinyin_index.redb" "oxpinyin-datagen output"
-	need_file "$export_dir/phrase_index.redb" "oxpinyin-datagen output"
+	need_file "$export_dir/pinyin_index.bin" "oxpinyin-datagen output"
+	need_file "$export_dir/phrase_index.bin" "oxpinyin-datagen output"
 	((missing)) && exit 2
 	export PINYIN_EVAL_DATA="$data"
 	export PINYIN_EVAL_INTERPOLATION2="$data/interpolation2.text"
 	export PINYIN_EVAL_TABLE_CONF="$data/table.conf"
-	export PINYIN_EVAL_PINYIN_INDEX="$export_dir/pinyin_index.redb"
-	export PINYIN_EVAL_PHRASE_INDEX="$export_dir/phrase_index.redb"
+	export PINYIN_EVAL_PINYIN_INDEX="$export_dir/pinyin_index.bin"
+	export PINYIN_EVAL_PHRASE_INDEX="$export_dir/phrase_index.bin"
 fi
 
 # ---- the suites -------------------------------------------------------------
-# The backend-forwarding crates run with the pure-Rust redb backend; oxpinyin-kmm
-# is backend-agnostic (no features).
-feat=(--no-default-features --features redb)
+# The backend-forwarding crates run with the default tkrzw selection;
+# oxpinyin-kmm is backend-agnostic (no features).
+feat=()
 report() {
 	grep -E "live parity|parity:|value-identical|skipping|test result|diverges|stale|panicked|assertion|left:|right:" || true
 }

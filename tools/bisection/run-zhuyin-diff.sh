@@ -5,7 +5,7 @@ set -euo pipefail
 # the pinned libzhuyin oracle and the oxpinyin libzhuyin.so.15, diffing the
 # logs.  The two sides read DIFFERENT systemdirs: the oracle side reads the
 # pin-built C++ tables (its own prefix's lib/libpinyin/data); the Rust side
-# reads an oxpinyin-native converted systemdir (redb tables +
+# reads an oxpinyin-native converted systemdir (tkrzw tables +
 # interpolation2.text) that carries the same model20 data.
 #
 # Non-vacuous verification: the driver must produce real output for BOTH
@@ -25,7 +25,7 @@ set -euo pipefail
 #   ZHUYIN_ORACLE_DATA   pin-built oracle's C++ data dir (default $PREFIX/lib/libpinyin/data)
 #   ZHUYIN_RUST_SO       the oxpinyin libzhuyin.so.15 (default $REPO_ROOT/target/debug/libzhuyin_capi.so)
 #   ZHUYIN_RUST_DATA     an oxpinyin-native converted systemdir (REQUIRED —
-#                         the oxpinyin-converted redb tables + interpolation2.text).
+#                         the oxpinyin-converted tkrzw tables + interpolation2.text).
 #   ZHUYIN_USER_DIR      caller-supplied user-data dir for the RUST side. If
 #                         set, the script uses it as-is and does NOT remove it;
 #                         otherwise each side gets its own fresh scratch dir
@@ -62,8 +62,8 @@ fi
 
 if [[ -z "$RUST_DATA" || ! -d "$RUST_DATA" ]]; then
     echo "SKIP: ZHUYIN_RUST_DATA is unset or not a directory" >&2
-    echo "  point it at an oxpinyin-native converted systemdir (pinyin_index.redb," >&2
-    echo "  phrase_index.redb, bigram.redb, punct.redb + interpolation2.text)." >&2
+    echo "  point it at an oxpinyin-native converted systemdir (pinyin_index.tkt," >&2
+    echo "  phrase_index.tkt, bigram.tkt, punct.tkt + interpolation2.text)." >&2
     exit 3
 fi
 

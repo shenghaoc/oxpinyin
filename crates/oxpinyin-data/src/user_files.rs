@@ -16,7 +16,7 @@
 //!
 //! On the two backends libpinyin itself builds against (Kyoto Cabinet,
 //! tkrzw) the DBM names are libpinyin's own, so a same-backend pair is
-//! byte-compatible in both directions. On redb the same records
+//! byte-compatible in both directions.
 //! live in that backend's container under `<stem>.<ext>` — a libpinyin
 //! those backends never had, which [`UserTableInfo`]'s `database format`
 //! conformance line records explicitly: nothing upstream ships can read
@@ -114,7 +114,7 @@ impl UserDbm {
     }
 
     /// The file name for the compiled-in backend: libpinyin's own on
-    /// Kyoto Cabinet, tkrzw and Berkeley DB, `<stem>.<ext>` on redb.
+    /// Kyoto Cabinet, tkrzw and Berkeley DB.
     #[must_use]
     pub fn file_name(self) -> String {
         if DEFAULT_STORE_IS_LIBPINYIN_DBM {
@@ -159,7 +159,7 @@ pub struct SystemVersions {
     pub model_data_version: u32,
     /// `database format:` — the DBM the writing libpinyin was built
     /// against (`BerkeleyDB`, `KyotoCabinet`, `Tkrzw`; this build's own
-    /// token on redb).
+    /// token).
     pub database_format: &'static str,
 }
 
@@ -697,8 +697,9 @@ mod tests {
         }
         assert!(!other.is_conform(&versions));
         assert!(other.known_database_format());
-        // An oxpinyin-only token is known to no upstream build.
-        assert!(!conform_with("Redb").known_database_format());
+        // A token no upstream build ever emits — a permanent negative
+        // case for the known-database-format check.
+        assert!(!conform_with("NotADbmLibrary").known_database_format());
 
         // The open-counter rebuild limit.
         let tired = UserTableInfo {

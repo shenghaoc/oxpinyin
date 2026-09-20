@@ -16,7 +16,7 @@ workspace = true
 # per binary; see oxpinyin-store's [features] for the model): the segment and
 # evaluation stages open `phrase_index.<ext>` in the compiled-in backend's
 # format. Tkrzw is the default selection; `--no-default-features
-# --features {kyotocabinet|redb|bdb}` picks a peer. oxpinyin-kmm is backend-agnostic.
+# --features {kyotocabinet|bdb}` picks a peer. oxpinyin-kmm is backend-agnostic.
 default = ["tkrzw"]
 kyotocabinet = [
     "oxpinyin-segment/kyotocabinet",
@@ -38,13 +38,6 @@ tkrzw = [
     "oxpinyin-lambda/tkrzw",
     "oxpinyin-eval/tkrzw",
     "oxpinyin-data/tkrzw",
-]
-redb = [
-    "oxpinyin-segment/redb",
-    "oxpinyin-counter/redb",
-    "oxpinyin-lambda/redb",
-    "oxpinyin-eval/redb",
-    "oxpinyin-data/redb",
 ]
 
 [[bin]]

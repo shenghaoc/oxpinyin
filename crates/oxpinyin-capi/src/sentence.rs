@@ -85,7 +85,7 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
 /// ```
 ///
 /// Phrase prediction, then punctuation candidates prepended from
-/// `punct.redb` (`pinyin.cpp:2454-2498`). Always returns `true`, matching
+/// the punct table (`pinyin.cpp:2454-2498`). Always returns `true`, matching
 /// upstream, even when the prefix matched no phrase-table suffix.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(

@@ -26,7 +26,7 @@
 #               keep resolving (same file name), and are asserted to
 #   --features  the cargo feature list of the build that produced the
 #               staticlib, for the store-backend link flags (same precedence
-#               as the crates: tkrzw > kyotocabinet > bdb > redb;
+#               as the crates: tkrzw > kyotocabinet > bdb;
 #               default tkrzw, the workspace default)
 #
 # Linux + GNU ld only: the ELF versioning this implements has no macOS
@@ -85,7 +85,7 @@ done
 [ -f "$DEST" ] || { echo "error: installed object not found: $DEST" >&2; exit 1; }
 
 # The store backend the staticlib was built with, from the feature list —
-# the same precedence the crates' build.rs uses. Every backend except redb
+# the same precedence the crates' build.rs uses. Every backend
 # leaves C-library references in the staticlib that the shared-object link
 # must resolve; prefer pkg-config (it drags the backend's own dependencies,
 # e.g. tkrzw's -llzma) and fall back to the plain -l name build.rs uses when
@@ -93,13 +93,12 @@ done
 BACKEND="tkrzw"
 for feature in $(echo "$FEATURES" | tr ',' ' '); do
   case "$feature" in
-    tkrzw|kyotocabinet|bdb|redb) BACKEND="$feature" ;;
+    tkrzw|kyotocabinet|bdb) BACKEND="$feature" ;;
   esac
 done
 
 backend_libs() {
   case "$1" in
-    redb) return 0 ;;
     tkrzw)         pkg-config --libs tkrzw 2>/dev/null || echo -ltkrzw ;;
     kyotocabinet)  pkg-config --libs kyotocabinet 2>/dev/null || echo -lkyotocabinet ;;
     bdb)           echo -ldb ;;

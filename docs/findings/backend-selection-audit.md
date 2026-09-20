@@ -335,3 +335,29 @@ justified above and covered by tests. Every other axis matches.
       Every store-reaching crate forwards its own `{kyotocabinet, redb,
       lmdb, tkrzw}` features down onto `oxpinyin-store`, so the guards
       fire wherever a multi-peer combination first reaches the store.
+
+
+## Follow-up: the 2026-09-20 peer removals (2026-09-20 UTC)
+
+Recorded after the fact, the pinned body above untouched — it describes
+the peer set as it stood when audited, and an in-place edit could leave
+neither the historical record nor the current tree coherent. Two peers
+left:
+
+- **LMDB** — branch `refactor/drop-redb-lmdb-backends`, removed
+  2026-09-20 (PR #497). It bound the system liblmdb, was never the default,
+  and no lane, runner or tool defaulted to it.
+- **redb** — branch `refactor/drop-redb-backend`, removed 2026-09-20. It
+  had no upstream counterpart (nothing it did was oracle-verifiable),
+  its store files were oxpinyin's own artifacts from a configuration
+  never released, and its "pure-Rust peer" CI role ended when the
+  portable lanes moved to real C store backends per OS
+  (`ci/portable-lanes-on-a-c-backend`: Homebrew tkrzw on macOS, vcpkg
+  Berkeley DB 4.8.30 on Windows).
+
+The surviving peer set is Kyoto Cabinet, tkrzw (the default) and
+Berkeley DB — exactly the DBMs libpinyin itself builds against, so the
+drop-in surface and the selection model above now coincide. The
+exactly-one invariant, the feature-forwarding architecture and the
+`backend-matrix.sh` guard carry over unchanged, with the removed peers
+dropped from their enumerations.

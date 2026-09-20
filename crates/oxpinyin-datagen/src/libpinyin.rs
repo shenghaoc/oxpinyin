@@ -10,7 +10,7 @@
 //! `user_phrase_index.bin`); this module keeps the datagen paths stable.
 //!
 //! Only the KC/Tkrzw producers emit this schema for the *system* tables.
-//! redb keeps the native oxpinyin schema there — no drop-in
+//! no drop-in
 //! requirement exists for them (`docs/findings/datagen-compat-2026-09-01.md`);
 //! the *user* tables use this schema on every backend (drop-in task 9).
 

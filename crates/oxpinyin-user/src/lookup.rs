@@ -419,7 +419,7 @@ mod tests {
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!(
-            "oxpinyin-user-lookup-{tag}-{}.redb",
+            "oxpinyin-user-lookup-{tag}-{}.store",
             std::process::id()
         ))
     }

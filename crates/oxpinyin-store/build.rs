@@ -5,7 +5,7 @@
 //! `--no-default-features` — and with no C backend feature enabled —
 //! this script does nothing: no bindgen, no extra library. Selecting a
 //! peer backend explicitly (`--no-default-features --features
-//! {kyotocabinet|redb|bdb}`) skips the C-binding step for the ones
+//! {kyotocabinet|bdb}`) skips the C-binding step for the ones
 //! it does not build.
 //!
 //! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`).

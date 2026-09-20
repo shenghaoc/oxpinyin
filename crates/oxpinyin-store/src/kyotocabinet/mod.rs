@@ -19,7 +19,7 @@
 //! `TreeDB` with no `rcomp` tuning parameter uses Kyoto Cabinet's default
 //! record comparator, `LEXICALCOMP` — byte-wise, shorter key first on a
 //! shared prefix. The cross-backend conformance tests in `super` assert
-//! this backend walks identically to redb and the others over keys
+//! this backend walks identically to the other peers over keys
 //! that cross 256 in the first and in a later element — where byte order
 //! and integer order genuinely differ.
 //!
@@ -42,8 +42,7 @@
 //!
 //! A power cut *during* the commit itself can still tear the
 //! transaction — TreeDB writes through no write-ahead log — the same
-//! residual the tkrzw backend documents; redb alone rolls a torn
-//! commit back on the next open.
+//! residual the tkrzw backend documents.
 //!
 //! # Threading
 //!

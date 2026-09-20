@@ -23,6 +23,9 @@ not execute on the macOS host.
 
 ## Measurement host
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The comparative redb column in the tables below measured a backend that no longer exists at HEAD; the KC columns stay reproducible.
+
+
 | Property | Value |
 |---|---|
 | Container | Docker Desktop 4.88.1 on Apple Silicon (M-series) |

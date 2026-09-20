@@ -4,8 +4,8 @@
 //! The unit tests call the `#[unsafe(no_mangle)]` symbols directly (they are
 //! ordinary crate functions when the crate is compiled for testing) and read
 //! the counts back through the instance's own store handle — the committed
-//! state, exactly as a T7 export iterator would observe it. (redb 4.1
-//! refuses a second in-process write handle on the same file, so a
+//! state, exactly as a T7 export iterator would observe it. (The store
+//! backend refuses a second in-process write handle on the same file, so a
 //! reopen-and-read would be the wrong shape anyway.) The system tables are
 //! the committed mini fixture (`fixtures/w3`); no model bytes are added by
 //! these tests.

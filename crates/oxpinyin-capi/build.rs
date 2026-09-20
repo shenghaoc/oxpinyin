@@ -141,15 +141,13 @@ fn bake_pkg_config_template() {
 /// fcitx's cmake probe reads the right backend. Otherwise, the token of
 /// the peer backend feature this crate has enabled: tkrzw under the
 /// default features (the default since 2026-09-05, before that Kyoto
-/// Cabinet), kyotocabinet / bdb / redb when their `--no-default-features
+/// Cabinet), kyotocabinet or bdb when their `--no-default-features
 /// --features <peer>` is selected. The chain below is a fixed precedence
 /// over the arms as written; it is not `oxpinyin_store::DefaultStore`'s
 /// `#[cfg]` order, and does not need to be — the store's
 /// exactly-one-backend guard refuses any build that enables two of these
-/// features, so more than one arm can never be live. The surviving
-/// backends' tokens are upstream's own (`BerkeleyDB` / `KyotoCabinet` /
-/// `Tkrzw`); redb's oxpinyin-only spelling is lowercase because every
-/// other oxpinyin-owned spelling of it on disk is.
+/// features, so more than one arm can never be live. The tokens are
+/// upstream's own (`BerkeleyDB` / `KyotoCabinet` / `Tkrzw`).
 fn database_format() -> String {
     if let Ok(explicit) = env::var("LIBPINYIN_DATABASE_FORMAT")
         && !explicit.trim().is_empty()
@@ -162,10 +160,8 @@ fn database_format() -> String {
         "KyotoCabinet".to_owned()
     } else if env::var_os("CARGO_FEATURE_TKRZW").is_some() {
         "Tkrzw".to_owned()
-    } else if env::var_os("CARGO_FEATURE_BDB").is_some() {
-        "BerkeleyDB".to_owned()
     } else {
-        "redb".to_owned()
+        "BerkeleyDB".to_owned()
     }
 }
 

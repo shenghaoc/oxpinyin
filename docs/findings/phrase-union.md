@@ -11,6 +11,9 @@ changed by this document.
 
 ## 1. Scope
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The table below maps `SystemDictionary` lookups onto a `pinyin_index.redb` / `phrase_index.redb` pair — the naming of that backend's files; today's equivalent names are the selected DBM's own.
+
+
 W11 makes user, network, and addon phrases surface in candidates, makes
 `pinyin_load_addon_phrase_library` real, and closes the prediction gap
 (`pinyin_guess_predicted_candidates_with_punctuations`,

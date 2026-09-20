@@ -22,6 +22,9 @@ going red.
 
 ## The one rule
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The ordering benchmarks below include a redb leg; the byte-order law they all confirm is backend-independent and still enforced per surviving peer.
+
+
 **The store orders keys by ascending byte order — `memcmp` on the raw stored
 key bytes — and nothing else.** `ReadStore::range` and `for_each` visit rows in
 exactly that order; `range` bounds are compared the same way. This is a pure

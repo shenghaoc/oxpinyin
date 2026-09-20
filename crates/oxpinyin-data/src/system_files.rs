@@ -5,7 +5,7 @@
 //! per-library chunk files in `table.conf`. On a backend libpinyin itself
 //! builds against — Kyoto Cabinet or tkrzw — those are the names the
 //! runtime opens, so an unmodified libpinyin install's `data/` is the
-//! runtime's input. On redb the same records live in that
+//! runtime's input.
 //! backend's own container under `<stem>.<ext>`.
 //!
 //! The chunk files are backend-independent (`MemoryChunk` on every build
@@ -60,7 +60,7 @@ impl SystemDbm {
     }
 
     /// The file name for the compiled-in backend: libpinyin's own on
-    /// Kyoto Cabinet, tkrzw and Berkeley DB, `<stem>.<ext>` on redb.
+    /// Kyoto Cabinet, tkrzw and Berkeley DB.
     #[must_use]
     pub fn file_name(self) -> String {
         if DEFAULT_STORE_IS_LIBPINYIN_DBM {

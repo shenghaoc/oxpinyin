@@ -69,9 +69,9 @@ rm -f "$CAPI_LOG" "$ORACLE_LOG"
 
 if [ -n "${OPTION_SWEEP_CAPI_DATA:-}" ]; then
     CAPI_DATA="$OPTION_SWEEP_CAPI_DATA"
-elif [ -f /tmp/oxpinyin-export/pinyin_index.redb ]; then
+elif [ -f /tmp/oxpinyin-export/pinyin_index.bin ]; then
     CAPI_DATA="$(mktemp -d /tmp/traindiff-capi-data-XXXXXX)"
-    for table in pinyin_index.redb phrase_index.redb bigram.redb; do
+    for table in pinyin_index.bin phrase_index.bin bigram.db; do
         cp "/tmp/oxpinyin-export/$table" "$CAPI_DATA/$table"
     done
     for model_dir in \

@@ -56,11 +56,11 @@ use crate::table_conf::Lambda;
 /// Error conditions for bigram lookups.
 #[derive(Debug)]
 pub enum LmError {
-    /// A table-level error (I/O, redb, etc.).
+    /// A table-level error (I/O, backend, etc.).
     Table(TableError),
     /// Value bytes did not parse under the frozen bigram schema.
     Parse(String),
-    /// The user-count overlay failed (a redb read on the user store).
+    /// The user-count overlay failed (a read on the user store).
     User(String),
 }
 

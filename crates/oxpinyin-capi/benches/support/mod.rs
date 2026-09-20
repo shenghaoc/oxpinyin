@@ -192,7 +192,7 @@ pub fn staged_system_dir() -> &'static Path {
             // Name the staged tables exactly as the export dir carries them
             // and the runtime opens them (`SystemDbm::file_name`):
             // libpinyin's own on Kyoto Cabinet, tkrzw and Berkeley DB,
-            // `<stem>.<ext>` on redb.
+            // backend-named.
             for name in oxpinyin_testsupport::model_cache::system_dbm_names() {
                 link_or_copy(&export.join(&name), &staged.join(&name));
             }

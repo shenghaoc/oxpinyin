@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # backend-matrix.sh — prove the exactly-one-backend invariant.
 #
-# The oxpinyin store backends (kyotocabinet, redb, tkrzw, bdb)
+# The oxpinyin store backends (kyotocabinet, tkrzw, bdb)
 # are peer implementations behind one trait surface, and every build
 # has exactly one of them. This script drives that invariant end-to-end:
 #
@@ -36,7 +36,6 @@ fail=0
 # Every valid selection must compile.
 for peer in "" \
     "--no-default-features --features kyotocabinet" \
-    "--no-default-features --features redb" \
     "--no-default-features --features tkrzw" \
     "--no-default-features --features bdb"; do
     label=${peer:-default (tkrzw)}
@@ -52,15 +51,12 @@ for peer in "" \
 done
 
 # Every invalid combination must be refused by the compile_error guard.
-# Six pairs plus a three-way plus a zero-backend case.
+# Every pair plus the three-way plus the zero-backend case.
 for combo in \
-    "kyotocabinet,redb" \
     "kyotocabinet,tkrzw" \
     "kyotocabinet,bdb" \
-    "redb,tkrzw" \
-    "redb,bdb" \
     "tkrzw,bdb" \
-    "kyotocabinet,redb,bdb"; do
+    "kyotocabinet,tkrzw,bdb"; do
     printf '── invalid: --features %s\n' "$combo"
     if cargo check --locked -p oxpinyin-store --no-default-features --features "$combo" \
         >"$LOG" 2>&1; then

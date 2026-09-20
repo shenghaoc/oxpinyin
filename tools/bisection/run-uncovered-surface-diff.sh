@@ -32,7 +32,7 @@
 # $HOME/.local/opt/pinyin-oracle) and on a real-unigram capi system dir
 # (UNCOVERED_SYSTEM) holding pinyin_index, phrase_index, bigram,
 # interpolation2.text, AND punct — the tables in the extension of the
-# capi's compiled backend (.kct by default; .tkt/.redb), punct being the Option A export
+# capi's compiled backend (.kct by default; .tkt), punct being the Option A export
 # (token LE → NUL-terminated UTF-8, docs/findings/prediction-punct.md) of
 # the SAME model20 punct.table the oracle's punct.bin was built from, so
 # the punct rows are compared over matched tables (370 rows / 272 tokens).

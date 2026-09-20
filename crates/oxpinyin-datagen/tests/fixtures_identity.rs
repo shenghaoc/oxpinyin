@@ -28,7 +28,6 @@ fn compiled_backend() -> Backend {
         (cfg!(feature = "kyotocabinet"), Backend::KyotoCabinet),
         (cfg!(feature = "bdb"), Backend::BerkeleyDb),
         (cfg!(feature = "tkrzw"), Backend::Tkrzw),
-        (cfg!(feature = "redb"), Backend::Redb),
     ]
     .into_iter()
     .find_map(|(on, backend)| on.then_some(backend))

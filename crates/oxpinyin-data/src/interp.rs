@@ -18,7 +18,7 @@
 //! The phrase token is the same 32-bit `phrase_token_t` the exported tables
 //! use, so a parsed record joins directly onto the dictionary entries. This
 //! module reads only the `\1-gram` section: the system bigram already arrives
-//! verbatim in `bigram.redb` (`docs/findings/data-layer-export.md`), and the
+//! verbatim in the bigram table (`docs/findings/data-layer-export.md`), and the
 //! `\2-gram` section of the text export adds nothing the decoder does not
 //! already have.
 //!

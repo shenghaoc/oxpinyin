@@ -42,17 +42,17 @@
 # ── Backend-extension helpers ────────────────────────────────────────────
 #
 # The peer-backend tables the capi opens carry the compiled backend's own
-# extension (.kct/.tkt/.redb). Runners that copy or gate on those
+# extension (.kct/.tkt/.db). Runners that copy or gate on those
 # tables use these helpers instead of hard-coding an extension.
 
 # The native table extensions the capi can be compiled against, in the
 # compile-time precedence order of oxpinyin-store's DefaultStore cfg chain
-# (kyotocabinet > tkrzw > redb; see "Native data-file naming under
+# (kyotocabinet > tkrzw > bdb; see "Native data-file naming under
 # the compile-time backend" in docs/findings/upstream-divergences.md). The
 # order matters only when one directory holds complete sets in several
 # extensions (the old fixtures/w3 flat layout did): the first match is then
 # the default build's backend.
-SYSTEM_DIR_BACKEND_EXTS="kct tkt redb"
+SYSTEM_DIR_BACKEND_EXTS="kct tkt db"
 
 # The peer-backend table stems the capi opens from a system directory.
 # The first three are mandatory and must share one extension: the engine
@@ -70,7 +70,7 @@ SYSTEM_DIR_CORE_STEMS="pinyin_index phrase_index bigram"
 # install's data/ — the core trio under libpinyin's own names
 # (pinyin_index.bin, phrase_index.bin, bigram.db), not peer-extension
 # tables. detect_ext reports this layout as the pseudo-extension "bin";
-# redb builds have no native path and never see it. The
+# every peer has the native path. The
 # backend set is the three libpinyin-native DBMs: Kyoto Cabinet, tkrzw
 # and Berkeley DB (the store's bdb feature; datagen's out-dir "db").
 SYSTEM_DIR_NATIVE_CORE="pinyin_index.bin phrase_index.bin bigram.db"
@@ -118,8 +118,7 @@ system_dir_capi_ext() {
 		sed -n 's/^oxpinyin-store feature "\([a-z]*\)".*/\1/p' | sort -u); do
 		case $feature in
 		kyotocabinet) [[ -z $ext ]] && ext=kct ;;
-		tkrzw) [[ -z $ext || $ext == redb ]] && ext=tkt ;;
-		redb) [[ -z $ext ]] && ext=redb ;;
+		tkrzw) [[ -z $ext ]] && ext=tkt ;;
 		bdb) [[ -z $ext ]] && ext=db ;;
 		esac
 	done
@@ -133,7 +132,7 @@ system_dir_capi_ext() {
 #
 # Echoes the extension under which all three core tables exist. When the
 # capi's backend is known (system_dir_capi_ext) only that extension
-# counts: a complete .redb set is no use to a .kct capi. When it is not,
+# counts: a complete .tkt set is no use to a .kct capi. When it is not,
 # the directory is scanned in precedence order and the first complete set
 # wins. A directory holding both a peer set and the P6 native trio
 # resolves to the peer set. With no peer set, a kct-, tkt- or db-built
@@ -141,8 +140,8 @@ system_dir_capi_ext() {
 # the answer is the pseudo-extension "bin"; the fallback needs a known
 # backend because P6 covers the three libpinyin-native DBMs — Kyoto
 # Cabinet, tkrzw and Berkeley DB (the store's bdb feature; datagen's
-# out-dir name: "db") — while redb builds cannot open libpinyin's
-# files, and without cargo there is no built capi to speak of. Echoes
+# out-dir name: "db"), and without cargo there is no built capi to
+# speak of. Echoes
 # nothing and returns 1 when there is no complete core set.
 system_dir_detect_ext() {
 	local dir=$1 ext stem exts capi_ext
@@ -230,7 +229,6 @@ resolve_system_dir() {
 		for candidate in \
 			"$repo_root/target/datagen/kct" \
 			"$repo_root/target/datagen/tkt" \
-			"$repo_root/target/datagen/redb" \
 			"$repo_root/target/datagen/db" \
 			/tmp/oxpinyin-export; do
 			if [[ -f $candidate/gb_char.bin ]]; then
@@ -266,7 +264,7 @@ resolve_system_dir() {
 		printf 'Looked at, in order:\n'
 		printf '  $%s          (this runner'"'"'s own variable)\n' "$var_name"
 		printf '  $OXPINYIN_SYSTEM_DIR   (set once for a whole sweep)\n'
-		printf '  %s/target/datagen/{kct,tkt,redb,db}\n' "$repo_root"
+		printf '  %s/target/datagen/{kct,tkt,db}\n' "$repo_root"
 		printf '  /tmp/oxpinyin-export\n'
 		printf '\n'
 		printf 'A usable directory is a system data directory for the compiled-in\n'
@@ -298,15 +296,15 @@ system_dir_require_complete() {
 	# A system data directory holds the chunk files, table.conf, and the
 	# DBMs under the compiled-in backend's names: libpinyin's own
 	# (pinyin_index.bin, bigram.db, ...) on Kyoto Cabinet, tkrzw and
-	# Berkeley DB, <stem>.<ext> on redb.
+	# Berkeley DB, each under the backend's own names.
 	for file in gb_char.bin table.conf; do
 		[[ -f $dir/$file ]] || missing+=("$file")
 	done
 	local found_index=
-	for file in pinyin_index.bin pinyin_index.kct pinyin_index.tkt pinyin_index.redb; do
+	for file in pinyin_index.bin pinyin_index.kct pinyin_index.tkt pinyin_index.db; do
 		[[ -f $dir/$file ]] && found_index=$file
 	done
-	[[ -n $found_index ]] || missing+=("pinyin_index.{bin,kct,tkt,redb}")
+	[[ -n $found_index ]] || missing+=("pinyin_index.{bin,kct,tkt,db}")
 	# The core trio must be complete in ONE layout: an index table whose
 	# siblings are missing is a half-assembled directory, refused here
 	# rather than at the first mid-run open failure. The native trio

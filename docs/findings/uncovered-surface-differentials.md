@@ -21,6 +21,9 @@ here; the differential exiting non-zero **is** the deliverable.
 
 ## Reproduction
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The live-typing provisioning snippets below name `*.redb` table files; the equivalent provisioning today uses the tkrzw export's `*.tkt`.
+
+
 ```bash
 # assemble a real-unigram system dir once: the four live-typing files
 # (pinyin_index.redb, phrase_index.redb, bigram.redb, interpolation2.text)

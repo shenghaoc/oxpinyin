@@ -15,6 +15,9 @@ summarised at the end so the replacement is legible on its own.
 
 ## Approach (historical — how the frozen tables were derived)
 
+> **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** This finding froze the export schemas when redb was a live target; the schemas for the surviving DBMs are unchanged, and the redb container schema is historical.
+
+
 Every value in the tables frozen under `fixtures/w3/` was obtained from the
 pinned oracle (`docs/testing/oracle-environment.md`) **through its public
 C ABI** — the same header subset frozen in `docs/testing/oracle-ffi-seam.md`,

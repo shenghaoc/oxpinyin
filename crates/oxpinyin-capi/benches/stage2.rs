@@ -191,7 +191,7 @@ impl Drop for TempStorePath {
 
 fn user_store_count_delta(criterion: &mut Criterion) {
     let path = std::env::temp_dir().join(format!(
-        "oxpinyin-stage2-count-delta-{}.redb",
+        "oxpinyin-stage2-count-delta-{}.store",
         std::process::id()
     ));
     let _ = std::fs::remove_file(&path);

@@ -12,8 +12,7 @@ comparable within one container on one host; every published snapshot
 | crate | bench | needs |
 | --- | --- | --- |
 | oxpinyin-capi | `stage2` | the export (`PINYIN_EXPORT_DIR`), the C-ABI surface |
-| oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,bdb,redb}` | `--features <backend>` (each is `required-features`-gated) |
-| oxpinyin-store | `redb_is_empty` | the named backend |
+| oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,bdb}` | `--features <backend>` (each is `required-features`-gated) |
 | oxpinyin-store | `kyotocabinet_bnum` | `--features kyotocabinet,bench-internal`; **an installed libpinyin `data/` via `OXPINYIN_BNUM_DATA_DIR`** for meaningful numbers (see below) |
 | oxpinyin-user | `export_phrases`, `phrase_read` | the export |
 | pinyin-oracle | `scan_perf`, `dbm_bench`, `alloc_profile` | the export, model20 (`dbm_bench` also the bench oracles) |
@@ -22,7 +21,7 @@ Run one bench by name; without `--bench <name>` cargo also runs the lib
 under libtest, which rejects criterion flags:
 
 ```sh
-cargo bench -p oxpinyin-store --no-default-features --features redb --bench backend_matrix_redb
+cargo bench -p oxpinyin-store --no-default-features --features tkrzw --bench backend_matrix_tkrzw
 cargo bench -p oxpinyin-capi --bench stage2 -- --profile-time 10
 ```
 

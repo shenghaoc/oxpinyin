@@ -96,6 +96,9 @@ tells users to reset by deleting its `user.conf`:
 - **Backend actually changed, data loss taken for granted.** BDB-built
   libpinyin (Debian stable, Ubuntu) against these lanes, redb/LMDB
   builds, KC↔tkrzw transitions: fresh start, the norm libpinyin's own
+  ecosystem uses *(historical as of 2026-09-20: the redb/LMDB builds named here no longer exist —
+  removed in `refactor/drop-redb-lmdb-backends` and `refactor/drop-redb-backend`; the
+  BDB-vs-lanes and KC↔tkrzw examples remain live)*. (Debian's BerkeleyDB→Tkrzw switch carried a
   ecosystem uses (Debian's BerkeleyDB→Tkrzw switch carried a
   `debian/NEWS` warning; model-version bumps wipe via `check_format`).
   A distro whose users cross a backend boundary by installing a

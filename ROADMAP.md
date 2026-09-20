@@ -122,18 +122,18 @@ parked.
   Kyoto Cabinet had been the default since 2026-08-29 — RHEL 10.2 ships
   `tkrzw-devel` but not `kyotocabinet-devel`, which made the KC default
   unbuildable from source on the primary development machine). The
-  supported oxpinyin store backends — tkrzw, Kyoto Cabinet, redb and
+  supported oxpinyin store backends — tkrzw, Kyoto Cabinet and
   Berkeley DB —
   are peer implementations behind one `ReadStore`/`WriteStore` trait
   surface, and any single build compiles in exactly one of them
   (`DefaultStore`; `oxpinyin-store` refuses a build with zero or more
   than one backend feature at compile time). tkrzw is the feature in the
   workspace's default set; the others are selected explicitly with
-  `--no-default-features --features {kyotocabinet|redb|bdb}`. redb
-  is the pure-Rust portability fallback; KC/tkrzw/BDB are C
-  dependencies. System data files carry libpinyin's own names on Kyoto
-  Cabinet, tkrzw and Berkeley DB (the drop-in set) and `<stem>.<ext>` on
-  redb; the user dir is libpinyin's own file set under the same
+  `--no-default-features --features {kyotocabinet|bdb}`.
+  KC/tkrzw/BDB are C dependencies. System data files carry libpinyin's
+  own names on Kyoto
+  Cabinet, tkrzw and Berkeley DB (the drop-in set); the user dir is
+  libpinyin's own file set under the same
   naming rule (`user.conf` names the backend family, and a non-conforming
   profile is wiped on open as upstream's `check_format` does). Switching
   backends is a storage-format transition — the runtime does not
@@ -145,7 +145,7 @@ parked.
 
 - **W15 LANDED.** The data pipeline inversion is complete: runtime tables
   are compiled natively from the canonical pinned `model20` archive for every
-  storage backend (tkrzw, Kyoto Cabinet, redb, Berkeley DB) — no
+  storage backend (tkrzw, Kyoto Cabinet, Berkeley DB) — no
   producer consumes libpinyin-generated runtime data. Implemented in
   `crates/oxpinyin-datagen`; all the backend producers are feature-gated
   in its `Cargo.toml`. The retired `oxpinyin-migrate` route (oracle ABI
@@ -160,7 +160,7 @@ parked.
   against the pin), `pinyin_index.bin`, `phrase_index.bin`, `bigram.db`,
   `punct.bin`, the `addon_*` pair and `table.conf` — through the selected
   backend; on Kyoto Cabinet, tkrzw and Berkeley DB under libpinyin's
-  names, on redb as the same records in that backend's container
+  names
   (`docs/findings/datagen-compat-2026-09-01.md`; the pre-P6 native
   schema and its serializers are gone). The production runtime reads
   those files directly through lazy readers — a handle plus a mmap per
