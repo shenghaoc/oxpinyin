@@ -80,6 +80,11 @@ use crate::StoreError;
     // transmute integer types rustc 1.97's `unnecessary_transmutes`
     // (warn-by-default) flags inside generated code we cannot edit.
     unnecessary_transmutes,
+    // `clippy::all` does not reach the restriction group, and bindgen's
+    // generated bitfield accessors carry bare `unsafe` blocks with no
+    // safety comments — a lint this crate cannot satisfy in a file it
+    // does not write. Scoped to the generated module only.
+    clippy::undocumented_unsafe_blocks,
     clippy::all
 )]
 mod sys {

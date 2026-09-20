@@ -118,7 +118,18 @@ parked.
 
 ### Workstream notes (recorded as decisions settle)
 
-- **tkrzw is the default selected backend** (05688575, 2026-09-05;
+- **Berkeley DB is the default selected backend** (2026-09-20; the two
+  notes below are the dated record of how the default got here — tkrzw
+  since 05688575, 2026-09-05, Kyoto Cabinet since 2026-08-29 before
+  that). A bare libpinyin `./configure` sets `DBM=BerkeleyDB` in
+  `configure.ac` before `AC_ARG_WITH` and leaves it when `--with-dbm` is
+  absent, so the cargo default feature is the analogue of that build and
+  bug-for-bug parity applies to what the default build produces. The
+  per-distro release lanes are unaffected: they pin their backend
+  explicitly (debian/tkrzw, fedora and arch/kyotocabinet). This is a
+  user-data family change for from-source developer builds only —
+  nothing released, no wheel and no package carries the old default.
+- **tkrzw was the default selected backend** (05688575, 2026-09-05 →
   Kyoto Cabinet had been the default since 2026-08-29 — RHEL 10.2 ships
   `tkrzw-devel` but not `kyotocabinet-devel`, which made the KC default
   unbuildable from source on the primary development machine). The

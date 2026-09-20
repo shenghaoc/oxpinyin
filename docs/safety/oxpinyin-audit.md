@@ -127,4 +127,4 @@ unrefactored until Stage 2; oracle/dictool = tooling.
 | user/store persistence | medium (F-5) | integration tests | coverage report priority (the cargo-mutants scope was retired 2026-09-01) |
 | core parser/scheme | low (mature) | proptest + fuzz + parity corpus | expanded corpus soak; mutation score |
 | oracle FFI | low-medium | pinning + differentials | keep; Miri not applicable (C side) |
-| store kyotocabinet/tkrzw/redb/bdb | medium (unsafe deps) | feature-gated; one peer per build, tkrzw is the default selection, the others explicit | the geiger inventory and Miri lanes were retired 2026-09-01; the C-backed peers stay covered by the ABI smoke gate and integration tests |
+| store kyotocabinet/tkrzw/bdb | medium (unsafe deps) | feature-gated; one peer per build, Berkeley DB is the default selection since 2026-09-20 (the redb/LMDB peers this row named when written were removed the same day), the others explicit | the geiger inventory and Miri lanes were retired 2026-09-01; the C-backed peers stay covered by the ABI smoke gate and integration tests |

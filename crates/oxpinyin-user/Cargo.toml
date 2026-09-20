@@ -24,7 +24,7 @@ oxpinyin-store = { workspace = true }
 # Backend selection, forwarded to oxpinyin-data and oxpinyin-store (one
 # backend per binary; see the store's [features] for the model and
 # precedence).
-default = ["tkrzw"]
+default = ["bdb"]
 kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-store/kyotocabinet"]
 bdb = ["oxpinyin-data/bdb", "oxpinyin-store/bdb"]
 tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-store/tkrzw"]

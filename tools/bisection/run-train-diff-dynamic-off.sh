@@ -16,7 +16,7 @@ gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o train-diff train-diff.c -ldl
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+cargo build -p oxpinyin-capi --no-default-features --features tkrzw --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
 CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
@@ -69,7 +69,8 @@ rm -f "$CAPI_LOG" "$ORACLE_LOG"
 
 if [ -n "${OPTION_SWEEP_CAPI_DATA:-}" ]; then
     CAPI_DATA="$OPTION_SWEEP_CAPI_DATA"
-elif [ -f /tmp/oxpinyin-export/pinyin_index.bin ]; then
+elif [ -f /tmp/oxpinyin-export/pinyin_index.bin ] \
+	&& grep -q '^backend=tkt$' /tmp/oxpinyin-export/datagen-manifest.txt; then
     CAPI_DATA="$(mktemp -d /tmp/traindiff-capi-data-XXXXXX)"
     for table in pinyin_index.bin phrase_index.bin bigram.db; do
         cp "/tmp/oxpinyin-export/$table" "$CAPI_DATA/$table"

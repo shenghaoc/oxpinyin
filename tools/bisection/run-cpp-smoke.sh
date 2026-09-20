@@ -24,16 +24,16 @@ fi
 
 FIX_ROOT="$REPO_ROOT/fixtures/w3"
 # The committed W3 fixture holds one per-backend data directory each
-# (fixtures/w3/<kct|tkt>), a real drop-in dir with libpinyin's
+# (fixtures/w3/<kct|tkt|db>), a real drop-in dir with libpinyin's
 # own file names. OXPINYIN_CAPI_BACKEND_EXT pins the backend for capi
 # builds that select one explicitly (e.g. --features kyotocabinet); unset,
-# this gate builds the default (tkrzw) and picks the first committed
-# backend directory, preferring the default's.
+# this gate builds the default (Berkeley DB since 2026-09-20) and picks
+# the first committed backend directory, preferring the default's (db).
 if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
     case "$OXPINYIN_CAPI_BACKEND_EXT" in
-        kct|tkt) SYS_EXT=$OXPINYIN_CAPI_BACKEND_EXT ;;
+        kct|tkt|db) SYS_EXT=$OXPINYIN_CAPI_BACKEND_EXT ;;
         *)
-            echo "fatal: OXPINYIN_CAPI_BACKEND_EXT='$OXPINYIN_CAPI_BACKEND_EXT' is not one of: kct tkt"
+            echo "fatal: OXPINYIN_CAPI_BACKEND_EXT='$OXPINYIN_CAPI_BACKEND_EXT' is not one of: kct tkt db"
             exit 1
             ;;
     esac
@@ -43,7 +43,10 @@ if [ -n "${OXPINYIN_CAPI_BACKEND_EXT:-}" ]; then
     fi
 else
     SYS_EXT=""
-    for ext in tkt kct; do
+    # `db` first: the default build is Berkeley DB since 2026-09-20, and
+    # all three flavours name their tables identically, so picking the
+    # wrong one would open as nonsense rather than fail as a missing file.
+    for ext in db tkt kct; do
         if [ -d "$FIX_ROOT/$ext" ]; then
             SYS_EXT=$ext
             break

@@ -3,7 +3,7 @@
 //! Three invariants:
 //!   1. `Backend::DEFAULT` — the constant `Options::default()` pulls from —
 //!      is the compiled-in peer, matching `oxpinyin_store::DefaultStore`
-//!      under the workspace's default feature set (tkrzw there).
+//!      under the workspace's default feature set (Berkeley DB there).
 //!   2. The file names the producer writes are the names the runtime
 //!      reader opens for the same backend: libpinyin's own on the drop-in
 //!      backends, `<stem>.<ext>` elsewhere. The file *set* is no longer at

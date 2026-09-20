@@ -26,7 +26,8 @@ oxpinyin-capi = { path = "../crates/oxpinyin-capi", features = ["fuzz-api"] }
 # holds the in-memory test implementations).
 oxpinyin-testsupport = { path = "../crates/oxpinyin-testsupport" }
 # session-keys: the Rust session API is the supported surface; the
-# store backend rides the workspace default (tkrzw), as capi-commands
+# store backend rides the workspace default (Berkeley DB since
+# 2026-09-20), as capi-commands
 # does.
 oxpinyin-engine = { path = "../crates/oxpinyin-engine" }
 # user-store-ops: arbitrary mutation interleavings over UserStore.

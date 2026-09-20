@@ -38,10 +38,10 @@ bindgen = { workspace = true, optional = true }
 # unselected peer's dependency (bindgen) is not pulled in
 # either.
 #
-# `tkrzw` is the enabled feature in the workspace's default set,
+# `bdb` is the enabled feature in the workspace's default set,
 # which is what "default" means here — select any peer explicitly with
 # `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
-default = ["tkrzw"]
+default = ["bdb"]
 tkrzw = ["dep:bindgen"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
 # the runtime dependency is the system libkyotocabinet the distro already

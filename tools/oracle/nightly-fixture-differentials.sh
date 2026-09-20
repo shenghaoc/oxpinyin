@@ -123,8 +123,8 @@ export LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export_dir=$work/export-tkrzw
 cd "$repo"
 if [[ ! -f $export_dir/datagen-manifest.txt ]]; then
-	cargo run --locked -q -p oxpinyin-datagen -- \
-		compile --model-dir "$model" --out-dir "$export_dir"
+	cargo run --locked -q -p oxpinyin-datagen --no-default-features --features tkrzw -- \
+		compile --backend tkrzw --model-dir "$model" --out-dir "$export_dir"
 fi
 
 # ── 3. the gates ────────────────────────────────────────────────────────────
@@ -132,7 +132,11 @@ fi
 # tool comes from the build tree, the same paths run-differentials.sh
 # wires for the developer runs.
 L=$src
-feat=()
+# The pin and its utils are tkrzw; the Rust side is pinned to match (the
+# workspace default moved to Berkeley DB on 2026-09-20). The committed w3
+# fixture is the tkrzw one, and all three flavours name their tables
+# identically, so flavour agreement is asserted below rather than assumed.
+feat=(--no-default-features --features tkrzw)
 
 status=0
 run_suite() {
@@ -151,6 +155,12 @@ run_suite() {
 # locate_model_dir), so both point at the toned model.
 export PINYIN_NGSEG="$L/utils/segment/ngseg"
 export PINYIN_NGSEG_DATA="$data"
+for dir in "$export_dir" "$w3/tkt"; do
+	if ! grep -q "^backend=tkt$" "$dir/datagen-manifest.txt"; then
+		echo "fatal: $dir is not a tkrzw data set (manifest says $(sed -n 's/^backend=//p' "$dir/datagen-manifest.txt")); this runner's oracle and tests are tkrzw" >&2
+		exit 2
+	fi
+done
 export PINYIN_EXPORT_DIR="$export_dir"
 export PINYIN_MODEL_DIR="$model"
 run_suite "segment ngseg live parity (toned tables)" \

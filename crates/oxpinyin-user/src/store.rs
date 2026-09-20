@@ -360,9 +360,9 @@ pub struct GenericUserStore<S: WriteStore> {
 /// backend (Kyoto Cabinet, tkrzw, Berkeley DB) the build was
 /// compiled against.
 ///
-/// tkrzw is the default selection under the workspace's default feature
-/// set; the others are selected with `--no-default-features
-/// --features {kyotocabinet|bdb}`.
+/// Berkeley DB is the default selection under the workspace's default
+/// feature set (since 2026-09-20); the others are selected with
+/// `--no-default-features --features {kyotocabinet|tkrzw}`.
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {

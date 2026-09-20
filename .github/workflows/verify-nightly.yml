@@ -328,8 +328,9 @@ jobs:
         with:
           safe-directory: 'true'
           rustup: 'true'
-      # tkrzw is the default backend and the one the w3 fixture directory the
-      # snapshot opens was compiled for. valgrind supplies the instruction
+      # The snapshot runs tkrzw explicitly (the w3 fixture directory its
+      # tooling opens is the tkrzw one); the workspace default moved to
+      # Berkeley DB on 2026-09-20. valgrind supplies the instruction
       # count; it is optional by design — snapshot.sh records null rather than
       # zero when it is absent, so losing it degrades the sample instead of
       # corrupting the series.

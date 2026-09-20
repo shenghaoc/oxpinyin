@@ -9,7 +9,8 @@ files at this level:
   each a complete system data directory the runtime opens as is:
   `pinyin_index`, `phrase_index`, `bigram`, `punct`, the `addon_*` pair
   (libpinyin's own file names on all three — Kyoto Cabinet, tkrzw and
-  Berkeley DB are the DBMs libpinyin builds against),
+  Berkeley DB are the DBMs libpinyin builds against; `db/` is the
+  default build's flavour since 2026-09-20),
   the five per-library chunk files the `--mini` subset reaches
   (`gb_char.bin`, `gbk_char.bin`, `opengram.bin`, `merged.bin`, `art.bin`,
   byte-identical across all three), `table.conf`, and the

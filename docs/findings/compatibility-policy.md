@@ -59,7 +59,25 @@ unchanged and unaware.
 > of 2026-09-20: the redb and LMDB builds named here no longer
 > exist — LMDB was removed 2026-09-20 in `refactor/drop-redb-lmdb-backends`,
 > redb the same day in `refactor/drop-redb-backend`; the clause stands as the ruling's
-> record. The BDB-vs-KC/tkrzw and KC↔tkrzw examples remain live.)* There the
+> record. The BDB-vs-KC/tkrzw and KC↔tkrzw examples remain live.)*
+> **(Default-backend transition, 2026-09-20 UTC, branch
+> `refactor/default-backend-berkeleydb`.)** The workspace default feature
+> moved tkrzw → Berkeley DB, so a from-source build that takes the
+> default now produces a different backend family: `user.conf`'s
+> `database format` line changes `Tkrzw` → `BerkeleyDB` and the
+> `DEFAULT_STORE_EXT` constant `tkt` → `db` (the session-scratch /
+> datagen-native container extension; the DBM tables themselves keep
+> libpinyin's own names on both). This is the same-family change the
+> paragraph above takes for granted: a profile written by a
+> pre-2026-09-20 default build is non-conform under the new default and
+> is wiped on open, exactly as libpinyin wipes across its own backend
+> switches. **Affected set, stated honestly: from-source developer
+> stores only.** Nothing released carries the old default — no wheel,
+> no package, no published artifact; the per-distro release lanes pin
+> their backend explicitly (debian/tkrzw, fedora and arch/kyotocabinet)
+> and always have. `DEFAULT_STORE_IS_LIBPINYIN_DBM` is `true` either
+> way, and the drop-in on-disk surface — libpinyin's own file names —
+> is unchanged on both sides of the transition. There the
 > ecosystem's own fresh-start norm applies: libpinyin discards user
 > data across its own backend switches (Debian's 2.11.91-1
 > BerkeleyDB→Tkrzw carried a `debian/NEWS` warning: "all previous

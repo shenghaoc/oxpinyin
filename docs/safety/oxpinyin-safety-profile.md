@@ -36,7 +36,7 @@ would be cargo-cult). The boundary is the `unsafe` policy (Layer 2) and the
 |---|---|---|
 | every crate except data, store, capi, zhuyin-capi and pinyin-oracle — 20 of 25 at the crate root (`#![forbid(unsafe_code)]`; facade/runtime also carry the manifest form); `oxpinyin-capi-marshal` included (its unsafe is macro text that expands inside the facades) | **no unsafe, ever, not even locally** | crate-root `#![forbid(unsafe_code)]` (the pattern `oxpinyin-core` already proves composes with the workspace `deny`); `forbid` cannot be re-allowed by any inner attribute |
 | data | one documented exception: the mmap-backed phrase-library reader (`phrase_library.rs`, module-scoped allow) | keeps `#![deny(unsafe_code)]` + that one module-scoped allow — `forbid` would foreclose the exception, so deny is the deliberate choice; `undocumented_unsafe_blocks` and `missing_safety_doc` denied |
-| store | unsafe confined to the four C-backed backend modules (`bdb/*`, `kyotocabinet/*`, `lmdb/*`, `tkrzw/*`); within `bdb` and `kyotocabinet` it is confined further, to their `ffi` alone, so those two safe wrappers stay under the workspace `deny` | workspace `deny` + module-scoped waivers in exactly those modules, every one an `#![expect(unsafe_code, reason = …)]` rather than an `allow`, so a waiver that stops being needed draws `unfulfilled_lint_expectations` — warn-by-default, an error under the `-D warnings` every supported CI check builds with (a module waiver is precisely what `forbid` forbids — deny+scoped-waiver *is* the minimal trusted region here); `undocumented_unsafe_blocks` and `missing_safety_doc` denied |
+| store | unsafe confined to the three C-backed backend modules (`bdb/*`, `kyotocabinet/*`, `tkrzw/*`; this row named four while LMDB was still in the tree, removed 2026-09-20); within `bdb` and `kyotocabinet` it is confined further, to their `ffi` alone, so those two safe wrappers stay under the workspace `deny` | workspace `deny` + module-scoped waivers in exactly those modules, every one an `#![expect(unsafe_code, reason = …)]` rather than an `allow`, so a waiver that stops being needed draws `unfulfilled_lint_expectations` — warn-by-default, an error under the `-D warnings` every supported CI check builds with (a module waiver is precisely what `forbid` forbids — deny+scoped-waiver *is* the minimal trusted region here); `undocumented_unsafe_blocks` and `missing_safety_doc` denied |
 | capi, zhuyin-capi, oracle | unsafe allowed, but every block justified & every `unsafe fn` documented | `[lints.clippy] undocumented_unsafe_blocks = "deny"`, `missing_safety_doc = "deny"`, plus `rust::unsafe_op_in_unsafe_fn = "deny"`; `// SAFETY:` prose stays as the human-readable half |
 | all | ~~dependency unsafe inventoried~~ **not enforced** (retired 2026-09-01) | first-party unsafe inventory is the lint structure itself; the scheduled `cargo geiger` dependency report was retired 2026-09-01 (`docs/findings/verify-nightly.md`) — no job inventories dependency unsafe today; accepted loss |
 
@@ -108,7 +108,9 @@ record, enforced present-but-not-verified by Clippy, verified by review.
   applies — they fail unless recorded as an `ignore` entry in
   `deny.toml` (the deviation registry, **currently empty**: its one
   entry, bincode via heed-types behind `lmdb`, went away with heed when
-  the LMDB backend moved to the system liblmdb); licenses =
+  the LMDB backend moved to the system liblmdb — and the LMDB backend
+  itself was removed 2026-09-20, `refactor/drop-redb-lmdb-backends`);
+  licenses =
   allow-list (GPL-3.0-or-later + permissive set, NCSA scoped to
   libfuzzer-sys via `[[licenses.exceptions]]`); **sources = crates.io
   registry only — git sources disallowed** (`unknown-git = "deny"`,

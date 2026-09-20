@@ -14,7 +14,9 @@
 #   - cargo-c (`cargo cinstall --profile profiling`)
 #
 # Environment:
-#   PINYIN_EXPORT_DIR   tkrzw export (default /tmp/oxpinyin-export)
+#   PINYIN_EXPORT_DIR   tkrzw export (default /tmp/oxpinyin-export);
+#                       produce it with `--features tkrzw` (the oracle
+#                       this cycle compares against is tkrzw)
 #   PINYIN_MODEL_DIR    extracted model20 (default target/model20/extracted)
 #   PERF_CYCLES         bisect cycles (default 32; drown pinyin_init)
 #   PERF_CPU            taskset CPU (optional)
@@ -99,6 +101,12 @@ mkdir -p "$PROFILE_DIR"
 
 # ── Inputs ──────────────────────────────────────────────────────────────
 
+# All three backend flavours name their tables identically, so only the
+# manifest's backend token distinguishes them; the cycle's oracle is tkrzw.
+if ! grep -q "^backend=tkt$" "$EXPORT_DIR/datagen-manifest.txt"; then
+	echo "fatal: $EXPORT_DIR is not a tkrzw export; rebuild it with --features tkrzw" >&2
+	exit 2
+fi
 for name in pinyin_index.bin phrase_index.bin bigram.db; do
     if [ ! -f "$EXPORT_DIR/$name" ]; then
         echo "fatal: exported table missing at $EXPORT_DIR/$name" >&2
