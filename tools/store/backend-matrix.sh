@@ -7,7 +7,7 @@
 #
 #   1. The default selection and each explicit peer is a
 #      green `cargo check --locked -p oxpinyin-store`.
-#   2. Every one of the six pairwise combinations, and a three-way
+#   2. Every one of the pairwise combinations, and the all-peers
 #      combination, refuses to compile with the `compile_error!` message
 #      from `crates/oxpinyin-store/src/lib.rs`.
 #   3. The zero-backend build refuses with the same guard.

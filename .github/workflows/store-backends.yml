@@ -283,8 +283,8 @@ jobs:
     # `crates/oxpinyin-store/src/lib.rs` refuses it), so the same
     # `tools/store/backend-matrix.sh` script that developers run locally
     # runs here instead: it proves the valid peer selections each
-    # `cargo check --workspace` cleanly AND that every one of the six
-    # pairwise combinations, a three-way combination, and the
+    # `cargo check --workspace` cleanly AND that every pairwise
+    # combination, the all-peers combination, and the
     # zero-backend build are refused by the guards.
     #
     # Independent job: no needs edge to store-features, so it runs
@@ -331,7 +331,7 @@ jobs:
         # `.so` NEEDS `libglib-2.0`.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
-      - name: Exactly-one-backend invariant (13-case matrix)
+      - name: Exactly-one-backend invariant (backend-matrix pass)
         id: matrix-test
         run: |
           set -euo pipefail
@@ -354,7 +354,7 @@ jobs:
             echo ""
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
-            echo "| 13-case matrix | ${{ steps.matrix-test.outputs.elapsed || '—' }}s |"
+            echo "| backend-matrix (workspace-check pass) | ${{ steps.matrix-test.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   store-backends-gate:

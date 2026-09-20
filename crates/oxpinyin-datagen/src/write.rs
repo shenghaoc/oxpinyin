@@ -8,8 +8,7 @@
 //! a file is only reported written after it reads back identical.
 //!
 //! On Kyoto Cabinet, tkrzw and Berkeley DB the files carry libpinyin's own
-//! names and are the drop-in set
-//! backend's container under `<stem>.<ext>`.
+//! names — the drop-in set a libpinyin install's own runtime opens.
 
 use std::fs;
 use std::path::{Path, PathBuf};
