@@ -23,7 +23,7 @@ code from `#[cfg(test)]`/benches/bins.
 | Crates | 13 (10 safe-policy, capi, oracle, store-with-features) |
 | src LOC | ~51k (capi 7.8k, core 12.2k, engine 6.9k, oracle 7.5k, data 4.2k, user 4.1k, store 2.9k, tooling crates ~5.7k) |
 | Functions (Lizard) | 2,283; avg CCN 2.5; NLOC 46,195 |
-| Lockfile packages | 179; runtime deps: smallvec, compact_str, redb (+ heed/cxx behind features) |
+| Lockfile packages | 179; runtime deps: smallvec, compact_str, redb — the removed peers' deps (heed for LMDB, cxx for the old tkrzw shim) are long gone |
 | Fuzz targets | 1 (`parser`, 16 lines, safe Rust) |
 | Tests | 26 integration test files + inline `#[cfg(test)]` modules throughout |
 
@@ -33,7 +33,7 @@ code from `#[cfg(test)]`/benches/bins.
 |---|---|---|---|
 | oxpinyin-capi | 151 blocks + 6 `unsafe fn` + 4 `unsafe extern` | 100% | opaque-handle derefs (trust-based) dominate |
 | pinyin-oracle | 39 blocks + 2 extern blocks | 100% | hand-written libpinyin decls pinned to header SHA; owned strings freed exactly once on all paths |
-| oxpinyin-store | 5 blocks + 2 `unsafe impl Send/Sync` + 1 extern (cxx bridge), all behind `lmdb`/`tkrzw` features | 100% | heed flag call; cxx-generated marshalling; `from_raw_parts` over shim-provided views |
+| oxpinyin-store | unsafe blocks behind the `bdb`/`kyotocabinet`/`tkrzw` features (the row's original counts — 5 blocks, 2 `unsafe impl Send/Sync`, a cxx-bridge extern — were measured when LMDB and the cxx tkrzw shim existed; both are gone) | 100% | FFI call sites; `from_raw_parts` over backend-provided views |
 | all others + fuzz + tools | **zero** | — | — |
 
 Recurring capi patterns (each audited): opaque-handle cast helpers (P1,
@@ -127,4 +127,4 @@ unrefactored until Stage 2; oracle/dictool = tooling.
 | user/store persistence | medium (F-5) | integration tests | coverage report priority (the cargo-mutants scope was retired 2026-09-01) |
 | core parser/scheme | low (mature) | proptest + fuzz + parity corpus | expanded corpus soak; mutation score |
 | oracle FFI | low-medium | pinning + differentials | keep; Miri not applicable (C side) |
-| store lmdb/tkrzw/kyotocabinet/bdb | medium (unsafe deps) | feature-gated; five peer backends, tkrzw is the default selection, the other four explicit | the geiger inventory and Miri lanes were retired 2026-09-01; the C-backed peers stay covered by the ABI smoke gate and integration tests |
+| store kyotocabinet/tkrzw/redb/bdb | medium (unsafe deps) | feature-gated; one peer per build, tkrzw is the default selection, the others explicit | the geiger inventory and Miri lanes were retired 2026-09-01; the C-backed peers stay covered by the ABI smoke gate and integration tests |

@@ -15,7 +15,7 @@ name: Store backends
 #     seven backend-independent training crates — see the test step)
 #     under exactly ONE peer, on its
 #     own runner, so the sweeps run in PARALLEL (fail-fast: false,
-#     max-parallel: 5) instead of sequentially inside one job. Every pass
+#     max-parallel: 4) instead of sequentially inside one job. Every pass
 #     decodes real queries through the fixture tables, not just the store's
 #     own unit tests. The matrix value only selects one of the fixed,
 #     repository-controlled cargo invocations (see the case in the test

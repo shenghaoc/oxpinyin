@@ -2,7 +2,13 @@
 
 Date: 2026-08-24 (updated 2026-08-25 for the tkrzw backend; 2026-09-12
 for the Berkeley DB backend; 2026-09-13 for the Stage 2 hash/tree note,
-rechecked against the landed Berkeley DB backend) · Status:
+rechecked against the landed Berkeley DB backend; **2026-09-21 peer-set
+sweep** — the LMDB and redb peers were removed 2026-09-20
+(`refactor/drop-redb-lmdb-backends`, `refactor/drop-redb-backend`), so the
+peer enumerations below name the surviving set, the LMDB backend's
+comparator section is deleted rather than annotated — it documented a
+configuration that no longer exists — and every figure measured on a
+removed peer stands as measured at its own date) · Status:
 **audit finding** (verification + tests only; no key encoding changed) ·
 Branch: `audit/store-key-ordering`.
 
@@ -23,7 +29,7 @@ property of the stored bytes: the store never decodes a key, so it has no
 notion of "integer order". Any meaning a key's bytes carry is imposed by the
 layer that encoded them.
 
-All five backends satisfy exactly this rule:
+Every backend satisfies exactly this rule:
 
 - **redb** (the pure-Rust peer backend; `--no-default-features --features redb`).
   The store uses `TableDefinition<&[u8], &[u8]>`. redb's
@@ -34,15 +40,6 @@ All five backends satisfy exactly this rule:
   not use typed integer keys in the store; it uses the raw `&[u8]` path, which
   is pure memcmp. That distinction is the whole reason encoding choice matters
   below.)
-- **LMDB** (the system liblmdb, feature `lmdb`). The environment is opened
-  with only `MDB_NOSUBDIR` and `MDB_NOTLS` (plus `MDB_RDONLY` for read-only
-  opens, `MDB_WRITEMAP` for writable ones) —
-  `crates/oxpinyin-store/src/lmdb/mod.rs`. No `MDB_INTEGERKEY`, no reverse
-  or custom comparator is ever set, on the environment or on any database, so
-  LMDB uses its **default byte-lexicographic (`memcmp`) comparator**.
-  `MDB_INTEGERKEY` would compare in **native** endian order, which disagrees
-  with redb's memcmp on big-endian targets and on any multi-byte key that
-  crosses a 256 boundary even on little-endian targets. It must never be set.
 - **tkrzw** (`cxx` shim over TreeDBM, feature `tkrzw`; the default selection
   since 2026-09-05). `open_db` (`crates/oxpinyin-store/src/tkrzw/shim.cc`) calls
   `db->dbm.Open(path, writable, options)` with `options` being only
@@ -160,8 +157,8 @@ fixed-width big-endian `prev` prefix brackets exactly the successors of
 `order` proptest module already checks this encoding against redb's typed
 `(u32,u32)` compare order; the tests added by this audit extend it to the
 per-peer and 256-boundary cases in whichever backend the build compiles in
-— one peer per binary in both the store and the user suite, five peer
-builds across CI (see the inventory below).
+— one peer per binary in both the store and the user suite, one peer
+build per CI matrix child (see the inventory below).
 
 ## Layer consistency (encode ↔ decode)
 
@@ -189,13 +186,12 @@ key encoding was changed.**
   proven in process. Each build instead proves that *its* `DefaultStore`
   yields `for_each` and `range` sequences equal to the mathematical
   byte-ordered sequence on key sets that cross 256; the store-backends CI
-  matrix, which runs all five peer builds, is what turns those five
-  independent results into **redb == Kyoto Cabinet == tkrzw == LMDB ==
-  Berkeley DB**. Plus, in every build, that swapping an encode site's
+  matrix, which runs every peer build, is what turns those independent
+  results into **redb == Kyoto Cabinet == tkrzw == Berkeley DB**. Plus, in every build, that swapping an encode site's
   endianness changes the observed walk order (non-vacuity). The invariant
   itself is proven separately by `tools/store/backend-matrix.sh` (the
-  `backend-matrix` CI job), which checks that each of the five single-feature
-  selections compiles and that every pairwise combination, a four-way
+  `backend-matrix` CI job), which checks that each single-feature
+  selection compiles and that every pairwise combination, the all-peers
   combination, and the zero-backend build are refused by the guard — this
   replaced the older "cross-backend conformance in one binary" job, which the
   invariant makes architecturally impossible.
@@ -205,15 +201,15 @@ key encoding was changed.**
   integer order would break).
 - `crates/oxpinyin-user/src/store.rs` tests — the bigram successor scan
   returns the complete, correctly ordered successor set across 256 under the
-  `user_store_tests!` macro, which now carries an arm for **all five peers**
-  (`redb`, `lmdb`, `tkrzw`, `kc`, `bdb`), each `#[cfg]`-gated on its feature
+  `user_store_tests!` macro, which now carries an arm for **every peer**
+  (`redb`, `tkrzw`, `kc`, `bdb`), each `#[cfg]`-gated on its feature
   so exactly one suite compiles per build — Kyoto Cabinet is covered by its
   own arm now, not by a separate conformance suite. Alongside them,
   `bigram_walks_and_successors_follow_be_integer_order` asserts the current
   peer's raw bigram walk and successor scans come back in ascending
   `(prev, cur)` integer order, and that the set walked equals the set
   written. Flipping `encode_token_pair`'s endianness reddens that check on
-  whichever peer the build compiles in, so it reddens on all five across CI.
+  whichever peer the build compiles in, so it reddens on every peer across CI.
 
 ## 256-boundary blind spot
 
@@ -250,9 +246,11 @@ walk is unavailable; nothing checks it at the call.
 This is a **trait shape, not a backend defect**. `RawReadStore` imposes
 it on every peer that has a hash/tree distinction at all: Kyoto Cabinet
 behind `KcStore`, Tkrzw behind `TkrzwStore`, Berkeley DB behind
-`BdbStore`. redb and LMDB have one container class, so their
-`create_hash` / `open_hash_read_only` defaults delegate to
-`create` / `open_read_only` and the question does not arise for them.
+`BdbStore`. The pure-Rust peer had one container class, so its
+`create_hash` / `open_hash_read_only` defaults delegated to
+`create` / `open_read_only` and the question did not arise for it (that
+peer, and the LMDB peer this section was written alongside, were both
+removed 2026-09-20).
 
 ### What the framed tier would do on a hash handle
 
