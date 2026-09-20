@@ -5,7 +5,8 @@ Date: 2026-08-28 · Status: **work order** · Branch:
 merged as a document — the reverts landed as their own PRs).
 
 **Status at `87f25055` (2026-09-06), amended 2026-09-19 for rows 33–34
-and again for rows 35–37:**
+and again for rows 35–37, and 2026-09-20 for rows 32 (closed) and
+38:**
 
 | # | Register | Disposition |
 | --- | --- | --- |
@@ -23,12 +24,14 @@ and again for rows 35–37:**
 | 12 | #35 user-library tokens refused an n-best step cost | **closed in code** (2026-09-19): the presence gate mirrors the pin's `get_phrase_item` over the loaded sub-index — user-file tokens (nibbles 5/6/7) priced from their user delta alone, masked libraries and missing items still refused; phase A/X/D IDENTICAL, the runtime probe's `Some(21392)` measured (§12) |
 | 13 | #36 bigram export iterator's last-row return value | **open** — registered 2026-09-19 (probe side observation (i)): the pin returns `has_next_phrase` after advancing, oxpinyin returns `true` for every fetched row (§13); independent of the sequence |
 | 14 | #37 candidate window behind the composition offset | **open** — registered 2026-09-19 (probe residue E): the C ABI serves the composition-anchored cached list for any lookup offset at or behind a choose; an empty list at `(0, 0x1f)` after a whole-composition choose (§14); executes second |
+| 15 | #38 the train gate's no-selection arm | **closed in code** (2026-09-20): `InstanceCore::train` widens to the pin's own disjunction — a recorded selection OR a live sentence result (`pinyin.cpp:2678-2679`; `sentence_lookup_active` is the engine's stand-in for `results.size() > 0`) — landed with §9 (§15); pinyin measured IDENTICAL, the zhuyin differential owed |
 
 The sections below are the 2026-08-28 text, kept as the record of what
 each revert had to prove, plus section 8 for the target the original
 list omitted, section 9 for row 32 (2026-09-18), sections 10–11 for
 rows 33–34 (2026-09-19), section 12 for row 35, section 13 for row 36
-and section 14 for row 37 (2026-09-19).
+and section 14 for row 37 (2026-09-19), section 15 for row 38
+(2026-09-20).
 
 Driven by the classification table in
 `docs/findings/compatibility-policy.md`. Every entry that table marks
@@ -272,7 +275,7 @@ land with the measurements.
   `+483` observable.) The `0x1f` user-row shape stays §11 (row 34).
   The facade's train gate widened to the pin's own disjunction
   (user store present AND (a live sentence result OR a recorded
-  selection) — `pinyin.cpp:2674-2675` reads `results.size()`, and the
+  selection) — `pinyin.cpp:2678-2679` reads `results.size()`, and the
   compressed Rust e2e path records the selection the pin's
   `train_result3` would walk); the zhuyin train-no-selection test
   flipped to the pin's law with it.
@@ -477,6 +480,43 @@ land with the measurements.
   the whole phase runs IDENTICAL.
 - **Blocked on:** nothing — the display leg is unstarted work.
   Executes second (see the order below).
+
+### 15 — The train gate's no-selection arm (register #38)
+
+- **Site:** `InstanceCore::train`
+  (`crates/oxpinyin-facade/src/instance.rs`) — the gate every
+  `pinyin_train` and `zhuyin_train` call passes through; both shipped
+  C surfaces share this facade path.
+- **The pin's law:** `pinyin_train` refuses on the user dir
+  (`pinyin.cpp:2671-2672`) and on an empty `m_nbest_results`
+  (`:2678-2679` at pin 074a2219) and trains otherwise;
+  `zhuyin_train` carries the identical law (`zhuyin.cpp:1696-1705`).
+  A train with a live sentence result and no recorded selection
+  answers `true`, and `train_result3` walks the constraint-free
+  result writing nothing.
+- **What changed:** the gate was `selected_tokens().is_empty()` alone
+  — no selection, no train, where the pin trains — and widened to the
+  pin's own disjunction: a recorded selection OR
+  `sentence_lookup_active()` (the engine's stand-in for
+  `results.size() > 0`). The change landed WITH §9 (PR #496), not as
+  its own change: a LONGER-choose trains its `+483` inside
+  `pinyin_choose_candidate` and records no selection, so the train
+  that follows leans on the lookup-active half — the widened gate is
+  causally required by the §9 port. The zhuyin train-no-selection
+  e2e flipped to the pin's law in the same commit.
+- **Probe:** the pinyin surface is measured — the ABI probe's
+  longer-choose phase (`tools/bisection/abi-probe-diff.c`) runs
+  IDENTICAL against the pin, `train(after-longer)=true` on both sides
+  with no store writes (2026-09-20, host, oracle read-only, both
+  sides tkrzw). The zhuyin surface is NOT measured: `zhuyin-diff.c`
+  drives no train call, so the widened gate's zhuyin behaviour has no
+  differential — the gap is recorded in
+  `docs/findings/probe-coverage-abi.md` ("The train gate under the
+  widened law"), and the differential (guess-sentence-then-train with
+  no choose, choose-then-train, fresh-instance train, both sides) is
+  this row's owed item.
+- **Closed in code** 2026-09-20 with §9; the zhuyin differential is
+  owed.
 
 ## Order to execute
 

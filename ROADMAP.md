@@ -14,7 +14,7 @@ rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
 | Stage | Goal |
 |---|---|
 | **0** | Scaffold, pin, SPECs/fixtures (complete) |
-| **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`); full exported ABI and user-store surfaces still carry open residues (`docs/findings/probe-coverage-abi.md` B/C/A/F/E as rows 33–37, register row 32); the sentence-trellis float band stays the frozen exception (row 11) |
+| **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`); full exported ABI and user-store surfaces still carry open residues (`docs/findings/probe-coverage-abi.md` B/C/A/F/E as rows 33–37; register row 32 closed with the §9 port, PR #496); the sentence-trellis float band stays the frozen exception (row 11) |
 | **2** | Measured upgrades — smaller binary, faster execution, lower RAM first (in progress, `docs/perf/`); model upgrades (trigram/KN, typo edges, own data) remain candidates — every divergence vs the Stage 1 baseline |
 
 Stage 1 uses installed/libpinyin-format tables (no redistribution required:

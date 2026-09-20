@@ -238,7 +238,7 @@ impl InstanceCore {
     /// walk the recorded sentence through the store. The bool is the C
     /// surface's contract, verbatim.
     ///
-    /// The result gate is `pinyin_train`'s own (`pinyin.cpp:2674-2675`):
+    /// The result gate is `pinyin_train`'s own (`pinyin.cpp:2678-2679`):
     /// `m_nbest_results` empty — no sentence lookup has run — refuses.
     /// `sentence_lookup_active` is the engine's stand-in for
     /// `results.size() > 0`. The selection record disjoins into the
