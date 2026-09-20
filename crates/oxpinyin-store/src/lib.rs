@@ -3,7 +3,7 @@
 //! This crate defines an ordered byte-KV interface split into two
 //! capability tiers — [`ReadStore`] (point get, ranged scan, full scan,
 //! emptiness check) and [`WriteStore`] (creation, atomic multi-table
-//! writes, compaction) — and provides five peer implementations behind
+//! writes, compaction) — and provides four peer implementations behind
 //! it: [`KcStore`] on Kyoto Cabinet, [`RedbStore`] on redb,
 //! [`TkrzwStore`] on tkrzw, and [`BdbStore`] on Berkeley DB.
 //! All four are first-class and interchangeable: any oxpinyin binary
@@ -1044,6 +1044,8 @@ mod tests {
     #[cfg(feature = "tkrzw")]
     use super::ReadStore;
     #[cfg(feature = "tkrzw")]
+    use super::StoreError;
+    #[cfg(feature = "tkrzw")]
     use super::TkrzwStore;
     #[cfg(any(feature = "redb", feature = "tkrzw"))]
     use super::WriteStore;
@@ -1620,7 +1622,7 @@ mod tests {
     // its own fixture writer. A read-only backend would invoke only
     // `store_read_tests!`. Each group is gated by the peer's feature —
     // the exactly-one-backend guards refuse combined builds, so at most
-    // one of these five groups is ever compiled.
+    // one of these four groups is ever compiled.
     #[cfg(feature = "redb")]
     store_read_tests!(redb_read, RedbStore, RedbStore, "redb");
     #[cfg(feature = "redb")]
@@ -1630,6 +1632,20 @@ mod tests {
     store_read_tests!(tkrzw_read, TkrzwStore, TkrzwStore, "tkrzw");
     #[cfg(feature = "tkrzw")]
     store_write_tests!(tkrzw_write, TkrzwStore, "tkrzw");
+
+    #[cfg(feature = "tkrzw")]
+    #[test]
+    fn tkrzw_rejects_nul_path() {
+        let path = std::path::PathBuf::from("oxpinyin-store\0invalid.tkrzw");
+        assert!(matches!(
+            TkrzwStore::create(&path),
+            Err(StoreError::InvalidInput("path contains NUL"))
+        ));
+        assert!(matches!(
+            TkrzwStore::open_read_only(&path),
+            Err(StoreError::InvalidInput("path contains NUL"))
+        ));
+    }
 
     #[cfg(feature = "kyotocabinet")]
     store_read_tests!(kc_read, KcStore, KcStore, "kc");
