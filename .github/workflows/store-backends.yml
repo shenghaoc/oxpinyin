@@ -252,7 +252,6 @@ jobs:
             echo "--- tkrzw (the default) ---"
             cargo test --locked --workspace "${excludes[@]}"
             ;;
-            ;;
           bdb)
             echo "--- bdb (workspace) ---"
             cargo test --locked --workspace --no-default-features --features bdb "${excludes[@]}"

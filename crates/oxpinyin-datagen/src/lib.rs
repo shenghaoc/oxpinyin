@@ -33,7 +33,7 @@
 //!   (`PunctTable`, [`punct::compile`]);
 //! * `table.conf`.
 //!
-//! The five backends are instantiations of `oxpinyin-store`'s
+//! The four backends are instantiations of `oxpinyin-store`'s
 //! [`WriteStore`]: the same rows through each container. On Kyoto Cabinet,
 //! tkrzw and Berkeley DB the result is the file set a libpinyin build of
 //! that DBM ships, name for name; a libpinyin runtime opens it and so does
