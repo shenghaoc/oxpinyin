@@ -32,7 +32,7 @@ criterion = "0.8"
 bindgen = { workspace = true, optional = true }
 
 [features]
-# The four backends (kyotocabinet, redb, tkrzw, bdb) are peer
+# The backends (kyotocabinet, redb, tkrzw, bdb) are peer
 # implementations behind the store's `ReadStore`/`WriteStore` traits.
 # **Exactly one** is compiled in per build; a `compile_error!` in
 # `src/lib.rs` refuses builds that enable zero or two-or-more. The

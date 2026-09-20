@@ -121,14 +121,14 @@ parked.
 - **tkrzw is the default selected backend** (05688575, 2026-09-05;
   Kyoto Cabinet had been the default since 2026-08-29 — RHEL 10.2 ships
   `tkrzw-devel` but not `kyotocabinet-devel`, which made the KC default
-  unbuildable from source on the primary development machine). The four
+  unbuildable from source on the primary development machine). The
   supported oxpinyin store backends — tkrzw, Kyoto Cabinet, redb and
   Berkeley DB —
   are peer implementations behind one `ReadStore`/`WriteStore` trait
   surface, and any single build compiles in exactly one of them
   (`DefaultStore`; `oxpinyin-store` refuses a build with zero or more
   than one backend feature at compile time). tkrzw is the feature in the
-  workspace's default set; the other three are selected explicitly with
+  workspace's default set; the others are selected explicitly with
   `--no-default-features --features {kyotocabinet|redb|bdb}`. redb
   is the pure-Rust portability fallback; KC/tkrzw/BDB are C
   dependencies. System data files carry libpinyin's own names on Kyoto
@@ -147,7 +147,7 @@ parked.
   are compiled natively from the canonical pinned `model20` archive for every
   storage backend (tkrzw, Kyoto Cabinet, redb, Berkeley DB) — no
   producer consumes libpinyin-generated runtime data. Implemented in
-  `crates/oxpinyin-datagen`; all four backend producers are feature-gated
+  `crates/oxpinyin-datagen`; all the backend producers are feature-gated
   in its `Cargo.toml`. The retired `oxpinyin-migrate` route (oracle ABI
   export + verbatim Tkrzw conversion) was proven unnecessary by the
   native compilation.

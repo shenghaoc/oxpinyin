@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # backend-matrix.sh — prove the exactly-one-backend invariant.
 #
-# The four oxpinyin store backends (kyotocabinet, redb, tkrzw, bdb)
+# The oxpinyin store backends (kyotocabinet, redb, tkrzw, bdb)
 # are peer implementations behind one trait surface, and every build
 # has exactly one of them. This script drives that invariant end-to-end:
 #
-#   1. The default selection and each of the four explicit ones is a
+#   1. The default selection and each explicit peer is a
 #      green `cargo check --locked -p oxpinyin-store`.
 #   2. Every one of the six pairwise combinations, and a three-way
 #      combination, refuses to compile with the `compile_error!` message
