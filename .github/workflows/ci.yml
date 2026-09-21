@@ -1,5 +1,5 @@
 # Path gates: CI runs its lanes only when code or a direct input of one
-# of its jobs changes, so docs-only changes skip lint, test, python,
+# of its jobs changes, so docs-only changes skip lint, test,
 # deny and fuzz entirely. The gate moved from the workflow trigger to
 # the jobs themselves (2026-09-08): the workflow always starts, the
 # `changes` job computes one `run` flag from the path set below, and
@@ -23,7 +23,7 @@
 #   - tools/** — the test job runs tools/bisection/run-cpp-smoke.sh and
 #     run-live-typing-diff.sh, so bisection-script changes are CI inputs
 #   - Cargo.toml / Cargo.lock — workspace manifest and lockfile: a
-#     dependency or feature change reaches lint, test, python and deny
+#     dependency or feature change reaches lint, test and deny
 #   - deny.toml — the deny job reads this directly
 #   - rust-toolchain.toml — a toolchain change affects every job
 #   - .github/workflows/ci.yml — the workflow file itself
@@ -32,7 +32,7 @@
 #     crate-cfg placement checker and the harness that gates it, so a
 #     change to either is a direct input of that job
 #   - fixtures/** — the frozen tables, goldens and DBM files that the
-#     test, python and fuzz jobs decode through; a fixture-only change
+#     test and fuzz jobs decode through; a fixture-only change
 #     is exactly the kind that must be re-proven (added 2026-09-06 — until
 #     then a fixture-only PR ran no CI at all)
 #   - tests/parity/** — the parity corpus pinyin-oracle's tests replay
@@ -76,19 +76,13 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
-# Five jobs:
+# Four job groups (plus path gate and aggregate):
 #   lint — rustfmt + clippy + the Lizard CCN ratchet
 #   test — cargo test for the whole workspace (the ONE full sweep per
 #          PR), and the portable workspace (all but capi, zhuyin-capi,
-#          python, dictool, and the seven backend-independent training
-#          crates — corpus, counter, emitter, kmm, lambda, punct, word,
-#          which run once here on Linux) on macOS and Windows;
-#          python-portable builds and tests the binding's wheel there
-#   python — the oxpinyin Python binding on the container image's stock
-#            python3 — GIL-enabled CPython 3.14, since actions/setup-python
-#            cannot serve a container job and took the old '3.14t' selector
-#            with it: wheel build, binding tests, and native-vs-Python
-#            parity against the corpus transcript
+#          and the seven backend-independent training crates — corpus,
+#          counter, emitter, kmm, lambda, punct, word, which run once
+#          here on Linux) on macOS and Windows
 #   deny — supply-chain gate: RustSec advisories, licenses, sources,
 #          duplicate-version drift (docs/safety/oxpinyin-safety-profile.md
 #          layer 6)
@@ -270,181 +264,10 @@ jobs:
       - name: Live-typing differential
         run: tools/bisection/run-live-typing-diff.sh
 
-  # The Python binding: build the real extension (no mocks), run its pytest
-  # suite, which regenerates the pure-Rust transcript via `native-dump` and
-  # compares it against the binding's replay of the same corpus. The
-  # interpreter is Debian's python3 from the container: actions/setup-python
-  # does not support container jobs.
-  python:
-    needs: changes
-    if: needs.changes.outputs.run == 'true'
-    runs-on: ubuntu-latest
-    container:
-      image: debian:testing # deliberately unpinned; see store-backends.yml header
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    env:
-      DEBIAN_FRONTEND: noninteractive
-    steps:
-      # debian:testing ships a minimal base without bash or git; the
-      # runner infrastructure and later steps need both.
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-          rustup: 'true'
-          rustup-components: clippy
-          rust-cache: 'true'
-          rust-cache-key: python-job
-      - run: rustup show active-toolchain
-      - name: Install build dependencies (apt)
-        # The python job rides the workspace default (tkrzw): bindgen
-        # (libclang) reads tkrzw_langc.h at build time, and Debian's
-        # libtkrzw build demands the compression -dev packages at link
-        # time (see store-backends.yml). python3 comes from apt —
-        # actions/setup-python does not support container jobs — and the
-        # pip installs need --break-system-packages: Debian marks its
-        # interpreter PEP 668 externally managed, and this container is
-        # ephemeral with no system Python to protect.
-        run: apt-get install -y --no-install-recommends python3 python3-pip gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
-      - name: Lint the binding feature set
-        run: cargo clippy --locked -p oxpinyin-python --features bindings --all-targets -- -D warnings
-      - name: Build and install the wheel
-        working-directory: crates/oxpinyin-python
-        # Pinned to the versions validated locally. --no-build-isolation makes
-        # the build use this exact maturin instead of resolving its own from
-        # the build-system requires range (>=1.14,<2) in an isolated env; that
-        # range only bounds human-driven builds.
-        #
-        # On this GIL-enabled interpreter pyo3's abi3-py310 applies and
-        # abi3t-py315 does not (abi3t needs 3.15+), so the wheel built here is
-        # a stable-ABI cp310-abi3 one, not a version-specific build. See
-        # docs/python.md, "Supported platforms".
-        run: |
-          pip install --break-system-packages maturin==1.15.0 pytest==9.1.1
-          pip install --break-system-packages --no-build-isolation .
-      # The ABI above is asserted, not just documented. debian:testing is
-      # deliberately unpinned, so its python3 can move under us: to 3.15,
-      # where abi3t-py315 takes over from abi3-py310, or to a free-threaded
-      # build, where neither stable ABI applies and pyo3 emits a
-      # version-specific extension. Either silently invalidates the
-      # cp310-abi3 claim in the step above and in docs/python.md — which is
-      # exactly how that prose went stale when this job was containerized.
-      # Read the tag off the installed dist-info: `pip install .` leaves no
-      # wheel file behind, but it does record what it built.
-      - name: Assert the wheel is the documented stable ABI
-        run: |
-          python3 - <<'PY' >&2
-          import importlib.metadata as metadata
-          import sys
-
-          wheel = metadata.distribution("oxpinyin").read_text("WHEEL") or ""
-          tags = [
-              line.split(":", 1)[1].strip()
-              for line in wheel.splitlines()
-              if line.startswith("Tag:")
-          ]
-          if not tags or any(not tag.startswith("cp310-abi3-") for tag in tags):
-              print(
-                  f"::error::built wheel tags {tags or '(none)'} are not the "
-                  "documented cp310-abi3; the interpreter or pyo3's stable-ABI "
-                  "selection moved. See docs/python.md, 'Supported platforms'."
-              )
-              sys.exit(1)
-          print(f"wheel tags: {tags}")
-          PY
-      - name: Rust runtime tests
-        run: cargo test --locked -p oxpinyin-python
-      - name: Binding tests and native-vs-Python parity
-        working-directory: crates/oxpinyin-python
-        run: pytest -q
-
-  # The binding's wheel on the other two supported operating systems
-  # (.kiro/specs/python-binding/tasks.md item 5, closed 2026-09-08): the
-  # same source build, the same stable-ABI assertion and the same
-  # native-vs-Python parity suite as the Linux job above, under the
-  # pure-Rust redb backend (no C store library on these runners) and a
-  # GIL-enabled CPython 3.14 from actions/setup-python — the interpreter
-  # the Linux job also ends up on, so the cp310-abi3 tag is the same.
-  # Two jobs rather than a container matrix: containers are Linux-only.
-  python-portable:
-    needs: changes
-    if: needs.changes.outputs.run == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: bash
-    env:
-      # maturin's PEP 517 backend reads this for the cargo build: select
-      # the redb peer for the extension exactly as the portable test lanes
-      # do for the crates.
-      MATURIN_PEP517_ARGS: --no-default-features --features redb,bindings
-      # The parity suite regenerates the native transcripts with
-      # `cargo run`; the same selection keeps them on the same fixture set.
-      OXPINYIN_PYTEST_CARGO_ARGS: --no-default-features --features redb
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          rust-cache: 'true'
-          rust-cache-key: python-portable
-      - run: rustup show active-toolchain
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: '3.14'
-      - name: Build and install the wheel
-        working-directory: crates/oxpinyin-python
-        run: |
-          python -m pip install maturin==1.15.0 pytest==9.1.1
-          python -m pip install --no-build-isolation .
-      - name: Assert the wheel is the documented stable ABI
-        run: |
-          python - <<'PY' >&2
-          import importlib.metadata as metadata
-          import sys
-
-          wheel = metadata.distribution("oxpinyin").read_text("WHEEL") or ""
-          tags = [
-              line.split(":", 1)[1].strip()
-              for line in wheel.splitlines()
-              if line.startswith("Tag:")
-          ]
-          if not tags or any(not tag.startswith("cp310-abi3-") for tag in tags):
-              print(
-                  f"::error::built wheel tags {tags or '(none)'} are not the "
-                  "documented cp310-abi3; the interpreter or pyo3's stable-ABI "
-                  "selection moved. See docs/python.md, 'Supported platforms'."
-              )
-              sys.exit(1)
-          print(f"wheel tags: {tags}")
-          PY
-      - name: Rust runtime tests
-        run: cargo test --locked -p oxpinyin-python --no-default-features --features redb
-      - name: Binding tests and native-vs-Python parity
-        working-directory: crates/oxpinyin-python
-        run: python -m pytest -q
-
   # The portable crates on the other two supported operating systems:
-  # the whole workspace minus the three that are Linux-first or need a
-  # host interpreter — the two C-ABI crates (glib, cargo-c, Linux-only per
-  # structure.md) and the PyO3 binding (its wheel is built and tested on
-  # these same runners by python-portable above). oxpinyin-dictool stopped
-  # being excluded when its C-ABI dependency was cut (it now drives the
+  # the whole workspace minus the two C-ABI crates (glib, cargo-c,
+  # Linux-only per structure.md). oxpinyin-dictool stopped being
+  # excluded when its C-ABI dependency was cut (it now drives the
   # facade's §9 import/export machinery directly — pure Rust, no
   # glib/pkg-config), so it builds and tests here like the rest of the
   # portable set. Everything else — store, runtime, facade, datagen and
@@ -484,7 +307,7 @@ jobs:
       # whose behavior the platform can change.
       - run: >
           cargo test --locked --workspace --no-default-features --features redb
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi --exclude oxpinyin-python
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
           --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
           --exclude oxpinyin-word
@@ -511,7 +334,7 @@ jobs:
       # if it ever became a default feature.
       - run: >
           cargo test --locked --workspace --no-default-features --features redb
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi --exclude oxpinyin-python
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
           --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
           --exclude oxpinyin-word
@@ -721,7 +544,7 @@ jobs:
   # and remain non-required lanes beside this one.
   ci-aggregate:
     needs:
-      [changes, lint, test, python, python-portable, test-macos, test-windows, deny, fuzz]
+      [changes, lint, test, test-macos, test-windows, deny, fuzz]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -731,8 +554,6 @@ jobs:
           GATED: ${{ needs.changes.outputs.run }}
           LINT: ${{ needs.lint.result }}
           TEST: ${{ needs.test.result }}
-          PYTHON: ${{ needs.python.result }}
-          PYTHON_PORTABLE: ${{ needs.python-portable.result }}
           TEST_MACOS: ${{ needs.test-macos.result }}
           TEST_WINDOWS: ${{ needs.test-windows.result }}
           DENY: ${{ needs.deny.result }}
@@ -762,8 +583,6 @@ jobs:
           }
           lane lint "$LINT"
           lane test "$TEST"
-          lane python "$PYTHON"
-          lane python-portable "$PYTHON_PORTABLE"
           lane test-macos "$TEST_MACOS"
           lane test-windows "$TEST_WINDOWS"
           lane deny "$DENY"
