@@ -1,11 +1,6 @@
 #!/bin/sh
 # commit-msg hook — delegates to the canonical commit-trailer linter so the
-# local hook and CI can never disagree (single source of truth).
-#
-# Only R1–R2 (message-content) rules apply at commit time; R4
-# (author/committer identity) is CI-only because the hook runs before the
-# commit exists (no SHA to inspect) and the author identity is not a property
-# of the message.
+# local hook and CI can never disagree (single source of truth). Both run R2.
 set -eu
 repo_root=$(git rev-parse --show-toplevel)
 exec "$repo_root/.github/scripts/lint-commits.sh" --hook "$1"

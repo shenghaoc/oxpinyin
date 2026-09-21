@@ -43,7 +43,7 @@ mechanization exists.
 
 ## Attribution (commit trailers)
 
-Already mechanical: `.githooks/commit-msg` + CI R1–R4 lint every commit.
+Already mechanical: `.githooks/commit-msg` + CI R2 lint every commit.
 AGENTS.md keeps the spec; the mechanics exist. **No change.**
 
 ## Toolchain / rebase / worktree / concurrent-session sections

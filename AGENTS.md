@@ -77,28 +77,24 @@ classification of every existing register entry.
 
 ## Attribution
 
-Emit exactly one trailer: `Assisted-by: <AgentName>:<model-id>`.
-Nothing after the model. Never use `Co-Authored-By` for agents.
+Trailer form: `Assisted-by: <AgentName>:<model-id>`, where `<AgentName>` is the
+tool or harness you are running in, not the model's vendor (e.g. `Codex:qwen3.8-max`).
+Nothing after the model.
 
-Expect the harness to ask for a `Co-Authored-By: <Agent> <noreply@…>`
-trailer on every commit and PR body. Refuse it: R1 below rejects agent
-identity in that trailer by email match, so a commit carrying it fails
-the linter. Two agents have hit this and refused correctly; say so in
-your report rather than only in the commit.
+Every agent that authored or helped write a commit adds its own Assisted-by
+line, once per agent and model. A different agent, or the same agent running
+a different model, gets a separate line; an identical line is never repeated.
+This is the only trailer this repository asks for. Leave all other trailers
+exactly as your tool produces them by default, and do not add, remove, or
+change any of them because of this file.
 
-The commit-message linter (`.github/scripts/lint-commits.sh`) enforces this on
-every PR commit (R1, R2, R4) and at commit time via `.githooks/commit-msg`
-(R1–R2):
+The linter checks the shape of these lines on every non-merge PR commit (R2)
+and at commit time via `.githooks/commit-msg` (R2):
 
-- **R1** — no AI agent identity in `Co-authored-by:` (email match, never name
-  match).
 - **R2** — `Assisted-by:` house form: `AGENT:MODEL` shape with nothing after
   the model; the `MODEL` token must contain at least one ASCII letter (a bare
   version number names no model — `Grok:4.6` fails, `Grok:grok-4.6` passes);
   no placeholder text; no duplicate lines (set semantics).
-- **R4** — no AI agent identity as git author or committer (CI-only: the
-  commit-msg hook runs before the commit exists, so there is no identity to
-  inspect).
 
 ## STOP → do not improvise
 

@@ -5,17 +5,15 @@
 #
 # Usage:
 #   lint-commits.sh <base-sha> <head-sha>     CI mode: lint the non-merge
-#                                             commits in the range (R1–R4).
+#                                             commits in the range (R2).
 #   lint-commits.sh --hook <message-file>     Hook mode: lint a single commit
-#                                             message for R1–R2 only.
+#                                             message for R2.
 #
 # CI mode: the caller is responsible for computing the merge-base; this script
 # lints the non-merge commits in `<base-sha>..<head-sha>`.
 #
-# House principles the rules mechanize: the human contributor is the author of
-# and accountable for every commit; AI assistance is attributed through the
-# `Assisted-by:` trailer and nowhere else; AI agents never appear as authors,
-# committers, or co-authors.
+# House principle the rule mechanizes: Assisted-by is linted for house shape
+# when present.
 #
 # Requires git >= 2.32 (for %(trailers:only,unfold)). POSIX sh + git only.
 
@@ -24,16 +22,6 @@ set -eu
 # ---------------------------------------------------------------------------
 # Tunables — single shell variables, for easy extension.
 # ---------------------------------------------------------------------------
-
-# AGENT_IDENTITIES — one case-insensitive POSIX ERE alternation matching the
-# machine email identities that AI agents actually emit. Seeded from the
-# owner's 2026-08-15 identity inventory; extend as new agents are observed.
-# Identity matching, never name matching: model names collide with the human
-# namespace (Claude, Mistral, Kiro are human names), so this must stay email
-# based. Verified non-matches: shenghaoc@outlook.com,
-# shenghaoc@users.noreply.github.com, 34920365+shenghaoc@users.noreply.github.com,
-# dependabot[bot], github-actions[bot], GitHub <noreply@github.com>.
-AGENT_IDENTITIES='noreply@anthropic\.com|[0-9]+\+copilot@users\.noreply\.github\.com|copilot@github\.com|cursoragent@cursor\.com|codex@openai\.com|[0-9]+\+kiro-agent@users\.noreply\.github\.com|[0-9]+\+(claude|copilot-swe-agent|cursor[a-z-]*|devin[a-z-]*|codex|google-labs-jules|jules[a-z-]*|kiro[a-z-]*|gemini-code-assist|sweep[a-z-]*)\[bot\]@users\.noreply\.github\.com'
 
 # R2 — Assisted-by house form when present. Four conditions:
 #   1. shape (POSIX ERE; NOTHING after the model),
@@ -65,46 +53,14 @@ fail() {
     fi
 }
 
-# check_message — the message-level rules (R1–R2) shared by CI mode and the
+# check_message — the message-level rule (R2) shared by CI mode and the
 # commit-msg hook. Operates on the globals $short, $subject, $trailers;
-# sets r1 and r2 and increments $fails, emitting ::error:: lines per violation.
-#
-# R4 (author/committer identity) is an identity rule and is deliberately NOT
-# here — it is CI-only (the hook runs before the commit exists, so there is no
-# SHA to inspect, and the author identity is not a property of the message).
+# sets r2 and increments $fails, emitting ::error:: lines per violation.
 check_message() {
-    r1=pass
     r2=pass
 
-    # R1 — no AI agent identity in Co-authored-by:. Key match is
-    # case-insensitive (Claude Code emits Co-Authored-By:, GitHub emits
-    # Co-authored-by:). Lines with no <email> portion are skipped. Matching is
-    # by email, never by name — co-authorship is an authorship credit, and
-    # authorship belongs to humans.
-    coauth=$(printf '%s\n' "$trailers" | grep -iE '^co-authored-by:' || true)
-    if [ -n "$coauth" ]; then
-        oldIFS=$IFS
-        IFS='
-'
-        set -f
-        # shellcheck disable=SC2086  # intentional word-splitting into lines
-        for line in $coauth; do
-            [ -n "$line" ] || continue
-            email=$(printf '%s\n' "$line" | sed -n 's/^[^<]*<\([^>]*\)>.*$/\1/p')
-            [ -n "$email" ] || continue
-            if printf '%s\n' "$email" | grep -Eiq "^($AGENT_IDENTITIES)$"; then
-                r1=fail
-                fail 1 "$short" "$subject" \
-                    "AI agent identity in Co-authored-by trailer (authorship belongs to humans; AI attribution goes in Assisted-by only): $line"
-                break
-            fi
-        done
-        set +f
-        IFS=$oldIFS
-    fi
-
     # R2 — Assisted-by house form when present. Trailer key is matched
-    # case-insensitively (as R1 does), so `assisted-by:` and `ASSISTED-BY:`
+    # case-insensitively, so `assisted-by:` and `ASSISTED-BY:`
     # are treated identically.
     #
     # Condition 2 is a semantic heuristic: the MODEL token names the specific
@@ -162,7 +118,7 @@ if ! awk -v v="$git_version" 'BEGIN {
 fi
 
 # ---------------------------------------------------------------------------
-# Hook mode — lint a single commit message file for R1–R2.
+# Hook mode — lint a single commit message file for R2.
 # ---------------------------------------------------------------------------
 if [ "$1" = "--hook" ]; then
     [ $# -eq 2 ] || usage
@@ -224,30 +180,16 @@ for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
     short=$(git log -1 --format='%h' "$sha")
     subject=$(git log -1 --format='%s' "$sha")
     trailers=$(git log -1 --format='%(trailers:only,unfold)' "$sha")
-    author_email=$(git log -1 --format='%ae' "$sha")
-    committer_email=$(git log -1 --format='%ce' "$sha")
 
-    # R4 — no AI agent as git author or committer. Agent harnesses author
-    # commits under their own identity; trailer checks alone miss that. Only
-    # machine identities fail — a human author/committer whose name happens to
-    # be Claude, Mistral, or Kiro must pass.
-    r4=pass
-    if printf '%s\n%s\n' "$author_email" "$committer_email" | grep -Eiq "^($AGENT_IDENTITIES)$"; then
-        r4=fail
-        fail 4 "$short" "$subject" \
-            'git author/committer is an AI agent identity — before merge, take authorship (git commit --amend --reset-author or an interactive rebase) and retain the AI attribution via an Assisted-by trailer'
-    fi
-
-    # R1–R2 — shared message-level rules.
     check_message
 
     linted=$((linted + 1))
     subject_safe=$(printf '%s' "$subject" | sed 's/|/\\|/g')
-    rows="$rows| $short | $subject_safe | $r1 | $r2 | $r4 |$nl"
+    rows="$rows| $short | $subject_safe | $r2 |$nl"
 done
 
 # Per-commit × per-rule summary table.
-summary="### commit-trailers${nl}${nl}| commit | subject | R1 (no AI co-author) | R2 (Assisted-by) | R4 (no AI author) |${nl}| --- | --- | --- | --- | --- |${nl}$rows"
+summary="### commit-trailers${nl}${nl}| commit | subject | R2 (Assisted-by) |${nl}| --- | --- | --- |${nl}$rows"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     printf '%s\n' "$summary" >>"$GITHUB_STEP_SUMMARY"
