@@ -112,6 +112,7 @@ series lives in `../perf/`.
 | [`scoring-spec`](scoring-spec.md) | Scoring SPEC | frozen |
 | [`segment-graph`](segment-graph.md) | SegmentGraph SPEC | frozen |
 | [`segmenter-port`](segmenter-port.md) | W9-T1 segmenter port — `ngseg` → Rust | port record |
+| [`send-sync-audit-2026-09-21`](send-sync-audit-2026-09-21.md) | Send+Sync mechanisms vs the C ABI (PR #503 follow-up) | audit |
 | [`sentence-surface`](sentence-surface.md) | Sentence surface (W14) | frozen (§12 residual re-frozen 2026-09-04) |
 | [`session-api`](session-api.md) | Framework-neutral session API SPEC | frozen |
 | [`session-replay`](session-replay.md) | Session replay SPEC | frozen |
