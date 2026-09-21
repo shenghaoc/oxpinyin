@@ -64,12 +64,7 @@ progress (`ROADMAP.md` "Stage 2", `docs/perf/README.md`): the P1–P6
 data-layer inversion, the fat-LTO release profile and the store/user-crate
 hot-path work have landed, each measured against the pin in the same
 container. Named next targets: the per-instance key-cost table at
-`pinyin_alloc_instance` and steady-state candidate lookup. **Python:**
-`oxpinyin-python` serves the engine session API over PyO3 (not the C
-ABI), written to be correct on free-threaded CPython with the GIL released
-around engine calls and tested on GIL-enabled CPython 3.14 (Linux, macOS
-and Windows source builds); the spec's items all closed 2026-09-08
-(`.kiro/specs/python-binding/tasks.md`). **Frontends:**
+`pinyin_alloc_instance` and steady-state candidate lookup. **Frontends:**
 no frontend drives the ABI end-to-end yet; fcitx5-oxpinyin appears in the
 findings as a reference consumer, not a shipped driver.
 

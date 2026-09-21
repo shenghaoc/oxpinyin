@@ -35,6 +35,5 @@ recipe, per artifact".
 | [`perf-fill-lookup-2026-08`](perf-fill-lookup-2026-08.md) | Stage-2 leftover: `fill_lookup` (2026-08-20) |
 | [`perf-init-text-slurp-2026-08`](perf-init-text-slurp-2026-08.md) | Stage-2 init cut: interpolation2.text parse + redb slurp (2026-08-21) |
 | [`perf-init-typed-map-2026-08`](perf-init-typed-map-2026-08.md) | Stage-2 leftover: init typed-map insert (2026-08-21) |
-| [`perf-python-shared-engine-2026-08`](perf-python-shared-engine-2026-08.md) | Python binding: shared `Engine` vs one `Engine` per thread (2026-08) |
 | [`perf-so-size-2026-09`](perf-so-size-2026-09.md) | `.so` size — fat LTO + single codegen unit (2026-09) |
 | [`perf-stage2-harness-2026-08`](perf-stage2-harness-2026-08.md) | Stage-2 measurement harness (continues the W8 baseline) |

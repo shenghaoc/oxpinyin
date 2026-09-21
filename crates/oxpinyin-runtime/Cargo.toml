@@ -1,6 +1,6 @@
 [package]
 name = "oxpinyin-runtime"
-description = "Concrete engine assembly shared by oxpinyin consumers (C ABI, Python, tools)"
+description = "Concrete engine assembly shared by oxpinyin consumers (C ABI, tools)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -43,37 +43,15 @@ cargo test --locked --workspace --no-default-features --features redb  # portabl
 | `docs/testing/` | Corpus pipeline, oracle environment, fixture formats |
 | `docs/safety/` | MISRA-Rust mapping, audit, safety profile |
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
-| `docs/python.md` | Python binding data requirements and API |
 | `tools/oracle/` | Pin build recipe (`docs/runbooks/oracle.md`) |
-| `.kiro/` | Steering and specs (foundation/drop-in/python-binding) in Kiro's documented layout (<https://kiro.dev/docs/>); the format is used, the Kiro IDE and CLI are not |
+| `.kiro/` | Steering and specs (foundation/drop-in) in Kiro's documented layout (<https://kiro.dev/docs/>); the format is used, the Kiro IDE and CLI are not |
 
 | Group | Crates |
 |---|---|
-| Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-facade`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-capi-marshal`, `oxpinyin-python` |
+| Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-facade`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-capi-marshal` |
 | Training toolchain (never ships) | `oxpinyin-corpus`, `oxpinyin-segment`, `oxpinyin-kmm`, `oxpinyin-lambda`, `oxpinyin-word`, `oxpinyin-punct`, `oxpinyin-eval`, `oxpinyin-train`, `oxpinyin-datagen`; legacy interpolation utilities the trainer never invokes but the others share: `oxpinyin-counter`, `oxpinyin-emitter` |
 | Tools | `oxpinyin-dictool` |
 | Oracle / testing | `pinyin-oracle`, `oxpinyin-testsupport` |
-
-## Python
-
-The engine is consumable from Python with no libpinyin install — the same
-Rust implementation the C frontends use. It serves the use case described in
-[libpinyin issue #181](https://github.com/libpinyin/libpinyin/issues/181) —
-call a pinyin engine from Python and get Chinese candidates back — without
-requiring libpinyin.
-
-```python
-import oxpinyin
-
-# one data directory per backend; "tkt" is the default (tkrzw) build's
-with oxpinyin.Engine("fixtures/w3/tkt") as engine:
-    for candidate in engine.lookup("nihao"):
-        print(candidate.text)   # 你好 first
-```
-
-Build with maturin (`pip install .` inside `crates/oxpinyin-python`) and see
-[docs/python.md](docs/python.md) for data requirements, selection/learning
-workflows, thread-safety and error mapping.
 
 ## Upstream
 

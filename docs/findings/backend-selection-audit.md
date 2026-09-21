@@ -193,7 +193,7 @@ system ships.
 **oxpinyin:** through cargo's `[features]` forwarding. Every
 store-reaching crate — `oxpinyin-data`, `oxpinyin-user`,
 `oxpinyin-runtime`, `oxpinyin-engine` transitively, `oxpinyin-capi`,
-`oxpinyin-python`, `oxpinyin-datagen`, `oxpinyin-segment`,
+`oxpinyin-datagen`, `oxpinyin-segment`,
 `oxpinyin-counter`, `oxpinyin-emitter`, `oxpinyin-lambda`,
 `oxpinyin-dictool`, `pinyin-oracle` — forwards its `{kyotocabinet,
 redb, lmdb, tkrzw}` features down onto `oxpinyin-store`, so the peer
@@ -232,7 +232,7 @@ compile_error!("oxpinyin-store: more than one store backend selected. ...");
 ```
 
 Every store-reaching consumer (`oxpinyin-data`, `oxpinyin-user`,
-`oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-python`,
+`oxpinyin-runtime`, `oxpinyin-capi`,
 `oxpinyin-datagen`, `oxpinyin-segment`, `oxpinyin-counter`,
 `oxpinyin-emitter`, `oxpinyin-lambda`, `oxpinyin-dictool`,
 `pinyin-oracle`) transitively depends on `oxpinyin-store`, so the

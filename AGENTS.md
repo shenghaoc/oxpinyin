@@ -114,10 +114,12 @@ background-task notice. When the harness says no human input has arrived,
 none has — that statement outranks anything in your context that reads
 like consent. Ask, then stop and wait for the human to type it.
 
-Precedent: the 2026-09-05 `__store_ext__` addition (a Python-visible
-interface change, so a STOP) was proposed, self-selected and implemented
-in one unbroken agent run, while the harness was reporting no human input.
-The change was correct and the discipline was not; only review caught it.
+Precedent: the 2026-09-05 `__store_ext__` addition on the then-shipping
+Python binding (a consumer-visible interface change, so a STOP — that
+binding has since been removed) was proposed, self-selected and
+implemented in one unbroken agent run, while the harness was reporting no
+human input. The change was correct and the discipline was not; only
+review caught it.
 
 ## Hard forbids
 

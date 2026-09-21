@@ -49,7 +49,7 @@ pub const BEFORE_CURSOR_ANCHOR: usize = 0;
 /// snapshot).
 pub struct InstanceCore {
     /// The shared runtime's concrete session — the same assembly every
-    /// facade and the Python binding drive.
+    /// facade drives.
     pub session: RuntimeSession,
     /// Clone of the context's user store. `None` under no user dir.
     pub user: Option<UserStore>,

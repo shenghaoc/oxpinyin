@@ -3,7 +3,7 @@
 Design goal: maximum confidence per CI-minute, four tiers, nothing heavy on
 the PR path. Jobs as of 2026-09-12 (`ci.yml`): `changes`, `lint` (fmt ×2 workspaces +
 clippy `-D warnings` + Lizard), `test` (+ C++ smoke gate + live-typing
-differential), `python` / `python-portable`, `test-macos` / `test-windows`,
+differential), `test-macos` / `test-windows`,
 `deny`, `fuzz` (pinned nightly; builds all ten targets, ~10s smoke run of
 each) and `ci-aggregate`, the single required check.
 Estimated costs below are rough additive deltas on a cached runner.

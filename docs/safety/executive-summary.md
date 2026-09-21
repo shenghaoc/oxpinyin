@@ -24,12 +24,12 @@ biggest rules to hard failures.
 ## A. Top 20 highest-value changes (ordered)
 
 1. `#![forbid(unsafe_code)]` in the 8 then-remaining safe crates (core proves
-   the pattern; landed on 20 crate roots plus Python's manifest, 21 of 26) — makes the constitution's §5 allowlist mechanical. F-12.
+   the pattern; landed on 20 of 25 crate roots, with facade/runtime also carrying the manifest form) — makes the constitution's §5 allowlist mechanical. F-12.
 2. `clippy::undocumented_unsafe_blocks` + `missing_safety_doc` denied in
    capi/oracle — makes "SAFETY per block" (195/195 at 2382bdd; 416 `// SAFETY:` comments today under `crates/*/src` excluding `*_tests.rs`/`test_support.rs`, 460 counting the test files under `crates/*/src` too) enforced, not
    admired.
 3. Panic containment denies (`unwrap_used`, `expect_used`, `panic`,
-   `panic_in_result_fn`) via `cfg_attr(not(test))` in the library crates (eleven then; thirteen crate roots today, incl. capi, zhuyin-capi, oracle, runtime, facade, python, datagen)
+   `panic_in_result_fn`) via `cfg_attr(not(test))` in the library crates (eleven then; twelve crate roots today, incl. capi, zhuyin-capi, oracle, runtime, facade, datagen)
    — locks in the existing zero-panic state at zero churn (measured).
 4. `cargo deny` (advisories/bans/licenses/sources) as the sole supply-chain
    PR gate — closes the only fully unenforced layer.
