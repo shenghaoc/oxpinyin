@@ -8,5 +8,5 @@ upgrades — see `ROADMAP.md`. Run the README Quickstart (fmt / clippy / test);
 git config core.hooksPath .githooks   # once per clone
 ```
 
-AI assistants must follow `AGENTS.md` (`Assisted-by: AGENT:MODEL` only; set
+AI assistants must follow `AGENTS.md` (`Assisted-by: AGENT:MODEL`; set
 semantics).

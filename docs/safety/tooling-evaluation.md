@@ -536,7 +536,7 @@ oblivion — hooks are a convenience, not a boundary; CI stays authoritative.
 **Verdict: DROP** (was drafted as ADOPT, implemented as PR-1g, then
 dropped in review): CI's fmt gate is already seconds-fast, so the hook
 added convenience without enforcement. The tracked `.githooks/commit-msg`
-hook stays as-is — it is the single source of truth for R1–R2 and is
+hook stays as-is — it is the single source of truth for R2 and is
 cheap because it lints one message. The .vscode suggestion met the same
 fate; editors can set `rust-analyzer.check.command` locally.
 

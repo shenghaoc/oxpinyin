@@ -102,7 +102,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 | Constitution items 1–3 (broad appeal, size budget, no local AI) | product judgment |
 | Freeze discipline (SPECs, scorer API, path-set parity) | already enforced by review + oracle differentials; linting "don't change frozen semantics" is not mechanizable |
 | Rebase/worktree etiquette | git workflow, not code |
-| Commit trailer form | already mechanical: `.githooks/commit-msg` + CI (R1, R2, R4 — no R3 was ever adopted) |
+| Commit trailer form | already mechanical: `.githooks/commit-msg` + CI (R2 — no R3 was ever adopted) |
 | "When in doubt, STOP" | the meta-rule; cannot be a lint |
 
 ## Coverage of the MISRA-derived rule set

@@ -20,19 +20,19 @@ implementation that would change a frozen SPEC without an ask.
 
 ## Assisted-by trailer
 
-Every agent-assisted commit carries exactly one trailer — the full line
-`Assisted-by: AGENT:MODEL`, nothing after the model; plain human commits
-need none. The linter enforces the house form when a trailer is present
-(`.github/scripts/lint-commits.sh`):
+Every agent-assisted commit carries an `Assisted-by: AGENT:MODEL` trailer
+for each distinct agent and model, nothing after the model; plain human
+commits need none. The linter enforces the house form when a trailer is
+present (`.github/scripts/lint-commits.sh`):
 
     ^Assisted-by: [[:alnum:]][[:alnum:]._-]*:[[:alnum:]][[:alnum:].+_-]*$
 
 No slash in either character class, and each token starts alphanumeric. The
 model token must contain an ASCII letter (`Kiro:kiro-1` passes;
-`Kiro:4.6` fails). No duplicate lines (set semantics). Never
-`Co-Authored-By:` for agents. The regex is the gate; there is no vendor
-allowlist — `git log --format=%B | grep Assisted-by` shows the forms in
-use (`ZCode:GLM-5.3`, `Claude:claude-fable-5-1`, `Kiro:kiro-cli`, …).
+`Kiro:4.6` fails). No duplicate lines (set semantics). The regex is the
+gate; there is no vendor allowlist — `git log --format=%B | grep Assisted-by`
+shows the forms in use (`ZCode:GLM-5.3`, `Claude:claude-fable-5-1`,
+`Kiro:kiro-cli`, …).
 
 ## Worktrees
 

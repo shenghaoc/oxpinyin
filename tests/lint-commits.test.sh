@@ -23,7 +23,6 @@ unset GITHUB_STEP_SUMMARY
 
 HUMAN_NAME='Test Human'
 HUMAN_EMAIL='human@example.com'
-BOT_EMAIL='49699333+dependabot[bot]@users.noreply.github.com'
 
 failures=0
 tests_run=0
@@ -117,42 +116,26 @@ c1a=$(msg 'valid assisted-by' \
     'Assisted-by: Claude:claude-opus-5' | human)
 c1b=$(msg 'plain human commit' | human)
 
-# --- case 2: regression oxpinyin PR#41, 7b504d0 ------------------------------
-c2=$(msg 'copilot co-authored-by' \
+# --- case 2: extra trailer alongside a valid Assisted-by ----------------------
+# Keep one agent-email extra-trailer fixture, paired with a valid Assisted-by;
+# this used to fail R1 and now passes.
+c2=$(msg 'extra trailer with valid assisted-by' \
     '' \
+    'Assisted-by: Claude:claude-opus-5' \
     'Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>' | human)
 
-# --- case 3: observed-identity coverage (all verbatim from inventory) ----------
-# Fail R1:
-c3a=$(msg 'claude co-authored-by' \
-    '' \
-    'Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>' | human)
-c3b=$(msg 'cursor co-authored-by' \
-    '' \
-    'Co-authored-by: Cursor <cursoragent@cursor.com>' | human)
-c3c=$(msg 'jules bot co-authored-by' \
-    '' \
-    'Co-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>' | human)
-c3d=$(msg 'copilot github co-authored-by' \
-    '' \
-    'Co-authored-by: Copilot <copilot@github.com>' | human)
-# Pass R1 (human / non-agent bot identities must NOT match):
-c3e=$(msg 'human co-authored-by' \
+# --- case 3: extra trailers that are not agent-fail identities ----------------
+c3e=$(msg 'human extra trailer' \
     '' \
     'Co-authored-by: shenghaoc <34920365+shenghaoc@users.noreply.github.com>' | human)
-c3f=$(msg 'dependabot co-authored-by' \
+c3f=$(msg 'dependabot extra trailer' \
     '' \
     'Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>' | human)
 
-# --- case 4: human-namespace pass guards --------------------------------------
-# Claude, Mistral, and Kiro are human names; matching is by machine identity,
-# never by name.
-c4a=$(msg 'claude martin co-authored-by' \
+# --- case 4: extra trailer with a human name that collides with a model name --
+c4a=$(msg 'claude martin extra trailer' \
     '' \
     'Co-authored-by: Claude Martin <claude.martin@example.fr>' | human)
-c4b=$(msg 'claude martin author' '' \
-    | commit 'Claude Martin' 'claude.martin@example.fr' \
-             'Claude Martin' 'claude.martin@example.fr')
 
 # --- case 5: regression oxpinyin PR#41, ba25ff7 ------------------------------
 # `Grok:4.6` fails the letter heuristic (31 such trailers observed); the
@@ -191,33 +174,20 @@ c6f=$(msg 'lowercase assisted-by key bad model' \
     '' \
     'assisted-by: Grok:4.6' | human)
 
-# --- case 8: no AI agent as git author/committer ------------------------------
+# --- case 8: agent-author identity is not a lint failure ----------------------
+# Former R4 fail; kept as a regression guard that an agent-email author passes.
 c8a=$(msg 'kiro agent author' '' \
     | commit 'Kiro Agent' '244629292+kiro-agent@users.noreply.github.com' \
              'Kiro Agent' '244629292+kiro-agent@users.noreply.github.com')
-c8b=$(msg 'claude bot author' '' \
-    | commit 'claude[bot]' '12345+claude[bot]@users.noreply.github.com' \
-             'claude[bot]' '12345+claude[bot]@users.noreply.github.com')
-c8c=$(msg 'dependabot author' '' \
-    | commit 'dependabot[bot]' "$BOT_EMAIL" \
-             'dependabot[bot]' "$BOT_EMAIL")
-c8d=$(msg 'web merge committer' '' \
-    | commit "$HUMAN_NAME" "$HUMAN_EMAIL" \
-             'GitHub' 'noreply@github.com')
 
 # --- run the single-commit cases ----------------------------------------------
 
 expect_pass 'valid Assisted-by passes' "$c1a~1" "$c1a"
 expect_pass 'plain human commit passes' "$c1b~1" "$c1b"
-expect_fail 1 'Copilot App co-author fails R1 (regression 7b504d0)' "$c2~1" "$c2"
-expect_fail 1 'Claude Opus co-author fails R1' "$c3a~1" "$c3a"
-expect_fail 1 'Cursor co-author fails R1' "$c3b~1" "$c3b"
-expect_fail 1 'google-labs-jules[bot] co-author fails R1' "$c3c~1" "$c3c"
-expect_fail 1 'Copilot <copilot@github.com> co-author fails R1' "$c3d~1" "$c3d"
-expect_pass 'shenghaoc co-author passes R1' "$c3e~1" "$c3e"
-expect_pass 'dependabot[bot] co-author passes R1' "$c3f~1" "$c3f"
-expect_pass 'Claude Martin co-author passes R1 (human name)' "$c4a~1" "$c4a"
-expect_pass 'Claude Martin author passes R4 (human name)' "$c4b~1" "$c4b"
+expect_pass 'extra trailer alongside valid Assisted-by passes' "$c2~1" "$c2"
+expect_pass 'shenghaoc extra trailer passes' "$c3e~1" "$c3e"
+expect_pass 'dependabot[bot] extra trailer passes' "$c3f~1" "$c3f"
+expect_pass 'Claude Martin extra trailer passes (human name)' "$c4a~1" "$c4a"
 expect_fail 2 'Assisted-by Grok:4.6 fails R2 (regression ba25ff7)' "$c5a~1" "$c5a"
 expect_pass 'Assisted-by Grok:grok-4.6 passes R2' "$c5b~1" "$c5b"
 expect_pass 'lowercase assisted-by key passes R2' "$c5c~1" "$c5c"
@@ -228,17 +198,14 @@ expect_fail 2 'placeholder Assisted-by fails R2 (condition 3)' "$c6c~1" "$c6c"
 expect_fail 2 'duplicate Assisted-by fails R2 (condition 4)' "$c6d~1" "$c6d"
 expect_fail 2 'trailing token Assisted-by fails R2 (condition 1)' "$c6e~1" "$c6e"
 expect_fail 2 'lowercase assisted-by key fails R2' "$c6f~1" "$c6f"
-expect_fail 4 'Kiro Agent author fails R4' "$c8a~1" "$c8a"
-expect_fail 4 'claude[bot] author fails R4' "$c8b~1" "$c8b"
-expect_pass 'dependabot[bot] author passes R4' "$c8c~1" "$c8c"
-expect_pass 'GitHub <noreply@github.com> committer passes R4' "$c8d~1" "$c8d"
+expect_pass 'Kiro Agent author passes' "$c8a~1" "$c8a"
 
 # --- case 10: multi-commit range, one bad commit ------------------------------
 
 pre10=$(git rev-parse HEAD)
 good_a=$(msg 'good a' '' | human)
 bad=$(msg 'bad middle' '' \
-    'Co-authored-by: Copilot <copilot@github.com>' | human)
+    'Assisted-by: Grok:4.6' | human)
 good_b=$(msg 'good b' '' | human)
 
 tests_run=$((tests_run + 1))
@@ -246,17 +213,17 @@ run_lint "$pre10" "$good_b"
 bad_short=$(git rev-parse --short "$bad")
 if [ "$rc" -eq 0 ]; then
     fail_test 'multi-commit range with bad commit' 'expected nonzero exit, got 0'
-elif printf '%s' "$out" | grep -q 'R1'; then
+elif printf '%s' "$out" | grep -q 'R2'; then
     if printf '%s' "$out" | grep -q "$bad_short"; then
         ok 'multi-commit range with bad commit'
     else
         fail_test 'multi-commit range with bad commit' "annotations do not identify offending SHA $bad_short"
     fi
 else
-    fail_test 'multi-commit range with bad commit' "expected R1 in output, got: $(printf '%s' "$out" | head -n 5)"
+    fail_test 'multi-commit range with bad commit' "expected R2 in output, got: $(printf '%s' "$out" | head -n 5)"
 fi
 
-# --- case 9: merge commit with agent co-author trailer is skipped -------------
+# --- case 9: merge commit with malformed Assisted-by is skipped --------------
 
 git checkout -q -b merge-side
 msg 'side commit' '' | human >/dev/null
@@ -264,11 +231,11 @@ git checkout -q main
 main_before=$(git rev-parse HEAD)
 msg 'main commit' '' | human >/dev/null
 merge_msg="$TMPDIR/merge-msg.txt"
-printf 'merge side branch\n\nCo-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>\n' >"$merge_msg"
+printf 'merge side branch\n\nAssisted-by: Grok:4.6\n' >"$merge_msg"
 git merge -q --no-ff -F "$merge_msg" merge-side >/dev/null 2>&1
 merge_sha=$(git rev-parse HEAD)
 
-expect_pass 'merge commit with agent co-author is skipped' "$main_before" "$merge_sha"
+expect_pass 'merge commit with malformed Assisted-by is skipped' "$main_before" "$merge_sha"
 
 # --- case 11: hook parity (delegator = single source of truth) -----------------
 
@@ -319,8 +286,8 @@ parity() {
     fi
 }
 
-parity 'hook/CI agree: agent co-author (R1)' 'parity r1' '' \
-    'Co-authored-by: Copilot App <223556219+Copilot@users.noreply.github.com>'
+parity 'hook/CI agree: malformed Assisted-by (R2)' 'parity r2b' '' \
+    'Assisted-by: generic LLM chatbot'
 parity 'hook/CI agree: Grok:4.6 (R2)' 'parity r2' '' \
     'Assisted-by: Grok:4.6'
 parity 'hook/CI agree: valid Assisted-by' 'parity ok' '' \
