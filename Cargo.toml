@@ -10,7 +10,6 @@ members = [
   "crates/oxpinyin-facade",
   "crates/oxpinyin-capi-marshal",
   "crates/oxpinyin-capi",
-  "crates/oxpinyin-python",
   "crates/oxpinyin-runtime",
   "crates/pinyin-oracle",
   "crates/oxpinyin-dictool",
