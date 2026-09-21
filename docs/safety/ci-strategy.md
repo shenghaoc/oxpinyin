@@ -5,7 +5,8 @@ the PR path. Jobs as of 2026-09-12 (`ci.yml`): `changes`, `lint` (fmt ×2 worksp
 clippy `-D warnings` + Lizard), `test` (+ C++ smoke gate + live-typing
 differential), `test-macos` / `test-windows`,
 `deny`, `fuzz` (pinned nightly; builds all ten targets, ~10s smoke run of
-each) and `ci-aggregate`, the single required check.
+each) and `ci-aggregate`. Main's required checks are `ci-aggregate`,
+`trailer-lint`, and `trailer-test`.
 Estimated costs below are rough additive deltas on a cached runner.
 
 ## Tier 1 — FAST PR GATE (every push/PR, ~+2 min over today)

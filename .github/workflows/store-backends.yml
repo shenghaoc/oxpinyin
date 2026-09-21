@@ -33,9 +33,10 @@ name: Store backends
 #     tests; it only fails unless every backend child, the backend-matrix
 #     job AND both sanitizer jobs succeeded. Its display name tracks the
 #     peer set — it gained "/ bdb" with the fifth peer — which it is free
-#     to do because main's required-status-check context has been the
-#     single `ci-aggregate` since 2026-09-08; before that the name was
-#     held fixed because branch protection named it directly.
+#     to do because main's required-status-check contexts are
+#     `ci-aggregate`, `trailer-lint`, and `trailer-test`; before
+#     2026-09-08 the name was held fixed because branch protection named
+#     this job directly.
 #   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan,
 #     on a date-pinned nightly, and gates the merge (since 2026-09-08; it
 #     had been continue-on-error and outside the gate, so a finding on the
@@ -371,8 +372,9 @@ jobs:
   store-backends-gate:
     # Stable aggregate status check. The display name lists the peers
     # and is extended as peers land (bdb, 2026-09-12); it is no longer
-    # pinned to a historical string, because main's required context is
-    # the single `ci-aggregate` (2026-09-08) rather than this job. It
+    # pinned to a historical string, because main's required contexts are
+    # `ci-aggregate`, `trailer-lint`, and `trailer-test` rather than this
+    # job. It
     # builds and tests nothing; it only aggregates the results of the
     # five backend children and the backend-matrix job via the
     # documented `needs.<job>.result` semantics. For a matrix upstream,
