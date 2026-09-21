@@ -83,7 +83,7 @@ impl LiveOptions {
     /// tone bits ON), and the three schemes start at the header defaults
     /// both facades share (MS double, Standard zhuyin, Hanyu full).
     #[must_use]
-    pub fn new(option_word: u32) -> Self {
+    pub(crate) fn new(option_word: u32) -> Self {
         let bits = OptionBits::from_bits(option_word);
         Self {
             incomplete: Arc::new(std::sync::atomic::AtomicBool::new(

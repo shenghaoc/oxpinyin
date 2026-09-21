@@ -99,7 +99,7 @@ impl InstanceCore {
     /// Assembles an instance's state from the context's allocation — the
     /// `alloc_instance` law, minus the C handle wiring.
     #[must_use]
-    pub const fn new(
+    pub(crate) const fn new(
         session: RuntimeSession,
         user: Option<UserStore>,
         dict: RuntimeDict,
