@@ -51,7 +51,8 @@
 # `skipped`), which required status checks treat as satisfied, and the
 # always-running `ci-aggregate` job at the tail reports on every push
 # and PR no matter what changed — it is the shape a required check
-# needs. Require exactly `ci-aggregate` on main (nothing else): it
+# needs. Main's required set is `ci-aggregate`, `trailer-lint`, and
+# `trailer-test` (the last two from commit-trailers.yml). `ci-aggregate`
 # fails when any lane that should have run failed or was cancelled,
 # and when a gated-out lane was skipped despite its paths changing.
 # The path-set bypass (a PR editing ci.yml to skip its own lanes) is
@@ -389,14 +390,15 @@ jobs:
       # Default-feature tree first, then the feature-gated dependency
       # subtrees (tkrzw, oracle-ffi). --locked pins both root graphs
       # to the committed Cargo.lock, which Dependabot maintains. The fuzz
-      # workspace has its own lock and its own graph (libfuzzer-sys), and
-      # is checked without --locked: fuzz/Cargo.lock is maintained by hand
-      # and lags the workspace manifests whenever a root dependency bump
-      # flows through the fuzz targets' path deps, so its graph is checked
-      # at current resolution instead.
+      # workspace has its own lock (fuzz/Cargo.lock) and its own graph
+      # (libfuzzer-sys plus workspace path deps). Dependabot's cargo
+      # ecosystem at directory: "/fuzz" updates that lock for crates.io
+      # bumps in the fuzz graph. A root `/` bump that changes workspace
+      # pins or path crates reachable from fuzz, and does not refresh
+      # fuzz/Cargo.lock, fails --locked. That failure is the gate.
       - run: cargo deny --locked --log-level error check
       - run: cargo deny --locked --all-features --log-level error check
-      - run: cargo deny --log-level error --manifest-path fuzz/Cargo.toml check
+      - run: cargo deny --locked --log-level error --manifest-path fuzz/Cargo.toml check
       # deny.toml's advisory ignore list is empty, so nothing here needs a
       # scope assertion to bound it. The guard this replaced existed only
       # to keep the RUSTSEC-2025-0141 (bincode) ignore honest while heed
@@ -449,13 +451,13 @@ jobs:
           mkdir -p ~/.local/bin
           install -m755 cargo-fuzz ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      # Parses the fuzz manifest under the pinned nightly without resolving
-      # (--no-deps). Fuzz lockfile freshness is deliberately not CI-gated:
-      # fuzz/Cargo.lock is maintained by hand and lags the workspace
-      # manifests the path deps resolve through (see the deny job comment),
-      # so this never runs --locked.
-      - name: Verify fuzz manifest
-        run: cargo +nightly-2026-08-01 metadata --manifest-path fuzz/Cargo.toml --format-version 1 --no-deps > /dev/null
+      # Pins the fuzz workspace to fuzz/Cargo.lock. A stale lock
+      # (workspace pin bump or new path crate not reflected here)
+      # fails this step. Dependabot owns the nested lock via
+      # directory: "/fuzz"; root bumps that leave it stale are
+      # meant to fail.
+      - name: Verify fuzz lockfile
+        run: cargo +nightly-2026-08-01 metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 > /dev/null
       # Fuzzing memory on the PR path too: restore the corpus the nightly
       # soak has accumulated (same key prefix as verify-nightly.yml's
       # fuzz-soak, so a PR smoke starts from that memory instead of the
@@ -534,10 +536,11 @@ jobs:
           name: fuzz-crash-artifacts
           path: fuzz/artifacts/
 
-  # The single required check (the branch-protection target): always
-  # runs, always reports. Red only when a lane that should have run
-  # ended as anything but success, or when the path gate said run but a
-  # lane was skipped anyway (a broken `if`, or a PR narrowing its own
+  # One of the three required checks (with `trailer-lint` and
+  # `trailer-test` from commit-trailers.yml): always runs, always
+  # reports. Red only when a lane that should have run ended as
+  # anything but success, or when the path gate said run but a lane
+  # was skipped anyway (a broken `if`, or a PR narrowing its own
   # gates). `skipped` with run=false is green: those lanes had no
   # inputs on this change, which is exactly what a path gate means.
   # store-backends.yml and verify-nightly.yml keep their own triggers
