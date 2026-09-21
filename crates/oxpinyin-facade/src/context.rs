@@ -143,7 +143,7 @@ impl ContextCore {
 
     /// [`Self::open`] with the failure kept: the C facades log it before
     /// answering NULL, so a consumer can tell a missing directory from a
-    /// corrupt table without re-running the open through Python.
+    /// corrupt table without string-matching the logged message.
     ///
     /// # Errors
     ///

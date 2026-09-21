@@ -46,13 +46,6 @@ archive for every backend (`oxpinyin-datagen`); parity verification stays
 local-only — the model20 archive is non-redistributable and never enters
 CI.
 
-**Python binding seam:** `oxpinyin-python` consumes the same
-`oxpinyin-runtime` assembly as the C ABI over PyO3 — the rlib route, no
-`extern "C"` crossing, no dlopen — with free-threaded CPython (`abi3-py310`
-+ `abi3t-py315` declared; CI validates the source build on 3.14t — a
-version-specific `cp314t` extension, not an `abi3t-py315` stable-ABI
-wheel) and the GIL released around session work.
-
 Out of scope: dictionary loading, LM, decoding, IBus.
 
 **Reference:** [libpinyin wiki](https://github.com/libpinyin/libpinyin/wiki) — architecture, parser internals, and data formats; the authoritative upstream source while the project catches up.

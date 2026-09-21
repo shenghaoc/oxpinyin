@@ -176,8 +176,8 @@ interpolation table plus the reconstructed reverse/initial maps) is gone.
   through the readers; no fixture mode (the `fixtures/w3/<backend>` mini
   set is a real, small data directory).
 * `oxpinyin-engine` — the candidate law reads the item field directly.
-* `oxpinyin-capi` / `oxpinyin-zhuyin-capi` / `oxpinyin-python` — fixture
-  mode removed; the token unigram surface reports the item field.
+* `oxpinyin-capi` / `oxpinyin-zhuyin-capi` — fixture mode removed; the
+  token unigram surface reports the item field.
 * `oxpinyin-segment` and the W9 tools — the lexicon reads the chunk files,
   the bigram is the lazy `BigramTable`.
 

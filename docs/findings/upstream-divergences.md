@@ -1317,9 +1317,8 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   **The fix.** The before-cursor window is retained in
   `InstanceCore::anchored_window` exactly as the after-cursor one is, so
   the later choose resolves through `Session::select_anchored` against the
-  same list — in BOTH zhuyin facades (`oxpinyin-zhuyin-capi`'s C ABI and
-  `oxpinyin-python`'s `ZhuyinSession`, which mirror each other line for
-  line and are held together by `tests_py/test_zhuyin_parity.py`). The
+  same list — in the zhuyin C ABI (`oxpinyin-zhuyin-capi`; a former Python
+  `ZhuyinSession` mirror was retired with the binding). The
   anchor is `oxpinyin_facade::BEFORE_CURSOR_ANCHOR` = 0, not the lookup
   offset: `candidates_ending_at` scans the prefix graph `raw[..offset]`,
   whose coordinates are absolute from the buffer start, so every row's
@@ -1334,11 +1333,9 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   `oxpinyin-zhuyin-capi`'s
   `choosing_from_a_before_cursor_window_uses_that_window`, the twin of
   `oxpinyin-capi`'s
-  `choosing_from_a_reanchored_window_uses_the_anchored_span` — and the
-  zhuyin parity corpus gained `guess-before-cursor-then-select`
-  (`before(6)` then select row 1 then commit), replayed by both drivers.
-  Revert-and-check: reverting the two facade edits fails the C test at the
-  cursor assertion (3 vs 6) and changes exactly one of the 28 corpus cases.
+  `choosing_from_a_reanchored_window_uses_the_anchored_span`. Revert-and-check:
+  reverting the facade edit fails the C test at the cursor assertion
+  (3 vs 6).
 
   **Residual — OPEN.** The fix makes the
   committed row the displayed row; it does not make the before-cursor

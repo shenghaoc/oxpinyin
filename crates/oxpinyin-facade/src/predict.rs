@@ -47,9 +47,8 @@ pub fn compute_prefixes(dict: &RuntimeDict, user: Option<&UserStore>, prefix: &s
 /// the prefix path; user rows from the user store's phrase inventory.
 /// The ordering law itself is
 /// [`oxpinyin_runtime::merge_suggestion_rows`], held with this crate's
-/// other shared orchestration so the C-ABI facades and the Python
-/// binding rank one suggestion order rather than each assembling an
-/// equivalent.
+/// other shared orchestration so the C-ABI facades rank one suggestion
+/// order rather than each assembling an equivalent.
 #[must_use]
 pub fn merged_suggestions(
     dict: &RuntimeDict,

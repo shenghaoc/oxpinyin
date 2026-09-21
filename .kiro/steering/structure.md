@@ -10,12 +10,11 @@ inclusion: always
 | oxpinyin-data | load libpinyin-format tables (D3 route); drop-in readers for installed libpinyin data | deny (+mmap) | yes | via engine |
 | oxpinyin-user | ACID store over DefaultStore; no format-version row, matching libpinyin's unversioned user files (ruling 2026-09-08, `docs/findings/user-store.md` §4) | forbid | yes | via engine |
 | oxpinyin-engine | session API — the supported Rust surface | forbid | yes | yes |
-| oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws, the §9 user-data export materialization) consumed by both C-ABI facades and the Python binding; depends on core, engine, runtime and user — it holds the runtime's concrete dict/lm/user handles by value, so it forwards the whole backend feature matrix rather than staying generic over the engine traits | forbid | yes | via capi |
+| oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws, the §9 user-data export materialization) consumed by both C-ABI facades; depends on core, engine, runtime and user — it holds the runtime's concrete dict/lm/user handles by value, so it forwards the whole backend feature matrix rather than staying generic over the engine traits | forbid | yes | via capi |
 | oxpinyin-capi | the libpinyin C ABI — `libpinyin.so.15`, all 79 `pinyin_*` exports, libpinyin's SONAME/header/pkg-config via cargo-c | allow | Linux | yes |
 | oxpinyin-zhuyin-capi | C ABI of libpinyin's zhuyin facade — `libzhuyin.so.15`, the `--enable-libzhuyin` counterpart (52 symbols, own SONAME); delegates to the same engine/chewing surface as oxpinyin-capi | allow | Linux | yes |
 | oxpinyin-capi-marshal | declarative marshalling macros shared by the two C-ABI facades (opaque-handle casts, the `char **`-out sentence writer); macro-only, no compiled unsafe of its own | forbid | yes | via capi, zhuyin-capi |
-| oxpinyin-python | PyO3 binding over the engine session API (Python consumers) | forbid | yes | wheel only |
-| oxpinyin-runtime | concrete assembly shared by consumers (tables+model+user wiring → Session) | forbid | yes | via capi/python |
+| oxpinyin-runtime | concrete assembly shared by consumers (tables+model+user wiring → Session) | forbid | yes | via capi |
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |
 | oxpinyin-dictool | conversions; standalone vocab exporter over the facade's §9 import/export machinery — pure Rust, no C-ABI dependency (portable for real since that edge was cut) | forbid | yes | yes |
 | oxpinyin-store | ordered byte-KV seam; Tkrzw (default since 2026-09-05), Kyoto Cabinet, Berkeley DB (2026-09-12), LMDB, redb backends — one per binary, compile-time selected; KC/tkrzw/lmdb/bdb are system C-library deps, Linux-verified and macOS-buildable via Homebrew, redb is the pure-Rust portability fallback (macOS/Windows CI runs --no-default-features) | deny | yes | via engine |
@@ -35,9 +34,9 @@ inclusion: always
 **Centralized assembly:** the concrete construction of a decodable engine
 (system tables + unigram model + λ + optional user store + addon/punct
 wiring) lives in exactly one place, `oxpinyin-runtime`; the facades
-(through `oxpinyin-facade`), capi, python, and future adapters consume it
+(through `oxpinyin-facade`), capi, and future adapters consume it
 rather than assembling equivalents. This is deliberate so native and
-language-binding paths cannot silently diverge. It is wiring over `oxpinyin-data`/`-user`/`-engine` public APIs;
+C-ABI paths cannot silently diverge. It is wiring over `oxpinyin-data`/`-user`/`-engine` public APIs;
 what algorithm it does hold is deliberate and pinned — the user-count
 overlay feed (the arithmetic itself lives in `oxpinyin-data`'s
 `*_with_user_delta` methods, and the whole-row Gate 2 merge in its
@@ -66,7 +65,7 @@ config and storage paths injected as data; no platform services and no
 oxpinyin-capi, never in the engine. Sessions are instance-per-context and
 main-thread-friendly (TSF/IMK/ArkTS models).
 
-**Supported surface:** `oxpinyin-engine` (Rust), `oxpinyin-capi` (C ABI), and `oxpinyin-python` (PyO3: `Engine`/`Candidate` over the same session API; unsafe is forbidden even at the FFI boundary).
+**Supported surface:** `oxpinyin-engine` (Rust) and `oxpinyin-capi` (C ABI; `oxpinyin-zhuyin-capi` for the zhuyin facade).
 core/data/user are published to hold names but are internal — no
 stability promise. There is no cargo-public-api snapshot tooling in the
 tree; the supported surface's stability is review-enforced

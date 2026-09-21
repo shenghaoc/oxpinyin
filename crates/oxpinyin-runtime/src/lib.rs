@@ -15,10 +15,8 @@
 //! and `merge_bigram_row`, which [`RuntimeLm`] merely feeds. The one
 //! ordering law held here is [`merge_suggestion_rows`], the pinned
 //! suggestion row order the facades rank predicted candidates in.
-//! Centralizing the assembly here is what
-//! keeps the C ABI (`oxpinyin-capi`) and the Python binding
-//! (`oxpinyin-python`) from silently diverging: one construction, one set of
-//! parity-tested semantics.
+//! Centralizing the assembly here is what keeps every C-ABI consumer
+//! on one construction and one set of semantics.
 //!
 //! Pure Rust; no FFI of any kind, `unsafe_code` forbidden.
 #![forbid(unsafe_code)]
@@ -80,9 +78,9 @@ pub fn user_store_file() -> String {
 /// sorts by.
 ///
 /// Lives beside the other pinned data+user compositions this crate holds
-/// (the [`RuntimeLm`] overlay feed), so the C-ABI facades and the Python
-/// binding share one suggestion ordering instead of each assembling an
-/// equivalent against [`ucs4_walk_key`].
+/// (the [`RuntimeLm`] overlay feed), so the C-ABI facades share one
+/// suggestion ordering instead of each assembling an equivalent against
+/// [`ucs4_walk_key`].
 #[must_use]
 pub fn merge_suggestion_rows(
     system: &[(u32, String)],

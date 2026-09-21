@@ -86,13 +86,11 @@ same-backend requirement (maintainer ruling;
 
 Crates outside the Stage 1 table (roles in `.kiro/steering/structure.md`):
 `oxpinyin-facade` and `oxpinyin-runtime` (the shared orchestration and
-assembly layers under both C ABIs and the Python binding),
+assembly layers under both C ABIs),
 `oxpinyin-chewing` (the excisable zhuyin layer, D6 seam:
 `docs/findings/chewing-crate-seam.md`), `oxpinyin-zhuyin-capi`
 (`libzhuyin.so.15`, upstream's `--enable-libzhuyin` counterpart, 52
-symbols), `oxpinyin-python` (`docs/python.md`; spec
-`.kiro/specs/python-binding/`, all items closed 2026-09-08), and
-`oxpinyin-testsupport` (dev-only).
+symbols), and `oxpinyin-testsupport` (dev-only).
 
 **Stage 1 status (2026-09-12).** *Implementation:* complete — every
 workstream above has landed or closed (W9, W10, W11, W13, W14 and W15
@@ -165,8 +163,8 @@ parked.
   (`docs/findings/datagen-compat-2026-09-01.md`; the pre-P6 native
   schema and its serializers are gone). The production runtime reads
   those files directly through lazy readers — a handle plus a mmap per
-  table, nothing scanned at open — so `Runtime::open`, `pinyin_init` and
-  the Python binding open a system directory the way libpinyin does
+  table, nothing scanned at open — so `Runtime::open` and `pinyin_init`
+  open a system directory the way libpinyin does
   (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`).
   `interpolation2.text` is consumed by datagen only and is no longer
   emitted or read at runtime (3f0f0f36). The drop-in invariant is gated

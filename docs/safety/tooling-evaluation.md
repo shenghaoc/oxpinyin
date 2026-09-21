@@ -5,7 +5,7 @@
 > the `ffi_catch` wrapper was removed (2026-09-05), the fuzz corpus grew
 > to ten targets, Lizard gates PRs in the `lint` job, the exported ABI is
 > 79 `pinyin_*` + 52 `zhuyin_*` symbols, unsafe is forbidden in 21 of
-> 26 crates (20 at the crate root, `oxpinyin-python` at the manifest) and
+> 25 crates (20 at the crate root with `#![forbid(unsafe_code)]`, including facade/runtime which also carry the manifest form) and
 > compiled only in capi, zhuyin-capi, oracle,
 > store and data's mmap module, the workspace has 26 crates and a
 > 173-package lockfile. `enforcement-matrix.md` carries the current state.

@@ -34,7 +34,7 @@ would be cargo-cult). The boundary is the `unsafe` policy (Layer 2) and the
 
 | Crate(s) | Rule | Mechanism |
 |---|---|---|
-| every crate except data, store, capi, zhuyin-capi and pinyin-oracle — 21 of 26: 20 at the crate root, `oxpinyin-python` at the manifest (`[lints.rust] unsafe_code = "forbid"`); `oxpinyin-capi-marshal` included (its unsafe is macro text that expands inside the facades) | **no unsafe, ever, not even locally** | crate-root `#![forbid(unsafe_code)]` (the pattern `oxpinyin-core` already proves composes with the workspace `deny`); `forbid` cannot be re-allowed by any inner attribute |
+| every crate except data, store, capi, zhuyin-capi and pinyin-oracle — 20 of 25 at the crate root (`#![forbid(unsafe_code)]`; facade/runtime also carry the manifest form); `oxpinyin-capi-marshal` included (its unsafe is macro text that expands inside the facades) | **no unsafe, ever, not even locally** | crate-root `#![forbid(unsafe_code)]` (the pattern `oxpinyin-core` already proves composes with the workspace `deny`); `forbid` cannot be re-allowed by any inner attribute |
 | data | one documented exception: the mmap-backed phrase-library reader (`phrase_library.rs`, module-scoped allow) | keeps `#![deny(unsafe_code)]` + that one module-scoped allow — `forbid` would foreclose the exception, so deny is the deliberate choice; `undocumented_unsafe_blocks` and `missing_safety_doc` denied |
 | store | unsafe confined to the four C-backed backend modules (`bdb/*`, `kyotocabinet/*`, `lmdb/*`, `tkrzw/*`); within `bdb` and `kyotocabinet` it is confined further, to their `ffi` alone, so those two safe wrappers stay under the workspace `deny` | workspace `deny` + module-scoped waivers in exactly those modules, every one an `#![expect(unsafe_code, reason = …)]` rather than an `allow`, so a waiver that stops being needed draws `unfulfilled_lint_expectations` — warn-by-default, an error under the `-D warnings` every supported CI check builds with (a module waiver is precisely what `forbid` forbids — deny+scoped-waiver *is* the minimal trusted region here); `undocumented_unsafe_blocks` and `missing_safety_doc` denied |
 | capi, zhuyin-capi, oracle | unsafe allowed, but every block justified & every `unsafe fn` documented | `[lints.clippy] undocumented_unsafe_blocks = "deny"`, `missing_safety_doc = "deny"`, plus `rust::unsafe_op_in_unsafe_fn = "deny"`; `// SAFETY:` prose stays as the human-readable half |
@@ -49,7 +49,7 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 1. Public APIs return `Result`/`Option` for every fallible operation
    (constitution §4) — enforced by type-system convention + review.
 2. **Library crates** (twenty-four crate roots: core/engine/user/data/store/segment,
-   runtime, facade, python, datagen, capi, zhuyin-capi, pinyin-oracle,
+   runtime, facade, datagen, capi, zhuyin-capi, pinyin-oracle,
    plus capi-marshal, chewing, corpus, counter, emitter, eval, kmm, lambda,
    punct, train and word; two workspace members excluded: testsupport — never
    a dependency of shipping code — and dictool — CLI tool, not a library
