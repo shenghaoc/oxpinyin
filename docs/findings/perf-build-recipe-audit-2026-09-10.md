@@ -213,7 +213,6 @@ reading it, and a record in the second cannot.
 | `perf-alloc-2026-08.md` | N/A | criterion + dhat | delegated to `perf-exploration.md` |
 | `perf-candidate-cap-2026-08.md` | N/A | criterion | states it |
 | `perf-exploration.md` | N/A | criterion + Callgrind + dhat | states it |
-| `perf-python-shared-engine-2026-08.md` | N/A | PyO3 wheel (`oxpinyin._native`) | a third artifact entirely; no C-ABI `.so`, no libpinyin comparison |
 | `datagen-compat-2026-09-01.md` | N/A | — | names `run-perf-same-data.sh` once (`:143`) as a routing note, not as a source of figures |
 | `perf-provenance-audit-2026-09-07.md` | N/A (survey) | — | measures nothing; quotes three figures. Its map has **no recipe column** — see observation 5 |
 | `ci-perf-size-gate-proposal-2026-09-09.md` | N/A (PR gate rejected 2026-09-12) | — | measured nothing; the PR gate it specified will not be built. See Downstream |
