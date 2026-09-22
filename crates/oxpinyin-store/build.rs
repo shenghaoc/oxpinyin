@@ -264,6 +264,10 @@ mod tkrzw {
     }
 
     pub fn build() {
+        println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_TKRZW_INCLUDE_DIR");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_TKRZW_LIB_DIR");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_TKRZW_LIB_NAME");
         // The pkg-config lookup below decides the include path, the link
         // path and the embedded rpath; repointing it at a different tkrzw
         // installation must rerun this script, not reuse cached flags.
@@ -274,13 +278,36 @@ mod tkrzw {
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
 
-        let Some(cflags) = super::pkg_config("--cflags", "tkrzw") else {
+        // pkg-config first where it exists (Linux distros, Homebrew), then
+        // the explicit override ahead of it: an installation outside the
+        // default prefix that ships no `.pc` file — the normal case on
+        // Windows, where tkrzw's VCMakefile does not install one — is
+        // otherwise unreachable. The Kyoto Cabinet and Berkeley DB modules
+        // carry the same pair for the same reason.
+        let mut cflags: Vec<String> = super::pkg_config("--cflags", "tkrzw").unwrap_or_default();
+        if let Ok(dir) = std::env::var("OXPINYIN_TKRZW_INCLUDE_DIR") {
+            cflags.insert(0, format!("-I{dir}"));
+        }
+        if let Ok(dir) = std::env::var("OXPINYIN_TKRZW_LIB_DIR") {
+            println!("cargo:rustc-link-search=native={dir}");
+            // Package-scoped, like every build-script `rustc-link-arg`
+            // (see the Kyoto Cabinet module): this rpath reaches this
+            // package's own lib, test and bench artifacts and nothing
+            // else. Any other artifact must find the library through
+            // LD_LIBRARY_PATH or its own rpath.
+            println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+        }
+        let Some(header) = langc_header(&cflags) else {
             panic!(
                 "libtkrzw required: the `tkrzw` feature needs the tkrzw library with its \
-                 C API header tkrzw_langc.h, and `pkg-config --cflags tkrzw` could not find \
-                 them. Build tkrzw from source (https://dbmx.net/tkrzw/: ./configure \
-                 --prefix=DIR && make && make install) and put DIR/lib/pkgconfig on \
-                 PKG_CONFIG_PATH, or build without --features tkrzw.\n\n\
+                 C API header tkrzw_langc.h, which was found neither under \
+                 `pkg-config --cflags tkrzw` nor via OXPINYIN_TKRZW_INCLUDE_DIR. Build \
+                 tkrzw from source (https://dbmx.net/tkrzw/: POSIX: ./configure \
+                 --prefix=DIR && make && make install; Windows: nmake -f VCMakefile && \
+                 nmake -f VCMakefile install) and either put DIR/lib/pkgconfig on \
+                 PKG_CONFIG_PATH or point OXPINYIN_TKRZW_INCLUDE_DIR and \
+                 OXPINYIN_TKRZW_LIB_DIR at the installation directly, or build without \
+                 --features tkrzw.\n\n\
                  Do not use any Ubuntu libtkrzw-dev package. Ubuntu applies two build \
                  flags that each break tkrzw independently, silently, and in different \
                  ways; Debian applies neither, and neither fixes the other. (1) -flto \
@@ -297,26 +324,13 @@ mod tkrzw {
                  docs/findings/tkrzw-distro-compat.md."
             );
         };
-        let Some(libs) = super::pkg_config("--libs", "tkrzw") else {
-            panic!(
-                "libtkrzw required: `pkg-config --cflags tkrzw` succeeded but \
-                 `pkg-config --libs tkrzw` did not; the tkrzw installation looks incomplete."
-            );
-        };
-        let Some(header) = langc_header(&cflags) else {
-            panic!(
-                "libtkrzw required: `pkg-config --cflags tkrzw` found include flags but no \
-                 tkrzw_langc.h under them. The tkrzw backend binds only the plain-C API, so \
-                 the installation must ship that header."
-            );
-        };
         println!("cargo:rerun-if-changed={}", header.display());
 
         // Exactly the entry points the backend's safe wrapper calls, and
         // the types they traffic in. Anything else in tkrzw_langc.h — the
         // async adapter, the index API, the string utilities — stays
         // unbound: an unbound API cannot be misused.
-        let bindings = bindgen::Builder::default()
+        let mut builder = bindgen::Builder::default()
             .header(header.to_string_lossy())
             .allowlist_function("tkrzw_dbm_open")
             .allowlist_function("tkrzw_dbm_close")
@@ -342,7 +356,13 @@ mod tkrzw {
             .allowlist_var("TKRZW_STATUS_SUCCESS")
             .allowlist_var("TKRZW_STATUS_SYSTEM_ERROR")
             .allowlist_var("TKRZW_STATUS_NOT_FOUND_ERROR")
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
+
+        for arg in &cflags {
+            builder = builder.clang_arg(arg);
+        }
+
+        let bindings = builder
             .generate()
             .expect("bindgen over tkrzw_langc.h must succeed");
         let out_dir = std::env::var("OUT_DIR").unwrap();
@@ -350,22 +370,38 @@ mod tkrzw {
             .write_to_file(std::path::Path::new(&out_dir).join("tkrzw_langc.rs"))
             .expect("writing the generated tkrzw bindings must succeed");
 
-        for lib in &libs {
-            if let Some(name) = lib.strip_prefix("-l") {
-                println!("cargo:rustc-link-lib={name}");
-            } else if let Some(path) = lib.strip_prefix("-L") {
-                println!("cargo:rustc-link-search=native={path}");
-                // A tkrzw outside the default loader path — the usual case,
-                // since the library often has to be made by hand — would
-                // otherwise link but fail to start.
-                //
-                // Package-scoped, like every build-script `rustc-link-arg`
-                // (see the Kyoto Cabinet module): this rpath lands on the
-                // targets cargo builds from THIS package — its lib and its
-                // own test artifacts — not on other packages' binaries,
-                // which must make the library findable themselves via
-                // LD_LIBRARY_PATH or their own rpath setting.
-                println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
+        if let Ok(name) = std::env::var("OXPINYIN_TKRZW_LIB_NAME") {
+            // Explicit library name wins over pkg-config: vcpkg, static-
+            // only builds, or any platform where the installed name is
+            // not "tkrzw".
+            println!("cargo:rustc-link-lib={name}");
+        } else {
+            match super::pkg_config("--libs", "tkrzw") {
+                Some(libs) => {
+                    for lib in &libs {
+                        if let Some(name) = lib.strip_prefix("-l") {
+                            println!("cargo:rustc-link-lib={name}");
+                        } else if let Some(path) = lib.strip_prefix("-L") {
+                            println!("cargo:rustc-link-search=native={path}");
+                            // A tkrzw outside the default loader path —
+                            // the usual case, since the library often has
+                            // to be made by hand — would otherwise link
+                            // but fail to start.
+                            //
+                            // Package-scoped, like every build-script
+                            // `rustc-link-arg` (see the Kyoto Cabinet
+                            // module): this rpath reaches this package's
+                            // own lib, test and bench artifacts and
+                            // nothing else.
+                            println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
+                        }
+                    }
+                }
+                // No `.pc` file (Windows nmake install, or a from-source
+                // prefix without pkg-config): name the library directly
+                // and let OXPINYIN_TKRZW_LIB_DIR or the loader's default
+                // path resolve it.
+                None => println!("cargo:rustc-link-lib=tkrzw"),
             }
         }
     }

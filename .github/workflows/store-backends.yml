@@ -420,15 +420,19 @@ jobs:
           echo "store-backends gate: all upstream jobs succeeded"
 
   tkrzw-sanitizers:
-    # The shim passes Rust callbacks into tkrzw's visitor dispatch
+    # The tkrzw backend passes Rust callbacks into tkrzw's visitor dispatch
     # (db_get/db_scan install Process-full visitors handing borrowed key/value
     # records to Rust fn pointers valid only for the callback). Panic-unwinding
-    # across that boundary and borrow-escape of those records are the live
+    # across that FFI boundary and borrow-escape of those records are the live
     # hazards, so the feature's own test surface runs instrumented: once per
-    # sanitizer, any finding kills the job. See the test step for how each arm
-    # composes its flags (the mandated -fsanitize=address,undefined pair does
-    # not map 1:1 onto rustc's -Zsanitizer list).
-    name: tkrzw shim under ${{ matrix.sanitizer }}
+    # sanitizer, any finding kills the job. There are no compiled C/C++
+    # translation units — the backend is pure bindgen over tkrzw_langc.h — so
+    # ASan instruments the Rust side of the FFI and UBSan has no C targets to
+    # instrument (its CFLAGS/CXXFLAGS exports are inert; see the test step).
+    # See the test step for how each arm composes its flags (the mandated
+    # -fsanitize=address,undefined pair does not map 1:1 onto rustc's
+    # -Zsanitizer list).
+    name: tkrzw FFI under ${{ matrix.sanitizer }}
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -479,8 +483,8 @@ jobs:
 
       - name: Install build dependencies (apt)
         # On Debian, libasan and libubsan ship with gcc and are not separate
-        # packages. libtkrzw-dev provides the distro library the shim
-        # compiles against; libclang-dev is bindgen's runtime dependency.
+        # packages. libtkrzw-dev provides the distro library the backend
+        # links against; libclang-dev is bindgen's runtime dependency.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
 
       - name: Install nightly Rust (sanitizer support)
@@ -493,30 +497,30 @@ jobs:
           . "$HOME/.cargo/env"
           rustc --version
 
-      # No rust-cache here on purpose: the four-crate shim suite compiles in
-      # seconds; a separate sanitizer-flavored cache entry would be pure book-
-      # keeping. (Rust-cache hashes RUSTFLAGS into its key anyway, so even a
-      # future enablement cannot cross-contaminate the unsanitized dep store.)
+      # No rust-cache here on purpose: the store crate compiles in seconds;
+      # a separate sanitizer-flavored cache entry would be pure book-keeping.
+      # (Rust-cache hashes RUSTFLAGS into its key anyway, so even a future
+      # enablement cannot cross-contaminate the unsanitized dep store.)
       #
       # Both arms implement the mandated -fsanitize=address,undefined pair
-      # against the surface where those hazards actually live: the memory-
-      # unsafe C++ shim plus the linked runtime. Each arm instruments the shim
-      # translation units (clang-style flags through the cc crate) and injects
-      # its runtime at cargo's final link (-C linker=cc -Clink-arg=...); any
-      # finding traps hard and fails the job — the STOP contract.
+      # against the surface where those hazards actually live: the Rust FFI
+      # layer over tkrzw_langc.h plus the linked distro runtime. There are
+      # no compiled C/C++ translation units — the backend is pure bindgen —
+      # so CFLAGS/CXXFLAGS have no effect on either arm. ASan still catches
+      # real hazards (the visitor callbacks hand borrowed records to Rust fn
+      # pointers), but UBSan is close to a no-op without C targets.
       #
       # ADDRESS instruments the whole target graph (-Zsanitizer=address;
       # rustc manages the runtime, so ordering and abort semantics are its
-      # problem, not ours) and the shim gets GCC instrumentation on top via
-      # CFLAGS/CXXFLAGS. UNDEFINED has no -Zsanitizer equivalent (rustc's
-      # option list has never included the value), so it instruments the shim
-      # translation units — the memory-unsafe boundary — and injects libubsan
-      # at cargo's final link. Any finding traps and fails the job.
+      # problem, not ours). UNDEFINED has no -Zsanitizer equivalent (rustc's
+      # option list has never included the value), so it injects libubsan at
+      # cargo's final link (-C linker=cc -Clink-arg=...). Any finding traps
+      # and fails the job.
       #
-      # Both arms build tkrzw EXPLICITLY, so the instrumented binary is
-      # pure tkrzw — exactly the surface whose instrumentation exists to
-      # catch tkrzw-shim misuse. Pinned rather than riding the workspace
-      # default, which moved to Berkeley DB on 2026-09-20.
+      # Both arms build tkrzw EXPLICITLY, so the instrumented binary
+      # exercises exactly the FFI surface under test. Pinned rather than
+      # riding the workspace default, which moved to Berkeley DB on
+      # 2026-09-20.
       #
       # Both arms pass an EXPLICIT --target on purpose: without it, cargo
       # applies RUSTFLAGS to HOST build scripts and proc macros too, which is
