@@ -436,6 +436,7 @@ mod bdb {
         println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
         println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_INCLUDE_DIR");
         println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_LIB_DIR");
+        println!("cargo:rerun-if-env-changed=OXPINYIN_BDB_LIB_NAME");
         // All three pkg-config selectors, as the sibling modules track:
         // either one alone can point pkg-config at a different libdb.
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_PATH");
@@ -456,7 +457,17 @@ mod bdb {
             // Package-scoped, like every build-script `rustc-link-arg`
             // (see the Kyoto Cabinet module): reaches this package's own
             // lib, test and bench artifacts and nothing else.
-            println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+            // The rpath is GNU-ld/ELF syntax; PE targets have no rpath, and
+            // the raw flag reaches the Windows linker as at best a warning
+            // it ignores — link.exe's LNK4044 "unrecognized option; ignored"
+            // (documented) or lld-link's "ignoring unknown argument"
+            // (observed) — so it is emitted only where it means something.
+            // CARGO_CFG_TARGET_OS describes the TARGET cargo is building
+            // for, unlike `cfg!`, which describes this build script's host.
+            let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+            if target_os != "windows" {
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{dir}");
+            }
         }
         let Some(header) = db_header(&clang_args) else {
             panic!(
@@ -472,23 +483,35 @@ mod bdb {
         };
         println!("cargo:rerun-if-changed={}", header.display());
 
-        match super::pkg_config("--libs", "libdb").or_else(|| super::pkg_config("--libs", "db")) {
-            Some(libs) => {
-                for lib in &libs {
-                    if let Some(name) = lib.strip_prefix("-l") {
-                        println!("cargo:rustc-link-lib={name}");
-                    } else if let Some(path) = lib.strip_prefix("-L") {
-                        println!("cargo:rustc-link-search=native={path}");
-                        // Package-scoped, like every build-script
-                        // `rustc-link-arg` (see the Kyoto Cabinet module).
-                        println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
+        // An installation whose library carries a name the pkg-config and
+        // `-ldb` paths below cannot express (vcpkg's `berkeleydb` port
+        // installs `libdb48.lib`): name it directly, in the same shape as
+        // the INCLUDE_DIR/LIB_DIR overrides above. Precedence, exactly:
+        // this override (if set) skips pkg-config for `--libs` entirely;
+        // otherwise pkg-config's `libdb`/`db` is tried, then the bare
+        // `-ldb` fallback.
+        if let Ok(name) = std::env::var("OXPINYIN_BDB_LIB_NAME") {
+            println!("cargo:rustc-link-lib={name}");
+        } else {
+            match super::pkg_config("--libs", "libdb").or_else(|| super::pkg_config("--libs", "db"))
+            {
+                Some(libs) => {
+                    for lib in &libs {
+                        if let Some(name) = lib.strip_prefix("-l") {
+                            println!("cargo:rustc-link-lib={name}");
+                        } else if let Some(path) = lib.strip_prefix("-L") {
+                            println!("cargo:rustc-link-search=native={path}");
+                            // Package-scoped, like every build-script
+                            // `rustc-link-arg` (see the Kyoto Cabinet module).
+                            println!("cargo:rustc-link-arg=-Wl,-rpath,{path}");
+                        }
                     }
                 }
+                // No `.pc` on either target distro: name the library directly
+                // (both ship an unversioned `libdb.so` dev symlink) and let the
+                // loader's default path resolve it.
+                None => println!("cargo:rustc-link-lib=db"),
             }
-            // No `.pc` on either target distro: name the library directly
-            // (both ship an unversioned `libdb.so` dev symlink) and let the
-            // loader's default path resolve it.
-            None => println!("cargo:rustc-link-lib=db"),
         }
 
         // Exactly the entry points `src/bdb/ffi.rs` calls plus the types
