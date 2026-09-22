@@ -32,9 +32,11 @@ property of the stored bytes: the store never decodes a key, so it has no
 notion of "integer order". Any meaning a key's bytes carry is imposed by the
 layer that encoded them.
 
-Every backend satisfies exactly this rule:
+Every surviving backend satisfies exactly this rule. redb's mechanism
+is recorded first because it is why the encoding choice below matters;
+the peer itself was removed 2026-09-20.
 
-- **redb** (the pure-Rust peer backend; `--no-default-features --features redb`).
+- **redb** (removed 2026-09-20; surveyed as `--no-default-features --features redb`).
   The store uses `TableDefinition<&[u8], &[u8]>`. redb's
   `Key for &[u8]` is `data1.cmp(data2)` — plain lexicographic byte compare
   (`redb-4.1.0/src/types.rs:347`). (redb's *typed* integer keys are a
