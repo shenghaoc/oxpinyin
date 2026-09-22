@@ -48,7 +48,9 @@ An installation `pkg-config` cannot find — a custom prefix, or a build
 that ships no `.pc` file — is reachable without it:
 `OXPINYIN_KC_INCLUDE_DIR` prepends a header directory and
 `OXPINYIN_KC_LIB_DIR` adds a link-search path and an rpath, mirroring
-the `OXPINYIN_BDB_*` pair. `BINDGEN_EXTRA_CLANG_ARGS`
+the `OXPINYIN_BDB_INCLUDE_DIR` / `OXPINYIN_BDB_LIB_DIR` pair.
+`OXPINYIN_BDB_LIB_NAME` names the library when it is not `db` (vcpkg
+installs `libdb48.lib`). `BINDGEN_EXTRA_CLANG_ARGS`
 reaches bindgen as usual. All are tracked by `build.rs`, so changing one
 regenerates the declarations instead of leaving a stale set behind.
 The generated bindings are not committed, deliberately — they cross the
@@ -56,6 +58,16 @@ ABI by layout rather than as opaque handles, and generating them from
 the installed header keeps the declarations and the linked `.so` in
 lockstep by construction. `crates/oxpinyin-store/build.rs` carries the
 full reasoning.
+
+`OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION` is CI-only. Unset or blank, the
+Berkeley DB backend refuses any linked libdb other than 5.3 at open
+(`check_runtime_version` in `crates/oxpinyin-store/src/bdb/ffi.rs`). Set
+to a non-empty value, that comparison alone warns once — the line names
+the linked version and the surveyed 5.3 — and the open continues. It
+does not skip any other check. `test-windows` sets it because the vcpkg
+`berkeleydb` port is 4.8.30 and no surveyed build is packagable on that
+runner today. A developer recipe does not set it: Linux `libdb-dev` and
+Homebrew `berkeley-db@5` are the surveyed 5.3.
 
 The two C-ABI crates additionally need `libglib2.0-dev` and `g++`; they
 are Linux-first. `oxpinyin-dictool` depends on `oxpinyin-capi` and so
