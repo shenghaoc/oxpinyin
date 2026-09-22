@@ -362,6 +362,11 @@ jobs:
           echo "OXPINYIN_BDB_INCLUDE_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\include" >> "$GITHUB_ENV"
           echo "OXPINYIN_BDB_LIB_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\lib" >> "$GITHUB_ENV"
           echo "OXPINYIN_BDB_LIB_NAME=libdb48" >> "$GITHUB_ENV"
+          # vcpkg's berkeleydb port is 4.8.30. The store refuses any libdb
+          # other than the surveyed 5.3 unless this is set, and it is set
+          # only here: it covers that one comparison, and the process
+          # prints a warning naming both versions. No other lane sets it.
+          echo "OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION=1" >> "$GITHUB_ENV"
           echo 'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> "$GITHUB_ENV"
           echo "$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\bin" >> "$GITHUB_PATH"
       # bdb, one peer, so the exactly-one-backend guard is satisfied.

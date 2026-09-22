@@ -217,6 +217,20 @@ failed there.
 
 ## Not verified
 
+- **Open (2026-09-22), not part of the Windows CI opt-in.** The
+  `test-windows` lane links vcpkg `berkeleydb` 4.8.30 through
+  `OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION`. That flag does not survey
+  4.8: the store is created and read by the same library inside one
+  run, so the lane proves the workspace builds and its tests pass on
+  Windows against a real Berkeley DB, and it does not prove that a 4.8
+  file is readable by the surveyed 5.3 (or the reverse). The surveyed
+  version on the Linux lanes is 5.3. Nothing on Windows links 5.3
+  today. Closing this is either a real 4.8 survey, or moving the lane
+  onto a supported version once a route exists. Neither exists now:
+  the vcpkg registry's `berkeleydb` port is 4.8.30 (Sleepycat), and
+  vcpkg versioning can only pin versions that registry already has;
+  MSYS2's `mingw-w64-x86_64-db` is 6.2.32 under AGPL-3.0-or-later, which
+  this backend declines. A source build of 5.3 with MSVC is not set up.
 - **The frozen candidate and sentence pins were not re-measured** —
   this change adds a backend behind an off-by-default feature and
   touches no decode path, so it cannot move them; that is an argument,

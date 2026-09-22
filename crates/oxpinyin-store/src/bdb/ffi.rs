@@ -125,9 +125,29 @@ pub(crate) fn runtime_version() -> (i32, i32, i32) {
 /// while the linked library is the run machine's. Guessing at either is
 /// how a profile gets corrupted silently, so an unsurveyed version is
 /// an error at open rather than a risk taken at write.
+///
+/// `OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION`, when set to a non-empty
+/// value, covers this comparison and nothing else: the open continues,
+/// and the process emits one warning naming the linked version and the
+/// surveyed one. Unset or blank, the refusal above is unchanged. It
+/// exists so the Windows CI lane can link vcpkg's 4.8.30; a developer
+/// build does not set it. See `docs/runbooks/backends.md`.
 pub(crate) fn check_runtime_version() -> Result<(), StoreError> {
     let (major, minor, _) = runtime_version();
     if (major, minor) == (SUPPORTED_MAJOR, SUPPORTED_MINOR) {
+        return Ok(());
+    }
+    if allow_unsurveyed_version() {
+        // One line per process, not per open: a suite that opens a store
+        // on every test would otherwise bury the warning in repetition,
+        // and a single line is enough that the log cannot look clean.
+        static WARNED: std::sync::Once = std::sync::Once::new();
+        WARNED.call_once(|| {
+            eprintln!(
+                "warning: OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION is set: linked Berkeley DB \
+                 {major}.{minor}, surveyed version is {SUPPORTED_MAJOR}.{SUPPORTED_MINOR}"
+            );
+        });
         return Ok(());
     }
     Err(StoreError::Backend(
@@ -139,6 +159,15 @@ pub(crate) fn check_runtime_version() -> Result<(), StoreError> {
         )
         .into(),
     ))
+}
+
+/// The version-survey opt-in. Any other `OXPINYIN_BDB_*` name is a path
+/// or a library name; this one is not, and it is read only here.
+fn allow_unsurveyed_version() -> bool {
+    matches!(
+        std::env::var("OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION"),
+        Ok(value) if !value.trim().is_empty()
+    )
 }
 
 /// Turns a libdb return code into a [`StoreError`], preserving the
