@@ -272,8 +272,9 @@ feature.
   `tkrzw-devel` but not `kyotocabinet-devel`, which made the KC default
   unbuildable from source on the primary development machine); KC is a
   non-default peer selected with `--no-default-features --features
-  kyotocabinet`, and redb stays the pure-Rust portability fallback
-  selected by `--no-default-features`. The
+  kyotocabinet`. redb was the pure-Rust portability fallback selected
+  by `--no-default-features` until it was removed 2026-09-20
+  (`refactor/drop-redb-backend`). The
   Berkeley DB portability lesson applies unchanged — `registry.rs` puts
   `DefaultStore` in a `static Mutex`, so it must be `Send`, and
   `ci.yml`'s `test-portable` job runs `oxpinyin-data` and `oxpinyin-user`

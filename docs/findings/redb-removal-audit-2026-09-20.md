@@ -15,8 +15,9 @@ of the backend-family data-loss ruling). No migration, import, export or
 reader for redb data exists, was proposed, or is kept. Its last CI role —
 the pure-Rust peer the portable lanes ran because their runners were
 unprovisioned — ended in the member below (#500 moved test-macos to
-Homebrew tkrzw and test-windows/python-portable's Windows legs to vcpkg
-Berkeley DB 4.8.30), so the removal has **no platform consequence**.
+Homebrew tkrzw and test-windows to vcpkg Berkeley DB 4.8.30; the
+python-portable job that sentence used to name was retired on main
+in `5e7bfd98`), so the removal has **no platform consequence**.
 
 ## What was removed
 
@@ -78,10 +79,10 @@ Berkeley DB 4.8.30), so the removal has **no platform consequence**.
   libpinyin-format writer emits libpinyin's own names). Both gates can
   therefore only ever SKIP. Recorded per the review ruling; they get
   their own PR after this stack merges.
-- `.kiro/steering/rust-conventions.md`'s Dependencies ruling lost its
-  redb worked example ("a Rust library is used as Rust"); the rule's
-  force is unchanged, but the tree now has **no example of the rule's
-  positive case** among the store dependencies.
+- `.kiro/steering/rust-conventions.md`'s Dependencies ruling keeps
+  its force. The parenthetical that named redb as the worked example
+  of "a Rust library is used as Rust" now says that example was removed
+  2026-09-22 and the tree has no pure-Rust database in its place.
 - `.kiro/steering/compatibility-policy.md:42` needed no amendment: it
   states the per-KV-backend-family ruling without naming any removed
   backend's builds.
