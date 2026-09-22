@@ -3,7 +3,9 @@
 Date: 2026-08-22 · Status: drafts, not filed.
 
 Four finds with fixes and reproductions, consolidated so they can be
-filed as a considered set rather than trickling. Filing is the
+filed as a considered set rather than trickling. A fifth draft, item 5,
+was added 2026-09-22: a build-system disagreement, not an API defect,
+and not part of that four-issue filing shape. Filing is the
 maintainer's action (and account); nothing here has been posted. The
 collection mandate is `AGENTS.md`'s ("collected to report back to
 libpinyin once the rewrite is complete") — filing earlier than
@@ -199,9 +201,79 @@ any mutation runs.
 
 ---
 
+## 5. The two build systems disagree, and CI never builds Tkrzw
+
+**Severity: packaging** — not a crash. A packager who follows CMake
+gets a different `DATABASE_FORMAT` from a packager who follows
+autotools, and nothing in CI builds the Tkrzw configuration.
+
+Read at upstream `main` `074a2219c90feaf962d0d24f034514033ece5f99`
+(2026-09-03 09:26:19 UTC, subject "use g_rename to replace rename
+since rename fails by replace-existing-file").
+
+`configure.ac` sets `DBM="BerkeleyDB"` before `AC_ARG_WITH`, so a bare
+`./configure` is a Berkeley DB build. `--with-dbm` is accepted for
+`BerkeleyDB`, `KyotoCabinet`, and `Tkrzw` (each has its own `if` and
+`AC_DEFINE`). `AS_HELP_STRING` names only the first two: "Select
+BerkeleyDB or KyotoCabinet". The comment above the block says the same.
+
+`CMakeLists.txt` has no user-facing DBM option. The `option()` calls
+are `BUILD_SHARED_LIBS`, `BUILD_TESTING`, and `BUILD_UTILS`. It runs
+`find_package(BerkeleyDB)` and, when `DB_FOUND`, sets
+`DATABASE_FORMAT` to `BerkeleyDB`. Only when that did not set
+`HAVE_BERKELEY_DB` does it `find_package(KyotoCabinet REQUIRED)` and
+set `DATABASE_FORMAT` to `KyotoCabinet`. `tkrzw` does not appear in
+`CMakeLists.txt`, under `cmake/`, or under `.github/`.
+
+`.github/workflows/` has two workflows, not one:
+
+- `cmake.yml` — one `build` job, `ubuntu-latest`, container
+  `fedora:rawhide`. It installs `gcc-c++ kyotocabinet-devel
+  glib2-devel cmake ninja wget` and does not install `libdb-devel`.
+  CMake therefore takes the Kyoto Cabinet arm.
+- `make-check.yml` — one `build` job, same runner and container. It
+  installs `gcc-c++ libdb-devel glib2-devel make gnome-common wget
+  awk`, runs `./autogen.sh`, then `./configure --with-dbm=BerkeleyDB`,
+  `make`, `make check`, and `make distcheck`. That is the autotools
+  Berkeley DB configuration, named on the command line. It does not
+  build Tkrzw and it does not build Kyoto Cabinet.
+
+So CI covers autotools-with-BerkeleyDB and CMake-falling-through-to-Kyoto-Cabinet.
+It does not cover Tkrzw, and CMake has no switch a packager can set to
+pin a backend.
+
+**Reproduction, from the CMake control flow** (not executed as two
+configures in this record). Same source tree, `cmake -B build`:
+
+- `libdb-devel` installed: `DB_FOUND` is set, `DATABASE_FORMAT` is
+  `BerkeleyDB`, and Kyoto Cabinet is not searched.
+- `libdb-devel` absent and Kyoto Cabinet present: `HAVE_BERKELEY_DB`
+  stays unset, `find_package(KyotoCabinet REQUIRED)` runs, and
+  `DATABASE_FORMAT` is `KyotoCabinet`.
+- both absent: configure fails, because Kyoto Cabinet is `REQUIRED`.
+
+`cmake.yml` is the second machine: its package list has
+`kyotocabinet-devel` and no `libdb-devel`.
+
+**Debian, checked rather than assumed.** Fetched
+`debian/rules` for 2.11.91-1 from
+`https://tracker.debian.org/media/packages/libp/libpinyin/rules-2.11.91-1`:
+`dh_auto_configure -Sautoconf` with `--with-dbm=Tkrzw`. The package
+tracker lists 2.11.91-1 as testing and unstable, and lists
+`libtkrzw-dev` as a build dependency of that version. Stable and
+oldstable are 2.8.1-1; the Debian Sources copy of that version's
+`debian/rules` passes `--with-dbm=BerkeleyDB` (indexed file body;
+the HTML page itself did not fetch). Upstream CI therefore does not
+build the configuration Debian testing and unstable ship, and the
+autotools job it does run is the configuration Debian stable still
+ships.
+
+---
+
 ## Filing notes
 
-- Independence: no fix touches another; file as four issues.
+- Independence: no fix touches another; file items 1–4 as four issues.
+  Item 5 is a separate report; it does not belong in that batch.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Credit line per `AGENTS.md` attribution rules is the maintainer's to
   place; the reproductions above stand alone.
