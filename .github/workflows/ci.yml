@@ -167,8 +167,9 @@ jobs:
       - name: Install build dependencies (apt)
         # Tkrzw is the default store backend; bindgen (libclang) reads
         # tkrzw_langc.h at build time, and Debian's libtkrzw build demands
-        # the compression -dev packages at link time. The portable jobs
-        # below run the pure-Rust redb fallback instead.
+        # the compression -dev packages at link time. test-macos installs
+        # its own Homebrew tkrzw and test-windows links vcpkg Berkeley DB,
+        # so neither of those jobs uses this apt line.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
       - run: cargo fmt --all --check
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
@@ -229,8 +230,9 @@ jobs:
       - name: Install build dependencies (apt)
         # Tkrzw is the default store backend; bindgen (libclang) reads
         # tkrzw_langc.h at build time, and Debian's libtkrzw build demands
-        # the compression -dev packages at link time. The portable jobs
-        # below run the pure-Rust redb fallback instead.
+        # the compression -dev packages at link time. test-macos installs
+        # its own Homebrew tkrzw and test-windows links vcpkg Berkeley DB,
+        # so neither of those jobs uses this apt line.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
       - run: cargo test --locked --workspace
       - name: C++ pinyin.h smoke gate
@@ -265,20 +267,22 @@ jobs:
       - name: Live-typing differential
         run: tools/bisection/run-live-typing-diff.sh
 
-  # The portable crates on the other two supported operating systems:
-  # the whole workspace minus the two C-ABI crates (glib, cargo-c,
-  # Linux-only per structure.md). oxpinyin-dictool stopped being
-  # excluded when its C-ABI dependency was cut (it now drives the
-  # facade's §9 import/export machinery directly — pure Rust, no
-  # glib/pkg-config), so it builds and tests here like the rest of the
-  # portable set. Everything else — store, runtime, facade, datagen and
-  # the training crates included — is pure Rust under the redb backend
-  # and builds here (widened 2026-09-08 from the four engine crates plus
-  # the oracle harness, whose Linux-only `oracle-ffi` feature stays off
-  # with --no-default-features).
+  # macOS and Windows each link a C store backend. #501 deletes redb,
+  # and these two jobs were the only lanes still selecting it, so without
+  # a backend here they cannot build once that lands. macOS links Homebrew
+  # tkrzw — the path README.md documents for that OS. Windows links
+  # vcpkg's Berkeley DB 4.8, the Sleepycat line. Both jobs keep the
+  # exclude set these jobs already have on main: the two C-ABI crates
+  # (glib and cargo-c, Linux-only) and the seven backend-independent
+  # training crates (corpus, counter, emitter, kmm, lambda, punct, word),
+  # which run once per PR in the Linux `test` job. oxpinyin-dictool stays
+  # in the set: its C-ABI dependency was cut, and it drives the facade's
+  # import/export machinery directly.
   #
   # Two jobs rather than a matrix: containers run on Linux runners only, so
-  # a containerized matrix cannot cover these operating systems.
+  # a containerized matrix cannot cover these operating systems. macOS
+  # runners already default `run:` to bash, so only the Windows job sets
+  # `defaults.run.shell`.
   test-macos:
     needs: changes
     if: needs.changes.outputs.run == 'true'
@@ -292,22 +296,26 @@ jobs:
         with:
           rust-cache: 'true'
       - run: rustup show active-toolchain
-      # All backends but redb require Linux system libraries; redb is the
-      # pure-Rust peer, selected by disabling the default (tkrzw)
-      # feature chain and passing --features redb so the exactly-one-backend
-      # guard sees exactly one peer.
-      # --no-default-features --features redb selects the pure-Rust peer
-      # for every member at once (the exactly-one-backend guard sees one
-      # peer) and keeps pinyin-oracle's Linux-only `oracle-ffi` off even
-      # if it ever became a default feature.
-      # The seven backend-independent training crates (corpus, counter,
-      # emitter, kmm, lambda, punct, word) are excluded: none touches the
-      # store chain, so their result is identical on every backend and
-      # every OS — they run once per PR in the Linux `test` job (and in
-      # the nightly overflow/nextest lanes). This lane keeps the crates
-      # whose behavior the platform can change.
+      # Homebrew tkrzw, exactly as README.md documents it (`brew install
+      # tkrzw glib pkgconf`, then LIBRARY_PATH so the test link finds
+      # lz4/lzma/zstd — tkrzw.pc names them, and the store build script
+      # emits only tkrzw's own -L directory). The lane names tkrzw
+      # explicitly: macOS tests that documented path, which is the
+      # default today and stays this path if the default moves.
+      # `--no-default-features` also keeps pinyin-oracle's Linux-only
+      # `oracle-ffi` off even if it ever became a default feature.
+      - name: Install the store backend (Homebrew tkrzw)
+        run: |
+          brew install tkrzw glib pkgconf
+          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+          # `brew list --versions` prints "<name> <cellar-version>..."
+          # (space-separated; a second installed version is another field
+          # on the same line). Pin the 1.x line the core formula is on
+          # (1.0.32); a major bump fails here instead of silently.
+          brew list --versions tkrzw | grep -Eq '^tkrzw 1[.]' \
+            || { echo "::error::Homebrew tkrzw is not the documented 1.x line: $(brew list --versions tkrzw)"; exit 1; }
       - run: >
-          cargo test --locked --workspace --no-default-features --features redb
+          cargo test --locked --workspace --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
           --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
@@ -318,6 +326,13 @@ jobs:
     if: needs.changes.outputs.run == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
+    # windows-latest defaults every `run:` to pwsh. The provisioning step
+    # is bash (`$VCPKG_INSTALLATION_ROOT`, `>> "$GITHUB_ENV"`); under pwsh
+    # those names are unset and the redirections write nowhere, so the
+    # lane never reaches a build.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -326,15 +341,34 @@ jobs:
         with:
           rust-cache: 'true'
       - run: rustup show active-toolchain
-      # Same selection and exclusions as the macOS leg above: redb only,
-      # because every other backend requires Linux system libraries, and
-      # the training crates ride only in the Linux `test` job.
-      # --no-default-features --features redb selects the pure-Rust peer
-      # for every member at once (the exactly-one-backend guard sees one
-      # peer) and keeps pinyin-oracle's Linux-only `oracle-ffi` off even
-      # if it ever became a default feature.
+      # vcpkg's berkeleydb port: 4.8.30, the Sleepycat line, the same
+      # family as the 5.3 the Linux lanes link. The port installs
+      # libdb48.lib / libdb48.dll and the build_windows headers. The
+      # store build script is pointed at that tree; the import library
+      # is named explicitly because the bare `-ldb` fallback does not
+      # match libdb48.lib; the DLL directory joins PATH for the test
+      # binaries; bindgen gets the runner's preinstalled LLVM.
+      - name: Install the store backend (vcpkg Berkeley DB)
+        run: |
+          vcpkg install berkeleydb:x64-windows
+          # `vcpkg list` prints "<port>:<triplet>  <version>#<port-version>  <description>".
+          # The port name is followed by ":x64-windows", not whitespace, and
+          # the version carries a "#<n>" suffix, so a pattern expecting
+          # "berkeleydb" then spaces then "4.8" matches nothing and the
+          # lane dies before the build. Pin the 4.8 line; a bump off it
+          # fails here.
+          vcpkg list berkeleydb:x64-windows | grep -Eq 'berkeleydb:x64-windows[[:space:]]+4[.]8[.]' \
+            || { echo "::error::vcpkg berkeleydb is not the documented 4.8 line: $(vcpkg list berkeleydb:x64-windows)"; exit 1; }
+          echo "OXPINYIN_BDB_INCLUDE_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\include" >> "$GITHUB_ENV"
+          echo "OXPINYIN_BDB_LIB_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\lib" >> "$GITHUB_ENV"
+          echo "OXPINYIN_BDB_LIB_NAME=libdb48" >> "$GITHUB_ENV"
+          echo 'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> "$GITHUB_ENV"
+          echo "$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\bin" >> "$GITHUB_PATH"
+      # bdb, one peer, so the exactly-one-backend guard is satisfied.
+      # Same exclusions as the macOS job, and the same set main's
+      # test-windows already uses.
       - run: >
-          cargo test --locked --workspace --no-default-features --features redb
+          cargo test --locked --workspace --no-default-features --features bdb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
           --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
