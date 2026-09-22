@@ -125,7 +125,6 @@ fn parent() {
     }
 }
 
-
 fn spawn_child(backend: &str, scenario: &str) -> Vec<(String, String)> {
     let exe = std::env::current_exe().expect("current exe");
     let output = Command::new(exe)
