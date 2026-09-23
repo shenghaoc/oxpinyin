@@ -183,8 +183,10 @@ caused the failure leaves the lower member red until the upper one
 lands, which breaks both properties. When a change in member N exposes
 a pre-existing defect (a harness leak, a missing teardown, a latent UB),
 the fix goes on member N, not on whichever branch happened to be open.
-This is the same class of hazard as the stacked-CI problem recorded
-above: the tree must be correct at every level, not just at the top.
+The tree must be correct at every level, not just at the top (worked
+example: the capi-commands fuzz leak fix, first put on #512, belonged
+on #502, which made BDB the default and turned the harness defect into
+a failing job).
 
 ## Operational rules that live with their procedures
 
