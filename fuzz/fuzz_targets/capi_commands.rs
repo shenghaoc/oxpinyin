@@ -26,10 +26,10 @@ use libfuzzer_sys::fuzz_target;
 use pinyin_capi::fuzz_api::{
     oxpinyin_init_for_fixtures, pinyin_alloc_instance, pinyin_begin_add_phrases,
     pinyin_begin_get_phrases, pinyin_choose_candidate, pinyin_clear_constraint,
-    pinyin_end_add_phrases, pinyin_end_get_phrases, pinyin_get_candidate,
-    pinyin_get_candidate_string, pinyin_get_n_candidate, pinyin_get_parsed_input_length,
-    pinyin_get_sentence, pinyin_guess_sentence, pinyin_iterator_add_phrase,
-    pinyin_iterator_get_next_phrase, pinyin_iterator_has_next_phrase,
+    pinyin_end_add_phrases, pinyin_end_get_phrases, pinyin_fini, pinyin_free_instance,
+    pinyin_get_candidate, pinyin_get_candidate_string, pinyin_get_n_candidate,
+    pinyin_get_parsed_input_length, pinyin_get_sentence, pinyin_guess_sentence,
+    pinyin_iterator_add_phrase, pinyin_iterator_get_next_phrase, pinyin_iterator_has_next_phrase,
     pinyin_parse_more_full_pinyins, pinyin_reset, pinyin_set_double_pinyin_scheme, pinyin_train,
     ExportIterator, GChar, ImportIterator, LookupCandidate, PinyinContext, PinyinInstance,
 };
@@ -55,6 +55,46 @@ unsafe impl Send for Session {}
 unsafe impl Sync for Session {}
 
 static SESSION: OnceLock<Session> = OnceLock::new();
+
+/// Raw pointers for the atexit teardown — set once during session init,
+/// read only by the atexit callback. `atexit` requires a C function pointer
+/// with no captures, so the handles live in statics rather than a closure.
+static mut TEARDOWN_CONTEXT: *mut PinyinContext = null_mut();
+static mut TEARDOWN_INSTANCE: *mut PinyinInstance = null_mut();
+
+/// Registered via `atexit` exactly once per process, on the first
+/// `session()` call. This works because ASan registers its leak check
+/// during runtime initialization (before `main`), and `atexit` handlers
+/// run in **reverse** registration order — so this handler, registered
+/// later, runs *before* the leak check. That ordering is a property of
+/// the sanitizer runtime, not of this code; if it ever stops holding
+/// (a runtime change, a different sanitizer version), the leak returns
+/// silently and this target goes red again with no indication why.
+///
+/// An alternative is calling `__lsan_do_leak_check()` explicitly after
+/// teardown, which makes the ordering a program property rather than an
+/// inherited one. Declined here: it couples the harness to a specific
+/// sanitizer API, the reverse-order guarantee has been stable across
+/// every ASan/LSan version this project has used, and the explicit call
+/// would need its own `extern` declaration and conditional compilation
+/// for non-ASan builds. If the implicit ordering breaks, the fix is to
+/// add the explicit call then — not before.
+extern "C" fn teardown_at_exit() {
+    // SAFETY: both pointers were set in `session()` before atexit was
+    // registered, and atexit runs after the last fuzz_target invocation
+    // returns — no concurrent access is possible (libFuzzer is single-
+    // threaded).
+    unsafe {
+        if !TEARDOWN_INSTANCE.is_null() {
+            pinyin_free_instance(TEARDOWN_INSTANCE);
+            TEARDOWN_INSTANCE = null_mut();
+        }
+        if !TEARDOWN_CONTEXT.is_null() {
+            pinyin_fini(TEARDOWN_CONTEXT);
+            TEARDOWN_CONTEXT = null_mut();
+        }
+    }
+}
 
 fn session() -> &'static Session {
     SESSION.get_or_init(|| {
@@ -87,6 +127,19 @@ fn session() -> &'static Session {
         // SAFETY: `context` is the live context above.
         let instance = pinyin_alloc_instance(context);
         assert!(!instance.is_null(), "instance must allocate");
+        // Store raw pointers for the atexit teardown and register it.
+        // SAFETY: single-threaded init; TEARDOWN_* are written exactly
+        // once here and read only by teardown_at_exit after all fuzz
+        // runs complete. atexit returns 0 on success.
+        // SAFETY: atexit is POSIX/C standard; signature matches.
+        extern "C" {
+            fn atexit(cb: extern "C" fn()) -> c_int;
+        }
+        unsafe {
+            TEARDOWN_CONTEXT = context;
+            TEARDOWN_INSTANCE = instance;
+            atexit(teardown_at_exit);
+        }
         Session { context, instance }
     })
 }
