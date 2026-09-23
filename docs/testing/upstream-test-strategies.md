@@ -99,7 +99,7 @@ distribution, not crates.io — the README installs
 ([Fedora package](https://packages.fedoraproject.org/pkgs/american-fuzzy-lop/american-fuzzy-lop/))
 or `sudo apt install afl++`, and only `cargo-afl` (the cargo wrapper) comes
 from `cargo install`. For oxpinyin the analogous stance is already in force:
-the fuzz job pins `cargo-fuzz 0.13.2 --locked` on a pinned nightly; if an
+the nightly fuzz soak pins `cargo-fuzz 0.13.2 --locked` on a pinned nightly; if an
 AFL++ lane were ever added, prefer the distro package + version-pinned
 `cargo-afl` over ad-hoc builds, and keep it out of the default toolchain.
 
@@ -128,7 +128,7 @@ with the best historical yield for an IME:
    trust boundary documented in `../safety/oxpinyin-audit.md` F-6). This exercises
    the FFI conversion/ownership layer that the parser target cannot
    reach. Implementation note: lives in the existing nightly `fuzz/`
-   workspace (Linux-only matches the CI fuzz job); the harness itself is
+   workspace (Linux-only, like the nightly fuzz soak); the harness itself is
    the one place where fuzz code legitimately links capi. Sanitizers:
    the pinned cargo-fuzz 0.13.2 builds targets with its default
    instrumentation, selected as `-s address` (Sanitizer::Address) — the
