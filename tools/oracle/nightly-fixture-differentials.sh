@@ -155,6 +155,10 @@ run_suite() {
 # locate_model_dir), so both point at the toned model.
 export PINYIN_NGSEG="$L/utils/segment/ngseg"
 export PINYIN_NGSEG_DATA="$data"
+# Assigned here rather than in the w3 tier below, because the flavour
+# check that follows already reads it and set -u aborts on the first
+# unbound expansion.
+w3=$repo/fixtures/w3
 for dir in "$export_dir" "$w3/tkt"; do
 	if ! grep -q "^backend=tkt$" "$dir/datagen-manifest.txt"; then
 		echo "fatal: $dir is not a tkrzw data set (manifest says $(sed -n 's/^backend=//p' "$dir/datagen-manifest.txt")); this runner's oracle and tests are tkrzw" >&2
@@ -170,7 +174,6 @@ run_suite "segment ngseg live parity (toned tables)" \
 # w3 tier: the KMM and spseg corpora are w3-token-space, so the tables
 # and the Rust-side export are the committed tkrzw tables (the same
 # Tkrzw container format this build and the pin both open).
-w3=$repo/fixtures/w3
 export PINYIN_GEN_NGRAM_DATA="$w3/tkt"
 export PINYIN_EXPORT_DIR="$w3/tkt"
 export PINYIN_SPSEG="$L/utils/segment/spseg"
