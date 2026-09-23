@@ -174,6 +174,18 @@ pre-rebase numbers still hold.
 fmt failures are merge blockers; a fmt-only commit is always safe
 when the diff is formatting-only and reviewed.
 
+## Stack placement
+
+A fix belongs on the member whose change produces the symptom. Every
+stack member must be green standing alone — bisect compatibility and
+bottom-up merging both depend on it. A fix placed above the commit that
+caused the failure leaves the lower member red until the upper one
+lands, which breaks both properties. When a change in member N exposes
+a pre-existing defect (a harness leak, a missing teardown, a latent UB),
+the fix goes on member N, not on whichever branch happened to be open.
+This is the same class of hazard as the stacked-CI problem recorded
+above: the tree must be correct at every level, not just at the top.
+
 ## Operational rules that live with their procedures
 
 The procedure-level rules used to accumulate here as incident notes;
