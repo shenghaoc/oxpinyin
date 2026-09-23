@@ -136,7 +136,7 @@ with the best historical yield for an IME:
    AddressSanitizer build includes LeakSanitizer by default, so leaks and
    heap errors surface without extra flags. Native FFI coverage
    landed: `capi-commands` (`fuzz/fuzz_targets/capi_commands.rs`) links
-   the C ABI and runs in the PR smoke and the nightly soak.
+   the C ABI and runs in the nightly soak.
    
    Semantic postconditions to assert per command, **for valid command
    sequences only** (define before implementing; reuse the contract
@@ -179,7 +179,7 @@ decade of IME fuzzing converged on) and the config-mutation trick (fold
 | Golden keystroke→output table | — | materials.txt | parity fixtures + oracle differential (stronger) | none — keep |
 | Per-storage-class unit tests | yes (12) | partial | partial | coverage priority on user/store quartet |
 | Issue-named regression tests | — | yes | informal | adopt convention explicitly |
-| Random keystroke soak | — | randkeystroke + simulate | 10s libFuzzer smoke | nightly soak with corpus |
+| Random keystroke soak | — | randkeystroke + simulate | nightly libFuzzer soak with cached corpus (the 10s PR smoke left 2026-09-23) | done |
 | Valgrind/ASan stress | — | stresstest.py | — | nightly fuzz soak (ASan default) |
 | ABI size/pin guard | — | test-struct-size.c | checked-in pinyin.h + C++ smoke gate | none — keep |
 | Stateful C-API fuzzer | — | fuzzer.rs (AFL++) | `capi-commands` (landed) | done |
