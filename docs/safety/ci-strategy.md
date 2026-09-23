@@ -4,8 +4,8 @@ Design goal: maximum confidence per CI-minute, four tiers, nothing heavy on
 the PR path. Jobs as of 2026-09-12 (`ci.yml`): `changes`, `lint` (fmt ×2 workspaces +
 clippy `-D warnings` + Lizard), `test` (+ C++ smoke gate + live-typing
 differential), `test-macos` / `test-windows`,
-`deny`, `fuzz` (pinned nightly; builds all ten targets, ~10s smoke run of
-each) and `ci-aggregate`. Main's required checks are `ci-aggregate`,
+`deny` and `ci-aggregate`. Fuzzing left the PR gate on 2026-09-23: every
+target builds and soaks nightly (`verify-nightly.yml` fuzz-soak). Main's required checks are `ci-aggregate`,
 `trailer-lint`, and `trailer-test`.
 Estimated costs below are rough additive deltas on a cached runner.
 
@@ -19,7 +19,6 @@ cargo clippy --locked -p oxpinyin-capi -p pinyin-oracle --all-targets -- -D warn
 cargo nextest run --workspace (or cargo test)  # existing runner, nextest optional
 cargo test --doc                               # only if nextest adopted
 cargo deny --locked check                      # landed as the `deny` job: root default, root --all-features, fuzz graph
-fuzz: build all ten targets, smoke-run every target (~10s each)   # existing job; all ten targets soak nightly
 ```
 
 Rationale per addition: `cargo deny` is the only supply-chain gate (one
@@ -104,7 +103,7 @@ libchewing convention), they do not auto-block unless a ratchet exists
 | portable tests | ✔ (mac/win) | | | planned (T4 not built) |
 | C++ smoke + differential | ✔ | | | planned (T4 not built) |
 | cargo-deny | ✔ | | | planned (T4 not built) |
-| fuzz smoke | ✔ | | | |
+| fuzz smoke | moved to T3 2026-09-23 | | | |
 | fuzz soak + corpus | | | ✔ | |
 | Miri | | | retired 2026-09-01 | |
 | overflow release lane | | | ✔ | |
@@ -117,7 +116,9 @@ libchewing convention), they do not auto-block unless a ratchet exists
 
 ## Cost/confidence rationale
 
-- The PR tier stays compile+test dominated; deny/fuzz add ~2 min.
+- The PR tier stays compile+test dominated; deny adds ~1 min. The fuzz
+  smoke left it on 2026-09-23 — building and smoke-running every target
+  per PR cost more than it caught; the nightly soak covers both.
 - Everything interpreting or mutating semantics (the fuzz soak;
   Miri/mutants were scheduled here until their 2026-09-01 retirement)
   is scheduled: high value, too slow per-PR, zero MSRV impact.

@@ -31,8 +31,11 @@ concurrency:
 
 jobs:
   # Every fuzz target, 3 minutes each, ASan+LSan on by default with
-  # cargo-fuzz 0.13.2. The list comes from `cargo fuzz list`, as in
-  # ci.yml's smoke pass, so a new target cannot be left out of the soak:
+  # cargo-fuzz 0.13.2. The only fuzz lane: ci.yml's per-PR build and
+  # smoke pass moved here on 2026-09-23, so a target that no longer
+  # compiles or initializes surfaces here, the night after it lands.
+  # The list comes from `cargo fuzz list`, so a new target cannot be
+  # left out of the soak:
   # the five-name literal this replaced silently skipped the three targets
   # added on 2026-09-08. The dict-loader corpus is seeded from the
   # committed w3 tables so the decoder starts from valid headers.

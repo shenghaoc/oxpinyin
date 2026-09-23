@@ -1,6 +1,6 @@
 # Path gates: CI runs its lanes only when code or a direct input of one
 # of its jobs changes, so docs-only changes skip lint, test,
-# deny and fuzz entirely. The gate moved from the workflow trigger to
+# and deny entirely. The gate moved from the workflow trigger to
 # the jobs themselves (2026-09-08): the workflow always starts, the
 # `changes` job computes one `run` flag from the path set below, and
 # every lane carries `if: needs.changes.outputs.run == 'true'`.
@@ -19,7 +19,9 @@
 #
 # Why each path is gated:
 #   - crates/** — any code change
-#   - fuzz/** — the fuzz job uses fuzz/Cargo.toml and fuzz/src/
+#   - fuzz/** — lint formats the fuzz workspace and deny checks its
+#     graph against fuzz/Cargo.lock (the targets themselves build and
+#     run only in verify-nightly.yml's fuzz-soak)
 #   - tools/** — the test job runs tools/bisection/run-cpp-smoke.sh and
 #     run-live-typing-diff.sh, so bisection-script changes are CI inputs
 #   - Cargo.toml / Cargo.lock — workspace manifest and lockfile: a
@@ -32,7 +34,7 @@
 #     crate-cfg placement checker and the harness that gates it, so a
 #     change to either is a direct input of that job
 #   - fixtures/** — the frozen tables, goldens and DBM files that the
-#     test and fuzz jobs decode through; a fixture-only change
+#     test job decodes through; a fixture-only change
 #     is exactly the kind that must be re-proven (added 2026-09-06 — until
 #     then a fixture-only PR ran no CI at all)
 #   - tests/parity/** — the parity corpus pinyin-oracle's tests replay
@@ -77,7 +79,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
-# Four job groups (plus path gate and aggregate):
+# Three job groups (plus path gate and aggregate):
 #   lint — rustfmt + clippy + the Lizard CCN ratchet
 #   test — cargo test for the whole workspace (the ONE full sweep per
 #          PR), and the portable workspace (all but capi, zhuyin-capi,
@@ -87,7 +89,9 @@ env:
 #   deny — supply-chain gate: RustSec advisories, licenses, sources,
 #          duplicate-version drift (docs/safety/oxpinyin-safety-profile.md
 #          layer 6)
-#   fuzz — bounded parser fuzz smoke test on a pinned nightly/tool version
+# Fuzzing is not a PR lane: every target builds and soaks nightly in
+# verify-nightly.yml's fuzz-soak (moved there 2026-09-23 — the per-PR
+# build-and-smoke of every target cost more than it caught).
 
 jobs:
   # The path gate as a job: one `run` flag for the whole workflow (the
@@ -451,136 +455,6 @@ jobs:
       # was in the tree; that backend now binds a system C library, so
       # heed, heed-types and bincode are all gone.
 
-  fuzz:
-    needs: changes
-    if: needs.changes.outputs.run == 'true'
-    runs-on: ubuntu-latest
-    container:
-      image: debian:testing # deliberately unpinned; see store-backends.yml header
-    timeout-minutes: 45
-    defaults:
-      run:
-        shell: bash
-    env:
-      DEBIAN_FRONTEND: noninteractive
-    steps:
-      # debian:testing ships a minimal base without bash or git; the
-      # runner infrastructure and later steps need both.
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-          rustup: 'true'
-      - name: Install build dependencies (apt)
-        # The fuzz targets ride the workspace default (Berkeley DB, the
-        # Q1 ruling): bindgen (libclang) reads the system db.h at build
-        # time.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
-      - name: Install pinned nightly with Rust sources
-        run: rustup toolchain install nightly-2026-08-01 --profile minimal --component rust-src
-      - name: Install pinned cargo-fuzz
-        run: |
-          ver=0.13.2
-          # Verify the release archive before executing anything from it:
-          # pin the expected digest and fail the job on mismatch.
-          sum=b5b704018b63e0f151c17a057ac53b5111e1db545d1b9f72fee79f08a545931c
-          curl -sSfL -o cargo-fuzz.tar.gz "https://github.com/rust-fuzz/cargo-fuzz/releases/download/${ver}/cargo-fuzz-${ver}-x86_64-unknown-linux-musl.tar.gz"
-          echo "${sum}  cargo-fuzz.tar.gz" | sha256sum -c -
-          tar xzf cargo-fuzz.tar.gz
-          mkdir -p ~/.local/bin
-          install -m755 cargo-fuzz ~/.local/bin
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      # Pins the fuzz workspace to fuzz/Cargo.lock. A stale lock
-      # (workspace pin bump or new path crate not reflected here)
-      # fails this step. Dependabot owns the nested lock via
-      # directory: "/fuzz"; root bumps that leave it stale are
-      # meant to fail.
-      - name: Verify fuzz lockfile
-        run: cargo +nightly-2026-08-01 metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 > /dev/null
-      # Fuzzing memory on the PR path too: restore the corpus the nightly
-      # soak has accumulated (same key prefix as verify-nightly.yml's
-      # fuzz-soak, so a PR smoke starts from that memory instead of the
-      # single committed seed). The PR's own run-id key saves whatever
-      # the 10s smokes learned, LRU-evicted like any cache.
-      - name: Restore the accumulated fuzz corpora
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: fuzz/corpus
-          key: fuzz-corpus-${{ github.run_id }}
-          restore-keys: |
-            fuzz-corpus-
-      - name: Build every fuzz target
-        # Compile gate for the whole fuzz workspace. Only the parser is run
-        # here; the other targets used to reach a compiler solely in the
-        # nightly soak lane (verify-nightly.yml), so a PR that broke one
-        # merged green and surfaced the next night at best. The target
-        # list is derived from the manifest's [[bin]] entries via
-        # `cargo fuzz list` rather than enumerated, so a new target cannot
-        # be forgotten here; an empty list fails loudly rather than passing
-        # while building nothing. `fuzz build` and `fuzz run` share the
-        # ASan release profile and the pinned gnu triple (see the next
-        # step), so this warms exactly the parser binary the run step
-        # executes — the two steps are not redundant.
-        run: |
-          set -euo pipefail
-          mapfile -t targets < <(cargo +nightly-2026-08-01 fuzz list)
-          if [ "${#targets[@]}" -eq 0 ]; then
-            echo "::error::cargo fuzz list returned no targets"
-            exit 1
-          fi
-          for target in "${targets[@]}"; do
-            echo "::group::build $target"
-            cargo +nightly-2026-08-01 fuzz build --target x86_64-unknown-linux-gnu "$target"
-            echo "::endgroup::"
-          done
-      - name: Run bounded fuzz smoke pass (every target)
-        # The pinned cargo-fuzz release binary is itself a musl build, and
-        # cargo-fuzz defaults the fuzz target to the triple it was built for
-        # (rust-fuzz/cargo-fuzz#398) — pin the runner's gnu triple so the
-        # fuzzers build against the gnu std exactly as they did under the
-        # source-built tool (ASan will not link musl's static libc).
-        #
-        # Every target gets a short run, not just the parser: building is
-        # not executing. A harness whose environment went stale (the
-        # capi-commands fixture path, 2026-09-04) compiled green and
-        # failed only in the nightly soak — the first input already
-        # panicked. A 10s run per target boots each harness against its
-        # real inputs, fixtures, and temp state, so that class fails the
-        # PR. The soak lane still does the deep work (180s/target).
-        run: |
-          set -euo pipefail
-          mapfile -t targets < <(cargo +nightly-2026-08-01 fuzz list)
-          if [ "${#targets[@]}" -eq 0 ]; then
-            echo "::error::cargo fuzz list returned no targets"
-            exit 1
-          fi
-          status=0
-          for target in "${targets[@]}"; do
-            echo "::group::fuzz smoke $target"
-            if ! cargo +nightly-2026-08-01 fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=10 -timeout=15 -max_len=4096; then
-              status=1
-              echo "::error::fuzz smoke failed for $target"
-            fi
-            echo "::endgroup::"
-          done
-          exit $status
-      # A smoke crash must survive the runner: cargo-fuzz writes the
-      # crash-* input under fuzz/artifacts/<target>/, and that file is
-      # the repro a fix needs. Uploaded only on failure, like the
-      # nightly soak does.
-      - name: Upload crash artifacts
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: fuzz-crash-artifacts
-          path: fuzz/artifacts/
-
   # One of the three required checks (with `trailer-lint` and
   # `trailer-test` from commit-trailers.yml): always runs, always
   # reports. Red only when a lane that should have run ended as
@@ -592,7 +466,7 @@ jobs:
   # and remain non-required lanes beside this one.
   ci-aggregate:
     needs:
-      [changes, lint, test, test-macos, test-windows, deny, fuzz]
+      [changes, lint, test, test-macos, test-windows, deny]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -605,7 +479,6 @@ jobs:
           TEST_MACOS: ${{ needs.test-macos.result }}
           TEST_WINDOWS: ${{ needs.test-windows.result }}
           DENY: ${{ needs.deny.result }}
-          FUZZ: ${{ needs.fuzz.result }}
         run: |
           set -euo pipefail
           status=0
@@ -634,7 +507,6 @@ jobs:
           lane test-macos "$TEST_MACOS"
           lane test-windows "$TEST_WINDOWS"
           lane deny "$DENY"
-          lane fuzz "$FUZZ"
           if [ "$status" -eq 0 ]; then
             echo "all lanes green (gated=$GATED)"
           fi

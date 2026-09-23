@@ -130,7 +130,7 @@ record, enforced present-but-not-verified by Clippy, verified by review.
 
 | Activity | Cadence | Scope |
 |---|---|---|
-| fuzz smoke | every PR | all ten targets built and each smoke-run (10 s); every target runs in the nightly soak |
+| fuzz smoke | ~~every PR~~ moved to nightly 2026-09-23 | folded into the nightly soak, which builds and runs every target |
 | ASan/LSan allocator pairing | every PR | both C ABIs: every classified slot allocated and released by its declared deallocator, with a negative control (`docs/findings/abi-allocator-pairing.md`) |
 | fuzz soak | nightly | all ten targets, 3 min each; one committed seed (`fuzz/corpus/parser/zhuan`), the rest cache-restored or seeded at run time |
 | ~~Miri~~ | retired 2026-09-01 | — (`docs/findings/verify-nightly.md`) |
