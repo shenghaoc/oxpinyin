@@ -385,11 +385,14 @@ where
 /// Each sequence is a stack [`ExpandedKeys`] (phrase length ≤ 16).
 #[must_use]
 pub fn expand_keys(keys: &[SyllableKey], limit: usize) -> Vec<ExpandedKeys> {
-    let alternatives: SmallVec<[KeyCompletions; 16]> =
-        keys.iter().map(|key| completions(*key)).collect();
-
+    // Expand key by key and bail at the first key that empties the
+    // product or pushes it past `limit`: every exit returns the same empty
+    // result, and expanding the remaining keys first made a long run of
+    // initial-only keys cost one full inventory scan per key per call.
+    let mut alternatives: SmallVec<[KeyCompletions; 16]> = SmallVec::new();
     let mut product = 1_usize;
-    for choices in &alternatives {
+    for key in keys {
+        let choices = completions(*key);
         if choices.is_empty() {
             return Vec::new();
         }
@@ -397,6 +400,7 @@ pub fn expand_keys(keys: &[SyllableKey], limit: usize) -> Vec<ExpandedKeys> {
             Some(product) if product <= limit => product,
             _ => return Vec::new(),
         };
+        alternatives.push(choices);
     }
 
     let mut sequences: Vec<ExpandedKeys> = vec![ExpandedKeys::new()];
@@ -428,8 +432,11 @@ fn completions(key: SyllableKey) -> KeyCompletions {
     }
 
     let initial = key.text();
+    // The prefix test is implied by the initial test and rejects most of
+    // the inventory for one comparison, before the longest-initial search.
     FULL_PINYIN_SYLLABLES
         .iter()
+        .filter(|syllable| syllable.starts_with(initial))
         .filter(|syllable| crate::phonetic_initial(syllable) == Some(initial))
         .filter_map(|syllable| SyllableKey::from_text(syllable))
         .collect()
