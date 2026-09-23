@@ -71,7 +71,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 
 | Rule | Today | Proposed | Mechanism |
 |---|---|---|---|
-| Parser fuzz smoke per PR | yes (10s) | PR gate: all ten targets built and each smoke-run for 10 s; every target soaks nightly | cargo-fuzz pinned nightly (existing job; the build-all step landed with `docs/findings/verify-nightly.md` finding 6) |
+| Parser fuzz smoke per PR | no (removed 2026-09-23) | ~~PR gate~~ SCHED nightly: every target builds and soaks in fuzz-soak | the ci.yml fuzz job was removed; `docs/findings/verify-nightly.md` finding 6 records its build-all history |
 | Corpus replay under Miri | no | ~~SCHED nightly~~ retired 2026-09-01 | the Miri lane was retired (`docs/findings/verify-nightly.md`) |
 | Fuzz soak | no | SCHED nightly | ten targets × 3 min; one committed seed (`fuzz/corpus/parser/zhuan`), the rest of the corpus is seeded at run time |
 | Coverage floor | yes (nightly) | SCHED nightly | cargo-llvm-cov report plus the 77% line floor (`--fail-under-lines 77`, measured 2026-09-08; see verify-nightly.yml) |
