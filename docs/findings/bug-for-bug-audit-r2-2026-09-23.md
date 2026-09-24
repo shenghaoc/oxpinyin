@@ -15,9 +15,7 @@
 - **Step 4 (line-by-line verification of round 1, PR #516) was not done.**
   The round-1 report was never opened. The round-1 table (section 6) is
   therefore empty.
-- **Step 5 (GitHub tracking) was not done.**
-  - No label, milestone, project or issue exists yet.
-  - The `gh` token still lacks the `project` scope.
+- **Step 5 (GitHub tracking)** was done without a project board, which the maintainer removed from Step 5. Tracking issue #573 has the 50 audit issues (#523–#572) as sub-issues, under milestone *Bug-for-bug audit r2*, with `bug-for-bug`/`verdict:*`/`axis:*`/`severity:*`/`backend:*` labels.
 - **Measured subject:** `origin/main` at `18d782089bd1`. Main has since moved
   to `34a66bc915c9`, adding 00466d50 (`expand_keys` early stop in
   `oxpinyin-core/src/scoring.rs`) and 34a66bc9 (a fuzz corpus seed). Nothing
@@ -465,3 +463,60 @@ still reproduces.
 | D-14 | ibus-libpinyin 1.16.5 engine replay, library swapped | identical apart from the resolved-library path | **still reproduces at 34a66bc9** |
 | D-15 | `Cargo.toml` metadata and the built `.pc` at main | `Version: 2.11.91`, `libpinyin-2.11.91` | **still reproduces at 34a66bc9** |
 | D-16 | H `init_twice` | identical on all cells | **still reproduces at 34a66bc9** |
+
+## 12. Issue map
+
+Tracking issue: #573.
+
+| row | issue |
+|---|---|
+| D-01 | #523 |
+| D-02 | #524 |
+| D-03 | #525 |
+| D-04 | #526 |
+| D-05 | #527 |
+| D-06 | #528 |
+| D-07 | #529 |
+| D-20 | #530 |
+| D-09 | #531 |
+| D-10 | #532 |
+| D-11 | #533 |
+| D-12 | #534 |
+| D-13 | #535 |
+| D-14 | #536 |
+| D-15 | #537 |
+| D-16 | #538 |
+| D-17 | #539 |
+| D-18 | #540 |
+| D-19 | #541 |
+| D-25 | #542 |
+| D-08 | #543 |
+| D-21 | #544 |
+| D-23 | #545 |
+| D-22 | #546 |
+| D-24 | #547 |
+| R-1 | #548 |
+| R-2 | #549 |
+| R-3 | #550 |
+| R-4 | #551 |
+| P-1 | #552 |
+| NE-L-tkrzw | #553 |
+| NE-L-bdb | #554 |
+| NE-L-kc | #555 |
+| NE-G-tkrzw | #556 |
+| NE-G-bdb | #557 |
+| NE-G-kc | #558 |
+| NE-Copt-tkrzw | #559 |
+| NE-Copt-bdb | #560 |
+| NE-Copt-kc | #561 |
+| NE-Bzy-tkrzw | #562 |
+| NE-Bzy-bdb | #563 |
+| NE-Bzy-kc | #564 |
+| NE-J-tkrzw | #565 |
+| NE-J-bdb | #566 |
+| NE-J-kc | #567 |
+| NE-Cdrv-tkrzw | #568 |
+| NE-Cdrv-bdb | #569 |
+| NE-Cdrv-kc | #570 |
+| NE-Fdet-bdb | #571 |
+| NE-Step4 | #572 |
