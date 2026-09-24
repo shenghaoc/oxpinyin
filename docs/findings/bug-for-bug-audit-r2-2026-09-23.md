@@ -339,8 +339,10 @@ present counts as unregistered):
 5. **The tkrzw standing divergence is not in the register.** It is recorded
    only in `tkrzw-langc-exception-classification.md`; neither the policy
    table nor `upstream-divergences.md` carries it.
-6. **Upstream issues are misattributed.** The catalogue cites them as
-   libpinyin issues #566/#542/#518; they are ibus-libpinyin issues.
+6. **Upstream issues: no repo defect.** The repo's docs attribute #566,
+   #542 and #518 correctly to ibus-libpinyin (`robustness-evidence.md:40,169,183`).
+   Only the audit mandate called them libpinyin issues. An earlier draft of this
+   list wrongly recorded that as a register defect.
 7. **Cross-register gaps.**
    - `upstream-divergences.md` has 32 entries.
    - Policy rows 17 and 32–38 have no entry there; row 30 does.
