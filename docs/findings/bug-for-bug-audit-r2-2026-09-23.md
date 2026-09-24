@@ -130,7 +130,7 @@ was used.
    | D-14 | harness `harness/I-dropin/batch.sh:14-17`: same oracle-built ibus binary, only the library dir swapped; relink run identical | CONFIRMED (observational) |
    | D-15 | static `.pc` diff (section 5, A) | CONFIRMED |
    | D-16 | subject `oxpinyin-user/src/registry.rs:107-108`, process-global `OPEN_STORES` keyed by path | CONFIRMED |
-   | D-18 | pin `phrase_index.cpp:168-170` (`ERROR_INTEGER_OVERFLOW` → false); subject `dict.rs:364-379` adds a u64 delta unchecked | CONFIRMED (the add-frequency part; the other parts rest on axis E's completed ledger) |
+   | D-18 | pin `phrase_index.cpp:168-170` (`ERROR_INTEGER_OVERFLOW` → false); subject `dict.rs:364-377` adds a u64 delta unchecked | CONFIRMED (the add-frequency part; the other parts rest on axis E's completed ledger) |
    | D-19 | pin `pinyin.cpp:896-910` returns `has_next_phrase`; subject `iterators.rs:407-408` returns true | CONFIRMED |
    | D-21 | pin BDB user tables are created 0600 (`chewing_large_table2_bdb.cpp:149`, `phrase_large_table3_bdb.cpp:164`, `ngram_bdb.cpp:55`); subject `oxpinyin-store/src/bdb/ffi.rs:298` uses 0644 | CONFIRMED |
    | D-22 | every `std::env::temp_dir` use in the shipped crates is inside `#[cfg(test)]`, so the observed `TMPDIR` read has no located source | **downgraded to NOT-ESTABLISHED** |
