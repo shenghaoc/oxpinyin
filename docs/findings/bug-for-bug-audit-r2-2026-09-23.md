@@ -36,7 +36,7 @@
 | D persisted state | DIVERGENT (open counter, cross-read) | same | same, +kc interop | D-m1 (round-trip) and D-m3 (cycle) detected; revert identical |
 | E defect preservation | 37 DIVERGENT, 14 NE | same | same | E-m1 detected on all cells, reverted |
 | F errors/diagnostics | 74 sites DIVERGENT | same | same | F-m1, F-m2 detected (tkrzw); bdb subject rerun not byte-identical (pinyin), so bdb F is NOT-ESTABLISHED for MATCH |
-| G numerics | §12 gate 491/396/390 | gate passes | 491/396/390 | **gate mutations G-m1/G-m2 never run → NOT-ESTABLISHED**; counterfactuals show non-(a) selection divergences |
+| G numerics | **NOT-ESTABLISHED** (gate printed 491/396/390) | **NOT-ESTABLISHED** (gate passed) | **NOT-ESTABLISHED** (gate printed 491/396/390) | no G row may be MATCH: G-m1/G-m2 were never run. D-13's divergence stands on counterfactual and source evidence |
 | H process state | DIVERGENT | same | same, +fork hang | H-m1 and H-m2 detected and reverted |
 | I drop-in | DIVERGENT (.pc, consumer runtime) | same | same | I-m2 and I-m3 (C-m2) detected; header matrix fails identically on both sides |
 | J coverage | export ledger 131 = 131, identical across cells (static) | same | same | internal ledger **NOT-ESTABLISHED** (not produced) |
@@ -107,6 +107,38 @@ was used.
    `grep -rnE '\bassert\s*\(|\babort\s*\(\s*\)' src | wc -l` at the pin gives
    357. The merged F ledger has 357 rows. Separately there are 70
    `check_result()` sites (`pinyin_utils.h:27-31` defines it as an assert).
+
+6. **Recovered verdicts** (B-libpinyin, D, F, G, H, I, static A) were each
+   checked by the orchestrator against source on 2026-09-24/25 (UTC), before
+   the verdict was kept. A recovered verdict with no source spot-check is
+   downgraded to NOT-ESTABLISHED.
+
+   | row | spot-check | result |
+   |---|---|---|
+   | D-01 | pin `pinyin.cpp:185-186,1194-1198`; subject `context.rs:119-129`, `persistence.rs:223-266` | CONFIRMED |
+   | D-02 | pin `pinyin.cpp:2670-2691` (`assert(index < results.size())`, trains `results[index]`); subject `candidates.rs:550` (`_index` unused) | CONFIRMED |
+   | D-03 | the only glib log calls are `context.rs:21` and zhuyin `context.rs:44`; the extra stderr writers (item 1) are not at abort-site counterparts | CONFIRMED |
+   | D-04 | pin `pinyin.cpp:2845-2848` dereferences `instance` unguarded; subject `candidates.rs:22` returns false on NULL | CONFIRMED |
+   | D-06 | subject `instance.rs:24` dereferences the (freed) context in `pinyin_alloc_instance` | CONFIRMED |
+   | D-07 | pin KC `chewing_large_table2_kyotodb.cpp:100-106` loads the user index with `load_snapshot` into an in-memory tree; subject `oxpinyin-data/src/user_files.rs:11-17` writes the native tree DBM and claims byte compatibility | CONFIRMED |
+   | D-08 | round-trip dumps differ, but no per-phrase attribution | **downgraded to NOT-ESTABLISHED** |
+   | D-09 | harness `hsess.c:468-483`: the child finished (status 0), the parent was killed at the 300 s timeout; stdout buffering hides where; the run was at load ~68 | **downgraded to NOT-ESTABLISHED** (hang vs slowness not separated) |
+   | D-10 | pin `pinyin.cpp:329` `m_options = USE_TONE`; subject `oxpinyin-facade/src/lib.rs:56` `PINYIN_INCOMPLETE`, used at `state.rs:63` | CONFIRMED |
+   | D-11 | subject `oxpinyin-facade/src/export_rows.rs:33-35` returns empty for any library but USER/NETWORK; pin `pinyin.cpp:662-674` walks any sub-index | CONFIRMED |
+   | D-12 | subject `iterators.rs:128-133` refuses counts below −1; pin `pinyin.cpp:630` parses the import with `USE_TONE` | CONFIRMED |
+   | D-13 | pin `phonetic_lookup_heap.h:25-29` (`comp` = `less_than`, so `std::push_heap` builds a max-heap), and `:69-77` evicts `m_elements[0]` = best; subject `oxpinyin-engine/src/nbest.rs:254-265` evicts its worst | CONFIRMED |
+   | D-14 | harness `harness/I-dropin/batch.sh:14-17`: same oracle-built ibus binary, only the library dir swapped; relink run identical | CONFIRMED (observational) |
+   | D-15 | static `.pc` diff (section 5, A) | CONFIRMED |
+   | D-16 | subject `oxpinyin-user/src/registry.rs:107-108`, process-global `OPEN_STORES` keyed by path | CONFIRMED |
+   | D-18 | pin `phrase_index.cpp:168-170` (`ERROR_INTEGER_OVERFLOW` → false); subject `dict.rs:364-379` adds a u64 delta unchecked | CONFIRMED (the add-frequency part; the other parts rest on axis E's completed ledger) |
+   | D-19 | pin `pinyin.cpp:896-910` returns `has_next_phrase`; subject `iterators.rs:407-408` returns true | CONFIRMED |
+   | D-21 | pin BDB user tables are created 0600 (`chewing_large_table2_bdb.cpp:149`, `phrase_large_table3_bdb.cpp:164`, `ngram_bdb.cpp:55`); subject `oxpinyin-store/src/bdb/ffi.rs:298` uses 0644 | CONFIRMED |
+   | D-22 | every `std::env::temp_dir` use in the shipped crates is inside `#[cfg(test)]`, so the observed `TMPDIR` read has no located source | **downgraded to NOT-ESTABLISHED** |
+   | D-23 | subject `persistence.rs` "non-conforming user profile wiped" path; pin `open … failed.` from `table_info` | CONFIRMED |
+   | D-24 | key-byte deltas not classified | **downgraded to NOT-ESTABLISHED** |
+
+   D-05, D-17, D-20, D-26 and the E-derived parts of D-02/D-12/D-18/D-19 rest
+   on axes that returned complete ledgers (C, E).
 
 ## 2. Pre-registration and falsifiers
 
@@ -179,8 +211,8 @@ unless a live class demonstrably fits.
 | D-05 | C (union), K | all | Register row 33 (REVERT TARGET) is still present: after a whole-row NBEST choose + train the subject writes the user bigram and predicts `你`; the pin predicts nothing. Row 20 attributes the same line to the (a) residual, which is falsified | `pinyin.cpp:2515-2520`, `phonetic_lookup.h:866` | `constraint.rs`, `selection.rs` | DIVERGENT-UNREGISTERED | 1 |
 | D-06 | B (BP-12, BP-12b) | all | The subject crashes where the pin does not: `pinyin_alloc_instance` after `pinyin_fini` → SIGSEGV. Inversely, guessing on an instance that outlives its context crashes the pin and answers true on the subject | `pinyin.cpp` lifecycle | `oxpinyin-capi/src/context.rs` | DIVERGENT-UNREGISTERED | 1 |
 | D-07 | B (BP-42) | kc | The subject writes `user_pinyin_index.bin`/`user_phrase_index.bin` as native KC databases, and the pin cannot `load_snapshot` them. A phrase imported on the subject is lost to the pin. This contradicts the policy's same-backend interop claim | `load_snapshot` path | kc user store | DIVERGENT-UNREGISTERED | 1 |
-| D-08 | D (round-trip) | all | The same user dir read by pin and subject gives different learned state: unigram of 你 53853 vs 52887, and the bigram row sets differ. The attribution was not completed | — | — | DIVERGENT-UNREGISTERED (attribution owed) | 2 |
-| D-09 | H (fork) | kc | Parent init, forked child trains and saves: the subject run never exits (killed by the 300 s timeout, exit 137). The pin exits 0 | — | kc store after fork | DIVERGENT-UNREGISTERED | 1 |
+| D-08 | D (round-trip) | all | The same user dir read by pin and subject gives different learned state: unigram of 你 53853 vs 52887, and the bigram row sets differ. The attribution was not completed | — | — | NOT-ESTABLISHED (downgraded, section 1.3 item 6) | 2 |
+| D-09 | H (fork) | kc | Parent init, forked child trains and saves: the subject run never exits (killed by the 300 s timeout, exit 137). The pin exits 0 | — | kc store after fork | NOT-ESTABLISHED (downgraded, section 1.3 item 6) | 1 |
 | D-10 | B (BP-02) | all | The default option word after `pinyin_init` is `USE_TONE` on the pin and `PINYIN_INCOMPLETE` on the subject | `pinyin.cpp:329` | `oxpinyin-facade/src/lib.rs:56` | DIVERGENT-UNREGISTERED | 2 |
 | D-11 | B (BP-07) | all | `pinyin_begin_get_phrases(ctx, 1..4)` exports every system row on the pin (95698/21234/28255/1051) and nothing on the subject | `pinyin.cpp:698-769` | `iterators.rs` | DIVERGENT-UNREGISTERED | 2 |
 | D-12 | B (BP-08), E (SIGN-1, IMP-1) | all | Import semantics differ. Negative counts, toned pinyin (`ce4'shi4`) and libraries 1/255 are accepted by the pin and refused by the subject. Count 0 exports as −1 on the pin | `pinyin.cpp` import | `iterators.rs` | DIVERGENT-UNREGISTERED | 2 |
@@ -193,9 +225,9 @@ unless a live class demonstrably fits.
 | D-19 | B (15), C, E (ORD-1/2, OFF-2) | all | Bigram export surface: last-row `get_next` returns true (register row 36 open); DB-walk export order; the pin skips the last key; the pin attributes `sentence_start` successors to the next predecessor | `pinyin.cpp:842-911` | `iterators.rs:371-411` | DIVERGENT-UNREGISTERED | 2 |
 | D-20 | B (14), C, E (MSB-3.2) | all | Register row 1 (b) says "repeated export cycle". The pin SIGSEGVs on the **first** export cycle after a train (bdb deterministic, 4/4) | `pinyin.cpp:862` | — | DIVERGENT-BROADER (row 1) | 1 |
 | D-21 | B (41) | bdb | The pin creates the bdb user DB files mode 0600; the subject creates them 0644 under umask 022 | libdb default | store create | DIVERGENT-UNREGISTERED | 3 |
-| D-22 | H | all | The subject reads `TMPDIR` in `pinyin_init` and leaves a temp entry; the pin reads neither | — | — | DIVERGENT-UNREGISTERED | 3 |
+| D-22 | H | all | The subject reads `TMPDIR` in `pinyin_init` and leaves a temp entry; the pin reads neither | — | — | NOT-ESTABLISHED (downgraded, section 1.3 item 6) | 3 |
 | D-23 | B (11), C | all | Diagnostics differ: the pin prints `open <dir>/user.conf failed.`; the subject prints "non-conforming user profile wiped" on a fresh dir and a glib warning on init failure. Save rename messages are absent on the subject | — | `persistence.rs` | DIVERGENT-UNREGISTERED | 3 |
-| D-24 | A (ck-runtime) | all | Raw `ChewingKey` bytes and returns from single-key parses across schemes and options: 73 both-true-bytes-differ, 2830 pin-false/subject-true, 1991 pin-true/subject-false, and 337 chewing keys accepted only by the subject. The attribution was not completed | `chewing_key.h` | parser | DIVERGENT-UNREGISTERED (attribution owed) | 3 |
+| D-24 | A (ck-runtime) | all | Raw `ChewingKey` bytes and returns from single-key parses across schemes and options: 73 both-true-bytes-differ, 2830 pin-false/subject-true, 1991 pin-true/subject-false, and 337 chewing keys accepted only by the subject. The attribution was not completed | `chewing_key.h` | parser | NOT-ESTABLISHED (downgraded, section 1.3 item 6) | 3 |
 | D-25 | B (06, 18–22, 26, 32–39), E (D-1..3) | all | Assorted return-value and out-param contract differences on error or edge paths. Examples: `get_sentence` before a guess (pin false, subject true + raw input); aux text after full-pinyin parse; `guess_sentence` on no keys; out-param write-on-failure; function-static key slots shared across instances on the pin | per BP row | per BP row | DIVERGENT-UNREGISTERED | 2–3 |
 | D-26 | C (double3) | all | ZIGUANG `zhrgguor` candidate[2] NBEST: 宗人光卓然 on the pin vs 总人光卓然 on the subject. Attributed to row 11 by the C agent, but D-13 shows row 11's scope is contested | — | — | DIVERGENT-REGISTERED (row 11), under D-13 | 2 |
 
@@ -355,7 +387,7 @@ The raw evidence stays in the auditor host's scratch area
 - the container recipe;
 - every run log.
 
-**That area is ephemeral and is not retained with this document.** Any
+**That area is ephemeral and is not retained with this document.** Before the build target dirs were deleted, everything else in it was archived to `~/audit-r2-evidence-20260924T231404Z.tar.zst` on the auditor host (`tar --exclude='./work/target-*' | zstd -10`). The archive is 815,523,174 bytes, sha256 `79c912b8a60eb987b9b42cafe77c5ffdcc66f79f4398ea1510261632ca52eeaf`, and `zstd -dc | tar -tf` lists 155,219 entries cleanly with no `work/target-*` member. The deleted `work/target-*` dirs held only cargo build output. Any
 figure above must be regenerated from the recipes before it is relied on.
 Harnesses worth keeping are proposed for adoption in section 10.
 
