@@ -57,7 +57,7 @@
 | audit image | `ox-audit-r2:env`, id `d6153cd00d57bb70aabd6cc8ea43256e9e0d7183835238c87d6f16cea06f6f2c` |
 | toolchain | rustc 1.97.1 (8bab26f4f 2026-07-14), cargo-c 0.10.25 |
 | model | model20, archive sha256 `59c68e89…1155` (checked in-image) |
-| pre-registration | `dbee7c04dab055f0d0777e846b5dff55219f2503`, committed 2026-09-23T10:54:33Z |
+| pre-registration | first committed and pushed as `dbee7c04dab055f0d0777e846b5dff55219f2503` at 2026-09-23T10:54:33Z. The required rebase onto the landing tip rewrote it to `fad9ad47`. The author date is unchanged, and the file blob `d47e9b50aae0` is identical in both commits (`git rev-parse <sha>:<path>`) |
 | first measurement | image build 2026-09-24T15:06:26Z. An earlier interrupted attempt started 2026-09-23T~11:08Z. Both are after the pre-registration |
 | run window | 2026-09-24T15:06Z to 2026-09-24T23:01Z |
 
@@ -110,7 +110,7 @@ was used.
 
 ## 2. Pre-registration and falsifiers
 
-The pre-registration was committed as `dbee7c04` before any measurement.
+The pre-registration was committed as `dbee7c04` (rebased to `fad9ad47`, same blob) before any measurement.
 
 | falsifier | outcome |
 |---|---|
