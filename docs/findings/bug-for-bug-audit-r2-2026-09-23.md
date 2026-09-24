@@ -36,7 +36,7 @@
 | D persisted state | DIVERGENT (open counter, cross-read) | same | same, +kc interop | D-m1 (round-trip) and D-m3 (cycle) detected; revert identical |
 | E defect preservation | 37 DIVERGENT, 14 NE | same | same | E-m1 detected on all cells, reverted |
 | F errors/diagnostics | 74 sites DIVERGENT | same | same | F-m1, F-m2 detected (tkrzw); bdb subject rerun not byte-identical (pinyin), so bdb F is NOT-ESTABLISHED for MATCH |
-| G numerics | **NOT-ESTABLISHED** (gate printed 491/396/390) | **NOT-ESTABLISHED** (gate passed) | **NOT-ESTABLISHED** (gate printed 491/396/390) | no G row may be MATCH: G-m1/G-m2 were never run. D-13's divergence stands on counterfactual and source evidence |
+| G numerics | **NOT-ESTABLISHED** (gate printed 491/396/390) | **NOT-ESTABLISHED** (gate passed) | **NOT-ESTABLISHED** (gate printed 491/396/390) | no G row may be MATCH. The §12 gate's own mutation runs were never done. At the C-ABI surface (504 fixture inputs), G-m2 was detected on every cell (4 lines) but G-m1 (+1e-3 nats per step) was **not** detected (0 lines). D-13's divergence stands on counterfactual and source evidence |
 | H process state | DIVERGENT | same | same, +fork hang | H-m1 and H-m2 detected and reverted |
 | I drop-in | DIVERGENT (.pc, consumer runtime) | same | same | I-m2 and I-m3 (C-m2) detected; header matrix fails identically on both sides |
 | J coverage | export ledger 131 = 131, identical across cells (static) | same | same | internal ledger **NOT-ESTABLISHED** (not produced) |
@@ -192,7 +192,9 @@ The pre-registration was committed as `dbee7c04` (rebased to `fad9ad47`, same bl
 | H | host | H-m2 (static Mutex) | yes: inventory line added | yes (`h2-reverted` == pristine) | |
 | I | all | I-m2 (file removed) | yes | yes | |
 | I | tkrzw | I-m3 = C-m2 | yes: the ibus replay differs by 304 vs 71 lines | yes (mut-unset == subject) | |
-| G | all | G-m1, G-m2 | **not run** | — | G is NOT-ESTABLISHED |
+| G | all | G-m1, G-m2 through the §12 gate | **not run** | — | G is NOT-ESTABLISHED |
+| G | all | G-m1 at the C-ABI fixture surface | **no** (0 lines) | unset identical | the surface instrument is blind to a uniform +1e-3 nat shift |
+| G | all | G-m2 at the C-ABI fixture surface | yes (4 lines) | unset identical | |
 | C-options | all | C-m1 | **not run** | — | |
 | L | all | L-m1, L-m2 | **not run** | — | |
 
@@ -421,7 +423,7 @@ Harnesses worth keeping are proposed for adoption in section 10.
 | gap | what blocked it | next step |
 |---|---|---|
 | L on all cells | never started | run the pre-registered workloads on a quiet host, one cell at a time |
-| G mutations on all cells | the mutant gate builds finished; the runs were never started | build the gate test from `mut-src` (`5eb5c51`) and run it with `OXPINYIN_AUDIT_MUT=G-m1` / `G-m2` / unset |
+| G mutations on all cells | the §12 gate mutant runs were never started; at the C-ABI surface G-m1 went undetected | build the gate test from `mut-src` (`5eb5c51`) and run it with `OXPINYIN_AUDIT_MUT=G-m1` / `G-m2` / unset |
 | C option sweep, encoding battery, zhuyin layouts | killed at stop | rerun `harness/C-options/` sweep v3 per cell; add C-m1 |
 | B libzhuyin | no mutation validation or ledger | adopt the pinyin battery's analysis; C-m3 plus an LD_PRELOAD shim as the non-vacuity check |
 | J internal ledger | not produced | clang `-emit-llvm` call graph from the 131 exports |
@@ -437,3 +439,27 @@ Proposed for adoption as repo tools (each would need its own reviewed PR):
 - the getenv interposer;
 - the header layout probe generator;
 - `zhuyin-diff-ext`.
+
+## 11. Re-run of severity-1 and severity-2 findings at the current main
+
+The subject was rebuilt at `origin/main` =
+`34a66bc915c93a09a1680e70c5c2c252f95ffdfe` (same recipe and features per
+cell; stage `work/stage-main-<cell>`) on 2026-09-24/25 (UTC). Each finding's
+own harness was re-run with only the subject library swapped. Because the
+oracle side is unchanged, an unchanged subject output means the divergence
+still reproduces.
+
+| rows | harness | comparison against the `18d78208` subject | result |
+|---|---|---|---|
+| D-01 | D open-counter cycle (A/B/C protocols) plus the libzhuyin cycle | logs identical on all cells; wipe at launch 8 | **still reproduces at 34a66bc9** |
+| D-02, D-04, D-06, D-10, D-11, D-12, D-18, D-19, D-25 (the B parts) | B contract battery (252 probes) | identical apart from the three stderr self-size lines that embed the run tag | **still reproduces at 34a66bc9** |
+| D-03 | F site executor (fx-pinyin, fx-zhuyin) | 0 differing lines on every cell | **still reproduces at 34a66bc9** |
+| D-02, D-12, D-17, D-18, D-19, D-20, D-25 (the E parts) | E probes (e-pinyin, e-zhuyin, plus the named `H_gint_*` probes) | 0 differing lines after timestamp masking | **still reproduces at 34a66bc9** |
+| D-05, D-26 | C drivers, subject side (80 outputs/cell) | 80/80 identical | **still reproduces at 34a66bc9** |
+| D-07 | kc write-by-subject / read-by-oracle | 泥壕 still absent on kc; tkrzw and bdb interoperate | **still reproduces at 34a66bc9** |
+| D-08 (NOT-ESTABLISHED) | D round-trip | 56/56 text dumps identical; the DB byte hashes vary run to run on both SHAs | observation unchanged at 34a66bc9 |
+| D-09 (NOT-ESTABLISHED) | H fork, kc, on a quiet host | oracle 0.06 s exit 0; subject exit 137 at the 300 s timeout at **both** SHAs | observation unchanged at 34a66bc9. Slowness is now excluded; the source of the hang is still unlocated |
+| D-13 | G C-ABI fixture surface (504 inputs) | subject identical; oracle vs subject still 106 lines | **still reproduces at 34a66bc9** |
+| D-14 | ibus-libpinyin 1.16.5 engine replay, library swapped | identical apart from the resolved-library path | **still reproduces at 34a66bc9** |
+| D-15 | `Cargo.toml` metadata and the built `.pc` at main | `Version: 2.11.91`, `libpinyin-2.11.91` | **still reproduces at 34a66bc9** |
+| D-16 | H `init_twice` | identical on all cells | **still reproduces at 34a66bc9** |
