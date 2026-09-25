@@ -726,3 +726,58 @@ the same harness predate this addendum and are not used for verdicts.
   - C-m3 or the shim not detected makes the export ledger NOT-ESTABLISHED on
     that cell;
   - any export with no probe makes the ledger incomplete.
+
+---
+
+## Addendum 3 — item 4 (C-m1, option sweep, encoding battery, zhuyin layouts)
+
+Appended 2026-09-25T01:27:51Z, before this item's measurement. Earlier partial
+runs are set aside and are not used for verdicts.
+
+### Option sweep (`harness/C-options/master-sweep.sh <cell>`)
+
+- **Driver.** `optsweep`, one process per option word and a fresh user dir
+  per process. Words come from `words-single.txt`: all 32 bits
+  individually, including reserved bit 0 and bit 20, plus 0, all-ones and
+  preset words, 104 in total. Pairwise words come from `words-pair.txt`:
+  every pair of defined bits, 435.
+- **Corpora.** `corpus-sweep.txt` (496 lines) and `corpus-pair.txt`
+  (149 lines), covering full pinyin, the double-pinyin schemes, the zhuyin
+  schemes, and ü/v/`u:`, tone, abbreviation and correction triggers.
+- **Logged per word.** Parsed keys and their strings at every offset, aux
+  text, the 1-best, the candidate count, the top 10, and FNV-1a hashes of the
+  ordered and the sorted (multiset) full candidate list.
+- **Runs.** Oracle run1/run2, subject run1/run2, the mutant with C-m1, then
+  unset.
+- **Detection.** C-m1 changes at least one word's output. **Revert:** unset
+  equals subject run1.
+- **Verdict per word × corpus line.** MATCH, or DIVERGENT with the first
+  differing field recorded. The report carries **only the differing lines**
+  and their counts.
+
+### Encoding battery (`master-encbat.sh`)
+
+- **Driver.** `encbat`, each case in a forked child. Cases: invalid UTF-8,
+  NFC vs NFD, full-width vs half-width, embedded NUL, and lengths 64, 255,
+  256, 1024 and 65536 bytes. They go to the full, double and chewing parsers,
+  `phrase_segment`, `lookup_tokens` and the import path.
+- **Runs.** Oracle and subject r1/r2, C-m1, C-m3, unset.
+- **Detection.** The encoding battery's non-vacuity is shown by C-m1 **or**
+  C-m3. C-m1 and C-m3 are this item's pre-registered mutations; no extra
+  mutation is designed.
+
+### Zhuyin layouts (`master-zy.sh`)
+
+- **Driver.** `zylayout`, over every `ZHUYIN_*` keyboard scheme (table
+  mode, and the corpus in `corpus-zy.txt`) under the option words
+  none/`0x60`/`0xe0000070`.
+- **Runs.** Oracle and subject r1/r2, C-m3, unset.
+
+### Falsifiers
+
+- Oracle r1 ≠ r2 makes the affected words or cases NOT-ESTABLISHED.
+- An instrument whose mutation is not detected makes that instrument's MATCH
+  rows NOT-ESTABLISHED.
+
+The only change to the harness is parallelism (`xargs -P` 4 → 10); it
+changes no output.
