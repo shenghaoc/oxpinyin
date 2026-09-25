@@ -12,8 +12,16 @@
  * on its own copy (pinyin.cpp:185-187, :1194-1200); and when both contexts
  * save, the later save's files are the profile.
  *
+ * The two contexts may also be one of each library (#578's review): each
+ * keeps its own library's user.conf law whichever opened first. libpinyin
+ * raises the counter at init, writes it back at save and lowers it at fini;
+ * libzhuyin's init only reads it, its save writes a fresh 0 and its fini
+ * writes nothing (zhuyin.cpp:126-162, :164-176, :741-757).
+ *
  * Usage:
  *   two-context-diff <pinyin|zhuyin> <lib.so> <systemdir> <userdir> <scenario>
+ *   two-context-diff cross <libpinyin.so> <libzhuyin.so> <systemdir> <userdir>
+ *                    <scenario>
  *
  *   one-learns      init A, init B; A learns item 1; each context's view
  *                   of it; save B, save A; fini A, fini B.
@@ -22,11 +30,22 @@
  *                   save A, save B; fini A, fini B; then a third context
  *                   shows which learning the profile kept.
  *
+ *   cross, one libzhuyin context Z and one libpinyin context P:
+ *   zhuyin-first    init Z, init P; each learns its library's item 1 and
+ *                   shows its view; save Z, save P; fini Z, fini P; then a
+ *                   fresh P2 and a fresh Z2 show what the profile kept.
+ *   pinyin-first    the same with P opened, learning, saving and finishing
+ *                   first.
+ *   zhuyin-first-fini-reversed, pinyin-first-fini-reversed
+ *                   the same with the two finis in the reverse order.
+ *
  * "Learns" is what run-open-counter-diff.sh's driver does: pinyin imports
  * a user phrase and trains a system word chosen below the sentence rows;
  * zhuyin trains a system word. A view is read the same way too: pinyin's
  * user-dictionary rows and the words' unigram frequencies, zhuyin's
- * candidate order. user.conf's counter line is printed after every step.
+ * candidate order. In the cross scenarios a libpinyin view also reads the
+ * frequencies of the words the libzhuyin context trains. user.conf's
+ * counter line is printed after every step.
  *
  * This file is part of oxpinyin, GPL-3.0-or-later like the rest of it.
  */
@@ -68,21 +87,35 @@ static const struct target PINYIN_IMPORTS[] = {{"ni'hao", "泥壕"}, {"ba'kua", 
 static const struct target ZHUYIN_TARGETS[] = {{"2u04vu04", "癫痫"}, {"xu4g3", "砾石"}};
 #define N_ITEMS 2
 
-static void *lib;
-static const char *prefix;
-static bool zhuyin;
+/* One library: its symbols' prefix and its handle. */
+struct facade {
+    const char *prefix;
+    void *lib;
+    bool zhuyin;
+};
+
+static struct facade pinyin_facade = {"pinyin", NULL, false};
+static struct facade zhuyin_facade = {"zhuyin", NULL, true};
+static bool cross;
 static const char *system_dir;
 static const char *user_dir;
 
-static void *sym(const char *name) {
+static void *sym(const struct facade *f, const char *name) {
     char full[96];
-    snprintf(full, sizeof full, "%s_%s", prefix, name);
-    void *symbol = dlsym(lib, full);
+    snprintf(full, sizeof full, "%s_%s", f->prefix, name);
+    void *symbol = dlsym(f->lib, full);
     if (!symbol) {
         fprintf(stderr, "missing symbol: %s\n", full);
         exit(1);
     }
     return symbol;
+}
+
+static bool open_lib(struct facade *f, const char *path) {
+    f->lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!f->lib)
+        fprintf(stderr, "dlopen %s: %s\n", path, dlerror());
+    return f->lib != NULL;
 }
 
 /* user.conf's counter line as the file holds it now. */
@@ -105,14 +138,15 @@ static void counter(const char *step) {
 
 struct ctx {
     const char *name;
+    const struct facade *f;
     context_t *context;
     instance_t *instance;
 };
 
-static struct ctx init_ctx(const char *name) {
-    context_t *(*init)(const char *, const char *) = sym("init");
-    instance_t *(*alloc)(context_t *) = sym("alloc_instance");
-    struct ctx c = {name, init(system_dir, user_dir), NULL};
+static struct ctx init_ctx(const char *name, const struct facade *f) {
+    context_t *(*init)(const char *, const char *) = sym(f, "init");
+    instance_t *(*alloc)(context_t *) = sym(f, "alloc_instance");
+    struct ctx c = {name, f, init(system_dir, user_dir), NULL};
     if (!c.context) {
         printf("init %s: NULL\n", name);
         exit(1);
@@ -130,8 +164,8 @@ static struct ctx init_ctx(const char *name) {
 }
 
 static void fini_ctx(struct ctx *c) {
-    void (*free_instance)(instance_t *) = sym("free_instance");
-    void (*fini)(context_t *) = sym("fini");
+    void (*free_instance)(instance_t *) = sym(c->f, "free_instance");
+    void (*fini)(context_t *) = sym(c->f, "fini");
     free_instance(c->instance);
     fini(c->context);
     printf("fini %s\n", c->name);
@@ -141,46 +175,59 @@ static void fini_ctx(struct ctx *c) {
 }
 
 static void save_ctx(struct ctx *c) {
-    bool (*save)(context_t *) = sym("save");
+    bool (*save)(context_t *) = sym(c->f, "save");
     printf("save %s: %d\n", c->name, save(c->context));
     char step[32];
     snprintf(step, sizeof step, "save %s", c->name);
     counter(step);
 }
 
-static bool list_candidates(instance_t *inst, const char *typed) {
+static bool list_candidates(struct ctx *c, const char *typed) {
     size_t (*parse)(instance_t *, const char *) =
-        sym(zhuyin ? "parse_more_chewings" : "parse_more_full_pinyins");
-    bool (*guess_sentence)(instance_t *) = sym("guess_sentence");
-    if (strlen(typed) != parse(inst, typed) || !guess_sentence(inst))
+        sym(c->f, c->f->zhuyin ? "parse_more_chewings" : "parse_more_full_pinyins");
+    bool (*guess_sentence)(instance_t *) = sym(c->f, "guess_sentence");
+    if (strlen(typed) != parse(c->instance, typed) || !guess_sentence(c->instance))
         return false;
-    if (zhuyin) {
-        bool (*guess_after)(instance_t *, size_t) = sym("guess_candidates_after_cursor");
-        return guess_after(inst, 0);
+    if (c->f->zhuyin) {
+        bool (*guess_after)(instance_t *, size_t) = sym(c->f, "guess_candidates_after_cursor");
+        return guess_after(c->instance, 0);
     }
-    bool (*guess)(instance_t *, size_t, guint) = sym("guess_candidates");
-    return guess(inst, 0, SORT_OPTION);
+    bool (*guess)(instance_t *, size_t, guint) = sym(c->f, "guess_candidates");
+    return guess(c->instance, 0, SORT_OPTION);
+}
+
+/* A libpinyin context's unigram frequency for each token of `word`. */
+static void unigram_view(struct ctx *c, const char *word) {
+    bool (*lookup)(instance_t *, const char *, GArray *) = sym(c->f, "lookup_tokens");
+    bool (*unigram)(instance_t *, phrase_token_t, guint *) =
+        sym(c->f, "token_get_unigram_frequency");
+    GArray *tokens = g_array_new(FALSE, FALSE, sizeof(phrase_token_t));
+    lookup(c->instance, word, tokens);
+    for (guint t = 0; t < tokens->len; ++t) {
+        guint freq = 0;
+        unigram(c->instance, g_array_index(tokens, phrase_token_t, t), &freq);
+        printf("view %s: T %s %u\n", c->name, word, freq);
+    }
+    g_array_free(tokens, TRUE);
 }
 
 /* What context c sees of items 1..N: pinyin's user-dictionary rows and
  * the targets' unigram frequencies; zhuyin's candidate order for each
  * target's input. */
 static void view(struct ctx *c) {
-    bool (*n_candidate)(instance_t *, guint *) = sym("get_n_candidate");
-    bool (*candidate)(instance_t *, guint, candidate_t **) = sym("get_candidate");
-    bool (*candidate_type)(instance_t *, candidate_t *, int *) = sym("get_candidate_type");
+    bool (*n_candidate)(instance_t *, guint *) = sym(c->f, "get_n_candidate");
+    bool (*candidate)(instance_t *, guint, candidate_t **) = sym(c->f, "get_candidate");
+    bool (*candidate_type)(instance_t *, candidate_t *, int *) = sym(c->f, "get_candidate_type");
     bool (*candidate_string)(instance_t *, candidate_t *, const gchar **) =
-        sym("get_candidate_string");
-    bool (*reset)(instance_t *) = sym("reset");
+        sym(c->f, "get_candidate_string");
+    bool (*reset)(instance_t *) = sym(c->f, "reset");
 
-    if (!zhuyin) {
-        iterator_t *(*begin)(context_t *, guint) = sym("begin_get_phrases");
-        bool (*has_next)(iterator_t *) = sym("iterator_has_next_phrase");
-        bool (*next)(iterator_t *, gchar **, gchar **, gint *) = sym("iterator_get_next_phrase");
-        void (*end)(iterator_t *) = sym("end_get_phrases");
-        bool (*lookup)(instance_t *, const char *, GArray *) = sym("lookup_tokens");
-        bool (*unigram)(instance_t *, phrase_token_t, guint *) =
-            sym("token_get_unigram_frequency");
+    if (!c->f->zhuyin) {
+        iterator_t *(*begin)(context_t *, guint) = sym(c->f, "begin_get_phrases");
+        bool (*has_next)(iterator_t *) = sym(c->f, "iterator_has_next_phrase");
+        bool (*next)(iterator_t *, gchar **, gchar **, gint *) =
+            sym(c->f, "iterator_get_next_phrase");
+        void (*end)(iterator_t *) = sym(c->f, "end_get_phrases");
 
         iterator_t *iter = begin(c->context, USER_DICTIONARY);
         while (iter && has_next(iter)) {
@@ -194,21 +241,17 @@ static void view(struct ctx *c) {
         }
         if (iter)
             end(iter);
-        for (size_t i = 0; i < N_ITEMS; ++i) {
-            GArray *tokens = g_array_new(FALSE, FALSE, sizeof(phrase_token_t));
-            lookup(c->instance, PINYIN_TARGETS[i].word, tokens);
-            for (guint t = 0; t < tokens->len; ++t) {
-                guint freq = 0;
-                unigram(c->instance, g_array_index(tokens, phrase_token_t, t), &freq);
-                printf("view %s: T %s %u\n", c->name, PINYIN_TARGETS[i].word, freq);
-            }
-            g_array_free(tokens, TRUE);
-        }
+        for (size_t i = 0; i < N_ITEMS; ++i)
+            unigram_view(c, PINYIN_TARGETS[i].word);
+        /* The libzhuyin context's words, as this context reads them. */
+        if (cross)
+            for (size_t i = 0; i < N_ITEMS; ++i)
+                unigram_view(c, ZHUYIN_TARGETS[i].word);
         return;
     }
     for (size_t i = 0; i < N_ITEMS; ++i) {
         guint n = 0;
-        if (list_candidates(c->instance, ZHUYIN_TARGETS[i].typed))
+        if (list_candidates(c, ZHUYIN_TARGETS[i].typed))
             n_candidate(c->instance, &n);
         GString *row = g_string_new(NULL);
         int shown = 0;
@@ -235,19 +278,21 @@ static void view(struct ctx *c) {
  * target; zhuyin trains a target. As open-counter-diff.c: choose the
  * target below the sentence rows, re-guess, train, reset. */
 static void learn(struct ctx *c, size_t k) {
-    bool (*guess_sentence)(instance_t *) = sym("guess_sentence");
-    bool (*n_candidate)(instance_t *, guint *) = sym("get_n_candidate");
-    bool (*candidate)(instance_t *, guint, candidate_t **) = sym("get_candidate");
-    bool (*candidate_type)(instance_t *, candidate_t *, int *) = sym("get_candidate_type");
+    const struct facade *f = c->f;
+    bool (*guess_sentence)(instance_t *) = sym(f, "guess_sentence");
+    bool (*n_candidate)(instance_t *, guint *) = sym(f, "get_n_candidate");
+    bool (*candidate)(instance_t *, guint, candidate_t **) = sym(f, "get_candidate");
+    bool (*candidate_type)(instance_t *, candidate_t *, int *) = sym(f, "get_candidate_type");
     bool (*candidate_string)(instance_t *, candidate_t *, const gchar **) =
-        sym("get_candidate_string");
-    int (*choose)(instance_t *, size_t, candidate_t *) = sym("choose_candidate");
-    bool (*reset)(instance_t *) = sym("reset");
+        sym(f, "get_candidate_string");
+    int (*choose)(instance_t *, size_t, candidate_t *) = sym(f, "choose_candidate");
+    bool (*reset)(instance_t *) = sym(f, "reset");
 
-    if (!zhuyin) {
-        iterator_t *(*begin)(context_t *, guint8) = sym("begin_add_phrases");
-        bool (*add)(iterator_t *, const char *, const char *, gint) = sym("iterator_add_phrase");
-        void (*end)(iterator_t *) = sym("end_add_phrases");
+    if (!f->zhuyin) {
+        iterator_t *(*begin)(context_t *, guint8) = sym(f, "begin_add_phrases");
+        bool (*add)(iterator_t *, const char *, const char *, gint) =
+            sym(f, "iterator_add_phrase");
+        void (*end)(iterator_t *) = sym(f, "end_add_phrases");
         iterator_t *iter = begin(c->context, USER_DICTIONARY);
         bool ok = iter && add(iter, PINYIN_IMPORTS[k].word, PINYIN_IMPORTS[k].typed, IMPORT_COUNT);
         if (iter)
@@ -255,11 +300,11 @@ static void learn(struct ctx *c, size_t k) {
         printf("import %s: %s %d\n", c->name, PINYIN_IMPORTS[k].word, ok);
     }
 
-    const struct target *t = zhuyin ? &ZHUYIN_TARGETS[k] : &PINYIN_TARGETS[k];
+    const struct target *t = f->zhuyin ? &ZHUYIN_TARGETS[k] : &PINYIN_TARGETS[k];
     const char *result = "ok";
     guint n = 0;
     candidate_t *chosen = NULL;
-    if (!list_candidates(c->instance, t->typed))
+    if (!list_candidates(c, t->typed))
         result = "no-list";
     else
         n_candidate(c->instance, &n);
@@ -279,12 +324,12 @@ static void learn(struct ctx *c, size_t k) {
         result = "choose-failed";
     else if (!guess_sentence(c->instance))
         result = "reguess-failed";
-    else if (zhuyin) {
-        bool (*train)(instance_t *) = sym("train");
+    else if (f->zhuyin) {
+        bool (*train)(instance_t *) = sym(f, "train");
         if (!train(c->instance))
             result = "train-false";
     } else {
-        bool (*train)(instance_t *, guint8) = sym("train");
+        bool (*train)(instance_t *, guint8) = sym(f, "train");
         if (!train(c->instance, 0))
             result = "train-false";
     }
@@ -292,32 +337,10 @@ static void learn(struct ctx *c, size_t k) {
     printf("train %s: %s %s\n", c->name, t->word, result);
 }
 
-int main(int argc, char **argv) {
-    if (argc != 6) {
-        fprintf(stderr,
-                "usage: %s <pinyin|zhuyin> <lib.so> <systemdir> <userdir> "
-                "<one-learns|fini-reversed|both-learn>\n",
-                argv[0]);
-        return 2;
-    }
-    zhuyin = strcmp(argv[1], "zhuyin") == 0;
-    if (!zhuyin && strcmp(argv[1], "pinyin") != 0) {
-        fprintf(stderr, "kind must be pinyin or zhuyin: %s\n", argv[1]);
-        return 2;
-    }
-    const char *scenario = argv[5];
-    prefix = argv[1];
-    system_dir = argv[3];
-    user_dir = argv[4];
-    lib = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
-    if (!lib) {
-        fprintf(stderr, "dlopen: %s\n", dlerror());
-        return 1;
-    }
-    printf("scenario: %s\n", scenario);
-
-    struct ctx a = init_ctx("A");
-    struct ctx b = init_ctx("B");
+/* Two contexts of one library. */
+static int run_same(const struct facade *f, const char *scenario) {
+    struct ctx a = init_ctx("A", f);
+    struct ctx b = init_ctx("B", f);
     if (strcmp(scenario, "one-learns") == 0 || strcmp(scenario, "fini-reversed") == 0) {
         learn(&a, 0);
         view(&a);
@@ -340,7 +363,7 @@ int main(int argc, char **argv) {
         save_ctx(&b);
         fini_ctx(&a);
         fini_ctx(&b);
-        struct ctx c = init_ctx("C");
+        struct ctx c = init_ctx("C", f);
         view(&c);
         fini_ctx(&c);
     } else {
@@ -348,4 +371,85 @@ int main(int argc, char **argv) {
         return 2;
     }
     return 0;
+}
+
+/* One context of each library: the first opens, learns and saves first
+ * and, unless reversed, finishes first. */
+static int run_cross(const char *scenario) {
+    static const struct {
+        const char *name;
+        bool zhuyin_first;
+        bool fini_reversed;
+    } SCENARIOS[] = {
+        {"zhuyin-first", true, false},
+        {"zhuyin-first-fini-reversed", true, true},
+        {"pinyin-first", false, false},
+        {"pinyin-first-fini-reversed", false, true},
+    };
+    size_t s = 0;
+    while (s < sizeof SCENARIOS / sizeof *SCENARIOS && strcmp(SCENARIOS[s].name, scenario) != 0)
+        ++s;
+    if (s == sizeof SCENARIOS / sizeof *SCENARIOS) {
+        fprintf(stderr, "unknown scenario: %s\n", scenario);
+        return 2;
+    }
+    const struct facade *f1 = SCENARIOS[s].zhuyin_first ? &zhuyin_facade : &pinyin_facade;
+    const struct facade *f2 = SCENARIOS[s].zhuyin_first ? &pinyin_facade : &zhuyin_facade;
+    struct ctx first = init_ctx(f1->zhuyin ? "Z" : "P", f1);
+    struct ctx second = init_ctx(f2->zhuyin ? "Z" : "P", f2);
+    learn(&first, 0);
+    learn(&second, 0);
+    view(&first);
+    view(&second);
+    save_ctx(&first);
+    save_ctx(&second);
+    if (SCENARIOS[s].fini_reversed) {
+        fini_ctx(&second);
+        fini_ctx(&first);
+    } else {
+        fini_ctx(&first);
+        fini_ctx(&second);
+    }
+    /* What the profile kept, as a fresh context of each library reads it. */
+    struct ctx p = init_ctx("P2", &pinyin_facade);
+    view(&p);
+    fini_ctx(&p);
+    struct ctx z = init_ctx("Z2", &zhuyin_facade);
+    view(&z);
+    fini_ctx(&z);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    cross = argc > 1 && strcmp(argv[1], "cross") == 0;
+    if (argc != (cross ? 7 : 6)) {
+        fprintf(stderr,
+                "usage: %s <pinyin|zhuyin> <lib.so> <systemdir> <userdir> "
+                "<one-learns|fini-reversed|both-learn>\n"
+                "       %s cross <libpinyin.so> <libzhuyin.so> <systemdir> <userdir> "
+                "<zhuyin-first|pinyin-first>[-fini-reversed]\n",
+                argv[0], argv[0]);
+        return 2;
+    }
+    struct facade *only = NULL;
+    if (!cross) {
+        if (strcmp(argv[1], "pinyin") == 0)
+            only = &pinyin_facade;
+        else if (strcmp(argv[1], "zhuyin") == 0)
+            only = &zhuyin_facade;
+        else {
+            fprintf(stderr, "kind must be pinyin, zhuyin or cross: %s\n", argv[1]);
+            return 2;
+        }
+    }
+    /* argv index of <systemdir>: after one library path, or after two. */
+    int at = cross ? 4 : 3;
+    system_dir = argv[at];
+    user_dir = argv[at + 1];
+    const char *scenario = argv[at + 2];
+    if (cross ? !open_lib(&pinyin_facade, argv[2]) || !open_lib(&zhuyin_facade, argv[3])
+              : !open_lib(only, argv[2]))
+        return 1;
+    printf("scenario: %s\n", scenario);
+    return cross ? run_cross(scenario) : run_same(only, scenario);
 }
