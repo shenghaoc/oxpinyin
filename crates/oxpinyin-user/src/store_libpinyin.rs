@@ -40,7 +40,7 @@ use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_store::{DefaultStore, StoreError, WriteStore, WriteTxn};
 
 use crate::codec;
-use crate::persistence::{self, PersistenceError, SystemLibrary, UserState};
+use crate::persistence::{self, PersistenceError, SystemLibrary, UserConfLaw, UserState};
 use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::{self, StoreInner};
 use crate::store::{
@@ -51,7 +51,8 @@ use crate::store::{
 
 /// The persistence target a session store carries: the user dir, the
 /// original system chunks (the `.dbin` diff base), the conformance
-/// triple and the open counter `pinyin_save` re-writes.
+/// triple, and the `user.conf` law and open counter the session's saves
+/// and its fini write.
 #[derive(Clone, Debug)]
 pub struct Target {
     /// The user directory holding the profile.
@@ -60,8 +61,46 @@ pub struct Target {
     pub(crate) originals: BTreeMap<u8, SystemLibrary>,
     /// This build's identity triple.
     pub(crate) versions: SystemVersions,
-    /// The open counter recorded at `check_format` time.
+    /// Whose `user.conf` lifecycle the profile follows.
+    pub(crate) law: UserConfLaw,
+    /// The open counter the session's `user.conf` writes start from
+    /// ([`persistence::Loaded::open_counter`]).
     pub(crate) open_counter: u32,
+}
+
+/// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
+/// lowers the open counter its init raised and writes the marker, saved
+/// or not (`pinyin_fini`, `pinyin.cpp:1194-1200`); libzhuyin writes
+/// nothing. Armed on the one handle [`GenericUserStore::open_libpinyin`]
+/// returns from an open that ran `check_format` — never on a clone, nor
+/// on the handle a second open of a live session shares, which raised
+/// nothing — so it runs once per raise, when that handle drops: the
+/// context's fini. A process that dies before then leaves the raised
+/// counter on disk, as upstream's does.
+#[derive(Debug)]
+pub(crate) struct FiniGuard(Option<Arc<Target>>);
+
+impl FiniGuard {
+    /// A guard that writes nothing: every handle but the one an open
+    /// returned.
+    pub(crate) const fn disarmed() -> Self {
+        Self(None)
+    }
+}
+
+impl Drop for FiniGuard {
+    fn drop(&mut self) {
+        if let Some(target) = self.0.take() {
+            // Unreported, as `pinyin_fini` ignores `mark_version`'s result
+            // (`pinyin.cpp:1200`): a fini has no caller to answer.
+            let _ = persistence::fini(
+                &target.dir,
+                &target.versions,
+                target.law,
+                target.open_counter,
+            );
+        }
+    }
 }
 
 impl From<PersistenceError> for UserStoreError {
@@ -122,13 +161,17 @@ fn create_scratch_dir(user_dir: &Path) -> std::io::Result<PathBuf> {
 
 impl GenericUserStore<DefaultStore> {
     /// Open the user store on a libpinyin user directory: read the
-    /// profile ([`crate::persistence::load`]), seed a session scratch
-    /// store with its values, and carry the persistence target so
-    /// [`GenericUserStore::save`] writes the pin's files back.
+    /// profile ([`crate::persistence::load`]) under `law`, seed a session
+    /// scratch store with its values, and carry the persistence target so
+    /// [`GenericUserStore::save`] writes the pin's files back. Dropping the
+    /// returned handle — not a clone of it — is the facade's fini: it
+    /// makes the law's fini-time `user.conf` write
+    /// ([`crate::persistence::fini`]).
     ///
     /// A second live open of the same directory shares the session
     /// handle (one scratch, shared dirty flag), like [`UserStore::open`]
-    /// does for a path.
+    /// does for a path — and so the first open's `check_format`: the
+    /// second open neither raises the counter nor re-checks conformance.
     ///
     /// # Errors
     ///
@@ -140,6 +183,7 @@ impl GenericUserStore<DefaultStore> {
         user_dir: &Path,
         originals: BTreeMap<u8, SystemLibrary>,
         versions: SystemVersions,
+        law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
         let token = session_token(user_dir);
         let key = registry::registry_key(&token);
@@ -150,13 +194,13 @@ impl GenericUserStore<DefaultStore> {
         // AlreadyOpen before any handle exists to share.
         let mut reg = registry::lock_registry();
         if let Some(inner) = reg.get(&key).and_then(std::sync::Weak::upgrade) {
-            return Ok(Self::from_parts(inner, None));
+            return Ok(Self::from_parts(inner, None, FiniGuard::disarmed()));
         }
 
         // Reserve the session before touching the profile: a losing
-        // concurrent open must not run `check_format` — which ratchets
-        // `user.conf` and can wipe non-conforming files — only to fail
-        // the scratch reservation afterwards. The unique directory is
+        // concurrent open must not run `check_format` — which raises
+        // the open counter and can wipe non-conforming files — only to
+        // fail the scratch reservation afterwards. The unique directory is
         // created up front; on a lost race it is the loser's own fresh
         // dir, removed here, never the winner's.
         let scratch_dir = create_scratch_dir(user_dir).map_err(UserStoreError::Io)?;
@@ -168,7 +212,18 @@ impl GenericUserStore<DefaultStore> {
         };
         let lease = Some(lease);
 
-        let loaded = persistence::load(user_dir, &originals, &versions)?;
+        let loaded = persistence::load(user_dir, &originals, &versions, law)?;
+        // Armed as soon as the load has raised the counter: an open that
+        // fails from here on drops it and lowers the counter again, so a
+        // failed open reads as a finished session, not a crash.
+        let target = Arc::new(Target {
+            dir: user_dir.to_path_buf(),
+            originals,
+            versions,
+            law,
+            open_counter: loaded.open_counter,
+        });
+        let fini = FiniGuard(Some(Arc::clone(&target)));
         if loaded.wiped {
             // Upstream prints its own note when check_format cleans the
             // profile (`table_info.cpp` load failure, `user.conf` open);
@@ -183,7 +238,7 @@ impl GenericUserStore<DefaultStore> {
         let scratch = scratch_dir.join(format!("store.{}", oxpinyin_store::DEFAULT_STORE_EXT));
         let db = DefaultStore::create(&scratch)?;
         let has_user_data = db.write(|txn| {
-            seed_txn(txn, &loaded.state, &originals)?;
+            seed_txn(txn, &loaded.state, &target.originals)?;
             let total_rows = count_tables(txn)?;
             Ok(total_rows)
         })?;
@@ -195,12 +250,7 @@ impl GenericUserStore<DefaultStore> {
             write_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_generation: std::sync::atomic::AtomicU64::new(0),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
-            libpinyin: Some(std::sync::Arc::new(Target {
-                dir: user_dir.to_path_buf(),
-                originals,
-                versions,
-                open_counter: loaded.open_counter,
-            })),
+            libpinyin: Some(target),
             // The lease lives in the shared inner so every clone keeps
             // the scratch alive; from_parts' own copy is redundant
             // safety for the construction path only.
@@ -208,7 +258,7 @@ impl GenericUserStore<DefaultStore> {
         });
         reg.insert(key, Arc::downgrade(&inner));
         drop(reg);
-        Ok(Self::from_parts(inner, lease))
+        Ok(Self::from_parts(inner, lease, fini))
     }
 }
 
@@ -576,7 +626,9 @@ mod tests {
         ];
 
         {
-            let mut store = UserStore::open_libpinyin(&dir, originals(), versions()).expect("open");
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
             // A fresh profile: no counts yet.
             assert_eq!(store.bigram_count(1, 0x0100_0001).expect("count"), 0);
 
@@ -608,7 +660,9 @@ mod tests {
         );
 
         {
-            let store = UserStore::open_libpinyin(&dir, originals(), versions()).expect("reopen");
+            let store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("reopen");
             // First training: seed 69 on the pair and the total.
             assert_eq!(store.bigram_count(1, 0x0100_0001).expect("count"), 69);
             assert_eq!(store.bigram_total(1).expect("total"), 69);
@@ -695,7 +749,8 @@ mod tests {
         };
         persistence::save(&dir, &state, &originals(), &versions(), 1).expect("save");
 
-        let store = UserStore::open_libpinyin(&dir, originals(), versions()).expect("open");
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("open");
         assert_eq!(store.bigram_total(1).expect("total"), 207);
         assert_eq!(store.bigram_count(1, 0x0700_0001).expect("count"), 69);
         let token = store
@@ -717,8 +772,10 @@ mod tests {
     #[test]
     fn a_second_open_shares_the_session_handle() {
         let dir = tempdir("share");
-        let first = UserStore::open_libpinyin(&dir, originals(), versions()).expect("open 1");
-        let second = UserStore::open_libpinyin(&dir, originals(), versions()).expect("open 2");
+        let first = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("open 1");
+        let second = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("open 2");
         let mut second = second;
         second.observe_selection(1, 0x0100_0001).expect("train");
         // The shared handle sees it: one scratch, one dirty flag.

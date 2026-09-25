@@ -47,7 +47,7 @@ use oxpinyin_data::{
     SystemDictionary, default_store_file, merge_bigram_row, ucs4_walk_key,
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
-use oxpinyin_user::{PinyinKey, UserLookup, UserStore};
+use oxpinyin_user::{PinyinKey, UserConfLaw, UserLookup, UserStore};
 
 /// File name of a *standalone* user store — `user_store.<ext>`, the
 /// extension naming the compiled-in backend (`kct` Kyoto Cabinet, `tkt`
@@ -929,7 +929,8 @@ impl Runtime {
     /// Berkeley DB an unmodified libpinyin install's `data/` opens as is.
     /// When `user_dir` is given, the learning store opens too (its
     /// creation or read failure degrades to "no user state", matching the
-    /// C ABI so a bad user dir cannot fail init).
+    /// C ABI so a bad user dir cannot fail init), under libpinyin's
+    /// `user.conf` law ([`UserConfLaw::Pinyin`]).
     ///
     /// Nothing is read beyond the handles: the DBMs are opened, the chunk
     /// files mapped and checksummed, `table.conf` parsed for λ.
@@ -939,6 +940,23 @@ impl Runtime {
     /// Returns [`OpenError`] when a required file is missing or a DBM or
     /// chunk file cannot be opened.
     pub fn open(system_dir: &Path, user_dir: Option<&Path>) -> Result<Self, OpenError> {
+        Self::open_with_law(system_dir, user_dir, UserConfLaw::Pinyin)
+    }
+
+    /// [`Runtime::open`] with the user dir's `user.conf` law named: the
+    /// pinyin facade's init passes [`UserConfLaw::Pinyin`], the zhuyin
+    /// facade's [`UserConfLaw::Zhuyin`] — the two pins share the data
+    /// directory and the user file set but not the open counter's
+    /// lifecycle (`oxpinyin_user::persistence::UserConfLaw`).
+    ///
+    /// # Errors
+    ///
+    /// As [`Runtime::open`].
+    pub fn open_with_law(
+        system_dir: &Path,
+        user_dir: Option<&Path>,
+        law: UserConfLaw,
+    ) -> Result<Self, OpenError> {
         let pinyin_index = system_dir.join(SystemDbm::PinyinIndex.file_name());
         let phrase_index = system_dir.join(SystemDbm::PhraseIndex.file_name());
         let bigram = system_dir.join(SystemDbm::Bigram.file_name());
@@ -998,7 +1016,7 @@ impl Runtime {
                 // either: the failure goes to stderr like upstream's own
                 // loader notes, and the store's wipe (non-conforming
                 // profile cleaned) is logged inside `open_libpinyin`.
-                UserStore::open_libpinyin(dir, originals, versions)
+                UserStore::open_libpinyin(dir, originals, versions, law)
                     .map_err(|error| {
                         let dir = dir.display();
                         eprintln!(

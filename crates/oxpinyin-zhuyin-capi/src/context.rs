@@ -54,7 +54,10 @@ pub extern "C" fn zhuyin_init(
 /// void zhuyin_fini(zhuyin_context_t * context);
 /// ```
 ///
-/// Deliberately does **not** save — upstream's teardown has no flush.
+/// Deliberately does **not** save — upstream's teardown has no flush —
+/// and writes no `user.conf` either: libzhuyin keeps no open counter of
+/// its own (`zhuyin_init` only reads the marker, `zhuyin_fini` writes
+/// nothing, `zhuyin.cpp:126-162`, `:741-757`).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
     if context.is_null() {

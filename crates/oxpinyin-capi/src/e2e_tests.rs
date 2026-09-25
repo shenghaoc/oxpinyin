@@ -715,6 +715,58 @@ fn drain_bigrams(iter: *mut crate::types::BigramExportIterator) -> Vec<(String, 
     rows
 }
 
+/// The open counter `user.conf` records, as the next init reads it.
+fn recorded_open_counter(user_dir: &std::path::Path) -> Option<u32> {
+    std::fs::read_to_string(user_dir.join("user.conf"))
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("open counter:"))
+        .and_then(|value| value.trim().parse().ok())
+}
+
+#[test]
+fn clean_launches_lower_the_open_counter_and_keep_the_profile() {
+    // #523: pinyin_init raises user.conf's open counter and pinyin_fini
+    // lowers it again, saved or not (pinyin.cpp:185-187, :1194-1200), so
+    // ten clean launches never cross OPEN_COUNTER_LIMIT and the phrase
+    // the first one learned survives every later one. Before the fix the
+    // counter only rose, and the eighth init wiped the profile.
+    let user_dir = TempUserDir::new("open-counter-cycles");
+    for launch in 1..=10 {
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert_eq!(
+            recorded_open_counter(&user_dir.path),
+            Some(1),
+            "launch {launch}: the init raises"
+        );
+        if launch == 1 {
+            let iter = pinyin_begin_add_phrases(context, 7);
+            assert!(pinyin_iterator_add_phrase(
+                iter,
+                cstr("你好").as_ptr(),
+                cstr("nihao").as_ptr(),
+                5,
+            ));
+            pinyin_end_add_phrases(iter);
+            assert!(pinyin_save(context));
+        }
+        let export = pinyin_begin_get_phrases(context, 7);
+        assert_eq!(
+            drain_phrases(export),
+            vec![("你好".to_owned(), "ni'hao".to_owned(), 5)],
+            "launch {launch}: the profile survived"
+        );
+        pinyin_end_get_phrases(export);
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+        assert_eq!(
+            recorded_open_counter(&user_dir.path),
+            Some(0),
+            "launch {launch}: the fini lowers"
+        );
+    }
+}
+
 #[test]
 fn import_iterators_add_per_phrase_and_arm_modified_at_end() {
     let user_dir = TempUserDir::new("import");
@@ -1014,6 +1066,7 @@ fn user_only_bigram_export_fails_when_rows_need_system_tables() {
     let mut core = oxpinyin_facade::ContextCore::new_user_only(
         user_dir.path.to_str().expect("UTF-8 path"),
         oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
+        oxpinyin_user::UserConfLaw::Pinyin,
     )
     .expect("user-only context core");
     // System tokens (library nibble != 7). One training seed (69) is at

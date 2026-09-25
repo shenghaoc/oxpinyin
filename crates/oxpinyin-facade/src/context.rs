@@ -8,7 +8,7 @@ use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinSche
 use oxpinyin_engine::{Config, ConfigValue};
 use oxpinyin_runtime::{OpenError, Runtime};
 use oxpinyin_user::SystemVersions;
-use oxpinyin_user::UserStore;
+use oxpinyin_user::{UserConfLaw, UserStore};
 
 /// Why a context did not open — what `pinyin_init` / `zhuyin_init` hide
 /// behind NULL. Carried out of [`ContextCore::try_open`] so the facades
@@ -112,6 +112,13 @@ impl LiveOptions {
 /// State behind a facade's context handle, minus the C parts: the shared
 /// assembly, the user-learning store, the layered configuration, and the
 /// live option/scheme word every allocated instance shares.
+///
+/// Dropping it is the facade's fini: the user store it opened makes the
+/// fini-time `user.conf` write of the law it was opened under —
+/// libpinyin lowers the open counter its init raised, libzhuyin writes
+/// nothing (`oxpinyin_user::persistence::fini`). A context that is never
+/// dropped, like a process that dies before its `pinyin_fini`, leaves the
+/// raised counter on disk.
 pub struct ContextCore {
     /// The layered configuration instances are opened with (the pinned
     /// upstream defaults).
@@ -132,13 +139,20 @@ impl ContextCore {
     /// Opens a context the way an init does: system tables plus the
     /// optional user dir, health-checked, with `option_word` as the
     /// seeding word (per-facade: `PINYIN_DEFAULT_OPTION_WORD` /
-    /// `ZHUYIN_DEFAULT_OPTION_WORD`).
+    /// `ZHUYIN_DEFAULT_OPTION_WORD`) and `law` as the user dir's
+    /// `user.conf` lifecycle (per-facade: [`UserConfLaw::Pinyin`] /
+    /// [`UserConfLaw::Zhuyin`]).
     ///
     /// `None` is the C init's NULL: an empty system dir or a runtime
     /// that cannot open. [`Self::try_open`] says which.
     #[must_use]
-    pub fn open(system_dir: &str, user_dir: &str, option_word: u32) -> Option<Self> {
-        Self::try_open(system_dir, user_dir, option_word).ok()
+    pub fn open(
+        system_dir: &str,
+        user_dir: &str,
+        option_word: u32,
+        law: UserConfLaw,
+    ) -> Option<Self> {
+        Self::try_open(system_dir, user_dir, option_word, law).ok()
     }
 
     /// [`Self::open`] with the failure kept: the C facades log it before
@@ -153,11 +167,12 @@ impl ContextCore {
         system_dir: &str,
         user_dir: &str,
         option_word: u32,
+        law: UserConfLaw,
     ) -> Result<Self, OpenFailure> {
         if system_dir.is_empty() {
             return Err(OpenFailure::EmptySystemDir);
         }
-        let runtime = Runtime::open(Path::new(system_dir), Some(Path::new(user_dir)))
+        let runtime = Runtime::open_with_law(Path::new(system_dir), Some(Path::new(user_dir)), law)
             .map_err(OpenFailure::Runtime)?;
         let user = runtime.user_store();
         Ok(Self {
@@ -170,9 +185,10 @@ impl ContextCore {
 
     /// User-store-only context for standalone tools (the §9 import/export
     /// machinery): a decoder context this is not, so
-    /// [`ContextCore::alloc_instance`] answers `None` for it.
+    /// [`ContextCore::alloc_instance`] answers `None` for it. `law` is the
+    /// user dir's `user.conf` lifecycle, as for [`Self::open`].
     #[must_use]
-    pub fn new_user_only(user_dir: &str, option_word: u32) -> Option<Self> {
+    pub fn new_user_only(user_dir: &str, option_word: u32, law: UserConfLaw) -> Option<Self> {
         if user_dir.is_empty() {
             return None;
         }
@@ -184,6 +200,7 @@ impl ContextCore {
             Path::new(user_dir),
             std::collections::BTreeMap::new(),
             SystemVersions::from_table_conf(""),
+            law,
         )
         .ok()?;
         Some(Self {
@@ -275,15 +292,16 @@ mod open_failure_tests {
     use super::{ContextCore, OpenFailure};
     use crate::PINYIN_DEFAULT_OPTION_WORD as WORD;
     use oxpinyin_runtime::OpenError;
+    use oxpinyin_user::UserConfLaw;
 
     #[test]
     fn empty_system_dir_is_named() {
-        let failure = ContextCore::try_open("", "", WORD)
+        let failure = ContextCore::try_open("", "", WORD, UserConfLaw::Pinyin)
             .err()
             .expect("an empty system dir cannot open");
         assert!(matches!(failure, OpenFailure::EmptySystemDir));
         assert_eq!(failure.to_string(), "system directory is empty");
-        assert!(ContextCore::open("", "", WORD).is_none());
+        assert!(ContextCore::open("", "", WORD, UserConfLaw::Pinyin).is_none());
     }
 
     #[test]
@@ -291,7 +309,7 @@ mod open_failure_tests {
         let dir =
             std::env::temp_dir().join(format!("oxpinyin-facade-missing-{}", std::process::id()));
         let dir = dir.to_str().expect("UTF-8 temp path");
-        let failure = ContextCore::try_open(dir, "", WORD)
+        let failure = ContextCore::try_open(dir, "", WORD, UserConfLaw::Pinyin)
             .err()
             .expect("a missing system dir cannot open");
         let OpenFailure::Runtime(error) = &failure else {

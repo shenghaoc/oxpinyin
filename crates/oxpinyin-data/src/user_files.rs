@@ -209,6 +209,20 @@ pub const PINNED_MODEL_DATA_VERSION: u32 = 14;
 /// marks the profile non-conform — upstream's periodic-rebuild heuristic.
 pub const OPEN_COUNTER_LIMIT: u32 = 6;
 
+/// `UserTableInfo::get_open_counter` (`table_info.cpp:422-426`): a counter
+/// above [`OPEN_COUNTER_LIMIT`] reads as 0. Both ends of libpinyin's open
+/// counter go through it — `check_format`'s raise and `pinyin_fini`'s
+/// lowering — so a profile that crossed the limit restarts from 0 either
+/// way.
+#[must_use]
+pub const fn get_open_counter(open_counter: u32) -> u32 {
+    if open_counter > OPEN_COUNTER_LIMIT {
+        0
+    } else {
+        open_counter
+    }
+}
+
 /// `user.conf` — `UserTableInfo` (`table_info.cpp`), the version marker
 /// whose conformance check decides whether the previous library's user
 /// files are kept or discarded.
@@ -712,6 +726,12 @@ mod tests {
             ..conform
         };
         assert!(rested.is_conform(&versions));
+        // get_open_counter reads a counter past the limit as 0, and any
+        // other value as itself.
+        assert_eq!(get_open_counter(OPEN_COUNTER_LIMIT), OPEN_COUNTER_LIMIT);
+        assert_eq!(get_open_counter(OPEN_COUNTER_LIMIT + 1), 0);
+        assert_eq!(get_open_counter(u32::MAX), 0);
+        assert_eq!(get_open_counter(0), 0);
 
         // The table.conf reader takes the pin's values when the file
         // is silent, and the declared ones when it speaks.
