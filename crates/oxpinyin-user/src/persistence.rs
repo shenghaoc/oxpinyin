@@ -49,6 +49,35 @@ use oxpinyin_store::{DefaultStore, RawReadStore, StoreError, WriteStore};
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
 
+/// Preserve strict decoding before the counter value, but allow arbitrary
+/// bytes after its literal. The pin's `%d` stops at a non-digit, even when
+/// that byte is not UTF-8 (`table_info.cpp:356-359@074a2219`). Applying
+/// lossy decoding to the identity fields instead could hide a stray byte
+/// that makes the pin's earlier conversions fail (`:338-351`).
+fn parse_user_conf(bytes: &[u8]) -> Option<UserTableInfo> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => UserTableInfo::parse(text).ok(),
+        Err(error) => {
+            let prefix = std::str::from_utf8(bytes.get(..error.valid_up_to())?).ok()?;
+            let c_space = |c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c');
+            let mut start = 0;
+            for line in prefix.split_inclusive('\n') {
+                let trimmed = line.trim_start_matches(c_space);
+                let candidate = start + line.len() - trimmed.len();
+                start += line.len();
+                // Probe only lines beginning with `open`, so blank runs
+                // are traversed once even when the literal spans lines.
+                if let Some(rest) = prefix.get(candidate..)?.strip_prefix("open")
+                    && rest.trim_start_matches(c_space).starts_with("counter:")
+                {
+                    return UserTableInfo::parse(prefix).ok();
+                }
+            }
+            None
+        }
+    }
+}
+
 /// Which facade's `user.conf` lifecycle a profile follows. libpinyin and
 /// libzhuyin read and write the same marker through the same
 /// `UserTableInfo`, but at different points and with different counters,
@@ -212,8 +241,10 @@ pub struct Loaded {
     /// starts from: under [`UserConfLaw::Pinyin`] the value the load
     /// raised and wrote, which [`save`] writes back and [`fini`] lowers;
     /// under [`UserConfLaw::Zhuyin`] 0, the counter of the fresh
-    /// `UserTableInfo` libzhuyin's `mark_version` saves.
-    pub open_counter: u32,
+    /// `UserTableInfo` libzhuyin's `mark_version` saves. Upstream's `int`
+    /// (`table_info.h:102`), so a negative marker raises to a negative
+    /// value.
+    pub open_counter: i32,
     /// A non-conform profile was found and its files removed —
     /// `check_format`'s `_clean_user_files`, the ecosystem's own
     /// mechanism for "backend or model change discards user data".
@@ -257,9 +288,9 @@ pub fn load(
     law: UserConfLaw,
 ) -> Result<Loaded, PersistenceError> {
     let conf_path = dir.join(USER_CONF);
-    let existing = std::fs::read_to_string(&conf_path)
+    let existing = std::fs::read(&conf_path)
         .ok()
-        .and_then(|text| UserTableInfo::parse(&text).ok());
+        .and_then(|bytes| parse_user_conf(&bytes));
 
     let conform = existing
         .as_ref()
@@ -305,12 +336,12 @@ pub fn load(
 
 /// `pinyin_fini`'s arithmetic (`pinyin.cpp:1196-1197`): the counter the
 /// init raised, read through `get_open_counter`, lowered by one and
-/// floored at 0 — `counter > 1 ? counter - 1 : 0`, which over an unsigned
-/// counter is exactly a saturating decrement. A raised 7 therefore reads
-/// 0 and lowers to 0, not to 6.
+/// floored at 0 — `counter > 1 ? counter - 1 : 0`. A raised 7 therefore
+/// reads 0 and lowers to 0, not to 6; a negative counter lowers to 0.
 #[must_use]
-pub const fn lowered_open_counter(open_counter: u32) -> u32 {
-    get_open_counter(open_counter).saturating_sub(1)
+pub const fn lowered_open_counter(open_counter: i32) -> i32 {
+    let counter = get_open_counter(open_counter);
+    if counter > 1 { counter - 1 } else { 0 }
 }
 
 /// The facade's fini-time `user.conf` write under `law`: libpinyin
@@ -330,7 +361,7 @@ pub fn fini(
     dir: &Path,
     versions: &SystemVersions,
     law: UserConfLaw,
-    open_counter: u32,
+    open_counter: i32,
 ) -> Result<(), PersistenceError> {
     match law {
         UserConfLaw::Pinyin => write_marker(dir, versions, lowered_open_counter(open_counter)),
@@ -344,7 +375,7 @@ pub fn fini(
 fn write_marker(
     dir: &Path,
     versions: &SystemVersions,
-    open_counter: u32,
+    open_counter: i32,
 ) -> Result<(), PersistenceError> {
     let mut marker = UserTableInfo::conform_to(versions);
     marker.open_counter = open_counter;
@@ -653,7 +684,7 @@ pub fn save(
     state: &UserState,
     originals: &BTreeMap<u8, SystemLibrary>,
     versions: &SystemVersions,
-    open_counter: u32,
+    open_counter: i32,
 ) -> Result<(), PersistenceError> {
     let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
     let result = (|| -> Result<(), PersistenceError> {
@@ -1219,7 +1250,7 @@ mod tests {
     }
 
     /// The counter `user.conf` holds, read back as the next init reads it.
-    fn recorded_counter(dir: &Path) -> Option<u32> {
+    fn recorded_counter(dir: &Path) -> Option<i32> {
         let text = std::fs::read_to_string(dir.join(USER_CONF)).ok()?;
         Some(UserTableInfo::parse(&text).ok()?.open_counter)
     }
@@ -1236,7 +1267,9 @@ mod tests {
             OPEN_COUNTER_LIMIT - 1
         );
         assert_eq!(lowered_open_counter(OPEN_COUNTER_LIMIT + 1), 0);
-        assert_eq!(lowered_open_counter(u32::MAX), 0);
+        assert_eq!(lowered_open_counter(i32::MAX), 0);
+        assert_eq!(lowered_open_counter(-2), 0);
+        assert_eq!(lowered_open_counter(i32::MIN), 0);
     }
 
     #[test]
@@ -1376,6 +1409,117 @@ mod tests {
             assert_eq!(std::fs::read(dir.join(USER_CONF)).expect("marker"), marker);
         }
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_stray_byte_before_the_counter_line_wipes() {
+        // #584 review: invalid bytes amid the identity fields must not
+        // be hidden by lossy decoding, even though arbitrary trailing
+        // bytes in the counter value are accepted. The stray byte stops
+        // the next `fscanf`'s literal, `load` fails on the reset fields
+        // (table_info.cpp:318-321, :338-351) and `check_format` wipes
+        // (pinyin.cpp:191-215, zhuyin.cpp:138-161). libpinyin's rewrite
+        // then records a conform marker with counter 1
+        // (`pinyin.cpp:185-187`); libzhuyin wrote nothing and leaves the
+        // non-conform marker as it was (`zhuyin.cpp:126-162`).
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let dir = tempdir("stray-byte");
+            let originals = originals();
+            save(&dir, &state(), &originals, &versions(), 0).expect("seed");
+            let mut marker = UserTableInfo::conform_to(&versions())
+                .to_text()
+                .into_bytes();
+            let after_version = marker
+                .iter()
+                .position(|&byte| byte == b'\n')
+                .expect("a line end");
+            marker.splice(after_version..after_version, *b"\xFF");
+            std::fs::write(dir.join(USER_CONF), &marker).expect("corrupt marker");
+
+            let loaded = load(&dir, &originals, &versions(), law).expect("load");
+            assert!(loaded.wiped, "{law:?} kept a profile past a stray byte");
+            assert_eq!(loaded.state, UserState::default());
+            assert!(
+                !dir.join("user.bin").exists(),
+                "{law:?}: profile file survived the wipe"
+            );
+            match law {
+                UserConfLaw::Pinyin => assert_eq!(recorded_counter(&dir), Some(1)),
+                UserConfLaw::Zhuyin => assert_eq!(
+                    std::fs::read(dir.join(USER_CONF)).expect("marker"),
+                    marker,
+                    "zhuyin rewrote the non-conform marker"
+                ),
+            }
+            std::fs::remove_dir_all(&dir).expect("cleanup");
+        }
+    }
+
+    #[test]
+    fn a_hand_written_counter_reads_as_the_pins_percent_d() {
+        // #583: the marker's counter is whatever `fscanf`'s `%d` makes of it
+        // (table_info.cpp:356-359), an `int`. Under either law the value
+        // decides the wipe (above 6, :409-410); libpinyin's init writes it
+        // raised through get_open_counter (pinyin.cpp:185-187) and its fini
+        // the lowered value (:1194-1200); libzhuyin writes neither.
+        let originals = originals();
+        let conform = UserTableInfo::conform_to(&versions()).to_text();
+        let head = conform
+            .strip_suffix("open counter:0\n")
+            .expect("the marker ends with its counter");
+        for (line, raised, lowered, wiped) in [
+            (&b"open counter:-3\n"[..], -2, 0, false),
+            (b"open counter:+3\n", 4, 3, false),
+            (b"open counter:+7\n", 1, 0, true),
+            (b"open counter:3x\n", 4, 3, false),
+            (b"open counter:7x\n", 1, 0, true),
+            (b"open counter:3\xff\n", 4, 3, false),
+            (b"opencounter:3\xff\n", 4, 3, false),
+            (b"open \n counter:3\xff\n", 4, 3, false),
+            (b"open counter:\xff\n", 1, 0, false),
+            (b"open counter:\x0b5\n", 6, 5, false),
+            (b"open counter:\n5\n", 6, 5, false),
+            (b"  open counter:5\n", 6, 5, false),
+            (b"opencounter:5\n", 6, 5, false),
+            (b"open counter:2147483648\n", i32::MIN + 1, 0, false),
+            (b"open counter:4294967303\n", 1, 0, true),
+            (b"open counter:-2147483649\n", 1, 0, true),
+            (b"open counter:99999999999999999999\n", 0, 0, false),
+            (b"open counter:\n", 1, 0, false),
+            (b"open counter:-\n", 1, 0, false),
+            (b"", 1, 0, false),
+        ] {
+            for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+                let case = format!("{law:?} {:?}", String::from_utf8_lossy(line));
+                let dir = tempdir("hand-written-counter");
+                save(&dir, &state(), &originals, &versions(), 0).expect("seed");
+                let mut marker = head.as_bytes().to_vec();
+                marker.extend_from_slice(line);
+                std::fs::write(dir.join(USER_CONF), &marker).expect("hand-written marker");
+
+                let loaded = load(&dir, &originals, &versions(), law).expect("load");
+                assert_eq!(loaded.wiped, wiped, "{case}");
+                let expected_state = if wiped { UserState::default() } else { state() };
+                assert_eq!(loaded.state, expected_state, "{case}");
+                match law {
+                    UserConfLaw::Pinyin => {
+                        assert_eq!(loaded.open_counter, raised, "{case}");
+                        assert_eq!(recorded_counter(&dir), Some(raised), "{case}");
+                        fini(&dir, &versions(), law, loaded.open_counter).expect("fini");
+                        assert_eq!(recorded_counter(&dir), Some(lowered), "{case}");
+                    }
+                    UserConfLaw::Zhuyin => {
+                        fini(&dir, &versions(), law, loaded.open_counter).expect("fini");
+                        assert_eq!(
+                            std::fs::read(dir.join(USER_CONF)).expect("marker"),
+                            marker,
+                            "{case}"
+                        );
+                    }
+                }
+                std::fs::remove_dir_all(&dir).expect("cleanup");
+            }
+        }
     }
 
     #[test]

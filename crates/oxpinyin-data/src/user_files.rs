@@ -207,15 +207,15 @@ pub const PINNED_MODEL_DATA_VERSION: u32 = 14;
 
 /// `OPEN_COUNTER_LIMIT` (`table_info.cpp:32`): an open counter above this
 /// marks the profile non-conform — upstream's periodic-rebuild heuristic.
-pub const OPEN_COUNTER_LIMIT: u32 = 6;
+pub const OPEN_COUNTER_LIMIT: i32 = 6;
 
 /// `UserTableInfo::get_open_counter` (`table_info.cpp:422-426`): a counter
 /// above [`OPEN_COUNTER_LIMIT`] reads as 0. Both ends of libpinyin's open
 /// counter go through it — `check_format`'s raise and `pinyin_fini`'s
 /// lowering — so a profile that crossed the limit restarts from 0 either
-/// way.
+/// way. A negative counter passes through as itself.
 #[must_use]
-pub const fn get_open_counter(open_counter: u32) -> u32 {
+pub const fn get_open_counter(open_counter: i32) -> i32 {
     if open_counter > OPEN_COUNTER_LIMIT {
         0
     } else {
@@ -236,7 +236,8 @@ pub const fn get_open_counter(open_counter: u32) -> u32 {
 ///
 /// The first two lines are required; `database format:` and
 /// `open counter:` default (`UNKNOWN`/0) when absent, matching
-/// upstream's `fscanf` tolerance.
+/// upstream's `fscanf` tolerance. The counter is read as that `fscanf`'s
+/// `%d` reads it ([`UserTableInfo::parse`]).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserTableInfo {
     /// `binary format version:`.
@@ -246,8 +247,10 @@ pub struct UserTableInfo {
     /// `database format:` — `None` when the line is absent or names no
     /// token upstream recognises (`UNKNOWN_FORMAT`).
     pub database_format: Option<String>,
-    /// `open counter:`.
-    pub open_counter: u32,
+    /// `open counter:` — upstream's `int m_open_counter`
+    /// (`table_info.h:102`), negative whenever `%d` reads a negative
+    /// value.
+    pub open_counter: i32,
 }
 
 /// The `database format:` tokens upstream recognises
@@ -271,6 +274,17 @@ impl UserTableInfo {
     /// Parses `user.conf` text. See the type doc for the line set and
     /// the defaults for absent lines.
     ///
+    /// The counter is read the way upstream's
+    /// `fscanf(input, "open counter:%d\n", &counter)` reads it
+    /// (`table_info.cpp:356-359`). The first line that holds the literal
+    /// counts, found after any white space the previous `fscanf`'s
+    /// trailing `\n` directive leaves unread (`:352`). The literal's space
+    /// matches any run of white space, an empty one included. `%d` then
+    /// runs on over the rest of the file, as glibc's does, and a failed
+    /// conversion reads 0. The line model is the pre-existing one — this
+    /// reads the counter's VALUE as `%d` does, not the whole marker as a
+    /// sequence of `fscanf` calls.
+    ///
     /// # Errors
     ///
     /// Fails when either version line is missing or does not parse.
@@ -278,9 +292,27 @@ impl UserTableInfo {
         let mut binary_format_version = None;
         let mut model_data_version = None;
         let mut database_format = None;
-        let mut open_counter = 0_u32;
+        let mut open_counter = None;
 
-        for line in text.lines() {
+        let bytes = text.as_bytes();
+        // Counter discovery is a single monotonic pass. `probe` is the
+        // first non-white-space byte at or after the last probed line's
+        // start: every byte before it is spent — a white-space run is
+        // skipped once, not once per line, so a marker padded with blank
+        // lines parses in linear time. A landing that failed its literal
+        // attempt is never re-attempted (`probed`): a later line whose
+        // start is at most `probe` sits inside the white space the probe
+        // already skipped, so its landing — and its attempt — is the
+        // same one, with the same outcome.
+        let mut line_start = 0;
+        let mut probe = 0_usize;
+        let mut probed = usize::MAX;
+        for raw in text.split_inclusive('\n') {
+            let start = line_start;
+            line_start += raw.len();
+            let line = raw
+                .strip_suffix('\n')
+                .map_or(raw, |line| line.strip_suffix('\r').unwrap_or(line));
             if let Some(value) = line.strip_prefix("binary format version:") {
                 binary_format_version =
                     Some(parse_u32(value).ok_or(UserConfError::Line("binary format version"))?);
@@ -293,8 +325,19 @@ impl UserTableInfo {
                 // not an error.
                 let token = value.trim();
                 database_format = Some(token.to_owned());
-            } else if let Some(counter) = line.strip_prefix("open counter:").and_then(parse_u32) {
-                open_counter = counter;
+            } else if open_counter.is_none() {
+                if probe < start {
+                    probe =
+                        bytes.len() - skip_c_space(bytes.get(start..).unwrap_or_default()).len();
+                    probed = usize::MAX;
+                }
+                if probe < bytes.len() && probed != probe {
+                    // `counter_value` skips white space itself, but the
+                    // probe lands on a non-white-space byte, so that skip
+                    // costs nothing here.
+                    probed = probe;
+                    open_counter = counter_value(bytes.get(probe..).unwrap_or_default());
+                }
             }
         }
 
@@ -304,7 +347,7 @@ impl UserTableInfo {
             model_data_version: model_data_version
                 .ok_or(UserConfError::Line("model data version"))?,
             database_format,
-            open_counter,
+            open_counter: open_counter.unwrap_or(0),
         })
     }
 
@@ -367,13 +410,101 @@ impl std::fmt::Display for UserConfError {
 
 impl std::error::Error for UserConfError {}
 
-/// `fscanf("%d")` shape: an unsigned decimal, nothing else.
+/// A version line's value: an unsigned decimal, nothing else.
 fn parse_u32(text: &str) -> Option<u32> {
     let trimmed = text.trim();
     if trimmed.is_empty() || !trimmed.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
     trimmed.parse().ok()
+}
+
+/// C's `isspace` over ASCII — the white space a `scanf` directive or
+/// conversion skips: space, `\t`, `\n`, `\v`, `\f` and `\r`.
+/// [`u8::is_ascii_whitespace`] leaves out `\v`.
+const fn is_c_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+}
+
+fn skip_c_space(input: &[u8]) -> &[u8] {
+    let start = input
+        .iter()
+        .position(|&byte| !is_c_space(byte))
+        .unwrap_or(input.len());
+    input.get(start..).unwrap_or_default()
+}
+
+/// A `scanf` format's literal at the start of `input`: a white-space
+/// byte of the format matches any run of white space, an empty one
+/// included, and any other byte matches only itself (C11 7.21.6.2p5-6).
+/// The input after the match, or `None` where it fails.
+fn scanf_literal<'a>(input: &'a [u8], literal: &[u8]) -> Option<&'a [u8]> {
+    let mut rest = input;
+    for &byte in literal {
+        if is_c_space(byte) {
+            rest = skip_c_space(rest);
+        } else {
+            let (&first, tail) = rest.split_first()?;
+            if first != byte {
+                return None;
+            }
+            rest = tail;
+        }
+    }
+    Some(rest)
+}
+
+/// `fscanf(input, "open counter:%d\n", &counter)` at `rest`, the file from
+/// one line's start on (`table_info.cpp:356-359`). That line's leading
+/// white space is what the previous `fscanf`'s trailing `\n` directive
+/// skips (`:352`) — `parse`'s probe has usually spent that skip already,
+/// so this one costs nothing; the literal matches as the format's does;
+/// `%d` reads the value, and a failed conversion leaves the counter 0
+/// (`:358-359`). `None` when no counter line was reached.
+fn counter_value(rest: &[u8]) -> Option<i32> {
+    let value = scanf_literal(skip_c_space(rest), b"open counter:")?;
+    Some(scan_int(value).unwrap_or(0))
+}
+
+/// `fscanf`'s `%d` as the pin's glibc runs it. White space is skipped
+/// first — newlines too, so an empty value reads on into the next line.
+/// Then comes an optional sign and every decimal digit that follows.
+/// glibc converts the digits with `strtol`, which saturates at `long`'s
+/// range (64 bits on the pin's LP64 builds), and stores the result
+/// through an `int *`, which keeps its low 32 bits. So `2147483648` reads
+/// as −2147483648 and `4294967303` as 7. Anything past `long` reads as
+/// the low half of `LONG_MAX` (−1) or of `LONG_MIN` (0). `None` is a
+/// failed conversion: no digit after the optional sign.
+fn scan_int(input: &[u8]) -> Option<i32> {
+    let rest = skip_c_space(input);
+    let (negative, rest) = match rest.split_first() {
+        Some((b'-', tail)) => (true, tail),
+        Some((b'+', tail)) => (false, tail),
+        _ => (false, rest),
+    };
+    // `strtol` accumulates toward the sign, so `LONG_MIN` is reachable;
+    // `None` once the value has left `long`'s range.
+    let mut long = Some(0_i64);
+    let mut any_digit = false;
+    for &byte in rest.iter().take_while(|byte| byte.is_ascii_digit()) {
+        any_digit = true;
+        let digit = i64::from(byte - b'0');
+        long = long
+            .and_then(|value| value.checked_mul(10))
+            .and_then(|value| {
+                if negative {
+                    value.checked_sub(digit)
+                } else {
+                    value.checked_add(digit)
+                }
+            });
+    }
+    if !any_digit {
+        return None;
+    }
+    let long = long.unwrap_or(if negative { i64::MIN } else { i64::MAX });
+    // The store through `int *`: the low 32 bits.
+    Some(long as i32)
 }
 
 /// One `PhraseIndexLogger` record (`phrase_index_logger.h`).
@@ -730,8 +861,10 @@ mod tests {
         // other value as itself.
         assert_eq!(get_open_counter(OPEN_COUNTER_LIMIT), OPEN_COUNTER_LIMIT);
         assert_eq!(get_open_counter(OPEN_COUNTER_LIMIT + 1), 0);
-        assert_eq!(get_open_counter(u32::MAX), 0);
+        assert_eq!(get_open_counter(i32::MAX), 0);
         assert_eq!(get_open_counter(0), 0);
+        assert_eq!(get_open_counter(-3), -3);
+        assert_eq!(get_open_counter(i32::MIN), i32::MIN);
 
         // The table.conf reader takes the pin's values when the file
         // is silent, and the declared ones when it speaks.
@@ -754,6 +887,97 @@ mod tests {
         assert!(!sparse.is_conform(&versions));
         assert!(UserTableInfo::parse("binary format version:x\n").is_err());
         assert!(UserTableInfo::parse("").is_err());
+    }
+
+    /// What each counter line reads as, per glibc's
+    /// `fscanf("open counter:%d\n")` in debian:testing (glibc 2.43), which
+    /// the seeded protocol of `tools/bisection/run-open-counter-diff.sh`
+    /// checks against the pin.
+    #[test]
+    fn the_counter_reads_as_fscanfs_percent_d() {
+        let head = "binary format version:7\nmodel data version:14\ndatabase format:Tkrzw\n";
+        for (tail, counter) in [
+            ("open counter:5\n", 5),
+            ("open counter:-3\n", -3),
+            ("open counter:+3\n", 3),
+            ("open counter:+7\n", 7),
+            ("open counter:3x\n", 3),
+            ("open counter:7x\n", 7),
+            ("open counter:3\u{fffd}\n", 3),
+            ("open counter: 5\n", 5),
+            ("open counter:\t5\n", 5),
+            ("open counter:\u{b}5\n", 5),
+            ("open counter:\n5\n", 5),
+            ("open counter:\r\n5\r\n", 5),
+            ("  open counter:5\n", 5),
+            ("\nopen counter:5\n", 5),
+            ("open   counter:5\n", 5),
+            ("opencounter:5\n", 5),
+            ("open counter:2147483647\n", i32::MAX),
+            ("open counter:2147483648\n", i32::MIN),
+            ("open counter:4294967303\n", 7),
+            ("open counter:99999999999999999999\n", -1),
+            ("open counter:-99999999999999999999\n", 0),
+            ("open counter:-2147483649\n", i32::MAX),
+            ("open counter:-9223372036854775808\n", 0),
+            ("open counter:9223372036854775807\n", -1),
+            ("open counter:-0\n", 0),
+            ("open counter:\n", 0),
+            ("open counter:", 0),
+            ("open counter:-\n", 0),
+            ("open counter:- 5\n", 0),
+            ("open counter:x5\n", 0),
+            ("", 0),
+            // One conversion only: an empty value reads on, but not into a
+            // second counter line.
+            ("open counter:\nopen counter:5\n", 0),
+            ("open counter:4\nopen counter:5\n", 4),
+        ] {
+            let info = UserTableInfo::parse(&format!("{head}{tail}")).expect("parse");
+            assert_eq!(info.open_counter, counter, "{tail:?}");
+        }
+    }
+
+    /// Discovery walks the file once: a long run of blank, white-space
+    /// and irrelevant lines before the counter, and one with no counter
+    /// at all, parse without each line resuming the scan its predecessor
+    /// already spent. The run lengths are long enough that the per-line
+    /// re-scan this replaced would multiply out to a visible stall.
+    #[test]
+    fn a_long_blank_run_reaches_the_counter_once() {
+        let head = "binary format version:7\nmodel data version:14\ndatabase format:Tkrzw\n";
+        let blanks = "\u{b}\t \n".repeat(20_000);
+        let junk = "not a counter line\n".repeat(20_000);
+        let cases = [
+            (format!("{head}{blanks}open counter:5\n"), 5),
+            // The literal's own leading skip spans the blank run.
+            (format!("{head}{blanks}  open counter:-3\n"), -3),
+            // White space after the colon reads on across the blank run.
+            (format!("{head}{blanks}open counter:\n{blanks}7\n"), 7),
+            (format!("{head}{junk}open counter:9\n"), 9),
+            (format!("{head}{junk}{blanks}open counter: 4\n"), 4),
+            // Never a counter: the walk still ends in one pass, at 0.
+            (format!("{head}{junk}{blanks}"), 0),
+        ];
+        for (text, counter) in cases {
+            let info = UserTableInfo::parse(&text).expect("parse");
+            assert_eq!(info.open_counter, counter);
+        }
+    }
+
+    #[test]
+    fn a_negative_counter_conforms() {
+        let versions = SystemVersions::for_this_build(7, 14);
+        let negative = UserTableInfo {
+            open_counter: -3,
+            ..UserTableInfo::conform_to(&versions)
+        };
+        assert!(negative.is_conform(&versions));
+        assert!(negative.to_text().ends_with("open counter:-3\n"));
+        assert_eq!(
+            UserTableInfo::parse(&negative.to_text()).expect("parse"),
+            negative
+        );
     }
 
     fn conform_with(token: &str) -> UserTableInfo {

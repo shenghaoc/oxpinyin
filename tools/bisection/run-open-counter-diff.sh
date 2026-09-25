@@ -89,7 +89,7 @@ CRASHES="${OPEN_COUNTER_CRASHES:-10}"
 # The seeded protocol's cases: user.conf's fourth line as printf %b writes
 # it, and what glibc's fscanf("open counter:%d\n") reads there. The %d
 # column is glibc's, checked in debian:testing (glibc 2.43).
-SEEDS=(control-5 control-7 negative plus plus-over garbage garbage-over garbage-byte
+SEEDS=(control-5 control-7 negative plus plus-over garbage garbage-over garbage-byte invalid-prefix
     space tab vtab newline indent spaced joined overflow-int overflow-wrap overflow-long
     overflow-neg under-int empty sign missing)
 declare -A SEED_LINE=(
@@ -100,7 +100,8 @@ declare -A SEED_LINE=(
     [plus-over]='open counter:+7\n'                      # 7
     [garbage]='open counter:3x\n'                        # 3
     [garbage-over]='open counter:7x\n'                   # 7
-    [garbage-byte]='open counter:3\xff\n'                # 3; the file is not UTF-8
+    [garbage-byte]='open counter:3\xff\n'               # 3; non-UTF-8 after the digits
+    [invalid-prefix]='open counter:5\n'                 # stray byte before the identity fields
     [space]='open counter: 5\n'                          # 5
     [tab]='open counter:\t5\n'                           # 5
     [vtab]='open counter:\v5\n'                          # 5: C's isspace has \v
@@ -187,7 +188,11 @@ launch() {
 seed_conf() {
     local conf=$1/user.conf head
     head=$(head -n 3 "$conf")
-    { printf '%s\n' "$head"; printf '%b' "${SEED_LINE[$2]}"; } > "$conf"
+    {
+        if [[ $2 == invalid-prefix ]]; then printf '\xff\n'; fi
+        printf '%s\n' "$head"
+        printf '%b' "${SEED_LINE[$2]}"
+    } > "$conf"
 }
 
 run_protocol() {
