@@ -59,7 +59,7 @@
     reason = "FFI over the system libdb; every block carries a SAFETY comment"
 )]
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_int};
 use std::marker::PhantomData;
 use std::path::Path;
 use std::ptr;
@@ -232,11 +232,26 @@ pub(crate) struct Db {
     hash: bool,
 }
 
+/// The mode libpinyin's `attach` passes to `DB->open` — the system
+/// tables (`chewing_large_table2_bdb.cpp:90-91`,
+/// `phrase_large_table3_bdb.cpp:105-106`, `ngram_bdb.cpp:119-120`).
+pub(crate) const SYSTEM_FILE_MODE: c_int = 0o644;
+
+/// The mode libpinyin's `save_db` passes to `DB->open` when it creates a
+/// user table — `user_pinyin_index.bin`, `user_phrase_index.bin`,
+/// `user_bigram.db` (`chewing_large_table2_bdb.cpp:148-149`,
+/// `phrase_large_table3_bdb.cpp:163-164`, `ngram_bdb.cpp:94-95`).
+pub(crate) const USER_FILE_MODE: c_int = 0o600;
+
 impl Db {
-    /// Opens `path` as `db_type`, exactly as libpinyin opens its own
-    /// files — no environment, no transaction, no comparator, mode
-    /// 0644 — plus the `DB_THREAD` flag this module's threading
-    /// contract needs.
+    /// Opens `path` as `db_type`, as libpinyin opens its own files — no
+    /// environment, no transaction, no comparator — plus the `DB_THREAD`
+    /// flag this module's threading contract needs.
+    ///
+    /// `mode` is what `DB->open` creates a missing file with, before the
+    /// process umask applies: [`SYSTEM_FILE_MODE`] where libpinyin
+    /// attaches, [`USER_FILE_MODE`] where it saves a user table. libdb
+    /// ignores it for a file that already exists.
     ///
     /// Passing no comparator is load-bearing for `DB_BTREE`: the default
     /// is a byte-wise `memcmp` with the shorter key first on a shared
@@ -247,6 +262,7 @@ impl Db {
         db_type: DBTYPE,
         read_only: bool,
         create: bool,
+        mode: c_int,
     ) -> Result<Self, StoreError> {
         check_runtime_version()?;
         let path = c_path(path)?;
@@ -295,7 +311,7 @@ impl Db {
                 ptr::null(),
                 db_type,
                 flags,
-                0o644,
+                mode,
             )
         };
         check(code, "DB->open")?;
