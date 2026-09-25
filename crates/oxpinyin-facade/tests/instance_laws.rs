@@ -13,6 +13,7 @@ use oxpinyin_facade::{
     ContextCore, InstanceCore, PINYIN_DEFAULT_OPTION_WORD, ToneForwarding,
     ZHUYIN_DEFAULT_OPTION_WORD,
 };
+use oxpinyin_user::UserConfLaw;
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -30,8 +31,12 @@ fn open_context(option_word: u32) -> ContextCore {
         if !dir.is_dir() {
             continue;
         }
-        if let Some(context) = ContextCore::open(dir.to_str().expect("UTF-8 path"), "", option_word)
-        {
+        if let Some(context) = ContextCore::open(
+            dir.to_str().expect("UTF-8 path"),
+            "",
+            option_word,
+            UserConfLaw::Pinyin,
+        ) {
             return context;
         }
     }

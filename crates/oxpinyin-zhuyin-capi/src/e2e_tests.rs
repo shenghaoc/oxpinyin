@@ -292,3 +292,37 @@ fn null_and_empty_inputs_are_refused() {
     zhuyin_free_instance(ptr::null_mut());
     zhuyin_fini(ptr::null_mut());
 }
+
+/// #523's libzhuyin half: `zhuyin_init` only reads `user.conf` and
+/// `zhuyin_fini` writes nothing (`zhuyin.cpp:126-162`, `:741-757`); the
+/// one write is `zhuyin_save`'s `mark_version`, whose fresh
+/// `UserTableInfo` carries a counter of 0 (`:164-176`, `:695`). No run of
+/// launches can raise the counter toward the limit, so none can wipe.
+#[test]
+fn zhuyin_launches_never_move_the_open_counter() {
+    let user_dir = TempUserDir::new("zhuyin-open-counter");
+    let marker = user_dir.path.join("user.conf");
+
+    let (context, instance) = open_with_user(&user_dir.path);
+    assert!(!marker.exists(), "zhuyin_init wrote user.conf");
+    // End arms m_modified with or without an add (zhuyin.cpp:543).
+    zhuyin_end_add_phrases(zhuyin_begin_add_phrases(context, USER_DICTIONARY));
+    assert!(zhuyin_save(context));
+    let saved = std::fs::read(&marker).expect("zhuyin_save writes user.conf");
+    assert!(
+        String::from_utf8_lossy(&saved).ends_with("open counter:0\n"),
+        "zhuyin_save's marker carries a fresh counter"
+    );
+    close(context, instance);
+    assert_eq!(
+        std::fs::read(&marker).expect("marker"),
+        saved,
+        "zhuyin_fini wrote user.conf"
+    );
+
+    for _ in 0..10 {
+        let (context, instance) = open_with_user(&user_dir.path);
+        close(context, instance);
+    }
+    assert_eq!(std::fs::read(&marker).expect("marker"), saved);
+}
