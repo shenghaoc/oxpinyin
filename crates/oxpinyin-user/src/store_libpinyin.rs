@@ -65,7 +65,7 @@ pub struct Target {
     pub(crate) law: UserConfLaw,
     /// The open counter the session's `user.conf` writes start from
     /// ([`persistence::Loaded::open_counter`]).
-    pub(crate) open_counter: u32,
+    pub(crate) open_counter: i32,
 }
 
 /// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
@@ -758,7 +758,7 @@ mod tests {
     }
 
     /// The open counter `user.conf` records, as the next init reads it.
-    fn recorded_counter(dir: &Path) -> Option<u32> {
+    fn recorded_counter(dir: &Path) -> Option<i32> {
         let text = std::fs::read_to_string(dir.join("user.conf")).ok()?;
         Some(
             oxpinyin_data::user_files::UserTableInfo::parse(&text)

@@ -729,6 +729,31 @@ Semantics this reverts or preserves, on purpose:
   contexts on one dir are independent, and when both save, the later
   save's files are the profile. The differential is
   `tools/bisection/run-two-context-diff.sh`.
+* **Amendment (2026-09-25, #583): the counter reads as `%d` reads it.**
+  Task 9 parsed `open counter:` as a bare unsigned decimal and read
+  anything else as 0. Upstream reads the line with
+  `fscanf(input, "open counter:%d\n", &counter)` into an `int`
+  (`table_info.cpp:356-359`, `table_info.h:102`), so it takes a sign, a
+  negative value, the digits before trailing garbage, a value on the
+  next line, and the low 32 bits of a value past `int`. The old parse
+  kept profiles the pin wipes (`+7`, `7x`) and wrote 1 at init where
+  the pin writes −2 (`-3`). `UserTableInfo::open_counter` is an `i32`
+  now, and the line is scanned as glibc's `%d` scans it:
+  - from the first line that holds the literal, where white space
+    before the literal and the literal's own space match as the
+    format's do;
+  - across newlines to a sign and the digits;
+  - with `strtol`'s saturation at `long`;
+  - keeping the low 32 bits, as the store through `int *` does.
+
+  The marker is read as bytes. UTF-8 validation is retained before the
+  counter value. After its literal, the first invalid byte ends the
+  input considered by `%d`, just as a non-digit ends its
+  conversion without rejecting the marker, while a stray byte before
+  the identity fields still rejects it. Counter discovery advances
+  monotonically rather than rescanning whitespace suffixes. The
+  differential is the seeded protocol of
+  `tools/bisection/run-open-counter-diff.sh`.
 
 Verification: unit goldens and round-trips at every layer (codecs,
 persistence, bridge, e2e); the backend matrix through the
