@@ -300,6 +300,38 @@ pub trait WriteStore: ReadStore {
     {
         Self::create(path)
     }
+    /// Create a **user** tree file: the two index tables `pinyin_save`
+    /// writes into a user dir. It is [`WriteStore::create`] with the
+    /// file mode libpinyin's own `save_db` creates a user table with,
+    /// where that differs from the one `attach` uses for the system
+    /// tables. Berkeley DB passes 0600 there and 0644 in `attach`, and
+    /// Kyoto Cabinet writes a user table through an `std::ofstream`
+    /// (0666). The process umask applies on top, as it does upstream.
+    /// The default is [`WriteStore::create`] (tkrzw's `save_db` opens
+    /// its tables exactly as `attach` does).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store cannot be created.
+    fn create_user(path: &Path) -> Result<Self, StoreError>
+    where
+        Self: Sized,
+    {
+        Self::create(path)
+    }
+    /// [`WriteStore::create_user`]'s hash form: the user bigram, where a
+    /// backend writes it as a hash container. The default is
+    /// [`WriteStore::create_hash`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the store cannot be created.
+    fn create_user_hash(path: &Path) -> Result<Self, StoreError>
+    where
+        Self: Sized,
+    {
+        Self::create_hash(path)
+    }
 
     /// Writes `rows` to `path` as the **user** bigram container.
     ///
@@ -330,7 +362,12 @@ pub trait WriteStore: ReadStore {
         // atomic, so the profile is always the old one or the new one,
         // never a mix.
         let tmp = sibling_temp(path);
-        let mut store = Self::create_hash(&tmp)?;
+        // libpinyin unlinks the temporary before `save_db` creates it
+        // (`pinyin.cpp:1017`, and `save_db` unlinks again): a stale one
+        // left by a crashed save is not reopened, so its rows and its
+        // mode do not carry into the new file.
+        remove_if_present(&tmp)?;
+        let mut store = Self::create_user_hash(&tmp)?;
         store.write(|txn| {
             for (key, value) in rows {
                 txn.put_raw(key, value)?;
@@ -537,6 +574,16 @@ pub trait RawReadStore: ReadStore {
         Self: Sized,
     {
         Self::open_hash_read_only(path)
+    }
+}
+
+/// Removes `path`; absence is not an error — libpinyin's
+/// `unlink`-before-create, which ignores `ENOENT`.
+pub(crate) fn remove_if_present(path: &Path) -> Result<(), StoreError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(StoreError::Io(error)),
     }
 }
 
