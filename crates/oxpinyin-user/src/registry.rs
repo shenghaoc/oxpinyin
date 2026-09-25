@@ -209,12 +209,12 @@ pub fn acquire_standalone(path: &Path) -> Option<StandaloneLease> {
 }
 
 /// [`acquire_standalone`], for a session scratch: the reservation is
-/// keyed on `key` (a stable token for the user dir, so a second open of
-/// the same directory in this process collides), while `cleanup` — the
-/// unique scratch directory this session actually uses — is removed
-/// recursively when the last handle drops, file, sidecars and all.
-pub fn acquire_scratch(key: &Path, cleanup: PathBuf) -> Option<StandaloneLease> {
-    let key = registry_key(key);
+/// keyed on `cleanup` — the unique scratch directory the session uses,
+/// so every session holds its own, however many share a user dir — and
+/// that directory is removed recursively when the last handle drops,
+/// file, sidecars and all.
+pub fn acquire_scratch(cleanup: PathBuf) -> Option<StandaloneLease> {
+    let key = registry_key(&cleanup);
     let mut stores = OPEN_STANDALONE_STORES
         .get_or_init(|| Mutex::new(HashSet::new()))
         .lock()

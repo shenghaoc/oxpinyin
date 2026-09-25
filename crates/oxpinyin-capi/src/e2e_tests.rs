@@ -768,6 +768,46 @@ fn clean_launches_lower_the_open_counter_and_keep_the_profile() {
 }
 
 #[test]
+fn two_contexts_on_one_user_dir_are_independent() {
+    // #538: a second pinyin_init on a user dir another live context has
+    // open is a context of its own, as upstream's is — no state is held
+    // per directory. Each init raises the open counter (pinyin.cpp:185-187),
+    // B does not see what A learned and has not saved, each save answers
+    // for its own context's modifications, and each fini lowers its own
+    // copy of the counter (:1194-1200).
+    let user_dir = TempUserDir::new("two-contexts");
+    let dir = user_dir.path.to_str().expect("UTF-8 path");
+    let (ctx_a, inst_a) = open(dir);
+    let (ctx_b, inst_b) = open(dir);
+    assert_eq!(recorded_open_counter(&user_dir.path), Some(2));
+
+    let iter = pinyin_begin_add_phrases(ctx_a, 7);
+    assert!(pinyin_iterator_add_phrase(
+        iter,
+        cstr("你好").as_ptr(),
+        cstr("nihao").as_ptr(),
+        5,
+    ));
+    pinyin_end_add_phrases(iter);
+    let export = pinyin_begin_get_phrases(ctx_b, 7);
+    assert!(
+        drain_phrases(export).is_empty(),
+        "B sees A's unsaved import"
+    );
+    pinyin_end_get_phrases(export);
+
+    assert!(!pinyin_save(ctx_b), "B changed nothing");
+    assert!(pinyin_save(ctx_a));
+
+    crate::instance::pinyin_free_instance(inst_a);
+    crate::instance::pinyin_free_instance(inst_b);
+    crate::context::pinyin_fini(ctx_a);
+    assert_eq!(recorded_open_counter(&user_dir.path), Some(0));
+    crate::context::pinyin_fini(ctx_b);
+    assert_eq!(recorded_open_counter(&user_dir.path), Some(1));
+}
+
+#[test]
 fn import_iterators_add_per_phrase_and_arm_modified_at_end() {
     let user_dir = TempUserDir::new("import");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
@@ -1071,8 +1111,9 @@ fn user_only_bigram_export_fails_when_rows_need_system_tables() {
     .expect("user-only context core");
     // System tokens (library nibble != 7). One training seed (69) is at
     // the §9 first-seed threshold, so a real export would emit a row.
-    // Trained through the context's own session handle — one open per
-    // user dir, shared.
+    // Trained through the context's own session handle: a second open of
+    // the dir would be a session of its own, which this context never
+    // sees (#538).
     core.user
         .as_mut()
         .expect("user-only core owns a store")

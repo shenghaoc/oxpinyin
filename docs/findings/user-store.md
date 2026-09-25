@@ -716,6 +716,19 @@ Semantics this reverts or preserves, on purpose:
   leaves the counter raised, so seven killed launches in a row wipe the
   profile at the eighth, where the pin wipes it too. The differential
   is `tools/bisection/run-open-counter-diff.sh`.
+* **Amendment (2026-09-25, #538): every open is a session of its own.**
+  Task 9 shared one session per user dir through the process registry.
+  A second `pinyin_init` on a dir another live context had open reused
+  the first context's scratch, dirty flag and counter, so it saw the
+  first context's unsaved learning, its save answered for the other
+  context's changes, and the second init raised nothing. Upstream
+  holds nothing per directory: every init reads the profile into its
+  own context (`pinyin.cpp:326-444`) and every save writes that
+  context's whole state (`:1132-1147`). `open_libpinyin` now reserves a
+  fresh scratch per open and runs `check_format` every time, so two
+  contexts on one dir are independent, and when both save, the later
+  save's files are the profile. The differential is
+  `tools/bisection/run-two-context-diff.sh`.
 
 Verification: unit goldens and round-trips at every layer (codecs,
 persistence, bridge, e2e); the backend matrix through the
