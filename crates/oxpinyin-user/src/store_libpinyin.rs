@@ -869,4 +869,81 @@ mod tests {
         drop(third);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
+
+    #[test]
+    fn a_pinyin_open_after_a_zhuyin_open_keeps_libpinyins_law() {
+        // #578's review: a session follows the law it was opened with, not
+        // the law of whatever already has the dir open. libzhuyin's init
+        // only reads user.conf (zhuyin.cpp:126-162); libpinyin's raises and
+        // writes the counter whatever else is live (pinyin.cpp:185-187).
+        let dir = tempdir("zhuyin-then-pinyin");
+        let mut zhuyin =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Zhuyin)
+                .expect("open zhuyin");
+        assert_eq!(recorded_counter(&dir), None);
+        let mut pinyin =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open pinyin");
+        assert_eq!(recorded_counter(&dir), Some(1));
+
+        zhuyin
+            .observe_selection(1, 0x0100_0001)
+            .expect("train zhuyin");
+        assert_eq!(pinyin.bigram_count(1, 0x0100_0001).expect("count"), 0);
+        // libzhuyin's save writes a fresh counter of 0 (zhuyin.cpp:164-176,
+        // :695); libpinyin's writes back its own raised one
+        // (pinyin.cpp:1143, :220-232).
+        assert!(zhuyin.save().expect("save zhuyin"));
+        assert_eq!(recorded_counter(&dir), Some(0));
+        pinyin
+            .observe_selection(1, 0x0100_0001)
+            .expect("train pinyin");
+        assert!(pinyin.save().expect("save pinyin"));
+        assert_eq!(recorded_counter(&dir), Some(1));
+
+        // libpinyin's fini lowers its copy (pinyin.cpp:1194-1200);
+        // libzhuyin's writes nothing (zhuyin.cpp:741-757).
+        drop(pinyin);
+        assert_eq!(recorded_counter(&dir), Some(0));
+        drop(zhuyin);
+        assert_eq!(recorded_counter(&dir), Some(0));
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_zhuyin_open_after_a_pinyin_open_keeps_libzhuyins_law() {
+        // The other order: the live libpinyin session lends the libzhuyin
+        // open neither its law nor its unsaved learning.
+        let dir = tempdir("pinyin-then-zhuyin");
+        let mut pinyin =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open pinyin");
+        assert_eq!(recorded_counter(&dir), Some(1));
+        let mut zhuyin =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Zhuyin)
+                .expect("open zhuyin");
+        assert_eq!(recorded_counter(&dir), Some(1));
+
+        pinyin
+            .observe_selection(1, 0x0100_0001)
+            .expect("train pinyin");
+        assert_eq!(zhuyin.bigram_count(1, 0x0100_0001).expect("count"), 0);
+        zhuyin
+            .observe_selection(1, 0x0100_0001)
+            .expect("train zhuyin");
+        assert!(pinyin.save().expect("save pinyin"));
+        assert_eq!(recorded_counter(&dir), Some(1));
+        // The later save is libzhuyin's: its fresh 0 replaces libpinyin's
+        // raised counter.
+        assert!(zhuyin.save().expect("save zhuyin"));
+        assert_eq!(recorded_counter(&dir), Some(0));
+
+        // The finis in the reverse order: libzhuyin's writes nothing, and
+        // libpinyin's lowers its own 1.
+        drop(zhuyin);
+        assert_eq!(recorded_counter(&dir), Some(0));
+        drop(pinyin);
+        assert_eq!(recorded_counter(&dir), Some(0));
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
 }
