@@ -17,7 +17,9 @@
 - **Measured subject:** `origin/main` at `18d782089bd1`. Main has since moved
   to `34a66bc915c9`, adding 00466d50 (`expand_keys` early stop in
   `oxpinyin-core/src/scoring.rs`) and 34a66bc9 (a fuzz corpus seed). Nothing
-  here was re-measured on the new tip.
+  in the primary ledger was re-measured on the new tip; selected severity-1/2
+  findings were re-run in section 11, and item 4's severity-2 findings were
+  re-run in section 15.
 - **Findings were not adversarially re-verified.** Subagent enumeration was
   spot-checked (section 1.3). Salvaged verdicts come from the raw run
   artifacts, not from a finished agent's conclusion.
@@ -28,11 +30,11 @@
 | B libpinyin contract | DIVERGENT (40 findings) | same | same | B-m1, B-m2, F-m2 detected; gated revert identical |
 | B libzhuyin contract | DIVERGENT: all 52 exports (Z-1..Z-3 plus twins, §14) | same | same | C-m3 and the Bz-shim-m1 shim detected and reverted on every cell |
 | C drivers | DIVERGENT (6 kinds) | same, +1 broader | same | C-m2 detected by 6 drivers; the other 7 were validated by their own DRV-* mutations (§13.2), so their IDENTICAL results are MATCH |
-| C options/encoding/zhuyin layouts | **NOT-ESTABLISHED** | same | same | sweep killed at stop; C-m1 not run |
+| C options/encoding/zhuyin layouts | DIVERGENT (§15) | same | same | 539 option words, 1,043 encoding cases and 1,236 layout corpus lines; C-m1/C-m3 detected and reverted. Payload equality is conditional on D-23 diagnostics |
 | D persisted state | DIVERGENT (open counter, cross-read) | same | same, +kc interop | D-m1 (round-trip) and D-m3 (cycle) detected; revert identical |
 | E defect preservation | 37 DIVERGENT, 14 NE | same | same | E-m1 detected on all cells, reverted |
 | F errors/diagnostics | 74 sites DIVERGENT | same | same | F-m1, F-m2 detected on every cell; bdb determinism holds under normalisation 2 (§13.3) |
-| G numerics | **NOT-ESTABLISHED** (G-m2 detected, **G-m1 not**: blind gate, §13.1) | **NOT-ESTABLISHED** (same) | **NOT-ESTABLISHED** (same) | no G row may be MATCH. The §12 gate's own mutation runs were never done. At the C-ABI surface (504 fixture inputs), G-m2 was detected on every cell (4 lines) but G-m1 (+1e-3 nats per step) was **not** detected (0 lines). D-13's divergence stands on counterfactual and source evidence |
+| G numerics | **NOT-ESTABLISHED** (G-m2 detected, **G-m1 not**: blind gate, §13.1) | **NOT-ESTABLISHED** (same) | **NOT-ESTABLISHED** (same) | no G row may be MATCH. The §12 gate mutation runs were done: G-m2 was detected and reverted on all cells; G-m1 was reached and changed four C-ABI outputs outside the fixture, but the gate missed it. D-13 stands on counterfactual and source evidence |
 | H process state | DIVERGENT | same | same, +fork hang | H-m1 and H-m2 detected and reverted |
 | I drop-in | DIVERGENT (.pc, consumer runtime) | same | same | I-m2 and I-m3 (C-m2) detected; header matrix fails identically on both sides |
 | J coverage | export ledger 131 = 131, identical across cells (static) | same | same | internal ledger **NOT-ESTABLISHED** (not produced) |
@@ -163,9 +165,9 @@ The pre-registration was committed as `dbee7c04` (rebased to `fad9ad47`, same bl
 3. **The C-m3 detector was extended.** The repo's `zhuyin-diff` never types
    key `1`, so it cannot detect C-m3. An extended copy (`zhuyin-diff-ext`)
    detects it.
-4. **Execution stopped early,** by maintainer instruction, before
+4. **Execution stopped early at the salvage point,** by maintainer instruction, before
    G-m1/G-m2, C-m1, L-m1/L-m2, the J internal ledger, the full option sweep,
-   B-zhuyin validation, and Steps 4–5.
+   B-zhuyin validation, and Steps 4–5. Sections 13–15 record later work.
 
 ## 3. Instrument validation
 
@@ -188,10 +190,12 @@ The pre-registration was committed as `dbee7c04` (rebased to `fad9ad47`, same bl
 | H | host | H-m2 (static Mutex) | yes: inventory line added | yes (`h2-reverted` == pristine) | |
 | I | all | I-m2 (file removed) | yes | yes | |
 | I | tkrzw | I-m3 = C-m2 | yes: the ibus replay differs by 304 vs 71 lines | yes (mut-unset == subject) | |
-| G | all | G-m1, G-m2 through the §12 gate | **not run** | — | G is NOT-ESTABLISHED |
+| G | all | G-m1, G-m2 through the §12 gate | G-m1 not detected; G-m2 detected | both unset runs match pristine | G remains NOT-ESTABLISHED (§13.1) |
 | G | all | G-m1 at the C-ABI fixture surface | **no** (0 lines) | unset identical | the surface instrument is blind to a uniform +1e-3 nat shift |
 | G | all | G-m2 at the C-ABI fixture surface | yes (4 lines) | unset identical | |
-| C-options | all | C-m1 | **not run** | — | |
+| C-options | all | C-m1 | yes: 34/104 single words and 29/435 pair words per cell | yes: unset matches pristine exactly | §15 |
+| C-encoding | all | C-m1, C-m3 | yes: 2 and 3 cases respectively per cell | yes: unset matches pristine exactly | §15 |
+| C-layouts | all | C-m3 | yes: table and all three corpus words per cell | yes: unset matches pristine exactly | §15 |
 | L | all | L-m1, L-m2 | **not run** | — | |
 
 ## 4. Ledger: distinct defects
@@ -228,6 +232,9 @@ unless a live class demonstrably fits.
 | D-24 | A (ck-runtime) | all | Raw `ChewingKey` bytes and returns from single-key parses across schemes and options: 73 both-true-bytes-differ, 2830 pin-false/subject-true, 1991 pin-true/subject-false, and 337 chewing keys accepted only by the subject. The attribution was not completed | `chewing_key.h` | parser | NOT-ESTABLISHED (downgraded, section 1.3 item 6) | 3 |
 | D-25 | B (06, 18–22, 26, 32–39), E (D-1..3) | all | Assorted return-value and out-param contract differences on error or edge paths. Examples: `get_sentence` before a guess (pin false, subject true + raw input); aux text after full-pinyin parse; `guess_sentence` on no keys; out-param write-on-failure; function-static key slots shared across instances on the pin | per BP row | per BP row | DIVERGENT-UNREGISTERED | 2–3 |
 | D-26 | C (double3) | all | ZIGUANG `zhrgguor` candidate[2] NBEST: 宗人光卓然 on the pin vs 总人光卓然 on the subject. Attributed to row 11 by the C agent, but D-13 shows row 11's scope is contested | — | — | DIVERGENT-REGISTERED (row 11), under D-13 | 2 |
+| C-1 | C options | all | Secondary-zhuyin `tsz` consumes and exposes incomplete key `c` on both sides, but with option `0x00000002` the pin returns 718 candidates and sentence 从 while the subject returns zero candidates/no sentence. Subject's `walk` drops `Incomplete` unless `PINYIN_INCOMPLETE` is set | `storage/zhuyin_parser2.cpp:48-55`; `pinyin.cpp:1590-1605` | `oxpinyin-engine/src/session/lookup.rs:1030-1051` | DIVERGENT-UNREGISTERED | 2 |
+| C-2 | C options | all | With `PINYIN_AMB_L_N`, transformed exact keys omit fuzzy alternates: double-pinyin `nihk` yields 499 candidates including 利好 on the pin, 126 without 利好 on the subject; all four bytes are consumed on both sides. The same loss appears for chewing `su3cl3` | `pinyin.cpp:1557-1559,1602-1604` | `oxpinyin-engine/src/session/mod.rs:593-640` | DIVERGENT-UNREGISTERED | 2 |
+| C-3 | C encoding | all | For C bytes `ni\xffhao`, `pinyin_parse_more_full_pinyins` consumes the valid `ni` prefix (2) on the pin, but zero bytes on the subject. Other invalid UTF-8 import cases differ under the same C-string conversion | `pinyin.cpp:1498-1515,615-640` | `oxpinyin-capi/src/ffi.rs:19-28` | DIVERGENT-UNREGISTERED | 3 |
 
 The per-probe evidence for B (757 probe rows, 79 per-export rows) and the
 per-site F ledger (357 rows) exist only in the ephemeral scratch area (see
@@ -251,11 +258,10 @@ section 8).
 
 ### C
 
-- Axis C's drivers are **not uniformly non-vacuous.** Seven identical
-  drivers (key-surface, dict-surface, phrase-surface, pred-order, predict,
-  punct, import) fail to detect C-m2. Their IDENTICAL results cannot count
-  as parity evidence until an injected divergence on their own surface is
-  shown to reach them.
+- Axis C's drivers did not all detect C-m2. The seven identical drivers
+  (key-surface, dict-surface, phrase-surface, pred-order, predict, punct,
+  import) were later validated by their own DRV mutations (§13.2); their
+  conditional IDENTICAL results are evidence only for those driver surfaces.
 - The **zhuyin-diff corpus never exercises key `1`.**
 
 ### G
@@ -319,8 +325,8 @@ Grades use round-2 evidence and cite the round-2 row or issue.
 | M3, M4 | shipped ABI identical; abidiff exit 0 is a deep comparison | CONFIRMED for symbol sets and versioning; REFUTED for the "deep" abidiff claim | the release subject has a `.debug_info` section, yet abidiff on it reports nothing, while a DWARF-built subject reports **75 changed** functions on every cell (`results/X-A-dyn/abidiff/<cell>-dwarf-r1-libpinyin.stat.txt`) |
 | M5 | 11/12 drivers IDENTICAL, so the surface is identical | UNSUPPORTED | 7 of those drivers do not detect C-m2 (#568–570); the union-diff attribution is REFUTED (D8) |
 | M6 | same-backend user dir round-trips | UNSUPPORTED | round 1 had no injected mutation; round-2 D-m1 detection exists, and the round-trip differences are NOT-ESTABLISHED (D-08, #543). kc interop fails (D-07, #529) on a cell round 1 never built |
-| M7 | §12 residual stable, MATCH | UNSUPPORTED | no mutation; the gate compares a committed fixture. Item 2 decides it |
-| M8 | all 131 exports implemented | CONFIRMED | 131 exported on every cell; the round-2 battery exercised all 79 pinyin exports (zhuyin half: item 3) |
+| M7 | §12 residual stable, MATCH | UNSUPPORTED | no round-1 mutation; item 2 found the gate blind to G-m1 despite changed C-ABI outputs (§13.1) |
+| M8 | all 131 exports implemented | CONFIRMED | 131 exported on every cell; the round-2 batteries exercised all 79 pinyin and 52 zhuyin exports (§14) |
 
 **MISSED:** findings on axes where round 1 claimed MATCH.
 
@@ -329,6 +335,7 @@ Grades use round-2 evidence and cite the round-2 row or issue.
 | D-01 (#523), the profile wipe on the 8th launch | M6, axis D | on the tkrzw cell round 1 ran |
 | D-15's `--atleast-version=2.11.92` failure and non-relocatable `libdir` (#537) | M3, axis A | beyond its D1 version string |
 | D-10 (#532), D-11 (#533), D-12 (#534), D-19 (#541), D-25 (#542) | M5's surface claim | reachable through the C ABI |
+| C-1, C-2, C-3 (§15) | M5's output-equivalence claim | option words and invalid C-string bytes omitted from its drivers; exposed by the mandated axis-C sweep |
 
 ### 6.2 Falsifiers
 
@@ -338,7 +345,7 @@ Grades use round-2 evidence and cite the round-2 row or issue.
 | Φ2 abidiff exit 0 means structurally identical | REFUTED | see M3/M4 |
 | Φ3 headers | CONFIRMED (count UNSUPPORTED) | 5, not 7 |
 | Φ4 11/12 drivers | UNSUPPORTED | vacuous drivers (#568–570); union attribution refuted |
-| Φ5 §12 gate | UNSUPPORTED | pending item 2 |
+| Φ5 §12 gate | UNSUPPORTED | item 2 shows G-m1 changes non-fixture outputs while the gate remains green (§13.1) |
 | Φ6 round-trip | UNSUPPORTED | see M6; D-01 was MISSED |
 | Φ7 no STUB/ABSENT | CONFIRMED | |
 | Φ8 "the differential instrument is non-vacuous" | UNSUPPORTED | one driver (key-surface) was validated, then generalised to all 12 |
@@ -486,20 +493,16 @@ Harnesses worth keeping are proposed for adoption in section 10.
    decision for the BDB default. The only maintainer act is the merge of
    #502; `mergedBy` was not queried.
 6. **This is not decided here, and no default is changed.** The default
-   build (bdb) is also the cell whose parity is least established. The §12
-   gate uses a tkrzw-derived fixture, and several same-data-dir drivers are
-   vacuous (section 5, C).
+   build (bdb) is also a cell with remaining NOT-ESTABLISHED axes. The §12
+   gate uses a tkrzw-derived fixture and misses G-m1 (§13.1).
 
 ## 10. Open gaps and proposed follow-ups
 
 | gap | what blocked it | next step |
 |---|---|---|
 | L on all cells | never started | run the pre-registered workloads on a quiet host, one cell at a time |
-| G mutations on all cells | the §12 gate mutant runs were never started; at the C-ABI surface G-m1 went undetected | build the gate test from `mut-src` (`5eb5c51`) and run it with `OXPINYIN_AUDIT_MUT=G-m1` / `G-m2` / unset |
-| C option sweep, encoding battery, zhuyin layouts | killed at stop | rerun `harness/C-options/` sweep v3 per cell; add C-m1 |
-| B libzhuyin | no mutation validation or ledger | adopt the pinyin battery's analysis; C-m3 plus an LD_PRELOAD shim as the non-vacuity check |
+| G on all cells | G-m1 reaches code and changes four non-fixture C-ABI outputs, but the §12 gate misses it (§13.1) | extend the fixture with a changed input and rerun both mutants and unset |
 | J internal ledger | not produced | clang `-emit-llvm` call graph from the 131 exports |
-| C non-detecting drivers (7) | C-m2 does not reach their surfaces | design a per-driver mutation on its own surface |
 | D-08, D-24 attribution | salvaged, not analysed | diff the unigram/bigram dumps per phrase; classify the key-byte deltas by scheme and option |
 | GitHub tracking (Step 5) | not started; token lacks the `project` scope | `gh auth refresh -s project`; file one issue per D-row, register item and gap |
 | Re-measure on the current main | main moved to `34a66bc9` (`expand_keys` change in core) | re-run B, C and G on the new tip |
@@ -742,3 +745,139 @@ garbage, bad, 3keys, empty, NULL and bad UTF-8 are all IDENT on every cell,
 because both sides reject them. The observable divergence is the parser
 itself (Z-1). D3 is therefore graded **REFUTED as characterised**: the
 `MAX` substitution has no observable effect, and the real defect is Z-1.
+
+## 15. Completion run: item 4 (options, encoding, layouts)
+
+Addendum 3 of the pre-registration preceded the option sweep; addendum 4,
+commit `065f601f`, preceded the isolated-import rerun. The audited objects
+remain those built from `18d782089bd1`, with tkrzw, bdb and kc using their
+matched oracle data directories. The option sweep began
+`2026-09-25T01:28:02Z`; the current-main import recheck ended
+`2026-09-25T20:58:48Z` (timestamps emitted by the run scripts).
+
+The scratch drivers and raw results are under
+`/home/sheng/audit-r2-scratch/harness/C-options/` and
+`/home/sheng/audit-r2-scratch/results/X-C-options/`. Regenerate the bounded
+summaries with `python3 harness/C-options/audit_sweep_results.py`,
+`python3 harness/C-options/audit_encoding_results.py`,
+`python3 harness/C-options/audit_layout_results.py`, and
+`python3 harness/C-options/audit_isolated_import.py`. Their captures are
+`logs/item4-{sweep,encoding,layout,isolated-import}-analysis.log`.
+None is in the earlier evidence archive; the scratch directory must be
+retained until these captures are preserved.
+
+### 15.1 Instrument controls and hygiene
+
+| surface | inputs per cell | oracle repeat | subject repeat | mutation detected | unset vs pristine |
+|---|---:|---|---|---|---|
+| options, single words | 104 words × 496 corpus lines | byte-identical | byte-identical | C-m1: 34 words | byte-identical |
+| options, defined-bit pairs | 435 words × 149 corpus lines | byte-identical | byte-identical | C-m1: 29 words | byte-identical |
+| encoding battery | 1,043 case headers | identical after process-ID/time normalization | identical | C-m1: 2 cases; C-m3: 3 cases | identical |
+| layout table + three corpora | schemes 0–10; 1,236 lines per corpus | identical | identical | C-m3: table and all three corpora | identical |
+| isolated import | 4 exports × 58 named inputs | two identical fresh-dir runs | two identical fresh-dir runs | C-m1/C-m3 in parent encoding battery | pristine staged hashes unchanged |
+
+Source-side spot checks: pinned `pinyin.cpp:1498-1515,1557-1559,1602-1604`,
+`storage/zhuyin_parser2.cpp:48-55`, `zhuyin.cpp:500-537`; audited Rust
+`session/mod.rs:593-640`, `session/lookup.rs:1030-1051`, `capi/ffi.rs:19-28`,
+and `zhuyin-capi/iterators.rs:59-92`. On each cell,
+`head -n 2 results/X-C-options/sweep/<cell>/sha-before.txt | cmp -
+results/X-C-options/sweep/<cell>/sha-after.txt` passed; the corresponding
+layout SHA files compare directly. `git -C mut-src status --short` was empty.
+The gated mutant with its variable unset also matched the pristine object.
+
+Hygiene deviation: after addendum 3, the encoding launch script changed
+from background fan-out to sequential execution with `set -euo pipefail`;
+the probe source, inputs and output format were unchanged. That contradicts
+addendum 3's sentence that the *only* harness change was the option runner's
+parallelism. The original `encbat.c` SHA-256 remained
+`0743076fbd0373c2f015f68201b5f0cf43cc7892126029e2c9a7e4c99d20da4c`;
+the isolated importer used a separately compiled, exact-filter copy.
+
+The analyzers remove D-23's known fresh-user-dir diagnostic to compare
+payloads, and normalize glib process IDs/times. Thus "same" below is
+**conditional payload equality**, not a MATCH verdict under the
+pre-registered diagnostic-inclusive rule. D-23 remains DIVERGENT for those
+cases. The analyses never mask option words or candidate hashes.
+
+### 15.2 Option words
+
+`wc -l harness/C-options/words-{single,pair}.txt` gives 104 and 435;
+the corpus counts are 496 and 149. All three cells gave the same conditional
+block counts per cell:
+
+| kind | same payload | oracle abort | candidate | parse/key | sentence |
+|---|---:|---:|---:|---:|---:|
+| single | 35,052 | 11,088 | 4,955 | 294 | 299 |
+| pair | 43,932 | 14,988 | 5,779 | 0 | 551 |
+
+The first changed fields, not a blanket verdict for each cluster:
+
+- **C-1:** word `0x00000002`, `P3 input=tsz`: both sides consume three
+  bytes and expose the same incomplete `c` key; pin `sentence=1/1 从,
+  n=718`, subject `sentence=1/0, n=0`. Among single words the pin gave
+  n=718 vs 0 on 34 words and n=2188 vs 0 on one; six pin runs aborted.
+  In the subject, `walk` drops `EdgeKind::Incomplete` whenever
+  `PINYIN_INCOMPLETE` is clear (`lookup.rs:1042-1051`), even though the
+  transformed chewing key was parsed. This is a source-path explanation,
+  not a claim that every affected word has the same cause.
+- **C-2:** word `0x00008002` (`PINYIN_AMB_L_N`), `D1 input=nihk`:
+  both sides consume all four bytes and select 你好; pin n=499 with 利好,
+  subject n=126 without it. `Z1 input=su3cl3` gives pin n=497 and subject
+  n=125. The pin calls `fuzzy_syllable_step` after matrix fill for both
+  transformed parsers; the subject's `build_scan_matrix` returns early when
+  `divided` is false, before `fuzzy_additions`. The pair sweep found this
+  D1 count mismatch on 28 words per cell.
+
+### 15.3 Encoding and isolated import
+
+The battery's 1,043 case headers per cell had stable repeats and successful
+mutation controls. Excluding the 232 import case headers that shared a user
+directory, the analyzer found 237 conditional payload differences per cell;
+many are previously ledgered abort, input-limit and key differences. The
+shared-directory import counts (133/27/27 differing cases on
+tkrzw/bdb/kc) are **not** per-input verdicts and were discarded.
+
+The addendum-4 rerun put each import probe/input/side/repeat in a new user
+directory. `audit_isolated_import.py` regenerated the same counts on every
+cell, with no missing or unstable case:
+
+| import export | conditional equal payloads | differing payloads | first differing inputs |
+|---|---:|---:|---|
+| pinyin phrase | 56 | 2 | invalid surrogate, above-Unicode-max bytes |
+| pinyin reading | 53 | 5 | `ni\xffhao`, half-width digit, 256/1024-byte `su3`, `jv` |
+| zhuyin phrase | 53 | 5 | apostrophe, space, invalid bytes, 绿 |
+| zhuyin reading | 43 | 15 | tab/DEL, full-width punctuation/digit, `lu:`, long `su3`, others |
+
+The distinct new boundary defect is **C-3**: for `ni\xffhao`, the pin's
+`pinyin_parse_more_full_pinyins` reports consumed/parsed 2 and key `ni`,
+while the subject reports 0 and no key. The pin passes the raw C bytes to
+the parser; subject `cstr_to_string` converts an invalid-UTF-8 C string to
+empty. The pinyin import of the same byte string returns 1 with exported
+`ni` on the pin and 0 on the subject; invalid phrase-byte imports also
+differ. The ordinary `zhuyin_iterator_add_phrase("你", "lu:")` result,
+pin false/subject true, is **Z-1 / #575**, not a new issue: its direct-vs-full
+parser difference was already found in §14.2. The remaining pinyin import
+behaviour extends **D-12 / #534** and the input-cap finding **D-18 / #540**;
+these cases are added to those issues rather than duplicated.
+
+### 15.4 Keyboard layouts and current-main checks
+
+The table enumerated printable ASCII for schemes 0–10 on both C ABIs.
+The oracle/subject table differs in 14 of 22 function/scheme blocks on
+each cell: six invalid-scheme abort-vs-false blocks already under D-03,
+and the eight valid pinyin blocks' space/tone symbols reflect the existing
+default-option difference D-10 / #532. Valid zhuyin table blocks agree
+conditionally on D-23. For each of the three 1,236-line corpora, 980 cases
+differ per cell, all with an oracle abort; no non-aborting case differs
+after D-23 normalization. C-m3 is detected in the table and every corpus,
+and its unset control matches pristine.
+
+The selected severity-2 rerun against current `origin/main`
+`34a66bc915c93a09a1680e70c5c2c252f95ffdfe` used relinked
+`stage-main-{tkrzw,bdb,kc}` objects (`src-main`'s changed `scoring.rs` blob
+matches that commit) and the same oracle prefixes. On **every** cell,
+`repro-main-options.sh` still gives `P3 tsz` n=0 at `0x00000002`
+against pin n=718, and `D1 nihk` n=126 at `0x00008002` against pin
+n=499. `repro-main-import.sh` still gives `zhuyin_iterator_add_phrase`
+for `lu:` pin false, current-main subject true on all cells. No default
+was changed, and these rechecks do not replace the audited-SHA measurements.
