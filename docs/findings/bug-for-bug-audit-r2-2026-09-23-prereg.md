@@ -621,3 +621,68 @@ If the session ends before an axis × cell is closed:
 - one `verdict:not-established` issue is filed per unfinished axis ×
   cell, naming where the work stopped and the next command to run;
 - the report's first section says so plainly.
+
+---
+
+## Addendum 1 — item 2 (G gate mutations, vacuous drivers, F determinism)
+
+Appended 2026-09-25T00:02:54Z, before any item-2 measurement. The sections above
+are unchanged.
+
+### 2a. G-m1 / G-m2 through the §12 gate
+
+- **Instrument.** `sentence_surface_matches_the_declared_residual`,
+  `--include-ignored`, built from `mut-src` `5eb5c51` with each cell's
+  features, `PINYIN_EXPORT_DIR=/opt/oracle/<cell>/lib/libpinyin/data`, and
+  `PINYIN_MODEL_DIR` pointing at the verified model20. Runs per cell:
+  `OXPINYIN_AUDIT_MUT=G-m1`, `=G-m2`, and unset.
+- **Detected** if any of the printed 1-best / distinct-set / ordered counts
+  differs from 491/396/390, or the test fails.
+- **Reverted** if the unset run passes and prints exactly 491/396/390.
+- **If G-m1 goes undetected,** a scratch-only instrumented copy counts how
+  often the G-m1 branch executes during the gate and dumps the n-best tails
+  (text and rank per input) with and without G-m1. The result is classed as:
+  - **unreached** if the count is 0;
+  - **equivalent mutant** if the count is > 0 and every ranked tail is
+    identical;
+  - **blind instrument** if the count is > 0 and any ranked tail differs while
+    the gate's counts do not move.
+- **Falsifiers:**
+  - the unset run does not print 491/396/390, so the build is not the audited
+    baseline;
+  - the dump harness disagrees with the gate's own tail rendering on the
+    pristine build, so the dump is invalid.
+
+### 2b. The seven drivers that missed C-m2
+
+Each driver gets one gated mutation within its own call set, built into a
+second mutant tree (`mut-src` + `DRV-*`):
+
+| driver | mutation |
+|---|---|
+| key-surface | `DRV-key`: negate `pinyin_get_pinyin_is_incomplete` |
+| dict-surface | `DRV-dict`: `pinyin_token_get_unigram_frequency` answers freq+1 |
+| phrase-surface | `DRV-phrase`: `pinyin_get_n_phrase` answers n−1 when n > 1 |
+| pred-order, predict | `DRV-pred`: `pinyin_guess_predicted_candidates` reverses its list |
+| punct | `DRV-punct`: `pinyin_guess_predicted_candidates_with_punctuations` drops its last candidate |
+| import-diff | `DRV-import`: `pinyin_iterator_get_next_phrase` reports count+1 |
+
+- **Validated** if the driver exits 2 with the mutation set, and the unset run
+  is identical to pristine.
+- **NOT-ESTABLISHED** if the driver does not detect its own mutation and no
+  proof is given that nothing in its scope is observable to it.
+- **Falsifier:** the mutated function is not called on the driver's path.
+  Checked with `ltrace`/symbol grep; if it fires, the mutation is invalid.
+
+### 2c. F determinism on bdb
+
+1. Diff the bdb pristine `fx-pinyin` runs a and b.
+2. Identify the nondeterministic probe or probes and their source: an address,
+   a time, DB-internal state, or ordering.
+3. If the source is environmental, mask it with a documented normalisation.
+   If it is behavioural, record it as a finding.
+4. Re-run F on bdb (pristine a/b, F-m1, F-m2, unset).
+
+- **Deterministic** if a == b after the declared normalisations.
+- **Falsifier:** a residual difference after normalisation keeps bdb F
+  NOT-ESTABLISHED.
