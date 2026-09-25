@@ -686,3 +686,43 @@ second mutant tree (`mut-src` + `DRV-*`):
 - **Deterministic** if a == b after the declared normalisations.
 - **Falsifier:** a residual difference after normalisation keeps bdb F
   NOT-ESTABLISHED.
+
+---
+
+## Addendum 2 — item 3 (libzhuyin half of axis B)
+
+Appended 2026-09-25T00:50:26Z, before this item's measurement. Earlier runs of
+the same harness predate this addendum and are not used for verdicts.
+
+- **Instrument.** `harness/B-zhuyin/v2`.
+  - `zprobes.c` probes all 52 `zhuyin_*` exports, each in a forked child
+    with a fresh user dir. The probe classes are:
+    - NULL, empty, out-of-range and oversized inputs;
+    - error-path returns;
+    - out-params on failure, via 0xA5 sentinels;
+    - free-function pairing, through the `allocshim` allocator-family
+      interposer;
+    - lifecycle misuse.
+  - `pprobes.c` holds the pinyin twin for the `iterator_add_phrase`
+    differential.
+- **Protocol per cell** (`cell.sh`): oracle r1/r2; pristine r1/r2; the gated
+  mutant with `OXPINYIN_AUDIT_MUT=C-m3`, then unset; pristine with the ungated
+  `LD_PRELOAD` shim `Bz-shim-m1` (`zhuyin_get_n_candidate` reports n+1),
+  then with the shim removed; the pristine sha256 is checked against
+  BUILD-INFO.
+- **Per-export MATCH** needs all of:
+  - every probe of that export is identical between oracle r1 and subject r1
+    after normalisations 1–3;
+  - both mutations are detected;
+  - both reverts are confirmed.
+- **DIVERGENT** otherwise. Each differing probe is classed as in section 2.
+- **Required differential.** An out-of-range, garbage or empty key passed to
+  `zhuyin_iterator_add_phrase` against `pinyin_iterator_add_phrase` on
+  both sides, comparing the return value and the user store. This decides
+  round-1 row D3.
+- **Falsifiers:**
+  - oracle r1 ≠ r2 beyond the normalisations makes the affected probes
+    NOT-ESTABLISHED;
+  - C-m3 or the shim not detected makes the export ledger NOT-ESTABLISHED on
+    that cell;
+  - any export with no probe makes the ledger incomplete.
