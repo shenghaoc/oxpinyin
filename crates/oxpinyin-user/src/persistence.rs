@@ -640,7 +640,8 @@ pub fn system_new_total(
 /// `user.conf` is `mark_version`'s marker with `open_counter` — the
 /// session's [`Loaded::open_counter`]: libpinyin's save writes back the
 /// value its init raised (`pinyin.cpp:1143`), libzhuyin's a fresh 0
-/// (`zhuyin.cpp:695`). Neither save moves the counter.
+/// (`zhuyin.cpp:695`). Neither save moves the counter. It is written
+/// after the renames, in place, not staged.
 ///
 /// # Errors
 ///
@@ -734,12 +735,6 @@ pub fn save(
             stage_chunk(dir, name, &bytes, &mut staged)?;
         }
 
-        // ---- user.conf ----------------------------------------------------
-        let mut marker = UserTableInfo::conform_to(versions);
-        marker.open_counter = open_counter;
-        let tmp = dir.join(format!("{USER_CONF}.tmp"));
-        std::fs::write(&tmp, marker.to_text())?;
-        staged.push((tmp, dir.join(USER_CONF)));
         Ok(())
     })();
 
@@ -758,7 +753,11 @@ pub fn save(
                     return Err(error.into());
                 }
             }
-            Ok(())
+            // `user.conf` last, and in place: `mark_version` runs after
+            // the renames and `fopen`s the marker over the existing file
+            // (`pinyin.cpp:1141-1143`, `zhuyin.cpp:695`), so the file
+            // keeps whatever mode it already had.
+            write_marker(dir, versions, open_counter)
         }
         Err(error) => {
             for (tmp, _) in &staged {
@@ -871,7 +870,9 @@ fn stage_dbm(
         Err(e) => return Err(e.into()),
     }
     remove_dbm_sidecars(dir, &tmp);
-    let store = DefaultStore::create(&tmp)?;
+    // A user table, created with the mode the backend's own `save_db`
+    // uses for one (Berkeley DB's 0600, not `attach`'s 0644).
+    let store = DefaultStore::create_user(&tmp)?;
     store.write(|txn| {
         for (key, value) in rows {
             txn.put_raw(key, value)?;
@@ -926,9 +927,21 @@ fn stage_chunk(
 ) -> Result<(), PersistenceError> {
     let final_path = dir.join(name);
     let tmp = dir.join(format!("{name}.tmp"));
-    std::fs::write(&tmp, bytes)?;
+    write_chunk_file(&tmp, bytes)?;
     staged.push((tmp, final_path));
     Ok(())
+}
+
+/// `MemoryChunk::save` (`memory_chunk.h:536-537`): `open(O_CREAT |
+/// O_WRONLY | O_TRUNC, 0644)` over `path`, then the bytes. The process
+/// umask applies to 0644, and a file that already exists keeps its own
+/// mode, as upstream's does — `std::fs::write` would ask for 0666.
+fn write_chunk_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o644);
+    std::io::Write::write_all(&mut options.open(path)?, bytes)
 }
 
 #[cfg(test)]
@@ -1409,6 +1422,85 @@ mod tests {
                 .expect("load")
                 .wiped
         );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// The process umask, read without `unsafe`: a file created asking
+    /// for 0777 keeps exactly the bits the umask lets through.
+    #[cfg(unix)]
+    fn current_umask(dir: &Path) -> u32 {
+        use std::os::unix::fs::OpenOptionsExt;
+        let probe = dir.join("umask-probe");
+        let _ = std::fs::remove_file(&probe);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o777)
+            .open(&probe)
+            .expect("probe");
+        let granted = mode_of(&probe);
+        std::fs::remove_file(&probe).expect("probe");
+        !granted & 0o777
+    }
+
+    #[cfg(unix)]
+    fn mode_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+            .permissions()
+            .mode()
+            & 0o777
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn user_files_take_the_pins_creation_modes() {
+        // #544: each file's mode is what upstream asks for, less the
+        // umask — MemoryChunk::save's 0644 for the chunks
+        // (memory_chunk.h:536-537), the backend's own save_db request for
+        // the three DBMs (Berkeley DB 0600, Kyoto Cabinet's ofstream 0666,
+        // tkrzw's 0644), fopen's 0666 for user.conf — and user.conf is
+        // written in place, so a mode the user gave it survives a save
+        // while the renamed files come back fresh.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir("modes");
+        let originals = originals();
+        let umask = current_umask(&dir);
+        save(&dir, &state(), &originals, &versions(), 0).expect("save");
+
+        let dbm_request = match oxpinyin_store::DEFAULT_STORE_DB_FORMAT {
+            "BerkeleyDB" => 0o600,
+            "KyotoCabinet" => 0o666,
+            _ => 0o644,
+        };
+        let mut expected: Vec<(String, u32)> = vec![(USER_CONF.to_owned(), 0o666)];
+        for dbm in [UserDbm::Bigram, UserDbm::PinyinIndex, UserDbm::PhraseIndex] {
+            expected.push((dbm.file_name(), dbm_request));
+        }
+        for &(_, name) in USER_LIBRARY_FILES.iter().chain(SYSTEM_LOG_FILES) {
+            expected.push((name.to_owned(), 0o644));
+        }
+        for (name, request) in &expected {
+            assert_eq!(mode_of(&dir.join(name)), request & !umask, "{name}");
+        }
+
+        for name in [USER_CONF, "user.bin"] {
+            std::fs::set_permissions(dir.join(name), std::fs::Permissions::from_mode(0o640))
+                .expect("chmod");
+        }
+        save(&dir, &state(), &originals, &versions(), 0).expect("save again");
+        assert_eq!(
+            mode_of(&dir.join(USER_CONF)),
+            0o640,
+            "user.conf is rewritten in place"
+        );
+        assert_eq!(
+            mode_of(&dir.join("user.bin")),
+            0o644 & !umask,
+            "user.bin is replaced"
+        );
+
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 

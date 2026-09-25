@@ -300,14 +300,35 @@ impl WriteStore for KcStore {
         })
     }
 
+    /// A user index table. libpinyin writes these with `dump_snapshot`
+    /// (`chewing_large_table2_kyotodb.cpp:124-130`,
+    /// `phrase_large_table3_kyotodb.cpp:139-145`), whose `std::ofstream`
+    /// creates the file with mode 0666 before the umask. This store
+    /// still writes a tree there rather than a snapshot, so it makes the
+    /// same request itself — the file is created empty with 0666 — and
+    /// Kyoto Cabinet then opens the empty file as a new database, keeping
+    /// its mode. A plain [`WriteStore::create`] would leave the mode to
+    /// Kyoto Cabinet's own 0644.
+    fn create_user(path: &Path) -> Result<Self, StoreError> {
+        let mut file = std::fs::OpenOptions::new();
+        file.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        std::os::unix::fs::OpenOptionsExt::mode(&mut file, 0o666);
+        drop(file.open(path).map_err(StoreError::Io)?);
+        Self::create(path)
+    }
+
     fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError> {
         // The inverse of `open_user_bigram`, mirroring the pin's
         // `Bigram::save_db` (`ngram_kyotodb.cpp:82-101`) — unlink then
         // dump — with the unlink deferred into an atomic rename: the
         // snapshot is dumped to a sibling temporary first, so a failure
         // anywhere before the rename leaves the previous profile intact
-        // instead of destroyed.
+        // instead of destroyed. The temporary itself is unlinked first,
+        // as `pinyin.cpp:1017` unlinks it: a stale one's mode would
+        // otherwise survive the dump's truncation.
         let tmp = crate::sibling_temp(path);
+        crate::remove_if_present(&tmp)?;
         let db = Db::open_stash()?;
         for (key, value) in rows {
             db.set(key, value)?;
