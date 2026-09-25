@@ -12,9 +12,7 @@
     half), D, F and G.
   - The other axes are partial, as the table below states.
 - **Axis L (complexity) never ran.**
-- **Step 4 (line-by-line verification of round 1, PR #516) was not done.**
-  The round-1 report was never opened. The round-1 table (section 6) is
-  therefore empty.
+- **Step 4 (round-1 verification) is done** (section 6).
 - **Step 5 (GitHub tracking)** was done without a project board, which the maintainer removed from Step 5. Tracking issue #573 has the 50 audit issues (#523–#572) as sub-issues, under milestone *Bug-for-bug audit r2*, with `bug-for-bug`/`verdict:*`/`axis:*`/`severity:*`/`backend:*` labels.
 - **Measured subject:** `origin/main` at `18d782089bd1`. Main has since moved
   to `34a66bc915c9`, adding 00466d50 (`expand_keys` early stop in
@@ -283,11 +281,85 @@ section 8).
   undeclared in C modes, because the headers are identical. That is MATCH on
   a static basis.
 
-## 6. Round-1 verification
+## 6. Round-1 verification (Step 4)
 
-**Not done.** The round-1 report (`docs/findings/bug-for-bug-audit-2026-09-23.md`
-on PR #516) was not opened in this round. No row of round 1 is CONFIRMED,
-REFUTED or UNSUPPORTED here.
+The round-1 report is read at `origin/docs/bug-for-bug-audit-2026-09-23`
+(`4a9fddb5`): only its §2.2 falsifier table, §3 instrument table and §4 ledger.
+Grades use round-2 evidence and cite the round-2 row or issue.
+
+- **CONFIRMED**: round 2 reproduces the claim.
+- **REFUTED**: round-2 evidence contradicts the claim.
+- **UNSUPPORTED**: round-1 evidence could not establish it.
+- **MISSED**: a round-2 finding on an axis where round 1 claimed MATCH.
+
+### 6.1 Ledger rows
+
+| r1 row | round-1 claim (short) | grade | round-2 basis |
+|---|---|---|---|
+| D1 | `.pc` Version/include-subdir 2.11.91 vs 2.11.92 | CONFIRMED | D-15 (#537) |
+| D2 | `pinyin_train` ignores `index` (source only) | CONFIRMED | D-02 (#524), executed |
+| D3 | `zhuyin_iterator_add_phrase` substitutes `MAX` for an out-of-range key where the pinyin twin rejects | UNSUPPORTED | source-only in round 1; round 2 decides it in item 3 (#562–564) |
+| D4 | row 33 divergence, verdict R (registered) | REFUTED (verdict) | divergence CONFIRMED (D-05, #527), but an open REVERT TARGET counts as unregistered |
+| D5 | row 34, verdict R | REFUTED (verdict) | still present by source (K-policy); an open REVERT TARGET is unregistered |
+| D6 | row 36, verdict R | REFUTED (verdict) | divergence CONFIRMED (D-19, #541); unregistered while open |
+| D7 | row 37, verdict R | REFUTED (verdict) | still present by source (K-policy); unregistered while open |
+| D8 | union-diff `pred 你` is class (a), row 20 | REFUTED | D-05 (#527): the pin writes no bigram after a whole-row NBEST train, so the mechanism is row 33 and occurs on every cell; R-3 (#550) |
+| D9 | §12 residual entirely (a) | REFUTED | D-13 (#535): keep-rule and comparator differences move results and are not (a) |
+| D10 | class-(b) defects (aux over-read, bigram-export stale buffer, padding) registered | REFUTED (scope) | D-20 (#530): the pin crashes on the first export cycle, not only a repeated one |
+| D11 | class-(c) rows answered false/Err **plus logs** | REFUTED | D-03 (#525): 74 executed abort sites, no log line anywhere; R-2 (#549) |
+| D12 | tkrzw error collapse registered, "no broader" | UNSUPPORTED | doc-cited only; not executed in either round (memory-exhaustion path); R-4 (#551): absent from both registers |
+| D13 | row 35 stale | CONFIRMED | R-1 (#548) |
+| D14 | `installed-naming.md` 2.11.91 prose | CONFIRMED | P-1 (#552) |
+| D15 | `Dockerfile.perf-matrix` cell D label | CONFIRMED | P-1 (#552) |
+| D16 | `upstream-report-drafts.md` has 5 items, not 13 | CONFIRMED | E-exec count (5) |
+| N1–N3, N5–N9 | axes declared NOT-ESTABLISHED | CONFIRMED | accurate as declared; round 2 filled N1 (B-pinyin), N3 (E), N5 (H), N6 (I) and N9 (C-drivers zhuyin) |
+| N4 | 280 `assert(` + 61 `abort()` = 341 | CONFIRMED | `grep -rn 'assert(\|abort()' src` at the pin = 341 (280 + 61). Round 2's 357 comes from a different pattern (`\b…\s*\(`, which includes comments and disabled code) |
+| M1 | version scripts identical | CONFIRMED | static A |
+| M2 | installed headers identical ("7 pairs") | CONFIRMED (count UNSUPPORTED) | 5 installed headers, byte-identical on all cells; "7/7" does not match the installed set |
+| M3, M4 | shipped ABI identical; abidiff exit 0 is a deep comparison | CONFIRMED for symbol sets and versioning; REFUTED for the "deep" abidiff claim | the release subject has a `.debug_info` section, yet abidiff on it reports nothing, while a DWARF-built subject reports **75 changed** functions on every cell (`results/X-A-dyn/abidiff/<cell>-dwarf-r1-libpinyin.stat.txt`) |
+| M5 | 11/12 drivers IDENTICAL, so the surface is identical | UNSUPPORTED | 7 of those drivers do not detect C-m2 (#568–570); the union-diff attribution is REFUTED (D8) |
+| M6 | same-backend user dir round-trips | UNSUPPORTED | round 1 had no injected mutation; round-2 D-m1 detection exists, and the round-trip differences are NOT-ESTABLISHED (D-08, #543). kc interop fails (D-07, #529) on a cell round 1 never built |
+| M7 | §12 residual stable, MATCH | UNSUPPORTED | no mutation; the gate compares a committed fixture. Item 2 decides it |
+| M8 | all 131 exports implemented | CONFIRMED | 131 exported on every cell; the round-2 battery exercised all 79 pinyin exports (zhuyin half: item 3) |
+
+**MISSED:** findings on axes where round 1 claimed MATCH.
+
+| finding | round-1 claim it falls under | basis |
+|---|---|---|
+| D-01 (#523), the profile wipe on the 8th launch | M6, axis D | on the tkrzw cell round 1 ran |
+| D-15's `--atleast-version=2.11.92` failure and non-relocatable `libdir` (#537) | M3, axis A | beyond its D1 version string |
+| D-10 (#532), D-11 (#533), D-12 (#534), D-19 (#541), D-25 (#542) | M5's surface claim | reachable through the C ABI |
+
+### 6.2 Falsifiers
+
+| Φ | grade | basis |
+|---|---|---|
+| Φ1 export sets | CONFIRMED | static A |
+| Φ2 abidiff exit 0 means structurally identical | REFUTED | see M3/M4 |
+| Φ3 headers | CONFIRMED (count UNSUPPORTED) | 5, not 7 |
+| Φ4 11/12 drivers | UNSUPPORTED | vacuous drivers (#568–570); union attribution refuted |
+| Φ5 §12 gate | UNSUPPORTED | pending item 2 |
+| Φ6 round-trip | UNSUPPORTED | see M6; D-01 was MISSED |
+| Φ7 no STUB/ABSENT | CONFIRMED | |
+| Φ8 "the differential instrument is non-vacuous" | UNSUPPORTED | one driver (key-surface) was validated, then generalised to all 12 |
+| Φ9 version fired | CONFIRMED | D-15 |
+| Φ10 train index fired | CONFIRMED | D-02 |
+| Φ11 revert targets open | CONFIRMED | K-policy |
+| Φ12 row 35 stale | CONFIRMED | R-1 |
+
+### 6.3 Round-1 methodology breaches
+
+1. **Pre-registration after measurement.** Self-disclosed in round 1's preamble.
+2. **MATCH without an injected mutation.** M3, M4, M6, M7 and M8 on axes A, D, G and J were supported by real detection, strict assertions or DWARF presence instead.
+3. **Single backend.** Every behavioural axis ran on tkrzw only. The workspace default (bdb) and kc were never built, and D-07 (kc) was therefore unreachable.
+4. **Premature generalisations:**
+   - Φ8 extends one validated driver to the whole instrument;
+   - D11 asserts "+ logs" without checking the log calls (the subject has two, both at init);
+   - D12 asserts "no broader" without enumerating the error paths.
+5. **Register text accepted as evidence.** D8 (row 20's mechanism), D10 and D11 restate register rows without measuring them.
+6. **The abidiff "depth" was argued from the presence of a `.debug_info` section,** not from type coverage of the exported functions.
+7. **Counts not regenerated against the installed set.** "7/7 headers" versus the 5 installed.
+8. **An open REVERT TARGET classified as registered (R).** D4–D7.
 
 ## 7. Register reconciliation (axis K, static, executed where noted)
 
@@ -429,7 +501,6 @@ Harnesses worth keeping are proposed for adoption in section 10.
 | J internal ledger | not produced | clang `-emit-llvm` call graph from the 131 exports |
 | C non-detecting drivers (7) | C-m2 does not reach their surfaces | design a per-driver mutation on its own surface |
 | D-08, D-24 attribution | salvaged, not analysed | diff the unigram/bigram dumps per phrase; classify the key-byte deltas by scheme and option |
-| Round-1 verification (Step 4) | not started | read #516's report and grade every row against sections 3–7 |
 | GitHub tracking (Step 5) | not started; token lacks the `project` scope | `gh auth refresh -s project`; file one issue per D-row, register item and gap |
 | Re-measure on the current main | main moved to `34a66bc9` (`expand_keys` change in core) | re-run B, C and G on the new tip |
 
