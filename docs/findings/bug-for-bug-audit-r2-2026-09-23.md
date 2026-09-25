@@ -27,12 +27,12 @@
 | A ABI surface | static MATCH (exc. .pc); layout MATCH | same | same | A-m1 and A-m3 detected and reverted; abidiff type section NOT-ESTABLISHED by pre-registration |
 | B libpinyin contract | DIVERGENT (40 findings) | same | same | B-m1, B-m2, F-m2 detected; gated revert identical |
 | B libzhuyin contract | observations only | same | same | 458 probes/cell, 278–279 differ; no mutation validation: **NOT-ESTABLISHED** for any MATCH |
-| C drivers | DIVERGENT (6 kinds) | same, +1 broader | same | C-m2 detected by 6 of 13 drivers; the 7 non-detecting drivers are NOT-ESTABLISHED |
+| C drivers | DIVERGENT (6 kinds) | same, +1 broader | same | C-m2 detected by 6 drivers; the other 7 were validated by their own DRV-* mutations (§13.2), so their IDENTICAL results are MATCH |
 | C options/encoding/zhuyin layouts | **NOT-ESTABLISHED** | same | same | sweep killed at stop; C-m1 not run |
 | D persisted state | DIVERGENT (open counter, cross-read) | same | same, +kc interop | D-m1 (round-trip) and D-m3 (cycle) detected; revert identical |
 | E defect preservation | 37 DIVERGENT, 14 NE | same | same | E-m1 detected on all cells, reverted |
-| F errors/diagnostics | 74 sites DIVERGENT | same | same | F-m1, F-m2 detected (tkrzw); bdb subject rerun not byte-identical (pinyin), so bdb F is NOT-ESTABLISHED for MATCH |
-| G numerics | **NOT-ESTABLISHED** (gate printed 491/396/390) | **NOT-ESTABLISHED** (gate passed) | **NOT-ESTABLISHED** (gate printed 491/396/390) | no G row may be MATCH. The §12 gate's own mutation runs were never done. At the C-ABI surface (504 fixture inputs), G-m2 was detected on every cell (4 lines) but G-m1 (+1e-3 nats per step) was **not** detected (0 lines). D-13's divergence stands on counterfactual and source evidence |
+| F errors/diagnostics | 74 sites DIVERGENT | same | same | F-m1, F-m2 detected on every cell; bdb determinism holds under normalisation 2 (§13.3) |
+| G numerics | **NOT-ESTABLISHED** (G-m2 detected, **G-m1 not**: blind gate, §13.1) | **NOT-ESTABLISHED** (same) | **NOT-ESTABLISHED** (same) | no G row may be MATCH. The §12 gate's own mutation runs were never done. At the C-ABI surface (504 fixture inputs), G-m2 was detected on every cell (4 lines) but G-m1 (+1e-3 nats per step) was **not** detected (0 lines). D-13's divergence stands on counterfactual and source evidence |
 | H process state | DIVERGENT | same | same, +fork hang | H-m1 and H-m2 detected and reverted |
 | I drop-in | DIVERGENT (.pc, consumer runtime) | same | same | I-m2 and I-m3 (C-m2) detected; header matrix fails identically on both sides |
 | J coverage | export ledger 131 = 131, identical across cells (static) | same | same | internal ledger **NOT-ESTABLISHED** (not produced) |
@@ -591,3 +591,91 @@ Tracking issue: #573.
 | NE-Cdrv-kc | #570 |
 | NE-Fdet-bdb | #571 |
 | NE-Step4 | #572 |
+
+## 13. Completion run: item 2 (gate mutations, vacuous drivers, bdb F determinism)
+
+This work was pre-registered in addendum 1 of the pre-registration file
+(`e18fd9fc`). The subject is `18d78208`; the mutant trees are `mut-src`
+`5eb5c51` and `mut-src-2` (`5eb5c51` plus the scratch-only `DRV-*` mutations
+and a G-m1 hit marker, `7cf6f05`). Measured 2026-09-24/25 (UTC).
+
+### 13.1 G-m1 / G-m2 through the §12 gate
+
+The runs used the release-profile gate
+(`harness/G-gate/r2-run-gate.sh <cell> mut <label> <MUTID|unset>`).
+
+| cell | G-m1 | G-m2 | unset (revert) |
+|---|---|---|---|
+| tkrzw | pass, 491/396/390: **not detected** | FAIL, 491/395/388: detected | pass, 491/396/390 |
+| bdb | pass, 491/396/390: **not detected** | FAIL, 491/395/388: detected | pass, 491/396/390 |
+| kc | pass, 491/396/390: **not detected** | FAIL, 491/395/388: detected | pass, 491/396/390 |
+
+**G-m1 determination: blind instrument.** It applies on every cell:
+
+- **The path is reached.** A hit marker in the gated branch (`mut-src-2`)
+  fires at least 262,144 times over the 504 gate inputs and at least
+  4,194,304 times over the 10,465-input corpus, on each cell.
+- **The output changes.** The C-ABI surface
+  (`harness/G-gate/rerun-surface.sh <cell> mut2 <inputs> …`) with G-m1
+  against unset differs on **4 of 10,465** corpus inputs, the same 4 on
+  every cell. For example, `xiehenshuaitong` n-best rows 1 and 2 swap
+  (写很帅通 / 写很率同), and `yaomeichong` row 1 changes 妖媚冲 → 要枚冲.
+- **The gate does not see it.** None of the gate's 504 fixture inputs
+  changes, and the unset surface equals the pristine surface.
+
+So the §12 gate cannot detect a per-step cost shift that does change
+observable n-best output. Its fixture is too narrow. G therefore stays
+**NOT-ESTABLISHED** on every cell. The gate fails the pre-registration's
+mutation rule because G-m1 is undetected, even though G-m2 is detected and
+reverted. This is filed as a register/instrument-integrity finding (§12
+issue map, G-1).
+
+### 13.2 The seven drivers that missed C-m2
+
+The `sdd` group was run with `SUBJECT_ENV=OXPINYIN_AUDIT_MUT=<id>` against the
+`mut2` object. In the table, "detected" is the count of subject-output lines
+that differ from `pristine-1`.
+
+| driver | mutation | tkrzw | bdb | kc | unset = pristine |
+|---|---|---|---|---|---|
+| key-surface | DRV-key | 36 | 36 | 36 | yes (all cells) |
+| dict-surface | DRV-dict | 8 | 8 | 8 | yes |
+| phrase-surface | DRV-phrase | 22 | 22 | 22 | yes |
+| pred-order | DRV-punct (substitute) | 8 | 8 | 8 | yes |
+| predict | DRV-punct (substitute) | 1 | 1 | 1 | yes |
+| punct | DRV-punct2 (substitute) | 12 | 12 | 12 | yes |
+| import | DRV-import | 8 | 8 | 8 | yes |
+
+Deviations, both allowed by the pre-registration's falsifier clause:
+
+1. **DRV-pred is never on these drivers' path.** `pred-order-diff` resolves
+   `pinyin_guess_predicted_candidates_with_punctuations` first and calls the
+   plain function only as a fallback (`pred-order-diff.c:149-151`).
+   `predict-diff`'s plain call on 测测 yields at most one row, so reversing
+   it is invisible. The substitute DRV-punct mutates the function both
+   drivers actually call.
+2. **DRV-punct removed a row that `punct-diff` never prints.** It dropped the
+   last candidate, a phrase row. The substitute DRV-punct2 drops the first,
+   a punctuation row.
+
+All seven drivers now detect a mutation in their own scope and revert
+cleanly. Their IDENTICAL oracle-vs-subject results (section 4, C) therefore
+become **MATCH** on every cell. Gap issues #568–570 are answered.
+
+### 13.3 F determinism on bdb
+
+- **Source of the nondeterminism.** On bdb the subject side prints libdb's
+  error message `BDB0137 write: 0x<heap address>, <n>: File too large`, and
+  the heap address changes per run under ASLR. That accounts for all 4 raw
+  differing lines between runs a and b.
+- **Normalisation.** Pre-registered normalisation 2 (pointer → `PTR`) removes
+  them. Fresh bdb runs a and b (2026-09-25T00:06Z) are identical after it,
+  and identical to the earlier v3a run.
+- **Mutations.** F-m1 (5 lines) and F-m2 (6 lines) are detected on **all
+  three** cells.
+- **Unset vs pristine.** Unset equals pristine except the failing-malloc
+  sweep's `tried=` tallies. The gate's own `std::env::var` read allocates,
+  which adds allocation points (a known baseline, see `mutations/INDEX.md`).
+  With those tallies excluded, the difference is 0 on every cell.
+- **Result.** bdb F is deterministic under the declared normalisation. Gap
+  #571 is answered.
