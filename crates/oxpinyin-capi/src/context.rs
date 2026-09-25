@@ -112,9 +112,14 @@ pub extern "C" fn oxpinyin_test_set_user_bigram(
 /// (`PYLibPinyin.cc:43-50` destroys the timer, removes the timeout source,
 /// and calls only `pinyin_fini`; `focusOut` at `PYPPinyinEngine.cc:496`
 /// saves nothing either). The shutdown decision is recorded in
-/// `docs/findings/user-store.md` §6: oxpinyin reproduces the call pattern,
-/// and the upstream sub-timer data-loss window does not exist here because
-/// every training update is a durable commit.
+/// `docs/findings/user-store.md` §6: oxpinyin reproduces the call pattern.
+///
+/// It does write `user.conf`, as the pin's does: the open counter
+/// `pinyin_init` raised is lowered (`counter > 1 ? counter - 1 : 0`) and
+/// the marker re-written, saved or not (`pinyin.cpp:1194-1200`) — the
+/// user store's fini, run as the context drops. A process that never
+/// calls this leaves the raised counter behind, and the init that reads
+/// it past the limit wipes the profile, exactly as upstream's does.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     if context.is_null() {

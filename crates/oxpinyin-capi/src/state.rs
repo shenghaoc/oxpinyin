@@ -61,6 +61,7 @@ impl CapiContext {
                 system_dir,
                 user_dir,
                 oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
+                oxpinyin_user::UserConfLaw::Pinyin,
             )?,
         })
     }
