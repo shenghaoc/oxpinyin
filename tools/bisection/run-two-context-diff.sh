@@ -9,8 +9,8 @@
 # modifications, libpinyin raises and lowers the open counter once per
 # init and fini on each context's own copy, and when both save, the
 # later save's files are the profile. tools/bisection/two-context-diff.c
-# drives three scenarios into the pin-built libraries and into oxpinyin's
-# and this runner diffs the logs byte for byte:
+# drives the scenarios below into the pin-built libraries and into
+# oxpinyin's, and this runner diffs the logs byte for byte:
 #
 #   one-learns     A learns; each context's view; save B, save A; fini A,
 #                  fini B.
@@ -18,6 +18,16 @@
 #                  writes back depends on the order, as upstream's does.
 #   both-learn     A and B learn different items and both save; a third
 #                  context shows which one the profile kept.
+#
+# and, as the library kind `cross`, one libzhuyin and one libpinyin context
+# on the dir (#578's review: each must keep its own library's user.conf law
+# whichever opened first):
+#
+#   zhuyin-first   Z opens, then P; each learns, both save and both fini in
+#                  that order; a fresh P2 and Z2 show what the profile kept.
+#   pinyin-first   the same with P first.
+#   zhuyin-first-fini-reversed, pinyin-first-fini-reversed
+#                  the same with the two finis in the reverse order.
 #
 # Both sides open the pin prefix's own data directory with a fresh user
 # dir per scenario; oxpinyin's libraries must be built with the store
@@ -34,7 +44,8 @@
 #                              $REPO_ROOT/target/debug/libpinyin_capi.so)
 #   TWO_CONTEXT_ZHUYIN_SO      oxpinyin's libzhuyin (default
 #                              $REPO_ROOT/target/debug/libzhuyin_capi.so)
-#   TWO_CONTEXT_LIBS           "pinyin zhuyin" (default) or either one
+#   TWO_CONTEXT_LIBS           "pinyin zhuyin cross" (default) or any of
+#                              them; cross needs both libraries
 #   TWO_CONTEXT_OUT            directory the logs are kept in (default: a
 #                              temp dir, removed on exit)
 #
@@ -63,14 +74,22 @@ declare -A OX_SO=(
     [pinyin]="${TWO_CONTEXT_PINYIN_SO:-$REPO_ROOT/target/debug/libpinyin_capi.so}"
     [zhuyin]="${TWO_CONTEXT_ZHUYIN_SO:-$REPO_ROOT/target/debug/libzhuyin_capi.so}"
 )
-read -r -a LIBS <<< "${TWO_CONTEXT_LIBS:-pinyin zhuyin}"
+read -r -a LIBS <<< "${TWO_CONTEXT_LIBS:-pinyin zhuyin cross}"
 SCENARIOS=(one-learns fini-reversed both-learn)
+CROSS_SCENARIOS=(zhuyin-first zhuyin-first-fini-reversed pinyin-first pinyin-first-fini-reversed)
+
+# The libraries a kind loads, in the driver's argument order.
+facades_of() {
+    if [[ $1 == cross ]]; then echo "pinyin zhuyin"; else echo "$1"; fi
+}
 
 [[ -f "$DATA/table.conf" ]] || { echo "missing input: $DATA/table.conf" >&2; exit 3; }
 for lib in "${LIBS[@]}"; do
-    [[ -n "${ORACLE_SO[$lib]:-}" ]] || { echo "unknown library: $lib" >&2; exit 3; }
-    for so in "${ORACLE_SO[$lib]}" "${OX_SO[$lib]}"; do
-        [[ -f "$so" ]] || { echo "missing input: $so" >&2; exit 3; }
+    for facade in $(facades_of "$lib"); do
+        [[ -n "${ORACLE_SO[$facade]:-}" ]] || { echo "unknown library: $lib" >&2; exit 3; }
+        for so in "${ORACLE_SO[$facade]}" "${OX_SO[$facade]}"; do
+            [[ -f "$so" ]] || { echo "missing input: $so" >&2; exit 3; }
+        done
     done
 done
 
@@ -92,15 +111,18 @@ gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$DRIVER" "$SCRIPT_DIR/two-context-d
     $(pkg-config --cflags --libs glib-2.0) -ldl
 echo "build: ok"
 
+# run_side <kind> <scenario> <log> <lib.so>... — one side's run, with the
+# kind's libraries in facades_of order.
 run_side() {
-    local lib=$1 so=$2 scenario=$3 log=$4
+    local lib=$1 scenario=$2 log=$3
+    shift 3
     local user="$WORK/user-$(basename "$log" .log)"
     local tmp="$WORK/tmp-$(basename "$log" .log)"
     rm -rf "$user" "$tmp"
     mkdir -p "$user" "$tmp"
-    if ! TMPDIR="$tmp" "$DRIVER" "$lib" "$so" "$DATA" "$user" "$scenario" \
+    if ! TMPDIR="$tmp" "$DRIVER" "$lib" "$@" "$DATA" "$user" "$scenario" \
         > "$log" 2> "$log.stderr"; then
-        echo "FAIL: $scenario on $so" >&2
+        echo "FAIL: $lib/$scenario on $*" >&2
         cat "$log.stderr" >&2
         return 1
     fi
@@ -108,11 +130,21 @@ run_side() {
 
 status=0
 for lib in "${LIBS[@]}"; do
-    for scenario in "${SCENARIOS[@]}"; do
+    oracle_libs=()
+    ox_libs=()
+    for facade in $(facades_of "$lib"); do
+        oracle_libs+=("${ORACLE_SO[$facade]}")
+        ox_libs+=("${OX_SO[$facade]}")
+    done
+    scenarios=("${SCENARIOS[@]}")
+    if [[ $lib == cross ]]; then
+        scenarios=("${CROSS_SCENARIOS[@]}")
+    fi
+    for scenario in "${scenarios[@]}"; do
         oracle_log="$OUT/$lib-$scenario-oracle.log"
         ox_log="$OUT/$lib-$scenario-oxpinyin.log"
-        run_side "$lib" "${ORACLE_SO[$lib]}" "$scenario" "$oracle_log" || exit 1
-        run_side "$lib" "${OX_SO[$lib]}" "$scenario" "$ox_log" || exit 1
+        run_side "$lib" "$scenario" "$oracle_log" "${oracle_libs[@]}" || exit 1
+        run_side "$lib" "$scenario" "$ox_log" "${ox_libs[@]}" || exit 1
         # Vacuity guard: both sides must have learned something the
         # comparison can see.
         if ! grep -q ' ok$' "$oracle_log" || ! grep -q ' ok$' "$ox_log"; then
