@@ -781,3 +781,34 @@ runs are set aside and are not used for verdicts.
 
 The only change to the harness is parallelism (`xargs -P` 4 → 10); it
 changes no output.
+
+## Addendum 4 — isolated import cases (2026-09-25T19:46:45Z UTC)
+
+The encoding battery's import cases share a user directory across forked
+children. A child can persist an import; a later child then observes that
+state even when its own import fails. This invalidates an independent
+per-input verdict for those cases. The original outputs remain evidence of
+the harness defect, not of each input's isolated behaviour.
+
+Before the supplemental run, compile a separate scratch copy of `encbat.c`
+that accepts exact `ENC_PROBE` and `ENC_INPUT` filters. Keep the original
+source and binary (and their recorded SHA-256) unchanged. For each of the
+four import probes, all 58 named inputs, three cells and both libraries,
+launch each probe/input in a new process with fresh pinyin and zhuyin user
+directories; repeat each side twice. The output includes the return value,
+the exported phrases (where available), diagnostics and exit status.
+
+**Decision rule.** A case is MATCH only if both sides' own repeats agree and
+their return, output, persisted/exported state and diagnostic stream agree,
+apart from the same path and glib process-ID/time normalization used in the
+main battery. A stable difference is DIVERGENT and must be attributed before
+filing. If the process fails before reaching the probe, or either side's
+repeats differ, that case is NOT-ESTABLISHED. The axis-C C-m1 and C-m3
+mutations already pre-registered for the main encoding battery must be
+detected and revert on every cell; absent that, no import MATCH is claimed.
+
+**Falsifiers.** Cross-case user state, missing or duplicated input names,
+different staged subject hashes from the main battery, a missing oracle
+export, or any mismatch between first and second runs invalidates the
+affected case. The audit will report those cases as NOT-ESTABLISHED rather
+than counting them as matches.
