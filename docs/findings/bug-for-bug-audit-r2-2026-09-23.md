@@ -99,6 +99,12 @@ was used.
    - Pin: `pinyin.cpp:1194-1198` and `:185-186`.
    - Subject: `oxpinyin-capi/src/context.rs:119-129` and
      `oxpinyin-user/src/persistence.rs:223-266`.
+   - **Facade correction:** the pin's libzhuyin never raises this counter:
+     `zhuyin.cpp:126-176` reads or creates `user.conf` without an increment,
+     and `:741-757` has no counter write at fini. The subject's zhuyin
+     facade uses the same `CapiContext::try_open` path as pinyin
+     (`oxpinyin-zhuyin-capi/src/context.rs:34-45`), so it does raise the
+     counter. This correction is documented in #523 and #573.
 3. "Upstream issues #566/#542/#518 belong to libpinyin/ibus-libpinyin, not
    libpinyin/libpinyin." **CONFIRMED** with `gh issue view`.
 4. "Row 35 was fixed by `7c9a6923`." **CONFIRMED** with
@@ -208,7 +214,7 @@ unless a live class demonstrably fits.
 
 | ID | axes | cells | claim | upstream | subject | verdict | sev | issue |
 |---|---|---|---|---|---|---|---|---|
-| D-01 | D, H, B (BP-10) | all | **The subject wipes the whole user profile on the 8th launch.** The pin decrements `user.conf`'s open counter in `pinyin_fini`, so a steady user stays at 0/1. The subject increments on every open and never decrements, so after 7 clean init→train→save→fini cycles the 8th init finds counter > 6 and deletes all user files. Executed: 10 cycles; subject `c8: WIPE`, 7 learned phrases → 0 on all cells; pin keeps 9 phrases. libzhuyin behaves the same | `pinyin.cpp:185-186`, `:1194-1198`; `storage/table_info.cpp:409-425` | `oxpinyin-capi/src/context.rs:119-129`; `oxpinyin-user/src/persistence.rs:223-266` | DIVERGENT-UNREGISTERED | 1 | #523 |
+| D-01 | D, H, B (BP-10) | all | **The subject wipes the whole user profile on the 8th launch.** The pin decrements `user.conf`'s open counter in `pinyin_fini`, so a steady pinyin user stays at 0/1. The pin's libzhuyin never raises the counter at all, even across clean or killed launches. The subject increments on every open through both facades and never decrements, so after 7 clean init→train→save→fini cycles the 8th init finds counter > 6 and deletes all user files. Executed: 10 cycles; subject `c8: WIPE`, 7 learned phrases → 0 on all cells; pin's pinyin path keeps 9 phrases. The libzhuyin differential also wipes only on the subject side (see #523). | `pinyin.cpp:185-186`, `:1194-1198`; `zhuyin.cpp:126-176`, `:741-757`; `storage/table_info.cpp:409-425` | `oxpinyin-capi/src/context.rs:119-129`; `oxpinyin-zhuyin-capi/src/context.rs:34-45`; `oxpinyin-user/src/persistence.rs:223-266` | DIVERGENT-UNREGISTERED | 1 | #523 |
 | D-02 | B (BP-01), E (A-1), K (row 38) | all | `pinyin_train` ignores `index`. `train(1)`/`train(2)` write `train(0)`'s deltas; the pin trains the index-th n-best row. `train(len)`/`train(255)` abort on the pin and return true on the subject | `pinyin.cpp:2670-2691` | `oxpinyin-capi/src/candidates.rs:550` | DIVERGENT-UNREGISTERED | 1 | #524 |
 | D-03 | F, B (BP-04), C, E | all | **No class-(c) row meets (c).** 74 executed pin abort sites (73 SIGABRT, 1 SIGSEGV) are answered silently by the subject: false, true, data, or a store write, with no log. This covers register rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21 and 22 | F ledger (357 sites) | only log site: `context.rs:21` | DIVERGENT-UNREGISTERED | 1 | #525 |
 | D-04 | B (BP-03) | all | NULL pointer arguments to 68 exports: the pin SIGSEGVs, the subject returns false/0/NULL silently. There is no register row; (b) was not argued | `pinyin.cpp` (unguarded derefs) | C ABI null guards | DIVERGENT-UNREGISTERED | 1 | #526 |
@@ -1067,3 +1073,89 @@ in `/home/sheng/audit-r2-item5-6-evidence-20260926T034353Z.tar.zst`, SHA-256
 `066830aa1476c9b199f6a8368a441e2ec0f1143f8c807035f9b70c9a88394cca`.
 `sha256sum -c` passed; `tar --zstd -tf` listed 516 entries cleanly. The
 archive is local to the audit host, not attached to PR #522.
+
+## 18. Carried to round 3
+
+These are the remaining axis-level NOT-ESTABLISHED items. The commands below
+are the exact next commands recorded in
+`/home/sheng/audit-r2-scratch/STATUS.md`; this close-out did not run them or
+make new measurements.
+
+| Axis / issues | Remaining work | Exact next command from STATUS.md |
+|---|---|---|
+| J / [#565](https://github.com/shenghaoc/oxpinyin/issues/565), [#566](https://github.com/shenghaoc/oxpinyin/issues/566), [#567](https://github.com/shenghaoc/oxpinyin/issues/567) | Resolve unmapped and indirect call edges, validate counterparts on all three cells; candidate counts alone do not establish internal coverage. | `sed -n '1,40p' /home/sheng/audit-r2-scratch/results/J-internal/tkrzw-final-baseline/unresolved-names.txt` |
+| L / [#553](https://github.com/shenghaoc/oxpinyin/issues/553), [#554](https://github.com/shenghaoc/oxpinyin/issues/554), [#555](https://github.com/shenghaoc/oxpinyin/issues/555) | Extend Callgrind/Massif beyond cold open to the full section-12 input set, 200-input training, and 10k-phrase import/export; finish the structural inventory after J. Record load with every run. | `wc -l /home/sheng/audit-r2-scratch/harness/G-gate/fixture-inputs.txt` |
+| G / [#556](https://github.com/shenghaoc/oxpinyin/issues/556), [#557](https://github.com/shenghaoc/oxpinyin/issues/557), [#558](https://github.com/shenghaoc/oxpinyin/issues/558), [#574](https://github.com/shenghaoc/oxpinyin/issues/574) | The gate is blind to G-m1 despite an observable output change. Wait for lane D's gate extension, then rerun G-m1 and its unset control on each cell. No G row becomes MATCH until the extended gate detects and reverts the mutation. | `gh pr list --repo shenghaoc/oxpinyin --state open --search 'gate' --json number,title,url` |
+
+## 19. Findings index
+
+This is the GitHub issue inventory in the #523-#588 number range, not a new
+verdict. It preserves issue labels as filed; some gap issues retain a
+`not-established` label after later work and are not among the remaining
+axis-level gaps in section 18. Issue numbers #578, #579, #580, #581 and #584
+are not issues in this range. The last column records literal references by
+open fix PRs, not a claim that a fix has landed.
+
+| Issue | Axis | Issue verdict | Severity | Referenced by open fix PR |
+|---|---|---|---|---|
+| [#523](https://github.com/shenghaoc/oxpinyin/issues/523) | D | unregistered | 1 | [#584](https://github.com/shenghaoc/oxpinyin/pull/584), [#581](https://github.com/shenghaoc/oxpinyin/pull/581), [#579](https://github.com/shenghaoc/oxpinyin/pull/579), [#578](https://github.com/shenghaoc/oxpinyin/pull/578) |
+| [#524](https://github.com/shenghaoc/oxpinyin/issues/524) | B | unregistered | 1 | — |
+| [#525](https://github.com/shenghaoc/oxpinyin/issues/525) | F | unregistered | 1 | — |
+| [#526](https://github.com/shenghaoc/oxpinyin/issues/526) | B | unregistered | 1 | — |
+| [#527](https://github.com/shenghaoc/oxpinyin/issues/527) | C | unregistered | 1 | — |
+| [#528](https://github.com/shenghaoc/oxpinyin/issues/528) | B | unregistered | 1 | — |
+| [#529](https://github.com/shenghaoc/oxpinyin/issues/529) | B | unregistered | 1 | [#579](https://github.com/shenghaoc/oxpinyin/pull/579) |
+| [#530](https://github.com/shenghaoc/oxpinyin/issues/530) | B | broader-than-registered | 1 | — |
+| [#531](https://github.com/shenghaoc/oxpinyin/issues/531) | H | not-established | 1 | — |
+| [#532](https://github.com/shenghaoc/oxpinyin/issues/532) | B | unregistered | 2 | — |
+| [#533](https://github.com/shenghaoc/oxpinyin/issues/533) | B | unregistered | 2 | — |
+| [#534](https://github.com/shenghaoc/oxpinyin/issues/534) | B | unregistered | 2 | — |
+| [#535](https://github.com/shenghaoc/oxpinyin/issues/535) | G | broader-than-registered | 2 | — |
+| [#536](https://github.com/shenghaoc/oxpinyin/issues/536) | I | unregistered | 2 | — |
+| [#537](https://github.com/shenghaoc/oxpinyin/issues/537) | A | unregistered | 2 | — |
+| [#538](https://github.com/shenghaoc/oxpinyin/issues/538) | H | unregistered | 2 | [#584](https://github.com/shenghaoc/oxpinyin/pull/584), [#581](https://github.com/shenghaoc/oxpinyin/pull/581), [#578](https://github.com/shenghaoc/oxpinyin/pull/578) |
+| [#539](https://github.com/shenghaoc/oxpinyin/issues/539) | E | unregistered | 2 | — |
+| [#540](https://github.com/shenghaoc/oxpinyin/issues/540) | B | unregistered | 2 | — |
+| [#541](https://github.com/shenghaoc/oxpinyin/issues/541) | B | unregistered | 2 | — |
+| [#542](https://github.com/shenghaoc/oxpinyin/issues/542) | B | unregistered | 2 | — |
+| [#543](https://github.com/shenghaoc/oxpinyin/issues/543) | D | not-established | 2 | — |
+| [#544](https://github.com/shenghaoc/oxpinyin/issues/544) | B | unregistered | 3 | [#584](https://github.com/shenghaoc/oxpinyin/pull/584), [#581](https://github.com/shenghaoc/oxpinyin/pull/581), [#579](https://github.com/shenghaoc/oxpinyin/pull/579), [#578](https://github.com/shenghaoc/oxpinyin/pull/578) |
+| [#545](https://github.com/shenghaoc/oxpinyin/issues/545) | B | unregistered | 3 | — |
+| [#546](https://github.com/shenghaoc/oxpinyin/issues/546) | H | not-established | 3 | — |
+| [#547](https://github.com/shenghaoc/oxpinyin/issues/547) | A | not-established | 3 | — |
+| [#548](https://github.com/shenghaoc/oxpinyin/issues/548) | K | register-integrity | 4 | — |
+| [#549](https://github.com/shenghaoc/oxpinyin/issues/549) | K | register-integrity | 4 | — |
+| [#550](https://github.com/shenghaoc/oxpinyin/issues/550) | K | register-integrity | 4 | — |
+| [#551](https://github.com/shenghaoc/oxpinyin/issues/551) | K | register-integrity | 4 | — |
+| [#552](https://github.com/shenghaoc/oxpinyin/issues/552) | K | register-integrity | 4 | — |
+| [#553](https://github.com/shenghaoc/oxpinyin/issues/553) | L | not-established | — | — |
+| [#554](https://github.com/shenghaoc/oxpinyin/issues/554) | L | not-established | — | — |
+| [#555](https://github.com/shenghaoc/oxpinyin/issues/555) | L | not-established | — | — |
+| [#556](https://github.com/shenghaoc/oxpinyin/issues/556) | G | not-established | — | — |
+| [#557](https://github.com/shenghaoc/oxpinyin/issues/557) | G | not-established | — | — |
+| [#558](https://github.com/shenghaoc/oxpinyin/issues/558) | G | not-established | — | — |
+| [#559](https://github.com/shenghaoc/oxpinyin/issues/559) | C | not-established | — | — |
+| [#560](https://github.com/shenghaoc/oxpinyin/issues/560) | C | not-established | — | — |
+| [#561](https://github.com/shenghaoc/oxpinyin/issues/561) | C | not-established | — | — |
+| [#562](https://github.com/shenghaoc/oxpinyin/issues/562) | B | not-established | — | — |
+| [#563](https://github.com/shenghaoc/oxpinyin/issues/563) | B | not-established | — | — |
+| [#564](https://github.com/shenghaoc/oxpinyin/issues/564) | B | not-established | — | — |
+| [#565](https://github.com/shenghaoc/oxpinyin/issues/565) | J | not-established | — | — |
+| [#566](https://github.com/shenghaoc/oxpinyin/issues/566) | J | not-established | — | — |
+| [#567](https://github.com/shenghaoc/oxpinyin/issues/567) | J | not-established | — | — |
+| [#568](https://github.com/shenghaoc/oxpinyin/issues/568) | C | not-established | — | — |
+| [#569](https://github.com/shenghaoc/oxpinyin/issues/569) | C | not-established | — | — |
+| [#570](https://github.com/shenghaoc/oxpinyin/issues/570) | C | not-established | — | — |
+| [#571](https://github.com/shenghaoc/oxpinyin/issues/571) | F | not-established | — | — |
+| [#572](https://github.com/shenghaoc/oxpinyin/issues/572) | K | not-established | — | — |
+| [#573](https://github.com/shenghaoc/oxpinyin/issues/573) | — | tracking | — | — |
+| [#574](https://github.com/shenghaoc/oxpinyin/issues/574) | G | register-integrity | 3 | — |
+| [#575](https://github.com/shenghaoc/oxpinyin/issues/575) | B | unregistered | 2 | — |
+| [#576](https://github.com/shenghaoc/oxpinyin/issues/576) | B | unregistered | 2 | — |
+| [#577](https://github.com/shenghaoc/oxpinyin/issues/577) | B | unregistered | 2 | — |
+| [#582](https://github.com/shenghaoc/oxpinyin/issues/582) | C | unregistered | 2 | — |
+| [#583](https://github.com/shenghaoc/oxpinyin/issues/583) | D | unregistered | 3 | [#584](https://github.com/shenghaoc/oxpinyin/pull/584) |
+| [#585](https://github.com/shenghaoc/oxpinyin/issues/585) | C | unregistered | 2 | — |
+| [#586](https://github.com/shenghaoc/oxpinyin/issues/586) | C | unregistered | 2 | — |
+| [#587](https://github.com/shenghaoc/oxpinyin/issues/587) | C | unregistered | 3 | — |
+| [#588](https://github.com/shenghaoc/oxpinyin/issues/588) | L | unregistered | 2 | — |
