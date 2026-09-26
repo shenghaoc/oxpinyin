@@ -256,7 +256,7 @@ impl BdbStore {
 impl ReadStore for BdbStore {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            db: Db::open(path, ffi::DB_BTREE, true, false)?,
+            db: Db::open(path, ffi::DB_BTREE, true, false, ffi::SYSTEM_FILE_MODE)?,
         })
     }
 
@@ -304,15 +304,17 @@ impl RawReadStore for BdbStore {
 
     fn open_hash_read_only(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            db: Db::open(path, ffi::DB_HASH, true, false)?,
+            db: Db::open(path, ffi::DB_HASH, true, false, ffi::SYSTEM_FILE_MODE)?,
         })
     }
 }
 
 impl WriteStore for BdbStore {
+    /// A system table, created as `attach` creates one: mode 0644
+    /// ([`ffi::SYSTEM_FILE_MODE`]).
     fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            db: Db::open(path, ffi::DB_BTREE, false, true)?,
+            db: Db::open(path, ffi::DB_BTREE, false, true, ffi::SYSTEM_FILE_MODE)?,
         })
     }
 
@@ -320,7 +322,23 @@ impl WriteStore for BdbStore {
     /// half of this backend's raw seam (see [`RawReadStore`]).
     fn create_hash(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
-            db: Db::open(path, ffi::DB_HASH, false, true)?,
+            db: Db::open(path, ffi::DB_HASH, false, true, ffi::SYSTEM_FILE_MODE)?,
+        })
+    }
+
+    /// A user index table, created as `save_db` creates one: mode 0600
+    /// ([`ffi::USER_FILE_MODE`]).
+    fn create_user(path: &Path) -> Result<Self, StoreError> {
+        Ok(Self {
+            db: Db::open(path, ffi::DB_BTREE, false, true, ffi::USER_FILE_MODE)?,
+        })
+    }
+
+    /// The user bigram, created as `Bigram::save_db` creates it: a
+    /// `DB_HASH` file, mode 0600 ([`ffi::USER_FILE_MODE`]).
+    fn create_user_hash(path: &Path) -> Result<Self, StoreError> {
+        Ok(Self {
+            db: Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?,
         })
     }
 
