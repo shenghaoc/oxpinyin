@@ -17,8 +17,11 @@ crates/oxpinyin-capi/
   build.rs                 — Linux: -Wl,-soname,libpinyin.so.15; bakes the .pc
   Cargo.toml               — [package.metadata.capi] library { name = "pinyin",
                              version = "15.0.0", versioning = true };
-                             header { subdirectory = "libpinyin-2.11.91" }
-  libpinyin.pc.in          — @prefix@/@libdir@/@DATABASE_FORMAT@ placeholders
+                             header { subdirectory = "libpinyin-2.11.92" }
+                             (checked by build.rs against oracle-pin.txt)
+  build_pin_version.rs     — reads libpinyin_tag from tools/oracle/oracle-pin.txt
+  libpinyin.pc.in          — the pin's template: @prefix@/@exec_prefix@/
+                             @libdir@/@includedir@/@VERSION@/@DATABASE_FORMAT@
   pinyin.h, libpinyin.ver  — the declarations and the 79-symbol export list
 crates/oxpinyin-data/src/
   system_files.rs          — libpinyin's file inventory: DBM names per backend
@@ -31,7 +34,8 @@ crates/oxpinyin-data/src/
 crates/oxpinyin-user/src/persistence.rs — the user dir in libpinyin's own shapes
 crates/oxpinyin-runtime/src/lib.rs      — Runtime::open(system_dir, user_dir),
                                           what pinyin_init does
-tools/packaging/install.sh              — fills @prefix@/@libdir@ into the .pc
+tools/packaging/install.sh              — fills @prefix@/@exec_prefix@/@libdir@/
+                                          @includedir@ into the .pc as autoconf does
 ```
 
 ## Components and Interfaces
@@ -42,11 +46,22 @@ tools/packaging/install.sh              — fills @prefix@/@libdir@ into the .pc
   (Linux); cargo-c `[package.metadata.capi.library]` name `pinyin`,
   version `15.0.0`, `versioning = true` (libtool -version-info 15:0,
   confirmed against Ubuntu's shipped `libpinyin15`).
-- Header: `subdirectory = "libpinyin-2.11.91"`; asset install of
-  `pinyin.h` into the same subdirectory.
-- pkg-config: `libpinyin.pc.in` carries `pkgdatadir`, `database_format`
-  and `exec_prefix`; `build.rs` bakes `@VERSION@`/`@DATABASE_FORMAT@`,
-  and `tools/packaging/install.sh` fills `@prefix@`/`@libdir@`.
+- Header: `subdirectory = "libpinyin-2.11.92"`; asset install of
+  `pinyin.h` into the same subdirectory. The version is the pin's
+  (`libpinyin_tag` in `tools/oracle/oracle-pin.txt`): the drop-in
+  identity follows the pinned libpinyin (`074a2219`), superseding the
+  PR #363 split that held it at 2.11.91 until upstream tagged
+  (version ruling 2026-09-26 UTC, #592). `build.rs` reads the pin
+  record and fails the build when the `[package.metadata.capi]` tables
+  disagree with it.
+- pkg-config: `libpinyin.pc.in` is the pin's template line for line
+  (`pkgdatadir`, `database_format`, `exec_prefix`); `build.rs` bakes
+  `@VERSION@`/`@DATABASE_FORMAT@`, and `tools/packaging/install.sh` fills
+  `@prefix@`/`@exec_prefix@`/`@libdir@`/`@includedir@` as the pin's
+  configure does (prefix-relative `${exec_prefix}/lib` and
+  `${prefix}/include` unless `--libdir`/`--includedir` are given).
+  `tools/packaging/check-pc-metadata.sh` diffs the result against a pin
+  install.
 - Exported surface: the full live upstream ABI, 79 `pinyin_*` symbols
   (`docs/findings/abi-reference.md`, `tools/abi/check-exports.sh`); no
   symbol is scoped by which consumer calls it.

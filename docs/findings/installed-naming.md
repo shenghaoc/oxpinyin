@@ -194,3 +194,29 @@ missing variables would otherwise cause is closed on the wrapper path.
   `${LIBPINYIN_EXECPREFIX}/bin`, and sets `LIBPINYIN_TOOLS_FOUND 0` when
   they are absent. Not fatal, and a build-time concern only, but the
   drop-in does not provide them.
+
+## Amendment — version follows the pin (2026-09-26 UTC, #592)
+
+The `2.11.91` in the tree listing, the gate table, the build.rs
+description, the gate console and "Notes carried forward" above is the
+version this record measured and is left as written. It no longer
+describes the tree:
+
+- **Ruling (human, 2026-09-26 UTC):** oxpinyin's behaviour follows the
+  pinned libpinyin (`074a2219`), so its drop-in identity follows the pin
+  too — `Version: 2.11.92`, headers under `include/libpinyin-2.11.92/`.
+  This supersedes the version split of PR #363, which held the drop-in at
+  `2.11.91` until upstream tagged a release.
+- **Derivation:** the version is `libpinyin_tag` in
+  `tools/oracle/oracle-pin.txt`, read by both capi build scripts
+  (`crates/oxpinyin-capi/build_pin_version.rs`, which also rejects a
+  `[package.metadata.capi]` table that disagrees) and by
+  `tools/packaging/pc-version.sh` for the release scripts.
+- **Template and placement (same PR):** `libpinyin.pc.in` is now the
+  pin's template line for line, so it no longer hardcodes `exec_prefix`
+  and `includedir`; `tools/packaging/install.sh` fills `@prefix@`,
+  `@exec_prefix@`, `@libdir@` and `@includedir@` for both libraries as
+  the pin's configure does — `--libdir`/`--includedir` verbatim when
+  given, otherwise the prefix-relative `${exec_prefix}/lib` and
+  `${prefix}/include`. `tools/packaging/check-pc-metadata.sh` diffs the
+  installed tree against a pin install field for field.

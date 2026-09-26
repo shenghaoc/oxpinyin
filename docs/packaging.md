@@ -302,7 +302,8 @@ consumers perform, and a C compile/link/run) before any packaging runs.
 The per-distro makers wrap that staged tree in the shape the distro's real
 libpinyin packaging uses, and every package takes the distro's
 libpinyin/libzhuyin over **in their entirety** — same sonames, same
-pkg-config names, versioned Provides at 2.11.91, and
+pkg-config names, versioned Provides at the pin's libpinyin version
+(`tools/packaging/pc-version.sh`; 2.11.92), and
 Conflicts/Replaces (deb) / Obsoletes (rpm) / `conflicts=` (pacman) on the
 originals:
 
@@ -322,7 +323,7 @@ originals:
   pacman's form (`libpinyin.so=15-64`) and, via `--data=DIR`, the model
   directory installed as `/usr/lib/libpinyin/data`; `--data-version=VER`
   records the origin package version in the description, since Arch's data
-  (2.10.x) is older than the 2.11.91 the library provides.
+  (2.10.x) is older than the pin version (2.11.92) the library provides.
 
 Data: Debian and Fedora keep `libpinyin-data` — a separate package there,
 it stays installed through the takeover and is only a Recommends on ours.

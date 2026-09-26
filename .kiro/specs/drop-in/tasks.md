@@ -14,8 +14,9 @@ backends; task 10, the BerkeleyDB backend, landed 2026-09-12
 - [x] 1. Set the SONAME and the cargo-c library metadata (#206).
   _Requirements: 1_
 
-- [x] 2. Install the header under `libpinyin-2.11.91/` and ship
-  `libpinyin.pc` with the installed naming (#206, #192).
+- [x] 2. Install the header under `libpinyin-<pin version>/` and ship
+  `libpinyin.pc` with the installed naming (#206, #192; `2.11.91` then,
+  `2.11.92` from #592 per the version ruling 2026-09-26 UTC).
   _Requirements: 1_
 
 - [x] 3. Open installed libpinyin data (#228, as a compatibility layer;

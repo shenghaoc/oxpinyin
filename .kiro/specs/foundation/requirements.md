@@ -100,8 +100,12 @@ libpinyin's names so that unmodified consumers link against it and run.
 
 1. The cdylib SHALL carry SONAME `libpinyin.so.15` (libtool
    -version-info 15:0). 2. The header SHALL install under
-   `include/libpinyin-2.11.91/`. 3. The pkg-config file SHALL ship as
-   `libpinyin.pc` exposing `pkgdatadir`, `database_format` and
+   `include/libpinyin-<version>/`, `<version>` being the pinned
+   libpinyin's (`libpinyin_tag` in `tools/oracle/oracle-pin.txt`;
+   `2.11.92` at `074a2219`) — the drop-in identity follows the pin,
+   superseding PR #363's hold at 2.11.91 (version ruling 2026-09-26
+   UTC, #592). 3. The pkg-config file SHALL ship as `libpinyin.pc`
+   exposing `pkgdatadir`, `database_format` and
    `exec_prefix`. 4. The exported surface SHALL be the full live upstream ABI — 79
    `pinyin_*` symbols (`docs/findings/abi-reference.md`).
 
@@ -127,7 +131,7 @@ replacing the library changes nothing observable.
 
 1. For every exported symbol, given the same inputs and state, the
    whole observable output SHALL be byte-identical to the pinned libpinyin
-   2.11.91 — return status, out-parameters and the data they point to,
+   (`tools/oracle/oracle-pin.txt`; 2.11.92 at `074a2219`) — return status, out-parameters and the data they point to,
    written lengths, and handle state transitions. 2. Divergence SHALL be
    permitted only under the three classes of
    `docs/findings/compatibility-policy.md`: (a) MATH — platform-dependent

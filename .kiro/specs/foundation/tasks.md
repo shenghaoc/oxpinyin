@@ -73,8 +73,9 @@ fixtures are human-frozen.
 
 - [x] 10. **[A]** Establish the drop-in replacement surface.
   - SONAME `libpinyin.so.15` and consumer-union scope 58/58 (#206);
-    header under `libpinyin-2.11.91/`, `libpinyin.pc`, installed naming
-    (#192).
+    header under `libpinyin-<pin version>/` (`2.11.91` then; `2.11.92`
+    from #592, version ruling 2026-09-26 UTC), `libpinyin.pc`,
+    installed naming (#192).
   _Requirements: R7_
 
 - [x] 11. **[B]** Open installed libpinyin data and measure it on the distro backends.
