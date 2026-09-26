@@ -37,7 +37,7 @@
 | G numerics | **NOT-ESTABLISHED** (G-m2 detected, **G-m1 not**: blind gate, §13.1) | **NOT-ESTABLISHED** (same) | **NOT-ESTABLISHED** (same) | no G row may be MATCH. The §12 gate mutation runs were done: G-m2 was detected and reverted on all cells; G-m1 was reached and changed four C-ABI outputs outside the fixture, but the gate missed it. D-13 stands on counterfactual and source evidence |
 | H process state | DIVERGENT | same | same, +fork hang | H-m1 and H-m2 detected and reverted |
 | I drop-in | DIVERGENT (.pc, consumer runtime) | same | same | I-m2 and I-m3 (C-m2) detected; header matrix fails identically on both sides |
-| J coverage | export ledger 131 = 131, identical across cells (static) | same | same | internal ledger **NOT-ESTABLISHED** (not produced) |
+| J coverage | export set MATCH; internal **PARTIAL / NOT-ESTABLISHED** | same | same | static three-cell candidate ledger, but unresolved call edges and unverified counterparts (§16); J-m1/J-m2 detected and reverted |
 | K register | 3 lists produced (section 7) | — | — | static reconciliation, no mutation by design |
 | L complexity | **NOT RUN** | NOT RUN | NOT RUN | — |
 
@@ -446,7 +446,10 @@ The candidates the mandate named are all confirmed:
 - Command:
   `nm -D --defined-only /opt/oracle/<cell>/lib/lib{pinyin,zhuyin}.so.15 | awk '$2=="T"{print $3}'`
 - Result: 79 + 52 = 131 on every cell; tkrzw == bdb == kc.
-- **The internal (transitive) ledger was not produced.**
+- A conservative, name-level internal candidate ledger was subsequently
+  produced for each cell (§16). It is **not** a complete transitive mapping:
+  indirect calls, overloaded method resolution and counterpart identity remain
+  open. The J internal verdict remains NOT-ESTABLISHED.
 
 ### F site ledger
 
@@ -504,9 +507,9 @@ Harnesses worth keeping are proposed for adoption in section 10.
 |---|---|---|
 | L on all cells | never started | run the pre-registered workloads on a quiet host, one cell at a time |
 | G on all cells | G-m1 reaches code and changes four non-fixture C-ABI outputs, but the §12 gate misses it (§13.1) | extend the fixture with a changed input and rerun both mutants and unset |
-| J internal ledger | not produced | clang `-emit-llvm` call graph from the 131 exports |
+| J internal ledger | a static candidate ledger exists, but mapping and indirect edges are unresolved (§16) | resolve call targets by USR/signature, verify each counterpart or cite deliberate absence, then re-check all three cells |
 | D-08, D-24 attribution | salvaged, not analysed | diff the unigram/bigram dumps per phrase; classify the key-byte deltas by scheme and option |
-| GitHub tracking (Step 5) | not started; token lacks the `project` scope | `gh auth refresh -s project`; file one issue per D-row, register item and gap |
+| GitHub tracking (Step 5) | tracking issue #573 and the issue map in section 12 exist; no Project board was created | keep gap issues open until human triage |
 | Re-measure on the current main | main moved to `34a66bc9` (`expand_keys` change in core) | re-run B, C and G on the new tip |
 
 Proposed for adoption as repo tools (each would need its own reviewed PR):
@@ -890,3 +893,80 @@ against pin n=718, and `D1 nihk` n=126 at `0x00008002` against pin
 n=499. `repro-main-import.sh` still gives `zhuyin_iterator_add_phrase`
 for `lu:` pin false, current-main subject true on all cells. No default
 was changed, and these rechecks do not replace the audited-SHA measurements.
+
+## 16. Completion run: item 5 (J internal candidate ledger)
+
+This static pass ended at `2026-09-26T03:19:50Z`. It used the pinned
+`074a2219` source and the audited `18d78208` subject source, with no build.
+Clang 21 ran `-fsyntax-only -Xclang -ast-dump` in the existing pinned
+container. The configured tkrzw header was preserved from the earlier oracle
+build; scratch-only macro variants selected BDB and KC. Each cell parsed 24
+of the 32 source translation units; the eight that failed were the other two
+backends' storage units. Partial AST emitted before those failures was
+excluded. The exact parser and checker are
+`/home/sheng/audit-r2-scratch/harness/J-internal/ast-reduce.py` (SHA-256
+`4946803a7f44e4112cd1fe0729bc87d4c46b7d6c2f74b2460829cb09af3e38c8`)
+and `reachable-ledger.py` (SHA-256
+`a269f81c7bab56598b1df2f1a49d36ea226f7c1289f945fd32f99450c9a84da7`).
+The reduced AST streams are `logs/item5-{tkrzw,bdb,kc}-defs-clean.tsv`;
+the separate ledgers and `summary.json` are
+`results/J-internal/<cell>-final-baseline/` in the same scratch root.
+
+Regeneration of each count is the checker invocation below; the AST reduction
+recipe is `clang++ -std=c++17 -fsyntax-only -Xclang -ast-dump` over each
+`find src -type f -name '*.cpp' | sort` translation unit, with `-I` for all
+pin `src/` subdirectories, the cell's scratch `config.h`, the pin-generated
+public headers in `/opt/oracle/<cell>/include/libpinyin-2.11.92`, and
+`pkg-config --cflags glib-2.0`, piped to `ast-reduce.py <TU>`. A nonzero
+Clang status excludes that TU's entire partial stream. The recorded command
+used to regenerate the summary from the reduced streams is:
+
+```sh
+for cell in tkrzw bdb kc; do
+  python3 /home/sheng/audit-r2-scratch/harness/J-internal/reachable-ledger.py \
+    --ast /home/sheng/audit-r2-scratch/logs/item5-${cell}-defs-clean.tsv \
+    --pin /home/sheng/audit-r2-scratch/libpinyin-pin \
+    --subject /home/sheng/audit-r2-scratch/src \
+    --exports /home/sheng/audit-r2-scratch/results/X-J-coverage/exports/union.txt \
+    --out /home/sheng/audit-r2-scratch/results/J-internal/${cell}-regenerated
+done
+```
+
+| cell | export roots found | reachable definition candidates | non-export candidates | unmapped by name | unresolved reference names |
+|---|---:|---:|---:|---:|---:|
+| tkrzw | 131/131 | 551 | 420 | 248 | 134 |
+| bdb | 131/131 | 528 | 397 | 244 | 118 |
+| kc | 131/131 | 546 | 415 | 247 | 132 |
+
+**Source spot-check.** `pinyin.cpp:326-344` calls the internal
+`check_format` at `:172`; both appear in every candidate ledger.
+`pinyin.cpp:2670-2684` defines `pinyin_train` and its `get_result(index)`
+path; the same-name Rust export at
+`crates/oxpinyin-capi/src/candidates.rs:550` ignores `_index`, so a name
+match is plainly not semantic mapping. `zhuyin.cpp:500-516` defines
+`zhuyin_iterator_add_phrase`, with the same-name Rust entry at
+`crates/oxpinyin-zhuyin-capi/src/iterators.rs:59`. The backend spot-check
+found `ngram_bdb.cpp:127` only in BDB's ledger and
+`ngram_kyotodb.cpp:124` only in KC's; neither appeared in the wrong cell
+after failed-TU filtering. These checks substantiate candidate locations,
+not counterpart equivalence.
+
+| instrument | cell | injected deletion | detected | revert |
+|---|---|---|---|---|
+| J-m1 | tkrzw, bdb, kc | one `pinyin_init` export root | exit 1 on each | baseline exit 0; ledger byte-identical |
+| J-m2 | tkrzw, bdb, kc | one reachable `src/pinyin.cpp:172:check_format` definition | exit 1 on each | baseline exit 0; ledger byte-identical |
+
+The first J-m2 checker iteration was too broad: removing only the pinyin
+definition left the zhuyin overload and escaped detection. The final checker
+requires the exact source location; the table records only that rerun.
+
+**Verdict: PARTIAL evidence, coverage NOT-ESTABLISHED on all three cells.**
+This is a name-level overapproximation: overloaded methods may be conflated,
+function pointers/virtual calls may be missed, and a Rust name match is only
+a lead. None of the 248/244/247 unmapped rows has a verified deliberate-
+absence reason. The 134/118/132 unresolved names include external calls but
+have not been individually classified. Thus it does not meet the mandate's
+every-transitively-reachable-function-to-counterpart criterion. Gap issues
+#565, #566 and #567 remain open; the next pass needs USR/signature-resolved
+call targets, indirect-edge closure, and reviewed counterpart or absence
+citations for every internal row.
