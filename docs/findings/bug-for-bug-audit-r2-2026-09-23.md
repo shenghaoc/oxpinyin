@@ -11,9 +11,11 @@
   - Four were salvaged from the files their agents had written: B (libpinyin
     half), D, F and G.
   - The other axes are partial, as the table below states.
-- **Axis L (complexity) never ran.**
+- **Axis L (complexity) remains NOT-ESTABLISHED.** Cold open was measured
+  with Callgrind/Massif on all cells; the other workloads and full structural
+  inventory remain open (section 17).
 - **Step 4 (round-1 verification) is done** (section 6).
-- **Step 5 (GitHub tracking)** was done without a project board, which the maintainer removed from Step 5. Tracking issue #573 has the 50 audit issues (#523–#572) as sub-issues, under milestone *Bug-for-bug audit r2*, with `bug-for-bug`/`verdict:*`/`axis:*`/`severity:*`/`backend:*` labels.
+- **Step 5 (GitHub tracking)** was done without a project board, which the maintainer removed from Step 5. Tracking issue #573 links the audit findings and gaps as sub-issues under milestone *Bug-for-bug audit r2*, with `bug-for-bug`/`verdict:*`/`axis:*`/`severity:*`/`backend:*` labels.
 - **Measured subject:** `origin/main` at `18d782089bd1`. Main has since moved
   to `34a66bc915c9`, adding 00466d50 (`expand_keys` early stop in
   `oxpinyin-core/src/scoring.rs`) and 34a66bc9 (a fuzz corpus seed). Nothing
@@ -39,7 +41,7 @@
 | I drop-in | DIVERGENT (.pc, consumer runtime) | same | same | I-m2 and I-m3 (C-m2) detected; header matrix fails identically on both sides |
 | J coverage | export set MATCH; internal **PARTIAL / NOT-ESTABLISHED** | same | same | static three-cell candidate ledger, but unresolved call edges and unverified counterparts (§16); J-m1/J-m2 detected and reverted |
 | K register | 3 lists produced (section 7) | — | — | static reconciliation, no mutation by design |
-| L complexity | **NOT RUN** | NOT RUN | NOT RUN | — |
+| L complexity | cold open BOTH-WORSENED; remainder **NOT-ESTABLISHED** | same | same | Callgrind Ir and Massif live heap, three repeats per side; L-m1/L-m2 detected and reverted (§17). Other workloads and structural inventory remain open |
 
 ## 1. Provenance
 
@@ -196,7 +198,7 @@ The pre-registration was committed as `dbee7c04` (rebased to `fad9ad47`, same bl
 | C-options | all | C-m1 | yes: 34/104 single words and 29/435 pair words per cell | yes: unset matches pristine exactly | §15 |
 | C-encoding | all | C-m1, C-m3 | yes: 2 and 3 cases respectively per cell | yes: unset matches pristine exactly | §15 |
 | C-layouts | all | C-m3 | yes: table and all three corpus words per cell | yes: unset matches pristine exactly | §15 |
-| L | all | L-m1, L-m2 | **not run** | — | |
+| L | all | L-m1 Callgrind, L-m2 Massif | both detected in every cell | outputs identical; L-m1 Ir returned within 0.0021%, L-m2 heap exactly | cold-open instrument validated; axis still incomplete (§17) |
 
 ## 4. Ledger: distinct defects
 
@@ -505,7 +507,7 @@ Harnesses worth keeping are proposed for adoption in section 10.
 
 | gap | what blocked it | next step |
 |---|---|---|
-| L on all cells | never started | run the pre-registered workloads on a quiet host, one cell at a time |
+| L on all cells | cold open measured; §12, 200-train, 10k import/export and the complete structural inventory remain unmeasured (§17) | run the remaining matched workloads under Callgrind/Massif with per-run UTC/load and close J's structural inventory |
 | G on all cells | G-m1 reaches code and changes four non-fixture C-ABI outputs, but the §12 gate misses it (§13.1) | extend the fixture with a changed input and rerun both mutants and unset |
 | J internal ledger | a static candidate ledger exists, but mapping and indirect edges are unresolved (§16) | resolve call targets by USR/signature, verify each counterpart or cite deliberate absence, then re-check all three cells |
 | D-08, D-24 attribution | salvaged, not analysed | diff the unigram/bigram dumps per phrase; classify the key-byte deltas by scheme and option |
@@ -970,3 +972,90 @@ every-transitively-reachable-function-to-counterpart criterion. Gap issues
 #565, #566 and #567 remain open; the next pass needs USR/signature-resolved
 call targets, indirect-edge closure, and reviewed counterpart or absence
 citations for every internal row.
+
+## 17. Completion run: item 6 (L, load-independent measurements)
+
+Measured through `2026-09-26T03:38:12Z` in the pinned container
+`sha256:8bf63f196e7a18e7f003adc37b148fc366c0f0ef9ae7c9cc2f6d4ab8e5fd4514`.
+The same pre-existing `harness/G-gate/surface` C binary dlopened each
+relinked library against the matching oracle data directory and a fresh,
+empty user directory. Empty stdin exercises cold `pinyin_init`, option set,
+instance allocation/free and `pinyin_fini`, with no candidate work. All
+36 baseline runs exited 0 and had the same empty stdout digest. Callgrind
+used `--cache-sim=no --branch-sim=no`; `Ir` came from `summary:`. Massif
+used `--time-unit=i --heap=yes --stacks=no`; the maximum `mem_heap_B` is
+peak live heap. Each trace has its own UTC, `/proc/loadavg`, library path,
+exit and stdout digest in `results/L-complexity/cold/*.meta`. The one-minute
+load average ranged 2.67-3.09 across these traces. No wall-clock number is
+reported.
+
+The exact runner is `harness/L-complexity/cold.sh` (SHA-256
+`4db059f0245953d60b174bc391e3bccbe18eb22d45b03248c4cc3ea21eeca7cc`)
+under `/home/sheng/audit-r2-scratch`; its log is
+`logs/item6-cold-series.log`. Run it with
+`podman run --rm --network=none -v /home/sheng/audit-r2-scratch:/w:z
+localhost/ox-audit-r2:env bash /w/harness/L-complexity/cold.sh`.
+For each side and metric, the table gives the median of three runs. All
+oracle repeats were exact; the largest subject `Ir` spread was 100
+instructions in more than 330 million. Heap repeats were exact.
+
+| cell | oracle Ir | subject Ir | ratio | oracle peak heap B | subject peak heap B | ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| tkrzw | 22,295,138 | 334,313,247 | 14.995 | 9,449,311 | 24,556,688 | 2.599 |
+| bdb | 12,343,767 | 330,749,412 | 26.795 | 319,591 | 23,683,414 | 74.105 |
+| kc | 26,462,307 | 342,715,226 | 12.951 | 5,960,885 | 30,549,899 | 5.125 |
+
+Massif's heap count excludes mappings. A diagnostic
+`--pages-as-heap=yes` pass, separately load-recorded, still found larger
+subject mapped-page peaks: tkrzw 97,140,736 vs 70,676,480 B; bdb
+66,514,944 vs 36,298,752 B; kc 167,583,744 vs 73,846,784 B. These
+figures are not substituted for the pre-registered heap metric.
+
+**Source and asymptotics for L-01.** The pin's `pinyin.cpp:172-199`
+checks/writes profile metadata, and `:326-405` opens tables and maps the
+system phrase chunks (`:259-269`), then merges user logs. On a fresh empty
+user directory, that path has no full system-item materialization pass.
+The subject's `oxpinyin-runtime/src/lib.rs:941-1000` always calls
+`oxpinyin_user::system_originals` before opening the user store. The latter
+iterates every system item and every pronunciation, decoding text and
+building `BTreeMap`s (`oxpinyin-user/src/persistence.rs:73-110`). This is
+an extra O(N+P) work and O(N+P) transient heap pass for N system items
+and P pronunciations, even when the profile is empty. `callgrind_annotate`
+attributes 103,593,529 of the subject tkrzw cold-open Ir to the
+`Runtime::open` closure, with 25,052,756 in `PhraseItemView::phrase_text`
+and substantial allocator cost (`logs/item6-tkrzw-subject-annotate.log`).
+The measured cold-open scope exceeds 1.10 in both dimensions on each cell;
+this is a distinct complexity finding, not a claim that every L path was
+measured.
+
+**Instrument falsifiers.** The preserved gated scratch build `5eb5c51`
+has L-m1 at `oxpinyin-capi/src/sentence.rs:279-288` (an input-length-squared
+busy loop) and L-m2 at `oxpinyin-capi/src/context.rs:52-57` (a touched,
+retained 64 MiB allocation). Its parent `8567883` matches the audited
+subject at both source sites. `harness/L-complexity/mutations.sh` (SHA-256
+`e67cad47a9ebc40731e257138fb27d02ac526771d2fe1745a373b9b186d596be`)
+ran baseline, injected and reverted phases in each cell. L-m1 increased
+Callgrind Ir by 32,166,128 / 32,179,739 / 32,211,279 (tkrzw/bdb/kc);
+after unsetting it Ir returned within 0.0021% of baseline. L-m2 raised
+Massif peak heap by more than 64 MiB in each cell and returned exactly on
+unset. Every phase exited 0, and stdout digests were identical within a
+cell. Its per-run one-minute load range was 2.03-2.57. Raw files are in
+`results/L-complexity/mutations/`.
+
+The selected severity-2 cold-open repro was repeated once per cell against
+prebuilt relinked `stage-main-*` objects from current `origin/main`
+`34a66bc915c93a09a1680e70c5c2c252f95ffdfe` (the runtime, user
+persistence and C init source files in `src-main` were byte-equal to that
+commit). Current-main subject Ir was 334,313,153 / 330,749,226 /
+342,716,300, and peak heap was 24,556,676 / 23,683,402 / 30,549,887 B
+(tkrzw/bdb/kc): the finding still reproduces. The six recheck traces each
+record UTC/load (one-minute range 1.90-2.23) under
+`results/L-complexity/current-main/`; the runner is
+`harness/L-complexity/current-main.sh` (SHA-256
+`020e91b6e121de5c697a48cda0362c6050bba107191262ae8097b85881528637`).
+
+**Overall L verdict: NOT-ESTABLISHED.** The complete structural-divergence
+inventory is blocked by J's unresolved graph. The full section-12 input set,
+200-input training and 10k-phrase import/export have not been measured with
+these instruments. L-01 is a measured BOTH-WORSENED cold-open finding, but
+no other internal path is marked MATCH and gap issues #553-#555 remain open.
