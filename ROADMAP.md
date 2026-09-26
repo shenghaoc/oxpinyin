@@ -217,7 +217,7 @@ parked.
   `libpinyin.ver` at the pin (`pinyin_get_raw_full_pinyin` excluded, dead
   in upstream itself) — under libpinyin's own binary identity: SONAME
   `libpinyin.so.15`, `LIBPINYIN` symbol versions, the header under
-  `libpinyin-2.11.91/`, and `libpinyin.pc`, all produced by cargo-c
+  `libpinyin-2.11.92/`, and `libpinyin.pc`, all produced by cargo-c
   (`docs/packaging.md`, `docs/findings/drop-in-abi-identity.md`). The
   goal is the compatibility policy's: rename the built object to
   `libpinyin.so.15`, put it on the library path, and unmodified consumers

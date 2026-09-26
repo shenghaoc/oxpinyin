@@ -80,27 +80,27 @@ glib-sys.workspace = true
 # The checked-in zhuyin.h ships verbatim; never regenerate it with cbindgen.
 generation = false
 # The real libzhuyin installs its header under the same version-stamped
-# subdirectory as libpinyin (/usr/include/libpinyin-2.11.91/zhuyin.h).
+# subdirectory as libpinyin (/usr/include/libpinyin-2.11.92/zhuyin.h).
 # zhuyin.h includes novel_types.h and zhuyin_custom2.h; zhuyin_custom2.h
 # includes pinyin_custom2.h, so all three shipped companions close the set.
-subdirectory = "libpinyin-2.11.91"
+subdirectory = "libpinyin-2.11.92"
 
 [package.metadata.capi.install.include]
 asset = [
-    { from = "zhuyin.h", to = "libpinyin-2.11.91" },
-    { from = "zhuyin_custom2.h", to = "libpinyin-2.11.91" },
+    { from = "zhuyin.h", to = "libpinyin-2.11.92" },
+    { from = "zhuyin_custom2.h", to = "libpinyin-2.11.92" },
     # zhuyin.h -> novel_types.h; zhuyin_custom2.h -> pinyin_custom2.h. Both
     # companions ship so the header resolves standalone (the drop-in installs
     # the closed include set, matching upstream's libzhuyin install tree).
-    { from = "novel_types.h", to = "libpinyin-2.11.91" },
-    { from = "pinyin_custom2.h", to = "libpinyin-2.11.91" },
+    { from = "novel_types.h", to = "libpinyin-2.11.92" },
+    { from = "pinyin_custom2.h", to = "libpinyin-2.11.92" },
 ]
 
 [package.metadata.capi.pkg_config]
 name = "libzhuyin"
 filename = "libzhuyin"
 description = "Library to deal with zhuyin"
-version = "2.11.91"
+version = "2.11.92"
 requires = "glib-2.0"
 # cargo-c cannot emit the extra variables real consumers read (database_format,
 # libzhuyinincludedir, libzhuyin_binary_version), so build.rs bakes them and

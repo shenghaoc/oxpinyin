@@ -40,12 +40,19 @@
 # cargo-c link). The relink verifies its own export set, both directions,
 # before replacing anything.
 #
-# Usage: tools/packaging/install.sh <library> --prefix=DIR [--libdir=DIR] [--destdir=DIR]
-#                                   [-- <extra cargo cinstall args>]
+# Usage: tools/packaging/install.sh <library> --prefix=DIR [--libdir=DIR] [--includedir=DIR]
+#                                   [--destdir=DIR] [-- <extra cargo cinstall args>]
 #        <library> is `libpinyin` or `libzhuyin` — required, one per invocation.
 #        --destdir stages the tree under DIR (the usual packaging DESTDIR): it
 #        is forwarded to cargo cinstall and the complete .pc is written under
 #        it too, while the .pc's own paths keep the real --prefix/--libdir.
+#        The .pc's directory variables are written the way the pin's
+#        autoconf configure substitutes them: exec_prefix=${prefix}, and
+#        libdir / includedir as the given --libdir / --includedir verbatim,
+#        or, when absent, autoconf's prefix-relative defaults
+#        ${exec_prefix}/lib and ${prefix}/include — so a consumer's
+#        `pkg-config --define-variable=prefix=` relocates the tree exactly as
+#        it relocates the pin's.
 # Env:   LIBPINYIN_DATABASE_FORMAT=<name>  overrides the baked database_format
 #                                          (e.g. KyotoCabinet, BerkeleyDB).
 #
@@ -67,11 +74,12 @@ COMPANION_HEADERS="novel_types.h pinyin_custom2.h"
 LIBRARY=""
 PREFIX=""
 LIBDIR=""
+INCLUDEDIR=""
 DESTDIR=""
 EXTRA=()
 
 usage() {
-  echo "usage: $0 <libpinyin|libzhuyin> --prefix=DIR [--libdir=DIR] [--destdir=DIR] [-- <extra cargo cinstall args>]" >&2
+  echo "usage: $0 <libpinyin|libzhuyin> --prefix=DIR [--libdir=DIR] [--includedir=DIR] [--destdir=DIR] [-- <extra cargo cinstall args>]" >&2
   echo "       one library per invocation; run twice to install both" >&2
   exit 2
 }
@@ -97,6 +105,8 @@ while [ $# -gt 0 ]; do
     --prefix)   shift; PREFIX="${1:-}" ;;
     --libdir=*) LIBDIR="${1#*=}" ;;
     --libdir)   shift; LIBDIR="${1:-}" ;;
+    --includedir=*) INCLUDEDIR="${1#*=}" ;;
+    --includedir)   shift; INCLUDEDIR="${1:-}" ;;
     --destdir=*) DESTDIR="${1#*=}" ;;
     --destdir)  shift; DESTDIR="${1:-}" ;;
     --)         shift; EXTRA+=("$@"); break ;;
@@ -106,8 +116,16 @@ while [ $# -gt 0 ]; do
 done
 
 [ -n "$PREFIX" ] || usage
+# The .pc's libdir / includedir values: what the caller passed, verbatim, or
+# autoconf's unexpanded defaults — the pin's configure writes exactly these
+# strings into libpinyin.pc / libzhuyin.pc when --libdir / --includedir are
+# absent. Captured before LIBDIR / INCLUDEDIR are defaulted to the concrete
+# paths cargo cinstall needs.
+PC_LIBDIR="${LIBDIR:-\${exec_prefix\}/lib}"
+PC_INCLUDEDIR="${INCLUDEDIR:-\${prefix\}/include}"
 # cargo-c defaults pkgconfigdir to <libdir>/pkgconfig; mirror its libdir default.
 LIBDIR="${LIBDIR:-$PREFIX/lib}"
+INCLUDEDIR="${INCLUDEDIR:-$PREFIX/include}"
 
 # Resolve the target-dir, target triple and profile from the passthrough args
 # BEFORE building. cargo cinstall receives an explicit, absolute --target-dir
@@ -268,7 +286,8 @@ collect_features() {
 install_library() {
   local crate_dir="$1" baked_name="$2" pc_name="$3" static_stem="$4"
   shift 4
-  ( cd "$crate_dir" && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" --target-dir="$TARGET_DIR" \
+  ( cd "$crate_dir" && cargo cinstall --prefix="$PREFIX" --libdir="$LIBDIR" --includedir="$INCLUDEDIR" \
+      --target-dir="$TARGET_DIR" \
       ${DESTDIR:+--destdir="$DESTDIR"} ${PASSTHRU[@]+"${PASSTHRU[@]}"} )
   local baked
   baked="$(locate_baked "$baked_name")"
@@ -299,24 +318,25 @@ PC_DIR="${DESTDIR}${LIBDIR}/pkgconfig"
 mkdir -p "$PC_DIR"
 
 prefix_esc="$(sed_escape "$PREFIX")"
-libdir_esc="$(sed_escape "$LIBDIR")"
+libdir_esc="$(sed_escape "$PC_LIBDIR")"
+includedir_esc="$(sed_escape "$PC_INCLUDEDIR")"
+
+# Both templates are the pin's own .pc.in, so both take the same four
+# install-time substitutions, with the values the pin's configure writes
+# (exec_prefix is always the unexpanded ${prefix}: cargo-c has no
+# --exec-prefix).
+PC_SUBST=(
+  -e "s#@prefix@#${prefix_esc}#g"
+  -e "s#@exec_prefix@#\${prefix}#g"
+  -e "s#@libdir@#${libdir_esc}#g"
+  -e "s#@includedir@#${includedir_esc}#g"
+)
 
 case "$LIBRARY" in
   libpinyin)
-    # libpinyin: the template hardcodes exec_prefix/includedir off ${prefix}, so
-    # only @prefix@ and @libdir@ are install-time.
-    install_library "$PINYIN_CRATE_DIR" libpinyin.pc.in.baked libpinyin.pc libpinyin \
-      -e "s#@prefix@#${prefix_esc}#g" -e "s#@libdir@#${libdir_esc}#g"
+    install_library "$PINYIN_CRATE_DIR" libpinyin.pc.in.baked libpinyin.pc libpinyin "${PC_SUBST[@]}"
     ;;
   libzhuyin)
-    # libzhuyin: the template keeps @exec_prefix@ and @includedir@ as placeholders
-    # (unlike libpinyin.pc.in's hardcoded ${prefix}/include), so all four are
-    # install-time. Mirror the values autoconf substitutes upstream (exec_prefix
-    # defaults to ${prefix}, includedir to ${prefix}/include).
-    install_library "$ZHUYIN_CRATE_DIR" libzhuyin.pc.in.baked libzhuyin.pc libzhuyin \
-      -e "s#@prefix@#${prefix_esc}#g" \
-      -e "s#@exec_prefix@#\${prefix}#g" \
-      -e "s#@libdir@#${libdir_esc}#g" \
-      -e "s#@includedir@#\${prefix}/include#g"
+    install_library "$ZHUYIN_CRATE_DIR" libzhuyin.pc.in.baked libzhuyin.pc libzhuyin "${PC_SUBST[@]}"
     ;;
 esac

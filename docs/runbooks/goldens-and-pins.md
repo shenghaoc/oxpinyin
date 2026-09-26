@@ -50,8 +50,12 @@ model SHA-256, DBM) are one identity; change every field together. The
 3. Record what moved, what did not, and what is build-nondeterministic
    (the six DBM-backed data files are; issue #358) in a verification
    finding; amend `oracle-environment.md`.
-4. The drop-in identity (`libpinyin-2.11.91` header dir, `.pc` version)
-   moves only when upstream tags a release, never with the pin.
+4. The drop-in identity (`libpinyin-<version>` header dir, `.pc` version)
+   moves with the pin: the capi builds read `libpinyin_tag` from
+   `oracle-pin.txt` and refuse a `[package.metadata.capi]` table that
+   disagrees, so the bump edits both capi `Cargo.toml` files in the same
+   commit; then run `tools/packaging/check-pc-metadata.sh` against the
+   rebuilt pin (issue #537).
 
 Re-run the pins after any rebase that touches engine, capi or data
 (AGENTS.md, "Rebase discipline"); whoever merges later re-measures.

@@ -22,8 +22,9 @@ and attaches them with a `SHA256SUMS` to the release.
 4. Frozen pins unchanged since the last measured run, or re-measured
    (`goldens-and-pins.md`).
 5. Version streams agree (`docs/packaging.md`, "The four version
-   streams"): the drop-in identity stays `2.11.91` until upstream tags a
-   release; the crate version is the workspace's `0.x` lockstep.
+   streams"): the drop-in identity is the pin's libpinyin version
+   (`tools/packaging/pc-version.sh`; CI's `check-pc-version.sh` holds the
+   manifests to it); the crate version is the workspace's `0.x` lockstep.
 
 ## What each lane gates
 

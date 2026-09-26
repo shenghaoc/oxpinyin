@@ -142,7 +142,7 @@ generation = false
 # pinyin.h includes novel_types.h and pinyin_custom2.h (each -> glib.h); both
 # ship beside it verbatim, the closed set upstream installs under the same
 # subdirectory.
-subdirectory = "libpinyin-2.11.91"
+subdirectory = "libpinyin-2.11.92"
 
 [package.metadata.capi.install.include]
 # Ship the existing crate-root header without moving it into assets/. The
@@ -150,16 +150,16 @@ subdirectory = "libpinyin-2.11.91"
 # directory the header is not in. pinyin.h's two companions ship with it so
 # the header resolves standalone — the drop-in installs the closed include set.
 asset = [
-    { from = "pinyin.h", to = "libpinyin-2.11.91" },
-    { from = "novel_types.h", to = "libpinyin-2.11.91" },
-    { from = "pinyin_custom2.h", to = "libpinyin-2.11.91" },
+    { from = "pinyin.h", to = "libpinyin-2.11.92" },
+    { from = "novel_types.h", to = "libpinyin-2.11.92" },
+    { from = "pinyin_custom2.h", to = "libpinyin-2.11.92" },
 ]
 
 [package.metadata.capi.pkg_config]
 name = "libpinyin"
 filename = "libpinyin"
 description = "Library to deal with pinyin"
-version = "2.11.91"
+version = "2.11.92"
 requires = "glib-2.0"
 # Intent: do not let cargo-c own the .pc — the complete file (with pkgdatadir,
 # database_format, libpinyinincludedir, libpinyin_binary_version) is generated

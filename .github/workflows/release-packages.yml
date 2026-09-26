@@ -13,7 +13,8 @@
 #
 # The packages REPLACE the distro's libpinyin/libzhuyin in their entirety:
 # same sonames (libpinyin.so.15 / libzhuyin.so.15), same pkg-config names,
-# versioned Provides at the pinned pc version (2.11.91), Conflicts/Replaces
+# versioned Provides at the pinned pc version (the pin record's libpinyin_tag,
+# read by tools/packaging/pc-version.sh), Conflicts/Replaces
 # (deb) or Obsoletes (rpm) or conflicts= (pacman) on the originals. Data is
 # deliberately NOT replaced on Debian/Fedora (libpinyin-data is a separate
 # package there and stays); on Arch the data lives inside the libpinyin
@@ -159,7 +160,8 @@ jobs:
           esac >> "$GITHUB_ENV"
 
       # Package version = the release tag (v stripped). The .pc keeps its
-      # own 2.11.91 version — docs/packaging.md "The four version streams".
+      # own version, the pin's libpinyin version (tools/packaging/pc-version.sh)
+      # — docs/packaging.md "The four version streams".
       # Stable three-component versions only: a prerelease suffix (-rc1)
       # is not a legal pkgver for makepkg and sorts wrongly under dpkg/rpm,
       # so anything but vX.Y.Z / X.Y.Z fails here rather than in a maker.
@@ -235,12 +237,13 @@ jobs:
           esac
           ldconfig
           fail() { echo "::error::gate failed: $*" >&2; exit 1; }
-          [ "$(pkg-config --modversion libpinyin)" = "2.11.91" ] || fail "libpinyin modversion"
+          PCVER="$(tools/packaging/pc-version.sh)"
+          [ "$(pkg-config --modversion libpinyin)" = "$PCVER" ] || fail "libpinyin modversion"
           [ "$(pkg-config --variable=database_format libpinyin)" = "$DBFMT" ] || fail "database_format"
           [ -n "$(pkg-config --variable=pkgdatadir libpinyin)" ] || fail "pkgdatadir"
           pkg-config --libs libpinyin | grep -qw -- "-lpinyin" || fail "libpinyin --libs"
-          pkg-config --cflags libpinyin | grep -q -- "libpinyin-2.11.91" || fail "libpinyin --cflags"
-          [ "$(pkg-config --modversion libzhuyin)" = "2.11.91" ] || fail "libzhuyin modversion"
+          pkg-config --cflags libpinyin | grep -q -- "libpinyin-$PCVER" || fail "libpinyin --cflags"
+          [ "$(pkg-config --modversion libzhuyin)" = "$PCVER" ] || fail "libzhuyin modversion"
           # Two programs, one public header + one library each — the real
           # consumer pattern (no program links both headers: they
           # re-declare the same enums and novel_types.h's tentative
