@@ -64,16 +64,26 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// Mirror `[package.metadata.capi.pkg_config].version` and the libtool
-// `current.revision` behind `[package.metadata.capi.library].version` in
-// Cargo.toml. build.rs cannot read those metadata tables, so keep these in
-// sync with them (and with `header.subdirectory = libpinyin-2.11.91`).
-const PC_VERSION: &str = "2.11.91";
+mod build_pin_version;
+
+// Mirrors the libtool `current.revision` behind
+// `[package.metadata.capi.library].version` in Cargo.toml. The `.pc`
+// version is not restated here: `build_pin_version` reads it from the pin
+// record and checks the manifest's header subdirectory and pkg_config
+// version against it.
 const PC_BINARY_VERSION: &str = "15.0";
 
 fn main() {
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"));
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=build_pin_version.rs");
+    println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=libpinyin.pc.in");
+    println!(
+        "cargo:rerun-if-changed={}",
+        build_pin_version::pin_record_path(&manifest_dir).display()
+    );
     println!("cargo:rerun-if-env-changed=LIBPINYIN_DATABASE_FORMAT");
 
     // SONAME is an ELF concept. The crate is Linux-first by design but must
@@ -87,7 +97,8 @@ fn main() {
     // SYSTEM_DEPS_GLIB_2_0_LIB, and SYSTEM_DEPS_GLIB_2_0_NO_PKG_CONFIG
     // in place of the former GLIB_LIBS override.
 
-    bake_pkg_config_template();
+    let pc_version = build_pin_version::pin_version(&manifest_dir);
+    bake_pkg_config_template(&manifest_dir, &pc_version);
 }
 
 /// Bakes the build-time fields of `libpinyin.pc.in` — `@VERSION@`,
@@ -96,14 +107,13 @@ fn main() {
 /// `$OUT_DIR/libpinyin.pc.in.baked` and mirrors it to
 /// `<target>/<profile>/libpinyin.pc.in.baked`, an un-hashed path the wrapper
 /// can read without discovering the build-hash directory.
-fn bake_pkg_config_template() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo");
-    let template_path = Path::new(&manifest_dir).join("libpinyin.pc.in");
+fn bake_pkg_config_template(manifest_dir: &Path, pc_version: &str) {
+    let template_path = manifest_dir.join("libpinyin.pc.in");
     let template = fs::read_to_string(&template_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", template_path.display()));
 
     let substituted = template
-        .replace("@VERSION@", PC_VERSION)
+        .replace("@VERSION@", pc_version)
         .replace("@LIBPINYIN_BINARY_VERSION@", PC_BINARY_VERSION)
         .replace("@DATABASE_FORMAT@", &database_format());
 

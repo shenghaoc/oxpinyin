@@ -15,17 +15,20 @@
 # absence is a SILENT misconfiguration, not a build failure: the consumer
 # looks for system data at "" and probes an empty backend name.
 #
-# build.rs bakes the build-time fields (@VERSION@, @LIBPINYIN_BINARY_VERSION@,
-# @DATABASE_FORMAT@) and strips this header, leaving @prefix@/@libdir@ for
-# tools/packaging/install.sh to fill after cargo cinstall; see
-# docs/findings/installed-naming.md for why a wrapper is required.
+# build.rs bakes the build-time fields (@VERSION@ from the pin record,
+# @LIBPINYIN_BINARY_VERSION@, @DATABASE_FORMAT@) and strips this header,
+# leaving the install-time @prefix@/@exec_prefix@/@libdir@/@includedir@ for
+# tools/packaging/install.sh to fill after cargo cinstall the way the pin's
+# configure does; see docs/findings/installed-naming.md for why a wrapper is
+# required.
 #
-# Mirrors the real /usr/lib/<triple>/pkgconfig/libpinyin.pc field for field.
+# Below the header this is the pin's libpinyin.pc.in (074a2219) line for
+# line.
 
 prefix=@prefix@
-exec_prefix=${prefix}
+exec_prefix=@exec_prefix@
 libdir=@libdir@
-includedir=${prefix}/include
+includedir=@includedir@
 pkgdatadir=@libdir@/libpinyin
 database_format=@DATABASE_FORMAT@
 

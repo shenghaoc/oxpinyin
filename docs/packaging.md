@@ -29,7 +29,7 @@ below), which is why `tools/packaging/install.sh` wraps `cargo cinstall`.
 
 `crates/oxpinyin-capi/Cargo.toml` carries the full contract. The installed
 tree takes libpinyin's own binary identity — SONAME `libpinyin.so.15`,
-`libpinyin.pc`, headers under `libpinyin-2.11.91/` — while the source tree
+`libpinyin.pc`, headers under `libpinyin-2.11.92/` — while the source tree
 keeps ours; the full rationale and the measured gates live in
 `docs/findings/installed-naming.md`. In short:
 
@@ -41,11 +41,11 @@ keeps ours; the full rationale and the measured gates live in
   `[features] shipped = []` compiles out the fixture hooks no real consumer
   calls; it is enabled only for the shipped drop-in artifact.
 - `[package.metadata.capi.header] generation = false`, `subdirectory =
-  "libpinyin-2.11.91"`. `pinyin.h` and its two companion headers ship
+  "libpinyin-2.11.92"`. `pinyin.h` and its two companion headers ship
   **verbatim** under libpinyin's version-stamped include subdirectory, never
   regenerated.
 - `[package.metadata.capi.pkg_config] name = "libpinyin"`,
-  `version = "2.11.91"`. The `.pc` answers to libpinyin's own name and a
+  `version = "2.11.92"`. The `.pc` answers to libpinyin's own name and a
   libpinyin version, so consumers' `>=` constraints resolve; cargo-c's own
   `.pc` is incomplete (closed seven-key field set) and is overwritten from
   the build.rs-baked template by `tools/packaging/install.sh`.
@@ -66,7 +66,7 @@ detects upstream — the `.pc` name is `libpinyin`, not `oxpinyin`, and the
 version it reports is libpinyin's, so existing `>=` constraints resolve:
 
 ```autoconf
-PKG_CHECK_MODULES(LIBPINYIN, [libpinyin >= 2.11.91])
+PKG_CHECK_MODULES(LIBPINYIN, [libpinyin >= 2.11.92])
 ```
 
 Nothing in the installed tree carries the `oxpinyin` or `pinyin_capi` name;
@@ -136,7 +136,13 @@ These are independent and move for different reasons:
    ABI current — never with the crate version.
 3. **Pinned oracle** — libpinyin `2.11.92`. Re-pinning the oracle is a
    deliberate event with its own re-freeze (`pin-refreeze-*.md` convention),
-   independent of the crate version and SONAME.
+   independent of the crate version and SONAME. The drop-in's installed
+   identity — the `.pc` `Version:`, the `libpinyin-<version>/` header
+   subdirectory, the packages' versioned Provides — is the pin's own
+   `configure.ac` version and moves with it: its one source is
+   `libpinyin_tag` in `tools/oracle/oracle-pin.txt`, which both capi build
+   scripts read (and check their `[package.metadata.capi]` tables against)
+   and `tools/packaging/pc-version.sh` prints for the shell side.
 4. **Parity pins** — `10190 / 10190 / 98930` of `98930` candidate symbols,
    `0` absent, `0` tie-swaps (per `pin-refreeze-2026-08.md`
    2026-08-22 amendment). These freeze the decode/predict output the
@@ -199,9 +205,13 @@ writing its own incomplete `libpinyin.pc`.
 The contract is therefore carried outside cargo-c: each crate's build.rs
 bakes a complete `.pc` template (`libpinyin.pc.in.baked`) with the
 build-time fields, and `tools/packaging/install.sh` fills the install-time
-placeholders and **overwrites** the file cargo-c installed. The result is
-byte-for-byte the shape of upstream's `.pc` — every variable
-`${prefix}`-derived, so `DESTDIR` relocation still works (below). A bare
+placeholders and **overwrites** the file cargo-c installed. Both templates
+are the pin's own `.pc.in`, and the wrapper substitutes what the pin's
+configure does — `exec_prefix=${prefix}`, and `libdir` / `includedir` as
+the given `--libdir` / `--includedir` verbatim or, without them, autoconf's
+prefix-relative `${exec_prefix}/lib` / `${prefix}/include` — so the
+installed file is byte-identical to the pin's for the same layout and
+backend (`tools/packaging/check-pc-metadata.sh` diffs the two trees). A bare
 `cargo cinstall` without the wrapper leaves the incomplete file; that
 silent window and its gates are recorded in
 `docs/findings/installed-naming.md`.

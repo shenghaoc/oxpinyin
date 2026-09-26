@@ -38,6 +38,10 @@ ZHUYIN_CRATE_DIR="$REPO_ROOT/crates/oxpinyin-zhuyin-capi"
 # silently rewrite what the other put there (same check as install.sh).
 COMPANION_HEADERS="novel_types.h pinyin_custom2.h"
 
+# The pin's libpinyin version: the .pc Version and the include subdirectory
+# name, read from the pin record every .pc version derives from.
+PCVER="$(./pc-version.sh)"
+
 # Expected `database_format` per backend; must mirror build.rs's
 # database_format() and the .pc gate below catches any drift.
 db_format_for() {
@@ -122,7 +126,7 @@ echo "== installing libzhuyin into $DEST (backend: $BACKEND) =="
   --release --locked --no-default-features --features "$BACKEND"
 
 STAGE_LIB="$DEST$LIBDIR"
-STAGE_INC="$DEST$PREFIX/include/libpinyin-2.11.91"
+STAGE_INC="$DEST$PREFIX/include/libpinyin-$PCVER"
 STAGE_PC="$STAGE_LIB/pkgconfig"
 
 # The fixed tree of docs/findings/installed-naming.md, file by file: a
@@ -172,12 +176,12 @@ check_pc libzhuyin database_format "$DB_FORMAT"
 check_pc libpinyin libpinyin_binary_version "15.0"
 check_pc libzhuyin libzhuyin_binary_version "15.0"
 for mod in libpinyin libzhuyin; do
-  [ "$(pkg-config --modversion "$mod")" = "2.11.91" ] \
-    || fail "$mod modversion is not 2.11.91"
+  [ "$(pkg-config --modversion "$mod")" = "$PCVER" ] \
+    || fail "$mod modversion is not $PCVER"
   pkg-config --libs "$mod" | grep -qw -- "-l${mod#lib}" \
     || fail "$mod --libs does not contain -l${mod#lib}"
-  pkg-config --cflags "$mod" | grep -q -- "libpinyin-2.11.91" \
-    || fail "$mod --cflags does not point into libpinyin-2.11.91"
+  pkg-config --cflags "$mod" | grep -q -- "libpinyin-$PCVER" \
+    || fail "$mod --cflags does not point into libpinyin-$PCVER"
 done
 # pkgdatadir exists on libpinyin.pc only — upstream's libzhuyin.pc carries no
 # data-dir variable, and mirroring upstream byte-for-byte is the contract.

@@ -25,7 +25,7 @@
 # system whose libpinyin it replaced; the release workflow always passes it.
 # `--data-version=VER` names the libpinyin package version the data came
 # from and is recorded in pkgdesc, since the model's version (Arch is on
-# 2.10.x) is not the 2.11.91 the library provides.
+# 2.10.x) is not the pin version the library provides.
 #
 # makepkg refuses to run as root, so a build user is created and the package
 # is built as that user; the script itself is expected to run as root (CI
@@ -66,7 +66,7 @@ DESC="Library to deal with pinyin — oxpinyin drop-in ($BACKEND store backend"
 [ -n "$DATAVER" ] && DESC="$DESC; model data from Arch libpinyin $DATAVER"
 DESC="$DESC)"
 
-PCVER="2.11.91"      # mirrors [package.metadata.capi.pkg_config].version
+PCVER="$("$(dirname "$0")/pc-version.sh")"  # the pin record, via pc-version.sh
 PKGNAME="oxpinyin-libpinyin-${BACKEND}"
 ARCH="$(uname -m)"
 # pacman's soname provision suffix for the 64-bit arches (x86_64, aarch64).

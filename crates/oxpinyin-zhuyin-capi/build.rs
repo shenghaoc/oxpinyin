@@ -23,14 +23,26 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// Mirror `[package.metadata.capi.pkg_config].version` and the libtool
-// ABI version in Cargo.toml. Keep in sync.
-const PC_VERSION: &str = "2.11.91";
+// The pin-version reader `oxpinyin-capi`'s build script uses, so both
+// `.pc` files and both header subdirectories follow the one pin record.
+#[path = "../oxpinyin-capi/build_pin_version.rs"]
+mod build_pin_version;
+
+// Mirrors the libtool ABI version in Cargo.toml. The `.pc` version comes
+// from the pin record through `build_pin_version`.
 const PC_BINARY_VERSION: &str = "15.0";
 
 fn main() {
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo"));
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=../oxpinyin-capi/build_pin_version.rs");
+    println!("cargo:rerun-if-changed=Cargo.toml");
     println!("cargo:rerun-if-changed=libzhuyin.pc.in");
+    println!(
+        "cargo:rerun-if-changed={}",
+        build_pin_version::pin_record_path(&manifest_dir).display()
+    );
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux") {
         println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libzhuyin.so.15");
@@ -40,20 +52,20 @@ fn main() {
     // SYSTEM_DEPS_GLIB_2_0_LIB, and SYSTEM_DEPS_GLIB_2_0_NO_PKG_CONFIG
     // in place of the former GLIB_LIBS override.
 
-    bake_pkg_config_template();
+    let pc_version = build_pin_version::pin_version(&manifest_dir);
+    bake_pkg_config_template(&manifest_dir, &pc_version);
 }
 
 /// Bakes the build-time fields of `libzhuyin.pc.in` — `@VERSION@`,
 /// `@LIBPINYIN_BINARY_VERSION@`, `@DATABASE_FORMAT@` — leaving the
 /// install-time `@prefix@` / `@libdir@` for the wrapper.
-fn bake_pkg_config_template() {
-    let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by cargo");
-    let template_path = Path::new(&manifest_dir).join("libzhuyin.pc.in");
+fn bake_pkg_config_template(manifest_dir: &Path, pc_version: &str) {
+    let template_path = manifest_dir.join("libzhuyin.pc.in");
     let template = fs::read_to_string(&template_path)
         .unwrap_or_else(|e| panic!("read {}: {e}", template_path.display()));
 
     let substituted = template
-        .replace("@VERSION@", PC_VERSION)
+        .replace("@VERSION@", pc_version)
         .replace("@LIBPINYIN_BINARY_VERSION@", PC_BINARY_VERSION)
         .replace("@DATABASE_FORMAT@", &database_format());
 

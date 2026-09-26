@@ -13,7 +13,7 @@
 # Recommends here, so an uninstall of ours keeps the data intact too.
 #
 # Package Version is the oxpinyin release tag (0.x stream); the
-# consumer-facing version stays 2.11.91 in the .pc and the Provides, the same
+# consumer-facing version is the pin's libpinyin version in the .pc and the Provides, the same
 # split docs/packaging.md "The four version streams" records.
 #
 # Depends is computed, not hardcoded: every DT_NEEDED soname of the shipped
@@ -38,9 +38,10 @@ DEBVER="${VERSION}-1"
 BASE="oxpinyin-libpinyin15-${BACKEND}"
 MAINTAINER="Shenghao Chen <shenghaoc@outlook.com>"
 HOMEPAGE="https://github.com/shenghaoc/oxpinyin"
-# Mirror [package.metadata.capi.pkg_config].version: the libpinyin release
-# whose ABI and consumers this drop-in answers to.
-PCVER="2.11.91"
+# The pin's libpinyin version (tools/packaging/pc-version.sh reads the pin
+# record every .pc version derives from): the libpinyin release whose ABI and
+# consumers this drop-in answers to.
+PCVER="$("$(dirname "$0")/pc-version.sh")"
 
 STAGE_LIB="$STAGE$LIBDIR"
 for f in libpinyin.so.15.0.0 libzhuyin.so.15.0.0; do
@@ -100,13 +101,13 @@ ln -sfn -- libpinyin.so.15.0.0 "$RT$LIBDIR/libpinyin.so.15"
 ln -sfn -- libzhuyin.so.15.0.0 "$RT$LIBDIR/libzhuyin.so.15"
 
 # dev: unversioned linker symlinks, static archives, headers, .pc files
-mkdir -p -- "$DEV$LIBDIR" "$DEV$LIBDIR/pkgconfig" "$DEV/usr/include/libpinyin-2.11.91" \
+mkdir -p -- "$DEV$LIBDIR" "$DEV$LIBDIR/pkgconfig" "$DEV/usr/include/libpinyin-$PCVER" \
          "$DEV/usr/share/doc/$BASE-dev"
 install -m0644 -- "$STAGE_LIB/libpinyin.a" "$STAGE_LIB/libzhuyin.a" "$DEV$LIBDIR/"
 install -m0644 -- "$STAGE_LIB/pkgconfig/libpinyin.pc" \
                   "$STAGE_LIB/pkgconfig/libzhuyin.pc" "$DEV$LIBDIR/pkgconfig/"
-install -m0644 -- "$STAGE/usr/include/libpinyin-2.11.91/"*.h \
-                  "$DEV/usr/include/libpinyin-2.11.91/"
+install -m0644 -- "$STAGE/usr/include/libpinyin-$PCVER/"*.h \
+                  "$DEV/usr/include/libpinyin-$PCVER/"
 ln -sfn -- libpinyin.so.15 "$DEV$LIBDIR/libpinyin.so"
 ln -sfn -- libzhuyin.so.15 "$DEV$LIBDIR/libzhuyin.so"
 

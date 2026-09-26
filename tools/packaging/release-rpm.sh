@@ -9,7 +9,7 @@
 # in their entirety: rpm's dependency generator emits the soname Provides the
 # real packages carry (libpinyin.so.15()(64bit), libzhuyin.so.15()(64bit)),
 # Obsoletes swaps the installed packages out, and Provides: libpinyin =
-# 2.11.91 / libzhuyin = 2.11.91 keeps every "Requires: libpinyin >= …"
+# <pc version> / libzhuyin = <pc version> keeps every "Requires: libpinyin >= …"
 # consumer resolving. libpinyin-data is deliberately not obsoleted: it is a
 # separate package on Fedora and the library reads it in place.
 #
@@ -31,9 +31,10 @@ VERSION="${2:?version required}"
 STAGE="${3:?stage root required}"
 OUTDIR="${4:?outdir required}"
 
-# Mirror [package.metadata.capi.pkg_config].version: the libpinyin release
-# whose ABI and consumers this drop-in answers to.
-PCVER="2.11.91"
+# The pin's libpinyin version (tools/packaging/pc-version.sh reads the pin
+# record every .pc version derives from): the libpinyin release whose ABI and
+# consumers this drop-in answers to.
+PCVER="$("$(dirname "$0")/pc-version.sh")"
 NAME="oxpinyin-libpinyin-${BACKEND}"
 
 [ -d "$STAGE/usr" ] || { echo "error: $STAGE/usr missing" >&2; exit 1; }
@@ -92,7 +93,7 @@ cp -a %{_builddir}/stage/usr %{buildroot}/
 %{_libdir}/libzhuyin.so.15*
 
 %files devel
-%{_includedir}/libpinyin-2.11.91/
+%{_includedir}/libpinyin-$PCVER/
 %{_libdir}/libpinyin.so
 %{_libdir}/libzhuyin.so
 %{_libdir}/libpinyin.a

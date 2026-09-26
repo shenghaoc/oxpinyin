@@ -189,6 +189,11 @@ jobs:
       # checker itself must not pass quietly.
       - run: tests/lint-crate-cfg-placement.test.sh
       - run: .github/scripts/lint-crate-cfg-placement.sh
+      # Drop-in version agreement: the capi manifests' header subdirectory
+      # and pkg_config version against the pin record (issue #537). The
+      # full installed-tree diff, tools/packaging/check-pc-metadata.sh,
+      # needs the pin-built libpinyin, which CI never has.
+      - run: tools/packaging/check-pc-version.sh
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       # Complexity ratchet: no function may exceed CCN 40 (current max is
       # 38, the user/store.rs quartet — a tracked refactor target, never
