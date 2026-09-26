@@ -26,20 +26,22 @@
 - **Findings were not adversarially re-verified.** Subagent enumeration was
   spot-checked (section 1.3). Section 4 identifies rows whose code or inline
   differential basis could not be located; those rows remain open claims, not
-  established findings.
+  established findings. Six of them (D-03, D-04, D-18, D-22, D-25, D-26) were
+  moved out by the code-basis pass of 2026-09-26 (section 1.4, section 4.2);
+  the five others are owned by another lane and stay listed.
 
 | axis | tkrzw | bdb | kc | basis |
 |---|---|---|---|---|
 | A ABI surface | static MATCH (exc. .pc); layout MATCH | same | same | A-m1 and A-m3 detected and reverted; abidiff type section NOT-ESTABLISHED by pre-registration |
-| B libpinyin contract | DIVERGENT; aggregate probe count includes §4.2 gaps | DIVERGENT, with three nondeterministic oracle probes NOT-ESTABLISHED (§5) | DIVERGENT | B-m1, B-m2, F-m2 detected; gated revert identical for deterministic probes |
+| B libpinyin contract | DIVERGENT; §4.2 gaps D-04/D-18/D-25 closed by the code-basis pass | DIVERGENT, with three nondeterministic oracle probes NOT-ESTABLISHED (§5) | DIVERGENT | B-m1, B-m2, F-m2 detected; gated revert identical for deterministic probes |
 | B libzhuyin contract | DIVERGENT among 52 exports probed (Z-1..Z-3 plus twins, §14) | same | same | C-m3 and the Bz-shim-m1 shim detected and reverted on every cell |
 | C drivers | DIVERGENT (6 kinds); pred-order, predict and punct NOT-ESTABLISHED | same, +1 broader | same | C-m2 detected by 6 drivers; four of the seven remaining drivers detected their named DRV-* mutation. Three used impermissible substitutes (§13.2); their IDENTICAL output is not MATCH |
 | C options/encoding/zhuyin layouts | DIVERGENT (§15) | same | same | 539 option words, 1,043 encoding cases and 1,236 layout corpus lines; C-m1/C-m3 detected and reverted. Payload equality is conditional on D-23 diagnostics |
 | D persisted state | DIVERGENT (open counter, cross-read) | same | same, +kc interop | D-m1 (round-trip) and D-m3 (cycle) detected; revert identical |
 | E defect preservation | 37 DIVERGENT, 14 NE | same | same | E-m1 detected on all cells, reverted |
-| F errors/diagnostics | PARTIAL: 74-site aggregate NOT-ESTABLISHED (§4.2) | same | same | F-m1, F-m2 detected on every cell; bdb determinism holds under normalisation 2 (§13.3) |
+| F errors/diagnostics | DIVERGENT: 87 executed sites, each answered silently (§4.2 D-03 closed by the code-basis pass) | same | same | F-m1, F-m2 detected on every cell; bdb determinism holds under normalisation 2 (§13.3) |
 | G numerics | **NOT-ESTABLISHED** (G-m2 detected, **G-m1 not**: blind gate, §13.1) | **NOT-ESTABLISHED** (same) | **NOT-ESTABLISHED** (same) | no G row may be MATCH. The §12 gate mutation runs were done: G-m2 was detected and reverted on all cells; G-m1 was reached and changed four C-ABI outputs outside the fixture, but the gate missed it. D-13 also lacks a minimal attributed output (§4.2) |
-| H process state | DIVERGENT; D-22 NOT-ESTABLISHED | same | DIVERGENT; fork observation D-09 NOT-ESTABLISHED | H-m1 and H-m2 detected and reverted |
+| H process state | DIVERGENT; D-22 source located by the code-basis pass | same | DIVERGENT; fork observation D-09 NOT-ESTABLISHED | H-m1 and H-m2 detected and reverted |
 | I drop-in | DIVERGENT (.pc); D-14 consumer runtime NOT-ESTABLISHED | same | same | I-m2 and I-m3 (C-m2) detected; header matrix fails identically on both sides |
 | J coverage | export set MATCH; internal **PARTIAL / NOT-ESTABLISHED** | same | same | static three-cell candidate ledger, but unresolved call edges and unverified counterparts (§16); J-m1/J-m2 detected and reverted |
 | K register | 3 lists produced (section 7) | — | — | static reconciliation, no mutation by design |
@@ -156,12 +158,38 @@ was used.
    | D-18 | pin `phrase_index.cpp:168-170` (`ERROR_INTEGER_OVERFLOW` → false); subject `dict.rs:364-377` adds a u64 delta unchecked | CONFIRMED (the add-frequency part; the other parts rest on axis E's completed ledger) |
    | D-19 | pin `pinyin.cpp:896-910` returns `has_next_phrase`; subject `iterators.rs:407-408` returns true | CONFIRMED |
    | D-21 | pin BDB user tables are created 0600 (`chewing_large_table2_bdb.cpp:149`, `phrase_large_table3_bdb.cpp:164`, `ngram_bdb.cpp:55`); subject `oxpinyin-store/src/bdb/ffi.rs:298` uses 0644 | CONFIRMED |
-   | D-22 | every `std::env::temp_dir` use in the shipped crates is inside `#[cfg(test)]`, so the observed `TMPDIR` read has no located source | **downgraded to NOT-ESTABLISHED** |
+   | D-22 | **source located** (code-basis pass, 2026-09-26): subject `crates/oxpinyin-user/src/store_libpinyin.rs:82` — `session_token` calls `std::env::temp_dir()`, and `create_scratch_dir` (`:91-121`, called from `open_libpinyin` `:144`) creates `$TMPDIR/oxpinyin-user-<hash16>-<nanos>-<n>` mode 0700 for the session store; the pin's `src` has zero `TMPDIR`/`g_get_tmp_dir`/`mkstemp`-family hits over 106 files | **CONFIRMED** |
    | D-23 | subject `persistence.rs` "non-conforming user profile wiped" path; pin `open … failed.` from `table_info` | CONFIRMED |
    | D-24 | key-byte deltas not classified | **downgraded to NOT-ESTABLISHED** |
 
    D-05, D-17, D-20, D-26 and the E-derived parts of D-02/D-12/D-18/D-19 rest
    on axes that returned complete ledgers (C, E).
+
+### 1.4 Code-basis pass (read-only, executed 2026-09-26)
+
+A separate read-only pass traced the rows that section 4.2 lists as lacking a
+code basis — D-22, D-04, D-03, D-18, D-25 and D-26 — on both sides, and
+supplied the citations and the executed inline data that the ledger rows and
+the issues now carry. The five rows 4.2 still lists are owned by another lane
+(lane D Phase 1 / lane H) and were not traced. Pin citations were read at
+`074a2219` (blobs by `git show` from the host checkout at
+`~/Documents/repos/libpinyin`); subject citations were read at `34a66bc9`,
+whose `crates/` tree is blob-identical to this document's branch
+(`git diff --stat 34a66bc9 HEAD -- crates/` is empty), so a `:line` is the
+same line in both. Inline data is re-read from the archived evidence
+(section 8 points at the archive); no new capture is committed.
+
+| row | outcome of the pass |
+|---|---|
+| D-22 | source located — verdict leaves the NOT-ESTABLISHED set (section 1.3 item 6 and the ledger row) |
+| D-03 | sites recounted: 357 raw lines in `src`, 70 `check_result` sites, 87 executed (74 divergent / 8 refuted / 5 not executed); the 87-row site table is in #525 |
+| D-04 | the 68 exports are the ones the crashing NULL probes touch: 70 of the 83 NULL-class probes crash the pin, over 68 distinct exports; per-export deref and guard lines are in #526 |
+| D-18 | every part cited and executed (input-length cap, frequency add, `remember_user_input` count, 97400-train totals) |
+| D-25 | the named probes cited and executed |
+| D-26 | issue identified as #535 (its body already carries this row); the `zhrgguor` candidate[2] probe is cited |
+
+Skipped here as owned by other lanes: D-13, D-08, D-09, D-14 and D-24
+(lane D Phase 1 / lane H); their ledger rows say so.
 
 ## 2. Pre-registration and falsifiers
 
@@ -234,30 +262,30 @@ unless a live class demonstrably fits.
 |---|---|---|---|---|---|---|---|---|
 | D-01 | D, H, B (BP-10) | all | **The subject wipes the whole user profile on the 8th launch.** The pin decrements `user.conf`'s open counter in `pinyin_fini`, so a steady pinyin user stays at 0/1. The pin's libzhuyin never raises the counter at all, even across clean or killed launches. The subject increments on every open through both facades and never decrements, so after 7 clean init→train→save→fini cycles the 8th init finds counter > 6 and deletes all user files. Executed: 10 cycles; subject `c8: WIPE`, 7 learned phrases → 0 on all cells; pin's pinyin path keeps 9 phrases. The libzhuyin differential also wipes only on the subject side (see #523). | `pinyin.cpp:185-186`, `:1194-1198`; `zhuyin.cpp:126-176`, `:741-757`; `storage/table_info.cpp:409-425` | `oxpinyin-capi/src/context.rs:119-129`; `oxpinyin-zhuyin-capi/src/context.rs:34-45`; `oxpinyin-user/src/persistence.rs:223-266` | DIVERGENT-UNREGISTERED | 1 | #523 |
 | D-02 | B (BP-01), E (A-1), K (row 38) | all | `pinyin_train` ignores `index`. `train(1)`/`train(2)` write `train(0)`'s deltas; the pin trains the index-th n-best row. `train(len)`/`train(255)` abort on the pin and return true on the subject | `pinyin.cpp:2670-2691` | `oxpinyin-capi/src/candidates.rs:550` | DIVERGENT-UNREGISTERED | 1 | #524 |
-| D-03 | F, B (BP-04), C, E | all | The prior 74-site class-(c) claim has no inline per-site code/data ledger. One cited example does not establish the aggregate | code basis not located for 74-site scope | code basis not located for 74-site scope | NOT-ESTABLISHED (code basis not located) | 1 | #525 |
-| D-04 | B (BP-03) | all | The prior 68-export NULL claim has no inline per-export code/data ledger. `pinyin_get_n_candidate(NULL)` is one cited example, not 68 | code basis not located for 68-export scope | code basis not located for 68-export scope | NOT-ESTABLISHED (code basis not located) | 1 | #526 |
+| D-03 | F, B (BP-04), C, E | all | The prior 74-site class-(c) claim had no inline per-site ledger; the code-basis pass supplies it. Recount at `074a2219`: 357 raw `assert(`/`abort()` lines in `src` (54 `pinyin.cpp` + 41 lookup/zhuyin/common headers + 150 storage non-backend + 112 backend; 61 of the 357 are `abort()`), 70 `check_result` sites (`include/pinyin_utils.h:27-31` expands to `assert`; no `NDEBUG` in the build and the oracle `.so` carries `__assert_fail`). 87 sites executed = 74 DIVERGENT-UNREGISTERED (73 SIGABRT + 1 SIGSEGV) + 8 trigger-refuted + 5 not executed; kinds 67 `assert` (2 entered through `check_result`) + 20 `abort`. No divergent site logs. This covers register rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21 and 22 | 87-row per-site ledger (site, kind, condition, trigger input, oracle outcome, subject answer line, log?) in #525; raw enumeration in the F ledgers (F1-F4) plus `X-F-exec/site-verdicts.tsv` | only glib log calls: `oxpinyin-capi/src/context.rs:21`, `oxpinyin-zhuyin-capi/src/context.rs:44` (both init-failure only); `subject_logged_site = False` on all 87 | DIVERGENT-UNREGISTERED | 1 | #525 |
+| D-04 | B (BP-03) | all | The prior 68-export NULL claim had one cited example; the code-basis pass supplies the per-export ledger. Of the 83 NULL-class probes, 70 crash the pin (68 distinct exports, all `signal=11`; e.g. `save_null`: pin `(no stdout) => signal=11`, subject `save(NULL) -> false`) and all 83 answer `status=0` on the subject. The 13 non-crashing NULL probes (`pinyin_init(NULL,…)` false, `pinyin_lookup_tokens` NULL array, …) are excluded from the 68 | per-export first deref of the NULL argument in `src/pinyin.cpp` (e.g. `:1312` `instance->m_context`, `:509`/`:665`/`:777` iterators, `:1196` `context->m_user_table_info…`, `:1348` `g_free(instance->m_prefix_ucs4)`, `:2847` `*num = instance->m_candidates->len`, `:2876` `*utf8_str = candidate->m_phrase_string`, `:2507`/`:2593` live asserts on `candidate->…`); 68-row table in #526 | per-export `is_null()` guard (`instance.rs:19,41,59`, `iterators.rs:63,174,226,349,418`, `config.rs:21,60,100,156,183,212,237,265,294`, `candidates.rs:309,501`, `keys.rs:48,91,127,254`, `cursor.rs:241` `render_key`, `context.rs:120,145`); 68-row table in #526 | DIVERGENT-UNREGISTERED | 1 | #526 |
 | D-05 | C (union), K | all | Register row 33 (REVERT TARGET) is still present: after a whole-row NBEST choose + train the subject writes the user bigram and predicts `你`; the pin predicts nothing. Row 20 attributes the same line to the (a) residual, which is falsified | `pinyin.cpp:2515-2520`, `lookup/phonetic_lookup.h:866` | `oxpinyin-engine/src/constraint.rs:193-220`; `oxpinyin-engine/src/session/selection.rs:25-48` | DIVERGENT-UNREGISTERED | 1 | #527 |
 | D-06 | B (BP-12, BP-12b) | all | The subject crashes where the pin does not: `pinyin_alloc_instance` after `pinyin_fini` → SIGSEGV. Inversely, guessing on an instance that outlives its context crashes the pin and answers true on the subject | `pinyin.cpp:1194-1200,1310-1320,1372-1391` | `oxpinyin-capi/src/instance.rs:18-27`; `sentence.rs:119-154` | DIVERGENT-UNREGISTERED | 1 | #528 |
 | D-07 | B (BP-42) | kc | The subject writes `user_pinyin_index.bin`/`user_phrase_index.bin` as native KC databases, and the pin cannot `load_snapshot` them. A phrase imported on the subject is lost to the pin. This contradicts the policy's same-backend interop claim | `storage/chewing_large_table2_kyotodb.cpp:94-106` | `oxpinyin-user/src/persistence.rs:600-613,763-785` | DIVERGENT-UNREGISTERED | 1 | #529 |
-| D-08 | D (round-trip) | all | The same user dir read by pin and subject gives different learned state: unigram of 你 53853 vs 52887, and the bigram row sets differ. The attribution was not completed | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 2 | #543 |
-| D-09 | H (fork) | kc | Parent init, forked child trains and saves: the subject run never exits (killed by the 300 s timeout, exit 137). The pin exits 0; a hang versus slow run was not separated | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 1 | #531 |
+| D-08 | D (round-trip) | all | The same user dir read by pin and subject gives different learned state: unigram of 你 53853 vs 52887, and the bigram row sets differ. The attribution was not completed | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located); skipped in the code-basis pass — owned by lane D Phase 1 / lane H | 2 | #543 |
+| D-09 | H (fork) | kc | Parent init, forked child trains and saves: the subject run never exits (killed by the 300 s timeout, exit 137). The pin exits 0; a hang versus slow run was not separated | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located); skipped in the code-basis pass — owned by lane D Phase 1 / lane H | 1 | #531 |
 | D-10 | B (BP-02) | all | The default option word after `pinyin_init` is `USE_TONE` on the pin and `PINYIN_INCOMPLETE` on the subject | `pinyin.cpp:329` | `oxpinyin-facade/src/lib.rs:56` | DIVERGENT-UNREGISTERED | 2 | #532 |
 | D-11 | B (BP-07) | all | `pinyin_begin_get_phrases(ctx, 1..4)` exports every system row on the pin (95698/21234/28255/1051) and nothing on the subject | `pinyin.cpp:662-674,698-769` | `oxpinyin-facade/src/export_rows.rs:26-36` | DIVERGENT-UNREGISTERED | 2 | #533 |
 | D-12 | B (BP-08), E (SIGN-1, IMP-1) | all | Import semantics differ. Negative counts, toned pinyin (`ce4'shi4`) and libraries 1/255 are accepted by the pin and refused by the subject. Count 0 exports as −1 on the pin | `pinyin.cpp:615-640` | `oxpinyin-capi/src/iterators.rs:118-143` | DIVERGENT-UNREGISTERED | 2 | #534 |
-| D-13 | G | tkrzw (fixture) | Trellis keep-rule and comparator code differ, but the 504-input aggregate lacks a minimal attributed input/output pair in this report | `lookup/phonetic_lookup_heap.h:25-29,56-81`; `lookup/phonetic_lookup.h:75-88` | `oxpinyin-engine/src/nbest.rs:194-197,241-267` | NOT-ESTABLISHED (inline case not located) | 2 | #535 |
-| D-14 | I | all | The 71-line ibus runtime difference has no located minimal differing line or libpinyin/oxpinyin call-path pair | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 2 | #536 |
+| D-13 | G | tkrzw (fixture) | Trellis keep-rule and comparator code differ, but the 504-input aggregate lacks a minimal attributed input/output pair in this report | `lookup/phonetic_lookup_heap.h:25-29,56-81`; `lookup/phonetic_lookup.h:75-88` | `oxpinyin-engine/src/nbest.rs:194-197,241-267` | NOT-ESTABLISHED (inline case not located); skipped in the code-basis pass — owned by lane D Phase 1 / lane H | 2 | #535 |
+| D-14 | I | all | The 71-line ibus runtime difference has no located minimal differing line or libpinyin/oxpinyin call-path pair | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located); skipped in the code-basis pass — owned by lane D Phase 1 / lane H | 2 | #536 |
 | D-15 | A, I, K | all | `libpinyin.pc`/`libzhuyin.pc` say `Version: 2.11.91` and `includedir …/libpinyin-2.11.91`; the pin says 2.11.92. `pkg-config --atleast-version=2.11.92` fails on the subject. `libdir` is hard-coded `/usr/lib` (the pin uses `${exec_prefix}/lib`), which breaks `--define-variable=prefix` relocation | `configure.ac:7-9`, `libpinyin.pc.in` | `oxpinyin-capi/Cargo.toml:145-162` | DIVERGENT-UNREGISTERED | 2 | #537 |
 | D-16 | H | all | Two contexts on one user dir: independent on the pin (B does not see A's import; counter 2). Shared on the subject through the process registry (B sees A's import; counter 1; save results flip) | `pinyin.cpp:172-215,326-365` | `oxpinyin-user/src/registry.rs:104-108`; `store_libpinyin.rs:185-226` | DIVERGENT-UNREGISTERED | 2 | #538 |
 | D-17 | E (G-LOC-1) | all | `pinyin_init` leaves the process `LC_NUMERIC` at "C" on the pin (`table_info.cpp` setlocale); the subject does not touch the locale | `storage/table_info.cpp:328,372` | `oxpinyin-capi/src/context.rs:30-80` (no locale call) | DIVERGENT-UNREGISTERED | 2 | #539 |
-| D-18 | B (16, 17), E (INT-1..4) | all | The `add_unigram_frequency(G_MAXUINT)` edge has an identified code pair; the wider wrap/saturate, length-cap and export-overflow bundle lacks code and inline data here | `storage/phrase_index.cpp:150-176` (one edge only) | `oxpinyin-capi/src/dict.rs:364-377` (one edge only); wider code basis not located | NOT-ESTABLISHED (code basis incomplete) | 2 | #540 |
+| D-18 | B (16, 17), E (INT-1..4) | all | The `add_unigram_frequency(G_MAXUINT)` edge has an identified code pair; the code-basis pass adds the wider wrap/saturate, length-cap and export bundle, executed: input cap — pin `parse(L=32767)=32767`, `parse(32768)=32767`, `parse(65536)=32767`, `parse(65537)=32767` (gint16 saturation) vs subject `parse(32767)=4096` (4096 the only SAME case); frequency add — pin `add[0](0x7fffffff)=1 → f=2147536534`, `add[1..3]=0`, `add(0xffffffff)=0` (value held) vs subject all `=1 → f=4294967295`; `remember(你好世界,-1)` export count — pin `-2147483644` (u32 `2147483652`) vs subject `2147483647`; 97400 trains — pin `uni(你)=2122897296`, export `你好\|ni'hao\|5985278`, subject `4294967295`, `2147483647` | `storage/pinyin_parser2.cpp:333` (`gint16 parsed_len`) → `pinyin.cpp:1511`; `storage/phrase_index.cpp:168-171` (overflow guard → `ERROR_INTEGER_OVERFLOW`, `include/novel_types.h:86`) → `pinyin.cpp:2836-2843`; `pinyin.cpp:604-605` (`count * unigram_factor`, 32-bit) with `:520-521` | `oxpinyin-engine/src/session/mod.rs:36` (`MAX_INPUT_BYTES = 4_096`) + `session/buffer.rs:75,111`; `oxpinyin-runtime/src/lib.rs:436-477` (saturating) + `oxpinyin-user/src/store_libpinyin.rs:460-462` (u32) + `oxpinyin-capi/src/iterators.rs:280,403` (`c_int::MAX`) + `oxpinyin-capi/src/dict.rs:364-377` | DIVERGENT-UNREGISTERED | 2 | #540 |
 | D-19 | B (15), C, E (ORD-1/2, OFF-2) | all | Bigram export surface: last-row `get_next` returns true (register row 36 open); DB-walk export order; the pin skips the last key; the pin attributes `sentence_start` successors to the next predecessor | `pinyin.cpp:842-911` | `oxpinyin-capi/src/iterators.rs:371-411` | DIVERGENT-UNREGISTERED | 2 | #541 |
 | D-20 | B (14), C, E (MSB-3.2) | all | Register row 1 (b) says "repeated export cycle". The pin SIGSEGVs on the **first** export cycle after a train (bdb deterministic, 4/4) | `pinyin.cpp:842-872` | `oxpinyin-capi/src/iterators.rs:371-411` | DIVERGENT-BROADER (row 1) | 1 | #530 |
 | D-21 | B (41) | bdb | The pin creates the bdb user DB files mode 0600; the subject creates them 0644 under umask 022 | `storage/chewing_large_table2_bdb.cpp:149`; `ngram_bdb.cpp:55` | `oxpinyin-store/src/bdb/ffi.rs:298` | DIVERGENT-UNREGISTERED | 3 | #544 |
-| D-22 | H | all | The reported `TMPDIR` read and temporary entry have no shipped source path located | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 3 | #546 |
+| D-22 | H | all | The reported `TMPDIR` read and temporary entry: **source located** by the code-basis pass. Executed (getenv interposer): subject `GETENV phase=init var=TMPDIR caller=libpinyin.so.15` ×2 vs pin 0; init creates `$TMPDIR/oxpinyin-user-<hash16>-<nanos>-<n>` (0700) holding the session store; an unclean exit leaves it (`fork_exit`: subject `TMPLIST pre-fork entries=1`, leftover `./oxpinyin-user-52d5ae3aa0e3673c-<nanos>-0/store.tkt`; pin `entries=0`, nothing left). A clean `pinyin_fini` removes it | no `TMPDIR` and no temp-dir API anywhere in `src` (0 hits over 106 files); the user bigram is loaded into memory (`pinyin.cpp:399-402`; `storage/ngram_bdb.cpp:47-77` "create in memory db"/"load db into memory"); the only `.tmp` names are `<user_dir>/*.tmp` (`pinyin.cpp:997-1003,1006-1012,1015-1020`) | `oxpinyin-user/src/store_libpinyin.rs:82` (`session_token` → `std::env::temp_dir()`, `:78-84`), `:91-121` (`create_scratch_dir`, 0700), `:144`; reached from `pinyin_init` via `oxpinyin-runtime/src/lib.rs:1001`; removal at `oxpinyin-user/src/registry.rs:166-181` | DIVERGENT-UNREGISTERED | 3 | #546 |
 | D-23 | B (11), C | all | On a fresh dir the pin prints `open <dir>/user.conf failed.` and the subject prints `oxpinyin: non-conforming user profile wiped ...`; other diagnostic subclaims need their own code/data pairs | `storage/table_info.cpp:201,332` | `oxpinyin-user/src/store_libpinyin.rs:174-181` | DIVERGENT-UNREGISTERED (fresh-dir case only) | 3 | #545 |
-| D-24 | A (ck-runtime) | all | Raw `ChewingKey` bytes and parse returns differ across schemes/options, but the attribution was not completed | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 3 | #547 |
-| D-25 | B (06, 18–22, 26, 32–39), E (D-1..3) | all | The assorted return-value/out-param bundle lacks a per-export code/data pair in this report | code basis not located for bundle | code basis not located for bundle | NOT-ESTABLISHED (code basis not located) | 2–3 | #542 |
-| D-26 | C (double3) | all | ZIGUANG `zhrgguor` candidate[2] NBEST: 宗人光卓然 on the pin vs 总人光卓然 on the subject. Its exact source path and attribution to row 11 were not located | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 2 | #535 (scope) |
+| D-24 | A (ck-runtime) | all | Raw `ChewingKey` bytes and parse returns differ across schemes/options, but the attribution was not completed | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located); skipped in the code-basis pass — owned by lane D Phase 1 / lane H | 3 | #547 |
+| D-25 | B (06, 18–22, 26, 32–39), E (D-1..3) | all | The assorted return-value/out-param bundle had no per-export code/data pair; the code-basis pass supplies per-probe pairs, executed: `get_sentence(0)` before a guess — pin `false`/`UNTOUCHED` vs subject `true`/`"nihao"`; on a false return the subject writes NULL where the pin leaves the slot untouched, while `get_character_offset` failures write `0` on the pin and leave `UNTOUCHED` on the subject; `nth_pron(1..G_MAXUINT)` — pin `true len=2 [0000 0000]` (garbage `4f60 0000` at `G_MAXUINT`) vs subject `false len=0`; double/chewing aux after a full parse — pin `true "\|ni hao "` vs subject `false ""`; `unload_phrase_library(2)` twice — pin `true,true` vs subject `true,false`; `save` with the user dir removed — pin `true` vs subject `false`; `train(0)` with no choose — pin `save → true` (11 files) vs subject `false` (1 file); `parse_full("n")` — pin `false` (`0000`) vs subject `true` (`0b00`); `parse_full("ni3")` — pin `true` (`2b30`) vs subject `false`; `get_sentence(3)` past the rows — pin `SIGNAL 6` (live `:1473` assert) vs subject `false`+NULL; function-static key slots — pin aliases across instances (`same pointer as first: yes`), subject `no` (per-instance `cursor.rs:600`) | `pinyin.cpp:1464-1470` (false when `0 == results.size()`, slot untouched), `:1473` (`assert(index < results.size())`), `:3193` (writes `0` before failing), `:2936`/`:2960` (function-static key slots), `:464` (second unload true), `:1132` (save true even when the renames fail), `:2801`, `:2979`, `:1372`/`:1426`, `:3440`/`:3518`, `:2184`; `pinyin_parser2.cpp` `parse_one_key` (incomplete key refused, written `0000`) | `oxpinyin-capi/src/sentence.rs:127-152` (NULL on the false path; raw input before a lookup), `cursor.rs:600` (per-instance slot), `dict.rs:116,213`, `config.rs:264`, `context.rs:139-164`, `cursor.rs:125`, `sentence.rs:202` (`get_character_offset` leaves the slot untouched), `sentence.rs:24`/`:50`, `text.rs:330`, `keys.rs:43`, `phrase.rs:33` | DIVERGENT-UNREGISTERED | 2–3 | #542 |
+| D-26 | C (double3) | all | ZIGUANG `zhrgguor` candidate[2] NBEST: 宗人光卓然 on the pin vs 总人光卓然 on the subject. Executed by the code-basis pass (`pristine-1/scheme.double.3.diff`): `n_candidates: 98`, candidate[0] 纵然光卓然 and candidate[1] 总日光灼热 identical, only `candidate[2]` differs (both `type=NBEST_MATCH`). The probe and both sides' code paths are now cited; whether the difference resolves through the keep rule or another part of the trellis is the open scope question on #535 | `lookup/phonetic_lookup_heap.h:25-29`, `:56-81` | `oxpinyin-engine/src/nbest.rs:194-197`, `:241-267` | DIVERGENT-REGISTERED (row 11), attribution contested — see #535 | 2 | #535 (scope) |
 | C-1 | C options | all | Secondary-zhuyin `tsz` consumes and exposes incomplete key `c` on both sides, but with option `0x00000002` the pin returns 718 candidates and sentence 从 while the subject returns zero candidates/no sentence. Subject's `walk` drops `Incomplete` unless `PINYIN_INCOMPLETE` is set | `storage/zhuyin_parser2.cpp:48-55`; `pinyin.cpp:1590-1605` | `oxpinyin-engine/src/session/lookup.rs:1030-1051` | DIVERGENT-UNREGISTERED | 2 | #585 |
 | C-2 | C options | all | With `PINYIN_AMB_L_N`, transformed exact keys omit fuzzy alternates: double-pinyin `nihk` yields 499 candidates including 利好 on the pin, 126 without 利好 on the subject; all four bytes are consumed on both sides. The same loss appears for chewing `su3cl3` | `pinyin.cpp:1557-1559,1602-1604` | `oxpinyin-engine/src/session/mod.rs:593-640` | DIVERGENT-UNREGISTERED | 2 | #586 |
 | C-3 | C encoding | all | For C bytes `ni\xffhao`, `pinyin_parse_more_full_pinyins` consumes the valid `ni` prefix (2) on the pin, but zero bytes on the subject. Other invalid UTF-8 import cases differ under the same C-string conversion | `pinyin.cpp:1498-1515,615-640` | `oxpinyin-capi/src/ffi.rs:19-28` | DIVERGENT-UNREGISTERED | 3 | #587 |
@@ -312,21 +340,30 @@ are already inline in §17. The post-audit C-4/D-27 code blobs are identical at
 The following rows are **not evidence-backed findings in this report**. The
 prior input/output claims are retained for follow-up, but they cannot be used
 to assert parity or divergence until the missing code or minimal data is
-supplied. No raw-log pathname fills the gap.
+supplied. No raw-log pathname fills the gap. These five rows are owned by
+another lane (lane D Phase 1 / lane H) and were deliberately not traced in
+the code-basis pass of 2026-09-26.
 
 | ID | Prior input and reported pin → subject difference | Missing basis |
 |---|---|---|
-| D-03 | 74 caller-reachable abort probes; abort → silent result | code basis not located for every claimed site and counterpart |
-| D-04 | NULL across 68 exports; SIGSEGV → false/0/NULL | code basis not located for 68-export scope (one example is `pinyin_get_n_candidate(NULL)`: `pinyin.cpp:2845-2848` → `oxpinyin-capi/src/candidates.rs:21-24`) |
-| D-08 | Reopen a learned dir; unigram 你 53853 → 52887 | code basis not located for the changed value |
-| D-09 | Fork after KC init; parent exits 0 → killed after 300 s | code basis not located; hang vs slowness unresolved |
-| D-13 | 504-input trellis corpus; 62 keep-rule and 7 comparator moves claimed | code pair located, but no minimal attributed input/output line located |
-| D-14 | Pinned ibus key replay; 71 differing lookup/stderr lines claimed | code basis not located, nor one differing input/output line |
-| D-18 | `add_unigram_frequency(G_MAXUINT)` reportedly false/unchanged → true/4294967295 | that code pair is located, but the bundled wrap, length and export claims have no complete code/data pairs |
-| D-22 | `TMPDIR` change; no pin read → subject temp entry | code basis not located in shipped subject path |
-| D-24 | Single-key scheme/options battery; thousands of parse-byte differences claimed | code basis not located for individual key/scheme outputs |
-| D-25 | `get_sentence` before guess: false → true plus raw input (one reported example) | code basis not located for the bundled 18 contract probes |
-| D-26 | ZIGUANG `zhrgguor` candidate[2]: 宗人光卓然 → 总人光卓然 | code basis not located for this output or its attribution to row 11 |
+| D-08 | Reopen a learned dir; unigram 你 53853 → 52887 | code basis not located for the changed value (lane D Phase 1 / lane H) |
+| D-09 | Fork after KC init; parent exits 0 → killed after 300 s | code basis not located; hang vs slowness unresolved (lane D Phase 1 / lane H) |
+| D-13 | 504-input trellis corpus; 62 keep-rule and 7 comparator moves claimed | code pair located, but no minimal attributed input/output line located (lane D Phase 1 / lane H) |
+| D-14 | Pinned ibus key replay; 71 differing lookup/stderr lines claimed | code basis not located, nor one differing input/output line (lane D Phase 1 / lane H) |
+| D-24 | Single-key scheme/options battery; thousands of parse-byte differences claimed | code basis not located for individual key/scheme outputs (lane D Phase 1 / lane H) |
+
+**Moved out of this table by the code-basis pass (2026-09-26).** Six rows
+were traced on both sides; each now carries its citations and executed
+inline data in the ledger (§4), and the same citations are in its issue.
+
+| ID | what was missing before | basis now cited | issue |
+|---|---|---|---|
+| D-03 | every claimed site and counterpart | 357 raw lines recounted; 87 executed sites, each with its condition, trigger input, oracle outcome, subject answer line and log flag | #525 |
+| D-04 | 68-export scope | the 68 exports the crashing NULL probes touch (70 of 83 probes), with the first NULL deref and the guard line per export | #526 |
+| D-18 | complete code/data pairs for the bundle | input-length cap, frequency add, `remember_user_input` count and the 97400-train totals, each with both lines | #540 |
+| D-22 | the shipped subject path | `oxpinyin-user/src/store_libpinyin.rs:82` (`session_token` → `std::env::temp_dir()`), against the pin's total absence of a temp API | #546 |
+| D-25 | the bundled 18 contract probes | the named probes with per-probe pin/subject lines and outputs | #542 |
+| D-26 | this output and its attribution to row 11 | the probe's output pair plus both code paths; the attribution stays contested on #535 | #535 |
 
 ## 5. Per-axis narrative (non-MATCH only)
 
@@ -393,8 +430,8 @@ F normalisation run in §13.3.
 
 ### H
 
-- D-16 is supported by the code/data pair in §4.1; D-09 and D-22 are
-  NOT-ESTABLISHED (§4.2).
+- D-16 is supported by the code/data pair in §4.1; D-09 is NOT-ESTABLISHED
+  (§4.2), and D-22's source is located by the code-basis pass (§1.4).
 - Upstream has no synchronisation primitives. The subject has two process
   registries and a `Once`. "Safer" sharing appears as D-16.
 
@@ -504,8 +541,10 @@ D-01 to D-07, D-10 to D-12, D-14 to D-19, D-21, D-23, D-25,
 C-1 to C-3, Z-1 to Z-3, and L-01 above. Post-audit follow-ups C-4
 (#582) and D-27 (#583) are also unregistered, but their executions belong
 to the later `34a66bc9` follow-up rather than the original audited snapshot.
-D-08, D-09, D-22 and D-24 are NOT-ESTABLISHED,
-not established unregistered divergences. In addition, the
+D-08, D-09 and D-24 are NOT-ESTABLISHED,
+not established unregistered divergences (D-22 was moved out of this set by
+the code-basis pass of 2026-09-26: its source is located, see section 1.3
+item 6 and its ledger row). In addition, the
 REVERT TARGET rows still present in code (a revert target that is still
 present counts as unregistered):
 
