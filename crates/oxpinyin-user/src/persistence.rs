@@ -41,40 +41,33 @@ use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::single_gram::{decode_single_gram, encode_single_gram};
 use oxpinyin_data::table_entries::{phrase_index_entries, pinyin_index_entries};
 use oxpinyin_data::user_files::{
-    LogRecord, SYSTEM_LOG_FILES, SystemVersions, USER_LIBRARY_FILES, UserDbm, UserTableInfo,
-    decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
+    LogRecord, SYSTEM_LOG_FILES, SystemVersions, USER_LIBRARY_FILES, UserConfError, UserDbm,
+    UserTableInfo, decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
 };
 use oxpinyin_store::{DefaultStore, RawReadStore, StoreError, WriteStore};
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
 
-/// Preserve strict decoding before the counter value, but allow arbitrary
-/// bytes after its literal. The pin's `%d` stops at a non-digit, even when
-/// that byte is not UTF-8 (`table_info.cpp:356-359@074a2219`). Applying
-/// lossy decoding to the identity fields instead could hide a stray byte
-/// that makes the pin's earlier conversions fail (`:338-351`).
-fn parse_user_conf(bytes: &[u8]) -> Option<UserTableInfo> {
-    match std::str::from_utf8(bytes) {
-        Ok(text) => UserTableInfo::parse(text).ok(),
-        Err(error) => {
-            let prefix = std::str::from_utf8(bytes.get(..error.valid_up_to())?).ok()?;
-            let c_space = |c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0b' | '\x0c');
-            let mut start = 0;
-            for line in prefix.split_inclusive('\n') {
-                let trimmed = line.trim_start_matches(c_space);
-                let candidate = start + line.len() - trimmed.len();
-                start += line.len();
-                // Probe only lines beginning with `open`, so blank runs
-                // are traversed once even when the literal spans lines.
-                if let Some(rest) = prefix.get(candidate..)?.strip_prefix("open")
-                    && rest.trim_start_matches(c_space).starts_with("counter:")
-                {
-                    return UserTableInfo::parse(prefix).ok();
-                }
-            }
-            None
-        }
+/// Reads `user.conf`'s bytes, splitting upstream's two failure kinds the
+/// way `check_format` meets them.
+///
+/// `Ok(None)` is a marker upstream's `load` cannot complete: the file is
+/// absent, or a version directive did not convert (`table_info.cpp:339-342`,
+/// `:345-348`). Upstream then runs its conformance check against the
+/// reset defaults, so the profile reads as non-conforming and is wiped —
+/// [`load`] does the same.
+///
+/// `Err` is the class-(c) site: the `database format:` directive reached
+/// `to_table_database_format_type`, which `abort()`s upstream
+/// (`:122-133`, called at `:353-354`). No profile is judged and nothing
+/// is written or cleaned — the open fails, as `check_format` never gets
+/// to run.
+fn parse_user_conf(bytes: &[u8]) -> Result<Option<UserTableInfo>, PersistenceError> {
+    match UserTableInfo::parse(bytes) {
+        Ok(info) => Ok(Some(info)),
+        Err(UserConfError::Line(_)) => Ok(None),
+        Err(UserConfError::UnknownDatabaseFormat) => Err(PersistenceError::UnknownDatabaseFormat),
     }
 }
 
@@ -194,6 +187,12 @@ pub enum PersistenceError {
     Store(StoreError),
     /// A byte stream did not parse under its frozen format.
     Codec(String),
+    /// `user.conf` names a database format upstream's
+    /// `to_table_database_format_type` does not know, where that function
+    /// `abort()`s (`table_info.cpp:122-133`). The class-(c) answer: the
+    /// open fails instead of the process dying, and nothing is cleaned or
+    /// written.
+    UnknownDatabaseFormat,
 }
 
 impl std::fmt::Display for PersistenceError {
@@ -202,6 +201,11 @@ impl std::fmt::Display for PersistenceError {
             Self::Io(error) => write!(f, "user file io: {error}"),
             Self::Store(error) => write!(f, "user file store: {error}"),
             Self::Codec(message) => write!(f, "user file codec: {message}"),
+            Self::UnknownDatabaseFormat => write!(
+                f,
+                "user.conf: unknown database format (upstream aborts, \
+                 table_info.cpp:122-133, so the open is refused)"
+            ),
         }
     }
 }
@@ -278,9 +282,11 @@ const fn token_of(nibble: u8, slot: u32) -> u32 {
 ///
 /// # Errors
 ///
-/// Returns [`PersistenceError`] only when the `user.conf` write itself
-/// fails; unparsable profile files degrade per-file (see
-/// [`Loaded::skipped`]), as upstream's do.
+/// Returns [`PersistenceError::UnknownDatabaseFormat`] for the
+/// `database format:` abort point — the class-(c) refusal, raised before
+/// any judgement, wipe or write (see [`parse_user_conf`]) — and otherwise
+/// only when the `user.conf` write itself fails; unparsable profile files
+/// degrade per-file (see [`Loaded::skipped`]), as upstream's do.
 pub fn load(
     dir: &Path,
     originals: &BTreeMap<u8, SystemLibrary>,
@@ -288,9 +294,10 @@ pub fn load(
     law: UserConfLaw,
 ) -> Result<Loaded, PersistenceError> {
     let conf_path = dir.join(USER_CONF);
-    let existing = std::fs::read(&conf_path)
-        .ok()
-        .and_then(|bytes| parse_user_conf(&bytes));
+    let existing = match std::fs::read(&conf_path) {
+        Ok(bytes) => parse_user_conf(&bytes)?,
+        Err(_) => None,
+    };
 
     let conform = existing
         .as_ref()
@@ -1191,6 +1198,100 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
+    /// The user dir as a sorted (name, bytes) list: the differential's
+    /// "byte-identical to the seeded dir, no wipe" check, at unit scale.
+    fn dir_snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
+        let mut rows: Vec<(String, Vec<u8>)> = std::fs::read_dir(dir)
+            .expect("readdir")
+            .map(|entry| {
+                let entry = entry.expect("entry");
+                let name = entry.file_name().to_string_lossy().into_owned();
+                (name, std::fs::read(entry.path()).expect("read"))
+            })
+            .collect();
+        rows.sort();
+        rows
+    }
+
+    /// The class-(c) marker: a `database format:` field upstream's
+    /// `to_table_database_format_type` does not know, which `abort()`s the
+    /// pin's process (`table_info.cpp:122-133`, reached from `:353-354`).
+    /// `load` answers `Err` and leaves the user dir byte-identical — no
+    /// conformance judgement, no wipe, no marker write, no counter step.
+    #[test]
+    fn an_unknown_database_format_refuses_the_load_untouched() {
+        let dir = tempdir("marker-abort");
+        let originals = originals();
+        save(&dir, &state(), &originals, &versions(), 1).expect("save");
+
+        let long = format!(
+            "binary format version:7\nmodel data version:14\ndatabase format:{}\nopen counter:5\n",
+            "A".repeat(300)
+        );
+        let trunc = format!(
+            "binary format version:7\nmodel data version:14\ndatabase format:{}open counter:5\n",
+            "A".repeat(255)
+        );
+        for body in [
+            // A token no upstream build knows.
+            "binary format version:7\nmodel data version:14\ndatabase format:NotADbmLibrary\nopen counter:5\n".to_owned(),
+            // 300 bytes: `%255s` takes 255 of them.
+            long,
+            // 255 bytes, counter on the same line.
+            trunc,
+            // No format directive at all: the literal mismatches and
+            // upstream maps the `str` no conversion wrote.
+            "binary format version:7\nmodel data version:14\nopen counter:5\n".to_owned(),
+            // Junk on the model-data line: the abort is what the *third*
+            // directive meets.
+            "binary format version:7\nmodel data version:14x\ndatabase format:Tkrzw\nopen counter:5\n".to_owned(),
+        ] {
+            std::fs::write(dir.join(USER_CONF), &body).expect("write");
+            let before = dir_snapshot(&dir);
+            for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+                assert!(
+                    matches!(
+                        load(&dir, &originals, &versions(), law),
+                        Err(PersistenceError::UnknownDatabaseFormat)
+                    ),
+                    "{body:?} under {law:?}"
+                );
+            }
+            assert_eq!(dir_snapshot(&dir), before, "the dir moved under {body:?}");
+        }
+
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// A marker the load cannot complete at all — a version directive that
+    /// does not convert, in the directives before the format one — is not
+    /// the refusal: upstream's `load` returns `false`, `check_format`
+    /// judges the reset marker non-conforming, and the profile is wiped
+    /// and (pinyin) rewritten, exactly as before.
+    #[test]
+    fn a_marker_the_load_cannot_complete_still_wipes() {
+        let dir = tempdir("marker-incomplete");
+        let originals = originals();
+        for body in [
+            "",
+            "binary format version:x\nmodel data version:14\n",
+            "model data version:14\nbinary format version:7\ndatabase format:Tkrzw\nopen counter:5\n",
+            "binary format version:7x\nmodel data version:14\ndatabase format:Tkrzw\nopen counter:5\n",
+        ] {
+            save(&dir, &state(), &originals, &versions(), 1).expect("save");
+            assert!(dir.join("user.bin").exists());
+            std::fs::write(dir.join(USER_CONF), body).expect("write");
+
+            let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+            assert!(loaded.wiped, "{body:?}");
+            assert_eq!(loaded.open_counter, 1, "{body:?}"); // 0 + the pin's raise
+            assert_eq!(dir_snapshot(&dir).len(), 1, "{body:?}: only the marker");
+            assert!(!dir.join("user.bin").exists(), "{body:?}");
+        }
+
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
     #[test]
     fn non_conform_profile_wipes_and_resets() {
         let dir = tempdir("wipe");
@@ -1225,9 +1326,8 @@ mod tests {
         );
         assert!(!dir.join("gb_char.dbin").exists());
         // The marker is rewritten conform.
-        let marker =
-            UserTableInfo::parse(&std::fs::read_to_string(dir.join(USER_CONF)).expect("read"))
-                .expect("parse");
+        let marker = UserTableInfo::parse(&std::fs::read(dir.join(USER_CONF)).expect("read"))
+            .expect("parse");
         assert!(marker.is_conform(&versions()));
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -1251,8 +1351,8 @@ mod tests {
 
     /// The counter `user.conf` holds, read back as the next init reads it.
     fn recorded_counter(dir: &Path) -> Option<i32> {
-        let text = std::fs::read_to_string(dir.join(USER_CONF)).ok()?;
-        Some(UserTableInfo::parse(&text).ok()?.open_counter)
+        let bytes = std::fs::read(dir.join(USER_CONF)).ok()?;
+        Some(UserTableInfo::parse(&bytes).ok()?.open_counter)
     }
 
     #[test]

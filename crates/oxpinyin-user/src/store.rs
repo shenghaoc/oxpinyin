@@ -102,6 +102,11 @@ pub enum UserStoreError {
     /// The libpinyin user-dir persistence failed (I/O, container, or a
     /// byte stream that does not parse).
     Persistence(String),
+    /// `user.conf` names a database format upstream's mapper does not
+    /// know — the point `to_table_database_format_type` `abort()`s on
+    /// (`table_info.cpp:122-133`). The class-(c) answer: the store does
+    /// not open, and nothing is cleaned or written.
+    UnknownDatabaseFormat,
 }
 
 impl fmt::Display for UserStoreError {
@@ -120,6 +125,10 @@ impl fmt::Display for UserStoreError {
             Self::Persistence(message) => {
                 write!(f, "libpinyin user-dir persistence: {message}")
             }
+            Self::UnknownDatabaseFormat => write!(
+                f,
+                "user.conf: unknown database format (upstream aborts, table_info.cpp:122-133)"
+            ),
         }
     }
 }
@@ -133,7 +142,8 @@ impl std::error::Error for UserStoreError {
             | Self::AlreadyOpen
             | Self::InvalidPhrase
             | Self::TokenSpaceExhausted
-            | Self::Persistence(_) => None,
+            | Self::Persistence(_)
+            | Self::UnknownDatabaseFormat => None,
         }
     }
 }

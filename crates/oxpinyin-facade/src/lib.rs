@@ -40,7 +40,9 @@ mod offsets;
 mod parse;
 mod predict;
 
-pub use context::{ContextCore, FALLBACK_CLEARED_BIT, LiveOptions, OpenFailure};
+pub use context::{
+    ContextCore, FALLBACK_CLEARED_BIT, LiveOptions, OpenFailure, UNKNOWN_DATABASE_FORMAT_WARNING,
+};
 pub use cursor::{KeyAt, SpanSource};
 pub use export_rows::ExportedBigramRow;
 pub use instance::{BEFORE_CURSOR_ANCHOR, InstanceCore};

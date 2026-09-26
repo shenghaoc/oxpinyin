@@ -18,7 +18,16 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     match CapiContext::try_new(&system_path, &user_path) {
         Ok(context) => box_context(context),
         Err(error) => {
-            crate::ffi::log_warning(&format!("pinyin_init: {error} (systemdir {system_path:?})"));
+            // The user marker's class-(c) refusal has its own fixed line
+            // (`OpenFailure::unknown_database_format`); every other
+            // failure keeps the descriptive one.
+            if error.unknown_database_format() {
+                crate::ffi::log_warning(oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING);
+            } else {
+                crate::ffi::log_warning(&format!(
+                    "pinyin_init: {error} (systemdir {system_path:?})"
+                ));
+            }
             ptr::null_mut()
         }
     }

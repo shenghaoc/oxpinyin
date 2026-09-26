@@ -104,7 +104,12 @@ impl Drop for FiniGuard {
 
 impl From<PersistenceError> for UserStoreError {
     fn from(error: PersistenceError) -> Self {
-        UserStoreError::Persistence(error.to_string())
+        // The class-(c) refusal keeps its own variant: it is not a
+        // degraded store but a failed open (see `persistence::load`).
+        match error {
+            PersistenceError::UnknownDatabaseFormat => UserStoreError::UnknownDatabaseFormat,
+            other => UserStoreError::Persistence(other.to_string()),
+        }
     }
 }
 
@@ -759,9 +764,9 @@ mod tests {
 
     /// The open counter `user.conf` records, as the next init reads it.
     fn recorded_counter(dir: &Path) -> Option<i32> {
-        let text = std::fs::read_to_string(dir.join("user.conf")).ok()?;
+        let bytes = std::fs::read(dir.join("user.conf")).ok()?;
         Some(
-            oxpinyin_data::user_files::UserTableInfo::parse(&text)
+            oxpinyin_data::user_files::UserTableInfo::parse(&bytes)
                 .ok()?
                 .open_counter,
         )
