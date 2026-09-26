@@ -12,7 +12,7 @@
 # byte: every launch's learned rows, then user.conf and the user dir's
 # file inventory as that launch left them.
 #
-# Two protocols, per library (pinyin, zhuyin):
+# Three protocols, per library (pinyin, zhuyin):
 #
 #   cycle  OPEN_COUNTER_CYCLES (default 10) clean launches: init -> learn
 #          one phrase -> train -> save -> fini. The pin keeps every phrase
@@ -23,6 +23,15 @@
 #          The pin's counter stays raised by every killed launch and the
 #          profile is wiped by the launch that reads a value above the
 #          limit — the 8th consecutive killed launch from a counter of 0.
+#   seeded one clean launch, then user.conf's counter line is rewritten to
+#          a seed (below), then two launches that init and fini and learn
+#          nothing. The pin reads the counter with fscanf's %d
+#          (table_info.cpp:356-359, glibc): leading whitespace and a sign
+#          are taken, the digits run until the first non-digit, a value
+#          past int keeps the low 32 bits of strtol's long, and no digits
+#          at all read 0. The value then decides the wipe (above 6) and
+#          libpinyin's init write (the value plus one, through
+#          get_open_counter, pinyin.cpp:185-187) and fini write (:1194-1200).
 #
 # Both sides open the pin prefix's own data directory (the drop-in
 # contract) with a fresh user dir each; the oxpinyin libraries must be
@@ -41,6 +50,7 @@
 #   OPEN_COUNTER_ZHUYIN_SO      oxpinyin's libzhuyin (default
 #                               $REPO_ROOT/target/debug/libzhuyin_capi.so)
 #   OPEN_COUNTER_LIBS           "pinyin zhuyin" (default) or either one
+#   OPEN_COUNTER_PROTOCOLS      "cycle crash seeded" (default) or any of them
 #   OPEN_COUNTER_CYCLES         clean launches in the cycle protocol (10)
 #   OPEN_COUNTER_CRASHES        killed launches in the crash protocol (10)
 #   OPEN_COUNTER_OUT            directory the logs are kept in (default: a
@@ -72,8 +82,42 @@ declare -A OX_SO=(
     [zhuyin]="${OPEN_COUNTER_ZHUYIN_SO:-$REPO_ROOT/target/debug/libzhuyin_capi.so}"
 )
 read -r -a LIBS <<< "${OPEN_COUNTER_LIBS:-pinyin zhuyin}"
+read -r -a PROTOCOLS <<< "${OPEN_COUNTER_PROTOCOLS:-cycle crash seeded}"
 CYCLES="${OPEN_COUNTER_CYCLES:-10}"
 CRASHES="${OPEN_COUNTER_CRASHES:-10}"
+
+# The seeded protocol's cases: user.conf's fourth line as printf %b writes
+# it, and what glibc's fscanf("open counter:%d\n") reads there. The %d
+# column is glibc's, checked in debian:testing (glibc 2.43).
+SEEDS=(control-5 control-7 negative plus plus-over garbage garbage-over garbage-byte invalid-prefix
+    space tab vtab newline indent spaced joined overflow-int overflow-wrap overflow-long
+    overflow-neg under-int empty sign missing)
+declare -A SEED_LINE=(
+    [control-5]='open counter:5\n'                       # 5
+    [control-7]='open counter:7\n'                       # 7, above the limit
+    [negative]='open counter:-3\n'                       # -3
+    [plus]='open counter:+3\n'                           # 3
+    [plus-over]='open counter:+7\n'                      # 7
+    [garbage]='open counter:3x\n'                        # 3
+    [garbage-over]='open counter:7x\n'                   # 7
+    [garbage-byte]='open counter:3\xff\n'               # 3; non-UTF-8 after the digits
+    [invalid-prefix]='open counter:5\n'                 # stray byte before the identity fields
+    [space]='open counter: 5\n'                          # 5
+    [tab]='open counter:\t5\n'                           # 5
+    [vtab]='open counter:\v5\n'                          # 5: C's isspace has \v
+    [newline]='open counter:\n5\n'                        # 5, from the next line
+    [indent]='  open counter:5\n'                        # 5: the \n before skips it
+    [spaced]='open   counter:5\n'                        # 5: the format's space
+    [joined]='opencounter:5\n'                           # 5: ... matches none too
+    [overflow-int]='open counter:2147483648\n'           # -2147483648
+    [overflow-wrap]='open counter:4294967303\n'          # 7
+    [overflow-long]='open counter:99999999999999999999\n' # -1 (LONG_MAX's low half)
+    [overflow-neg]='open counter:-99999999999999999999\n' # 0 (LONG_MIN's low half)
+    [under-int]='open counter:-2147483649\n'             # 2147483647
+    [empty]='open counter:\n'                            # 0: no digits (EOF)
+    [sign]='open counter:-\n'                            # 0: no digits
+    [missing]=''                                         # 0: no line (EOF)
+)
 
 [[ -f "$DATA/table.conf" ]] || { echo "missing input: $DATA/table.conf" >&2; exit 3; }
 for lib in "${LIBS[@]}"; do
@@ -128,7 +172,7 @@ launch() {
         exit $?
     ) 2>> "$err" || rc=$?
     case "$mode:$rc" in
-    cycle:0) echo "exit: 0" >> "$log" ;;
+    cycle:0 | look:0) echo "exit: 0" >> "$log" ;;
     crash:137) echo "exit: SIGKILL" >> "$log" ;;
     *)
         echo "FAIL: launch $n ($mode) of $so exited $rc" >&2
@@ -137,6 +181,18 @@ launch() {
         ;;
     esac
     snapshot "$user" >> "$log"
+}
+
+# Rewrite user.conf for seed $2: its first three lines as the last launch
+# wrote them, then the seed's fourth line.
+seed_conf() {
+    local conf=$1/user.conf head
+    head=$(head -n 3 "$conf")
+    {
+        if [[ $2 == invalid-prefix ]]; then printf '\xff\n'; fi
+        printf '%s\n' "$head"
+        printf '%b' "${SEED_LINE[$2]}"
+    } > "$conf"
 }
 
 run_protocol() {
@@ -158,6 +214,15 @@ run_protocol() {
     crash)
         for mode in cycle cycle $(for ((i = 0; i < CRASHES; i++)); do echo crash; done) cycle; do
             n=$((n + 1)); launch "$lib" "$so" "$user" "$n" "$mode" "$log" "$err" "$tmp" || return 1
+        done
+        ;;
+    seed-*)
+        n=1; launch "$lib" "$so" "$user" "$n" cycle "$log" "$err" "$tmp" || return 1
+        seed_conf "$user" "${protocol#seed-}"
+        echo "seeded: ${protocol#seed-}" >> "$log"
+        snapshot "$user" >> "$log"
+        for n in 2 3; do
+            launch "$lib" "$so" "$user" "$n" look "$log" "$err" "$tmp" || return 1
         done
         ;;
     esac
@@ -194,9 +259,31 @@ summarize() {
         }' "$1"
 }
 
+# A seeded run in one line per look launch: user.conf's counter as the
+# init left it and as the fini left it, and whether the profile survived
+# (a wipe leaves user.conf alone in the dir).
+seed_summary() {
+    awk '
+        /^launch: / { split($0, a, " "); n = a[2]; look = (a[3] == "look"); init = "" }
+        look && /^conf@init: / && index($0, "counter:") { init = substr($0, index($0, "counter:") + 8) }
+        look && /^conf: / && index($0, "counter:") { fini = substr($0, index($0, "counter:") + 8) }
+        look && /^files: / {
+            kept = (NF > 2) ? "kept" : "wiped"
+            printf "  launch %d: counter %s at init, %s at fini, profile %s\n", n, (init == "" ? "-" : init), fini, kept
+        }' "$1"
+}
+
 status=0
 for lib in "${LIBS[@]}"; do
-    for protocol in cycle crash; do
+    protocols=()
+    for protocol in "${PROTOCOLS[@]}"; do
+        if [[ $protocol == seeded ]]; then
+            for seed in "${SEEDS[@]}"; do protocols+=("seed-$seed"); done
+        else
+            protocols+=("$protocol")
+        fi
+    done
+    for protocol in "${protocols[@]}"; do
         echo "=== $lib / $protocol ==="
         oracle_log="$OUT/$lib-$protocol-oracle.log"
         ox_log="$OUT/$lib-$protocol-oxpinyin.log"
@@ -209,9 +296,9 @@ for lib in "${LIBS[@]}"; do
             exit 1
         fi
         echo "pin:"
-        summarize "$oracle_log"
+        if [[ $protocol == seed-* ]]; then seed_summary "$oracle_log"; else summarize "$oracle_log"; fi
         echo "oxpinyin:"
-        summarize "$ox_log"
+        if [[ $protocol == seed-* ]]; then seed_summary "$ox_log"; else summarize "$ox_log"; fi
         diff_rc=0
         diff -u "$oracle_log" "$ox_log" > "$OUT/$lib-$protocol.diff" || diff_rc=$?
         if ((diff_rc > 1)); then

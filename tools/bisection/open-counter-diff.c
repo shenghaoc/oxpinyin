@@ -13,7 +13,8 @@
  * launch, reading user.conf and the user dir's inventory in between.
  *
  * Usage:
- *   open-counter-diff <pinyin|zhuyin> <lib.so> <systemdir> <userdir> <launch> <cycle|crash>
+ *   open-counter-diff <pinyin|zhuyin> <lib.so> <systemdir> <userdir> <launch>
+ *                     <cycle|crash|look>
  *
  *   cycle  init -> learned state -> learn (train launch k's target;
  *          pinyin also imports launch k's user phrase) -> save ->
@@ -21,6 +22,9 @@
  *   crash  init -> learned state -> SIGKILL: the process dies between init
  *          and fini, with no save and no fini, the way a crashed frontend
  *          leaves the profile.
+ *   look   init -> learned state -> user.conf as the init left it -> fini,
+ *          learning and saving nothing: what one launch makes of a profile
+ *          it is handed, for the seeded protocol's hand-written counters.
  *
  * The learned state is read in-process, never by an extra launch: a
  * separate reader process would be one more init, and on the pinyin side
@@ -345,8 +349,36 @@ static const char *train_target(instance_t *inst, bool zhuyin, const struct targ
     return result;
 }
 
+/* user.conf's bytes as they stand, one prefixed line per file line, after
+ * its size: the init write, read in-process before the fini rewrites it. */
+static void conf_rows(const char *user_dir, const char *when) {
+    char path[4096];
+    snprintf(path, sizeof path, "%s/user.conf", user_dir);
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        printf("user.conf@%s: absent\n", when);
+        return;
+    }
+    GString *bytes = g_string_new(NULL);
+    char chunk[512];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof chunk, f)) > 0)
+        g_string_append_len(bytes, chunk, (gssize)n);
+    fclose(f);
+    printf("user.conf@%s: %zu bytes\n", when, bytes->len);
+    for (const char *line = bytes->str, *end = bytes->str + bytes->len; line < end;) {
+        const char *nl = memchr(line, '\n', (size_t)(end - line));
+        size_t len = nl ? (size_t)(nl - line) : (size_t)(end - line);
+        printf("conf@%s: ", when);
+        fwrite(line, 1, len, stdout);
+        putchar('\n');
+        line += len + (nl ? 1 : 0);
+    }
+    g_string_free(bytes, TRUE);
+}
+
 static int run(const char *system_dir, const char *user_dir, long launch, bool zhuyin,
-               bool crash) {
+               bool crash, bool look) {
     context_t *(*init)(const char *, const char *) = sym("init");
     void (*fini)(context_t *) = sym("fini");
     bool (*save)(context_t *) = sym("save");
@@ -373,6 +405,13 @@ static int run(const char *system_dir, const char *user_dir, long launch, bool z
     }
     if (crash)
         die_before_fini();
+    if (look) {
+        conf_rows(user_dir, "init");
+        free_instance(inst);
+        fini(ctx);
+        printf("fini\n");
+        return 0;
+    }
 
     if (!zhuyin)
         printf("import: %s %d\n", PINYIN_IMPORTS[k].word, import_phrase(ctx, &PINYIN_IMPORTS[k]));
@@ -394,7 +433,8 @@ static int run(const char *system_dir, const char *user_dir, long launch, bool z
 int main(int argc, char **argv) {
     if (argc != 7) {
         fprintf(stderr,
-                "usage: %s <pinyin|zhuyin> <lib.so> <systemdir> <userdir> <launch> <cycle|crash>\n",
+                "usage: %s <pinyin|zhuyin> <lib.so> <systemdir> <userdir> <launch> "
+                "<cycle|crash|look>\n",
                 argv[0]);
         return 2;
     }
@@ -410,8 +450,9 @@ int main(int argc, char **argv) {
         return 2;
     }
     bool crash = strcmp(argv[6], "crash") == 0;
-    if (!crash && strcmp(argv[6], "cycle") != 0) {
-        fprintf(stderr, "mode must be cycle or crash: %s\n", argv[6]);
+    bool look = strcmp(argv[6], "look") == 0;
+    if (!crash && !look && strcmp(argv[6], "cycle") != 0) {
+        fprintf(stderr, "mode must be cycle, crash or look: %s\n", argv[6]);
         return 2;
     }
 
@@ -422,5 +463,5 @@ int main(int argc, char **argv) {
         return 1;
     }
     printf("launch: %ld %s\n", launch, argv[6]);
-    return run(argv[3], argv[4], launch, zhuyin, crash);
+    return run(argv[3], argv[4], launch, zhuyin, crash, look);
 }
