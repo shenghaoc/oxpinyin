@@ -755,6 +755,43 @@ Semantics this reverts or preserves, on purpose:
   differential is the seeded protocol of
   `tools/bisection/run-open-counter-diff.sh`.
 
+* **Amendment (2026-09-27, #589/#590): the whole marker is the pin's
+  `fscanf` sequence, and its abort point is a refusal.** The #583
+  amendment above read the counter as `%d` reads it, but kept a line
+  model around it and validated UTF-8 before the literal.
+  `UserTableInfo::load` is *four* `fscanf` calls over one stream
+  (`table_info.cpp:338-359`), so `UserTableInfo::parse` is that sequence
+  now, byte for byte:
+  - both version directives are `%d` (`:338`, `:344`) — a sign, every
+    digit, `strtol`'s saturation at `long`, the low 32 bits kept by the
+    store through `int *`. `+7` and `4294967303` read 7 and conform; the
+    old bare-unsigned reader rejected them and wiped a profile the pin
+    keeps (#589);
+  - `database format:` is `%255s` (`:352`): white-space prefixed, at
+    most 255 bytes, stopped by white space, so a token can cross a
+    newline and a trailing word is left for the next directive;
+  - the counter directive reads from where the third stopped — one
+    attempt at its literal, then `%d` — so a junk line between the two
+    reads 0, as the pin does, and a failed conversion still reads 0
+    (`:358-359`, #583's law, unchanged);
+  - `parse` takes bytes: the UTF-8 special case this document recorded
+    is gone, and bytes upstream never reads decide nothing.
+  The one outcome that is not a value is
+  `to_table_database_format_type`'s `abort()` (`:122-133`, reached at
+  `:353-354` whenever the third call does not return `EOF` — including
+  the matching failure that leaves its `str` unwritten). That is a
+  class-(c) site: the parse answers
+  `Err(UserConfError::UnknownDatabaseFormat)`, the store does not open
+  (`OpenError::UnknownDatabaseFormat`), `pinyin_init`/`zhuyin_init`
+  answer NULL, and nothing is cleaned or written — where the previous
+  code read the token as unknown and wiped the profile. One GLib warning
+  per attempt: `check_format: unknown database format in user.conf`.
+  The differential is the seeded protocol of
+  `tools/bisection/run-open-counter-diff.sh`: the counter seeds keep
+  their byte-for-byte comparison, the `conf-*` cases cover the whole
+  sequence, and the `abort-*` expectation channel asserts the pin's
+  SIGABRT against the refusal.
+
 Verification: unit goldens and round-trips at every layer (codecs,
 persistence, bridge, e2e); the backend matrix through the
 `oxpinyin-validate` container (Kyoto Cabinet and tkrzw suites, 282 and
