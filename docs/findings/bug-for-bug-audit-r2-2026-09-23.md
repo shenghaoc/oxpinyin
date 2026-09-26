@@ -237,6 +237,7 @@ unless a live class demonstrably fits.
 | C-1 | C options | all | Secondary-zhuyin `tsz` consumes and exposes incomplete key `c` on both sides, but with option `0x00000002` the pin returns 718 candidates and sentence 从 while the subject returns zero candidates/no sentence. Subject's `walk` drops `Incomplete` unless `PINYIN_INCOMPLETE` is set | `storage/zhuyin_parser2.cpp:48-55`; `pinyin.cpp:1590-1605` | `oxpinyin-engine/src/session/lookup.rs:1030-1051` | DIVERGENT-UNREGISTERED | 2 | #585 |
 | C-2 | C options | all | With `PINYIN_AMB_L_N`, transformed exact keys omit fuzzy alternates: double-pinyin `nihk` yields 499 candidates including 利好 on the pin, 126 without 利好 on the subject; all four bytes are consumed on both sides. The same loss appears for chewing `su3cl3` | `pinyin.cpp:1557-1559,1602-1604` | `oxpinyin-engine/src/session/mod.rs:593-640` | DIVERGENT-UNREGISTERED | 2 | #586 |
 | C-3 | C encoding | all | For C bytes `ni\xffhao`, `pinyin_parse_more_full_pinyins` consumes the valid `ni` prefix (2) on the pin, but zero bytes on the subject. Other invalid UTF-8 import cases differ under the same C-string conversion | `pinyin.cpp:1498-1515,615-640` | `oxpinyin-capi/src/ffi.rs:19-28` | DIVERGENT-UNREGISTERED | 3 | #587 |
+| L-01 | L cold open | all | A fresh user profile forces an eager `system_originals` pass over every system item/pronunciation before store open; Callgrind Ir and Massif peak live heap are both above the pin by more than 1.10 on all three backends (§17) | `pinyin.cpp:172-199,259-269,326-405` | `oxpinyin-runtime/src/lib.rs:941-1000`; `oxpinyin-user/src/persistence.rs:73-110` | DIVERGENT-UNREGISTERED; overall L NOT-ESTABLISHED | 2 | #588 |
 
 The per-probe evidence for B (757 probe rows, 79 per-export rows) and the
 per-site F ledger (357 rows) exist only in the ephemeral scratch area (see
@@ -579,6 +580,7 @@ Tracking issue: #573.
 | C-1 | #585 |
 | C-2 | #586 |
 | C-3 | #587 |
+| L-01 | #588 |
 | R-1 | #548 |
 | R-2 | #549 |
 | R-3 | #550 |
@@ -1057,5 +1059,11 @@ record UTC/load (one-minute range 1.90-2.23) under
 **Overall L verdict: NOT-ESTABLISHED.** The complete structural-divergence
 inventory is blocked by J's unresolved graph. The full section-12 input set,
 200-input training and 10k-phrase import/export have not been measured with
-these instruments. L-01 is a measured BOTH-WORSENED cold-open finding, but
+these instruments. L-01 / #588 is a measured BOTH-WORSENED cold-open finding, but
 no other internal path is marked MATCH and gap issues #553-#555 remain open.
+
+The item-5/6 raw scripts, reduced ledgers, traces and metadata are preserved
+in `/home/sheng/audit-r2-item5-6-evidence-20260926T034353Z.tar.zst`, SHA-256
+`066830aa1476c9b199f6a8368a441e2ec0f1143f8c807035f9b70c9a88394cca`.
+`sha256sum -c` passed; `tar --zstd -tf` listed 516 entries cleanly. The
+archive is local to the audit host, not attached to PR #522.
