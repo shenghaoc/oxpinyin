@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# run-two-context-diff.sh — two contexts on one user dir in one process,
+# against the pin (#538).
+#
+# The pin holds nothing per user dir beyond each context: a second
+# pinyin_init / zhuyin_init on a dir another live context has open reads
+# the profile afresh into its own memory. It does not see the first
+# context's unsaved learning, each context's save answers for its own
+# modifications, libpinyin raises and lowers the open counter once per
+# init and fini on each context's own copy, and when both save, the
+# later save's files are the profile. tools/bisection/two-context-diff.c
+# drives the scenarios below into the pin-built libraries and into
+# oxpinyin's, and this runner diffs the logs byte for byte:
+#
+#   one-learns     A learns; each context's view; save B, save A; fini A,
+#                  fini B.
+#   fini-reversed  the same with fini B first — the counter each fini
+#                  writes back depends on the order, as upstream's does.
+#   both-learn     A and B learn different items and both save; a third
+#                  context shows which one the profile kept.
+#   late-save      A finishes before B saves its learning.
+#
+# and, as the library kind `cross`, one libzhuyin and one libpinyin context
+# on the dir (#578's review: each must keep its own library's user.conf law
+# whichever opened first):
+#
+#   zhuyin-first   Z opens, then P; each learns, both save and both fini in
+#                  that order; a fresh P2 and Z2 show what the profile kept.
+#   pinyin-first   the same with P first.
+#   zhuyin-first-fini-reversed, pinyin-first-fini-reversed
+#                  the same with the two finis in the reverse order.
+#   zhuyin-first-late-save, pinyin-first-late-save
+#                  the first context finishes before the second saves.
+#
+# Both sides open the pin prefix's own data directory with a fresh user
+# dir per scenario; oxpinyin's libraries must be built with the store
+# backend that matches the prefix's --with-dbm.
+#
+# Usage: run-two-context-diff.sh
+#
+# Env:
+#   TWO_CONTEXT_ORACLE_PREFIX  (required) a tools/oracle/build-oracle.sh
+#                              prefix configured with --enable-libzhuyin
+#                              (as for run-open-counter-diff.sh). No
+#                              default: a missing oracle fails the run.
+#   TWO_CONTEXT_PINYIN_SO      oxpinyin's libpinyin (default
+#                              $REPO_ROOT/target/debug/libpinyin_capi.so)
+#   TWO_CONTEXT_ZHUYIN_SO      oxpinyin's libzhuyin (default
+#                              $REPO_ROOT/target/debug/libzhuyin_capi.so)
+#   TWO_CONTEXT_LIBS           "pinyin zhuyin cross" (default) or any of
+#                              them; cross needs both libraries
+#   TWO_CONTEXT_OUT            directory the logs are kept in (default: a
+#                              temp dir, removed on exit)
+#
+# Exit codes: 0 = identical; 1 = build/run failure; 2 = divergence;
+# 3 = a required input is missing.
+
+set -euo pipefail
+cd "$(dirname "$0")"
+SCRIPT_DIR="$(pwd)"
+REPO_ROOT="$(cd ../.. && pwd)"
+
+PREFIX="${TWO_CONTEXT_ORACLE_PREFIX:-}"
+if [[ -z "$PREFIX" || ! -d "$PREFIX" ]]; then
+    echo "missing input: TWO_CONTEXT_ORACLE_PREFIX is unset or not a directory" >&2
+    echo "  build it with tools/oracle/build-oracle.sh, configure line plus --enable-libzhuyin" >&2
+    exit 3
+fi
+if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
+    "$PREFIX/oracle-pin.txt" 2>/dev/null; then
+    echo "missing input: $PREFIX is not a prefix of the 074a2219 pin (oracle-pin.txt)" >&2
+    exit 3
+fi
+DATA="$PREFIX/lib/libpinyin/data"
+declare -A ORACLE_SO=([pinyin]="$PREFIX/lib/libpinyin.so.15" [zhuyin]="$PREFIX/lib/libzhuyin.so.15")
+declare -A OX_SO=(
+    [pinyin]="${TWO_CONTEXT_PINYIN_SO:-$REPO_ROOT/target/debug/libpinyin_capi.so}"
+    [zhuyin]="${TWO_CONTEXT_ZHUYIN_SO:-$REPO_ROOT/target/debug/libzhuyin_capi.so}"
+)
+read -r -a LIBS <<< "${TWO_CONTEXT_LIBS:-pinyin zhuyin cross}"
+SCENARIOS=(one-learns fini-reversed both-learn late-save)
+CROSS_SCENARIOS=(zhuyin-first zhuyin-first-fini-reversed pinyin-first pinyin-first-fini-reversed zhuyin-first-late-save pinyin-first-late-save)
+
+# The libraries a kind loads, in the driver's argument order.
+facades_of() {
+    if [[ $1 == cross ]]; then echo "pinyin zhuyin"; else echo "$1"; fi
+}
+
+[[ -f "$DATA/table.conf" ]] || { echo "missing input: $DATA/table.conf" >&2; exit 3; }
+for lib in "${LIBS[@]}"; do
+    for facade in $(facades_of "$lib"); do
+        [[ -n "${ORACLE_SO[$facade]:-}" ]] || { echo "unknown library: $lib" >&2; exit 3; }
+        for so in "${ORACLE_SO[$facade]}" "${OX_SO[$facade]}"; do
+            [[ -f "$so" ]] || { echo "missing input: $so" >&2; exit 3; }
+        done
+    done
+done
+
+if [[ -n "${TWO_CONTEXT_OUT:-}" ]]; then
+    OUT="$TWO_CONTEXT_OUT"
+    mkdir -p "$OUT"
+    WORK="$(mktemp -d)"
+    trap 'rm -rf "$WORK"' EXIT
+else
+    OUT="$(mktemp -d)"
+    WORK="$OUT"
+    trap 'rm -rf "$OUT"' EXIT
+fi
+
+echo "--- building two-context-diff driver ---"
+DRIVER="$WORK/two-context-diff"
+# shellcheck disable=SC2046  # pkg-config's flags are meant to split.
+gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$DRIVER" "$SCRIPT_DIR/two-context-diff.c" \
+    $(pkg-config --cflags --libs glib-2.0) -ldl
+echo "build: ok"
+
+# run_side <kind> <scenario> <log> <lib.so>... — one side's run, with the
+# kind's libraries in facades_of order.
+run_side() {
+    local lib=$1 scenario=$2 log=$3
+    shift 3
+    local user="$WORK/user-$(basename "$log" .log)"
+    local tmp="$WORK/tmp-$(basename "$log" .log)"
+    rm -rf "$user" "$tmp"
+    mkdir -p "$user" "$tmp"
+    if ! TMPDIR="$tmp" "$DRIVER" "$lib" "$@" "$DATA" "$user" "$scenario" \
+        > "$log" 2> "$log.stderr"; then
+        echo "FAIL: $lib/$scenario on $*" >&2
+        cat "$log.stderr" >&2
+        return 1
+    fi
+}
+
+require_line() {
+    local log=$1 expected=$2
+    if ! grep -Fxq -- "$expected" "$log"; then
+        echo "FAIL: missing '$expected' in $log" >&2
+        return 1
+    fi
+}
+
+require_pattern() {
+    local log=$1 pattern=$2
+    if ! grep -Eq -- "$pattern" "$log"; then
+        echo "FAIL: missing step matching '$pattern' in $log" >&2
+        return 1
+    fi
+}
+
+verify_steps() {
+    local lib=$1 scenario=$2 log=$3 first second name
+    local -a contexts learners savers
+    if [[ $lib == cross ]]; then
+        if [[ $scenario == zhuyin-first* ]]; then
+            first=Z; second=P
+        else
+            first=P; second=Z
+        fi
+        contexts=("$first" "$second" P2 Z2)
+        learners=("$first" "$second")
+        savers=("$first" "$second")
+    else
+        contexts=(A B)
+        learners=(A)
+        savers=(A B)
+        if [[ $scenario == both-learn || $scenario == late-save ]]; then
+            contexts+=(C)
+            learners+=(B)
+        fi
+    fi
+
+    require_line "$log" "scenario: $scenario" || return 1
+    for name in "${contexts[@]}"; do
+        require_line "$log" "init $name: ok" || return 1
+        require_line "$log" "alloc $name: ok" || return 1
+        require_line "$log" "fini $name: ok" || return 1
+    done
+    for name in "${learners[@]}"; do
+        require_pattern "$log" "^train $name: .+ ok$" || return 1
+        if [[ $lib == pinyin || $name == P ]]; then
+            require_pattern "$log" "^import $name: .+ ok$" || return 1
+        fi
+    done
+    for name in "${savers[@]}"; do
+        if [[ $lib != cross && $name == B &&
+              ( $scenario == one-learns || $scenario == fini-reversed ) ]]; then
+            require_line "$log" "save B: unchanged" || return 1
+        else
+            require_line "$log" "save $name: ok" || return 1
+        fi
+    done
+}
+
+status=0
+for lib in "${LIBS[@]}"; do
+    oracle_libs=()
+    ox_libs=()
+    for facade in $(facades_of "$lib"); do
+        oracle_libs+=("${ORACLE_SO[$facade]}")
+        ox_libs+=("${OX_SO[$facade]}")
+    done
+    scenarios=("${SCENARIOS[@]}")
+    if [[ $lib == cross ]]; then
+        scenarios=("${CROSS_SCENARIOS[@]}")
+    fi
+    for scenario in "${scenarios[@]}"; do
+        oracle_log="$OUT/$lib-$scenario-oracle.log"
+        ox_log="$OUT/$lib-$scenario-oxpinyin.log"
+        run_side "$lib" "$scenario" "$oracle_log" "${oracle_libs[@]}" || exit 1
+        run_side "$lib" "$scenario" "$ox_log" "${ox_libs[@]}" || exit 1
+        verify_steps "$lib" "$scenario" "$oracle_log" || exit 1
+        verify_steps "$lib" "$scenario" "$ox_log" || exit 1
+        diff_rc=0
+        diff -u "$oracle_log" "$ox_log" > "$OUT/$lib-$scenario.diff" || diff_rc=$?
+        if ((diff_rc > 1)); then
+            echo "FAIL: could not compare $oracle_log and $ox_log" >&2
+            exit 1
+        fi
+        if ((diff_rc == 0)); then
+            echo "$lib/$scenario: IDENTICAL ($(wc -l < "$oracle_log") lines)"
+        else
+            echo "$lib/$scenario: DIVERGED"
+            cat "$OUT/$lib-$scenario.diff"
+            status=2
+        fi
+    done
+done
+
+if ((status == 0)); then
+    echo "RESULT: two contexts on one user dir behave as the pin's do"
+else
+    echo "RESULT: at least one two-context scenario DIVERGED from the pin"
+fi
+exit "$status"

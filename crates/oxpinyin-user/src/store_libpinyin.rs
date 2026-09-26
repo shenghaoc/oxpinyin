@@ -71,10 +71,9 @@ pub struct Target {
 /// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
 /// lowers the open counter its init raised and writes the marker, saved
 /// or not (`pinyin_fini`, `pinyin.cpp:1194-1200`); libzhuyin writes
-/// nothing. Armed on the one handle [`GenericUserStore::open_libpinyin`]
-/// returns from an open that ran `check_format` — never on a clone, nor
-/// on the handle a second open of a live session shares, which raised
-/// nothing — so it runs once per raise, when that handle drops: the
+/// nothing. Armed on the handle [`GenericUserStore::open_libpinyin`]
+/// returns and never on a clone of it, so it runs once per open — every
+/// open runs its own `check_format` — when that handle drops: the
 /// context's fini. A process that dies before then leaves the raised
 /// counter on disk, as upstream's does.
 #[derive(Debug)]
@@ -109,11 +108,10 @@ impl From<PersistenceError> for UserStoreError {
     }
 }
 
-/// The stable lease token for `user_dir` — one per directory per
-/// process. This name never touches the filesystem: it keys the
-/// standalone-set reservation and the shared-handle registry, so a
-/// second open of the same directory collides with the live session
-/// instead of racing a second scratch into existence.
+/// The name stem of `user_dir`'s scratch directories: a hash of the
+/// path under the temp area, so one profile's sessions are recognisable
+/// there. It keys nothing — every session reserves its own unique
+/// scratch ([`create_scratch_dir`]).
 fn session_token(user_dir: &Path) -> PathBuf {
     let mut hasher = DefaultHasher::new();
     user_dir.hash(&mut hasher);
@@ -168,10 +166,15 @@ impl GenericUserStore<DefaultStore> {
     /// makes the law's fini-time `user.conf` write
     /// ([`crate::persistence::fini`]).
     ///
-    /// A second live open of the same directory shares the session
-    /// handle (one scratch, shared dirty flag), like [`UserStore::open`]
-    /// does for a path — and so the first open's `check_format`: the
-    /// second open neither raises the counter nor re-checks conformance.
+    /// Every open is a session of its own, as every `pinyin_init` /
+    /// `zhuyin_init` is a context of its own upstream: nothing is held
+    /// per directory (`pinyin.cpp:326-444` keeps the profile in the
+    /// context, `:1132-1147` saves that context's state). A second open
+    /// of a directory another live session has open runs `check_format`
+    /// again, reads the profile as the files hold it, and learns and
+    /// saves on its own scratch — it does not see the first session's
+    /// unsaved learning, and when both save, the later save's files are
+    /// the profile.
     ///
     /// # Errors
     ///
@@ -185,26 +188,13 @@ impl GenericUserStore<DefaultStore> {
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        let token = session_token(user_dir);
-        let key = registry::registry_key(&token);
-        // The registry lock is held until the new handle is published:
-        // a concurrent second open of the same directory must either
-        // find the live handle here or wait for this one to appear —
-        // never slip past, fail the scratch reservation, and answer
-        // AlreadyOpen before any handle exists to share.
-        let mut reg = registry::lock_registry();
-        if let Some(inner) = reg.get(&key).and_then(std::sync::Weak::upgrade) {
-            return Ok(Self::from_parts(inner, None, FiniGuard::disarmed()));
-        }
-
-        // Reserve the session before touching the profile: a losing
-        // concurrent open must not run `check_format` — which raises
-        // the open counter and can wipe non-conforming files — only to
-        // fail the scratch reservation afterwards. The unique directory is
-        // created up front; on a lost race it is the loser's own fresh
-        // dir, removed here, never the winner's.
+        // Reserve the session's own scratch before touching the profile,
+        // so a failure here cannot follow a `check_format` that already
+        // raised the open counter and wiped a non-conforming profile. The
+        // directory is created new, so the reservation is this session's
+        // alone.
         let scratch_dir = create_scratch_dir(user_dir).map_err(UserStoreError::Io)?;
-        let lease = if let Some(lease) = registry::acquire_scratch(&token, scratch_dir.clone()) {
+        let lease = if let Some(lease) = registry::acquire_scratch(scratch_dir.clone()) {
             Arc::new(lease)
         } else {
             let _ = std::fs::remove_dir_all(&scratch_dir);
@@ -256,8 +246,6 @@ impl GenericUserStore<DefaultStore> {
             // safety for the construction path only.
             scratch_lease: lease.clone(),
         });
-        reg.insert(key, Arc::downgrade(&inner));
-        drop(reg);
         Ok(Self::from_parts(inner, lease, fini))
     }
 }
@@ -769,24 +757,62 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
+    /// The open counter `user.conf` records, as the next init reads it.
+    fn recorded_counter(dir: &Path) -> Option<u32> {
+        let text = std::fs::read_to_string(dir.join("user.conf")).ok()?;
+        Some(
+            oxpinyin_data::user_files::UserTableInfo::parse(&text)
+                .ok()?
+                .open_counter,
+        )
+    }
+
     #[test]
-    fn a_second_open_shares_the_session_handle() {
-        let dir = tempdir("share");
-        let first = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
-            .expect("open 1");
-        let second = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
-            .expect("open 2");
-        let mut second = second;
-        second.observe_selection(1, 0x0100_0001).expect("train");
-        // The shared handle sees it: one scratch, one dirty flag.
+    fn a_second_open_is_a_session_of_its_own() {
+        // #538: two opens of one user dir are two contexts, as two
+        // pinyin_init calls are upstream. Each runs check_format, so the
+        // counter reaches 2 (pinyin.cpp:185-187); each learns on its own
+        // scratch, so the second does not see the first's unsaved
+        // learning; each save answers for its own modifications; each
+        // fini lowers its own copy of the counter (:1194-1200).
+        let dir = tempdir("two-sessions");
+        let mut first =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open 1");
+        let mut second =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open 2");
+        assert_eq!(recorded_counter(&dir), Some(2));
+
+        first.observe_selection(1, 0x0100_0001).expect("train");
         assert_eq!(first.bigram_count(1, 0x0100_0001).expect("count"), 69);
+        assert_eq!(second.bigram_count(1, 0x0100_0001).expect("count"), 0);
+
+        assert!(
+            !second.save().expect("save 2"),
+            "the second session changed nothing"
+        );
+        assert!(first.save().expect("save 1"));
+        assert_eq!(
+            recorded_counter(&dir),
+            Some(1),
+            "the first save writes its own counter"
+        );
 
         drop(first);
+        assert_eq!(recorded_counter(&dir), Some(0));
         drop(second);
-        // The scratch directory dies with the last handle; the profile
-        // is whatever was last saved (nothing here). Every session dir
-        // shares the stable token's stem, so the token's parent holds
-        // only live sessions when none remain.
+        assert_eq!(recorded_counter(&dir), Some(1));
+
+        // The profile holds the first session's saved learning.
+        let third = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("open 3");
+        assert_eq!(third.bigram_count(1, 0x0100_0001).expect("count"), 69);
+        drop(third);
+
+        // Every session's scratch died with its last handle. Session dirs
+        // share the profile's token stem, so its parent holds only live
+        // sessions when none remain.
         let token = session_token(&dir);
         let stem = token
             .file_name()
@@ -808,6 +834,116 @@ mod tests {
             "scratch survived the last handle: {leftovers:?}"
         );
 
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn when_two_sessions_save_the_later_save_is_the_profile() {
+        // Both sessions learn and both save: each writes its own whole
+        // state (pinyin.cpp:1132-1147), so the profile is the later one's
+        // and the earlier session's learning is gone from it.
+        let dir = tempdir("two-saves");
+        let mut first =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open 1");
+        let mut second =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open 2");
+        // The first session trains the gram once, the second twice: the
+        // counts (69 against 69 + 138) tell whose save the profile kept.
+        first.observe_selection(1, 0x0100_0001).expect("train 1");
+        second.observe_selection(1, 0x0100_0001).expect("train 2");
+        second
+            .observe_selection(1, 0x0100_0001)
+            .expect("train 2 again");
+        assert_eq!(first.bigram_count(1, 0x0100_0001).expect("count"), 69);
+        assert_eq!(second.bigram_count(1, 0x0100_0001).expect("count"), 207);
+        assert!(first.save().expect("save 1"));
+        assert!(second.save().expect("save 2"));
+        drop(first);
+        drop(second);
+
+        let third = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("open 3");
+        assert_eq!(third.bigram_count(1, 0x0100_0001).expect("count"), 207);
+        drop(third);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_pinyin_open_after_a_zhuyin_open_keeps_libpinyins_law() {
+        // #578's review: a session follows the law it was opened with, not
+        // the law of whatever already has the dir open. libzhuyin's init
+        // only reads user.conf (zhuyin.cpp:126-162); libpinyin's raises and
+        // writes the counter whatever else is live (pinyin.cpp:185-187).
+        let dir = tempdir("zhuyin-then-pinyin");
+        let mut zhuyin =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Zhuyin)
+                .expect("open zhuyin");
+        assert_eq!(recorded_counter(&dir), None);
+        let mut pinyin =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open pinyin");
+        assert_eq!(recorded_counter(&dir), Some(1));
+
+        zhuyin
+            .observe_selection(1, 0x0100_0001)
+            .expect("train zhuyin");
+        assert_eq!(pinyin.bigram_count(1, 0x0100_0001).expect("count"), 0);
+        // libzhuyin's save writes a fresh counter of 0 (zhuyin.cpp:164-176,
+        // :695); libpinyin's writes back its own raised one
+        // (pinyin.cpp:1143, :220-232).
+        assert!(zhuyin.save().expect("save zhuyin"));
+        assert_eq!(recorded_counter(&dir), Some(0));
+        pinyin
+            .observe_selection(1, 0x0100_0001)
+            .expect("train pinyin");
+        assert!(pinyin.save().expect("save pinyin"));
+        assert_eq!(recorded_counter(&dir), Some(1));
+
+        // libpinyin's fini lowers its copy (pinyin.cpp:1194-1200);
+        // libzhuyin's writes nothing (zhuyin.cpp:741-757).
+        drop(pinyin);
+        assert_eq!(recorded_counter(&dir), Some(0));
+        drop(zhuyin);
+        assert_eq!(recorded_counter(&dir), Some(0));
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_zhuyin_open_after_a_pinyin_open_keeps_libzhuyins_law() {
+        // The other order: the live libpinyin session lends the libzhuyin
+        // open neither its law nor its unsaved learning.
+        let dir = tempdir("pinyin-then-zhuyin");
+        let mut pinyin =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open pinyin");
+        assert_eq!(recorded_counter(&dir), Some(1));
+        let mut zhuyin =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Zhuyin)
+                .expect("open zhuyin");
+        assert_eq!(recorded_counter(&dir), Some(1));
+
+        pinyin
+            .observe_selection(1, 0x0100_0001)
+            .expect("train pinyin");
+        assert_eq!(zhuyin.bigram_count(1, 0x0100_0001).expect("count"), 0);
+        zhuyin
+            .observe_selection(1, 0x0100_0001)
+            .expect("train zhuyin");
+        assert!(pinyin.save().expect("save pinyin"));
+        assert_eq!(recorded_counter(&dir), Some(1));
+        // The later save is libzhuyin's: its fresh 0 replaces libpinyin's
+        // raised counter.
+        assert!(zhuyin.save().expect("save zhuyin"));
+        assert_eq!(recorded_counter(&dir), Some(0));
+
+        // The finis in the reverse order: libzhuyin's writes nothing, and
+        // libpinyin's lowers its own 1.
+        drop(zhuyin);
+        assert_eq!(recorded_counter(&dir), Some(0));
+        drop(pinyin);
+        assert_eq!(recorded_counter(&dir), Some(0));
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 }
