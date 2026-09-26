@@ -226,3 +226,14 @@ pin-stamped guard moves. Amendment recorded in
 2. libpinyin's generated data is not reproducible: 6 of 23 files differ
    between two clean builds at a fixed pin (the DBM-backed generation
    path). Relevant to distro reproducible-builds work.
+
+## Amendment — drop-in identity follows the pin (2026-09-26 UTC, #592)
+
+Human ruling, 2026-09-26 UTC: oxpinyin's behaviour follows the pinned
+libpinyin (`074a2219`), so its drop-in identity follows the pin too —
+version `2.11.92`, headers under `include/libpinyin-2.11.92/`. This
+supersedes "The pin" section's statement that the drop-in stays at
+`2.11.91` (the PR #363 split). The version is now derived from
+`libpinyin_tag` in `tools/oracle/oracle-pin.txt` (read by both capi
+build scripts and by `tools/packaging/pc-version.sh`), so it moves with
+every future pin bump.

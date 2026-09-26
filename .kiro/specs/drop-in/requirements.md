@@ -27,7 +27,12 @@ so that unmodified consumers link and run.
 
 1. THE cdylib SHALL carry SONAME `libpinyin.so.15` (libtool
    -version-info 15:0).
-2. THE header SHALL install under `include/libpinyin-2.11.91/`.
+2. THE header SHALL install under `include/libpinyin-<version>/`, and the
+   pkg-config `Version` SHALL be `<version>`, where `<version>` is the
+   pinned libpinyin's (`libpinyin_tag` in `tools/oracle/oracle-pin.txt`;
+   `2.11.92` at `074a2219`). The drop-in identity follows the pin; this
+   supersedes the PR #363 rule that held it at 2.11.91 until upstream
+   tagged a release (version ruling 2026-09-26 UTC, #592).
 3. THE pkg-config file SHALL ship as `libpinyin.pc` exposing `pkgdatadir`,
    `database_format` and `exec_prefix`.
 4. THE exported surface SHALL be the full live upstream ABI — 79

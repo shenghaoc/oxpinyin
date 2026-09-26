@@ -154,3 +154,24 @@ verification form moves, to match libpinyin's:
   re-serving of it, and unaffected by a moved tag. The model archive
   stays on its SHA-256 because it is a plain file download, not a git
   tree.
+
+## Amendment — drop-in identity follows the pin (2026-09-26 UTC, #592)
+
+Human ruling, 2026-09-26 UTC: oxpinyin's behaviour follows the pinned
+libpinyin (`074a2219`), so its drop-in identity follows the pin too —
+version `2.11.92`, headers under `include/libpinyin-2.11.92/`. This
+supersedes the version split recorded in the pin-074a2219 amendment
+above (PR #363), under which the drop-in stayed at `2.11.91` until
+upstream tagged a release; that bullet is kept as the record of what
+held from 2026-09-06 to 2026-09-26 and no longer describes the tree.
+
+- **Source of the version:** `libpinyin_tag` in
+  `tools/oracle/oracle-pin.txt`. Both capi build scripts read it
+  (`crates/oxpinyin-capi/build_pin_version.rs`) and refuse a
+  `[package.metadata.capi]` table that disagrees; the release scripts
+  read it through `tools/packaging/pc-version.sh`. A pin bump that edits
+  the record therefore moves the `.pc` `Version:`, the header
+  subdirectory and the packages' versioned Provides with it.
+- **Checks:** `tools/packaging/check-pc-version.sh` (CI lint job) holds
+  the manifests to the record; `tools/packaging/check-pc-metadata.sh`
+  diffs an installed drop-in against a pin install (issue #537).
