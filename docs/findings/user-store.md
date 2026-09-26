@@ -648,17 +648,18 @@ Architecture — a session scratch behind the value engine:
 * `oxpinyin_data::user_files` — the inventory (`UserDbm`: libpinyin's
   names on KC/tkrzw, `<stem>.<ext>` on redb/LMDB — "libpinyin with
   redb"), the `user.conf` codec (`UserTableInfo`, `OPEN_COUNTER_LIMIT`
-  = 6, the counter ratchet, conformance), and the `PhraseIndexLogger`
+  = 6, `get_open_counter`, conformance), and the `PhraseIndexLogger`
   record codec (add/remove/modify/header; MODIFY_HEADER carries the
   payload length once, then two runs).
 * `oxpinyin_user::persistence` — load (`check_format` first: wipe on
-  non-conform, `user.conf` re-written with the ratcheted counter on
-  every init; then the user bigram wholesale, the USER_FILE chunk
+  non-conform; then the user bigram wholesale, the USER_FILE chunk
   stores, and the `.dbin` logs replayed onto the original system
-  chunks with merge's stop-at-first-mismatch) and save (the pin's
+  chunks with merge's stop-at-first-mismatch), save (the pin's
   `_write_files`+`_rename_files`: every file whole to a `.tmp` sibling,
-  then all renames). The two index DBMs are derivatives of the USER_FILE
-  items and are rebuilt at save, never read.
+  then all renames) and fini, each writing `user.conf` under the
+  facade's law (`UserConfLaw`, amendment below). The two index DBMs are
+  derivatives of the USER_FILE items and are rebuilt at save, never
+  read.
 * **The user bigram's container is backend-specific, and is not the
   system bigram's container** — the fact that produced this section's
   one real defect. On Kyoto Cabinet the *system* `bigram.db` is a
@@ -698,6 +699,23 @@ Semantics this reverts or preserves, on purpose:
   MODIFYs carry unigram changes only), and a replayed REMOVE degrades
   to a skip (`load`'s `skipped` list) because the value model cannot
   express a removed system token.
+* **Amendment (2026-09-25, #523): the open counter's lifecycle is the
+  facade's, and fini lowers it.** Task 9 raised the counter at every
+  open and never lowered it, so the eighth clean launch of a profile
+  wiped it. The two pins differ here, and `UserConfLaw` names which one
+  a profile follows. libpinyin raises at init and writes the marker
+  (`pinyin.cpp:185-187`), writes the same value back at save
+  (`mark_version`, `:1143`), and lowers it at fini — `get_open_counter`
+  then `counter > 1 ? counter - 1 : 0` — writing again whether or not a
+  save came first (`:1194-1200`). libzhuyin never moves it: init only
+  reads the marker (`zhuyin.cpp:126-162`), save writes a fresh
+  `UserTableInfo` with counter 0 (`:164-176`, `:695`), and fini writes
+  nothing (`:741-757`). Neither wipe removes `user.conf`. The fini write
+  belongs to the store handle whose open raised the counter: dropping
+  it is the context's `*_fini`. A process that dies before its fini
+  leaves the counter raised, so seven killed launches in a row wipe the
+  profile at the eighth, where the pin wipes it too. The differential
+  is `tools/bisection/run-open-counter-diff.sh`.
 
 Verification: unit goldens and round-trips at every layer (codecs,
 persistence, bridge, e2e); the backend matrix through the

@@ -43,7 +43,7 @@ pub(crate) mod store_libpinyin;
 
 pub use lookup::UserLookup;
 pub use oxpinyin_data::user_files::SystemVersions;
-pub use persistence::{SystemLibrary, system_originals};
+pub use persistence::{SystemLibrary, UserConfLaw, system_originals};
 pub use phrase::{
     ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, FIRST_NETWORK_TOKEN,
     FIRST_USER_TOKEN, MAX_PHRASE_LENGTH, NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK,

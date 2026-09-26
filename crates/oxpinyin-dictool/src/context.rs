@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use oxpinyin_facade::{ContextCore, PINYIN_DEFAULT_OPTION_WORD};
-use oxpinyin_user::UserStore;
+use oxpinyin_user::{UserConfLaw, UserStore};
 
 /// A user-store-only [`ContextCore`] for the §9 import/export/save trio.
 ///
@@ -22,7 +22,7 @@ impl UserImportContext {
     pub(crate) fn open(user_dir: &Path) -> Option<Self> {
         let dir = user_dir.to_str()?;
         Some(Self {
-            core: ContextCore::new_user_only(dir, PINYIN_DEFAULT_OPTION_WORD)?,
+            core: ContextCore::new_user_only(dir, PINYIN_DEFAULT_OPTION_WORD, UserConfLaw::Pinyin)?,
         })
     }
 

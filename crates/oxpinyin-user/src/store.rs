@@ -31,6 +31,7 @@ use crate::phrase::{
 };
 use crate::registry::{self, CountCache, RegistryLease, StandaloneLease, StoreInner};
 use crate::seed;
+use crate::store_libpinyin::FiniGuard;
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
 pub type Token = u32;
@@ -349,6 +350,9 @@ fn has_user_data_in_write_txn(txn: &dyn WriteTxn) -> Result<bool, StoreError> {
 /// context's `pinyin_save` observes it. The C ABI contract is
 /// main-thread-only, so the flag uses relaxed ordering.
 pub struct GenericUserStore<S: WriteStore> {
+    /// The facade fini's `user.conf` write: armed only on the handle a
+    /// libpinyin open returned, never on a clone ([`FiniGuard`]).
+    _fini: FiniGuard,
     inner: Arc<StoreInner<S>>,
     /// Keeps a standalone path reservation alive until its last clone drops.
     _standalone_lease: Option<Arc<StandaloneLease>>,
@@ -367,12 +371,15 @@ pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
     /// Crate-visible handle assembly for the libpinyin constructor
-    /// ([`crate::store_libpinyin`]), which owns a scratch lease.
+    /// ([`crate::store_libpinyin`]), which owns a scratch lease and arms
+    /// the fini guard of the open that raised the counter.
     pub(crate) const fn from_parts(
         inner: Arc<StoreInner<S>>,
         lease: Option<Arc<StandaloneLease>>,
+        fini: FiniGuard,
     ) -> Self {
         Self {
+            _fini: fini,
             inner,
             _standalone_lease: lease,
             _lease: RegistryLease,
@@ -383,6 +390,9 @@ impl<S: WriteStore> GenericUserStore<S> {
 impl<S: WriteStore> Clone for GenericUserStore<S> {
     fn clone(&self) -> Self {
         Self {
+            // A clone shares the session, not the open: only the handle
+            // the open returned finishes it.
+            _fini: FiniGuard::disarmed(),
             inner: Arc::clone(&self.inner),
             _standalone_lease: self._standalone_lease.clone(),
             _lease: RegistryLease,
@@ -525,6 +535,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         let db = S::create(path)?;
         let inner = Self::init_and_wrap(db)?;
         Ok(Self {
+            _fini: FiniGuard::disarmed(),
             inner,
             _standalone_lease: Some(standalone_lease),
             _lease: RegistryLease,
@@ -1385,6 +1396,7 @@ impl GenericUserStore<DefaultStore> {
         let mut reg = registry::lock_registry();
         if let Some(inner) = reg.get(&key).and_then(std::sync::Weak::upgrade) {
             return Ok(Self {
+                _fini: FiniGuard::disarmed(),
                 inner,
                 _standalone_lease: None,
                 _lease: RegistryLease,
@@ -1395,6 +1407,7 @@ impl GenericUserStore<DefaultStore> {
         let inner = Self::init_and_wrap(db)?;
         reg.insert(key, Arc::downgrade(&inner));
         Ok(Self {
+            _fini: FiniGuard::disarmed(),
             inner,
             _standalone_lease: None,
             _lease: RegistryLease,

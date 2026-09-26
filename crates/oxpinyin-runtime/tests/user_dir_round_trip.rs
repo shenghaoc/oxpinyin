@@ -23,7 +23,7 @@ use std::path::Path;
 
 use oxpinyin_runtime::Runtime;
 use oxpinyin_user::persistence;
-use oxpinyin_user::{SystemVersions, system_originals};
+use oxpinyin_user::{SystemVersions, UserConfLaw, system_originals};
 
 fn env(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("user-dir round trip: ${name} is required"))
@@ -173,8 +173,13 @@ fn a_pin_profile_loads_and_saves_back_in_place() {
         &fs::read_to_string(Path::new(&system).join("table.conf")).unwrap_or_default(),
     );
     let originals: BTreeMap<u8, _> = system_originals(runtime.dict().system().libraries());
-    let first =
-        persistence::load(Path::new(&pin_dir), &originals, &versions).expect("the rewrite loads");
+    let first = persistence::load(
+        Path::new(&pin_dir),
+        &originals,
+        &versions,
+        UserConfLaw::Pinyin,
+    )
+    .expect("the rewrite loads");
     assert!(
         !first.state.bigram.is_empty(),
         "the pin profile carried grams that did not survive the round trip"
@@ -187,8 +192,13 @@ fn a_pin_profile_loads_and_saves_back_in_place() {
         first.open_counter,
     )
     .expect("the rewrite saves again");
-    let second = persistence::load(Path::new(&pin_dir), &originals, &versions)
-        .expect("the second rewrite loads");
+    let second = persistence::load(
+        Path::new(&pin_dir),
+        &originals,
+        &versions,
+        UserConfLaw::Pinyin,
+    )
+    .expect("the second rewrite loads");
     assert_eq!(
         second.state, first.state,
         "load→save is not a value fixed point on a pin profile"

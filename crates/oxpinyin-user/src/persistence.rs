@@ -16,6 +16,11 @@
 //! * save — the pin's `_write_files` + `_rename_files`: every file is
 //!   written whole to a `.tmp` sibling, then all are renamed over their
 //!   finals, so a crash mid-save leaves the previous profile intact.
+//! * fini — `pinyin_fini`'s `user.conf` write: the open counter the load
+//!   raised, lowered again.
+//!
+//! The two facades share the files and the `user.conf` codec but not its
+//! lifecycle: [`UserConfLaw`] names which one a profile follows.
 //!
 //! Nothing here holds a container open: the DBM files are created,
 //! written and closed during save, and opened read-only during load —
@@ -36,13 +41,36 @@ use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::single_gram::{decode_single_gram, encode_single_gram};
 use oxpinyin_data::table_entries::{phrase_index_entries, pinyin_index_entries};
 use oxpinyin_data::user_files::{
-    LogRecord, OPEN_COUNTER_LIMIT, SYSTEM_LOG_FILES, SystemVersions, USER_LIBRARY_FILES, UserDbm,
-    UserTableInfo, decode_log_records, encode_log_records, read_chunk_payload,
+    LogRecord, SYSTEM_LOG_FILES, SystemVersions, USER_LIBRARY_FILES, UserDbm, UserTableInfo,
+    decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
 };
 use oxpinyin_store::{DefaultStore, RawReadStore, StoreError, WriteStore};
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
+
+/// Which facade's `user.conf` lifecycle a profile follows. libpinyin and
+/// libzhuyin read and write the same marker through the same
+/// `UserTableInfo`, but at different points and with different counters,
+/// so the facade that opens a profile names its law and every write below
+/// follows it ([`load`], [`save`]'s counter, [`fini`]).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UserConfLaw {
+    /// libpinyin: every `pinyin_init` raises the open counter and writes
+    /// the marker (`check_format`, `pinyin.cpp:185-187`); `pinyin_save`
+    /// writes the context's counter back (`mark_version`, `:1143`,
+    /// `:220-232`); `pinyin_fini` lowers it and writes again, with or
+    /// without a save before it (`:1194-1200`). A process that dies
+    /// between init and fini leaves the counter raised, and the init that
+    /// reads it past `OPEN_COUNTER_LIMIT` wipes the profile.
+    Pinyin,
+    /// libzhuyin: `zhuyin_init` only reads the marker (`check_format`,
+    /// `zhuyin.cpp:126-162`: conformance and the wipe, no counter step and
+    /// no write); `zhuyin_save` writes a fresh `UserTableInfo`, so its
+    /// counter is 0 (`mark_version`, `:164-176`, called at `:695`);
+    /// `zhuyin_fini` writes nothing (`:741-757`).
+    Zhuyin,
+}
 
 /// One user-bigram gram: the previous token's `SingleGram`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -180,7 +208,11 @@ impl From<oxpinyin_data::chunk_write::ChunkWriteError> for PersistenceError {
 pub struct Loaded {
     /// The decoded state (empty on a fresh or wiped profile).
     pub state: UserState,
-    /// The open counter now recorded in `user.conf`.
+    /// The open counter every later `user.conf` write of this session
+    /// starts from: under [`UserConfLaw::Pinyin`] the value the load
+    /// raised and wrote, which [`save`] writes back and [`fini`] lowers;
+    /// under [`UserConfLaw::Zhuyin`] 0, the counter of the fresh
+    /// `UserTableInfo` libzhuyin's `mark_version` saves.
     pub open_counter: u32,
     /// A non-conform profile was found and its files removed —
     /// `check_format`'s `_clean_user_files`, the ecosystem's own
@@ -206,19 +238,23 @@ const fn token_of(nibble: u8, slot: u32) -> u32 {
 
 /// Reads the user dir: `check_format` first, then the profile.
 ///
-/// This reproduces the pin's `pinyin_init` user-dir half, including the
-/// `user.conf` write at init — the open counter the conformance check
-/// ratchets on every open, upstream's periodic-rebuild heuristic.
+/// This reproduces the facade's init-time user-dir half under `law`.
+/// libpinyin raises the open counter and writes `user.conf` at every
+/// init, conform or not (`pinyin.cpp:185-187`); libzhuyin reads the
+/// marker and writes nothing (`zhuyin.cpp:126-162`). Both wipe a
+/// non-conform profile — a counter past the limit included — and keep
+/// the marker file itself, which neither pin's wipe removes.
 ///
 /// # Errors
 ///
-/// Returns [`PersistenceError`] only when the `user.conf` re-write
-/// itself fails; unparsable profile files degrade per-file (see
+/// Returns [`PersistenceError`] only when the `user.conf` write itself
+/// fails; unparsable profile files degrade per-file (see
 /// [`Loaded::skipped`]), as upstream's do.
 pub fn load(
     dir: &Path,
     originals: &BTreeMap<u8, SystemLibrary>,
     versions: &SystemVersions,
+    law: UserConfLaw,
 ) -> Result<Loaded, PersistenceError> {
     let conf_path = dir.join(USER_CONF);
     let existing = std::fs::read_to_string(&conf_path)
@@ -229,30 +265,31 @@ pub fn load(
         .as_ref()
         .is_some_and(|info| info.is_conform(versions));
 
-    // `check_format`'s counter ratchet, exactly upstream's arithmetic:
-    // `get_open_counter` answers 0 for a value above the limit, then +1.
-    // A conform profile ratchets 5→6→7; 7 fails `is_conform` next open,
-    // wipes, and the marker restarts at 1. (A `min(LIMIT)+1` here would
-    // write LIMIT+1 after every wipe — and re-wipe on every open.)
-    let counter = existing.as_ref().map_or(1, |info| {
-        if info.open_counter > OPEN_COUNTER_LIMIT {
-            1
-        } else {
-            info.open_counter + 1
+    // libpinyin's raise, exactly `check_format`'s arithmetic
+    // (`pinyin.cpp:185-186`): `get_open_counter() + 1`, where a missing
+    // or unparsable marker reads 0 (`UserTableInfo::load` resets before
+    // it parses, `table_info.cpp:325-326`). A conform profile raised to 7
+    // fails `is_conform` at the next init, which wipes and writes 1.
+    // libzhuyin keeps no counter of its own: its writes carry the fresh
+    // `UserTableInfo`'s 0.
+    let open_counter = match law {
+        UserConfLaw::Pinyin => {
+            get_open_counter(existing.as_ref().map_or(0, |info| info.open_counter)) + 1
         }
-    });
+        UserConfLaw::Zhuyin => 0,
+    };
 
     let mut loaded = Loaded {
-        open_counter: counter,
+        open_counter,
         wiped: !conform,
         ..Loaded::default()
     };
 
     if !conform {
         clean_user_files(dir);
-        let mut marker = UserTableInfo::conform_to(versions);
-        marker.open_counter = counter;
-        std::fs::write(&conf_path, marker.to_text())?;
+        if law == UserConfLaw::Pinyin {
+            write_marker(dir, versions, open_counter)?;
+        }
         return Ok(loaded);
     }
 
@@ -260,14 +297,66 @@ pub fn load(
     load_libraries(dir, &mut loaded);
     load_logs(dir, originals, &mut loaded);
 
-    let mut marker = UserTableInfo::conform_to(versions);
-    marker.open_counter = counter;
-    std::fs::write(&conf_path, marker.to_text())?;
+    if law == UserConfLaw::Pinyin {
+        write_marker(dir, versions, open_counter)?;
+    }
     Ok(loaded)
 }
 
-/// `_clean_user_files` + the fixed names: every file of the profile is
-/// removed; absence is not an error.
+/// `pinyin_fini`'s arithmetic (`pinyin.cpp:1196-1197`): the counter the
+/// init raised, read through `get_open_counter`, lowered by one and
+/// floored at 0 — `counter > 1 ? counter - 1 : 0`, which over an unsigned
+/// counter is exactly a saturating decrement. A raised 7 therefore reads
+/// 0 and lowers to 0, not to 6.
+#[must_use]
+pub const fn lowered_open_counter(open_counter: u32) -> u32 {
+    get_open_counter(open_counter).saturating_sub(1)
+}
+
+/// The facade's fini-time `user.conf` write under `law`: libpinyin
+/// lowers the counter the load raised and writes the conform marker
+/// (`pinyin_fini`, `pinyin.cpp:1195-1200`, whose `mark_version` runs
+/// whether or not a save came first); libzhuyin writes nothing
+/// (`zhuyin_fini`, `zhuyin.cpp:741-757`). Nothing else of the profile
+/// is touched.
+///
+/// A process that never reaches its fini leaves the load's raised value
+/// on disk, as upstream's does.
+///
+/// # Errors
+///
+/// Returns [`PersistenceError`] when the marker cannot be written.
+pub fn fini(
+    dir: &Path,
+    versions: &SystemVersions,
+    law: UserConfLaw,
+    open_counter: u32,
+) -> Result<(), PersistenceError> {
+    match law {
+        UserConfLaw::Pinyin => write_marker(dir, versions, lowered_open_counter(open_counter)),
+        UserConfLaw::Zhuyin => Ok(()),
+    }
+}
+
+/// `mark_version`'s write: the conform marker (`make_conform`) with
+/// `open_counter`, straight over `user.conf` as `UserTableInfo::save`'s
+/// `fopen("w")` does (`table_info.cpp:377-397`).
+fn write_marker(
+    dir: &Path,
+    versions: &SystemVersions,
+    open_counter: u32,
+) -> Result<(), PersistenceError> {
+    let mut marker = UserTableInfo::conform_to(versions);
+    marker.open_counter = open_counter;
+    std::fs::write(dir.join(USER_CONF), marker.to_text())?;
+    Ok(())
+}
+
+/// `_clean_user_files` + the fixed names: every data file of the profile
+/// is removed; absence is not an error. `user.conf` is not among them —
+/// neither pin's `check_format` unlinks it (`pinyin.cpp:194-215`,
+/// `zhuyin.cpp:141-159`): libpinyin has already rewritten it by then, and
+/// libzhuyin leaves the non-conform marker in place until a save.
 fn clean_user_files(dir: &Path) {
     let mut names: Vec<String> = [
         UserDbm::Bigram.file_name(),
@@ -278,7 +367,6 @@ fn clean_user_files(dir: &Path) {
     .collect();
     names.extend(USER_LIBRARY_FILES.iter().map(|&(_, name)| name.to_owned()));
     names.extend(SYSTEM_LOG_FILES.iter().map(|&(_, name)| name.to_owned()));
-    names.push(USER_CONF.to_owned());
     for name in names {
         let _ = std::fs::remove_file(dir.join(name));
     }
@@ -548,6 +636,11 @@ pub fn system_new_total(
 /// Writes the whole profile: `_write_files` (every file to its `.tmp`
 /// sibling) then `_rename_files` (all renames), so a crash between the
 /// passes leaves the previous profile intact.
+///
+/// `user.conf` is `mark_version`'s marker with `open_counter` — the
+/// session's [`Loaded::open_counter`]: libpinyin's save writes back the
+/// value its init raised (`pinyin.cpp:1143`), libzhuyin's a fresh 0
+/// (`zhuyin.cpp:695`). Neither save moves the counter.
 ///
 /// # Errors
 ///
@@ -841,6 +934,7 @@ fn stage_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oxpinyin_data::user_files::OPEN_COUNTER_LIMIT;
     use oxpinyin_store::ReadStore;
 
     fn item(phrase: &[u32], unigram: u32, prons: &[(Vec<u16>, u32)]) -> ChunkItem {
@@ -961,10 +1055,10 @@ mod tests {
         expected.sort();
         assert_eq!(names, expected, "the save left an unexpected file");
 
-        let loaded = load(&dir, &originals, &versions()).expect("load");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
         assert!(!loaded.wiped);
-        assert_eq!(loaded.open_counter, 2); // the ratchet
+        assert_eq!(loaded.open_counter, 2); // check_format's raise
         assert_eq!(loaded.state, state);
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -1007,7 +1101,7 @@ mod tests {
             .insert(2_u32, None);
 
         save(&dir, &state, &originals, &versions(), 1).expect("save");
-        let loaded = load(&dir, &originals, &versions()).expect("load");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
         assert_eq!(
             loaded.state.system_overrides[&1].get(&2),
@@ -1024,7 +1118,7 @@ mod tests {
         let originals = originals();
 
         // A fresh load: no user.conf → non-conform → empty, counter 1.
-        let loaded = load(&dir, &originals, &versions()).expect("load");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(loaded.wiped);
         assert_eq!(loaded.open_counter, 1);
         assert_eq!(loaded.state, UserState::default());
@@ -1032,7 +1126,7 @@ mod tests {
         // Saving the empty state writes the whole inventory, and it
         // loads back empty.
         save(&dir, &UserState::default(), &originals, &versions(), 1).expect("save");
-        let reloaded = load(&dir, &originals, &versions()).expect("load");
+        let reloaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(!reloaded.wiped);
         assert!(reloaded.skipped.is_empty(), "{:?}", reloaded.skipped);
         assert_eq!(reloaded.state, UserState::default());
@@ -1077,7 +1171,7 @@ mod tests {
         };
         std::fs::write(dir.join(USER_CONF), foreign.to_text()).expect("write");
 
-        let loaded = load(&dir, &originals, &versions()).expect("load");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(loaded.wiped);
         assert_eq!(loaded.state, UserState::default());
         assert_eq!(loaded.open_counter, 1); // get_open_counter caps, +1
@@ -1101,13 +1195,220 @@ mod tests {
         let originals = originals();
         save(&dir, &state(), &originals, &versions(), OPEN_COUNTER_LIMIT).expect("save");
         // The limit itself still conforms; one more open crosses it.
-        let loaded = load(&dir, &originals, &versions()).expect("load");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(!loaded.wiped);
         assert_eq!(loaded.open_counter, OPEN_COUNTER_LIMIT + 1);
-        let next = load(&dir, &originals, &versions()).expect("load");
+        let next = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(next.wiped);
         assert_eq!(next.state, UserState::default());
 
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// The counter `user.conf` holds, read back as the next init reads it.
+    fn recorded_counter(dir: &Path) -> Option<u32> {
+        let text = std::fs::read_to_string(dir.join(USER_CONF)).ok()?;
+        Some(UserTableInfo::parse(&text).ok()?.open_counter)
+    }
+
+    #[test]
+    fn the_lowering_is_pinyin_finis_arithmetic() {
+        // `counter > 1 ? counter - 1 : 0` over `get_open_counter`
+        // (pinyin.cpp:1196-1197): a raised 7 reads 0, so it lowers to 0.
+        assert_eq!(lowered_open_counter(0), 0);
+        assert_eq!(lowered_open_counter(1), 0);
+        assert_eq!(lowered_open_counter(2), 1);
+        assert_eq!(
+            lowered_open_counter(OPEN_COUNTER_LIMIT),
+            OPEN_COUNTER_LIMIT - 1
+        );
+        assert_eq!(lowered_open_counter(OPEN_COUNTER_LIMIT + 1), 0);
+        assert_eq!(lowered_open_counter(u32::MAX), 0);
+    }
+
+    #[test]
+    fn clean_pinyin_cycles_return_the_counter_and_keep_the_profile() {
+        // #523: init raises, save writes the raised value back, fini
+        // lowers — so a profile that is saved and finished every launch
+        // never reaches the limit, however many launches it sees.
+        let dir = tempdir("pinyin-cycles");
+        let originals = originals();
+        for launch in 1..=10 {
+            let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+            assert_eq!(
+                loaded.wiped,
+                launch == 1,
+                "launch {launch}: only the fresh dir wipes"
+            );
+            assert_eq!(loaded.open_counter, 1, "launch {launch}: raised from 0");
+            assert_eq!(
+                recorded_counter(&dir),
+                Some(1),
+                "launch {launch}: the init writes"
+            );
+            if launch > 1 {
+                assert_eq!(
+                    loaded.state,
+                    state(),
+                    "launch {launch}: the profile survived"
+                );
+            }
+            save(&dir, &state(), &originals, &versions(), loaded.open_counter).expect("save");
+            assert_eq!(
+                recorded_counter(&dir),
+                Some(1),
+                "launch {launch}: the save writes back"
+            );
+            fini(&dir, &versions(), UserConfLaw::Pinyin, loaded.open_counter).expect("fini");
+            assert_eq!(
+                recorded_counter(&dir),
+                Some(0),
+                "launch {launch}: the fini lowers"
+            );
+        }
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_pinyin_fini_without_a_save_still_lowers_the_counter() {
+        // pinyin_fini's mark_version runs whether or not a save came
+        // first (pinyin.cpp:1194-1200).
+        let dir = tempdir("pinyin-fini-unsaved");
+        let originals = originals();
+        save(&dir, &state(), &originals, &versions(), 0).expect("seed");
+        let before = std::fs::read(dir.join("user.bin")).expect("user.bin");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+        assert_eq!(recorded_counter(&dir), Some(1));
+        fini(&dir, &versions(), UserConfLaw::Pinyin, loaded.open_counter).expect("fini");
+        assert_eq!(recorded_counter(&dir), Some(0));
+        // user.conf is the only file a fini writes.
+        assert_eq!(
+            std::fs::read(dir.join("user.bin")).expect("user.bin"),
+            before
+        );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn pinyin_launches_that_die_before_fini_wipe_on_the_eighth() {
+        // The crash path: every init raises and writes, nothing lowers.
+        // From a counter of 0 the seventh killed launch leaves 7, and the
+        // eighth init reads it past the limit, wipes and writes 1 — where
+        // the pin wipes (table_info.cpp:409-410).
+        let dir = tempdir("pinyin-crashes");
+        let originals = originals();
+        save(&dir, &state(), &originals, &versions(), 0).expect("seed");
+        for launch in 1..=7 {
+            let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+            assert!(!loaded.wiped, "killed launch {launch} wiped early");
+            assert_eq!(loaded.state, state());
+            assert_eq!(recorded_counter(&dir), Some(launch));
+        }
+        let eighth = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+        assert!(eighth.wiped);
+        assert_eq!(eighth.state, UserState::default());
+        assert_eq!(recorded_counter(&dir), Some(1));
+        assert!(
+            !dir.join("user.bin").exists(),
+            "profile file survived the wipe"
+        );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_raised_seven_that_finishes_restarts_from_zero() {
+        // get_open_counter on both ends: an init that raises 6 to 7 and
+        // then finishes writes 0 (a 7 reads as 0), not 6.
+        let dir = tempdir("pinyin-seven");
+        let originals = originals();
+        save(&dir, &state(), &originals, &versions(), OPEN_COUNTER_LIMIT).expect("seed");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+        assert!(!loaded.wiped);
+        assert_eq!(recorded_counter(&dir), Some(OPEN_COUNTER_LIMIT + 1));
+        fini(&dir, &versions(), UserConfLaw::Pinyin, loaded.open_counter).expect("fini");
+        assert_eq!(recorded_counter(&dir), Some(0));
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn zhuyin_init_and_fini_never_write_the_marker() {
+        // libzhuyin's check_format only reads user.conf and its fini writes
+        // nothing (zhuyin.cpp:126-162, :741-757): a fresh dir has no marker
+        // until the first save, which writes a counter of 0 (:164-176).
+        let dir = tempdir("zhuyin-marker");
+        let originals = originals();
+        let fresh = load(&dir, &originals, &versions(), UserConfLaw::Zhuyin).expect("load");
+        assert!(fresh.wiped);
+        assert_eq!(fresh.open_counter, 0);
+        assert!(
+            !dir.join(USER_CONF).exists(),
+            "a zhuyin init wrote user.conf"
+        );
+        fini(&dir, &versions(), UserConfLaw::Zhuyin, fresh.open_counter).expect("fini");
+        assert!(
+            !dir.join(USER_CONF).exists(),
+            "a zhuyin fini wrote user.conf"
+        );
+
+        save(&dir, &state(), &originals, &versions(), fresh.open_counter).expect("save");
+        let marker = std::fs::read(dir.join(USER_CONF)).expect("marker");
+        assert_eq!(recorded_counter(&dir), Some(0));
+        // Launches that die before fini, and clean ones, leave it alone:
+        // no counter moves, so no wipe ever comes of them.
+        for launch in 1..=10 {
+            let loaded = load(&dir, &originals, &versions(), UserConfLaw::Zhuyin).expect("load");
+            assert!(!loaded.wiped, "zhuyin launch {launch} wiped");
+            assert_eq!(loaded.state, state());
+            fini(&dir, &versions(), UserConfLaw::Zhuyin, loaded.open_counter).expect("fini");
+            assert_eq!(std::fs::read(dir.join(USER_CONF)).expect("marker"), marker);
+        }
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_zhuyin_wipe_keeps_the_non_conform_marker() {
+        // A counter past the limit is non-conform under either law; the
+        // zhuyin wipe removes the data files and leaves the marker as it
+        // was (zhuyin.cpp:141-159 unlinks no user.conf), so every later
+        // init wipes again until a save rewrites it.
+        let dir = tempdir("zhuyin-tired");
+        let originals = originals();
+        save(
+            &dir,
+            &state(),
+            &originals,
+            &versions(),
+            OPEN_COUNTER_LIMIT + 1,
+        )
+        .expect("seed");
+        let marker = std::fs::read(dir.join(USER_CONF)).expect("marker");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Zhuyin).expect("load");
+        assert!(loaded.wiped);
+        assert_eq!(loaded.state, UserState::default());
+        assert!(
+            !dir.join("user.bin").exists(),
+            "profile file survived the wipe"
+        );
+        assert_eq!(std::fs::read(dir.join(USER_CONF)).expect("marker"), marker);
+        assert!(
+            load(&dir, &originals, &versions(), UserConfLaw::Zhuyin)
+                .expect("load")
+                .wiped
+        );
+        save(
+            &dir,
+            &UserState::default(),
+            &originals,
+            &versions(),
+            loaded.open_counter,
+        )
+        .expect("save");
+        assert_eq!(recorded_counter(&dir), Some(0));
+        assert!(
+            !load(&dir, &originals, &versions(), UserConfLaw::Zhuyin)
+                .expect("load")
+                .wiped
+        );
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
@@ -1121,7 +1422,7 @@ mod tests {
         // Load back and save again: the loaded state reproduces the same
         // bytes — the replay recomputes the same overrides the diff
         // emitted.
-        let loaded = load(&dir, &originals, &versions()).expect("load");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         save(&dir, &loaded.state, &originals, &versions(), 2).expect("save 2");
         let second = std::fs::read(dir.join("gb_char.dbin")).expect("log 2");
         assert_eq!(first, second);
@@ -1163,7 +1464,7 @@ mod tests {
         let marker = UserTableInfo::conform_to(&versions());
         std::fs::write(dir.join(USER_CONF), marker.to_text()).expect("write");
 
-        let loaded = load(&dir, &originals, &versions()).expect("load");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(!loaded.wiped);
         // Slot 1 was never reached: the mismatch stopped the replay
         // before the second MODIFY (an absent map and an empty one are
@@ -1233,7 +1534,7 @@ mod tests {
         std::fs::write(dir.join("user.bin"), chunk).expect("write");
         std::fs::write(dir.join(UserDbm::Bigram.file_name()), b"not a dbm").expect("write");
 
-        let loaded = load(&dir, &originals, &versions()).expect("load");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
         assert!(!loaded.wiped, "user.conf is intact; only files skip");
         assert_eq!(loaded.skipped.len(), 2, "{:?}", loaded.skipped);
         assert!(loaded.state.bigram.is_empty());
