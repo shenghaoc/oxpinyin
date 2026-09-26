@@ -1,11 +1,25 @@
 # Bug-for-bug audit, round 2 — pre-registration
 
-Written 2026-09-23T10:52:43Z (UTC, `date -u +%FT%TZ` at authoring time),
-before any round-2 measurement. This file is committed as the first
-commit on `docs/bug-for-bug-audit-r2-2026-09-23` and is **never edited
-after that commit**; the report
-(`docs/findings/bug-for-bug-audit-r2-2026-09-23.md`) cites it by commit
-SHA and records every deviation from it as a deviation, not as an edit.
+Written 2026-09-23T10:52:43Z (UTC, `date -u +%FT%TZ` at authoring time).
+The original decision-rule body in sections 0-6, excluding this provenance
+correction, remained unedited after the first branch commit
+`fad9ad47b16d9ef74de6346b2619610a17791762` (author time
+2026-09-23T10:54:33Z; rebased commit time 2026-09-24T23:09:44Z).
+Later protocol revisions were **appended to this same file**, not part of
+the original body. `git log --follow` records their commits and UTC times:
+
+| revision | commit | UTC commit time |
+|---|---|---|
+| Addendum 1 (G, C drivers, F) | `e18fd9fcd577efb35182563c1247c774bd16092e` | 2026-09-25T00:02:54Z |
+| Addendum 2 (libzhuyin B) | `44a46988bf8d4eb8561c4af00ce6b450601a5d36` | 2026-09-25T00:50:26Z |
+| Addendum 3 (C option, encoding, layouts) | `47e6ba6d9fd817ea0b59032d4b5af674cab1a549` | 2026-09-25T01:27:51Z |
+| Addendum 4 (isolated import) | `065f601f0b952fffed646bd5db4fa8a450258e0d` | 2026-09-25T19:48:15Z |
+| Addendum 5 (J) | `8962ad7f5c2528d10fcf76366b24fa970161bb32` | 2026-09-26T02:45:54Z |
+| Addendum 6 (L) | `625d463b39d11d9eef41e2a8604a2604dede0784` | 2026-09-26T03:23:38Z |
+
+The report records deviations from these protocols separately. The first
+commit's author time predates the reported measurement window; the displayed
+rebased commit time does not, and must not be mistaken for the original push.
 
 ## 0. Fixed identities
 
