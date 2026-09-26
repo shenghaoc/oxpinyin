@@ -24,27 +24,42 @@
   severity-1/2 findings were re-run in section 11, and item 4's severity-2
   findings were re-run in section 15.
 - **Findings were not adversarially re-verified.** Subagent enumeration was
-  spot-checked (section 1.3). Salvaged verdicts come from the raw run
-  artifacts, not from a finished agent's conclusion.
+  spot-checked (section 1.3). Section 4 identifies rows whose code or inline
+  differential basis could not be located; those rows remain open claims, not
+  established findings.
 
 | axis | tkrzw | bdb | kc | basis |
 |---|---|---|---|---|
 | A ABI surface | static MATCH (exc. .pc); layout MATCH | same | same | A-m1 and A-m3 detected and reverted; abidiff type section NOT-ESTABLISHED by pre-registration |
-| B libpinyin contract | DIVERGENT (40 findings) | DIVERGENT, with three nondeterministic oracle probes NOT-ESTABLISHED (§5) | DIVERGENT | B-m1, B-m2, F-m2 detected; gated revert identical for deterministic probes |
-| B libzhuyin contract | DIVERGENT: all 52 exports (Z-1..Z-3 plus twins, §14) | same | same | C-m3 and the Bz-shim-m1 shim detected and reverted on every cell |
+| B libpinyin contract | DIVERGENT; aggregate probe count includes §4.2 gaps | DIVERGENT, with three nondeterministic oracle probes NOT-ESTABLISHED (§5) | DIVERGENT | B-m1, B-m2, F-m2 detected; gated revert identical for deterministic probes |
+| B libzhuyin contract | DIVERGENT among 52 exports probed (Z-1..Z-3 plus twins, §14) | same | same | C-m3 and the Bz-shim-m1 shim detected and reverted on every cell |
 | C drivers | DIVERGENT (6 kinds); pred-order, predict and punct NOT-ESTABLISHED | same, +1 broader | same | C-m2 detected by 6 drivers; four of the seven remaining drivers detected their named DRV-* mutation. Three used impermissible substitutes (§13.2); their IDENTICAL output is not MATCH |
 | C options/encoding/zhuyin layouts | DIVERGENT (§15) | same | same | 539 option words, 1,043 encoding cases and 1,236 layout corpus lines; C-m1/C-m3 detected and reverted. Payload equality is conditional on D-23 diagnostics |
 | D persisted state | DIVERGENT (open counter, cross-read) | same | same, +kc interop | D-m1 (round-trip) and D-m3 (cycle) detected; revert identical |
 | E defect preservation | 37 DIVERGENT, 14 NE | same | same | E-m1 detected on all cells, reverted |
-| F errors/diagnostics | 74 sites DIVERGENT | same | same | F-m1, F-m2 detected on every cell; bdb determinism holds under normalisation 2 (§13.3) |
-| G numerics | **NOT-ESTABLISHED** (G-m2 detected, **G-m1 not**: blind gate, §13.1) | **NOT-ESTABLISHED** (same) | **NOT-ESTABLISHED** (same) | no G row may be MATCH. The §12 gate mutation runs were done: G-m2 was detected and reverted on all cells; G-m1 was reached and changed four C-ABI outputs outside the fixture, but the gate missed it. D-13 stands on counterfactual and source evidence |
-| H process state | DIVERGENT | same | same, +fork hang | H-m1 and H-m2 detected and reverted |
-| I drop-in | DIVERGENT (.pc, consumer runtime) | same | same | I-m2 and I-m3 (C-m2) detected; header matrix fails identically on both sides |
+| F errors/diagnostics | PARTIAL: 74-site aggregate NOT-ESTABLISHED (§4.2) | same | same | F-m1, F-m2 detected on every cell; bdb determinism holds under normalisation 2 (§13.3) |
+| G numerics | **NOT-ESTABLISHED** (G-m2 detected, **G-m1 not**: blind gate, §13.1) | **NOT-ESTABLISHED** (same) | **NOT-ESTABLISHED** (same) | no G row may be MATCH. The §12 gate mutation runs were done: G-m2 was detected and reverted on all cells; G-m1 was reached and changed four C-ABI outputs outside the fixture, but the gate missed it. D-13 also lacks a minimal attributed output (§4.2) |
+| H process state | DIVERGENT; D-22 NOT-ESTABLISHED | same | DIVERGENT; fork observation D-09 NOT-ESTABLISHED | H-m1 and H-m2 detected and reverted |
+| I drop-in | DIVERGENT (.pc); D-14 consumer runtime NOT-ESTABLISHED | same | same | I-m2 and I-m3 (C-m2) detected; header matrix fails identically on both sides |
 | J coverage | export set MATCH; internal **PARTIAL / NOT-ESTABLISHED** | same | same | static three-cell candidate ledger, but unresolved call edges and unverified counterparts (§16); J-m1/J-m2 detected and reverted |
 | K register | 3 lists produced (section 7) | — | — | static reconciliation, no mutation by design |
 | L complexity | cold open BOTH-WORSENED; remainder **NOT-ESTABLISHED** | same | same | Callgrind Ir and Massif live heap, three repeats per side; L-m1/L-m2 detected and reverted (§17). Other workloads and structural inventory remain open |
 
 ## 1. Provenance
+
+### Method: code and data basis
+
+Each finding rests on code citations at libpinyin pin
+`074a2219c90feaf962d0d24f034514033ece5f99` and oxpinyin's audited SHA
+`18d782089bd1dff1eec95d92a9897269b011a035`, plus the inline input and
+output data needed to see the difference. A code path alone is not proof of a
+measured output; where either side's code basis or the minimal differential
+cannot be located, section 4 marks the row NOT-ESTABLISHED. Raw run logs and
+local working files are not evidence for a finding.
+In the ledger, unqualified upstream paths are under the pin's `src/` and
+unqualified subject paths under the audited `crates/`; both resolve at the
+SHAs above. Section 4's row audit supersedes broad execution counts in the
+status table wherever a basis is missing.
 
 ### 1.1 Identities
 
@@ -57,7 +72,8 @@
 | apt | `snapshot.debian.org/archive/debian/20260831T000000Z testing main` |
 | audit image | `ox-audit-r2:env`, id `d6153cd00d57bb70aabd6cc8ea43256e9e0d7183835238c87d6f16cea06f6f2c` |
 | toolchain | rustc 1.97.1 (8bab26f4f 2026-07-14), cargo-c 0.10.25 |
-| model | model20, archive sha256 `59c68e89…1155` (checked in-image) |
+| model | model20, checked in-image |
+| local archive | `~/audit-r2-evidence-20260924T231404Z.tar.zst`: local working copy, not published, not required to verify any finding |
 | pre-registration | first committed and pushed as `dbee7c04dab055f0d0777e846b5dff55219f2503` at 2026-09-23T10:54:33Z. The required rebase onto the landing tip rewrote it to `fad9ad47`. The author date is unchanged, and the file blob `d47e9b50aae0` is identical in both commits (`git rev-parse <sha>:<path>`) |
 | first measurement | image build 2026-09-24T15:06:26Z. An earlier interrupted attempt started 2026-09-23T~11:08Z. Both are after the pre-registration |
 | run window | 2026-09-24T15:06Z to 2026-09-24T23:01Z |
@@ -134,7 +150,7 @@ was used.
    | D-11 | subject `oxpinyin-facade/src/export_rows.rs:33-35` returns empty for any library but USER/NETWORK; pin `pinyin.cpp:662-674` walks any sub-index | CONFIRMED |
    | D-12 | subject `iterators.rs:128-133` refuses counts below −1; pin `pinyin.cpp:630` parses the import with `USE_TONE` | CONFIRMED |
    | D-13 | pin `phonetic_lookup_heap.h:25-29` (`comp` = `less_than`, so `std::push_heap` builds a max-heap), and `:69-77` evicts `m_elements[0]` = best; subject `oxpinyin-engine/src/nbest.rs:254-265` evicts its worst | CONFIRMED |
-   | D-14 | harness `harness/I-dropin/batch.sh:14-17`: same oracle-built ibus binary, only the library dir swapped; relink run identical | CONFIRMED (observational) |
+   | D-14 | the same oracle-built ibus binary was run with only the library directory swapped; the source-level attribution and minimal differing output were not retained inline | NOT-ESTABLISHED under this report's code/data rule |
    | D-15 | static `.pc` diff (section 5, A) | CONFIRMED |
    | D-16 | subject `oxpinyin-user/src/registry.rs:107-108`, process-global `OPEN_STORES` keyed by path | CONFIRMED |
    | D-18 | pin `phrase_index.cpp:168-170` (`ERROR_INTEGER_OVERFLOW` → false); subject `dict.rs:364-377` adds a u64 delta unchecked | CONFIRMED (the add-frequency part; the other parts rest on axis E's completed ledger) |
@@ -218,43 +234,99 @@ unless a live class demonstrably fits.
 |---|---|---|---|---|---|---|---|---|
 | D-01 | D, H, B (BP-10) | all | **The subject wipes the whole user profile on the 8th launch.** The pin decrements `user.conf`'s open counter in `pinyin_fini`, so a steady pinyin user stays at 0/1. The pin's libzhuyin never raises the counter at all, even across clean or killed launches. The subject increments on every open through both facades and never decrements, so after 7 clean init→train→save→fini cycles the 8th init finds counter > 6 and deletes all user files. Executed: 10 cycles; subject `c8: WIPE`, 7 learned phrases → 0 on all cells; pin's pinyin path keeps 9 phrases. The libzhuyin differential also wipes only on the subject side (see #523). | `pinyin.cpp:185-186`, `:1194-1198`; `zhuyin.cpp:126-176`, `:741-757`; `storage/table_info.cpp:409-425` | `oxpinyin-capi/src/context.rs:119-129`; `oxpinyin-zhuyin-capi/src/context.rs:34-45`; `oxpinyin-user/src/persistence.rs:223-266` | DIVERGENT-UNREGISTERED | 1 | #523 |
 | D-02 | B (BP-01), E (A-1), K (row 38) | all | `pinyin_train` ignores `index`. `train(1)`/`train(2)` write `train(0)`'s deltas; the pin trains the index-th n-best row. `train(len)`/`train(255)` abort on the pin and return true on the subject | `pinyin.cpp:2670-2691` | `oxpinyin-capi/src/candidates.rs:550` | DIVERGENT-UNREGISTERED | 1 | #524 |
-| D-03 | F, B (BP-04), C, E | all | **No class-(c) row meets (c).** 74 executed pin abort sites (73 SIGABRT, 1 SIGSEGV) are answered silently by the subject: false, true, data, or a store write, with no log. This covers register rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21 and 22 | F ledger (357 sites) | only log site: `context.rs:21` | DIVERGENT-UNREGISTERED | 1 | #525 |
-| D-04 | B (BP-03) | all | NULL pointer arguments to 68 exports: the pin SIGSEGVs, the subject returns false/0/NULL silently. There is no register row; (b) was not argued | `pinyin.cpp` (unguarded derefs) | C ABI null guards | DIVERGENT-UNREGISTERED | 1 | #526 |
-| D-05 | C (union), K | all | Register row 33 (REVERT TARGET) is still present: after a whole-row NBEST choose + train the subject writes the user bigram and predicts `你`; the pin predicts nothing. Row 20 attributes the same line to the (a) residual, which is falsified | `pinyin.cpp:2515-2520`, `phonetic_lookup.h:866` | `constraint.rs`, `selection.rs` | DIVERGENT-UNREGISTERED | 1 | #527 |
-| D-06 | B (BP-12, BP-12b) | all | The subject crashes where the pin does not: `pinyin_alloc_instance` after `pinyin_fini` → SIGSEGV. Inversely, guessing on an instance that outlives its context crashes the pin and answers true on the subject | `pinyin.cpp` lifecycle | `oxpinyin-capi/src/context.rs` | DIVERGENT-UNREGISTERED | 1 | #528 |
-| D-07 | B (BP-42) | kc | The subject writes `user_pinyin_index.bin`/`user_phrase_index.bin` as native KC databases, and the pin cannot `load_snapshot` them. A phrase imported on the subject is lost to the pin. This contradicts the policy's same-backend interop claim | `load_snapshot` path | kc user store | DIVERGENT-UNREGISTERED | 1 | #529 |
-| D-08 | D (round-trip) | all | The same user dir read by pin and subject gives different learned state: unigram of 你 53853 vs 52887, and the bigram row sets differ. The attribution was not completed | — | — | NOT-ESTABLISHED (downgraded, section 1.3 item 6) | 2 | #543 |
-| D-09 | H (fork) | kc | Parent init, forked child trains and saves: the subject run never exits (killed by the 300 s timeout, exit 137). The pin exits 0 | — | kc store after fork | NOT-ESTABLISHED (downgraded, section 1.3 item 6) | 1 | #531 |
+| D-03 | F, B (BP-04), C, E | all | The prior 74-site class-(c) claim has no inline per-site code/data ledger. One cited example does not establish the aggregate | code basis not located for 74-site scope | code basis not located for 74-site scope | NOT-ESTABLISHED (code basis not located) | 1 | #525 |
+| D-04 | B (BP-03) | all | The prior 68-export NULL claim has no inline per-export code/data ledger. `pinyin_get_n_candidate(NULL)` is one cited example, not 68 | code basis not located for 68-export scope | code basis not located for 68-export scope | NOT-ESTABLISHED (code basis not located) | 1 | #526 |
+| D-05 | C (union), K | all | Register row 33 (REVERT TARGET) is still present: after a whole-row NBEST choose + train the subject writes the user bigram and predicts `你`; the pin predicts nothing. Row 20 attributes the same line to the (a) residual, which is falsified | `pinyin.cpp:2515-2520`, `lookup/phonetic_lookup.h:866` | `oxpinyin-engine/src/constraint.rs:193-220`; `oxpinyin-engine/src/session/selection.rs:25-48` | DIVERGENT-UNREGISTERED | 1 | #527 |
+| D-06 | B (BP-12, BP-12b) | all | The subject crashes where the pin does not: `pinyin_alloc_instance` after `pinyin_fini` → SIGSEGV. Inversely, guessing on an instance that outlives its context crashes the pin and answers true on the subject | `pinyin.cpp:1194-1200,1310-1320,1372-1391` | `oxpinyin-capi/src/instance.rs:18-27`; `sentence.rs:119-154` | DIVERGENT-UNREGISTERED | 1 | #528 |
+| D-07 | B (BP-42) | kc | The subject writes `user_pinyin_index.bin`/`user_phrase_index.bin` as native KC databases, and the pin cannot `load_snapshot` them. A phrase imported on the subject is lost to the pin. This contradicts the policy's same-backend interop claim | `storage/chewing_large_table2_kyotodb.cpp:94-106` | `oxpinyin-user/src/persistence.rs:600-613,763-785` | DIVERGENT-UNREGISTERED | 1 | #529 |
+| D-08 | D (round-trip) | all | The same user dir read by pin and subject gives different learned state: unigram of 你 53853 vs 52887, and the bigram row sets differ. The attribution was not completed | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 2 | #543 |
+| D-09 | H (fork) | kc | Parent init, forked child trains and saves: the subject run never exits (killed by the 300 s timeout, exit 137). The pin exits 0; a hang versus slow run was not separated | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 1 | #531 |
 | D-10 | B (BP-02) | all | The default option word after `pinyin_init` is `USE_TONE` on the pin and `PINYIN_INCOMPLETE` on the subject | `pinyin.cpp:329` | `oxpinyin-facade/src/lib.rs:56` | DIVERGENT-UNREGISTERED | 2 | #532 |
-| D-11 | B (BP-07) | all | `pinyin_begin_get_phrases(ctx, 1..4)` exports every system row on the pin (95698/21234/28255/1051) and nothing on the subject | `pinyin.cpp:698-769` | `iterators.rs` | DIVERGENT-UNREGISTERED | 2 | #533 |
-| D-12 | B (BP-08), E (SIGN-1, IMP-1) | all | Import semantics differ. Negative counts, toned pinyin (`ce4'shi4`) and libraries 1/255 are accepted by the pin and refused by the subject. Count 0 exports as −1 on the pin | `pinyin.cpp` import | `iterators.rs` | DIVERGENT-UNREGISTERED | 2 | #534 |
-| D-13 | G | tkrzw (fixture) | Trellis selection logic is not class (a). The node-store keep rule (Q12, `phonetic_lookup_heap.h:56-81`, a max-heap that evicts the best) moves 62 of 504 corpus inputs, and a counterfactual oracle using the subject's rule reproduces the subject on 42 of them. The comparator clause (Q09, `phonetic_lookup.h:75-88`, dead "longer" clause) moves 7. Part of the residual frozen under row 11 (a) is selection-logic divergence | `phonetic_lookup.h`, `phonetic_lookup_heap.h` | `oxpinyin-engine/src/nbest.rs:194-197,241-267` | DIVERGENT-BROADER (row 11) | 2 | #535 |
-| D-14 | I | all | ibus-libpinyin 1.16.5 at the pin, with libpinyin swapped for the subject (LD_LIBRARY_PATH and relink): the lookup table content and stderr differ (71 lines, deterministic) | — | — | DIVERGENT-UNREGISTERED | 2 | #536 |
+| D-11 | B (BP-07) | all | `pinyin_begin_get_phrases(ctx, 1..4)` exports every system row on the pin (95698/21234/28255/1051) and nothing on the subject | `pinyin.cpp:662-674,698-769` | `oxpinyin-facade/src/export_rows.rs:26-36` | DIVERGENT-UNREGISTERED | 2 | #533 |
+| D-12 | B (BP-08), E (SIGN-1, IMP-1) | all | Import semantics differ. Negative counts, toned pinyin (`ce4'shi4`) and libraries 1/255 are accepted by the pin and refused by the subject. Count 0 exports as −1 on the pin | `pinyin.cpp:615-640` | `oxpinyin-capi/src/iterators.rs:118-143` | DIVERGENT-UNREGISTERED | 2 | #534 |
+| D-13 | G | tkrzw (fixture) | Trellis keep-rule and comparator code differ, but the 504-input aggregate lacks a minimal attributed input/output pair in this report | `lookup/phonetic_lookup_heap.h:25-29,56-81`; `lookup/phonetic_lookup.h:75-88` | `oxpinyin-engine/src/nbest.rs:194-197,241-267` | NOT-ESTABLISHED (inline case not located) | 2 | #535 |
+| D-14 | I | all | The 71-line ibus runtime difference has no located minimal differing line or libpinyin/oxpinyin call-path pair | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 2 | #536 |
 | D-15 | A, I, K | all | `libpinyin.pc`/`libzhuyin.pc` say `Version: 2.11.91` and `includedir …/libpinyin-2.11.91`; the pin says 2.11.92. `pkg-config --atleast-version=2.11.92` fails on the subject. `libdir` is hard-coded `/usr/lib` (the pin uses `${exec_prefix}/lib`), which breaks `--define-variable=prefix` relocation | `configure.ac:7-9`, `libpinyin.pc.in` | `oxpinyin-capi/Cargo.toml:145-162` | DIVERGENT-UNREGISTERED | 2 | #537 |
-| D-16 | H | all | Two contexts on one user dir: independent on the pin (B does not see A's import; counter 2). Shared on the subject through the process registry (B sees A's import; counter 1; save results flip) | — | `oxpinyin-user/src/registry.rs:107-108` | DIVERGENT-UNREGISTERED | 2 | #538 |
-| D-17 | E (G-LOC-1) | all | `pinyin_init` leaves the process `LC_NUMERIC` at "C" on the pin (`table_info.cpp` setlocale); the subject does not touch the locale | `storage/table_info.cpp` | — | DIVERGENT-UNREGISTERED | 2 | #539 |
-| D-18 | B (16, 17), E (INT-1..4) | all | Integer edge semantics: wrap vs saturate (`remember_user_input`, bigram totals), `add_unigram_frequency(G_MAXUINT)`, input length cap (pin 32767 via gint16, subject 4096), and overflow drops | various | various | DIVERGENT-UNREGISTERED | 2 | #540 |
-| D-19 | B (15), C, E (ORD-1/2, OFF-2) | all | Bigram export surface: last-row `get_next` returns true (register row 36 open); DB-walk export order; the pin skips the last key; the pin attributes `sentence_start` successors to the next predecessor | `pinyin.cpp:842-911` | `iterators.rs:371-411` | DIVERGENT-UNREGISTERED | 2 | #541 |
-| D-20 | B (14), C, E (MSB-3.2) | all | Register row 1 (b) says "repeated export cycle". The pin SIGSEGVs on the **first** export cycle after a train (bdb deterministic, 4/4) | `pinyin.cpp:862` | — | DIVERGENT-BROADER (row 1) | 1 | #530 |
-| D-21 | B (41) | bdb | The pin creates the bdb user DB files mode 0600; the subject creates them 0644 under umask 022 | libdb default | store create | DIVERGENT-UNREGISTERED | 3 | #544 |
-| D-22 | H | all | The subject reads `TMPDIR` in `pinyin_init` and leaves a temp entry; the pin reads neither | — | — | NOT-ESTABLISHED (downgraded, section 1.3 item 6) | 3 | #546 |
-| D-23 | B (11), C | all | Diagnostics differ: the pin prints `open <dir>/user.conf failed.`; the subject prints "non-conforming user profile wiped" on a fresh dir and a glib warning on init failure. Save rename messages are absent on the subject | — | `persistence.rs` | DIVERGENT-UNREGISTERED | 3 | #545 |
-| D-24 | A (ck-runtime) | all | Raw `ChewingKey` bytes and returns from single-key parses across schemes and options: 73 both-true-bytes-differ, 2830 pin-false/subject-true, 1991 pin-true/subject-false, and 337 chewing keys accepted only by the subject. The attribution was not completed | `chewing_key.h` | parser | NOT-ESTABLISHED (downgraded, section 1.3 item 6) | 3 | #547 |
-| D-25 | B (06, 18–22, 26, 32–39), E (D-1..3) | all | Assorted return-value and out-param contract differences on error or edge paths. Examples: `get_sentence` before a guess (pin false, subject true + raw input); aux text after full-pinyin parse; `guess_sentence` on no keys; out-param write-on-failure; function-static key slots shared across instances on the pin | per BP row | per BP row | DIVERGENT-UNREGISTERED | 2–3 | #542 |
-| D-26 | C (double3) | all | ZIGUANG `zhrgguor` candidate[2] NBEST: 宗人光卓然 on the pin vs 总人光卓然 on the subject. Attributed to row 11 by the C agent, but D-13 shows row 11's scope is contested | — | — | DIVERGENT-REGISTERED (row 11), under D-13 | 2 | #535 (scope) |
+| D-16 | H | all | Two contexts on one user dir: independent on the pin (B does not see A's import; counter 2). Shared on the subject through the process registry (B sees A's import; counter 1; save results flip) | `pinyin.cpp:172-215,326-365` | `oxpinyin-user/src/registry.rs:104-108`; `store_libpinyin.rs:185-226` | DIVERGENT-UNREGISTERED | 2 | #538 |
+| D-17 | E (G-LOC-1) | all | `pinyin_init` leaves the process `LC_NUMERIC` at "C" on the pin (`table_info.cpp` setlocale); the subject does not touch the locale | `storage/table_info.cpp:328,372` | `oxpinyin-capi/src/context.rs:30-80` (no locale call) | DIVERGENT-UNREGISTERED | 2 | #539 |
+| D-18 | B (16, 17), E (INT-1..4) | all | The `add_unigram_frequency(G_MAXUINT)` edge has an identified code pair; the wider wrap/saturate, length-cap and export-overflow bundle lacks code and inline data here | `storage/phrase_index.cpp:150-176` (one edge only) | `oxpinyin-capi/src/dict.rs:364-377` (one edge only); wider code basis not located | NOT-ESTABLISHED (code basis incomplete) | 2 | #540 |
+| D-19 | B (15), C, E (ORD-1/2, OFF-2) | all | Bigram export surface: last-row `get_next` returns true (register row 36 open); DB-walk export order; the pin skips the last key; the pin attributes `sentence_start` successors to the next predecessor | `pinyin.cpp:842-911` | `oxpinyin-capi/src/iterators.rs:371-411` | DIVERGENT-UNREGISTERED | 2 | #541 |
+| D-20 | B (14), C, E (MSB-3.2) | all | Register row 1 (b) says "repeated export cycle". The pin SIGSEGVs on the **first** export cycle after a train (bdb deterministic, 4/4) | `pinyin.cpp:842-872` | `oxpinyin-capi/src/iterators.rs:371-411` | DIVERGENT-BROADER (row 1) | 1 | #530 |
+| D-21 | B (41) | bdb | The pin creates the bdb user DB files mode 0600; the subject creates them 0644 under umask 022 | `storage/chewing_large_table2_bdb.cpp:149`; `ngram_bdb.cpp:55` | `oxpinyin-store/src/bdb/ffi.rs:298` | DIVERGENT-UNREGISTERED | 3 | #544 |
+| D-22 | H | all | The reported `TMPDIR` read and temporary entry have no shipped source path located | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 3 | #546 |
+| D-23 | B (11), C | all | On a fresh dir the pin prints `open <dir>/user.conf failed.` and the subject prints `oxpinyin: non-conforming user profile wiped ...`; other diagnostic subclaims need their own code/data pairs | `storage/table_info.cpp:201,332` | `oxpinyin-user/src/store_libpinyin.rs:174-181` | DIVERGENT-UNREGISTERED (fresh-dir case only) | 3 | #545 |
+| D-24 | A (ck-runtime) | all | Raw `ChewingKey` bytes and parse returns differ across schemes/options, but the attribution was not completed | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 3 | #547 |
+| D-25 | B (06, 18–22, 26, 32–39), E (D-1..3) | all | The assorted return-value/out-param bundle lacks a per-export code/data pair in this report | code basis not located for bundle | code basis not located for bundle | NOT-ESTABLISHED (code basis not located) | 2–3 | #542 |
+| D-26 | C (double3) | all | ZIGUANG `zhrgguor` candidate[2] NBEST: 宗人光卓然 on the pin vs 总人光卓然 on the subject. Its exact source path and attribution to row 11 were not located | code basis not located | code basis not located | NOT-ESTABLISHED (code basis not located) | 2 | #535 (scope) |
 | C-1 | C options | all | Secondary-zhuyin `tsz` consumes and exposes incomplete key `c` on both sides, but with option `0x00000002` the pin returns 718 candidates and sentence 从 while the subject returns zero candidates/no sentence. Subject's `walk` drops `Incomplete` unless `PINYIN_INCOMPLETE` is set | `storage/zhuyin_parser2.cpp:48-55`; `pinyin.cpp:1590-1605` | `oxpinyin-engine/src/session/lookup.rs:1030-1051` | DIVERGENT-UNREGISTERED | 2 | #585 |
 | C-2 | C options | all | With `PINYIN_AMB_L_N`, transformed exact keys omit fuzzy alternates: double-pinyin `nihk` yields 499 candidates including 利好 on the pin, 126 without 利好 on the subject; all four bytes are consumed on both sides. The same loss appears for chewing `su3cl3` | `pinyin.cpp:1557-1559,1602-1604` | `oxpinyin-engine/src/session/mod.rs:593-640` | DIVERGENT-UNREGISTERED | 2 | #586 |
 | C-3 | C encoding | all | For C bytes `ni\xffhao`, `pinyin_parse_more_full_pinyins` consumes the valid `ni` prefix (2) on the pin, but zero bytes on the subject. Other invalid UTF-8 import cases differ under the same C-string conversion | `pinyin.cpp:1498-1515,615-640` | `oxpinyin-capi/src/ffi.rs:19-28` | DIVERGENT-UNREGISTERED | 3 | #587 |
 | Z-1 | B libzhuyin | all | `zhuyin_iterator_add_phrase` accepts bopomofo readings on the pin and full-pinyin readings on the subject; the opposite form fails on each side (§14.2) | `zhuyin.cpp:516-523` | `oxpinyin-zhuyin-capi/src/iterators.rs:87-93` | DIVERGENT-UNREGISTERED | 2 | #575 |
-| Z-2 | B libzhuyin | all | A system token's `zhuyin_token_get_unigram_frequency` is 52887 on the pin, 52888 on the subject (§14.2) | `zhuyin.cpp` token-frequency path | `oxpinyin-zhuyin-capi/src/dict.rs:233-239` | DIVERGENT-UNREGISTERED | 2 | #576 |
+| Z-2 | B libzhuyin | all | A system token's `zhuyin_token_get_unigram_frequency` is 52887 on the pin, 52888 on the subject (§14.2) | `zhuyin.cpp:1813-1839` | `oxpinyin-zhuyin-capi/src/dict.rs:221-243` | DIVERGENT-UNREGISTERED | 2 | #576 |
 | Z-3 | B libzhuyin | all | Candidate windows at mid-key offsets of `su3cl3` differ before and after a choose, despite register rows 25/26 claiming closure (§14.2) | `zhuyin.cpp:1460-1580` | `oxpinyin-zhuyin-capi/src/sentence.rs:181-290` | DIVERGENT-UNREGISTERED | 2 | #577 |
 | C-4 (post-audit) | C candidates | all | Under `SORT_WITHOUT_SENTENCE_CANDIDATE`, the pin keeps NORMAL rows whose text equals an n-best sentence; the subject dedups them behind sentence rows and then filters those rows. This was found later at `34a66bc9`, not in the original `18d78208` run; the cited implementation files are unchanged between those SHAs | `pinyin.cpp:2058-2160,2295-2300` | `oxpinyin-engine/src/session/lookup.rs:732-755`; `oxpinyin-capi/src/sentence.rs:298-299,359-361` | DIVERGENT-UNREGISTERED (post-audit evidence) | 2 | #582 |
 | D-27 (post-audit) | D user.conf | all | The pin parses the open counter with signed `%d` and accepts signs/trailing junk; the subject's bare `u32` parser treats those forms as zero. This was found later at `34a66bc9`, not in the original `18d78208` run; the cited implementation file is unchanged between those SHAs | `storage/table_info.cpp:356-368,409-426` | `oxpinyin-data/src/user_files.rs:282-283,356-363` | DIVERGENT-UNREGISTERED (post-audit evidence) | 3 | #583 |
 | L-01 | L cold open | all | A fresh user profile forces an eager `system_originals` pass over every system item/pronunciation before store open; Callgrind Ir and Massif peak live heap are both above the pin by more than 1.10 on all three backends (§17) | `pinyin.cpp:172-199,259-269,326-405` | `oxpinyin-runtime/src/lib.rs:941-1000`; `oxpinyin-user/src/persistence.rs:73-110` | DIVERGENT-UNREGISTERED; overall L NOT-ESTABLISHED | 2 | #588 |
 
-The per-probe evidence for B (757 probe rows, 79 per-export rows) and the
-per-site F ledger (357 rows) exist only in the ephemeral scratch area (see
-section 8).
+The B battery counted 757 probe rows and the F enumeration counted 357 sites.
+Those counts are coverage inventory, not a substitute for the row-level
+code/data basis below.
+
+### 4.1 Minimal input and differing output
+
+These are the input and output slices for rows with a located code pair in the
+ledger. Unchanged setup is omitted: each C-ABI probe uses the matching cell's
+pin data dir and a fresh user dir. For L-01, the complete three-cell values
+are already inline in §17. The post-audit C-4/D-27 code blobs are identical at
+`18d78208` and `34a66bc9` (`git diff` on their cited files is empty).
+
+| ID | Minimal input | Pin output | oxpinyin output |
+|---|---|---|---|
+| D-01 | Eight clean `pinyin_init` → train → save → fini cycles on one user dir; reopen | counter returns to 0; learned phrases retained (9 by cycle 10) | counter ratchets; cycle 8 wipes, learned phrases 7 → 0 |
+| D-02 | Parse `nihao`, guess, `pinyin_train(1)`; separately `train(255)` | row-1 unigram 好 38539; index 255 aborts | row-0 unigram 好 38056; index 255 returns true |
+| D-05 | Choose a whole-row n-best candidate, train, then predict after 测测 | no predicted 你; no user bigram | `测测→你` count 138; predicted 你 |
+| D-06 | `alloc_instance(ctx)` after `pinyin_fini(ctx)`; separately guess on an orphaned instance | first call survives; second SIGSEGV | first SIGSEGV; second returns true |
+| D-07 | KC: import 泥壕/`ni'hao`/100 with subject, save, reopen same dir with pin | `candidate 泥壕 ABSENT (n=126)` | subject reopening finds 泥壕 at rank 0 |
+| D-10 | Read option word immediately after `pinyin_init` | `USE_TONE` | `PINYIN_INCOMPLETE` |
+| D-11 | `pinyin_begin_get_phrases(ctx, 1)`, exhaust iterator | 95,698 rows | 0 rows (libraries 2–4: 21,234/28,255/1,051 vs 0) |
+| D-12 | `pinyin_iterator_add_phrase` with count −2; separately count 0 | accepts −2; exports count 0 as −1 | refuses −2; exports count 0 as 0 |
+| D-15 | `pkg-config --atleast-version=2.11.92 libpinyin`; inspect `.pc` | exit 0; `Version: 2.11.92` | nonzero; `Version: 2.11.91` |
+| D-16 | Open A and B on one user dir, import into A before save | B does not see import; counter 2 | B sees import; counter 1 |
+| D-17 | Set `LC_ALL=zh_CN.UTF-8`, call `pinyin_init`, query `LC_NUMERIC` | `C` | `zh_CN.UTF-8` |
+| D-19 | Train then call bigram iterator `get_next` on its last row | `你好|ni'hao|138|false` | `你好|ni'hao|138|true` |
+| D-20 | Train once, then first bigram export cycle | SIGSEGV in `has_next_phrase` | cycle completes |
+| D-21 | BDB, umask 022, create user DB | file mode 0600 | file mode 0644 |
+| D-23 | `pinyin_init` on a fresh user dir, capture stderr | `open <dir>/user.conf failed.` | `oxpinyin: non-conforming user profile wiped ...` |
+| C-1 | Secondary-zhuyin `tsz`, option `0x00000002` | 718 candidates; sentence 从 | 0 candidates; no sentence |
+| C-2 | Double-pinyin `nihk` with `PINYIN_AMB_L_N` | 499 candidates including 利好 | 126 candidates, no 利好 |
+| C-3 | C bytes `ni\xffhao` in `pinyin_parse_more_full_pinyins` | consumes 2 bytes | consumes 0 bytes |
+| Z-1 | Import 测侧 with reading `ㄘㄜˋ ㄘㄜˋ`; separately `ce'ce` | true; false | false; true |
+| Z-2 | `zhuyin_token_get_unigram_frequency(0x01001225)` | 52887 | 52888 |
+| Z-3 | `su3cl3`, `zhuyin_guess_candidates_after_cursor` at offset 1 | 1 candidate | 126 candidates |
+| C-4 | `li'shi`, option `0x1f`, guess sentence then candidates | 385 rows, starting 历史/理事 | 383 rows, neither 历史 nor 理事 |
+| D-27 | Seed a conform profile, change `user.conf` to `open counter:+7`, then init | profile wiped; only marker remains | profile kept (11 files) |
+| L-01 | Fresh user dir, empty input, cold `pinyin_init` on tkrzw | Callgrind Ir 22,295,138; Massif peak heap 9,449,311 B | Ir 334,313,247; heap 24,556,688 B |
+
+### 4.2 Rows lacking code basis
+
+The following rows are **not evidence-backed findings in this report**. The
+prior input/output claims are retained for follow-up, but they cannot be used
+to assert parity or divergence until the missing code or minimal data is
+supplied. No raw-log pathname fills the gap.
+
+| ID | Prior input and reported pin → subject difference | Missing basis |
+|---|---|---|
+| D-03 | 74 caller-reachable abort probes; abort → silent result | code basis not located for every claimed site and counterpart |
+| D-04 | NULL across 68 exports; SIGSEGV → false/0/NULL | code basis not located for 68-export scope (one example is `pinyin_get_n_candidate(NULL)`: `pinyin.cpp:2845-2848` → `oxpinyin-capi/src/candidates.rs:21-24`) |
+| D-08 | Reopen a learned dir; unigram 你 53853 → 52887 | code basis not located for the changed value |
+| D-09 | Fork after KC init; parent exits 0 → killed after 300 s | code basis not located; hang vs slowness unresolved |
+| D-13 | 504-input trellis corpus; 62 keep-rule and 7 comparator moves claimed | code pair located, but no minimal attributed input/output line located |
+| D-14 | Pinned ibus key replay; 71 differing lookup/stderr lines claimed | code basis not located, nor one differing input/output line |
+| D-18 | `add_unigram_frequency(G_MAXUINT)` reportedly false/unchanged → true/4294967295 | that code pair is located, but the bundled wrap, length and export claims have no complete code/data pairs |
+| D-22 | `TMPDIR` change; no pin read → subject temp entry | code basis not located in shipped subject path |
+| D-24 | Single-key scheme/options battery; thousands of parse-byte differences claimed | code basis not located for individual key/scheme outputs |
+| D-25 | `get_sentence` before guess: false → true plus raw input (one reported example) | code basis not located for the bundled 18 contract probes |
+| D-26 | ZIGUANG `zhrgguor` candidate[2]: 宗人光卓然 → 总人光卓然 | code basis not located for this output or its attribution to row 11 |
 
 ## 5. Per-axis narrative (non-MATCH only)
 
@@ -267,8 +339,9 @@ section 8).
 - **Header layout MATCH**, from the generated probe: 185 lines, and the
   oracle-vs-subject diff is empty on all cells.
 - **Raw cargo-c versus relinked object:** the retained
-  `results/X-A-dyn/static/<cell>/raw-vs-relinked.txt` for tkrzw, bdb and kc
-  records `nm -D --defined-only` and `readelf -V` on both objects. For each
+  `nm -D --defined-only` and `readelf -V` comparison of the raw cargo-c object
+  with the object produced by committed
+  `tools/packaging/relink-versioned.sh` on each cell found: for each
   cell, raw libpinyin has 79 defined API names, raw libzhuyin 52, no
   `@@LIBPINYIN`/`@@LIBZHUYIN` names and no version-definition section.
   Relinking adds one version-node symbol per object (80/53 defined names)
@@ -284,12 +357,14 @@ section 8).
 
 ### B
 
-The bdb libpinyin oracle's two pristine contract-battery logs differ at
+The bdb libpinyin oracle's two pristine contract-battery runs differ at
 `fini_double` (UB-dependent stderr bytes), `free_instance_double` (SIGSEGV
 versus SIGABRT with a different diagnostic), and
-`fsite_mask_out_logger_245` (a user-index file hash). The exact comparison is
-`diff -u results/X-B-pinyin/logs/bdb-o1.log
-results/X-B-pinyin/logs/bdb-o2.log` in the retained scratch archive.
+`fsite_mask_out_logger_245` (a user-index file hash). For example,
+`free_instance_double` ended with SIGSEGV on one run and SIGABRT on the other.
+The reproduction harness is to be committed: fork each probe, run it twice
+against the same bdb oracle build and fresh dirs, then compare the three
+named result fields before assigning a verdict.
 Under B's own falsifier, **all three probes are NOT-ESTABLISHED on bdb**;
 observing a divergence on one run does not exempt it. The other deterministic
 contract probes and their distinct findings are unaffected. This is not the
@@ -312,13 +387,14 @@ F normalisation run in §13.3.
   It does not test the bdb or kc oracle's own behaviour, and its mutation
   check ran on all three cells: G-m2 was detected and reverted, but G-m1
   reached an observable path and was missed by the fixture (§13.1).
-- The counterfactual experiment (D-13) is the substantive result:
-  - two selection-logic differences are visible at the C ABI on real data;
-  - neither is a transcendental accumulation.
+- D-13 has a source-level keep-rule/comparator discrepancy, but the reported
+  504-input aggregate lacks a minimal attributed input/output pair here.
+  Its behavioural verdict is NOT-ESTABLISHED (§4.2).
 
 ### H
 
-- Findings D-09, D-16 and D-22.
+- D-16 is supported by the code/data pair in §4.1; D-09 and D-22 are
+  NOT-ESTABLISHED (§4.2).
 - Upstream has no synchronisation primitives. The subject has two process
   registries and a `Once`. "Safer" sharing appears as D-16.
 
@@ -363,7 +439,7 @@ Grades use round-2 evidence and cite the round-2 row or issue.
 | N4 | 280 `assert(` + 61 `abort()` = 341 | CONFIRMED | `grep -rn 'assert(\|abort()' src` at the pin = 341 (280 + 61). Round 2's 357 comes from a different pattern (`\b…\s*\(`, which includes comments and disabled code) |
 | M1 | version scripts identical | CONFIRMED | static A |
 | M2 | installed headers identical ("7 pairs") | CONFIRMED (count UNSUPPORTED) | 5 installed headers, byte-identical on all cells; "7/7" does not match the installed set |
-| M3, M4 | shipped ABI identical; abidiff exit 0 is a deep comparison | CONFIRMED for symbol sets and versioning; REFUTED for the "deep" abidiff claim | the release subject has a `.debug_info` section, yet abidiff on it reports nothing, while a DWARF-built subject reports **75 changed** functions on every cell (`results/X-A-dyn/abidiff/<cell>-dwarf-r1-libpinyin.stat.txt`) |
+| M3, M4 | shipped ABI identical; abidiff exit 0 is a deep comparison | CONFIRMED for symbol sets and versioning; REFUTED for the "deep" abidiff claim | the release subject has a `.debug_info` section, yet abidiff on it reports nothing, while a DWARF-built subject reports **75 changed** functions on every cell; build both sides with DWARF and run `abidiff` to reproduce |
 | M5 | 11/12 drivers IDENTICAL, so the surface is identical | UNSUPPORTED | 7 of those drivers do not detect C-m2 (#568–570); the union-diff attribution is REFUTED (D8) |
 | M6 | same-backend user dir round-trips | UNSUPPORTED | round 1 had no injected mutation; round-2 D-m1 detection exists, and the round-trip differences are NOT-ESTABLISHED (D-08, #543). kc interop fails (D-07, #529) on a cell round 1 never built |
 | M7 | §12 residual stable, MATCH | UNSUPPORTED | no round-1 mutation; item 2 found the gate blind to G-m1 despite changed C-ABI outputs (§13.1) |
@@ -494,7 +570,7 @@ The candidates the mandate named are all confirmed:
 | `tools/bisection/Dockerfile.perf-matrix:3-7,116` | cell D is labelled "Kyoto Cabinet (default)" |
 | several findings docs | still call tkrzw the default |
 
-## 8. Coverage ledgers and evidence location
+## 8. Coverage ledgers and reproduction
 
 ### Export ledger (J)
 
@@ -509,8 +585,9 @@ The candidates the mandate named are all confirmed:
 ### F site ledger
 
 - 357 lines from the pre-registered grep, 70 `check_result` sites;
-  87 caller- or data-reachable sites executed.
-- Per-site verdicts:
+  87 caller- or data-reachable sites were reported executed. These are
+  inventory figures, not a supported 74-site divergence verdict (§4.2).
+- Prior per-site classifications, retained for follow-up:
 
 | verdict | sites |
 |---|---|
@@ -518,27 +595,15 @@ The candidates the mandate named are all confirmed:
 | trigger refuted | 8 |
 | not executed | 5 |
 
-### Evidence
+### Reproduction status
 
-The raw evidence stays in the auditor host's scratch area
-`/home/sheng/audit-r2-scratch/{results,harness,mutations,env}`. It holds:
-- the harness sources (contract battery, open-counter cycle, layout probe,
-  env interposer, counterfactual builds);
-- the mutation patches and `mutations/INDEX.md`;
-- the container recipe;
-- every run log.
-
-**That area is ephemeral and is not retained with this document.** Before the build target dirs were deleted, everything else in it was archived to `~/audit-r2-evidence-20260924T231404Z.tar.zst` on the auditor host (`tar --exclude='./work/target-*' | zstd -10`). The archive is 815,523,174 bytes, sha256 `79c912b8a60eb987b9b42cafe77c5ffdcc66f79f4398ea1510261632ca52eeaf`, and `zstd -dc | tar -tf` lists 155,219 entries cleanly with no `work/target-*` member. The deleted `work/target-*` dirs held only cargo build output. Any
-figure above must be regenerated from the recipes before it is relied on.
-
-**Evidence-publication gap (open):** the main archive above and the item-4
-and item-5/6 archives cited in §§15 and 17 are retained locally but are
-not attached to PR #522 or held in durable project storage. The main archive
-is 815,523,174 bytes, which cannot be represented as a docs-only diff.
-Loss of the auditor host would lose these raw artifacts. Their checksums do
-not replace access to their contents; a maintainer must choose and approve a
-durable storage/attachment route before treating the evidence as preserved.
-Harnesses worth keeping are proposed for adoption in section 10.
+The installed ABI and export count can be regenerated with the commands
+above and `tools/packaging/relink-versioned.sh`. The contract battery,
+counterfactual, process-state, and internal-reachability harnesses are
+**reproduction harnesses to be committed**. Until then, section 4 gives the
+minimal call sequence and observed difference where one is available; a
+scratch pathname does not fill a missing basis. Proposed harness adoption is
+listed in section 10.
 
 ## 9. Provenance of the "Q1 ruling"
 
@@ -557,12 +622,16 @@ Harnesses worth keeping are proposed for adoption in section 10.
    existed, but neither the questions nor their answers appear in any PR
    body, comment, commit or tree file. #497's own ruling 1 calls tkrzw "the
    default, shipping backend".
-5. **What records a human decision.** Nothing on record is a written human
-   decision for the BDB default. The only maintainer act is the merge of
-   #502; `mergedBy` was not queried.
-6. **This is not decided here, and no default is changed.** The default
-   build (bdb) is also a cell with remaining NOT-ESTABLISHED axes. The §12
-   gate uses a tkrzw-derived fixture and misses G-m1 (§13.1).
+5. **Earlier record gap.** Before the human ruling below, no written human
+   decision for the BDB default was found in the inspected tree, issue or PR
+   record. The only maintainer act identified was the merge of #502;
+   `mergedBy` was not queried. This remains the historical provenance finding.
+6. **Human ruling, 2026-09-26 UTC (date captured with `date -u`).** The
+   reference build is the pin's autoconf build and the reference default is
+   bare `./configure`, selecting Berkeley DB (`configure.ac:94-100`). Parity
+   coverage retains the tkrzw, bdb and kc cells. No default is changed by
+   this audit. BDB still has NOT-ESTABLISHED probes, and the §12 gate misses
+   G-m1 (§13.1).
 
 ## 10. Open gaps and proposed follow-ups
 
@@ -682,8 +751,12 @@ and a G-m1 hit marker, `7cf6f05`). Measured 2026-09-24/25 (UTC).
 
 ### 13.1 G-m1 / G-m2 through the §12 gate
 
-The runs used the release-profile gate
-(`harness/G-gate/r2-run-gate.sh <cell> mut <label> <MUTID|unset>`).
+The gate's committed test is
+`crates/pinyin-oracle/tests/sentence_surface_parity.rs`. The mutation
+launcher is a **reproduction harness to be committed**: build the same
+relinked subject with each gated G mutation set and unset, run the 504
+fixture inputs against the matching pin data dir, and compare the verdict
+counts below.
 
 | cell | G-m1 | G-m2 | unset (revert) |
 |---|---|---|---|
@@ -696,8 +769,9 @@ The runs used the release-profile gate
 - **The path is reached.** A hit marker in the gated branch (`mut-src-2`)
   fires at least 262,144 times over the 504 gate inputs and at least
   4,194,304 times over the 10,465-input corpus, on each cell.
-- **The output changes.** The C-ABI surface
-  (`harness/G-gate/rerun-surface.sh <cell> mut2 <inputs> …`) with G-m1
+- **The output changes.** A C-ABI surface reproduction harness to be
+  committed parses, guesses and prints n-best rows for each corpus input.
+  With G-m1
   against unset differs on **4 of 10,465** corpus inputs, the same 4 on
   every cell. For example, `xiehenshuaitong` n-best rows 1 and 2 swap
   (写很帅通 / 写很率同), and `yaomeichong` row 1 changes 妖媚冲 → 要枚冲.
@@ -769,9 +843,10 @@ are not used for verdicts.
 
 ### 14.1 Instrument validation
 
-`harness/B-zhuyin/v2/cell.sh <cell>` covers all 52 exports; none is unmapped
-or has zero probes. It runs 458 probes per cell. In the table, "stable" means
-the r1 and r2 runs of that side are identical.
+The libzhuyin contract battery is a **reproduction harness to be committed**:
+resolve all 52 exports by name, fork each of the 458 per-cell probes, and
+compare two fresh-dir runs per side. None of the names was unmapped or had
+zero probes. In the table, "stable" means the two runs of that side agreed.
 
 | cell | oracle stable | subject stable | C-m3 detected | C-m3 revert | Bz-shim-m1 detected | shim revert | pristine sha |
 |---|---|---|---|---|---|---|---|
@@ -782,8 +857,8 @@ the r1 and r2 runs of that side are identical.
 ### 14.2 Result
 
 The oracle-vs-subject comparison masks only the init-time user-profile
-diagnostic line, which is already D-23:
-`cmp.py <cell>-oracle-r1.log <cell>-pristine-r1.log --mask-diag`.
+diagnostic line, which is already D-23. This is an execution count, not a
+code/data basis for each export.
 
 | cell | probes differing | probes identical |
 |---|---|---|
@@ -791,10 +866,10 @@ diagnostic line, which is already D-23:
 | bdb | 279 | 179 |
 | kc | 278 | 180 |
 
-Every one of the 52 exports has at least one differing probe on every cell. So
-**no libzhuyin export is MATCH**, and the per-export ledger (52 exports × 3
-cells) is **DIVERGENT** throughout. It is regenerated by
-`python3 harness/B-zhuyin/v2/verdicts.py` → `results/X-B-zhuyin/v2/per-export.tsv`.
+The battery reported at least one differing probe for each of the 52 exports
+on every cell, so no export is marked MATCH. The supported, individually
+attributed differences are Z-1–Z-3 in §4; the aggregate per-export claim is
+not promoted to a finding without inline code/data rows for the other exports.
 
 The differing probes fall into these defects:
 
@@ -833,20 +908,12 @@ matched oracle data directories. The option sweep began
 `2026-09-25T01:28:02Z`; the current-main import recheck ended
 `2026-09-25T20:58:48Z` (timestamps emitted by the run scripts).
 
-The scratch drivers and raw results are under
-`/home/sheng/audit-r2-scratch/harness/C-options/` and
-`/home/sheng/audit-r2-scratch/results/X-C-options/`. Regenerate the bounded
-summaries with `python3 harness/C-options/audit_sweep_results.py`,
-`python3 harness/C-options/audit_encoding_results.py`,
-`python3 harness/C-options/audit_layout_results.py`, and
-`python3 harness/C-options/audit_isolated_import.py`. Their captures are
-`logs/item4-{sweep,encoding,layout,isolated-import}-analysis.log`.
-None is in the earlier evidence archive. The supplemental local archive
-`/home/sheng/audit-r2-item4-evidence-20260925T211313Z.tar.zst` contains the
-item-4 harness, raw results and logs. Its SHA-256 is
-`0e4a1c51d84ed8f4bad9df50736073e764923cf09c31e8132ce553df4f69dfdd`;
-`sha256sum -c` passed and `tar --zstd -tf` listed 19,259 entries without
-error. The archive is on the auditor host, not uploaded to the draft PR.
+The committed `tools/bisection/option-sweep.c` and
+`tools/bisection/run-option-sweep.sh` cover the option baseline. The expanded
+encoding, layout and isolated-import battery is a **reproduction harness to
+be committed**: enumerate the words and named byte/layout cases described
+below, run each side against one pin data dir per cell, and compare the
+candidate, parse and sentence fields while retaining diagnostics separately.
 
 ### 15.1 Instrument controls and hygiene
 
@@ -861,19 +928,17 @@ error. The archive is on the auditor host, not uploaded to the draft PR.
 Source-side spot checks: pinned `pinyin.cpp:1498-1515,1557-1559,1602-1604`,
 `storage/zhuyin_parser2.cpp:48-55`, `zhuyin.cpp:500-537`; audited Rust
 `session/mod.rs:593-640`, `session/lookup.rs:1030-1051`, `capi/ffi.rs:19-28`,
-and `zhuyin-capi/iterators.rs:59-92`. On each cell,
-`head -n 2 results/X-C-options/sweep/<cell>/sha-before.txt | cmp -
-results/X-C-options/sweep/<cell>/sha-after.txt` passed; the corresponding
-layout SHA files compare directly. `git -C mut-src status --short` was empty.
-The gated mutant with its variable unset also matched the pristine object.
+and `zhuyin-capi/iterators.rs:59-92`. The gated mutant with its variable
+unset matched the pristine object; no user state was intentionally reused
+between cases.
 
 Hygiene deviation: after addendum 3, the encoding launch script changed
 from background fan-out to sequential execution with `set -euo pipefail`;
 the probe source, inputs and output format were unchanged. That contradicts
 addendum 3's sentence that the *only* harness change was the option runner's
-parallelism. The original `encbat.c` SHA-256 remained
-`0743076fbd0373c2f015f68201b5f0cf43cc7892126029e2c9a7e4c99d20da4c`;
-the isolated importer used a separately compiled, exact-filter copy.
+parallelism; the isolated importer also used a separately compiled,
+exact-filter copy. Both supplemental probes need committed reproduction
+harnesses.
 
 The analyzers remove D-23's known fresh-user-dir diagnostic to compare
 payloads, and normalize glib process IDs/times. Thus "same" below is
@@ -883,8 +948,9 @@ cases. The analyses never mask option words or candidate hashes.
 
 ### 15.2 Option words
 
-`wc -l harness/C-options/words-{single,pair}.txt` gives 104 and 435;
-the corpus counts are 496 and 149. All three cells gave the same conditional
+The enumerated word sets contain 104 singles and 435 defined-bit pairs;
+the corpora contain 496 and 149 inputs. The enumeration script is a
+**reproduction harness to be committed**; all three cells gave the same conditional
 block counts per cell:
 
 | kind | same input payload | oracle abort | candidate | parse/key | sentence | total input blocks | identical preambles (excluded) |
@@ -896,9 +962,8 @@ The analyzer's `blocks()` emits a `<preamble>` before the first `==` input
 header in **every** option-word file, even when its body is identical. The
 earlier table counted that control block as `same payload`, adding one per
 word. The `same input payload` column subtracts those 104/435 preambles;
-each row now sums to its 104×496 or 435×149 input blocks. The archived
-analyzer is `harness/C-options/audit_sweep_results.py:22-32,81-110` and a
-sample run begins with `options=...` before `== F0`.
+each row now sums to its 104×496 or 435×149 input blocks. The parser's
+control block begins with `options=...` before the first `== F0` input.
 
 The first changed fields, not a blanket verdict for each cluster:
 
@@ -981,33 +1046,26 @@ container. The configured tkrzw header was preserved from the earlier oracle
 build; scratch-only macro variants selected BDB and KC. Each cell parsed 24
 of the 32 source translation units; the eight that failed were the other two
 backends' storage units. Partial AST emitted before those failures was
-excluded. The exact parser and checker are
-`/home/sheng/audit-r2-scratch/harness/J-internal/ast-reduce.py` (SHA-256
-`4946803a7f44e4112cd1fe0729bc87d4c46b7d6c2f74b2460829cb09af3e38c8`)
-and `reachable-ledger.py` (SHA-256
-`a269f81c7bab56598b1df2f1a49d36ea226f7c1289f945fd32f99450c9a84da7`).
-The reduced AST streams are `logs/item5-{tkrzw,bdb,kc}-defs-clean.tsv`;
-the separate ledgers and `summary.json` are
-`results/J-internal/<cell>-final-baseline/` in the same scratch root.
+excluded. Reproduction harness to be committed: extract function definitions
+and call edges from Clang's AST for each configured backend, traverse from
+the export roots, and compare candidate names with audited Rust definitions.
+The name-level ledger is intermediate working data, not independent evidence
+of counterpart equivalence.
 
 Regeneration of each count is the checker invocation below; the AST reduction
 recipe is `clang++ -std=c++17 -fsyntax-only -Xclang -ast-dump` over each
 `find src -type f -name '*.cpp' | sort` translation unit, with `-I` for all
-pin `src/` subdirectories, the cell's scratch `config.h`, the pin-generated
+pin `src/` subdirectories, the cell's configured `config.h`, the pin-generated
 public headers in `/opt/oracle/<cell>/include/libpinyin-2.11.92`, and
-`pkg-config --cflags glib-2.0`, piped to `ast-reduce.py <TU>`. A nonzero
-Clang status excludes that TU's entire partial stream. The recorded command
-used to regenerate the summary from the reduced streams is:
+`pkg-config --cflags glib-2.0`. A nonzero Clang status excludes that TU's
+entire partial stream. After committing the reducer, regenerate separately
+for each backend with this procedure:
 
 ```sh
-for cell in tkrzw bdb kc; do
-  python3 /home/sheng/audit-r2-scratch/harness/J-internal/reachable-ledger.py \
-    --ast /home/sheng/audit-r2-scratch/logs/item5-${cell}-defs-clean.tsv \
-    --pin /home/sheng/audit-r2-scratch/libpinyin-pin \
-    --subject /home/sheng/audit-r2-scratch/src \
-    --exports /home/sheng/audit-r2-scratch/results/X-J-coverage/exports/union.txt \
-    --out /home/sheng/audit-r2-scratch/results/J-internal/${cell}-regenerated
-done
+find src -type f -name '*.cpp' | sort
+clang++ -std=c++17 -fsyntax-only -Xclang -ast-dump <configured flags> <TU>
+# Reduce successful ASTs, traverse from all C exports, then review every
+# unresolved or unmatched edge against both pinned source trees.
 ```
 
 | cell | export roots found | reachable definition candidates | non-export candidates | unmapped by name | unresolved reference names |
@@ -1053,24 +1111,22 @@ citations for every internal row.
 
 Measured through `2026-09-26T03:38:12Z` in the pinned container
 `sha256:8bf63f196e7a18e7f003adc37b148fc366c0f0ef9ae7c9cc2f6d4ab8e5fd4514`.
-The same pre-existing `harness/G-gate/surface` C binary dlopened each
+The cold-open C caller (reproduction harness to be committed) dlopened each
 relinked library against the matching oracle data directory and a fresh,
 empty user directory. Empty stdin exercises cold `pinyin_init`, option set,
 instance allocation/free and `pinyin_fini`, with no candidate work. All
 36 baseline runs exited 0 and had the same empty stdout digest. Callgrind
 used `--cache-sim=no --branch-sim=no`; `Ir` came from `summary:`. Massif
 used `--time-unit=i --heap=yes --stacks=no`; the maximum `mem_heap_B` is
-peak live heap. Each trace has its own UTC, `/proc/loadavg`, library path,
-exit and stdout digest in `results/L-complexity/cold/*.meta`. The one-minute
-load average ranged 2.67-3.09 across these traces. No wall-clock number is
-reported.
-
-The exact runner is `harness/L-complexity/cold.sh` (SHA-256
-`4db059f0245953d60b174bc391e3bccbe18eb22d45b03248c4cc3ea21eeca7cc`)
-under `/home/sheng/audit-r2-scratch`; its log is
-`logs/item6-cold-series.log`. Run it with
-`podman run --rm --network=none -v /home/sheng/audit-r2-scratch:/w:z
-localhost/ox-audit-r2:env bash /w/harness/L-complexity/cold.sh`.
+peak live heap. The one-minute load average ranged 2.67-3.09 across these
+traces. No wall-clock number is reported. Reproduction harness to be
+committed: for each backend, run a C caller that dlopens each relinked
+library, initializes with the same system directory and an empty user
+directory, sets options, allocates and frees an instance, then finalizes.
+Run each side three times under
+`valgrind --tool=callgrind --cache-sim=no --branch-sim=no` and
+`valgrind --tool=massif --time-unit=i --heap=yes --stacks=no`; record
+`/proc/loadavg`, exit status and stdout for each run.
 For each side and metric, the table gives the median of three runs. All
 oracle repeats were exact; the largest subject `Ir` spread was 100
 instructions in more than 330 million. Heap repeats were exact.
@@ -1099,7 +1155,7 @@ an extra O(N+P) work and O(N+P) transient heap pass for N system items
 and P pronunciations, even when the profile is empty. `callgrind_annotate`
 attributes 103,593,529 of the subject tkrzw cold-open Ir to the
 `Runtime::open` closure, with 25,052,756 in `PhraseItemView::phrase_text`
-and substantial allocator cost (`logs/item6-tkrzw-subject-annotate.log`).
+and substantial allocator cost.
 The measured cold-open scope exceeds 1.10 in both dimensions on each cell;
 this is a distinct complexity finding, not a claim that every L path was
 measured.
@@ -1108,15 +1164,14 @@ measured.
 has L-m1 at `oxpinyin-capi/src/sentence.rs:279-288` (an input-length-squared
 busy loop) and L-m2 at `oxpinyin-capi/src/context.rs:52-57` (a touched,
 retained 64 MiB allocation). Its parent `8567883` matches the audited
-subject at both source sites. `harness/L-complexity/mutations.sh` (SHA-256
-`e67cad47a9ebc40731e257138fb27d02ac526771d2fe1745a373b9b186d596be`)
-ran baseline, injected and reverted phases in each cell. L-m1 increased
+subject at both source sites. Reproduction harness to be committed: apply
+each mutation to a temporary copy, collect baseline, mutated and reverted
+Callgrind/Massif readings for each backend, and compare stdout. L-m1 increased
 Callgrind Ir by 32,166,128 / 32,179,739 / 32,211,279 (tkrzw/bdb/kc);
 after unsetting it Ir returned within 0.0021% of baseline. L-m2 raised
 Massif peak heap by more than 64 MiB in each cell and returned exactly on
 unset. Every phase exited 0, and stdout digests were identical within a
-cell. Its per-run one-minute load range was 2.03-2.57. Raw files are in
-`results/L-complexity/mutations/`.
+cell. Its per-run one-minute load range was 2.03-2.57.
 
 The selected severity-2 cold-open repro was repeated once per cell against
 prebuilt relinked `stage-main-*` objects from current `origin/main`
@@ -1124,11 +1179,10 @@ prebuilt relinked `stage-main-*` objects from current `origin/main`
 persistence and C init source files in `src-main` were byte-equal to that
 commit). Current-main subject Ir was 334,313,153 / 330,749,226 /
 342,716,300, and peak heap was 24,556,676 / 23,683,402 / 30,549,887 B
-(tkrzw/bdb/kc): the finding still reproduces. The six recheck traces each
-record UTC/load (one-minute range 1.90-2.23) under
-`results/L-complexity/current-main/`; the runner is
-`harness/L-complexity/current-main.sh` (SHA-256
-`020e91b6e121de5c697a48cda0362c6050bba107191262ae8097b85881528637`).
+(tkrzw/bdb/kc): the finding still reproduces. The six recheck traces had
+a one-minute load range of 1.90-2.23. Reproduction harness to be committed:
+repeat the cold-open procedure above against the relinked libraries from
+that main commit, using the same data directories.
 
 **Overall L verdict: NOT-ESTABLISHED.** The complete structural-divergence
 inventory is blocked by J's unresolved graph. The full section-12 input set,
@@ -1136,35 +1190,31 @@ inventory is blocked by J's unresolved graph. The full section-12 input set,
 these instruments. L-01 / #588 is a measured BOTH-WORSENED cold-open finding, but
 no other internal path is marked MATCH and gap issues #553-#555 remain open.
 
-The item-5/6 raw scripts, reduced ledgers, traces and metadata are preserved
-in `/home/sheng/audit-r2-item5-6-evidence-20260926T034353Z.tar.zst`, SHA-256
-`066830aa1476c9b199f6a8368a441e2ec0f1143f8c807035f9b70c9a88394cca`.
-`sha256sum -c` passed; `tar --zstd -tf` listed 516 entries cleanly. The
-archive is local to the audit host, not attached to PR #522.
-
 ## 18. Carried to round 3
 
 These are the remaining axis-level and C-driver NOT-ESTABLISHED items. The
-J/L/G commands are copied from `/home/sheng/audit-r2-scratch/STATUS.md`;
-the newly downgraded C drivers have exact source-inspection commands here.
+The C drivers have source-inspection commands here. For other rows, the next
+reproduction step describes the missing harness or measurement.
 This close-out did not run a new differential or mutation measurement.
 
-| Axis / issues | Remaining work | Exact next command |
+| Axis / issues | Remaining work | Next reproduction step |
 |---|---|---|
-| B bdb / [#573](https://github.com/shenghaoc/oxpinyin/issues/573) (tracking; no dedicated gap issue) | The three nondeterministic oracle probes in §5 cannot be MATCH or confidently classified from the existing two runs. Pre-register any legitimate normalization, then repeat the B battery and its mutation/revert checks. | `diff -u /home/sheng/audit-r2-scratch/results/X-B-pinyin/logs/bdb-o1.log /home/sheng/audit-r2-scratch/results/X-B-pinyin/logs/bdb-o2.log` |
+| B bdb / [#573](https://github.com/shenghaoc/oxpinyin/issues/573) (tracking; no dedicated gap issue) | The three nondeterministic oracle probes in §5 cannot be MATCH or confidently classified from the existing two runs. Pre-register any legitimate normalization, then repeat the B battery and its mutation/revert checks. | Reproduction harness to be committed: rerun the same BDB contract cases twice and compare only the affected API outputs and return values. |
 | C `pred-order` / [#568](https://github.com/shenghaoc/oxpinyin/issues/568), [#569](https://github.com/shenghaoc/oxpinyin/issues/569), [#570](https://github.com/shenghaoc/oxpinyin/issues/570) | The driver selects the punctuation variant before the named `DRV-pred` path. Inspect its call path, then pre-register and test a new within-scope mutation in round 3. | `rg -n 'pinyin_guess_predicted_candidates' tools/bisection/pred-order-diff.c` |
 | C `predict` / [#568](https://github.com/shenghaoc/oxpinyin/issues/568), [#569](https://github.com/shenghaoc/oxpinyin/issues/569), [#570](https://github.com/shenghaoc/oxpinyin/issues/570) | Its plain predicted list has at most one row, so the named reversal is invisible. Inspect its call path, then pre-register a non-vacuous corpus/mutation in round 3. | `rg -n 'pinyin_guess_predicted_candidates' tools/bisection/predict-diff.c` |
 | C `punct` / [#568](https://github.com/shenghaoc/oxpinyin/issues/568), [#569](https://github.com/shenghaoc/oxpinyin/issues/569), [#570](https://github.com/shenghaoc/oxpinyin/issues/570) | The named `DRV-punct` removed an unprinted row; `DRV-punct2` was an impermissible substitute. Inspect the printed rows, then pre-register a non-vacuous mutation in round 3. | `rg -n 'pinyin_guess_predicted_candidates_with_punctuations' tools/bisection/punct-diff.c` |
-| J / [#565](https://github.com/shenghaoc/oxpinyin/issues/565), [#566](https://github.com/shenghaoc/oxpinyin/issues/566), [#567](https://github.com/shenghaoc/oxpinyin/issues/567) | Resolve unmapped and indirect call edges, validate counterparts on all three cells; candidate counts alone do not establish internal coverage. | `sed -n '1,40p' /home/sheng/audit-r2-scratch/results/J-internal/tkrzw-final-baseline/unresolved-names.txt` |
-| L / [#553](https://github.com/shenghaoc/oxpinyin/issues/553), [#554](https://github.com/shenghaoc/oxpinyin/issues/554), [#555](https://github.com/shenghaoc/oxpinyin/issues/555) | Extend Callgrind/Massif beyond cold open to the full section-12 input set, 200-input training, and 10k-phrase import/export; finish the structural inventory after J. Record load with every run. | `wc -l /home/sheng/audit-r2-scratch/harness/G-gate/fixture-inputs.txt` |
+| J / [#565](https://github.com/shenghaoc/oxpinyin/issues/565), [#566](https://github.com/shenghaoc/oxpinyin/issues/566), [#567](https://github.com/shenghaoc/oxpinyin/issues/567) | Resolve unmapped and indirect call edges, validate counterparts on all three cells; candidate counts alone do not establish internal coverage. | Reproduction harness to be committed: rerun the AST ledger of §16 with signature-resolved edges, then review every unmatched entry against both source trees. |
+| L / [#553](https://github.com/shenghaoc/oxpinyin/issues/553), [#554](https://github.com/shenghaoc/oxpinyin/issues/554), [#555](https://github.com/shenghaoc/oxpinyin/issues/555) | Extend Callgrind/Massif beyond cold open to the full section-12 input set, 200-input training, and 10k-phrase import/export; finish the structural inventory after J. Record load with every run. | Reproduction harness to be committed: feed the committed §12 fixture through the §17 Callgrind/Massif procedure, then add training and import/export workloads. |
 | G / [#556](https://github.com/shenghaoc/oxpinyin/issues/556), [#557](https://github.com/shenghaoc/oxpinyin/issues/557), [#558](https://github.com/shenghaoc/oxpinyin/issues/558), [#574](https://github.com/shenghaoc/oxpinyin/issues/574) | The gate is blind to G-m1 despite an observable output change. Wait for lane D's gate extension, then rerun G-m1 and its unset control on each cell. No G row becomes MATCH until the extended gate detects and reverts the mutation. | `gh pr list --repo shenghaoc/oxpinyin --state open --search 'gate' --json number,title,url` |
 
 ## 19. Findings index
 
 This is the GitHub issue inventory in the #523-#588 number range, not a new
 verdict. It preserves issue labels as filed; some gap issues retain a
-`not-established` label after later work and are not among the remaining
-axis-level gaps in section 18. Issue numbers #578, #579, #580, #581 and #584
+  `not-established` label after later work and are not among the remaining
+axis-level gaps in section 18. #559-#564 and #572 are **closable by human**
+because their audit work finished; this report does not close them. Issue
+numbers #578, #579, #580, #581 and #584
 are not issues in this range. The last column records literal references by
 open fix PRs, not a claim that a fix has landed.
 
@@ -1206,12 +1256,12 @@ open fix PRs, not a claim that a fix has landed.
 | [#556](https://github.com/shenghaoc/oxpinyin/issues/556) | G | not-established | — | — |
 | [#557](https://github.com/shenghaoc/oxpinyin/issues/557) | G | not-established | — | — |
 | [#558](https://github.com/shenghaoc/oxpinyin/issues/558) | G | not-established | — | — |
-| [#559](https://github.com/shenghaoc/oxpinyin/issues/559) | C | not-established | — | — |
-| [#560](https://github.com/shenghaoc/oxpinyin/issues/560) | C | not-established | — | — |
-| [#561](https://github.com/shenghaoc/oxpinyin/issues/561) | C | not-established | — | — |
-| [#562](https://github.com/shenghaoc/oxpinyin/issues/562) | B | not-established | — | — |
-| [#563](https://github.com/shenghaoc/oxpinyin/issues/563) | B | not-established | — | — |
-| [#564](https://github.com/shenghaoc/oxpinyin/issues/564) | B | not-established | — | — |
+| [#559](https://github.com/shenghaoc/oxpinyin/issues/559) | C | not-established; closable by human | — | — |
+| [#560](https://github.com/shenghaoc/oxpinyin/issues/560) | C | not-established; closable by human | — | — |
+| [#561](https://github.com/shenghaoc/oxpinyin/issues/561) | C | not-established; closable by human | — | — |
+| [#562](https://github.com/shenghaoc/oxpinyin/issues/562) | B | not-established; closable by human | — | — |
+| [#563](https://github.com/shenghaoc/oxpinyin/issues/563) | B | not-established; closable by human | — | — |
+| [#564](https://github.com/shenghaoc/oxpinyin/issues/564) | B | not-established; closable by human | — | — |
 | [#565](https://github.com/shenghaoc/oxpinyin/issues/565) | J | not-established | — | — |
 | [#566](https://github.com/shenghaoc/oxpinyin/issues/566) | J | not-established | — | — |
 | [#567](https://github.com/shenghaoc/oxpinyin/issues/567) | J | not-established | — | — |
@@ -1219,7 +1269,7 @@ open fix PRs, not a claim that a fix has landed.
 | [#569](https://github.com/shenghaoc/oxpinyin/issues/569) | C | not-established | — | — |
 | [#570](https://github.com/shenghaoc/oxpinyin/issues/570) | C | not-established | — | — |
 | [#571](https://github.com/shenghaoc/oxpinyin/issues/571) | F | not-established | — | — |
-| [#572](https://github.com/shenghaoc/oxpinyin/issues/572) | K | not-established | — | — |
+| [#572](https://github.com/shenghaoc/oxpinyin/issues/572) | K | not-established; closable by human | — | — |
 | [#573](https://github.com/shenghaoc/oxpinyin/issues/573) | — | tracking | — | — |
 | [#574](https://github.com/shenghaoc/oxpinyin/issues/574) | G | register-integrity | 3 | — |
 | [#575](https://github.com/shenghaoc/oxpinyin/issues/575) | B | unregistered | 2 | — |
