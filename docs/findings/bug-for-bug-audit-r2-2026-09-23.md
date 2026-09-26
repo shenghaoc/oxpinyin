@@ -321,7 +321,7 @@ are already inline in §17. The post-audit C-4/D-27 code blobs are identical at
 | D-15 | `pkg-config --atleast-version=2.11.92 libpinyin`; inspect `.pc` | exit 0; `Version: 2.11.92` | nonzero; `Version: 2.11.91` |
 | D-16 | Open A and B on one user dir, import into A before save | B does not see import; counter 2 | B sees import; counter 1 |
 | D-17 | Set `LC_ALL=zh_CN.UTF-8`, call `pinyin_init`, query `LC_NUMERIC` | `C` | `zh_CN.UTF-8` |
-| D-19 | Train then call bigram iterator `get_next` on its last row | `你好|ni'hao|138|false` | `你好|ni'hao|138|true` |
+| D-19 | Train then call bigram iterator `get_next` on its last row | `你好\|ni'hao\|138\|false` | `你好\|ni'hao\|138\|true` |
 | D-20 | Train once, then first bigram export cycle | SIGSEGV in `has_next_phrase` | cycle completes |
 | D-21 | BDB, umask 022, create user DB | file mode 0600 | file mode 0644 |
 | D-23 | `pinyin_init` on a fresh user dir, capture stderr | `open <dir>/user.conf failed.` | `oxpinyin: non-conforming user profile wiped ...` |
