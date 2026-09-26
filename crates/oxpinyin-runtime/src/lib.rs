@@ -47,7 +47,7 @@ use oxpinyin_data::{
     SystemDictionary, default_store_file, merge_bigram_row, ucs4_walk_key,
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
-use oxpinyin_user::{PinyinKey, UserConfLaw, UserLookup, UserStore};
+use oxpinyin_user::{PinyinKey, UserConfLaw, UserLookup, UserStore, UserStoreError};
 
 /// File name of a *standalone* user store — `user_store.<ext>`, the
 /// extension naming the compiled-in backend (`kct` Kyoto Cabinet, `tkt`
@@ -125,6 +125,17 @@ pub enum OpenError {
     Dict(DictError),
     /// The language model failed to open or parse.
     Lm(LmError),
+    /// The user dir's `user.conf` names a database format upstream's
+    /// mapper does not know, where `to_table_database_format_type`
+    /// `abort()`s (`table_info.cpp:122-133`, called at `:353-354` from
+    /// `UserTableInfo::load`, which `check_format` calls).
+    ///
+    /// The class-(c) availability answer of
+    /// `docs/findings/compatibility-policy.md`: the open fails and the C
+    /// ABI answers NULL, where upstream takes the process down. Nothing
+    /// is cleaned and no marker is written — upstream never reaches its
+    /// wipe either.
+    UnknownDatabaseFormat(PathBuf),
 }
 
 impl core::fmt::Display for OpenError {
@@ -137,6 +148,11 @@ impl core::fmt::Display for OpenError {
             }
             Self::Dict(error) => write!(f, "dictionary error: {error}"),
             Self::Lm(error) => write!(f, "language model error: {error}"),
+            Self::UnknownDatabaseFormat(path) => write!(
+                f,
+                "unknown database format in {} (upstream aborts, table_info.cpp:132)",
+                path.join("user.conf").display()
+            ),
         }
     }
 }
@@ -918,6 +934,58 @@ pub struct Runtime {
     key_costs: RwLock<Option<(u32, Arc<[Cost]>)>>,
 }
 
+/// Opens the optional user dir: `check_format`'s `user.conf` half.
+///
+/// A bad user dir does not fail the open — the C ABI degrades to "no user
+/// state" — but it must not vanish silently either: those failures go to
+/// stderr like upstream's own loader notes, and the store's wipe
+/// (non-conforming profile cleaned) is logged inside `open_libpinyin`.
+///
+/// One failure is not a degradation. A `user.conf` whose `database
+/// format:` upstream cannot map is where `check_format` `abort()`s
+/// (`table_info.cpp:132`), and the class-(c) answer is a failed open:
+/// [`OpenError::UnknownDatabaseFormat`], with nothing cleaned and no
+/// marker written — upstream never reaches its wipe either.
+fn open_user_store(
+    system_dir: &Path,
+    user_dir: &Path,
+    dict: &SystemDictionary,
+    law: UserConfLaw,
+) -> Result<Option<UserStore>, OpenError> {
+    // An absent table.conf is the fixture-dir case: the pinned versions
+    // stand. An unreadable *existing* one must not fall back to them —
+    // the profile would be judged non-conforming against the wrong
+    // triple and wiped, so the store degrades to no-user-state instead.
+    let versions = match std::fs::read_to_string(system_dir.join("table.conf")) {
+        Ok(text) => SystemVersions::from_table_conf(&text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => SystemVersions::from_table_conf(""),
+        Err(e) => {
+            let system_dir = system_dir.display();
+            eprintln!(
+                "oxpinyin: table.conf unreadable (system dir \
+                 {system_dir}: {e}); user store degraded to \
+                 no-user-state rather than risk wiping the profile"
+            );
+            return Ok(None);
+        }
+    };
+    let originals = oxpinyin_user::system_originals(dict.libraries());
+    match UserStore::open_libpinyin(user_dir, originals, versions, law) {
+        Ok(store) => Ok(Some(store)),
+        Err(UserStoreError::UnknownDatabaseFormat) => {
+            Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
+        }
+        Err(error) => {
+            let user_dir = user_dir.display();
+            eprintln!(
+                "oxpinyin: user store degraded to no-user-state \
+                 (user dir {user_dir}: {error})"
+            );
+            Ok(None)
+        }
+    }
+}
+
 impl Runtime {
     /// Opens a system data directory the way `pinyin_init` does.
     ///
@@ -986,47 +1054,10 @@ impl Runtime {
         // check_format, the session runs on a scratch, and `pinyin_save`
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
-        let user = user_dir
-            .filter(|dir| !dir.as_os_str().is_empty())
-            .and_then(|dir| {
-                // An absent table.conf is the fixture-dir case: the
-                // pinned versions stand. An unreadable *existing* one
-                // must not fall back to them — the profile would be
-                // judged non-conforming against the wrong triple and
-                // wiped, so the store degrades to no-user-state
-                // instead, logged like the pin's own loader notes.
-                let versions = match std::fs::read_to_string(system_dir.join("table.conf")) {
-                    Ok(text) => SystemVersions::from_table_conf(&text),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        SystemVersions::from_table_conf("")
-                    }
-                    Err(e) => {
-                        let system_dir = system_dir.display();
-                        eprintln!(
-                            "oxpinyin: table.conf unreadable (system dir \
-                             {system_dir}: {e}); user store degraded to \
-                             no-user-state rather than risk wiping the profile"
-                        );
-                        return None;
-                    }
-                };
-                let originals = oxpinyin_user::system_originals(dict.libraries());
-                // A bad user dir must not fail init — the C ABI degrades
-                // to "no user state" — but it must not vanish silently
-                // either: the failure goes to stderr like upstream's own
-                // loader notes, and the store's wipe (non-conforming
-                // profile cleaned) is logged inside `open_libpinyin`.
-                UserStore::open_libpinyin(dir, originals, versions, law)
-                    .map_err(|error| {
-                        let dir = dir.display();
-                        eprintln!(
-                            "oxpinyin: user store degraded to no-user-state \
-                             (user dir {dir}: {error})"
-                        );
-                        error
-                    })
-                    .ok()
-            });
+        let user = match user_dir.filter(|dir| !dir.as_os_str().is_empty()) {
+            None => None,
+            Some(dir) => open_user_store(system_dir, dir, &dict, law)?,
+        };
 
         let addons = Arc::new(RwLock::new(AddonSet {
             dict: AddonDictionary::open(system_dir).map_err(OpenError::Dict)?,

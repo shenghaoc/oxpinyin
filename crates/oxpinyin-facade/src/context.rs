@@ -40,6 +40,33 @@ impl std::error::Error for OpenFailure {
     }
 }
 
+/// The fixed diagnostic the C facades log at the user marker's class-(c)
+/// refusal: the step that fails and the condition, in the shape the
+/// register row for the site records. Upstream's own `check_format` never
+/// gets to report it — `to_table_database_format_type` `abort()`s first
+/// (`table_info.cpp:132`) — so this line is what a consumer's log shows
+/// where the pin's process would have died. Exactly one line per attempt.
+pub const UNKNOWN_DATABASE_FORMAT_WARNING: &str =
+    "check_format: unknown database format in user.conf";
+
+impl OpenFailure {
+    /// Whether this failure is the user marker's class-(c) refusal: a
+    /// `user.conf` whose `database format:` field upstream's
+    /// `to_table_database_format_type` does not know, and therefore
+    /// `abort()`s on (`table_info.cpp:122-133`, reached from `:353-354`).
+    ///
+    /// The C facades log [`UNKNOWN_DATABASE_FORMAT_WARNING`] for it and
+    /// answer NULL; nothing was cleaned and no marker was written, which
+    /// is also where upstream stops.
+    #[must_use]
+    pub fn unknown_database_format(&self) -> bool {
+        matches!(
+            self,
+            Self::Runtime(oxpinyin_runtime::OpenError::UnknownDatabaseFormat(_))
+        )
+    }
+}
+
 /// Bit 30 of [`LiveOptions::double_scheme`]: when set, the live
 /// scheme's fallback table is suppressed — upstream's half-mutation
 /// (`pinyin_parser2.cpp:580` + `:614`; `upstream-divergences.md`

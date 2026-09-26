@@ -41,7 +41,16 @@ pub extern "C" fn zhuyin_init(
     match CapiContext::try_open(&system_path, &user_path) {
         Ok(ctx) => box_context(ctx),
         Err(error) => {
-            crate::ffi::log_warning(&format!("zhuyin_init: {error} (systemdir {system_path:?})"));
+            // The user marker's class-(c) refusal has its own fixed line
+            // (`OpenFailure::unknown_database_format`); every other
+            // failure keeps the descriptive one.
+            if error.unknown_database_format() {
+                crate::ffi::log_warning(oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING);
+            } else {
+                crate::ffi::log_warning(&format!(
+                    "zhuyin_init: {error} (systemdir {system_path:?})"
+                ));
+            }
             ptr::null_mut()
         }
     }
