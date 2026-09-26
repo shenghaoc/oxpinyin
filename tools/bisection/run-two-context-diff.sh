@@ -18,6 +18,7 @@
 #                  writes back depends on the order, as upstream's does.
 #   both-learn     A and B learn different items and both save; a third
 #                  context shows which one the profile kept.
+#   late-save      A finishes before B saves its learning.
 #
 # and, as the library kind `cross`, one libzhuyin and one libpinyin context
 # on the dir (#578's review: each must keep its own library's user.conf law
@@ -28,6 +29,8 @@
 #   pinyin-first   the same with P first.
 #   zhuyin-first-fini-reversed, pinyin-first-fini-reversed
 #                  the same with the two finis in the reverse order.
+#   zhuyin-first-late-save, pinyin-first-late-save
+#                  the first context finishes before the second saves.
 #
 # Both sides open the pin prefix's own data directory with a fresh user
 # dir per scenario; oxpinyin's libraries must be built with the store
@@ -75,8 +78,8 @@ declare -A OX_SO=(
     [zhuyin]="${TWO_CONTEXT_ZHUYIN_SO:-$REPO_ROOT/target/debug/libzhuyin_capi.so}"
 )
 read -r -a LIBS <<< "${TWO_CONTEXT_LIBS:-pinyin zhuyin cross}"
-SCENARIOS=(one-learns fini-reversed both-learn)
-CROSS_SCENARIOS=(zhuyin-first zhuyin-first-fini-reversed pinyin-first pinyin-first-fini-reversed)
+SCENARIOS=(one-learns fini-reversed both-learn late-save)
+CROSS_SCENARIOS=(zhuyin-first zhuyin-first-fini-reversed pinyin-first pinyin-first-fini-reversed zhuyin-first-late-save pinyin-first-late-save)
 
 # The libraries a kind loads, in the driver's argument order.
 facades_of() {
@@ -128,6 +131,66 @@ run_side() {
     fi
 }
 
+require_line() {
+    local log=$1 expected=$2
+    if ! grep -Fxq -- "$expected" "$log"; then
+        echo "FAIL: missing '$expected' in $log" >&2
+        return 1
+    fi
+}
+
+require_pattern() {
+    local log=$1 pattern=$2
+    if ! grep -Eq -- "$pattern" "$log"; then
+        echo "FAIL: missing step matching '$pattern' in $log" >&2
+        return 1
+    fi
+}
+
+verify_steps() {
+    local lib=$1 scenario=$2 log=$3 first second name
+    local -a contexts learners savers
+    if [[ $lib == cross ]]; then
+        if [[ $scenario == zhuyin-first* ]]; then
+            first=Z; second=P
+        else
+            first=P; second=Z
+        fi
+        contexts=("$first" "$second" P2 Z2)
+        learners=("$first" "$second")
+        savers=("$first" "$second")
+    else
+        contexts=(A B)
+        learners=(A)
+        savers=(A B)
+        if [[ $scenario == both-learn || $scenario == late-save ]]; then
+            contexts+=(C)
+            learners+=(B)
+        fi
+    fi
+
+    require_line "$log" "scenario: $scenario" || return 1
+    for name in "${contexts[@]}"; do
+        require_line "$log" "init $name: ok" || return 1
+        require_line "$log" "alloc $name: ok" || return 1
+        require_line "$log" "fini $name: ok" || return 1
+    done
+    for name in "${learners[@]}"; do
+        require_pattern "$log" "^train $name: .+ ok$" || return 1
+        if [[ $lib == pinyin || $name == P ]]; then
+            require_pattern "$log" "^import $name: .+ ok$" || return 1
+        fi
+    done
+    for name in "${savers[@]}"; do
+        if [[ $lib != cross && $name == B &&
+              ( $scenario == one-learns || $scenario == fini-reversed ) ]]; then
+            require_line "$log" "save B: unchanged" || return 1
+        else
+            require_line "$log" "save $name: ok" || return 1
+        fi
+    done
+}
+
 status=0
 for lib in "${LIBS[@]}"; do
     oracle_libs=()
@@ -145,12 +208,8 @@ for lib in "${LIBS[@]}"; do
         ox_log="$OUT/$lib-$scenario-oxpinyin.log"
         run_side "$lib" "$scenario" "$oracle_log" "${oracle_libs[@]}" || exit 1
         run_side "$lib" "$scenario" "$ox_log" "${ox_libs[@]}" || exit 1
-        # Vacuity guard: both sides must have learned something the
-        # comparison can see.
-        if ! grep -q ' ok$' "$oracle_log" || ! grep -q ' ok$' "$ox_log"; then
-            echo "FAIL: $lib/$scenario learned nothing on a side; the comparison would be vacuous" >&2
-            exit 1
-        fi
+        verify_steps "$lib" "$scenario" "$oracle_log" || exit 1
+        verify_steps "$lib" "$scenario" "$ox_log" || exit 1
         diff_rc=0
         diff -u "$oracle_log" "$ox_log" > "$OUT/$lib-$scenario.diff" || diff_rc=$?
         if ((diff_rc > 1)); then

@@ -29,6 +29,7 @@
  *   both-learn      init A, init B; A learns item 1, B learns item 2;
  *                   save A, save B; fini A, fini B; then a third context
  *                   shows which learning the profile kept.
+ *   late-save       as both-learn, but fini A before B saves.
  *
  *   cross, one libzhuyin context Z and one libpinyin context P:
  *   zhuyin-first    init Z, init P; each learns its library's item 1 and
@@ -38,6 +39,8 @@
  *                   first.
  *   zhuyin-first-fini-reversed, pinyin-first-fini-reversed
  *                   the same with the two finis in the reverse order.
+ *   zhuyin-first-late-save, pinyin-first-late-save
+ *                   the first context finishes before the second saves.
  *
  * "Learns" is what run-open-counter-diff.sh's driver does: pinyin imports
  * a user phrase and trains a system word chosen below the sentence rows;
@@ -157,6 +160,7 @@ static struct ctx init_ctx(const char *name, const struct facade *f) {
         exit(1);
     }
     printf("init %s: ok\n", name);
+    printf("alloc %s: ok\n", name);
     char step[32];
     snprintf(step, sizeof step, "init %s", name);
     counter(step);
@@ -168,15 +172,18 @@ static void fini_ctx(struct ctx *c) {
     void (*fini)(context_t *) = sym(c->f, "fini");
     free_instance(c->instance);
     fini(c->context);
-    printf("fini %s\n", c->name);
+    printf("fini %s: ok\n", c->name);
     char step[32];
     snprintf(step, sizeof step, "fini %s", c->name);
     counter(step);
 }
 
-static void save_ctx(struct ctx *c) {
+static void save_ctx(struct ctx *c, bool expect_written) {
     bool (*save)(context_t *) = sym(c->f, "save");
-    printf("save %s: %d\n", c->name, save(c->context));
+    bool written = save(c->context);
+    printf("save %s: %s\n", c->name, written ? "ok" : "unchanged");
+    if (written != expect_written)
+        exit(1);
     char step[32];
     snprintf(step, sizeof step, "save %s", c->name);
     counter(step);
@@ -297,7 +304,10 @@ static void learn(struct ctx *c, size_t k) {
         bool ok = iter && add(iter, PINYIN_IMPORTS[k].word, PINYIN_IMPORTS[k].typed, IMPORT_COUNT);
         if (iter)
             end(iter);
-        printf("import %s: %s %d\n", c->name, PINYIN_IMPORTS[k].word, ok);
+        printf("import %s: %s %s\n", c->name, PINYIN_IMPORTS[k].word,
+               ok ? "ok" : "failed");
+        if (!ok)
+            exit(1);
     }
 
     const struct target *t = f->zhuyin ? &ZHUYIN_TARGETS[k] : &PINYIN_TARGETS[k];
@@ -333,8 +343,11 @@ static void learn(struct ctx *c, size_t k) {
         if (!train(c->instance, 0))
             result = "train-false";
     }
-    reset(c->instance);
+    if (!reset(c->instance) && strcmp(result, "ok") == 0)
+        result = "reset-failed";
     printf("train %s: %s %s\n", c->name, t->word, result);
+    if (strcmp(result, "ok") != 0)
+        exit(1);
 }
 
 /* Two contexts of one library. */
@@ -345,8 +358,8 @@ static int run_same(const struct facade *f, const char *scenario) {
         learn(&a, 0);
         view(&a);
         view(&b);
-        save_ctx(&b);
-        save_ctx(&a);
+        save_ctx(&b, false);
+        save_ctx(&a, true);
         if (strcmp(scenario, "one-learns") == 0) {
             fini_ctx(&a);
             fini_ctx(&b);
@@ -354,14 +367,18 @@ static int run_same(const struct facade *f, const char *scenario) {
             fini_ctx(&b);
             fini_ctx(&a);
         }
-    } else if (strcmp(scenario, "both-learn") == 0) {
+    } else if (strcmp(scenario, "both-learn") == 0 || strcmp(scenario, "late-save") == 0) {
+        bool late_save = strcmp(scenario, "late-save") == 0;
         learn(&a, 0);
         learn(&b, 1);
         view(&a);
         view(&b);
-        save_ctx(&a);
-        save_ctx(&b);
-        fini_ctx(&a);
+        save_ctx(&a, true);
+        if (late_save)
+            fini_ctx(&a);
+        save_ctx(&b, true);
+        if (!late_save)
+            fini_ctx(&a);
         fini_ctx(&b);
         struct ctx c = init_ctx("C", f);
         view(&c);
@@ -380,11 +397,14 @@ static int run_cross(const char *scenario) {
         const char *name;
         bool zhuyin_first;
         bool fini_reversed;
+        bool late_save;
     } SCENARIOS[] = {
-        {"zhuyin-first", true, false},
-        {"zhuyin-first-fini-reversed", true, true},
-        {"pinyin-first", false, false},
-        {"pinyin-first-fini-reversed", false, true},
+        {"zhuyin-first", true, false, false},
+        {"zhuyin-first-fini-reversed", true, true, false},
+        {"pinyin-first", false, false, false},
+        {"pinyin-first-fini-reversed", false, true, false},
+        {"zhuyin-first-late-save", true, false, true},
+        {"pinyin-first-late-save", false, false, true},
     };
     size_t s = 0;
     while (s < sizeof SCENARIOS / sizeof *SCENARIOS && strcmp(SCENARIOS[s].name, scenario) != 0)
@@ -401,9 +421,13 @@ static int run_cross(const char *scenario) {
     learn(&second, 0);
     view(&first);
     view(&second);
-    save_ctx(&first);
-    save_ctx(&second);
-    if (SCENARIOS[s].fini_reversed) {
+    save_ctx(&first, true);
+    if (SCENARIOS[s].late_save)
+        fini_ctx(&first);
+    save_ctx(&second, true);
+    if (SCENARIOS[s].late_save) {
+        fini_ctx(&second);
+    } else if (SCENARIOS[s].fini_reversed) {
         fini_ctx(&second);
         fini_ctx(&first);
     } else {
@@ -425,9 +449,9 @@ int main(int argc, char **argv) {
     if (argc != (cross ? 7 : 6)) {
         fprintf(stderr,
                 "usage: %s <pinyin|zhuyin> <lib.so> <systemdir> <userdir> "
-                "<one-learns|fini-reversed|both-learn>\n"
+                "<one-learns|fini-reversed|both-learn|late-save>\n"
                 "       %s cross <libpinyin.so> <libzhuyin.so> <systemdir> <userdir> "
-                "<zhuyin-first|pinyin-first>[-fini-reversed]\n",
+                "<zhuyin-first|pinyin-first>[-fini-reversed|-late-save]\n",
                 argv[0], argv[0]);
         return 2;
     }
