@@ -171,7 +171,7 @@ impl fmt::Display for OracleError {
             Self::PrefixNotFound { tried } => write!(
                 formatter,
                 "no pin-verified oracle prefix found (tried {tried:?}); \
-                 build one with tools/oracle/build-oracle.sh"
+                 build one with tools/oracle/build-oracle.sh --dbm tkrzw"
             ),
             Self::InteriorNul { what } => {
                 write!(formatter, "{what} contains an interior NUL byte")

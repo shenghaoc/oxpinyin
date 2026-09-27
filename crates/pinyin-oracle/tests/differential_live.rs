@@ -30,7 +30,7 @@ fn oracle() -> Oracle {
     let prefix = OraclePrefix::locate().unwrap_or_else(|error| {
         panic!(
             "{error}\n\nBuild the oracle first:\n  \
-             bash tools/oracle/build-oracle.sh \
+             bash tools/oracle/build-oracle.sh --dbm tkrzw \
              --prefix \"$HOME/.local/opt/pinyin-oracle\" --jobs \"$(nproc)\""
         )
     });

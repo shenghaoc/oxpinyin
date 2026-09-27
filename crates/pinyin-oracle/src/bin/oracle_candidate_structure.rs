@@ -23,7 +23,7 @@ fn main() -> ExitCode {
             "oracle-candidate-structure needs the `oracle-ffi` feature and a pin-built oracle."
         );
         eprintln!(
-            "  bash tools/oracle/build-oracle.sh --prefix \"$HOME/.local/opt/pinyin-oracle\""
+            "  bash tools/oracle/build-oracle.sh --dbm tkrzw --prefix \"$HOME/.local/opt/pinyin-oracle\""
         );
         eprintln!(
             "  cargo run -p pinyin-oracle --features oracle-ffi --bin oracle-candidate-structure"
