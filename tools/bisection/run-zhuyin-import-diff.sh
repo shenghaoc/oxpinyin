@@ -7,10 +7,9 @@
 # libzhuyin_capi.so, both opened on ONE data directory (the oracle's own
 # lib/libpinyin/data) with a fresh user dir per side and library, and diffs
 # the logs byte for byte (add return values, then every battery phrase's
-# tokens with their pronunciations, live and after save + reopen) with two
-# introspection fields masked, each a separate defect of the read surface,
-# not of the import: the unigram (zhuyin_token_get_unigram_frequency answers
-# nothing for a user token, #600), and for libraries 5 and 6 the
+# tokens with their unigram frequencies and pronunciations, live and after
+# save + reopen) with one introspection field masked, a separate defect of
+# the read surface, not of the import: for libraries 5 and 6 the
 # pronunciations (token introspection reads the addon facade for those
 # nibbles, #601). The unmasked difference is printed, not gated.
 #
@@ -57,12 +56,11 @@ run() {
     "$work/driver" "$so" "$data" "$library") >"$work/$side-$library.log" 2>/dev/null
 }
 
-# The unigram field is #600's, library 5/6 pronunciations #601's;
-# everything else is gated.
+# Library 5/6 pronunciations are #601's; everything else is gated.
 mask() {
   case $2 in
-    5 | 6) sed 's/ unigram=[0-9]*//; s/ prons=.*//' "$1" ;;
-    *) sed 's/ unigram=[0-9]*//' "$1" ;;
+    5 | 6) sed 's/ prons=.*//' "$1" ;;
+    *) cat "$1" ;;
   esac
 }
 
@@ -76,9 +74,9 @@ for library in 0 5 6 7 15; do
   fi
   if diff -u <(mask "$work/oracle-$library.log" "$library") \
     <(mask "$work/oxpinyin-$library.log" "$library") >"$work/$library.diff"; then
-    echo "library $library: IDENTICAL ($(wc -l <"$work/oracle-$library.log") lines, introspection fields masked)"
+    echo "library $library: IDENTICAL ($(wc -l <"$work/oracle-$library.log") lines$(case $library in 5 | 6) echo ", prons masked (#601)";; esac))"
     if ! diff -q "$work/oracle-$library.log" "$work/oxpinyin-$library.log" >/dev/null; then
-      echo "  introspection PENDING #600/#601: $(diff "$work/oracle-$library.log" "$work/oxpinyin-$library.log" | grep -c '^>') lines differ (not gated)"
+      echo "  introspection PENDING #601: $(diff "$work/oracle-$library.log" "$work/oxpinyin-$library.log" | grep -c '^>') lines differ (not gated)"
     fi
   else
     echo "library $library: DIVERGENCE"

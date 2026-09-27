@@ -221,6 +221,14 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
 /// bool zhuyin_token_get_unigram_frequency(zhuyin_instance_t * instance,
 ///                                         phrase_token_t token, guint * freq);
 /// ```
+///
+/// The pin answers the default facade's item field verbatim
+/// (`zhuyin.cpp:1813-1826`: `get_phrase_item` on `m_phrase_index`, then
+/// `PhraseItem::get_unigram_frequency` — the stored `guint32`,
+/// `gen_unigram`'s `+1` already included for system items), system and
+/// `USER_FILE` tokens alike. `*freq` is zeroed before the dispatch, so a
+/// `false` still delivers 0; the read includes the
+/// `zhuyin_token_add_unigram_frequency` overlay.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_token_get_unigram_frequency(
     instance: *mut ZhuyinInstance,
@@ -234,13 +242,58 @@ pub extern "C" fn zhuyin_token_get_unigram_frequency(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let Some(count) = inst.core.dict.system_unigram_count(token) else {
-        return false;
-    };
     if !freq.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *freq = GUint::try_from(count + 1).unwrap_or(GUint::MAX);
+            *freq = 0;
+        }
+    }
+    // The pin reads the item of whichever sub-index the token's nibble
+    // names; a library that is missing or owns no such item answers
+    // `false` (`get_phrase_item`'s `ERROR_NO_SUB_PHRASE_INDEX` /
+    // `ERROR_NO_ITEM`).
+    let nibble = token >> 24;
+    let base = match nibble {
+        1..=4 => {
+            if !inst.core.dict.library_visible_token(token)
+                || inst.core.dict.system_unigram_count(token).is_none()
+            {
+                // Unloaded library or no such item — nothing is
+                // reported (matches the visibility filter every other
+                // Tier-C read honours).
+                None
+            } else {
+                use oxpinyin_core::LanguageModel;
+                inst.core
+                    .lm
+                    .unigram_freq(&oxpinyin_core::PhraseToken::new(token))
+                    .ok()
+                    .flatten()
+            }
+        }
+        // The `USER_FILE` sub-indexes (addon.bin / network.bin /
+        // user.bin): the item's stored field is the user store's full
+        // UNIGRAM accumulation for the token (`count·3` at `_add_phrase`,
+        // `seed·7` per training). An absent item answers `false`, as
+        // `get_phrase_item`'s `ERROR_NO_ITEM` does upstream.
+        5..=7 => inst
+            .core
+            .user
+            .as_ref()
+            .and_then(|store| match store.phrase(token) {
+                Ok(Some(_)) => store.unigram_delta(token).ok(),
+                _ => None,
+            }),
+        _ => None,
+    };
+    let Some(base) = base else {
+        return false;
+    };
+    let count = base + inst.core.dict.unigram_delta(token).unwrap_or(0);
+    if !freq.is_null() {
+        // SAFETY: Null-checked above.
+        unsafe {
+            *freq = GUint::try_from(count).unwrap_or(GUint::MAX);
         }
     }
     true

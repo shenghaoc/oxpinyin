@@ -39,11 +39,12 @@
  *                listed: the sentence row, then the two-character
  *                candidates after the cursor, in order. Training moves the
  *                target up that list; a wipe moves it back. zhuyin reads
- *                learning this way because its frequency getter is not a
- *                shared surface: oxpinyin's zhuyin_token_get_unigram_
- *                frequency answers one above the pin's and leaves the
- *                user's trained delta out — a divergence of its own, not
- *                this differential's subject.
+ *                learning this way because its frequency getter was not a
+ *                shared surface when this driver was written (it answered
+ *                one above the pin's and left the user's trained delta
+ *                out — #600, since fixed); the rank rows stay because
+ *                they measure learning without one more init on the
+ *                pinyin side's counter.
  *   phrase rows  (pinyin) the user dictionary through the §9 export: the
  *                user phrases the imports added. The bigram export runs
  *                once per context, after the save: repeating it in one
