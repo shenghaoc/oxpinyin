@@ -4,7 +4,8 @@
 #   A. libpinyin  + Tkrzw          (upstream oracle pin)
 #   B. libpinyin  + Kyoto Cabinet  (same source, different --with-dbm)
 #   C. oxpinyin   + Tkrzw          (cargo feature: tkrzw)
-#   D. oxpinyin   + Kyoto Cabinet  (cargo feature: kyotocabinet, default)
+#   D. oxpinyin   + Kyoto Cabinet  (cargo feature: kyotocabinet; not the
+#                                    default — see the cell D note below)
 #
 # Run the full matrix — build on the measurement host itself, with no
 # --platform override, so the image is native silicon:
@@ -113,7 +114,16 @@ RUN cp -a /tmp/libpinyin-src /tmp/build-B-src \
     && make -j"$(nproc)" && make install \
     && rm -rf /tmp/build-B
 
-# ── Cell D: oxpinyin + Kyoto Cabinet (default) ──────────────────────
+# ── Cell D: oxpinyin + Kyoto Cabinet ────────────────────────────────
+#
+# Note (2026-09-27 UTC, #552): this cell was written when Kyoto Cabinet
+# was the workspace default (2026-08-29 → 2026-09-05). The default has
+# since been tkrzw (→ 2026-09-20) and is now Berkeley DB
+# (`default = ["bdb"]`), so the two commands below, which take default
+# features, no longer select Kyoto Cabinet, and this image installs no
+# libdb headers. The label states the cell's intent (the pair of cell
+# B); making the commands match it (`--no-default-features --features
+# kyotocabinet`) is a harness change outside the docs-only lane.
 
 RUN cargo cinstall --locked --release -p oxpinyin-capi \
     --destdir=/opt/oxpinyin-kc/stage --prefix=/usr \

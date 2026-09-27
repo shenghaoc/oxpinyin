@@ -63,7 +63,8 @@ facade and records the constraint under the promoted token — and a later
 The default facade's writable, persisted phrase index is the user store
 (`oxpinyin-user`), served by `oxpinyin_store::DefaultStore` — Kyoto Cabinet
 under the workspace's default features, redb under
-`--no-default-features --features redb`; nibbles 6/7 already live there and
+`--no-default-features --features redb` (as written; the default is
+Berkeley DB since 2026-09-20 and redb was removed that day); nibbles 6/7 already live there and
 `addon.bin` (nibble 5) is a `USER_FILE` of the same facade, so promotion
 writes there too:
 

@@ -361,3 +361,22 @@ drop-in surface and the selection model above now coincide. The
 exactly-one invariant, the feature-forwarding architecture and the
 `backend-matrix.sh` guard carry over unchanged, with the removed peers
 dropped from their enumerations.
+
+
+## Follow-up: the default is Berkeley DB, as the reference build's (2026-09-27 UTC)
+
+Recorded after the fact, like the follow-up above; the pinned body is
+untouched. "tkrzw (the default)" in the previous follow-up was true
+when written and is not now: the workspace default moved to Berkeley
+DB on 2026-09-20 (`refactor/default-backend-berkeleydb`, PR #502) —
+every store-reaching crate carries `default = ["bdb"]`, e.g.
+`crates/oxpinyin-capi/Cargo.toml:32`. The human ruling of 2026-09-26
+UTC (Q1; `compatibility-policy.md`, "Amendment — rulings recorded")
+names the pin's autoconf build as the reference build and bare
+`./configure` as its default, which selects Berkeley DB
+(`configure.ac:94` at `074a2219`). So question 1's answer and the
+"Alignment summary" row "Default when nothing specified", recorded
+above as an intentional divergence (KC against BerkeleyDB), no longer
+describe a divergence: both sides default to
+Berkeley DB, and tkrzw and Kyoto Cabinet are peers chosen explicitly
+on both. Parity coverage keeps all three cells.

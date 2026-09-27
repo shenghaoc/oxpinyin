@@ -2,7 +2,9 @@
 
 Date: 2026-09-12 · Status: **implemented and verified on Debian testing
 and Fedora 44, both libdb 5.3.28**; the peer is non-default (tkrzw stays
-the workspace default). macOS (2026-09-13): clippy and the full store
+the workspace default). *(Amended 2026-09-27 UTC: Berkeley DB has been the
+workspace default since 2026-09-20 — `default = ["bdb"]` — matching the
+reference build's bare `./configure` (Q1 ruling, `compatibility-policy.md`, "Amendment — rulings recorded").)* macOS (2026-09-13): clippy and the full store
 suite also pass there, against Homebrew `berkeley-db@5` — 5.3.28 under
 the Sleepycat license, the surveyed version — with the two
 `OXPINYIN_BDB_*` overrides pointing at the keg; 36 passed / 0 failed /

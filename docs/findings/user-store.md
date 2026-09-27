@@ -602,8 +602,9 @@ project memory).
    Recorded so the decision carries its cost, and so the RSS work does not
    re-derive it as an addressable gap. The separable question it does raise —
    whether the store needs to be *open* while idle, which is independent of
-   what format it uses — is untouched and unmeasured. The tkrzw default is
-   unmeasured; these are Kyoto Cabinet figures.
+   what format it uses — is untouched and unmeasured. tkrzw (the default
+   when this was written; Berkeley DB since 2026-09-20) is unmeasured;
+   these are Kyoto Cabinet figures.
 2. **Not** the K-mixture-model path (out of scope, as in W9).
 3. **Not** reproducing the frontend's 5-minute debounce timer inside the
    library — that is frontend policy (§6); the library persists when
