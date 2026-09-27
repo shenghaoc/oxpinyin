@@ -729,8 +729,18 @@ where
     ///
     /// Under [`Session::set_collapse_sentence_rows_to_best`] only the 1-best
     /// row is prepended — libzhuyin's display law.
+    ///
+    /// A sort word with `SORT_WITHOUT_SENTENCE_CANDIDATE` set prepends
+    /// nothing and so dedups nothing against the sentences: the pin skips
+    /// `_prepend_sentence_candidates` under that bit (`pinyin.cpp:2295-2296`)
+    /// before `_remove_duplicated_items_by_phrase_string` runs (`:2300`), so
+    /// a phrase row whose string repeats an n-best sentence survives there
+    /// (issue #582). Filtering the sentence rows out after the dedup would
+    /// drop both copies of that string.
     pub(super) fn prepend_nbest_rows(&mut self, collected: &mut Vec<Candidate>) {
-        if self.sentence.rows.is_empty() {
+        if self.sentence.rows.is_empty()
+            || self.lookup.sort_word & SORT_WITHOUT_SENTENCE_CANDIDATE != 0
+        {
             return;
         }
         let rows = if self.collapse_sentence_rows_to_best {
