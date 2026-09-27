@@ -225,9 +225,11 @@ resolve_system_dir() {
 
 	# 3. the conventional build locations, newest convention first.
 	#    oxpinyin-datagen's default --out-dir is target/datagen/<ext>, one
-	#    per backend, so every backend's directory is a candidate; the
-	#    extension order is the compile-time precedence (see
-	#    system_dir_detect_ext) so the default build's tables win.
+	#    per backend, so every backend's directory is a candidate. The
+	#    order below (kct, tkt, db) dates from the Kyoto Cabinet default;
+	#    the default build now writes target/datagen/db (Berkeley DB since
+	#    2026-09-20), so a tree holding more than one backend's directory
+	#    resolves to a peer's first — a known gap (#552 follow-up).
 	if [[ -z $resolved ]]; then
 		for candidate in \
 			"$repo_root/target/datagen/kct" \
@@ -273,12 +275,12 @@ resolve_system_dir() {
 		printf 'A usable directory is a system data directory for the compiled-in\n'
 		printf 'backend: the chunk files, table.conf, and the DBMs.\n'
 		printf '\n'
-		printf 'Build one from the pinned model (the default build writes .kct\n'
-		printf 'under target/datagen/kct):\n'
+		printf 'Build one from the pinned model (the default build, Berkeley DB,\n'
+		printf 'writes under target/datagen/db):\n'
 		printf '  tools/model/fetch-model.sh\n'
 		printf '  PINYIN_MODEL_DIR=$PWD/target/model20/extracted \\\n'
 		printf '    cargo run --release -p oxpinyin-datagen -- compile\n'
-		printf '  cp target/model20/extracted/interpolation2.text target/datagen/kct/\n'
+		printf '  cp target/model20/extracted/interpolation2.text target/datagen/db/\n'
 		printf '\n'
 		printf 'Refusing rather than falling back to fixtures/w3: scoring a real\n'
 		printf 'oracle against the mini tables reports DIVERGENCE that means\n'

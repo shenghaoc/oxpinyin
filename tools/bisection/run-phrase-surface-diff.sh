@@ -23,7 +23,8 @@
 #                         three `.kct` tables (pinyin_index, phrase_index,
 #                         bigram) plus interpolation2.text are required.
 #                         `.kct` because this script's own `cargo build
-#                         -p oxpinyin-capi` uses default features → KC,
+#                         -p oxpinyin-capi` pins Kyoto Cabinet (`--features
+#                         kyotocabinet`; the default is Berkeley DB),
 #                         so the built `.so`'s compiled-in backend can
 #                         only read `.kct`. Point at a tkrzw
 #                         dir and the driver will fail to open it.
@@ -66,7 +67,8 @@ CAPI_SO="$CARGO_TARGET_DIR/release/libpinyin_capi.so"
 # stale libpinyin_capi.so on disk would otherwise mask the change under
 # test.
 echo "building libpinyin_capi.so (release)..."
-(cd "$REPO_ROOT" && CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build --release -p oxpinyin-capi) || exit 1
+(cd "$REPO_ROOT" && CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build --release -p oxpinyin-capi \
+    --no-default-features --features kyotocabinet) || exit 1
 
 echo "--- cc phrase-surface-diff.c ---"
 DRIVER="$CARGO_TARGET_DIR/phrase-surface-diff"
@@ -80,8 +82,8 @@ case "$SYSTEM" in
     ''|/*) ;;
     *) SYSTEM="$REPO_ROOT/$SYSTEM" ;;
 esac
-# This script's `cargo build -p oxpinyin-capi` above uses default
-# features → Kyoto Cabinet, so the `.so` under test only opens `.kct`
+# This script's `cargo build -p oxpinyin-capi` above pins Kyoto
+# Cabinet, so the `.so` under test only opens `.kct`
 # tables. Accepting other peer extensions here would pass the gate on
 # a dir the driver cannot actually load, and the failure would land
 # mid-run rather than as this clean skip.
