@@ -2010,6 +2010,62 @@ section.
   owed (`probe-coverage-abi.md`, "The train gate under the widened
   law").
 
+### An unknown `database format:` in `user.conf` aborts the pin; oxpinyin refuses the open (policy row 44)
+
+Registered 2026-09-27 UTC from the "Register impact" of #591 (merged
+into `main` 2026-09-26 with the #578–#591 stack; the fix is
+`e5c1f3ad`), row text as #591 wrote it, cites re-read at `074a2219`
+and at `main`.
+
+- **Upstream source cite:** `src/storage/table_info.cpp:122-133`
+  (`to_table_database_format_type`; the fall-through `abort()` at
+  `:132`), called at `:353-354` from `UserTableInfo::load`
+  (`:351-352`: `char str[256]` and
+  `fscanf(input, "database format:%255s\n", str)`), which
+  `check_format` calls at `pinyin.cpp:172-178` and `zhuyin.cpp:126-132`
+  (`pinyin_init`/`zhuyin_init` then ignore its result and carry on —
+  `pinyin.cpp:344`, `zhuyin.cpp:288` — so the `abort()` is what
+  actually stops them).
+- **Condition:** the third `fscanf` returns anything but `EOF` and the
+  token it converted — or the `str` no conversion wrote, on a matching
+  failure — is not `BerkeleyDB`, `KyotoCabinet` or `Tkrzw`. So an
+  unrecognised token (a foreign or future backend's, a 255-byte
+  truncation of one, an empty field whose `%255s` reads the next word
+  across the newline), and any failure of that directive's literal (a
+  missing `database format:` line), all reach the same `abort()`.
+- **Trigger:** an edited, foreign or torn `user.conf`.
+  `UserTableInfo::save` is `fopen`/`fprintf`/`fclose` with no atomic
+  rename (`table_info.cpp:377-395`), so a write interrupted mid-file is
+  reachable in the field. Executed on both facades and all three cells:
+  24 runs, every one SIGABRT (exit 134), user dir untouched.
+- **What oxpinyin does instead:** `UserTableInfo::parse` answers
+  `Err(UserConfError::UnknownDatabaseFormat)` on both sub-cases,
+  `persistence::load` propagates it before any conformance judgement
+  (`crates/oxpinyin-user/src/persistence.rs:66-72`), `Runtime::open`'s
+  user-store step turns it into `OpenError::UnknownDatabaseFormat`, and
+  `pinyin_init`/`zhuyin_init` answer NULL with nothing cleaned and no
+  marker written — upstream never reaches its own wipe either. Stated
+  for the record: the *previous* oxpinyin behaviour (unknown token →
+  wipe) was itself a divergence, and this row replaces it.
+- **Log line:** `check_format: unknown database format in user.conf`,
+  exactly one per attempt, through GLib at warning level
+  (`oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING`,
+  `crates/oxpinyin-facade/src/context.rs:49-50`; domain `libpinyin`
+  from the pinyin facade, `crates/oxpinyin-capi/src/context.rs:25`,
+  `libzhuyin` from the zhuyin one,
+  `crates/oxpinyin-zhuyin-capi/src/context.rs:48` — the pin sets no
+  `G_LOG_DOMAIN`, so its own `g_warning` sites print domain-less, and
+  the shared message text is the fixed string above).
+- **Externally observable:** yes, and it is a difference in kind — the
+  pin takes the process down, oxpinyin fails the open. No pinned
+  differential is possible at the abort point (the register's existing
+  abort rows), so `tools/bisection/run-open-counter-diff.sh`'s
+  `abort-*` expectation channel asserts the pair instead.
+- **Class:** (c), both halves met — the first class-(c) row that is.
+  The `table.conf` route to the same `abort()` (`table_info.cpp:232-233`)
+  is not covered: oxpinyin ignores that line silently (the ledger
+  below, group B).
+
 ### Abort sites answered without a log: the #525 site ledger (policy rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21, 22)
 
 - **Source:** the 87-row per-site table in #525's body (the round-2
@@ -2028,7 +2084,7 @@ section.
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|
 | A — refuses silently (34) | `include/memory_chunk.h:390` (`assert`, via `check_result`), `:493`, `:543`, `:547` (`assert`); `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1474`, `:3035`, `:3067`, `:3092`, `:3147`, `:3203`, `:3204`, `:3738`, `:3743` (`assert`), `:1189`, `:3488` (`abort()`); `storage/ngram_bdb.cpp:199`, `ngram_kyotodb.cpp:173`, `ngram_tkrzwdb.cpp:150` (`assert`); `storage/phonetic_key_matrix.h:103` (`assert`); `storage/pinyin_parser2.cpp:170` (`assert`), `:398`, `:611` (`abort()`); `storage/zhuyin_parser2.cpp:295` (`abort()`); `zhuyin.cpp:372`, `:381`, `:440` (trigger not established), `:457`, `:2110`, `:2158` (`assert`), `:736` (`abort()`) | `false`, `Err`, NULL, a skipped library or a dropped row — the false/`Err` half holds | one `g_warning` line per site |
-| B — no check at all (33) | `lookup/phonetic_lookup.h:868` (`assert`, row 6); `pinyin.cpp:388`, `:491`, `:902`, `:2507`, `:2566`, `:2593`, `:2684`, `:2769`, `:2883`, `:3311`, `:3734`, `:3759` (`assert`); `storage/chewing_large_table2_bdb.cpp:282`, `:529`, `_kyotodb.cpp:269`, `:499`, `_tkrzwdb.cpp:252`, `:466` (`abort()`); `storage/phonetic_key_matrix.cpp:661`, `:663` (`assert`); `storage/phrase_large_table3.h:95` (`assert`); `storage/pinyin_phrase3.h:152` (`assert`, row 4); `storage/ngram.cpp:70` (`assert`); `zhuyin.cpp:330`, `:1261`, `:1453` (arm (c) of #525's trigger; arms (a)/(b) refuse) (`assert`); `storage/table_info.cpp:119`, `:142`, `:156`, `:175` (`abort()`), `:276` (`assert`), and `:132`'s `table.conf` half (`abort()`; its `user.conf` half was answered by #591) | `true`, data, a store write, or an ignored `table.conf` column — e.g. `pinyin_choose_candidate` has no candidate-type check for a predicted row (`:2507`, `crates/oxpinyin-capi/src/candidates.rs:304-409`) and `pinyin_remove_user_candidate` none for a non-`NORMAL` row (`:3734`, `candidates.rs:225-253`) | a guard answering `false`/`Err`, then the log line |
+| B — no check at all (33) | `lookup/phonetic_lookup.h:868` (`assert`, row 6); `pinyin.cpp:388`, `:491`, `:902`, `:2507`, `:2566`, `:2593`, `:2684`, `:2769`, `:2883`, `:3311`, `:3734`, `:3759` (`assert`); `storage/chewing_large_table2_bdb.cpp:282`, `:529`, `_kyotodb.cpp:269`, `:499`, `_tkrzwdb.cpp:252`, `:466` (`abort()`); `storage/phonetic_key_matrix.cpp:661`, `:663` (`assert`); `storage/phrase_large_table3.h:95` (`assert`); `storage/pinyin_phrase3.h:152` (`assert`, row 4); `storage/ngram.cpp:70` (`assert`); `zhuyin.cpp:330`, `:1261`, `:1453` (arm (c) of #525's trigger; arms (a)/(b) refuse) (`assert`); `storage/table_info.cpp:119`, `:142`, `:156`, `:175` (`abort()`), `:276` (`assert`), and `:132`'s `table.conf` half (`abort()`; its `user.conf` half is policy row 44, both halves met) | `true`, data, a store write, or an ignored `table.conf` column — e.g. `pinyin_choose_candidate` has no candidate-type check for a predicted row (`:2507`, `crates/oxpinyin-capi/src/candidates.rs:304-409`) and `pinyin_remove_user_candidate` none for a non-`NORMAL` row (`:3734`, `candidates.rs:225-253`) | a guard answering `false`/`Err`, then the log line |
 | C — not applicable (4) | `pinyin.cpp:554`, `:568`, `:571`, `:3750` (`assert`) | no counterpart check can exist — see the note below | nothing |
 | refuted (8) | `include/memory_chunk.h:434`; `storage/bdb_utils.h:61`, `:67`; `storage/phrase_index_logger.h:245`; `storage/tkrzwdb_utils.h:65`, `:72`; `zhuyin.cpp:454`; `pinyin.cpp:2517` (`check_result`) — all `assert` | the executed trigger did not abort the pin | nothing |
 | not executed (5) | `include/memory_chunk.h:438`, `:497` (`assert`); `storage/chewing_large_table2_bdb.cpp:388`, `_kyotodb.cpp:367`, `_tkrzwdb.cpp:342` (`abort()`) | no trigger reached the site | a trigger |
