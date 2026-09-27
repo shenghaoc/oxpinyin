@@ -44,7 +44,7 @@ pub use parser::{
 };
 pub use scheme::{
     DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme,
-    ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme,
+    ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme, parse_zhuyin_direct,
 };
 pub use syllables::{
     FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
