@@ -8,10 +8,8 @@
 # lib/libpinyin/data) with a fresh user dir per side and library, and diffs
 # the logs byte for byte (add return values, then every battery phrase's
 # tokens with their unigram frequencies and pronunciations, live and after
-# save + reopen) with one introspection field masked, a separate defect of
-# the read surface, not of the import: for libraries 5 and 6 the
-# pronunciations (token introspection reads the addon facade for those
-# nibbles, #601). The unmasked difference is printed, not gated.
+# save + reopen). Nothing is masked: #600 (the unigram field) and #601
+# (library 5/6 pronunciations read from the addon facade) are both fixed.
 #
 #   libraries 0 5 6 7 15      must be IDENTICAL.
 #   libraries 16 255          the pin reads its 16-slot sub-index array out
@@ -56,14 +54,6 @@ run() {
     "$work/driver" "$so" "$data" "$library") >"$work/$side-$library.log" 2>/dev/null
 }
 
-# Library 5/6 pronunciations are #601's; everything else is gated.
-mask() {
-  case $2 in
-    5 | 6) sed 's/ prons=.*//' "$1" ;;
-    *) cat "$1" ;;
-  esac
-}
-
 status=0
 for library in 0 5 6 7 15; do
   if ! run oracle "$oracle_so" "$library"; then
@@ -72,12 +62,8 @@ for library in 0 5 6 7 15; do
   if ! run oxpinyin "$capi_so" "$library"; then
     echo "library $library: FAIL (oxpinyin driver exited nonzero)"; status=1; continue
   fi
-  if diff -u <(mask "$work/oracle-$library.log" "$library") \
-    <(mask "$work/oxpinyin-$library.log" "$library") >"$work/$library.diff"; then
-    echo "library $library: IDENTICAL ($(wc -l <"$work/oracle-$library.log") lines$(case $library in 5 | 6) echo ", prons masked (#601)";; esac))"
-    if ! diff -q "$work/oracle-$library.log" "$work/oxpinyin-$library.log" >/dev/null; then
-      echo "  introspection PENDING #601: $(diff "$work/oracle-$library.log" "$work/oxpinyin-$library.log" | grep -c '^>') lines differ (not gated)"
-    fi
+  if diff -u "$work/oracle-$library.log" "$work/oxpinyin-$library.log" >"$work/$library.diff"; then
+    echo "library $library: IDENTICAL ($(wc -l <"$work/oracle-$library.log") lines)"
   else
     echo "library $library: DIVERGENCE"
     head -40 "$work/$library.diff"

@@ -619,14 +619,15 @@ impl RuntimeDict {
                         .collect(),
                 })
             }
-            5 | 6 => {
-                let item = self.addon_phrase_item(token)?;
-                Some(TokenIntrospection {
-                    text: item.text,
-                    pronunciations: item.readings,
-                })
-            }
-            7 => {
+            // The default facade's USER_FILE sub-indexes (addon.bin /
+            // network.bin / user.bin): the pin's `get_phrase_item` reads the
+            // item from the sub-index the token's nibble names
+            // (`phrase_index.h:646-657`, the default table set's
+            // `ADDON_DICTIONARY` / `NETWORK_DICTIONARY` / `USER_DICTIONARY`
+            // rows of `data/table.conf.in`) — never the addon facade, whose
+            // own nibbles 4..15 are a different token space (the
+            // `DICTIONARY` rows, art.bin … technology.bin).
+            5..=7 => {
                 let store = self.user.as_ref()?;
                 let phrase = store.phrase(token).ok()??;
                 Some(TokenIntrospection {
