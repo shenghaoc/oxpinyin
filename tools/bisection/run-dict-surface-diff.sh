@@ -130,8 +130,19 @@ fi
 echo "--- capi side ---"
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
-trap 'rm -f "$CAPI_LOG" "$ORACLE_LOG"' EXIT
-if ! "$DRIVER" "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG"; then
+# The driver opens the context with an empty user dir (""), which both
+# libraries resolve against the working directory: the pin writes
+# user.conf there. Each side therefore runs in a fresh private directory
+# (both start equal, and nothing lands in tools/bisection), removed on
+# exit. The data paths are made absolute first, since the driver runs
+# from elsewhere.
+CAPI_CWD="$(mktemp -d)"
+ORACLE_CWD="$(mktemp -d)"
+trap 'rm -rf "$CAPI_LOG" "$ORACLE_LOG" "$CAPI_CWD" "$ORACLE_CWD"' EXIT
+SYSTEM="$(cd "$SYSTEM" && pwd)"
+ORACLE_DATA="$(cd "$ORACLE_DATA" && pwd)"
+ORACLE_SO="$(cd "$(dirname "$ORACLE_SO")" && pwd)/$(basename "$ORACLE_SO")"
+if ! (cd "$CAPI_CWD" && "$DRIVER" "$CAPI_SO" "$SYSTEM") > "$CAPI_LOG"; then
     echo "FAIL: dict-surface-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     exit 1
@@ -143,7 +154,7 @@ echo "--- oracle side ---"
 # oxpinyin-native and the oracle wouldn't know what to do with it.
 # Both dirs derive from the same pinned model20, so the comparison is
 # still same-source when the datagen convention is followed.
-if ! "$DRIVER" "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG"; then
+if ! (cd "$ORACLE_CWD" && "$DRIVER" "$ORACLE_SO" "$ORACLE_DATA") > "$ORACLE_LOG"; then
     echo "FAIL: dict-surface-diff crashed against oracle"
     cat "$ORACLE_LOG"
     exit 1
