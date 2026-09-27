@@ -5,7 +5,7 @@ use std::os::raw::c_char;
 
 use crate::ffi::{cstr_to_strict, cstr_to_string};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
-use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t, sort_option_t};
+use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
 
 /// Guess a sentence from saved pinyin keys.
 ///
@@ -255,11 +255,13 @@ pub extern "C" fn pinyin_get_character_offset(
 /// candidates; the scan anchor is otherwise still positionless — the
 /// engine has no positional backend yet.
 ///
-/// W14 honours [`sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE`]: with
+/// W14 honours [`crate::types::sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE`]: with
 /// the bit clear, sentence rows guessed by [`pinyin_guess_sentence`]
 /// appear at the head typed `NBEST_MATCH_CANDIDATE` with their tail rank;
-/// with the bit set they are excluded, exactly upstream's gate
-/// (`pinyin.cpp:2295-2296`). §9 honours the rest of the word:
+/// with the bit set the engine never prepends them (`pinyin.cpp:2295-2296`),
+/// so the phrase-string dedup after the prepend (`:2298-2300`) keeps a
+/// phrase row whose string repeats a sentence (issue #582) — the gate sits
+/// in the engine's list assembly, not in a filter here. §9 honours the rest of the word:
 /// `SORT_WITHOUT_LONGER_CANDIDATE` clear prepends a `LONGER_CANDIDATE`
 /// row (`:2292-2293`) and the three `SORT_BY_*` bits order the list
 /// (`:1678-1709`), both through the engine's sort word above.
@@ -295,8 +297,6 @@ pub extern "C" fn pinyin_guess_candidates(
         inst.candidates.clear();
         return false;
     };
-    let without_sentence =
-        sort_option & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as GUint != 0;
     inst.candidates.clear();
     let double_parse = inst.core.double_parse.clone();
     let zhuyin_parse = inst.core.zhuyin_parse.clone();
@@ -356,9 +356,6 @@ pub extern "C" fn pinyin_guess_candidates(
         None => inst.core.session.candidates(),
     };
     for (window_index, cand) in candidates.iter().enumerate() {
-        if without_sentence && cand.kind() == oxpinyin_engine::CandidateKind::Sentence {
-            continue;
-        }
         // The engine's remaining-raw-input `Fallback` row is the
         // session-API affordance (`session-api.md`: it keeps `Space`
         // and `select` meaningful before a decoder result exists) —

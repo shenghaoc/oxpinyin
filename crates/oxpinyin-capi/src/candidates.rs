@@ -325,9 +325,8 @@ pub extern "C" fn pinyin_choose_candidate(
     };
     // `index` is the candidate's position in the SNAPSHOT, which
     // `try_promote_addon` reads (it indexes `inst.candidates`); the
-    // snapshot may omit entries (sentence rows under
-    // `SORT_WITHOUT_SENTENCE_CANDIDATE`, a `CString` conversion
-    // failure), so that position is NOT the row's position in the
+    // snapshot may omit entries (the engine's `Fallback` row, a
+    // `CString` conversion failure), so that position is NOT the row's position in the
     // window the `select*` calls index. Select by the candidate's
     // recorded source index.
     //

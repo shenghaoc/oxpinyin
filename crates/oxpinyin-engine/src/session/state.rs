@@ -353,10 +353,10 @@ where
     /// (`pinyin.cpp:2203` at the pin), re-stored by every
     /// `pinyin_guess_candidates` and read by `pinyin_choose_candidate`.
     ///
-    /// The word's bits: `0x1` `SORT_WITHOUT_SENTENCE_CANDIDATE` (a C-ABI
-    /// display filter the engine does not apply — it reads the sentence
-    /// rows from the list the way the pin's prepend does and lets the
-    /// facade drop them), `0x2` `SORT_WITHOUT_LONGER_CANDIDATE` (clear →
+    /// The word's bits: `0x1` `SORT_WITHOUT_SENTENCE_CANDIDATE` (set →
+    /// the n-best rows are not prepended, so the phrase-string dedup never
+    /// meets them — `pinyin.cpp:2295-2300`), `0x2`
+    /// `SORT_WITHOUT_LONGER_CANDIDATE` (clear →
     /// the LONGER row is built and prepended),
     /// `0x4`/`0x8`/`0x10` `SORT_BY_{PHRASE_LENGTH,PINYIN_LENGTH,FREQUENCY}`
     /// (each key ordered descending only while its bit is set; a disabled
