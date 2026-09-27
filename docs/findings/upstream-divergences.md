@@ -385,6 +385,18 @@ line.)
 
 ### One bigram-prediction row differs on the pin's own data (trellis residual)
 
+- **Reattributed 2026-09-27 UTC (#550, audit D-05; policy row 20 → row
+  33).** The line is not a trellis residual. The union driver's
+  whole-row NBEST choose installs no `CONSTRAINT_ONESTEP` on the pin
+  (`src/pinyin.cpp:2515-2520`), so `train_result3` trains nothing
+  (`src/lookup/phonetic_lookup.h:866`) and the pin writes no `测测 → 你`
+  at all; oxpinyin's selection-history fallback
+  (`crates/oxpinyin-engine/src/session/selection.rs:298-339`) writes it
+  with count 138 and predicts 你. That is row 33's mechanism, and the
+  audit measured it on every cell, not only on Kyoto Cabinet. The
+  bullets below are the original record; their "straddle the
+  `m_count ≥ 10` filter" explanation is superseded.
+
 - **Where:** `tools/bisection/run-same-data-dir-diff.sh union-diff` on a
   `--with-dbm=KyotoCabinet` libpinyin install's own `data/` — one line,
   `pred: type=4 text=你` (a `PREDICTED_BIGRAM_CANDIDATE`), present on
@@ -414,6 +426,20 @@ line.)
   `import` / `key-surface` differential, is identical on the pin's data.
 
 ### N-best trellis accumulates gfloat log costs — not reproducible in fixed point, FROZEN as a permanent Stage-1 divergence
+
+- **Scope shrinks, pending lane D (2026-09-27 UTC, #550, #535, audit
+  D-13; policy row 11).** Two rules inside the frozen residual are
+  selection logic, not arithmetic, and are not class (a): the node keep
+  rule (the pin's `trellis_node::eval_item` heap front is the best
+  value, replaced when a newcomer beats it —
+  `src/lookup/phonetic_lookup_heap.h:25-29`, `:56-81`; oxpinyin replaces
+  its worst, `crates/oxpinyin-engine/src/nbest.rs:241-267`) and the
+  comparator's longer-by-one clause (dead at the pin, `:75-77` being
+  subsumed by `:87-88` of `phonetic_lookup.h`; live in oxpinyin,
+  `nbest.rs:194-197`). Selection-logic specimen D-26: ZiGuang
+  `zhrgguor`, candidate[2] 宗人光卓然 on the pin, 总人光卓然 on
+  oxpinyin, rows 0–1 identical (#535). Class (a) keeps the `gfloat`
+  `log` accumulation only.
 
 - **Upstream source cite:** `src/lookup/phonetic_lookup.h:663, 692`
   (`m_poss += log(...)` per step, a `gfloat` accumulator rounded at
@@ -1939,6 +1965,15 @@ section.
 - **Status:** REVERT TARGET, pending lane I (#582).
 
 ### `pinyin_train`/`zhuyin_train` gate (policy row 38)
+
+- **Scope correction (2026-09-27 UTC, #550, audit D-02, #524).** The
+  train entry is broader than the gate: `pinyin_train` asserts
+  `index < results.size()` (`src/pinyin.cpp:2684`, `assert`) and trains
+  the `index`-th result (`:2685-2688`); oxpinyin ignores `index`
+  (`crates/oxpinyin-capi/src/candidates.rs:550`), so `train(1)`/`train(2)`
+  write `train(0)`'s deltas and `train(255)` answers `true` where the
+  pin aborts. That index arm is open (REVERT TARGET, #524); the refuse
+  arms below stay closed.
 
 - **Upstream source cite:** `src/pinyin.cpp:2669-2690` (`pinyin_train`:
   refuse without a user dir, `:2670-2671`; refuse on empty

@@ -113,14 +113,14 @@ Sources: upstream GitHub issues, Red Hat ABRT, SUSE Bugzilla, Launchpad, commit 
 | **Status** | Fixed in the 1.16.1 timeframe |
 | **Why Rust helps** | The borrow checker turns this entire class of bug into a compile-time error. |
 
-### 3.2 Bigram export iterator reuses stale pinyin-join storage
+### 3.2 Bigram export iterator joins an unterminated pronunciation vector
 
 | Field | Value |
 |-------|-------|
-| **Source cite** | `src/pinyin.cpp:842-872` (`pinyin_bigram_iterator_has_next_phrase`) |
-| **Symptoms** | Repeating the bigram export cycle inside one context segfaults (observed by the W6 train differential; the harness runs one export per fresh context for the oracle). |
+| **Source cite** | `src/pinyin.cpp:842-872` (`pinyin_bigram_iterator_has_next_phrase`): `:844-850` and `:857-863` pass a `GPtrArray`'s data to `g_strjoinv`/`g_strfreev` without the NULL terminator the unigram export adds (`:730`), at pin `074a2219` |
+| **Symptoms** | A heap over-read; the first export cycle after a train segfaults (round-2 audit D-20, #530: tkrzw and kc saved and unsaved, bdb unsaved 4/4). Recorded until 2026-09-27 UTC as a stale-storage reuse on a *repeated* cycle (the W6 train differential's observation), which #530/#550 corrected. |
 | **Status** | Registered in `docs/findings/upstream-divergences.md` |
-| **Why Rust helps** | oxpinyin renders the full export row snapshot into owned strings before exposing the iterator; no C pointer can outlive a reused buffer. |
+| **Why Rust helps** | oxpinyin renders the full export row snapshot into owned strings before exposing the iterator; no NULL-terminated C string vector is built, so none can lack its terminator. |
 
 ---
 
