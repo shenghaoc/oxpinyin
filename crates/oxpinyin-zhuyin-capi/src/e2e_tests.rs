@@ -149,20 +149,23 @@ fn add_phrase_batch_writes_the_user_index() {
     let iter = zhuyin_begin_add_phrases(context, USER_DICTIONARY);
     assert!(!iter.is_null());
     let phrase = cstr("网词");
-    let pinyin = cstr("wangci");
+    // The reading is bopomofo, parsed by `ZhuyinDirectParser2` under
+    // `USE_TONE | FORCE_TONE` (`zhuyin.cpp:515-523`): the tones ride on
+    // the stored keys.
+    let reading = cstr("ㄨㄤˇ ㄘˊ");
     assert!(zhuyin_iterator_add_phrase(
         iter,
         phrase.as_ptr(),
-        pinyin.as_ptr(),
+        reading.as_ptr(),
         5,
     ));
-    // A pinyin that parses to no complete key path is refused, not
+    // A romanized reading parses no bopomofo key and is refused, not
     // stored half-way.
-    let bad = cstr("vvvvx");
+    let romanized = cstr("wangci");
     assert!(!zhuyin_iterator_add_phrase(
         iter,
         phrase.as_ptr(),
-        bad.as_ptr(),
+        romanized.as_ptr(),
         1,
     ));
     zhuyin_end_add_phrases(iter);
@@ -176,7 +179,7 @@ fn add_phrase_batch_writes_the_user_index() {
         rows,
         vec![oxpinyin_user::ExportedPhrase {
             text: "网词".to_owned(),
-            pinyin: "wang'ci".to_owned(),
+            pinyin: "wang3'ci2".to_owned(),
             count: 5,
         }]
     );

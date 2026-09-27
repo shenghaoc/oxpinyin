@@ -1625,6 +1625,64 @@ fn search_zhuyin_index(
     SyllableKey::from_canonical_text(pinyin).map(|key| (key, canonical))
 }
 
+/// `ZhuyinDirectParser2::parse` (`zhuyin_parser2.cpp:914-958`): the input
+/// splits at every `' '` and `'\''`, each segment must be one whole key
+/// ([`parse_zhuyin_direct_key`]), and the parse stops at the first segment
+/// that is not — the keys before it are the result. Returns the keys as
+/// `(syllable, tone)`.
+#[must_use]
+pub fn parse_zhuyin_direct(input: &str, options: u32) -> Vec<(SyllableKey, u8)> {
+    let bytes = input.as_bytes();
+    let is_separator = |byte: u8| byte == b' ' || byte == b'\'';
+    let mut keys = Vec::new();
+    let mut cur = 0;
+    while cur < bytes.len() {
+        let next = bytes[cur..]
+            .iter()
+            .position(|&byte| is_separator(byte))
+            .map_or(bytes.len(), |offset| cur + offset);
+        // Separators are ASCII, so both ends are char boundaries.
+        let Some(key) = input
+            .get(cur..next)
+            .and_then(|segment| parse_zhuyin_direct_key(segment, options))
+        else {
+            return keys;
+        };
+        keys.push(key);
+        cur = bytes[next..]
+            .iter()
+            .position(|&byte| !is_separator(byte))
+            .map_or(bytes.len(), |offset| next + offset);
+    }
+    keys
+}
+
+/// `ZhuyinDirectParser2::parse_one_key` (`zhuyin_parser2.cpp:858-912`):
+/// the tone defaults to 1; under `USE_TONE` a trailing tone symbol
+/// (`chewing_tone_table[1..]`) sets it and is cut off; the rest must be a
+/// `zhuyin_index` spelling admitted by `check_chewing_options` with the
+/// ambiguity bits cleared. `FORCE_TONE` never refuses: the default tone
+/// is already non-zero.
+fn parse_zhuyin_direct_key(segment: &str, options: u32) -> Option<(SyllableKey, u8)> {
+    let options = options & !PINYIN_AMB_ALL;
+    let last = segment.chars().last()?;
+    let mut tone = 1_u8;
+    let mut body = segment;
+    if options & USE_TONE != 0 {
+        let mut buffer = [0_u8; 4];
+        let last = last.encode_utf8(&mut buffer);
+        if let Some(found) = (1..=5).find(|&t| tone_symbol(t) == last) {
+            tone = found;
+            body = &segment[..segment.len() - last.len()];
+        }
+    }
+    if body.is_empty() {
+        return None;
+    }
+    let (key, _) = search_zhuyin_index(&crate::zhuyin_map::ZHUYIN_PINYIN_MAP, body, options)?;
+    Some((key, tone))
+}
+
 /// The compiled keyboard behind a scheme: a Simple symbol/tone pair over
 /// the global index, a Discrete initial/middle/final set over the
 /// keyboard's own index, or the CP26 repeat-count keyboard over the
@@ -2415,6 +2473,46 @@ fn is_valid_zhuyin(key: SyllableKey, tone: u8) -> bool {
 mod tests {
     use super::{DoublePinyinParser, DoublePinyinScheme, ZhuyinParser, ZhuyinScheme};
     use crate::options::{FORCE_TONE, PINYIN_INCOMPLETE, USE_TONE, ZHUYIN_INCOMPLETE};
+
+    #[test]
+    fn zhuyin_direct_parse_is_the_pins_bopomofo_split() {
+        use super::parse_zhuyin_direct;
+        use crate::SyllableKey;
+        let options = USE_TONE | FORCE_TONE;
+        let text = |keys: Vec<(SyllableKey, u8)>| -> Vec<(&'static str, u8)> {
+            keys.into_iter()
+                .map(|(key, tone)| (key.text(), tone))
+                .collect()
+        };
+        // Toned, unmarked (tone 1), and the neutral tone.
+        assert_eq!(
+            text(parse_zhuyin_direct("ㄘㄜˋ ㄘㄜˋ", options)),
+            [("ce", 4), ("ce", 4)]
+        );
+        assert_eq!(
+            text(parse_zhuyin_direct("ㄘㄜ'ㄘㄜ", options)),
+            [("ce", 1), ("ce", 1)]
+        );
+        assert_eq!(
+            text(parse_zhuyin_direct("ㄑㄧㄥ ㄕㄥ˙", options)),
+            [("qing", 1), ("sheng", 5)]
+        );
+        // Runs of separators are skipped; a trailing one is harmless.
+        assert_eq!(
+            text(parse_zhuyin_direct("ㄋㄧˇ  ㄏㄠˇ ", options)),
+            [("ni", 3), ("hao", 3)]
+        );
+        // Romanized input and incomplete keys parse nothing; the parse
+        // stops at the first failing segment.
+        assert!(parse_zhuyin_direct("ce'ce", options).is_empty());
+        assert!(parse_zhuyin_direct("ㄑ ㄑ", options).is_empty());
+        assert_eq!(text(parse_zhuyin_direct("ㄘ ㄑ", options)), [("ci", 1)]);
+        assert_eq!(
+            text(parse_zhuyin_direct("ㄘㄜˋ xx ㄘㄜˋ", options)),
+            [("ce", 4)]
+        );
+        assert!(parse_zhuyin_direct("", options).is_empty());
+    }
 
     #[test]
     fn default_scheme_is_ms() {

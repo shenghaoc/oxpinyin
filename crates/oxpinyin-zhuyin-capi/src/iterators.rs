@@ -4,8 +4,8 @@
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
-use oxpinyin_core::graph::FewestKeys;
-use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library};
+use oxpinyin_core::{FORCE_TONE, USE_TONE, parse_zhuyin_direct};
+use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library, toned_key};
 
 use crate::ffi::cstr_to_owned_lossy;
 use crate::state::context_ref;
@@ -55,6 +55,19 @@ pub extern "C" fn zhuyin_begin_add_phrases(
 ///                                 const char * pinyin,
 ///                                 gint count);
 /// ```
+///
+/// `zhuyin.cpp:500-534` then `_add_phrase` (`:400-498`): the reading is
+/// bopomofo, parsed by `ZhuyinDirectParser2` under `USE_TONE |
+/// FORCE_TONE` (`:515-523`) — keys separated by spaces or apostrophes,
+/// each carrying its tone (tone 1 when unmarked) — so a romanized reading
+/// parses no key and is refused. The phrase's character count must equal
+/// the key count, `0 < len < 16`. Count, storage and library routing are
+/// the pinyin facade's (`pinyin_iterator_add_phrase`): -1 is the default
+/// 5, any other count its `guint32` bit pattern; the `USER_FILE`
+/// libraries take the phrase, the system libraries are refused until
+/// oxpinyin models system items (#599), and every other nibble answers
+/// `false` — 16..=255 without reproducing the pin's out-of-bounds read of
+/// its 16-slot array (library 16 SIGSEGVs the pin).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_iterator_add_phrase(
     iter: *mut ImportIterator,
@@ -62,19 +75,14 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     pinyin: *const c_char,
     count: c_int,
 ) -> bool {
-    if iter.is_null() {
+    if iter.is_null() || phrase.is_null() || pinyin.is_null() {
         return false;
     }
 
     let phrase = cstr_to_owned_lossy(phrase);
     let pinyin = cstr_to_owned_lossy(pinyin);
-    let count = if count == -1 {
-        None
-    } else if count >= 0 {
-        Some(u64::try_from(count).unwrap_or(0))
-    } else {
-        return false;
-    };
+    // `if (-1 == count) count = default_count;` (`zhuyin.cpp:409-410`).
+    let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
     // SAFETY: `iter` is non-null and was produced by
     // `zhuyin_begin_add_phrases`.
     let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
@@ -84,14 +92,13 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     let Some(user) = handle.user.as_mut() else {
         return false;
     };
-    let Some(parsed) = FewestKeys::parse(&pinyin) else {
+    let Some(keys) = parse_zhuyin_direct(&pinyin, USE_TONE | FORCE_TONE)
+        .into_iter()
+        .map(|(key, tone)| toned_key(key.index(), tone))
+        .collect::<Option<Vec<PinyinKey>>>()
+    else {
         return false;
     };
-    let keys: Vec<PinyinKey> = parsed
-        .keys()
-        .iter()
-        .map(|key| PinyinKey::try_from(key.index()).unwrap_or(PinyinKey::MAX))
-        .collect();
     user.add_phrase_in(handle.index, &phrase, &keys, count)
         .is_ok()
 }
