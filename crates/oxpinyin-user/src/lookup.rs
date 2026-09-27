@@ -70,7 +70,15 @@ impl UserLookup {
                 .or_default()
                 .push(token);
             for pronunciation in phrase.pronunciations() {
-                let Some(pinyin) = pronunciation.render_pinyin() else {
+                // Only readings the user pinyin index carries are found
+                // (`_add_phrase` never indexes a reading merged into an
+                // existing phrase, `pinyin.cpp:569-582`). The index is
+                // keyed on the tone-zeroed projection
+                // (`encode_complete_key`), which the toneless queries meet.
+                if !pronunciation.indexed() {
+                    continue;
+                }
+                let Some(pinyin) = pronunciation.render_pinyin_toneless() else {
                     continue;
                 };
                 let entry = PhraseEntry::new(PhraseToken::new(token), phrase.text().to_owned());
@@ -86,6 +94,8 @@ impl UserLookup {
 
         for entries in exact.values_mut() {
             entries.sort_by_key(|entry| entry.token().value());
+            // Two readings differing only in tone project onto one key.
+            entries.dedup_by_key(|entry| entry.token().value());
         }
         for bucket in by_initial.values_mut() {
             // Order matches `exact`'s per-bucket sort: token ascending.
@@ -98,6 +108,9 @@ impl UserLookup {
                     .value()
                     .cmp(&right.1.token().value())
                     .then_with(|| left.0.cmp(&right.0))
+            });
+            bucket.dedup_by(|left, right| {
+                left.0 == right.0 && left.1.token().value() == right.1.token().value()
             });
         }
         for tokens in text_tokens.values_mut() {

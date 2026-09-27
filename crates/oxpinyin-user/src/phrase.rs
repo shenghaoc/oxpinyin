@@ -47,10 +47,62 @@ pub const ADD_PHRASE_UNIGRAM_FACTOR: u64 = 3;
 
 /// One pinyin key in a stored pronunciation.
 ///
-/// Opaque 16-bit id. In oxpinyin this is a [`oxpinyin_core::SyllableKey`]
-/// index; T2 stores the sequence as values, not libpinyin's `ChewingKey`
-/// bitfields.
+/// Opaque 16-bit id: the low [`KEY_TONE_SHIFT`] bits are a
+/// [`oxpinyin_core::SyllableKey`] index, the high three bits the key's
+/// `ChewingKey::m_tone` (0 = zero tone, 1..=5). A toneless key is the bare
+/// syllable index, so every toneless producer's ids are unchanged.
+/// libpinyin stores the tone with the key (`PhraseItem::add_pronunciation`
+/// copies the parsed `ChewingKey`s, `phrase_index.cpp:56-91`); the import
+/// parser keeps it under `USE_TONE` (`pinyin.cpp:630`).
 pub type PinyinKey = u16;
+
+/// Bit position of the tone inside a [`PinyinKey`].
+pub const KEY_TONE_SHIFT: u32 = 13;
+
+/// The syllable-index bits of a [`PinyinKey`].
+pub const KEY_SYLLABLE_MASK: PinyinKey = (1 << KEY_TONE_SHIFT) - 1;
+
+/// `CHEWING_NUMBER_OF_TONES` less one: the highest tone a key carries
+/// (`chewing_enum.h`, tones 0..=5).
+pub const MAX_KEY_TONE: u8 = 5;
+
+/// A [`PinyinKey`] for syllable index `syllable` carrying `tone`; `None`
+/// when the index does not fit the syllable bits or the tone is not
+/// 0..=[`MAX_KEY_TONE`].
+#[must_use]
+pub fn toned_key(syllable: usize, tone: u8) -> Option<PinyinKey> {
+    let syllable = PinyinKey::try_from(syllable).ok()?;
+    if syllable > KEY_SYLLABLE_MASK || tone > MAX_KEY_TONE {
+        return None;
+    }
+    Some(syllable | (PinyinKey::from(tone) << KEY_TONE_SHIFT))
+}
+
+/// The syllable index of `key`, tone stripped.
+#[must_use]
+pub const fn key_syllable(key: PinyinKey) -> usize {
+    (key & KEY_SYLLABLE_MASK) as usize
+}
+
+/// The tone of `key` (0 = zero tone).
+#[must_use]
+pub const fn key_tone(key: PinyinKey) -> u8 {
+    (key >> KEY_TONE_SHIFT) as u8
+}
+
+/// `_ChewingKey::get_pinyin_string` (`chewing_key.cpp:47-58`) over a
+/// [`PinyinKey`]: the canonical spelling, the tone digit appended for a
+/// non-zero tone. `None` when the syllable bits name no key or the tone
+/// is out of range.
+#[must_use]
+pub fn key_pinyin_string(key: PinyinKey) -> Option<String> {
+    let text = SyllableKey::from_index(key_syllable(key))?.text();
+    match key_tone(key) {
+        0 => Some(text.to_owned()),
+        tone @ 1..=MAX_KEY_TONE => Some(format!("{text}{tone}")),
+        _ => None,
+    }
+}
 
 /// `PHRASE_INDEX_LIBRARY_INDEX(token)` (`novel_types.h:44`).
 #[must_use]
@@ -156,11 +208,13 @@ pub(crate) fn decode_keys(bytes: &[u8]) -> Vec<PinyinKey> {
         .collect()
 }
 
-/// A user-phrase pronunciation: the pinyin key sequence and its stored count.
+/// A user-phrase pronunciation: the pinyin key sequence, its stored count,
+/// and whether the user pinyin index carries it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserPronunciation {
     keys: Vec<PinyinKey>,
     count: u64,
+    indexed: bool,
 }
 
 impl UserPronunciation {
@@ -176,8 +230,19 @@ impl UserPronunciation {
         self.count
     }
 
-    /// This reading rendered as `'`-joined syllable spellings (e.g. `ni'hao`),
-    /// or `None` when a stored key is not a valid [`SyllableKey`] id.
+    /// Whether the user pinyin index carries this reading — the lookup
+    /// finds the phrase under it. `_add_phrase` indexes the reading a new
+    /// phrase is created with (`pinyin.cpp:597-600`) and never one added
+    /// to an existing phrase (`pinyin.cpp:569-582`, `add_pronunciation`
+    /// without `add_index`).
+    #[must_use]
+    pub const fn indexed(&self) -> bool {
+        self.indexed
+    }
+
+    /// This reading rendered as `'`-joined `_ChewingKey::get_pinyin_string`
+    /// spellings (e.g. `ni'hao`, `ce4'shi4`), or `None` when a stored key
+    /// is not a valid [`SyllableKey`] id.
     ///
     /// The single rendering path the §9 phrase and bigram exports share, so
     /// an unrenderable key is skipped identically on both surfaces.
@@ -185,13 +250,29 @@ impl UserPronunciation {
     pub fn render_pinyin(&self) -> Option<String> {
         self.keys
             .iter()
-            .map(|key| SyllableKey::from_index(usize::from(*key)).map(SyllableKey::text))
+            .map(|key| key_pinyin_string(*key))
             .collect::<Option<Vec<_>>>()
             .map(|parts| parts.join("'"))
     }
 
-    pub(crate) const fn new(keys: Vec<PinyinKey>, count: u64) -> Self {
-        Self { keys, count }
+    /// [`Self::render_pinyin`] with every tone dropped — the complete
+    /// keyspace's projection (`encode_complete_key` zeroes the tone),
+    /// which the toneless lookup queries meet.
+    #[must_use]
+    pub fn render_pinyin_toneless(&self) -> Option<String> {
+        self.keys
+            .iter()
+            .map(|key| SyllableKey::from_index(key_syllable(*key)).map(SyllableKey::text))
+            .collect::<Option<Vec<_>>>()
+            .map(|parts| parts.join("'"))
+    }
+
+    pub(crate) const fn new(keys: Vec<PinyinKey>, count: u64, indexed: bool) -> Self {
+        Self {
+            keys,
+            count,
+            indexed,
+        }
     }
 }
 
@@ -220,7 +301,8 @@ impl UserPhrase {
         &self.text
     }
 
-    /// Pronunciations in key-sequence order (the store's composite-key order).
+    /// Pronunciations in insertion order — `add_pronunciation` appends
+    /// (`phrase_index.cpp:86-91`).
     #[must_use]
     pub fn pronunciations(&self) -> &[UserPronunciation] {
         &self.pronunciations

@@ -9,10 +9,12 @@
 //!   `_clean_user_files` on a non-conform profile), then the bigram
 //!   hash, the `USER_FILE` chunk stores (`user.bin`, `addon.bin`,
 //!   `network.bin`), and the `SYSTEM_FILE` `.dbin` logs replayed onto the
-//!   original system chunks. The two index DBMs (`user_pinyin_index.bin`,
-//!   `user_phrase_index.bin`) are pure derivatives of the `USER_FILE`
-//!   items — every index row was added by the same `add_index` walk that
-//!   inserted the item — so they are rebuilt at save and not read.
+//!   original system chunks, and the user pinyin index's records.
+//!   `user_phrase_index.bin` is a pure derivative of the `USER_FILE`
+//!   items and is rebuilt at save, not read; `user_pinyin_index.bin` is
+//!   not — a reading merged into an existing phrase is never indexed
+//!   (`pinyin.cpp:569-582`) — so its records are loaded
+//!   ([`UserState::indexed`]) and saved back.
 //! * save — the pin's `_write_files` + `_rename_files`: every file is
 //!   written whole to a `.tmp` sibling, then all are renamed over their
 //!   finals, so a crash mid-save leaves the previous profile intact.
@@ -44,7 +46,7 @@ use oxpinyin_data::user_files::{
     LogRecord, SYSTEM_LOG_FILES, SystemVersions, USER_LIBRARY_FILES, UserConfError, UserDbm,
     UserTableInfo, decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
 };
-use oxpinyin_store::{DefaultStore, RawReadStore, StoreError, WriteStore};
+use oxpinyin_store::{DefaultStore, RawReadStore, ReadStore, StoreError, WriteStore};
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
@@ -173,9 +175,31 @@ pub struct UserState {
     /// `Some(item)` modifies the original, `None` removes it. A slot
     /// absent here still answers its original item.
     pub system_overrides: BTreeMap<u8, BTreeMap<u32, Option<ChunkItem>>>,
+    /// The `USER_FILE` readings the user pinyin index carries, as
+    /// `(token, packed ChewingKey words)`. `_add_phrase` indexes the
+    /// reading a phrase is created with and never one merged into an
+    /// existing phrase (`pinyin.cpp:569-600`), so the index is not a
+    /// derivative of the items: it is loaded from `user_pinyin_index.bin`
+    /// and saved from this set.
+    pub indexed: std::collections::BTreeSet<(u32, Vec<u16>)>,
 }
 
-impl UserState {}
+impl UserState {
+    /// Every `USER_FILE` reading indexed — a profile whose phrases were
+    /// all created with the readings they carry.
+    #[cfg(test)]
+    pub(crate) fn index_every_reading(mut self) -> Self {
+        for (&nibble, items) in &self.libraries {
+            for (&slot, item) in items {
+                for (packed, _) in &item.prons {
+                    self.indexed
+                        .insert((token_of(nibble, slot), packed.clone()));
+                }
+            }
+        }
+        self
+    }
+}
 
 /// A persistence failure: I/O, a container, or a byte stream that does
 /// not parse.
@@ -333,6 +357,7 @@ pub fn load(
 
     load_bigram(dir, &mut loaded);
     load_libraries(dir, &mut loaded);
+    load_user_pinyin_index(dir, &mut loaded);
     load_logs(dir, originals, &mut loaded);
 
     if law == UserConfLaw::Pinyin {
@@ -465,6 +490,55 @@ fn load_bigram(dir: &Path, loaded: &mut Loaded) {
         loaded
             .skipped
             .push(format!("{}: {error}", UserDbm::Bigram.file_name()));
+    }
+    drop(store);
+    remove_dbm_sidecars(dir, &path);
+}
+
+/// The user pinyin index's `(token, keys)` records — which `USER_FILE`
+/// readings lookup finds. Both keyspaces carry every record, so the set
+/// absorbs the duplicate. An absent or unreadable file indexes nothing,
+/// as an empty `ChewingLargeTable2` does.
+fn load_user_pinyin_index(dir: &Path, loaded: &mut Loaded) {
+    let path = dir.join(UserDbm::PinyinIndex.file_name());
+    if !path.exists() {
+        return;
+    }
+    let store = match DefaultStore::open_read_only(&path) {
+        Ok(store) => store,
+        Err(error) => {
+            loaded
+                .skipped
+                .push(format!("{}: {error}", UserDbm::PinyinIndex.file_name()));
+            remove_dbm_sidecars(dir, &path);
+            return;
+        }
+    };
+    let indexed = &mut loaded.state.indexed;
+    let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
+        if value.is_empty() || key.is_empty() || !key.len().is_multiple_of(2) {
+            return Ok(()); // a prefix marker, or not a key upstream writes
+        }
+        let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(value, key.len() / 2)
+        else {
+            return Ok(());
+        };
+        for item in items {
+            indexed.insert((
+                item.token,
+                item.keys.iter().map(|key| key.to_packed()).collect(),
+            ));
+        }
+        Ok(())
+    };
+    if let Err(error) = store.range_raw(
+        std::ops::Bound::Unbounded,
+        std::ops::Bound::Unbounded,
+        &mut visit,
+    ) {
+        loaded
+            .skipped
+            .push(format!("{}: {error}", UserDbm::PinyinIndex.file_name()));
     }
     drop(store);
     remove_dbm_sidecars(dir, &path);
@@ -713,7 +787,9 @@ pub fn save(
             .collect();
         stage_user_bigram(dir, &bigram_rows)?;
 
-        // ---- the two index trees, rebuilt from the USER_FILE items ------
+        // ---- the two index trees, from the USER_FILE items ---------------
+        // The phrase index holds every item; the pinyin index only the
+        // readings `add_index` saw (`UserState::indexed`).
         let mut chewing_rows: Vec<PinyinIndexItem> = Vec::new();
         let mut phrase_rows: Vec<(Vec<u32>, u32)> = Vec::new();
         for (&nibble, items) in &state.libraries {
@@ -721,6 +797,9 @@ pub fn save(
                 let token = token_of(nibble, slot);
                 phrase_rows.push((item.phrase.clone(), token));
                 for (packed, _freq) in &item.prons {
+                    if !state.indexed.contains(&(token, packed.clone())) {
+                        continue;
+                    }
                     chewing_rows.push(PinyinIndexItem {
                         token,
                         keys: packed
@@ -1059,7 +1138,9 @@ mod tests {
                     )),
                 )]),
             )]),
+            indexed: std::collections::BTreeSet::new(),
         }
+        .index_every_reading()
     }
 
     fn tempdir(name: &str) -> PathBuf {
@@ -2029,7 +2110,9 @@ mod tests {
                 bigram,
                 libraries,
                 system_overrides,
-            },
+                indexed: std::collections::BTreeSet::new(),
+            }
+            .index_every_reading(),
             originals,
         )
     }

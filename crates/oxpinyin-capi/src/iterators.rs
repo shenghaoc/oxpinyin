@@ -7,8 +7,9 @@
 use std::os::raw::{c_char, c_int};
 use std::ptr;
 
-use oxpinyin_core::graph::FewestKeys;
-use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library};
+use oxpinyin_core::graph::SegmentGraph;
+use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
+use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library, toned_key};
 
 use crate::ffi::{cstr_to_owned_lossy, owned_cstr};
 use crate::state::{ExportedBigramRow, context_ref};
@@ -98,14 +99,20 @@ pub extern "C" fn pinyin_begin_add_phrases(
 ///                                 gint count);
 /// ```
 ///
-/// `count` of -1 means use the default value. The pinyin is parsed with the
-/// frozen untuned full-pinyin inventory under upstream's longest-parsed-prefix
-/// then fewest-keys rule (`pinyin_parser2.cpp` selection, [`FewestKeys`]).
-/// A phrase whose character count does not equal the key count reports
-/// `false`; trailing unparsed pinyin bytes are ignored exactly as upstream's
-/// parser does.
-/// Negative counts other than -1 are rejected rather than reproduced as the
-/// upstream `guint32` wrap (the pin segfaults on them).
+/// `pinyin.cpp:614-652` then `_add_phrase` (`:514-611`): the reading is
+/// parsed with `FullPinyinParser2` under `PINYIN_CORRECT_ALL | USE_TONE`
+/// (`:630`) — tone digits are kept on the keys, corrections apply
+/// (`jv` → `ju`), trailing unparsed bytes are ignored — and the phrase's
+/// character count must equal the key count, `0 < len < 16`. `count` of
+/// -1 is the default 5; any other value reaches the item as its `guint32`
+/// bit pattern (`-2` stores 4294967294 and exports as -2).
+///
+/// Libraries: the `USER_FILE` sub-indexes (5, 6, 7) take the phrase. The
+/// system sub-indexes (1..=4) are refused until oxpinyin models system
+/// items (#599); every other nibble has no sub-index
+/// (`get_range` → `ERROR_NO_SUB_PHRASE_INDEX`) and answers `false`, and
+/// 16..=255 — an out-of-bounds read of the pin's 16-slot array
+/// (`phrase_index.h:630`) — answer `false` without reproducing it.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_iterator_add_phrase(
     iter: *mut ImportIterator,
@@ -113,21 +120,17 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     pinyin: *const c_char,
     count: c_int,
 ) -> bool {
-    if iter.is_null() {
+    if iter.is_null() || phrase.is_null() || pinyin.is_null() {
         return false;
     }
 
     // `cstr_to_owned_lossy` is the C ABI entry point's string
-    // marshaller: null reads as empty, which validation rejects.
+    // marshaller.
     let phrase = cstr_to_owned_lossy(phrase);
     let pinyin = cstr_to_owned_lossy(pinyin);
-    let count = if count == -1 {
-        None
-    } else if count >= 0 {
-        Some(u64::try_from(count).unwrap_or(0))
-    } else {
-        return false;
-    };
+    // `if (-1 == count) count = default_count;` (`pinyin.cpp:523-524`);
+    // otherwise the `gint` is used as the `guint32` it becomes.
+    let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
 
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
@@ -138,19 +141,26 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     let Some(user) = handle.user.as_mut() else {
         return false;
     };
-    let Some(parsed) = FewestKeys::parse(&pinyin) else {
-        return false;
-    };
-    let Some(keys) = parsed
-        .keys()
-        .iter()
-        .map(|key| PinyinKey::try_from(key.index()).ok())
-        .collect::<Option<Vec<PinyinKey>>>()
-    else {
+    let Some(keys) = parse_import_pinyin(&pinyin) else {
         return false;
     };
     user.add_phrase_in(handle.index, &phrase, &keys, count)
         .is_ok()
+}
+
+/// `FullPinyinParser2::parse` under `PINYIN_CORRECT_ALL | USE_TONE`
+/// (`pinyin.cpp:629-637`, `pinyin_parser2.cpp:217-381`): the longest
+/// parsable prefix, fewest keys, as toned store keys. `None` when the
+/// input is past the graph limit or a key does not fit the store's key
+/// layout.
+fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
+    let options = OptionBits::from_bits(PINYIN_CORRECT_ALL | USE_TONE);
+    let graph = SegmentGraph::build_with_options(pinyin.as_bytes(), options).ok()?;
+    graph
+        .fewest_keys(false)
+        .iter()
+        .map(|edge| toned_key(edge.key().index(), edge.tone()))
+        .collect()
 }
 
 /// End the import iterator, arm `m_modified`, and free it.
@@ -282,7 +292,10 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     true
 }
 
-/// The pin uses -1 for zero frequency and the guint32 bit pattern otherwise.
+/// The `gint` a stored pronunciation count exports as: `-1` ("default")
+/// for a zero frequency, else the `guint32` frequency's bit pattern
+/// (`*count = -1; … if (freq > 0) *count = freq;`, `pinyin.cpp:715`,
+/// `:738-739`).
 fn export_count(count: u64) -> c_int {
     let freq = u32::try_from(count).unwrap_or(u32::MAX);
     if freq == 0 { -1 } else { freq.cast_signed() }

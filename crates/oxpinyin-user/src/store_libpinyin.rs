@@ -45,7 +45,7 @@ use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::{self, StoreInner};
 use crate::store::{
     ALLOC, ALLOC_CURSOR, BIGRAM, BIGRAM_TOTAL, GenericUserStore, PHRASE, PHRASE_BY_LIB_TEXT,
-    PHRASE_BY_TEXT, PRONUNCIATION, Token, UNIGRAM, UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY,
+    PHRASE_BY_TEXT, PRONUNCIATION, PronValue, Token, UNIGRAM, UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY,
     UserStoreError,
 };
 
@@ -294,21 +294,28 @@ fn seed_txn(
                     &codec::encode_token(token),
                 )?;
             }
-            for (keys, freq) in &item.prons {
+            for (seq, (keys, freq)) in (0_u32..).zip(&item.prons) {
                 // The store's pronunciation table keys on the dense
                 // syllable id (`PinyinKey`), while the pin's file format
                 // carries packed `ChewingKey` words — the conversion
                 // belongs here, at the seam between the two models. A
                 // key that names no syllable in this engine's frozen
                 // inventory cannot be represented, so the reading is
-                // dropped rather than stored as a wrong id.
+                // dropped rather than stored as a wrong id. The item's
+                // reading order is the insertion order; the user pinyin
+                // index says which readings lookup finds.
                 let Some(ids) = packed_to_pinyin_keys(keys) else {
                     continue;
+                };
+                let value = PronValue {
+                    count: u64::from(*freq),
+                    seq,
+                    indexed: state.indexed.contains(&(token, keys.clone())),
                 };
                 txn.put(
                     PRONUNCIATION,
                     &codec::encode_token_bytes(token, &phrase::encode_keys(&ids)),
-                    &codec::encode_u64(u64::from(*freq)),
+                    &value.encode(),
                 )?;
             }
             txn.put(
@@ -407,12 +414,11 @@ pub fn export_state<S: WriteStore>(
         Ok(())
     })?;
 
-    let mut pronunciations: BTreeMap<Token, Vec<(Vec<u16>, u64)>> = BTreeMap::new();
+    let mut pronunciations: BTreeMap<Token, Vec<StoredReading>> = BTreeMap::new();
     db.for_each(PRONUNCIATION, &mut |key, value| {
         let (token, key_bytes) = codec::decode_token_bytes(key)
             .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-        let count = codec::decode_u64(value)
-            .map_err(|_| StoreError::Backend("corrupt pronunciation count".into()))?;
+        let value = PronValue::decode(value)?;
         // The reverse of the seed conversion: the store holds dense
         // syllable ids, the file format wants packed `ChewingKey`
         // words. A stored id outside the engine's inventory is skipped
@@ -420,12 +426,18 @@ pub fn export_state<S: WriteStore>(
         let Some(packed) = pinyin_keys_to_packed(&phrase::decode_keys(key_bytes)) else {
             return Ok(());
         };
-        pronunciations
-            .entry(token)
-            .or_default()
-            .push((packed, count));
+        pronunciations.entry(token).or_default().push((
+            value.seq,
+            packed,
+            value.count,
+            value.indexed,
+        ));
         Ok(())
     })?;
+    for rows in pronunciations.values_mut() {
+        // Insertion order: the item's reading order in the file.
+        rows.sort_by_key(|row| row.0);
+    }
 
     let mut unigrams: BTreeMap<Token, u64> = BTreeMap::new();
     db.for_each(UNIGRAM, &mut |key, value| {
@@ -460,19 +472,16 @@ pub fn export_state<S: WriteStore>(
 
     let mut state = UserState::default();
     for (token, text) in &phrase_text {
-        let Some(delta) = unigrams.get(token) else {
-            continue;
-        };
+        // An item whose unigram add the sub-index refused keeps 0
+        // (`SubPhraseIndex::add_unigram_frequency`'s overflow guard).
+        let delta = unigrams.get(token).copied().unwrap_or(0);
         let prons = pronunciations.get(token).map_or(Vec::new(), |rows| {
             rows.iter()
-                .map(|(packed, count)| {
-                    (
-                        packed
-                            .iter()
-                            .map(|&bits| u16::from_le_bytes(bits.to_le_bytes()))
-                            .collect::<Vec<_>>(),
-                        u32::try_from(*count).unwrap_or(u32::MAX),
-                    )
+                .map(|(_, packed, count, indexed)| {
+                    if *indexed {
+                        state.indexed.insert((*token, packed.clone()));
+                    }
+                    (packed.clone(), u32::try_from(*count).unwrap_or(u32::MAX))
                 })
                 .collect()
         });
@@ -481,7 +490,7 @@ pub fn export_state<S: WriteStore>(
             token & crate::phrase::PHRASE_MASK,
             ChunkItem {
                 phrase: text.clone(),
-                unigram: u32::try_from(*delta).unwrap_or(u32::MAX),
+                unigram: u32::try_from(delta).unwrap_or(u32::MAX),
                 prons,
             },
         );
@@ -530,6 +539,10 @@ pub fn export_state<S: WriteStore>(
     Ok(state)
 }
 
+/// One stored reading on its way to the file: insertion sequence, packed
+/// `ChewingKey` words, count, and whether the user pinyin index carries it.
+type StoredReading = (u32, Vec<u16>, u64, bool);
+
 /// UCS-4 code points as text; `None` when any scalar is invalid.
 fn ucs4_to_string(codes: &[u32]) -> Option<String> {
     codes.iter().copied().map(char::from_u32).collect()
@@ -544,20 +557,21 @@ fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase::PinyinKey>
     packed
         .iter()
         .map(|&bits| {
-            let spelling = oxpinyin_core::ChewingKey::from_packed(bits).pinyin_spelling();
-            oxpinyin_core::SyllableKey::from_text(spelling)
-                .and_then(|syllable| u16::try_from(syllable.index()).ok())
+            let key = oxpinyin_core::ChewingKey::from_packed(bits);
+            let syllable = oxpinyin_core::SyllableKey::from_text(key.pinyin_spelling())?;
+            phrase::toned_key(syllable.index(), key.tone)
         })
         .collect()
 }
 
-/// The reverse: dense syllable ids as packed `ChewingKey` words.
+/// The reverse: dense syllable ids, tone included, as packed `ChewingKey`
+/// words.
 fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<Vec<u16>> {
     ids.iter()
         .map(|&id| {
-            let syllable = oxpinyin_core::SyllableKey::from_index(usize::from(id))?;
+            let syllable = oxpinyin_core::SyllableKey::from_index(phrase::key_syllable(id))?;
             oxpinyin_core::ChewingKey::from_pinyin(syllable.text())
-                .map(oxpinyin_core::ChewingKey::to_packed)
+                .map(|key| key.with_tone(phrase::key_tone(id)).to_packed())
         })
         .collect()
 }
@@ -739,7 +753,9 @@ mod tests {
                 )]),
             )]),
             system_overrides: BTreeMap::new(),
-        };
+            indexed: std::collections::BTreeSet::new(),
+        }
+        .index_every_reading();
         persistence::save(&dir, &state, &originals(), &versions(), 1).expect("save");
 
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)

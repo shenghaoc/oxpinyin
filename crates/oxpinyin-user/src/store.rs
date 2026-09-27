@@ -210,6 +210,182 @@ fn bump_unigram_total(txn: &mut dyn WriteTxn, delta: u64) -> Result<(), StoreErr
     Ok(())
 }
 
+/// A `PRONUNCIATION` row's value: the reading's count, its insertion
+/// sequence inside the phrase, and whether the user pinyin index carries
+/// it (`count` in [`codec::encode_u64`]'s layout, then `seq: u32 BE`,
+/// then `indexed: u8`).
+///
+/// libpinyin keeps a phrase's pronunciations in the order they were
+/// appended (`PhraseItem::add_pronunciation`, `phrase_index.cpp:86-91`)
+/// and indexes only the reading a phrase was created with
+/// (`pinyin.cpp:569-600`); the row key `(token, keys)` carries neither, so
+/// the value does. A bare 8-byte count — a row written before this
+/// layout — reads as indexed, sequenced after every sequenced row.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PronValue {
+    pub(crate) count: u64,
+    pub(crate) seq: u32,
+    pub(crate) indexed: bool,
+}
+
+impl PronValue {
+    const LEN: usize = 13;
+
+    pub(crate) fn encode(self) -> [u8; Self::LEN] {
+        let mut out = [0_u8; Self::LEN];
+        out[..8].copy_from_slice(&codec::encode_u64(self.count));
+        out[8..12].copy_from_slice(&self.seq.to_be_bytes());
+        out[12] = u8::from(self.indexed);
+        out
+    }
+
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, StoreError> {
+        let corrupt = || StoreError::Backend("corrupt pronunciation value".into());
+        match bytes.len() {
+            8 => Ok(Self {
+                count: codec::decode_u64(bytes).map_err(|_| corrupt())?,
+                seq: u32::MAX,
+                indexed: true,
+            }),
+            Self::LEN => {
+                let count = codec::decode_u64(&bytes[..8]).map_err(|_| corrupt())?;
+                let mut seq = [0_u8; 4];
+                seq.copy_from_slice(&bytes[8..12]);
+                Ok(Self {
+                    count,
+                    seq: u32::from_be_bytes(seq),
+                    indexed: bytes[12] != 0,
+                })
+            }
+            _ => Err(corrupt()),
+        }
+    }
+}
+
+/// One stored reading of a token, as the write paths walk them.
+pub(crate) struct PronRow {
+    pub(crate) key_bytes: Vec<u8>,
+    pub(crate) value: PronValue,
+}
+
+/// Puts `rows` into insertion order: ascending sequence, the table's key
+/// order among equal sequences (the stable sort keeps it).
+fn sort_by_insertion<T>(rows: &mut [T], seq: impl Fn(&T) -> u32) {
+    rows.sort_by_key(|row| seq(row));
+}
+
+/// [`ADD_PHRASE_UNIGRAM_FACTOR`] as `_add_phrase`'s `guint32`
+/// `unigram_factor` (`pinyin.cpp:522`).
+const ADD_PHRASE_UNIGRAM_FACTOR_U32: u32 = 3;
+const _: () = assert!(ADD_PHRASE_UNIGRAM_FACTOR_U32 as u64 == ADD_PHRASE_UNIGRAM_FACTOR);
+
+/// `PhraseItem::add_pronunciation(keys, delta)` (`phrase_index.cpp:56-91`)
+/// on `token`'s stored readings: an exact-key match (tone included,
+/// `pinyin_exact_compare2`) gains `delta` unless the running `guint32`
+/// total of the readings up to and including it would overflow — then
+/// nothing changes (the pin's `return false`, which `_add_phrase`
+/// discards); any other key is appended with `delta` as its count.
+fn add_pronunciation(
+    txn: &mut dyn WriteTxn,
+    token: Token,
+    key_bytes: &[u8],
+    delta: u32,
+    indexed: bool,
+) -> Result<(), StoreError> {
+    let rows = collect_pronunciations_from_txn(txn, token)?;
+    let mut total_freq: u32 = 0;
+    for row in &rows {
+        // Stored counts are `guint32` fields upstream.
+        let freq = u32::try_from(row.value.count).unwrap_or(u32::MAX);
+        total_freq = total_freq.wrapping_add(freq);
+        if row.key_bytes == key_bytes {
+            if delta > 0 && total_freq.checked_add(delta).is_none() {
+                return Ok(());
+            }
+            let value = PronValue {
+                count: u64::from(freq.wrapping_add(delta)),
+                ..row.value
+            };
+            txn.put(
+                PRONUNCIATION,
+                &codec::encode_token_bytes(token, key_bytes),
+                &value.encode(),
+            )?;
+            return Ok(());
+        }
+    }
+    let value = PronValue {
+        count: u64::from(delta),
+        seq: next_pron_seq(&rows),
+        indexed,
+    };
+    txn.put(
+        PRONUNCIATION,
+        &codec::encode_token_bytes(token, key_bytes),
+        &value.encode(),
+    )
+}
+
+/// `FacadePhraseIndex::add_unigram_frequency` (`phrase_index.h:628-635`)
+/// for a `USER_FILE` token: the facade total always takes `delta`; the
+/// sub-index refuses it — the item's unigram unchanged — when its own
+/// `guint32` total would overflow (`SubPhraseIndex::add_unigram_frequency`,
+/// `phrase_index.cpp:150-178`).
+fn add_unigram_frequency(
+    txn: &mut dyn WriteTxn,
+    library: u8,
+    token: Token,
+    delta: u32,
+) -> Result<(), StoreError> {
+    bump_unigram_total(txn, u64::from(delta))?;
+    if library_total_overflows(txn, library, delta)? {
+        return Ok(());
+    }
+    let uni_key = codec::encode_token(token);
+    let prev = txn_get_u64_or(txn, UNIGRAM, &uni_key, 0)?;
+    txn.put(
+        UNIGRAM,
+        &uni_key,
+        &codec::encode_u64(prev.saturating_add(u64::from(delta))),
+    )
+}
+
+/// Whether `library`'s `guint32` unigram total plus `delta` overflows —
+/// the sub-index's `m_total_freq > m_total_freq + delta` guard. The
+/// facade total bounds every library's sum from above, so the library's
+/// rows are summed only when that bound itself could overflow.
+fn library_total_overflows(
+    txn: &dyn WriteTxn,
+    library: u8,
+    delta: u32,
+) -> Result<bool, StoreError> {
+    if delta == 0 {
+        return Ok(false);
+    }
+    let bound = txn_get_u64_or(txn, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)?;
+    if bound <= u64::from(u32::MAX - delta) {
+        return Ok(false);
+    }
+    let lo = codec::encode_token(phrase::phrase_index_make_token(library, 0));
+    let hi = u32::from(library)
+        .checked_add(1)
+        .map(|next| codec::encode_token(next << 24));
+    let mut total: u32 = 0;
+    txn.range(
+        UNIGRAM,
+        Bound::Included(lo.as_slice()),
+        hi.as_ref()
+            .map_or(Bound::Unbounded, |hi| Bound::Excluded(hi.as_slice())),
+        &mut |_key, value| {
+            let unigram = codec::decode_u64(value)
+                .map_err(|_| StoreError::Backend("corrupt unigram".into()))?;
+            total = total.wrapping_add(u32::try_from(unigram).unwrap_or(u32::MAX));
+            Ok(())
+        },
+    )?;
+    Ok(total.checked_add(delta).is_none())
+}
+
 /// Pronunciation-range bounds for `token`: every key whose 4-byte
 /// big-endian prefix is `token`, so `[token, token + 1)` over the prefix
 /// alone. The bytes are exactly what `encode_token_bytes(token, &[])`
@@ -235,22 +411,26 @@ fn collect_pronunciations_from_store(
         &mut |key, value| {
             let (_, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-            let count = codec::decode_u64(value)
-                .map_err(|_| StoreError::Backend("corrupt pronunciation count".into()))?;
-            out.push(UserPronunciation::new(
-                phrase::decode_keys(key_bytes),
-                count,
+            let value = PronValue::decode(value)?;
+            out.push((
+                value.seq,
+                UserPronunciation::new(phrase::decode_keys(key_bytes), value.count, value.indexed),
             ));
             Ok(())
         },
     )?;
-    Ok(out)
+    sort_by_insertion(&mut out, |row| row.0);
+    Ok(out
+        .into_iter()
+        .map(|(_, pronunciation)| pronunciation)
+        .collect())
 }
 
-fn collect_pronunciations_from_txn(
+/// `token`'s readings inside `txn`, in insertion order.
+pub(crate) fn collect_pronunciations_from_txn(
     txn: &dyn WriteTxn,
     token: Token,
-) -> Result<Vec<(Vec<u8>, u64)>, StoreError> {
+) -> Result<Vec<PronRow>, StoreError> {
     let (lo, hi) = pronunciation_range(token);
     let mut out = Vec::new();
     txn.range(
@@ -260,19 +440,32 @@ fn collect_pronunciations_from_txn(
         &mut |key, value| {
             let (_, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-            let count = codec::decode_u64(value)
-                .map_err(|_| StoreError::Backend("corrupt pronunciation count".into()))?;
-            out.push((key_bytes.to_vec(), count));
+            out.push(PronRow {
+                key_bytes: key_bytes.to_vec(),
+                value: PronValue::decode(value)?,
+            });
             Ok(())
         },
     )?;
+    sort_by_insertion(&mut out, |row| row.value.seq);
     Ok(out)
+}
+
+/// The sequence the next reading appended to a phrase with `rows` takes.
+fn next_pron_seq(rows: &[PronRow]) -> u32 {
+    rows.iter()
+        .map(|row| row.value.seq.saturating_add(1))
+        .max()
+        .unwrap_or(0)
 }
 
 fn remove_pronunciations(txn: &mut dyn WriteTxn, token: Token) -> Result<(), StoreError> {
     let rows = collect_pronunciations_from_txn(txn, token)?;
-    for (key_bytes, _) in rows {
-        txn.remove(PRONUNCIATION, &codec::encode_token_bytes(token, &key_bytes))?;
+    for row in rows {
+        txn.remove(
+            PRONUNCIATION,
+            &codec::encode_token_bytes(token, &row.key_bytes),
+        )?;
     }
     Ok(())
 }
@@ -289,9 +482,10 @@ fn collect_pronunciations_for_tokens(
     store: &impl ReadStore,
     tokens: &std::collections::HashSet<Token>,
 ) -> Result<std::collections::BTreeMap<Token, Vec<UserPronunciation>>, UserStoreError> {
-    let mut out = std::collections::BTreeMap::new();
+    let mut out: std::collections::BTreeMap<Token, Vec<(u32, UserPronunciation)>> =
+        std::collections::BTreeMap::new();
     if tokens.is_empty() {
-        return Ok(out);
+        return Ok(std::collections::BTreeMap::new());
     }
     store.for_each(PRONUNCIATION, &mut |key, value| {
         let (token, key_bytes) = codec::decode_token_bytes(key)
@@ -299,17 +493,20 @@ fn collect_pronunciations_for_tokens(
         if !tokens.contains(&token) {
             return Ok(());
         }
-        let count = codec::decode_u64(value)
-            .map_err(|_| StoreError::Backend("corrupt pronunciation count".into()))?;
-        out.entry(token)
-            .or_insert_with(Vec::new)
-            .push(UserPronunciation::new(
-                phrase::decode_keys(key_bytes),
-                count,
-            ));
+        let value = PronValue::decode(value)?;
+        out.entry(token).or_default().push((
+            value.seq,
+            UserPronunciation::new(phrase::decode_keys(key_bytes), value.count, value.indexed),
+        ));
         Ok(())
     })?;
-    Ok(out)
+    Ok(out
+        .into_iter()
+        .map(|(token, mut rows)| {
+            sort_by_insertion(&mut rows, |row| row.0);
+            (token, rows.into_iter().map(|(_, row)| row).collect())
+        })
+        .collect())
 }
 
 /// The pronunciation key tails owned by `tokens`, from **one** ordered
@@ -736,7 +933,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !is_user_file_library(library) || !phrase::phrase_and_keys_valid(phrase, keys) {
             return Err(UserStoreError::InvalidPhrase);
         }
-        let count = count.unwrap_or(DEFAULT_PHRASE_COUNT);
+        // `_add_phrase`'s `count` reaches the item as a `guint32` delta
+        // (`add_pronunciation(keys, count)`, `pinyin.cpp:579`, `:603`): the
+        // C ABI hands its `gint`'s bit pattern over; a wider caller value
+        // saturates.
+        let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
         let key_bytes = phrase::encode_keys(keys);
 
         let db = self.database();
@@ -761,13 +962,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             };
 
             if let Some(token) = existing {
-                let pron_key = codec::encode_token_bytes(token, &key_bytes);
-                let prev = txn_get_u64_or(txn, PRONUNCIATION, &pron_key, 0)?;
-                txn.put(
-                    PRONUNCIATION,
-                    &pron_key,
-                    &codec::encode_u64(prev.saturating_add(count)),
-                )?;
+                // The existing-item path (`pinyin.cpp:566-583`): the
+                // reading is merged into the item — no unigram, and no
+                // `add_index`, so a reading this adds stays out of the
+                // user pinyin index.
+                add_pronunciation(txn, token, &key_bytes, delta, false)?;
                 Ok(Ok(token))
             } else {
                 let alloc_key = codec::encode_u8(ALLOC_CURSOR);
@@ -814,18 +1013,19 @@ impl<S: WriteStore> GenericUserStore<S> {
                     )?;
                 }
 
+                // The new-item path (`pinyin.cpp:585-607`): indexed
+                // under its reading, then `add_unigram_frequency(token,
+                // count * unigram_factor)` in `guint32` arithmetic.
                 let pron_key = codec::encode_token_bytes(token, &key_bytes);
-                txn.put(PRONUNCIATION, &pron_key, &codec::encode_u64(count))?;
+                let value = PronValue {
+                    count: u64::from(delta),
+                    seq: 0,
+                    indexed: true,
+                };
+                txn.put(PRONUNCIATION, &pron_key, &value.encode())?;
 
-                let delta = count.saturating_mul(ADD_PHRASE_UNIGRAM_FACTOR);
-                let uni_key = codec::encode_token(token);
-                let prev = txn_get_u64_or(txn, UNIGRAM, &uni_key, 0)?;
-                txn.put(
-                    UNIGRAM,
-                    &uni_key,
-                    &codec::encode_u64(prev.saturating_add(delta)),
-                )?;
-                bump_unigram_total(txn, delta)?;
+                let unigram = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
+                add_unigram_frequency(txn, library, token, unigram)?;
                 Ok(Ok(token))
             }
         })??;
@@ -901,12 +1101,19 @@ impl<S: WriteStore> GenericUserStore<S> {
             for (keys, count) in valid {
                 let key_bytes = phrase::encode_keys(keys);
                 let pron_key = codec::encode_token_bytes(token, &key_bytes);
-                let prev = txn_get_u64_or(txn, PRONUNCIATION, &pron_key, 0)?;
-                txn.put(
-                    PRONUNCIATION,
-                    &pron_key,
-                    &codec::encode_u64(prev.saturating_add(*count)),
-                )?;
+                let rows = collect_pronunciations_from_txn(txn, token)?;
+                let value = match rows.iter().find(|row| row.key_bytes == key_bytes) {
+                    Some(row) => PronValue {
+                        count: row.value.count.saturating_add(*count),
+                        ..row.value
+                    },
+                    None => PronValue {
+                        count: *count,
+                        seq: next_pron_seq(&rows),
+                        indexed: true,
+                    },
+                };
+                txn.put(PRONUNCIATION, &pron_key, &value.encode())?;
             }
             Ok(Ok(token))
         })??;
