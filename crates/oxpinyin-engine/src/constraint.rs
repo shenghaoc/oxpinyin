@@ -88,8 +88,10 @@ impl ConstraintStore {
         self.cells.resize(len, Cell::None);
     }
 
-    /// `add_constraint` (`phonetic_lookup.cpp:61-86`): clear anything the
-    /// span covers, write the `OneStep` at `start` and `NoSearch`
+    /// `add_constraint` (`phonetic_lookup.cpp:61-86`): clear every forcing
+    /// the span overlaps — `clear_constraint` per covered cell (`:66-68`),
+    /// which clears each overlapped run whole, the part outside the span
+    /// included — then write the `OneStep` at `start` and `NoSearch`
     /// back-pointers on the interior. Returns the span length, or 0 when
     /// the span overruns the array (upstream's refusal, not an abort).
     pub(crate) fn add(
@@ -102,8 +104,8 @@ impl ConstraintStore {
         if end > self.cells.len() || start >= end {
             return 0;
         }
-        for cell in &mut self.cells[start..end] {
-            *cell = Cell::None;
+        for index in start..end {
+            self.clear_by_offset(index);
         }
         self.cells[start] = Cell::OneStep { token, end, text };
         for index in start + 1..end {
@@ -320,6 +322,23 @@ mod tests {
         assert!(!dropped);
         assert!(store.is_one_step_at(0));
         assert_eq!(store.cell(7), Some(&Cell::None));
+    }
+
+    /// `add_constraint` clears every run the span overlaps through
+    /// `clear_constraint` (`phonetic_lookup.cpp:66-68`), so the part of an
+    /// overlapped run outside the new span goes too — no dangling
+    /// `OneStep` survives in front of it.
+    #[test]
+    fn add_clears_a_partly_overlapped_run_whole() {
+        let mut store = ConstraintStore::default();
+        store.resize(8);
+        store.add(0, 4, token(7), "你好".into());
+        assert_eq!(store.add(2, 6, token(8), "好事".into()), 4);
+        assert_eq!(store.cell(0), Some(&Cell::None));
+        assert_eq!(store.cell(1), Some(&Cell::None));
+        assert!(store.is_one_step_at(2));
+        assert_eq!(store.cell(5), Some(&Cell::NoSearch { start: 2 }));
+        assert_eq!(store.cell(6), Some(&Cell::None));
     }
 
     #[test]

@@ -232,7 +232,11 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     // terminal case answers the buffer's one-past-end (the pin's
     // reserved slot). The after-cursor path keeps the composition-anchored
     // cached list when the mapped offset is at/before the composition
-    // offset.
+    // offset. Amended 2026-09-27 (maintainer ruling, register row 37): only AT
+    // it — the pin builds every after-cursor window from `offset`
+    // (`zhuyin_guess_candidates_after_cursor`, `zhuyin.cpp:1460`), and a
+    // choose from a window behind the composition moves the record back
+    // to the chosen span (`Session::select_anchored`).
     let session_offset = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
         oxpinyin_facade::zhuyin_lookup_session_offset(
             parse,
@@ -260,7 +264,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         inst.core.anchored_window = Some((oxpinyin_facade::BEFORE_CURSOR_ANCHOR, window.clone()));
         window
     } else {
-        inst.core.anchored_window = if session_offset <= inst.core.session.composition_offset() {
+        inst.core.anchored_window = if session_offset == inst.core.session.composition_offset() {
             None
         } else {
             if let Ok(window) = inst.core.session.candidates_at(session_offset) {

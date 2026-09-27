@@ -1663,6 +1663,57 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
     crate::context::pinyin_fini(context);
 }
 
+/// Register row 37 (maintainer ruling 2026-09-27): after 你好 is chosen
+/// (cursor 5), a lookup at 0 — ibus's `moveCursorLeft` shape — shows the
+/// offset-0 window, not the composition-anchored one, and choosing 你
+/// from it forces `[0, 2)` over the overlapped 你好 and answers cursor 2:
+/// the pin's `offset + len` (`pinyin.cpp:2578-2590`,
+/// `phonetic_lookup.cpp:61-86`), the pre-registered phase E3 shape.
+#[test]
+fn choosing_behind_the_composition_answers_the_chosen_span() {
+    fn row(instance: *mut PinyinInstance, text: &str) -> *mut LookupCandidate {
+        // SAFETY: live instance immediately after a guess.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|cd| cd.text.as_bytes() == text.as_bytes())
+            .unwrap_or_else(|| panic!("{text} is offered"));
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &raw mut cand
+        ));
+        cand
+    }
+    let user_dir = TempUserDir::new("row37-behind-choose");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let _ = candidate(instance, "nihao", 0);
+    assert_eq!(
+        pinyin_choose_candidate(instance, 0, row(instance, "你好")),
+        5
+    );
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    assert_eq!(pinyin_choose_candidate(instance, 0, row(instance, "你")), 2);
+    {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        assert_eq!(
+            inst.core.session.composition_offset(),
+            2,
+            "the record moved back"
+        );
+        assert_eq!(
+            inst.core.session.selected_tokens().len(),
+            1,
+            "你 replaced 你好 in the record"
+        );
+    }
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 #[test]
 fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
     let user_dir = TempUserDir::new("c2-reanchor-choose");

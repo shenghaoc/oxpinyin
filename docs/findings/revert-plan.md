@@ -23,7 +23,7 @@ and again for rows 35–37, and 2026-09-20 for rows 32 (closed) and
 | 11 | #34 imported user phrase after `guess_sentence` | **open** — registered 2026-09-19 (probe residue C): nbest cleared on parse; NBEST-wins dedup before `SORT_WITHOUT_SENTENCE` (§11) |
 | 12 | #35 user-library tokens refused an n-best step cost | **closed in code** (2026-09-19): the presence gate mirrors the pin's `get_phrase_item` over the loaded sub-index — user-file tokens (nibbles 5/6/7) priced from their user delta alone, masked libraries and missing items still refused; phase A/X/D IDENTICAL, the runtime probe's `Some(21392)` measured (§12) |
 | 13 | #36 bigram export iterator's last-row return value | **open** — registered 2026-09-19 (probe side observation (i)): the pin returns `has_next_phrase` after advancing, oxpinyin returns `true` for every fetched row (§13); independent of the sequence |
-| 14 | #37 candidate window behind the composition offset | **open** — registered 2026-09-19 (probe residue E): the C ABI serves the composition-anchored cached list for any lookup offset at or behind a choose; an empty list at `(0, 0x1f)` after a whole-composition choose (§14); executes second |
+| 14 | #37 candidate window behind the composition offset | **closed in code** (2026-09-27, maintainer ruling of that date): both legs — the display leg re-anchors at any offset other than the composition's, and a choose behind it forces its span and moves the record back (§14 amendment). Registered 2026-09-19 (probe residue E): the C ABI served the composition-anchored cached list for any lookup offset at or behind a choose; an empty list at `(0, 0x1f)` after a whole-composition choose |
 | 15 | #38 the train gate's no-selection arm | **closed in code** (2026-09-20): `InstanceCore::train` widens to the pin's own disjunction — a recorded selection OR a live sentence result (`pinyin.cpp:2678-2679`; `sentence_lookup_active` is the engine's stand-in for `results.size() > 0`) — landed with §9 (§15); pinyin measured IDENTICAL, the zhuyin differential owed |
 
 The sections below are the 2026-08-28 text, kept as the record of what
@@ -480,6 +480,30 @@ land with the measurements.
   the whole phase runs IDENTICAL.
 - **Blocked on:** nothing — the display leg is unstarted work.
   Executes second (see the order below).
+- **Amendment (2026-09-27, maintainer ruling of that date).** Executed with
+  both legs, the scoping caveat above resolved by the ruling: lift
+  `SelectionAnchorBeforeComposition` so a choose behind the
+  composition offset works as on the pin. Display leg: both facades
+  re-anchor whenever the lookup offset ≠ the composition offset
+  (`oxpinyin-capi` and `oxpinyin-zhuyin-capi` `sentence.rs`). Choose
+  leg: `Session::select_inner` sends a token-bearing row whose span
+  starts before the composition offset to `select_behind` — the pin's
+  `add_constraint(m_begin, m_end, token)` (`pinyin.cpp:2578-2590`,
+  `m_begin = start = offset` at `:2246`), which clears every forcing
+  the span overlaps (`phonetic_lookup.cpp:61-86`, `clear_constraint`
+  per cell `:66-68`; `ConstraintStore::add` now clears a partly
+  overlapped run whole, as the pin does) — and the record is re-derived
+  from the store, so it moves back to the chosen span; the choose
+  answers the span's end (`offset + len`). The refusal remains only
+  for a row with no token (the engine's raw-input `Fallback` row).
+  Measured by `tools/bisection/candidate-assembly-diff.c` phases C and
+  M (choose after a `moveCursorLeft`-shaped lookup at 0), libpinyin and
+  libzhuyin, IDENTICAL on tkrzw/bdb/kc except libzhuyin M2, where an
+  earlier forward choose's forcing is already lost before the behind
+  choose (#602, independent of this row); the pre-registered E3 shape
+  (choose 你 at 0 after 你好: cursor 2, 你@0..2 replacing 你好) is
+  pinned by `choosing_behind_the_composition_moves_the_record_back`
+  and `choosing_behind_the_composition_answers_the_chosen_span`.
 
 ### 15 — The train gate's no-selection arm (register #38)
 

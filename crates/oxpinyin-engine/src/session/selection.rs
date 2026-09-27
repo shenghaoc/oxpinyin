@@ -155,16 +155,20 @@ where
         let span_start = anchor.saturating_add(candidate.span_start());
         let constraint_start = span_start;
         let constraint_end = self.next_boundary(anchor.saturating_add(advance));
-        // Reject a span that starts before the composition offset: it would
-        // regress the composition offset, a backward selection no frontend
-        // drives (a stale cursor behind the selection). Rejected, not
-        // reconciled — the gap handling below covers only the start == / >
-        // composition-offset shapes.
-        if span_start < self.record.consumed() {
-            return Err(EngineError::SelectionAnchorBeforeComposition {
-                anchor: span_start,
-                composition: self.record.consumed(),
-            });
+        // A span that starts before the composition offset — a choose from
+        // a window the caller looked up behind an earlier selection (ibus's
+        // `moveCursorLeft`, `PYPPhoneticEditor.cc:595-604`, sets the lookup
+        // cursor to 0). This was refused as a backward selection no
+        // frontend drives; amended 2026-09-27 (maintainer ruling, register row
+        // 37): the pin keeps no composition offset — its window is built
+        // from `start = offset` (`pinyin.cpp:2229`, `m_begin = start` at
+        // `:2246`) and the choose writes `add_constraint(m_begin, m_end,
+        // token)` over whatever forcings the span overlaps (`:2578-2590`,
+        // `phonetic_lookup.cpp:61-86`) — so the choose forces the span and
+        // the record follows the store, moving back to it. An n-best row
+        // is a whole-composition hypothesis and takes the row path below.
+        if span_start < self.record.consumed() && candidate.nbest_row().is_none() {
+            return self.select_behind(constraint_start, constraint_end, token, &text);
         }
         // The raw bytes between the composition offset and the span start
         // were typed without being selected. For a re-anchored selection
@@ -254,6 +258,37 @@ where
             .set_committed(constraint_end >= self.input.len());
         self.refresh()?;
 
+        Ok(self.selection_outcome())
+    }
+
+    /// A choose whose span starts before the composition offset (register
+    /// row 37, amended 2026-09-27): the pin's `add_constraint(m_begin, m_end,
+    /// token)` (`pinyin.cpp:2582-2584`, `phonetic_lookup.cpp:61-86`) —
+    /// every forcing the span overlaps is cleared, the span is forced, and
+    /// forcings outside it survive — after which the selection record is
+    /// re-derived from the store
+    /// ([`Session::rebuild_selection_from_constraints`]), so the
+    /// composition offset moves back to the end of the forced prefix. A
+    /// row with no token has nothing to force; it keeps the old refusal
+    /// ([`EngineError::SelectionAnchorBeforeComposition`]).
+    fn select_behind(
+        &mut self,
+        start: usize,
+        end: usize,
+        token: Option<PhraseToken>,
+        text: &str,
+    ) -> Result<Selection, EngineError> {
+        let Some(token) = token else {
+            return Err(EngineError::SelectionAnchorBeforeComposition {
+                anchor: start,
+                composition: self.record.consumed(),
+            });
+        };
+        self.constraints.resize(self.input.len() + 1);
+        self.constraints
+            .add(start, end, token, compact_str::CompactString::from(text));
+        self.rebuild_selection_from_constraints();
+        self.refresh()?;
         Ok(self.selection_outcome())
     }
 
