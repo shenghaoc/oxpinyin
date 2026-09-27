@@ -704,13 +704,19 @@ fn drain_bigrams(iter: *mut crate::types::BigramExportIterator) -> Vec<(String, 
         let mut phrase: *mut crate::types::GChar = ptr::null_mut();
         let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
         let mut count: std::os::raw::c_int = 0;
-        assert!(crate::iterators::pinyin_bigram_iterator_get_next_phrase(
+        let more = crate::iterators::pinyin_bigram_iterator_get_next_phrase(
             iter,
             &raw mut phrase,
             &raw mut pinyin,
             &raw mut count,
-        ));
+        );
         rows.push((take_exported(phrase), take_exported(pinyin), count));
+        // Register row 36: `get_next` answers `has_next` after the row
+        // (`pinyin.cpp:896-911`), so `false` on the last one.
+        assert_eq!(
+            more,
+            crate::iterators::pinyin_bigram_iterator_has_next_phrase(iter)
+        );
     }
     rows
 }
