@@ -12,6 +12,8 @@ use oxpinyin_user::{
     UserPronunciation, is_user_file_token,
 };
 
+use std::collections::{HashMap, VecDeque};
+
 use crate::ContextCore;
 
 /// The first `SYSTEM_FILE` library (`novel_types.h:154`).
@@ -182,50 +184,58 @@ impl ContextCore {
         })
     }
 
-    /// Every rendered §9 bigram-export row, in stored order.
+    /// The pin's bigram export iterator over this context
+    /// (`pinyin_begin_get_bigram_phrases`, `pinyin.cpp:776-787`): the
+    /// predecessors in the user bigram container's walk order
+    /// (`get_all_items`), each predecessor's gram, and the rendering of
+    /// every token they name. `None` without a user store.
+    #[must_use]
+    pub fn bigram_export_walk(&self) -> Option<BigramExportWalk> {
+        let store = self.user.as_ref()?;
+        let items = store.bigram_predecessors().ok()?;
+        let mut grams: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
+        let mut rendered: HashMap<u32, Option<(String, Vec<String>)>> = HashMap::new();
+        for &prev in &items {
+            let gram: Vec<(u32, u32)> = store
+                .bigram_successors(prev)
+                .ok()?
+                .into_iter()
+                .map(|(cur, count)| (cur, u32::try_from(count).unwrap_or(u32::MAX)))
+                .collect();
+            for &token in std::iter::once(&prev).chain(gram.iter().map(|(cur, _)| cur)) {
+                // Memoized: a token recurs across many grams and
+                // `render_token` is an O(pinyin-index) scan.
+                rendered
+                    .entry(token)
+                    .or_insert_with(|| self.render_token(token));
+            }
+            grams.insert(prev, gram);
+        }
+        Some(BigramExportWalk {
+            items: items.into(),
+            index_token: NULL_TOKEN,
+            phrase_tokens: VecDeque::new(),
+            phrase: None,
+            pinyins: Vec::new(),
+            pinyin_index: 0,
+            count: 0,
+            grams,
+            rendered,
+        })
+    }
+
+    /// Every §9 bigram-export row the pin's iterator yields, in its order:
+    /// [`BigramExportWalk`] driven the way a caller drives the C iterator
+    /// (`while has_next { get_next }`).
     #[must_use]
     pub fn export_bigram_rows(&self) -> Option<Vec<ExportedBigramRow>> {
-        let store = self.user.as_ref()?;
-        let raw = store.export_bigrams().ok()?;
+        let mut walk = self.bigram_export_walk()?;
         let mut rows = Vec::new();
-        // Memoize the (text, pinyins) rendering: a system token recurs across
-        // many bigram rows and `render_token` is an O(pinyin-index) scan, so
-        // resolving it once per distinct token keeps the export off the
-        // rows×index quadratic.
-        let mut rendered: std::collections::HashMap<u32, Option<(String, Vec<String>)>> =
-            std::collections::HashMap::new();
-        for (prev, cur, count) in raw {
-            if prev == SENTENCE_START {
-                continue;
-            }
-            // Upstream's threshold is `initial_seed - 1` = 68.
-            if count < INITIAL_SEED {
-                continue;
-            }
-            let Some((prev_text, prev_pinyins)) = rendered
-                .entry(prev)
-                .or_insert_with(|| self.render_token(prev))
-                .clone()
-            else {
-                continue;
+        while walk.has_next() {
+            let BigramStep::Row(row, _) = walk.get_next() else {
+                break;
             };
-            let Some((cur_text, cur_pinyins)) = rendered
-                .entry(cur)
-                .or_insert_with(|| self.render_token(cur))
-                .clone()
-            else {
-                continue;
-            };
-            let phrase = format!("{prev_text}{cur_text}");
-            for first in &prev_pinyins {
-                for second in &cur_pinyins {
-                    rows.push(ExportedBigramRow {
-                        phrase: phrase.clone(),
-                        pinyin: format!("{first}'{second}"),
-                        count: i64::try_from(count.saturating_mul(2)).unwrap_or(i64::MAX),
-                    });
-                }
-            }
+            rows.push(row);
         }
         Some(rows)
     }
@@ -276,6 +286,258 @@ pub struct ExportedBigramRow {
     pub pinyin: String,
     /// The rendered bigram count (`stored × 2`).
     pub count: i64,
+}
+
+/// `null_token` (`novel_types.h:131`).
+const NULL_TOKEN: u32 = 0;
+
+/// The first-seed threshold the export filters on: a pair is exported
+/// when its count is above `initial_seed - 1` (`pinyin.cpp:792-793`).
+const EXPORT_THRESHOLD: u32 = 23 * 3 - 1;
+
+/// `_bigram_export_iterator_t` (`pinyin.cpp:132-146`) and its two
+/// operations, ported state for state over a snapshot of the store
+/// ([`ContextCore::bigram_export_walk`]). Nothing here reorders, filters
+/// or repairs what the pin does: `m_items` is the container's walk
+/// order and is consumed from the front; the gram of each predecessor
+/// is *appended* to `m_phrase_tokens` (`SingleGram::retrieve_all`), so a
+/// `sentence_start` gram, which is never scanned, is scanned under the
+/// predecessor loaded after it; and the loop ends as soon as loading has
+/// emptied `m_items`, so the last predecessor's gram is scanned only by
+/// a further `has_next` after one that answered `false`.
+#[derive(Clone, Debug, Default)]
+pub struct BigramExportWalk {
+    items: VecDeque<u32>,
+    index_token: u32,
+    phrase_tokens: VecDeque<(u32, u32)>,
+    phrase: Option<String>,
+    pinyins: Vec<String>,
+    pinyin_index: usize,
+    count: u32,
+    grams: HashMap<u32, Vec<(u32, u32)>>,
+    rendered: HashMap<u32, Option<(String, Vec<String>)>>,
+}
+
+/// What one [`BigramExportWalk::get_next`] produced.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BigramStep {
+    /// A row, and the `has_next` the pin's `get_next` returns after it
+    /// (`pinyin.cpp:910`).
+    Row(ExportedBigramRow, bool),
+    /// No current predecessor, or `sentence_start` — the pin's
+    /// `assert(iter->m_index_token != null_token && iter->m_index_token
+    /// != sentence_start)` (`pinyin.cpp:902`), which aborts.
+    Aborts,
+    /// No pinyin at the current position: the pin reads past `m_pinyins`
+    /// (`pinyin.cpp:905`), undefined behaviour.
+    Undefined,
+}
+
+impl BigramExportWalk {
+    /// `pinyin_bigram_iterator_has_next_phrase` (`pinyin.cpp:790-893`).
+    pub fn has_next(&mut self) -> bool {
+        if self.phrase.is_some() && self.pinyin_index < self.pinyins.len() {
+            return true;
+        }
+        // Clean up old values.
+        self.pinyin_index = 0;
+        self.pinyins.clear();
+        let mut retval = false;
+        loop {
+            if self.index_token != NULL_TOKEN && self.index_token != SENTENCE_START {
+                while let Some(&(token, count)) = self.phrase_tokens.front() {
+                    // Find the next item above the threshold.
+                    if count > EXPORT_THRESHOLD {
+                        self.load_row(token, count);
+                        self.phrase_tokens.pop_front();
+                        retval = true;
+                        break;
+                    }
+                    self.phrase_tokens.pop_front();
+                }
+            }
+            if retval || self.items.is_empty() {
+                break;
+            }
+            let Some(index_token) = self.items.pop_front() else {
+                break;
+            };
+            self.index_token = index_token;
+            // `load(…, user_gram, true)` then `retrieve_all`, which appends.
+            if let Some(gram) = self.grams.get(&index_token) {
+                self.phrase_tokens.extend(gram.iter().copied());
+            }
+            // `} while (iter->m_items->len);`
+            if self.items.is_empty() {
+                break;
+            }
+        }
+        retval
+    }
+
+    /// `pinyin_bigram_iterator_get_next_phrase` (`pinyin.cpp:896-911`):
+    /// the current row — count × 2 in `guint32` — then `has_next`.
+    pub fn get_next(&mut self) -> BigramStep {
+        if self.index_token == NULL_TOKEN || self.index_token == SENTENCE_START {
+            return BigramStep::Aborts;
+        }
+        let (Some(phrase), Some(pinyin)) = (
+            self.phrase.clone(),
+            self.pinyins.get(self.pinyin_index).cloned(),
+        ) else {
+            return BigramStep::Undefined;
+        };
+        let row = ExportedBigramRow {
+            phrase,
+            pinyin,
+            count: i64::from(self.count.wrapping_mul(2).cast_signed()),
+        };
+        self.pinyin_index += 1;
+        let more = self.has_next();
+        BigramStep::Row(row, more)
+    }
+
+    /// The row `has_next` builds for `(m_index_token, token)`
+    /// (`pinyin.cpp:810-870`): the two texts concatenated, and every
+    /// first-pronunciation × second-pronunciation pair joined by `'`. A
+    /// token the phrase index does not resolve reads as the pin's empty
+    /// `PhraseItem` — no text, no pronunciation.
+    fn load_row(&mut self, token: u32, count: u32) {
+        let empty = (String::new(), Vec::new());
+        let (first_text, first_pinyins) = self
+            .rendered
+            .get(&self.index_token)
+            .and_then(Option::as_ref)
+            .unwrap_or(&empty);
+        let (second_text, second_pinyins) = self
+            .rendered
+            .get(&token)
+            .and_then(Option::as_ref)
+            .unwrap_or(&empty);
+        self.phrase = Some(format!("{first_text}{second_text}"));
+        self.count = count;
+        self.pinyins = first_pinyins
+            .iter()
+            .flat_map(|first| {
+                second_pinyins
+                    .iter()
+                    .map(move |second| format!("{first}'{second}"))
+            })
+            .collect();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BigramExportWalk, BigramStep, ExportedBigramRow, SENTENCE_START};
+
+    fn walk(items: &[u32], grams: &[(u32, &[(u32, u32)])]) -> BigramExportWalk {
+        let mut walk = BigramExportWalk {
+            items: items.iter().copied().collect(),
+            ..BigramExportWalk::default()
+        };
+        for (prev, gram) in grams {
+            walk.grams.insert(*prev, gram.to_vec());
+        }
+        for (token, text, pinyin) in [
+            (0x0100_0001, "你", "ni"),
+            (0x0100_0002, "好", "hao"),
+            (0x0100_0003, "我", "wo"),
+            (0x0100_0004, "爱", "ai"),
+        ] {
+            walk.rendered
+                .insert(token, Some((text.to_owned(), vec![pinyin.to_owned()])));
+        }
+        walk
+    }
+
+    /// A caller that trusts `get_next`'s return: stops on the first `false`.
+    fn drain_by_return(walk: &mut BigramExportWalk) -> Vec<(String, bool)> {
+        let mut rows = Vec::new();
+        let mut more = walk.has_next();
+        while more {
+            let BigramStep::Row(ExportedBigramRow { phrase, .. }, next) = walk.get_next() else {
+                break;
+            };
+            rows.push((phrase, next));
+            more = next;
+        }
+        rows
+    }
+
+    /// ibus-libpinyin's loop (`PYLibPinyin.cc:317-329`): `while (has_next)
+    /// get_next`.
+    fn drain_by_has_next(walk: &mut BigramExportWalk) -> Vec<(String, bool)> {
+        let mut rows = Vec::new();
+        while walk.has_next() {
+            let BigramStep::Row(ExportedBigramRow { phrase, .. }, next) = walk.get_next() else {
+                break;
+            };
+            rows.push((phrase, next));
+        }
+        rows
+    }
+
+    fn scenario() -> BigramExportWalk {
+        walk(
+            &[SENTENCE_START, 0x0100_0001, 0x0100_0003],
+            &[
+                (SENTENCE_START, &[(0x0100_0003, 69)]),
+                (0x0100_0001, &[(0x0100_0002, 138)]),
+                (0x0100_0003, &[(0x0100_0004, 69)]),
+            ],
+        )
+    }
+
+    /// Register row 36 and the pin's walk (`pinyin.cpp:790-911`):
+    /// `get_next` answers `has_next` after the row, so a caller that
+    /// trusts it stops before the last predecessor, whose gram was loaded
+    /// but never scanned; a `sentence_start` gram's successors are scanned
+    /// under the next predecessor.
+    #[test]
+    fn the_walk_is_the_pins_state_machine() {
+        let mut walk = scenario();
+        assert_eq!(
+            drain_by_return(&mut walk),
+            vec![("你我".to_owned(), true), ("你好".to_owned(), false)]
+        );
+        // A further has_next scans the gram loaded but never scanned.
+        assert!(walk.has_next());
+        assert_eq!(
+            walk.get_next(),
+            BigramStep::Row(
+                ExportedBigramRow {
+                    phrase: "我爱".to_owned(),
+                    pinyin: "wo'ai".to_owned(),
+                    count: 138,
+                },
+                false,
+            )
+        );
+        assert!(!walk.has_next());
+        assert_eq!(walk.get_next(), BigramStep::Undefined);
+    }
+
+    /// ibus-libpinyin's `while (has_next)` loop therefore exports the last
+    /// predecessor's rows too.
+    #[test]
+    fn a_has_next_loop_sees_the_last_predecessor() {
+        assert_eq!(
+            drain_by_has_next(&mut scenario()),
+            vec![
+                ("你我".to_owned(), true),
+                ("你好".to_owned(), false),
+                ("我爱".to_owned(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn get_next_without_a_predecessor_is_the_pins_abort() {
+        let mut walk = walk(&[], &[]);
+        assert!(!walk.has_next());
+        assert_eq!(walk.get_next(), BigramStep::Aborts);
+    }
 }
 
 #[cfg(test)]

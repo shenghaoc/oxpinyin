@@ -245,6 +245,9 @@ impl GenericUserStore<DefaultStore> {
             write_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_generation: std::sync::atomic::AtomicU64::new(0),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
+            bigram_db: Some(std::sync::Mutex::new(persistence::load_user_bigram_db(
+                &target.dir,
+            )?)),
             libpinyin: Some(target),
             // The lease lives in the shared inner so every clone keeps
             // the scratch alive; from_parts' own copy is redundant

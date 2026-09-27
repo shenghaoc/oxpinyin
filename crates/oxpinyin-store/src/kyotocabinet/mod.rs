@@ -455,3 +455,62 @@ impl WriteTxn for KcTxn<'_> {
         self.store.is_empty(table)
     }
 }
+
+// ── the user bigram's in-memory container ─────────────────────────
+
+/// libpinyin's Kyoto Cabinet user bigram as `Bigram::load_db` leaves it:
+/// an in-memory `StashDB` filled by `load_snapshot`
+/// (`ngram_kyotodb.cpp:54-64`), so its bucket walk is the pin's.
+pub struct KcUserBigramDb {
+    db: Db,
+}
+
+impl crate::UserBigramDb for KcUserBigramDb {
+    fn empty() -> Result<Self, StoreError> {
+        // `m_db = new StashDB; m_db->open("-", …)`.
+        Ok(Self {
+            db: Db::open_stash()?,
+        })
+    }
+
+    fn load_db(path: &Path) -> Result<Self, StoreError> {
+        // Then `load_snapshot(dbfile)`; a snapshot that does not load
+        // leaves the stash as far as it got — empty for an absent file.
+        let this = Self::empty()?;
+        let _ = this.db.load_snapshot(path);
+        Ok(this)
+    }
+
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(self.db.get(key)?.map(|value| value.to_vec()))
+    }
+
+    fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.db.set(key, value)
+    }
+
+    fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
+        self.db.remove(key)
+    }
+
+    fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        // `get_all_items`' visitor walk: the stash's bucket order, which
+        // its cursor steps through the same way.
+        let mut cursor = self.db.cursor()?;
+        let mut keys = Vec::new();
+        if !cursor.jump_first()? {
+            return Ok(keys);
+        }
+        while let Some(record) = cursor.next()? {
+            keys.push(record.key().to_vec());
+        }
+        Ok(keys)
+    }
+
+    fn save_db(&self, path: &Path) -> Result<(), StoreError> {
+        // `Bigram::save_db` (`ngram_kyotodb.cpp:82-101`): unlink, then
+        // `dump_snapshot`.
+        crate::remove_if_present(path)?;
+        self.db.dump_snapshot(path)
+    }
+}

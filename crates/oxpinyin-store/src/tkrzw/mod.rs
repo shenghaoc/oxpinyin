@@ -1041,3 +1041,101 @@ impl WriteTxn for TkrzwWriteTxn<'_> {
         Ok(empty)
     }
 }
+
+// ── the user bigram's in-memory container ─────────────────────────
+
+/// libpinyin's tkrzw user bigram as `Bigram::load_db` leaves it: an
+/// in-memory `TinyDBM` (`ngram_tkrzwdb.cpp:48-63`) at its default bucket
+/// count, filled from the `HashDBM` file by `copy_tkrzwdb`'s
+/// iterator walk (`tkrzwdb_utils.h`), so its bucket walk is the pin's.
+pub struct TkrzwUserBigramDb {
+    db: Db,
+}
+
+/// One `Set` or `Remove` against `db`, through the same record-processor
+/// path every commit uses.
+fn db_set_one(db: &Db, key: &[u8], value: Option<&[u8]>) -> Result<(), StoreError> {
+    let (value, remove) = value.map_or((Vec::new(), true), |value| (value.to_vec(), false));
+    let mutation = Mutation {
+        key_size: c_len(key)?,
+        value_size: c_len(&value)?,
+        key: key.to_vec(),
+        value,
+        remove,
+    };
+    db_apply(db, std::slice::from_ref(&mutation))
+}
+
+/// Every record of `db` in its own iterator order.
+fn db_records(db: &Db) -> Result<Vec<crate::RawRecord>, StoreError> {
+    let mut records = Vec::new();
+    scan(
+        db,
+        b"",
+        Bound::Unbounded,
+        Bound::Unbounded,
+        &mut |key, value| {
+            records.push((key.to_vec(), value.to_vec()));
+            Ok(true)
+        },
+    )?;
+    Ok(records)
+}
+
+impl crate::UserBigramDb for TkrzwUserBigramDb {
+    fn empty() -> Result<Self, StoreError> {
+        // `m_db = new TinyDBM;` — an in-memory database at the default
+        // bucket count; the empty path is PolyDBM's on-memory form.
+        // SAFETY: both strings outlive the call; the returned handle is
+        // NULL on failure, taken as an error immediately.
+        let db = unsafe { ffi::tkrzw_dbm_open(c"".as_ptr(), true, c"dbm=tiny".as_ptr()) };
+        let Some(db) = NonNull::new(db) else {
+            return Err(status_error());
+        };
+        Ok(Self { db: Db(db) })
+    }
+
+    fn load_db(path: &Path) -> Result<Self, StoreError> {
+        let this = Self::empty()?;
+        // `HashDBM tmp_db; tmp_db.Open(dbfile, false, OPEN_NO_CREATE)`
+        // then `copy_tkrzwdb(&tmp_db, m_db)`; a file that does not open
+        // leaves the container empty, as the pin's does.
+        if let Ok(file) = open_hash(path) {
+            for (key, value) in db_records(&file.db)? {
+                db_set_one(&this.db, &key, Some(&value))?;
+            }
+        }
+        Ok(this)
+    }
+
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        db_get(&self.db, key)
+    }
+
+    fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        db_set_one(&self.db, key, Some(value))
+    }
+
+    fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
+        db_set_one(&self.db, key, None)
+    }
+
+    fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        Ok(db_records(&self.db)?
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect())
+    }
+
+    fn save_db(&self, path: &Path) -> Result<(), StoreError> {
+        // `Bigram::save_db` (`ngram_tkrzwdb.cpp:66-87`): remove the file,
+        // open a fresh `HashDBM` at its default tuning, copy this
+        // container into it in iterator order, synchronize, close.
+        crate::remove_if_present(path)?;
+        let file = open_hash_create(path)?;
+        for (key, value) in db_records(&self.db)? {
+            db_set_one(&file.db, &key, Some(&value))?;
+        }
+        db_synchronize(&file.db, false)
+    }
+}

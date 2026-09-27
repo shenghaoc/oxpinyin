@@ -83,6 +83,13 @@ pub struct StoreInner<S: WriteStore> {
     /// session values and writes the file set. `None` on plain
     /// `open`/`create_standalone` stores.
     pub(crate) libpinyin: Option<std::sync::Arc<crate::store_libpinyin::Target>>,
+    /// The pin's own in-memory user bigram container (`Bigram::m_db`
+    /// after `load_db`), kept in step with every bigram write so its
+    /// walk order — the export's order and the saved file's layout — is
+    /// the pin's. Only a libpinyin session carries one; a plain or
+    /// standalone store has no user dir and walks its predecessors in
+    /// ascending order.
+    pub(crate) bigram_db: Option<Mutex<oxpinyin_store::DefaultUserBigramDb>>,
     /// The scratch-session lease, held here (never read) so every clone
     /// of the shared handle keeps it alive: without this, the first
     /// handle's drop could release the lease — and remove the scratch —

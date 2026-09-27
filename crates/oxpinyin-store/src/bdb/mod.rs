@@ -532,3 +532,77 @@ impl BdbTxn<'_> {
         result
     }
 }
+
+// ── the user bigram's in-memory container ─────────────────────────
+
+/// libpinyin's Berkeley DB user bigram as `Bigram::load_db` leaves it:
+/// an in-memory `DB_HASH` filled from the file by `copy_bdb`'s cursor
+/// walk (`ngram_bdb.cpp:47-79`, `bdb_utils.h:43-74`), so its walk is the
+/// pin's.
+pub struct BdbUserBigramDb {
+    db: Db,
+}
+
+/// Every record of `db` in its cursor order.
+fn db_records(db: &Db) -> Result<Vec<crate::RawRecord>, StoreError> {
+    let mut cursor = db.cursor()?;
+    let mut records = Vec::new();
+    let mut seek = ffi::Seek::First;
+    while let Some(row) = cursor.get(seek)? {
+        records.push((row.key.to_vec(), row.value.to_vec()));
+        seek = ffi::Seek::Next;
+    }
+    Ok(records)
+}
+
+impl crate::UserBigramDb for BdbUserBigramDb {
+    fn empty() -> Result<Self, StoreError> {
+        Ok(Self {
+            db: Db::open_in_memory_hash()?,
+        })
+    }
+
+    fn load_db(path: &Path) -> Result<Self, StoreError> {
+        let this = Self::empty()?;
+        // `tmp_db->open(…, dbfile, NULL, DB_HASH, DB_RDONLY, 0600)` then
+        // `copy_bdb(tmp_db, m_db)`; a file that does not open leaves the
+        // container empty, as the pin's does.
+        if let Ok(file) = Db::open(path, ffi::DB_HASH, true, false, ffi::USER_FILE_MODE) {
+            for (key, value) in db_records(&file)? {
+                this.db.put(&key, &value)?;
+            }
+        }
+        Ok(this)
+    }
+
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        self.db.get(key)
+    }
+
+    fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.db.put(key, value)
+    }
+
+    fn remove(&self, key: &[u8]) -> Result<(), StoreError> {
+        self.db.del(key)
+    }
+
+    fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        Ok(db_records(&self.db)?
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect())
+    }
+
+    fn save_db(&self, path: &Path) -> Result<(), StoreError> {
+        // `Bigram::save_db` (`ngram_bdb.cpp:81-107`): unlink, create a
+        // `DB_HASH` file (`DB_CREATE, 0600`), copy this container into it
+        // in cursor order, sync, close.
+        crate::remove_if_present(path)?;
+        let file = Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?;
+        for (key, value) in db_records(&self.db)? {
+            file.put(&key, &value)?;
+        }
+        file.sync()
+    }
+}

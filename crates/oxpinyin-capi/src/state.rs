@@ -146,7 +146,14 @@ impl CapiContext {
         self.core.can_render_export_bigrams()
     }
 
+    /// The pin's bigram export iterator over this context, shared:
+    /// [`ContextCore::bigram_export_walk`].
+    pub(crate) fn bigram_export_walk(&self) -> Option<oxpinyin_facade::BigramExportWalk> {
+        self.core.bigram_export_walk()
+    }
+
     /// §9 bigram-export rows, shared: [`ContextCore::export_bigram_rows`].
+    #[cfg(test)]
     pub(crate) fn export_bigram_rows(&self) -> Option<Vec<ExportedBigramRow>> {
         self.core.export_bigram_rows()
     }

@@ -5,7 +5,7 @@
 # Drives tools/bisection/bigram-export-diff.c into a pin-built libpinyin.so
 # and oxpinyin's libpinyin_capi.so, both opened on ONE data directory (the
 # oracle's own lib/libpinyin/data) with a fresh user dir per side and
-# scenario (empty, one, two, many, repeat).
+# scenario (empty, one, two, many, repeat, reopen, mask).
 #
 # The oracle prefix must carry the instrumentation patch
 # tools/bisection/patches/bigram-export-strjoinv: the unpatched pin reads
@@ -21,14 +21,12 @@
 #       <patched-prefix>/lib/libpinyin/data
 #
 # Gate (BIGRAM_DIFF_GATE):
-#   returns (default) — every scenario's get= column obeys the pin's law on
-#                       both sides (get_next answers has_next after the row:
-#                       true while rows remain, false on the last — register
-#                       row 36), and the scenarios whose walk has one
-#                       predecessor (empty, one) are byte-identical. The full
-#                       walks are printed, not gated: their row set and order
-#                       follow the pin's DB walk (#541's order points).
-#   full              — every scenario byte-identical.
+#   full (default)    — every scenario byte-identical: rows, get= returns,
+#                       and the tail an ibus-libpinyin-style has_next loop
+#                       drains after get_next answered false.
+#   returns           — the row-36 law on every scenario on both sides (get
+#                       answers has_next after the row), byte identity only
+#                       where the walk has one predecessor (empty, one).
 #
 # usage: run-bigram-export-diff.sh <libpinyin.so> <libpinyin_capi.so> <data-dir>
 #
@@ -37,7 +35,7 @@ set -euo pipefail
 oracle_so=${1:?path to the patched pin-built libpinyin.so}
 capi_so=${2:?path to the oxpinyin libpinyin_capi.so}
 data=${3:?data directory}
-gate=${BIGRAM_DIFF_GATE:-returns}
+gate=${BIGRAM_DIFF_GATE:-full}
 oracle_so=$(cd "$(dirname "$oracle_so")" && pwd)/$(basename "$oracle_so")
 capi_so=$(cd "$(dirname "$capi_so")" && pwd)/$(basename "$capi_so")
 data=$(cd "$data" && pwd)
@@ -51,7 +49,9 @@ fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$work/driver" bigram-export-diff.c -ldl
+# shellcheck disable=SC2046  # pkg-config's flags are word lists.
+gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$work/driver" bigram-export-diff.c -ldl \
+  $(pkg-config --cflags --libs glib-2.0)
 
 run() {
   local side=$1 so=$2 scenario=$3
@@ -75,7 +75,7 @@ returns_law() {
 }
 
 status=0
-for scenario in empty one two many repeat; do
+for scenario in empty one two many repeat reopen mask; do
   if ! run oracle "$oracle_so" "$scenario"; then
     echo "$scenario: FAIL (oracle driver exited nonzero)"; status=1; continue
   fi
