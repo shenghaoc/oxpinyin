@@ -187,10 +187,13 @@ impl InstanceCore {
             !continues && self.session.committed_parse_continues(stored, original);
         // The committed-continues shape needs exactly `reset_parse_state`:
         // its `reset_composition` keeps the store and the selection
-        // record, so the full reset below must not run there.
+        // record, so the discard below must not run there. Neither path
+        // drops the n-best rows: upstream's parse never touches
+        // `m_nbest_results` (`pinyin.cpp:1497-1524`), which only the full
+        // reset clears (register row 34).
         self.reset_parse_state();
         if !continues && !committed_continues {
-            self.session.reset();
+            self.session.discard_composition();
         }
     }
 
