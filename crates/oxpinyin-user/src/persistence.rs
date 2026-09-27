@@ -662,20 +662,20 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
                     .unwrap_or_else(|| original.and_then(|library| library.item(slot)))
             };
 
+        // The pin emits local slots, but its reader masks high bits even
+        // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
         for record in records {
             match record {
-                LogRecord::Add { token, new_item } if token <= PHRASE_MASK => {
-                    match decode_phrase_item(&new_item) {
-                        Ok(item) => {
-                            overrides.insert(token & PHRASE_MASK, Some(item));
-                        }
-                        Err(error) => {
-                            loaded.skipped.push(format!("{name}: {error}"));
-                            break;
-                        }
+                LogRecord::Add { token, new_item } => match decode_phrase_item(&new_item) {
+                    Ok(item) => {
+                        overrides.insert(token & PHRASE_MASK, Some(item));
                     }
-                }
-                LogRecord::Remove { token, old_item } if token <= PHRASE_MASK => {
+                    Err(error) => {
+                        loaded.skipped.push(format!("{name}: {error}"));
+                        break;
+                    }
+                },
+                LogRecord::Remove { token, old_item } => {
                     let slot = token & PHRASE_MASK;
                     match (decode_phrase_item(&old_item), current(&overrides, slot)) {
                         (Ok(old), Some(cur)) if old == cur => {
@@ -699,7 +699,7 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
                     token,
                     old_item,
                     new_item,
-                } if token <= PHRASE_MASK => {
+                } => {
                     let slot = token & PHRASE_MASK;
                     match (
                         decode_phrase_item(&old_item),
@@ -733,13 +733,6 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
                             .push(format!("{name}: replay stopped at a mismatched header"));
                         break;
                     }
-                }
-                _ => {
-                    // a record of another library's token: corrupt stream
-                    loaded.skipped.push(format!(
-                        "{name}: replay stopped at a foreign-library record"
-                    ));
-                    break;
                 }
             }
         }
@@ -1951,6 +1944,41 @@ mod tests {
         assert_eq!(first, second);
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn replay_masks_high_token_bits_like_the_subindex() {
+        let dir = tempdir("local-slot-mask");
+        let originals = originals();
+        let old = originals[&1].item(1).expect("original");
+        let mut new = old.clone();
+        new.prons[0].1 += 7;
+        let records = vec![
+            LogRecord::ModifyHeader {
+                old_total: 150,
+                new_total: 150,
+            },
+            LogRecord::Modify {
+                token: 0xab00_0001,
+                old_item: encode_phrase_item(&old).expect("old payload"),
+                new_item: encode_phrase_item(&new).expect("new payload"),
+            },
+        ];
+        let payload = encode_log_records(&records).expect("log");
+        std::fs::write(
+            dir.join("gb_char.dbin"),
+            build_memory_chunk(&payload).expect("chunk"),
+        )
+        .expect("write");
+        std::fs::write(
+            dir.join("user.conf"),
+            UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("marker");
+        let loaded = load(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+        assert!(loaded.skipped.is_empty());
+        assert_eq!(loaded.state.system_overrides[&1][&1], Some(new));
+        std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]
