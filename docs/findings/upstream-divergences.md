@@ -1816,6 +1816,143 @@ section.
   test or differential surface reaches it, and nothing crosses the
   libpinyin C ABI.
 
+### Literal `0x0` option gating — CLOSED in code (policy row 17)
+
+- **Upstream source cite:** `src/storage/phonetic_key_matrix.cpp:86-89`
+  (`resplit_step` returns without `USE_RESPLIT_TABLE`), `:168-171`
+  (`inner_split_step` without `USE_DIVIDED_TABLE`); `src/pinyin.cpp:2194`
+  (`pinyin_guess_candidates` answers `false` on an empty matrix).
+- **Mechanism:** at the literal option word `0x0` the correction
+  aliases (`jv`, `zon`) produce no key and the divided/resplit tables
+  add no alternatives, so the guess is empty and `xian`'s inventory
+  shrinks.
+- **What oxpinyin does:** the same gates (`crates/oxpinyin-engine/src/session/mod.rs:609`,
+  `:626`), and no raw-text fallback when the parse consumed nothing
+  (`8ec75085`).
+- **Status:** closed; `run-option-sweep.sh` with the `0x0` and
+  divided-contrast cases ran 2026-09-16, 24/24 PASS. Registered here
+  2026-09-27 UTC (#548): until then the row's only record was the
+  parked paragraph in `all-off-tails.md`.
+
+### Sort-option input of `pinyin_guess_candidates` — REOPENED, pending lane I (policy row 32)
+
+- **Upstream source cite:** `src/pinyin.cpp:2292-2300` (the LONGER and
+  sentence prepends gated on `sort_option`, then
+  `_remove_duplicated_items_by_phrase_string`); `:1678-1709`
+  (`compare_item_with_sort_option`); `:1870-1933`
+  (`_prepend_longer_candidates`); `src/pinyin.h:56`
+  (`SORT_WITHOUT_SENTENCE_CANDIDATE = 0x1`).
+- **Mechanism:** with bit `0x1` set the pin never prepends the n-best
+  rows, so its dedup never sees them and every NORMAL row survives.
+- **What oxpinyin does instead:** bits `0x2`/`0x4`/`0x8`/`0x10` are
+  ported (PR #496, 2026-09-20). Bit `0x1` is applied after an engine
+  dedup that already ran with the n-best rows present
+  (`crates/oxpinyin-engine/src/session/lookup.rs:754`, then
+  `crates/oxpinyin-capi/src/sentence.rs:359`), so a NORMAL row whose
+  text equals an n-best string is lost with the sentence row.
+- **Externally observable:** yes (#582, all three cells): `li'shi`
+  after `guess_sentence` at `0x1f` — pin n=385 headed by 历史, 理事;
+  oxpinyin n=383, neither present; `0x1d` the same; `0x1c` identical.
+  The 2026-09-20 closure measured `0x1e`/`0x1c`/`0x14` only.
+- **Status:** reopened 2026-09-27 UTC; pending lane I (#582).
+
+### Whole-row NBEST choose + train writes the user bigram (policy row 33)
+
+- **Upstream source cite:** `src/pinyin.cpp:2515-2520` (a row choose
+  installs no `CONSTRAINT_ONESTEP`); `src/lookup/phonetic_lookup.h:866`
+  (`train_result3` trains only past a ONESTEP constraint).
+- **Mechanism:** after a whole-row n-best choose, `pinyin_train` walks a
+  constraint-free result and writes nothing.
+- **What oxpinyin does instead:** `Session::train`
+  (`crates/oxpinyin-engine/src/session/selection.rs:298-339`) falls back
+  to the selection record when no OneStep cell is present and seeds
+  `sentence_start → phrase`.
+- **Externally observable:** yes — audit D-05 (#527): after the union
+  driver's choose and train, oxpinyin writes `测测→你` (count 138) and
+  predicts 你; the pin writes and predicts nothing. Row 20's line is
+  this mechanism (see row 20).
+- **Status:** REVERT TARGET; work order `revert-plan.md`.
+
+### Imported user phrase lost after `guess_sentence` (policy row 34)
+
+- **Upstream source cite:** `src/pinyin.cpp:2693-2704` (`pinyin_reset`
+  is the only clear of `m_nbest_results`); `:2184-2300`
+  (`pinyin_guess_candidates` rebuilds from scratch).
+- **Mechanism:** the pin keeps n-best results across a parse and, under
+  `0x1`, never lets them into the dedup.
+- **What oxpinyin does instead:** clears n-best on every parse and
+  dedups NBEST-first before the `0x1` filter (row 32's mechanism).
+- **Externally observable:** yes — an imported user phrase is offered at
+  `0x1f` after a sentence guess on the pin and not on oxpinyin
+  (`probe-coverage-abi.md` C); #582 shows the dedup half without any
+  import.
+- **Status:** REVERT TARGET, pending lane I (#582).
+
+### User-library tokens refused an n-best step cost — CLOSED in code (policy row 35)
+
+- **Upstream source cite:** `src/lookup/phonetic_lookup.h:643-668`
+  (`unigram_gen_next_step` prices any loaded sub-index's item);
+  `src/pinyin.cpp:597-605` (an import writes the item with
+  `count × unigram_factor`).
+- **Mechanism:** a user-dictionary token is a priced trellis step.
+- **What oxpinyin does:** since `7c9a6923` (2026-09-20),
+  `nbest_step_costs_with_user_delta` prices a visible `USER_FILE` token
+  with no system unigram from its user delta
+  (`crates/oxpinyin-data/src/lm/mod.rs:570-576`); a masked library's
+  token and a missing item keep the default, as the pin's failing
+  `get_phrase_item` does.
+- **Status:** closed; `7c9a6923`'s same-dir measurement on the pin's
+  `data/` (tkrzw): `residue-a-tail-diff` phases A and X byte-identical.
+  #548 found the policy still counting it open; corrected 2026-09-27
+  UTC.
+
+### Bigram export iterator: `get_next_phrase`'s return value on the last row (policy row 36)
+
+- **Upstream source cite:** `src/pinyin.cpp:894-911`
+  (`pinyin_bigram_iterator_get_next_phrase` returns
+  `pinyin_bigram_iterator_has_next_phrase(iter)`).
+- **Mechanism:** the pin answers `false` on the last row.
+- **What oxpinyin does instead:** answers `true` whenever a row was
+  fetched (`crates/oxpinyin-capi/src/iterators.rs:406-407`).
+- **Externally observable:** yes — audit D-19 (#541):
+  `你好|ni'hao|138|false` on the pin, `…|true` on oxpinyin. A debug
+  ibus-libpinyin build wraps the call in `check_result`
+  (`PYLibPinyin.cc:321`) and aborts on the pin's last row.
+- **Status:** REVERT TARGET, pending lane B (#541), which also owns the
+  pin's DB-walk export order, its skipped last key and its
+  `sentence_start` attribution on the same surface.
+
+### Candidate window behind the composition offset after a choose (policy row 37)
+
+- **Upstream source cite:** `src/pinyin.cpp:2184-2262`
+  (`pinyin_guess_candidates` rebuilds from `offset` over the whole
+  matrix); `:2501-2590` (a choose writes a constraint and answers a
+  cursor; the instance keeps no composition offset).
+- **What oxpinyin does instead:** advances a composition offset on every
+  choose (`crates/oxpinyin-engine/src/session/selection.rs`) and serves
+  its cached list for any lookup offset at or behind it
+  (`crates/oxpinyin-capi/src/sentence.rs`, the re-anchor test).
+- **Externally observable:** yes — `probe-coverage-abi.md` E: at
+  `guess_candidates(0, 0x1f)` after a whole-composition choose the pin
+  answers 127 candidates and oxpinyin 0; ibus-libpinyin's preset 2
+  takes that path after every partial choose.
+- **Status:** REVERT TARGET, pending lane I (#582).
+
+### `pinyin_train`/`zhuyin_train` gate (policy row 38)
+
+- **Upstream source cite:** `src/pinyin.cpp:2669-2690` (`pinyin_train`:
+  refuse without a user dir, `:2670-2671`; refuse on empty
+  `m_nbest_results`, `:2677-2678`); `src/zhuyin.cpp:1696-1705`.
+- **What oxpinyin does:** since PR #496 the gate is a recorded
+  selection or an active sentence lookup
+  (`crates/oxpinyin-facade/src/instance.rs:259`), so a train after a
+  guess with no choose answers `true` and writes nothing, as the pin's
+  does.
+- **Status:** the refuse arms are closed on the pinyin side (the ABI
+  probe's longer-choose phase, IDENTICAL); the zhuyin differential is
+  owed (`probe-coverage-abi.md`, "The train gate under the widened
+  law").
+
 ### Abort sites answered without a log: the #525 site ledger (policy rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21, 22)
 
 - **Source:** the 87-row per-site table in #525's body (the round-2
