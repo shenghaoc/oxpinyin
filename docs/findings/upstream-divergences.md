@@ -1137,6 +1137,17 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
 
 ## zhuyin candidate-tag grouping + `after(consumed)` terminal offset — CLOSED (display-law collapse + builder terminal mapping)
 
+- **Contradicted by #577 (2026-09-27 UTC; audit Z-3; policy rows 25
+  and 26), pending investigation.** On all three cells, for the chewing
+  input `su3cl3` after `zhuyin_guess_sentence`,
+  `zhuyin_guess_candidates_after_cursor` at offsets 1, 2 and 5 answers
+  n=1 on the pin and n=126/126/94 on oxpinyin, and after a choose
+  `zhuyin_guess_candidates_before_cursor` answers 94/126 on the pin and
+  1/94 on oxpinyin (pin `src/zhuyin.cpp:1460-1541`, `:1542-1600`;
+  oxpinyin `crates/oxpinyin-zhuyin-capi/src/sentence.rs:181`, `:198`).
+  `zhuyin-diff` drives no mid-key offset. The CLOSED status below is
+  contradicted until #577 is investigated.
+
 - **Upstream source cite:** `src/zhuyin.cpp:1272-1291`
   (`_prepend_sentence_candidates` prepends `m_nbest_results.size()`
   `BEST_MATCH_CANDIDATE` rows), `src/zhuyin.cpp:1460-1540`
@@ -1204,6 +1215,17 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
   builder's full measured numbers.)
 
 ## zhuyin before-cursor candidate window — CLOSED (backward-anchored window builder)
+
+- **Contradicted by #577 (2026-09-27 UTC; audit Z-3; policy rows 25
+  and 26), pending investigation.** On all three cells, for the chewing
+  input `su3cl3` after `zhuyin_guess_sentence`,
+  `zhuyin_guess_candidates_after_cursor` at offsets 1, 2 and 5 answers
+  n=1 on the pin and n=126/126/94 on oxpinyin, and after a choose
+  `zhuyin_guess_candidates_before_cursor` answers 94/126 on the pin and
+  1/94 on oxpinyin (pin `src/zhuyin.cpp:1460-1541`, `:1542-1600`;
+  oxpinyin `crates/oxpinyin-zhuyin-capi/src/sentence.rs:181`, `:198`).
+  `zhuyin-diff` drives no mid-key offset. The CLOSED status below is
+  contradicted until #577 is investigated.
 
 The facade's `zhuyin_guess_candidates_before_cursor` originally reused the
 composition-anchored cached candidate window, so `before(0)` wrongly returned
