@@ -26,6 +26,11 @@ one defect the 2026-09-12 amendment carried — row 30 — is closed in
 code (the table and totals below carry the state; the live FORCE_TONE
 differential ran 2026-09-16 — all eight implemented keyboards
 IDENTICAL, register amendment in `docs/findings/upstream-divergences.md`).
+**Amended 2026-09-27 UTC (lane G, register integrity after the round-2
+audit, #573):** five human rulings are recorded with their sources in
+"Amendment — rulings recorded" at the end of this document; the
+reference build, the drop-in version, class (c)'s obligations, the
+`LC_NUMERIC` side effect and the evidence standard follow from them.
 
 ## The goal this policy serves
 
@@ -101,6 +106,19 @@ unchanged and unaware.
 > landed — the Berkeley DB backend is the fifth store peer
 > (`docs/findings/berkeleydb-backend.md`); this paragraph records the
 > pre-landing state.)
+> **(Reference build, ruling 2026-09-26 UTC, recorded 2026-09-27 UTC.)**
+> The reference build is the pin's autoconf build, and the reference
+> default is a bare `./configure`, which selects Berkeley DB
+> (`configure.ac:94` at `074a2219`: `DBM="BerkeleyDB"`, overridden only
+> by `--with-dbm`). oxpinyin's default matches it: every crate that
+> selects a store backend carries `default = ["bdb"]` (e.g.
+> `crates/oxpinyin-capi/Cargo.toml:32`). Neither tkrzw nor Kyoto Cabinet
+> is "the default" any longer, in oxpinyin or in the reference; both
+> are peers selected explicitly, as the pin selects them with
+> `--with-dbm`. Parity coverage always includes all three cells —
+> tkrzw, bdb and kc — whichever one a given release lane pins. Earlier
+> prose in this document that calls tkrzw or Kyoto Cabinet the default
+> is history, dated where it stands.
 
 That goal sets the default: **oxpinyin reproduces the pin.** Divergence
 is not a design freedom to be exercised where the Rust is nicer. It is
@@ -179,6 +197,22 @@ same rule.
 (Rust), *and log the point*. A silently-swallowed abort is not class
 (c) — it is a behaviour change with no record.
 
+**Both halves, exactly (ruling recorded 2026-09-27
+UTC).** A site is class (c) only when oxpinyin answers `false`/`Err`
+**and** emits exactly one GLib `g_warning`-level log line for that
+site per occurrence — the channel `crates/oxpinyin-capi/src/ffi.rs:158-173`
+(`log_warning`, domain `libpinyin`) and its zhuyin twin already use.
+A site that answers `true`, data or a store write where the pin
+aborts meets neither half and needs a guard, not just a log. The
+bug-for-bug target is the **asserts-live** pin build: the reference
+autoconf build passes no `-DNDEBUG` (its default `-g -O2`), so every
+`assert` at the pin is an abort site exactly as every `abort()` is,
+and `check_result` (`include/pinyin_utils.h:27-31`, an `assert`
+unless `NDEBUG`) is one too. Every class-(c) row states, per site,
+whether the pin's construct is an **`assert`** or an **`abort()`** —
+an `assert` would vanish under `-DNDEBUG`, an `abort()` would not, and
+the upstream report differs accordingly.
+
 **Boundary:** (c) covers *aborts*. It does not cover upstream returning
 a wrong-but-defined answer. Where upstream half-mutates and reports
 success, reproducing it is possible and the divergence is a revert
@@ -243,7 +277,16 @@ exceptions to.
 > observable surface, not just the scalar return: return status,
 > out-parameters and the data they point to, written lengths, and any
 > state transition on the handle. A symbol with no probe is unverified,
-> not compliant.
+> not compliant. The probe runs on all three backend cells — tkrzw,
+> bdb and kc — against the pin built for the same cell (ruling
+> 2026-09-26 UTC; see "Amendment — rulings recorded").
+>
+> **Evidence standard (ruling recorded 2026-09-27 UTC).** A finding —
+> a divergence, a closure, a class — rests on code plus data: the
+> citation of both sides' code at the named SHAs and the input and
+> output needed to see the difference. Logs are not evidence; a run
+> log or a local working file may point at where the data came from,
+> never stand in for it.
 
 Three consequences worth stating, because each is currently unmet
 somewhere:
@@ -320,6 +363,7 @@ revert targets is `revert-plan.md`.
 | 36 | Bigram export iterator: `pinyin_bigram_iterator_get_next_phrase`'s return value on the last row | **REVERT TARGET** | no exception class fits; a plain ABI return-value divergence. The pin fills the out-params, advances, and returns `pinyin_bigram_iterator_has_next_phrase(iter)` (`pinyin.cpp:896-911`) — `false` on the last row; oxpinyin returns `true` whenever a row was fetched and `false` only once exhausted (`crates/oxpinyin-capi/src/iterators.rs:373-410`). The unigram export iterator is not affected: the pin's `pinyin_iterator_get_next_phrase` returns `true` on every row (`pinyin.cpp:698-769`), as oxpinyin's does. Measured 2026-09-19 (`debian:testing` container `7cfeefdaf53f`, same-dir on the pin's `data/`; `residue-a-tail-diff` phase X2 after a constrained train): `X2-train1:bigram[0]=false 你好时节\|ni'hao'shi'jie\|138` on the pin, `true` on oxpinyin, one row exported on both. Invisible to the union probe while the pin's export was empty in every probed state (row 33). Consumer-visible in exactly one place: ibus-libpinyin 1.16.5 wraps the call in `check_result` (`PYLibPinyin.cc:321`), `assert` outside `NDEBUG`/`G_DISABLE_ASSERT` builds (`PYUtil.h:49-53`) — a debug ibus exporting a user dictionary with at least one bigram row aborts on the pin's last row and completes on oxpinyin; release builds discard the value. Fix: return `handle.index < handle.rows.len()` after the increment (the pin's value, since `has_next_phrase` is a pure read of the remaining rows on oxpinyin's pre-rendered list); differential: phase X2's `bigram[0]` line identical, plus a two-row export (import two pairs, train each) asserting `true` then `false` on both sides. Work order `revert-plan.md` §13 |
 | 37 | Candidate window behind the composition offset after a choose | **REVERT TARGET** | no exception class fits; the pin's `pinyin_guess_candidates` rebuilds the window from `start = offset` over the whole-composition matrix on every call (`pinyin.cpp:2184-2262`) and its instance carries no composition offset — a choose writes a constraint and answers a cursor (`:2501-2590`) — where oxpinyin advances a composition offset on every choose (`session/selection.rs:229,252`), rebuilds its cached list there (`scan_window(anchor = consumed)`, `session/lookup.rs:102-110`; a fully-consumed anchor yields the n-best rows alone), and the C ABI re-anchors only for a lookup offset strictly past the composition offset (`crates/oxpinyin-capi/src/sentence.rs:319-339`), serving the cached list for any offset at or behind it. Measured 2026-09-19 (`debian:testing` container `70d00b22eee3`, image `sha256:dab11cdb0a9d…`, same-dir on the pin's `data/`; `residue-a-tail-diff` phase E, `probe-coverage-abi.md` E). **At its worst measured point** — `guess_candidates(0, 0x1f)` after a whole-composition NBEST choose and re-guess — the pin answers 127 candidates headed by the imported user phrase and oxpinyin answers **0, an empty list**; at the ordinary partial choose (E2: 你好 chosen for `nihaoshijie`, cursor 5) `guess_candidates(0, …)` on oxpinyin answers the offset-5 list (世界 时节 …, 301 phrases) where the pin answers the offset-0 one (你好世界 你好 你 …, 127). At the choose's own offset both sides agree. Consumer routes: ibus-libpinyin 1.16.5 under preset 2 forces `lookup_cursor = 0` (`PYPPhoneticEditor.cc:352-355`) and calls `guess_candidates(0, 0x1f)` after every partial choose, so offset 0 behind a choose is that preset's normal path; and `moveCursorLeft` (`:595-604`) puts the lookup offset behind a choose under every preset. Independent of rows 34 and 35 (unchanged under the row-35 counterfactual build; no parse between the choose and the guess, n-best rows present on both sides). Fix shape and pre-registered differential in `probe-coverage-abi.md` E; work order `revert-plan.md` §14, executing second |
 | 38 | `pinyin_train`/`zhuyin_train` gate: train refused without a recorded selection | **CLOSED** in code (2026-09-20, landed with §9 — PR #496) | the pin's gate is the user dir plus a non-empty `m_nbest_results` (`pinyin_train`, `pinyin.cpp:2670-2679` at pin 074a2219: the user-dir refuse `:2671-2672`, the empty-results refuse `:2678-2679`; `zhuyin_train` carries the identical law, `zhuyin.cpp:1696-1705`) — a train with a live sentence result but no recorded selection answers `true` and `train_result3` walks the constraint-free result, writing nothing. Pre-§9 oxpinyin's `InstanceCore::train` (`crates/oxpinyin-facade/src/instance.rs`) refused on `selected_tokens().is_empty()` alone, so those flows answered `false` where the pin trains; the zhuyin e2e recorded the divergence as its own assertion (`assert!(!zhuyin_train(instance), "no choose happened yet")`). The gate widened to the pin's own disjunction — a recorded selection OR `sentence_lookup_active` (the engine's stand-in for `results.size() > 0`) — as a causal dependency of §9 (a LONGER-choose trains inside `pinyin_choose_candidate`, records no selection, and the train that follows leans on the lookup-active half), landing with the §9 port rather than as its own change, and the zhuyin test flipped to the pin's law with it. Surfaces: BOTH shipped C surfaces — `pinyin_train` and `zhuyin_train` share the facade path. Evidence: the pinyin side is measured (the ABI probe's longer-choose phase, `tools/bisection/abi-probe-diff.c`: `train(after-longer)=true` on both sides, no store writes, IDENTICAL); the zhuyin side has **no differential** — `zhuyin-diff.c` drives no train call — and the coverage gap is recorded in `probe-coverage-abi.md` ("The train gate under the widened law"). The zhuyin differential is the row's only owed item |
+| 39 | `pinyin_init`/`zhuyin_init` leave the process `LC_NUMERIC` at `"C"` | **REVERT TARGET** (ruled bug-for-bug, recorded 2026-09-27 UTC; not yet reproduced — #539) | no exception class fits, and the ruling is to reproduce it: the pin's `UserTableInfo::load` and `SystemTableInfo2::load` save `setlocale(LC_NUMERIC, "C")`'s return — the *new* locale's name, not the old one — and restore it on success (`storage/table_info.cpp:328,372` and `:197,291` at `074a2219`; `save` the same, `:378,394`), while every early return skips the restore (e.g. `:330-333`, `:339-348`, `:199-202`), so after any init, successful or not, `LC_NUMERIC` is `"C"`. oxpinyin never calls `setlocale` (no hit in `crates/`), so a host that set `LC_ALL=zh_CN.UTF-8` still reads `zh_CN.UTF-8` after init (audit D-17, `bug-for-bug-audit-r2-2026-09-23.md` §4.1). Recorded as an upstream defect (`upstream-report-drafts.md` item 6) |
 
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219), amended
 2026-09-16 for rows 5b, 17 and 30 — each closed in code, each with its
@@ -577,3 +621,53 @@ second (12 → 14 → 10 → 11 → 9). The `tuihui` dump stays as the band illu
 sides agree). Residue **D** needs no register row (same-dir
 retraction stays in the probe record). Totals move REVERT TARGET 1 →
 3; CLOSED stays 16.
+
+## Amendment — rulings recorded (2026-09-27 UTC)
+
+Five human rulings, recorded here with their sources. The recording
+date is UTC captured at run time (`date -u`: 2026-09-27T04:00:22Z);
+where a ruling was given earlier, its own date is stated too.
+
+1. **Q1 — the reference build and its default.** *Given 2026-09-26
+   UTC* (recorded in `bug-for-bug-audit-r2-2026-09-23.md` §9 item 6,
+   landed in `2702674f`, PR #522), *restated in the lane-G brief of
+   2026-09-27.* The reference build is the pin's autoconf build; the
+   reference default is bare `./configure`, i.e. Berkeley DB
+   (`configure.ac:94` at `074a2219`), matching the workspace's
+   `default = ["bdb"]`. Parity coverage always includes the tkrzw, bdb
+   and kc cells. Prose calling tkrzw or Kyoto Cabinet the default is
+   retired: current-state claims are corrected, dated history is
+   annotated where it could be read as current (the goal section
+   above; `upstream-divergences.md`, "Native data-file naming").
+   §9 of the audit report also records the provenance gap this ruling
+   closes: before it, no written human decision for the Berkeley DB
+   default existed.
+2. **Version — the drop-in identity follows the pin.** *Given
+   2026-09-26 UTC*, landed in `e1d915d0` (PR #592): the drop-in
+   version is 2.11.92, derived from `libpinyin_tag` in
+   `tools/oracle/oracle-pin.txt`. In this document,
+   `upstream-divergences.md`, `divergence-taxonomy.md` and
+   `upstream-report-drafts.md` no current-state 2.11.91 claim remains:
+   every 2.11.91 left in them is oracle history (the `0c5e80e1` pin
+   the E2E rule was written against, the 2026-08-22 report drafts
+   verified at that pin, the taxonomy's 2026-08-09 corpus roll-up) or
+   a distro package version (Debian's `2.11.91-1`), and stays as
+   written.
+3. **Class (c) — both halves, asserts live.** *Given in the lane-G
+   brief of 2026-09-27 UTC.* A class-(c) site answers `false`/`Err`
+   **and** emits exactly one `g_warning` log line; the bug-for-bug
+   target is the asserts-live pin build; every class-(c) row says
+   whether each site is an `assert` or an `abort()`. The class text
+   above carries the rule; rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21 and
+   22 are re-marked against it (#549, #525).
+4. **#539 — `LC_NUMERIC`.** *Given in the lane-G brief of 2026-09-27
+   UTC.* The pin leaves the process `LC_NUMERIC` at `"C"` after
+   `pinyin_init`/`zhuyin_init`; oxpinyin reproduces this bug-for-bug,
+   and it is recorded as an upstream defect. Row 39 registers it as a
+   REVERT TARGET until the reproduction lands (no PR yet; #539 open);
+   `upstream-report-drafts.md` item 6 is the upstream draft.
+5. **Evidence policy.** *Given in the lane-G brief of 2026-09-27 UTC*;
+   the round-2 audit already applied it (`bug-for-bug-audit-r2-2026-09-23.md`
+   §1, "Method: code and data basis"). Findings rest on code plus
+   data; logs are not evidence. The E2E rule's verification clause
+   above carries it.
