@@ -29,6 +29,11 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
     && echo 'deb http://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
     > /etc/apt/sources.list
 
+# libdb-dev (→ libdb5.3-dev): Berkeley DB is the workspace default since
+# 2026-09-20 and the parity oracle's default cell since 2026-09-27, so a
+# default-feature build in this image (tools/bisection/run-perf-baseline.sh
+# stages oxpinyin that way) needs the system libdb. Cell D stays Kyoto
+# Cabinet: its commands name --features kyotocabinet explicitly.
 RUN apt-get -o Acquire::Check-Valid-Until=false update \
     && apt-get install -y --no-install-recommends \
     build-essential \
@@ -41,6 +46,7 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update \
     libglib2.0-dev \
     libtkrzw-dev \
     libkyotocabinet-dev \
+    libdb-dev \
     liblz4-dev \
     libzstd-dev \
     libsqlite3-dev sqlite3 \
