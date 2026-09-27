@@ -11,15 +11,12 @@
 # save + reopen). Nothing is masked: #600 (the unigram field) and #601
 # (library 5/6 pronunciations read from the addon facade) are both fixed.
 #
-#   libraries 0 5 6 7 15      must be IDENTICAL.
+#   libraries 0 1 2 3 4 5 6 7 15 must be IDENTICAL.
 #   libraries 16 255          the pin reads its 16-slot sub-index array out
 #                             of bounds (phrase_index.h:630) — a SIGSEGV or
 #                             a refusal, as the heap falls (class (b));
 #                             oxpinyin must answer every add false and exit
 #                             cleanly.
-#   library 1                 PENDING — the pin adds into the system library;
-#                             oxpinyin refuses until system items are modelled
-#                             (#599). Reported, not gated.
 #
 # Run once per backend cell, with the capi built on the matching backend:
 #
@@ -55,7 +52,7 @@ run() {
 }
 
 status=0
-for library in 0 5 6 7 15; do
+for library in 0 1 2 3 4 5 6 7 15; do
   if ! run oracle "$oracle_so" "$library"; then
     echo "library $library: FAIL (oracle driver exited nonzero)"; status=1; continue
   fi
@@ -86,13 +83,6 @@ for library in 16 255; do
     echo "library $library: oxpinyin refuses every add; pin rc=$oracle_rc (class (b), not reproduced)"
   fi
 done
-
-# Library 1: pending the system-library model.
-if run oracle "$oracle_so" 1 && run oxpinyin "$capi_so" 1; then
-  echo "library 1: PENDING #599 — pin accepts $(grep -c '^add .*: true$' "$work/oracle-1.log"), oxpinyin accepts $(grep -c '^add .*: true$' "$work/oxpinyin-1.log") (not gated)"
-else
-  echo "library 1: PENDING #599 — a driver exited nonzero (not gated)"
-fi
 
 case $status in
   0) echo "zhuyin-import-diff: IDENTICAL" ;;
