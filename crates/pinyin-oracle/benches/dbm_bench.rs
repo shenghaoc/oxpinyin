@@ -83,7 +83,7 @@ fn bench_prefix() -> OraclePrefix {
     let Some(root) = std::env::var_os("PINYIN_ORACLE_PREFIX") else {
         eprintln!(
             "dbm_bench: PINYIN_ORACLE_PREFIX must name the oracle prefix to measure \
-             (built by tools/oracle/build-oracle.sh, optionally --dbm-selected)"
+             (built by tools/oracle/build-oracle.sh --dbm tkrzw, or another --dbm with PINYIN_BENCH_DBM set)"
         );
         std::process::exit(2);
     };
