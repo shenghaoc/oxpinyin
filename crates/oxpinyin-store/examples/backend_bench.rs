@@ -1,7 +1,7 @@
 //! The compiled-in store backend on the raw store tier traits.
 //!
 //! Measurement only; consumes public APIs and touches no parity code.
-//! Run in release against the default (tkrzw):
+//! Run in release against the default (Berkeley DB):
 //!
 //! ```text
 //! cargo run -p oxpinyin-store --release --example backend_bench

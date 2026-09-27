@@ -1,16 +1,17 @@
 //! Generates the C backends' bindings.
 //!
-//! tkrzw is the workspace's default selected backend, so a normal build
-//! runs bindgen over `tkrzw_langc.h` and links the system libtkrzw. With
+//! Berkeley DB is the workspace's default selected backend, so a normal
+//! build runs bindgen over `db.h` and links the system libdb. With
 //! `--no-default-features` — and with no C backend feature enabled —
 //! this script does nothing: no bindgen, no extra library. Selecting a
 //! peer backend explicitly (`--no-default-features --features
-//! {kyotocabinet|bdb}`) skips the C-binding step for the ones
+//! {kyotocabinet|tkrzw}`) skips the C-binding step for the ones
 //! it does not build.
 //!
 //! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`).
-//! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`), on by default.
-//! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb.
+//! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`).
+//! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb, on by
+//!   default.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
@@ -122,7 +123,8 @@ fn split_shell_words(line: &str) -> Vec<String> {
 /// at all. The cost is a build-time libclang, and it is small here
 /// because linking already requires the development package that carries
 /// the header: only libclang is added, and only when a build compiles a
-/// C backend in (Kyoto Cabinet by default; tkrzw when asked for).
+/// C backend in (Berkeley DB by default; Kyoto Cabinet or tkrzw when
+/// asked for).
 #[cfg(feature = "kyotocabinet")]
 mod kyotocabinet {
     use std::path::PathBuf;
