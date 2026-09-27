@@ -70,14 +70,18 @@ run zhuyin pin "$prefix/lib/libzhuyin.so"
 run zhuyin ox "$zhuyin_so"
 
 # The declared divergences: `mode<TAB>case-header regex<TAB>reason`. A
-# declared case must diverge and every other case must be identical —
-# a declared case that stops diverging fails too, so the table cannot
+# declared case must diverge and every other case must be identical. A
+# reason that starts `lists-only:` is stricter: the case may differ only
+# in candidate-list rows, LIST headers and the `row=` index a shifted
+# list moves — every choose cursor, chosen string and sentence must still
+# match, so an extra n-best row (#594) cannot hide a choose defect. A
+# declared case that stops diverging fails too, so the table cannot
 # go stale silently (for the #594 rows that means the trellis moved:
 # re-measure, do not just edit the table).
 declared=$(cat <<'TABLE'
-pinyin	^A word=0x(0|1e) import=(true|false) input=ba'kua$	trellis selection logic, not class (a): pin 2 n-best rows, oxpinyin 3 (#594, with #535)
-pinyin	^N word=0x(0|1e) import=(true|false) input=li'shi->ba'kua$	trellis selection logic, not class (a): the re-guessed ba'kua rows (#594, with #535)
-zhuyin	^M2 	open: #602 (a choose at the cursor is written where the session matrix has no column, and the next guess drops it)
+pinyin	^A word=0x(0|1e) import=(true|false) input=ba'kua$	lists-only: trellis selection logic, not class (a): pin 2 n-best rows, oxpinyin 3 (#594, with #535)
+pinyin	^N word=0x(0|1e) import=(true|false) input=li'shi->ba'kua$	lists-only: trellis selection logic, not class (a): the re-guessed ba'kua rows (#594, with #535)
+pinyin	^S[123] word=0x(0|1e) input=li'shi'ba'kua$	lists-only: trellis selection logic, not class (a): one more n-best row for li'shi'ba'kua (#594, with #535)
 TABLE
 )
 
@@ -107,6 +111,19 @@ for mode in ("pinyin", "zhuyin"):
     for name in pin:
         reason = next((r for m, rx, r in table if m == mode and re.search(rx, name)), None)
         same = pin[name] == ox[name]
+        if not same and reason is not None and reason.startswith("lists-only:"):
+            def rest(lines):
+                kept = []
+                for raw in lines:
+                    line = raw.decode("utf-8", "replace")
+                    if line.startswith("LIST ") or re.match(r"  \d+ ", line):
+                        continue
+                    kept.append(re.sub(r" row=\d+", "", line))
+                return kept
+            if rest(pin[name]) != rest(ox[name]):
+                print(f"{mode}: DIVERGENT {name}  (outside the lists a lists-only entry allows)")
+                status = 2
+                continue
         if same and reason is None:
             counts["identical"] += 1
         elif not same and reason is not None:

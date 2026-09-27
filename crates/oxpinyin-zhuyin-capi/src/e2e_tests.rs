@@ -329,3 +329,59 @@ fn zhuyin_launches_never_move_the_open_counter() {
     }
     assert_eq!(std::fs::read(&marker).expect("marker"), saved);
 }
+
+/// Issue #602: a choose at the cursor after an earlier choose writes its
+/// forcing on the matrix column the whole-buffer re-guess walks, so the
+/// forcing survives `zhuyin_guess_sentence` and the sentence keeps the
+/// chosen row — the pin's `add_constraint(m_begin, m_end, token)` at
+/// `m_begin = offset` (`zhuyin.cpp:1649-1654`, `:1460`), kept by
+/// `validate_constraint` (`phonetic_lookup.cpp:120-167`). The row chosen
+/// is one the unconstrained decode would not pick, so a dropped forcing
+/// shows in the sentence.
+#[test]
+fn a_choose_at_the_cursor_survives_the_next_guess() {
+    use crate::candidates::zhuyin_get_candidate;
+    use crate::sentence::zhuyin_guess_candidates_after_cursor;
+    use crate::test_support::candidate_text;
+
+    let (context, instance) = open();
+    let first = (0..8)
+        .find(|index| {
+            let _ = candidate(instance, "su3cl3", 0);
+            candidate_text(instance, *index) == "你"
+        })
+        .expect("你 is offered at 0");
+    let cand = candidate(
+        instance,
+        "su3cl3",
+        u32::try_from(first).expect("small index"),
+    );
+    assert_eq!(zhuyin_choose_candidate(instance, 0, cand), 3);
+    assert!(zhuyin_guess_sentence(instance));
+    assert!(zhuyin_guess_candidates_after_cursor(instance, 3));
+    let mut count = 0;
+    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    let other = (0..usize::try_from(count).expect("count fits"))
+        .find(|index| {
+            let text = candidate_text(instance, *index);
+            text.chars().count() == 1 && text != "好"
+        })
+        .expect("a one-character row other than 好 is offered at 3");
+    let text = candidate_text(instance, other);
+    let mut chosen: *mut crate::types::LookupCandidate = ptr::null_mut();
+    assert!(zhuyin_get_candidate(
+        instance,
+        u32::try_from(other).expect("small index"),
+        &raw mut chosen
+    ));
+    assert_eq!(zhuyin_choose_candidate(instance, 3, chosen), 6);
+    assert!(zhuyin_guess_sentence(instance));
+    let mut sentence: *mut c_char = ptr::null_mut();
+    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+    assert_eq!(
+        take_sentence(sentence),
+        format!("你{text}"),
+        "the forcing at the cursor survived the re-guess"
+    );
+    close(context, instance);
+}
