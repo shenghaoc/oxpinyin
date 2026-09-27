@@ -80,48 +80,77 @@ pub fn full_original_offset(parse: &FullPinyinIndexParse, offset: usize) -> usiz
 }
 
 /// Maps an original-input offset to the transformed session offset — the
-/// inverse of [`double_original_offset`]: the transformed start of the
-/// first key whose original span ends past `offset`.
+/// inverse of [`double_original_offset`]: the matrix column of the first
+/// key whose original span ends past `offset`.
 ///
-/// A key-boundary
-/// offset therefore maps to the next key's start, the position a forced
-/// run at that key would sit at.
+/// That column is the key's graph edge `from`: 0 for the first key, and
+/// for every later key the byte of the apostrophe in front of it — the
+/// previous key's transformed end — because the exact-key graph starts
+/// each later edge at the previous segment's end
+/// (`oxpinyin_core::SegmentGraph::build_exact`) and the scan matrix keys
+/// its columns by that start. It is the session-coordinate image of the
+/// pin's column: `fill_matrix` appends each key at its key rest's
+/// `m_raw_begin` (`phonetic_key_matrix.cpp:52-56` at pin 074a2219), which
+/// for these separator-free inputs is the previous key's `m_raw_end`. A
+/// key-boundary offset therefore maps to the column a forced run at the
+/// next key sits at, and that run spells under the whole-buffer matrix.
+///
+/// Amended 2026-09-27 (issue #602): this answered the key's text start, one
+/// past the apostrophe — a column the matrix does not hold — so a forcing
+/// written there was dropped by the next `guess_sentence`'s validation.
 #[must_use]
 pub fn double_session_offset(parse: &DoublePinyinParse, offset: usize) -> usize {
-    let mut transformed = 0;
-    for item in parse.keys() {
-        if offset < item.end() {
-            return transformed;
-        }
-        transformed += item.key().text().len() + 1; // key + apostrophe
-    }
-    transformed
+    session_column(
+        parse
+            .keys()
+            .iter()
+            .map(|item| (item.end(), item.key().text().len())),
+        offset,
+    )
 }
 
-/// [`double_session_offset`]'s zhuyin sibling.
+/// The shared walk behind the three `*_session_offset` mappers: over
+/// `(original end, transformed text length)` per key, the column of the
+/// first key whose original span ends past `offset` — 0, or the previous
+/// key's transformed end (its trailing apostrophe) — and past every key
+/// the last key's transformed end, the buffer's one-past-end.
+fn session_column(keys: impl Iterator<Item = (usize, usize)>, offset: usize) -> usize {
+    let mut column = 0;
+    let mut text_start = 0;
+    for (end, len) in keys {
+        if offset < end {
+            return column;
+        }
+        column = text_start + len;
+        text_start = column + 1; // the apostrophe between keys
+    }
+    column
+}
+
+/// [`double_session_offset`]'s zhuyin sibling — the mapping the zhuyin
+/// facade's after-cursor lookup and `zhuyin_choose_candidate` forcing
+/// ride (issue #602).
 #[must_use]
 pub fn zhuyin_session_offset(parse: &ZhuyinParse, offset: usize) -> usize {
-    let mut transformed = 0;
-    for item in parse.keys() {
-        if offset < item.end() {
-            return transformed;
-        }
-        transformed += item.key().text().len() + 1; // key + apostrophe
-    }
-    transformed
+    session_column(
+        parse
+            .keys()
+            .iter()
+            .map(|item| (item.end(), item.key().text().len())),
+        offset,
+    )
 }
 
 /// [`double_session_offset`]'s Luoma/secondary-zhuyin sibling.
 #[must_use]
 pub fn full_session_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize {
-    let mut transformed = 0;
-    for item in parse.keys() {
-        if offset < item.end() {
-            return transformed;
-        }
-        transformed += item.canonical().len() + 1; // key + apostrophe
-    }
-    transformed
+    session_column(
+        parse
+            .keys()
+            .iter()
+            .map(|item| (item.end(), item.canonical().len())),
+        offset,
+    )
 }
 
 ///
@@ -132,10 +161,13 @@ pub fn full_session_offset(parse: &FullPinyinIndexParse, offset: usize) -> usize
 /// syllables is two session positions at once: the end of the left key
 /// (`'a'`-joined bytes up to the apostrophe) and the start of the right
 /// key (past the apostrophe). The after-cursor family searches spans
-/// STARTING at the offset and takes the right-key start
+/// STARTING at the offset and takes the right key's matrix column
 /// ([`zhuyin_session_offset`]); the before-cursor family searches spans
 /// ENDING at it and takes the left-key end — upstream's `search_matrix`
-/// walk answers the left syllable's candidates there.
+/// walk answers the left syllable's candidates there. Amended 2026-09-27 (issue
+/// #602): the right key's column is the apostrophe byte in front of it,
+/// not its text start, so at a key boundary the two directions now answer
+/// the same position; they still differ inside a key and past the last.
 #[must_use]
 pub fn zhuyin_lookup_session_offset(
     parse: &ZhuyinParse,
@@ -209,16 +241,41 @@ mod tests {
         assert_eq!(zhuyin_original_begin(&parse, 3), 3);
     }
 
+    /// Issue #602: a key boundary maps to the right key's MATRIX COLUMN —
+    /// the apostrophe byte in front of it (the exact graph's edge `from`),
+    /// the session image of the pin's `m_raw_begin` column — not to its
+    /// text start, where the whole-buffer matrix holds nothing.
     #[test]
-    fn zhuyin_session_offset_is_the_next_key_start() {
+    fn zhuyin_session_offset_is_the_next_key_column() {
         let parse = nihao();
         assert_eq!(zhuyin_session_offset(&parse, 0), 0);
         assert_eq!(zhuyin_session_offset(&parse, 2), 0);
-        // The key boundary maps to the right key's transformed start.
-        assert_eq!(zhuyin_session_offset(&parse, 3), 3);
-        assert_eq!(zhuyin_session_offset(&parse, 5), 3);
-        // Past every key: one past the last key plus its apostrophe.
-        assert_eq!(zhuyin_session_offset(&parse, 6), 7);
+        // The key boundary maps to the apostrophe in front of `hao`.
+        assert_eq!(zhuyin_session_offset(&parse, 3), 2);
+        assert_eq!(zhuyin_session_offset(&parse, 5), 2);
+        // Past every key: the buffer's one-past-end.
+        assert_eq!(zhuyin_session_offset(&parse, 6), "ni'hao".len());
+    }
+
+    /// The column a mapped offset names is the one the exact-key graph
+    /// starts that key's edge at — the invariant #602 broke.
+    #[test]
+    fn zhuyin_session_offset_names_a_graph_column() {
+        use oxpinyin_core::graph::SegmentGraph;
+        let parse = nihao();
+        let segments = [
+            oxpinyin_core::graph::ExactSegment::new(0, 2, parse.keys()[0].key(), 0),
+            oxpinyin_core::graph::ExactSegment::new(3, 6, parse.keys()[1].key(), 0),
+        ];
+        let graph = SegmentGraph::build_exact(b"ni'hao", &segments).expect("valid segments");
+        let froms: Vec<usize> = graph.edges().iter().map(|edge| edge.from()).collect();
+        for key in parse.keys() {
+            assert!(
+                froms.contains(&zhuyin_session_offset(&parse, key.start())),
+                "key at original {} maps to a column the graph holds ({froms:?})",
+                key.start()
+            );
+        }
     }
 
     #[test]
@@ -226,10 +283,11 @@ mod tests {
         let parse = nihao();
         let session_len = "ni'hao".len();
         // The boundary between the two keys: after-cursor takes the right
-        // key's start (3), before-cursor the left key's end (2).
+        // key's column (the apostrophe, 2 — #602), before-cursor the left
+        // key's end (also 2).
         assert_eq!(
             zhuyin_lookup_session_offset(&parse, session_len, 3, false),
-            3
+            2
         );
         assert_eq!(
             zhuyin_lookup_session_offset(&parse, session_len, 3, true),
@@ -264,8 +322,13 @@ mod tests {
             // Transformed positions inside the key map to its original end.
             assert_eq!(double_original_offset(&parse, start), key.end());
             assert_eq!(double_original_offset(&parse, end), key.end());
-            // The original start maps back to the transformed start.
-            assert_eq!(double_session_offset(&parse, key.start()), start);
+            // The original start maps back to the key's matrix column:
+            // 0 for the first key, the apostrophe before it otherwise
+            // (#602).
+            assert_eq!(
+                double_session_offset(&parse, key.start()),
+                start.saturating_sub(1)
+            );
             transformed = end + 1;
         }
         assert_eq!(
