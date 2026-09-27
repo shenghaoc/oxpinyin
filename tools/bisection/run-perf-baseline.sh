@@ -13,10 +13,13 @@
 #   - the pinned model20 archive/cache, fetched by tools/model/fetch-model.sh
 #
 # Reproducible container: the perf-matrix image (Dockerfile.perf-matrix)
-# carries the pin oracle at /opt/libpinyin-tkrzw plus every build dep the
-# tkrzw datagen default links (lz4, zstd). The former dedicated
-# perf-baseline / perf-validation images were unreferenced and had been
-# unbuildable since the tkrzw default flip; they were removed in #370.
+# carries the pin oracle at /opt/libpinyin-tkrzw plus the build deps the
+# tkrzw peer links (lz4, zstd). This runner stages oxpinyin with default
+# features — whatever the workspace default is, Berkeley DB since
+# 2026-09-20 (tkrzw before) — and that image installs no libdb headers.
+# The former dedicated perf-baseline / perf-validation images were
+# unreferenced and had been unbuildable since the tkrzw default flip
+# (2026-09-05); they were removed in #370.
 #
 #   docker build -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
 #   docker run --rm -v /tmp/perf-out:/out -e PINYIN_ORACLE_PREFIX=/opt/libpinyin-tkrzw \
