@@ -379,6 +379,20 @@ pub extern "C" fn pinyin_choose_candidate(
         };
     }
     let source_index = inst.candidates[index].source_index;
+    // The chosen row's end in the window the caller saw — the pin's
+    // `offset + len` (`pinyin.cpp:2582-2589`, `m_begin = start = offset`,
+    // `:2246`). A choose behind the composition offset (register row 37)
+    // re-derives the composition offset from the surviving forcings, which
+    // can reach past this span; the answer is still the span's end.
+    let window_end = inst
+        .core
+        .anchored_window
+        .as_ref()
+        .and_then(|(anchor, window)| {
+            window
+                .get(source_index)
+                .map(|row| anchor + row.span_start() + row.consumed_bytes())
+        });
     // Resolve the selection against the window the caller actually saw:
     // when the last `pinyin_guess_candidates` re-anchored at an offset
     // other than the composition's own, that window is held in
@@ -431,7 +445,7 @@ pub extern "C" fn pinyin_choose_candidate(
     } else if let Some(parse) = inst.core.full_parse.as_ref() {
         oxpinyin_facade::full_original_offset(parse, inst.core.session.composition_offset())
     } else {
-        inst.core.session.composition_offset()
+        window_end.unwrap_or_else(|| inst.core.session.composition_offset())
     };
     c_int::try_from(end).unwrap_or(c_int::MAX)
 }

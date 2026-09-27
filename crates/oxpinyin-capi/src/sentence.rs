@@ -304,11 +304,11 @@ pub extern "C" fn pinyin_guess_candidates(
     // anchors its window at `start = offset` (`pinyin.cpp:2224-2262`); the
     // session's cached list is anchored at the composition offset it owns.
     // When the caller's normalized lookup offset differs — a
-    // mid-composition cursor with no prior choose — rebuild the window at
-    // that offset. When it matches (offset 0 unconstrained, and every
-    // post-choose lookup, where the frontend's offset equals the
-    // composition offset), the cached list already answers, so those paths
-    // stay bit-identical.
+    // mid-composition cursor with no prior choose, or a cursor behind a
+    // choose — rebuild the window at that offset. When it matches (offset
+    // 0 unconstrained, and every post-choose lookup at the chosen
+    // cursor), the cached list already answers, so those paths stay
+    // bit-identical.
     //
     // Re-anchoring is valid only for plain full pinyin, where the caller's
     // offset is a direct byte index into the session's raw buffer — the
@@ -327,16 +327,20 @@ pub extern "C" fn pinyin_guess_candidates(
     // an index into the cached list would select a different row
     // whenever the two differ. `anchored_window` is set here and a later
     // `pinyin_choose_candidate` resolves its index against it.
-    // Re-anchor only at a normalized offset strictly PAST the
-    // composition offset. A normalized offset equal to it is the
-    // composition-anchored cached list; one BELOW it is a stale cursor
-    // behind the selection, whose anchored span would regress the
-    // composition (rejected — the `select_anchored` guard refuses it)
-    // and is served the cached list instead. Under a transform the
-    // cached list stands (the offset is in the original input's
-    // coordinates `self.raw` does not share).
+    // Re-anchor at any normalized offset other than the composition
+    // offset; one equal to it is the composition-anchored cached list.
+    // An offset BELOW it — ibus's `moveCursorLeft` looks up at 0 behind a
+    // choose (`PYPPhoneticEditor.cc:595-604`) — was served the cached
+    // list, the window at the composition offset, because a choose from
+    // it would regress the composition; amended 2026-09-27 (maintainer ruling,
+    // register row 37): the pin keeps no composition offset and builds
+    // every window from `start = offset` (`pinyin.cpp:2224-2262`), and a
+    // choose from a window behind the composition now moves the record
+    // back to the chosen span (`Session::select_anchored`). Under a
+    // transform the cached list stands (the offset is in the original
+    // input's coordinates `self.raw` does not share).
     inst.core.anchored_window =
-        if transformed || normalized <= inst.core.session.composition_offset() {
+        if transformed || normalized == inst.core.session.composition_offset() {
             None
         } else if let Ok(window) = inst.core.session.candidates_at(normalized) {
             Some((normalized, window))

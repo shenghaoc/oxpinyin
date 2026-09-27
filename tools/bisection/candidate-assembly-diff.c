@@ -29,9 +29,19 @@
  *      re-query at 0 and at the returned cursor, guess_sentence, the same
  *      two re-queries. Words with bit 0x1 clear also run C2: choose row 0
  *      (the 1-best NBEST row) and re-query at 0 after a re-guess.
+ *   M  a choose behind an earlier choose — ibus's moveCursorLeft, which
+ *      looks up at 0 (`PYPPhoneticEditor.cc:595-604`), at the words with
+ *      bit 0x1 clear (under 0x1 ibus commits on the first choose):
+ *      M1 chooses the first NORMAL row at 0, re-guesses and looks up at
+ *      the cursor, then looks up at 0 and chooses the first one-character
+ *      NORMAL row there (the overlapped forcing is replaced); M2 first
+ *      chooses a second phrase at the cursor, so a forcing after the
+ *      behind-choose's span survives it. Each choose passes the offset
+ *      it looked up at, as ibus does; every list, sentence and cursor
+ *      after it is printed.
  *
  * Zhuyin mode (libzhuyin, standard keyboard, the pin's default option
- * word): the same A / N / C shape over ㄌㄧˋㄕˇ (`xu4g3`, 歷史) and
+ * word): the same A / N / C / M shape over ㄌㄧˋㄕˇ (`xu4g3`, 歷史) and
  * ㄅㄚˋㄎㄨㄚˋ (`184dj84`) with no import (see the #575 note in main),
  * through zhuyin_guess_candidates_after_cursor.
  *
@@ -269,6 +279,37 @@ static int first_of_type(instance_t *inst, int type) {
     return -1;
 }
 
+/* Index of the first row of `type` whose string is one CJK character
+ * (three UTF-8 bytes), or -1. */
+static int first_single_of_type(instance_t *inst, int type) {
+    guint n = 0;
+    if (!s.getn(inst, &n))
+        return -1;
+    for (guint i = 0; i < n; ++i) {
+        candidate_t *cand = NULL;
+        int t = -1;
+        const gchar *str = NULL;
+        if (s.getc(inst, i, &cand) && cand && s.gettype(inst, cand, &t) && t == type &&
+            s.getstr(inst, cand, &str) && str && strlen(str) == 3)
+            return (int)i;
+    }
+    return -1;
+}
+
+static int choose_row_at(instance_t *inst, const char *label, int index, size_t offset) {
+    candidate_t *cand = NULL;
+    const gchar *str = NULL;
+    if (index < 0 || !s.getc(inst, (guint)index, &cand) || !cand) {
+        printf("CHOOSE %s row=%d unavailable\n", label, index);
+        return -1;
+    }
+    s.getstr(inst, cand, &str);
+    int cursor = s.choose(inst, offset, cand);
+    printf("CHOOSE %s offset=%zu row=%d %s cursor=%d\n", label, offset, index,
+           str ? str : "(null)", cursor);
+    return cursor;
+}
+
 static int choose_row(instance_t *inst, const char *label, int index) {
     candidate_t *cand = NULL;
     const gchar *str = NULL;
@@ -345,6 +386,50 @@ static void case_c(const char *systemdir, guint options, guint word, bool import
     close_session(&ss);
 }
 
+/* A printed lookup at a returned cursor; false when the choose returned
+ * no usable cursor (nothing is looked up then). */
+static bool lookup(instance_t *inst, const char *label, int offset, guint word) {
+    if (offset <= 0)
+        return false;
+    dump_list(inst, label, (size_t)offset, word);
+    return true;
+}
+
+static void case_m(const char *systemdir, guint options, guint word, bool import,
+                   const char *input, bool later_forcing) {
+    struct session ss;
+    printf("== M%s word=0x%x import=%s input=%s\n", later_forcing ? "2" : "1", word,
+           yesno(import), input);
+    if (!open_session(&ss, systemdir, options, import))
+        return;
+    int normal = zhuyin ? ZHUYIN_NORMAL_AFTER_CURSOR : NORMAL_CANDIDATE;
+    printf("parse=%zu\n", s.parse(ss.inst, input));
+    printf("guess_sentence=%s\n", yesno(s.guess_sentence(ss.inst)));
+    dump_list(ss.inst, "start", 0, word);
+    int cursor = choose_row_at(ss.inst, "first", first_of_type(ss.inst, normal), 0);
+    printf("guess_sentence=%s\n", yesno(s.guess_sentence(ss.inst)));
+    if (!lookup(ss.inst, "after-first", cursor, word)) {
+        close_session(&ss);
+        return;
+    }
+    if (later_forcing) {
+        int next = choose_row_at(ss.inst, "second", first_of_type(ss.inst, normal),
+                                 (size_t)cursor);
+        printf("guess_sentence=%s\n", yesno(s.guess_sentence(ss.inst)));
+        print_sentence(ss.inst, "after-second");
+        if (next > 0 && next < (int)strlen(input))
+            dump_list(ss.inst, "after-second", (size_t)next, word);
+    }
+    /* moveCursorLeft: the lookup cursor goes to 0, behind the choose. */
+    dump_list(ss.inst, "behind", 0, word);
+    int back = choose_row_at(ss.inst, "behind", first_single_of_type(ss.inst, normal), 0);
+    printf("guess_sentence=%s\n", yesno(s.guess_sentence(ss.inst)));
+    print_sentence(ss.inst, "after-behind");
+    dump_list(ss.inst, "after-behind", 0, word);
+    lookup(ss.inst, "after-behind", back, word);
+    close_session(&ss);
+}
+
 static void load_syms(void) {
     s.init = (fn_init)must_prefixed("init");
     s.fini = (fn_fini)must_prefixed("fini");
@@ -402,6 +487,8 @@ int main(int argc, char **argv) {
             case_n(systemdir, ZHUYIN_OPTIONS, 0, imp, "xu4g3", "xu4g3");
             case_c(systemdir, ZHUYIN_OPTIONS, 0, imp, "xu4g3184dj84", false);
             case_c(systemdir, ZHUYIN_OPTIONS, 0, imp, "xu4g3184dj84", true);
+            case_m(systemdir, ZHUYIN_OPTIONS, 0, imp, "xu4g3184dj84", false);
+            case_m(systemdir, ZHUYIN_OPTIONS, 0, imp, "xu4g3184dj84", true);
         }
         return 0;
     }
@@ -422,6 +509,10 @@ int main(int argc, char **argv) {
             case_c(systemdir, options, word, imp, "lishibakua", false);
             if (!(word & 0x1))
                 case_c(systemdir, options, word, imp, "lishibakua", true);
+            if (!(word & 0x1)) {
+                case_m(systemdir, options, word, imp, "lishibakua", false);
+                case_m(systemdir, options, word, imp, "lishibakua", true);
+            }
         }
     }
     return 0;

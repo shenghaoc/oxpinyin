@@ -179,6 +179,19 @@ pub extern "C" fn zhuyin_choose_candidate(
         return -1;
     };
     let source_index = inst.candidates[index].source_index;
+    // An after-cursor row's end in the window the caller saw — the pin's
+    // `offset = m_end` (`zhuyin.cpp:1649-1654`). A choose behind the
+    // composition offset (register row 37) re-derives the composition
+    // offset from the surviving forcings, which can reach past this span.
+    let window_end = inst
+        .core
+        .anchored_window
+        .as_ref()
+        .and_then(|(anchor, window)| {
+            window
+                .get(source_index)
+                .map(|row| anchor + row.span_start() + row.consumed_bytes())
+        });
     let selection = match inst.core.anchored_window.as_ref() {
         Some((anchor, window)) => inst
             .core
@@ -200,13 +213,11 @@ pub extern "C" fn zhuyin_choose_candidate(
         lookup_candidate_type_t::BEST_MATCH_CANDIDATE => inst.core.parsed_len,
         lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => chosen.span_begin,
         _ => {
+            let end = window_end.unwrap_or_else(|| inst.core.session.composition_offset());
             if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-                oxpinyin_facade::zhuyin_original_offset(
-                    parse,
-                    inst.core.session.composition_offset(),
-                )
+                oxpinyin_facade::zhuyin_original_offset(parse, end)
             } else {
-                inst.core.session.composition_offset()
+                end
             }
         }
     };

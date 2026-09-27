@@ -3026,3 +3026,49 @@ fn engine_default_includes_divided_and_resplit_table_bits() {
         "default options must include USE_DIVIDED_TABLE: byte 10 is the divided e column"
     );
 }
+
+/// Register row 37 (maintainer ruling 2026-09-27): a choose from a window
+/// looked up BEHIND the composition offset forces its own span over the
+/// overlapped forcing and the record moves back to it — the pin's
+/// `add_constraint(m_begin, m_end, token)` (`pinyin.cpp:2578-2590`,
+/// `phonetic_lookup.cpp:61-86`), the pre-registered phase E3 shape
+/// (`probe-coverage-abi.md` E: choose 你 at 0 after 你好, cursor 2,
+/// 你@0..2 replacing 你好).
+#[test]
+fn choosing_behind_the_composition_moves_the_record_back() {
+    use super::CandidateKind;
+
+    const VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
+                         token=2\tkeys=hao\ttext=好\tunigram=900\n\
+                         token=3\tkeys=ni,hao\ttext=你好\tunigram=800\n";
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        FixtureDictionary::parse(VOCAB).expect("authored fixture"),
+        FixtureLanguageModel::parse(VOCAB, "").expect("authored fixture"),
+    )
+    .expect("the fixtures open");
+    session.type_pinyin("nihao").expect("typing cannot fail");
+    let whole = session
+        .candidates()
+        .iter()
+        .position(|cand| cand.kind() == CandidateKind::Phrase && cand.text() == "你好")
+        .expect("你好 is offered at 0");
+    session.select(whole).expect("你好 is selectable");
+    assert_eq!(session.composition_offset(), 5);
+
+    let window = session.candidates_at(0).expect("offset 0 is in range");
+    let (index, _) = window
+        .iter()
+        .enumerate()
+        .find(|(_, cand)| cand.kind() == CandidateKind::Phrase && cand.text() == "你")
+        .expect("你 is offered at 0");
+    session
+        .select_anchored(index, &window, 0)
+        .expect("a choose behind the composition is a selection, not a refusal");
+    assert_eq!(session.composition_offset(), 2, "the record moves back");
+    let runs = session.constraints.runs();
+    assert_eq!(runs.len(), 1, "你好 was overlapped and cleared: {runs:?}");
+    assert_eq!((runs[0].0, runs[0].1, runs[0].3.as_str()), (0, 2, "你"));
+    assert_eq!(session.preedit().text(), "你hao");
+}

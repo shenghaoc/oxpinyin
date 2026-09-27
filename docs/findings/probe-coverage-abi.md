@@ -1015,6 +1015,14 @@ the whole phase runs IDENTICAL; the phase's phrase-row counts (126 at
 offset 0, 301 at offset 5) are the A-independent half of the same
 gate.
 
+**Amendment (2026-09-27, maintainer ruling of that date).** Both legs landed
+(`revert-plan.md` §14 amendment): the display leg re-anchors at any
+offset other than the composition's, and the choose leg no longer hits
+`SelectionAnchorBeforeComposition` for a token-bearing row — the span is
+forced over the overlapped forcings and the record moves back. The E3
+shape above is pinned in the engine and C tests named there and
+measured on both libraries by `candidate-assembly-diff` phase M.
+
 ### F — bigram export iterator, last-row return value (**REVERT TARGET**, register row 36)
 
 **Mechanism.** The pin's `pinyin_bigram_iterator_get_next_phrase`

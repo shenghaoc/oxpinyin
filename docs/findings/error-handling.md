@@ -71,6 +71,7 @@ the W14 / #113 shape: an empty n-best is a successful empty lookup.
 | Type | Shape | Callers distinguish? |
 |---|---|---|
 | `EngineError` | `CandidateIndexOutOfRange { index, len }`, `LookupOffsetPastSeparator { offset, normalized }`, `LookupOffsetOutOfRange { offset, len }`, `LookupOffsetInsideCharacter { offset, len }`, `SelectionAnchorBeforeComposition { anchor, composition }`, `ZeroKeyOffsetCheck { offset }`, `MatrixColumnAssert { offset }`, `UserModel(String)`, `Graph(GraphError)`, `Decode(DecodeError)`, `Scoring(ScoringError)` — the complete inventory | **yes** — `select` on a stale index is F-E-02; tests match `CandidateIndexOutOfRange`. Backend failures stay strings. |
+| | *Amended 2026-09-27 (maintainer ruling, register row 37): `SelectionAnchorBeforeComposition` no longer answers a token-bearing choose behind the composition offset — that choose forces its span as the pin does and the record moves back; it remains only for a row with no token to force.* | |
 | `ConfigError` | overlay parse/type mismatch | yes for config-merge callers; `Session::new` does not use it (typed getters fall back to defaults) |
 
 `EngineError` already exists and is the right Rust-side enum. Do not

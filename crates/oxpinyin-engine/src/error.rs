@@ -56,6 +56,14 @@ pub enum EngineError {
     /// composition offset — a stale cursor behind the selection, whose span
     /// would regress the consumed boundary. Rejected rather than
     /// reconciled; no frontend drives a backward selection.
+    ///
+    /// Amended 2026-09-27 (maintainer ruling, register row 37): a frontend does
+    /// drive it — ibus-libpinyin's `moveCursorLeft` looks up at 0 behind a
+    /// choose — and the pin forces the chosen span over the overlapped
+    /// forcings (`pinyin.cpp:2578-2590`, `phonetic_lookup.cpp:61-86`). A
+    /// token-bearing row is now selected that way and the record moves
+    /// back to it; this error remains only for a row with no token to
+    /// force (the engine's raw-input `Fallback` row).
     SelectionAnchorBeforeComposition {
         /// The window anchor the caller supplied.
         anchor: usize,

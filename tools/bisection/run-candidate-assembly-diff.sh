@@ -72,13 +72,12 @@ run zhuyin ox "$zhuyin_so"
 # The declared divergences: `mode<TAB>case-header regex<TAB>reason`. A
 # declared case must diverge and every other case must be identical —
 # a declared case that stops diverging fails too, so the table cannot
-# go stale silently (for the §12 rows that is a pin move: re-measure,
-# do not just edit the table).
+# go stale silently (for the #594 rows that means the trellis moved:
+# re-measure, do not just edit the table).
 declared=$(cat <<'TABLE'
-pinyin	^A word=0x(0|1e) import=(true|false) input=ba'kua$	§12 frozen sentence-surface residual? (pin 2 n-best rows, oxpinyin 3 — #594)
-pinyin	^N word=0x(0|1e) import=(true|false) input=li'shi->ba'kua$	§12 frozen sentence-surface residual? (the re-guessed ba'kua rows — #594)
-pinyin	^C[12] word=0x(0|1e) 	open: register row 37 (window behind the composition offset)
-zhuyin	^C[12] 	open: register row 37 (window behind the composition offset)
+pinyin	^A word=0x(0|1e) import=(true|false) input=ba'kua$	trellis selection logic, not class (a): pin 2 n-best rows, oxpinyin 3 (#594, with #535)
+pinyin	^N word=0x(0|1e) import=(true|false) input=li'shi->ba'kua$	trellis selection logic, not class (a): the re-guessed ba'kua rows (#594, with #535)
+zhuyin	^M2 	open: #602 (a choose at the cursor is written where the session matrix has no column, and the next guess drops it)
 TABLE
 )
 
