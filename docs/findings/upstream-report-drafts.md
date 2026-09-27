@@ -5,7 +5,10 @@ Date: 2026-08-22 · Status: drafts, not filed.
 Four finds with fixes and reproductions, consolidated so they can be
 filed as a considered set rather than trickling. A fifth draft, item 5,
 was added 2026-09-22: Tkrzw has no upstream CI coverage, not an API
-defect, and not part of that four-issue filing shape. Filing is the
+defect, and not part of that four-issue filing shape. A sixth, item 6,
+was added 2026-09-27 UTC: `pinyin_init` leaves the process
+`LC_NUMERIC` at `"C"` (#539), read at the current pin `074a2219`.
+Filing is the
 maintainer's action (and account); nothing here has been posted. The
 collection mandate is `AGENTS.md`'s ("collected to report back to
 libpinyin once the rewrite is complete") — filing earlier than
@@ -267,10 +270,73 @@ testing/unstable one.
 
 ---
 
+## 6. `pinyin_init` leaves the process `LC_NUMERIC` at "C"
+
+**Severity: process state** — not a crash. A library call changes a
+process-global locale category and does not put it back.
+
+Read at the pin `074a2219c90feaf962d0d24f034514033ece5f99`
+(`src/storage/table_info.cpp`). Unlike items 1–4 this one was not
+verified at `0c5e80e`; it is the round-2 audit's D-17 (oxpinyin #539).
+
+`SystemTableInfo2::load` (`:197`, `:291`), `UserTableInfo::load`
+(`:328`, `:372`) and `UserTableInfo::save` (`:378`, `:394`) all use the
+same shape:
+
+```c++
+char * locale = setlocale(LC_NUMERIC, "C");
+/* ... fopen, fscanf/fprintf ... */
+setlocale(LC_NUMERIC, locale);
+return true;
+```
+
+Two defects, each enough on its own:
+
+- **The saved value is the new locale, not the old one.** `setlocale`
+  with a non-NULL locale argument returns the name of the locale it just
+  selected (C11 7.11.1.1p7), so `locale` is `"C"` and the closing call
+  re-selects `"C"`. Saving the old value takes a query first —
+  `setlocale(LC_NUMERIC, NULL)`, copied with `g_strdup` because the
+  next `setlocale` may overwrite the returned buffer — and only then the
+  switch.
+- **Every early return skips the restore.** A missing file
+  (`:199-202`, `:330-333`) or a failed version directive (`:339-348`)
+  returns `false` before the closing `setlocale`.
+
+**Reproduction** (the shared setup above, with these lines around its
+`pinyin_init` call and `#include <locale.h>` added; the host must have
+`zh_CN.UTF-8` generated):
+
+```c
+setlocale(LC_ALL, "zh_CN.UTF-8");
+printf("before: %s\n", setlocale(LC_NUMERIC, NULL)); /* zh_CN.UTF-8 */
+/* pinyin_context_t *ctx = pinyin_init(systemdir, userdir); — as above */
+printf("after:  %s\n", setlocale(LC_NUMERIC, NULL)); /* C */
+```
+
+The same holds after a failed init (a user dir with no `user.conf`
+takes the `:330-333` path) and after `pinyin_fini`, whose
+`mark_version` runs `UserTableInfo::save`. An input-method frontend that
+prints or parses locale-formatted numbers after init reads them in the
+`C` locale from then on.
+
+**Fix:** query, copy, switch, and restore on every exit — or, since the
+three functions only need `%d`/`%f` in the C locale, a thread-local
+`uselocale(newlocale(LC_NUMERIC_MASK, "C", 0))` that is freed on every
+return and leaves the process locale alone.
+
+oxpinyin reproduces the pin's end state bug-for-bug (ruling recorded
+2026-09-27 UTC, `compatibility-policy.md` row 39) until upstream fixes
+it.
+
+---
+
 ## Filing notes
 
 - Independence: no fix touches another; file items 1–4 as four issues.
-  Item 5 is a separate report; it does not belong in that batch.
+  Item 5 is a separate report; it does not belong in that batch, and
+  neither does item 6, which is a process-state defect filed on its
+  own.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Credit line per `AGENTS.md` attribution rules is the maintainer's to
   place; the reproductions above stand alone.
