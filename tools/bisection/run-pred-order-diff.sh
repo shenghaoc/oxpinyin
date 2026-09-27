@@ -54,8 +54,8 @@ fi
 # works across every differential, so a whole sweep needs one export
 # rather than a different variable per runner (see system-dir.sh).
 # The tables are looked for in the extension the built capi opens
-# (system_dir_detect_ext: .kct by default, .tkt for an
-# explicit --features build), not in a hard-coded one.
+# (system_dir_detect_ext: .db for the default Berkeley DB build, .kct or
+# .tkt for an explicit --features build), not in a hard-coded one.
 SYSTEM="${UNCOVERED_SYSTEM:-${OXPINYIN_SYSTEM_DIR:-}}"
 if [[ -z "$SYSTEM" ]] || ! system_dir_detect_ext "$SYSTEM" >/dev/null; then
     echo "SKIP: UNCOVERED_SYSTEM must name the five-file system dir"

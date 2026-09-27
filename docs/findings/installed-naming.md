@@ -148,7 +148,12 @@ the redundant first write.
 backend of `oxpinyin-capi`, mirroring `oxpinyin_store::DefaultStore` —
 `KyotoCabinet` under the default features (KC is the workspace's default
 selection), and `Tkrzw` / `LMDB` / `redb` when the corresponding peer
-feature is selected via `--no-default-features --features <peer>`. A
+feature is selected via `--no-default-features --features <peer>`.
+*(Amended 2026-09-27 UTC, #552: the default features now select Berkeley
+DB, so the token is `BerkeleyDB` (`crates/oxpinyin-capi/build.rs:150-165`);
+Kyoto Cabinet and tkrzw are peers, and the LMDB and redb peers were
+removed 2026-09-20. Q1 ruling, `compatibility-policy.md`, "Amendment —
+rulings recorded".)* A
 packager shipping data in a specific engine's format who wants to
 override that mapping sets `LIBPINYIN_DATABASE_FORMAT=<name>` at build
 time; otherwise the variable reads whichever peer the library was
