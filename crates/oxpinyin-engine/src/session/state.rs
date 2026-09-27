@@ -141,8 +141,24 @@ where
     ///
     /// The full reset — upstream's `pinyin_reset`: the input, the
     /// selection record, the n-best rows, and the constraint store all
-    /// go (`pinyin.cpp:2697` clears `m_constraints`).
+    /// go (`pinyin.cpp:2693-2704`; `:2700` clears `m_nbest_results`,
+    /// `:2699` `m_constraints`).
     pub fn reset(&mut self) {
+        self.discard_composition();
+        self.sentence.reset();
+    }
+
+    /// Discards the composition but keeps the last sentence lookup's
+    /// n-best rows — the reset a parse of a *different* buffer takes.
+    ///
+    /// The input, the selection record and the constraint store go, as
+    /// in [`Session::reset`]; the n-best state does not, because
+    /// upstream's parse never touches `m_nbest_results`
+    /// (`pinyin_parse_more_full_pinyins`, `pinyin.cpp:1497-1524`): only
+    /// `pinyin_reset` (`:2700`) and the next `guess_sentence` replace it.
+    /// Until then `pinyin_get_sentence` answers the old rows and
+    /// `pinyin_guess_candidates` prepends them (register row 34).
+    pub fn discard_composition(&mut self) {
         self.reset_composition();
         self.input.clear();
         self.record.clear();
@@ -150,7 +166,8 @@ where
     }
 
     /// The parse-path reset: the composition's PARSE state goes; the
-    /// raw input, the selection record, and the constraint store stay.
+    /// raw input, the selection record, the constraint store and the
+    /// n-best rows stay.
     ///
     /// `pinyin_parse_more_full_pinyins` replaces the input buffer — the
     /// frontend re-sends the whole buffer every keystroke — and never
@@ -158,7 +175,10 @@ where
     /// cursor (`pinyin.cpp:1497-1533`); the next `guess_sentence`
     /// re-validates the surviving forcings against the new matrix. This
     /// is that split's engine half: the L2 lifetime rule
-    /// (`docs/findings/live-typing.md`).
+    /// (`docs/findings/live-typing.md`). The parse leaves
+    /// `m_nbest_results` alone too (`pinyin.cpp:1497-1524`; only
+    /// `pinyin_reset` clears it, `:2700`), so the sentence rows survive
+    /// until the next `guess_sentence` replaces them (register row 34).
     ///
     /// The raw buffer is NOT cleared here: a cleared raw with a surviving
     /// cursor would leave `consumed > raw.len()` observable, and every
@@ -169,7 +189,6 @@ where
     /// consistent session.
     pub fn reset_composition(&mut self) {
         self.lookup.reset();
-        self.sentence.reset();
     }
 
     /// Replaces the raw input with `text` in one step — the capi parse

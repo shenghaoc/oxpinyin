@@ -77,9 +77,6 @@ run zhuyin ox "$zhuyin_so"
 declared=$(cat <<'TABLE'
 pinyin	^A word=0x(0|1e) import=(true|false) input=ba'kua$	§12 frozen sentence-surface residual? (pin 2 n-best rows, oxpinyin 3 — #594)
 pinyin	^N word=0x(0|1e) import=(true|false) input=li'shi->ba'kua$	§12 frozen sentence-surface residual? (the re-guessed ba'kua rows — #594)
-pinyin	^N 	open: register row 34 (n-best rows across a parse)
-zhuyin	^N 	open: register row 34 (n-best rows across a parse)
-pinyin	^C1 word=0x1f? 	open: register row 34 / §11 (the 0x1 choose leg)
 pinyin	^C[12] word=0x(0|1e) 	open: register row 37 (window behind the composition offset)
 zhuyin	^C[12] 	open: register row 37 (window behind the composition offset)
 TABLE

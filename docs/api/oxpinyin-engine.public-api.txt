@@ -539,6 +539,7 @@ impl<D, L> oxpinyin_engine::Session<D, L> where D: oxpinyin_core::Dictionary<Syl
 pub const fn oxpinyin_engine::Session<D, L>::candidates(&self) -> &oxpinyin_engine::CandidateList
 pub const fn oxpinyin_engine::Session<D, L>::composition_offset(&self) -> usize
 pub const fn oxpinyin_engine::Session<D, L>::dictionary(&self) -> &D
+pub fn oxpinyin_engine::Session<D, L>::discard_composition(&mut self)
 pub const fn oxpinyin_engine::Session<D, L>::is_composing(&self) -> bool
 pub const fn oxpinyin_engine::Session<D, L>::language_model(&self) -> &L
 pub fn oxpinyin_engine::Session<D, L>::new(&dyn oxpinyin_engine::ConfigSource, oxpinyin_engine::StoragePaths, D, L) -> core::result::Result<Self, oxpinyin_engine::EngineError>

@@ -9,7 +9,9 @@ use oxpinyin_user::{SENTENCE_START, is_user_token};
 use crate::state::{
     CapiCandidate, CapiInstance, candidate_ptr, candidate_ref, instance_mut, instance_ref,
 };
-use crate::types::{GChar, GUint, LookupCandidate, PinyinInstance, lookup_candidate_type_t};
+use crate::types::{
+    GChar, GUint, LookupCandidate, PinyinInstance, lookup_candidate_type_t, sort_option_t,
+};
 
 /// Get the number of candidates.
 ///
@@ -296,14 +298,17 @@ pub extern "C" fn pinyin_remove_user_candidate(
 /// §9: a chosen `LONGER_CANDIDATE` row trains `+483` unigram through the
 /// phrase-index overlay above and answers cursor `1` — the same law the
 /// pin's LONGER branch applies (`pinyin.cpp:2521-2530`). The
-/// `SORT_WITHOUT_SENTENCE_CANDIDATE` leg of that same call site (a
-/// `NORMAL_CANDIDATE` trained `+483` with the bit set, `:2570-2577`)
-/// remains unreachable: it fires only at words with bit `0x1` set, whose
-/// row shape is register #34 / §11.
+/// `SORT_WITHOUT_SENTENCE_CANDIDATE` leg of that same call site
+/// (`:2565-2576`) applies the same law to any other row when the last
+/// `pinyin_guess_candidates` word set bit `0x1`: after an addon row's
+/// promotion (`:2534-2563`) the row's token trains `+483` unigram, no
+/// constraint is written and the call answers `true` (cursor `1`). The
+/// pin `assert`s `0 == offset` there (`:2566`) and aborts on any other
+/// offset; oxpinyin answers `false` (`0`) and logs one warning — class (c).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_choose_candidate(
     instance: *mut PinyinInstance,
-    _offset: usize,
+    offset: usize,
     candidate: *mut LookupCandidate,
 ) -> c_int {
     if instance.is_null() || candidate.is_null() {
@@ -349,6 +354,30 @@ pub extern "C" fn pinyin_choose_candidate(
         };
     }
     let addon_token = try_promote_addon(inst, index);
+    // The `SORT_WITHOUT_SENTENCE_CANDIDATE` leg (`pinyin.cpp:2565-2576`),
+    // reached after the addon promotion exactly as the pin's dispatch
+    // falls through to it: only the unigram trains, by the LONGER
+    // branch's `69 * 7 = 483`, into the same overlay, with the same
+    // refusal answer.
+    if inst.core.session.sort_options() & sort_option_t::SORT_WITHOUT_SENTENCE_CANDIDATE as u32 != 0
+    {
+        if offset != 0 {
+            // Class (c): the pin's `assert(0 == offset)` (`:2566`).
+            crate::ffi::log_warning(
+                "pinyin_choose_candidate: offset must be 0 under \
+                 SORT_WITHOUT_SENTENCE_CANDIDATE",
+            );
+            return 0;
+        }
+        let Some(token) = addon_token.or(inst.candidates[index].token) else {
+            return -1;
+        };
+        return if inst.core.dict.add_unigram_delta(token.value(), 483) {
+            1
+        } else {
+            -1
+        };
+    }
     let source_index = inst.candidates[index].source_index;
     // Resolve the selection against the window the caller actually saw:
     // when the last `pinyin_guess_candidates` re-anchored at an offset
