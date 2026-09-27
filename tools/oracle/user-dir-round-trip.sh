@@ -11,12 +11,11 @@
 # Usage:
 #   user-dir-round-trip.sh <oracle-prefix> [input ...]
 #
-#   <oracle-prefix>  a prefix built by tools/oracle/build-oracle.sh
-#                    (DBM tkrzw — build oxpinyin with
-#                    --no-default-features --features tkrzw, which this
-#                    script now does itself; the pin-built oracle is
-#                    tkrzw and the workspace default moved to Berkeley
-#                    DB on 2026-09-20).
+#   <oracle-prefix>  a prefix built by tools/oracle/build-oracle.sh with
+#                    any --dbm; this script reads the prefix's
+#                    oracle-pin.txt dbm= field and builds oxpinyin with
+#                    the matching cargo feature (bdb, kyotocabinet or
+#                    tkrzw), so the pair is always one backend.
 #   input            pinyin strings to train on (default: nihao nisha).
 #
 # Requires: cc, pkg-config, glib-2.0 dev files, and the rust toolchain.
@@ -73,15 +72,21 @@ printf '== Phase B: oxpinyin loads the pin profile and saves it back in place ==
 # can enter the comparison.
 #
 # OX_CARGO_FEATURES selects oxpinyin's store backend and MUST match the
-# oracle prefix's `--with-dbm` (the seamless claim is per KV backend):
-# a KyotoCabinet-built libpinyin pairs with `--no-default-features
-# --features kyotocabinet`, tkrzw with `--no-default-features --features
-# tkrzw` (the workspace default moved from tkrzw to Berkeley DB on
-# 2026-09-20, so the default `build-oracle.sh --dbm` no longer matches an
-# empty selection). The default here is therefore tkrzw explicitly —
-# matching that oracle — and OX_CARGO_FEATURES overrides it.
+# oracle prefix's `--with-dbm` (the seamless claim is per KV backend).
+# By default it is derived from the prefix's own oracle-pin.txt dbm=
+# field, so the pair cannot drift apart when build-oracle.sh's default
+# changes (Berkeley DB since 2026-09-27); OX_CARGO_FEATURES overrides it.
+case $(sed -n 's/^dbm=//p' "$prefix/oracle-pin.txt" 2>/dev/null | head -n1) in
+BerkeleyDB) ox_default_feature=bdb ;;
+KyotoCabinet) ox_default_feature=kyotocabinet ;;
+Tkrzw) ox_default_feature=tkrzw ;;
+*)
+	echo "fatal: $prefix/oracle-pin.txt names no known dbm (BerkeleyDB, KyotoCabinet, Tkrzw)" >&2
+	exit 1
+	;;
+esac
 # shellcheck disable=SC2206
-feature_flags=(${OX_CARGO_FEATURES:---no-default-features --features tkrzw})
+feature_flags=(${OX_CARGO_FEATURES:---no-default-features --features $ox_default_feature})
 OX_SYSTEM_DIR="$data_dir" \
 OX_PIN_DIR="$work/pin" \
 cargo test --locked --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \

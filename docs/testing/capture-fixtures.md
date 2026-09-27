@@ -17,7 +17,7 @@ libpinyin-2.11.91-0c5e80e1200f84fab185d1c5bde458b770a0636c+model20-59c68e89d43ff
 Reproduce from a clean ignored build directory:
 
 ```bash
-tools/oracle/build-oracle.sh --work-dir target/oracle --jobs 4
+tools/oracle/build-oracle.sh --dbm tkrzw --work-dir target/oracle --jobs 4
 tools/capture/run-capture.sh target/oracle/prefix fixtures/foundation
 sha256sum fixtures/foundation/f-a.txt fixtures/foundation/f-c.txt
 ```

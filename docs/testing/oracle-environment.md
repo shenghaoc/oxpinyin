@@ -42,7 +42,10 @@ the amendments below; the freeze originally used tag tarballs), verifies
 the model archive's SHA-256 before extraction, builds both components
 with autotools, and prints the absolute path to the resulting `libpinyin`
 shared object. The libpinyin DBM backend is
-pinned to Tkrzw; the deprecated Berkeley DB backend is not used. Its default
+pinned to Tkrzw; the deprecated Berkeley DB backend is not used. *(Superseded
+2026-09-27 UTC: the parity oracle now defaults to Berkeley DB, and tkrzw
+and kc are selectable cells — see "Amendment — the parity oracle defaults
+to Berkeley DB" below.)* Its default
 installation prefix is `WORK_DIR/prefix`, resolved after option parsing. The prefix must be
 absent or empty so stale output cannot enter the oracle. The script resets
 `PKG_CONFIG_PATH` and `LD_LIBRARY_PATH` to prefix-local paths rather than
@@ -78,7 +81,8 @@ corresponding DBM (`Tkrzw`, `KyotoCabinet`, `BerkeleyDB`). The choice is
 recorded in the pin ref (`+dbm-<name>`) and in the `dbm=` field of
 `oracle-pin.txt`; each backend gets its own explicit `--prefix`. The
 default path — no flag — is unchanged: the parity oracle remains tkrzw
-and nothing in this section applies to it.
+and nothing in this section applies to it. *(Superseded 2026-09-27 UTC:
+the no-flag path is now Berkeley DB; see the amendment below.)*
 
 A bench prefix is linked by setting `PINYIN_ORACLE_PREFIX` plus
 `PINYIN_BENCH_DBM=kc|bdb`, which relaxes the frozen pin-ref comparison
@@ -175,3 +179,32 @@ held from 2026-09-06 to 2026-09-26 and no longer describes the tree.
 - **Checks:** `tools/packaging/check-pc-version.sh` (CI lint job) holds
   the manifests to the record; `tools/packaging/check-pc-metadata.sh`
   diffs an installed drop-in against a pin install (issue #537).
+
+## Amendment — the parity oracle defaults to Berkeley DB (2026-09-27 UTC)
+
+Human ruling, 2026-09-27 UTC: the parity oracle defaults to Berkeley DB,
+following Q1 — the reference build is the pin's autoconf build with a
+bare `./configure`, which selects `BerkeleyDB` (`configure.ac:94` at
+`074a2219`; `docs/findings/compatibility-policy.md`, "Amendment — rulings
+recorded"). The tkrzw, bdb and kc cells all stay explicitly selectable.
+What changed, and what did not:
+
+- `tools/oracle/build-oracle.sh` defaults to `--dbm bdb`; `--dbm tkrzw`
+  and `--dbm kc` build the other cells. `tools/oracle/oracle-pin.txt`
+  records `dbm=BerkeleyDB`.
+- Differentials that compare against a full pin ref choose the cell with
+  `PINYIN_ORACLE_DBM=bdb|kc|tkrzw` (default `bdb`,
+  `tools/bisection/oracle-cell.sh`), build oxpinyin with the matching
+  cargo feature, and refuse data written by another backend
+  (`tools/bisection/system-dir.sh`).
+- **Unchanged — the tkrzw cell stays the pin for the frozen goldens.** The
+  capture fixtures (`fixtures/foundation`, `fixtures/w4`, `fixtures/w3/pin-ref.txt`)
+  and the `pinyin-oracle` crate's `EXPECTED_PIN_REF` carry `+dbm-tkrzw`;
+  `tools/capture/run-capture.sh`, `tools/profile/run-w8-cycle.sh` and the
+  crate's parity tests need a prefix built with `--dbm tkrzw`. The
+  Multi-backend section's statement that capture links only the tkrzw
+  oracle still holds.
+- Dated facts above stay as written: Debian's history with Berkeley DB,
+  the 2026-09-06 bench-oracle introduction, and "deprecated" as the
+  2026-09-06 characterisation.
+
