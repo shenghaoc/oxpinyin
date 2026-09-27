@@ -81,6 +81,8 @@ is complete, these notes are collected to report back to libpinyin.
 
 ### Tone digit on an initial-only key aborts the pin's phrase search
 
+- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — and **needs guard, not just a log**: the pin's sites are `storage/pinyin_phrase3.h:152` and `pinyin.cpp:2769`, both **`assert`**; oxpinyin returns candidates (and `pinyin_get_pinyin_is_incomplete` answers `true`, `crates/oxpinyin-capi/src/keys.rs:260`), so neither `false`/`Err` nor the log line holds (`compatibility-policy.md` row 4).
+
 - **Upstream source cite:** `contains_incomplete_pinyin`
   (`src/storage/pinyin_phrase3.h:146-156`) asserts
   `CHEWING_ZERO_TONE == key.m_tone` for any zero-middle/zero-final
@@ -102,6 +104,8 @@ is complete, these notes are collected to report back to libpinyin.
   for libpinyin.
 
 ### Scheme setters abort or half-mutate on the no-op slots
+
+- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — for the abort slots: double 30 `storage/pinyin_parser2.cpp:611`, zhuyin 7 `storage/zhuyin_parser2.cpp:295`, zhuyin out-of-enum `pinyin.cpp:1189` (not `:1188`) with libzhuyin's `zhuyin.cpp:736`, full-pinyin out-of-enum `storage/pinyin_parser2.cpp:398` — all **`abort()`**, so they abort in an `-DNDEBUG` build too. oxpinyin's `false` holds; the log line is owed (rows 5a, 5c, 5d; 5b stays closed).
 
 The #109 contract-lock (all rows verified at `0c5e80e1`; row 5b
 reverted 2026-09-15; remaining rows pinned by
@@ -154,6 +158,8 @@ consumed=2/n=8 — and the whole-log diff is IDENTICAL, exit 0, no SKIP
 line.)
 
 ### Constraint-aware train without the consistency assert
+
+- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — and **needs guard, not just a log**: `lookup/phonetic_lookup.h:868` is an **`assert`**; oxpinyin trains and answers the gate result, so neither half holds (row 6).
 
 - **Upstream source cite:** `src/lookup/phonetic_lookup.h:841-935`
   (`train_result3`), `src/pinyin.cpp:2669-2689` (`pinyin_train`).
@@ -339,6 +345,8 @@ line.)
   tables.
 
 ### pinyin_get_sentence asserts a non-empty past-the-rows index
+
+- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — `pinyin.cpp:1474` is an **`assert`**; oxpinyin's `false` holds (`crates/oxpinyin-capi/src/sentence.rs:132-154`); the log line is owed (row 10).
 
 - **Upstream source cite:** `src/pinyin.cpp:1463-1482`
   (`pinyin_get_sentence`).
@@ -602,6 +610,8 @@ Text, candidate type and counts cannot.
 
 ### The cursor helpers' `_check_offset` aborts answer `false` — not the pin's abort, not post-`95e3af7` upstream's discarded-`false` true
 
+- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — at `074a2219` the aborts are the **`assert`**-wrapped calls `pinyin.cpp:3035`, `:3057`, `:3067`, `:3092` (`_check_offset` itself, `:2163-2182`, returns `false`); the `:2175` cited below is the `0c5e80e1` pin's line. oxpinyin's `false` holds; the log line is owed (row 14).
+
 - **Upstream source cite:** `src/pinyin.cpp:2163-2180` (`_check_offset`,
   the assert at `:2175`) called on the COMPUTED result of the word moves
   — `pinyin_get_left_pinyin_offset`'s second check (`pinyin.cpp:3055`)
@@ -726,6 +736,8 @@ seen in the same probe is a separate parity defect: issue #356.
 
 ### The single-key surface aborts the pin where oxpinyin answers `false`
 
+- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — `storage/pinyin_parser2.cpp:170`, `pinyin.cpp:499` and `:466` are **`assert`**; the empty-input reads (`pinyin_parser2.cpp:178`, `zhuyin_parser2.cpp:171`) are over-reads, not aborts. oxpinyin's `false` holds; the log line is owed (row 21).
+
 - **Upstream source cite:** `FullPinyinParser2::parse_one_key`
   (`src/storage/pinyin_parser2.cpp:168-170`, the
   `assert(NULL == strchr(input, '\''))` on apostrophes);
@@ -754,6 +766,8 @@ seen in the same probe is a separate parity defect: issue #356.
   `_check_offset` assert families.
 
 ### `pinyin_get_character_offset`'s recursion asserts answer `false`
+
+- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — the sites are `pinyin.cpp:3147`, `:3161`, `:3203`, `:3204` and `zhuyin.cpp:2110`, `:2158`, all **`assert`** (the `:3152`/`:3166` below are five lines stale; `:3172` is now `:3168`). oxpinyin's `false` holds; the log line is owed (row 19).
 
 - **Upstream source cite:** `pinyin_get_character_offset`
   (`src/pinyin.cpp:3193-3241` at 074a221; `zhuyin.cpp:2148-2196` for the
@@ -880,7 +894,9 @@ seen in the same probe is a separate parity defect: issue #356.
   revert-check reproduces it) and first surfaced by the full-model
   scheme sweep.
 
-### Empty-string phrase lookup SIGFPEs the pin
+### Empty-string phrase lookup SIGFPEs the pin — corrected: the crash is `pinyin_lookup_tokens("")`
+
+- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — and the symbol is corrected. The audit's execution (R-2) crashes the pin on `pinyin_lookup_tokens(instance, "", …)`, which hands a zero length straight to `m_phrase_table->search` (`pinyin.cpp:2652-2667`); `pinyin_phrase_segment(instance, "")` answers `true` — `PhraseLookup::get_best_match` with length 0 runs no search (`lookup/phrase_lookup.cpp:119-149`: `nstep - 1 == 0`). The bullets below are the original record and name the wrong entry point. Site kind: a fault signal, neither `assert` nor `abort()`. oxpinyin answers `false` for the token lookup (`crates/oxpinyin-capi/src/dict.rs:86`) — the false half holds; the log line is owed (row 22). For `pinyin_phrase_segment("")` the two sides agree on `true`: oxpinyin's span DP backtracks from the start node to an empty result (`crates/oxpinyin-engine/src/phrase.rs:124-130`, `:181-201`), so the "oxpinyin answers `false`" below is stale as well.
 
 - **Upstream source cite:** `pinyin_phrase_segment` →
   `PhraseLookup::get_best_match` with `sentence_length = 0`
@@ -1781,3 +1797,48 @@ section.
   test or differential surface reaches it, and nothing crosses the
   libpinyin C ABI.
 
+### Abort sites answered without a log: the #525 site ledger (policy rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21, 22)
+
+- **Source:** the 87-row per-site table in #525's body (the round-2
+  audit's D-03 code-basis pass, pin `074a2219`, subject `34a66bc9`),
+  re-grouped here by what oxpinyin owes. Every site is live at the
+  reference build: no `-DNDEBUG`, and `check_result`
+  (`include/pinyin_utils.h:27-31`) is an `assert` there. Kind is the
+  pin's construct — **`assert`** or **`abort()`**. No site's answering
+  line logs (#525: `subject_site_log = False` for all 87); the only
+  `g_warning` calls in the shipped crates are the init-failure lines
+  (`crates/oxpinyin-capi/src/context.rs:25-29`,
+  `crates/oxpinyin-zhuyin-capi/src/context.rs:48-50`).
+- **Status:** every row below is **pending logging (lane C, #525)**;
+  group B additionally **needs a guard, not just a log**.
+
+| group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
+|---|---|---|---|
+| A — refuses silently (34) | `include/memory_chunk.h:390` (`assert`, via `check_result`), `:493`, `:543`, `:547` (`assert`); `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1474`, `:3035`, `:3067`, `:3092`, `:3147`, `:3203`, `:3204`, `:3738`, `:3743` (`assert`), `:1189`, `:3488` (`abort()`); `storage/ngram_bdb.cpp:199`, `ngram_kyotodb.cpp:173`, `ngram_tkrzwdb.cpp:150` (`assert`); `storage/phonetic_key_matrix.h:103` (`assert`); `storage/pinyin_parser2.cpp:170` (`assert`), `:398`, `:611` (`abort()`); `storage/zhuyin_parser2.cpp:295` (`abort()`); `zhuyin.cpp:372`, `:381`, `:440` (trigger not established), `:457`, `:2110`, `:2158` (`assert`), `:736` (`abort()`) | `false`, `Err`, NULL, a skipped library or a dropped row — the false/`Err` half holds | one `g_warning` line per site |
+| B — no check at all (33) | `lookup/phonetic_lookup.h:868` (`assert`, row 6); `pinyin.cpp:388`, `:491`, `:902`, `:2507`, `:2566`, `:2593`, `:2684`, `:2769`, `:2883`, `:3311`, `:3734`, `:3759` (`assert`); `storage/chewing_large_table2_bdb.cpp:282`, `:529`, `_kyotodb.cpp:269`, `:499`, `_tkrzwdb.cpp:252`, `:466` (`abort()`); `storage/phonetic_key_matrix.cpp:661`, `:663` (`assert`); `storage/phrase_large_table3.h:95` (`assert`); `storage/pinyin_phrase3.h:152` (`assert`, row 4); `storage/ngram.cpp:70` (`assert`); `zhuyin.cpp:330`, `:1261`, `:1453` (arm (c) of #525's trigger; arms (a)/(b) refuse) (`assert`); `storage/table_info.cpp:119`, `:142`, `:156`, `:175` (`abort()`), `:276` (`assert`), and `:132`'s `table.conf` half (`abort()`; its `user.conf` half was answered by #591) | `true`, data, a store write, or an ignored `table.conf` column — e.g. `pinyin_choose_candidate` has no candidate-type check for a predicted row (`:2507`, `crates/oxpinyin-capi/src/candidates.rs:304-409`) and `pinyin_remove_user_candidate` none for a non-`NORMAL` row (`:3734`, `candidates.rs:225-253`) | a guard answering `false`/`Err`, then the log line |
+| C — not applicable (4) | `pinyin.cpp:554`, `:568`, `:571`, `:3750` (`assert`) | no counterpart check can exist — see the note below | nothing |
+| refuted (8) | `include/memory_chunk.h:434`; `storage/bdb_utils.h:61`, `:67`; `storage/phrase_index_logger.h:245`; `storage/tkrzwdb_utils.h:65`, `:72`; `zhuyin.cpp:454`; `pinyin.cpp:2517` (`check_result`) — all `assert` | the executed trigger did not abort the pin | nothing |
+| not executed (5) | `include/memory_chunk.h:438`, `:497` (`assert`); `storage/chewing_large_table2_bdb.cpp:388`, `_kyotodb.cpp:367`, `_tkrzwdb.cpp:342` (`abort()`) | no trigger reached the site | a trigger |
+| unverified (3) | `storage/phrase_index.cpp:745`, `storage/phrase_index_logger.h:202`, `pinyin.cpp:1859` (`assert`) | the subject side was not traced (#525) | a trace |
+
+Totals 34 + 33 + 4 + 8 + 5 + 3 = 87; kinds 67 `assert` + 20
+`abort()`, as #525 counts them.
+
+**Note — the not-applicable sites (different storage model).** Each of
+the four asserts an invariant of upstream's text-searched phrase index
+that oxpinyin's user store makes structural, so no check has anything to
+test:
+
+- `pinyin.cpp:554` (`PHRASE_INDEX_LIBRARY_INDEX(token) != index`) — the
+  pin searches every library by text and asserts at most one hit per
+  sub-index. oxpinyin keys a user phrase by (library, text) in
+  `PHRASE_BY_LIB_TEXT` (`crates/oxpinyin-user/src/store.rs:744-745`), so
+  a second token for one (library, text) pair cannot be stored.
+- `pinyin.cpp:568`, `:571` (the found item's length and text equal the
+  input) — the pin reads the hit back and compares; oxpinyin looks the
+  token up *by* that text (`store.rs:744-757`) and adds a pronunciation
+  to it (`:760-768`), never reading an item back to compare.
+- `pinyin.cpp:3750` (`phrase_table->remove_index` returns `ERROR_OK`) —
+  oxpinyin removes the text-index rows unconditionally (`txn.remove`,
+  `store.rs:1303-1310`), a no-op for an absent key, so the removal has
+  no failure return to check.
