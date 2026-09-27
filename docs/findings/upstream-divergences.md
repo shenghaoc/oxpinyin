@@ -957,6 +957,13 @@ seen in the same probe is a separate parity defect: issue #356.
   build naming none or more than one backend feature, so no order
   survives to fall back on, and the default selection has been tkrzw
   since 2026-09-05. The naming decision itself is unchanged.
+- **Amendment (2026-09-27 UTC, Q1 ruling).** The last clause above is
+  history: the default selection was tkrzw from 2026-09-05 to
+  2026-09-20 and has been Berkeley DB since (`default = ["bdb"]`, e.g.
+  `crates/oxpinyin-capi/Cargo.toml:32`), matching the reference build's
+  bare `./configure` (`configure.ac:94` at `074a2219`). Neither tkrzw nor
+  Kyoto Cabinet is the default; `compatibility-policy.md`, "Amendment —
+  rulings recorded", item 1.
 
 ## R1 measured on the drop-in compat paths — order-only, sets identical (2026-08-30)
 
@@ -1456,7 +1463,7 @@ composition**; multi-syllable before-cursor is a genuine engine gap.
   `--with-dbm=Tkrzw --enable-libzhuyin` over the SHA-verified model20
   export (`libzhuyin.so.15.0.0` sha256 `2109e10c…`, 23 data files built
   by the pin's own `data/` step) against this tree's
-  `libzhuyin_capi.so` (default tkrzw) reading an
+  `libzhuyin_capi.so` (tkrzw, then the default) reading an
   `oxpinyin-datagen compile --backend tkrzw` systemdir from the same
   export. `tools/bisection/zhuyin-diff.c`: the standard battery is
   byte-identical (2307 lines a side) and the default-off `choose`
@@ -1663,7 +1670,7 @@ freezes — was never in that enumeration. This entry completes it.
   `docker.io/library/debian@sha256:5056ab8a99336d6d71390d640f72229649f12e3d38e987cf6b24dc8675325d73`,
   container `a15849ef7dd2`), the pin oracle prefix mounted read-only,
   both sides on tkrzw — the oracle is the `dbm=tkrzw` parity build and
-  the default `cargo build -p oxpinyin-capi` resolves the tkrzw backend —
+  the default `cargo build -p oxpinyin-capi` then resolved the tkrzw backend (Berkeley DB since 2026-09-20) —
   with the capi on a P6-native data directory (libpinyin-native
   `.bin`/`.db` naming). The measurement tree was `main` @ `93a462f`
   overlayed with PR #476's `system-dir.sh` (the native-layout
@@ -1715,3 +1722,38 @@ creates, `list_tables` is the only lookup), no non-creating write-side
 existence probe exists; the store traits cannot tell an empty table from an
 absent one, so nothing above them observes it and the only trace is an empty
 table in the file.
+
+## Entries registered 2026-09-27 UTC (lane G — round-2 audit reconciliation)
+
+The entries below were registered by the round-2 register
+reconciliation (#573; the audit report is
+`docs/findings/bug-for-bug-audit-r2-2026-09-23.md`). Each carries its
+`compatibility-policy.md` row number. Pin cites are at `074a2219`,
+oxpinyin cites at `main` @ `e1d915d0`; both were re-read for this
+section.
+
+### `pinyin_init`/`zhuyin_init` leave the process `LC_NUMERIC` at "C" (policy row 39)
+
+- **Upstream source cite:** `src/storage/table_info.cpp:328` and `:372`
+  (`UserTableInfo::load`), `:197` and `:291` (`SystemTableInfo2::load`),
+  `:378` and `:394` (`UserTableInfo::save`).
+- **Mechanism:** each function saves `setlocale(LC_NUMERIC, "C")`'s
+  return value and restores it at the end. `setlocale` returns the name
+  of the *new* locale (C11 7.11.1.1p7), so the "restore" re-applies
+  `"C"`; and every early return — a failed `fopen` (`:330-333`,
+  `:199-202`), a failed version directive (`:339-348`) — skips the
+  restore altogether. Either way the process's `LC_NUMERIC` is `"C"`
+  after `pinyin_init` or `zhuyin_init`, successful or not.
+- **What oxpinyin does instead:** nothing — no `setlocale` call anywhere
+  in `crates/`, so the host's `LC_NUMERIC` survives init.
+- **Externally observable:** yes — audit D-17 (#539): with
+  `LC_ALL=zh_CN.UTF-8` set by the host, `setlocale(LC_NUMERIC, NULL)`
+  reads `C` after the pin's init and `zh_CN.UTF-8` after oxpinyin's. A
+  consumer that formats numbers after init sees the difference.
+- **Status:** ruled bug-for-bug (recorded 2026-09-27 UTC,
+  `compatibility-policy.md` "Amendment — rulings recorded" item 4):
+  oxpinyin is to reproduce the pin's end state, and the defect is
+  drafted for the upstream report (`upstream-report-drafts.md` item 6,
+  not filed). Not yet
+  reproduced in code; REVERT TARGET until it is (#539).
+
