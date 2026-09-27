@@ -20,21 +20,40 @@ is complete, these notes are collected to report back to libpinyin.
 
 ### Bigram export iterator's pinyin buffer
 
+- **Restated 2026-09-27 UTC (#530, audit D-20; policy row 1).** The
+  original record below called this a stale-buffer reuse that crashes on
+  a *repeated* export cycle. Re-read at `074a2219`, the defect is an
+  unterminated string vector, and it crashes the *first* export cycle
+  after a train.
 - **Upstream source cite:** `src/pinyin.cpp:842-872`
-  (`pinyin_bigram_iterator_has_next_phrase` builds the `m_pinyins` join
-  buffer).
-- **Mechanism:** the export iterator keeps C pointers into reused
-  pronunciation/join buffers. Repeating an export cycle inside one context
-  reuses stale storage and the pinned oracle segfaults.
-- **What oxpinyin does instead:** `CapiContext::export_bigram_rows` renders
-  the complete row snapshot up front into owned Rust strings before the
-  iterator handle is created, so repeated iterator cycles cannot alias stale
-  C storage. The per-round train differential runs one export per fresh
-  context for the oracle and compares those rows to oxpinyin
+  (`pinyin_bigram_iterator_has_next_phrase`): `:844-850` and `:857-863`
+  build each pronunciation with `g_ptr_array_new`, free the array with
+  `g_ptr_array_free(…, FALSE)` and pass the result to `g_strjoinv` and
+  `g_strfreev`; nothing adds the terminating NULL. The unigram export
+  does add it (`:726-734`, `g_ptr_array_add(array, NULL)` at `:730`).
+- **Mechanism:** `g_strjoinv`/`g_strfreev` walk a `gchar **` until a
+  NULL; the array has none, so both read past its end into whatever
+  the heap holds there — an out-of-bounds read whose outcome depends on
+  the allocation's neighbourhood. Any export that reaches a row with a
+  pronunciation takes the path.
+- **What oxpinyin does instead:** `CapiContext::export_bigram_rows`
+  renders every row into owned Rust strings when the iterator is created
+  (`crates/oxpinyin-capi/src/iterators.rs:336`), so no join over a C
+  array exists to over-read, on the first cycle or any later one.
+- **Externally observable:** yes — the audit's execution
+  (`bigram-before-save.c`): after one train, the first export cycle
+  SIGSEGVs in `pinyin_bigram_iterator_has_next_phrase` on tkrzw and kc
+  whether or not the user dir was saved, and on bdb unsaved (4 of 4
+  runs); oxpinyin completes the cycle. Class (b): the pin's behaviour is
+  undefined, and no safe construction reproduces a read past an
+  allocation. Also cross-indexed in `reference/memory-safety-bugs.md`.
+- **Original record (2026-08, superseded in mechanism and scope by the
+  restatement above):** the export iterator keeps C pointers into
+  reused pronunciation/join buffers; repeating an export cycle inside
+  one context reuses stale storage and the pinned oracle segfaults.
+  The per-round train differential runs one export per fresh context
+  for the oracle and compares those rows to oxpinyin
   (`tools/bisection/run-train-diff.sh`).
-- **Externally observable:** yes — upstream aborts on the repeated-export
-  sequence; oxpinyin returns the same rows on every cycle. Also cross-indexed
-  in `reference/memory-safety-bugs.md` (use-after-free class).
 
 ### Public bigram export is a rendering surface
 
@@ -1842,3 +1861,64 @@ test:
   oxpinyin removes the text-index rows unconditionally (`txn.remove`,
   `store.rs:1303-1310`), a no-op for an absent key, so the removal has
   no failure return to check.
+
+### NULL pointer arguments: the pin dereferences, oxpinyin null-guards (policy row 41)
+
+- **Upstream source cite:** 68 `pinyin_*` exports, each dereferencing a
+  NULL argument before any check at `074a2219`; the per-export first
+  dereference is tabulated in #526's body, by pattern: the instance
+  first (`src/pinyin.cpp:1312`); the context or iterator first (`:509`,
+  `:665`, `:777`, `:1196`); an out-parameter written before any check
+  (`:2847`, `:2876`, `:2982`); a NULL candidate inside a live `assert`
+  (`:2507`, `:2593`); a NULL key or key-rest (`:2711`, `:2722`,
+  `:2733`, `:2744`).
+- **Mechanism:** no export checks its pointer arguments; a NULL one is
+  dereferenced — undefined behaviour, SIGSEGV in practice.
+- **What oxpinyin does instead:** every export (or the helper it
+  delegates to) opens with an `is_null()` guard and answers
+  `false`/`0`/NULL/void; #526 lists the guard line per export (e.g.
+  `crates/oxpinyin-capi/src/instance.rs:19`, `iterators.rs:63`,
+  `candidates.rs:309`, `cursor.rs:241`, `keys.rs:219`).
+- **Externally observable:** yes — audit D-04: of 83 NULL-class probes,
+  70 crash the pin (68 distinct exports, all `signal=11`) and all 83
+  return on oxpinyin; the libzhuyin exports show the same shape (#526,
+  comment of 2026-09-25). Class (b).
+
+### A guess on an instance whose context was finalised (policy row 42)
+
+- **Upstream source cite:** `src/pinyin.cpp:1194-1222` (`pinyin_fini`
+  deletes the context and its members, not its instances);
+  `:1372-1380` (`pinyin_guess_sentence` reads
+  `instance->m_context->m_pinyin_lookup`).
+- **Mechanism:** a use after free — the instance keeps a pointer to the
+  deleted context.
+- **What oxpinyin does instead:** each instance holds its own handles to
+  the shared engine state (`crates/oxpinyin-capi/src/state.rs:69-77`),
+  so the guess completes and answers `true`.
+- **Externally observable:** yes — audit D-06, probe
+  `instance_outlives_context`: SIGSEGV on the pin, `true` on oxpinyin.
+  Class (b). The inverse probe (`alloc_after_fini`: oxpinyin crashes,
+  `crates/oxpinyin-capi/src/instance.rs:18-27`; the pin survives by
+  chance) is caller UB on both sides and not registered here; it stays
+  open on #528.
+
+### Zhuyin import into library index 16 (policy row 43)
+
+- **Upstream source cite:** `src/zhuyin.cpp:392-398`
+  (`zhuyin_begin_add_phrases` stores any index), `:475` (`_add_phrase`
+  calls `phrase_index->get_range(index, …)`),
+  `src/storage/phrase_index.cpp:611` (`m_sub_phrase_indices[phrase_index]`
+  with no bound), `src/storage/phrase_index.h:441` (the array has
+  `PHRASE_INDEX_LIBRARY_COUNT` = 16 entries).
+- **Mechanism:** index 16 reads one element past the array and calls
+  through the value found there — an out-of-bounds read.
+- **What oxpinyin does instead:** refuses every library that is not a
+  user file (`crates/oxpinyin-zhuyin-capi/src/iterators.rs:81`) and
+  answers `false`.
+- **Externally observable:** yes — the audit's libzhuyin battery
+  (#526, comment of 2026-09-25): SIGSEGV on the pin on all three cells,
+  `false` on oxpinyin. Class (b). The pinyin facade's `_add_phrase`
+  carries the same unchecked index (`src/pinyin.cpp:589`), but the
+  audit recorded library 255 *accepted* there (D-12), so that side is
+  not a stable crash and is not part of this entry.
+
