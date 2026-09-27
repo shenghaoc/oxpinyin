@@ -32,6 +32,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 
 typedef void zhuyin_context_t;
@@ -130,8 +131,8 @@ static void dump(const char *label, zhuyin_context_t *ctx, guint index) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 4) {
-        fprintf(stderr, "usage: %s <so> <systemdir> <index>\n", argv[0]);
+    if (argc != 4 && argc != 5) {
+        fprintf(stderr, "usage: %s <so> <systemdir> <index> [read|rewrite]\n", argv[0]);
         return 2;
     }
     unsigned index = (unsigned)strtoul(argv[3], NULL, 10);
@@ -158,6 +159,24 @@ int main(int argc, char **argv) {
     if (!ctx) {
         printf("init: NULL\n");
         return 1;
+    }
+
+    /* Cross-reader mode uses the profile already present in ./user.
+     * No import is repeated: compare exactly the saved state, then optionally
+     * rewrite it to exercise pin -> oxpinyin -> pin preservation. */
+    if (argc == 5) {
+        if (strcmp(argv[4], "read") && strcmp(argv[4], "rewrite")) {
+            fini(ctx);
+            return 2;
+        }
+        dump("reopened", ctx, index);
+        if (!strcmp(argv[4], "rewrite")) {
+            /* end_add arms modified even with no additions (pinyin.cpp:657). */
+            end_add(begin_add(ctx, (uint8_t)index));
+            if (!save(ctx)) { fini(ctx); return 1; }
+        }
+        fini(ctx);
+        return 0;
     }
 
     import_iterator_t *import = begin_add(ctx, (guint8)index);

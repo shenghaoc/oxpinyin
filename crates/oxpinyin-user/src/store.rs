@@ -61,6 +61,7 @@ pub const SENTENCE_START: Token = 1;
 
 pub const BIGRAM: &str = "user_bigram";
 pub const BIGRAM_TOTAL: &str = "user_bigram_total";
+pub(crate) const SYSTEM_BASE: &str = "system_base";
 pub const UNIGRAM: &str = "user_unigram";
 pub const UNIGRAM_TOTAL: &str = "user_unigram_total";
 pub const PHRASE: &str = "user_phrase";
@@ -363,7 +364,9 @@ fn library_total_overflows(
     if delta == 0 {
         return Ok(false);
     }
-    let bound = txn_get_u64_or(txn, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)?;
+    let base = txn_get_u64_or(txn, SYSTEM_BASE, &codec::encode_u8(library), 0)?;
+    let bound = txn_get_u64_or(txn, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)?
+        .saturating_add(base);
     if bound <= u64::from(u32::MAX - delta) {
         return Ok(false);
     }
@@ -371,7 +374,7 @@ fn library_total_overflows(
     let hi = u32::from(library)
         .checked_add(1)
         .map(|next| codec::encode_token(next << 24));
-    let mut total: u32 = 0;
+    let mut total = base as u32;
     txn.range(
         UNIGRAM,
         Bound::Included(lo.as_slice()),
@@ -742,6 +745,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         })?;
 
         Ok(Arc::new(StoreInner {
+            has_system_items: AtomicBool::new(false),
+            system_items: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             count_cache: Mutex::new(None),
             db: Mutex::new(db),
             dirty: AtomicBool::new(false),
@@ -1910,6 +1915,220 @@ impl CountCache {
             unigram_delta,
             unigram_total_delta,
         })
+    }
+}
+
+impl<S: WriteStore> GenericUserStore<S> {
+    pub(crate) fn stored_system_items(
+        &self,
+    ) -> std::collections::BTreeMap<Token, oxpinyin_data::chunk_write::ChunkItem> {
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Whether this session carries system-item payloads from imports or logs.
+    #[must_use]
+    pub fn has_system_items(&self) -> bool {
+        self.inner.has_system_items.load(Ordering::Relaxed)
+    }
+
+    /// The imported/replayed system item, with its current unigram field.
+    ///
+    /// # Errors
+    /// Returns an error if the scratch payload or count cannot be read.
+    pub fn system_item_override(
+        &self,
+        token: Token,
+    ) -> Result<Option<oxpinyin_data::chunk_write::ChunkItem>, UserStoreError> {
+        if !self.has_system_items() || !(1..=4).contains(&(token >> 24)) {
+            return Ok(None);
+        }
+        let db = self.database();
+        let Some(mut item) = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&token)
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let base = self
+            .inner
+            .libpinyin
+            .as_ref()
+            .and_then(|target| target.originals.get(&phrase_index_library_index(token)))
+            .and_then(|library| library.unigram(token & PHRASE_MASK))
+            .unwrap_or(0);
+        item.unigram =
+            base.wrapping_add(get_u64_or(&*db, UNIGRAM, &codec::encode_token(token), 0)? as u32);
+        Ok(Some(item))
+    }
+
+    /// Exclusive token end of imported system items in one library, without
+    /// cloning payloads for the streaming export's range probe.
+    #[must_use]
+    pub fn system_item_end(&self, library: u8) -> Option<Token> {
+        if !(1..=4).contains(&library) || !self.has_system_items() {
+            return None;
+        }
+        self.inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .range((u32::from(library) << 24)..(u32::from(library + 1) << 24))
+            .next_back()
+            .and_then(|(&token, _)| token.checked_add(1))
+    }
+
+    /// System overrides in token order for a bulk export; original items stay lazy.
+    ///
+    /// # Errors
+    /// Returns an error when a scratch payload cannot be decoded.
+    pub fn system_item_overrides(
+        &self,
+        library: u8,
+    ) -> Result<
+        std::collections::BTreeMap<Token, oxpinyin_data::chunk_write::ChunkItem>,
+        UserStoreError,
+    > {
+        let mut items = std::collections::BTreeMap::new();
+        if !self.has_system_items() {
+            return Ok(items);
+        }
+        let tokens: Vec<_> = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .keys()
+            .copied()
+            .filter(|&token| phrase_index_library_index(token) == library)
+            .collect();
+        for token in tokens {
+            if let Some(item) = self.system_item_override(token)? {
+                items.insert(token, item);
+            }
+        }
+        Ok(items)
+    }
+
+    /// `_add_phrase` for a system library (074a2219, pinyin.cpp:515-611).
+    /// `original_token` comes from the system phrase-table search, restricted
+    /// to this library; prior imports are resolved by the scratch text index.
+    /// Packed original readings are retained verbatim, including their order.
+    ///
+    /// # Errors
+    /// Returns an error for invalid input, unavailable originals, or store failure.
+    pub fn add_system_phrase_in(
+        &mut self,
+        library: u8,
+        original_token: Option<Token>,
+        text: &str,
+        keys: &[PinyinKey],
+        count: Option<u64>,
+    ) -> Result<Token, UserStoreError> {
+        use oxpinyin_data::chunk_write::{ChunkItem, encode_phrase_item};
+        if !(1..=4).contains(&library) || !phrase::phrase_and_keys_valid(text, keys) {
+            return Err(UserStoreError::InvalidPhrase);
+        }
+        let target = self
+            .inner
+            .libpinyin
+            .as_ref()
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let original = target
+            .originals
+            .get(&library)
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let packed = crate::store_libpinyin::pinyin_keys_to_packed(keys)
+            .ok_or(UserStoreError::InvalidPhrase)?;
+        let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
+        let db = self.database();
+        let mut system_items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let lib_key = codec::encode_u8_str(library, text);
+        let existing = match db.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
+            Some(bytes) => Some(codec::decode_token(&bytes).map_err(|_| UserStoreError::Decode)?),
+            None => original_token,
+        };
+        let (token, mut item) = if let Some(token) = existing {
+            let item = system_items
+                .get(&token)
+                .cloned()
+                .or_else(|| original.item(token & PHRASE_MASK))
+                .ok_or(UserStoreError::InvalidPhrase)?;
+            (token, item)
+        } else {
+            let token = db.write(|txn| {
+                // get_range's end, pinyin.cpp:587-595; seeded from the shipped
+                // range and replayed ADD records, never from another library.
+                let token = match txn.get(ALLOC, &codec::encode_u8(library))? {
+                    Some(bytes) => codec::decode_token(&bytes)
+                        .map_err(|_| StoreError::Backend("corrupt system cursor".into()))?,
+                    None => (u32::from(library) << 24) | original.range_end.max(1),
+                };
+                let next = phrase::next_library_token_after(library, token)
+                    .ok_or_else(|| StoreError::Backend("system token space exhausted".into()))?;
+                txn.put(
+                    ALLOC,
+                    &codec::encode_u8(library),
+                    &codec::encode_token(next),
+                )?;
+                txn.put(PHRASE, &codec::encode_token(token), codec::encode_str(text))?;
+                txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
+                add_pronunciation(txn, token, &phrase::encode_keys(keys), delta, true)?;
+                // The two facade add_index calls write the user tables. Only
+                // this first reading gets an index row (pinyin.cpp:598-607).
+                add_unigram_frequency(
+                    txn,
+                    library,
+                    token,
+                    delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32),
+                )?;
+                Ok(token)
+            })?;
+            (
+                token,
+                ChunkItem {
+                    phrase: text.chars().map(u32::from).collect(),
+                    unigram: 0,
+                    prons: Vec::new(),
+                },
+            )
+        };
+        // PhraseItem::add_pronunciation, phrase_index.cpp:56-91: the
+        // overflow test uses the prefix total through the matching row.
+        // _add_phrase ignores a refused increment and still returns true.
+        let mut total = 0_u32;
+        let mut matched = false;
+        for (reading, frequency) in &mut item.prons {
+            total = total.wrapping_add(*frequency);
+            if *reading == packed {
+                if delta == 0 || total <= total.wrapping_add(delta) {
+                    *frequency = frequency.wrapping_add(delta);
+                }
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            item.prons.push((packed.clone(), delta));
+        }
+        // Validate the eventual packed payload before publishing it.
+        encode_phrase_item(&item).map_err(|error| StoreError::Backend(error.to_string().into()))?;
+        system_items.insert(token, item);
+        drop(system_items);
+        self.inner.has_system_items.store(true, Ordering::Relaxed);
+        self.mark_committed_phrase_write(db, true);
+        Ok(token)
     }
 }
 

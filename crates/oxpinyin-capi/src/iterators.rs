@@ -41,6 +41,7 @@ struct BigramHandle {
 struct ImportHandle {
     index: u8,
     user: Option<UserStore>,
+    dict: Option<oxpinyin_runtime::RuntimeDict>,
 }
 
 /// Begin adding phrases to an index.
@@ -53,9 +54,7 @@ struct ImportHandle {
 ///
 /// Returns a handle for any non-null context, matching the export iterator
 /// shape; caller must call `pinyin_end_add_phrases` to free it. Adds target
-/// [`USER_DICTIONARY`] and [`NETWORK_DICTIONARY`] only — oxpinyin's system
-/// phrase indexes are read-only tables — so any other index yields a
-/// handle whose adds report `false`.
+/// the loaded system libraries 1–4 and USER_FILE libraries 5–7.
 pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut ImportIterator {
     if context.is_null() {
         return ptr::null_mut();
@@ -68,6 +67,7 @@ pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut Im
     let handle = ImportHandle {
         index,
         user: ctx.user_store(),
+        dict: ctx.core.runtime.as_ref().map(|runtime| runtime.dict()),
     };
     Box::into_raw(Box::new(handle)).cast()
 }
@@ -107,9 +107,8 @@ pub extern "C" fn pinyin_begin_add_phrases(
 /// -1 is the default 5; any other value reaches the item as its `guint32`
 /// bit pattern (`-2` stores 4294967294 and exports as -2).
 ///
-/// Libraries: the `USER_FILE` sub-indexes (5, 6, 7) take the phrase. The
-/// system sub-indexes (1..=4) are refused until oxpinyin models system
-/// items (#599); every other nibble has no sub-index
+/// Libraries: loaded system sub-indexes (1..=4) and the `USER_FILE`
+/// sub-indexes (5, 6, 7) take the phrase. Every other nibble has no sub-index
 /// (`get_range` → `ERROR_NO_SUB_PHRASE_INDEX`) and answers `false`, and
 /// 16..=255 — an out-of-bounds read of the pin's 16-slot array
 /// (`phrase_index.h:630`) — answer `false` without reproducing it.
@@ -135,7 +134,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_add_phrases`; the unique borrow lasts for this call.
     let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-    if !is_user_file_library(handle.index) {
+    if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
         return false;
     }
     let Some(user) = handle.user.as_mut() else {
@@ -144,8 +143,27 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     let Some(keys) = parse_import_pinyin(&pinyin) else {
         return false;
     };
-    user.add_phrase_in(handle.index, &phrase, &keys, count)
-        .is_ok()
+    if (1..=4).contains(&handle.index) {
+        let Some(dict) = handle.dict.as_ref() else {
+            return false;
+        };
+        if !dict.library_visible(u32::from(handle.index)) {
+            return false;
+        }
+        // 074a2219 pinyin.cpp:533-571 / zhuyin.cpp:419-457: choose the
+        // same-library token. The store also searches prior imported items.
+        let original = dict
+            .system()
+            .tokens_for_text(&phrase)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|token| token >> 24 == u32::from(handle.index));
+        user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
+            .is_ok()
+    } else {
+        user.add_phrase_in(handle.index, &phrase, &keys, count)
+            .is_ok()
+    }
 }
 
 /// `FullPinyinParser2::parse` under `PINYIN_CORRECT_ALL | USE_TONE`

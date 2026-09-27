@@ -246,7 +246,12 @@ fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
     pinyin
         .split('\'')
         .map(|syllable| {
-            SyllableKey::from_text(syllable).and_then(|key| PinyinKey::try_from(key.index()).ok())
+            let (spelling, tone) = match syllable.as_bytes().last().copied() {
+                Some(digit @ b'1'..=b'5') => (&syllable[..syllable.len() - 1], digit - b'0'),
+                _ => (syllable, 0),
+            };
+            SyllableKey::from_text(spelling)
+                .and_then(|key| oxpinyin_user::toned_key(key.index(), tone))
         })
         .collect()
 }
@@ -571,7 +576,13 @@ impl RuntimeDict {
         if !self.library_visible_token(token) {
             return None;
         }
-        self.system.unigram_count(token)
+        self.system.unigram_count(token).or_else(|| {
+            self.user
+                .as_ref()?
+                .system_item_override(token)
+                .ok()?
+                .map(|item| u64::from(item.unigram))
+        })
     }
 
     /// The visible item count for the amplified-law denominator: the
@@ -601,8 +612,39 @@ impl RuntimeDict {
                 if !self.library_visible(nibble) {
                     return None;
                 }
-                let text = self.system.phrase_text(token)?;
-                let pronunciations = self.system.pronunciations(token);
+                // The facade reads the replaced item, not the immutable
+                // shipped chunk (074a2219 phrase_index.h:646-657).
+                let override_item = self
+                    .user
+                    .as_ref()
+                    .and_then(|store| store.system_item_override(token).ok().flatten());
+                let (text, pronunciations) = if let Some(item) = override_item {
+                    let text = item
+                        .phrase
+                        .into_iter()
+                        .map(char::from_u32)
+                        .collect::<Option<String>>()?;
+                    let pronunciations = item
+                        .prons
+                        .into_iter()
+                        .map(|(keys, frequency)| {
+                            let spelling = keys
+                                .into_iter()
+                                .map(|key| {
+                                    oxpinyin_core::ChewingKey::from_packed(key).pinyin_string()
+                                })
+                                .collect::<Vec<_>>()
+                                .join("'");
+                            (spelling, u64::from(frequency))
+                        })
+                        .collect();
+                    (text, pronunciations)
+                } else {
+                    (
+                        self.system.phrase_text(token)?,
+                        self.system.pronunciations(token),
+                    )
+                };
                 Some(TokenIntrospection {
                     text,
                     // Drop only the pronunciations whose spelling can't
@@ -672,6 +714,48 @@ impl Dictionary for RuntimeDict {
     ) -> Result<(), Self::Error> {
         self.system.lookup_into(syllables, out)?;
         out.extend(self.user_lookup()?.lookup(syllables));
+        // 074a2219 phrase_index.h:136-163 uses wrapping guint32 sums;
+        // pinyin_lookup2.cpp:437-466 reads pronunciation possibility from
+        // the current item even when the match came from the shipped index.
+        if let Some(store) = self.user.as_ref().filter(|store| store.has_system_items()) {
+            let query = syllables
+                .iter()
+                .map(|key| oxpinyin_core::ChewingKey::from_pinyin(key.text()))
+                .collect::<Option<Vec<_>>>();
+            if let Some(query) = query {
+                for entry in out.iter_mut() {
+                    if let Some(item) = store
+                        .system_item_override(entry.token().value())
+                        .ok()
+                        .flatten()
+                    {
+                        let mut total = 0_u32;
+                        let mut matched = 0_u32;
+                        for (keys, frequency) in item.prons {
+                            let keys = keys
+                                .into_iter()
+                                .map(oxpinyin_core::ChewingKey::from_packed)
+                                .collect::<Vec<_>>();
+                            total = total.wrapping_add(frequency);
+                            if query.len() == keys.len()
+                                && query.iter().zip(&keys).all(|(q, s)| {
+                                    q.initial == s.initial
+                                        && ((q.middle == s.middle && q.final_ == s.final_)
+                                            || (q.middle == 0 && q.final_ == 0)
+                                            || (s.middle == 0 && s.final_ == 0))
+                                        && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
+                                })
+                            {
+                                matched = matched.wrapping_add(frequency);
+                            }
+                        }
+                        *entry = entry
+                            .clone()
+                            .with_pronunciation_possibility(u64::from(matched), u64::from(total));
+                    }
+                }
+            }
+        }
         if self.library_mask.load(Ordering::SeqCst) != 0 {
             // An unloaded library's phrases leave every read: upstream
             // frees the sub-index (`phrase_index.cpp:260-268`), the
@@ -722,6 +806,9 @@ impl Dictionary for RuntimeDict {
                     .map(|&token| PhraseToken::new(token)),
             );
         }
+        tokens.retain(|token| self.library_visible_token(token.value()));
+        // reduce_tokens groups the system and user table results by library.
+        tokens.sort_by_key(|token| token.value() >> 24);
         tokens
     }
 
@@ -938,8 +1025,18 @@ impl LanguageModel for RuntimeLm {
         token: &Self::Token,
     ) -> Result<NbestStepCosts, Self::Error> {
         let extra = self.delta(Some(prev.value()), token.value())?;
+        // A SYSTEM_FILE ADD is absent from the immutable chunk but present
+        // in the current facade (074a2219 pinyin.cpp:598-607).
+        let imported = if let Some(store) = self.user.as_ref() {
+            store
+                .system_item_override(token.value())
+                .map_err(|error| LmError::User(error.to_string()))?
+                .is_some()
+        } else {
+            false
+        };
         self.inner
-            .nbest_step_costs_with_user_delta(prev, token, extra)
+            .nbest_step_costs_with_imported_item(prev, token, extra, imported)
     }
 }
 

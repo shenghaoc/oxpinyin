@@ -142,3 +142,10 @@ if [[ "$actual_phrases" != "$expected_phrases" ]]; then
 fi
 printf 'READABLE: the pin loads and renders oxpinyin own profile (%s rows, %s phrase rows, all expected)\n' \
     "$rows" "$phrases"
+
+# #599: creation and pronunciation edits in SYSTEM_FILE libraries 1–4.
+# Build the same facade/backend used above; both readers consume each other's
+# saved .dbin files, including a pin -> oxpinyin -> pin rewrite.
+cargo build --locked --manifest-path "$root/Cargo.toml" -p oxpinyin-capi "${feature_flags[@]}"
+"$root/tools/bisection/run-system-import-round-trip.sh" \
+    pinyin "$so" "${CARGO_TARGET_DIR:-$root/target}/debug/libpinyin_capi.so" "$data_dir"

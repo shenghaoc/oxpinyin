@@ -78,6 +78,8 @@ static fn_guess guess_candidates;
 static fn_getn get_n;
 static fn_getc get_c;
 static fn_getstr get_str;
+static bool (*guess_sentence)(void *);
+static bool (*get_sentence)(void *, uint8_t, char **);
 
 struct add {
     const char *phrase;
@@ -170,9 +172,24 @@ static void probe(const char *label, pinyin_context_t *ctx, const char *pinyin) 
     free_instance(instance);
 }
 
+/* Clear-margin scoring regression: both words have the same indexed reading.
+ * Adding an unindexed second reading dilutes only the first word's matching
+ * frequency (074a2219 phrase_index.h:136-163, pinyin_lookup2.cpp:437-466). */
+static void score(const char *phase, pinyin_context_t *ctx) {
+    void *instance = alloc_instance(ctx);
+    if (!instance) exit(1);
+    parse_full(instance, "cece");
+    bool guessed = guess_sentence(instance);
+    char *text = NULL;
+    bool got = get_sentence(instance, 0, &text);
+    printf("%s score: guessed=%d got=%d text=%s\n", phase, guessed, got, text ? text : "NULL");
+    g_free_fn(text);
+    free_instance(instance);
+}
+
 int main(int argc, char **argv) {
-    if (argc != 4) {
-        fprintf(stderr, "usage: %s <so> <systemdir> <index>\n", argv[0]);
+    if (argc != 4 && argc != 5) {
+        fprintf(stderr, "usage: %s <so> <systemdir> <index> [read|rewrite]\n", argv[0]);
         return 2;
     }
     unsigned index = (unsigned)strtoul(argv[3], NULL, 10);
@@ -203,12 +220,35 @@ int main(int argc, char **argv) {
     get_n = (fn_getn)load_symbol(handle, "pinyin_get_n_candidate");
     get_c = (fn_getc)load_symbol(handle, "pinyin_get_candidate");
     get_str = (fn_getstr)load_symbol(handle, "pinyin_get_candidate_string");
+    guess_sentence = load_symbol(handle, "pinyin_guess_sentence");
+    get_sentence = load_symbol(handle, "pinyin_get_sentence");
 
     mkdir("user", 0700);
     pinyin_context_t *ctx = init(argv[2], "user");
     if (!ctx) {
         printf("init: NULL\n");
         return 1;
+    }
+
+    /* Cross-reader mode uses the profile already present in ./user.
+     * No import is repeated: compare exactly the saved state, then optionally
+     * rewrite it to exercise pin -> oxpinyin -> pin preservation. */
+    if (argc == 5) {
+        if (strcmp(argv[4], "read") && strcmp(argv[4], "rewrite")) {
+            fini(ctx);
+            return 2;
+        }
+        dump("reopened", ctx, index);
+        probe("reopened", ctx, "ceshi");
+        probe("reopened", ctx, "ceyan");
+        if (index >= 1 && index <= 4) score("reopened", ctx);
+        if (!strcmp(argv[4], "rewrite")) {
+            /* end_add arms modified even with no additions (pinyin.cpp:657). */
+            end_add(begin_add(ctx, (uint8_t)index));
+            if (!save(ctx)) { fini(ctx); return 1; }
+        }
+        fini(ctx);
+        return 0;
     }
 
     import_iterator_t *import = begin_add(ctx, (uint8_t)index);
@@ -224,6 +264,17 @@ int main(int argc, char **argv) {
         fini(ctx);
         return 0;
     }
+    if (index >= 1 && index <= 4) {
+        import = begin_add(ctx, (uint8_t)index);
+        if (!iterator_add(import, "测侧", "ce'ce", 1000000)
+            || !iterator_add(import, "侧测", "ce'ce", 600000)) return 1;
+        end_add(import);
+        score("before-dilution", ctx);
+        import = begin_add(ctx, (uint8_t)index);
+        if (!iterator_add(import, "测侧", "xi'xi", 9000000)) return 1;
+        end_add(import);
+        score("after-dilution", ctx);
+    }
     dump("live", ctx, index);
     probe("live", ctx, "ceshi");
     probe("live", ctx, "ceyan");
@@ -238,6 +289,7 @@ int main(int argc, char **argv) {
     dump("reopened", ctx, index);
     probe("reopened", ctx, "ceshi");
     probe("reopened", ctx, "ceyan");
+    if (index >= 1 && index <= 4) score("reopened", ctx);
     fini(ctx);
     return 0;
 }

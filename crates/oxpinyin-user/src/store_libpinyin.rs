@@ -45,8 +45,8 @@ use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::{self, StoreInner};
 use crate::store::{
     ALLOC, ALLOC_CURSOR, BIGRAM, BIGRAM_TOTAL, GenericUserStore, PHRASE, PHRASE_BY_LIB_TEXT,
-    PHRASE_BY_TEXT, PRONUNCIATION, PronValue, Token, UNIGRAM, UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY,
-    UserStoreError,
+    PHRASE_BY_TEXT, PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM, UNIGRAM_TOTAL,
+    UNIGRAM_TOTAL_KEY, UserStoreError,
 };
 
 /// The persistence target a session store carries: the user dir, the
@@ -239,6 +239,22 @@ impl GenericUserStore<DefaultStore> {
         })?;
 
         let inner = Arc::new(StoreInner {
+            has_system_items: std::sync::atomic::AtomicBool::new(
+                !loaded.state.system_overrides.is_empty(),
+            ),
+            system_items: std::sync::Mutex::new(
+                loaded
+                    .state
+                    .system_overrides
+                    .iter()
+                    .flat_map(|(&nibble, items)| {
+                        items.iter().filter_map(move |(&slot, item)| {
+                            item.clone()
+                                .map(|item| (((u32::from(nibble) << 24) | slot), item))
+                        })
+                    })
+                    .collect(),
+            ),
             count_cache: std::sync::Mutex::new(None),
             db: std::sync::Mutex::new(db),
             dirty: std::sync::atomic::AtomicBool::new(false),
@@ -273,7 +289,37 @@ fn seed_txn(
     let mut unigram_total = 0_u64;
     let mut alloc_cursor: BTreeMap<u8, Token> = BTreeMap::new();
 
-    for (&nibble, items) in &state.libraries {
+    // ADD records own text/index rows just like USER_FILE items. MODIFY
+    // records do not gain index rows (pinyin.cpp:566-607 at 074a2219).
+    let mut libraries = state.libraries.clone();
+    for (&nibble, original) in originals {
+        txn.put(
+            SYSTEM_BASE,
+            &codec::encode_u8(nibble),
+            &codec::encode_u64(u64::from(original.total)),
+        )?;
+        alloc_cursor.insert(
+            nibble,
+            (u32::from(nibble) << 24) | original.range_end.max(1).saturating_sub(1),
+        );
+    }
+    for (&nibble, overrides) in &state.system_overrides {
+        for (&slot, item) in overrides {
+            let Some(item) = item else {
+                continue;
+            };
+            if !originals
+                .get(&nibble)
+                .is_some_and(|original| original.contains_item(slot))
+            {
+                libraries
+                    .entry(nibble)
+                    .or_default()
+                    .insert(slot, item.clone());
+            }
+        }
+    }
+    for (&nibble, items) in &libraries {
         for (&slot, item) in items {
             let token = (u32::from(nibble) << 24) | slot;
             let Some(text) = ucs4_to_string(&item.phrase) else {
@@ -344,7 +390,10 @@ fn seed_txn(
                 continue; // a replayed removal: not expressible in the
                 // value model; the load's `skipped` list carries it
             };
-            let base = original.items.get(&slot).map_or(0, |old| old.unigram);
+            let Some(old) = original.item(slot) else {
+                continue;
+            };
+            let base = old.unigram;
             let delta = u64::from(new_item.unigram.saturating_sub(base));
             if delta == 0 {
                 continue;
@@ -471,6 +520,7 @@ pub fn export_state<S: WriteStore>(
         Ok(())
     })?;
 
+    let system_items = store.stored_system_items();
     drop(db);
 
     let mut state = UserState::default();
@@ -508,7 +558,7 @@ pub fn export_state<S: WriteStore>(
             continue;
         };
         let slot = token & crate::phrase::PHRASE_MASK;
-        let Some(old) = original.items.get(&slot) else {
+        let Some(old) = original.item(slot) else {
             continue;
         };
         let mut new_item = old.clone();
@@ -539,6 +589,23 @@ pub fn export_state<S: WriteStore>(
             },
         );
     }
+    for (token, mut item) in system_items {
+        let nibble = phrase_index_library_index(token);
+        let slot = token & crate::phrase::PHRASE_MASK;
+        let base = originals
+            .get(&nibble)
+            .and_then(|original| original.unigram(slot))
+            .unwrap_or(0);
+        item.unigram = base.wrapping_add(unigrams.get(&token).copied().unwrap_or(0) as u32);
+        state
+            .system_overrides
+            .entry(nibble)
+            .or_default()
+            .insert(slot, Some(item));
+    }
+    state
+        .libraries
+        .retain(|nibble, _| !(1..=4).contains(nibble));
     Ok(state)
 }
 
@@ -569,7 +636,7 @@ fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase::PinyinKey>
 
 /// The reverse: dense syllable ids, tone included, as packed `ChewingKey`
 /// words.
-fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<Vec<u16>> {
+pub(crate) fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<Vec<u16>> {
     ids.iter()
         .map(|&id| {
             let syllable = oxpinyin_core::SyllableKey::from_index(phrase::key_syllable(id))?;
@@ -596,7 +663,15 @@ mod tests {
                 prons: vec![(vec![ChewingKey::new(23, 0, 1, 0).to_packed()], 100)],
             },
         );
-        BTreeMap::from([(1_u8, SystemLibrary { total: 100, items })])
+        BTreeMap::from([(
+            1_u8,
+            SystemLibrary {
+                mapped: None,
+                total: 100,
+                range_end: 2,
+                items,
+            },
+        )])
     }
 
     fn versions() -> SystemVersions {

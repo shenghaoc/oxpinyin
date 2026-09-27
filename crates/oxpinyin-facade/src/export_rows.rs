@@ -31,6 +31,7 @@ const INITIAL_SEED: u64 = 23 * 3;
 #[derive(Default)]
 pub struct PhraseExportCursor {
     system: Option<oxpinyin_runtime::RuntimeDict>,
+    user: Option<oxpinyin_user::UserStore>,
     next_token: u32,
     end_token: u32,
     rows: std::collections::VecDeque<ExportedPhrase>,
@@ -51,6 +52,37 @@ impl PhraseExportCursor {
             let token = self.next_token;
             self.next_token += 1;
             if !dict.library_visible_token(token) {
+                continue;
+            }
+            if let Some(item) = self
+                .user
+                .as_ref()
+                .and_then(|user| user.system_item_override(token).ok())
+                .flatten()
+            {
+                let Some(text) = item
+                    .phrase
+                    .iter()
+                    .copied()
+                    .map(char::from_u32)
+                    .collect::<Option<String>>()
+                else {
+                    continue;
+                };
+                self.rows
+                    .extend(item.prons.into_iter().map(|(keys, frequency)| {
+                        ExportedPhrase {
+                            text: text.clone(),
+                            pinyin: keys
+                                .into_iter()
+                                .map(|key| {
+                                    oxpinyin_core::ChewingKey::from_packed(key).pinyin_string()
+                                })
+                                .collect::<Vec<_>>()
+                                .join("'"),
+                            count: u64::from(frequency),
+                        }
+                    }));
                 continue;
             }
             let system = dict.system();
@@ -132,7 +164,13 @@ impl ContextCore {
                     {
                         let range = library.token_range();
                         cursor.next_token = base | range.start;
-                        cursor.end_token = base | range.end;
+                        cursor.end_token = (base | range.end).max(
+                            self.user
+                                .as_ref()
+                                .and_then(|user| user.system_item_end(index))
+                                .unwrap_or(0),
+                        );
+                        cursor.user = self.user.clone();
                         cursor.system = Some(dict);
                         cursor.probe();
                     }
