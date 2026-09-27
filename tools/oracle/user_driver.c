@@ -20,6 +20,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The pin's pinyin.h declares `bool` returns but includes no <stdbool.h>;
+ * glib >= 2.84 no longer drags it in transitively, so C17 compilation
+ * against the installed header needs it here. */
+#include <stdbool.h>
+
 #include <glib.h>
 #include "pinyin.h"
 
