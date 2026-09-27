@@ -28,4 +28,9 @@ ibus_libpinyin_commit=2d2cdac0187101aa0cd7ac06694a8340721ddfbb
 # ibus-libpinyin: verified by commit SHA (git fetch --depth=1); the
 # lightweight tag 1.16.5 points at this commit upstream.
 model_archive_sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155
-dbm=Tkrzw
+# 2026-09-27 UTC: dbm moves Tkrzw -> BerkeleyDB, mirroring
+# build-oracle.sh's new --dbm default (human ruling: the parity oracle
+# follows Q1, the bare ./configure reference build). The tkrzw and kc
+# cells stay selectable; the frozen capture goldens remain the tkrzw
+# cell.
+dbm=BerkeleyDB
