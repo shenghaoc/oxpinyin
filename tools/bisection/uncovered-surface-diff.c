@@ -574,10 +574,12 @@ static int cursor_moves(const struct syms *s, pinyin_instance_t *inst,
 
     /* Word-level moves at a subset of cursors. The pinned oracle's
      * get_left/right_pinyin_offset run a SECOND _check_offset on the
-     * offset they compute (pinyin.cpp:3055/:3090 at the pin) and assert
-     * there for tail cursors of this composition (measured: offset 11
-     * aborts, pinyin.cpp:2175 — later upstream turned the assert into
-     * `return false`, commit 95e3af7 "Fix _check_offset function"). The
+     * offset they compute (pinyin.cpp:3057/:3092 at the pin 074a2219)
+     * and assert there for tail cursors of this composition (measured:
+     * offset 11 aborts; at 074a2219 the assert is the call's own,
+     * pinyin.cpp:3092 — the 0c5e80e1 pin asserted inside _check_offset
+     * at :2175, which upstream commit 95e3af7 "Fix _check_offset
+     * function" turned into `return false`). The
      * probes below are the smoke-proved-safe cursors. Offset 8 is fully
      * measurable (get_left(8)=5, get_right(8)=11, both ok), so it is
      * measured with the rest; offset 11 is not probed — its right move

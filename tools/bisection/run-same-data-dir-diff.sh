@@ -62,8 +62,11 @@ default_drivers=(
   nbest-train-diff
 )
 # bisect's surface mode is not in the default set: its offset sweep trips
-# an upstream assertion (`_check_offset`, pinyin.cpp:2175) inside the pin
-# itself. Name it explicitly to run it anyway.
+# an upstream `_check_offset` assertion inside the pin itself — at the pin
+# 074a2219 the `assert(_check_offset(...))` call sites, pinyin.cpp:3035,
+# :3057, :3067, :3092 and :3204 (`_check_offset` itself, :2163-2182, now
+# returns false; the :2175 once cited here was the 0c5e80e1 pin's assert
+# inside it). Name it explicitly to run it anyway.
 drivers=("$@")
 ((${#drivers[@]})) || drivers=("${default_drivers[@]}")
 
