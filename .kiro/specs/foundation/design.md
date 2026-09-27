@@ -38,8 +38,12 @@ directory. The #228 `CompatLayout` reader this replaced is recorded in
 `docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`.
 
 **Storage model:** the backends, compile-time selected through the
-`DefaultStore` `#[cfg]` chain (kyotocabinet, tkrzw, redb, bdb;
-tkrzw the default selection since 2026-09-05), exactly one per binary —
+`DefaultStore` `#[cfg]` chain (bdb, kyotocabinet, tkrzw; Berkeley DB
+the default selection since 2026-09-20, matching the reference build's
+bare `./configure` — Q1 ruling, recorded 2026-09-27 UTC, #593 item 1,
+`docs/findings/compatibility-policy.md` "Amendment — rulings recorded";
+tkrzw was the default 2026-09-05 → 2026-09-20, and redb was removed
+2026-09-20), exactly one per binary —
 a `compile_error!` guard refuses a build naming none or more than one, so
 no precedence order survives to fall back on — mirroring libpinyin's own
 `--with-dbm`. Runtime tables are compiled natively from the pinned model20
