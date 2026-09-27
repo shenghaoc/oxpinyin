@@ -13,8 +13,8 @@
 //! pinned model20 ──► libpinyin's own build ──► libpinyin's data dir ─┐
 //!        │                                                            ├─► differential
 //!        ├──► oxpinyin-datagen (kyotocabinet) ──────────► KC data dir ─┤   (same files)
-//!        ├──► oxpinyin-datagen (tkrzw, default) ────────► Tkrzw data dir┤
-//!        └──► oxpinyin-datagen (bdb) ───────────────────► BDB data dir ┘
+//!        ├──► oxpinyin-datagen (tkrzw) ─────────────────► Tkrzw data dir┤
+//!        └──► oxpinyin-datagen (bdb, default) ──────────► BDB data dir ┘
 //! ```
 //!
 //! One semantic read pass ([`system::read_semantic`]) and one set of
