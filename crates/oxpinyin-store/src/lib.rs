@@ -577,6 +577,84 @@ pub trait RawReadStore: ReadStore {
     }
 }
 
+/// One raw record, key then value, as a container walk yields it (the
+/// backends whose user bigram container is copied record by record).
+#[cfg(any(feature = "bdb", feature = "tkrzw"))]
+pub(crate) type RawRecord = (Vec<u8>, Vec<u8>);
+
+/// libpinyin's user bigram container as the pin holds it between
+/// `pinyin_init` and `pinyin_fini`: `Bigram::m_db` after `load_db` — an
+/// **in-memory** container of the backend's own type, filled from
+/// `user_bigram.db` by the backend's own copy loop, mutated by `store` /
+/// `remove`, walked by `get_all_items`, and written back by `save_db`.
+///
+/// The container is the pin's by construction — the same library, the
+/// same database type, the same default tuning, the same sequence of
+/// inserts — so its walk order is the pin's walk order: tkrzw `TinyDBM`
+/// copied from the `HashDBM` file by iterator (`ngram_tkrzwdb.cpp:48-63`,
+/// `tkrzwdb_utils.h`), Kyoto Cabinet `StashDB` filled by
+/// `load_snapshot` (`ngram_kyotodb.cpp:54-64`), Berkeley DB an
+/// in-memory `DB_HASH` filled by cursor copy (`ngram_bdb.cpp:47-79`,
+/// `bdb_utils.h:43-74`). Keys are the 4-byte native-endian predecessor
+/// token; values the `SingleGram` chunk.
+pub trait UserBigramDb: Sized {
+    /// A fresh, empty in-memory container — what `load_db` works on
+    /// before the copy.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the container cannot be created.
+    fn empty() -> Result<Self, StoreError>;
+
+    /// `Bigram::load_db`: a fresh in-memory container, then the file's
+    /// records in the file's own walk order. An absent or unreadable
+    /// file leaves the container empty, as the pin's does — its
+    /// `load_db` fails after the in-memory database already exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] only when the in-memory container itself
+    /// cannot be created.
+    fn load_db(path: &Path) -> Result<Self, StoreError>;
+
+    /// `Bigram::load`'s read: the stored value for `key`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the read fails.
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// `Bigram::store`: set `key` to `value`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the write fails.
+    fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
+
+    /// `Bigram::remove`: delete `key`; an absent key is not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the delete fails.
+    fn remove(&self, key: &[u8]) -> Result<(), StoreError>;
+
+    /// `Bigram::get_all_items`: every key in the container's walk order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the walk fails.
+    fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError>;
+
+    /// `Bigram::save_db`: remove `path`, then write the container to it
+    /// the pin's way (a fresh file of the backend's user-bigram form,
+    /// filled in this container's walk order).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the file cannot be written.
+    fn save_db(&self, path: &Path) -> Result<(), StoreError>;
+}
+
 /// Removes `path`; absence is not an error — libpinyin's
 /// `unlink`-before-create, which ignores `ENOENT`.
 pub(crate) fn remove_if_present(path: &Path) -> Result<(), StoreError> {
@@ -660,6 +738,16 @@ pub type DefaultStore = TkrzwStore;
 #[cfg(feature = "bdb")]
 pub type DefaultStore = BdbStore;
 
+/// The compiled-in backend's [`UserBigramDb`].
+#[cfg(feature = "kyotocabinet")]
+pub type DefaultUserBigramDb = KcUserBigramDb;
+/// The compiled-in backend's [`UserBigramDb`].
+#[cfg(feature = "tkrzw")]
+pub type DefaultUserBigramDb = TkrzwUserBigramDb;
+/// The compiled-in backend's [`UserBigramDb`].
+#[cfg(feature = "bdb")]
+pub type DefaultUserBigramDb = BdbUserBigramDb;
+
 /// File extension for [`DefaultStore`]'s native tables — one per peer;
 /// the store forces its database type through open parameters, so the
 /// extension is naming, not detection.
@@ -720,17 +808,17 @@ mod common;
 #[cfg(feature = "tkrzw")]
 mod tkrzw;
 #[cfg(feature = "tkrzw")]
-pub use tkrzw::TkrzwStore;
+pub use tkrzw::{TkrzwStore, TkrzwUserBigramDb};
 
 #[cfg(feature = "bdb")]
 mod bdb;
 #[cfg(feature = "bdb")]
-pub use bdb::BdbStore;
+pub use bdb::{BdbStore, BdbUserBigramDb};
 
 #[cfg(feature = "kyotocabinet")]
 pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
-pub use kyotocabinet::KcStore;
+pub use kyotocabinet::{KcStore, KcUserBigramDb};
 
 // ── tests ──────────────────────────────────────────────────────────
 
@@ -2011,5 +2099,85 @@ mod tests {
                 "big-endian (prev, cur) pairs walk in integer order",
             );
         }
+    }
+}
+
+#[cfg(all(
+    test,
+    any(feature = "bdb", feature = "kyotocabinet", feature = "tkrzw")
+))]
+mod user_bigram_db_tests {
+    use super::{DefaultUserBigramDb, UserBigramDb};
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "oxpinyin-user-bigram-db-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    fn key(token: u32) -> [u8; 4] {
+        token.to_le_bytes()
+    }
+
+    #[test]
+    fn a_missing_file_loads_an_empty_container() {
+        let dir = temp_dir("missing");
+        let db = DefaultUserBigramDb::load_db(&dir.join("user_bigram.db")).expect("load");
+        assert!(db.keys().expect("keys").is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn store_get_remove_and_the_walk_see_the_same_records() {
+        let db = DefaultUserBigramDb::empty().expect("empty");
+        for token in 1..=40_u32 {
+            db.store(&key(token), &token.to_le_bytes().repeat(3))
+                .expect("store");
+        }
+        db.remove(&key(7)).expect("remove");
+        db.remove(&key(999)).expect("absent remove is not an error");
+        assert_eq!(db.get(&key(7)).expect("get"), None);
+        assert_eq!(
+            db.get(&key(8)).expect("get"),
+            Some(8_u32.to_le_bytes().repeat(3))
+        );
+        let mut keys = db.keys().expect("keys");
+        assert_eq!(keys.len(), 39);
+        keys.sort();
+        let mut expected: Vec<Vec<u8>> = (1..=40_u32)
+            .filter(|&token| token != 7)
+            .map(|token| key(token).to_vec())
+            .collect();
+        expected.sort();
+        assert_eq!(keys, expected);
+    }
+
+    #[test]
+    fn save_then_load_keeps_every_record() {
+        let dir = temp_dir("round-trip");
+        let path = dir.join("user_bigram.db");
+        let db = DefaultUserBigramDb::empty().expect("empty");
+        for token in [1_u32, 0x0100_0001, 0x0700_0001, 0x0100_05db] {
+            db.store(&key(token), &[token.to_le_bytes(), [9, 0, 0, 0]].concat())
+                .expect("store");
+        }
+        db.save_db(&path).expect("save");
+        let reloaded = DefaultUserBigramDb::load_db(&path).expect("load");
+        let mut before = db.keys().expect("keys");
+        let mut after = reloaded.keys().expect("keys");
+        before.sort();
+        after.sort();
+        assert_eq!(before, after);
+        for token in [1_u32, 0x0100_0001, 0x0700_0001, 0x0100_05db] {
+            assert_eq!(
+                reloaded.get(&key(token)).expect("get"),
+                db.get(&key(token)).expect("get")
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

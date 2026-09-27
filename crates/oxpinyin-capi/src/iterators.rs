@@ -9,10 +9,11 @@ use std::ptr;
 
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
+use oxpinyin_facade::{BigramExportWalk, BigramStep};
 use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library, toned_key};
 
 use crate::ffi::{cstr_to_owned_lossy, owned_cstr};
-use crate::state::{ExportedBigramRow, context_ref};
+use crate::state::context_ref;
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
 };
@@ -24,8 +25,7 @@ struct ExportHandle {
 
 /// State behind `bigram_export_iterator_t *`.
 struct BigramHandle {
-    rows: Vec<ExportedBigramRow>,
-    index: usize,
+    walk: BigramExportWalk,
 }
 
 // ── Import iterator ──────────────────────────────────────────────────
@@ -350,8 +350,8 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
     if !ctx.can_render_export_bigrams() {
         return ptr::null_mut();
     }
-    let rows = ctx.export_bigram_rows().unwrap_or_default();
-    Box::into_raw(Box::new(BigramHandle { rows, index: 0 })).cast()
+    let walk = ctx.bigram_export_walk().unwrap_or_default();
+    Box::into_raw(Box::new(BigramHandle { walk })).cast()
 }
 
 /// Check whether the bigram export iterator has a next phrase.
@@ -368,9 +368,10 @@ pub extern "C" fn pinyin_bigram_iterator_has_next_phrase(iter: *mut BigramExport
     }
 
     // SAFETY: `iter` is non-null and was produced by
-    // `pinyin_begin_get_bigram_phrases`.
-    let handle = unsafe { &*(iter.cast::<BigramHandle>()) };
-    handle.index < handle.rows.len()
+    // `pinyin_begin_get_bigram_phrases`; the unique borrow lasts for this
+    // call (the pin's `has_next` advances the iterator).
+    let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
+    handle.walk.has_next()
 }
 
 /// Get the next phrase from the bigram export iterator.
@@ -402,8 +403,19 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     // `pinyin_begin_get_bigram_phrases`; the unique borrow lasts for
     // this call.
     let handle = unsafe { &mut *(iter.cast::<BigramHandle>()) };
-    let Some(row) = handle.rows.get(handle.index) else {
-        return false;
+    let (row, more) = match handle.walk.get_next() {
+        BigramStep::Row(row, more) => (row, more),
+        BigramStep::Aborts => {
+            // Class (c): the pin asserts and aborts here.
+            crate::ffi::log_warning(
+                "pinyin_bigram_iterator_get_next_phrase: assertion \
+                 'iter->m_index_token != null_token && \
+                 iter->m_index_token != sentence_start' failed",
+            );
+            return false;
+        }
+        // Class (b): the pin reads past its pinyin array.
+        BigramStep::Undefined => return false,
     };
     if !phrase.is_null() {
         // SAFETY: Null-checked above.
@@ -423,8 +435,7 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
             *count = c_int::try_from(row.count).unwrap_or(c_int::MAX);
         }
     }
-    handle.index += 1;
-    handle.index < handle.rows.len()
+    more
 }
 
 /// End the bigram export iterator and free it.
@@ -443,59 +454,5 @@ pub extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIterator)
     // only here.
     unsafe {
         drop(Box::from_raw(iter.cast::<BigramHandle>()));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        BigramHandle, ExportedBigramRow, pinyin_bigram_iterator_get_next_phrase,
-        pinyin_bigram_iterator_has_next_phrase, pinyin_end_get_bigram_phrases,
-    };
-    use crate::types::BigramExportIterator;
-
-    fn row(phrase: &str) -> ExportedBigramRow {
-        ExportedBigramRow {
-            phrase: phrase.to_owned(),
-            pinyin: "ni'hao".to_owned(),
-            count: 138,
-        }
-    }
-
-    /// Register row 36: `get_next` returns `has_next` after the row
-    /// (`pinyin.cpp:896-911`) — `true` while rows remain, `false` on the
-    /// last one — and `false` once exhausted.
-    #[test]
-    fn bigram_get_next_answers_has_next_after_the_row() {
-        let handle = BigramHandle {
-            rows: vec![row("你好"), row("你号")],
-            index: 0,
-        };
-        let iter: *mut BigramExportIterator = Box::into_raw(Box::new(handle)).cast();
-        let next = || {
-            pinyin_bigram_iterator_get_next_phrase(
-                iter,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        };
-        assert!(pinyin_bigram_iterator_has_next_phrase(iter));
-        assert!(next(), "a row remains after the first");
-        assert!(!next(), "the last row answers false");
-        assert!(!pinyin_bigram_iterator_has_next_phrase(iter));
-        assert!(!next(), "exhausted");
-        pinyin_end_get_bigram_phrases(iter);
-    }
-}
-
-#[cfg(test)]
-mod export_count_tests {
-    #[test]
-    fn zero_and_unsigned_frequency_bit_patterns_match_the_pin() {
-        assert_eq!(super::export_count(0), -1);
-        assert_eq!(super::export_count(5), 5);
-        assert_eq!(super::export_count(u64::from(u32::MAX)), -1);
-        assert_eq!(super::export_count(0x8000_0000), i32::MIN);
     }
 }

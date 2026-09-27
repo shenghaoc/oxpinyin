@@ -663,6 +663,16 @@ Architecture — a session scratch behind the value engine:
   reading merged into an existing phrase is never indexed
   (`pinyin.cpp:569-582`), so its records are loaded and saved back as
   the per-reading `indexed` flag.
+* **Amendment (2026-09-27, #541): the session keeps the pin's own user
+  bigram container.** Besides the scratch tables, a libpinyin session
+  holds `Bigram::m_db` as the pin builds it — tkrzw `TinyDBM`, Kyoto
+  Cabinet `StashDB` via `load_snapshot`, Berkeley DB an in-memory
+  `DB_HASH` by cursor copy (`oxpinyin_store::UserBigramDb`) — and replays
+  the pin's operations on it: one `store` per trained or predicted pair,
+  `Bigram::mask_out`'s walk for a mask or a user-phrase removal. Its walk
+  order is therefore the pin's; the bigram export iterates it, and
+  `pinyin_save` writes `user_bigram.db` from it by the pin's `save_db`.
+  The scratch tables stay the source of every count.
 * **The user bigram's container is backend-specific, and is not the
   system bigram's container** — the fact that produced this section's
   one real defect. On Kyoto Cabinet the *system* `bigram.db` is a

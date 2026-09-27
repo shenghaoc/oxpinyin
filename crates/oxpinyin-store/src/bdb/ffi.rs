@@ -264,8 +264,27 @@ impl Db {
         create: bool,
         mode: c_int,
     ) -> Result<Self, StoreError> {
-        check_runtime_version()?;
         let path = c_path(path)?;
+        Self::open_at(Some(&path), db_type, read_only, create, mode)
+    }
+
+    /// An in-memory `DB_HASH` — `DB->open` with a null file name, as
+    /// libpinyin's `Bigram::load_db` creates the user bigram it works on
+    /// (`ngram_bdb.cpp:51-56`: `DB_HASH, DB_CREATE, 0600`).
+    pub(crate) fn open_in_memory_hash() -> Result<Self, StoreError> {
+        Self::open_at(None, DB_HASH, false, true, USER_FILE_MODE)
+    }
+
+    /// [`Self::open`]'s body over an optional file name (`None` is
+    /// libdb's in-memory database).
+    fn open_at(
+        path: Option<&std::ffi::CStr>,
+        db_type: DBTYPE,
+        read_only: bool,
+        create: bool,
+        mode: c_int,
+    ) -> Result<Self, StoreError> {
+        check_runtime_version()?;
 
         let mut handle: *mut sys::DB = ptr::null_mut();
         // SAFETY: `db_create` writes a fresh handle through the pointer
@@ -299,15 +318,16 @@ impl Db {
         // type; libdb checks that itself when DB_CREATE is absent.
 
         let open = method!(this.handle, open, "DB->open")?;
-        // SAFETY: `this.handle` is live; `path` outlives the call; both
-        // the environment (already bound at create) and the transaction
-        // are null, and the sub-database name is null, which is the
-        // whole-file form libpinyin uses.
+        // SAFETY: `this.handle` is live; `path`, when present, outlives
+        // the call, and a null file name is libdb's documented in-memory
+        // database; both the environment (already bound at create) and
+        // the transaction are null, and the sub-database name is null,
+        // which is the whole-file form libpinyin uses.
         let code = unsafe {
             open(
                 this.handle,
                 ptr::null_mut(),
-                path.as_ptr(),
+                path.map_or(ptr::null(), std::ffi::CStr::as_ptr),
                 ptr::null(),
                 db_type,
                 flags,

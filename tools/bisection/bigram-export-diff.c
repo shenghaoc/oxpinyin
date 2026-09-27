@@ -13,6 +13,7 @@
  *   row <phrase>\t<pinyin>\t<count>\tget=<bool>
  *   rows=<n>
  *   has_next_after_false <bool>
+ *   tail <phrase>\t<pinyin>\t<count>\tget=<bool>   (ibus-libpinyin's loop)
  *
  * get= is pinyin_bigram_iterator_get_next_phrase's return, which the pin
  * defines as has_next after the row (pinyin.cpp:896-911, register row 36).
@@ -26,7 +27,13 @@
  * pin reads past its join arrays (pinyin.cpp:843-849) and crashes on most
  * heaps before a second row.
  *
- * Scenarios (argv[3]): empty, one, two, many, repeat — see scenario().
+ * Scenarios (argv[3]): empty, one, two, many, repeat — see scenario() —
+ * and two that export after mutating the stored container:
+ *   reopen — many, then pinyin_save, pinyin_fini and a fresh pinyin_init
+ *            on the same user dir: the walk of the container the pin's
+ *            save_db wrote and load_db copied back;
+ *   mask   — many, then pinyin_mask_out(ctx, PHRASE_INDEX_LIBRARY_MASK |
+ *            PHRASE_MASK, <token of 我>): the pin's mask walk.
  * Training chooses each named phrase as a normal candidate, never the
  * n-best sentence candidate: choosing the top n-best result trains nothing
  * on the pin and a sentence_start gram on oxpinyin (#603), which is not
@@ -44,6 +51,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+
+#include <glib.h>
 
 typedef void ctx_t;
 typedef void inst_t;
@@ -84,12 +93,14 @@ static const char *const *scenario(const char *name) {
         return many;
     if (0 == strcmp(name, "repeat"))
         return repeat;
+    if (0 == strcmp(name, "reopen") || 0 == strcmp(name, "mask"))
+        return many;
     return NULL;
 }
 
 int main(int argc, char **argv) {
     if (argc != 4 || !scenario(argv[3])) {
-        fprintf(stderr, "usage: %s <so> <systemdir> empty|one|two|many|repeat\n", argv[0]);
+        fprintf(stderr, "usage: %s <so> <systemdir> empty|one|two|many|repeat|reopen|mask\n", argv[0]);
         return 2;
     }
     void *h = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
@@ -177,6 +188,28 @@ int main(int argc, char **argv) {
         }
     }
 
+    if (0 == strcmp(argv[3], "mask")) {
+        bool (*lookup_tokens)(inst_t *, const char *, GArray *) = load_symbol(h, "pinyin_lookup_tokens");
+        bool (*mask_out)(ctx_t *, uint32_t, uint32_t) = load_symbol(h, "pinyin_mask_out");
+        GArray *tokens = g_array_new(FALSE, TRUE, sizeof(uint32_t));
+        lookup_tokens(instance, "我", tokens);
+        uint32_t token = tokens->len ? g_array_index(tokens, uint32_t, 0) : 0;
+        g_array_free(tokens, TRUE);
+        printf("mask %#x: %s\n", token,
+               mask_out(ctx, 0x0FFFFFFF /* LIBRARY_MASK | PHRASE_MASK */, token) ? "true" : "false");
+    }
+    if (0 == strcmp(argv[3], "reopen")) {
+        bool (*save)(ctx_t *) = load_symbol(h, "pinyin_save");
+        printf("save: %s\n", save(ctx) ? "true" : "false");
+        free_instance(instance);
+        fini(ctx);
+        ctx = init(argv[2], "user");
+        if (!ctx) {
+            printf("reinit: NULL\n");
+            return 1;
+        }
+        instance = alloc(ctx);
+    }
     iter_t *iter = begin(ctx);
     if (!iter) {
         printf("begin: NULL\n");
@@ -198,7 +231,22 @@ int main(int argc, char **argv) {
             ++rows;
         }
         printf("rows=%u\n", rows);
-        printf("has_next_after_false %s\n", has_next(iter) ? "true" : "false");
+        /* ibus-libpinyin's loop (PYLibPinyin.cc:317-329) keeps calling
+         * has_next after get_next answered false; on the pin that scans the
+         * gram it loaded but never scanned. Drain it the same way. */
+        more = has_next(iter);
+        printf("has_next_after_false %s\n", more ? "true" : "false");
+        while (more && rows < 20000) {
+            char *phrase = NULL, *pinyin = NULL;
+            int32_t count = 0;
+            bool got = get_next(iter, &phrase, &pinyin, &count);
+            printf("tail %s\t%s\t%d\tget=%s\n", phrase ? phrase : "(null)",
+                   pinyin ? pinyin : "(null)", count, got ? "true" : "false");
+            g_free_fn(phrase);
+            g_free_fn(pinyin);
+            ++rows;
+            more = has_next(iter);
+        }
         end(iter);
     }
     free_instance(instance);

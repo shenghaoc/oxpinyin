@@ -21,13 +21,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oxpinyin_core::UserCountDelta;
-use oxpinyin_store::{DefaultStore, ReadStore, StoreError, WriteStore, WriteTxn};
+use oxpinyin_data::single_gram::encode_single_gram;
+use oxpinyin_store::{DefaultStore, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn};
 
 use crate::codec;
 use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN,
-    PinyinKey, USER_DICTIONARY, UserPhrase, UserPronunciation, first_library_token,
-    is_user_file_library, phrase_index_library_index,
+    PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase,
+    UserPronunciation, first_library_token, is_user_file_library, phrase_index_library_index,
 };
 use crate::registry::{self, CountCache, RegistryLease, StandaloneLease, StoreInner};
 use crate::seed;
@@ -748,6 +749,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             phrase_generation: AtomicU64::new(0),
             has_user_data: AtomicBool::new(has_user_data),
             libpinyin: None,
+            bigram_db: None,
             scratch_lease: None,
         }))
     }
@@ -818,6 +820,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             Ok(())
         })?;
         self.mark_committed_write(db, true);
+        self.mirror_store(prev)?;
         Ok(())
     }
 
@@ -926,6 +929,9 @@ impl<S: WriteStore> GenericUserStore<S> {
             Ok(seed)
         })?;
         self.mark_committed_write(db, true);
+        // `m_user_bigram->store(last_token, user)` (`pinyin_lookup2.cpp:626`,
+        // `pinyin.cpp:2638`): one store of the predecessor's gram.
+        self.mirror_store(last)?;
         Ok(seed)
     }
 
@@ -1381,13 +1387,20 @@ impl<S: WriteStore> GenericUserStore<S> {
             // ChunkItems) and a dirty save must not copy them — both
             // halves take the Arc by reference.
             let state = crate::store_libpinyin::export_state(self, &target.originals)?;
-            crate::persistence::save(
+            let bigram_db = self
+                .inner
+                .bigram_db
+                .as_ref()
+                .map(|db| db.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+            crate::persistence::save_with_bigram(
                 &target.dir,
                 &state,
                 &target.originals,
                 &target.versions,
                 target.open_counter,
+                bigram_db.as_deref(),
             )?;
+            drop(bigram_db);
         }
         // Dropping the cache is no longer forced by the backend — no read
         // view outlives a call, so nothing pins pages against compaction —
@@ -1400,6 +1413,103 @@ impl<S: WriteStore> GenericUserStore<S> {
         drop(cache);
         self.inner.dirty.store(false, Ordering::Relaxed);
         Ok(true)
+    }
+
+    /// `Bigram::get_all_items` (`pinyin.cpp:779`): every predecessor with
+    /// a stored gram, in the walk order of the pin's own in-memory
+    /// container on a libpinyin session; ascending on a store without
+    /// one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the store or the container cannot
+    /// be read.
+    pub fn bigram_predecessors(&self) -> Result<Vec<Token>, UserStoreError> {
+        if let Some(mirror) = self.inner.bigram_db.as_ref() {
+            let mirror = mirror
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            return Ok(mirror
+                .keys()?
+                .into_iter()
+                .filter_map(|key| <[u8; 4]>::try_from(key.as_slice()).ok())
+                .map(Token::from_le_bytes)
+                .collect());
+        }
+        let mut prevs: Vec<Token> = self
+            .export_bigrams()?
+            .into_iter()
+            .map(|(prev, _, _)| prev)
+            .collect();
+        prevs.dedup();
+        Ok(prevs)
+    }
+
+    /// The `SingleGram` chunk `prev`'s stored rows make (`total_freq`, then
+    /// the successors in token order); `None` when `prev` has no row.
+    fn gram_value(&self, prev: Token) -> Result<Option<Vec<u8>>, UserStoreError> {
+        let items = self.bigram_successors(prev)?;
+        if items.is_empty() {
+            return Ok(None);
+        }
+        let total = u32::try_from(self.bigram_total(prev)?).unwrap_or(u32::MAX);
+        let records: Vec<(u32, u32)> = items
+            .into_iter()
+            .map(|(cur, count)| (cur, u32::try_from(count).unwrap_or(u32::MAX)))
+            .collect();
+        Ok(Some(encode_single_gram(total, &records)))
+    }
+
+    /// `Bigram::store(prev, gram)` on the pin's container — or its
+    /// removal, when `prev` no longer has a row.
+    fn mirror_store(&self, prev: Token) -> Result<(), UserStoreError> {
+        let Some(mirror) = self.inner.bigram_db.as_ref() else {
+            return Ok(());
+        };
+        let value = self.gram_value(prev)?;
+        let mirror = mirror
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let key = prev.to_le_bytes();
+        match value {
+            Some(value) => mirror.store(&key, &value)?,
+            None => mirror.remove(&key)?,
+        }
+        Ok(())
+    }
+
+    /// `Bigram::mask_out(mask, value)`'s walk (`ngram_*.cpp`, "sync
+    /// mask_out code"): over the container's keys in its own order, a key
+    /// that matches is removed; any other whose gram changed is stored
+    /// again, or removed once empty. The values are the store's rows
+    /// after its own mask, so the container follows the pin's sequence of
+    /// operations on the store's data.
+    fn mirror_mask_out(&self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+        let Some(mirror) = self.inner.bigram_db.as_ref() else {
+            return Ok(());
+        };
+        let mirror = mirror
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for key in mirror.keys()? {
+            let Ok(bytes) = <[u8; 4]>::try_from(key.as_slice()) else {
+                continue;
+            };
+            let prev = Token::from_le_bytes(bytes);
+            if prev & mask == value {
+                mirror.remove(&key)?;
+                continue;
+            }
+            match self.gram_value(prev)? {
+                None => mirror.remove(&key)?,
+                Some(gram) => {
+                    if mirror.get(&key)?.as_deref() != Some(gram.as_slice()) {
+                        mirror.store(&key, &gram)?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `pinyin_mask_out`'s store side.
@@ -1511,6 +1621,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             has_user_data_in_write_txn(txn)
         })?;
         self.mark_committed_phrase_write(db, has_user_data);
+        // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`).
+        self.mirror_mask_out(mask, value)?;
         Ok(())
     }
 
@@ -1611,6 +1723,9 @@ impl<S: WriteStore> GenericUserStore<S> {
             || Ok(false),
             |has_user_data| {
                 self.mark_committed_phrase_write(db, has_user_data);
+                // `user_bigram->mask_out(PHRASE_INDEX_LIBRARY_MASK |
+                // PHRASE_MASK, token)` (`pinyin.cpp:3764-3766`).
+                self.mirror_mask_out(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)?;
                 Ok(true)
             },
         )
