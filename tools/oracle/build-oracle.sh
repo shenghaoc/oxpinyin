@@ -4,8 +4,8 @@ set -euo pipefail
 # Build dependencies: autotools (autoconf, automake, autopoint, libtool),
 # a C/C++ toolchain and make, pkg-config, gettext, gnome-common, curl,
 # tar, python3, and development headers for GLib 2.0, IBus 1.0, SQLite 3,
-# and the DBM backend selected by --dbm (Tkrzw, Kyoto Cabinet or
-# Berkeley DB).
+# and the DBM backend selected by --dbm (Berkeley DB by default, or
+# Tkrzw / Kyoto Cabinet).
 
 # Both upstreams are fetched by commit SHA and verified by commit SHA. For
 # libpinyin this is forced: no release tag carries this pin (2.11.92 is
@@ -59,7 +59,14 @@ prefix=
 jobs=1
 apply_patches_dir=
 model_dir=
-dbm=tkrzw
+# The parity oracle defaults to Berkeley DB: the reference build is a bare
+# `./configure`, which selects BerkeleyDB (configure.ac:94 at the pin) —
+# human ruling 2026-09-27 UTC, following Q1. tkrzw and kc stay selectable
+# with --dbm. The frozen capture goldens and the pinyin-oracle crate's
+# EXPECTED_PIN_REF are still the tkrzw cell (+dbm-tkrzw); build those
+# prefixes with `--dbm tkrzw` (tools/capture/run-capture.sh,
+# tools/profile/run-w8-cycle.sh, docs/testing/capture-fixtures.md).
+dbm=bdb
 
 usage() {
 	cat <<'EOF'
@@ -84,11 +91,14 @@ Options:
                        SHA-256 check: the archive that produced DIR was verified
                        against MODEL_SHA256 before extraction. Only the source
                        of the bytes changes, never whether they are checked.
-  --dbm NAME           DBM backend libpinyin is configured with: tkrzw
-                       (default), kc, or bdb. Recorded in the pin ref
-                       (+dbm-<name>) and the oracle-pin.txt dbm= field. For
-                       bench-only oracle prefixes; the parity oracle stays
-                       tkrzw.
+  --dbm NAME           DBM backend libpinyin is configured with: bdb
+                       (default — the bare ./configure reference build),
+                       kc, or tkrzw. Recorded in the pin ref (+dbm-<name>)
+                       and the oracle-pin.txt dbm= field. Differentials
+                       select the matching cell with PINYIN_ORACLE_DBM
+                       (tools/bisection/oracle-cell.sh). The capture
+                       goldens and the pinyin-oracle crate need
+                       --dbm tkrzw (their frozen pin ref is +dbm-tkrzw).
   -h, --help           Show this help
 
 Build variables CC, CXX, CFLAGS, CXXFLAGS and LDFLAGS are passed through.

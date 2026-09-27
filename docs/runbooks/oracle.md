@@ -24,8 +24,13 @@ extracted directory.
 
 Build dependencies: autotools, a C/C++ toolchain, pkg-config, gettext,
 gnome-common, curl, python3, and the dev headers for GLib 2.0, IBus 1.0,
-SQLite 3 and the DBM (`libtkrzw-dev` by default; `--dbm` selects Kyoto
-Cabinet or Berkeley DB for the bench oracles).
+SQLite 3 and the DBM (`libdb-dev` for the default Berkeley DB cell;
+`--dbm kc` needs `libkyotocabinet-dev`, `--dbm tkrzw` needs
+`libtkrzw-dev`). The parity oracle defaults to Berkeley DB (ruling
+2026-09-27 UTC, following Q1); differentials pick the cell with
+`PINYIN_ORACLE_DBM`. The capture goldens and the `pinyin-oracle`
+crate's tests still need the tkrzw cell: build that prefix with
+`--dbm tkrzw`.
 
 ```sh
 tools/oracle/build-oracle.sh --prefix ~/.local/opt/pinyin-oracle   # fetches libpinyin by commit SHA, verifies, builds

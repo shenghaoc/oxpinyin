@@ -58,9 +58,16 @@ fi
 # if it were this pin. Expected values come from build-oracle.sh, the same
 # single source the workflow's drift check reads.
 MODEL_SHA256_EXPECTED=$(sed -n 's/^MODEL_SHA256=//p' "$REPO_ROOT/tools/oracle/build-oracle.sh")
-DBM_EXPECTED=$(sed -n 's/.*--with-dbm=\([[:alnum:]]*\).*/\1/p' "$REPO_ROOT/tools/oracle/build-oracle.sh" | head -n1)
+# The dbm field follows the backend cell (PINYIN_ORACLE_DBM, default bdb;
+# tools/bisection/oracle-cell.sh). This used to be scraped from a
+# `--with-dbm=<literal>` in build-oracle.sh, which spells it
+# `--with-dbm="$dbm_name"` — so the scrape matched the empty string and
+# the check accepted any dbm.
+# shellcheck source=oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
+DBM_EXPECTED=$ORACLE_DBM_NAME
 if ! grep -q "^model_sha256=$MODEL_SHA256_EXPECTED" "$PREFIX/oracle-pin.txt" \
-    || ! grep -q "^dbm=$DBM_EXPECTED" "$PREFIX/oracle-pin.txt"; then
+    || ! grep -qx "dbm=$DBM_EXPECTED" "$PREFIX/oracle-pin.txt"; then
     echo "SKIP: oracle prefix at $PREFIX is off-pin (model/dbm fields)"
     echo "  expected model_sha256=$MODEL_SHA256_EXPECTED dbm=$DBM_EXPECTED"
     exit 0
