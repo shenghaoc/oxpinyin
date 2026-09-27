@@ -188,13 +188,17 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
     };
     let mut packed: Vec<u16> = Vec::with_capacity(keys_list.len());
     for &key in keys_list {
-        let Some(syllable) = oxpinyin_core::SyllableKey::from_index(key as usize) else {
+        let Some(syllable) =
+            oxpinyin_core::SyllableKey::from_index(oxpinyin_user::key_syllable(key))
+        else {
             return false;
         };
         let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
             return false;
         };
-        packed.push(chewing.to_packed());
+        // The stored key's tone rides along (`get_nth_pronunciation`
+        // copies the item's `ChewingKey`s verbatim).
+        packed.push(chewing.with_tone(oxpinyin_user::key_tone(key)).to_packed());
     }
     if packed.is_empty() {
         return false;

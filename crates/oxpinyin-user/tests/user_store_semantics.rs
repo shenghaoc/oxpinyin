@@ -19,7 +19,9 @@
 use std::path::PathBuf;
 
 use oxpinyin_core::SyllableKey;
-use oxpinyin_user::{FIRST_USER_TOKEN, SENTENCE_START, UserPhrase, UserStore, UserStoreError};
+use oxpinyin_user::{
+    FIRST_USER_TOKEN, SENTENCE_START, UserPhrase, UserStore, UserStoreError, toned_key,
+};
 
 fn temp_path(tag: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!(
@@ -215,6 +217,54 @@ fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
     // Removing the phrase takes every reading with it.
     assert!(store.remove_user_phrase(token).unwrap());
     assert!(store.phrase(token).unwrap().is_none());
+}
+
+#[test]
+fn readings_keep_insertion_order_tones_and_only_the_first_is_indexed() {
+    // `_add_phrase` (pinyin.cpp:566-607): a new phrase is indexed under the
+    // reading it is created with; a reading merged into it later is
+    // appended (`add_pronunciation`, phrase_index.cpp:86-91) and never
+    // indexed. The tone is part of the key (`pinyin_exact_compare2`).
+    let mut store = UserStore::create_standalone(&temp_path("phrase-reading-order")).unwrap();
+    let ce = SyllableKey::from_text("ce").unwrap().index();
+    let yan = SyllableKey::from_text("yan").unwrap().index();
+    let toneless = [toned_key(ce, 0).unwrap(), toned_key(yan, 0).unwrap()];
+    let toned = [toned_key(ce, 4).unwrap(), toned_key(yan, 4).unwrap()];
+
+    let token = store.add_phrase("测验", &toned, Some(7)).unwrap();
+    store.add_phrase("测验", &toneless, Some(5)).unwrap();
+    store.add_phrase("测验", &toned, Some(1)).unwrap();
+
+    let phrase = store.phrase(token).unwrap().expect("stored");
+    let rows: Vec<(Option<String>, u64, bool)> = phrase
+        .pronunciations()
+        .iter()
+        .map(|p| (p.render_pinyin(), p.count(), p.indexed()))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            (Some("ce4'yan4".to_owned()), 8, true),
+            (Some("ce'yan".to_owned()), 5, false),
+        ]
+    );
+}
+
+#[test]
+fn a_reading_add_that_would_overflow_the_running_total_changes_nothing() {
+    // `PhraseItem::add_pronunciation`'s guard (phrase_index.cpp:76-79): the
+    // guint32 total of the readings up to the match must not wrap.
+    let mut store = UserStore::create_standalone(&temp_path("phrase-overflow")).unwrap();
+    let reading = keys("ce,shi");
+    let token = store
+        .add_phrase("测试", &reading, Some(u64::from(u32::MAX - 1)))
+        .unwrap();
+    store.add_phrase("测试", &reading, Some(2)).unwrap();
+    let phrase = store.phrase(token).unwrap().expect("stored");
+    assert_eq!(phrase.pronunciations()[0].count(), u64::from(u32::MAX - 1));
+    store.add_phrase("测试", &reading, Some(1)).unwrap();
+    let phrase = store.phrase(token).unwrap().expect("stored");
+    assert_eq!(phrase.pronunciations()[0].count(), u64::from(u32::MAX));
 }
 
 #[test]

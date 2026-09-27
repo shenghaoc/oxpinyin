@@ -657,9 +657,12 @@ Architecture — a session scratch behind the value engine:
   chunks with merge's stop-at-first-mismatch), save (the pin's
   `_write_files`+`_rename_files`: every file whole to a `.tmp` sibling,
   then all renames) and fini, each writing `user.conf` under the
-  facade's law (`UserConfLaw`, amendment below). The two index DBMs are
-  derivatives of the USER_FILE items and are rebuilt at save, never
-  read.
+  facade's law (`UserConfLaw`, amendment below). `user_phrase_index.bin`
+  is a derivative of the USER_FILE items and is rebuilt at save, never
+  read. `user_pinyin_index.bin` is not (amendment 2026-09-27, #534): a
+  reading merged into an existing phrase is never indexed
+  (`pinyin.cpp:569-582`), so its records are loaded and saved back as
+  the per-reading `indexed` flag.
 * **The user bigram's container is backend-specific, and is not the
   system bigram's container** — the fact that produced this section's
   one real defect. On Kyoto Cabinet the *system* `bigram.db` is a
