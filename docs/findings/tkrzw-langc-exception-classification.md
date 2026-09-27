@@ -5,7 +5,11 @@ Date: 2026-08-28 · Source tier: binding-migration audit (cxx → bindgen,
 Status: **ruled accepted** (maintainer decision 2026-08-28). Registered as
 a standing divergence — binding-ABI error-origin collapse — rather than a
 defect, because it is externally observable in principle and fits none of
-the previously accepted divergence buckets.
+the previously accepted divergence buckets. **Registered 2026-09-27
+UTC** (#551): `compatibility-policy.md` row 40 (class column
+**STANDING**, "Registered standing divergences") and the matching
+entry in `upstream-divergences.md`; until then this document was its
+only record.
 
 ## What diverges
 

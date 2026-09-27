@@ -122,12 +122,20 @@ unchanged and unaware.
 
 That goal sets the default: **oxpinyin reproduces the pin.** Divergence
 is not a design freedom to be exercised where the Rust is nicer. It is
-an exception that has to be argued into one of four classes below, and
-everything outside those four classes is a defect to be reverted.
+an exception that has to be argued into one of the three live classes
+below, (a)–(c), and everything outside them is a defect to be reverted.
+Class (d) was retired on 2026-09-06; its text is kept below as a record
+and no entry may be classified under it.
 
-## The four exception classes
+## The exception classes — three live, (a)–(c)
 
-There are four, and no others.
+There are three live classes, (a) math, (b) memory safety and (c)
+availability, and no others. A fourth, (d) consumer scope, was retired
+by maintainer decision on 2026-09-06 (banner under its heading below).
+A **registered standing divergence** — "Registered standing
+divergences" below — is not a class: it records a ruled-accepted
+difference that no class covers, one by one, and never admits a new
+entry by analogy.
 
 ### (a) MATH — platform-dependent floating-point accumulation
 
@@ -249,11 +257,33 @@ inside `#if 0`, is not even an upstream export, so a live call would
 not link). The reference for the exported set and per-symbol
 signatures is `docs/findings/abi-reference.md`.
 
+## Registered standing divergences — outside the classes
+
+A standing divergence is a difference the maintainer ruled accepted
+although none of (a)–(c) covers it. It is registered by name, with its
+ruling; it is not a class, it admits nothing by analogy, and it is
+counted apart from the classes in the totals.
+
+- **tkrzw `SYSTEM_ERROR`/`UNKNOWN_ERROR` collapse** (row 40; ruled
+  accepted 2026-08-28, `tkrzw-langc-exception-classification.md`).
+  Through tkrzw's C API every wrapper catches a C++ exception and
+  reports `TKRZW_STATUS_SYSTEM_ERROR` (`tkrzw_langc.cc` at 1.0.32,
+  e.g. `:163-165`, as that finding cites it), where the retired cxx shim reported
+  `UNKNOWN_ERROR`; the store maps `SYSTEM_ERROR` to `StoreError::Io`
+  (`crates/oxpinyin-store/src/tkrzw/mod.rs:214`), so an
+  allocation-failure exception and an operating-system error now share
+  one error class. Reachable only under memory exhaustion; no
+  differential surface observes it. It is a binding-ABI information
+  loss inside oxpinyin's store layer, not observable through
+  libpinyin's C ABI — the pin's tkrzw backend calls tkrzw's C++ API and
+  never reaches this binding — and it is not UB, not an abort and not
+  a transcendental, which is why no class fits.
+
 ## (e) The E2E I/O compatibility rule
 
-The four exceptions say when divergence is permitted. This says what
-compliance *means* everywhere else, and it is the rule the other four are
-exceptions to.
+The three live exception classes say when divergence is permitted. This
+says what compliance *means* everywhere else, and it is the rule those
+classes are exceptions to.
 
 > **E2E I/O COMPATIBILITY RULE:** For every exported symbol, given
 > the same inputs and state, oxpinyin MUST return
@@ -310,7 +340,9 @@ somewhere:
 ## The classification table
 
 Every entry in `upstream-divergences.md`, and the one parked entry in
-`all-off-tails.md`, classified against (a)/(b)/(c)/(d), **REVERT
+`all-off-tails.md`, classified against (a)/(b)/(c) ((d) retired
+2026-09-06; rows 16 and 17 carry its history), **STANDING** (a
+registered standing divergence, not a class — see below), **REVERT
 TARGET** (reproducible, not yet reproduced, no blocker but the work),
 **OPEN DEFECT** (reproducible, blocked on a STOP — an engine-interface
 ask), **CLOSED** (reproduced, or proven equivalent on the pinned data),
@@ -364,6 +396,7 @@ revert targets is `revert-plan.md`.
 | 37 | Candidate window behind the composition offset after a choose | **REVERT TARGET** | no exception class fits; the pin's `pinyin_guess_candidates` rebuilds the window from `start = offset` over the whole-composition matrix on every call (`pinyin.cpp:2184-2262`) and its instance carries no composition offset — a choose writes a constraint and answers a cursor (`:2501-2590`) — where oxpinyin advances a composition offset on every choose (`session/selection.rs:229,252`), rebuilds its cached list there (`scan_window(anchor = consumed)`, `session/lookup.rs:102-110`; a fully-consumed anchor yields the n-best rows alone), and the C ABI re-anchors only for a lookup offset strictly past the composition offset (`crates/oxpinyin-capi/src/sentence.rs:319-339`), serving the cached list for any offset at or behind it. Measured 2026-09-19 (`debian:testing` container `70d00b22eee3`, image `sha256:dab11cdb0a9d…`, same-dir on the pin's `data/`; `residue-a-tail-diff` phase E, `probe-coverage-abi.md` E). **At its worst measured point** — `guess_candidates(0, 0x1f)` after a whole-composition NBEST choose and re-guess — the pin answers 127 candidates headed by the imported user phrase and oxpinyin answers **0, an empty list**; at the ordinary partial choose (E2: 你好 chosen for `nihaoshijie`, cursor 5) `guess_candidates(0, …)` on oxpinyin answers the offset-5 list (世界 时节 …, 301 phrases) where the pin answers the offset-0 one (你好世界 你好 你 …, 127). At the choose's own offset both sides agree. Consumer routes: ibus-libpinyin 1.16.5 under preset 2 forces `lookup_cursor = 0` (`PYPPhoneticEditor.cc:352-355`) and calls `guess_candidates(0, 0x1f)` after every partial choose, so offset 0 behind a choose is that preset's normal path; and `moveCursorLeft` (`:595-604`) puts the lookup offset behind a choose under every preset. Independent of rows 34 and 35 (unchanged under the row-35 counterfactual build; no parse between the choose and the guess, n-best rows present on both sides). Fix shape and pre-registered differential in `probe-coverage-abi.md` E; work order `revert-plan.md` §14, executing second |
 | 38 | `pinyin_train`/`zhuyin_train` gate: train refused without a recorded selection | **CLOSED** in code (2026-09-20, landed with §9 — PR #496) | the pin's gate is the user dir plus a non-empty `m_nbest_results` (`pinyin_train`, `pinyin.cpp:2670-2679` at pin 074a2219: the user-dir refuse `:2671-2672`, the empty-results refuse `:2678-2679`; `zhuyin_train` carries the identical law, `zhuyin.cpp:1696-1705`) — a train with a live sentence result but no recorded selection answers `true` and `train_result3` walks the constraint-free result, writing nothing. Pre-§9 oxpinyin's `InstanceCore::train` (`crates/oxpinyin-facade/src/instance.rs`) refused on `selected_tokens().is_empty()` alone, so those flows answered `false` where the pin trains; the zhuyin e2e recorded the divergence as its own assertion (`assert!(!zhuyin_train(instance), "no choose happened yet")`). The gate widened to the pin's own disjunction — a recorded selection OR `sentence_lookup_active` (the engine's stand-in for `results.size() > 0`) — as a causal dependency of §9 (a LONGER-choose trains inside `pinyin_choose_candidate`, records no selection, and the train that follows leans on the lookup-active half), landing with the §9 port rather than as its own change, and the zhuyin test flipped to the pin's law with it. Surfaces: BOTH shipped C surfaces — `pinyin_train` and `zhuyin_train` share the facade path. Evidence: the pinyin side is measured (the ABI probe's longer-choose phase, `tools/bisection/abi-probe-diff.c`: `train(after-longer)=true` on both sides, no store writes, IDENTICAL); the zhuyin side has **no differential** — `zhuyin-diff.c` drives no train call — and the coverage gap is recorded in `probe-coverage-abi.md` ("The train gate under the widened law"). The zhuyin differential is the row's only owed item |
 | 39 | `pinyin_init`/`zhuyin_init` leave the process `LC_NUMERIC` at `"C"` | **REVERT TARGET** (ruled bug-for-bug, recorded 2026-09-27 UTC; not yet reproduced — #539) | no exception class fits, and the ruling is to reproduce it: the pin's `UserTableInfo::load` and `SystemTableInfo2::load` save `setlocale(LC_NUMERIC, "C")`'s return — the *new* locale's name, not the old one — and restore it on success (`storage/table_info.cpp:328,372` and `:197,291` at `074a2219`; `save` the same, `:378,394`), while every early return skips the restore (e.g. `:330-333`, `:339-348`, `:199-202`), so after any init, successful or not, `LC_NUMERIC` is `"C"`. oxpinyin never calls `setlocale` (no hit in `crates/`), so a host that set `LC_ALL=zh_CN.UTF-8` still reads `zh_CN.UTF-8` after init (audit D-17, `bug-for-bug-audit-r2-2026-09-23.md` §4.1). Recorded as an upstream defect (`upstream-report-drafts.md` item 6) |
+| 40 | tkrzw binding: `SYSTEM_ERROR`/`UNKNOWN_ERROR` collapse | **STANDING** (registered standing divergence, ruled accepted 2026-08-28; not a class) | registered 2026-09-27 UTC (#551): the ruling existed only in `tkrzw-langc-exception-classification.md`. tkrzw's C API reports every caught C++ exception as `TKRZW_STATUS_SYSTEM_ERROR`, which `crates/oxpinyin-store/src/tkrzw/mod.rs:214` maps to `StoreError::Io`, the same class as an operating-system error; the retired cxx shim reported `UNKNOWN_ERROR` → `Backend`. Reachable only under memory exhaustion; not observable through the C ABI. See "Registered standing divergences" |
 
 Totals at `2a99761a` (2026-09-06, oracle pin 074a2219), amended
 2026-09-16 for rows 5b, 17 and 30 — each closed in code, each with its
@@ -528,7 +561,7 @@ Stated so the classes are not read as broader than they are:
 ## Consequences for the register
 
 `upstream-divergences.md` keeps its stated purpose — the residue of
-what a Rust mechanism prevents — but the four classes are narrower than
+what a Rust mechanism prevents — but the three live classes are narrower than
 what the register accumulated. Class (c) entries in particular are not
 language-mechanism residue at all; they are product decisions, and the
 register should say so where it currently implies Rust forced them.
