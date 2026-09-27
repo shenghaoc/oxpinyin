@@ -1,0 +1,40 @@
+Instrumentation patch — NULL-terminate the bigram export's join arrays.
+
+pinyin_bigram_iterator_has_next_phrase (src/pinyin.cpp:843-849 and the
+twin block at :857-863) hands g_strjoinv a GPtrArray that was never
+NULL-terminated (g_ptr_array_new, then g_ptr_array_free(…, FALSE)), so the
+join reads past the last pinyin until it meets a NULL on the heap: undefined
+behaviour (class (b)), a SIGSEGV or a garbage pinyin as the allocator falls.
+oxpinyin renders the intended join.
+
+This patch adds only g_ptr_array_add(pinyins, NULL) before each
+g_ptr_array_free. It changes no control flow, no DB access and no iteration:
+the user bigram's get_all_items walk, the m_items consumption, the
+m_phrase_tokens carry-over and every returned value are the pin's. It exists
+so the bigram export differentials (tools/bisection/run-bigram-export-diff.sh)
+can run full walks against the pin on hosts whose heap does not happen to hold
+a NULL after the array. A prefix built with it records
+pin_ref=…+patches-<sha256> in oracle-pin.txt and must use its own --prefix.
+
+  tools/oracle/build-oracle.sh --dbm <cell> \
+      --apply-patches tools/bisection/patches/bigram-export-strjoinv \
+      --prefix <patched-prefix>
+
+--- a/src/pinyin.cpp
++++ b/src/pinyin.cpp
+@@ -845,6 +845,7 @@
+                         for (size_t k = 0; k < first_len; ++k) {
+                             g_ptr_array_add(pinyins, keys[k].get_pinyin_string());
+                         }
++                        g_ptr_array_add(pinyins, NULL);
+                         gchar ** strs = (gchar **)g_ptr_array_free(pinyins, FALSE);
+                         first_pinyin = g_strjoinv("'", strs);
+                         g_strfreev(strs);
+@@ -858,6 +859,7 @@
+                             for (size_t k = 0; k < second_len; ++k) {
+                                 g_ptr_array_add(pinyins, keys[k].get_pinyin_string());
+                             }
++                            g_ptr_array_add(pinyins, NULL);
+                             gchar ** strs = (gchar **)g_ptr_array_free(pinyins, FALSE);
+                             second_pinyin = g_strjoinv("'", strs);
+                             g_strfreev(strs);

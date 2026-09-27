@@ -383,7 +383,10 @@ pub extern "C" fn pinyin_bigram_iterator_has_next_phrase(iter: *mut BigramExport
 /// ```
 ///
 /// Out-params `phrase` and `pinyin` are caller-owned (`g_free` each).
-/// Returns `false` once the iterator is exhausted.
+/// Returns what `pinyin_bigram_iterator_has_next_phrase` answers after
+/// the row is taken — `false` on the last row — as the pin's
+/// `return pinyin_bigram_iterator_has_next_phrase(iter);` does
+/// (`pinyin.cpp:896-911`, register row 36); `false` once exhausted.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     iter: *mut BigramExportIterator,
@@ -421,7 +424,7 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
         }
     }
     handle.index += 1;
-    true
+    handle.index < handle.rows.len()
 }
 
 /// End the bigram export iterator and free it.
@@ -440,6 +443,49 @@ pub extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIterator)
     // only here.
     unsafe {
         drop(Box::from_raw(iter.cast::<BigramHandle>()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BigramHandle, ExportedBigramRow, pinyin_bigram_iterator_get_next_phrase,
+        pinyin_bigram_iterator_has_next_phrase, pinyin_end_get_bigram_phrases,
+    };
+    use crate::types::BigramExportIterator;
+
+    fn row(phrase: &str) -> ExportedBigramRow {
+        ExportedBigramRow {
+            phrase: phrase.to_owned(),
+            pinyin: "ni'hao".to_owned(),
+            count: 138,
+        }
+    }
+
+    /// Register row 36: `get_next` returns `has_next` after the row
+    /// (`pinyin.cpp:896-911`) — `true` while rows remain, `false` on the
+    /// last one — and `false` once exhausted.
+    #[test]
+    fn bigram_get_next_answers_has_next_after_the_row() {
+        let handle = BigramHandle {
+            rows: vec![row("你好"), row("你号")],
+            index: 0,
+        };
+        let iter: *mut BigramExportIterator = Box::into_raw(Box::new(handle)).cast();
+        let next = || {
+            pinyin_bigram_iterator_get_next_phrase(
+                iter,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(pinyin_bigram_iterator_has_next_phrase(iter));
+        assert!(next(), "a row remains after the first");
+        assert!(!next(), "the last row answers false");
+        assert!(!pinyin_bigram_iterator_has_next_phrase(iter));
+        assert!(!next(), "exhausted");
+        pinyin_end_get_bigram_phrases(iter);
     }
 }
 
