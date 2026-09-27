@@ -145,6 +145,8 @@ pub(crate) enum DbType {
     /// *user* bigram lives in between snapshot load and dump
     /// (`ngram_kyotodb.cpp:54-108`).
     Stash,
+    /// ProtoTreeDB, the pin's in-memory user index container.
+    ProtoTree,
 }
 
 impl DbType {
@@ -154,6 +156,7 @@ impl DbType {
             Self::Tree => "kct",
             Self::Hash => "kch",
             Self::Stash => "kcs",
+            Self::ProtoTree => "kcpt",
         }
     }
 }
@@ -556,6 +559,12 @@ impl Db {
     /// between its snapshot load and dump.
     pub(crate) fn open_stash() -> Result<Self, StoreError> {
         Self::open(Path::new("-"), DbType::Stash, false, true)
+    }
+
+    /// The pin constructs ProtoTreeDB for both user indexes; PolyDB's
+    /// `kcpt` selector names the same class (kcpolydb.h's type parser).
+    pub(crate) fn open_proto_tree() -> Result<Self, StoreError> {
+        Self::open(Path::new("+"), DbType::ProtoTree, false, true)
     }
 
     /// The number of records — `kcdbcount`.
