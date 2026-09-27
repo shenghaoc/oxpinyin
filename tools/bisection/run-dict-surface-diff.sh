@@ -26,16 +26,22 @@
 #   DICT_SYSTEM           an oxpinyin-native system dir for the capi
 #                         side (the oracle side always reads from
 #                         PINYIN_ORACLE_PREFIX/lib/libpinyin/data). The
-#                         four `.kct` tables (pinyin_index, phrase_index,
-#                         bigram, punct) plus interpolation2.text are
+#                         core tables under libpinyin's own names
+#                         (pinyin_index.bin, phrase_index.bin, bigram.db, punct.bin,
+#                         the layout every datagen output and libpinyin
+#                         install uses) plus interpolation2.text are
 #                         required — punct because the driver dlsyms
-#                         `pinyin_guess_predicted_candidates_with_punctuations`.
-#                         `.kct` because this script's own `cargo build
-#                         -p oxpinyin-capi` pins Kyoto Cabinet
-#                         (`--no-default-features --features
-#                         kyotocabinet`; the default is Berkeley DB since
-#                         2026-09-20), so the built `.so`'s compiled-in
-#                         backend is KC.
+#                         `pinyin_guess_predicted_candidates_with_punctuations`
+#                         — and the directory must have been written
+#                         by the cell's backend (its datagen-manifest.txt
+#                         `backend=` or table.conf `database format:`); a
+#                         directory from another backend FAILS (exit 1).
+#   PINYIN_ORACLE_DBM     the backend cell: bdb (default — the reference
+#                         build is a bare ./configure), kc or tkrzw. The
+#                         oracle prefix must be built with the same
+#                         `build-oracle.sh --dbm`, and the capi is built
+#                         with the matching cargo feature
+#                         (tools/bisection/oracle-cell.sh).
 
 set -u
 cd "$(dirname "$0")" || exit 1
@@ -48,17 +54,22 @@ if [[ ! -f "$PREFIX/oracle-pin.txt" || ! -f "$ORACLE_SO" ]]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
     exit 0
 fi
-# Full ORACLE_PIN_REF from tools/oracle/build-oracle.sh (LIBPINYIN_TAG,
-# LIBPINYIN_SHA, MODEL_SHA256, dbm). Exact whole-line match so an oracle
-# built against a different model checksum or a different DBM backend
-# does not silently validate this differential.
-EXPECTED_PIN_REF='pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw'
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+# The backend cell (PINYIN_ORACLE_DBM, default bdb) fixes the expected
+# pin ref (+dbm-<cell>), the capi's cargo feature and the data's
+# backend. Exact whole-line match on the ref so an oracle built against
+# a different model checksum or another cell's DBM does not silently
+# validate this differential.
+# shellcheck source=oracle-cell.sh
+source ./oracle-cell.sh
+# shellcheck source=system-dir.sh
+source ./system-dir.sh
 if ! grep -Fxq "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
-    echo "SKIP: oracle prefix at $PREFIX is off-pin"
+    echo "SKIP: oracle prefix at $PREFIX is off-pin for the $ORACLE_DBM cell"
+    echo "  expected $EXPECTED_PIN_REF"
+    echo "  (build it with build-oracle.sh --dbm $ORACLE_DBM, or set PINYIN_ORACLE_DBM)"
     exit 3
 fi
-
-REPO_ROOT="$(git rev-parse --show-toplevel)"
 # Honour CARGO_TARGET_DIR so a caller who redirects cargo output (a
 # distro-package builder, a shared-target CI, a per-worktree target)
 # ends up loading the .so cargo actually wrote instead of a stale one
@@ -74,9 +85,9 @@ CAPI_SO="$CARGO_TARGET_DIR/release/libpinyin_capi.so"
 # Always rebuild — cargo is a no-op when the artifact is current, and a
 # stale libpinyin_capi.so on disk would otherwise mask the change under
 # test.
-echo "building libpinyin_capi.so (release)..."
+echo "building libpinyin_capi.so (release, $CAPI_FEATURE)..."
 (cd "$REPO_ROOT" && CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build --release -p oxpinyin-capi \
-    --no-default-features --features kyotocabinet) || exit 1
+    --no-default-features --features "$CAPI_FEATURE") || exit 1
 
 echo "--- cc dict-surface-diff.c ---"
 DRIVER="$CARGO_TARGET_DIR/dict-surface-diff"
@@ -88,26 +99,32 @@ fi
 cc -O2 -Wall -o "$DRIVER" dict-surface-diff.c -ldl $GLIB_LIBS || exit 1
 
 SYSTEM="${DICT_SYSTEM:-}"
-# This script's `cargo build -p oxpinyin-capi` above pins Kyoto
-# Cabinet, so the `.so` under test only opens `.kct`
-# tables. Accepting other peer extensions here would pass the gate on
-# a dir the driver cannot actually load, and the failure would land
-# mid-run rather than as this clean skip. `punct` is fourth: the driver
-# dlsyms `pinyin_guess_predicted_candidates_with_punctuations` and a
-# missing punct on the capi side would make its predicted list diverge
-# from the oracle's for the wrong reason.
-has_all_kct_tables() {
-    local t
-    for t in pinyin_index phrase_index bigram punct; do
-        [[ -f "$SYSTEM/$t.kct" ]] || return 1
-    done
-}
-if [[ -z "$SYSTEM" ]] || ! [[ -f "$SYSTEM/interpolation2.text" ]] \
-    || ! has_all_kct_tables; then
-    echo "SKIP: DICT_SYSTEM must name an oxpinyin-native KC system dir"
-    echo "  (pinyin_index.kct, phrase_index.kct, bigram.kct and punct.kct"
-    echo "  plus interpolation2.text)"
+# The capi under test is built for the cell's backend (CAPI_FEATURE), so
+# the data must be that backend's: all three DBMs use libpinyin's own
+# file names, so the names alone cannot tell a Kyoto Cabinet directory
+# from a Berkeley DB one — the backend check below does.
+# punct.bin is required: the driver dlsyms
+# `pinyin_guess_predicted_candidates_with_punctuations` and a missing
+# punct on the capi side would make its predicted list diverge from the
+# oracle's for the wrong reason.
+missing=()
+for t in pinyin_index.bin phrase_index.bin bigram.db punct.bin interpolation2.text; do
+    [[ -n "$SYSTEM" && -f "$SYSTEM/$t" ]] || missing+=("$t")
+done
+if ((${#missing[@]})); then
+    echo "SKIP: DICT_SYSTEM must name a $ORACLE_DBM_NAME system data dir"
+    echo "  missing: ${missing[*]}"
     exit 3
+fi
+if ! data_ext=$(system_dir_data_ext "$SYSTEM"); then
+    echo "FAIL: cannot tell which backend wrote DICT_SYSTEM=$SYSTEM"
+    echo "  (no datagen-manifest.txt backend= and no known table.conf database format:)"
+    exit 1
+fi
+if [[ $data_ext != "$OXPINYIN_CAPI_BACKEND_EXT" ]]; then
+    echo "FAIL: BACKEND MISMATCH — the $ORACLE_DBM cell's capi is $(system_dir_ext_name "$OXPINYIN_CAPI_BACKEND_EXT"),"
+    echo "  but DICT_SYSTEM=$SYSTEM was written for $(system_dir_ext_name "$data_ext")"
+    exit 1
 fi
 
 echo "--- capi side ---"
