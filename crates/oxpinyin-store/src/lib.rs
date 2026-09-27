@@ -333,6 +333,25 @@ pub trait WriteStore: ReadStore {
         Self::create_hash(path)
     }
 
+    /// Writes one user phrase/pinyin index in the backend's pin format.
+    /// KC overrides this with a ProtoTreeDB snapshot; other peers write
+    /// their ordinary index container. The caller owns staging/rename.
+    ///
+    /// # Errors
+    /// Returns an error when creation or a row write fails.
+    fn write_user_index(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError>
+    where
+        Self: Sized,
+    {
+        let store = Self::create_user(path)?;
+        store.write(|txn| {
+            for (key, value) in rows {
+                txn.put_raw(key, value)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Writes `rows` to `path` as the **user** bigram container.
     ///
     /// The write half of [`RawReadStore::open_user_bigram`], and for the
@@ -547,6 +566,19 @@ pub trait RawReadStore: ReadStore {
     ///
     /// Returns [`StoreError`] when the backend open fails.
     fn open_hash_read_only(path: &std::path::Path) -> Result<Self, StoreError>
+    where
+        Self: Sized,
+    {
+        Self::open_read_only(path)
+    }
+
+    /// Opens a saved user phrase/pinyin index. KC uses snapshot streams
+    /// (074a2219 chewing_large_table2_kyotodb.cpp:94-105); the default is
+    /// the backend's ordinary index container.
+    ///
+    /// # Errors
+    /// Returns an error when the index cannot be read.
+    fn open_user_index(path: &std::path::Path) -> Result<Self, StoreError>
     where
         Self: Sized,
     {

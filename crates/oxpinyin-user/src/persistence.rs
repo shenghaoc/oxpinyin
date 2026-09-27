@@ -47,8 +47,7 @@ use oxpinyin_data::user_files::{
     UserTableInfo, decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
 };
 use oxpinyin_store::{
-    DefaultStore, DefaultUserBigramDb, RawReadStore, ReadStore, StoreError, UserBigramDb,
-    WriteStore,
+    DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
 };
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
@@ -522,7 +521,7 @@ fn load_user_pinyin_index(dir: &Path, loaded: &mut Loaded) {
     if !path.exists() {
         return;
     }
-    let store = match DefaultStore::open_read_only(&path) {
+    let store = match DefaultStore::open_user_index(&path) {
         Ok(store) => store,
         Err(error) => {
             loaded
@@ -1089,14 +1088,7 @@ fn stage_dbm(
     remove_dbm_sidecars(dir, &tmp);
     // A user table, created with the mode the backend's own `save_db`
     // uses for one (Berkeley DB's 0600, not `attach`'s 0644).
-    let store = DefaultStore::create_user(&tmp)?;
-    store.write(|txn| {
-        for (key, value) in rows {
-            txn.put_raw(key, value)?;
-        }
-        Ok(())
-    })?;
-    drop(store);
+    DefaultStore::write_user_index(&tmp, rows)?;
     // Some backends keep a lock sidecar beside the database (tkrzw writes
     // `<path>-lock`). It is stale once the handle drops, and the rename
     // below moves only the data file — without this the user dir would
@@ -1165,7 +1157,6 @@ fn write_chunk_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use oxpinyin_data::user_files::OPEN_COUNTER_LIMIT;
-    use oxpinyin_store::ReadStore;
 
     fn item(phrase: &[u32], unigram: u32, prons: &[(Vec<u16>, u32)]) -> ChunkItem {
         ChunkItem {
@@ -2263,7 +2254,7 @@ mod tests {
             let store = if dbm.is_hash() {
                 DefaultStore::open_user_bigram(&path).expect("user bigram opens")
             } else {
-                DefaultStore::open_read_only(&path).expect("index opens")
+                DefaultStore::open_user_index(&path).expect("index opens")
             };
             let mut rows = Vec::new();
             store

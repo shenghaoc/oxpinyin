@@ -270,6 +270,16 @@ impl crate::RawReadStore for KcStore {
         })
     }
 
+    fn open_user_index(path: &Path) -> Result<Self, crate::StoreError> {
+        // 074a2219 chewing_large_table2_kyotodb.cpp:94-105 and
+        // phrase_large_table3_kyotodb.cpp:109-121: ProtoTreeDB snapshots.
+        let db = Db::open_proto_tree()?;
+        db.load_snapshot(path)?;
+        Ok(Self {
+            db: db.into_read_only(),
+        })
+    }
+
     fn open_user_bigram(path: &Path) -> Result<Self, crate::StoreError> {
         // Kyoto Cabinet's user bigram is a snapshot stream, not a hash
         // file (`ngram_kyotodb.cpp:54-64`): open an in-memory stash and
@@ -300,15 +310,8 @@ impl WriteStore for KcStore {
         })
     }
 
-    /// A user index table. libpinyin writes these with `dump_snapshot`
-    /// (`chewing_large_table2_kyotodb.cpp:124-130`,
-    /// `phrase_large_table3_kyotodb.cpp:139-145`), whose `std::ofstream`
-    /// creates the file with mode 0666 before the umask. This store
-    /// still writes a tree there rather than a snapshot, so it makes the
-    /// same request itself — the file is created empty with 0666 — and
-    /// Kyoto Cabinet then opens the empty file as a new database, keeping
-    /// its mode. A plain [`WriteStore::create`] would leave the mode to
-    /// Kyoto Cabinet's own 0644.
+    /// Creates a raw writable tree with user-file permissions. Production
+    /// user-index files use `write_user_index`'s snapshot path below.
     fn create_user(path: &Path) -> Result<Self, StoreError> {
         let mut file = std::fs::OpenOptions::new();
         file.write(true).create(true).truncate(true);
@@ -316,6 +319,19 @@ impl WriteStore for KcStore {
         std::os::unix::fs::OpenOptionsExt::mode(&mut file, 0o666);
         drop(file.open(path).map_err(StoreError::Io)?);
         Self::create(path)
+    }
+
+    fn write_user_index(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError> {
+        // The pin unlinks then dump_snapshot's the in-memory tree
+        // (chewing_large_table2_kyotodb.cpp:124-130,
+        // phrase_large_table3_kyotodb.cpp:139-145). Persistence passes
+        // the staged .tmp path, so the previous profile remains intact.
+        crate::remove_if_present(path)?;
+        let db = Db::open_proto_tree()?;
+        for (key, value) in rows {
+            db.set(key, value)?;
+        }
+        db.dump_snapshot(path)
     }
 
     fn write_user_bigram(path: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), StoreError> {
