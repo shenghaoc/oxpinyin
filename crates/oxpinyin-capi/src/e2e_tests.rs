@@ -933,8 +933,8 @@ fn empty_import_batch_arms_modified_and_saves() {
 }
 
 /// The §9 phrase-export leg of the iterator e2e: (phrase, `'`-joined pinyin,
-/// pronunciation count) rows in token order, the exhaustion shape, and the
-/// empty non-user index.
+/// pronunciation count) rows in token order, the exhaustion shape, a system
+/// sub-index and its `guint8` alias, and an index with no sub-index.
 fn exported_phrase_rows_are_token_ordered(context: *mut crate::types::PinyinContext) {
     // §9 phrase export: (phrase, `'`-joined pinyin, pronunciation count),
     // token order.
@@ -957,12 +957,24 @@ fn exported_phrase_rows_are_token_ordered(context: *mut crate::types::PinyinCont
     ));
     crate::iterators::pinyin_end_get_phrases(iter);
 
-    // A non-user index exports nothing (system sub-indexes are not this
-    // store's data).
+    // A system sub-index exports its rows (`pinyin.cpp:662-768`), and so
+    // does its guint8 alias 257 (`export_iterator_t::m_phrase_index`,
+    // `pinyin.cpp:126`), row for row.
     let system = crate::iterators::pinyin_begin_get_phrases(context, 1);
     assert!(!system.is_null());
-    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(system));
+    let system_rows = drain_phrases(system);
+    assert!(!system_rows.is_empty());
     crate::iterators::pinyin_end_get_phrases(system);
+    let alias = crate::iterators::pinyin_begin_get_phrases(context, 257);
+    assert!(!alias.is_null());
+    assert_eq!(drain_phrases(alias), system_rows);
+    crate::iterators::pinyin_end_get_phrases(alias);
+
+    // A nibble with no sub-index in the default facade exports nothing.
+    let empty = crate::iterators::pinyin_begin_get_phrases(context, 8);
+    assert!(!empty.is_null());
+    assert!(!crate::iterators::pinyin_iterator_has_next_phrase(empty));
+    crate::iterators::pinyin_end_get_phrases(empty);
 }
 
 /// Trains one multi-phrase sentence through choose/guess/train: choosing 你

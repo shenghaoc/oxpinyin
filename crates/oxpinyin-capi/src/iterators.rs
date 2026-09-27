@@ -194,12 +194,15 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
 ///                                              guint index);
 /// ```
 ///
-/// Note: the index parameter is `guint` (not `guint8`).
+/// Note: the index parameter is `guint` (not `guint8`), narrowed to the
+/// pin's `guint8` iterator field (`pinyin.cpp:126`).
 ///
-/// [`USER_DICTIONARY`] exports every user phrase — one row per stored
-/// pronunciation, `(phrase, `'`-joined pinyin, pronunciation count)`.
-/// Any other index exports nothing: the system sub-indexes are the system
-/// dictionary's data, not this store's.
+/// Every sub-index the pin's default facade holds exports its items — one
+/// row per pronunciation, `(phrase, `'`-joined pinyin, pronunciation
+/// count)`, token order (`pinyin.cpp:662-768`): the system libraries 1..=4
+/// from their chunk files, the `USER_FILE` libraries from the user store.
+/// A nibble without a sub-index exports nothing
+/// ([`oxpinyin_facade::ContextCore::export_phrases`]).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_begin_get_phrases(
     context: *mut PinyinContext,

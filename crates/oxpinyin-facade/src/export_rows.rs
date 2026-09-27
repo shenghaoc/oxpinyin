@@ -8,32 +8,87 @@
 //! this boundary.
 
 use oxpinyin_user::{
-    ExportedPhrase, NETWORK_DICTIONARY, SENTENCE_START, USER_DICTIONARY, UserPronunciation,
-    is_user_file_token,
+    ADDON_DICTIONARY, ExportedPhrase, NETWORK_DICTIONARY, SENTENCE_START, USER_DICTIONARY,
+    UserPronunciation, is_user_file_token,
 };
 
 use crate::ContextCore;
+
+/// The first `SYSTEM_FILE` library (`novel_types.h:154`).
+const GB_DICTIONARY: u8 = 1;
+
+/// The last `SYSTEM_FILE` library (`novel_types.h:158`).
+const MERGED_DICTIONARY: u8 = 4;
 
 /// Upstream's first training seed (`initial_seed`, 23·3): the §9 bigram
 /// export threshold — counts at or above it export, below it stay.
 const INITIAL_SEED: u64 = 23 * 3;
 
 impl ContextCore {
-    /// §9 phrase-export materialization. [`USER_DICTIONARY`] and
-    /// [`NETWORK_DICTIONARY`] export their stored rows; any other index
-    /// exports an empty list.
+    /// §9 phrase-export materialization (`pinyin_begin_get_phrases`,
+    /// `pinyin.cpp:662-768`): every item of sub-index `index` that has a
+    /// pronunciation, token order, one row per pronunciation in stored
+    /// order.
+    ///
+    /// The index is narrowed the way the pin stores it —
+    /// `export_iterator_t::m_phrase_index` is a `guint8`
+    /// (`pinyin.cpp:126`), so `257` addresses library 1. The system
+    /// libraries (`GB_DICTIONARY` … `MERGED_DICTIONARY`) walk their chunk
+    /// file; the `USER_FILE` libraries (`ADDON_DICTIONARY`,
+    /// [`NETWORK_DICTIONARY`], [`USER_DICTIONARY`]) export their stored
+    /// rows. Every other nibble, and a system library that is unloaded,
+    /// has no sub-index (`FacadePhraseIndex::get_range` →
+    /// `ERROR_NO_SUB_PHRASE_INDEX`, `phrase_index.cpp:610-613`) and
+    /// exports an empty list. Nibbles 16..=255 read past the pin's
+    /// 16-slot array (`phrase_index.cpp:611`), undefined behaviour this
+    /// port does not reproduce: they are empty too.
     #[must_use]
     pub fn export_phrases(&self, index: u32) -> Option<Vec<ExportedPhrase>> {
-        // Match the two exportable libraries before narrowing, so every
-        // other index — including values past `u8::MAX` — is the empty
-        // list the doc promises rather than `None`.
-        let Ok(index) = u8::try_from(index) else {
-            return Some(Vec::new());
-        };
-        if index != USER_DICTIONARY && index != NETWORK_DICTIONARY {
-            return Some(Vec::new());
+        let [index, ..] = index.to_le_bytes();
+        match index {
+            GB_DICTIONARY..=MERGED_DICTIONARY => Some(self.export_system_phrases(index)),
+            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY => {
+                self.user.as_ref()?.export_phrases_in(index).ok()
+            }
+            _ => Some(Vec::new()),
         }
-        self.user.as_ref()?.export_phrases_in(index).ok()
+    }
+
+    /// The system half of [`Self::export_phrases`]: the pin's probe loop
+    /// over `SubPhraseIndex::get_range` (`phrase_index.cpp:624-646`),
+    /// keeping items with `get_n_pronunciation() >= 1`
+    /// (`pinyin.cpp:680-687`, `759-766`) and rendering each pronunciation
+    /// with its stored frequency (`pinyin.cpp:722-739`). Empty under a
+    /// user-store-only context, for a library absent from the data
+    /// directory, and for one `pinyin_unload_phrase_library` removed.
+    fn export_system_phrases(&self, nibble: u8) -> Vec<ExportedPhrase> {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return Vec::new();
+        };
+        let dict = runtime.dict();
+        if !dict.library_visible(u32::from(nibble)) {
+            return Vec::new();
+        }
+        let system = dict.system();
+        let base = u32::from(nibble) << 24;
+        let Some(library) = system.libraries().library(base) else {
+            return Vec::new();
+        };
+        let mut rows = Vec::new();
+        for local in library.token_range() {
+            let token = base | local;
+            let Some(text) = system.phrase_text(token) else {
+                continue;
+            };
+            for (pinyin, count) in system.pronunciations(token) {
+                rows.push(ExportedPhrase {
+                    text: text.clone(),
+                    pinyin,
+                    count,
+                });
+            }
+        }
+        rows
     }
 
     /// §9 bigram-export materialization with upstream's filters and
