@@ -27,6 +27,10 @@
 #     sweep, and still honours its own historical variable as an override;
 #   * an unresolvable system dir is FATAL (exit 3), naming the variables
 #     it looked at and what a valid directory contains;
+#   * the directory is chosen for, and must have been written by, the
+#     backend under test; another backend's directory is FATAL, never a
+#     fallback (the DBMs share file names, so it would load or score the
+#     wrong data);
 #   * the mini fixture is still reachable, but only by asking for it:
 #     OXPINYIN_ALLOW_MINI_FIXTURE=1, which prints a loud banner saying the
 #     run is not a parity measurement.
@@ -45,16 +49,14 @@
 # extension (.kct/.tkt/.db). Runners that copy or gate on those
 # tables use these helpers instead of hard-coding an extension.
 
-# The native table extensions the capi can be compiled against, in the
-# compile-time precedence order of oxpinyin-store's DefaultStore cfg chain
-# (kyotocabinet > tkrzw > bdb; see "Native data-file naming under
-# the compile-time backend" in docs/findings/upstream-divergences.md). The
-# order matters only when one directory holds complete sets in several
-# extensions (the old fixtures/w3 flat layout did): the first match wins.
-# Since 2026-09-20 the workspace default is bdb, so `db` leads — a
-# default-built capi opens BDB containers, and all three flavours name
-# their tables identically, so a wrong pick is silent nonsense rather
-# than a missing file.
+# The native table extensions the capi can be compiled against: db
+# (Berkeley DB, the workspace default since 2026-09-20), kct (Kyoto
+# Cabinet), tkt (tkrzw). The list is a set, not a precedence: a
+# directory is chosen and validated for the ONE backend under test
+# (system_dir_capi_ext), never by scanning these in order (#552
+# follow-up). All three backends name their files identically in the P6
+# native layout, so only system_dir_require_backend — which reads the
+# directory's datagen-manifest.txt or table.conf — tells them apart.
 SYSTEM_DIR_BACKEND_EXTS="db kct tkt"
 
 # The peer-backend table stems the capi opens from a system directory.
@@ -129,45 +131,130 @@ system_dir_capi_ext() {
 	return 0
 }
 
-# Names the backend extension of a system directory.
+# Names the table layout of a system directory for the backend under test.
 #
 #   system_dir_detect_ext <dir>
 #
-# Echoes the extension under which all three core tables exist. When the
-# capi's backend is known (system_dir_capi_ext) only that extension
-# counts: a complete .tkt set is no use to a .kct capi. When it is not,
-# the directory is scanned in precedence order and the first complete set
-# wins. A directory holding both a peer set and the P6 native trio
-# resolves to the peer set. With no peer set, a kct-, tkt- or db-built
-# capi falls back to the native layout ($SYSTEM_DIR_NATIVE_CORE) and
-# the answer is the pseudo-extension "bin"; the fallback needs a known
-# backend because P6 covers the three libpinyin-native DBMs — Kyoto
-# Cabinet, tkrzw and Berkeley DB (the store's bdb feature; datagen's
-# out-dir name: "db"), and without cargo there is no built capi to
-# speak of. Echoes
-# nothing and returns 1 when there is no complete core set.
+# The backend comes from system_dir_capi_ext — the library under test —
+# never from what happens to sit in the directory: there is no scan over
+# every backend in a precedence order (#552 follow-up; a directory built
+# for another backend used to be picked silently). With the backend
+# known, echoes that extension when the core tables carry it (a pre-P6
+# peer layout), else "bin" for the P6 native layout
+# ($SYSTEM_DIR_NATIVE_CORE: libpinyin's own names, the layout every
+# current datagen output and every libpinyin install uses). Returns 1 —
+# with a message naming the missing piece — when the backend is unknown
+# or the directory has no complete core set, and exits 3 through
+# system_dir_require_backend when a complete directory was written by
+# another backend.
 system_dir_detect_ext() {
-	local dir=$1 ext stem exts capi_ext
-	exts=$(system_dir_capi_ext)
-	capi_ext=$exts
-	[[ -z $exts ]] && exts=$SYSTEM_DIR_BACKEND_EXTS
-	for ext in $exts; do
-		for stem in $SYSTEM_DIR_CORE_STEMS; do
-			[[ -f $dir/$stem.$ext ]] || continue 2
-		done
-		printf '%s\n' "$ext"
-		return 0
+	local dir=$1 ext stem
+	ext=$(system_dir_capi_ext)
+	if [[ -z $ext ]]; then
+		printf 'fatal: cannot tell which backend the library under test uses;\n' >&2
+		printf '  set OXPINYIN_CAPI_BACKEND_EXT to one of: %s\n' "$SYSTEM_DIR_BACKEND_EXTS" >&2
+		return 1
+	fi
+	local peer_ok=1
+	for stem in $SYSTEM_DIR_CORE_STEMS; do
+		[[ -f $dir/$stem.$ext ]] || peer_ok=0
 	done
-	case $capi_ext in
-	kct | tkt | db)
+	if ((!peer_ok)); then
 		for stem in $SYSTEM_DIR_NATIVE_CORE; do
 			[[ -f $dir/$stem ]] || return 1
 		done
+	fi
+	# Complete for this backend's layout; now the data must also have
+	# been written BY this backend (exits 3, loudly, when it was not).
+	system_dir_require_backend "$dir" "$ext" "system data directory"
+	if ((peer_ok)); then
+		printf '%s\n' "$ext"
+	else
 		printf 'bin\n'
+	fi
+	return 0
+}
+
+# Names the backend that wrote a system directory, as a table extension
+# (db, kct or tkt).
+#
+#   system_dir_data_ext <dir>
+#
+# Reads datagen-manifest.txt's `backend=` line (every oxpinyin-datagen
+# output has one), else table.conf's `database format:` token (every
+# datagen output and every libpinyin install's data/ has one:
+# BerkeleyDB, KyotoCabinet or Tkrzw). Returns 1 when neither names a
+# known backend.
+system_dir_data_ext() {
+	local dir=$1 value=
+	if [[ -f $dir/datagen-manifest.txt ]]; then
+		value=$(sed -n 's/^backend=//p' "$dir/datagen-manifest.txt" | head -n1)
+	fi
+	if [[ -z $value && -f $dir/table.conf ]]; then
+		case $(sed -n 's/^database format:[[:space:]]*//p' "$dir/table.conf" | head -n1 | tr -d '[:space:]') in
+		BerkeleyDB) value=db ;;
+		KyotoCabinet) value=kct ;;
+		Tkrzw) value=tkt ;;
+		esac
+	fi
+	case $value in
+	db | kct | tkt)
+		printf '%s\n' "$value"
 		return 0
 		;;
 	esac
 	return 1
+}
+
+# Refuses a directory whose data was written by another backend than the
+# library under test.
+#
+#   system_dir_require_backend <dir> <expected-ext> <label>
+#
+# The three libpinyin DBMs name their files identically (pinyin_index.bin,
+# bigram.db, ...), so a directory built for another backend passes every
+# file-name check and then fails to open — or opens and scores nonsense —
+# mid-run. This is the check that tells them apart. Exits 3, loudly, on a
+# mismatch or when the directory does not say which backend wrote it.
+system_dir_require_backend() {
+	local dir=$1 want=$2 label=$3 have
+	if ! have=$(system_dir_data_ext "$dir"); then
+		{
+			printf 'fatal: %s: cannot tell which backend wrote\n' "$label"
+			printf '  %s\n' "$dir"
+			printf '  (no datagen-manifest.txt backend= line and no known\n'
+			printf '  table.conf "database format:" token)\n'
+		} >&2
+		exit 3
+	fi
+	[[ $have == "$want" ]] && return 0
+	{
+		printf 'fatal: %s: BACKEND MISMATCH\n' "$label"
+		printf '  data directory %s\n' "$dir"
+		printf '  was written for %s, but the library under test is %s.\n' \
+			"$(system_dir_ext_name "$have")" "$(system_dir_ext_name "$want")"
+		printf '  Point at a %s data directory (datagen --backend %s).\n' \
+			"$(system_dir_ext_name "$want")" "$(system_dir_ext_feature "$want")"
+	} >&2
+	exit 3
+}
+
+# Human name and cargo feature of a table extension.
+system_dir_ext_name() {
+	case $1 in
+	db) printf 'Berkeley DB\n' ;;
+	kct) printf 'Kyoto Cabinet\n' ;;
+	tkt) printf 'tkrzw\n' ;;
+	*) printf '%s\n' "$1" ;;
+	esac
+}
+system_dir_ext_feature() {
+	case $1 in
+	db) printf 'bdb\n' ;;
+	kct) printf 'kyotocabinet\n' ;;
+	tkt) printf 'tkrzw\n' ;;
+	*) printf '%s\n' "$1" ;;
+	esac
 }
 
 # Copies the capi-side tables of one system directory into another.
@@ -210,41 +297,50 @@ system_dir_copy_tables() {
 #
 #   resolve_system_dir <RUNNER_VARIABLE_NAME> <runner-label>
 #
-# Echoes the resolved directory on stdout. Exits 3 if none can be found.
+# Echoes the resolved directory on stdout. The directory is chosen by
+# the backend under test (system_dir_capi_ext: OXPINYIN_CAPI_BACKEND_EXT,
+# else the backend `cargo build -p oxpinyin-capi` compiles in), and it
+# must have been written by that backend (system_dir_require_backend).
+# Exits 3 if none can be found — never falling back to another backend's
+# directory.
 resolve_system_dir() {
 	local var_name=$1 label=$2
-	local repo_root candidate resolved=
+	local repo_root ext candidate resolved=
 	# Every runner computes REPO_ROOT before sourcing this; deriving it
 	# again from $BASH_SOURCE would depend on the caller's cwd, and each
 	# runner cd's into tools/bisection first.
 	repo_root=${REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}
 
+	ext=$(system_dir_capi_ext)
+	if [[ -z $ext ]]; then
+		{
+			printf 'fatal: %s: cannot tell which backend the library under test uses.\n' "$label"
+			printf '  Set OXPINYIN_CAPI_BACKEND_EXT to one of: %s\n' "$SYSTEM_DIR_BACKEND_EXTS"
+		} >&2
+		exit 3
+	fi
+
 	# 1. the runner's own variable, 2. the sweep-wide one.
 	resolved=${!var_name:-}
 	[[ -z $resolved ]] && resolved=${OXPINYIN_SYSTEM_DIR:-}
 
-	# 3. the conventional build locations, newest convention first.
-	#    oxpinyin-datagen's default --out-dir is target/datagen/<ext>, one
-	#    per backend, so every backend's directory is a candidate. The
-	#    order below (kct, tkt, db) dates from the Kyoto Cabinet default;
-	#    the default build now writes target/datagen/db (Berkeley DB since
-	#    2026-09-20), so a tree holding more than one backend's directory
-	#    resolves to a peer's first — a known gap (#552 follow-up).
+	# 3. the conventional build location for THIS backend only:
+	#    oxpinyin-datagen's default --out-dir is target/datagen/<ext>.
+	#    /tmp/oxpinyin-export is the legacy single-directory export; it
+	#    is accepted only when it was written by the same backend.
 	if [[ -z $resolved ]]; then
-		for candidate in \
-			"$repo_root/target/datagen/kct" \
-			"$repo_root/target/datagen/tkt" \
-			"$repo_root/target/datagen/db" \
-			/tmp/oxpinyin-export; do
-			if [[ -f $candidate/gb_char.bin ]]; then
-				resolved=$candidate
-				break
-			fi
-		done
+		candidate=$repo_root/target/datagen/$ext
+		if [[ -f $candidate/gb_char.bin ]]; then
+			resolved=$candidate
+		elif [[ -f /tmp/oxpinyin-export/gb_char.bin ]] &&
+			[[ $(system_dir_data_ext /tmp/oxpinyin-export 2>/dev/null) == "$ext" ]]; then
+			resolved=/tmp/oxpinyin-export
+		fi
 	fi
 
 	if [[ -n $resolved ]]; then
 		system_dir_require_complete "$resolved" "$var_name" "$label"
+		system_dir_require_backend "$resolved" "$ext" "$label"
 		printf '%s\n' "$resolved"
 		return 0
 	fi
@@ -259,28 +355,31 @@ resolve_system_dir() {
 		printf '# make this fatal again.\n' >&2
 		printf '################################################################\n' >&2
 		printf '\n' >&2
-		printf '%s\n' "$repo_root/fixtures/w3/kct"
+		system_dir_require_backend "$repo_root/fixtures/w3/$ext" "$ext" "$label"
+		printf '%s\n' "$repo_root/fixtures/w3/$ext"
 		return 0
 	fi
 
 	{
-		printf 'fatal: %s has an oracle but no system data directory.\n' "$label"
+		printf 'fatal: %s has an oracle but no %s system data directory.\n' \
+			"$label" "$(system_dir_ext_name "$ext")"
 		printf '\n'
 		printf 'Looked at, in order:\n'
 		printf '  $%s          (this runner'"'"'s own variable)\n' "$var_name"
 		printf '  $OXPINYIN_SYSTEM_DIR   (set once for a whole sweep)\n'
-		printf '  %s/target/datagen/{kct,tkt,db}\n' "$repo_root"
-		printf '  /tmp/oxpinyin-export\n'
+		printf '  %s/target/datagen/%s\n' "$repo_root" "$ext"
+		printf '  /tmp/oxpinyin-export   (only if written by the same backend)\n'
 		printf '\n'
-		printf 'A usable directory is a system data directory for the compiled-in\n'
-		printf 'backend: the chunk files, table.conf, and the DBMs.\n'
+		printf 'Another backend'"'"'s directory is never used instead: the three\n'
+		printf 'DBMs share file names, so it would load or score the wrong data.\n'
 		printf '\n'
-		printf 'Build one from the pinned model (the default build, Berkeley DB,\n'
-		printf 'writes under target/datagen/db):\n'
+		printf 'Build one from the pinned model:\n'
 		printf '  tools/model/fetch-model.sh\n'
 		printf '  PINYIN_MODEL_DIR=$PWD/target/model20/extracted \\\n'
-		printf '    cargo run --release -p oxpinyin-datagen -- compile\n'
-		printf '  cp target/model20/extracted/interpolation2.text target/datagen/db/\n'
+		printf '    cargo run --release -p oxpinyin-datagen --no-default-features \\\n'
+		printf '    --features %s -- compile --backend %s\n' \
+			"$(system_dir_ext_feature "$ext")" "$(system_dir_ext_feature "$ext")"
+		printf '  cp target/model20/extracted/interpolation2.text target/datagen/%s/\n' "$ext"
 		printf '\n'
 		printf 'Refusing rather than falling back to fixtures/w3: scoring a real\n'
 		printf 'oracle against the mini tables reports DIVERGENCE that means\n'
@@ -338,7 +437,14 @@ system_dir_require_complete() {
 			[[ -f $dir/bigram.$peer ]] || missing+=("bigram.$peer")
 		fi
 	fi
-	((${#missing[@]} == 0)) && return 0
+	if ((${#missing[@]} == 0)); then
+		# Complete by name; the names are shared by all three backends,
+		# so also require the one under test to have written it.
+		local want
+		want=$(system_dir_capi_ext)
+		[[ -n $want ]] && system_dir_require_backend "$dir" "$want" "$label"
+		return 0
+	fi
 	{
 		printf 'fatal: %s: the system directory is incomplete.\n' "$label"
 		printf '  %s\n' "$dir"
