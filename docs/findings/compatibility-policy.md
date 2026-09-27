@@ -348,6 +348,8 @@ registered standing divergence, not a class — see below), **REVERT
 TARGET** (reproducible, not yet reproduced, no blocker but the work),
 **OPEN DEFECT** (reproducible, blocked on a STOP — an engine-interface
 ask), **CLOSED** (reproduced, or proven equivalent on the pinned data),
+**CONTRADICTED** (a closure a later measurement contradicts, pending
+investigation),
 or **no ABI divergence**. Rows 1–18 are the 2026-08-28 table with their
 status brought to `87f25055`; rows 19–31 are the entries the register
 gained or that the original table skipped (row 19 landed with the
@@ -386,8 +388,8 @@ revert targets is `revert-plan.md`.
 | 22 | Empty-string phrase lookup crashes the pin | **(c)** — pending logging (lane C, #525) | **symbol corrected (#549):** the crash is `pinyin_lookup_tokens(instance, "", …)`, which passes a zero length straight to `m_phrase_table->search` (`pinyin.cpp:2652-2667`); `pinyin_phrase_segment(instance, "")` does not crash — `get_best_match` with length 0 runs no search (`lookup/phrase_lookup.cpp:119-149`, `nstep - 1 == 0`) — and answers `true` (audit R-2), as oxpinyin does (`crates/oxpinyin-engine/src/phrase.rs:124-130`, `:181-201`). Site kind: a fault signal, neither `assert` nor `abort()`; a crash on caller input is the (c) shape whatever the signal. oxpinyin answers `false` (`crates/oxpinyin-capi/src/dict.rs:86`) — the false half holds; no log |
 | 23 | Sanitizer scope on the tkrzw shim CI · native data-file naming · R1 measured on the compat paths | **no ABI divergence** | three dated records, not behaviour entries: a CI-instrumentation note, a file-naming decision (`installed-naming.md`), and a measurement whose subject was removed (its SUPERSEDED banner is itself amended 2026-09-06 — P6 restored direct reads of libpinyin's files) |
 | 24 | zhuyin batch `FORCE_TONE` law | **CLOSED** | 1671954: `ZhuyinParser::parse_with_options` honours the three per-keyboard shapes |
-| 25 | zhuyin candidate-tag grouping + `after(consumed)` terminal offset | **CLOSED** | both halves closed by the display-law collapse and the builder terminal mapping (amended 2026-08-31) |
-| 26 | zhuyin before-cursor candidate window | **CLOSED** | window builder closed (c2ad5925); the residual — a row whose span starts after the offset was constrained as `[0, offset)` — closed by #374 (`Candidate::span_start` = upstream's `m_begin`, constraint `[m_begin, m_end)`, `zhuyin_choose_candidate` answers `m_begin`, `zhuyin.cpp:1660`) and **measured IDENTICAL on the pin-built libzhuyin at 074a2219** on 2026-09-08: the three-input choose battery byte-identical (register entry, second amendment) |
+| 25 | zhuyin candidate-tag grouping + `after(consumed)` terminal offset | **CONTRADICTED** by #577, pending investigation (was CLOSED) | **Contradicted by #577 (2026-09-27 UTC; audit Z-3), pending investigation.** The audit's libzhuyin battery, on all three cells: `zhuyin_parse_more_chewings(inst, "su3cl3")`, `zhuyin_guess_sentence`, then `zhuyin_guess_candidates_after_cursor` at offsets 1, 2 and 5 answers n=1 on the pin and n=126/126/94 on oxpinyin; after a choose, `zhuyin_guess_candidates_before_cursor` answers 94/126 on the pin and 1/94 on oxpinyin (pin `zhuyin.cpp:1460-1541`, `:1542-1600`; oxpinyin `crates/oxpinyin-zhuyin-capi/src/sentence.rs:181`, `:198`). The repo's `zhuyin-diff` drives no mid-key offset, which is how the closure below missed it. Which half of this row the mid-key windows belong to is the open question; the closure stands contradicted until it is answered. Original closure record: both halves closed by the display-law collapse and the builder terminal mapping (amended 2026-08-31) |
+| 26 | zhuyin before-cursor candidate window | **CONTRADICTED** by #577, pending investigation (was CLOSED) | **Contradicted by #577 (2026-09-27 UTC; audit Z-3), pending investigation.** The audit's libzhuyin battery, on all three cells: `zhuyin_parse_more_chewings(inst, "su3cl3")`, `zhuyin_guess_sentence`, then `zhuyin_guess_candidates_after_cursor` at offsets 1, 2 and 5 answers n=1 on the pin and n=126/126/94 on oxpinyin; after a choose, `zhuyin_guess_candidates_before_cursor` answers 94/126 on the pin and 1/94 on oxpinyin (pin `zhuyin.cpp:1460-1541`, `:1542-1600`; oxpinyin `crates/oxpinyin-zhuyin-capi/src/sentence.rs:181`, `:198`). The repo's `zhuyin-diff` drives no mid-key offset, which is how the closure below missed it. Which half of this row the mid-key windows belong to is the open question; the closure stands contradicted until it is answered. Original closure record: window builder closed (c2ad5925); the residual — a row whose span starts after the offset was constrained as `[0, offset)` — closed by #374 (`Candidate::span_start` = upstream's `m_begin`, constraint `[m_begin, m_end)`, `zhuyin_choose_candidate` answers `m_begin`, `zhuyin.cpp:1660`) and **measured IDENTICAL on the pin-built libzhuyin at 074a2219** on 2026-09-08: the three-input choose battery byte-identical (register entry, second amendment) |
 | 27 | zhuyin multi-syllable candidate construction | **CLOSED** | the divergence was the pinyin string-fill law, not the construction model (amended 2026-08-31) |
 | 28 | zhuyin n-best trellis constants `<1, 1>` vs the engine's `<2, 3>` | **CLOSED** in code (#374) | per-session `NbestShape` (`PINYIN` = `<2, 3>`, `ZHUYIN` = `<1, 1>`), set by both zhuyin facades at instance allocation; not observable through today's libzhuyin candidate surface, so no gate moves |
 | 29 | zhuyin `FORCE_TONE` / `ZHUYIN_INCOMPLETE` default | **no ABI divergence** | `CapiContext::try_open` seeds the pin's `USE_TONE \| FORCE_TONE`; entry kept as analysis for a future consumer |
@@ -411,11 +413,12 @@ the class column; #548): **(a)** 1 (row 11, scope shrinking, #535) · **(b)** 5 
 41, 42, 43) · **(c)** 10 (4, 5a, 5c, 5d, 6, 10, 14, 19, 21, 22 — all
 pending logging, lane C, #525) · **(d)** 0 (retired 2026-09-06) ·
 **REVERT TARGET** 7 (32 reopened, 33, 34, 36, 37, 38's index arm, 39) ·
-**OPEN DEFECT** 0 · **CLOSED** 17 (3, 5b, 7, 8, 9, 12, 13, 15, 16, 17,
-24, 25, 26, 27, 28, 30, 35) · **STANDING** 1 (40) · **reattributed** 1
-(20 → 33) · **no ABI divergence** 4 (2, 23, 29, 31) — 46 rows
-(amended the same day for #550: row 20 reattributed, row 38's index
-arm opened). The line this replaces (below) no longer matched
+**OPEN DEFECT** 0 · **CLOSED** 15 (3, 5b, 7, 8, 9, 12, 13, 15, 16, 17,
+24, 27, 28, 30, 35) · **CONTRADICTED** 2 (25, 26 — by #577, pending
+investigation) · **STANDING** 1 (40) · **reattributed** 1 (20 → 33) ·
+**no ABI divergence** 4 (2, 23, 29, 31) — 46 rows (amended the same
+day for #550: row 20 reattributed, row 38's index arm opened; and for
+#577: rows 25 and 26 contradicted). The line this replaces (below) no longer matched
 its own table: it said REVERT TARGET 5 and CLOSED 18 while the class
 column counted 6 and 17, because row 17's cell still read REVERT
 TARGET after `8ec75085` closed it, and row 35, closed in code by
