@@ -3,7 +3,7 @@
 //! W2-T4 is the human triage pass over the divergence log this produces.
 //!
 //! ```bash
-//! bash tools/oracle/build-oracle.sh --prefix "$HOME/.local/opt/pinyin-oracle" --jobs "$(nproc)"
+//! bash tools/oracle/build-oracle.sh --dbm tkrzw --prefix "$HOME/.local/opt/pinyin-oracle" --jobs "$(nproc)"
 //!
 //! PKG_CONFIG_PATH=$HOME/.local/opt/pinyin-oracle/lib/pkgconfig \
 //! cargo run -p pinyin-oracle --features oracle-ffi --bin parity-diff -- target/parity
@@ -16,7 +16,7 @@ fn main() -> ExitCode {
     {
         eprintln!("parity-diff needs the `oracle-ffi` feature and a pin-built oracle.");
         eprintln!(
-            "  bash tools/oracle/build-oracle.sh --prefix \"$HOME/.local/opt/pinyin-oracle\""
+            "  bash tools/oracle/build-oracle.sh --dbm tkrzw --prefix \"$HOME/.local/opt/pinyin-oracle\""
         );
         eprintln!("  cargo run -p pinyin-oracle --features oracle-ffi --bin parity-diff");
         ExitCode::from(2)
