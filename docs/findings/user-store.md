@@ -694,8 +694,12 @@ Architecture — a session scratch behind the value engine:
   file set. The value mapping is one-for-one: bigram rows are the
   `SingleGram` grams; a user item is the `PHRASE` text + the
   `PRONUNCIATION` rows (packed keys — one wire form) + the token's full
-  `UNIGRAM` accumulation (`count·3` base, `seed·7` training); a system
-  `.dbin` MODIFY is the original item with `unigram + delta`.
+  `UNIGRAM` accumulation (`count·3` base, `seed·7` training). System
+  imports retain full packed item payloads in a sparse session-memory map;
+  original items are read lazily from shared immutable mappings. Appended
+  system items also have user lookup rows for their creation reading.
+  Save emits full-item `.dbin` ADD/MODIFY records using local slots
+  (`074a2219`, `phrase_index.cpp:394–442`), including pronunciation changes.
 
 Semantics this reverts or preserves, on purpose:
 
@@ -707,11 +711,10 @@ Semantics this reverts or preserves, on purpose:
   between saves; a crash loses the sub-timer window exactly as
   upstream's does. `user_store.<ext>` leaves the user dir (`user_store_file` stays a public helper for standalone stores; no
   in-tree caller remains).
-* Known gaps, disclosed: the value model tracks no per-pronunciation
-  delta for system tokens (pre-existing engine-model gap — the `.dbin`
-  MODIFYs carry unigram changes only), and a replayed REMOVE degrades
-  to a skip (`load`'s `skipped` list) because the value model cannot
-  express a removed system token.
+* System import pronunciation changes are preserved by #599, including
+  pin-created payloads read and saved back through oxpinyin. The separate
+  training path still lacks per-pronunciation updates, and replayed REMOVE
+  records remain outside the runtime value model.
 * **Amendment (2026-09-25, #523): the open counter's lifecycle is the
   facade's, and fini lowers it.** Task 9 raised the counter at every
   open and never lowered it, so the eighth clean launch of a profile

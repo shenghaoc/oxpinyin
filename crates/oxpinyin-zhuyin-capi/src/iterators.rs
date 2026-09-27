@@ -16,6 +16,7 @@ use crate::types::{ImportIterator, ZhuyinContext};
 struct ImportHandle {
     index: u8,
     user: Option<UserStore>,
+    dict: Option<oxpinyin_runtime::RuntimeDict>,
 }
 
 /// Begin adding phrases to an index.
@@ -42,6 +43,7 @@ pub extern "C" fn zhuyin_begin_add_phrases(
     let handle = ImportHandle {
         index,
         user: ctx.user_store(),
+        dict: ctx.core.runtime.as_ref().map(|runtime| runtime.dict()),
     };
     Box::into_raw(Box::new(handle)).cast()
 }
@@ -64,8 +66,7 @@ pub extern "C" fn zhuyin_begin_add_phrases(
 /// the key count, `0 < len < 16`. Count, storage and library routing are
 /// the pinyin facade's (`pinyin_iterator_add_phrase`): -1 is the default
 /// 5, any other count its `guint32` bit pattern; the `USER_FILE`
-/// libraries take the phrase, the system libraries are refused until
-/// oxpinyin models system items (#599), and every other nibble answers
+/// libraries and loaded system libraries take the phrase; every other nibble answers
 /// `false` — 16..=255 without reproducing the pin's out-of-bounds read of
 /// its 16-slot array (library 16 SIGSEGVs the pin).
 #[unsafe(no_mangle)]
@@ -86,7 +87,7 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     // SAFETY: `iter` is non-null and was produced by
     // `zhuyin_begin_add_phrases`.
     let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-    if !is_user_file_library(handle.index) {
+    if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
         return false;
     }
     let Some(user) = handle.user.as_mut() else {
@@ -99,8 +100,27 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     else {
         return false;
     };
-    user.add_phrase_in(handle.index, &phrase, &keys, count)
-        .is_ok()
+    if (1..=4).contains(&handle.index) {
+        let Some(dict) = handle.dict.as_ref() else {
+            return false;
+        };
+        if !dict.library_visible(u32::from(handle.index)) {
+            return false;
+        }
+        // 074a2219 pinyin.cpp:533-571 / zhuyin.cpp:419-457: choose the
+        // same-library token. The store also searches prior imported items.
+        let original = dict
+            .system()
+            .tokens_for_text(&phrase)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|token| token >> 24 == u32::from(handle.index));
+        user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
+            .is_ok()
+    } else {
+        user.add_phrase_in(handle.index, &phrase, &keys, count)
+            .is_ok()
+    }
 }
 
 /// End the import iterator, arm `m_modified`, and free it.

@@ -899,11 +899,11 @@ fn import_iterators_add_per_phrase_and_arm_modified_at_end() {
     );
     pinyin_end_get_phrases(export);
 
-    // A non-user index returns a live handle but has no writable store:
-    // add reports false, end is still a valid release.
+    // A loaded system index accepts imports through its sparse overlay
+    // (074a2219 pinyin.cpp:585-608).
     let system = pinyin_begin_add_phrases(context, 1);
     assert!(!system.is_null());
-    assert!(!pinyin_iterator_add_phrase(
+    assert!(pinyin_iterator_add_phrase(
         system,
         cstr("测试").as_ptr(),
         cstr("ce'shi").as_ptr(),

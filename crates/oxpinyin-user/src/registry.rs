@@ -53,6 +53,9 @@ pub struct CountCache {
 }
 
 pub struct StoreInner<S: WriteStore> {
+    pub(crate) has_system_items: AtomicBool,
+    pub(crate) system_items:
+        Mutex<std::collections::BTreeMap<Token, oxpinyin_data::chunk_write::ChunkItem>>,
     /// Decode-time count memo. Declared before `db` so it is dropped
     /// first (struct fields drop in declaration order).
     pub(crate) count_cache: Mutex<Option<CountCache>>,

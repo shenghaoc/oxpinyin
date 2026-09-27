@@ -110,12 +110,55 @@ pub struct Gram {
 
 /// One system library's original state — the shipped chunk as loaded,
 /// the diff base of its `.dbin` log.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct SystemLibrary {
     /// The chunk's `total_freq`.
     pub total: u32,
+    /// The pin's trimmed allocation range end (phrase_index.cpp:624-646).
+    pub range_end: u32,
     /// Items by slot (`token & PHRASE_MASK`).
     pub items: BTreeMap<u32, ChunkItem>,
+    /// Shared immutable runtime mapping; inline originals serve fixture stores.
+    pub mapped: Option<oxpinyin_data::phrase_library::PhraseLibrary>,
+}
+
+impl SystemLibrary {
+    pub(crate) fn contains_item(&self, slot: u32) -> bool {
+        self.items.contains_key(&slot)
+            || self
+                .mapped
+                .as_ref()
+                .is_some_and(|library| library.item(slot).is_some())
+    }
+
+    pub(crate) fn unigram(&self, slot: u32) -> Option<u32> {
+        self.items
+            .get(&slot)
+            .map(|item| item.unigram)
+            .or_else(|| self.mapped.as_ref()?.item(slot).map(|view| view.unigram()))
+    }
+
+    pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
+        if let Some(item) = self.items.get(&slot) {
+            return Some(item.clone());
+        }
+        let view = self.mapped.as_ref()?.item(slot)?;
+        Some(ChunkItem {
+            phrase: view.phrase_text()?.chars().map(u32::from).collect(),
+            unigram: view.unigram(),
+            prons: view
+                .pronunciations()
+                .map(|pron| {
+                    let keys = pron
+                        .keys
+                        .chunks_exact(2)
+                        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+                        .collect();
+                    (keys, pron.freq)
+                })
+                .collect(),
+        })
+    }
 }
 
 /// Builds the `SYSTEM_FILE` libraries' originals from the runtime's
@@ -131,36 +174,13 @@ pub fn system_originals(libraries: &PhraseLibraries) -> BTreeMap<u8, SystemLibra
         let Some(library) = libraries.library((u32::from(nibble) << 24) | 1) else {
             continue;
         };
-        let mut items = BTreeMap::new();
-        for (token, view) in library.items() {
-            let Some(text) = view.phrase_text() else {
-                continue;
-            };
-            let prons: Vec<(Vec<u16>, u32)> = view
-                .pronunciations()
-                .map(|pron| {
-                    let packed = pron
-                        .keys
-                        .chunks_exact(2)
-                        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                        .collect();
-                    (packed, pron.freq)
-                })
-                .collect();
-            items.insert(
-                token & PHRASE_MASK,
-                ChunkItem {
-                    phrase: text.chars().map(u32::from).collect(),
-                    unigram: view.unigram(),
-                    prons,
-                },
-            );
-        }
         out.insert(
             nibble,
             SystemLibrary {
                 total: library.total_freq(),
-                items,
+                range_end: library.token_range().end,
+                items: BTreeMap::new(),
+                mapped: Some(library.clone()),
             },
         );
     }
@@ -286,11 +306,6 @@ pub struct Loaded {
     /// them (upstream's own degrade — `chunk->load` failure leaves an
     /// empty library, never a failed init).
     pub skipped: Vec<String>,
-}
-
-/// The library nibble of a token (`PHRASE_INDEX_LIBRARY_INDEX`).
-const fn nibble_of(token: u32) -> u8 {
-    ((token >> 24) & 0x0F) as u8
 }
 
 /// The full token of a system-library item.
@@ -641,16 +656,15 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
         let mut overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::new();
         let current =
             |overrides: &BTreeMap<u32, Option<ChunkItem>>, slot: u32| -> Option<ChunkItem> {
-                overrides.get(&slot).cloned().unwrap_or_else(|| {
-                    original
-                        .and_then(|library| library.items.get(&slot))
-                        .cloned()
-                })
+                overrides
+                    .get(&slot)
+                    .cloned()
+                    .unwrap_or_else(|| original.and_then(|library| library.item(slot)))
             };
 
         for record in records {
             match record {
-                LogRecord::Add { token, new_item } if nibble_of(token) == nibble => {
+                LogRecord::Add { token, new_item } if token <= PHRASE_MASK => {
                     match decode_phrase_item(&new_item) {
                         Ok(item) => {
                             overrides.insert(token & PHRASE_MASK, Some(item));
@@ -661,7 +675,7 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
                         }
                     }
                 }
-                LogRecord::Remove { token, old_item } if nibble_of(token) == nibble => {
+                LogRecord::Remove { token, old_item } if token <= PHRASE_MASK => {
                     let slot = token & PHRASE_MASK;
                     match (decode_phrase_item(&old_item), current(&overrides, slot)) {
                         (Ok(old), Some(cur)) if old == cur => {
@@ -685,7 +699,7 @@ fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut L
                     token,
                     old_item,
                     new_item,
-                } if nibble_of(token) == nibble => {
+                } if token <= PHRASE_MASK => {
                     let slot = token & PHRASE_MASK;
                     match (
                         decode_phrase_item(&old_item),
@@ -749,7 +763,7 @@ pub fn system_new_total(
 ) -> u32 {
     let mut total = original.total;
     for (slot, override_item) in overrides {
-        match (original.items.get(slot), override_item) {
+        match (original.item(*slot), override_item) {
             (Some(old), Some(new)) => {
                 total = total.saturating_sub(old.unigram);
                 total = total.saturating_add(new.unigram);
@@ -873,6 +887,34 @@ fn stage_rest(
                 }
             }
         }
+        // Both add_index calls target the user trees even for a system token
+        // (074a2219, facade_phrase_table3.h:166-172 / facade_chewing_table2.h:167-172).
+        for (&nibble, overrides) in &state.system_overrides {
+            for (&slot, item) in overrides {
+                if originals
+                    .get(&nibble)
+                    .is_some_and(|base| base.contains_item(slot))
+                {
+                    continue;
+                }
+                let Some(item) = item else {
+                    continue;
+                };
+                let token = token_of(nibble, slot);
+                phrase_rows.push((item.phrase.clone(), token));
+                for (packed, _) in &item.prons {
+                    if state.indexed.contains(&(token, packed.clone())) {
+                        chewing_rows.push(PinyinIndexItem {
+                            token,
+                            keys: packed
+                                .iter()
+                                .map(|&bits| ChewingKey::from_packed(bits))
+                                .collect(),
+                        });
+                    }
+                }
+            }
+        }
         stage_dbm(
             dir,
             UserDbm::PinyinIndex,
@@ -966,7 +1008,7 @@ fn finish_save(
 ///
 /// Returns the store's error when a diff walk or record append fails.
 pub fn diff_records(
-    nibble: u8,
+    _nibble: u8,
     original: &SystemLibrary,
     overrides: &BTreeMap<u32, Option<ChunkItem>>,
 ) -> Result<Vec<LogRecord>, PersistenceError> {
@@ -975,26 +1017,18 @@ pub fn diff_records(
         new_total: system_new_total(original, overrides),
     }];
 
-    let mut slots: Vec<u32> = original
-        .items
-        .keys()
-        .copied()
-        .chain(overrides.keys().copied())
-        .collect::<Vec<_>>();
-    slots.sort_unstable();
-    slots.dedup();
-
-    for slot in slots {
+    // 074a2219 phrase_index.cpp:394-442 emits local SubPhraseIndex slots.
+    // Only overridden slots can differ; walking this ordered sparse map
+    // emits the same records without scanning every immutable original.
+    for &slot in overrides.keys() {
         // An override entry always wins — including `Some(None)`, an
         // explicit removal: flattening it into the original item here
         // would drop the Remove record and resurrect the phrase on
         // reopen.
-        let current = overrides
-            .get(&slot)
-            .map(|item| item.as_ref())
-            .unwrap_or_else(|| original.items.get(&slot));
-        let token = token_of(nibble, slot);
-        match (original.items.get(&slot), current) {
+        let old = original.item(slot);
+        let current = overrides.get(&slot).and_then(|item| item.as_ref());
+        let token = slot;
+        match (old.as_ref(), current) {
             (Some(old), Some(new)) => {
                 if old != new {
                     records.push(LogRecord::Modify {
@@ -1169,7 +1203,9 @@ mod tests {
         BTreeMap::from([(
             1_u8,
             SystemLibrary {
+                mapped: None,
                 total: 150,
+                range_end: 3,
                 items: merged,
             },
         )])
@@ -1286,10 +1322,7 @@ mod tests {
                     old_total: 150,
                     new_total: 50
                 },
-                LogRecord::Remove {
-                    token: 0x0100_0001,
-                    ..
-                }
+                LogRecord::Remove { token: 1, .. }
             ]
         ));
     }
@@ -1933,7 +1966,7 @@ mod tests {
                 new_total: 150 + 69,
             },
             LogRecord::Modify {
-                token: 0x0100_0002,
+                token: 2,
                 // A decodable-but-wrong old item (a real pron run; the
                 // encoder rejects empty runs now).
                 old_item: encode_phrase_item(&item(&[0x597d], 999, &[(vec![0x5678], 999)]))
@@ -1942,7 +1975,7 @@ mod tests {
                     .unwrap_or_else(|e| panic!("{e}")),
             },
             LogRecord::Modify {
-                token: 0x0100_0001,
+                token: 1,
                 old_item: encode_phrase_item(&item(&[0x4f60], 100, &[(vec![0x1234], 100)]))
                     .unwrap_or_else(|e| panic!("{e}")),
                 new_item: encode_phrase_item(&item(&[0x4f60], 200, &[(vec![0x1235], 200)]))
@@ -2069,7 +2102,7 @@ mod tests {
 ## network.bin (19 payload bytes)
   00000000110000001200000013000000232323
 ## gb_char.dbin (62 payload bytes)
-  040000000000000004006400000047020000030000000100000110001000010164000000604f0000970064000000010147020000604f00009700a9000000
+  040000000000000004006400000047020000030000000100000010001000010164000000604f0000970064000000010147020000604f00009700a9000000
 ## gbk_char.dbin (18 payload bytes)
   040000000000000004000000000000000000
 ## opengram.dbin (18 payload bytes)
@@ -2167,7 +2200,9 @@ mod tests {
         let originals = BTreeMap::from([(
             1_u8,
             SystemLibrary {
+                mapped: None,
                 total: 100,
+                range_end: 2,
                 items: BTreeMap::from([(
                     1_u32,
                     ChunkItem {

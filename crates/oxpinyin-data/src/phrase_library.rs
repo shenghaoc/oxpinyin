@@ -378,8 +378,9 @@ impl PhraseItemView<'_> {
 /// One per-library phrase index over a mapped libpinyin `*.bin` chunk
 /// file — the `SubPhraseIndex` of `FacadePhraseIndex`, upstream's
 /// mmap-backed half of the system data.
+#[derive(Clone)]
 pub struct PhraseLibrary {
-    file: map::MappedFile,
+    file: std::sync::Arc<map::MappedFile>,
     /// The payload after the 8-byte chunk header.
     payload: std::ops::Range<usize>,
     /// `SubPhraseIndex::m_total_freq`.
@@ -457,7 +458,7 @@ impl PhraseLibrary {
         }
 
         Ok(Self {
-            file,
+            file: std::sync::Arc::new(file),
             payload,
             total_freq,
             // load's sub-chunk views: the offset array runs to the
