@@ -1757,3 +1757,27 @@ section.
   not filed). Not yet
   reproduced in code; REVERT TARGET until it is (#539).
 
+### tkrzw binding: exception-origin `SYSTEM_ERROR` and OS `SYSTEM_ERROR` share one error class (policy row 40)
+
+- **Registered as:** a standing divergence (ruled accepted 2026-08-28),
+  not an exception class — `compatibility-policy.md`, "Registered
+  standing divergences". Registered here 2026-09-27 UTC (#551); the full
+  record, with the ruling's process note, is
+  `docs/findings/tkrzw-langc-exception-classification.md`.
+- **Upstream source cite:** none in libpinyin: the pin's tkrzw backend
+  (`src/storage/*_tkrzwdb.cpp`) calls tkrzw's C++ API. The cite is
+  tkrzw's `tkrzw_langc.cc` at 1.0.32 (every wrapper's
+  `catch (const std::exception& e)` sets `TKRZW_STATUS_SYSTEM_ERROR`,
+  e.g. `:163-165`, as the finding cites it).
+- **Mechanism:** a C++ exception inside tkrzw (allocation failure) and
+  an operating-system error both surface as `SYSTEM_ERROR` through the
+  C API; the retired cxx shim reported the first as `UNKNOWN_ERROR`.
+- **What oxpinyin does instead:** maps `SYSTEM_ERROR` to
+  `StoreError::Io` and every other code to `StoreError::Backend`
+  (`crates/oxpinyin-store/src/tkrzw/mod.rs:149`, `:214`), so the
+  exception origin is indistinguishable from an I/O error.
+- **Externally observable:** only to a Rust caller of `oxpinyin-store`
+  branching on `StoreError::Io`, and only under memory exhaustion; no
+  test or differential surface reaches it, and nothing crosses the
+  libpinyin C ABI.
+
