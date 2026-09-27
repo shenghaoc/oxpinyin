@@ -13,7 +13,7 @@
 #
 # Runs inside the perf-matrix container (tools/bisection/Dockerfile.perf-matrix):
 #
-#   cargo build --locked -p oxpinyin-capi                    # KC, the default
+#   cargo build --locked -p oxpinyin-capi --no-default-features --features kyotocabinet
 #   tools/bisection/run-same-data-dir-diff.sh \
 #       /opt/libpinyin-kc/lib/libpinyin.so target/debug/libpinyin_capi.so \
 #       /opt/libpinyin-kc/lib/libpinyin/data
