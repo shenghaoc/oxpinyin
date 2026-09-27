@@ -4,7 +4,8 @@
 #   A. libpinyin  + Tkrzw          (upstream oracle pin)
 #   B. libpinyin  + Kyoto Cabinet  (same source, different --with-dbm)
 #   C. oxpinyin   + Tkrzw          (cargo feature: tkrzw)
-#   D. oxpinyin   + Kyoto Cabinet  (cargo feature: kyotocabinet, default)
+#   D. oxpinyin   + Kyoto Cabinet  (cargo feature: kyotocabinet; not the
+#                                    default, so pinned explicitly)
 #
 # Run the full matrix — build on the measurement host itself, with no
 # --platform override, so the image is native silicon:
@@ -113,14 +114,23 @@ RUN cp -a /tmp/libpinyin-src /tmp/build-B-src \
     && make -j"$(nproc)" && make install \
     && rm -rf /tmp/build-B
 
-# ── Cell D: oxpinyin + Kyoto Cabinet (default) ──────────────────────
+# ── Cell D: oxpinyin + Kyoto Cabinet ────────────────────────────────
+#
+# Pinned to Kyoto Cabinet (2026-09-27 UTC, #552): this cell pairs with
+# cell B and was written when Kyoto Cabinet was the workspace default
+# (2026-08-29 → 2026-09-05). The default is Berkeley DB since
+# 2026-09-20 (`default = ["bdb"]`), so both commands name the backend
+# explicitly rather than taking default features.
 
 RUN cargo cinstall --locked --release -p oxpinyin-capi \
+    --no-default-features --features kyotocabinet \
     --destdir=/opt/oxpinyin-kc/stage --prefix=/usr \
     --manifest-path /repo/Cargo.toml
 
-RUN cargo run --locked --release -p oxpinyin-datagen -- compile \
+RUN cargo run --locked --release -p oxpinyin-datagen \
+    --no-default-features --features kyotocabinet -- compile \
     --model-dir target/model20/extracted \
+    --backend kyotocabinet \
     --out-dir /opt/oxpinyin-kc/data
 
 # ── Cell C: oxpinyin + Tkrzw ────────────────────────────────────────
