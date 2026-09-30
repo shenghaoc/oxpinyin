@@ -24,6 +24,61 @@ const MERGED_DICTIONARY: u8 = 4;
 /// export threshold — counts at or above it export, below it stay.
 const INITIAL_SEED: u64 = 23 * 3;
 
+/// Phrase export state. System libraries retain only the current item's rows,
+/// following the pin's token/pronunciation cursor (`pinyin.cpp:662-768`).
+#[derive(Default)]
+pub struct PhraseExportCursor {
+    system: Option<oxpinyin_runtime::RuntimeDict>,
+    next_token: u32,
+    end_token: u32,
+    rows: std::collections::VecDeque<ExportedPhrase>,
+}
+
+impl PhraseExportCursor {
+    /// Whether the begin/previous-next probe found another pronunciation.
+    #[must_use]
+    pub fn has_next(&self) -> bool {
+        !self.rows.is_empty()
+    }
+
+    fn probe(&mut self) {
+        let Some(dict) = self.system.as_ref() else {
+            return;
+        };
+        while self.rows.is_empty() && self.next_token < self.end_token {
+            let token = self.next_token;
+            self.next_token += 1;
+            if !dict.library_visible_token(token) {
+                continue;
+            }
+            let system = dict.system();
+            let Some(text) = system.phrase_text(token) else {
+                continue;
+            };
+            self.rows.extend(
+                system
+                    .pronunciations(token)
+                    .into_iter()
+                    .map(|(pinyin, count)| ExportedPhrase {
+                        text: text.clone(),
+                        pinyin,
+                        count,
+                    }),
+            );
+        }
+    }
+}
+
+impl Iterator for PhraseExportCursor {
+    type Item = ExportedPhrase;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let row = self.rows.pop_front()?;
+        self.probe();
+        Some(row)
+    }
+}
+
 impl ContextCore {
     /// §9 phrase-export materialization (`pinyin_begin_get_phrases`,
     /// `pinyin.cpp:662-768`): every item of sub-index `index` that has a
@@ -54,41 +109,47 @@ impl ContextCore {
         }
     }
 
-    /// The system half of [`Self::export_phrases`]: the pin's probe loop
-    /// over `SubPhraseIndex::get_range` (`phrase_index.cpp:624-646`),
-    /// keeping items with `get_n_pronunciation() >= 1`
-    /// (`pinyin.cpp:680-687`, `759-766`) and rendering each pronunciation
-    /// with its stored frequency (`pinyin.cpp:722-739`). Empty under a
-    /// user-store-only context, for a library absent from the data
-    /// directory, and for one `pinyin_unload_phrase_library` removed.
-    fn export_system_phrases(&self, nibble: u8) -> Vec<ExportedPhrase> {
-        let Some(runtime) = self.runtime.as_ref() else {
-            return Vec::new();
-        };
-        let dict = runtime.dict();
-        if !dict.library_visible(u32::from(nibble)) {
-            return Vec::new();
-        }
-        let system = dict.system();
-        let base = u32::from(nibble) << 24;
-        let Some(library) = system.libraries().library(base) else {
-            return Vec::new();
-        };
-        let mut rows = Vec::new();
-        for local in library.token_range() {
-            let token = base | local;
-            let Some(text) = system.phrase_text(token) else {
-                continue;
-            };
-            for (pinyin, count) in system.pronunciations(token) {
-                rows.push(ExportedPhrase {
-                    text: text.clone(),
-                    pinyin,
-                    count,
-                });
+    /// Opens a phrase export cursor, probing only the first system item.
+    /// User-library exports keep their existing transaction-scoped snapshot.
+    ///
+    /// # Errors
+    /// Returns the user-store error if its rows cannot be read.
+    pub fn phrase_export_cursor(
+        &self,
+        index: u32,
+    ) -> Result<PhraseExportCursor, oxpinyin_user::UserStoreError> {
+        let [index, ..] = index.to_le_bytes();
+        let mut cursor = PhraseExportCursor::default();
+        match index {
+            GB_DICTIONARY..=MERGED_DICTIONARY => {
+                if let Some(runtime) = self.runtime.as_ref() {
+                    let dict = runtime.dict();
+                    let base = u32::from(index) << 24;
+                    if dict.library_visible(u32::from(index)) {
+                        if let Some(library) = dict.system().libraries().library(base) {
+                            let range = library.token_range();
+                            cursor.next_token = base | range.start;
+                            cursor.end_token = base | range.end;
+                            cursor.system = Some(dict);
+                            cursor.probe();
+                        }
+                    }
+                }
             }
+            ADDON_DICTIONARY | NETWORK_DICTIONARY | USER_DICTIONARY => {
+                if let Some(user) = self.user.as_ref() {
+                    cursor.rows = user.export_phrases_in(index)?.into();
+                }
+            }
+            _ => {}
         }
-        rows
+        Ok(cursor)
+    }
+
+    fn export_system_phrases(&self, nibble: u8) -> Vec<ExportedPhrase> {
+        self.phrase_export_cursor(u32::from(nibble))
+            .map(Iterator::collect)
+            .unwrap_or_default()
     }
 
     /// §9 bigram-export materialization with upstream's filters and
@@ -215,4 +276,33 @@ pub struct ExportedBigramRow {
     pub pinyin: String,
     /// The rendered bigram count (`stored × 2`).
     pub count: i64,
+}
+
+#[cfg(test)]
+mod phrase_cursor_tests {
+    #[test]
+    fn system_begin_probes_one_item_and_draining_matches_materialization() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/w3");
+        let ctx = ["db", "kct", "tkt"]
+            .into_iter()
+            .find_map(|ext| {
+                super::ContextCore::open(
+                    root.join(ext).to_str().unwrap(),
+                    "",
+                    crate::PINYIN_DEFAULT_OPTION_WORD,
+                    oxpinyin_user::UserConfLaw::Pinyin,
+                )
+            })
+            .expect("committed backend fixtures");
+        let cursor = ctx.phrase_export_cursor(257).unwrap();
+        assert!(cursor.has_next());
+        assert!(
+            cursor.next_token < cursor.end_token,
+            "begin scanned the whole library"
+        );
+        let buffered = cursor.rows.len();
+        let all: Vec<_> = cursor.collect();
+        assert!(buffered < all.len(), "begin buffered the whole library");
+        assert_eq!(all, ctx.export_phrases(1).unwrap());
+    }
 }

@@ -131,8 +131,14 @@ int main(int argc, char **argv) {
     }
 
     import_iterator_t *import = begin_add(ctx, 7 /* USER_DICTIONARY */);
-    printf("add: %s\n", iterator_add(import, "你好世界", "ni'hao'shi'jie", 5) ? "true" : "false");
+    bool added = iterator_add(import, "你好世界", "ni'hao'shi'jie", 5);
+    printf("add: %s\n", added ? "true" : "false");
     end_add(import);
+    if (!added) {
+        fprintf(stderr, "import failed\n");
+        fini(ctx);
+        return 1;
+    }
 
     for (guint index = 0; index < 16; ++index)
         dump(ctx, index);
