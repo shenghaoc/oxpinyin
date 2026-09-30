@@ -316,7 +316,7 @@ fn add_pronunciation(
     }
     let value = PronValue {
         count: u64::from(delta),
-        seq: next_pron_seq(&rows),
+        seq: next_pron_seq(txn, token, &rows)?,
         indexed,
     };
     txn.put(
@@ -452,11 +452,36 @@ pub(crate) fn collect_pronunciations_from_txn(
 }
 
 /// The sequence the next reading appended to a phrase with `rows` takes.
-fn next_pron_seq(rows: &[PronRow]) -> u32 {
-    rows.iter()
-        .map(|row| row.value.seq.saturating_add(1))
+fn next_pron_seq(
+    txn: &mut dyn WriteTxn,
+    token: Token,
+    rows: &[PronRow],
+) -> Result<u32, StoreError> {
+    let next = rows
+        .iter()
+        .map(|row| row.value.seq)
         .max()
-        .unwrap_or(0)
+        .map_or(Some(0), |seq| seq.checked_add(1));
+    if let Some(next) = next {
+        return Ok(next);
+    }
+    // Legacy rows use MAX as their stable, table-key-ordered tail. Compact
+    // that order in the same transaction before appending a new reading.
+    let next = u32::try_from(rows.len())
+        .map_err(|_| StoreError::Backend("pronunciation sequence exhausted".into()))?;
+    for (seq, row) in rows.iter().enumerate() {
+        let value = PronValue {
+            seq: u32::try_from(seq)
+                .map_err(|_| StoreError::Backend("pronunciation sequence exhausted".into()))?,
+            ..row.value
+        };
+        txn.put(
+            PRONUNCIATION,
+            &codec::encode_token_bytes(token, &row.key_bytes),
+            &value.encode(),
+        )?;
+    }
+    Ok(next)
 }
 
 fn remove_pronunciations(txn: &mut dyn WriteTxn, token: Token) -> Result<(), StoreError> {
@@ -1109,7 +1134,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     },
                     None => PronValue {
                         count: *count,
-                        seq: next_pron_seq(&rows),
+                        seq: next_pron_seq(txn, token, &rows)?,
                         indexed: true,
                     },
                 };
@@ -2195,6 +2220,61 @@ mod tests {
                     assert_eq!(got.pronunciations()[1].keys(), &[11, 20]);
                     assert_eq!(got.pronunciations()[1].count(), 8);
                     cleanup(&path);
+                }
+
+                #[test]
+                fn new_reading_appends_after_legacy_and_exhausted_sequences() {
+                    for legacy in [true, false] {
+                        let path = temp_path("legacy-pron-order");
+                        let mut store = Store::create_standalone(&path).unwrap();
+                        let token = store.add_phrase("你", &[20], Some(5)).unwrap();
+                        store
+                            .database()
+                            .write(|txn| {
+                                let value = if legacy {
+                                    codec::encode_u64(5).to_vec()
+                                } else {
+                                    super::super::PronValue {
+                                        count: 5,
+                                        seq: u32::MAX,
+                                        indexed: false,
+                                    }
+                                    .encode()
+                                    .to_vec()
+                                };
+                                txn.put(
+                                    PRONUNCIATION,
+                                    &codec::encode_token_bytes(token, &phrase::encode_keys(&[20])),
+                                    &value,
+                                )
+                            })
+                            .unwrap();
+                        store.add_phrase("你", &[10], Some(7)).unwrap();
+                        store.add_phrase("你", &[15], Some(9)).unwrap();
+                        let item = store.phrase(token).unwrap().unwrap();
+                        assert_eq!(
+                            item.pronunciations()
+                                .iter()
+                                .map(|p| p.keys().to_vec())
+                                .collect::<Vec<_>>(),
+                            vec![vec![20], vec![10], vec![15]]
+                        );
+
+                        let encoded = store
+                            .database()
+                            .get(
+                                PRONUNCIATION,
+                                &codec::encode_token_bytes(token, &phrase::encode_keys(&[20])),
+                            )
+                            .unwrap()
+                            .unwrap();
+                        assert_eq!(PronValue::decode(&encoded).unwrap().indexed, legacy);
+                        drop(store);
+                        let reopened = Store::create_standalone(&path).unwrap();
+                        assert_eq!(reopened.phrase(token).unwrap().unwrap(), item);
+                        drop(reopened);
+                        cleanup(&path);
+                    }
                 }
 
                 #[test]
