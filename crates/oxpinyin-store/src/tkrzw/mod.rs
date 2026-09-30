@@ -1066,20 +1066,18 @@ fn db_set_one(db: &Db, key: &[u8], value: Option<&[u8]>) -> Result<(), StoreErro
     db_apply(db, std::slice::from_ref(&mutation))
 }
 
-/// Every record of `db` in its own iterator order.
-fn db_records(db: &Db) -> Result<Vec<crate::RawRecord>, StoreError> {
-    let mut records = Vec::new();
+/// Visits one borrowed record at a time in the database's native order.
+fn visit_db(db: &Db, visit: &mut crate::Visitor<'_>) -> Result<(), StoreError> {
     scan(
         db,
         b"",
         Bound::Unbounded,
         Bound::Unbounded,
         &mut |key, value| {
-            records.push((key.to_vec(), value.to_vec()));
+            visit(key, value)?;
             Ok(true)
         },
-    )?;
-    Ok(records)
+    )
 }
 
 impl crate::UserBigramDb for TkrzwUserBigramDb {
@@ -1101,8 +1099,11 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
         // then `copy_tkrzwdb(&tmp_db, m_db)`; a file that does not open
         // leaves the container empty, as the pin's does.
         if let Ok(file) = open_hash(path) {
-            for (key, value) in db_records(&file.db)? {
-                db_set_one(&this.db, &key, Some(&value))?;
+            // A failed source walk must not discard unrelated learned data.
+            if let Err(error) = visit_db(&file.db, &mut |key, value| {
+                db_set_one(&this.db, key, Some(value))
+            }) {
+                eprintln!("user-bigram load {}: {error}", path.display());
             }
         }
         Ok(this)
@@ -1121,10 +1122,12 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
     }
 
     fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        Ok(db_records(&self.db)?
-            .into_iter()
-            .map(|(key, _)| key)
-            .collect())
+        let mut keys = Vec::new();
+        visit_db(&self.db, &mut |key, _| {
+            keys.push(key.to_vec());
+            Ok(())
+        })?;
+        Ok(keys)
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
@@ -1133,9 +1136,9 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
         // container into it in iterator order, synchronize, close.
         crate::remove_if_present(path)?;
         let file = open_hash_create(path)?;
-        for (key, value) in db_records(&self.db)? {
-            db_set_one(&file.db, &key, Some(&value))?;
-        }
+        visit_db(&self.db, &mut |key, value| {
+            db_set_one(&file.db, key, Some(value))
+        })?;
         db_synchronize(&file.db, false)
     }
 }
