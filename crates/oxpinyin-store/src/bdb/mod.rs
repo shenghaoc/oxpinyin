@@ -543,16 +543,15 @@ pub struct BdbUserBigramDb {
     db: Db,
 }
 
-/// Every record of `db` in its cursor order.
-fn db_records(db: &Db) -> Result<Vec<crate::RawRecord>, StoreError> {
+/// Visits one borrowed record at a time in the database's native order.
+fn visit_db(db: &Db, visit: &mut crate::Visitor<'_>) -> Result<(), StoreError> {
     let mut cursor = db.cursor()?;
-    let mut records = Vec::new();
     let mut seek = ffi::Seek::First;
     while let Some(row) = cursor.get(seek)? {
-        records.push((row.key.to_vec(), row.value.to_vec()));
+        visit(row.key, row.value)?;
         seek = ffi::Seek::Next;
     }
-    Ok(records)
+    Ok(())
 }
 
 impl crate::UserBigramDb for BdbUserBigramDb {
@@ -568,8 +567,10 @@ impl crate::UserBigramDb for BdbUserBigramDb {
         // `copy_bdb(tmp_db, m_db)`; a file that does not open leaves the
         // container empty, as the pin's does.
         if let Ok(file) = Db::open(path, ffi::DB_HASH, true, false, ffi::USER_FILE_MODE) {
-            for (key, value) in db_records(&file)? {
-                this.db.put(&key, &value)?;
+            // Keep the usable in-memory container if source traversal fails;
+            // callers of the pin retain it even when load_db returns false.
+            if let Err(error) = visit_db(&file, &mut |key, value| this.db.put(key, value)) {
+                eprintln!("user-bigram load {}: {error}", path.display());
             }
         }
         Ok(this)
@@ -588,10 +589,12 @@ impl crate::UserBigramDb for BdbUserBigramDb {
     }
 
     fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        Ok(db_records(&self.db)?
-            .into_iter()
-            .map(|(key, _)| key)
-            .collect())
+        let mut keys = Vec::new();
+        visit_db(&self.db, &mut |key, _| {
+            keys.push(key.to_vec());
+            Ok(())
+        })?;
+        Ok(keys)
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
@@ -600,9 +603,7 @@ impl crate::UserBigramDb for BdbUserBigramDb {
         // in cursor order, sync, close.
         crate::remove_if_present(path)?;
         let file = Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?;
-        for (key, value) in db_records(&self.db)? {
-            file.put(&key, &value)?;
-        }
+        visit_db(&self.db, &mut |key, value| file.put(key, value))?;
         file.sync()
     }
 }
