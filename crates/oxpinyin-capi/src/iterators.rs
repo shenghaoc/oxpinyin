@@ -8,7 +8,7 @@ use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 use oxpinyin_core::graph::FewestKeys;
-use oxpinyin_user::{ExportedPhrase, PinyinKey, UserStore, is_user_file_library};
+use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library};
 
 use crate::ffi::{cstr_to_owned_lossy, owned_cstr};
 use crate::state::{ExportedBigramRow, context_ref};
@@ -16,13 +16,9 @@ use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
 };
 
-/// State behind `export_iterator_t *`: the materialized §9 rows and the
-/// cursor into them. Materializing at begin (rather than streaming) keeps
-/// the store transaction scoped to the constructor and matches the
-/// snapshot the differential compares.
+/// The phrase cursor retains one system item, rather than its whole library.
 struct ExportHandle {
-    rows: Vec<ExportedPhrase>,
-    index: usize,
+    cursor: oxpinyin_facade::PhraseExportCursor,
 }
 
 /// State behind `bigram_export_iterator_t *`.
@@ -214,8 +210,8 @@ pub extern "C" fn pinyin_begin_get_phrases(
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
-    let rows = ctx.export_phrases(index).unwrap_or_default();
-    Box::into_raw(Box::new(ExportHandle { rows, index: 0 })).cast()
+    let cursor = ctx.core.phrase_export_cursor(index).unwrap_or_default();
+    Box::into_raw(Box::new(ExportHandle { cursor })).cast()
 }
 
 /// Check whether the export iterator has a next phrase.
@@ -233,7 +229,7 @@ pub extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> 
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_get_phrases`.
     let handle = unsafe { &*(iter.cast::<ExportHandle>()) };
-    handle.index < handle.rows.len()
+    handle.cursor.has_next()
 }
 
 /// Get the next phrase from the export iterator.
@@ -262,7 +258,7 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_get_phrases`; the unique borrow lasts for this call.
     let handle = unsafe { &mut *(iter.cast::<ExportHandle>()) };
-    let Some(row) = handle.rows.get(handle.index) else {
+    let Some(row) = handle.cursor.next() else {
         return false;
     };
     if !phrase.is_null() {
@@ -280,11 +276,16 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     if !count.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *count = c_int::try_from(row.count).unwrap_or(c_int::MAX);
+            *count = export_count(row.count);
         }
     }
-    handle.index += 1;
     true
+}
+
+/// The pin uses -1 for zero frequency and the guint32 bit pattern otherwise.
+fn export_count(count: u64) -> c_int {
+    let freq = u32::try_from(count).unwrap_or(u32::MAX);
+    if freq == 0 { -1 } else { freq.cast_signed() }
 }
 
 /// End the export iterator and free it.
@@ -426,5 +427,16 @@ pub extern "C" fn pinyin_end_get_bigram_phrases(iter: *mut BigramExportIterator)
     // only here.
     unsafe {
         drop(Box::from_raw(iter.cast::<BigramHandle>()));
+    }
+}
+
+#[cfg(test)]
+mod export_count_tests {
+    #[test]
+    fn zero_and_unsigned_frequency_bit_patterns_match_the_pin() {
+        assert_eq!(super::export_count(0), -1);
+        assert_eq!(super::export_count(5), 5);
+        assert_eq!(super::export_count(u64::from(u32::MAX)), -1);
+        assert_eq!(super::export_count(0x8000_0000), i32::MIN);
     }
 }

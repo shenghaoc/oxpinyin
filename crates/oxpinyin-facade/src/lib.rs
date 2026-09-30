@@ -44,7 +44,7 @@ pub use context::{
     ContextCore, FALLBACK_CLEARED_BIT, LiveOptions, OpenFailure, UNKNOWN_DATABASE_FORMAT_WARNING,
 };
 pub use cursor::{KeyAt, SpanSource};
-pub use export_rows::ExportedBigramRow;
+pub use export_rows::{ExportedBigramRow, PhraseExportCursor};
 pub use instance::{BEFORE_CURSOR_ANCHOR, InstanceCore};
 pub use offsets::{
     double_original_offset, double_session_offset, full_original_offset, full_session_offset,
