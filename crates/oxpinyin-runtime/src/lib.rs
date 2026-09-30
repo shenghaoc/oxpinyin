@@ -265,6 +265,12 @@ pub struct TokenIntrospection {
 /// The generation-stamped user-phrase lookup cache shared by clones.
 type LookupCache = Arc<Mutex<Option<(u64, Arc<UserLookup>)>>>;
 
+#[derive(Default)]
+struct UnigramOverlay {
+    tokens: HashMap<u32, u64>,
+    libraries: HashMap<u32, u32>,
+}
+
 /// The system dictionary with the user-phrase lookup merged in.
 ///
 /// `SystemDictionary` holds DBM handles and mappings, so it rides an
@@ -281,7 +287,7 @@ pub struct RuntimeDict {
     /// in-memory `FacadePhraseIndex` and nothing persists them
     /// (`pinyin_save` flushes user data exclusively), so the overlay is
     /// the faithful shape: shared per context, gone at fini.
-    unigram_overlay: Arc<Mutex<HashMap<u32, u64>>>,
+    unigram_overlay: Arc<Mutex<UnigramOverlay>>,
     /// The facade-total bump `add_unigram_frequency` applies
     /// unconditionally once the token's library is loaded
     /// (`phrase_index.h:632` — before the item-level dispatch, so an
@@ -437,14 +443,15 @@ impl RuntimeDict {
             .unigram_overlay
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        overlay.get(&token).copied()
+        overlay.tokens.get(&token).copied()
     }
 
     /// Applies `add_unigram_frequency`'s effects for a loaded library:
     /// the facade-total bump is unconditional (`phrase_index.h:632`,
     /// before the item dispatch — an absent-token add still moves the
     /// amplified-law denominator), and the item delta lands only when
-    /// the token exists. Returns whether the token was found. A token
+    /// the token exists and its library total accepts the addition. Returns
+    /// whether the item update succeeded. A token
     /// whose library is unloaded is invisible on both edges: neither
     /// the total nor the overlay moves, matching the visibility filter
     /// the rest of the surface honours.
@@ -468,7 +475,8 @@ impl RuntimeDict {
                 .is_some();
             system_found || addon_found || user_found
         };
-        // Saturating on both edges: the total is an amplified-law
+        // The facade total moves before the sub-index overflow check.
+        // Saturating on the facade edge: the total is an amplified-law
         // denominator that would fail catastrophically on a wraparound,
         // and the per-token overlay entry can pile up under repeated
         // `add_unigram_frequency` calls. `AtomicU64::fetch_add` wraps
@@ -487,8 +495,52 @@ impl RuntimeDict {
             .unigram_overlay
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let entry = overlay.entry(token).or_insert(0);
-        *entry = entry.saturating_add(delta);
+        let Ok(delta) = u32::try_from(delta) else {
+            return false;
+        };
+        let library = token >> 24;
+        let base = self
+            .system
+            .libraries()
+            .library(library << 24)
+            .map_or(0, |lib| lib.total_freq());
+        let accepted = overlay.libraries.get(&library).copied().unwrap_or(0);
+        let user_bound = match self
+            .user
+            .as_ref()
+            .map(|user| user.unigram_total())
+            .transpose()
+        {
+            Ok(total) => total.unwrap_or(0),
+            Err(_) => return false,
+        };
+        // Ordinary additions need only the cached/global bound. Scan the
+        // user library only at the overflow edge, not on every training bump.
+        let bound = u64::from(base) + u64::from(accepted);
+        if bound
+            .saturating_add(user_bound)
+            .saturating_add(u64::from(delta))
+            > u64::from(u32::MAX)
+        {
+            let user_total = match self
+                .user
+                .as_ref()
+                .map(|user| user.unigram_library_total(library as u8))
+                .transpose()
+            {
+                Ok(total) => total.unwrap_or(0),
+                Err(_) => return false,
+            };
+            let total = base.wrapping_add(accepted).wrapping_add(user_total);
+            if total.checked_add(delta).is_none() {
+                return false;
+            }
+        }
+        overlay
+            .libraries
+            .insert(library, accepted.wrapping_add(delta));
+        let entry = overlay.tokens.entry(token).or_insert(0);
+        *entry = entry.saturating_add(u64::from(delta));
         true
     }
 
@@ -1070,7 +1122,7 @@ impl Runtime {
             user_lookup_cache: LookupCache::default(),
             addons: Arc::clone(&addons),
             punct: Arc::new(punct),
-            unigram_overlay: Arc::new(Mutex::new(HashMap::new())),
+            unigram_overlay: Arc::new(Mutex::new(UnigramOverlay::default())),
             unigram_total_delta: Arc::new(AtomicU64::new(0)),
             library_mask,
             library_epoch: Arc::new(AtomicU64::new(0)),

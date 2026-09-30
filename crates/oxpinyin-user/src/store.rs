@@ -846,6 +846,33 @@ impl<S: WriteStore> GenericUserStore<S> {
         get_u64_or(&*db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)
     }
 
+    /// The pinned sub-index's wrapping u32 total of stored deltas in one library.
+    ///
+    /// # Errors
+    /// Returns the store error if a unigram row cannot be read or decoded.
+    pub fn unigram_library_total(&self, library: u8) -> Result<u32, UserStoreError> {
+        let db = self.database();
+        let lo = codec::encode_token(u32::from(library) << 24);
+        let hi = u32::from(library)
+            .checked_add(1)
+            .and_then(|next| next.checked_mul(1 << 24))
+            .map(codec::encode_token);
+        let mut total = 0_u32;
+        db.range(
+            UNIGRAM,
+            Bound::Included(lo.as_slice()),
+            hi.as_ref()
+                .map_or(Bound::Unbounded, |hi| Bound::Excluded(hi.as_slice())),
+            &mut |_, value| {
+                let count = codec::decode_u64(value)
+                    .map_err(|_| StoreError::Backend("corrupt unigram".into()))?;
+                total = total.wrapping_add(u32::try_from(count).unwrap_or(u32::MAX));
+                Ok(())
+            },
+        )?;
+        Ok(total)
+    }
+
     /// One-transaction §5 overlay for scoring `token` after `prev`.
     ///
     /// # Errors
