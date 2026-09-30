@@ -335,23 +335,15 @@ where
         U: UserModel<Token = PhraseToken>,
         U::Error: Display,
     {
-        // The constrained walk applies only when the result actually
-        // sits on user forcings — some phrase of the last lookup's 1-best
-        // lands on a OneStep cell. Everything else falls to the selection
-        // record: a row-0 choose constrains nothing (exactly upstream,
-        // `diff_result` adds cells only for the differing phrases) yet the
-        // engine's row chooses still record tokens, and a model that
-        // cannot run the constrained walk (the pre-frequency fallback)
-        // leaves the result without spans at all. The record is the
-        // stand-in for exactly those shapes — it cannot mask a missed
-        // cell: a forcing that failed to record changes the row and
-        // window surfaces the differential probes, not the train output.
-        let constrained = self
-            .sentence
-            .last_result
-            .iter()
-            .any(|span| self.constraints.is_one_step_at(span.start));
-        if constrained {
+        // 074a2219 lookup/phonetic_lookup.h:854-866,932: every decoded
+        // phrase advances the predecessor, but only OneStep or train_next
+        // observes it. A constraint-free result therefore trains nothing.
+        // In particular pinyin.cpp:2515-2520 diffs an n-best choose against
+        // result 0; choosing result 0 adds no forcing (lookup/
+        // phonetic_lookup.cpp:178-188). The recorded tokens must not bypass
+        // that gate. Only a model with no decoded spans uses the fixture
+        // selection-history fallback below.
+        if !self.sentence.last_result.is_empty() {
             let mut context: Vec<PhraseToken> = Vec::with_capacity(self.sentence.last_result.len());
             let mut train_next = false;
             for span in &self.sentence.last_result {
