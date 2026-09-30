@@ -440,12 +440,14 @@ void exercise_iterators(pinyin_context_t *context) {
             gchar *phrase = nullptr;
             gchar *pinyin = nullptr;
             gint count = 0;
-            if (!pinyin_bigram_iterator_get_next_phrase(bigram_iter, &phrase, &pinyin,
-                                                        &count)) {
-                break;
-            }
+            const bool more = pinyin_bigram_iterator_get_next_phrase(
+                bigram_iter, &phrase, &pinyin, &count);
+            // The terminal row owns both outputs even though get_next is false.
             release_g_free("pinyin_bigram_iterator_get_next_phrase", "phrase", phrase);
             release_g_free("pinyin_bigram_iterator_get_next_phrase", "pinyin", pinyin);
+            if (!more) {
+                break;
+            }
         }
         gchar *phrase = kSentinel;
         gchar *pinyin = kSentinel;

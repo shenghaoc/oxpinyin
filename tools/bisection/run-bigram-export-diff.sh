@@ -64,8 +64,14 @@ run() {
 # false, and no row came back empty — an always-true get_next shows up as a
 # trailing "(null)" row the driver's loop fetched past the end.
 returns_law() {
-  awk -F'\tget=' '/^row \(null\)/{bad=1} /^row /{v[n++]=$2}
-    END{if(bad) exit 1; for(i=0;i<n;i++) if(v[i]!=(i<n-1?"true":"false")) exit 1}' "$1"
+  awk -F'\tget=' -v scenario="$2" '
+    /^train / && $0 !~ /: true$/ {bad=1}
+    /^row \(null\)/ {bad=1}
+    /^row / {v[n++]=$2}
+    END {
+      if (bad || (scenario != "empty" && n == 0)) exit 1;
+      for(i=0;i<n;i++) if(v[i]!=(i<n-1?"true":"false")) exit 1
+    }' "$1"
 }
 
 status=0
@@ -77,8 +83,13 @@ for scenario in empty one two many repeat; do
     echo "$scenario: FAIL (oxpinyin driver exited nonzero)"; status=1; continue
   fi
   law=ok
-  returns_law "$work/oracle-$scenario.log" || law="pin breaks the law"
-  returns_law "$work/oxpinyin-$scenario.log" || law="oxpinyin breaks the law"
+  returns_law "$work/oracle-$scenario.log" "$scenario" || law="pin breaks the law"
+  returns_law "$work/oxpinyin-$scenario.log" "$scenario" || law="oxpinyin breaks the law"
+  if [[ $law != ok ]]; then
+    echo "$scenario: DIVERGENCE (row 36: $law)"
+    [[ $status == 0 ]] && status=2
+    continue
+  fi
   if diff -u "$work/oracle-$scenario.log" "$work/oxpinyin-$scenario.log" >"$work/$scenario.diff"; then
     echo "$scenario: IDENTICAL ($(grep -c '^row ' "$work/oracle-$scenario.log") rows)"
     continue
