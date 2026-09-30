@@ -2059,11 +2059,6 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
     );
 }
 
-/// The train fallback's boundary: a row-0 choose constrains nothing
-/// (upstream-faithful), so the record — not the result — carries the
-/// training; a result that sits on a forcing takes the constrained
-/// walk instead (the test above). This pins the trigger, not just the
-/// outcome: taking the constrained path here would observe nothing.
 /// Review regression: a rank-greater-than-zero row choose on a FRESH
 /// composition records its forcing. The row branch once called
 /// `diff_result` on a store that was never sized — `add` refused every
@@ -2142,7 +2137,7 @@ fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
 }
 
 #[test]
-fn a_row_zero_choose_trains_through_the_record() {
+fn a_row_zero_choose_trains_nothing_even_with_recorded_tokens() {
     let mut session = trellis_session();
     for character in "nihao".chars() {
         session
@@ -2174,13 +2169,9 @@ fn a_row_zero_choose_trains_through_the_record() {
         observed: Vec::new(),
     };
     session.train(&mut recorder).expect("train cannot fail");
-    assert_eq!(
-        recorder.observed,
-        vec![
-            (Vec::new(), PhraseToken::new(1)),
-            (vec![PhraseToken::new(1)], PhraseToken::new(2)),
-        ],
-        "the record walked — the forcing-less result trained nothing by itself"
+    assert!(
+        recorder.observed.is_empty(),
+        "a result without OneStep trains nothing"
     );
 }
 

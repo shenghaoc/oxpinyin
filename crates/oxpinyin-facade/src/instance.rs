@@ -266,6 +266,10 @@ impl InstanceCore {
         if self.session.selected_tokens().is_empty() && !self.session.sentence_lookup_active() {
             return false;
         }
+        // 074a2219 pinyin.cpp:2681 / zhuyin.cpp:1707: a valid train
+        // marks the context modified even when train_result3 observes no
+        // phrase (a constraint-free n-best choose). Save must still run.
+        user.mark_modified();
         self.session.train(user).is_ok()
     }
 }

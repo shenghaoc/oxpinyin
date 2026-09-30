@@ -112,6 +112,10 @@ typedef bool (*fn_getc)(instance_t *, guint, candidate_t **);
 typedef bool (*fn_gettype)(instance_t *, candidate_t *, int *);
 typedef bool (*fn_getstr)(instance_t *, candidate_t *, const gchar **);
 typedef int (*fn_choose)(instance_t *, size_t, candidate_t *);
+typedef bool (*fn_save)(context_t *);
+typedef bool (*fn_pinyin_train)(instance_t *, uint8_t);
+typedef bool (*fn_zhuyin_train)(instance_t *);
+typedef bool (*fn_getnbest)(instance_t *, candidate_t *, uint8_t *);
 typedef import_iterator_t *(*fn_begin_add)(context_t *, uint8_t);
 typedef bool (*fn_add_phrase)(import_iterator_t *, const char *, const char *, gint);
 typedef void (*fn_end_add)(import_iterator_t *);
@@ -134,6 +138,10 @@ static struct {
     fn_gettype gettype;
     fn_getstr getstr;
     fn_choose choose;
+    fn_save save;
+    fn_pinyin_train pinyin_train;
+    fn_zhuyin_train zhuyin_train;
+    fn_getnbest getnbest;
     fn_begin_add begin_add;
     fn_add_phrase add_phrase;
     fn_end_add end_add;
@@ -488,15 +496,19 @@ static void load_syms(void) {
     s.gettype = (fn_gettype)must_prefixed("get_candidate_type");
     s.getstr = (fn_getstr)must_prefixed("get_candidate_string");
     s.choose = (fn_choose)must_prefixed("choose_candidate");
+    s.save = (fn_save)must_prefixed("save");
     s.begin_add = (fn_begin_add)must_prefixed("begin_add_phrases");
     s.add_phrase = (fn_add_phrase)must_prefixed("iterator_add_phrase");
     s.end_add = (fn_end_add)must_prefixed("end_add_phrases");
     if (zhuyin) {
+        s.zhuyin_train = (fn_zhuyin_train)must("zhuyin_train");
         s.parse = (fn_parse)must("zhuyin_parse_more_chewings");
         s.zhuyin_get_sentence = (fn_zhuyin_get_sentence)must("zhuyin_get_sentence");
         s.zhuyin_guess_cands =
             (fn_zhuyin_guess_cands)must("zhuyin_guess_candidates_after_cursor");
     } else {
+        s.pinyin_train = (fn_pinyin_train)must("pinyin_train");
+        s.getnbest = (fn_getnbest)must("pinyin_get_candidate_nbest_index");
         s.parse = (fn_parse)must("pinyin_parse_more_full_pinyins");
         s.pinyin_get_sentence = (fn_pinyin_get_sentence)must("pinyin_get_sentence");
         s.pinyin_guess_cands = (fn_pinyin_guess_cands)must("pinyin_guess_candidates");
@@ -504,6 +516,79 @@ static void load_syms(void) {
     s.g_free = (fn_g_free)dlsym(RTLD_DEFAULT, "g_free");
     if (!s.g_free)
         s.g_free = (fn_g_free)must("g_free");
+}
+
+/* Lane I (#603 / #527): every offered n-best row is chosen on its own
+ * fresh context, re-guessed, trained and saved. Pinyin diffs against row
+ * zero (074a2219 pinyin.cpp:2515-2520); zhuyin BEST_MATCH adds no
+ * constraint at all (zhuyin.cpp:1643-1644). The runner dumps the saved
+ * bigram DB and compares the binary unigram logs, avoiding the export
+ * iterator's independently audited traversal defects. */
+static int train_rows(const char *systemdir, const char *root, const char *input,
+                      int fixture) {
+    for (int ordinal = 1; ; ++ordinal) {
+        struct session ss;
+        guint options = zhuyin ? ZHUYIN_OPTIONS : PINYIN_USE_TONE;
+        if (!open_session(&ss, systemdir, options, false))
+            return 1;
+        if (fixture == 3) {
+            import_iterator_t *it = s.begin_add(ss.ctx, USER_DICTIONARY);
+            bool added = it && s.add_phrase(it, "测测", "cece", 5);
+            if (it)
+                s.end_add(it);
+            if (!added) {
+                close_session(&ss);
+                return 1;
+            }
+        }
+        if (s.parse(ss.inst, input) != strlen(input) ||
+            !s.guess_sentence(ss.inst) || !guess_cands(ss.inst, 0, 0x1e)) {
+            close_session(&ss);
+            return 1;
+        }
+        int row = nth_of_type(ss.inst, NBEST_MATCH_CANDIDATE, ordinal);
+        if (row < 0) {
+            close_session(&ss);
+            if (ordinal == 1) {
+                fprintf(stderr, "no n-best candidate for %s\n", input);
+                return 1;
+            }
+            break;
+        }
+        printf("== T fixture=%d ordinal=%d input=%s\n", fixture, ordinal, input);
+        if (!zhuyin) {
+            candidate_t *candidate = NULL;
+            uint8_t rank = 255;
+            if (!s.getc(ss.inst, (guint)row, &candidate) || !candidate ||
+                !s.getnbest(ss.inst, candidate, &rank)) {
+                close_session(&ss);
+                return 1;
+            }
+            /* Coverage metadata, separate from the training-state log:
+             * #594 can give equal displayed rows different tail ranks.
+             * Keep each side's actual rank rather than assuming the list
+             * position is the n-best index. lishibakua covers 0,1,2. */
+            fprintf(stderr, "coverage fixture=%d ordinal=%d nbest-index=%u\n",
+                    fixture, ordinal, (unsigned)rank);
+        }
+        int cursor = choose_row(ss.inst, "nbest", row);
+        bool guessed = s.guess_sentence(ss.inst);
+        bool trained = zhuyin ? s.zhuyin_train(ss.inst) : s.pinyin_train(ss.inst, 0);
+        bool saved = s.save(ss.ctx);
+        printf("reguess=%s train=%s save=%s\n", yesno(guessed), yesno(trained),
+               yesno(saved));
+        s.free_inst(ss.inst);
+        s.fini(ss.ctx);
+        char dest[4096];
+        if (cursor < 0 || !guessed || !trained || !saved ||
+            snprintf(dest, sizeof(dest), "%s/%d-%d", root, fixture, ordinal) >=
+                (int)sizeof(dest) || rename(ss.userdir, dest) != 0) {
+            rm_rf(ss.userdir);
+            fprintf(stderr, "choose/train/save/snapshot failed\n");
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int main(int argc, char **argv) {
@@ -520,6 +605,16 @@ int main(int argc, char **argv) {
     load_syms();
     const char *systemdir = argv[3];
     setvbuf(stdout, NULL, _IOLBF, 0);
+
+    const char *train_root = getenv("CAND_ASSEMBLY_TRAIN_DIR");
+    if (train_root) {
+        const char *inputs[] = {"jintian", "nihao", "lishibakua", "cecenihao"};
+        const char *chewings[] = {"xu4g3", "su3cl3", "xu4g3184dj84"};
+        for (int i = 0; i < (zhuyin ? 3 : 4); ++i)
+            if (train_rows(systemdir, train_root, zhuyin ? chewings[i] : inputs[i], i))
+                return 1;
+        return 0;
+    }
 
     if (zhuyin) {
         /* Import state off only: libzhuyin's import reading parser

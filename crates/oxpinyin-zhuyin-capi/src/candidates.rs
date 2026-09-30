@@ -178,6 +178,14 @@ pub extern "C" fn zhuyin_choose_candidate(
     else {
         return -1;
     };
+    // 074a2219 zhuyin.cpp:1643-1644: every BEST_MATCH candidate returns
+    // the matrix tail without touching constraints or the selection
+    // record. Unlike pinyin.cpp:2515-2520, this facade does not diff the
+    // chosen row against result 0; zhuyin_train always walks result 0
+    // (zhuyin.cpp:1709-1713).
+    if inst.candidates[index].candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE {
+        return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
+    }
     let source_index = inst.candidates[index].source_index;
     // An after-cursor row's end in the window the caller saw — the pin's
     // `offset = m_end` (`zhuyin.cpp:1649-1654`). A choose behind the
