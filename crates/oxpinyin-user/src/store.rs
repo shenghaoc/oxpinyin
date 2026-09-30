@@ -1652,6 +1652,20 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
             has_user_data_in_write_txn(txn)
         })?;
+        // Commit succeeded: discard matched in-memory system payloads too.
+        // Dropping an original's override restores it; dropping an appended
+        // item removes its only payload. Do this before publishing the epoch.
+        {
+            let mut items = self
+                .inner
+                .system_items
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            items.retain(|&token, _| (token & mask) != value);
+            self.inner
+                .has_system_items
+                .store(!items.is_empty(), Ordering::Relaxed);
+        }
         self.mark_committed_phrase_write(db, has_user_data);
         // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`).
         self.mirror_mask_out(mask, value)?;

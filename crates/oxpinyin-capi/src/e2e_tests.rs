@@ -2007,3 +2007,46 @@ mod chewing_batch_force_tone {
         crate::context::pinyin_fini(context);
     }
 }
+
+#[test]
+fn masking_system_imports_restores_originals_and_removes_appended_items() {
+    let user_dir = TempUserDir::new("mask-system-imports");
+    let dir = user_dir.path.to_str().expect("UTF-8 path");
+    let (context, instance) = open(dir);
+    let export = pinyin_begin_get_phrases(context, 1);
+    let original = drain_phrases(export);
+    pinyin_end_get_phrases(export);
+    assert!(!original.is_empty());
+    let import = pinyin_begin_add_phrases(context, 1);
+    assert!(pinyin_iterator_add_phrase(
+        import,
+        cstr(&original[0].0).as_ptr(),
+        cstr(&original[0].1).as_ptr(),
+        5
+    ));
+    assert!(pinyin_iterator_add_phrase(
+        import,
+        cstr("你你你").as_ptr(),
+        cstr("ni'ni'ni").as_ptr(),
+        5
+    ));
+    pinyin_end_add_phrases(import);
+    let export = pinyin_begin_get_phrases(context, 1);
+    let modified = drain_phrases(export);
+    pinyin_end_get_phrases(export);
+    assert_ne!(modified, original);
+    assert!(modified.iter().any(|row| row.0 == "你你你"));
+    assert!(crate::config::pinyin_mask_out(context, 0, 0));
+    let export = pinyin_begin_get_phrases(context, 1);
+    assert_eq!(drain_phrases(export), original);
+    pinyin_end_get_phrases(export);
+    assert!(pinyin_save(context));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+    let (context, instance) = open(dir);
+    let export = pinyin_begin_get_phrases(context, 1);
+    assert_eq!(drain_phrases(export), original);
+    pinyin_end_get_phrases(export);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
