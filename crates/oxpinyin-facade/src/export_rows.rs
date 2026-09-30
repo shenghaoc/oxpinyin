@@ -125,14 +125,14 @@ impl ContextCore {
                 if let Some(runtime) = self.runtime.as_ref() {
                     let dict = runtime.dict();
                     let base = u32::from(index) << 24;
-                    if dict.library_visible(u32::from(index)) {
-                        if let Some(library) = dict.system().libraries().library(base) {
-                            let range = library.token_range();
-                            cursor.next_token = base | range.start;
-                            cursor.end_token = base | range.end;
-                            cursor.system = Some(dict);
-                            cursor.probe();
-                        }
+                    if dict.library_visible(u32::from(index))
+                        && let Some(library) = dict.system().libraries().library(base)
+                    {
+                        let range = library.token_range();
+                        cursor.next_token = base | range.start;
+                        cursor.end_token = base | range.end;
+                        cursor.system = Some(dict);
+                        cursor.probe();
                     }
                 }
             }
