@@ -27,7 +27,6 @@ pub use oxpinyin_facade::ExportedBigramRow;
 pub use oxpinyin_facade::InstanceCore;
 use oxpinyin_facade::{ContextCore, OpenFailure};
 pub use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
-use oxpinyin_user::ExportedPhrase;
 
 use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, PinyinContext, PinyinInstance};
 
@@ -139,12 +138,6 @@ impl CapiContext {
             .runtime
             .as_ref()
             .is_some_and(|runtime| runtime.unload_system_addon(index))
-    }
-
-    /// §9 phrase-export materialization, shared with the zhuyin facade
-    /// and the standalone migration tool: [`ContextCore::export_phrases`].
-    pub(crate) fn export_phrases(&self, index: u32) -> Option<Vec<ExportedPhrase>> {
-        self.core.export_phrases(index)
     }
 
     /// §9 bigram-export renderability, shared: [`ContextCore::
