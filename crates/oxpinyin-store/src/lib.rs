@@ -577,11 +577,6 @@ pub trait RawReadStore: ReadStore {
     }
 }
 
-/// One raw record, key then value, as a container walk yields it (the
-/// backends whose user bigram container is copied record by record).
-#[cfg(any(feature = "bdb", feature = "tkrzw"))]
-pub(crate) type RawRecord = (Vec<u8>, Vec<u8>);
-
 /// libpinyin's user bigram container as the pin holds it between
 /// `pinyin_init` and `pinyin_fini`: `Bigram::m_db` after `load_db` — an
 /// **in-memory** container of the backend's own type, filled from
