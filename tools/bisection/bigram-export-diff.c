@@ -67,7 +67,7 @@ static const char *const *scenario(const char *name) {
     static const char *const two[] = {"nihao:你,好", "woai:我,爱", NULL};
     static const char *const many[] = {
         "nihao:你,好", "woai:我,爱", "tahen:他,很", "nihaoshijie:你好,世界",
-        "zhongguorenmin:中国,人民", "woaibeijing:我,爱,北京", "jintian:今天",
+        "zhongguorenmin:中国,人民", "woaibeijing:我,爱,北京", "jintian:今,天",
         "wohenhao:我,很,好", NULL,
     };
     static const char *const repeat[] = {
