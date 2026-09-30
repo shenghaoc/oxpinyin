@@ -315,3 +315,30 @@ fn gbk_visibility_changes_the_key_cost_table() {
         "reload must restore the original key costs"
     );
 }
+
+#[test]
+fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
+    let dict = runtime.dict();
+    let library = dict
+        .system()
+        .libraries()
+        .library(0x0100_0000)
+        .expect("library 1");
+    let tokens: Vec<_> = library
+        .token_range()
+        .map(|local| 0x0100_0000 | local)
+        .filter(|&token| dict.system_unigram_count(token).is_some())
+        .take(2)
+        .collect();
+    assert_eq!(tokens.len(), 2);
+    let remaining = u32::MAX - library.total_freq();
+    assert!(dict.add_unigram_delta(tokens[0], u64::from(remaining)));
+    assert_eq!(dict.unigram_delta(tokens[0]), Some(u64::from(remaining)));
+    assert!(!dict.add_unigram_delta(tokens[1], 1));
+    assert_eq!(dict.unigram_delta(tokens[1]), None);
+    assert!(!dict.add_unigram_delta(tokens[0], 1));
+    assert_eq!(dict.unigram_delta(tokens[0]), Some(u64::from(remaining)));
+    assert_eq!(dict.unigram_total_delta(), u64::from(remaining) + 2);
+    assert!(dict.add_unigram_delta(tokens[1], 0));
+}
