@@ -129,6 +129,10 @@ int main(int argc, char **argv) {
         return 1;
     }
     inst_t *instance = alloc(ctx);
+    if (!instance) {
+        fini(ctx);
+        return 1;
+    }
 
     for (const char *const *entry = scenario(argv[3]); *entry; ++entry) {
         char buffer[256];
@@ -136,7 +140,12 @@ int main(int argc, char **argv) {
         char *words = strchr(buffer, ':');
         *words++ = '\0';
         reset(instance);
-        parse(instance, buffer);
+        if (parse(instance, buffer) != strlen(buffer)) {
+            fprintf(stderr, "parse failed: %s\n", buffer);
+            free_instance(instance);
+            fini(ctx);
+            return 1;
+        }
         guess_sentence(instance);
         size_t offset = 0;
         bool ok = true;
@@ -159,12 +168,21 @@ int main(int argc, char **argv) {
             offset = ok ? (size_t)next : offset;
             guess_sentence(instance);
         }
-        printf("train %s: %s\n", *entry, ok && train(instance, 0) ? "true" : "false");
+        bool trained = ok && train(instance, 0);
+        printf("train %s: %s\n", *entry, trained ? "true" : "false");
+        if (!trained) {
+            free_instance(instance);
+            fini(ctx);
+            return 1;
+        }
     }
 
     iter_t *iter = begin(ctx);
     if (!iter) {
         printf("begin: NULL\n");
+        free_instance(instance);
+        fini(ctx);
+        return 1;
     } else {
         bool more = has_next(iter);
         printf("has_next0 %s\n", more ? "true" : "false");
