@@ -451,13 +451,20 @@ int main(int argc, char **argv) {
             }
         }
 
-        /* The five lookup surfaces, each rebuilding the list and dumping it
-         * in full: after(0), after(consumed), before(0), before(3) (a key
+        /* The lookup surfaces, each rebuilding the list and dumping it in
+         * full: after(0), after(consumed), before(0), before(3) (a key
          * boundary mid-composition; skipped when consumed < 3 so the
          * oracle's out-of-range matrix read is never poked), and
-         * before(consumed). A guess rebuilds the instance's list wholesale
-         * on both sides (upstream too), so the shared up-front
-         * guess_sentence keeps the sequence symmetric. */
+         * before(consumed); then the mid-key offsets 1 and 2 of both
+         * families (#577: inside a three-key syllable, where the pin's
+         * matrix column is empty and the list is the sentence rows alone;
+         * on a shorter input they coincide with a key boundary or the
+         * terminal offset, which both sides already answer alike). Every
+         * offset is at most `consumed`, inside the pin's matrix, so
+         * `_check_offset` (zhuyin.cpp:1441-1458) has a column to read.
+         * A guess rebuilds the instance's list wholesale on both sides
+         * (upstream too), so the shared up-front guess_sentence keeps the
+         * sequence symmetric. */
         const struct lookup_spec {
             bool before;
             size_t offset;
@@ -468,6 +475,10 @@ int main(int argc, char **argv) {
             {true, 0, "before(0)"},
             {true, 3, "before(3)"},
             {true, consumed, "before(consumed)"},
+            {false, 1, "after(1)"},
+            {false, 2, "after(2)"},
+            {true, 1, "before(1)"},
+            {true, 2, "before(2)"},
         };
         for (size_t l = 0; l < sizeof(lookups) / sizeof(lookups[0]); l++) {
             if (lookups[l].offset > consumed)

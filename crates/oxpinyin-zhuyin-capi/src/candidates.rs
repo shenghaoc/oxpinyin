@@ -281,13 +281,16 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
 /// the session-coordinate origin the window's rows are measured from (the
 /// lookup offset, the composition offset, or
 /// [`oxpinyin_facade::BEFORE_CURSOR_ANCHOR`]), so each row's absolute span
-/// start is `anchor + span_start()`.
+/// start is `anchor + span_start()`. `sentence_rows_only` keeps the
+/// sentence rows and nothing else — the after-cursor window at a mid-key
+/// offset, where the pin's matrix column is empty (issue #577).
 pub fn snapshot_candidates(
     inst: &mut CapiInstance,
     window: &oxpinyin_engine::CandidateList,
     before_cursor: bool,
     before_end: Option<usize>,
     anchor: usize,
+    sentence_rows_only: bool,
 ) {
     let normal_type = if before_cursor {
         lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR
@@ -300,6 +303,9 @@ pub fn snapshot_candidates(
             // BEST_MATCH row stays at the head.
         }
         if cand.kind() == CandidateKind::Fallback {
+            continue;
+        }
+        if sentence_rows_only && cand.kind() != CandidateKind::Sentence {
             continue;
         }
         let Ok(text) = std::ffi::CString::new(cand.text().as_bytes()) else {
