@@ -98,15 +98,20 @@ impl UserLookup {
             entries.dedup_by_key(|entry| entry.token().value());
         }
         for bucket in by_initial.values_mut() {
-            // Order matches `exact`'s per-bucket sort: token ascending.
-            // Ties on token break on the stored pinyin, so a store with
-            // two pronunciations of one phrase keeps a deterministic
-            // order.
+            // The pin's user index chunk is ordered by the stored key —
+            // `phrase_exact_less_than2`, initials first, then middle and
+            // final per syllable, then tones — and only then by token
+            // (`add_index`, `chewing_large_table2.h:208-230`); an
+            // incomplete query's bucket spans several stored keys, and
+            // `_append_items` lays the hits down in that chunk order, so
+            // comparator ties keep it (issue #536: the network
+            // dictionary's `𬪩 nong` listed before its `ni` entries on the
+            // pin, after them here). A same-key tie is token-ascending, and
+            // two pronunciations of one phrase keep the stored-pinyin order.
             bucket.sort_by(|left, right| {
-                left.1
-                    .token()
-                    .value()
-                    .cmp(&right.1.token().value())
+                stored_key_order(&left.0)
+                    .cmp(&stored_key_order(&right.0))
+                    .then_with(|| left.1.token().value().cmp(&right.1.token().value()))
                     .then_with(|| left.0.cmp(&right.0))
             });
             bucket.dedup_by(|left, right| {
@@ -387,6 +392,27 @@ fn initial_key(syllables: &[SyllableKey]) -> String {
         syllables
             .iter()
             .map(|syllable| syllable_initial(syllable.text()).unwrap_or("0")),
+    )
+}
+
+/// The pin's `pinyin_exact_compare2` order of a stored `'`-joined pinyin
+/// (`pinyin_phrase3.h:33-65` at 074a2219): every syllable's initial, then
+/// every syllable's `(middle, final)`, then every tone — the user store's
+/// readings carry no tone here, so that run is all zero. A syllable the
+/// table does not know sorts after every known one.
+fn stored_key_order(pinyin: &str) -> (Vec<u8>, Vec<(u8, u8)>, Vec<u8>) {
+    let keys: Vec<oxpinyin_core::ChewingKey> = pinyin
+        .split('\'')
+        .map(|syllable| {
+            oxpinyin_core::ChewingKey::from_pinyin(syllable).unwrap_or(
+                oxpinyin_core::ChewingKey::new(u8::MAX, u8::MAX, u8::MAX, u8::MAX),
+            )
+        })
+        .collect();
+    (
+        keys.iter().map(|key| key.initial).collect(),
+        keys.iter().map(|key| (key.middle, key.final_)).collect(),
+        keys.iter().map(|key| key.tone).collect(),
     )
 }
 
