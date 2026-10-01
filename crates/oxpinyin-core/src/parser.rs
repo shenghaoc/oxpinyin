@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use crate::options::{FORCE_TONE, USE_TONE};
+use crate::options::{FORCE_TONE, PINYIN_INCOMPLETE, USE_TONE};
 use crate::{CHEWING_ZERO_TONE, ChewingKey};
 use crate::{FULL_PINYIN_SYLLABLES, InputParser, MAX_SYLLABLE_LEN, OptionBits, SyllableKey};
 
@@ -136,6 +136,15 @@ impl FullPinyinParser {
         }
         let text = core::str::from_utf8(core).ok()?;
         let syllable = SyllableKey::from_option_text(text, bits)?;
+        // `check_pinyin_options` (`pinyin_parser2.cpp:38-58` at 074a2219):
+        // an index row flagged `PINYIN_INCOMPLETE` — an initial-only
+        // spelling — answers `false` unless the option word carries the
+        // bit (issue #547: `b`, `zh`, `m` under 0x0 or 0x20).
+        if syllable.completeness() == crate::Completeness::Partial
+            && !bits.contains(PINYIN_INCOMPLETE)
+        {
+            return None;
+        }
         let mut key = ChewingKey::from_pinyin(syllable.text())?;
         key.tone = tone;
         Some(key)
@@ -549,7 +558,7 @@ mod tests {
         Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
     };
     use crate::ChewingKey;
-    use crate::options::{FORCE_TONE, PINYIN_CORRECT_GN_NG, USE_TONE};
+    use crate::options::{FORCE_TONE, PINYIN_CORRECT_GN_NG, PINYIN_INCOMPLETE, USE_TONE};
     use crate::{FULL_PINYIN_SYLLABLES, InputParser};
 
     /// `FullPinyinParser2::parse_one_key`: the whole stripped input is
@@ -600,11 +609,23 @@ mod tests {
         // `6` is not a tone: the digit stays in the core and fails it.
         assert_eq!(parser.parse_one_key(USE_TONE, b"zai6"), None);
 
-        // Initial-only keys parse under PINYIN_INCOMPLETE-adjacent
-        // exactness: they are real inventory keys.
-        let b = parser.parse_one_key(0, b"b").expect("initial-only");
+        // Initial-only keys are index rows flagged PINYIN_INCOMPLETE:
+        // `check_pinyin_options` refuses them unless the option word
+        // carries the bit (`pinyin_parser2.cpp:42-46`), so `b` parses
+        // under PINYIN_INCOMPLETE and under nothing else (#547).
+        assert_eq!(parser.parse_one_key(0, b"b"), None);
+        assert_eq!(parser.parse_one_key(USE_TONE, b"b1"), None);
+        let b = parser
+            .parse_one_key(PINYIN_INCOMPLETE, b"b")
+            .expect("initial-only under PINYIN_INCOMPLETE");
         assert_eq!(b.pinyin_string(), "b");
         assert_eq!(b.yunmu_string(), "");
+        assert_eq!(
+            parser
+                .parse_one_key(PINYIN_INCOMPLETE, b"zh")
+                .map(|k| k.to_packed()),
+            Some(0x0017)
+        );
 
         // Correction aliases resolve through the option gate.
         let ang = parser

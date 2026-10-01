@@ -123,6 +123,43 @@ pub fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
     (text, segments)
 }
 
+/// `FullPinyinParser2::parse_one_key` (`pinyin_parser2.cpp:164-214` at
+/// 074a2219) over a scheme index: an apostrophe is the assert shape the
+/// no-abort policy renders as `None`; under `USE_TONE` a trailing `1..5`
+/// is the tone, which `FORCE_TONE` then requires; the remaining spelling
+/// must be one row of the index exactly, and the key is the row's
+/// canonical syllable with that tone.
+fn parse_one_scheme_key(
+    options: u32,
+    input: &[u8],
+    index: &[(&'static str, &'static str)],
+) -> Option<ChewingKey> {
+    if input.contains(&b'\'') {
+        return None;
+    }
+    let use_tone = options & USE_TONE != 0;
+    let force_tone = options & oxpinyin_core::FORCE_TONE != 0;
+    let mut tone = oxpinyin_core::CHEWING_ZERO_TONE;
+    let mut spelling = input;
+    if use_tone {
+        if let Some((&last, rest)) = input.split_last()
+            && (b'1'..=b'5').contains(&last)
+        {
+            tone = last - b'0';
+            spelling = rest;
+        }
+        if force_tone && tone == oxpinyin_core::CHEWING_ZERO_TONE {
+            return None;
+        }
+    }
+    let spelling = core::str::from_utf8(spelling).ok()?;
+    let position = index.partition_point(|row| row.0 < spelling);
+    let canonical = index.get(position).filter(|row| row.0 == spelling)?.1;
+    let mut key = ChewingKey::from_pinyin(canonical)?;
+    key.tone = tone;
+    Some(key)
+}
+
 impl InstanceCore {
     /// The full-pinyin batch seam — the `parse_more_full_pinyins` law
     /// both facades implement identically: continue or restart the
@@ -274,6 +311,17 @@ impl InstanceCore {
         let mut options = self.options().bits();
         if mask_corrections {
             options &= !PINYIN_CORRECT_ALL;
+        }
+        // The probe runs on the context's live full-pinyin parser, whose
+        // index `pinyin_set_full_pinyin_scheme` swaps
+        // (`FullPinyinParser2::set_scheme`, `pinyin_parser2.cpp:383-401`
+        // at 074a2219): under LUOMA / SECONDARY_ZHUYIN the spelling is
+        // looked up in that scheme's table — plain rows, no option gating
+        // — and the key is the canonical syllable's (issue #547).
+        if let Some(scheme) = full_scheme(self.live.full_scheme.load(Ordering::Relaxed))
+            && let Some(index) = scheme.index()
+        {
+            return parse_one_scheme_key(options, text.as_bytes(), index);
         }
         FullPinyinParser.parse_one_key(options, text.as_bytes())
     }
