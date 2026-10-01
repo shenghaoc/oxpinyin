@@ -57,6 +57,8 @@ pub trait UserModel {
 }
 ```
 
+2026-10-01: #615 adds defaulted `UserModel::observe_with_keys(history, token, readings)`, delegating to `observe`; its lazy tone-bearing readings preserve the trained matrix span and path multiplicity (human approval, 2026-10-01).
+
 `score` is read-only. `observe` is the explicit learning boundary; callers can
 omit it entirely in learning-off modes. Neither method may depend on hidden
 process-global state.

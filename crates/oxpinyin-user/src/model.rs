@@ -41,6 +41,17 @@ impl UserModel for UserStore {
         self.observe_selection(last, token.value())?;
         Ok(())
     }
+
+    fn observe_with_keys(
+        &mut self,
+        history: &[Self::Token],
+        token: &Self::Token,
+        readings: &mut dyn Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
+    ) -> Result<(), Self::Error> {
+        let last = history.last().map_or(SENTENCE_START, |t| t.value());
+        let seed = self.observe_selection(last, token.value())?;
+        self.train_pronunciations(token.value(), readings, seed)
+    }
 }
 
 #[cfg(test)]

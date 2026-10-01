@@ -411,6 +411,24 @@ pub trait UserModel {
     ///
     /// Returns [`Self::Error`] when the model backend cannot record the observation.
     fn observe(&mut self, history: &[Self::Token], token: &Self::Token) -> Result<(), Self::Error>;
+
+    /// Records a trained token and the tone-bearing readings of its matrix span.
+    ///
+    /// Readings retain matrix order and multiplicity; each has the phrase's
+    /// syllable length. The default preserves existing implementors by
+    /// delegating to [`Self::observe`]. Learning-off callers omit this call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the observation cannot be recorded.
+    fn observe_with_keys(
+        &mut self,
+        history: &[Self::Token],
+        token: &Self::Token,
+        _readings: &mut dyn Iterator<Item = Vec<ChewingKey>>,
+    ) -> Result<(), Self::Error> {
+        self.observe(history, token)
+    }
 }
 
 /// One `prev → *` bigram row with the user overlay already merged — the
