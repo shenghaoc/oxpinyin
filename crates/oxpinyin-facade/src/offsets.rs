@@ -44,6 +44,24 @@ pub fn zhuyin_original_offset(parse: &ZhuyinParse, offset: usize) -> usize {
     parse.consumed()
 }
 
+/// Whether an original zhuyin lookup offset falls strictly inside a
+/// parsed key — not at any key's start and not at the terminal offset.
+///
+/// The pin's matrix holds keys only at the columns their key rests
+/// begin on (`fill_matrix` appends each key at `m_raw_begin`,
+/// `phonetic_key_matrix.cpp:52-56` at 074a2219; `fuzzy_syllable_step`
+/// adds alternatives on those same columns), so an after-cursor lookup
+/// at a mid-key column searches an empty column: every `search_matrix`
+/// answers `SEARCH_NONE`, no item is appended, and the list is the
+/// prepended sentence rows alone (`zhuyin.cpp:1498-1512`, `:1624-1626`).
+/// The after-cursor facade path asks this before snapping the offset to
+/// the key's column (issue #577); the before-cursor builder already
+/// answers nothing for a span ending mid-key.
+#[must_use]
+pub fn zhuyin_offset_is_mid_key(parse: &ZhuyinParse, offset: usize) -> bool {
+    offset < parse.consumed() && !parse.keys().iter().any(|item| item.start() == offset)
+}
+
 /// Maps a session-coordinate span START back to original zhuyin input
 /// coordinates — [`zhuyin_original_offset`]'s sibling for `m_begin`.
 ///
@@ -229,6 +247,20 @@ mod tests {
         assert_eq!(zhuyin_original_offset(&parse, 6), 6);
         // Beyond the joined buffer: the parse's consumed length.
         assert_eq!(zhuyin_original_offset(&parse, 40), 6);
+    }
+
+    #[test]
+    fn zhuyin_mid_key_offsets_are_the_ones_no_key_starts_on() {
+        let parse = nihao();
+        // Key starts and the terminal offset are not mid-key.
+        assert!(!zhuyin_offset_is_mid_key(&parse, 0));
+        assert!(!zhuyin_offset_is_mid_key(&parse, 3));
+        assert!(!zhuyin_offset_is_mid_key(&parse, 6));
+        assert!(!zhuyin_offset_is_mid_key(&parse, 40));
+        // Inside `su3` and inside `cl3`.
+        for offset in [1, 2, 4, 5] {
+            assert!(zhuyin_offset_is_mid_key(&parse, offset), "offset {offset}");
+        }
     }
 
     #[test]

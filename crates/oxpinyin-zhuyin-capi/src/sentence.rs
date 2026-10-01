@@ -247,6 +247,19 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     } else {
         normalized
     };
+    // An after-cursor lookup strictly inside a key: the pin's matrix column
+    // there is empty (keys sit on their key rests' `m_raw_begin` only), so
+    // every `search_matrix` answers nothing and the list is the prepended
+    // sentence rows alone (`zhuyin.cpp:1498-1512`, `:1624-1626`). The
+    // mapped column is the containing key's, which would answer that key's
+    // window instead (issue #577); keep the window anchored there for a
+    // later choose, but snapshot only its sentence rows.
+    let sentence_rows_only = !before_cursor
+        && inst
+            .core
+            .zhuyin_parse
+            .as_ref()
+            .is_some_and(|parse| oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized));
     let window_owned: oxpinyin_engine::CandidateList = if before_cursor {
         let Ok(window) = inst.core.session.candidates_ending_at(session_offset) else {
             inst.core.anchored_window = None;
@@ -294,6 +307,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         before_cursor,
         before_end,
         anchor,
+        sentence_rows_only,
     );
     // The pin answers `true` for a valid lookup into a non-empty matrix
     // even when no candidate spans the offset (the empty-col-window
