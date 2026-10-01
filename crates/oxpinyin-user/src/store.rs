@@ -906,6 +906,80 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(seed)
     }
 
+    /// Pronunciation half of train_result3 (074a2219 phonetic_lookup.h:925-927).
+    pub(crate) fn train_pronunciations(
+        &mut self,
+        token: Token,
+        readings: &mut dyn Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
+        seed: u64,
+    ) -> Result<(), UserStoreError> {
+        use crate::store_libpinyin::{pinyin_keys_to_packed, pronunciation_matches};
+        let original = self
+            .inner
+            .libpinyin
+            .as_ref()
+            .and_then(|target| target.originals.get(&phrase_index_library_index(token)))
+            .and_then(|library| library.item(token & phrase::PHRASE_MASK));
+        let db = self.database();
+        db.write(|txn| {
+            // (row key, packed reading, running count, stored row value).
+            let mut rows: Vec<(Vec<u8>, Vec<u16>, u32, PronValue)> = Vec::new();
+            if let Some(item) = &original {
+                // A system item: the stored value is the delta over the
+                // original count, and an untouched reading has no row yet.
+                for (keys, frequency) in &item.prons {
+                    let key = codec::encode_token_bytes(token, &phrase::encode_keys(keys));
+                    let stored = match txn.get(PRONUNCIATION, &key)? {
+                        Some(bytes) => PronValue::decode(&bytes)?,
+                        None => PronValue {
+                            count: 0,
+                            seq: u32::MAX,
+                            indexed: false,
+                        },
+                    };
+                    rows.push((
+                        key,
+                        keys.clone(),
+                        frequency.wrapping_add(stored.count as u32),
+                        stored,
+                    ));
+                }
+            } else {
+                for row in collect_pronunciations_from_txn(txn, token)? {
+                    let Some(packed) = pinyin_keys_to_packed(&phrase::decode_keys(&row.key_bytes))
+                    else {
+                        continue;
+                    };
+                    let key = codec::encode_token_bytes(token, &row.key_bytes);
+                    rows.push((key, packed, row.value.count as u32, row.value));
+                }
+            }
+            for reading in readings {
+                let mut total = 0_u32;
+                for (key, packed, frequency, stored) in &mut rows {
+                    // 074a2219 phrase_index.cpp:122-139: accumulate each
+                    // current count before matching; retain partial updates
+                    // if the running total would overflow on this addition.
+                    total = total.wrapping_add(*frequency);
+                    if !pronunciation_matches(&reading, packed) {
+                        continue;
+                    }
+                    let delta = seed as u32;
+                    if delta > 0 && total > total.wrapping_add(delta) {
+                        break;
+                    }
+                    *frequency = frequency.wrapping_add(delta);
+                    total = total.wrapping_add(delta);
+                    stored.count = stored.count.wrapping_add(seed);
+                    txn.put(PRONUNCIATION, key, &stored.encode())?;
+                }
+            }
+            Ok(())
+        })?;
+        self.mark_committed_write(db, true);
+        Ok(())
+    }
+
     /// Record an accepted *predicted* candidate `cur` after `last` (the
     /// `pinyin_choose_predicted_candidate` path, §2). Returns the seed
     /// applied.

@@ -393,12 +393,34 @@ fn seed_txn(
             let Some(old) = original.item(slot) else {
                 continue;
             };
+            // Restore packed system-pronunciation deltas on reopen, so
+            // train/save does not erase earlier matched-reading updates.
+            let token = (u32::from(nibble) << 24) | slot;
+            for (keys, frequency) in &new_item.prons {
+                let base = old
+                    .prons
+                    .iter()
+                    .find(|(base, _)| base == keys)
+                    .map_or(0, |(_, frequency)| *frequency);
+                let delta = frequency.wrapping_sub(base);
+                if delta != 0 {
+                    let value = crate::store::PronValue {
+                        count: u64::from(delta),
+                        seq: u32::MAX,
+                        indexed: false,
+                    };
+                    txn.put(
+                        PRONUNCIATION,
+                        &codec::encode_token_bytes(token, &phrase::encode_keys(keys)),
+                        &value.encode(),
+                    )?;
+                }
+            }
             let base = old.unigram;
             let delta = u64::from(new_item.unigram.saturating_sub(base));
             if delta == 0 {
                 continue;
             }
-            let token = (u32::from(nibble) << 24) | slot;
             let key = codec::encode_token(token);
             let prev = crate::store::txn_get_u64_or(txn, UNIGRAM, &key, 0)?;
             txn.put(
@@ -475,8 +497,19 @@ pub fn export_state<S: WriteStore>(
         // syllable ids, the file format wants packed `ChewingKey`
         // words. A stored id outside the engine's inventory is skipped
         // (a corrupt row, never a panic).
-        let Some(packed) = pinyin_keys_to_packed(&phrase::decode_keys(key_bytes)) else {
-            return Ok(());
+        let keys = phrase::decode_keys(key_bytes);
+        let packed = if !phrase_text.contains_key(&token)
+            && originals.contains_key(&phrase_index_library_index(token))
+        {
+            // A system item's rows retain exact packed keys and their values
+            // are deltas; a phrase added to a system library (it has a phrase
+            // row) keeps the user store's dense syllable ids.
+            keys
+        } else {
+            let Some(packed) = pinyin_keys_to_packed(&keys) else {
+                return Ok(());
+            };
+            packed
         };
         pronunciations.entry(token).or_default().push((
             value.seq,
@@ -562,6 +595,15 @@ pub fn export_state<S: WriteStore>(
             continue;
         };
         let mut new_item = old.clone();
+        for (keys, frequency) in &mut new_item.prons {
+            if let Some(delta) = pronunciations
+                .get(token)
+                .and_then(|rows| rows.iter().find(|row| &row.1 == keys))
+                .map(|row| row.2)
+            {
+                *frequency = frequency.wrapping_add(delta as u32);
+            }
+        }
         new_item.unigram = old
             .unigram
             .saturating_add(u32::try_from(*delta).unwrap_or(u32::MAX));
@@ -597,6 +639,31 @@ pub fn export_state<S: WriteStore>(
             .and_then(|original| original.unigram(slot))
             .unwrap_or(0);
         item.unigram = base.wrapping_add(unigrams.get(&token).copied().unwrap_or(0) as u32);
+        // A payload carries the pronunciation counts it was saved with. For
+        // an item the library originally holds, the stored rows are deltas
+        // over the original counts (the loader writes them, training adds
+        // to them), so a reading with a row is rebuilt from the original
+        // count plus its delta. A phrase added to the library has no
+        // original: its payload is the authority, as for its unigram.
+        let original_item = originals
+            .get(&nibble)
+            .and_then(|original| original.item(slot));
+        if let Some(original_item) = original_item.as_ref() {
+            for (keys, frequency) in &mut item.prons {
+                let Some(row) = pronunciations
+                    .get(&token)
+                    .and_then(|rows| rows.iter().find(|row| &row.1 == keys))
+                else {
+                    continue;
+                };
+                let base_count = original_item
+                    .prons
+                    .iter()
+                    .find(|(original, _)| original == keys)
+                    .map_or(0, |(_, count)| *count);
+                *frequency = base_count.wrapping_add(u32::try_from(row.2).unwrap_or(u32::MAX));
+            }
+        }
         state
             .system_overrides
             .entry(nibble)
@@ -632,6 +699,20 @@ fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase::PinyinKey>
             phrase::toned_key(syllable.index(), key.tone)
         })
         .collect()
+}
+
+/// 074a2219 storage/pinyin_phrase3.h:68-147: initial equality,
+/// incomplete middle/final wildcard, and zero-tone wildcard on either side.
+pub(crate) fn pronunciation_matches(reading: &[oxpinyin_core::ChewingKey], packed: &[u16]) -> bool {
+    reading.len() == packed.len()
+        && reading.iter().zip(packed).all(|(query, bits)| {
+            let stored = oxpinyin_core::ChewingKey::from_packed(*bits);
+            query.initial == stored.initial
+                && ((query.middle == stored.middle && query.final_ == stored.final_)
+                    || (query.middle == 0 && query.final_ == 0)
+                    || (stored.middle == 0 && stored.final_ == 0))
+                && (query.tone == stored.tone || query.tone == 0 || stored.tone == 0)
+        })
 }
 
 /// The reverse: dense syllable ids, tone included, as packed `ChewingKey`
@@ -686,6 +767,66 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tmpdir");
         dir
+    }
+
+    #[test]
+    fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
+        use oxpinyin_core::{PhraseToken, UserModel};
+        let dir = tempdir("trained-prons");
+        let mut base = originals();
+        let item = base
+            .get_mut(&1)
+            .expect("library")
+            .items
+            .get_mut(&1)
+            .expect("item");
+        let key = ChewingKey::from_packed(item.prons[0].0[0]);
+        let other = ChewingKey::from_pinyin("jin").expect("key");
+        item.prons = vec![
+            (vec![key.with_tone(2).to_packed()], 100),
+            (vec![key.with_tone(3).to_packed()], 200),
+            (vec![other.to_packed()], 300),
+        ];
+        let token = PhraseToken::new(0x0100_0001);
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            let mut paths = vec![vec![key.with_tone(2)]].into_iter();
+            UserModel::observe_with_keys(&mut store, &[], &token, &mut paths).expect("train");
+            let state = export_state(&store, &base).expect("state");
+            assert_eq!(
+                state.system_overrides[&1][&1]
+                    .as_ref()
+                    .expect("item")
+                    .prons
+                    .iter()
+                    .map(|p| p.1)
+                    .collect::<Vec<_>>(),
+                [169, 200, 300]
+            );
+            assert!(store.save().expect("save"));
+        }
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
+                    .expect("reopen");
+            let mut paths = vec![vec![key.with_tone(0)], vec![key.with_tone(0)]].into_iter();
+            UserModel::observe_with_keys(&mut store, &[], &token, &mut paths).expect("retrain");
+            let state = export_state(&store, &base).expect("state");
+            assert_eq!(
+                state.system_overrides[&1][&1]
+                    .as_ref()
+                    .expect("item")
+                    .prons
+                    .iter()
+                    .map(|p| p.1)
+                    .collect::<Vec<_>>(),
+                [445, 476, 300]
+            );
+            assert!(store.save().expect("save"));
+        }
+        std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]

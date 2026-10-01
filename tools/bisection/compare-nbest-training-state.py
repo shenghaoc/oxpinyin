@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare Lane I's saved bigram records and unigram field bytes.
+"""Compare saved bigram records, pronunciation counts and complete item logs.
 
 DBM container headers/allocation differ; keys and values must match byte
 for byte. Dump tools read the same-backend user_bigram.db without routing
@@ -79,6 +79,41 @@ def unigram_fields(path):
     result = b"".join(sorted(fields))
     path.with_suffix(".unigrams").write_bytes(result)
     return result
+
+
+def pronunciation_fields(path):
+    """Decode every old/new pronunciation field; raw logs are checked too."""
+    payload = path.read_bytes()[8:]
+    offset, rows = 0, []
+    while offset < len(payload):
+        kind, token = struct.unpack_from("<II", payload, offset)
+        offset += 8
+        if kind == 4:
+            size, = struct.unpack_from("<H", payload, offset)
+            offset += 2 + 2 * size
+            continue
+        if kind == 3:
+            sizes = struct.unpack_from("<HH", payload, offset)
+            offset += 4
+        elif kind in (1, 2):
+            sizes = struct.unpack_from("<H", payload, offset)
+            offset += 2
+        else:
+            raise ValueError(f"unknown record: {path}")
+        for side, size in enumerate(sizes):
+            item = payload[offset:offset + size]
+            offset += size
+            length, count = item[:2]
+            at = 6 + 4 * length
+            for _ in range(count):
+                keys = item[at:at + 2 * length]
+                at += 2 * length
+                frequency = item[at:at + 4]
+                at += 4
+                rows.append((token & 0xFFFFFF, side, keys, frequency))
+            if at != len(item):
+                raise ValueError(f"invalid pronunciation payload: {path}")
+    return rows
 
 
 def bigrams(cell, profile):
@@ -177,7 +212,9 @@ def main():
                 (folder / "driver.err").read_text())}
             if ranks != {0, 1, 2}:
                 raise ValueError(f"n-best coverage must include 0,1,2: {folder}: {ranks}")
-        print("coverage: both pinyin sides chose indices 0,1,2")
+        if pin != ["0-1", "0-2", "1-1", "2-1", "2-2", "2-3", "3-1", "3-2"]:
+            raise ValueError(f"missing named pronunciation cases: {pin}")
+        print("coverage: both pinyin sides chose indices 0,1,2; all four nonzero cases present")
     elif args.facade == "zhuyin" and len(pin) != 3:
         raise ValueError("zhuyin's sole sentence row must be chosen on all three inputs")
     status = 0
@@ -188,6 +225,7 @@ def main():
         if not logs or logs != sorted(p.name for p in right.glob("*.dbin")):
             raise ValueError(f"missing unigram logs in {name}")
         changed = [f for f in logs if unigram_fields(left / f) != unigram_fields(right / f)]
+        pronunciation = [f for f in logs if pronunciation_fields(left / f) != pronunciation_fields(right / f)]
         full = [f for f in logs if (left / f).read_bytes() != (right / f).read_bytes()]
         # User-library chunks also carry unigram state. These cases never
         # train an imported phrase's pronunciation independently: require
@@ -211,10 +249,18 @@ def main():
                 exports.append(exported)
             if exports[0] != exports[1]:
                 changed.append("exported unigram API bytes")
-        same = a == b and not changed
+        same = a == b and not changed and not pronunciation and not full
         print(f"{name}: {'IDENTICAL' if same else 'DIVERGENT'} "
               f"bigram-records={len(a)}/{len(b)} unigram-diffs={changed} "
-              f"complete-log-diffs={full}")
+              f"pronunciation-diffs={pronunciation} complete-log-diffs={full}")
+        for filename in logs:
+            for folder, label in ((left, "pin"), (right, "ox")):
+                rows = pronunciation_fields(folder / filename)
+                if rows:
+                    print(f"  {label} {filename} pronunciations=" + repr([
+                        (hex(token), "old" if side == 0 else "new", keys.hex(),
+                         int.from_bytes(frequency, "little"))
+                        for token, side, keys, frequency in rows]))
         if not same:
             status = 2
     return status

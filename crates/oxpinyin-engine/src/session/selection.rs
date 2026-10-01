@@ -344,13 +344,43 @@ where
         // that gate. Only a model with no decoded spans uses the fixture
         // selection-history fallback below.
         if !self.sentence.last_result.is_empty() {
+            // A no-op needs no matrix rebuild: train_next starts false
+            // and only a OneStep can start training (pin :854-872).
+            if !self
+                .sentence
+                .last_result
+                .iter()
+                .any(|span| self.constraints.is_one_step_at(span.start))
+            {
+                return Ok(());
+            }
             let mut context: Vec<PhraseToken> = Vec::with_capacity(self.sentence.last_result.len());
             let mut train_next = false;
-            for span in &self.sentence.last_result {
+            let graph = self.build_graph_at(0, self.input.as_bytes())?;
+            let matrix =
+                build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+            for (index, span) in self.sentence.last_result.iter().enumerate() {
                 let forced = self.constraints.is_one_step_at(span.start);
                 if train_next || forced {
                     train_next = forced;
-                    user.observe(&context, &span.token)
+                    // 074a2219 phonetic_lookup.h:911-920 scans to the next
+                    // non-null result token, not the forced constraint end.
+                    let next = self
+                        .sentence
+                        .last_result
+                        .get(index + 1)
+                        .map_or(matrix.len().saturating_sub(1), |next| next.start);
+                    // :921 clamps the last span to constraints->length()-1;
+                    // :923-927 trains every matching path of this span.
+                    let end = next.min(matrix.len().saturating_sub(1));
+                    let mut readings = training_readings(
+                        &matrix,
+                        self.input.as_bytes(),
+                        span.start,
+                        end,
+                        span.text.chars().count(),
+                    );
+                    user.observe_with_keys(&context, &span.token, &mut readings)
                         .map_err(|error| EngineError::UserModel(error.to_string()))?;
                 }
                 context.push(span.token);
@@ -446,5 +476,136 @@ where
         text.push_str(&self.input.as_str()[self.record.consumed()..]);
         self.reset();
         Ok(text)
+    }
+}
+
+/// 074a2219 storage/phonetic_key_matrix.cpp:603-670: lazy depth-first
+/// traversal keeps only one path, like the pin's cached_keys. Matrix order
+/// and multiplicity survive; separator zero keys are folded into scan edges.
+fn training_readings<'a>(
+    matrix: &'a [Vec<ScanKey>],
+    input: &'a [u8],
+    start: usize,
+    end: usize,
+    length: usize,
+) -> TrainingReadings<'a> {
+    TrainingReadings {
+        matrix,
+        input,
+        end,
+        length,
+        frames: vec![(start, 0)],
+        keys: Vec::new(),
+        yielded: false,
+    }
+}
+
+struct TrainingReadings<'a> {
+    matrix: &'a [Vec<ScanKey>],
+    input: &'a [u8],
+    end: usize,
+    length: usize,
+    frames: Vec<(usize, usize)>,
+    keys: Vec<oxpinyin_core::ChewingKey>,
+    yielded: bool,
+}
+
+impl TrainingReadings<'_> {
+    fn backtrack(&mut self) {
+        self.frames.pop();
+        if !self.frames.is_empty() {
+            self.keys.pop();
+        }
+    }
+}
+
+impl Iterator for TrainingReadings<'_> {
+    type Item = Vec<oxpinyin_core::ChewingKey>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.yielded {
+            self.yielded = false;
+            self.backtrack();
+        }
+        while let Some(&(position, index)) = self.frames.last() {
+            // :607-621: exact span and phrase length only.
+            if position == self.end && self.keys.len() == self.length {
+                self.yielded = true;
+                return Some(self.keys.clone());
+            }
+            // 074a2219 phonetic_key_matrix.cpp:635-642: a zero key
+            // advances without adding a syllable, including a trailing
+            // separator after the last key. Other separator hops are
+            // already folded into the scan edge that follows them.
+            if position < self.end
+                && self.input.get(position) == Some(&b'\'')
+                && self.matrix.get(position).is_some_and(Vec::is_empty)
+            {
+                if let Some(frame) = self.frames.last_mut() {
+                    frame.0 += 1;
+                }
+                continue;
+            }
+            if position >= self.end || self.keys.len() >= self.length {
+                self.backtrack();
+                continue;
+            }
+            let Some(edge) = self
+                .matrix
+                .get(position)
+                .and_then(|column| column.get(index))
+            else {
+                self.backtrack();
+                continue;
+            };
+            if let Some(frame) = self.frames.last_mut() {
+                frame.1 += 1;
+            }
+            // :629-651: visit each matrix key in order, without deduping.
+            if edge.to <= position {
+                continue;
+            }
+            let Some(key) = oxpinyin_core::ChewingKey::from_pinyin(edge.key.text()) else {
+                continue;
+            };
+            self.keys.push(key.with_tone(edge.tone));
+            self.frames.push((edge.to, 0));
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod training_span_tests {
+    use super::*;
+
+    #[test]
+    fn readings_preserve_span_tones_order_and_multiplicity() {
+        let Some(key) = SyllableKey::from_text("jin") else {
+            panic!("inventory");
+        };
+        let edge = |from, to, tone| ScanKey {
+            key,
+            from,
+            to,
+            syllable_start: from,
+            crosses_separator: false,
+            tone,
+        };
+        let matrix = vec![
+            vec![edge(0, 1, 2), edge(0, 1, 3), edge(0, 2, 4)],
+            vec![edge(1, 2, 1)],
+            vec![],
+        ];
+        let readings: Vec<_> = training_readings(&matrix, b"xx", 0, 1, 1).collect();
+        assert_eq!(
+            readings.iter().map(|r| r[0].tone).collect::<Vec<_>>(),
+            [2, 3]
+        );
+        assert_eq!(training_readings(&matrix, b"xx", 0, 2, 2).count(), 2);
+        assert_eq!(training_readings(&matrix, b"xx", 0, 2, 1).count(), 1);
+        assert_eq!(training_readings(&matrix, b"xx", 2, 1, 1).count(), 0);
+        let trailing = vec![vec![edge(0, 1, 2)], vec![], vec![], vec![]];
+        assert_eq!(training_readings(&trailing, b"x''", 0, 3, 1).count(), 1);
+        assert_eq!(training_readings(&trailing, b"xxx", 0, 3, 1).count(), 0);
     }
 }
