@@ -221,8 +221,17 @@ int main(int argc, char **argv) {
         printf("train: alloc NULL\n");
         return 1;
     }
-    printf("train: %s\n", train_target(inst, zhuyin));
+    const char *trained = train_target(inst, zhuyin);
+    printf("train: %s\n", trained);
     probe("train");
+    /* The dirty-save step below only measures the pin's `mark_version` write
+     * (pinyin.cpp:1143, zhuyin.cpp:695) when the train set m_modified. Two
+     * matching "no-candidate" logs would otherwise pass without ever reaching
+     * it, so a train that did not succeed is a run failure, not a result. */
+    if (strcmp(trained, "ok") != 0) {
+        fprintf(stderr, "train did not set m_modified (%s); save-modified is not measured\n", trained);
+        return 1;
+    }
 
     adopt_environment();
     printf("save-modified: save %d\n", save(ctx));
