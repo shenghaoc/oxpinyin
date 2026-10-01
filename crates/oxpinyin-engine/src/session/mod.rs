@@ -317,27 +317,41 @@ fn append_scan_entries(
 
 /// Flushes one window's facade batch in the pin's array order.
 ///
-/// The oracle appends each window's search hits library by library, token
-/// by token (`_append_items`, `pinyin.cpp:1769-1791`), and its stable
+/// The oracle's `search_matrix` walks the window's key-paths depth-first
+/// (`phonetic_key_matrix.cpp:350-408` at 074a2219) and each path's table
+/// hit files its matching records into per-library range arrays in the
+/// order the index chunk stores them (`ChewingTableEntry::convert`,
+/// `chewing_large_table2.h:91-133`); `_append_items` then lays the
+/// window down library by library, each library's ranges in that
+/// encounter order (`pinyin.cpp:1769-1791`), and the stable
 /// `g_array_sort_with_data` keeps exactly that order for candidates whose
 /// three keys tie — the amplified-frequency collapses of
-/// `docs/testing/corpus-tail.md` Class A. The scan reaches the same
-/// tokens through several key-paths; sorting the batch by token and
-/// keeping the first of each reproduces the one-row-per-token array the
-/// pin sorts.
+/// `docs/testing/corpus-tail.md` Class A. A chunk is ordered by the
+/// stored key (`phrase_exact_less_than2`: initials, then middles and
+/// finals, then tones) and only then by token (`add_index`,
+/// `chewing_large_table2.h:208-230`), so a lookup that matches several
+/// stored keys — an incomplete syllable, or a tone-less query over a
+/// toned index — is **not** token-ascending across the block. This flush
+/// used to sort the batch by token, which reordered every such tie
+/// (issue #536: `n` under ibus listed 竜/黏 the other way round from the
+/// pin). The scan appends each path's records in chunk order already, so
+/// the pin's order is a stable sort by library nibble over the batch,
+/// keeping the first occurrence of a token reached through several
+/// key-paths — the duplicate the pin's string dedup drops later.
 fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
     batch.sort_by_key(|candidate| {
         candidate
             .token()
-            .map_or(u32::MAX, oxpinyin_core::PhraseToken::value)
+            .map_or(u32::MAX, |token| token.value() >> 24)
     });
-    let mut last: Option<u32> = None;
+    let mut seen: Vec<u32> = Vec::with_capacity(batch.len());
     for candidate in batch.drain(..) {
-        let token = candidate.token().map(oxpinyin_core::PhraseToken::value);
-        if token == last {
-            continue;
+        if let Some(token) = candidate.token().map(oxpinyin_core::PhraseToken::value) {
+            if seen.contains(&token) {
+                continue;
+            }
+            seen.push(token);
         }
-        last = token;
         into.push(candidate);
     }
 }

@@ -48,6 +48,7 @@ cd "$(dirname "$0")"
 default_drivers=(
   key-surface-diff
   key-parse-diff
+  tie-order-diff
   dict-surface-diff
   phrase-surface-diff
   pred-order-diff
