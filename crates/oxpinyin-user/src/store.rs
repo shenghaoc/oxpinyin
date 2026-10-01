@@ -607,7 +607,7 @@ pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
     /// Crate-visible handle assembly for the libpinyin constructor
-    /// ([`crate::store_libpinyin`]), which owns a scratch lease and arms
+    /// ([`crate::store_libpinyin`]), which runs in memory and arms
     /// the fini guard of the open that raised the counter.
     pub(crate) const fn from_parts(
         inner: Arc<StoreInner<S>>,
@@ -755,7 +755,6 @@ impl<S: WriteStore> GenericUserStore<S> {
             has_user_data: AtomicBool::new(has_user_data),
             libpinyin: None,
             bigram_db: None,
-            scratch_lease: None,
         }))
     }
 
@@ -1485,9 +1484,9 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(false);
         }
         // The libpinyin branch: export the session values and write the
-        // pin's whole file set (`.tmp` + rename). The scratch compaction
-        // below still runs — it keeps the session store tidy — but the
-        // durable write is the file set, not the scratch.
+        // pin's whole file set (`.tmp` + rename). The session store's
+        // compaction below still runs — it keeps the in-memory session
+        // tidy — but the durable write is the file set, not the session.
         if let Some(target) = self.inner.libpinyin.clone() {
             // Arc clone: the originals hold every system item (~138k
             // ChunkItems) and a dirty save must not copy them — both

@@ -688,10 +688,22 @@ Architecture — a session scratch behind the value engine:
   through the *system* bigram's hash path answers
   `kcdbopen: missing magic data of the file` on Kyoto Cabinet.
 * `oxpinyin_user::store_libpinyin` — `UserStore::open_libpinyin`: the
-  profile seeds a **session scratch** (temp file, backend container,
-  removed with the last handle), every W6 value operation runs unchanged
-  against it, and `save()` exports the session values back into the
-  file set. The value mapping is one-for-one: bigram rows are the
+  profile seeds a **session store in process memory** (the backend's
+  own on-memory ordered container — Kyoto Cabinet `ProtoTreeDB`, tkrzw
+  `BabyDBM`, Berkeley DB a null-file-name `DB_BTREE` —
+  `WriteStore::create_in_memory`), every W6 value operation runs
+  unchanged against it, and `save()` exports the session values back
+  into the file set. **Amendment (2026-10-01, #546, #531):** this
+  replaced a temp-file scratch under `std::env::temp_dir()`. The pin
+  reads no temp variable and opens no temp file anywhere under `src` at
+  074a2219 (its context holds the loaded profile in memory,
+  `pinyin.cpp:326-444`); the scratch read `TMPDIR` at `pinyin_init`, and
+  a process that died before `pinyin_fini` left the ~0.5 MB scratch
+  behind (#546). It was also a file shared across `fork`: a child's
+  `pinyin_save` truncated it under the parent, whose Kyoto Cabinet handle
+  then failed its next write (current main) or spun (the audited
+  `18d78208`, #531). Memory is private to the process, so neither can
+  happen. The value mapping is one-for-one: bigram rows are the
   `SingleGram` grams; a user item is the `PHRASE` text + the
   `PRONUNCIATION` rows (packed keys — one wire form) + the token's full
   `UNIGRAM` accumulation (`count·3` base, `seed·7` training). System

@@ -1201,7 +1201,7 @@ impl Runtime {
         // directory must not fail init either — training then refuses,
         // upstream-style. The store persists in libpinyin's own user-dir
         // file set (drop-in task 9): the profile is read through
-        // check_format, the session runs on a scratch, and `pinyin_save`
+        // check_format, the session runs in memory, and `pinyin_save`
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
         let user = match user_dir.filter(|dir| !dir.as_os_str().is_empty()) {

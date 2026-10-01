@@ -300,6 +300,23 @@ pub trait WriteStore: ReadStore {
     {
         Self::create(path)
     }
+    /// A fresh, empty, **in-memory** tree store: the backend's own
+    /// on-memory ordered container, which touches no file, reads no
+    /// environment, and dies with the handle — what a libpinyin session
+    /// runs on between `pinyin_init` and `pinyin_fini`, where the pin
+    /// keeps its working state in process memory too (`pinyin.cpp:
+    /// 326-444` at 074a2219 loads the profile into the context; nothing
+    /// under `src` opens temp space). Being memory, it is also private to
+    /// the process: a `fork`ed child's writes and saves cannot reach the
+    /// parent's session through a shared file description, which a
+    /// file-backed session cannot promise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the container cannot be created.
+    fn create_in_memory() -> Result<Self, StoreError>
+    where
+        Self: Sized;
     /// Create a **user** tree file: the two index tables `pinyin_save`
     /// writes into a user dir. It is [`WriteStore::create`] with the
     /// file mode libpinyin's own `save_db` creates a user table with,
@@ -1429,6 +1446,68 @@ mod tests {
                     assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
                     drop(store);
                     cleanup(&path);
+                }
+
+                /// The in-memory session store (the libpinyin session's
+                /// container, #546/#531): every write-tier operation
+                /// holds on it — ordered walks, rollback, compaction —
+                /// and nothing reaches the file system.
+                #[test]
+                fn in_memory_store_behaves_as_a_tree_store() {
+                    let mut store = <$store>::create_in_memory().unwrap();
+                    assert!(store.write(|txn| txn.is_empty("t")).unwrap());
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"b", b"2")?;
+                            txn.put("t", b"a", b"1")?;
+                            txn.put("t", b"c", b"3")?;
+                            txn.put("u", b"a", b"other")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(store.get("t", b"a").unwrap(), Some(b"1".to_vec()));
+                    assert_eq!(store.get("u", b"a").unwrap(), Some(b"other".to_vec()));
+                    let mut walked = Vec::new();
+                    store
+                        .for_each("t", &mut |k, v| {
+                            walked.push((k.to_vec(), v.to_vec()));
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        walked,
+                        vec![
+                            (b"a".to_vec(), b"1".to_vec()),
+                            (b"b".to_vec(), b"2".to_vec()),
+                            (b"c".to_vec(), b"3".to_vec()),
+                        ]
+                    );
+                    let mut ranged = Vec::new();
+                    store
+                        .range(
+                            "t",
+                            Bound::Included(&b"b"[..]),
+                            Bound::Unbounded,
+                            &mut |k, _| {
+                                ranged.push(k.to_vec());
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(ranged, vec![b"b".to_vec(), b"c".to_vec()]);
+                    // An `Err` rolls the transaction back.
+                    let rolled: Result<(), StoreError> = store.write(|txn| {
+                        txn.put("t", b"d", b"4")?;
+                        txn.remove("t", b"a")?;
+                        Err(StoreError::Backend("deliberate rollback".into()))
+                    });
+                    assert!(rolled.is_err());
+                    assert_eq!(store.get("t", b"d").unwrap(), None);
+                    assert_eq!(store.get("t", b"a").unwrap(), Some(b"1".to_vec()));
+                    store.compact().unwrap();
+                    assert_eq!(store.get("t", b"c").unwrap(), Some(b"3".to_vec()));
+                    store.write(|txn| txn.remove("t", b"c")).unwrap();
+                    assert_eq!(store.get("t", b"c").unwrap(), None);
                 }
             }
         };

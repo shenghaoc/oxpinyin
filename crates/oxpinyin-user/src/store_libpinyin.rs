@@ -3,16 +3,26 @@
 //!
 //! [`UserStore::open_libpinyin`] opens a user *directory* (not a store
 //! file): [`crate::persistence`] reads the profile, the loaded values
-//! seed a **session scratch store** (a temp file in this backend's
-//! container, removed when the last handle drops), and every existing
-//! value operation — training, phrase adds, exports, masking — runs
-//! against that scratch exactly as before. [`UserStore::save`] then
-//! exports the session values back through [`crate::persistence`] into
-//! the pin's files. The durability shape is therefore the pin's own:
-//! in-memory-equivalent between saves, whole-file `.tmp`+rename at
-//! `pinyin_save`, and a crash loses the sub-timer window exactly as
-//! upstream's does (the W6-T5 "reproduce the call pattern, not the loss
-//! window" deviation is reverted by design).
+//! seed a **session store in process memory** (the backend's own
+//! on-memory ordered container, [`WriteStore::create_in_memory`]), and
+//! every existing value operation — training, phrase adds, exports,
+//! masking — runs against that session exactly as before.
+//! [`UserStore::save`] then exports the session values back through
+//! [`crate::persistence`] into the pin's files. The durability shape is
+//! therefore the pin's own: in memory between saves, as the pin's
+//! context holds its loaded profile (`pinyin.cpp:326-444` at 074a2219),
+//! whole-file `.tmp`+rename at `pinyin_save`, and a crash loses the
+//! sub-timer window exactly as upstream's does (the W6-T5 "reproduce the
+//! call pattern, not the loss window" deviation is reverted by design).
+//!
+//! The session touches nothing outside the user dir: no temp directory,
+//! no `TMPDIR` read, nothing left behind by a process that dies before
+//! `pinyin_fini` (#546), and nothing a `fork`ed child can corrupt under
+//! its parent through a shared file description (#531 — a file-backed
+//! session was truncated by the child's save, and the parent's Kyoto
+//! Cabinet handle then failed or spun on its stale view of the file).
+//! The pin reads no temp variable and opens no temp file anywhere under
+//! `src` at 074a2219.
 //!
 //! The value mapping, both directions:
 //!
@@ -30,8 +40,6 @@
 //!   engine-model gap, unchanged by this persistence.
 
 use std::collections::BTreeMap;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -42,7 +50,7 @@ use oxpinyin_store::{DefaultStore, StoreError, WriteStore, WriteTxn};
 use crate::codec;
 use crate::persistence::{self, PersistenceError, SystemLibrary, UserConfLaw, UserState};
 use crate::phrase::{self, phrase_index_library_index};
-use crate::registry::{self, StoreInner};
+use crate::registry::StoreInner;
 use crate::store::{
     ALLOC, ALLOC_CURSOR, BIGRAM, BIGRAM_TOTAL, GenericUserStore, PHRASE, PHRASE_BY_LIB_TEXT,
     PHRASE_BY_TEXT, PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM, UNIGRAM_TOTAL,
@@ -113,59 +121,10 @@ impl From<PersistenceError> for UserStoreError {
     }
 }
 
-/// The name stem of `user_dir`'s scratch directories: a hash of the
-/// path under the temp area, so one profile's sessions are recognisable
-/// there. It keys nothing — every session reserves its own unique
-/// scratch ([`create_scratch_dir`]).
-fn session_token(user_dir: &Path) -> PathBuf {
-    let mut hasher = DefaultHasher::new();
-    user_dir.hash(&mut hasher);
-    let hash = hasher.finish();
-    std::env::temp_dir().join(format!("oxpinyin-user-{hash:016x}"))
-}
-
-/// Creates this session's private scratch directory under the temp
-/// area: a fresh, unpredictable name each open, so nothing can pre-place
-/// (or race the recreation of) the path the backend then opens — and
-/// the directory is created new rather than reused, which removes the
-/// remove-then-recreate window a fixed name had. Private permissions on
-/// unix; the platform default elsewhere.
-fn create_scratch_dir(user_dir: &Path) -> std::io::Result<PathBuf> {
-    let token = session_token(user_dir);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_nanos());
-    for attempt in 0..64_u32 {
-        let dir = token.with_file_name(format!(
-            "{}-{nanos:x}-{attempt}",
-            token
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("session"),
-        ));
-        match std::fs::create_dir(&dir) {
-            Ok(()) => {
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-                }
-                return Ok(dir);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e),
-        }
-    }
-    Err(std::io::Error::new(
-        std::io::ErrorKind::AlreadyExists,
-        "no free scratch directory name",
-    ))
-}
-
 impl GenericUserStore<DefaultStore> {
     /// Open the user store on a libpinyin user directory: read the
-    /// profile ([`crate::persistence::load`]) under `law`, seed a session
-    /// scratch store with its values, and carry the persistence target so
+    /// profile ([`crate::persistence::load`]) under `law`, seed an
+    /// in-memory session store with its values, and carry the persistence target so
     /// [`GenericUserStore::save`] writes the pin's files back. Dropping the
     /// returned handle — not a clone of it — is the facade's fini: it
     /// makes the law's fini-time `user.conf` write
@@ -177,14 +136,14 @@ impl GenericUserStore<DefaultStore> {
     /// context, `:1132-1147` saves that context's state). A second open
     /// of a directory another live session has open runs `check_format`
     /// again, reads the profile as the files hold it, and learns and
-    /// saves on its own scratch — it does not see the first session's
+    /// saves on its own session store — it does not see the first session's
     /// unsaved learning, and when both save, the later save's files are
     /// the profile.
     ///
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the profile's `user.conf` cannot
-    /// be re-written or the scratch store cannot be created. A corrupt
+    /// be re-written or the session store cannot be created. A corrupt
     /// or partial profile does not fail here — it degrades per-file,
     /// exactly as upstream's loader degrades.
     pub fn open_libpinyin(
@@ -193,19 +152,12 @@ impl GenericUserStore<DefaultStore> {
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        // Reserve the session's own scratch before touching the profile,
-        // so a failure here cannot follow a `check_format` that already
-        // raised the open counter and wiped a non-conforming profile. The
-        // directory is created new, so the reservation is this session's
-        // alone.
-        let scratch_dir = create_scratch_dir(user_dir).map_err(UserStoreError::Io)?;
-        let lease = if let Some(lease) = registry::acquire_scratch(scratch_dir.clone()) {
-            Arc::new(lease)
-        } else {
-            let _ = std::fs::remove_dir_all(&scratch_dir);
-            return Err(UserStoreError::AlreadyOpen);
-        };
-        let lease = Some(lease);
+        // Create the session's own container before touching the
+        // profile, so a failure here cannot follow a `check_format` that
+        // already raised the open counter and wiped a non-conforming
+        // profile. It is this session's alone: process memory, shared
+        // with no other open and no other process.
+        let db = DefaultStore::create_in_memory()?;
 
         let loaded = persistence::load(user_dir, &originals, &versions, law)?;
         // Armed as soon as the load has raised the counter: an open that
@@ -230,8 +182,6 @@ impl GenericUserStore<DefaultStore> {
             );
         }
 
-        let scratch = scratch_dir.join(format!("store.{}", oxpinyin_store::DEFAULT_STORE_EXT));
-        let db = DefaultStore::create(&scratch)?;
         let has_user_data = db.write(|txn| {
             seed_txn(txn, &loaded.state, &target.originals)?;
             let total_rows = count_tables(txn)?;
@@ -265,21 +215,17 @@ impl GenericUserStore<DefaultStore> {
                 &target.dir,
             )?)),
             libpinyin: Some(target),
-            // The lease lives in the shared inner so every clone keeps
-            // the scratch alive; from_parts' own copy is redundant
-            // safety for the construction path only.
-            scratch_lease: lease.clone(),
         });
-        Ok(Self::from_parts(inner, lease, fini))
+        Ok(Self::from_parts(inner, None, fini))
     }
 }
 
-/// `init_and_wrap`'s `has_user_data` probe, against a seeded scratch.
+/// `init_and_wrap`'s `has_user_data` probe, against a seeded session store.
 fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
     Ok(!txn.is_empty(BIGRAM)? || !txn.is_empty(UNIGRAM)? || !txn.is_empty(PHRASE)?)
 }
 
-/// Writes the loaded profile's values into a fresh scratch store — the
+/// Writes the loaded profile's values into a fresh session store — the
 /// seed half of the value mapping.
 fn seed_txn(
     txn: &mut dyn WriteTxn,
@@ -1012,7 +958,7 @@ mod tests {
         // #538: two opens of one user dir are two contexts, as two
         // pinyin_init calls are upstream. Each runs check_format, so the
         // counter reaches 2 (pinyin.cpp:185-187); each learns on its own
-        // scratch, so the second does not see the first's unsaved
+        // session store, so the second does not see the first's unsaved
         // learning; each save answers for its own modifications; each
         // fini lowers its own copy of the counter (:1194-1200).
         let dir = tempdir("two-sessions");
@@ -1049,30 +995,6 @@ mod tests {
             .expect("open 3");
         assert_eq!(third.bigram_count(1, 0x0100_0001).expect("count"), 69);
         drop(third);
-
-        // Every session's scratch died with its last handle. Session dirs
-        // share the profile's token stem, so its parent holds only live
-        // sessions when none remain.
-        let token = session_token(&dir);
-        let stem = token
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("oxpinyin-user");
-        let parent = token
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("/tmp"));
-        let leftovers: Vec<_> = std::fs::read_dir(parent)
-            .map(|entries| {
-                entries
-                    .flatten()
-                    .filter(|e| e.file_name().to_str().is_some_and(|n| n.starts_with(stem)))
-                    .collect()
-            })
-            .unwrap_or_default();
-        assert!(
-            leftovers.is_empty(),
-            "scratch survived the last handle: {leftovers:?}"
-        );
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }

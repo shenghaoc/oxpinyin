@@ -275,6 +275,13 @@ impl Db {
         Self::open_at(None, DB_HASH, false, true, USER_FILE_MODE)
     }
 
+    /// An in-memory `DB_BTREE` — the same null-file-name form as
+    /// [`Self::open_in_memory_hash`], ordered: the session store a
+    /// libpinyin profile is loaded into.
+    pub(crate) fn open_in_memory_tree() -> Result<Self, StoreError> {
+        Self::open_at(None, DB_BTREE, false, true, USER_FILE_MODE)
+    }
+
     /// [`Self::open`]'s body over an optional file name (`None` is
     /// libdb's in-memory database).
     fn open_at(

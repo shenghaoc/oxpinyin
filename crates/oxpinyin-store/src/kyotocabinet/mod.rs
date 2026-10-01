@@ -310,6 +310,17 @@ impl WriteStore for KcStore {
         })
     }
 
+    /// The pin's own in-memory ordered container, `ProtoTreeDB` (what its
+    /// user indexes live in between loads and saves,
+    /// `chewing_large_table2_kyotodb.cpp:124-130`): no file, no WAL, no
+    /// lock file. `ProtoDB` carries its own transaction log, so
+    /// [`WriteStore::write`]'s begin/commit/rollback keep their meaning.
+    fn create_in_memory() -> Result<Self, StoreError> {
+        Ok(Self {
+            db: Db::open_proto_tree()?,
+        })
+    }
+
     /// Creates a raw writable tree with user-file permissions. Production
     /// user-index files use `write_user_index`'s snapshot path below.
     fn create_user(path: &Path) -> Result<Self, StoreError> {
