@@ -326,6 +326,15 @@ impl WriteStore for BdbStore {
         })
     }
 
+    /// libdb's in-memory database (`DB->open` with a null file name, the
+    /// form `ngram_bdb.cpp:51-56` uses for the user bigram), as a
+    /// `DB_BTREE` so the table framing's ordered walks hold.
+    fn create_in_memory() -> Result<Self, StoreError> {
+        Ok(Self {
+            db: Db::open_in_memory_tree()?,
+        })
+    }
+
     /// A user index table, created as `save_db` creates one: mode 0600
     /// ([`ffi::USER_FILE_MODE`]).
     fn create_user(path: &Path) -> Result<Self, StoreError> {

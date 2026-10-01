@@ -368,6 +368,23 @@ fn open_hash_create(path: &Path) -> Result<TkrzwStore, StoreError> {
     })
 }
 
+/// `BabyDBM`, tkrzw's on-memory ordered container, through PolyDBM's
+/// empty-path form (the same form the user bigram's `TinyDBM` takes
+/// below): ordered like `TreeDBM`, so the table framing's prefix walks
+/// and `jump`s hold, and bound to no file.
+fn open_in_memory() -> Result<TkrzwStore, StoreError> {
+    // SAFETY: both strings outlive the call; the returned handle is
+    // NULL on failure, taken as an error immediately.
+    let db = unsafe { ffi::tkrzw_dbm_open(c"".as_ptr(), true, c"dbm=baby".as_ptr()) };
+    let Some(db) = NonNull::new(db) else {
+        return Err(status_error());
+    };
+    Ok(TkrzwStore {
+        db: Db(db),
+        read_only: false,
+    })
+}
+
 fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
     validate_path(path)?;
     // `dbm=tree` selects TreeDBM; `no_create=true` reproduces
@@ -839,6 +856,10 @@ impl WriteStore for TkrzwStore {
 
     fn create_hash(path: &Path) -> Result<Self, StoreError> {
         open_hash_create(path)
+    }
+
+    fn create_in_memory() -> Result<Self, StoreError> {
+        open_in_memory()
     }
 
     fn write<R>(
