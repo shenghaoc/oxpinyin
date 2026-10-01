@@ -10,8 +10,15 @@ use crate::state::{CapiContext, box_context, context_mut};
 #[cfg(not(feature = "shipped"))]
 use crate::state::context_ref;
 use crate::types::PinyinContext;
+use oxpinyin_user::UserStore;
 
 fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
+    // The pin's first step is `SystemTableInfo2::load` on table.conf
+    // (`pinyin.cpp:337`), which resets the process's LC_NUMERIC to "C"
+    // before it can fail (`table_info.cpp:197`; register row 39), so an
+    // empty or missing system dir leaves the same locale behind as a
+    // successful init.
+    crate::locale::pin_table_info_locale();
     // SAFETY: Both pointers are C strings from the caller (null OK).
     let system_path = cstr_to_owned_lossy(systemdir);
     let user_path = cstr_to_owned_lossy(userdir);
@@ -135,6 +142,10 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
         return;
     }
 
+    // `mark_version`'s user.conf write (`pinyin.cpp:1200`) runs on every
+    // fini and resets LC_NUMERIC to "C" (`table_info.cpp:378`; register
+    // row 39).
+    crate::locale::pin_table_info_locale();
     // SAFETY: `context` was created by `pinyin_init` via `box_context`
     // (= `Box::into_raw`). The caller transfers ownership back.
     unsafe {
@@ -163,6 +174,13 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     // SAFETY: `context` is non-null and was produced by `pinyin_init`;
     // the unique borrow lasts only for the save call.
     let ctx = unsafe { context_mut(context) };
+    // Past both guards (`pinyin.cpp:1133-1137`) the pin's `mark_version`
+    // writes user.conf and resets LC_NUMERIC to "C" (`:1143`,
+    // `table_info.cpp:378`; register row 39); the two early returns do
+    // not reach it.
+    if ctx.core.user.as_ref().is_some_and(UserStore::is_modified) {
+        crate::locale::pin_table_info_locale();
+    }
     ctx.save_user()
 }
 

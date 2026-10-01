@@ -104,6 +104,7 @@ mod context;
 mod cursor;
 mod instance;
 mod iterators;
+mod locale;
 mod parse;
 mod predict;
 mod sentence;

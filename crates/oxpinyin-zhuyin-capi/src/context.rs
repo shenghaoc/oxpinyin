@@ -6,6 +6,7 @@ use std::ptr;
 use crate::ffi::cstr_to_owned_lossy;
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::ZhuyinContext;
+use oxpinyin_user::UserStore;
 
 /// Create a new zhuyin context.
 ///
@@ -35,6 +36,12 @@ pub extern "C" fn zhuyin_init(
     systemdir: *const c_char,
     userdir: *const c_char,
 ) -> *mut ZhuyinContext {
+    // The pin's first step is `SystemTableInfo2::load` on table.conf
+    // (`zhuyin.cpp:281`), which resets the process's LC_NUMERIC to "C"
+    // before it can fail (`table_info.cpp:197`; register row 39), so an
+    // empty or missing system dir leaves the same locale behind as a
+    // successful init.
+    crate::locale::pin_table_info_locale();
     // SAFETY: Both pointers are C strings from the caller (null OK).
     let system_path = cstr_to_owned_lossy(systemdir);
     let user_path = cstr_to_owned_lossy(userdir);
@@ -98,5 +105,12 @@ pub extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`;
     // the unique borrow lasts only for the save call.
     let ctx = unsafe { context_mut(context) };
+    // Past both guards (`zhuyin.cpp:548-552`) the pin's `mark_version`
+    // writes user.conf and resets LC_NUMERIC to "C" (`:695`,
+    // `table_info.cpp:378`; register row 39); the two early returns do
+    // not reach it.
+    if ctx.core.user.as_ref().is_some_and(UserStore::is_modified) {
+        crate::locale::pin_table_info_locale();
+    }
     ctx.save_user()
 }

@@ -66,6 +66,7 @@ mod ffi;
 mod instance;
 mod iterators;
 mod keys;
+mod locale;
 mod parse;
 mod phrase;
 mod sentence;
