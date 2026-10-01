@@ -47,6 +47,7 @@ cd "$(dirname "$0")"
 # order"), which this runner reports rather than hides.
 default_drivers=(
   key-surface-diff
+  key-parse-diff
   dict-surface-diff
   phrase-surface-diff
   pred-order-diff
