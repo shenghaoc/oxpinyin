@@ -172,6 +172,8 @@ static const char *ctype_name(lookup_candidate_type_t t) {
  * diffed. */
 static const char *SYLLABLE_CORPUS[] = {
     "su3",          /* ㄋㄧˇ */
+    "su3cl3",       /* ㄋㄧˇㄏㄠˇ — two three-byte keys: offsets 4 and 5 sit
+                     * inside the SECOND key (#577's 94-row after(4)/(5)) */
     "su3u3",        /* ㄋㄧˇ ㄧˇ — two-syllable; exercises before-cursor at the
                      * terminal offset (the multi-syllable engine gap: the pin
                      * returns the last syllable's candidates + sentence rows,
@@ -455,9 +457,10 @@ int main(int argc, char **argv) {
          * full: after(0), after(consumed), before(0), before(3) (a key
          * boundary mid-composition; skipped when consumed < 3 so the
          * oracle's out-of-range matrix read is never poked), and
-         * before(consumed); then the mid-key offsets 1 and 2 of both
-         * families (#577: inside a three-key syllable, where the pin's
-         * matrix column is empty and the list is the sentence rows alone;
+         * before(consumed); then the mid-key offsets 1, 2, 4 and 5 of
+         * both families (#577: inside a three-byte key — 1 and 2 in the
+         * first, 4 and 5 in the second of su3cl3 — where the pin's matrix
+         * column is empty and the list is the sentence rows alone;
          * on a shorter input they coincide with a key boundary or the
          * terminal offset, which both sides already answer alike). Every
          * offset is at most `consumed`, inside the pin's matrix, so
@@ -479,6 +482,10 @@ int main(int argc, char **argv) {
             {false, 2, "after(2)"},
             {true, 1, "before(1)"},
             {true, 2, "before(2)"},
+            {false, 4, "after(4)"},
+            {false, 5, "after(5)"},
+            {true, 4, "before(4)"},
+            {true, 5, "before(5)"},
         };
         for (size_t l = 0; l < sizeof(lookups) / sizeof(lookups[0]); l++) {
             if (lookups[l].offset > consumed)
