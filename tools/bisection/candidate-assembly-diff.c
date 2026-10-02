@@ -188,10 +188,20 @@ static bool open_session(struct session *ss, const char *systemdir, guint option
          * (`zhuyin.cpp:515-526`): bopomofo, not pinyin. */
         const char *phrase = zhuyin ? "罷跨" : "罢跨";
         const char *reading = zhuyin ? ZHUYIN_READING : "ba'kua";
-        printf("import %s/%s/5=%s\n", phrase, reading,
-               yesno(it && s.add_phrase(it, phrase, reading, 5)));
+        bool added = it && s.add_phrase(it, phrase, reading, 5);
+        printf("import %s/%s/5=%s\n", phrase, reading, yesno(added));
         if (it)
             s.end_add(it);
+        if (!added) {
+            /* A requested import that cannot be installed leaves an empty
+             * user store under an `import=true` header: if it fails the
+             * same way on both sides the logs still match, and the case
+             * would pass without running the path it claims to cover. */
+            fprintf(stderr, "import %s/%s failed\n", phrase, reading);
+            s.fini(ss->ctx);
+            rm_rf(ss->userdir);
+            exit(1);
+        }
     }
     ss->inst = s.alloc(ss->ctx);
     if (!ss->inst) {

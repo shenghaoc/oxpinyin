@@ -23,10 +23,14 @@
 # outside the table, or a declared case that no longer diverges.
 set -euo pipefail
 
-prefix=${1:?oracle prefix}
-capi_so=${2:?path to libpinyin_capi.so}
-zhuyin_so=${3:?path to libzhuyin_capi.so}
+# Resolved before the `cd` below: the usage text allows relative paths, and
+# the existence checks, the dlopen of the shared objects and the logs all
+# have to mean the same file as the caller's directory did.
+prefix=$(realpath -- "${1:?oracle prefix}")
+capi_so=$(realpath -- "${2:?path to libpinyin_capi.so}")
+zhuyin_so=$(realpath -- "${3:?path to libzhuyin_capi.so}")
 out=${4:-}
+[[ -z "$out" ]] || out=$(realpath -m -- "$out")
 
 for f in "$prefix/oracle-pin.txt" "$prefix/lib/libpinyin.so" "$prefix/lib/libzhuyin.so" \
     "$prefix/lib/libpinyin/data/bigram.db" "$capi_so" "$zhuyin_so"; do
