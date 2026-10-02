@@ -139,8 +139,14 @@ static void remove_tree(const char *dir) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
             continue;
         char path[4096];
-        snprintf(path, sizeof path, "%s/%s", dir, e->d_name);
-        unlink(path);
+        if (snprintf(path, sizeof path, "%s/%s", dir, e->d_name) >= (int)sizeof path)
+            continue;
+        struct stat st;
+        /* lstat: a symlink is unlinked, never followed out of the tree. */
+        if (lstat(path, &st) == 0 && S_ISDIR(st.st_mode))
+            remove_tree(path);
+        else
+            unlink(path);
     }
     closedir(d);
     rmdir(dir);
@@ -176,11 +182,14 @@ int main(int argc, char **argv) {
     context_t *ctx = init(argv[2], user_dir);
     if (!ctx) {
         fprintf(stderr, "pinyin_init failed\n");
+        remove_tree(user_dir);
         return 1;
     }
     instance_t *inst = alloc(ctx);
     if (!inst) {
         fprintf(stderr, "pinyin_alloc_instance failed\n");
+        fini(ctx);
+        remove_tree(user_dir);
         return 1;
     }
 

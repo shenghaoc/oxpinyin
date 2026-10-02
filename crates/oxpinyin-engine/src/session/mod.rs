@@ -344,13 +344,15 @@ fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
             .token()
             .map_or(u32::MAX, |token| token.value() >> 24)
     });
-    let mut seen: Vec<u32> = Vec::with_capacity(batch.len());
+    // Membership only: the retained candidates keep the batch's order, so
+    // the set's own (unspecified) iteration order is never observed.
+    let mut seen: std::collections::HashSet<u32> =
+        std::collections::HashSet::with_capacity(batch.len());
     for candidate in batch.drain(..) {
-        if let Some(token) = candidate.token().map(oxpinyin_core::PhraseToken::value) {
-            if seen.contains(&token) {
-                continue;
-            }
-            seen.push(token);
+        if let Some(token) = candidate.token().map(oxpinyin_core::PhraseToken::value)
+            && !seen.insert(token)
+        {
+            continue;
         }
         into.push(candidate);
     }
