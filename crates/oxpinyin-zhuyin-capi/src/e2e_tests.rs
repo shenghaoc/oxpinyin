@@ -385,3 +385,62 @@ fn a_choose_at_the_cursor_survives_the_next_guess() {
     );
     close(context, instance);
 }
+
+/// The same law after a MULTI-character choice: a choose of a phrase, a
+/// later choose at the cursor the phrase left, and a whole-sentence
+/// re-guess keep both forcings (`zhuyin.cpp:1649-1654`, `:1460`;
+/// `phonetic_lookup.cpp:120-167`). The second row is one the
+/// unconstrained decode of the tail would not pick, so a dropped later
+/// forcing shows in the sentence.
+#[test]
+fn a_choose_at_the_cursor_survives_the_next_guess_after_a_phrase() {
+    use crate::candidates::zhuyin_get_candidate;
+    use crate::sentence::zhuyin_guess_candidates_after_cursor;
+    use crate::test_support::candidate_text;
+
+    let keys = "su3cl3su3";
+    let (context, instance) = open();
+    let phrase = (0..16)
+        .find(|index| {
+            let _ = candidate(instance, keys, 0);
+            candidate_text(instance, *index) == "你好"
+        })
+        .expect("the two-character phrase 你好 is offered at 0");
+    let cand = candidate(instance, keys, u32::try_from(phrase).expect("small index"));
+    assert_eq!(zhuyin_choose_candidate(instance, 0, cand), 6);
+    assert!(zhuyin_guess_sentence(instance));
+    let mut unconstrained: *mut c_char = ptr::null_mut();
+    assert!(zhuyin_get_sentence(instance, &raw mut unconstrained));
+    let default_tail = take_sentence(unconstrained)
+        .chars()
+        .last()
+        .expect("the re-guessed sentence is not empty")
+        .to_string();
+
+    assert!(zhuyin_guess_candidates_after_cursor(instance, 6));
+    let mut count = 0;
+    assert!(zhuyin_get_n_candidate(instance, &raw mut count));
+    let other = (0..usize::try_from(count).expect("count fits"))
+        .find(|index| {
+            let text = candidate_text(instance, *index);
+            text.chars().count() == 1 && text != default_tail
+        })
+        .expect("a one-character row other than the decode's pick is offered at 6");
+    let text = candidate_text(instance, other);
+    let mut chosen: *mut crate::types::LookupCandidate = ptr::null_mut();
+    assert!(zhuyin_get_candidate(
+        instance,
+        u32::try_from(other).expect("small index"),
+        &raw mut chosen
+    ));
+    assert_eq!(zhuyin_choose_candidate(instance, 6, chosen), 9);
+    assert!(zhuyin_guess_sentence(instance));
+    let mut sentence: *mut c_char = ptr::null_mut();
+    assert!(zhuyin_get_sentence(instance, &raw mut sentence));
+    assert_eq!(
+        take_sentence(sentence),
+        format!("你好{text}"),
+        "both forcings survived the whole-sentence re-guess"
+    );
+    close(context, instance);
+}

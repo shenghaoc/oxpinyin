@@ -72,8 +72,9 @@ run zhuyin ox "$zhuyin_so"
 # The declared divergences: `mode<TAB>case-header regex<TAB>reason`. A
 # declared case must diverge and every other case must be identical. A
 # reason that starts `lists-only:` is stricter: the case may differ only
-# in candidate-list rows, LIST headers and the `row=` index a shifted
-# list moves — every choose cursor, chosen string and sentence must still
+# in candidate-list rows, the LIST header's count and the `row=` index a
+# shifted list moves (a LIST header's offset, `ret=` and get_n status must
+# still match) — every choose cursor, chosen string and sentence must still
 # match, so an extra n-best row (#594) cannot hide a choose defect. A
 # declared case that stops diverging fails too, so the table cannot
 # go stale silently (for the #594 rows that means the trellis moved:
@@ -116,8 +117,13 @@ for mode in ("pinyin", "zhuyin"):
                 kept = []
                 for raw in lines:
                     line = raw.decode("utf-8", "replace")
-                    if line.startswith("LIST ") or re.match(r"  \d+ ", line):
+                    if re.match(r"  \d+ ", line):
                         continue
+                    # A LIST header keeps its offset and `ret=`/`get_n`
+                    # status — a failed guess must not pass as a row
+                    # difference — and sheds only the count.
+                    if line.startswith("LIST "):
+                        line = re.sub(r" n=\d+", "", line)
                     kept.append(re.sub(r" row=\d+", "", line))
                 return kept
             if rest(pin[name]) != rest(ox[name]):
