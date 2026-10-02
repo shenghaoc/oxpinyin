@@ -73,7 +73,7 @@ def unigram_fields(path):
             item = take(u16())
             if len(item) < 6:
                 raise ValueError("short phrase item")
-            fields.append(token + bytes([kind]) + item[2:6])
+            fields.append(token + kind.to_bytes(4, "little") + item[2:6])
         else:
             raise ValueError(f"unknown log type {kind}")
     result = b"".join(sorted(fields))
