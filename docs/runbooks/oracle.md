@@ -1,8 +1,11 @@
 # Oracle — building the pin and running the differentials
 
 The oracle is libpinyin built from the pinned commit, with the pinned
-model20 data, on the tkrzw backend. Every parity claim in this repository
-is a differential against it. Its identity is `tools/oracle/oracle-pin.txt`
+model20 data, on the Berkeley DB backend by default (the reference
+build is a bare `./configure`); Kyoto Cabinet and tkrzw prefixes are
+built with `--dbm kc` / `--dbm tkrzw`, and a differential picks its cell
+with `PINYIN_ORACLE_DBM`. Every parity claim in this repository is a
+differential against it. Its identity is `tools/oracle/oracle-pin.txt`
 (mirrored by constants in `tools/oracle/build-oracle.sh`); the history of
 the pin is `docs/testing/oracle-environment.md`.
 
