@@ -1827,18 +1827,25 @@ section.
   `:199-202`), a failed version directive (`:339-348`) — skips the
   restore altogether. Either way the process's `LC_NUMERIC` is `"C"`
   after `pinyin_init` or `zhuyin_init`, successful or not.
-- **What oxpinyin does instead:** nothing — no `setlocale` call anywhere
-  in `crates/`, so the host's `LC_NUMERIC` survives init.
+- **What oxpinyin does instead:** since #618 (merge commit `a3ef00f5`,
+  code `e5400598`, 2026-10-01 UTC) it installs `"C"` at the same
+  points, through the C library's own `setlocale`, in the two C-ABI
+  crates. Before that — the state this section was written against —
+  there was no `setlocale` call anywhere in `crates/`, so the host's
+  `LC_NUMERIC` survived init.
 - **Externally observable:** yes — audit D-17 (#539): with
   `LC_ALL=zh_CN.UTF-8` set by the host, `setlocale(LC_NUMERIC, NULL)`
-  reads `C` after the pin's init and `zh_CN.UTF-8` after oxpinyin's. A
-  consumer that formats numbers after init sees the difference.
+  reads `C` after the pin's init and read `zh_CN.UTF-8` after
+  oxpinyin's, before #618. A consumer that formats numbers after init
+  saw the difference; `tools/bisection/run-locale-diff.sh` now diffs it
+  byte for byte.
 - **Status:** ruled bug-for-bug (recorded 2026-09-27 UTC,
   `compatibility-policy.md` "Amendment — rulings recorded" item 4):
   oxpinyin is to reproduce the pin's end state, and the defect is
   drafted for the upstream report (`upstream-report-drafts.md` item 6,
-  not filed). Not yet
-  reproduced in code; REVERT TARGET until it is (#539).
+  not filed). **CLOSED** in code: reproduced by #618 (merge commit
+  `a3ef00f5`, code `e5400598`, merged 2026-10-01 UTC; recorded
+  2026-10-02 UTC); it was a REVERT TARGET until then (#539).
 
 ### tkrzw binding: exception-origin `SYSTEM_ERROR` and OS `SYSTEM_ERROR` share one error class (policy row 40)
 
@@ -1960,15 +1967,20 @@ section.
   (`pinyin_bigram_iterator_get_next_phrase` returns
   `pinyin_bigram_iterator_has_next_phrase(iter)`).
 - **Mechanism:** the pin answers `false` on the last row.
-- **What oxpinyin does instead:** answers `true` whenever a row was
-  fetched (`crates/oxpinyin-capi/src/iterators.rs:406-407`).
+- **What oxpinyin did instead (before lane B):** answered `true`
+  whenever a row was fetched (`crates/oxpinyin-capi/src/iterators.rs:406-407`
+  at `e1d915d0`); #607 returns `has_next` after the increment.
 - **Externally observable:** yes — audit D-19 (#541):
   `你好|ni'hao|138|false` on the pin, `…|true` on oxpinyin. A debug
   ibus-libpinyin build wraps the call in `check_result`
   (`PYLibPinyin.cc:321`) and aborts on the pin's last row.
-- **Status:** REVERT TARGET, pending lane B (#541), which also owns the
-  pin's DB-walk export order, its skipped last key and its
-  `sentence_start` attribution on the same surface.
+- **Status:** **CLOSED** in code (recorded 2026-10-02 UTC at `a3ef00f5`):
+  lane B's #607 (merge commit `6c9bc75d`, code `3415b232`) answers
+  `has_next` after the increment, and #608 (merge commit `569420c1`, code
+  `d0d849af`) exports from the pin's own in-memory user-bigram container —
+  its walk order, its skipped last key and its `sentence_start`
+  attribution (#541). Both merged 2026-10-01 UTC; measured by those PRs'
+  `bigram-export-diff` differential.
 
 ### Candidate window behind the composition offset after a choose (policy row 37)
 
@@ -2026,13 +2038,18 @@ and at `main`.
   (`pinyin_init`/`zhuyin_init` then ignore its result and carry on —
   `pinyin.cpp:344`, `zhuyin.cpp:288` — so the `abort()` is what
   actually stops them).
-- **Condition:** the third `fscanf` returns anything but `EOF` and the
-  token it converted — or the `str` no conversion wrote, on a matching
-  failure — is not `BerkeleyDB`, `KyotoCabinet` or `Tkrzw`. So an
+- **Condition:** the third `fscanf` converts a token (it returns `1`)
+  that is not `BerkeleyDB`, `KyotoCabinet` or `Tkrzw` — an
   unrecognised token (a foreign or future backend's, a 255-byte
   truncation of one, an empty field whose `%255s` reads the next word
-  across the newline), and any failure of that directive's literal (a
-  missing `database format:` line), all reach the same `abort()`.
+  across the newline): the source guarantees the `abort()` there. When
+  the directive's literal fails to match (a missing `database format:`
+  line, or junk the previous line left behind) `fscanf` returns `0`, not
+  `EOF`, and writes no `str`, so `strcmp` reads an indeterminate stack
+  buffer — undefined behaviour, not a source-guaranteed abort. For those
+  two shapes the evidence is execution only: the runner's
+  `abort-modelver-junk` and `abort-no-dbformat` cases, oracle exit 134 on
+  every cell in #591's runs.
 - **Trigger:** an edited, foreign or torn `user.conf`.
   `UserTableInfo::save` is `fopen`/`fprintf`/`fclose` with no atomic
   rename (`table_info.cpp:377-395`), so a write interrupted mid-file is

@@ -164,11 +164,16 @@ compiled against.
 
 ```console
 $ pkg-config --variable=pkgdatadir libpinyin       → $P/lib/libpinyin
-$ pkg-config --variable=database_format libpinyin  → KyotoCabinet
+$ pkg-config --variable=database_format libpinyin  → BerkeleyDB
 $ pkg-config --variable=exec_prefix libpinyin      → $P
 $ pkg-config --libs libpinyin                      → -lpinyin -lglib-2.0
-$ pkg-config --modversion libpinyin                → 2.11.91
+$ pkg-config --modversion libpinyin                → 2.11.92
 ```
+
+*(Amended 2026-10-02 UTC: the expected values are those of a default-feature
+build at `a3ef00f5` — the default store is Berkeley DB (#552) and the drop-in
+version follows the pin, 2.11.92 (#592); a `--no-default-features --features
+<peer>` build reads its own token.)*
 
 All five come back non-empty — the silent misconfiguration the four
 missing variables would otherwise cause is closed on the wrapper path.
