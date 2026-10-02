@@ -99,7 +99,12 @@ echo "build: ok"
 
 # run_side <side> <mode> <lib.so> <log>: one run under a fresh TMPDIR and
 # a fresh user dir; the log carries the driver's stdout, then the exit
-# status, the user dir's inventory and TMPDIR's entry count.
+# status, the user dir's inventory and TMPDIR's entry count. The driver's
+# stderr stays beside the log (`<log>.stderr`) for reading and is not
+# diffed: the two libraries word their diagnostics differently by design
+# (the pin's raw `fprintf(stderr, "open %s failed.")`, table_info.cpp:201
+# and :332 at 074a2219, against oxpinyin's GLib warnings), so a byte diff
+# of it would be red on every run for a reason this runner is not about.
 run_side() {
     local side=$1 mode=$2 so=$3 log=$4
     local user="$WORK/user-$side-$mode"
@@ -108,11 +113,20 @@ run_side() {
     mkdir -p "$user" "$tmp"
     local rc=0
     # The subshell keeps the shell's own "Killed" notice for the crash
-    # mode out of the runner's output; the driver's stderr is the log's.
-    ( TMPDIR="$tmp" timeout "$TIMEOUT" "$DRIVER" "$so" "$DATA" "$user" "$mode" \
+    # mode out of the runner's output. `-k 5` bounds the wait after the
+    # TERM a timeout sends, so a driver that ignores it is still ended
+    # (status 137).
+    ( TMPDIR="$tmp" timeout -k 5 "$TIMEOUT" "$DRIVER" "$so" "$DATA" "$user" "$mode" \
         > "$log" 2> "$log.stderr" ) 2> /dev/null || rc=$?
-    if [[ $rc -eq 124 ]]; then
+    if [[ $rc -eq 124 || ( $rc -eq 137 && $mode != crash ) ]]; then
         echo "FAIL: $side/$mode did not finish within ${TIMEOUT}s" >&2
+        return 1
+    fi
+    # A driver that failed the same way against both libraries would log
+    # identically and pass: the only legitimate statuses are 0, and 137
+    # (the SIGKILL the crash mode raises on itself).
+    if [[ $mode == crash && $rc -ne 137 ]] || [[ $mode != crash && $rc -ne 0 ]]; then
+        echo "FAIL: $side/$mode exited with unexpected status $rc" >&2
         return 1
     fi
     {
