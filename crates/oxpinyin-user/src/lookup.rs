@@ -108,11 +108,13 @@ impl UserLookup {
             // dictionary's `𬪩 nong` listed before its `ni` entries on the
             // pin, after them here). A same-key tie is token-ascending, and
             // two pronunciations of one phrase keep the stored-pinyin order.
-            bucket.sort_by(|left, right| {
-                stored_key_order(&left.0)
-                    .cmp(&stored_key_order(&right.0))
-                    .then_with(|| left.1.token().value().cmp(&right.1.token().value()))
-                    .then_with(|| left.0.cmp(&right.0))
+            // The key is parsed once per entry, not once per comparison.
+            bucket.sort_by_cached_key(|(pinyin, entry)| {
+                (
+                    stored_key_order(pinyin),
+                    entry.token().value(),
+                    pinyin.clone(),
+                )
             });
             bucket.dedup_by(|left, right| {
                 left.0 == right.0 && left.1.token().value() == right.1.token().value()
