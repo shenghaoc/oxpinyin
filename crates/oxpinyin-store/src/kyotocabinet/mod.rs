@@ -1,7 +1,8 @@
 //! Kyoto Cabinet backend for the store's peer set.
 //!
-//! Enabled by the `kyotocabinet` cargo feature and — as the workspace's
-//! default selected backend — compiled in on a plain `cargo build`.
+//! Enabled by the `kyotocabinet` cargo feature (`--no-default-features
+//! --features kyotocabinet`); the workspace's default selected backend is
+//! Berkeley DB.
 //! [`KcStore`] is a `TreeDB` implementation of the store's two capability
 //! tiers, addressed by `(table, key)` like every other backend.
 //!
@@ -50,7 +51,7 @@
 //! locking (every access method takes the database's rwlock), and the
 //! `unsafe impl`s on the FFI handle record exactly that contract — see the
 //! SAFETY comment in `ffi.rs`. This is required for a peer backend that
-//! also serves as the default selection: the user-store registry holds
+//! serves as the compiled-in `DefaultStore`: the user-store registry holds
 //! `DefaultStore` behind a `static Mutex`, and the runtime compile-asserts
 //! its handles `Send + Sync`.
 //!

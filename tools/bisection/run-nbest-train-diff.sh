@@ -23,7 +23,7 @@
 # (PINYIN_ORACLE_PREFIX, default $HOME/.local/opt/pinyin-oracle) and on a
 # real-unigram capi system dir (NBEST_CAPI_SYSTEM, e.g. the matched model20
 # tables with pinyin_index/phrase_index/bigram in the extension of the
-# capi's compiled backend, .kct by default, and interpolation2.text). Rounds: NBESTTRAINDIFF_USER_ROUNDS (default 3),
+# capi's compiled backend, .db by default (Berkeley DB), and interpolation2.text). Rounds: NBESTTRAINDIFF_USER_ROUNDS (default 3),
 # NBESTTRAINDIFF_ROUNDS (default 3).
 #
 # Exit codes: 0 = identical or skipped; 1 = build/run failure;
@@ -85,7 +85,7 @@ if [[ -z "$CAPI_SYSTEM" || ! -f "$CAPI_SYSTEM/interpolation2.text" ]] \
     || ! system_dir_detect_ext "$CAPI_SYSTEM" >/dev/null; then
     echo "SKIP: NBEST_CAPI_SYSTEM must name a real-unigram system dir"
     echo "  (pinyin_index, phrase_index and bigram in the extension of the capi's"
-    echo "   compiled backend -- .kct by default -- plus interpolation2.text)"
+    echo "   compiled backend -- .db by default -- plus interpolation2.text)"
     exit 0
 fi
 

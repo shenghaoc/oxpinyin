@@ -32,7 +32,7 @@
 # $HOME/.local/opt/pinyin-oracle) and on a real-unigram capi system dir
 # (UNCOVERED_SYSTEM) holding pinyin_index, phrase_index, bigram,
 # interpolation2.text, AND punct — the tables in the extension of the
-# capi's compiled backend (.kct by default; .tkt), punct being the Option A export
+# capi's compiled backend (.db by default — Berkeley DB; .kct, .tkt), punct being the Option A export
 # (token LE → NUL-terminated UTF-8, docs/findings/prediction-punct.md) of
 # the SAME model20 punct.table the oracle's punct.bin was built from, so
 # the punct rows are compared over matched tables (370 rows / 272 tokens).
@@ -109,7 +109,7 @@ SYSTEM_EXT=""
 if [[ -z "$SYSTEM_EXT" ]] || ! [[ -f "$SYSTEM/interpolation2.text" && -f "$SYSTEM/punct.$SYSTEM_EXT" ]]; then
     echo "SKIP: UNCOVERED_SYSTEM must name a real-unigram system dir"
     echo "  (pinyin_index, phrase_index, bigram and punct all in the extension of"
-    echo "   the capi's compiled backend -- .kct by default -- plus interpolation2.text;"
+    echo "   the capi's compiled backend -- .db by default -- plus interpolation2.text;"
     echo "   punct is the Option A export of the same model20 punct.table)"
     exit 0
 fi

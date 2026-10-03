@@ -54,7 +54,8 @@
 //! * **Engine-level latency.** This is a backend-tier bench; `ChewingTable`
 //!   and the engine's search matrix sit above the raw `get`. The store-tier
 //!   number is the input to a full-engine bench, not a replacement for it.
-//! * **The shipped default (tkrzw).** The `PlantDB` page cache is a Kyoto
+//! * **The other peers (Berkeley DB, the default since 2026-09-20, and
+//!   tkrzw).** The `PlantDB` page cache is a Kyoto
 //!   Cabinet structure; there is no reason for its arithmetic or its cost
 //!   to transfer. This bench is Kyoto-Cabinet-scoped.
 //!

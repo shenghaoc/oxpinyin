@@ -266,11 +266,14 @@ feature.
 
 ## Not done, and why
 
-- **Item 6, the default backend.** Superseded twice, and no longer this
+- **Item 6, the default backend.** Superseded more than once, and no longer this
   backend's story: Kyoto Cabinet was the default from 2026-08-29, then
   tkrzw took the default on 2026-09-05 (`05688575` — RHEL 10.2 ships
   `tkrzw-devel` but not `kyotocabinet-devel`, which made the KC default
-  unbuildable from source on the primary development machine); KC is a
+  unbuildable from source on the primary development machine), and
+  Berkeley DB on 2026-09-20 (`default = ["bdb"]`, the reference build's
+  bare `./configure`; Q1 ruling, `compatibility-policy.md`, "Amendment —
+  rulings recorded"); KC is a
   non-default peer selected with `--no-default-features --features
   kyotocabinet`. redb was the pure-Rust portability fallback selected
   by `--no-default-features` until it was removed 2026-09-20
@@ -301,7 +304,7 @@ feature.
   Kyoto-Cabinet-built libpinyin on this machine (premise 1), and
   ibus-libpinyin is not installed either. The gate stands unmet.
 - **The frozen candidate and sentence pins were not re-measured — under
-  the now-default Kyoto Cabinet backend or any other.** They are measured
+  the then-default Kyoto Cabinet backend or any other.** They are measured
   against the pin-built oracle, which `tools/oracle/build-oracle.sh`
   cannot fetch here (`codeload.github.com` answers 403). The exact
   unmeasured coverage: no pin has been run with `DefaultStore` resolving

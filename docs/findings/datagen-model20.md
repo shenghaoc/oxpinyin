@@ -111,13 +111,14 @@ a provisioned machine:
 ```sh
 tools/model/fetch-model.sh                      # SHA-verified extract
 export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
-# tkrzw is the default backend, so libtkrzw must be installed before the
-# first command below compiles the crate. Once, build the pinned 1.0.32
+# Berkeley DB is the default backend (since 2026-09-20; tkrzw before),
+# so the libdb headers must be installed before the first command below
+# compiles the crate. For the tkrzw peer, once, build the pinned 1.0.32
 # from upstream (the lean default configure: no zlib/zstd/lz4/lzma):
 #   curl -O https://dbmx.net/tkrzw/pkg/tkrzw-1.0.32.tar.gz
 #   echo "d3404dfac6898632b69780c0f0994c5f6ba962191a61c9b0f4b53ba8bb27731c  tkrzw-1.0.32.tar.gz" | sha256sum -c -
 #   tar xzf tkrzw-1.0.32.tar.gz && cd tkrzw-1.0.32 && ./configure && make -j"$(nproc)" && sudo make install && sudo ldconfig
-cargo test -p oxpinyin-datagen -- --include-ignored                                          # tkrzw (default)
+cargo test -p oxpinyin-datagen -- --include-ignored                                          # Berkeley DB (default)
 cargo test -p oxpinyin-datagen --no-default-features --features redb -- --include-ignored
 cargo test -p oxpinyin-datagen --no-default-features --features lmdb -- --include-ignored
 cargo run -p oxpinyin-datagen -- compile --out-dir target/datagen/redb
@@ -132,7 +133,7 @@ cargo test -p pinyin-oracle --test sentence_surface_parity -- --nocapture
 
 | Source | Backend | Producer | Output | Oracle comparison |
 |---|---|---|---|---|
-| model20 | Kyoto Cabinet | `oxpinyin-datagen compile --backend kyotocabinet` (the default selection: needs `--features kyotocabinet`, which the workspace-default sweep compiles in) | `*.kct` | libpinyin, via proven-identical tables |
+| model20 | Kyoto Cabinet | `oxpinyin-datagen compile --backend kyotocabinet` (a non-default peer: `--no-default-features --features kyotocabinet`; the default selection was KC when this table was written and is Berkeley DB since 2026-09-20) | `*.kct` | libpinyin, via proven-identical tables |
 | model20 | redb | `oxpinyin-datagen compile --backend redb` (`--no-default-features --features redb`) | `*.redb` | libpinyin, behavioral |
 | model20 | LMDB | `oxpinyin-datagen compile --backend lmdb` (`--no-default-features --features lmdb`) | `*.lmdb` | libpinyin, via proven-identical tables |
 | model20 | Tkrzw | `oxpinyin-datagen compile --backend tkrzw` (`--no-default-features --features tkrzw`) | `*.tkt` | libpinyin, via proven-identical tables |

@@ -46,7 +46,7 @@ the peer itself was removed 2026-09-20.
   is pure memcmp. That distinction is the whole reason encoding choice matters
   below.)
 - **tkrzw** (`cxx` shim over TreeDBM, feature `tkrzw`; the default selection
-  since 2026-09-05). `open_db` (`crates/oxpinyin-store/src/tkrzw/shim.cc`) calls
+  2026-09-05 → 2026-09-20, Berkeley DB since). `open_db` (`crates/oxpinyin-store/src/tkrzw/shim.cc`) calls
   `db->dbm.Open(path, writable, options)` with `options` being only
   `File::OPEN_DEFAULT` or `File::OPEN_NO_CREATE`. **The fourth argument —
   `TreeDBM::TuningParameters` — is omitted**, so it is default-constructed and
