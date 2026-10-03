@@ -52,7 +52,7 @@ fn main() {
             eprintln!("output of tools/oracle/build-oracle.sh. Build it, then point at it:");
             eprintln!();
             eprintln!(
-                "  bash tools/oracle/build-oracle.sh \\\n    --prefix \"$HOME/{DEFAULT_PREFIX_SUFFIX}\" --jobs \"$(nproc)\""
+                "  bash tools/oracle/build-oracle.sh --dbm tkrzw \\\n    --prefix \"$HOME/{DEFAULT_PREFIX_SUFFIX}\" --jobs \"$(nproc)\""
             );
             eprintln!();
             eprintln!("  PINYIN_ORACLE_PREFIX=$HOME/{DEFAULT_PREFIX_SUFFIX} \\");

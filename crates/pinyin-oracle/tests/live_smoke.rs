@@ -4,7 +4,7 @@
 //! `tools/oracle/build-oracle.sh`:
 //!
 //! ```bash
-//! bash tools/oracle/build-oracle.sh --prefix "$HOME/.local/opt/pinyin-oracle" --jobs "$(nproc)"
+//! bash tools/oracle/build-oracle.sh --dbm tkrzw --prefix "$HOME/.local/opt/pinyin-oracle" --jobs "$(nproc)"
 //!
 //! PKG_CONFIG_PATH=$HOME/.local/opt/pinyin-oracle/lib/pkgconfig \
 //! LD_LIBRARY_PATH=$HOME/.local/opt/pinyin-oracle/lib \
@@ -28,7 +28,7 @@ fn oracle() -> Oracle {
         Ok(prefix) => prefix,
         Err(error) => panic!(
             "{error}\n\nBuild the oracle first:\n  \
-             bash tools/oracle/build-oracle.sh \
+             bash tools/oracle/build-oracle.sh --dbm tkrzw \
              --prefix \"$HOME/.local/opt/pinyin-oracle\" --jobs \"$(nproc)\""
         ),
     };

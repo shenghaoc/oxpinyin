@@ -1,8 +1,11 @@
 # Oracle — building the pin and running the differentials
 
 The oracle is libpinyin built from the pinned commit, with the pinned
-model20 data, on the tkrzw backend. Every parity claim in this repository
-is a differential against it. Its identity is `tools/oracle/oracle-pin.txt`
+model20 data, on the Berkeley DB backend by default (the reference
+build is a bare `./configure`); Kyoto Cabinet and tkrzw prefixes are
+built with `--dbm kc` / `--dbm tkrzw`, and a differential picks its cell
+with `PINYIN_ORACLE_DBM`. Every parity claim in this repository is a
+differential against it. Its identity is `tools/oracle/oracle-pin.txt`
 (mirrored by constants in `tools/oracle/build-oracle.sh`); the history of
 the pin is `docs/testing/oracle-environment.md`.
 
@@ -24,8 +27,14 @@ extracted directory.
 
 Build dependencies: autotools, a C/C++ toolchain, pkg-config, gettext,
 gnome-common, curl, python3, and the dev headers for GLib 2.0, IBus 1.0,
-SQLite 3 and the DBM (`libtkrzw-dev` by default; `--dbm` selects Kyoto
-Cabinet or Berkeley DB for the bench oracles).
+SQLite 3 and the DBM (`libdb-dev` for the default Berkeley DB cell;
+`--dbm kc` needs `libkyotocabinet-dev`, `--dbm tkrzw` needs
+`libtkrzw-dev`). The parity oracle defaults to Berkeley DB (ruling
+2026-09-27 UTC, following Q1); differentials pick the cell with
+`PINYIN_ORACLE_DBM`. The capture goldens and the `pinyin-oracle`
+crate's tests still need the tkrzw cell: build that prefix with
+`--dbm tkrzw`.
+Add `--enable-libzhuyin` to also build libzhuyin, which the zhuyin, candidate-assembly, two-context and open-counter differentials need.
 
 ```sh
 tools/oracle/build-oracle.sh --prefix ~/.local/opt/pinyin-oracle   # fetches libpinyin by commit SHA, verifies, builds

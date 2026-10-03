@@ -78,7 +78,11 @@ s = re.sub(r"\(\n\tcd \"\\\$ibus_src\"\n.*?\n\)\n",
            s, count=1, flags=re.S)
 open("/tmp/bo.sh", "w").write(s)
 PYEOF
+  # tkrzw explicitly: this container installs libtkrzw-dev and
+  # libkyotocabinet-dev but no libdb, and the build-oracle.sh default is
+  # Berkeley DB since 2026-09-27.
   if bash /tmp/bo.sh \
+	--dbm tkrzw \
 	--work-dir /tmp/oracle-work \
 	--prefix /tmp/oracle-prefix \
 	--model-dir /work/target/model20/extracted \
