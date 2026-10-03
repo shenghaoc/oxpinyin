@@ -385,6 +385,9 @@ line.)
 
 ### One bigram-prediction row differs on the pin's own data (trellis residual)
 
+- **Closed 2026-10-03 with row 33 (#614, merge commit `33e2e54d`):** `union-diff` is
+  pin-identical on `main` (`IDENTICAL (11 log lines)` on tkrzw, bdb and kc);
+  the extra line described here is gone.
 - **Reattributed 2026-09-27 UTC (#550, audit D-05; policy row 20 → row
   33).** The line is not a trellis residual. The union driver's
   whole-row NBEST choose installs no `CONSTRAINT_ONESTEP` on the pin
@@ -1140,8 +1143,14 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
 
 ## zhuyin candidate-tag grouping + `after(consumed)` terminal offset — CLOSED (display-law collapse + builder terminal mapping)
 
+- **Re-closed 2026-10-03 (#577; #623, merge commit `cb824981`, code
+  `7bea86d1`; policy rows 25 and 26):** a mid-key after-cursor lookup
+  answers the sentence rows alone (`zhuyin.cpp:1498-1512`, `:1624-1626`);
+  `zhuyin-diff` now drives offsets 1, 2, 4 and 5 of both families and a
+  choose battery, 4558 lines identical on tkrzw, bdb and kc; the
+  choose-then-guess half is #609 (`563ed9b1`).
 - **Contradicted by #577 (2026-09-27 UTC; audit Z-3; policy rows 25
-  and 26), pending investigation.** On all three cells, for the chewing
+  and 26), pending investigation — the record this closure answers.** On all three cells, for the chewing
   input `su3cl3` after `zhuyin_guess_sentence`,
   `zhuyin_guess_candidates_after_cursor` at offsets 1, 2 and 5 answers
   n=1 on the pin and n=126/126/94 on oxpinyin, and after a choose
@@ -1219,8 +1228,14 @@ syllables (`ta`=1, `li`=2, `ju`=2) where the pin reported 0. Root cause was
 
 ## zhuyin before-cursor candidate window — CLOSED (backward-anchored window builder)
 
+- **Re-closed 2026-10-03 (#577; #623, merge commit `cb824981`, code
+  `7bea86d1`; policy rows 25 and 26):** a mid-key after-cursor lookup
+  answers the sentence rows alone (`zhuyin.cpp:1498-1512`, `:1624-1626`);
+  `zhuyin-diff` now drives offsets 1, 2, 4 and 5 of both families and a
+  choose battery, 4558 lines identical on tkrzw, bdb and kc; the
+  choose-then-guess half is #609 (`563ed9b1`).
 - **Contradicted by #577 (2026-09-27 UTC; audit Z-3; policy rows 25
-  and 26), pending investigation.** On all three cells, for the chewing
+  and 26), pending investigation — the record this closure answers.** On all three cells, for the chewing
   input `su3cl3` after `zhuyin_guess_sentence`,
   `zhuyin_guess_candidates_after_cursor` at offsets 1, 2 and 5 answers
   n=1 on the pin and n=126/126/94 on oxpinyin, and after a choose
@@ -1895,7 +1910,7 @@ section.
   2026-09-27 UTC (#548): until then the row's only record was the
   parked paragraph in `all-off-tails.md`.
 
-### Sort-option input of `pinyin_guess_candidates` — REOPENED, pending lane I (policy row 32)
+### Sort-option input of `pinyin_guess_candidates` — CLOSED in code, reopened 2026-09-27 (#582) and closed 2026-10-03 (policy row 32)
 
 - **Upstream source cite:** `src/pinyin.cpp:2292-2300` (the LONGER and
   sentence prepends gated on `sort_option`, then
@@ -1915,7 +1930,9 @@ section.
   after `guess_sentence` at `0x1f` — pin n=385 headed by 历史, 理事;
   oxpinyin n=383, neither present; `0x1d` the same; `0x1c` identical.
   The 2026-09-20 closure measured `0x1e`/`0x1c`/`0x14` only.
-- **Status:** reopened 2026-09-27 UTC; pending lane I (#582).
+- **Status:** **CLOSED** in code 2026-10-03: #596 (merge commit `45cc6032`) and
+  #598 (`efa8337a`); every `0x1`/`0x1f` case of `candidate-assembly-diff` is
+  identical on tkrzw, bdb and kc. Reopened 2026-09-27 UTC (#582).
 
 ### Whole-row NBEST choose + train writes the user bigram (policy row 33)
 
@@ -1932,7 +1949,9 @@ section.
   driver's choose and train, oxpinyin writes `测测→你` (count 138) and
   predicts 你; the pin writes and predicts nothing. Row 20's line is
   this mechanism (see row 20).
-- **Status:** REVERT TARGET; work order `revert-plan.md`.
+- **Status:** **CLOSED** in code 2026-10-03: #614 (merge commit `33e2e54d`, code
+  `750b8cb6`) and #616 (`fd293e53`); the choose-every-row differential is
+  identical on tkrzw, bdb and kc. Work order `revert-plan.md`.
 
 ### Imported user phrase lost after `guess_sentence` (policy row 34)
 
@@ -1947,7 +1966,9 @@ section.
   `0x1f` after a sentence guess on the pin and not on oxpinyin
   (`probe-coverage-abi.md` C); #582 shows the dedup half without any
   import.
-- **Status:** REVERT TARGET, pending lane I (#582).
+- **Status:** **CLOSED** in code 2026-10-03: #598 (merge commit `efa8337a`) with
+  #596 (`45cc6032`); phases A and N at `0x1`/`0x1f` are identical on
+  tkrzw, bdb and kc.
 
 ### User-library tokens refused an n-best step cost — CLOSED in code (policy row 35)
 
@@ -2002,7 +2023,9 @@ section.
   `guess_candidates(0, 0x1f)` after a whole-composition choose the pin
   answers 127 candidates and oxpinyin 0; ibus-libpinyin's preset 2
   takes that path after every partial choose.
-- **Status:** REVERT TARGET, pending lane I (#582).
+- **Status:** **CLOSED** in code 2026-10-03: #604 (merge commit `06ede4dc`), #609
+  (`563ed9b1`) and, for the transformed input schemes, #625 (`c6a61be8`);
+  phases C, M, S, T and K are identical on tkrzw, bdb and kc.
 
 ### `pinyin_train`/`zhuyin_train` gate (policy row 38)
 
@@ -2088,6 +2111,28 @@ and at `main`.
   The `table.conf` route to the same `abort()` (`table_info.cpp:232-233`)
   is not covered: oxpinyin ignores that line silently (the ledger
   below, group B).
+
+### `pinyin_choose_candidate` under `SORT_WITHOUT_SENTENCE_CANDIDATE` with a nonzero offset aborts the pin (policy row 45)
+
+Registered 2026-10-03 UTC from #598's "Register impact" (merge commit
+`efa8337a`), row text as #598 wrote it, re-executed at `074a2219` on
+freshly built tkrzw, bdb and kc oracles.
+
+- **Upstream source cite:** `src/pinyin.cpp:2565-2576` — the `0x1` leg of
+  `pinyin_choose_candidate`, whose first statement is
+  `assert(0 == offset)` (`:2566`), then the unigram-only train.
+- **Condition:** `m_sort_option & SORT_WITHOUT_SENTENCE_CANDIDATE` (set by
+  the last `pinyin_guess_candidates` word) and `offset != 0`. ibus-libpinyin
+  1.16.5 always passes 0 on that path (`PYPLibPinyinCandidates.cc:139-145`).
+- **Executed:** `pinyin_parse_more_full_pinyins("nihao")`,
+  `pinyin_guess_candidates(0, 0x1)`, choose the first NORMAL row at offset 1:
+  `Assertion '0 == offset' failed`, SIGABRT (exit 134) on all three cells;
+  at offset 0 the call answers `1`.
+- **What oxpinyin does instead:** answers `0` and logs exactly one
+  `g_warning` in the `libpinyin` domain, `pinyin_choose_candidate: offset
+  must be 0 under SORT_WITHOUT_SENTENCE_CANDIDATE`
+  (`crates/oxpinyin-capi/src/candidates.rs:362-371`).
+- **Class:** (c), both halves met; the site is an **`assert`**.
 
 ### Abort sites answered without a log: the #525 site ledger (policy rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21, 22)
 
