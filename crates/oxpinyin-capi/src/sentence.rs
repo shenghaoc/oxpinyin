@@ -310,51 +310,55 @@ pub extern "C" fn pinyin_guess_candidates(
     // cursor), the cached list already answers, so those paths stay
     // bit-identical.
     //
-    // Re-anchoring is valid only for plain full pinyin, where the caller's
-    // offset is a direct byte index into the session's raw buffer — the
-    // same coordinate space as `composition_offset`. Under a transform
-    // (double pinyin, zhuyin, or the LUOMA / secondary-zhuyin full-pinyin
-    // index) the offset lives in the original input's coordinates, which
-    // `self.raw` does not share; the normalized offset is range-checked
-    // there but is not a raw index, so the cached list stands (the C2
-    // differential never drives a transformed scheme).
-    let transformed = inst.core.double_parse.is_some()
-        || inst.core.zhuyin_parse.is_some()
-        || inst.core.full_parse.is_some();
+    // The caller's offset lives in the active parse mode's ORIGINAL input
+    // coordinates — the pin's matrix keeps each key at its key rest's
+    // `m_raw_begin` (`phonetic_key_matrix.cpp:52-56`) for every scheme —
+    // while the session is driven with the `'`-joined full-pinyin spelling.
+    // The transformed seams map the offset across to the matrix column of
+    // the key it starts (`*_session_offset`: 0, or the apostrophe in front
+    // of the key, the column a forcing there spells under); plain full
+    // pinyin is the identity.
+    let session_offset = if let Some(parse) = inst.core.double_parse.as_ref() {
+        oxpinyin_facade::double_session_offset(parse, normalized)
+    } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+        oxpinyin_facade::zhuyin_session_offset(parse, normalized)
+    } else if let Some(parse) = inst.core.full_parse.as_ref() {
+        oxpinyin_facade::full_session_offset(parse, normalized)
+    } else {
+        normalized
+    };
     // Retain the re-anchored window on the instance: a session's
     // selection records against the cached (composition-anchored) list,
     // but the row the caller saw came from the offset-anchored window —
     // an index into the cached list would select a different row
     // whenever the two differ. `anchored_window` is set here and a later
     // `pinyin_choose_candidate` resolves its index against it.
-    // Re-anchor at any normalized offset other than the composition
-    // offset; one equal to it is the composition-anchored cached list.
-    // An offset BELOW it — ibus's `moveCursorLeft` looks up at 0 behind a
-    // choose (`PYPPhoneticEditor.cc:595-604`) — was served the cached
-    // list, the window at the composition offset, because a choose from
-    // it would regress the composition; amended 2026-09-27 (maintainer ruling,
-    // register row 37): the pin keeps no composition offset and builds
-    // every window from `start = offset` (`pinyin.cpp:2224-2262`), and a
-    // choose from a window behind the composition now moves the record
-    // back to the chosen span (`Session::select_anchored`). Under a
-    // transform the cached list stands (the offset is in the original
-    // input's coordinates `self.raw` does not share).
-    inst.core.anchored_window =
-        if transformed || normalized == inst.core.session.composition_offset() {
-            None
-        } else if let Ok(window) = inst.core.session.candidates_at(normalized) {
-            Some((normalized, window))
-        } else {
-            // Unreachable for a well-formed plain-pinyin lookup:
-            // the offset-shaped contracts are refused by
-            // `validate_lookup_offset` and `candidates_at`'s own
-            // range/char-boundary checks, and a mid-syllable byte
-            // is not an error — the window answers the pin's
-            // empty-column law. The arm remains for genuine
-            // backend failures during the re-anchored scan.
-            inst.candidates.clear();
-            return false;
-        };
+    // Re-anchor at any session offset other than the composition offset;
+    // one equal to it is the composition-anchored cached list. An offset
+    // BELOW it — ibus's `moveCursorLeft` looks up at 0 behind a choose
+    // (`PYPPhoneticEditor.cc:595-604`) — builds its own window: amended
+    // 2026-09-27 (maintainer ruling, register row 37), the pin keeps no
+    // composition offset and builds every window from `start = offset`
+    // (`pinyin.cpp:2224-2262`), and a choose from a window behind the
+    // composition moves the record back to the chosen span
+    // (`Session::select_anchored`). That holds for the transformed input
+    // schemes too — double pinyin, the chewing keyboards, Luoma and
+    // secondary zhuyin (maintainer ruling 2026-10-03: required by the
+    // tenet, `pinyin.cpp:2224-2262`).
+    inst.core.anchored_window = if session_offset == inst.core.session.composition_offset() {
+        None
+    } else if let Ok(window) = inst.core.session.candidates_at(session_offset) {
+        Some((session_offset, window))
+    } else {
+        // Unreachable for a well-formed lookup: the offset-shaped
+        // contracts are refused by `validate_lookup_offset` and
+        // `candidates_at`'s own range/char-boundary checks, and a
+        // mid-syllable byte is not an error — the window answers the
+        // pin's empty-column law. The arm remains for genuine backend
+        // failures during the re-anchored scan.
+        inst.candidates.clear();
+        return false;
+    };
     let candidates: &oxpinyin_engine::CandidateList = match inst.core.anchored_window.as_ref() {
         Some((_, window)) => window,
         None => inst.core.session.candidates(),

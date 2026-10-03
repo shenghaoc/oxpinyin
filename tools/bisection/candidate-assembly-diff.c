@@ -46,6 +46,11 @@
  *      Pinyin runs it over lishibakua and li'shi'ba'kua (separators) at
  *      the words with bit 0x1 clear.
  *
+ *   T  the C / M / S shapes under the transformed input schemes — double
+ *      pinyin (MS), Luoma and secondary zhuyin — at the words 0x0 and 0x1e,
+ *      over one four-key spelling per scheme (the caller's offsets are
+ *      in the original input's coordinates).
+ *
  * Zhuyin mode (libzhuyin, standard keyboard, the pin's default option
  * word): the same A / N / C / M / S shape over ㄌㄧˋㄕˇ (`xu4g3`, 歷史) and
  * ㄅㄚˋㄎㄨㄚˋ (`184dj84`) with no import (see the #575 note in main),
@@ -120,6 +125,7 @@ typedef import_iterator_t *(*fn_begin_add)(context_t *, uint8_t);
 typedef bool (*fn_add_phrase)(import_iterator_t *, const char *, const char *, gint);
 typedef void (*fn_end_add)(import_iterator_t *);
 typedef void (*fn_g_free)(void *);
+typedef bool (*fn_set_scheme)(context_t *, int);
 
 static struct {
     fn_init init;
@@ -146,7 +152,21 @@ static struct {
     fn_add_phrase add_phrase;
     fn_end_add end_add;
     fn_g_free g_free;
+    fn_set_scheme set_full_scheme;
+    fn_set_scheme set_double_scheme;
+    fn_parse parse_double;
 } s;
+
+/* The input scheme a pinyin case runs under (the T cases): 0 plain full
+ * pinyin, 1 double pinyin (MS), 2 Luoma, 3 secondary zhuyin. */
+static int scheme_kind;
+
+/* Header suffix of a transformed-scheme case; empty for plain full pinyin,
+ * so the plain cases keep their names (and the declared table its regexes). */
+static const char *scheme_tag(void) {
+    static const char *tags[] = {"", " scheme=double", " scheme=luoma", " scheme=secondary-zhuyin"};
+    return tags[scheme_kind];
+}
 
 static void *must(const char *name) {
     void *sym = dlsym(lib, name);
@@ -206,6 +226,11 @@ static bool open_session(struct session *ss, const char *systemdir, guint option
         return false;
     }
     printf("set_options(0x%x)=%s\n", options, yesno(s.set_options(ss->ctx, options)));
+    if (scheme_kind == 1)
+        printf("set_double_pinyin_scheme(MS)=%s\n", yesno(s.set_double_scheme(ss->ctx, 2)));
+    else if (scheme_kind > 1)
+        printf("set_full_pinyin_scheme(%d)=%s\n", scheme_kind,
+               yesno(s.set_full_scheme(ss->ctx, scheme_kind)));
     if (import) {
         import_iterator_t *it = s.begin_add(ss->ctx, USER_DICTIONARY);
         /* libzhuyin parses the import's reading with ZhuyinDirectParser2
@@ -355,7 +380,7 @@ static int choose_row(instance_t *inst, const char *label, int index) {
 static void case_a(const char *systemdir, guint options, guint word, bool import,
                    const char *input) {
     struct session ss;
-    printf("== A word=0x%x import=%s input=%s\n", word, yesno(import), input);
+    printf("== A word=0x%x import=%s input=%s%s\n", word, yesno(import), input, scheme_tag());
     if (!open_session(&ss, systemdir, options, import))
         return;
     printf("parse=%zu\n", s.parse(ss.inst, input));
@@ -395,8 +420,8 @@ static void requery(instance_t *inst, const char *label, int cursor, guint word)
 static void case_c(const char *systemdir, guint options, guint word, bool import,
                    const char *input, bool nbest_choose) {
     struct session ss;
-    printf("== C%s word=0x%x import=%s input=%s\n", nbest_choose ? "2" : "1", word,
-           yesno(import), input);
+    printf("== C%s word=0x%x import=%s input=%s%s\n", nbest_choose ? "2" : "1", word,
+           yesno(import), input, scheme_tag());
     if (!open_session(&ss, systemdir, options, import))
         return;
     printf("parse=%zu\n", s.parse(ss.inst, input));
@@ -427,8 +452,8 @@ static bool lookup(instance_t *inst, const char *label, int offset, guint word) 
 static void case_m(const char *systemdir, guint options, guint word, bool import,
                    const char *input, bool later_forcing) {
     struct session ss;
-    printf("== M%s word=0x%x import=%s input=%s\n", later_forcing ? "2" : "1", word,
-           yesno(import), input);
+    printf("== M%s word=0x%x import=%s input=%s%s\n", later_forcing ? "2" : "1", word,
+           yesno(import), input, scheme_tag());
     if (!open_session(&ss, systemdir, options, import))
         return;
     int normal = zhuyin ? ZHUYIN_NORMAL_AFTER_CURSOR : NORMAL_CANDIDATE;
@@ -462,7 +487,7 @@ static void case_m(const char *systemdir, guint options, guint word, bool import
 static void case_s(const char *systemdir, guint options, guint word, const char *input,
                    int k) {
     struct session ss;
-    printf("== S%d word=0x%x input=%s\n", k, word, input);
+    printf("== S%d word=0x%x input=%s%s\n", k, word, input, scheme_tag());
     if (!open_session(&ss, systemdir, options, false))
         return;
     int normal = zhuyin ? ZHUYIN_NORMAL_AFTER_CURSOR : NORMAL_CANDIDATE;
@@ -512,6 +537,9 @@ static void load_syms(void) {
         s.parse = (fn_parse)must("pinyin_parse_more_full_pinyins");
         s.pinyin_get_sentence = (fn_pinyin_get_sentence)must("pinyin_get_sentence");
         s.pinyin_guess_cands = (fn_pinyin_guess_cands)must("pinyin_guess_candidates");
+        s.set_full_scheme = (fn_set_scheme)must("pinyin_set_full_pinyin_scheme");
+        s.set_double_scheme = (fn_set_scheme)must("pinyin_set_double_pinyin_scheme");
+        s.parse_double = (fn_parse)must("pinyin_parse_more_double_pinyins");
     }
     s.g_free = (fn_g_free)dlsym(RTLD_DEFAULT, "g_free");
     if (!s.g_free)
@@ -591,6 +619,31 @@ static int train_rows(const char *systemdir, const char *root, const char *input
     return 0;
 }
 
+/* T: the same C / M / S shapes under the transformed input schemes. The
+ * caller's offsets live in the ORIGINAL input's coordinates (the pin's
+ * matrix keeps each key at its key rest's `m_raw_begin`,
+ * `phonetic_key_matrix.cpp:52-56`), and the window is built from
+ * `start = offset` for every scheme (`pinyin.cpp:2224-2262`), so a lookup
+ * behind a choose answers the window there and a choose from it moves the
+ * record back (register row 37). One spelling of 历史把跨 per scheme:
+ * double pinyin MS `liuibakw`, Luoma `nihaobakua`, secondary zhuyin
+ * `lishibakua`. */
+static void case_t(const char *systemdir, guint options, guint word, int kind,
+                   const char *input) {
+    scheme_kind = kind;
+    fn_parse saved = s.parse;
+    if (kind == 1)
+        s.parse = s.parse_double;
+    case_a(systemdir, options, word, false, input);
+    case_c(systemdir, options, word, false, input, false);
+    case_m(systemdir, options, word, false, input, false);
+    case_m(systemdir, options, word, false, input, true);
+    for (int k = 1; k <= 3; ++k)
+        case_s(systemdir, options, word, input, k);
+    s.parse = saved;
+    scheme_kind = 0;
+}
+
 int main(int argc, char **argv) {
     if (argc != 4 || (strcmp(argv[1], "pinyin") != 0 && strcmp(argv[1], "zhuyin") != 0)) {
         fprintf(stderr, "usage: %s pinyin|zhuyin <lib.so> <systemdir>\n", argv[0]);
@@ -663,6 +716,14 @@ int main(int argc, char **argv) {
                 }
             }
         }
+    }
+    static const struct {
+        int kind;
+        const char *input;
+    } schemes[] = {{1, "liuibakw"}, {2, "nihaobakua"}, {3, "lishibakua"}};
+    for (size_t t = 0; t < sizeof(schemes) / sizeof(schemes[0]); ++t) {
+        case_t(systemdir, options, 0x0, schemes[t].kind, schemes[t].input);
+        case_t(systemdir, options, 0x1e, schemes[t].kind, schemes[t].input);
     }
     return 0;
 }
