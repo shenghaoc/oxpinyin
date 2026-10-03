@@ -359,6 +359,22 @@ pub extern "C" fn pinyin_guess_candidates(
         inst.candidates.clear();
         return false;
     };
+    // A lookup strictly inside a key of the active transformed parse: the
+    // pin's matrix column there is empty (keys sit on their key rests'
+    // `m_raw_begin` only), so the search finds nothing and the list is the
+    // prepended sentence rows alone (`pinyin.cpp:2224-2262`, `:2295-2296`).
+    // The window stays anchored at the containing key for a later choose,
+    // as in the zhuyin facade (issue #577); only its sentence rows are
+    // snapshot.
+    let sentence_rows_only = if let Some(parse) = inst.core.double_parse.as_ref() {
+        oxpinyin_facade::double_offset_is_mid_key(parse, normalized)
+    } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+        oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized)
+    } else if let Some(parse) = inst.core.full_parse.as_ref() {
+        oxpinyin_facade::full_offset_is_mid_key(parse, normalized)
+    } else {
+        false
+    };
     let candidates: &oxpinyin_engine::CandidateList = match inst.core.anchored_window.as_ref() {
         Some((_, window)) => window,
         None => inst.core.session.candidates(),
@@ -372,6 +388,9 @@ pub extern "C" fn pinyin_guess_candidates(
         // with no rows. The C ABI translates the engine shape, it
         // does not surface it.
         if cand.kind() == oxpinyin_engine::CandidateKind::Fallback {
+            continue;
+        }
+        if sentence_rows_only && cand.kind() != oxpinyin_engine::CandidateKind::Sentence {
             continue;
         }
         let Ok(text) = CString::new(cand.text().as_bytes()) else {

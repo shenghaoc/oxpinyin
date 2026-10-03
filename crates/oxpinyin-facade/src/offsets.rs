@@ -62,6 +62,30 @@ pub fn zhuyin_offset_is_mid_key(parse: &ZhuyinParse, offset: usize) -> bool {
     offset < parse.consumed() && !parse.keys().iter().any(|item| item.start() == offset)
 }
 
+/// Whether an original lookup offset falls strictly inside a parsed
+/// double-pinyin key — [`zhuyin_offset_is_mid_key`]'s sibling for the
+/// pinyin facade (#625). The pin's matrix holds a key only on the column
+/// its key rest begins on (`fill_matrix`, `phonetic_key_matrix.cpp:52-56`
+/// at 074a2219), so `pinyin_guess_candidates` at a mid-key column searches
+/// nothing and answers the prepended sentence rows alone
+/// (`pinyin.cpp:2224-2262`, `:2295-2296`).
+#[must_use]
+pub fn double_offset_is_mid_key(parse: &DoublePinyinParse, offset: usize) -> bool {
+    parse
+        .keys()
+        .iter()
+        .any(|item| item.start() < offset && offset < item.end())
+}
+
+/// [`double_offset_is_mid_key`]'s Luoma/secondary-zhuyin sibling.
+#[must_use]
+pub fn full_offset_is_mid_key(parse: &FullPinyinIndexParse, offset: usize) -> bool {
+    parse
+        .keys()
+        .iter()
+        .any(|item| item.start() < offset && offset < item.end())
+}
+
 /// Maps a session-coordinate span START back to original zhuyin input
 /// coordinates — [`zhuyin_original_offset`]'s sibling for `m_begin`.
 ///

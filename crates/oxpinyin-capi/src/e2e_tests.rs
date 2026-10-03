@@ -1764,6 +1764,49 @@ fn choosing_behind_the_composition_under_double_pinyin_answers_the_chosen_span()
     crate::context::pinyin_fini(context);
 }
 
+/// A lookup strictly inside a double-pinyin key answers the sentence rows
+/// alone: the pin's matrix holds the key only on the column its key rest
+/// begins on, so a mid-key `pinyin_guess_candidates` searches an empty
+/// column (`pinyin.cpp:2224-2262`; the zhuyin facade's #577 law). Offset 0
+/// and offset 2 are key starts and list phrases.
+#[test]
+fn a_mid_key_lookup_under_double_pinyin_lists_only_the_sentence_rows() {
+    let user_dir = TempUserDir::new("double-mid-key");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert!(crate::config::pinyin_set_double_pinyin_scheme(context, 2));
+    let keys = cstr("nihk");
+    assert_eq!(
+        crate::parse::pinyin_parse_more_double_pinyins(instance, keys.as_ptr()),
+        4
+    );
+    assert!(pinyin_guess_sentence(instance));
+    let kinds = |instance: *mut PinyinInstance| -> Vec<lookup_candidate_type_t> {
+        // SAFETY: live instance immediately after a guess.
+        let inst = unsafe { instance_ref(instance) };
+        inst.candidates.iter().map(|cd| cd.candidate_type).collect()
+    };
+    for offset in [0, 2] {
+        assert!(pinyin_guess_candidates(instance, offset, DEFAULT_SORT));
+        assert!(
+            kinds(instance).contains(&lookup_candidate_type_t::NORMAL_CANDIDATE),
+            "offset {offset} is a key start and lists phrases"
+        );
+    }
+    for offset in [1, 3] {
+        assert!(pinyin_guess_candidates(instance, offset, DEFAULT_SORT));
+        let kinds = kinds(instance);
+        assert!(!kinds.is_empty(), "the sentence rows are listed");
+        assert!(
+            kinds
+                .iter()
+                .all(|kind| *kind == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE),
+            "offset {offset} is mid-key: sentence rows only"
+        );
+    }
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 #[test]
 fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
     let user_dir = TempUserDir::new("c2-reanchor-choose");

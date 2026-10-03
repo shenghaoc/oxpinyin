@@ -50,6 +50,8 @@
  *      pinyin (MS), Luoma and secondary zhuyin — at the words 0x0 and 0x1e,
  *      over one four-key spelling per scheme (the caller's offsets are
  *      in the original input's coordinates).
+ *   K  lookups strictly inside a key under the same schemes, before and after
+ *      a choose: the pin's matrix column there is empty.
  *
  * Zhuyin mode (libzhuyin, standard keyboard, the pin's default option
  * word): the same A / N / C / M / S shape over ㄌㄧˋㄕˇ (`xu4g3`, 歷史) and
@@ -625,9 +627,17 @@ static int train_rows(const char *systemdir, const char *root, const char *input
  * `phonetic_key_matrix.cpp:52-56`), and the window is built from
  * `start = offset` for every scheme (`pinyin.cpp:2224-2262`), so a lookup
  * behind a choose answers the window there and a choose from it moves the
- * record back (register row 37). One spelling of 历史把跨 per scheme:
- * double pinyin MS `liuibakw`, Luoma `nihaobakua`, secondary zhuyin
- * `lishibakua`. */
+ * record back (register row 37). One four-key spelling per scheme, the
+ * ones the cases actually run:
+ *   double pinyin (MS)  `liuibakw`     li|ui|ba|kw   历史把跨
+ *   Luoma               `nihaobakua`   ni|hao|ba|kua 你好把跨 — not the
+ *                       历史 spelling, which needs Luoma's `shih`: the pin
+ *                       decodes that incomplete key under USE_TONE and
+ *                       oxpinyin does not (#626), so it is kept out of
+ *                       this differential
+ *   secondary zhuyin    `lishibakua`   li|shi|ba|kua 历史把跨
+ * The K cases probe the offsets strictly inside a key, where the pin's
+ * matrix column is empty. */
 static void case_t(const char *systemdir, guint options, guint word, int kind,
                    const char *input) {
     scheme_kind = kind;
@@ -640,6 +650,34 @@ static void case_t(const char *systemdir, guint options, guint word, int kind,
     case_m(systemdir, options, word, false, input, true);
     for (int k = 1; k <= 3; ++k)
         case_s(systemdir, options, word, input, k);
+    s.parse = saved;
+    scheme_kind = 0;
+}
+
+static void case_k(const char *systemdir, guint options, guint word, int kind,
+                   const char *input, const int *offsets, int n, bool after_choose) {
+    scheme_kind = kind;
+    fn_parse saved = s.parse;
+    if (kind == 1)
+        s.parse = s.parse_double;
+    struct session ss;
+    printf("== K%d word=0x%x input=%s%s\n", after_choose ? 2 : 1, word, input, scheme_tag());
+    if (open_session(&ss, systemdir, options, false)) {
+        printf("parse=%zu\n", s.parse(ss.inst, input));
+        if (after_choose) {
+            printf("guess_sentence=%s\n", yesno(s.guess_sentence(ss.inst)));
+            dump_list(ss.inst, "start", 0, word);
+            choose_row_at(ss.inst, "first", first_of_type(ss.inst, NORMAL_CANDIDATE), 0);
+        }
+        printf("guess_sentence=%s\n", yesno(s.guess_sentence(ss.inst)));
+        print_sentence(ss.inst, "before-mid");
+        for (int j = 0; j < n; ++j) {
+            char label[32];
+            snprintf(label, sizeof label, "mid(%d)", offsets[j]);
+            dump_list(ss.inst, label, (size_t)offsets[j], word);
+        }
+        close_session(&ss);
+    }
     s.parse = saved;
     scheme_kind = 0;
 }
@@ -724,6 +762,17 @@ int main(int argc, char **argv) {
     for (size_t t = 0; t < sizeof(schemes) / sizeof(schemes[0]); ++t) {
         case_t(systemdir, options, 0x0, schemes[t].kind, schemes[t].input);
         case_t(systemdir, options, 0x1e, schemes[t].kind, schemes[t].input);
+    }
+    /* K: lookups strictly inside a key, original coordinates. */
+    static const int mid_double[] = {1, 3, 5, 7};
+    static const int mid_long[] = {1, 3, 4, 6, 8, 9};
+    for (size_t t = 0; t < sizeof(schemes) / sizeof(schemes[0]); ++t) {
+        const int *offs = schemes[t].kind == 1 ? mid_double : mid_long;
+        int n = schemes[t].kind == 1 ? 4 : 6;
+        for (int after = 0; after < 2; ++after) {
+            case_k(systemdir, options, 0x0, schemes[t].kind, schemes[t].input, offs, n, after);
+            case_k(systemdir, options, 0x1e, schemes[t].kind, schemes[t].input, offs, n, after);
+        }
     }
     return 0;
 }
