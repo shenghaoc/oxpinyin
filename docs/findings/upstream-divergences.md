@@ -941,7 +941,7 @@ seen in the same probe is a separate parity defect: issue #356.
 
 ### Empty-string phrase lookup SIGFPEs the pin — corrected: the crash is `pinyin_lookup_tokens("")` — WITHDRAWN
 
-- **Withdrawn (2026-10-03 UTC, maintainer ruling):** not reproduced at `074a2219`, valgrind clean on all three cells; claim withdrawn (policy row 22). The record below is kept as written.
+- **Withdrawn (2026-10-03 UTC, maintainer ruling):** not reproduced at `074a2219`: no crash and valgrind clean on tkrzw, bdb and kc (2026-10-03); the audit's original reproduction is unavailable; claim withdrawn (policy row 22). The record below is kept as written.
 - **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — and the symbol is corrected. The audit's execution (R-2) crashes the pin on `pinyin_lookup_tokens(instance, "", …)`, which hands a zero length straight to `m_phrase_table->search` (`pinyin.cpp:2652-2667`); `pinyin_phrase_segment(instance, "")` answers `true` — `PhraseLookup::get_best_match` with length 0 runs no search (`lookup/phrase_lookup.cpp:119-149`: `nstep - 1 == 0`). The bullets below are the original record and name the wrong entry point. Site kind: a fault signal, neither `assert` nor `abort()`. oxpinyin answers `false` for the token lookup (`crates/oxpinyin-capi/src/dict.rs:86`) — the false half holds; the log line is owed (row 22). For `pinyin_phrase_segment("")` the two sides agree on `true`: oxpinyin's span DP backtracks from the start node to an empty result (`crates/oxpinyin-engine/src/phrase.rs:124-130`, `:181-201`), so the "oxpinyin answers `false`" below is stale as well.
 
 - **Upstream source cite:** `pinyin_phrase_segment` →
