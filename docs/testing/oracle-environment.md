@@ -207,4 +207,3 @@ What changed, and what did not:
 - Dated facts above stay as written: Debian's history with Berkeley DB,
   the 2026-09-06 bench-oracle introduction, and "deprecated" as the
   2026-09-06 characterisation.
-
