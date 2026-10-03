@@ -947,7 +947,9 @@ seen in the same probe is a separate parity defect: issue #356.
   `PhraseLookup::get_best_match` with `sentence_length = 0`
   (`src/lookup/phrase_lookup.cpp:121-157`), reaching
   `m_phrase_table->search(0, ...)`; measured SIGFPE (gdb: divide in the
-  search path) on the pin-built oracle.
+  search path) on the pin-built oracle. **Re-measured 2026-10-03: not
+  reproduced** — see policy row 22; the crash claimed here could not be
+  re-captured on freshly built tkrzw, bdb and kc oracles.
 - **Mechanism:** a zero-length sentence reaches the span search, which
   divides by the (zero) span length; upstream never guards the entry
   point's UTF-8-validated but possibly-empty input.
@@ -1849,9 +1851,10 @@ section.
 
 ### tkrzw binding: exception-origin `SYSTEM_ERROR` and OS `SYSTEM_ERROR` share one error class (policy row 40)
 
-- **Registered as:** a standing divergence (ruled accepted 2026-08-28),
-  not an exception class — `compatibility-policy.md`, "Registered
-  standing divergences". Registered here 2026-09-27 UTC (#551); the full
+- **Registered as:** a standing divergence (ruled accepted 2026-08-28;
+  a Rust/C++ language-boundary consequence under the language-quirk
+  exception, maintainer ruling 2026-10-03), not a numbered exception
+  class — `compatibility-policy.md`, "Registered standing divergences". Registered here 2026-09-27 UTC (#551); the full
   record, with the ruling's process note, is
   `docs/findings/tkrzw-langc-exception-classification.md`.
 - **Upstream source cite:** none in libpinyin: the pin's tkrzw backend
@@ -1862,6 +1865,8 @@ section.
 - **Mechanism:** a C++ exception inside tkrzw (allocation failure) and
   an operating-system error both surface as `SYSTEM_ERROR` through the
   C API; the retired cxx shim reported the first as `UNKNOWN_ERROR`.
+  Rust cannot catch a C++ exception, so the C API is the only way in,
+  and it merges the two before oxpinyin sees either.
 - **What oxpinyin does instead:** maps `SYSTEM_ERROR` to
   `StoreError::Io` and every other code to `StoreError::Backend`
   (`crates/oxpinyin-store/src/tkrzw/mod.rs:149`, `:214`), so the
