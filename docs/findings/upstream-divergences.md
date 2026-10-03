@@ -2188,4 +2188,3 @@ test:
   carries the same unchecked index (`src/pinyin.cpp:589`), but the
   audit recorded library 255 *accepted* there (D-12), so that side is
   not a stable crash and is not part of this entry.
-
