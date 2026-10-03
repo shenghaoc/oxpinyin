@@ -47,7 +47,8 @@ pub use cursor::{KeyAt, SpanSource};
 pub use export_rows::{BigramExportWalk, BigramStep, ExportedBigramRow, PhraseExportCursor};
 pub use instance::{BEFORE_CURSOR_ANCHOR, InstanceCore};
 pub use offsets::{
-    double_original_offset, double_session_offset, full_original_offset, full_session_offset,
+    double_offset_is_mid_key, double_original_offset, double_session_offset,
+    full_offset_is_mid_key, full_original_offset, full_session_offset,
     zhuyin_lookup_session_offset, zhuyin_offset_is_mid_key, zhuyin_original_begin,
     zhuyin_original_offset, zhuyin_session_offset,
 };
