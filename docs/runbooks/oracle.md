@@ -34,6 +34,7 @@ SQLite 3 and the DBM (`libdb-dev` for the default Berkeley DB cell;
 `PINYIN_ORACLE_DBM`. The capture goldens and the `pinyin-oracle`
 crate's tests still need the tkrzw cell: build that prefix with
 `--dbm tkrzw`.
+Add `--enable-libzhuyin` to also build libzhuyin, which the zhuyin, candidate-assembly, two-context and open-counter differentials need.
 
 ```sh
 tools/oracle/build-oracle.sh --prefix ~/.local/opt/pinyin-oracle   # fetches libpinyin by commit SHA, verifies, builds
