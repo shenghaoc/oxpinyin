@@ -67,6 +67,7 @@ model_dir=
 # prefixes with `--dbm tkrzw` (tools/capture/run-capture.sh,
 # tools/profile/run-w8-cycle.sh, docs/testing/capture-fixtures.md).
 dbm=bdb
+enable_libzhuyin=0
 
 usage() {
 	cat <<'EOF'
@@ -91,6 +92,10 @@ Options:
                        SHA-256 check: the archive that produced DIR was verified
                        against MODEL_SHA256 before extraction. Only the source
                        of the bytes changes, never whether they are checked.
+  --enable-libzhuyin   Also build libzhuyin (configure --enable-libzhuyin): installs
+                       lib/libzhuyin.so beside libpinyin.so, which the zhuyin,
+                       candidate-assembly, two-context and open-counter
+                       differentials need.
   --dbm NAME           DBM backend libpinyin is configured with: bdb
                        (default — the bare ./configure reference build),
                        kc, or tkrzw. Recorded in the pin ref (+dbm-<name>)
@@ -127,6 +132,10 @@ while (($#)); do
 	--model-dir)
 		model_dir=$2
 		shift 2
+		;;
+	--enable-libzhuyin)
+		enable_libzhuyin=1
+		shift
 		;;
 	--dbm)
 		dbm=$2
@@ -330,7 +339,9 @@ fi
 (
 	cd "$lib_src"
 	autoreconf --force --install --verbose
-	./configure --prefix="$prefix" --disable-static --with-dbm="$dbm_name"
+	configure_args=(--prefix="$prefix" --disable-static --with-dbm="$dbm_name")
+	((enable_libzhuyin)) && configure_args+=(--enable-libzhuyin)
+	./configure "${configure_args[@]}"
 	make -j"$jobs"
 	make install
 )
