@@ -1714,6 +1714,56 @@ fn choosing_behind_the_composition_answers_the_chosen_span() {
     crate::context::pinyin_fini(context);
 }
 
+/// Register row 37 for the transformed input schemes (maintainer ruling
+/// 2026-10-03): the caller's offsets are in the ORIGINAL input's
+/// coordinates and the pin builds every window from `start = offset`
+/// (`pinyin.cpp:2224-2262`), so under double pinyin a lookup at 0 behind a
+/// chosen 你好 shows the offset-0 window (a lookup that used the cached,
+/// composition-anchored list showed none of it), and choosing 你 from it
+/// answers the span's end in original coordinates, `0 + len = 2`.
+#[test]
+fn choosing_behind_the_composition_under_double_pinyin_answers_the_chosen_span() {
+    fn row(instance: *mut PinyinInstance, text: &str) -> *mut LookupCandidate {
+        // SAFETY: live instance immediately after a guess.
+        let inst = unsafe { instance_ref(instance) };
+        let index = inst
+            .candidates
+            .iter()
+            .position(|cd| cd.text.as_bytes() == text.as_bytes())
+            .unwrap_or_else(|| panic!("{text} is offered"));
+        let mut cand: *mut LookupCandidate = ptr::null_mut();
+        assert!(pinyin_get_candidate(
+            instance,
+            u32::try_from(index).expect("small candidate index"),
+            &raw mut cand
+        ));
+        cand
+    }
+    let user_dir = TempUserDir::new("row37-double-behind-choose");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // Microsoft double pinyin (scheme 2): n+i, then h+ao (`k`).
+    assert!(crate::config::pinyin_set_double_pinyin_scheme(context, 2));
+    let keys = cstr("nihk");
+    assert_eq!(
+        crate::parse::pinyin_parse_more_double_pinyins(instance, keys.as_ptr()),
+        4
+    );
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    assert_eq!(
+        pinyin_choose_candidate(instance, 0, row(instance, "你好")),
+        4,
+        "the chosen phrase consumes both keys, in original coordinates"
+    );
+    assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+    assert_eq!(
+        pinyin_choose_candidate(instance, 0, row(instance, "你")),
+        2,
+        "the pin's offset + len for the key-wide choose behind the composition"
+    );
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 #[test]
 fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
     let user_dir = TempUserDir::new("c2-reanchor-choose");

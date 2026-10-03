@@ -438,14 +438,22 @@ pub extern "C" fn pinyin_choose_candidate(
         == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
     {
         inst.core.parsed_len
-    } else if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
-        oxpinyin_facade::zhuyin_original_offset(parse, inst.core.session.composition_offset())
-    } else if let Some(parse) = inst.core.double_parse.as_ref() {
-        oxpinyin_facade::double_original_offset(parse, inst.core.session.composition_offset())
-    } else if let Some(parse) = inst.core.full_parse.as_ref() {
-        oxpinyin_facade::full_original_offset(parse, inst.core.session.composition_offset())
     } else {
-        window_end.unwrap_or_else(|| inst.core.session.composition_offset())
+        // The chosen span's end in session coordinates: the window's own
+        // end when the caller looked up in an anchored window (the pin's
+        // `offset + len`, which a choose behind the composition keeps even
+        // though the rebuilt composition offset can reach past it), else
+        // the composition offset the selection just produced.
+        let session_end = window_end.unwrap_or_else(|| inst.core.session.composition_offset());
+        if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+            oxpinyin_facade::zhuyin_original_offset(parse, session_end)
+        } else if let Some(parse) = inst.core.double_parse.as_ref() {
+            oxpinyin_facade::double_original_offset(parse, session_end)
+        } else if let Some(parse) = inst.core.full_parse.as_ref() {
+            oxpinyin_facade::full_original_offset(parse, session_end)
+        } else {
+            session_end
+        }
     };
     c_int::try_from(end).unwrap_or(c_int::MAX)
 }
