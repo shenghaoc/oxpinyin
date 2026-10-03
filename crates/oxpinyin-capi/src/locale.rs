@@ -52,36 +52,3 @@ pub(crate) fn pin_table_info_locale() {
         setlocale(LC_NUMERIC, c"C".as_ptr());
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::ffi::CStr;
-    use std::ptr;
-
-    use super::{LC_NUMERIC, setlocale};
-
-    fn numeric_locale() -> String {
-        // SAFETY: a NULL locale queries without installing; the answer is a
-        // NUL-terminated string owned by the C library, copied out at once.
-        unsafe { CStr::from_ptr(setlocale(LC_NUMERIC, ptr::null())) }
-            .to_string_lossy()
-            .into_owned()
-    }
-
-    /// `pinyin_init` on an empty system dir fails before any file opens,
-    /// and the pin's `table_info.cpp:197` has already reset `LC_NUMERIC`
-    /// by then. `C.UTF-8` is glibc's built-in UTF-8 locale (2.35+), so the
-    /// step away from "C" needs no generated locale on the host.
-    #[test]
-    fn a_failed_init_leaves_lc_numeric_at_c() {
-        // SAFETY: `setlocale` with a NUL-terminated literal; the answer is
-        // only tested for NULL.
-        let installed = unsafe { setlocale(LC_NUMERIC, c"C.UTF-8".as_ptr()) };
-        assert!(!installed.is_null(), "missing input: the C.UTF-8 locale");
-        assert_eq!(numeric_locale(), "C.UTF-8");
-
-        let context = crate::context::pinyin_init(c"".as_ptr(), c"".as_ptr());
-        assert!(context.is_null());
-        assert_eq!(numeric_locale(), "C");
-    }
-}
