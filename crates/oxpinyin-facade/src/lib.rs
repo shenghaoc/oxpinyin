@@ -55,9 +55,10 @@ pub use offsets::{
 pub use parse::{ToneForwarding, double_scheme, full_scheme, zhuyin_scheme};
 pub use predict::{compute_prefixes, merged_suggestions};
 
-/// The option word `pinyin_init` seeds (`PINYIN_INCOMPLETE`, and nothing
-/// else) — the pinyin facade's distinguishing default.
-pub const PINYIN_DEFAULT_OPTION_WORD: u32 = oxpinyin_core::PINYIN_INCOMPLETE;
+/// The option word `pinyin_init` seeds (`USE_TONE`, and nothing else;
+/// `pinyin.cpp:329` at the pin) — the pinyin facade's distinguishing
+/// default: incomplete OFF, tone digits consumed.
+pub const PINYIN_DEFAULT_OPTION_WORD: u32 = oxpinyin_core::USE_TONE;
 
 /// The option word `zhuyin_init` seeds (`USE_TONE | FORCE_TONE`,
 /// `zhuyin.cpp:273` at both pins) — the zhuyin facade's distinguishing

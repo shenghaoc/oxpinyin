@@ -348,8 +348,8 @@ mod tests {
         let nih = cstr("nih");
         assert_eq!(
             pinyin_parse_more_full_pinyins(instance, nih.as_ptr()),
-            3,
-            "default incomplete-on consumes the tail"
+            2,
+            "the USE_TONE default leaves the incomplete tail"
         );
 
         assert!(pinyin_set_options(context, 0));
@@ -374,10 +374,14 @@ mod tests {
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
         let zai4 = cstr("zai4");
+        assert!(pinyin_set_options(
+            context,
+            PinyinTableFlag::PINYIN_INCOMPLETE as u32
+        ));
         assert_eq!(
             pinyin_parse_more_full_pinyins(instance, zai4.as_ptr()),
             3,
-            "toneless default leaves the digit unparsed"
+            "a toneless word leaves the digit unparsed"
         );
 
         assert!(pinyin_set_options(

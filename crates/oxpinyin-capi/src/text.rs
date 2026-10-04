@@ -555,6 +555,12 @@ mod tests {
 
         let user_dir = TempUserDir::new("full-aux");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        // The "nih" case needs the incomplete tail the USE_TONE default
+        // refuses.
+        assert!(crate::config::pinyin_set_options(
+            context,
+            oxpinyin_core::PINYIN_INCOMPLETE
+        ));
 
         let cases = [
             ("nihao", 5, 2, "ni |hao "),

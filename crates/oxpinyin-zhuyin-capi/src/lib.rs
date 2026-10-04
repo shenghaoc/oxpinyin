@@ -137,7 +137,7 @@ mod tests {
     }
 
     /// The zhuyin init seed is `USE_TONE | FORCE_TONE` (the pin's
-    /// `zhuyin.cpp:273`), unlike `pinyin_init`'s `PINYIN_INCOMPLETE`. The
+    /// `zhuyin.cpp:273`), unlike `pinyin_init`'s `USE_TONE`. The
     /// constant is the wire value the context stores.
     #[test]
     fn zhuyin_default_options_is_use_tone_or_force_tone() {

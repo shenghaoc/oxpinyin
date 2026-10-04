@@ -20,7 +20,7 @@ use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, ZhuyinContext, Z
 
 /// `USE_TONE | FORCE_TONE` — the option word `zhuyin_init` seeds
 /// (`zhuyin.cpp:273` at 0c5e80e1 and at the 074a2219 pin). This is the zhuyin facade's
-/// distinguishing default: `pinyin_init` seeds only `PINYIN_INCOMPLETE`.
+/// distinguishing default: `FORCE_TONE` is on, unlike `pinyin_init`'s `USE_TONE`.
 ///
 /// Superseded by [`oxpinyin_facade::ZHUYIN_DEFAULT_OPTION_WORD`]; kept as
 /// the crate-local name the tests cite.

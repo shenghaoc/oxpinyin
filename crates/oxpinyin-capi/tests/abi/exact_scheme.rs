@@ -77,7 +77,7 @@ fn zhuyin_keys_are_not_resegmented_by_the_pinyin_inventory() {
     // the xi'an phrases. This pins that the exact seam narrowed the
     // scheme path only — the full-pinyin path policy is untouched.
     //
-    // The context default is PINYIN_INCOMPLETE (0x8) alone; the divided
+    // The context default is USE_TONE (0x20) alone; the divided
     // pair `xian` -> `xi` + `an` needs USE_DIVIDED_TABLE, so set
     // PINYIN_INCOMPLETE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE (0x188).
     assert!(pinyin_set_options(context, 0x188));
