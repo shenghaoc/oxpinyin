@@ -7,8 +7,29 @@
 
 use std::ptr;
 
-use crate::state::{instance_mut, instance_ref};
+use crate::state::{CapiInstance, instance_mut, instance_ref};
 use crate::types::{ChewingKey, ChewingKeyRest, ZhuyinInstance};
+
+/// Whether the parse placed a key. The pin's matrix is empty (size 0) for a
+/// fresh instance or a keyless parse (`phonetic_key_matrix.cpp:34-38`); an
+/// unreadable parse is left to the callers' own refusals.
+pub(crate) fn matrix_has_keys(inst: &CapiInstance) -> bool {
+    let Ok((keys, input, _)) = inst.core.mode_keys() else {
+        return true;
+    };
+    !(input.is_empty() || keys.is_empty())
+}
+
+/// Class (c), `phonetic_key_matrix.h:103`: on an empty matrix the pin's
+/// `matrix.size() - 1` wraps, the offset test passes, and `get_column_size`
+/// asserts. A matrix with keys is the graceful `false`, silent.
+fn warn_on_empty_matrix(inst: &CapiInstance, name: &str) {
+    if !matrix_has_keys(inst) {
+        crate::ffi::log_warning(&format!(
+            "{name}: assertion 'index < m_table_content->len' failed"
+        ));
+    }
+}
 
 /// Get the zhuyin key rest at an offset.
 ///
@@ -37,6 +58,7 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
     let Some(found) = inst.core.key_at(offset) else {
+        warn_on_empty_matrix(inst, "zhuyin_get_zhuyin_key_rest");
         return false;
     };
     inst.key_rest_slot.begin = u16::try_from(found.begin).unwrap_or(u16::MAX);
@@ -143,6 +165,7 @@ pub extern "C" fn zhuyin_get_zhuyin_key(
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
     let Some(found) = inst.core.key_at(offset) else {
+        warn_on_empty_matrix(inst, "zhuyin_get_zhuyin_key");
         return false;
     };
     // `found.text` comes from `mode_keys`, which reads the parsed keys /
@@ -216,6 +239,10 @@ pub extern "C" fn zhuyin_get_left_zhuyin_offset(
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     let Ok(result) = inst.core.left_offset(offset) else {
+        // Class (c): the pin's `get_column_size` asserts past the matrix.
+        crate::ffi::log_warning(
+            "zhuyin_get_left_zhuyin_offset: assertion 'index < m_table_content->len' failed",
+        );
         return false;
     };
     if !left.is_null() {
@@ -247,8 +274,20 @@ pub extern "C" fn zhuyin_get_right_zhuyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let Ok(Some(result)) = inst.core.right_offset(offset) else {
-        return false;
+    let result = match inst.core.right_offset(offset) {
+        Ok(Some(result)) => result,
+        // The pin's own graceful `false` (`zhuyin.cpp:2049`), except on an
+        // empty matrix, where the loop's `get_column_size` asserts first.
+        Ok(None) => {
+            warn_on_empty_matrix(inst, "zhuyin_get_right_zhuyin_offset");
+            return false;
+        }
+        Err(_) => {
+            crate::ffi::log_warning(
+                "zhuyin_get_right_zhuyin_offset: assertion 'index < m_table_content->len' failed",
+            );
+            return false;
+        }
     };
     if !right.is_null() {
         // SAFETY: Null-checked above.

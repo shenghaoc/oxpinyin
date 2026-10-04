@@ -1199,6 +1199,172 @@ def _(k):
     return out
 
 
+# batch2 group 12f: the zhuyin twins (PR 12f, #525)
+for _name, _call in (
+        ('chewing-scheme-0', ctx_call('set_chewing_scheme', B, (I, 0))),
+        ('chewing-scheme-7', ctx_call('set_chewing_scheme', B, (I, 7))),
+        ('chewing-scheme-10', ctx_call('set_chewing_scheme', B, (I, 10))),
+        ('chewing-scheme-minus-1', ctx_call('set_chewing_scheme', B, (I, -1))),
+        ('full-pinyin-scheme-0', ctx_call('set_full_pinyin_scheme', B, (I, 0))),
+        ('full-pinyin-scheme-4', ctx_call('set_full_pinyin_scheme', B, (I, 4))),
+        ('load-phrase-library-0', ctx_call('load_phrase_library', B, (C.c_ubyte, 0))),
+        ('load-phrase-library-8', ctx_call('load_phrase_library', B, (C.c_ubyte, 8))),
+        ('unload-phrase-library-16', ctx_call('unload_phrase_library', B, (C.c_ubyte, 16))),
+        ('unload-phrase-library-255', ctx_call('unload_phrase_library', B, (C.c_ubyte, 255)))):
+    case('abort-zhuyin-' + _name, mode='zhuyin', abort=False)(_call)
+
+
+def zhuyin_chewing(k, text=b'su3cl3'):
+    inst = k.alloc()
+    k.fn('parse_more_chewings', Z, P, S)(inst, text)
+    return inst
+
+
+def offset_call(name, fresh, offset):
+    def run(k):
+        inst = k.alloc() if fresh else zhuyin_chewing(k)
+        out = Z(UNTOUCHED)
+        return {'ret': k.fn(name, B, P, Z, C.POINTER(Z))(inst, offset, C.byref(out))}
+    return run
+
+
+def guess_call(name, offset):
+    def run(k):
+        return {'ret': k.fn(name, B, P, Z)(zhuyin_chewing(k), offset)}
+    return run
+
+
+def key_call(name, fresh, offset):
+    def run(k):
+        inst = k.alloc() if fresh else zhuyin_chewing(k)
+        out = P(UNTOUCHED)
+        return {'ret': k.fn(name, B, P, Z, C.POINTER(P))(inst, offset, C.byref(out))}
+    return run
+
+
+def char_offset_call(offset):
+    def run(k):
+        out = Z(UNTOUCHED)
+        return {'ret': k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))(
+            zhuyin_chewing(k), '你好'.encode(), offset, C.byref(out))}
+    return run
+
+
+case('abort-zhuyin-get-left-zhuyin-offset-past-matrix', mode='zhuyin', abort=False)(
+    offset_call('get_left_zhuyin_offset', False, 99))
+case('abort-zhuyin-get-right-zhuyin-offset-past-matrix', mode='zhuyin', abort=False)(
+    offset_call('get_right_zhuyin_offset', False, 99))
+case('abort-zhuyin-get-right-zhuyin-offset-empty-matrix', mode='zhuyin', abort=False)(
+    offset_call('get_right_zhuyin_offset', True, 0))
+case('abort-zhuyin-guess-candidates-after-cursor-past-matrix', mode='zhuyin', abort=False)(
+    guess_call('guess_candidates_after_cursor', 99))
+case('abort-zhuyin-guess-candidates-before-cursor-past-matrix', mode='zhuyin', abort=False)(
+    guess_call('guess_candidates_before_cursor', 99))
+case('abort-zhuyin-guess-candidates-after-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False)(
+    guess_call('guess_candidates_after_cursor', 7))
+case('abort-zhuyin-guess-candidates-before-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False)(
+    guess_call('guess_candidates_before_cursor', 7))
+case('abort-zhuyin-get-character-offset-past-matrix', mode='zhuyin', abort=False)(char_offset_call(99))
+case('abort-zhuyin-get-zhuyin-key-empty-matrix', mode='zhuyin', abort=False)(
+    key_call('get_zhuyin_key', True, 0))
+case('abort-zhuyin-get-zhuyin-key-rest-empty-matrix', mode='zhuyin', abort=False)(
+    key_call('get_zhuyin_key_rest', True, 0))
+
+
+# The zhuyin zero total aborts the pin only while a searched row is ranked
+# (`zhuyin.cpp:1261`): the reserved slot after the cursor and the start before
+# it hold none, and the pin answers true with no warning.
+for _name, _offset in (('after_cursor', 6), ('before_cursor', 0)):
+    def _no_rank_z(name, offset):
+        def run(k):
+            inst = zhuyin_chewing(k)
+            k.fn('token_add_unigram_frequency', B, P, U, U)(inst, (1 << 24) | 1, (2 ** 32 - FACADE_TOTAL) % 2 ** 32)
+            count = U()
+            ret = k.fn('guess_candidates_' + name, B, P, Z)(inst, offset)
+            k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+            return {'ret': ret, 'rows': count.value}
+        return run
+    case('zhuyin-total-zero-ranks-nothing-' + _name.replace('_', '-'), mode='zhuyin', control=True)(
+        _no_rank_z(_name, _offset))
+
+
+@case('abort-zhuyin-parse-full-pinyin-apostrophe', mode='zhuyin', abort=False)
+def _(k):
+    key = C.c_uint16(UNTOUCHED & 0xFFFF)
+    ret = k.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_uint16))(k.inst, b"n'i", C.byref(key))
+    return {'ret': ret, 'untouched key': key.value == UNTOUCHED & 0xFFFF}
+
+
+@case('abort-zhuyin-guess-candidates-total-zero', mode='zhuyin', abort=False)
+def _(k):
+    inst = zhuyin_chewing(k)
+    k.fn('token_add_unigram_frequency', B, P, U, U)(inst, (1 << 24) | 1, (2 ** 32 - FACADE_TOTAL) % 2 ** 32)
+    return {'ret': k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)}
+
+
+# The zhuyin sites' graceful neighbours answer without a warning.
+@case('zhuyin-cursor-neighbours', mode='zhuyin', control=True)
+def _(k):
+    out = {}
+    inst = zhuyin_chewing(k)
+    res = Z(UNTOUCHED)
+    out['offset 99'] = [k.fn('get_zhuyin_offset', B, P, Z, C.POINTER(Z))(inst, 99, C.byref(res)),
+                        'untouched' if res.value == UNTOUCHED else res.value]
+    for label, name, offset in (('left 0', 'get_left_zhuyin_offset', 0), ('left 3', 'get_left_zhuyin_offset', 3),
+                                ('right 0', 'get_right_zhuyin_offset', 0), ('right 3', 'get_right_zhuyin_offset', 3)):
+        res = Z(UNTOUCHED)
+        out[label] = [k.fn(name, B, P, Z, C.POINTER(Z))(inst, offset, C.byref(res)),
+                      'untouched' if res.value == UNTOUCHED else res.value]
+    for label, name, offset in (('key 0', 'get_zhuyin_key', 0), ('key 99', 'get_zhuyin_key', 99),
+                                ('rest 3', 'get_zhuyin_key_rest', 3)):
+        ptr = P(UNTOUCHED)
+        out[label] = k.fn(name, B, P, Z, C.POINTER(P))(inst, offset, C.byref(ptr))
+    out['empty left'] = k.fn('get_left_zhuyin_offset', B, P, Z, C.POINTER(Z))(k.alloc(), 0, C.byref(Z()))
+    out['empty guess'] = k.fn('guess_candidates_after_cursor', B, P, Z)(k.alloc(), 0)
+    out['guess 0'] = k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+    out['guess end before'] = k.fn('guess_candidates_before_cursor', B, P, Z)(inst, 6)
+    out['guess end after'] = k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 6)
+    return out
+
+
+@case('zhuyin-scheme-and-library-neighbours', mode='zhuyin', control=True)
+def _(k):
+    out = {}
+    for label, name, arg in (('chewing 1', 'set_chewing_scheme', 1), ('chewing 6', 'set_chewing_scheme', 6),
+                             ('chewing 8', 'set_chewing_scheme', 8), ('chewing 9', 'set_chewing_scheme', 9),
+                             ('full 1', 'set_full_pinyin_scheme', 1), ('full 3', 'set_full_pinyin_scheme', 3)):
+        out[label] = k.fn(name, B, P, I)(k.ctx, arg)
+    for label, name, arg in (('load 1', 'load_phrase_library', 1), ('load 7', 'load_phrase_library', 7),
+                             ('load 16', 'load_phrase_library', 16), ('load 255', 'load_phrase_library', 255),
+                             ('unload 1', 'unload_phrase_library', 1)):
+        out[label] = k.fn(name, B, P, C.c_ubyte)(k.ctx, arg)
+    return out
+
+
+# The pinyin sites the offset probes of this group found still silent.
+@case('abort-get-right-pinyin-offset-empty-matrix', abort=False)
+def _(k):
+    out = Z(UNTOUCHED)
+    return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(k.alloc(), 0, C.byref(out))}
+
+
+@case('abort-guess-candidates-past-matrix', abort=False)
+def _(k):
+    return {'ret': k.fn('guess_candidates', B, P, Z, U)(full_inst(k, b'nihao'), 99, 0)}
+
+
+# One past the reserved slot is an ordinary lookup that finds nothing.
+@case('guess-candidates-past-the-reserved-slot')
+def _(k):
+    out = {}
+    inst = full_inst(k, b'nihao')
+    for offset in (5, 6):
+        # The returns only: at these offsets the pin still lists the LONGER
+        # row (policy row 65), which oxpinyin does not.
+        out['offset %d' % offset] = k.fn('guess_candidates', B, P, Z, U)(inst, offset, 0)
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):

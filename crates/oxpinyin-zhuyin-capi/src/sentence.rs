@@ -154,8 +154,14 @@ pub extern "C" fn zhuyin_get_character_offset(
     let Some(text) = cstr_to_strict(phrase) else {
         return false;
     };
-    let Ok(Some(char_count)) = inst.core.character_offset(&text, offset) else {
-        return false;
+    let char_count = match inst.core.character_offset(&text, offset) {
+        Ok(Some(char_count)) => char_count,
+        Ok(None) => return false,
+        Err(_) => {
+            // Class (c): `zhuyin.cpp:2110` and `:2158`.
+            crate::ffi::log_warning("zhuyin_get_character_offset: assertion failed");
+            return false;
+        }
     };
     if !length.is_null() {
         // SAFETY: Null-checked above.
@@ -202,6 +208,40 @@ pub extern "C" fn zhuyin_guess_candidates_before_cursor(
     guess_candidates(instance, offset, true)
 }
 
+/// The normalized lookup offset, or `None` where the lookup is refused.
+///
+/// The pin's matrix holds `parsed_len + 1` columns, the last a reserved slot
+/// holding a lone zero key, and `zhuyin.cpp`'s `_check_offset` asserts
+/// `zero_key != key` on the column before the offset (`:1441-1456`): an
+/// offset past the reserved slot aborts. Class (c), `false` and one warning.
+fn validated_lookup_offset(inst: &crate::state::CapiInstance, offset: usize) -> Option<usize> {
+    match inst.core.validate_lookup_offset(offset) {
+        Ok(normalized) => Some(normalized),
+        Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }) => {
+            crate::ffi::log_warning("zhuyin_guess_candidates: offset lies past the matrix");
+            None
+        }
+        Err(_) => None,
+    }
+}
+
+/// Whether the facade's `guint32` unigram total is zero: the loaded
+/// libraries' sum, the user store's deltas and the accepted
+/// `zhuyin_token_add_unigram_frequency` deltas, wrapped. A model without real
+/// unigrams has no total to divide by.
+fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
+    use oxpinyin_core::LanguageModel as _;
+
+    inst.core.lm.has_real_unigrams()
+        && inst
+            .core
+            .lm
+            .amplified_total()
+            .wrapping_add(u64::from(inst.core.dict.unigram_total_delta()))
+            & u64::from(u32::MAX)
+            == 0
+}
+
 /// The shared candidate-build shell over the engine's `candidates_at` /
 /// `candidates_ending_at` / cached candidate list.
 fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor: bool) -> bool {
@@ -218,7 +258,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     if !inst.core.session.is_composing() {
         return false;
     }
-    let Ok(normalized) = inst.core.validate_lookup_offset(offset) else {
+    let Some(normalized) = validated_lookup_offset(inst, offset) else {
         inst.candidates.clear();
         return false;
     };
@@ -309,6 +349,20 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         anchor,
         sentence_rows_only,
     );
+    // Class (c), `zhuyin.cpp:1261`: `assert (0 < total_freq)` while ranking a
+    // candidate, with the facade total wrapped to zero by
+    // `zhuyin_token_add_unigram_frequency`. The assertion sits in the loop
+    // over the searched rows (before the sentence rows are prepended), so a
+    // window with no phrase row never reaches it and the pin answers true.
+    if facade_total_is_zero(inst)
+        && inst.candidates.iter().any(|c| {
+            c.candidate_type != crate::types::lookup_candidate_type_t::BEST_MATCH_CANDIDATE
+        })
+    {
+        crate::ffi::log_warning("zhuyin_guess_candidates: assertion '0 < total_freq' failed");
+        inst.candidates.clear();
+        return false;
+    }
     // The pin answers `true` for a valid lookup into a non-empty matrix
     // even when no candidate spans the offset (the empty-col-window
     // shape, `zhuyin.cpp:1474,1549`); only an empty matrix (nothing
