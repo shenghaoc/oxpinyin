@@ -2293,10 +2293,9 @@ test:
   so the guess completes and answers `true`.
 - **Externally observable:** yes — audit D-06, probe
   `instance_outlives_context`: SIGSEGV on the pin, `true` on oxpinyin.
-  Class (b). The inverse probe (`alloc_after_fini`: oxpinyin crashes,
-  `crates/oxpinyin-capi/src/instance.rs:18-27`; the pin survives by
-  chance) is caller UB on both sides and not registered here; it stays
-  open on #528.
+  Class (b). The inverse probe (`alloc_after_fini`) is the next entry
+  (policy row 60). The orphan guess itself needs no change (ruled
+  2026-10-04): the pin's use after free stays unreproducible.
 
 ### Zhuyin import into library index 16 (policy row 43)
 
@@ -2336,3 +2335,26 @@ test:
   `pinyin_token_get_nth_pronunciation`). The return value and the number of
   keys are the pin's.
 - **Externally observable:** the content only. Class (b).
+
+### `pinyin_alloc_instance` on a finalised context (policy row 60)
+
+- **Upstream source cite:** `src/pinyin.cpp:1194-1222` (`pinyin_fini`
+  deletes the context), `:1310-1333` (`pinyin_alloc_instance` reads
+  `context->m_phrase_index` at `:1322` to build the instance's
+  constraints, `phonetic_lookup.h:427`).
+- **Mechanism:** a use after free. valgrind (2026-10-04, bdb): "Invalid
+  read of size 8 at `pinyin_alloc_instance (pinyin.cpp:1322)`, address 48
+  bytes inside a block of size 1,464 free'd". The call returns a non-NULL
+  instance whose constraints hold a dangling pointer, and survives because
+  the freed block is still mapped.
+- **What oxpinyin does instead:** `pinyin_init` records each context's
+  address and `pinyin_fini` forgets it (`crates/oxpinyin-capi/src/live.rs`);
+  `pinyin_alloc_instance` answers NULL for an address that is not live, and
+  logs nothing, because the pin does not abort. Before this entry the call
+  dereferenced the freed Rust context and crashed (valgrind: invalid read in
+  `ContextCore::alloc_instance`; SIGSEGV).
+- **Externally observable:** yes — `alloc-instance-after-fini` in
+  `contract-diff.py`: the pin returns an instance and exits 0, the parent
+  build exits with SIGSEGV, this change returns NULL and exits 0. Class (b).
+  A new context at a reused address is live again, which the registry cannot
+  tell from the old one.

@@ -13,14 +13,22 @@ use crate::types::{PinyinContext, PinyinInstance};
 /// pinyin_instance_t * pinyin_alloc_instance(pinyin_context_t * context);
 /// ```
 ///
-/// Returns NULL on failure or null context.
+/// Returns NULL on failure, on a null context and on a context that
+/// `pinyin_fini` already finalised (register row 60).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_alloc_instance(context: *mut PinyinContext) -> *mut PinyinInstance {
     if context.is_null() {
         return ptr::null_mut();
     }
+    // A context `pinyin_fini` already freed: the pin reads it anyway
+    // (`pinyin.cpp:1322`) and gets away with it; here the answer is NULL
+    // (register row 60, class (b)), with no log — the pin does not abort.
+    if !crate::live::is_live(context) {
+        return ptr::null_mut();
+    }
 
-    // SAFETY: `context` is non-null and was produced by `pinyin_init`.
+    // SAFETY: `context` is non-null, was produced by `pinyin_init` and is
+    // still live (checked above).
     let ctx = unsafe { context_ref(context) };
     ctx.alloc_instance(context)
         .map_or(ptr::null_mut(), box_instance)
