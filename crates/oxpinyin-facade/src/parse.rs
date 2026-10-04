@@ -211,6 +211,11 @@ impl InstanceCore {
     #[must_use]
     pub fn parse_chewing_more(&mut self, text: &str, forwarding: ToneForwarding) -> usize {
         self.begin_parse(text.as_bytes());
+        // The pin fills and fuzzes with the live context word before a
+        // sentence guess (pinyin.cpp:1589-1604, zhuyin.cpp:1061-1076).
+        if self.session.set_options(self.options()).is_err() {
+            return 0;
+        }
 
         let Some(scheme) = zhuyin_scheme(self.live.zhuyin_scheme.load(Ordering::Relaxed)) else {
             return 0;
@@ -260,6 +265,11 @@ impl InstanceCore {
     #[must_use]
     pub fn parse_double_more(&mut self, text: &str) -> usize {
         self.begin_parse(text.as_bytes());
+        // Match fill-then-fuzzy under the whole context word, not merely
+        // the incomplete mirror below (pinyin.cpp:1549-1559, pin 074a2219).
+        if self.session.set_options(self.options()).is_err() {
+            return 0;
+        }
 
         let raw = self.live.double_scheme.load(Ordering::Relaxed);
         let fallback_cleared = raw & crate::context::FALLBACK_CLEARED_BIT != 0;

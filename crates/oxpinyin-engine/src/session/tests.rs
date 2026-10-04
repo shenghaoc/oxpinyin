@@ -1621,6 +1621,47 @@ fn window_scan_emits_system_candidates_before_addon_candidates() {
 }
 
 #[test]
+fn exact_scan_matrix_adds_fuzzy_without_full_pinyin_splits() {
+    use oxpinyin_core::graph::{ExactSegment, SegmentGraph};
+    use oxpinyin_core::{OptionBits, PINYIN_AMB_L_N, USE_DIVIDED_TABLE, USE_RESPLIT_TABLE};
+
+    let options = OptionBits::from_bits(PINYIN_AMB_L_N | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE);
+    let ni = SyllableKey::from_text("ni").expect("ni key");
+    let graph =
+        SegmentGraph::build_exact(b"ni", &[ExactSegment::new(0, 2, ni, 3)]).expect("exact ni");
+    let columns = super::build_scan_matrix(&graph, options, false);
+    let keys: Vec<_> = columns[0]
+        .iter()
+        .map(|key| (key.key.text(), key.from, key.to, key.tone))
+        .collect();
+    assert_eq!(keys, [("ni", 0, 2, 3), ("li", 0, 2, 3)]);
+
+    // Full-pinyin split options must not re-segment double/chewing keys.
+    let bian = SyllableKey::from_text("bian").expect("bian key");
+    let graph = SegmentGraph::build_exact(b"bian", &[ExactSegment::new(0, 4, bian, 0)])
+        .expect("exact bian");
+    let columns = super::build_scan_matrix(&graph, options, false);
+    assert_eq!(columns[0].len(), 1);
+    assert_eq!(columns[0][0].key, bian);
+    assert!(columns[1..4].iter().all(Vec::is_empty));
+
+    let fan = SyllableKey::from_text("fan").expect("fan key");
+    let gan = SyllableKey::from_text("gan").expect("gan key");
+    let graph = SegmentGraph::build_exact(
+        b"fangan",
+        &[
+            ExactSegment::new(0, 3, fan, 0),
+            ExactSegment::new(3, 6, gan, 0),
+        ],
+    )
+    .expect("exact fan gan");
+    let columns = super::build_scan_matrix(&graph, options, false);
+    assert_eq!(columns[0].len(), 1);
+    assert_eq!(columns[0][0].key, fan);
+    assert!(columns[4].is_empty());
+}
+
+#[test]
 fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{
