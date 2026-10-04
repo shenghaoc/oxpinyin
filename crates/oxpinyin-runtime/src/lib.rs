@@ -305,7 +305,7 @@ pub struct RuntimeDict {
     /// (`phrase_index.h:632` — before the item-level dispatch, so an
     /// absent-token add still moves the total). Observable through the
     /// amplified-law denominator (`pinyin.cpp:1817`).
-    unigram_total_delta: Arc<AtomicU64>,
+    unigram_total_delta: Arc<AtomicU32>,
     /// The loaded-library mask: bit `n` **set** = library `n` unloaded
     /// (matches `library_visible` at :344 and the query surface —
     /// `library_visible_token`, `visible_item_count`, and the
@@ -550,19 +550,16 @@ impl RuntimeDict {
                 .is_some();
             system_found || addon_found || user_found
         };
-        // The facade total moves before the sub-index overflow check.
-        // Saturating on the facade edge: the total is an amplified-law
-        // denominator that would fail catastrophically on a wraparound,
-        // and the per-token overlay entry can pile up under repeated
-        // `add_unigram_frequency` calls. `AtomicU64::fetch_add` wraps
-        // silently even in debug, and the plain `+=` panics in debug
-        // + wraps in release; both replaced with saturating equivalents
-        // so debug and release stay consistent.
-        let _ = self
-            .unigram_total_delta
-            .try_update(Ordering::SeqCst, Ordering::SeqCst, |cur| {
-                Some(cur.saturating_add(delta))
-            });
+        // The facade total moves before the sub-index overflow check, and it
+        // is a `guint32` that wraps (`m_total_freq += delta`,
+        // `phrase_index.h:633`): a wrap to zero is the `0 < total_freq`
+        // assert of `pinyin.cpp:1859`, which the capi layer answers (class
+        // (c)) instead of dividing by it. `fetch_add` wraps in debug and
+        // release alike.
+        let Ok(delta) = u32::try_from(delta) else {
+            return false;
+        };
+        self.unigram_total_delta.fetch_add(delta, Ordering::SeqCst);
         if !found {
             return false;
         }
@@ -570,9 +567,6 @@ impl RuntimeDict {
             .unigram_overlay
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Ok(delta) = u32::try_from(delta) else {
-            return false;
-        };
         let library = token >> 24;
         let base = self
             .system
@@ -620,9 +614,10 @@ impl RuntimeDict {
     }
 
     /// The overlay total — the amplified-law denominator's live shift
-    /// (`pinyin.cpp:1817` reads the facade total this mirrors).
+    /// (`pinyin.cpp:1817` reads the facade total this mirrors). A `guint32`
+    /// that wraps, as the facade total does.
     #[must_use]
-    pub fn unigram_total_delta(&self) -> u64 {
+    pub fn unigram_total_delta(&self) -> u32 {
         self.unigram_total_delta.load(Ordering::SeqCst)
     }
 
@@ -1123,7 +1118,10 @@ impl LanguageModel for RuntimeLm {
                 .unigram_total()
                 .map_err(|error| LmError::User(error.to_string()))?,
         };
-        Ok(Some(self.inner.unigram_total().saturating_add(extra)))
+        // The facade total is a `guint32` (`phrase_index.h:440`) and wraps.
+        Ok(Some(
+            self.inner.unigram_total().wrapping_add(extra) & u64::from(u32::MAX),
+        ))
     }
 
     fn addon_unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
@@ -1358,7 +1356,7 @@ impl Runtime {
             addons: Arc::clone(&addons),
             punct: Arc::new(punct),
             unigram_overlay: Arc::new(Mutex::new(UnigramOverlay::default())),
-            unigram_total_delta: Arc::new(AtomicU64::new(0)),
+            unigram_total_delta: Arc::new(AtomicU32::new(0)),
             library_mask,
             library_epoch: Arc::new(AtomicU64::new(0)),
         };

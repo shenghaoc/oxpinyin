@@ -394,6 +394,26 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
     assert_eq!(dict.unigram_delta(tokens[1]), None);
     assert!(!dict.add_unigram_delta(tokens[0], 1));
     assert_eq!(dict.unigram_delta(tokens[0]), Some(u64::from(remaining)));
-    assert_eq!(dict.unigram_total_delta(), u64::from(remaining) + 2);
+    assert_eq!(dict.unigram_total_delta(), remaining + 2);
     assert!(dict.add_unigram_delta(tokens[1], 0));
+}
+
+/// The facade total is a `guint32` that wraps (`m_total_freq += delta`,
+/// `phrase_index.h:633`), whether or not the item accepts the delta.
+#[test]
+fn the_facade_total_delta_wraps_like_a_guint32() {
+    let runtime = Runtime::open(&w3_dir(), None).expect("open");
+    let dict = runtime.dict();
+    let token = dict
+        .system()
+        .libraries()
+        .library(0x0100_0000)
+        .expect("library 1")
+        .token_range()
+        .map(|local| 0x0100_0000 | local)
+        .find(|&token| dict.system_unigram_count(token).is_some())
+        .expect("a token");
+    let _ = dict.add_unigram_delta(token, u64::from(u32::MAX));
+    let _ = dict.add_unigram_delta(token, 3);
+    assert_eq!(dict.unigram_total_delta(), 2);
 }
