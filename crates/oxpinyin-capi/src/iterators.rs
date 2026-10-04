@@ -12,7 +12,7 @@ use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
 use oxpinyin_facade::{BigramExportWalk, BigramStep};
 use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library, toned_key};
 
-use crate::ffi::{cstr_to_owned_lossy, owned_cstr};
+use crate::ffi::{cstr_to_owned_lossy, cstr_to_parsed_prefix, owned_cstr};
 use crate::state::context_ref;
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
@@ -126,7 +126,9 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     // `cstr_to_owned_lossy` is the C ABI entry point's string
     // marshaller.
     let phrase = cstr_to_owned_lossy(phrase);
-    let pinyin = cstr_to_owned_lossy(pinyin);
+    // The reading is parsed from the raw bytes (`pinyin.cpp:638`): the
+    // keys before an invalid sequence stand, as they do at the pin.
+    let pinyin = cstr_to_parsed_prefix(pinyin);
     // `if (-1 == count) count = default_count;` (`pinyin.cpp:523-524`);
     // otherwise the `gint` is used as the `guint32` it becomes.
     let count = (count != -1).then(|| u64::from(count.cast_unsigned()));

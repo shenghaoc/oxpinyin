@@ -27,6 +27,33 @@ pub unsafe fn cstr_to_string(ptr: *const c_char) -> String {
         .to_owned()
 }
 
+/// Converts a nullable C string to the longest valid UTF-8 prefix of its
+/// bytes, for the arguments the pin hands to a parser as raw bytes.
+///
+/// The pin passes `char *` and `strlen` straight to the parsers
+/// (`pinyin.cpp:1498-1509`, `zhuyin.cpp`, `pinyin_iterator_add_phrase`'s
+/// reading at `pinyin.cpp:638`), and a parser stops at the first byte that
+/// is no part of a key, so the bytes behind an invalid sequence can never
+/// change what it consumes: the valid prefix is the whole input as far as
+/// the parse goes, and its length is the byte count the pin reports. The
+/// arguments the pin treats as text (`g_utf8_to_ucs4`) or hands whole to a
+/// single-key parser keep [`cstr_to_string`]'s all-or-nothing answer.
+pub fn cstr_to_parsed_prefix(ptr: *const c_char) -> String {
+    if ptr.is_null() {
+        return String::new();
+    }
+    // SAFETY: Caller guarantees `ptr` is null-terminated when non-null; the
+    // only callers are `extern "C"` entry points, whose contract to C is
+    // exactly that.
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    match std::str::from_utf8(bytes) {
+        Ok(text) => text.to_owned(),
+        Err(error) => std::str::from_utf8(&bytes[..error.valid_up_to()])
+            .unwrap_or_default()
+            .to_owned(),
+    }
+}
+
 /// Converts a nullable C string to an owned [`String`], `None` unless the
 /// bytes are valid UTF-8.
 pub fn cstr_to_strict(ptr: *const c_char) -> Option<String> {

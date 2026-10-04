@@ -12,7 +12,7 @@ use std::os::raw::c_char;
 
 use oxpinyin_facade::ToneForwarding;
 
-use crate::ffi::cstr_to_string;
+use crate::ffi::cstr_to_parsed_prefix;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{GChar, PinyinInstance};
 
@@ -32,8 +32,9 @@ fn parse_c_string(instance: *mut PinyinInstance, text: *const c_char) -> usize {
         return 0;
     }
 
-    // SAFETY: `text` is a C string from the caller (null OK).
-    let text = unsafe { cstr_to_string(text) };
+    // The pin parses the raw bytes: what follows an invalid sequence is
+    // never reached (`cstr_to_parsed_prefix`).
+    let text = cstr_to_parsed_prefix(text);
     parse_more(instance, &text)
 }
 
@@ -73,8 +74,7 @@ pub extern "C" fn pinyin_parse_more_double_pinyins(
         return 0;
     }
 
-    // SAFETY: `pinyins` is a C string from the caller (null OK).
-    let text = unsafe { cstr_to_string(pinyins) };
+    let text = cstr_to_parsed_prefix(pinyins);
     // SAFETY: `instance` is non-null (checked above).
     let inst = unsafe { instance_mut(instance) };
     // Parse-path snapshot clear (main's begin_parse law).
@@ -101,8 +101,7 @@ pub extern "C" fn pinyin_parse_more_chewings(
         return 0;
     }
 
-    // SAFETY: `chewings` is a C string from the caller (null OK).
-    let text = unsafe { cstr_to_string(chewings) };
+    let text = cstr_to_parsed_prefix(chewings);
     // SAFETY: `instance` is non-null (checked above).
     let inst = unsafe { instance_mut(instance) };
     // Parse-path snapshot clear (main's begin_parse law).
@@ -230,6 +229,33 @@ mod tests {
         let mut after = u32::MAX;
         assert!(pinyin_get_n_candidate(instance, &raw mut after));
         assert_eq!(after, 0, "parse clears the snapshot without a guess");
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    /// The pin hands the parser the raw bytes (`pinyin.cpp:1498-1509`), so
+    /// valid pinyin before an invalid sequence is consumed and the count is
+    /// the prefix's; the bytes behind the sequence are never reached.
+    #[test]
+    fn invalid_utf8_after_valid_pinyin_keeps_the_parsed_prefix() {
+        let user_dir = TempUserDir::new("invalid-utf8-prefix");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+
+        for (bytes, consumed) in [
+            (&b"ni\xffhao"[..], 2),
+            (b"nihao\xff", 5),
+            (b"ni\xe4\xbd", 2),
+            (b"\xffnihao", 0),
+        ] {
+            let text = std::ffi::CString::new(bytes).expect("no interior NUL");
+            assert_eq!(
+                pinyin_parse_more_full_pinyins(instance, text.as_ptr()),
+                consumed,
+                "{bytes:?}"
+            );
+            assert_eq!(pinyin_get_parsed_input_length(instance), consumed);
+        }
 
         crate::instance::pinyin_free_instance(instance);
         crate::context::pinyin_fini(context);
