@@ -257,9 +257,8 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
 /// The GBK-only gate, verbatim: upstream asserts the index in range and
 /// refuses every non-GBK library before unloading
 /// (`pinyin.cpp:464-472`) — `false` here for both shapes (no-abort) —
-/// and answers `true` only for the first unload of a loaded GBK; the
-/// second unload finds the sub-index already gone (`phrase_index.cpp:
-/// 260-268`) and answers `false`.
+/// and for GBK calls `unload` and answers `true` whatever it returned
+/// (`:473-474`), so a repeat unload answers `true` as well.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, index: u8) -> bool {
     if context.is_null() {

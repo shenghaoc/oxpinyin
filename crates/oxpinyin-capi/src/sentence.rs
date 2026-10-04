@@ -31,7 +31,23 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    if !matrix_has_keys(inst) {
+        return false;
+    }
     inst.core.session.guess_sentence().unwrap_or(false)
+}
+
+/// Whether the parse placed a key. `get_nbest_match` answers `false` before
+/// it clears anything when the matrix has no step (`0 == nstep`,
+/// `phonetic_lookup.h:743-745`), and `fill_matrix` leaves the matrix empty
+/// for a parse without keys (`phonetic_key_matrix.cpp:34-38`): `"'"` and
+/// `"!"` consume a byte or none and place nothing. An unreadable parse is
+/// left to the session.
+fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
+    let Ok((keys, input, _)) = inst.core.mode_keys() else {
+        return true;
+    };
+    !(input.is_empty() || keys.is_empty())
 }
 
 /// Guess a sentence seeded with prefix tokens.
@@ -60,12 +76,17 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    // Reject invalid UTF-8 before the prefix-token lookup — same
-    // upstream FALSE gate the sibling prediction seam honours
-    // (`ffi::cstr_to_strict`).
-    let Some(prefix) = cstr_to_strict(prefix) else {
+    // The pin converts the prefix with `g_utf8_to_ucs4`; invalid UTF-8
+    // gives NULL, `_compute_prefixes` then adds no prefix token
+    // (`pinyin.cpp:1397-1403`) and the decode runs as if the prefix were
+    // empty. A NULL pointer keeps the capi's null guard (register row 41).
+    if prefix.is_null() {
         return false;
-    };
+    }
+    let prefix = cstr_to_strict(prefix).unwrap_or_default();
+    if !matrix_has_keys(inst) {
+        return false;
+    }
     let prefixes =
         oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
     let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
@@ -118,13 +139,13 @@ pub extern "C" fn pinyin_guess_predicted_candidates_with_punctuations(
 /// Out-param `sentence` is caller-owned (`g_free`). The returned buffer is
 /// allocated with libc `malloc`, which `g_free` releases on every platform.
 ///
-/// W14: once a sentence lookup is active ([`pinyin_guess_sentence`] ran
-/// since the last reset), this answers decoded-or-nothing — the text of
-/// n-best `index` through the phrase index (`pinyin.cpp:1463-1482`), and
-/// `false` with an empty out-param past the row count or after a lookup
-/// that produced none, exactly upstream's `0 == results.size()` false.
-/// The pre-W14 raw form (scheme keystroke buffer / session preedit)
-/// survives only before any lookup has occurred.
+/// Answers decoded-or-nothing, as the pin does: once a sentence lookup is
+/// active ([`pinyin_guess_sentence`] ran since the last reset), the text of
+/// n-best `index` through the phrase index (`pinyin.cpp:1463-1482`); with
+/// no row, `false` and `*sentence` untouched, upstream's
+/// `0 == results.size()` false. Before any lookup there is no row, so the
+/// answer is `false` too — the raw preedit the pre-W14 form returned is
+/// gone (register row 53).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_sentence(
     instance: *mut PinyinInstance,
@@ -138,41 +159,17 @@ pub extern "C" fn pinyin_get_sentence(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    if inst.core.session.sentence_lookup_active() {
-        // An active lookup answers decoded-or-nothing — the row text
-        // when held, `false` past the row count or after a lookup that
-        // produced none (upstream's `0 == results.size()` false),
-        // never the raw form.
-        return if let Some(decoded) = inst.core.session.sentence_text(index) {
-            write_owned_sentence(decoded, sentence)
-        } else {
-            // The pin returns without touching `*sentence`
-            // (`pinyin.cpp:1470-1471`; past the rows it asserts).
-            false
-        };
-    }
-    let text = if inst
-        .core
-        .zhuyin_parse
-        .as_ref()
-        .is_some_and(|parse| !parse.keys().is_empty())
-    {
-        inst.core.zhuyin_input.clone()
-    } else if inst
-        .core
-        .double_parse
-        .as_ref()
-        .is_some_and(|parse| !parse.keys().is_empty())
-    {
-        inst.core.double_input.clone()
-    } else {
-        inst.core.session.preedit().text().to_owned()
-    };
-    if text.is_empty() {
-        // Nothing to answer, and the pin leaves `*sentence` untouched.
+    // The pin answers from `m_nbest_results` alone: with no row — no
+    // `pinyin_guess_sentence` since the last reset — it returns `false`
+    // and leaves `*sentence` untouched (`pinyin.cpp:1470-1471`); past the
+    // rows it asserts (`:1474`). The raw preedit is never an answer.
+    if !inst.core.session.sentence_lookup_active() {
         return false;
     }
-    write_owned_sentence(&text, sentence)
+    match inst.core.session.sentence_text(index) {
+        Some(decoded) => write_owned_sentence(decoded, sentence),
+        None => false,
+    }
 }
 
 // The `char **`-out sentence writer, stamped from the shared marshalling
@@ -315,6 +312,13 @@ pub extern "C" fn pinyin_guess_candidates(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // The pin frees the candidates, then answers `false` for a matrix
+    // without a step before it stores the sort word
+    // (`pinyin.cpp:2193-2198`); a keyless parse is such a matrix.
+    if !matrix_has_keys(inst) {
+        inst.candidates.clear();
+        return false;
+    }
     if inst.core.session.set_options(inst.core.options()).is_err() {
         return false;
     }

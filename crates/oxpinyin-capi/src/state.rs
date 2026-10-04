@@ -73,8 +73,8 @@ impl CapiContext {
         })
     }
 
-    /// `pinyin_unload_phrase_library`'s read side: GBK-only, first-unload
-    /// `true`; `false` without a runtime (a user-store-only context
+    /// `pinyin_unload_phrase_library`'s read side: GBK-only, `true` on
+    /// every unload of GBK; `false` without a runtime (a user-store-only context
     /// never loaded GBK — upstream's sub-index is NULL there too).
     pub(crate) fn unload_phrase_library(&self, index: u8) -> bool {
         self.core.unload_phrase_library(index)

@@ -567,8 +567,8 @@ fn phrase_library_load_unload_contract() {
     );
     assert!(pinyin_unload_phrase_library(fixture.context, 2));
     assert!(
-        !pinyin_unload_phrase_library(fixture.context, 2),
-        "already gone"
+        pinyin_unload_phrase_library(fixture.context, 2),
+        "the pin ignores what `unload` returns: a repeat answers true too"
     );
     assert!(pinyin_load_phrase_library(fixture.context, 2), "reload");
     assert!(
