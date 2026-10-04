@@ -67,6 +67,40 @@ pub fn cstr_to_strict(ptr: *const c_char) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The path a nullable C string names, from its bytes as they are.
+///
+/// The pin keeps `g_strdup` of the caller's directory and opens it by that
+/// name (`pinyin.cpp:332`, `zhuyin.cpp:276`), so a name that is not UTF-8
+/// is as good a directory as any other; reading it as text would turn it
+/// into another path, or into no path. `None` for NULL.
+#[cfg(unix)]
+pub fn cstr_to_path(ptr: *const c_char) -> Option<std::path::PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: Caller guarantees `ptr` is null-terminated when non-null; the
+    // only callers are `extern "C"` entry points, whose contract to C is
+    // exactly that.
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    Some(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+}
+
+/// The path a nullable C string names. Outside unix a path is text, so the
+/// bytes are read as UTF-8, lossily.
+#[cfg(not(unix))]
+pub fn cstr_to_path(ptr: *const c_char) -> Option<std::path::PathBuf> {
+    if ptr.is_null() {
+        return None;
+    }
+    // SAFETY: as for the unix reading above.
+    let bytes = unsafe { CStr::from_ptr(ptr) }.to_bytes();
+    Some(std::path::PathBuf::from(
+        String::from_utf8_lossy(bytes).into_owned(),
+    ))
+}
+
 /// Safe wrapper for C ABI entry points, which own the null/invalid-UTF-8
 /// contract at the boundary.
 pub fn cstr_to_owned_lossy(ptr: *const c_char) -> String {

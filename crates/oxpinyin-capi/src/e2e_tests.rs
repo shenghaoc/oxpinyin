@@ -512,6 +512,50 @@ fn training_a_stale_forcing_refuses_and_writes_nothing() {
     crate::context::pinyin_fini(context);
 }
 
+/// The pin opens the directories it is given by their bytes (`g_strdup`,
+/// `pinyin.cpp:331-336`), so a name that is not UTF-8 is a directory like any
+/// other, for the system tables and for the user dir alike (#587).
+#[cfg(unix)]
+#[test]
+fn directories_with_non_utf8_names_open() {
+    use std::ffi::{CString, OsStr};
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let scratch = std::env::temp_dir();
+    let pid = std::process::id();
+    let named = |prefix: &str| {
+        let mut name = prefix.as_bytes().to_vec();
+        name.extend_from_slice(b"\xff");
+        name.extend_from_slice(pid.to_string().as_bytes());
+        scratch.join(OsStr::from_bytes(&name))
+    };
+    let system = named("oxpinyin-system-");
+    let user = named("oxpinyin-user-");
+    let _ = std::fs::remove_file(&system);
+    let _ = std::fs::remove_dir_all(&user);
+    std::os::unix::fs::symlink(system_dir(), &system).expect("symlink to the fixtures");
+    std::fs::create_dir(&user).expect("user dir");
+
+    let c_path = |path: &std::path::Path| {
+        CString::new(path.as_os_str().to_owned().into_vec()).expect("no NUL in the path")
+    };
+    let (system_c, user_c) = (c_path(&system), c_path(&user));
+    let context = oxpinyin_init_for_fixtures(system_c.as_ptr(), user_c.as_ptr());
+    assert!(!context.is_null(), "a non-UTF-8 name is a directory");
+    let instance = pinyin_alloc_instance(context);
+    assert!(!instance.is_null());
+    let _ = pinyin_save(context);
+    assert!(
+        std::fs::read_dir(&user).expect("user dir").next().is_some(),
+        "the context opened the user dir it was given"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+    let _ = std::fs::remove_file(&system);
+    let _ = std::fs::remove_dir_all(&user);
+}
+
 #[test]
 fn training_entry_points_refuse_without_a_user_store() {
     // No user store is a NULL user dir. An empty string is a user dir —
