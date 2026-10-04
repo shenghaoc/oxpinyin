@@ -28,7 +28,7 @@ pub use oxpinyin_facade::InstanceCore;
 use oxpinyin_facade::{ContextCore, OpenFailure};
 pub use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
 
-use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, PinyinContext, PinyinInstance};
+use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
 // ── Context ─────────────────────────────────────────────────────────────
 
@@ -68,8 +68,6 @@ impl CapiContext {
     pub(crate) fn alloc_instance(&self, context: *mut PinyinContext) -> Option<CapiInstance> {
         Some(CapiInstance {
             context,
-            key_slot: ChewingKey::ZERO,
-            key_rest_slot: ChewingKeyRest { begin: 0, end: 0 },
             candidates: Vec::new(),
             core: self.core.alloc_instance()?,
         })
@@ -205,17 +203,6 @@ pub struct CapiInstance {
     /// word, parse-mode state machine, re-anchored window — shared with
     /// the zhuyin facade.
     pub(crate) core: InstanceCore,
-    /// Per-instance slots the `pinyin_get_pinyin_key` family hands out as
-    /// `ChewingKey *` / `ChewingKeyRest *`.
-    ///
-    /// The pin returns `&`-of a function-local `static`, so its pointer is
-    /// one process-wide slot every instance and thread overwrites
-    /// (`pinyin.cpp`, `static ChewingKey key;`). Per-instance is observably
-    /// identical for the documented use — the consumer reads the pointer
-    /// before its next call, as fcitx does (`eim.cpp:419-520`) — and does
-    /// not share mutable state across instances.
-    pub(crate) key_slot: ChewingKey,
-    pub(crate) key_rest_slot: ChewingKeyRest,
     /// Snapshotted candidates, rebuilt by `pinyin_guess_candidates`.
     /// `lookup_candidate_t *` pointers borrow into this vec.
     pub(crate) candidates: Vec<CapiCandidate>,

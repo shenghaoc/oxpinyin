@@ -16,10 +16,37 @@
 //! columns, so the law steps their parse's key spans only.
 
 use std::ptr;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 use crate::ffi::owned_cstr;
 use crate::state::{instance_mut, instance_ref};
 use crate::types::{ChewingKey, ChewingKeyRest, GChar, PinyinInstance};
+
+/// The slot `pinyin_get_pinyin_key` hands out: the pin's function-local
+/// `static ChewingKey key` (`pinyin.cpp:2936`), one process-wide word that
+/// every instance overwrites and that outlives every instance. An atomic
+/// word keeps the Rust side free of a data race; the C side reads it
+/// through the pointer, as it reads the pin's static.
+static KEY_SLOT: AtomicU16 = AtomicU16::new(0);
+
+/// The `ChewingKeyRest` twin of [`KEY_SLOT`] (`static ChewingKeyRest
+/// key_rest`, `pinyin.cpp:2960`): `m_raw_begin` then `m_raw_end`.
+#[repr(C)]
+struct KeyRestSlot {
+    begin: AtomicU16,
+    end: AtomicU16,
+}
+
+const _: () = {
+    assert!(size_of::<KeyRestSlot>() == size_of::<ChewingKeyRest>());
+    assert!(align_of::<KeyRestSlot>() == align_of::<ChewingKeyRest>());
+    assert!(size_of::<AtomicU16>() == size_of::<ChewingKey>());
+};
+
+static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
+    begin: AtomicU16::new(0),
+    end: AtomicU16::new(0),
+};
 
 /// Get the pinyin key rest at an offset.
 ///
@@ -30,9 +57,11 @@ use crate::types::{ChewingKey, ChewingKeyRest, GChar, PinyinInstance};
 ///                                 ChewingKeyRest ** key_rest);
 /// ```
 ///
-/// Out-param `key_rest` borrows a per-instance slot, valid until the next
-/// call on the same instance. Answers at exactly the offsets
-/// [`pinyin_get_pinyin_key`] does.
+/// Out-param `key_rest` borrows the process-wide slot [`KEY_REST_SLOT`],
+/// as the pin's function-local `static` does: every instance shares it,
+/// the next call from any instance overwrites it, and it outlives the
+/// instance. Answers at exactly the offsets [`pinyin_get_pinyin_key`]
+/// does.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_key_rest(
     instance: *mut PinyinInstance,
@@ -55,13 +84,22 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
     let Some(found) = inst.core.key_at(offset) else {
         return false;
     };
-    inst.key_rest_slot.begin = u16::try_from(found.begin).unwrap_or(u16::MAX);
-    inst.key_rest_slot.end = u16::try_from(found.end).unwrap_or(u16::MAX);
+    KEY_REST_SLOT.begin.store(
+        u16::try_from(found.begin).unwrap_or(u16::MAX),
+        Ordering::Relaxed,
+    );
+    KEY_REST_SLOT.end.store(
+        u16::try_from(found.end).unwrap_or(u16::MAX),
+        Ordering::Relaxed,
+    );
     if !key_rest.is_null() {
-        // SAFETY: Null-checked above; the slot lives as long as the
-        // instance.
+        // SAFETY: Null-checked above; the slot is a `static`, so the
+        // pointer never dangles. `KeyRestSlot` is `repr(C)` over two
+        // `AtomicU16`, the layout of `ChewingKeyRest` (asserted above).
         unsafe {
-            *key_rest = &raw mut inst.key_rest_slot;
+            *key_rest = ptr::addr_of!(KEY_REST_SLOT)
+                .cast_mut()
+                .cast::<ChewingKeyRest>();
         }
     }
     true
@@ -117,8 +155,9 @@ pub extern "C" fn pinyin_get_pinyin_key_rest_positions(
 ///                                        guint16 * length);
 /// ```
 ///
-/// The pin's `key_rest->length()` — `m_raw_end - m_raw_begin`
-/// (`chewing_key.h:111-113`) — and, like the pin, `true` whenever it can
+/// The pin's `key_rest->length()` — `m_raw_end - m_raw_begin` in
+/// `guint16` (`chewing_key.h:111-113`), which wraps on a reversed rest
+/// (begin 5, end 2 answers 65533) — and, like the pin, `true` whenever it can
 /// answer. fcitx branches on this being 2 to pick its shuangpin rendering
 /// (`eim.cpp:473`).
 #[unsafe(no_mangle)]
@@ -136,7 +175,7 @@ pub extern "C" fn pinyin_get_pinyin_key_rest_length(
     if !length.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *length = rest.end.saturating_sub(rest.begin);
+            *length = rest.end.wrapping_sub(rest.begin);
         }
     }
     true
@@ -570,10 +609,9 @@ mod tests {
 ///                            ChewingKey ** key);
 /// ```
 ///
-/// Out-param `key` borrows a per-instance slot, valid until the next call
-/// on the same instance. The pin hands out a function-local `static`
-/// instead — one process-wide slot — which is observably identical for the
-/// documented use and unsound for any other.
+/// Out-param `key` borrows the process-wide slot [`KEY_SLOT`], as the
+/// pin's function-local `static` does: every instance shares it, the next
+/// call from any instance overwrites it, and it outlives the instance.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_key(
     instance: *mut PinyinInstance,
@@ -596,12 +634,16 @@ pub extern "C" fn pinyin_get_pinyin_key(
     let Some(found) = inst.core.key_at(offset) else {
         return false;
     };
-    inst.key_slot = ChewingKey::from_spelling(found.text, found.tone).unwrap_or(ChewingKey::ZERO);
+    let packed = ChewingKey::from_spelling(found.text, found.tone)
+        .unwrap_or(ChewingKey::ZERO)
+        .packed;
+    KEY_SLOT.store(packed, Ordering::Relaxed);
     if !key.is_null() {
-        // SAFETY: Null-checked above; the slot lives as long as the
-        // instance.
+        // SAFETY: Null-checked above; the slot is a `static`, so the
+        // pointer never dangles. `AtomicU16` has the size and alignment of
+        // the two-byte `ChewingKey` (asserted above).
         unsafe {
-            *key = &raw mut inst.key_slot;
+            *key = KEY_SLOT.as_ptr().cast::<ChewingKey>();
         }
     }
     true
@@ -613,7 +655,7 @@ mod preedit_key_tests {
 
     use crate::config::pinyin_set_options;
     use crate::parse::pinyin_parse_more_full_pinyins;
-    use crate::test_support::{TempUserDir, cstr, open};
+    use crate::test_support::{TempUserDir, cstr, key_slot_guard, open};
     use crate::types::{ChewingKey, ChewingKeyRest};
 
     const PARITY: u32 = 0x18a;
@@ -633,6 +675,7 @@ mod preedit_key_tests {
     /// is the reserved slot (`offset >= matrix.size() - 1`).
     #[test]
     fn nihao_preedit_family_matches_the_pin_expectation_table() {
+        let _slots = key_slot_guard();
         let user_dir = TempUserDir::new("preedit-nihao");
         let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
         assert!(pinyin_set_options(context, PARITY));
@@ -707,6 +750,57 @@ mod preedit_key_tests {
         }
 
         crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    /// The pin's key and key-rest slots are function-local `static`s
+    /// (`pinyin.cpp:2936`, `:2960`): one slot for the whole process, so a
+    /// second instance's call overwrites what the first was handed, and the
+    /// pointer survives the instance. The key-rest length is a `guint16`
+    /// difference, which wraps on a reversed rest.
+    #[test]
+    fn the_key_slots_are_process_wide_and_the_rest_length_wraps() {
+        let _slots = key_slot_guard();
+        let user_dir = TempUserDir::new("preedit-static-slots");
+        let (context, first) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        let second = crate::instance::pinyin_alloc_instance(context);
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(first, cstr("ni").as_ptr()),
+            2
+        );
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(second, cstr("hao").as_ptr()),
+            3
+        );
+
+        let (mut a, mut b): (*mut ChewingKey, *mut ChewingKey) = (ptr::null_mut(), ptr::null_mut());
+        assert!(super::pinyin_get_pinyin_key(first, 0, &raw mut a));
+        // SAFETY: `a` is the slot the call above handed out.
+        let ni = unsafe { *a };
+        assert!(super::pinyin_get_pinyin_key(second, 0, &raw mut b));
+        assert_eq!(a, b, "one slot for every instance");
+        // SAFETY: as above.
+        assert_ne!(unsafe { *a }, ni, "the second call overwrote the first");
+
+        let (mut ra, mut rb): (*mut ChewingKeyRest, *mut ChewingKeyRest) =
+            (ptr::null_mut(), ptr::null_mut());
+        assert!(super::pinyin_get_pinyin_key_rest(first, 0, &raw mut ra));
+        assert!(super::pinyin_get_pinyin_key_rest(second, 0, &raw mut rb));
+        assert_eq!(ra, rb);
+
+        let mut length = 0_u16;
+        let mut reversed = ChewingKeyRest { begin: 5, end: 2 };
+        assert!(super::pinyin_get_pinyin_key_rest_length(
+            first,
+            &raw mut reversed,
+            &raw mut length
+        ));
+        assert_eq!(length, 65533, "end - begin in guint16");
+
+        crate::instance::pinyin_free_instance(first);
+        crate::instance::pinyin_free_instance(second);
+        // SAFETY: the slot is a `static`: the pointer outlives the instances.
+        assert_ne!(unsafe { *a }, ni);
         crate::context::pinyin_fini(context);
     }
 }
