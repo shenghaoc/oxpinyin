@@ -6,6 +6,9 @@ use std::sync::atomic::Ordering;
 use crate::state::{context_mut, context_ref};
 use crate::types::{PinyinOptionT, ZhuyinContext};
 
+/// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
+const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
+
 /// Set the zhuyin scheme.
 ///
 /// # C signature
@@ -16,8 +19,9 @@ use crate::types::{PinyinOptionT, ZhuyinContext};
 ///
 /// The Rust parameter is `c_int`: callers may pass any `int`.
 /// Every implemented Zhuyin keyboard is table-driven; the `ZHUYIN_STANDARD_DVORAK`
-/// (7) upstream abort slot reports `false` instead of aborting (no-abort
-/// policy, divergence class (c)).
+/// (7) upstream abort slot, like every out-of-enum value, reports `false`
+/// and one warning instead of aborting (no-abort policy, divergence class
+/// (c)).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_set_chewing_scheme(context: *mut ZhuyinContext, scheme: c_int) -> bool {
     if context.is_null() {
@@ -27,6 +31,12 @@ pub extern "C" fn zhuyin_set_chewing_scheme(context: *mut ZhuyinContext, scheme:
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_mut(context) };
     if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
+        // Class (c): the dvorak slot (7) falls through to
+        // `zhuyin_parser2.cpp:295`, every out-of-enum value to
+        // `zhuyin.cpp:736`, both **`abort()`**.
+        crate::ffi::log_warning(&format!(
+            "zhuyin_set_chewing_scheme: scheme {scheme} aborts the parser table"
+        ));
         return false;
     }
     ctx.core.live.zhuyin_scheme.store(scheme, Ordering::Relaxed);
@@ -52,6 +62,11 @@ pub extern "C" fn zhuyin_set_full_pinyin_scheme(
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_mut(context) };
     if !matches!(scheme, 1..=3) {
+        // Class (c), `pinyin_parser2.cpp:398`: **`abort()`** in
+        // `FullPinyinParser2::set_scheme`.
+        crate::ffi::log_warning(&format!(
+            "zhuyin_set_full_pinyin_scheme: scheme {scheme} aborts the parser table"
+        ));
         return false;
     }
     ctx.core.live.full_scheme.store(scheme, Ordering::Relaxed);
@@ -114,6 +129,17 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_ref(context) };
+    // Class (c), `zhuyin.cpp:372`: the stock `table.conf` leaves library 0
+    // (reserved) and 8..=15 unused, and the pin **`assert`**s that a loaded
+    // library is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or more
+    // answers `false` first, `:362`).
+    if index == 0 || (8..PHRASE_INDEX_LIBRARY_COUNT).contains(&index) {
+        crate::ffi::log_warning(
+            "zhuyin_load_phrase_library: assertion 'SYSTEM_FILE == table_info->m_file_type \
+             || USER_FILE == table_info->m_file_type' failed",
+        );
+        return false;
+    }
     ctx.load_phrase_library(index as u32)
 }
 
@@ -132,5 +158,12 @@ pub extern "C" fn zhuyin_unload_phrase_library(context: *mut ZhuyinContext, inde
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_ref(context) };
+    if index >= PHRASE_INDEX_LIBRARY_COUNT {
+        // Class (c), `zhuyin.cpp:381`: **`assert`**.
+        crate::ffi::log_warning(
+            "zhuyin_unload_phrase_library: assertion 'index < PHRASE_INDEX_LIBRARY_COUNT' failed",
+        );
+        return false;
+    }
     ctx.unload_phrase_library(index)
 }

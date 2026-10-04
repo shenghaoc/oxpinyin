@@ -70,6 +70,31 @@ fn refuse_toned_initial(inst: &crate::state::CapiInstance, name: &str) -> bool {
     toned
 }
 
+/// The normalized lookup offset, or `None` where the lookup is refused.
+///
+/// The pin's matrix holds `parsed_len + 1` columns. `_check_offset` reads
+/// the column before the offset (`pinyin.cpp:2226`, unasserted, and
+/// `get_column_size` asserts its index), so an offset one past the reserved
+/// slot (`len + 1`) is an ordinary lookup that finds nothing — answered as
+/// the end-of-input lookup — and anything further out aborts: class (c),
+/// `false` and one warning. The leading-separator refusal keeps its silent
+/// `false`.
+fn validated_lookup_offset(inst: &crate::state::CapiInstance, offset: usize) -> Option<usize> {
+    match inst.core.validate_lookup_offset(offset) {
+        Ok(normalized) => Some(normalized),
+        Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { offset, len })
+            if offset == len + 1 =>
+        {
+            inst.core.validate_lookup_offset(len).ok()
+        }
+        Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }) => {
+            crate::ffi::log_warning("pinyin_guess_candidates: offset lies past the matrix");
+            None
+        }
+        Err(_) => None,
+    }
+}
+
 /// Whether the parse placed a key. `get_nbest_match` answers `false` before
 /// it clears anything when the matrix has no step (`0 == nstep`,
 /// `phonetic_lookup.h:743-745`), and `fill_matrix` leaves the matrix empty
@@ -387,7 +412,7 @@ pub extern "C" fn pinyin_guess_candidates(
     if !inst.core.session.is_composing() {
         return false;
     }
-    let Ok(normalized) = inst.core.validate_lookup_offset(offset) else {
+    let Some(normalized) = validated_lookup_offset(inst, offset) else {
         inst.candidates.clear();
         return false;
     };

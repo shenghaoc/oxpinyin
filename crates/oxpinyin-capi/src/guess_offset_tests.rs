@@ -174,9 +174,16 @@ fn an_offset_past_the_parsed_input_is_refused() {
         "the one-past-end offset is the reserved slot, still in range"
     );
     let parsed = pinyin_get_parsed_input_length(instance);
+    // One past the reserved slot is still an ordinary lookup at the pin
+    // (`_check_offset` reads a valid column and its result is discarded,
+    // `pinyin.cpp:2226`); only the offsets beyond abort it.
     assert!(
-        !pinyin_guess_candidates(instance, parsed + 1, DEFAULT_SORT),
-        "an offset past the parsed input is refused"
+        pinyin_guess_candidates(instance, parsed + 1, DEFAULT_SORT),
+        "one past the reserved slot finds nothing, as at the pin"
+    );
+    assert!(
+        !pinyin_guess_candidates(instance, parsed + 2, DEFAULT_SORT),
+        "an offset past the matrix is refused"
     );
     let mut num: c_uint = 77;
     assert!(pinyin_get_n_candidate(instance, &raw mut num));
@@ -333,7 +340,11 @@ fn double_pinyin_admits_no_zero_key_and_keeps_the_range_law() {
         pinyin_guess_candidates(instance, 4, DEFAULT_SORT),
         "the one-past-end offset is the reserved slot"
     );
-    assert!(!pinyin_guess_candidates(instance, 5, DEFAULT_SORT));
+    assert!(
+        pinyin_guess_candidates(instance, 5, DEFAULT_SORT),
+        "one past the reserved slot finds nothing, as at the pin"
+    );
+    assert!(!pinyin_guess_candidates(instance, 6, DEFAULT_SORT));
     let mut num: c_uint = 77;
     assert!(pinyin_get_n_candidate(instance, &raw mut num));
     assert_eq!(num, 0, "the refusal leaves no candidates behind");
@@ -373,7 +384,8 @@ fn zhuyin_keyboards_admit_no_zero_key_and_keep_the_range_law() {
     let both = cstr("sucl");
     assert_eq!(pinyin_parse_more_chewings(instance, both.as_ptr()), 4);
     assert!(pinyin_guess_candidates(instance, 4, DEFAULT_SORT));
-    assert!(!pinyin_guess_candidates(instance, 5, DEFAULT_SORT));
+    assert!(pinyin_guess_candidates(instance, 5, DEFAULT_SORT));
+    assert!(!pinyin_guess_candidates(instance, 6, DEFAULT_SORT));
 
     // The choose cursor is the absolute end in original coordinates.
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
@@ -400,7 +412,8 @@ fn zhuyin_keyboards_admit_no_zero_key_and_keep_the_range_law() {
         "a content apostrophe is not a zero key"
     );
     assert!(pinyin_guess_candidates(instance, 2, DEFAULT_SORT));
-    assert!(!pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
+    assert!(pinyin_guess_candidates(instance, 3, DEFAULT_SORT));
+    assert!(!pinyin_guess_candidates(instance, 4, DEFAULT_SORT));
 
     crate::instance::pinyin_free_instance(instance);
     crate::context::pinyin_fini(context);
@@ -445,7 +458,8 @@ fn luoma_input_carries_the_full_offset_law() {
     // Out of range refused; the leading run cannot normalize (upstream
     // aborts, oxpinyin refuses).
     assert_eq!(parse(instance, "ni'hao"), 6);
-    assert!(!pinyin_guess_candidates(instance, 7, DEFAULT_SORT));
+    assert!(pinyin_guess_candidates(instance, 7, DEFAULT_SORT));
+    assert!(!pinyin_guess_candidates(instance, 8, DEFAULT_SORT));
     // The re-send of the same buffer CONTINUES the committed composition
     // (the R5 revert, register #8: upstream's parse path never touches
     // the store, `pinyin.cpp:1497-1517`), so both forcings survive —
@@ -473,8 +487,12 @@ fn luoma_input_carries_the_full_offset_law() {
         "one past the parsed region is the reserved slot"
     );
     assert!(
-        !pinyin_guess_candidates(instance, 7, DEFAULT_SORT),
-        "an offset inside the unparsed suffix is refused"
+        pinyin_guess_candidates(instance, 7, DEFAULT_SORT),
+        "one past the reserved slot finds nothing, as at the pin"
+    );
+    assert!(
+        !pinyin_guess_candidates(instance, 8, DEFAULT_SORT),
+        "an offset past the matrix is refused"
     );
 
     crate::instance::pinyin_free_instance(instance);

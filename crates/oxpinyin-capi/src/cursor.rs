@@ -426,8 +426,13 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
     let inst = unsafe { instance_ref(instance) };
     let result = match inst.core.right_offset(offset) {
         Ok(Some(result)) => result,
-        // The pin's own graceful `false`, `pinyin.cpp:3085-3086`: silent.
-        Ok(None) => return false,
+        // The pin's own graceful `false`, `pinyin.cpp:3085-3086`: silent,
+        // except on an empty matrix, where the loop's `get_column_size`
+        // asserts first (class (c)).
+        Ok(None) => {
+            warn_on_empty_matrix(inst, "pinyin_get_right_pinyin_offset");
+            return false;
+        }
         Err(_) => {
             // Class (c): `assert(_check_offset(...))`, `pinyin.cpp:3067`, `:3092`.
             crate::ffi::log_warning(

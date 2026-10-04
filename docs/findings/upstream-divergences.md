@@ -2247,6 +2247,14 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
     `zhuyin_train` (policy row 6).
   - PR 12e: `storage/pinyin_phrase3.h:152` (through the lookups that
     search the pinyin table), `pinyin.cpp:2769`.
+  - PR 12f: `zhuyin.cpp:372`, `:381`, `:736`, `:1261`, `:1453` (`_check_offset`,
+    also one past the reserved slot), `:2158`; `storage/zhuyin_parser2.cpp:295`;
+    `storage/pinyin_parser2.cpp:398` through `zhuyin_set_full_pinyin_scheme`;
+    `phonetic_key_matrix.h:103` through `zhuyin_get_zhuyin_key` and `_key_rest`;
+    `storage/pinyin_parser2.cpp:170` through `zhuyin_parse_full_pinyin`;
+    `zhuyin.cpp:2110` through `zhuyin_get_character_offset`. The zhuyin ABI
+    logs in its own domain, `libzhuyin`. `zhuyin.cpp:330`, `:440` and `:457` are
+    file-triggered and wait for their own ruling (`:454` is refuted).
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|
