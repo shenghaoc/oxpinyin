@@ -112,7 +112,16 @@ def observe(library, data, word, cases):
 def worker(library, data, word, cases):
     command = [sys.executable, str(pathlib.Path(__file__).resolve()),
                "--worker", library, data, hex(word), json.dumps(cases)]
-    result = subprocess.run(command, capture_output=True, text=True, timeout=90, check=True)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=90, check=True)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+        stderr = exc.stderr
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode(errors="replace")
+        print(f"worker failed: library={library}, word={hex(word)}, "
+              f"inputs={json.dumps(cases, ensure_ascii=False)}\n"
+              f"{exc}\nstderr:\n{stderr or '(empty)'}", file=sys.stderr)
+        raise SystemExit(1) from exc
     return json.loads(result.stdout)
 
 
