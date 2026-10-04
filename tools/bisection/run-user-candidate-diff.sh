@@ -3,4 +3,4 @@
 # Does not edit run-import-diff.sh or run-train-diff.sh.
 set -euo pipefail
 cd "$(dirname "$0")"
-exec ./run-w11-diff.sh user-candidate-diff
+exec ./run-w11-diff.sh user-candidate-diff "$@"
