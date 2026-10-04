@@ -605,13 +605,12 @@ pub fn build_scan_matrix(
     }
 
     // The divided/resplit alternates are a full-pinyin-parse artifact:
-    // upstream generates them inside its pinyin parser's matrix fill, so
+    // upstream adds them after its full-pinyin parser's matrix fill, so
     // keys that arrive pre-parsed (the scheme seam — zhuyin, double
     // pinyin — exact keys) never gain them. The oracle's candidate list
     // for ㄅㄧㄝ is the bie rows alone, with no bi+e divided pair.
-    if !divided {
-        return columns;
-    }
+    // Both exact-key paths still run fill then fuzzy: double pinyin at
+    // pinyin.cpp:1557-1559 and chewing at :1602-1604 (pin 074a2219).
 
     // 2. Resplit pairs along the selected path. A pair only resplits when
     // the two keys share a boundary with no apostrophe between them: the
@@ -622,7 +621,7 @@ pub fn build_scan_matrix(
     // Gated on `USE_RESPLIT_TABLE` — upstream's `resplit_step` checks
     // `options & USE_RESPLIT_TABLE` (`phonetic_key_matrix.cpp:89`) and
     // returns false without it. At `0x0` neither table bit is set.
-    if options.has_resplit_table() {
+    if divided && options.has_resplit_table() {
         for addition in &resplit_additions(&selected) {
             columns[addition.from].push(*addition);
         }
@@ -639,7 +638,7 @@ pub fn build_scan_matrix(
     // `options & USE_DIVIDED_TABLE` (`phonetic_key_matrix.cpp:171`) and
     // returns false without it. At `0x0` the bit is clear, so `xian`'s
     // divided pairs (`xi` + `an`) are not in the inventory.
-    if options.has_divided_table() {
+    if divided && options.has_divided_table() {
         for addition in &divided_additions(&columns) {
             columns[addition.from].push(*addition);
         }
