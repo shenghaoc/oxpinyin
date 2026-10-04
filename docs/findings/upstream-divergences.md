@@ -2226,6 +2226,12 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
   `crates/oxpinyin-zhuyin-capi/src/context.rs:48-50`).
 - **Status:** every row below is **pending logging (lane C, #525)**;
   group B additionally **needs a guard, not just a log**.
+- **Logged since (lane C, 2026-10-04; each answers `false`/`0` and emits
+  exactly one `libpinyin` warning, held by an `abort-*` case of
+  `contract-diff.py` that shows the pin dying of SIGABRT):**
+  - PR 12a: `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1189`;
+    `storage/pinyin_parser2.cpp:398`, `:611`; `storage/zhuyin_parser2.cpp:295`
+    (through `pinyin_set_zhuyin_scheme`).
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|

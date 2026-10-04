@@ -22,7 +22,7 @@ use oxpinyin_engine::CandidateKind;
 /// The pin asserts an index below this in the addon load/unload path; the
 /// compatibility policy's availability class turns that abort into a
 /// `false`.
-const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
+pub(crate) const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
 pub use oxpinyin_facade::ExportedBigramRow;
 pub use oxpinyin_facade::InstanceCore;
 use oxpinyin_facade::{ContextCore, OpenFailure};
@@ -131,6 +131,11 @@ impl CapiContext {
     /// instead. In range, it mirrors the pin's unconditional `true`.
     pub(crate) fn unload_addon(&self, index: u8) -> bool {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
+            // Class (c), `pinyin.cpp:499`: **`assert`**.
+            crate::ffi::log_warning(
+                "pinyin_unload_addon_phrase_library: assertion \
+                 'index < PHRASE_INDEX_LIBRARY_COUNT' failed",
+            );
             return false;
         }
         self.core

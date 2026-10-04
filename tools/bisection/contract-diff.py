@@ -815,6 +815,54 @@ def _(k):
     return {'add': added, 'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1E)}
 
 
+# batch2 group 12a: library-index, scheme and iterator refusals (PR 12a, #525)
+def ctx_call(name, res, *args):
+    def run(k):
+        return {'ret': k.fn(name, res, P, *[t for t, _ in args])(k.ctx, *[v for _, v in args])}
+    return run
+
+
+for _name, _call in (
+        ('set-full-pinyin-scheme-0', ctx_call('set_full_pinyin_scheme', B, (I, 0))),
+        ('set-full-pinyin-scheme-4', ctx_call('set_full_pinyin_scheme', B, (I, 4))),
+        ('set-double-pinyin-scheme-30', ctx_call('set_double_pinyin_scheme', B, (I, 30))),
+        ('set-zhuyin-scheme-0', ctx_call('set_zhuyin_scheme', B, (I, 0))),
+        ('set-zhuyin-scheme-10', ctx_call('set_zhuyin_scheme', B, (I, 10))),
+        ('set-zhuyin-scheme-7', ctx_call('set_zhuyin_scheme', B, (I, 7))),
+        ('load-phrase-library-0', ctx_call('load_phrase_library', B, (C.c_ubyte, 0))),
+        ('load-phrase-library-8', ctx_call('load_phrase_library', B, (C.c_ubyte, 8))),
+        ('unload-phrase-library-16', ctx_call('unload_phrase_library', B, (C.c_ubyte, 16))),
+        ('unload-addon-phrase-library-16', ctx_call('unload_addon_phrase_library', B, (C.c_ubyte, 16)))):
+    case('abort-' + _name, abort=False)(_call)
+
+
+@case('abort-iterator-get-next-phrase', abort=False)
+def _(k):
+    # An empty user dictionary: the begin probes no next token.
+    it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
+    phrase, pinyin, count = P(), P(), I()
+    return {'has next': k.fn('iterator_has_next_phrase', B, P)(it),
+            'ret': k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
+                it, C.byref(phrase), C.byref(pinyin), C.byref(count))}
+
+
+# The in-range neighbours answer without a warning, as at the pin.
+@case('scheme-and-library-neighbours', control=True)
+def _(k):
+    out = {}
+    for label, name, res, arg in (
+            ('full 1', 'set_full_pinyin_scheme', B, (I, 1)), ('full 3', 'set_full_pinyin_scheme', B, (I, 3)),
+            ('double 6', 'set_double_pinyin_scheme', B, (I, 6)), ('double 99', 'set_double_pinyin_scheme', B, (I, 99)),
+            ('zhuyin 1', 'set_zhuyin_scheme', B, (I, 1)), ('zhuyin 9', 'set_zhuyin_scheme', B, (I, 9)),
+            ('load 1', 'load_phrase_library', B, (C.c_ubyte, 1)), ('load 7', 'load_phrase_library', B, (C.c_ubyte, 7)),
+            ('load 16', 'load_phrase_library', B, (C.c_ubyte, 16)), ('load 255', 'load_phrase_library', B, (C.c_ubyte, 255)),
+            ('unload 1', 'unload_phrase_library', B, (C.c_ubyte, 1)), ('unload 15', 'unload_phrase_library', B, (C.c_ubyte, 15)),
+            ('unload addon 15', 'unload_addon_phrase_library', B, (C.c_ubyte, 15)),
+            ('load addon 16', 'load_addon_phrase_library', B, (C.c_ubyte, 16))):
+        out[label] = k.fn(name, res, P, arg[0])(k.ctx, arg[1])
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):

@@ -289,6 +289,12 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     // `pinyin_begin_get_phrases`; the unique borrow lasts for this call.
     let handle = unsafe { &mut *(iter.cast::<ExportHandle>()) };
     let Some(row) = handle.cursor.next() else {
+        // Class (c), `pinyin.cpp:709`: the pin **`assert`**s that the token
+        // a previous call (or the begin) probed is valid; an exhausted or
+        // empty iterator has none.
+        crate::ffi::log_warning(
+            "pinyin_iterator_get_next_phrase: assertion 'ERROR_OK == retval' failed",
+        );
         return false;
     };
     if !phrase.is_null() {
