@@ -23,7 +23,6 @@
 //! records it in `DT_NEEDED`).
 
 use std::os::raw::{c_char, c_uint, c_void};
-use std::ptr;
 
 use oxpinyin_core::Dictionary;
 
@@ -110,8 +109,9 @@ pub extern "C" fn pinyin_lookup_tokens(
 ///                              gchar ** utf8_str);
 /// ```
 ///
-/// `false` for an unknown token or an unloaded library; both
-/// out-params are optional; the string is caller-owned (`g_free`).
+/// `false` for an unknown token or an unloaded library, with both
+/// out-params untouched; both out-params are optional; the string is
+/// caller-owned (`g_free`).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_token_get_phrase(
     instance: *mut PinyinInstance,
@@ -126,13 +126,9 @@ pub extern "C" fn pinyin_token_get_phrase(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
+    // An unknown token answers `false` with both out-params untouched
+    // (`_token_get_phrase` returns before writing, `pinyin.cpp:1627`).
     let Some(intro) = inst.core.dict.token_introspection(token) else {
-        if !utf8_str.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *utf8_str = ptr::null_mut();
-            }
-        }
         return false;
     };
     if !len.is_null() {
@@ -206,9 +202,13 @@ pub extern "C" fn pinyin_token_get_n_pronunciation(
 ///
 /// Appends the pronunciation's keys to the caller's array — packed
 /// two-byte chewing-key words, the same layout
-/// `pinyin_get_pinyin_key` hands out. `false` for an unknown token;
-/// an out-of-range `nth` answers `false` where upstream appends
-/// uninitialized stack bytes (the no-abort policy refuses instead).
+/// `pinyin_get_pinyin_key` hands out. The array is emptied first
+/// (`pinyin.cpp:2805`), so `false` for an unknown token leaves it empty.
+/// An `nth` past the last reading answers `true` and appends
+/// `phrase_length` keys, where upstream appends whatever its
+/// uninitialised stack buffer held (`pinyin.cpp:2808-2817`, the return
+/// value of `get_nth_pronunciation` ignored): zeroed keys, class (b) for
+/// the content (register row 51).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_token_get_nth_pronunciation(
     instance: *mut PinyinInstance,
@@ -223,6 +223,11 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
         return false;
     }
 
+    // SAFETY: Null-checked above; `g_array_set_size` on a real glib GArray
+    // updates `len` and preserves the private metadata.
+    unsafe {
+        g_array_set_size(keys, 0);
+    }
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
@@ -230,7 +235,19 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
         return false;
     };
     let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
-        return false;
+        // Past the last reading: `phrase_length` keys of indeterminate
+        // content at the pin; zeroed here.
+        let zeroed = vec![0_u16; intro.text.chars().count()];
+        // SAFETY: Null-checked above; the caller creates the keys array
+        // with element_size = sizeof(u16), as for the in-range path.
+        unsafe {
+            g_array_append_vals(
+                keys,
+                zeroed.as_ptr().cast::<c_void>(),
+                c_uint::try_from(zeroed.len()).unwrap_or(0),
+            );
+        }
+        return true;
     };
     // Pack each syllable key into its two-byte chewing-key word.
     let mut packed: Vec<u16> = Vec::with_capacity(keys_list.len());

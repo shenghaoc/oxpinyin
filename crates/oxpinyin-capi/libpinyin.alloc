@@ -79,7 +79,7 @@ pinyin_get_pinyin_key                    key         borrowed                   
 pinyin_get_pinyin_key_rest               key_rest    borrowed                      false-nulls
 
 # ── Caller-owned strings (g_free) ─────────────────────────────────────
-pinyin_get_sentence                      sentence    g_free                        false-nulls
+pinyin_get_sentence                      sentence    g_free                        false-untouched
 pinyin_get_full_pinyin_auxiliary_text    aux_text    g_free                        false-allocates
 pinyin_get_double_pinyin_auxiliary_text  aux_text    g_free                        false-allocates
 pinyin_get_chewing_auxiliary_text        aux_text    g_free                        false-allocates
@@ -92,7 +92,7 @@ pinyin_get_secondary_zhuyin_string       utf8_str    g_free                     
 # so a conforming consumer cannot make one. Unreachable, not unclaimed.
 pinyin_get_pinyin_strings                shengmu     g_free                        false-unreachable
 pinyin_get_pinyin_strings                yunmu       g_free                        false-unreachable
-pinyin_token_get_phrase                  utf8_str    g_free                        false-nulls
+pinyin_token_get_phrase                  utf8_str    g_free                        false-untouched
 # Both iterators answer `false` at exhaustion without writing, so the
 # loop must not free what it did not receive.
 pinyin_iterator_get_next_phrase          phrase      g_free                        false-untouched

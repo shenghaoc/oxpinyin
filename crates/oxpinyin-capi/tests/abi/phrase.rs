@@ -375,7 +375,7 @@ fn lookup_tokens_resolves_stored_phrases() {
 
 /// `pinyin_token_get_phrase` round-trips the lookup: the token found by
 /// text renders back to the same text; an unknown token answers false
-/// with a NULL out-param.
+/// and leaves both out-params untouched (`pinyin.cpp:1627`).
 #[test]
 fn token_get_phrase_round_trips() {
     let fixture = Fixture::new("dict-phrase");
@@ -410,19 +410,24 @@ fn token_get_phrase_round_trips() {
     ));
 
     let unknown = 0x09FF_FFFF;
+    len = 0xBEEF;
+    let sentinel = std::ptr::dangling_mut::<pinyin_capi::GChar>();
+    rendered = sentinel;
     assert!(!pinyin_token_get_phrase(
         fixture.instance,
         unknown,
         &raw mut len,
         &raw mut rendered
     ));
-    assert!(rendered.is_null());
+    assert_eq!(len, 0xBEEF, "len untouched");
+    assert_eq!(rendered, sentinel, "the string out-param is untouched");
 }
 
 /// `pinyin_token_get_n_pronunciation` and `_get_nth_pronunciation`:
 /// 你好 carries at least one pronunciation whose keys spell the phrase;
-/// an out-of-range nth answers false (the pin appends garbage there —
-/// the no-abort policy refuses instead).
+/// an out-of-range nth answers true and appends `phrase_length` keys (the
+/// pin appends whatever its uninitialised stack held, `pinyin.cpp:2808-2817`;
+/// here they are zeroed), and an unknown token empties the array first.
 #[test]
 fn token_pronunciation_surface() {
     let fixture = Fixture::new("dict-pron");
@@ -466,13 +471,34 @@ fn token_pronunciation_surface() {
     let keys_len = unsafe { (*keys).len };
     assert!(keys_len >= 2, "你+好: two chewing keys");
 
-    // An out-of-range nth answers false. The array is not appended to.
-    assert!(!pinyin_token_get_nth_pronunciation(
+    // An out-of-range nth answers true with `phrase_length` zeroed keys:
+    // the array is emptied first, then appended to.
+    assert!(pinyin_token_get_nth_pronunciation(
         fixture.instance,
         token,
         9,
         keys,
     ));
+    // SAFETY: keys is live; `len` and `data` are glib's public fields.
+    let (zeroed_len, zeroed) = unsafe {
+        let view = &*keys;
+        (
+            view.len,
+            std::slice::from_raw_parts(view.data.cast::<u16>(), view.len as usize).to_vec(),
+        )
+    };
+    assert_eq!(zeroed_len as usize, 2, "你好 is two characters");
+    assert_eq!(zeroed, vec![0, 0], "past the last reading: zeroed keys");
+
+    // An unknown token answers false and leaves the array empty.
+    assert!(!pinyin_token_get_nth_pronunciation(
+        fixture.instance,
+        0x09FF_FFFF,
+        0,
+        keys,
+    ));
+    // SAFETY: keys is live; `len` is glib's public field.
+    assert_eq!(unsafe { (*keys).len }, 0);
 
     // SAFETY: keys came from g_array_new; frees the buffer glib grew.
     unsafe {
