@@ -672,7 +672,8 @@ fn previous_token(inst: &CapiInstance) -> u32 {
 ///
 /// Train the requested decoded n-best row, with the pin's constraint gate.
 /// Empty results refuse quietly. An index beyond nonempty results returns
-/// false and emits one `libpinyin` warning (availability class (c)).
+/// false and emits one `libpinyin` warning (availability class (c)), as does
+/// a forced phrase that no longer matches the decoded result.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool {
     if instance.is_null() {
@@ -686,6 +687,14 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
         Ok(trained) => trained,
         Err(oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }) => {
             crate::ffi::log_warning("pinyin_train: n-best index is out of range");
+            false
+        }
+        // Class (c), `phonetic_lookup.h:868`: a forcing added after the last
+        // sentence lookup no longer matches the decoded result.
+        Err(oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }) => {
+            crate::ffi::log_warning(
+                "pinyin_train: assertion 'token == constraint->m_token' failed",
+            );
             false
         }
         Err(_) => false,

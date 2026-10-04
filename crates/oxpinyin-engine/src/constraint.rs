@@ -76,6 +76,14 @@ impl ConstraintStore {
         self.cells.get(index)
     }
 
+    /// The token the cell at `index` forces, `None` for any other cell.
+    pub(crate) fn one_step_token_at(&self, index: usize) -> Option<PhraseToken> {
+        match self.cell(index) {
+            Some(Cell::OneStep { token, .. }) => Some(*token),
+            _ => None,
+        }
+    }
+
     /// Whether the cell at `index` forces a token (`CONSTRAINT_ONESTEP`).
     pub(crate) fn is_one_step_at(&self, index: usize) -> bool {
         matches!(self.cell(index), Some(Cell::OneStep { .. }))

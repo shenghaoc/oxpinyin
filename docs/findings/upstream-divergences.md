@@ -2243,6 +2243,8 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
     (`pinyin_choose_candidate`, `pinyin_choose_predicted_candidate`,
     `pinyin_get_candidate_nbest_index`, `pinyin_remove_user_candidate`;
     policy row 64).
+  - PR 12d: `lookup/phonetic_lookup.h:868` through `pinyin_train` and
+    `zhuyin_train` (policy row 6).
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|

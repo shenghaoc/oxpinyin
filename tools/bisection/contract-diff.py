@@ -17,7 +17,8 @@ counted. Cases that make the pin abort belong to the class (c) logging
 differential, not to this one.
 
 A class (c) case (`abort=`) holds when the pin dies of SIGABRT and the subject
-answers the declared value with exactly one `libpinyin` warning.
+answers the declared value with exactly one warning in its own library's domain
+(`libpinyin`, or `libzhuyin` for the zhuyin facade).
 
 --expect-parent runs the same cases against a parent build: a case marked
 `control` must still match, every other case must differ.
@@ -44,11 +45,15 @@ CASES = {}
 
 NO_ABORT = object()
 
+# Each facade logs under its own library's domain.
+WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
+
 
 def case(name, mode='pinyin', control=False, abort=NO_ABORT):
     """Registers a case. `abort=<value>` marks a class (c) site: the pin
     must die of SIGABRT, and the subject must return `<value>` in its `ret`
-    field with exactly one GLib warning in domain `libpinyin` (level 16)."""
+    field with exactly one GLib warning in the facade's domain (`libpinyin`,
+    or `libzhuyin` for the zhuyin facade; level 16)."""
     def register(fn):
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort)
         return fn
@@ -72,7 +77,7 @@ class Kit:
         self._handler = cb_type(handler)
         self.glib.g_log_set_handler.argtypes = [S, U, cb_type, P]
         self.glib.g_log_set_handler.restype = U
-        for domain in (b'libpinyin', None):
+        for domain in (b'libpinyin', b'libzhuyin', None):
             self.glib.g_log_set_handler(domain, 0xFFFFFFFC, self._handler, None)
         self._ctx = None
         self._inst = None
@@ -1068,6 +1073,67 @@ def _(k):
     return out
 
 
+# batch2 group 12d: training a stale forcing (PR 12d, #525, row 6)
+def row_with_text(k, inst, kind, text):
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    for i in range(count.value):
+        cand, ctype, string = P(), I(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(ctype))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(string))
+        if ctype.value == kind and string.value == text.encode():
+            return cand
+    return None
+
+
+def forced_sentence(k, relook):
+    """nihao decoded, 泥 forced over 'ni' afterwards; optionally looked up again."""
+    inst = k.alloc()
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    k.fn('guess_sentence', B, P)(inst)
+    k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+    chosen = k.fn('choose_candidate', I, P, Z, P)(inst, 0, row_with_text(k, inst, 2, '泥'))
+    if relook:
+        k.fn('guess_sentence', B, P)(inst)
+    return inst, chosen
+
+
+@case('abort-zhuyin-train-stale-forcing', mode='zhuyin', abort=False)
+def _(k):
+    # The same walk through libzhuyin: a forcing added after the last
+    # sentence lookup (`phonetic_lookup.h:868`).
+    inst = k.alloc()
+    k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')
+    k.fn('guess_sentence', B, P)(inst)
+    k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+    chosen = None
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    for i in range(count.value):
+        cand, text = P(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        if text.value == '泥'.encode():
+            chosen = cand
+            break
+    k.fn('choose_candidate', I, P, Z, P)(inst, 0, chosen)
+    return {'ret': k.fn('train', B, P)(inst)}
+
+
+@case('abort-train-stale-forcing', abort=False)
+def _(k):
+    inst, _chosen = forced_sentence(k, False)
+    return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
+
+
+@case('train-forcing-after-lookup', control=True)
+def _(k):
+    inst, chosen = forced_sentence(k, True)
+    return {'chosen': chosen, 'train': k.fn('train', B, P, C.c_ubyte)(inst, 0),
+            'again': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):
@@ -1117,7 +1183,7 @@ def main():
             if spec['abort'] is not NO_ABORT:
                 shown = subject['result'] or {}
                 same = pin['exit'] == -6 and subject['exit'] == 0 and \
-                    shown.get('ret') == spec['abort'] and shown.get('logs') == [['libpinyin', 16]] and \
+                    shown.get('ret') == spec['abort'] and shown.get('logs') == [[WARNING_DOMAIN[spec['mode']], 16]] and \
                     all(v for key, v in shown.items() if key.startswith('untouched'))
             else:
                 # A side that died or printed nothing observed nothing: two

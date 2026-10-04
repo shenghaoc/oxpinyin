@@ -404,6 +404,18 @@ where
         {
             return Ok(());
         }
+        // `assert(token == constraint->m_token)` at a forced position
+        // (`phonetic_lookup.h:868`): checked before the first observation,
+        // since the pin's abort leaves nothing behind.
+        if let Some(span) = spans.iter().find(|span| {
+            self.constraints
+                .one_step_token_at(span.start)
+                .is_some_and(|forced| forced != span.token)
+        }) {
+            return Err(EngineError::StaleTrainingConstraint {
+                position: span.start,
+            });
+        }
         let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
         let mut train_next = false;
         let graph = self.build_graph_at(0, self.input.as_bytes())?;

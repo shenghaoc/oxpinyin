@@ -91,6 +91,15 @@ pub enum EngineError {
         /// The column position the walk stepped to.
         offset: usize,
     },
+    /// A training walk met a user-forced phrase whose token differs from the
+    /// token the decoded result holds there — the constraints changed after
+    /// the last sentence lookup. The pin's `train_result3` asserts it
+    /// (`assert(token == constraint->m_token)`, `phonetic_lookup.h:868` at
+    /// the pin); the engine answers an error, before observing anything.
+    StaleTrainingConstraint {
+        /// The matrix position of the forced phrase.
+        position: usize,
+    },
     /// The user-model backend failed (the learning/observation seam).
     UserModel(String),
     /// The input could not be represented as a segment graph.
@@ -145,6 +154,12 @@ impl fmt::Display for EngineError {
                     "offset {offset} sits one past a lone zero-key column"
                 )
             }
+            Self::StaleTrainingConstraint { position } => {
+                write!(
+                    formatter,
+                    "the forced phrase at {position} differs from the decoded result's"
+                )
+            }
             Self::MatrixColumnAssert { offset } => {
                 write!(
                     formatter,
@@ -172,6 +187,7 @@ impl std::error::Error for EngineError {
             | Self::SelectionAnchorBeforeComposition { .. }
             | Self::ZeroKeyOffsetCheck { .. }
             | Self::MatrixColumnAssert { .. }
+            | Self::StaleTrainingConstraint { .. }
             | Self::UserModel(_) => None,
         }
     }
