@@ -54,6 +54,14 @@ pub extern "C" fn pinyin_parse_full_pinyin(
     let inst = unsafe { instance_ref(instance) };
     // SAFETY: Null-checked above.
     let text = unsafe { cstr_to_string(onepinyin) };
+    // Class (c), `pinyin_parser2.cpp:170`: `parse_one_key` asserts the text
+    // holds no `'`, before it touches `*onekey`.
+    if text.contains('\'') {
+        crate::ffi::log_warning(
+            "pinyin_parse_full_pinyin: assertion 'NULL == strchr(input, ''')' failed",
+        );
+        return false;
+    }
     // SAFETY: Null-checked above; written through the caller's
     // storage exactly once per branch.
     unsafe {
