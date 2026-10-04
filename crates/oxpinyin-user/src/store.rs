@@ -109,6 +109,11 @@ pub enum UserStoreError {
     /// (`table_info.cpp:122-133`). The class-(c) answer: the store does
     /// not open, and nothing is cleaned or written.
     UnknownDatabaseFormat,
+    /// The unigram add of an accepted predicted candidate overflowed its
+    /// library's `guint32` total: `FacadePhraseIndex::add_unigram_frequency`
+    /// answers `ERROR_INTEGER_OVERFLOW` and `pinyin_choose_predicted_candidate`
+    /// returns `false` before it trains the bigram (`pinyin.cpp:2609-2612`).
+    UnigramTotalOverflow,
 }
 
 impl fmt::Display for UserStoreError {
@@ -131,6 +136,10 @@ impl fmt::Display for UserStoreError {
                 f,
                 "user.conf: unknown database format (upstream aborts, table_info.cpp:122-133)"
             ),
+            Self::UnigramTotalOverflow => write!(
+                f,
+                "unigram total overflow (upstream ERROR_INTEGER_OVERFLOW, pinyin.cpp:2609-2612)"
+            ),
         }
     }
 }
@@ -145,7 +154,8 @@ impl std::error::Error for UserStoreError {
             | Self::InvalidPhrase
             | Self::TokenSpaceExhausted
             | Self::Persistence(_)
-            | Self::UnknownDatabaseFormat => None,
+            | Self::UnknownDatabaseFormat
+            | Self::UnigramTotalOverflow => None,
         }
     }
 }
@@ -333,15 +343,20 @@ fn add_pronunciation(
 /// sub-index refuses it — the item's unigram unchanged — when its own
 /// `guint32` total would overflow (`SubPhraseIndex::add_unigram_frequency`,
 /// `phrase_index.cpp:150-178`).
+///
+/// Answers whether the sub-index accepted the delta: `false` is
+/// `ERROR_INTEGER_OVERFLOW`, which `pinyin_choose_predicted_candidate`
+/// turns into `false` (`pinyin.cpp:2609-2612`) and the training walk
+/// ignores (`phonetic_lookup.h:928-929`).
 fn add_unigram_frequency(
     txn: &mut dyn WriteTxn,
     library: u8,
     token: Token,
     delta: u32,
-) -> Result<(), StoreError> {
+) -> Result<bool, StoreError> {
     bump_unigram_total(txn, u64::from(delta))?;
     if library_total_overflows(txn, library, delta)? {
-        return Ok(());
+        return Ok(false);
     }
     let uni_key = codec::encode_token(token);
     let prev = txn_get_u64_or(txn, UNIGRAM, &uni_key, 0)?;
@@ -349,7 +364,8 @@ fn add_unigram_frequency(
         UNIGRAM,
         &uni_key,
         &codec::encode_u64(prev.saturating_add(u64::from(delta))),
-    )
+    )?;
+    Ok(true)
 }
 
 /// Whether `library`'s `guint32` unigram total plus `delta` overflows —
@@ -1007,6 +1023,17 @@ impl<S: WriteStore> GenericUserStore<S> {
                 SeedPolicy::Training => seed::training_seed((prev != 0).then_some(prev)),
                 SeedPolicy::Predicted => seed::predicted_seed(),
             };
+            // `seed * unigram_factor` in `guint32`; the seeds are small.
+            let delta = u32::try_from(seed::unigram_delta(seed)).unwrap_or(u32::MAX);
+            let library = phrase_index_library_index(cur);
+            if matches!(policy, SeedPolicy::Predicted)
+                && !add_unigram_frequency(txn, library, cur, delta)?
+            {
+                // The unigram add comes first and its overflow ends the
+                // call before any bigram is trained (`pinyin.cpp:2609-2612`);
+                // the facade total has already taken the delta.
+                return Ok(None);
+            }
             txn.put(
                 BIGRAM,
                 &pair_key,
@@ -1021,19 +1048,19 @@ impl<S: WriteStore> GenericUserStore<S> {
                 &codec::encode_u64(prev_total.saturating_add(seed)),
             )?;
 
-            let delta = seed::unigram_delta(seed);
-            let uni_key = codec::encode_token(cur);
-            let prev_unigram = txn_get_u64_or(txn, UNIGRAM, &uni_key, 0)?;
-            txn.put(
-                UNIGRAM,
-                &uni_key,
-                &codec::encode_u64(prev_unigram.saturating_add(delta)),
-            )?;
-            bump_unigram_total(txn, delta)?;
+            if matches!(policy, SeedPolicy::Training) {
+                // `train_result3` ignores the sub-index's refusal
+                // (`phonetic_lookup.h:928-929`): the item stops growing
+                // once its library's `guint32` total would overflow.
+                add_unigram_frequency(txn, library, cur, delta)?;
+            }
 
-            Ok(seed)
+            Ok(Some(seed))
         })?;
         self.mark_committed_write(db, true);
+        let Some(seed) = seed else {
+            return Err(UserStoreError::UnigramTotalOverflow);
+        };
         // `m_user_bigram->store(last_token, user)` (`pinyin_lookup2.cpp:626`,
         // `pinyin.cpp:2638`): one store of the predecessor's gram.
         self.mirror_store(last)?;
@@ -2618,6 +2645,34 @@ mod tests {
 
                     let token2 = store.add_phrase("世界", &[30, 40], Some(10)).unwrap();
                     assert_eq!(store.unigram_delta(token2).unwrap(), 30);
+                    cleanup(&path);
+                }
+
+                /// The sub-index refuses a unigram add that would overflow its
+                /// `guint32` total (`phrase_index.cpp:169-171`): training goes on
+                /// without the unigram, and an accepted predicted candidate
+                /// answers `ERROR_INTEGER_OVERFLOW` before its bigram
+                /// (`pinyin.cpp:2609-2612`).
+                #[test]
+                fn unigram_adds_stop_at_the_library_total() {
+                    let path = temp_path("uni-total");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    // 402 below `u32::MAX`: room for no 483 delta.
+                    let token = store
+                        .add_phrase("你好", &[10, 20], Some(1_431_655_631))
+                        .unwrap();
+                    let full = store.unigram_delta(token).unwrap();
+                    assert_eq!(full, 4_294_966_893);
+
+                    let err = store.observe_predicted(SENTENCE_START, token).unwrap_err();
+                    assert!(matches!(err, UserStoreError::UnigramTotalOverflow));
+                    assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 0);
+                    assert_eq!(store.unigram_delta(token).unwrap(), full);
+
+                    // Training keeps its bigram and loses only the unigram.
+                    store.observe_selection(SENTENCE_START, token).unwrap();
+                    assert_eq!(store.bigram_count(SENTENCE_START, token).unwrap(), 69);
+                    assert_eq!(store.unigram_delta(token).unwrap(), full);
                     cleanup(&path);
                 }
 
