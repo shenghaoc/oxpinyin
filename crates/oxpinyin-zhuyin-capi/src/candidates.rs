@@ -269,7 +269,18 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    inst.core.train(0).unwrap_or(false)
+    match inst.core.train(0) {
+        Ok(trained) => trained,
+        // Class (c), `phonetic_lookup.h:868`: a forcing added after the last
+        // sentence lookup no longer matches the decoded result.
+        Err(oxpinyin_engine::EngineError::StaleTrainingConstraint { .. }) => {
+            crate::ffi::log_warning(
+                "zhuyin_train: assertion 'token == constraint->m_token' failed",
+            );
+            false
+        }
+        Err(_) => false,
+    }
 }
 
 /// Fill the instance's candidate snapshot from a `CandidateList`.

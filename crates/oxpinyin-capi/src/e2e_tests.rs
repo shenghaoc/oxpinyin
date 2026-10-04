@@ -463,6 +463,55 @@ fn training_through_the_abi_records_the_pinned_counts() {
     crate::context::pinyin_fini(context);
 }
 
+/// `train_result3`'s `assert(token == constraint->m_token)`
+/// (`phonetic_lookup.h:868`): a phrase forced after the last sentence lookup
+/// no longer matches the decoded result, so training answers `false`, and
+/// writes nothing; looking the sentence up again brings them back in step.
+#[test]
+fn training_a_stale_forcing_refuses_and_writes_nothing() {
+    let user_dir = TempUserDir::new("train-stale");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let input = cstr("zhongguo");
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, input.as_ptr()),
+        "zhongguo".len()
+    );
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_guess_candidates(
+        instance,
+        0,
+        crate::test_support::DEFAULT_SORT
+    ));
+    // The last word row: not the phrase the sentence decoded at 0.
+    let index = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        inst.candidates
+            .iter()
+            .rposition(|c| {
+                c.candidate_type == lookup_candidate_type_t::NORMAL_CANDIDATE && c.token.is_some()
+            })
+            .expect("a word candidate")
+    };
+    let mut other: *mut LookupCandidate = ptr::null_mut();
+    assert!(pinyin_get_candidate(
+        instance,
+        u32::try_from(index).expect("small index"),
+        &raw mut other
+    ));
+    let forced = token_of(instance, other);
+    assert!(pinyin_choose_candidate(instance, 0, other) > 0);
+
+    assert!(!pinyin_train(instance, 0), "the forcing is stale");
+    assert_eq!(store_of(instance).unigram_delta(forced).unwrap(), 0);
+
+    assert!(pinyin_guess_sentence(instance));
+    assert!(pinyin_train(instance, 0), "the lookup is back in step");
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 #[test]
 fn training_entry_points_refuse_without_a_user_store() {
     // No user store is a NULL user dir. An empty string is a user dir —
