@@ -105,9 +105,8 @@ pub struct LiveOptions {
 
 impl LiveOptions {
     /// Seeds the live state the way an init does: the bools derive off
-    /// `option_word` (so `pinyin_init`'s `PINYIN_INCOMPLETE` seeds
-    /// incomplete ON, `zhuyin_init`'s `USE_TONE | FORCE_TONE` seeds both
-    /// tone bits ON), and the three schemes start at the header defaults
+    /// `option_word` (so `pinyin_init`'s `USE_TONE` seeds incomplete OFF,
+    /// `zhuyin_init`'s `USE_TONE | FORCE_TONE` seeds both tone bits ON), and the three schemes start at the header defaults
     /// both facades share (MS double, Standard zhuyin, Hanyu full).
     #[must_use]
     pub(crate) fn new(option_word: u32) -> Self {

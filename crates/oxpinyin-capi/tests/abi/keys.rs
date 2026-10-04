@@ -15,7 +15,8 @@ use pinyin_capi::{
 
 use crate::common::{TempUserDir, cstr, open};
 
-/// `PINYIN_INCOMPLETE` (`pinyin_custom2.h:34`) — the fixture default word.
+/// `PINYIN_INCOMPLETE` (`pinyin_custom2.h:34`) — the fixture word: `Fixture::new`
+/// sets it explicitly, because `pinyin_init` itself seeds `USE_TONE`.
 const PINYIN_INCOMPLETE: u32 = 1 << 3;
 /// `USE_TONE` (`pinyin_custom2.h:36`).
 const USE_TONE: u32 = 1 << 5;
@@ -58,6 +59,7 @@ struct Fixture {
 impl Fixture {
     fn new(tag: &str) -> Self {
         let (context, instance, user_dir) = open_with_dir(tag);
+        assert!(pinyin_set_options(context, PINYIN_INCOMPLETE));
         Self {
             context,
             instance,
@@ -189,7 +191,7 @@ fn full_pinyin_tone_law() {
     let fixture = Fixture::new("keys-tone");
     let mut key = ChewingKey::ZERO;
 
-    // The default fixture word (PINYIN_INCOMPLETE) ignores the digit
+    // The fixture word (PINYIN_INCOMPLETE) ignores the digit
     // gate: `ni3` is not a spelling, so it fails.
     assert!(!pinyin_parse_full_pinyin(
         fixture.instance,

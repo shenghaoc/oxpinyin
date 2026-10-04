@@ -25,7 +25,7 @@ use crate::candidates::{
     pinyin_choose_candidate, pinyin_choose_predicted_candidate, pinyin_clear_constraint,
     pinyin_get_candidate, pinyin_is_user_candidate, pinyin_remove_user_candidate, pinyin_train,
 };
-use crate::config::pinyin_mask_out;
+use crate::config::{pinyin_mask_out, pinyin_set_options};
 use crate::context::{oxpinyin_init_for_fixtures, pinyin_save};
 use crate::instance::{pinyin_alloc_instance, pinyin_reset};
 use crate::iterators::{
@@ -329,6 +329,12 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
 fn training_through_the_abi_records_the_pinned_counts() {
     let user_dir = TempUserDir::new("train");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // The composition "n" below needs the incomplete tail the USE_TONE
+    // default refuses.
+    assert!(pinyin_set_options(
+        context,
+        oxpinyin_core::PINYIN_INCOMPLETE
+    ));
 
     train_records_the_pinned_doubling_sequence(instance);
     assert!(pinyin_reset(instance));
@@ -1347,6 +1353,12 @@ fn the_forcing_survives_the_reparse_and_clears_by_offset() {
 fn the_forcing_survives_a_shrinking_reparse_and_the_retype() {
     let user_dir = TempUserDir::new("constraint-backspace");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    // The backspace ladder steps through "nihaoshij": its tail needs the
+    // incomplete word the USE_TONE default refuses.
+    assert!(pinyin_set_options(
+        context,
+        oxpinyin_core::PINYIN_INCOMPLETE
+    ));
 
     let input = cstr("nihaoshijie");
     assert_eq!(
