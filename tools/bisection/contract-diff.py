@@ -463,6 +463,127 @@ def _(k):
     return out
 
 
+# lane C, #542 rows 8 and 9: auxiliary text renders from the shared parse.
+def aux_matrix(k, parse_name, text, cursors):
+    out = {}
+    for fname in ('full_pinyin', 'double_pinyin', 'chewing'):
+        for cursor in cursors:
+            inst = k.alloc()
+            k.fn(parse_name, Z, P, S)(inst, text)
+            aux = P(UNTOUCHED)
+            ret = k.fn('get_%s_auxiliary_text' % fname, B, P, Z, C.POINTER(P))(inst, cursor, C.byref(aux))
+            out['%s@%d' % (fname, cursor)] = [ret, 'untouched' if aux.value == UNTOUCHED else k.text(aux.value)]
+    return out
+
+
+@case('aux-text-full-parse')
+def _(k):
+    # Mid-key cursors stay at one or two bytes into a key: the pin aborts on
+    # a longer mid-key cursor of the double-pinyin renderer.
+    return aux_matrix(k, 'parse_more_full_pinyins', b'nihao', (0, 1, 2, 3, 4, 5, 9))
+
+
+@case('aux-text-full-parse-apostrophe')
+def _(k):
+    return aux_matrix(k, 'parse_more_full_pinyins', b"xi'an", (0, 1, 2, 4, 5))
+
+
+@case('aux-text-double-parse')
+def _(k):
+    return aux_matrix(k, 'parse_more_double_pinyins', b'nihk', (0, 1, 2, 3, 4, 9))
+
+
+@case('aux-text-chewing-parse')
+def _(k):
+    return aux_matrix(k, 'parse_more_chewings', b'su3cl3', (0, 1, 2, 3, 4, 5, 6, 9))
+
+
+@case('aux-text-tones')
+def _(k):
+    # Tone digits ride the keys: the pinyin spelling appends them, the double
+    # renderer appends them after a cut key, the zhuyin spelling marks them.
+    out = {}
+    for parse_name, text, cursors in (('parse_more_full_pinyins', b'ni3hao4', (0, 1, 2, 3, 4, 5, 7)),
+                                      ('parse_more_double_pinyins', b'ni3hk4', (0, 1, 2, 3, 4, 5, 6))):
+        for label, value in aux_matrix(k, parse_name, text, cursors).items():
+            out[parse_name + ' ' + label] = value
+    return out
+
+
+def aux_cursors(k, text, cursors, functions=('full_pinyin', 'double_pinyin', 'chewing')):
+    """The listed aux functions at the listed cursors, after a full parse."""
+    out = {}
+    for fname in functions:
+        for cursor in cursors:
+            inst = k.alloc()
+            k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+            aux = P(UNTOUCHED)
+            ret = k.fn('get_%s_auxiliary_text' % fname, B, P, Z, C.POINTER(P))(inst, cursor, C.byref(aux))
+            out['%s %s@%d' % (text.decode(), fname, cursor)] = [
+                ret, 'untouched' if aux.value == UNTOUCHED else k.text(aux.value)]
+    return out
+
+
+def aux_options(k, word, texts):
+    """The three aux functions under one option word. The double renderer
+    aborts the pin three bytes into a key (`pinyin.cpp:3488`), so it is read
+    at the cursors that stay within two."""
+    k.fn('set_options', B, P, U)(k.ctx, word)
+    out = {}
+    for text in texts:
+        every = range(0, len(text) + 2)
+        out.update(aux_cursors(k, text, every, ('full_pinyin', 'chewing')))
+        out.update(aux_cursors(k, text, (0, 1, 2, len(text), len(text) + 1), ('double_pinyin',)))
+    return out
+
+
+# Several keys can begin at one byte under the divided, resplit and fuzzy
+# options; the pin's renderers read the first (`get_item(column, 0)`).
+@case('aux-text-divided-table')
+def _(k):
+    return aux_options(k, (1 << 5) | (1 << 7), (b'xian', b'jiangnan', b'xianan', b'tiananmen'))
+
+
+@case('aux-text-resplit-table')
+def _(k):
+    return aux_options(k, (1 << 5) | (1 << 8), (b'zhengfu', b'xianan', b'dianxin', b'changan'))
+
+
+@case('aux-text-divided-and-resplit')
+def _(k):
+    return aux_options(k, (1 << 5) | (1 << 7) | (1 << 8), (b'xian', b'zhengfu', b'xianan'))
+
+
+@case('aux-text-fuzzy-keys')
+def _(k):
+    return aux_options(k, (1 << 5) | (1 << 12) | (1 << 15) | (1 << 17), (b'zongguo', b'nan', b'lan', b'zi', b'banggan'))
+
+
+@case('aux-text-no-parse', control=True)
+def _(k):
+    out = {}
+    for fname in ('full_pinyin', 'double_pinyin', 'chewing'):
+        inst = k.alloc()
+        aux = P(UNTOUCHED)
+        ret = k.fn('get_%s_auxiliary_text' % fname, B, P, Z, C.POINTER(P))(inst, 0, C.byref(aux))
+        out[fname] = [ret, 'untouched' if aux.value == UNTOUCHED else k.text(aux.value)]
+    return out
+
+
+@case('aux-text-mixed-parses')
+def _(k):
+    # The matrix is the last parse, whatever mode made it.
+    out = {}
+    inst = k.alloc()
+    k.fn('parse_more_double_pinyins', Z, P, S)(inst, b'nihk')
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'xian')
+    for fname in ('full_pinyin', 'double_pinyin', 'chewing'):
+        aux = P(UNTOUCHED)
+        ret = k.fn('get_%s_auxiliary_text' % fname, B, P, Z, C.POINTER(P))(inst, 2, C.byref(aux))
+        out[fname] = [ret, 'untouched' if aux.value == UNTOUCHED else k.text(aux.value)]
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):

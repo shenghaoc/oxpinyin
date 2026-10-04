@@ -4,10 +4,10 @@
 //! the cursor). Double pinyin and chewing use the scheme aux walkers.
 
 use oxpinyin_core::OptionBits;
+use oxpinyin_core::ZhuyinParse;
 use oxpinyin_core::graph::SegmentGraph;
-use oxpinyin_core::phonetic_initial;
-use oxpinyin_core::{DoublePinyinParse, ZhuyinParse};
 
+use crate::aux_matrix::SharedMatrix;
 use crate::ffi::owned_cstr;
 use crate::state::instance_ref;
 use crate::types::{GChar, PinyinInstance};
@@ -122,78 +122,6 @@ fn full_aux_text(raw: &str, parsed_len: usize, cursor: usize, options: OptionBit
     out
 }
 
-fn split_pinyin_key(key: &str) -> (String, String) {
-    let initial = phonetic_initial(key).unwrap_or("");
-    let yunmu = &key[initial.len()..];
-    (initial.to_owned(), yunmu.to_owned())
-}
-
-fn double_aux_text(
-    input: &str,
-    parse: &DoublePinyinParse,
-    parsed_len: usize,
-    cursor: usize,
-) -> String {
-    let parsed_len = parsed_len.min(input.len());
-    let cursor = cursor.min(parsed_len);
-    let keys = parse.keys();
-
-    let mut prefix = String::new();
-    for item in keys {
-        if cursor < item.end() {
-            break;
-        }
-        prefix.push_str(item.key().text());
-        prefix.push(' ');
-    }
-
-    let mut postfix = String::new();
-    for item in keys {
-        if cursor > item.start() {
-            continue;
-        }
-        postfix.push_str(item.key().text());
-        postfix.push(' ');
-    }
-
-    let mut middle = String::new();
-    let mut offset = 0;
-    for item in keys {
-        if cursor == offset {
-            middle.push('|');
-            break;
-        }
-
-        let begin = item.start();
-        let end = item.end();
-        if begin < cursor && cursor < end {
-            let (shengmu, yunmu) = split_pinyin_key(item.key().text());
-            match cursor - begin {
-                1 => {
-                    middle.push_str(&shengmu);
-                    middle.push('|');
-                    middle.push_str(&yunmu);
-                    middle.push(' ');
-                }
-                2 => {
-                    middle.push_str(&shengmu);
-                    middle.push_str(&yunmu);
-                    middle.push('|');
-                    middle.push(' ');
-                }
-                _ => middle.push('|'),
-            }
-            break;
-        }
-        offset = end;
-    }
-    if middle.is_empty() {
-        middle.push('|');
-    }
-
-    format!("{prefix}{middle}{postfix}")
-}
-
 fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor: usize) -> String {
     let parsed_len = parsed_len.min(input.len());
     let cursor = cursor.min(parsed_len);
@@ -247,6 +175,36 @@ fn chewing_aux_text(input: &str, parse: &ZhuyinParse, parsed_len: usize, cursor:
     format!("{prefix}{middle}{postfix}")
 }
 
+/// Writes `text` through the caller's out-param, or the empty string the
+/// pin writes with its `false` for an empty matrix (`pinyin.cpp:3382-3388`).
+/// Returns the pin's boolean.
+fn write_aux(aux_text: *mut *mut GChar, text: Option<String>) -> bool {
+    let answered = text.is_some();
+    if !aux_text.is_null() {
+        // SAFETY: Null-checked above. `owned_cstr` returns null on an
+        // interior NUL or allocation failure; otherwise ownership
+        // transfers to the caller, which frees it with `g_free`.
+        let owned = owned_cstr(&text.unwrap_or_default());
+        // SAFETY: Null-checked above.
+        unsafe {
+            *aux_text = owned;
+        }
+        if owned.is_null() {
+            return false;
+        }
+    }
+    answered
+}
+
+/// Whether the parse placed a key: the pin's matrix is empty otherwise
+/// (`fill_matrix`, `phonetic_key_matrix.cpp:34-38`) and every auxiliary-text
+/// function answers `false` with an empty string.
+fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
+    inst.core
+        .mode_keys()
+        .is_ok_and(|(keys, input, _)| !(keys.is_empty() || input.is_empty()))
+}
+
 /// Get auxiliary text for full pinyin display.
 ///
 /// # C signature
@@ -272,47 +230,33 @@ pub extern "C" fn pinyin_get_full_pinyin_auxiliary_text(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     // Upstream returns false with an allocated empty string when
-    // the matrix is empty — no parse, or a parse that consumed
-    // nothing (`pinyin.cpp:3382-3386`).
-    if inst.core.parsed_len == 0 {
-        if !aux_text.is_null() {
-            let owned = owned_cstr("");
-            // SAFETY: Null-checked above.
-            unsafe {
-                *aux_text = owned;
-            }
-        }
-        return false;
+    // the matrix is empty — no parse, or a parse that placed no key
+    // (`pinyin.cpp:3382-3386`).
+    if inst.core.parsed_len == 0 || !matrix_has_keys(inst) {
+        return write_aux(aux_text, None);
     }
-    let text = inst.core.full_parse.as_ref().map_or_else(
-        || {
-            full_aux_text(
-                inst.core.session.raw_input(),
-                inst.core.parsed_len,
-                cursor,
-                inst.core.options(),
-            )
-        },
-        // LUOMA / SECONDARY_ZHUYIN: render the stored index parse —
-        // canonical spellings (tone digit appended when a tone was
-        // parsed, like `ChewingKey::get_pinyin_string`) over raw
-        // spans.
-        |parse| full_index_aux_text(&inst.core.full_input, parse, cursor),
-    );
-    if !aux_text.is_null() {
-        // SAFETY: Null-checked above. `owned_cstr` returns null on an
-        // interior NUL or allocation failure; otherwise ownership
-        // transfers to the caller, which frees it with `g_free`.
-        let owned = owned_cstr(&text);
-        // SAFETY: Null-checked above.
-        unsafe {
-            *aux_text = owned;
-        }
-        if owned.is_null() {
-            return false;
-        }
-    }
-    true
+    let text = if inst.core.double_parse.is_some() || inst.core.zhuyin_parse.is_some() {
+        // A double or chewing parse filled the matrix; the pin renders it
+        // all the same (register row 55).
+        SharedMatrix::of(inst).and_then(|matrix| matrix.full(cursor))
+    } else {
+        Some(inst.core.full_parse.as_ref().map_or_else(
+            || {
+                full_aux_text(
+                    inst.core.session.raw_input(),
+                    inst.core.parsed_len,
+                    cursor,
+                    inst.core.options(),
+                )
+            },
+            // LUOMA / SECONDARY_ZHUYIN: render the stored index parse —
+            // canonical spellings (tone digit appended when a tone was
+            // parsed, like `ChewingKey::get_pinyin_string`) over raw
+            // spans.
+            |parse| full_index_aux_text(&inst.core.full_input, parse, cursor),
+        ))
+    };
+    write_aux(aux_text, text)
 }
 
 /// Get auxiliary text for double pinyin display.
@@ -339,43 +283,16 @@ pub extern "C" fn pinyin_get_double_pinyin_auxiliary_text(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let Some(parse) = inst.core.double_parse.as_ref() else {
-        if !aux_text.is_null() {
-            // Upstream returns false with an allocated empty string when
-            // the matrix is empty (pinyin.cpp:3442-3445).
-            let owned = owned_cstr("");
-            // SAFETY: Null-checked above.
-            unsafe {
-                *aux_text = owned;
-            }
-        }
-        return false;
-    };
-    if parse.keys().is_empty() {
-        if !aux_text.is_null() {
-            let owned = owned_cstr("");
-            // SAFETY: Null-checked above.
-            unsafe {
-                *aux_text = owned;
-            }
-        }
-        return false;
+    // Upstream returns false with an allocated empty string when
+    // the matrix is empty (pinyin.cpp:3442-3445).
+    if !matrix_has_keys(inst) {
+        return write_aux(aux_text, None);
     }
-    let text = double_aux_text(&inst.core.double_input, parse, inst.core.parsed_len, cursor);
-    if !aux_text.is_null() {
-        // SAFETY: Null-checked above. `owned_cstr` returns null on an
-        // interior NUL or allocation failure; otherwise ownership
-        // transfers to the caller, which frees it with `g_free`.
-        let owned = owned_cstr(&text);
-        // SAFETY: Null-checked above.
-        unsafe {
-            *aux_text = owned;
-        }
-        if owned.is_null() {
-            return false;
-        }
-    }
-    true
+    // The pin renders the shared matrix whichever parser filled it
+    // (register row 55): the keys of a double-pinyin parse carry their
+    // tone, which the renderer appends after a cut key.
+    let text = SharedMatrix::of(inst).and_then(|matrix| matrix.double(cursor));
+    write_aux(aux_text, text)
 }
 
 /// Get auxiliary text for chewing (bopomofo) display.
@@ -402,41 +319,21 @@ pub extern "C" fn pinyin_get_chewing_auxiliary_text(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let Some(parse) = inst.core.zhuyin_parse.as_ref() else {
-        if !aux_text.is_null() {
-            let owned = owned_cstr("");
-            // SAFETY: Null-checked above.
-            unsafe {
-                *aux_text = owned;
-            }
-        }
-        return false;
+    if !matrix_has_keys(inst) {
+        return write_aux(aux_text, None);
+    }
+    let text = match inst.core.zhuyin_parse.as_ref() {
+        Some(parse) => Some(chewing_aux_text(
+            &inst.core.zhuyin_input,
+            parse,
+            inst.core.parsed_len,
+            cursor,
+        )),
+        // Another parser filled the matrix; the pin renders it all the
+        // same (register row 55).
+        None => SharedMatrix::of(inst).and_then(|matrix| matrix.chewing(cursor)),
     };
-    if parse.keys().is_empty() {
-        if !aux_text.is_null() {
-            let owned = owned_cstr("");
-            // SAFETY: Null-checked above.
-            unsafe {
-                *aux_text = owned;
-            }
-        }
-        return false;
-    }
-    let text = chewing_aux_text(&inst.core.zhuyin_input, parse, inst.core.parsed_len, cursor);
-    if !aux_text.is_null() {
-        // SAFETY: Null-checked above. `owned_cstr` returns null on an
-        // interior NUL or allocation failure; otherwise ownership
-        // transfers to the caller, which frees it with `g_free`.
-        let owned = owned_cstr(&text);
-        // SAFETY: Null-checked above.
-        unsafe {
-            *aux_text = owned;
-        }
-        if owned.is_null() {
-            return false;
-        }
-    }
-    true
+    write_aux(aux_text, text)
 }
 
 #[cfg(test)]

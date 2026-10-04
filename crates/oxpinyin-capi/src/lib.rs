@@ -98,6 +98,7 @@ mod phrase;
 mod state;
 mod types;
 
+mod aux_matrix;
 mod candidates;
 mod config;
 mod context;
