@@ -984,6 +984,90 @@ def _(k):
     return out
 
 
+# batch2 group 12c: candidate-type refusals (PR 12c, #525)
+def row_of(k, inst, want_kind):
+    """The first candidate of a type in the instance's list, or None."""
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    for i in range(count.value):
+        cand, kind = P(), I()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        if kind.value == want_kind:
+            return cand
+    return None
+
+
+def guessed(k, text=b'nihao'):
+    inst = k.alloc()
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+    k.fn('guess_sentence', B, P)(inst)
+    k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+    return inst
+
+
+def predicted(k, prefix='我'):
+    inst = k.alloc()
+    k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(inst, prefix.encode())
+    return inst
+
+
+@case('abort-get-candidate-nbest-index-normal-row', abort=False)
+def _(k):
+    inst = guessed(k)
+    out = C.c_ubyte(0xAB)
+    ret = k.fn('get_candidate_nbest_index', B, P, P, C.POINTER(C.c_ubyte))(
+        inst, row_of(k, inst, 2), C.byref(out))
+    # The pin dies before it writes `*index`; an `untouched*` field must stay true.
+    return {'ret': ret, 'untouched index': out.value == 0xAB}
+
+
+@case('abort-remove-user-candidate-normal-system-token', abort=False)
+def _(k):
+    inst = guessed(k)
+    return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, row_of(k, inst, 2))}
+
+
+@case('abort-remove-user-candidate-sentence-row', abort=False)
+def _(k):
+    inst = guessed(k)
+    return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, row_of(k, inst, 1))}
+
+
+@case('abort-choose-candidate-predicted-prefix-row', abort=0)
+def _(k):
+    inst = predicted(k)
+    return {'ret': k.fn('choose_candidate', I, P, Z, P)(inst, 0, row_of(k, inst, 5))}
+
+
+@case('abort-choose-predicted-candidate-normal-row', abort=False)
+def _(k):
+    inst = guessed(k)
+    return {'ret': k.fn('choose_predicted_candidate', B, P, P)(inst, row_of(k, inst, 2))}
+
+
+@case('abort-choose-predicted-candidate-sentence-row', abort=False)
+def _(k):
+    inst = guessed(k)
+    return {'ret': k.fn('choose_predicted_candidate', B, P, P)(inst, row_of(k, inst, 1))}
+
+
+# The rows the guards leave alone answer without a warning.
+@case('candidate-type-neighbours', control=True)
+def _(k):
+    out = {}
+    inst = guessed(k)
+    nbest = C.c_ubyte(0xAB)
+    out['nbest of sentence row'] = [k.fn('get_candidate_nbest_index', B, P, P, C.POINTER(C.c_ubyte))(
+        inst, row_of(k, inst, 1), C.byref(nbest)), nbest.value]
+    out['is user'] = [k.fn('is_user_candidate', B, P, P)(inst, row_of(k, inst, kind)) for kind in (1, 2)]
+    out['choose normal'] = k.fn('choose_candidate', I, P, Z, P)(inst, 0, row_of(k, inst, 2))
+    pred = predicted(k)
+    out['choose predicted prefix'] = k.fn('choose_predicted_candidate', B, P, P)(pred, row_of(k, pred, 5))
+    out['choose predicted punctuation'] = k.fn('choose_predicted_candidate', B, P, P)(pred, row_of(k, pred, 8))
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):
@@ -1033,7 +1117,8 @@ def main():
             if spec['abort'] is not NO_ABORT:
                 shown = subject['result'] or {}
                 same = pin['exit'] == -6 and subject['exit'] == 0 and \
-                    shown.get('ret') == spec['abort'] and shown.get('logs') == [['libpinyin', 16]]
+                    shown.get('ret') == spec['abort'] and shown.get('logs') == [['libpinyin', 16]] and \
+                    all(v for key, v in shown.items() if key.startswith('untouched'))
             else:
                 # A side that died or printed nothing observed nothing: two
                 # identical failures must not read as a match (nor satisfy
