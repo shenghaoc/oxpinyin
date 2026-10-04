@@ -272,10 +272,12 @@ static void rm_rf(const char *dir) {
     rmdir(dir);
 }
 
-/* ChewingKey / ChewingKeyRest are 32-bit packed structs at the pin
- * (key-surface-diff.c's convention): print the packed word. */
+/* libpinyin 074a2219, src/storage/chewing_key.h:41-48: ChewingKey
+ * occupies two bytes. ChewingKeyRest (:97-104) remains four bytes
+ * (two guint16 positions); it is read through its accessors below.
+ * Match key-surface-diff.c: never read beyond the key object. */
 static guint packed(const void *p) {
-    guint v = 0;
+    uint16_t v = 0;
     memcpy(&v, p, sizeof(v));
     return v;
 }
