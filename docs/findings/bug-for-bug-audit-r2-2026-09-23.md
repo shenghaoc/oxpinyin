@@ -292,7 +292,7 @@ unless a live class demonstrably fits.
 | D-25 | B (06, 18–22, 26, 32–39), E (D-1..3) | all | The assorted return-value/out-param bundle had no per-export code/data pair; the code-basis pass supplies per-probe pairs, executed: `get_sentence(0)` before a guess — pin `false`/`UNTOUCHED` vs subject `true`/`"nihao"`; on a false return the subject writes NULL where the pin leaves the slot untouched, while `get_character_offset` failures write `0` on the pin and leave `UNTOUCHED` on the subject; `nth_pron(1..G_MAXUINT)` — pin `true len=2 [0000 0000]` (garbage `4f60 0000` at `G_MAXUINT`) vs subject `false len=0`; double/chewing aux after a full parse — pin `true "\|ni hao "` vs subject `false ""`; `unload_phrase_library(2)` twice — pin `true,true` vs subject `true,false`; `save` with the user dir removed — pin `true` vs subject `false`; `train(0)` with no choose — pin `save → true` (11 files) vs subject `false` (1 file); `parse_full("n")` — pin `false` (`0000`) vs subject `true` (`0b00`); `parse_full("ni3")` — pin `true` (`2b30`) vs subject `false`; `get_sentence(3)` past the rows — pin `SIGNAL 6` (live `:1473` assert) vs subject `false`+NULL; function-static key slots — pin aliases across instances (`same pointer as first: yes`), subject `no` (per-instance `cursor.rs:600`) | `pinyin.cpp:1464-1470` (false when `0 == results.size()`, slot untouched), `:1473` (`assert(index < results.size())`), `:3193` (writes `0` before failing), `:2936`/`:2960` (function-static key slots), `:464` (second unload true), `:1132` (save true even when the renames fail), `:2801`, `:2979`, `:1372`/`:1426`, `:3440`/`:3518`, `:2184`; `pinyin_parser2.cpp` `parse_one_key` (incomplete key refused, written `0000`) | `oxpinyin-capi/src/sentence.rs:127-152` (NULL on the false path; raw input before a lookup), `cursor.rs:600` (per-instance slot), `dict.rs:116,213`, `config.rs:264`, `context.rs:139-164`, `cursor.rs:125`, `sentence.rs:202` (`get_character_offset` leaves the slot untouched), `sentence.rs:24`/`:50`, `text.rs:330`, `keys.rs:43`, `phrase.rs:33` | DIVERGENT-UNREGISTERED | 2–3 | #542 |
 | D-26 | C (double3) | all | ZIGUANG `zhrgguor` candidate[2] NBEST: 宗人光卓然 on the pin vs 总人光卓然 on the subject. Executed by the code-basis pass (`pristine-1/scheme.double.3.diff`): `n_candidates: 98`, candidate[0] 纵然光卓然 and candidate[1] 总日光灼热 identical, only `candidate[2]` differs (both `type=NBEST_MATCH`). The probe and both sides' code paths are now cited; whether the difference resolves through the keep rule or another part of the trellis is the open scope question on #535 | `lookup/phonetic_lookup_heap.h:25-29`, `:56-81` | `oxpinyin-engine/src/nbest.rs:194-197`, `:241-267` | DIVERGENT-REGISTERED (row 11), attribution contested — see #535 | 2 | #535 (scope) |
 | C-1 | C options | all | Secondary-zhuyin `tsz` consumes and exposes incomplete key `c` on both sides, but with option `0x00000002` the pin returns 718 candidates and sentence 从 while the subject returns zero candidates/no sentence. Subject's `walk` drops `Incomplete` unless `PINYIN_INCOMPLETE` is set | `storage/zhuyin_parser2.cpp:48-55`; `pinyin.cpp:1590-1605` | `oxpinyin-engine/src/session/lookup.rs:1030-1051` | DIVERGENT-UNREGISTERED | 2 | #585 |
-| C-2 | C options | all | With `PINYIN_AMB_L_N`, transformed exact keys omit fuzzy alternates: double-pinyin `nihk` yields 499 candidates including 利好 on the pin, 126 without 利好 on the subject; all four bytes are consumed on both sides. The same loss appears for chewing `su3cl3` | `pinyin.cpp:1557-1559,1602-1604` | `oxpinyin-engine/src/session/mod.rs:593-640` | DIVERGENT-UNREGISTERED | 2 | #586 |
+| C-2 | C options | all | Historical defect: double-pinyin `nihk` at `0x8002` returned 499 candidates on the pin and 126 on the subject; chewing `su3cl3` returned 497 vs 125. Lane J remeasurement on bdb/kc/tkrzw: fixed 499/497, all returned fields and ordered rows byte-identical; MS `n` at `0x800a` 2956 and chewing `su` at `0x8002` 497 also identical. Replacement 470-word sweep: double/chewing differing words 29/31 → 0/0; clean parent restores 29/31. See the Lane J note below | `pinyin.cpp:1540-1564,1582-1608` (fill then fuzzy at `:1557-1559,1602-1604`) | `oxpinyin-engine/src/session/mod.rs:612-664`; `oxpinyin-facade/src/parse.rs:214-218,268-272` | FIX VERIFIED — pending merge of Lane J #586 fix | 2 | #586 |
 | C-3 | C encoding | all | For C bytes `ni\xffhao`, `pinyin_parse_more_full_pinyins` consumes the valid `ni` prefix (2) on the pin, but zero bytes on the subject. Other invalid UTF-8 import cases differ under the same C-string conversion | `pinyin.cpp:1498-1515,615-640` | `oxpinyin-capi/src/ffi.rs:19-28` | DIVERGENT-UNREGISTERED | 3 | #587 |
 | Z-1 | B libzhuyin | all | `zhuyin_iterator_add_phrase` accepts bopomofo readings on the pin and full-pinyin readings on the subject; the opposite form fails on each side (§14.2) | `zhuyin.cpp:516-523` | `oxpinyin-zhuyin-capi/src/iterators.rs:87-93` | DIVERGENT-UNREGISTERED | 2 | #575 |
 | Z-2 | B libzhuyin | all | A system token's `zhuyin_token_get_unigram_frequency` is 52887 on the pin, 52888 on the subject (§14.2) | `zhuyin.cpp:1813-1839` | `oxpinyin-zhuyin-capi/src/dict.rs:221-243` | DIVERGENT-UNREGISTERED | 2 | #576 |
@@ -300,6 +300,51 @@ unless a live class demonstrably fits.
 | C-4 (post-audit) | C candidates | all | Under `SORT_WITHOUT_SENTENCE_CANDIDATE`, the pin keeps NORMAL rows whose text equals an n-best sentence; the subject dedups them behind sentence rows and then filters those rows. This was found later at `34a66bc9`, not in the original `18d78208` run; the cited implementation files are unchanged between those SHAs | `pinyin.cpp:2058-2160,2295-2300` | `oxpinyin-engine/src/session/lookup.rs:732-755`; `oxpinyin-capi/src/sentence.rs:298-299,359-361` | DIVERGENT-UNREGISTERED (post-audit evidence) | 2 | #582 |
 | D-27 (post-audit) | D user.conf | all | The pin parses the open counter with signed `%d` and accepts signs/trailing junk; the subject's bare `u32` parser treats those forms as zero. This was found later at `34a66bc9`, not in the original `18d78208` run; the cited implementation file is unchanged between those SHAs | `storage/table_info.cpp:356-368,409-426` | `oxpinyin-data/src/user_files.rs:282-283,356-363` | DIVERGENT-UNREGISTERED (post-audit evidence) | 3 | #583 |
 | L-01 | L cold open | all | A fresh user profile forces an eager `system_originals` pass over every system item/pronunciation before store open; Callgrind Ir and Massif peak live heap are both above the pin by more than 1.10 on all three backends (§17) | `pinyin.cpp:172-199,259-269,326-405` | `oxpinyin-runtime/src/lib.rs:941-1000`; `oxpinyin-user/src/persistence.rs:73-110` | DIVERGENT-UNREGISTERED; overall L NOT-ESTABLISHED | 2 | #588 |
+
+### Lane J #586 remeasurement (2026-10-04 UTC)
+
+Measured on Linux amd64 under Rosetta, Debian testing image
+`sha256:16faa8d1cd99fcb2d30eebe90454e26b20499055fa7094e9b55d32d1a7666f08`,
+pin `074a2219c90feaf962d0d24f034514033ece5f99`, parent
+`4b5a4bfca16588076f15603c69c196fd0418ab01`. The fix remains pending merge;
+this note does not claim that main is fixed.
+
+`tools/oracle/transformed-options-sweep.py` compares complete ordered
+observations with explicit options, fresh processes and profiles. Its committed
+470-word and 11-input lists replace the unavailable audit harness and are **not
+comparable** with the issues' 104/435-word and 496/149-input figures. Command
+per cell (matching backend-built libraries/data):
+
+```sh
+python3 tools/oracle/transformed-options-sweep.py --oracle PIN_SO --subject FIXED_RELEASE_SO --data PIN_DATA --expect fixed
+python3 tools/oracle/transformed-options-sweep.py --oracle PIN_SO --subject PARENT_RELEASE_SO --data PIN_DATA --expect parent
+```
+
+| Cell | Double ordinary/complete parent → fixed | Chewing ordinary/complete parent → fixed | Hanyu ordinary/complete unchanged | Luoma ordinary/complete unchanged | Secondary ordinary/complete unchanged |
+| --- | --- | --- | --- | --- | --- |
+| bdb | 29/29 → 0/0 | 31/31 → 0/0 | 0/437 | 437/439 | 437/439 |
+| kc | 29/29 → 0/0 | 31/31 → 0/0 | 0/437 | 437/439 | 437/439 |
+| tkrzw | 29/29 → 0/0 | 31/31 → 0/0 | 0/437 | 437/439 | 437/439 |
+
+Ordinary counts exclude NBEST rows; complete counts include every field.
+Each sweep covers 5,170 paired observations. On every cell the explicit targets
+`nihk/0x8002`, `su3cl3/0x8002`, MS `n/0x800a`, `su/0x8002` return
+499, 497, 2956, 497 candidates on both pin and fixed subject, with consumed
+lengths 4, 2, 1, 2 and no differing field or ordered row. Parent returns
+126, 125, 788, 125 candidates. Both complete sweeps were rerun after #633.
+
+Hanyu controls remain unchanged on every cell: `sh` at `0x2`/`0x20` consumes
+0 and returns 0 candidates (only #542's sentence-return difference remains,
+lane C); at `0xa`/`0x28` it consumes 2 and returns 1297, every field identical.
+`lishbakua` at `0x2`/`0x20` consumes 2 and returns 373; at `0xa`/`0x28` it
+consumes 9 and returns 403, every field identical.
+
+The implementation applies fuzzy additions after exact-key fill, leaves
+resplit/inner split restricted to full-pinyin, and forwards the existing live
+option word before transformed sentence guesses. It changes no public Rust API
+or dependency and does not edit the n-best or guess implementation files.
+Captures were temporary and are not retained or committed; the PR records the
+per-cell gate table. #585/#626 and FORCE_TONE remain outside this fix.
 
 The B battery counted 757 probe rows and the F enumeration counted 357 sites.
 Those counts are coverage inventory, not a substitute for the row-level
@@ -1322,6 +1367,6 @@ open fix PRs, not a claim that a fix has landed.
 | [#582](https://github.com/shenghaoc/oxpinyin/issues/582) | C | unregistered | 2 | — |
 | [#583](https://github.com/shenghaoc/oxpinyin/issues/583) | D | unregistered | 3 | [#584](https://github.com/shenghaoc/oxpinyin/pull/584) |
 | [#585](https://github.com/shenghaoc/oxpinyin/issues/585) | C | unregistered | 2 | — |
-| [#586](https://github.com/shenghaoc/oxpinyin/issues/586) | C | unregistered | 2 | — |
+| [#586](https://github.com/shenghaoc/oxpinyin/issues/586) | C | fix verified; pending merge | 2 | `codex/lane-j-transformed-fuzzy-matrix` |
 | [#587](https://github.com/shenghaoc/oxpinyin/issues/587) | C | unregistered | 3 | — |
 | [#588](https://github.com/shenghaoc/oxpinyin/issues/588) | L | unregistered | 2 | — |
