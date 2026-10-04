@@ -63,7 +63,7 @@ fn a_fresh_instance_is_empty_and_answers_nothing() {
     assert!(!inst.session.is_composing());
     assert!(inst.key_at(0).is_none());
     assert!(
-        !inst.train(),
+        !inst.train(0).expect("fresh train"),
         "no user store and no selection: train refuses"
     );
 }

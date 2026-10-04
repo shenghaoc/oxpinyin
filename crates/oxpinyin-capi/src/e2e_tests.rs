@@ -75,8 +75,18 @@ fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
     let first = candidate(instance, "nihao", 0);
     let t1 = token_of(instance, first);
     assert!(pinyin_choose_candidate(instance, 0, first) > 0);
+    assert!(
+        !pinyin_train(instance, 0),
+        "a choose without decoded results refuses"
+    );
+    assert_eq!(
+        store_of(instance).bigram_count(SENTENCE_START, t1).unwrap(),
+        0
+    );
+    assert_eq!(store_of(instance).unigram_delta(t1).unwrap(), 0);
 
     // 69 on first selection; the predecessor is sentence_start.
+    assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     {
         let store = store_of(instance);
@@ -87,11 +97,13 @@ fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
 
     // 138 on reselection (count 207), then 414 (count 621): the pinned
     // sequence 69, 138, 414, … through the wired path.
+    assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     assert_eq!(
         store_of(instance).bigram_count(SENTENCE_START, t1).unwrap(),
         207
     );
+    assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     assert_eq!(
         store_of(instance).bigram_count(SENTENCE_START, t1).unwrap(),
@@ -113,6 +125,7 @@ fn train_records_the_pinned_doubling_sequence(instance: *mut PinyinInstance) {
     let t2 = token_of(instance, second);
     assert_ne!(t1, t2, "distinct candidate indexes carry distinct tokens");
     assert!(pinyin_choose_candidate(instance, 0, second) > 0);
+    assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     {
         let store = store_of(instance);
@@ -298,6 +311,7 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
     // writes nothing more: the overlay stays at the choose's 483 and no
     // bigram row appears (the pin's constraint-free `train_result3`
     // observes nothing).
+    assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     {
         // SAFETY: `instance` is non-null and was produced by
@@ -317,6 +331,7 @@ fn training_through_the_abi_records_the_pinned_counts() {
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
     train_records_the_pinned_doubling_sequence(instance);
+    assert!(pinyin_reset(instance));
 
     // ── pinyin_choose_predicted_candidate: flat +69, no doubling ──
     let predicted = candidate(instance, "zhongguo", 0);
@@ -526,6 +541,7 @@ fn populated_store_raises_the_trained_unigram() {
         .expect("real unigrams");
 
     assert!(pinyin_choose_candidate(instance, 0, first) > 0);
+    assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     assert_eq!(store_of(instance).unigram_delta(token).unwrap(), 483);
 
@@ -592,6 +608,7 @@ fn save_gates_on_dirty_and_roundtrips_through_the_abi() {
     let first = candidate(instance, "nihao", 0);
     let t1 = token_of(instance, first);
     assert!(pinyin_choose_candidate(instance, 0, first) > 0);
+    assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
     assert!(pinyin_save(context));
     assert!(!pinyin_save(context), "the save cleared m_modified");
@@ -1034,6 +1051,7 @@ fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
         cand
     };
     assert!(pinyin_choose_candidate(instance, 2, hao_ptr) > 0);
+    assert!(pinyin_guess_sentence(instance));
     assert!(pinyin_train(instance, 0));
 }
 

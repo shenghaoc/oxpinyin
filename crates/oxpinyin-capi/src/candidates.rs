@@ -585,19 +585,11 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
 /// bool pinyin_train(pinyin_instance_t * instance, guint8 index);
 /// ```
 ///
-/// The §2.1 path: walks the sentence recorded by [`pinyin_choose_candidate`]
-/// (the phrases the user pinned) and applies the seed arithmetic to the user
-/// bigram — first selection `69`, reselections
-/// `min(max(prev_freq, 69) × 2, 22080)` — plus `seed × 7` to each token's
-/// unigram. The `index` n-best parameter is accepted but unused: the C ABI
-/// has no n-best sentence results yet.
-///
-/// Returns `false` when there is no user store (upstream refuses without a
-/// user dir, `pinyin.cpp:2669`), when neither a sentence lookup has run nor
-/// a candidate has been chosen (upstream refuses without a sentence result,
-/// `pinyin.cpp:2674`), or on a store failure.
+/// Train the requested decoded n-best row, with the pin's constraint gate.
+/// Empty results refuse quietly. An index beyond nonempty results returns
+/// false and emits one `libpinyin` warning (availability class (c)).
 #[unsafe(no_mangle)]
-pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, _index: u8) -> bool {
+pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool {
     if instance.is_null() {
         return false;
     }
@@ -605,5 +597,12 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, _index: u8) -> boo
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    inst.core.train()
+    match inst.core.train(index) {
+        Ok(trained) => trained,
+        Err(oxpinyin_engine::EngineError::CandidateIndexOutOfRange { .. }) => {
+            crate::ffi::log_warning("pinyin_train: n-best index is out of range");
+            false
+        }
+        Err(_) => false,
+    }
 }
