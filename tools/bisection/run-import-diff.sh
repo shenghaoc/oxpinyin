@@ -42,7 +42,7 @@ echo "build: ok"
 echo "--- building oxpinyin-capi ---"
 cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" \
     --no-default-features --features "$CAPI_FEATURE" 2>&1
-CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
+CAPI_SO="$CARGO_TARGET_DIR/debug/libpinyin_capi.so"
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
@@ -214,7 +214,12 @@ for command in g++ pkg-config glib-compile-schemas; do
 done
 
 # Compile the frontend harness from the same object files the pin build made.
-g++ -std=gnu++17 -O2     -I"$FRONT_SRC"     -I"$IBUS_PREFIX/include/libpinyin-2.11.92"     $(pkg-config --cflags ibus-1.0 glib-2.0 gio-2.0 sqlite3)     frontend-import.cc     $(find "$FRONT_SRC" -maxdepth 1 -name '*.o' ! -name '*PYMain.o' -print | sort)     $(pkg-config --libs ibus-1.0 glib-2.0 gio-2.0 sqlite3)     -L"$IBUS_PREFIX/lib" -lpinyin     -o frontend-import
+read -r -a frontend_cflags <<< "$(pkg-config --cflags ibus-1.0 glib-2.0 gio-2.0 sqlite3)"
+read -r -a frontend_libs <<< "$(pkg-config --libs ibus-1.0 glib-2.0 gio-2.0 sqlite3)"
+mapfile -t frontend_objects < <(find "$FRONT_SRC" -maxdepth 1 -name '*.o' ! -name '*PYMain.o' -print | sort)
+g++ -std=gnu++17 -O2 -I"$FRONT_SRC" -I"$IBUS_PREFIX/include/libpinyin-2.11.92" \
+    "${frontend_cflags[@]}" frontend-import.cc "${frontend_objects[@]}" \
+    "${frontend_libs[@]}" -L"$IBUS_PREFIX/lib" -lpinyin -o frontend-import
 
 # The frontend build's schema is newer than the system GSettings database;
 # compile a private copy for the harness.
@@ -236,7 +241,7 @@ run_frontend() {
     fi
 }
 
-DICTOOL="$REPO_ROOT/target/debug/oxpinyin-dictool"
+DICTOOL="$CARGO_TARGET_DIR/debug/oxpinyin-dictool"
 cargo build -p oxpinyin-dictool --manifest-path "$REPO_ROOT/Cargo.toml" \
     --no-default-features --features "$CAPI_FEATURE" 2>&1
 
