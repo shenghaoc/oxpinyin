@@ -58,6 +58,11 @@
  * ㄅㄚˋㄎㄨㄚˋ (`184dj84`) with no import (see the #575 note in main),
  * through zhuyin_guess_candidates_after_cursor.
  *
+ *   U  full pinyin with USE_TONE in 0x1aa: numeric-toned ni3hao3 and
+ *      chang/zhang, hang/xing, le/yue heteronyms, alone and in context.
+ *   F  choose NORMAL 得 by identity over the incomplete d span in dshi;
+ *      its two matching de/dei records must not duplicate a forced step.
+ *
  * Usage:
  *   ./candidate-assembly-diff pinyin <libpinyin.so> <systemdir>
  *   ./candidate-assembly-diff zhuyin <libzhuyin.so> <systemdir>
@@ -389,6 +394,39 @@ static void case_a(const char *systemdir, guint options, guint word, bool import
     printf("guess_sentence=%s\n", yesno(s.guess_sentence(ss.inst)));
     print_sentence(ss.inst, "after-guess");
     dump_list(ss.inst, "after-guess", 0, word);
+    close_session(&ss);
+}
+
+/* ONESTEP emits one forced token per predecessor, not one expansion per
+ * matching index record (074a2219 phonetic_lookup.h:552-554, 601-613).
+ * 得 has de/dei records for the incomplete d span; choose it by identity. */
+static void case_forced_duplicate(const char *systemdir) {
+    struct session ss;
+    printf("== F options=0x18a input=dshi forced=得\n");
+    if (!open_session(&ss, systemdir, 0x18a, false))
+        exit(1);
+    if (s.parse(ss.inst, "dshi") != 4 || !s.guess_sentence(ss.inst))
+        exit(1);
+    dump_list(ss.inst, "before", 0, 0x1e);
+    guint n = 0;
+    if (!s.getn(ss.inst, &n))
+        exit(1);
+    int index = -1;
+    for (guint i = 0; i < n; ++i) {
+        candidate_t *candidate = NULL;
+        const gchar *text = NULL;
+        int type = -1;
+        if (s.getc(ss.inst, i, &candidate) && candidate &&
+            s.gettype(ss.inst, candidate, &type) && type == NORMAL_CANDIDATE &&
+            s.getstr(ss.inst, candidate, &text) && text && strcmp(text, "得") == 0) {
+            index = (int)i;
+            break;
+        }
+    }
+    if (choose_row(ss.inst, "named-得", index) != 1 || !s.guess_sentence(ss.inst))
+        exit(1);
+    print_sentence(ss.inst, "constrained");
+    dump_list(ss.inst, "constrained", 0, 0x1e);
     close_session(&ss);
 }
 
@@ -774,5 +812,16 @@ int main(int argc, char **argv) {
             case_k(systemdir, options, 0x1e, schemes[t].kind, schemes[t].input, offs, n, after);
         }
     }
+    /* Explicit USE_TONE coverage. The system heteronyms include multiple
+     * pronunciations; model20 stores their tones as zero (a wildcard). */
+    static const char *toned_inputs[] = {
+        "ni3hao3", "chang2jiang1", "zhang3da4", "hang2ye4", "xing2wei2",
+        "le4guan1", "yin1yue4", "yue4qi4", "chang2", "zhang3", "hang2",
+        "xing2", "le4", "yue4",
+    };
+    scheme_kind = 0;
+    for (size_t i = 0; i < sizeof(toned_inputs) / sizeof(toned_inputs[0]); ++i)
+        case_a(systemdir, 0x1aa, 0x1e, false, toned_inputs[i]);
+    case_forced_duplicate(systemdir);
     return 0;
 }
