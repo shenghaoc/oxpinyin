@@ -2232,6 +2232,13 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
   - PR 12a: `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1189`;
     `storage/pinyin_parser2.cpp:398`, `:611`; `storage/zhuyin_parser2.cpp:295`
     (through `pinyin_set_zhuyin_scheme`).
+  - PR 12b: `pinyin.cpp:1474`, `:3035`, `:3057`, `:3067`, `:3092`, `:3203`,
+    `:3204`, `:3488` (`:3147` and `:3161` take the same logging path, no
+    trigger executed); `storage/phonetic_key_matrix.h:103`
+    (through `pinyin_get_pinyin_key` and `_key_rest` on an empty matrix);
+    `storage/pinyin_parser2.cpp:170`; `pinyin.cpp:3311` (group B), reached
+    by a leading `'` (`'nihao`, `''ni`): column 0 stays empty and all three
+    aux-text functions assert on every cursor (review of #652).
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|

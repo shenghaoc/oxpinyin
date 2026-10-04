@@ -863,6 +863,127 @@ def _(k):
     return out
 
 
+# batch2 group 12b: cursor, offset, sentence-index and aux-text refusals (PR 12b, #525)
+def full_inst(k, text):
+    inst = k.alloc()
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+    return inst
+
+
+@case('abort-get-sentence-past-rows', abort=False)
+def _(k):
+    inst = full_inst(k, b'nihao')
+    k.fn('guess_sentence', B, P)(inst)
+    return {'ret': sentence_out(k, inst, 5)[0]}
+
+
+@case('abort-get-left-pinyin-offset-after-separator', abort=False)
+def _(k):
+    inst = full_inst(k, b"ni'hao")
+    out = Z(UNTOUCHED)
+    return {'ret': k.fn('get_left_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 3, C.byref(out))}
+
+
+@case('abort-get-right-pinyin-offset-after-separator', abort=False)
+def _(k):
+    inst = full_inst(k, b"ni'hao")
+    out = Z(UNTOUCHED)
+    return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 3, C.byref(out))}
+
+
+@case('abort-get-right-pinyin-offset-nihao-5', abort=False)
+def _(k):
+    inst = full_inst(k, b'nihao')
+    out = Z(UNTOUCHED)
+    return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 5, C.byref(out))}
+
+
+@case('abort-get-character-offset-past-matrix', abort=False)
+def _(k):
+    inst = full_inst(k, b'nihao')
+    out = Z(UNTOUCHED)
+    return {'ret': k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))(
+        inst, '你好'.encode(), 99, C.byref(out))}
+
+
+@case('abort-get-character-offset-after-separator', abort=False)
+def _(k):
+    inst = full_inst(k, b"ni'hao")
+    out = Z(UNTOUCHED)
+    return {'ret': k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))(
+        inst, '你好'.encode(), 3, C.byref(out))}
+
+
+@case('abort-parse-full-pinyin-apostrophe', abort=False)
+def _(k):
+    key = C.c_uint16(UNTOUCHED & 0xFFFF)
+    return {'ret': k.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_uint16))(
+        k.inst, b"n'i", C.byref(key))}
+
+
+@case('abort-get-pinyin-key-empty-matrix', abort=False)
+def _(k):
+    out = P(UNTOUCHED)
+    return {'ret': k.fn('get_pinyin_key', B, P, Z, C.POINTER(P))(k.alloc(), 0, C.byref(out))}
+
+
+@case('abort-get-pinyin-key-rest-empty-matrix', abort=False)
+def _(k):
+    out = P(UNTOUCHED)
+    return {'ret': k.fn('get_pinyin_key_rest', B, P, Z, C.POINTER(P))(k.alloc(), 0, C.byref(out))}
+
+
+@case('abort-double-auxiliary-text-cut-three-bytes-in', abort=False)
+def _(k):
+    inst = full_inst(k, b'zhong')
+    aux = P(UNTOUCHED)
+    return {'ret': k.fn('get_double_pinyin_auxiliary_text', B, P, Z, C.POINTER(P))(inst, 3, C.byref(aux))}
+
+
+# A leading `'` leaves column 0 empty at the pin and the aux walk asserts
+# `get_column_size(offset) >= 1` (`pinyin.cpp:3311`) on every cursor.
+def leading_apostrophe_aux(fname, text=b"'nihao"):
+    def run(k):
+        inst = full_inst(k, text)
+        aux = P(UNTOUCHED)
+        return {'ret': k.fn('get_%s_auxiliary_text' % fname, B, P, Z, C.POINTER(P))(inst, 2, C.byref(aux))}
+    return run
+
+
+for _fname in ('full_pinyin', 'double_pinyin', 'chewing'):
+    case('abort-%s-auxiliary-text-leading-apostrophe' % _fname.replace('_', '-'), abort=False)(
+        leading_apostrophe_aux(_fname))
+case('abort-full-pinyin-auxiliary-text-doubled-leading-apostrophe', abort=False)(
+    leading_apostrophe_aux('full_pinyin', b"''ni"))
+
+
+# The graceful neighbours of the sites above answer without a warning.
+@case('cursor-and-sentence-neighbours', control=True)
+def _(k):
+    out = {}
+    inst = full_inst(k, b'nihao')
+    k.fn('guess_sentence', B, P)(inst)
+    out['sentence 0'] = sentence_out(k, inst, 0)
+    fresh = k.alloc()
+    out['sentence of fresh'] = sentence_out(k, fresh, 3)
+    for label, name, offset in (('left 2', 'get_left_pinyin_offset', 2), ('right 2', 'get_right_pinyin_offset', 2),
+                                ('right 4', 'get_right_pinyin_offset', 4)):
+        res = Z(UNTOUCHED)
+        out[label] = [k.fn(name, B, P, Z, C.POINTER(Z))(inst, offset, C.byref(res)),
+                      'untouched' if res.value == UNTOUCHED else res.value]
+    key = C.c_uint16(UNTOUCHED & 0xFFFF)
+    out['parse ni'] = [k.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_uint16))(inst, b'ni', C.byref(key)), key.value]
+    for offset in (0, 1):
+        ptr = P(UNTOUCHED)
+        ret = k.fn('get_pinyin_key', B, P, Z, C.POINTER(P))(inst, offset, C.byref(ptr))
+        out['key %d' % offset] = [ret, ptr.value is None]
+    for cursor in (1, 2, 5):
+        aux = P(UNTOUCHED)
+        ret = k.fn('get_double_pinyin_auxiliary_text', B, P, Z, C.POINTER(P))(inst, cursor, C.byref(aux))
+        out['double aux %d' % cursor] = [ret, k.text(aux.value) if aux.value != UNTOUCHED else 'untouched']
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):

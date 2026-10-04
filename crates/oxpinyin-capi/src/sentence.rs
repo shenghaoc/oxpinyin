@@ -61,7 +61,7 @@ fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
 /// for a parse without keys (`phonetic_key_matrix.cpp:34-38`): `"'"` and
 /// `"!"` consume a byte or none and place nothing. An unreadable parse is
 /// left to the session.
-fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
+pub(crate) fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
     let Ok((keys, input, _)) = inst.core.mode_keys() else {
         return true;
     };
@@ -187,7 +187,17 @@ pub extern "C" fn pinyin_get_sentence(
     }
     match inst.core.session.sentence_text(index) {
         Some(decoded) => write_owned_sentence(decoded, sentence),
-        None => false,
+        None => {
+            // Class (c), `pinyin.cpp:1474`: with rows present, an index past
+            // them is `assert(index < results.size())`. No rows at all is the
+            // pin's own graceful `false` (`:1470-1471`), silent.
+            if index > 0 && inst.core.session.sentence_text(0).is_some() {
+                crate::ffi::log_warning(
+                    "pinyin_get_sentence: assertion 'index < results.size()' failed",
+                );
+            }
+            false
+        }
     }
 }
 
@@ -250,7 +260,12 @@ pub extern "C" fn pinyin_get_character_offset(
             }
             return false;
         }
-        Err(_) => return false,
+        Err(_) => {
+            // Class (c): the pin's recursion and entry asserts
+            // (`pinyin.cpp:3147`, `:3161`, `:3203`, `:3204`).
+            crate::ffi::log_warning("pinyin_get_character_offset: assertion failed");
+            return false;
+        }
     };
     if !length.is_null() {
         // SAFETY: Null-checked above.

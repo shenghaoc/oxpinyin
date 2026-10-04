@@ -82,6 +82,7 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
     let Some(found) = inst.core.key_at(offset) else {
+        warn_on_empty_matrix(inst, "pinyin_get_pinyin_key_rest");
         return false;
     };
     KEY_REST_SLOT.begin.store(
@@ -103,6 +104,18 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
         }
     }
     true
+}
+
+/// Class (c), `phonetic_key_matrix.h:103`: with no matrix at all (a fresh or
+/// keyless instance) the pin's `matrix.size() - 1` wraps, the offset test
+/// passes, and `get_column_size` asserts. A matrix with keys is the
+/// graceful `false`, silent.
+fn warn_on_empty_matrix(inst: &crate::state::CapiInstance, name: &str) {
+    if !crate::sentence::matrix_has_keys(inst) {
+        crate::ffi::log_warning(&format!(
+            "{name}: assertion 'index < m_table_content->len' failed"
+        ));
+    }
 }
 
 /// Get the begin/end byte positions of a pinyin key rest.
@@ -371,6 +384,8 @@ pub extern "C" fn pinyin_get_left_pinyin_offset(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
     let Ok(result) = inst.core.left_offset(offset) else {
+        // Class (c): `assert(_check_offset(...))`, `pinyin.cpp:3035`, `:3057`.
+        crate::ffi::log_warning("pinyin_get_left_pinyin_offset: assertion '_check_offset' failed");
         return false;
     };
     if !left.is_null() {
@@ -409,8 +424,17 @@ pub extern "C" fn pinyin_get_right_pinyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let Ok(Some(result)) = inst.core.right_offset(offset) else {
-        return false;
+    let result = match inst.core.right_offset(offset) {
+        Ok(Some(result)) => result,
+        // The pin's own graceful `false`, `pinyin.cpp:3085-3086`: silent.
+        Ok(None) => return false,
+        Err(_) => {
+            // Class (c): `assert(_check_offset(...))`, `pinyin.cpp:3067`, `:3092`.
+            crate::ffi::log_warning(
+                "pinyin_get_right_pinyin_offset: assertion '_check_offset' failed",
+            );
+            return false;
+        }
     };
     if !right.is_null() {
         // SAFETY: Null-checked above.
@@ -632,6 +656,7 @@ pub extern "C" fn pinyin_get_pinyin_key(
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
     let Some(found) = inst.core.key_at(offset) else {
+        warn_on_empty_matrix(inst, "pinyin_get_pinyin_key");
         return false;
     };
     let packed = ChewingKey::from_spelling(found.text, found.tone)
