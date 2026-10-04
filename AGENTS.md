@@ -219,7 +219,21 @@ always".
 6. No new bespoke driver plus runner per issue where an existing driver
    can take a case file. Add cases to the existing driver; a new driver
    needs a line in the PR body saying why none could.
-7. Differentials build debug, never release. Keep one target directory
+7. Re-verification is proportional to what changed since the last
+   green gate:
+   - Docs, comments or findings only: fmt, then push. No builds.
+   - A review fix in code: fmt, clippy, `cargo test -p` for the touched
+     crates, and only the differential(s) belonging to that issue, on
+     the reference cell.
+   - Revert-and-check is not repeated unless the differential itself
+     changed.
+   - A rebase with no conflicts that brings in no file this lane
+     touches needs no local re-gate; CI covers it.
+   - In a stack, re-gate only the commit that changed and those above
+     it that touch the same files.
+   The report states which of these cases applied and why, so the
+   maintainer can check the call.
+8. Differentials build debug, never release. Keep one target directory
    per cell and reuse it; do not delete target directories between
    issues. Clean once, at the end of the lane.
 
