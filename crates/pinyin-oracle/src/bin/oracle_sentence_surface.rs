@@ -40,9 +40,18 @@ fn main() {
 #[cfg(feature = "oracle-ffi")]
 const SAMPLE: usize = 500;
 
-/// Anchor inputs the differential asserts exactly (the #97 evidence).
+/// Anchor inputs for the #97 evidence and #574 per-step-cost coverage.
 #[cfg(feature = "oracle-ffi")]
-const ANCHORS: [&str; 4] = ["nihao", "nihaoshijie", "cecenihao", "zhongguoren"];
+const ANCHORS: [&str; 8] = [
+    "nihao",
+    "nihaoshijie",
+    "cecenihao",
+    "zhongguoren",
+    "yaomeichong",
+    "xiehenshuaitong",
+    "nuanmanqianzhaofang",
+    "nic",
+];
 
 #[cfg(feature = "oracle-ffi")]
 fn real_main() -> Result<String, String> {
@@ -68,7 +77,13 @@ fn real_main() -> Result<String, String> {
         .chain(anchors())
         .collect();
     sample.dedup();
-    let sample_len = sample.len();
+    // A rendered input starting with # is a comment to the fixture reader
+    // (the historical sample contains #yaguai). Count readable data rows,
+    // while retaining the existing capture and its order.
+    let sample_len = sample
+        .iter()
+        .filter(|input| !input.starts_with('#'))
+        .count();
 
     let prefix = OraclePrefix::locate().map_err(|error| error.to_string())?;
     let mut oracle = Oracle::open_with_temp_user_dir(prefix).map_err(|error| error.to_string())?;

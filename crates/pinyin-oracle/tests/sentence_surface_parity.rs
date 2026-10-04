@@ -16,7 +16,7 @@
 
 use pinyin_oracle::sentence_tail;
 
-/// The §12 measured residual, over the 496 comparable inputs of the frozen
+/// The §12 measured residual, over the 500 comparable inputs of the frozen
 /// W2 sample. Re-measure and obtain approval before updating these numbers
 /// and §12 together; do not silently change the expected surface.
 #[test]
@@ -36,26 +36,26 @@ fn sentence_surface_matches_the_declared_residual() {
     let report = sentence_tail::measure(&mut session, &sentence_tail::repo_root())
         .expect("the sentence-surface measurement runs");
 
-    assert_eq!(report.comparable, 496, "comparable-input count drifted");
+    assert_eq!(report.comparable, 500, "comparable-input count drifted");
     assert_eq!(
         report.guessed_disagree, 0,
         "guess_sentence retval must agree on every comparable input"
     );
 
-    // The three strictnesses of §12. 1-best 495, distinct-set 495, ordered 495.
-    assert_eq!(report.row0_match, 495, "1-best agreement moved (§12: 495)");
+    // The three strictnesses of §12. 1-best 499, distinct-set 499, ordered 499.
+    assert_eq!(report.row0_match, 499, "1-best agreement moved (§12: 499)");
     assert_eq!(
         report.distinct_set_match(),
-        495,
-        "n-best distinct-set agreement moved (§12: 495)"
+        499,
+        "n-best distinct-set agreement moved (§12: 499)"
     );
     assert_eq!(
-        report.list_ordered_match, 495,
-        "n-best ordered-list agreement moved (§12: 495)"
+        report.list_ordered_match, 499,
+        "n-best ordered-list agreement moved (§12: 499)"
     );
     assert_eq!(
-        report.rows_match, 495,
-        "first-6 candidate-row agreement moved (§12: 495, coincides with ordered)"
+        report.rows_match, 499,
+        "first-6 candidate-row agreement moved (§12: 499, coincides with ordered)"
     );
 
     // Measured invariant: no residual list is merely reordered.
@@ -65,9 +65,40 @@ fn sentence_surface_matches_the_declared_residual() {
         "an order-only sentence divergence appeared; re-measure §12"
     );
 
-    // The 495 − 495 = 0 duplicate-path ranks (the distinct-same rows).
+    // The 499 − 499 = 0 duplicate-path ranks (the distinct-same rows).
     assert_eq!(
         report.list_distinct_extra, 0,
         "the distinct-set minus ordered gap moved from 0 (§12)"
     );
+}
+
+/// G-m1 adds one native cost unit at every trellis step. Surface parity
+/// alone can miss it after selection is ported; assert the native cost at
+/// each of #574's four recovered corpus inputs as well as their fixture rows.
+#[test]
+#[ignore = "needs the system-table export and the model20 cache (PINYIN_EXPORT_DIR, PINYIN_MODEL_DIR); run with --include-ignored"]
+fn sentence_surface_detects_per_step_cost_shift() {
+    let mut session = sentence_tail::open_session_from_env()
+        .expect("system-table export and model20 must open")
+        .expect("system-table export and model20 must be present");
+    for (input, expected) in [
+        ("yaomeichong", 32746),
+        ("xiehenshuaitong", 46792),
+        ("nuanmanqianzhaofang", 59752),
+        ("nic", 17763),
+    ] {
+        session.reset();
+        session.type_pinyin(input).expect("input must parse");
+        assert!(session.guess_sentence().expect("sentence guess must run"));
+        let first = session
+            .candidates()
+            .iter()
+            .find(|candidate| candidate.kind() == oxpinyin_engine::CandidateKind::Sentence)
+            .expect("input must have a sentence candidate");
+        assert_eq!(
+            first.cost(),
+            expected,
+            "native trellis cost moved for {input}"
+        );
+    }
 }
