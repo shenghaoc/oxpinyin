@@ -77,6 +77,22 @@ echo "--- driving the pin (bit on / off) ---"
 run "$ORACLE_SO" "$ORACLE_DATA" on  "$OUT/pin-on"
 run "$ORACLE_SO" "$ORACLE_DATA" off "$OUT/pin-off"
 
+# A changed initial choice would make the non-vacuity comparison invalid.
+# Check the actual selected identity and advanced cursor in all four runs.
+for side in pin-on pin-off ox-on ox-off; do
+    if ! grep '^CHOICE|' "$OUT/$side" > "$OUT/$side.choices" ||
+        [[ $(wc -l < "$OUT/$side.choices") -ne 7 ]]; then
+        echo "FAIL: $side did not report all seven fixed choices"
+        exit 1
+    fi
+    if ! cmp -s "$OUT/pin-on.choices" "$OUT/$side.choices"; then
+        echo "FAIL: chosen identity or advanced cursor differs for $side"
+        diff -u "$OUT/pin-on.choices" "$OUT/$side.choices" || true
+        exit 1
+    fi
+done
+echo "choices: identical identities and advanced cursors in all four runs"
+
 # Non-vacuity first: if the bit changes nothing, the comparison below is
 # meaningless whatever it reports.
 for engine in ox pin; do
