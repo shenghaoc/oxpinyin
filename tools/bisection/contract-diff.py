@@ -16,6 +16,9 @@ The raw `fprintf(stderr)` text of the pin is not compared; stderr is only
 counted. Cases that make the pin abort belong to the class (c) logging
 differential, not to this one.
 
+A class (c) case (`abort=`) holds when the pin dies of SIGABRT and the subject
+answers the declared value with exactly one `libpinyin` warning.
+
 --expect-parent runs the same cases against a parent build: a case marked
 `control` must still match, every other case must differ.
 
@@ -39,9 +42,15 @@ UNTOUCHED = 0xABCDEF  # out-param sentinel
 CASES = {}
 
 
-def case(name, mode='pinyin', control=False):
+NO_ABORT = object()
+
+
+def case(name, mode='pinyin', control=False, abort=NO_ABORT):
+    """Registers a case. `abort=<value>` marks a class (c) site: the pin
+    must die of SIGABRT, and the subject must return `<value>` in its `ret`
+    field with exactly one GLib warning in domain `libpinyin` (level 16)."""
     def register(fn):
-        CASES[name] = dict(fn=fn, mode=mode, control=control)
+        CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort)
         return fn
     return register
 
@@ -769,6 +778,43 @@ def _(k):
     return {'live instance': bool(live), '~instance after fini': bool(after)}
 
 
+# batch2 group 11: the facade unigram total wraps like the pin's (PR 11, #540)
+FACADE_TOTAL = 51051831   # the oracle data's loaded libraries, summed
+
+
+def wrap_total_to_zero(k, inst):
+    """Adds the delta that wraps the facade `guint32` total to zero."""
+    add = k.fn('token_add_unigram_frequency', B, P, U, U)
+    return add(inst, (1 << 24) | 1, (2 ** 32 - FACADE_TOTAL) % 2 ** 32)
+
+
+# The zero total aborts the pin only while a searched row is ranked
+# (`_compute_frequency_of_items`, `pinyin.cpp:1859`): a window with no phrase
+# row — the reserved slot, a mid-key offset — answers true with no warning.
+# One case each, since the wrapped total is the context's.
+for _label, _offset, _sort in (('end-sort-3', 5, 3), ('mid-key-sort-3', 3, 3), ('end-sort-2', 5, 2)):
+    def _no_rank(offset, sort):
+        def run(k):
+            inst = k.alloc()
+            k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+            wrap_total_to_zero(k, inst)
+            count = U()
+            ret = k.fn('guess_candidates', B, P, Z, U)(inst, offset, sort)
+            k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+            return {'ret': ret, 'rows': count.value}
+        return run
+    case('facade-total-zero-ranks-nothing-' + _label, control=True)(_no_rank(_offset, _sort))
+
+
+@case('facade-total-zero', abort=False)
+def _(k):
+    # `assert(0 < total_freq)` while ranking a candidate (pinyin.cpp:1859).
+    inst = k.inst
+    added = wrap_total_to_zero(k, inst)
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    return {'add': added, 'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1E)}
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):
@@ -815,11 +861,16 @@ def main():
                 pin_so, subject_so = lib / 'libpinyin.so', args.pinyin_so
             pin = run_worker(spec['mode'], pin_so.resolve(), data, n, scratch)
             subject = run_worker(spec['mode'], subject_so.resolve(), data, n, scratch)
-            # A side that died or printed nothing observed nothing: two
-            # identical failures must not read as a match (nor satisfy
-            # --expect-parent as a difference).
-            same = all(r['exit'] == 0 and r['result'] is not None for r in (pin, subject)) and \
-                observed(pin['result']) == observed(subject['result'])
+            if spec['abort'] is not NO_ABORT:
+                shown = subject['result'] or {}
+                same = pin['exit'] == -6 and subject['exit'] == 0 and \
+                    shown.get('ret') == spec['abort'] and shown.get('logs') == [['libpinyin', 16]]
+            else:
+                # A side that died or printed nothing observed nothing: two
+                # identical failures must not read as a match (nor satisfy
+                # --expect-parent as a difference).
+                same = all(r['exit'] == 0 and r['result'] is not None for r in (pin, subject)) and \
+                    observed(pin['result']) == observed(subject['result'])
             expected = same if (not args.expect_parent or spec['control']) else not same
             verdict = 'MATCH' if same else 'DIFFER'
             print(json.dumps(dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,

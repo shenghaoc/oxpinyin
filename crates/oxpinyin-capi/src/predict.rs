@@ -251,9 +251,11 @@ fn append_predicted_prefix(
     // the add_unigram_frequency overlay total — upstream's facade
     // total_freq shifts by exactly these (`phrase_index.h:632`,
     // `phrase_index.cpp:264`).
+    // A `guint32` that wraps.
     let total = lm
         .amplified_total()
-        .saturating_add(dict.unigram_total_delta());
+        .wrapping_add(u64::from(dict.unigram_total_delta()))
+        & u64::from(u32::MAX);
     for (token, text) in suggestions {
         // The length gate stays on the FULL phrase: the pin checks
         // `get_phrase_length()` against `prefix_len * 2 + 1` before any

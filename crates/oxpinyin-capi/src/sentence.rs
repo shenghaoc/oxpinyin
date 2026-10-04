@@ -3,7 +3,7 @@
 use std::ffi::CString;
 use std::os::raw::c_char;
 
-use oxpinyin_core::Dictionary as _;
+use oxpinyin_core::{Dictionary as _, LanguageModel as _};
 
 use crate::ffi::{cstr_to_strict, cstr_to_string};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
@@ -38,6 +38,21 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
         return false;
     }
     inst.core.session.guess_sentence().unwrap_or(false)
+}
+
+/// Whether the facade's `guint32` unigram total is zero: the loaded
+/// libraries' sum, the user store's deltas and the accepted
+/// `pinyin_token_add_unigram_frequency` deltas, wrapped. A model without real
+/// unigrams has no total to divide by.
+fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
+    inst.core.lm.has_real_unigrams()
+        && inst
+            .core
+            .lm
+            .amplified_total()
+            .wrapping_add(u64::from(inst.core.dict.unigram_total_delta()))
+            & u64::from(u32::MAX)
+            == 0
 }
 
 /// Whether the parse placed a key. `get_nbest_match` answers `false` before
@@ -482,6 +497,26 @@ pub extern "C" fn pinyin_guess_candidates(
             token: cand.token(),
             source_index: window_index,
         });
+    }
+    // Class (c), `pinyin.cpp:1859`: `assert(0 < total_freq)` while ranking a
+    // candidate, with the facade total wrapped to zero by
+    // `pinyin_token_add_unigram_frequency`. The assertion sits in the loop
+    // over the searched rows (`_compute_frequency_of_items`, before the
+    // sentence and longer rows are prepended), so a window with no phrase
+    // row — the reserved slot, a mid-key offset — never reaches it. The
+    // answer is `false` and one log line; the list is emptied.
+    if facade_total_is_zero(inst)
+        && inst.candidates.iter().any(|c| {
+            matches!(
+                c.candidate_type,
+                lookup_candidate_type_t::NORMAL_CANDIDATE
+                    | lookup_candidate_type_t::ADDON_CANDIDATE
+            )
+        })
+    {
+        crate::ffi::log_warning("pinyin_guess_candidates: assertion '0 < total_freq' failed");
+        inst.candidates.clear();
+        return false;
     }
     // The pin's empty-matrix early return (`pinyin.cpp:2193`): a
     // parse that produced no keys answers false, not an empty list.
