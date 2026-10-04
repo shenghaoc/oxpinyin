@@ -754,6 +754,21 @@ def _(k):
     return out
 
 
+# batch2 group 10: pinyin_alloc_instance on a finalised context (PR 10, #528)
+@case('alloc-instance-after-fini')
+def _(k):
+    # The pin reads the freed context (pinyin.cpp:1322) and survives by
+    # chance; the ruled answer here is NULL (class (b)), so the answer itself
+    # is left out of the comparison and the case holds the exit status: the
+    # parent build crashes where the pin does not.
+    context = k.init()
+    live = k.fn('alloc_instance', P, P)(context)
+    k.fn('free_instance', None, P)(live)
+    k.fn('fini', None, P)(context)
+    after = k.fn('alloc_instance', P, P)(context)
+    return {'live instance': bool(live), '~instance after fini': bool(after)}
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):

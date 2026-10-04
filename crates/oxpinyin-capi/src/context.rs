@@ -27,7 +27,11 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     // path that is not UTF-8 reads as no user dir, as it did before.
     let user_path = cstr_to_strict(userdir);
     match CapiContext::try_new(&system_path, user_path.as_deref()) {
-        Ok(context) => box_context(context),
+        Ok(context) => {
+            let handle = box_context(context);
+            crate::live::register(handle);
+            handle
+        }
         Err(error) => {
             // The user marker's class-(c) refusal has its own fixed line
             // (`OpenFailure::unknown_database_format`); every other
@@ -150,6 +154,7 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     // fini and resets LC_NUMERIC to "C" (`table_info.cpp:378`; register
     // row 39).
     crate::locale::pin_table_info_locale();
+    crate::live::unregister(context);
     // SAFETY: `context` was created by `pinyin_init` via `box_context`
     // (= `Box::into_raw`). The caller transfers ownership back.
     unsafe {
