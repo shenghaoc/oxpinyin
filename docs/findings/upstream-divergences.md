@@ -2157,6 +2157,61 @@ freshly built tkrzw, bdb and kc oracles.
   (`crates/oxpinyin-capi/src/candidates.rs:362-371`).
 - **Class:** (c), both halves met; the site is an **`assert`**.
 
+### An empty-string user dir is the working directory on the pin (policy row 46)
+
+Registered 2026-10-04 UTC with its fix (#619). Pin cites are at
+`074a2219`; the measurements were taken on freshly built bdb, kc and
+tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
+
+- **Upstream source cite:** `src/pinyin.cpp:332` and `src/zhuyin.cpp:276`
+  (`m_user_dir = g_strdup(userdir)`); `pinyin.cpp:1133` and `:2671`,
+  `zhuyin.cpp:548` and `:1697` (the only guards, both on the pointer);
+  `pinyin.cpp:176-177`, `:220-232`, `:922-1130` and `zhuyin.cpp:130-131`,
+  `:164-176`, `:547-693` (every user file's path is
+  `g_build_filename(m_user_dir, <name>, NULL)`, built when the file is
+  touched).
+- **Mechanism:** `g_build_filename` drops an empty element and stops at
+  a NULL one. With `userdir ""` every path is a bare file name, resolved
+  against the directory that is current at that file operation — not the
+  one current at init — and `m_user_dir` is non-NULL, so the context
+  trains and a dirty save writes the profile. With a NULL `userdir` the
+  same calls build the empty string: train and save answer `false` and
+  nothing is written. The behaviour is defined, has no float in it and
+  aborts nothing, so no exception class fits.
+- **What oxpinyin does instead:** since #619's fix it reproduces it.
+  `pinyin_init`/`zhuyin_init` keep NULL and `""` apart
+  (`crates/oxpinyin-capi/src/context.rs`,
+  `crates/oxpinyin-zhuyin-capi/src/context.rs`), `ContextCore::try_open`
+  carries the difference as `Option<&str>`, and `Runtime::open_with_law`
+  opens the store on the empty path and keeps it relative, so each file
+  resolves against the directory current when it is opened. Before that
+  — the state #619 measured — the runtime dropped an empty path
+  (`crates/oxpinyin-runtime/src/lib.rs:1207` at `8cd06566`) after the
+  two inits had turned NULL into `""`, so both arguments meant "no user
+  dir".
+- **Externally observable:** yes — #619. In an empty working directory
+  the pin's `pinyin_init(data, "")` writes `user.conf` there, a train
+  answers `true`, and the save answers `true`, writes the 11-file
+  profile into the working directory and leaves `LC_NUMERIC` at `"C"`
+  (row 39's site); a second process reads the training back (the trained
+  word's unigram frequency 854 → 1337). `zhuyin_init(data, "")` is the
+  same from the train on. Before the fix oxpinyin answered `false` to
+  the train and the save, wrote nothing and left `LC_NUMERIC` alone at
+  the save. With a chdir after init the pin's save and fini write into
+  the new directory and the first keeps the raised open counter.
+  `tools/bisection/run-locale-diff.sh` — row 39's differential,
+  extended — diffs the two libraries on five forms of the argument — an
+  absolute directory, `""`, `""` with a chdir after init, NULL and `"."`
+  — two consecutive processes each, byte for byte on every step's
+  return value, `LC_NUMERIC`, each directory's inventory and
+  `user.conf`, and the trained word's unigram frequency; stderr is
+  captured and not compared (#545).
+- **Status:** **CLOSED** in code (#619); it was never a registered
+  divergence, only an unregistered defect. Two neighbours are separate
+  issues and are not reproduced here: a NULL user dir still has
+  in-memory user tables on the pin, so an import succeeds there (#642),
+  and an empty-string *system* dir is the working directory too (#643).
+
 ### Abort sites answered without a log: the #525 site ledger (policy rows 4, 5a, 5c, 5d, 6, 10, 14, 19, 21, 22)
 
 - **Source:** the 87-row per-site table in #525's body (the round-2

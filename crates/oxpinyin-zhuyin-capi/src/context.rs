@@ -3,7 +3,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::cstr_to_owned_lossy;
+use crate::ffi::{cstr_to_owned_lossy, cstr_to_strict};
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::ZhuyinContext;
 use oxpinyin_user::UserStore;
@@ -44,8 +44,12 @@ pub extern "C" fn zhuyin_init(
     crate::locale::pin_table_info_locale();
     // SAFETY: Both pointers are C strings from the caller (null OK).
     let system_path = cstr_to_owned_lossy(systemdir);
-    let user_path = cstr_to_owned_lossy(userdir);
-    match CapiContext::try_open(&system_path, &user_path) {
+    // The pin keeps `g_strdup(userdir)` (`zhuyin.cpp:276`) and its guards
+    // test the pointer (`:548`, `:1697`): NULL is no user dir, while ""
+    // is one — the working directory (#619) — so the two stay apart. A
+    // path that is not UTF-8 reads as no user dir, as it did before.
+    let user_path = cstr_to_strict(userdir);
+    match CapiContext::try_open(&system_path, user_path.as_deref()) {
         Ok(ctx) => box_context(ctx),
         Err(error) => {
             // The user marker's class-(c) refusal has its own fixed line

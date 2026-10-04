@@ -3,7 +3,7 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::cstr_to_owned_lossy;
+use crate::ffi::{cstr_to_owned_lossy, cstr_to_strict};
 use crate::state::{CapiContext, box_context, context_mut};
 // Only the harness-gated fixture hooks below take a shared context ref; the
 // shipped build (--features shipped) does not compile them.
@@ -21,8 +21,12 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     crate::locale::pin_table_info_locale();
     // SAFETY: Both pointers are C strings from the caller (null OK).
     let system_path = cstr_to_owned_lossy(systemdir);
-    let user_path = cstr_to_owned_lossy(userdir);
-    match CapiContext::try_new(&system_path, &user_path) {
+    // The pin keeps `g_strdup(userdir)` (`pinyin.cpp:332`) and its guards
+    // test the pointer (`:1133`, `:2671`): NULL is no user dir, while ""
+    // is one — the working directory (#619) — so the two stay apart. A
+    // path that is not UTF-8 reads as no user dir, as it did before.
+    let user_path = cstr_to_strict(userdir);
+    match CapiContext::try_new(&system_path, user_path.as_deref()) {
         Ok(context) => box_context(context),
         Err(error) => {
             // The user marker's class-(c) refusal has its own fixed line
