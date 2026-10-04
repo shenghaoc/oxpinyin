@@ -19,21 +19,23 @@
 #                          any of the four required tables is equally FATAL,
 #                          whichever of the three sources it came from.
 #
-# Exit codes: 0 = identical or skipped; 1 = build/run failure; 2 = divergence.
+# Exit codes: 0 = identical; 77 = skipped; 1 = build/run failure; 2 = divergence.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 # shellcheck source=tools/bisection/system-dir.sh
 . ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source ./oracle-cell.sh
 
 echo "--- building option-sweep driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o option-sweep option-sweep.c -ldl
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
-CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
@@ -135,12 +137,12 @@ ORACLE_DATA="$PREFIX/lib/libpinyin/data"
 if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
     echo "  build it with tools/oracle/build-oracle.sh and set PINYIN_ORACLE_PREFIX"
-    exit 0
+    exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
     "$PREFIX/oracle-pin.txt"; then
     echo "SKIP: oracle prefix at $PREFIX is off-pin"
-    exit 0
+    exit 77
 fi
 
 echo "oracle: $ORACLE_SO"
@@ -193,7 +195,7 @@ is_w12_residual() {
 # Sets global compare_status to: identical | tie-order | w12-residual | stop
 # $3 is the case name.
 compare_text_order() {
-    local oracle_log=$1 capi_log=$2 case_name=$3
+    local oracle_log=$1 capi_log=$2
     local oracle_tbl capi_tbl
     oracle_tbl="$(cand_seq_table "$oracle_log")"
     capi_tbl="$(cand_seq_table "$capi_log")"

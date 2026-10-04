@@ -4,7 +4,8 @@
 # docs/findings/probe-coverage-abi.md. Diagnosis only: diffs the two ABI
 # logs and captures the side-specific dumps; never asserts a class.
 #
-# Env-gated on the pin-built oracle (PINYIN_ORACLE_PREFIX). The capi
+# Requires the bigram-export-strjoinv patched pin (PINYIN_ORACLE_PREFIX).
+# Register row 1: the unpatched bigram iterator has undefined over-reads. The capi
 # system directory resolves through system-dir.sh; RESIDUE_A_SAME_DIR=1
 # drives both .so files against the oracle's own data/ (the settling
 # configuration). Optional:
@@ -23,28 +24,26 @@
 #   RESIDUE_A_OUT          output directory (default: a mktemp dir,
 #                          removed when the logs are identical)
 #
-# Exit: 0 = identical or skipped; 1 = build/run failure; 2 = divergence.
+# Exit: 0 = identical; 1 = build/run/provisioning failure; 2 = divergence.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 # shellcheck source=tools/bisection/system-dir.sh
 . ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source ./oracle-cell.sh
 
 echo "--- building residue-a-tail driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o residue-a-tail-diff \
     residue-a-tail-diff.c -ldl
 echo "build: ok"
 
-if [[ -n "${RESIDUE_A_CAPI_SO:-}" ]]; then
-    CAPI_SO="$RESIDUE_A_CAPI_SO"
-    echo "capi (supplied): $CAPI_SO"
-else
-    echo "--- building oxpinyin-capi ---"
-    cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
-    CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
-    echo "capi: $CAPI_SO"
-fi
+OXPINYIN_CAPI_SO=${RESIDUE_A_CAPI_SO:-${OXPINYIN_CAPI_SO:-}}
+residue_a_supplied=${OXPINYIN_CAPI_SO:+1}
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
+echo "capi: $CAPI_SO"
 if [[ ! -f "$CAPI_SO" ]]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
@@ -54,18 +53,21 @@ PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"
 ORACLE_SO="$PREFIX/lib/libpinyin.so"
 ORACLE_DATA="$PREFIX/lib/libpinyin/data"
 
-if [[ ! -f "$PREFIX/oracle-pin.txt" || ! -f "$ORACLE_SO" ]]; then
-    echo "SKIP: pin-built oracle not found at $PREFIX"
-    exit 0
+if ! grep -q 'pin-bigram-export-strjoinv.patch' "$PREFIX/oracle-patches.sha256" 2>/dev/null; then
+    echo "FAIL: $PREFIX was not built with tools/bisection/patches/bigram-export-strjoinv"
+    exit 1
 fi
-if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
-    "$PREFIX/oracle-pin.txt"; then
-    echo "SKIP: oracle prefix at $PREFIX is off-pin"
-    exit 0
+if [[ ! -f "$PREFIX/oracle-pin.txt" || ! -f "$ORACLE_SO" ]]; then
+    echo "FAIL: patched pin-built oracle not found at $PREFIX"
+    exit 1
+fi
+if ! grep -q "^${EXPECTED_PIN_REF}+patches-" "$PREFIX/oracle-pin.txt"; then
+    echo "FAIL: oracle prefix at $PREFIX is off-pin or wrong-cell"
+    exit 1
 fi
 if [[ ! -f "$ORACLE_DATA/bigram.db" ]]; then
-    echo "SKIP: oracle data not found at $ORACLE_DATA"
-    exit 0
+    echo "FAIL: oracle data not found at $ORACLE_DATA"
+    exit 1
 fi
 
 if [[ "${RESIDUE_A_SAME_DIR:-}" == "1" ]]; then
@@ -127,8 +129,19 @@ fi
 if [[ "${RESIDUE_A_PROBE:-}" == "1" ]]; then
     echo "--- runtime-side probe ---"
     PROBE_USER="$(mktemp -d)"
-    if ! cargo run -q -p oxpinyin-runtime --example nbest_tail_probe \
-        --manifest-path "$REPO_ROOT/Cargo.toml" -- "$SYSTEM" "$PROBE_USER" \
+    probe=${OXPINYIN_NBEST_TAIL_PROBE:-}
+    if [[ -z $probe ]]; then
+        if [[ -n $residue_a_supplied ]]; then
+            echo "FAIL: RESIDUE_A_PROBE needs OXPINYIN_NBEST_TAIL_PROBE with a supplied library"
+            rm -rf "$PROBE_USER"
+            exit 1
+        fi
+        cargo build --locked -p oxpinyin-runtime --example nbest_tail_probe \
+            --no-default-features --features "$CAPI_FEATURE" \
+            --manifest-path "$REPO_ROOT/Cargo.toml"
+        probe=$CARGO_TARGET_DIR/debug/examples/nbest_tail_probe
+    fi
+    if ! "$probe" "$SYSTEM" "$PROBE_USER" \
         > "$OUT_DIR/ox-probe.log" 2>"$OUT_DIR/ox-probe.err"; then
         echo "FAIL: nbest_tail_probe failed"
         cat "$OUT_DIR/ox-probe.err" || true

@@ -23,7 +23,7 @@
 #   auxiliary text, lookup offset, word-level left/right offsets, the
 #   window at each moved cursor, and one mid-buffer choose.
 #
-# Exit codes: 0 = identical or skipped; 1 = build/run failure;
+# Exit codes: 0 = identical; 77 = skipped; 1 = build/run failure;
 # 2 = divergence (the expected, measured state — do not wire into CI green
 # until a later PR closes the classes in
 # docs/findings/uncovered-surface-differentials.md).
@@ -42,6 +42,8 @@ cd "$(dirname "$0")"
 # shellcheck source=tools/bisection/system-dir.sh
 . ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source ./oracle-cell.sh
 
 echo "--- building uncovered-surface-diff driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o uncovered-surface-diff \
@@ -49,8 +51,8 @@ gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o uncovered-surface-diff \
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
-CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
 if [[ ! -f "$CAPI_SO" ]]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
@@ -84,17 +86,17 @@ ORACLE_DATA="$PREFIX/lib/libpinyin/data"
 if [[ ! -f "$PREFIX/oracle-pin.txt" || ! -f "$ORACLE_SO" ]]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
     echo "  build it with tools/oracle/build-oracle.sh and set PINYIN_ORACLE_PREFIX"
-    exit 0
+    exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
     "$PREFIX/oracle-pin.txt"; then
     echo "SKIP: oracle prefix at $PREFIX is off-pin"
     echo "  expected libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99"
-    exit 0
+    exit 77
 fi
 if [[ ! -f "$ORACLE_DATA/bigram.db" ]]; then
     echo "SKIP: oracle data not found at $ORACLE_DATA"
-    exit 0
+    exit 77
 fi
 
 # UNCOVERED_SYSTEM first, then OXPINYIN_SYSTEM_DIR -- the one name that
@@ -111,7 +113,7 @@ if [[ -z "$SYSTEM_EXT" ]] || ! [[ -f "$SYSTEM/interpolation2.text" && -f "$SYSTE
     echo "  (pinyin_index, phrase_index, bigram and punct all in the extension of"
     echo "   the capi's compiled backend -- .db by default -- plus interpolation2.text;"
     echo "   punct is the Option A export of the same model20 punct.table)"
-    exit 0
+    exit 77
 fi
 # The five-file presence check catches half-assembled dirs; it does NOT bind
 # the tables' identity to the oracle pin (same parked oracle-provisioning

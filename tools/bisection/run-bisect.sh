@@ -9,7 +9,7 @@
 #   1. capi-only    — build + run the dlopen harness against oxpinyin-capi
 #   2. valgrind     — re-run the harness under valgrind (if available)
 #   3. ld-preload   — test ibus-engine-libpinyin with LD_PRELOAD (BISECT_LD_PRELOAD=1)
-#   4. differential — compare capi output against an oracle .so (if args given)
+#   4. oracle contract — expected pin abort versus safe C API failure (if args given)
 #
 # Exits 0 on success, 1 on build/run failure, 2 on differential mismatch,
 # 3 on valgrind errors, 4 on LD_PRELOAD integration failure.
@@ -17,6 +17,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source ./oracle-cell.sh
 
 # ── Build the harness ────────────────────────────────────────────────────
 
@@ -27,8 +29,8 @@ echo "build: ok"
 # ── Build oxpinyin-capi ────────────────────────────────────────────────────
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
-CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
@@ -199,35 +201,35 @@ ORACLE_SO="${1:-}"
 ORACLE_DATA="${2:-}"
 
 if [ -n "$ORACLE_SO" ] && [ -n "$ORACLE_DATA" ]; then
-    echo "--- running against oracle ---"
+    # The pinned oracle cannot finish the broad driver: nihao's right-tail
+    # cursor asserts at pinyin.cpp:3092. Check this registered class-(c)
+    # observation explicitly on both libraries, with the same full data.
+    # The full C API smoke/Valgrind modes above remain separate coverage;
+    # this is not a claim of full oracle byte parity.
+    echo "--- right-tail assertion contract (nihao, offset 5) ---"
     ORACLE_LOG="$(mktemp)"
     ORACLE_ERR="$(mktemp)"
-    if ! ./bisect "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
-        echo "FAIL: bisect crashed against oracle"
-        cat "$ORACLE_LOG"
-        echo "--- driver diagnostics (stderr) ---"
-        cat "$ORACLE_ERR"
-        rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"
+    CASE_LOG="$(mktemp)"
+    oracle_status=0
+    ./bisect "$ORACLE_SO" "$ORACLE_DATA" --right-tail-case > "$ORACLE_LOG" 2> "$ORACLE_ERR" || oracle_status=$?
+    if [ "$oracle_status" -ne 134 ] ||
+       ! grep -Fxq 'right-tail input=nihao offset=5 flags=0x0000018a' "$ORACLE_LOG" ||
+       ! grep -Eq 'pinyin.cpp:3092:.*pinyin_get_right_pinyin_offset.*Assertion.*_check_offset\(matrix, right\).*failed' "$ORACLE_ERR"; then
+        echo "FAIL: unexpected oracle right-tail observation (exit $oracle_status)"
+        cat "$ORACLE_LOG" "$ORACLE_ERR"
+        rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR" "$CASE_LOG"
         exit 1
     fi
-    echo "oracle: ok"
-    echo ""
-
-    echo "--- differential ---"
-    # Strip header lines (so path, dirs) for comparison.
-    tail -n +8 "$CAPI_LOG"  > "${CAPI_LOG}.body"
-    tail -n +8 "$ORACLE_LOG" > "${ORACLE_LOG}.body"
-
-    if diff -u "${ORACLE_LOG}.body" "${CAPI_LOG}.body" > /dev/null 2>&1; then
-        echo "IDENTICAL: no ABI divergence detected"
-    else
-        echo "DIVERGENCE: outputs differ"
-        diff -u "${ORACLE_LOG}.body" "${CAPI_LOG}.body" || true
-        rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR" \
-            "${CAPI_LOG}.body" "${ORACLE_LOG}.body"
-        exit 2
+    if ! ./bisect "$CAPI_SO" "$ORACLE_DATA" --right-tail-case > "$CASE_LOG" 2>&1 ||
+       ! grep -Fxq 'right-tail: false; output untouched' "$CASE_LOG"; then
+        echo "FAIL: unexpected C API right-tail observation"
+        cat "$CASE_LOG"
+        rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR" "$CASE_LOG"
+        exit 1
     fi
-    rm -f "$ORACLE_LOG" "$ORACLE_ERR" "${ORACLE_LOG}.body"
+    echo "oracle: expected SIGABRT, pinyin.cpp:3092 _check_offset(matrix, right)"
+    echo "capi: expected false, output untouched (compatibility register row 14)"
+    rm -f "$ORACLE_LOG" "$ORACLE_ERR" "$CASE_LOG"
 fi
 
 rm -f "$CAPI_LOG" "$CAPI_ERR" "${CAPI_LOG}.body"

@@ -25,7 +25,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
-# shellcheck source=oracle-cell.sh
+# shellcheck source=tools/bisection/oracle-cell.sh
 source ./oracle-cell.sh
 
 echo "--- building union-diff drivers ---"
@@ -43,9 +43,8 @@ g++ -std=c++17 -Wall -Wextra -Werror -O2 plant-oracle-bigram.cc \
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" \
-    --no-default-features --features "$CAPI_FEATURE" 2>&1
-CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
@@ -57,12 +56,12 @@ ORACLE_DATA="$PREFIX/lib/libpinyin/data"
 
 if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
-    exit 0
+    exit 77
 fi
 if ! grep -qxF "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
     echo "SKIP: oracle prefix at $PREFIX is off-pin for the $ORACLE_DBM cell"
     echo "  expected $EXPECTED_PIN_REF"
-    exit 0
+    exit 77
 fi
 echo "oracle: $ORACLE_SO"
 

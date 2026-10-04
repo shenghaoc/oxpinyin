@@ -9,7 +9,7 @@
  * and diff the logs to find behavioural divergence.
  *
  * Usage:
- *   ./bisect <path-to-so> <systemdir>
+ *   ./bisect <path-to-so> <systemdir> [--right-tail-case]
  *   ./bisect --perf <path-to-so> <systemdir>   # perf/RAM JSON line;
  *                                              # see run-perf-baseline.sh
  *
@@ -41,6 +41,9 @@
 #include <unistd.h>
 #include <linux/perf_event.h>
 #include <sys/syscall.h>
+
+/* Registered class-(c) cursor assertion: probe only the first input. */
+static bool right_tail_case;
 
 /* ── Opaque handle types (match pinyin.h) ─────────────────────────────── */
 
@@ -1255,8 +1258,21 @@ static void drive_input(const struct symbols *s, pinyin_instance_t *inst,
         printf("left_offset(%zu): %zu\n", consumed, left);
     }
     if (s->get_right_pinyin_offset) {
-        size_t right = 0;
-        s->get_right_pinyin_offset(inst, consumed, &right);
+        size_t right = right_tail_case ? SIZE_MAX : 0;
+        if (right_tail_case) {
+            printf("right-tail input=%s offset=%zu flags=0x%08x\n",
+                   input, consumed, (unsigned)DEFAULT_FLAGS);
+            fflush(stdout);
+        }
+        bool ok = s->get_right_pinyin_offset(inst, consumed, &right);
+        if (right_tail_case) {
+            if (ok || right != SIZE_MAX) {
+                fprintf(stderr, "right-tail: expected false and untouched output\n");
+                exit(2);
+            }
+            puts("right-tail: false; output untouched");
+            return;
+        }
         printf("right_offset(%zu): %zu\n", consumed, right);
     }
 
@@ -1472,6 +1488,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    right_tail_case = argc == 4 && strcmp(argv[3], "--right-tail-case") == 0;
+
     const char *so_path    = argv[1];
     const char *system_dir = argv[2];
 
@@ -1543,12 +1561,13 @@ int main(int argc, char **argv) {
     printf("\n");
 
     /* Phase 2 — Drive test inputs. */
-    for (size_t i = 0; i < N_INPUTS; i++) {
+    for (size_t i = 0; i < (right_tail_case ? 1 : N_INPUTS); i++) {
         drive_input(&sym, inst, TEST_INPUTS[i]);
     }
 
     /* Phase 2b — Remaining 27 symbols, after the full-pinyin cycle. */
-    probe_remaining(&sym, ctx, inst);
+    if (!right_tail_case)
+        probe_remaining(&sym, ctx, inst);
 
     /* Phase 3 — Teardown. */
     printf("=== teardown ===\n");

@@ -39,14 +39,16 @@ cd "$(dirname "$0")"
 # shellcheck source=tools/bisection/system-dir.sh
 . ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source ./oracle-cell.sh
 
 echo "--- building live-typing-diff driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o live-typing-diff live-typing-diff.c -ldl
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
-CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
 if [[ ! -f "$CAPI_SO" ]]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
