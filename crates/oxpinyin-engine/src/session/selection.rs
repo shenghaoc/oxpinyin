@@ -339,6 +339,14 @@ where
         if !self.sentence.last_result.is_empty() {
             return self.train_spans(&self.sentence.last_result, user);
         }
+        self.train_history(user)
+    }
+
+    fn train_history<U>(&self, user: &mut U) -> Result<(), EngineError>
+    where
+        U: UserModel<Token = PhraseToken>,
+        U::Error: Display,
+    {
         let history = self.record.history();
         for (index, token) in history.iter().enumerate() {
             user.observe(&history[..index], token)
@@ -351,7 +359,8 @@ where
     ///
     /// Returns `Ok(false)` when no decoded results exist, as the pinned
     /// `pinyin_train`/`zhuyin_train` gate requires. Selection history alone
-    /// does not satisfy this gate.
+    /// does not satisfy this gate. Valid fallback-model rows without spans
+    /// train the recorded selection history, like [`Session::train`].
     ///
     /// # Errors
     ///
@@ -372,7 +381,11 @@ where
                 len: self.sentence.rows.len(),
             },
         )?;
-        self.train_spans(&row.spans, user)?;
+        if row.spans.is_empty() {
+            self.train_history(user)?;
+        } else {
+            self.train_spans(&row.spans, user)?;
+        }
         Ok(true)
     }
 
