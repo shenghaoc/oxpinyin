@@ -17,7 +17,8 @@ use crate::types::PinyinInstance;
 ///                                 gint count);
 /// ```
 ///
-/// `count` of -1 means use the default value.
+/// `count` of -1 means use the default value; any other `gint` is used as
+/// the `guint32` it becomes, so a negative count is accepted (register row 57).
 ///
 /// The §3.1 path: stores `phrase` in the [`USER_DICTIONARY`] sub-index with
 /// the instance's current composition keys as its pronunciation — the
@@ -29,7 +30,7 @@ use crate::types::PinyinInstance;
 ///
 /// Returns `false` for a null instance, an empty/oversized phrase, a phrase
 /// whose character count does not match the current composition's key count,
-/// a count other than -1 that is negative, an instance without a user store,
+/// an instance without a user store,
 /// or a store failure ([`UserStoreError::InvalidPhrase`] included).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_remember_user_input(
@@ -59,12 +60,10 @@ pub extern "C" fn pinyin_remember_user_input(
     }) else {
         return false;
     };
-    let count = if count == -1 {
-        None
-    } else if count >= 0 {
-        Some(u64::try_from(count).unwrap_or(0))
-    } else {
-        return false;
-    };
+    // `if (-1 == count) count = default_count;` otherwise the `gint` is
+    // used as the `guint32` it becomes (`pinyin.cpp:520-524`, the same
+    // `_add_phrase` the import path calls): -2 is 4294967294, so a count
+    // below -1 is accepted and exported as it went in.
+    let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
     user.add_phrase(&phrase, &keys, count).is_ok()
 }

@@ -41,6 +41,9 @@ pub fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
     inst.candidates.clear();
     let prefixes =
         oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), prefix);
+    // `m_prefixes` is emptied and refilled before the empty check
+    // (`pinyin.cpp:2423-2426`).
+    inst.prefixes.clone_from(&prefixes);
     if prefixes.is_empty() {
         return false;
     }
@@ -311,7 +314,7 @@ fn amplified_frequency(unigram: u64, total: u64) -> u64 {
     u64::from((possibility * AMPLIFY_SCALE_F32) as u32)
 }
 
-fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<String> {
+pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<String> {
     if let Ok(Some(phrase)) = store.phrase(token) {
         return Some(phrase.text().to_owned());
     }
