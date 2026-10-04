@@ -7,7 +7,7 @@
  * absent by construction, so a corpus run proves nothing about it.
  *
  * This drives the shape that does exercise it: parse, guess a sentence so a
- * 1-best result exists, choose the first candidate, then guess again at the
+ * 1-best result exists, choose the first candidate that leaves input, then guess again at the
  * offset the choose advanced to. At that offset upstream's
  * _get_previous_token reads the 1-best result and returns the chosen token,
  * Gate 2 merges its gram, and Gate 3 folds a bigram term into every
@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
             fprintf(stderr, "alloc failed\n");
             return 1;
         }
-        parse(inst, INPUTS[i]);
+        const size_t parsed = parse(inst, INPUTS[i]);
         /* A 1-best result must exist before _get_previous_token can read it. */
         guess_sentence(inst);
         if (!guess(inst, 0, DEFAULT_SORT)) {
@@ -125,11 +125,43 @@ int main(int argc, char **argv) {
             free_inst(inst);
             continue;
         }
+        /* choose mutates constraints, and the ABI has no candidate-span
+         * preview. Test rows in disposable instances with the same parse
+         * and guesses; select the first actual cursor short of the end. */
+        guint total = 0, selected = 0;
+        bool found = false;
+        if (!n_cand(inst, &total)) {
+            fprintf(stderr, "cannot enumerate first guess\n");
+            return 1;
+        }
+        for (guint row = 0; row < total; ++row) {
+            pinyin_instance_t *trial = alloc(ctx);
+            if (!trial) {
+                fprintf(stderr, "trial alloc failed\n");
+                return 1;
+            }
+            parse(trial, INPUTS[i]);
+            guess_sentence(trial);
+            lookup_candidate_t *candidate = NULL;
+            int advanced = 0;
+            if (guess(trial, 0, DEFAULT_SORT) &&
+                get_cand(trial, row, &candidate)) {
+                advanced = choose(trial, 0, candidate);
+            }
+            free_inst(trial);
+            if (advanced > 0 && (size_t)advanced < parsed) {
+                selected = row;
+                found = true;
+                break;
+            }
+        }
         lookup_candidate_t *first = NULL;
-        if (!get_cand(inst, 0, &first)) {
-            printf("%s|no-first-candidate\n", INPUTS[i]);
+        if (!found || !get_cand(inst, selected, &first)) {
+            fprintf(stderr, "%s: no candidate leaves input to guess\n", INPUTS[i]);
             free_inst(inst);
-            continue;
+            fini(ctx);
+            dlclose(h);
+            return 1;
         }
         const int offset = choose(inst, 0, first);
         if (offset <= 0) {
