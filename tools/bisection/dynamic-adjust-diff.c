@@ -7,7 +7,7 @@
  * absent by construction, so a corpus run proves nothing about it.
  *
  * This drives the shape that does exercise it: parse, guess a sentence so a
- * 1-best result exists, choose the first candidate that leaves input, then guess again at the
+ * 1-best result exists, choose a fixed candidate identity that leaves input, then guess again at the
  * offset the choose advanced to. At that offset upstream's
  * _get_previous_token reads the 1-best result and returns the chosen token,
  * Gate 2 merges its gram, and Gate 3 folds a bigram term into every
@@ -70,8 +70,18 @@ static void *must(void *handle, const char *name) {
 
 /* Inputs long enough that a choose leaves a non-zero offset with more to
  * decode — the only shape where prev_token is non-null. */
-static const char *const INPUTS[] = {
-    "nihao", "beijing", "zhongguo", "womenshi", "xiexieni", "shijie", "pinyinshurufa",
+static const struct {
+    const char *input;
+    const char *chosen_text;
+    int chosen_type;
+} INPUTS[] = {
+    {"nihao", "你", 2},
+    {"beijing", "被", 2},
+    {"zhongguo", "中", 2},
+    {"womenshi", "我们", 2},
+    {"xiexieni", "谢谢", 2},
+    {"shijie", "世纪", 2},
+    {"pinyinshurufa", "拼音", 2},
 };
 
 int main(int argc, char **argv) {
@@ -117,63 +127,61 @@ int main(int argc, char **argv) {
             fprintf(stderr, "alloc failed\n");
             return 1;
         }
-        const size_t parsed = parse(inst, INPUTS[i]);
+        const size_t parsed = parse(inst, INPUTS[i].input);
         /* A 1-best result must exist before _get_previous_token can read it. */
         guess_sentence(inst);
         if (!guess(inst, 0, DEFAULT_SORT)) {
-            printf("%s|no-first-guess\n", INPUTS[i]);
-            free_inst(inst);
-            continue;
-        }
-        /* choose mutates constraints, and the ABI has no candidate-span
-         * preview. Test rows in disposable instances with the same parse
-         * and guesses; select the first actual cursor short of the end. */
-        guint total = 0, selected = 0;
-        bool found = false;
-        if (!n_cand(inst, &total)) {
-            fprintf(stderr, "cannot enumerate first guess\n");
-            return 1;
-        }
-        for (guint row = 0; row < total; ++row) {
-            pinyin_instance_t *trial = alloc(ctx);
-            if (!trial) {
-                fprintf(stderr, "trial alloc failed\n");
-                return 1;
-            }
-            parse(trial, INPUTS[i]);
-            guess_sentence(trial);
-            lookup_candidate_t *candidate = NULL;
-            int advanced = 0;
-            if (guess(trial, 0, DEFAULT_SORT) &&
-                get_cand(trial, row, &candidate)) {
-                advanced = choose(trial, 0, candidate);
-            }
-            free_inst(trial);
-            if (advanced > 0 && (size_t)advanced < parsed) {
-                selected = row;
-                found = true;
-                break;
-            }
-        }
-        lookup_candidate_t *first = NULL;
-        if (!found || !get_cand(inst, selected, &first)) {
-            fprintf(stderr, "%s: no candidate leaves input to guess\n", INPUTS[i]);
+            printf("%s|no-first-guess\n", INPUTS[i].input);
             free_inst(inst);
             fini(ctx);
             dlclose(h);
             return 1;
         }
-        const int offset = choose(inst, 0, first);
-        if (offset <= 0) {
-            printf("%s|choose-did-not-advance|%d\n", INPUTS[i], offset);
-            free_inst(inst);
-            continue;
+        /* Fix the choice across engines and option words: row order may
+         * change before choose, so a positional choice cannot prove liveness. */
+        guint total = 0;
+        lookup_candidate_t *selected = NULL;
+        if (!n_cand(inst, &total)) {
+            fprintf(stderr, "cannot enumerate first guess\n");
+            return 1;
         }
+        for (guint row = 0; row < total; ++row) {
+            lookup_candidate_t *candidate = NULL;
+            int type = -1;
+            const char *text = NULL;
+            if (get_cand(inst, row, &candidate) &&
+                get_type(inst, candidate, &type) &&
+                get_str(inst, candidate, &text) && text &&
+                type == INPUTS[i].chosen_type &&
+                strcmp(text, INPUTS[i].chosen_text) == 0) {
+                selected = candidate;
+                break;
+            }
+        }
+        if (!selected) {
+            fprintf(stderr, "%s: fixed candidate %s (type %d) missing\n",
+                    INPUTS[i].input, INPUTS[i].chosen_text, INPUTS[i].chosen_type);
+            free_inst(inst);
+            fini(ctx);
+            dlclose(h);
+            return 1;
+        }
+        const int offset = choose(inst, 0, selected);
+        if (offset <= 0 || (size_t)offset >= parsed) {
+            fprintf(stderr, "%s: fixed candidate did not leave input (%d/%zu)\n",
+                    INPUTS[i].input, offset, parsed);
+            free_inst(inst);
+            fini(ctx);
+            dlclose(h);
+            return 1;
+        }
+        printf("CHOICE|%s|%d|%s|%d\n", INPUTS[i].input,
+               INPUTS[i].chosen_type, INPUTS[i].chosen_text, offset);
         /* The offset the choose advanced to: prev_token is the chosen token
          * here, so the bit is live. */
         guess_sentence(inst);
         if (!guess(inst, (size_t)offset, DEFAULT_SORT)) {
-            printf("%s|%d|no-second-guess\n", INPUTS[i], offset);
+            printf("%s|%d|no-second-guess\n", INPUTS[i].input, offset);
             free_inst(inst);
             continue;
         }
@@ -188,7 +196,7 @@ int main(int argc, char **argv) {
             const char *text = NULL;
             get_type(inst, cand, &type);
             get_str(inst, cand, &text);
-            printf("%s|%d|%u|%d|%s\n", INPUTS[i], offset, k, type, text ? text : "");
+            printf("%s|%d|%u|%d|%s\n", INPUTS[i].input, offset, k, type, text ? text : "");
         }
         free_inst(inst);
     }
