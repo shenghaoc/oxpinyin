@@ -100,7 +100,7 @@ is complete, these notes are collected to report back to libpinyin.
 
 ### Tone digit on an initial-only key aborts the pin's phrase search
 
-- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — and **needs guard, not just a log**: the pin's sites are `storage/pinyin_phrase3.h:152` and `pinyin.cpp:2769`, both **`assert`**; oxpinyin returns candidates (and `pinyin_get_pinyin_is_incomplete` answers `true`, `crates/oxpinyin-capi/src/keys.rs:260`), so neither `false`/`Err` nor the log line holds (`compatibility-policy.md` row 4).
+- **Status (2026-10-04, lane C, PR 12e):** class (c), **both halves met**: the pin's sites are `storage/pinyin_phrase3.h:152` and `pinyin.cpp:2769`, both **`assert`**; oxpinyin answers `false` with exactly one `libpinyin` warning from `pinyin_get_pinyin_is_incomplete`, `pinyin_guess_candidates`, `pinyin_guess_sentence` and `pinyin_guess_sentence_with_prefix` (`compatibility-policy.md` row 4). It returned candidates (and `true`) before.
 
 - **Upstream source cite:** `contains_incomplete_pinyin`
   (`src/storage/pinyin_phrase3.h:146-156`) asserts
@@ -112,14 +112,14 @@ is complete, these notes are collected to report back to libpinyin.
   search containing that key trips the assert. The parser permits
   exactly what the search asserts against.
 - **What oxpinyin does instead:** parses the toned initial-only key
-  and searches without aborting — the toned incomplete edge flows the
-  scan matrix like any other (constitution 4: nothing panics).
+  as the pin does, then refuses every lookup over a matrix that holds
+  one — `false` and one warning, nothing searched (constitution 4:
+  nothing panics).
 - **Externally observable:** yes — the pinned oracle SIGABRTs on `n4`
   under `USE_TONE | PINYIN_INCOMPLETE` as soon as candidates are
-  guessed; oxpinyin returns candidates. No oracle differential is
-  possible for this class (the pin-built `.so` aborts), the same
-  situation as the scheme-setter rows above; the fullpin-diff tone
-  sweep documents the exclusion in the driver. Report-back candidate
+  guessed; oxpinyin answers `false` with the warning. The abort is held
+  by the `abort-*-toned-initial*` cases of `contract-diff.py`; the
+  fullpin-diff tone sweep keeps its exclusion. Report-back candidate
   for libpinyin.
 
 ### Scheme setters abort or half-mutate on the no-op slots
@@ -2245,6 +2245,8 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
     policy row 64).
   - PR 12d: `lookup/phonetic_lookup.h:868` through `pinyin_train` and
     `zhuyin_train` (policy row 6).
+  - PR 12e: `storage/pinyin_phrase3.h:152` (through the lookups that
+    search the pinyin table), `pinyin.cpp:2769`.
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|

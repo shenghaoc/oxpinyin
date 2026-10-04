@@ -1134,6 +1134,71 @@ def _(k):
             'again': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
 
 
+# batch2 group 12e: a tone digit on an initial-only key (PR 12e, #525, row 4)
+TONE_INCOMPLETE = (1 << 5) | (1 << 3)
+
+
+def toned_initial(k, text=b'n4'):
+    k.fn('set_options', B, P, U)(k.ctx, TONE_INCOMPLETE)
+    inst = k.alloc()
+    return inst, k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+
+
+@case('abort-is-incomplete-toned-initial', abort=False)
+def _(k):
+    k.fn('set_options', B, P, U)(k.ctx, TONE_INCOMPLETE)
+    inst = k.alloc()
+    key = C.c_uint16(0)
+    parsed = k.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_uint16))(inst, b'n4', C.byref(key))
+    return {'ret': k.fn('get_pinyin_is_incomplete', B, P, C.POINTER(C.c_uint16))(inst, C.byref(key))}
+
+
+@case('abort-guess-candidates-toned-initial-before-offset', abort=False)
+def _(k):
+    # The toned key sits before the lookup offset, outside the window the
+    # search walks: the pin dies all the same (review of #662 expected it not
+    # to), so the guard looks at the whole matrix.
+    inst, _ = toned_initial(k, b'n4ni')
+    return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 2, 0)}
+
+
+@case('abort-guess-candidates-toned-initial', abort=False)
+def _(k):
+    inst, _ = toned_initial(k)
+    return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
+
+
+@case('abort-guess-sentence-toned-initial', abort=False)
+def _(k):
+    inst, _ = toned_initial(k)
+    return {'ret': k.fn('guess_sentence', B, P)(inst)}
+
+
+@case('abort-guess-sentence-toned-initial-after-key', abort=False)
+def _(k):
+    inst, _ = toned_initial(k, b'nihaon4')
+    return {'ret': k.fn('guess_sentence', B, P)(inst)}
+
+
+# The keys the guard leaves alone: a toned complete key, an untoned initial.
+@case('toned-initial-neighbours', control=True)
+def _(k):
+    out = {}
+    k.fn('set_options', B, P, U)(k.ctx, TONE_INCOMPLETE)
+    for text in (b'ni4', b'n', b'nin', b'ni4hao'):
+        inst = k.alloc()
+        n = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+        out[text.decode()] = [n, k.fn('guess_sentence', B, P)(inst),
+                              k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)]
+    inst = k.alloc()
+    for text in (b'n', b'ni4', b'ni'):
+        key = C.c_uint16(0)
+        parsed = k.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_uint16))(inst, text, C.byref(key))
+        out['incomplete ' + text.decode()] = [parsed, key.value,
+                                              k.fn('get_pinyin_is_incomplete', B, P, C.POINTER(C.c_uint16))(inst, C.byref(key))]
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):
