@@ -62,13 +62,10 @@ if ! grep -Fxq "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
     echo "  (build it with build-oracle.sh --dbm $ORACLE_DBM, or set PINYIN_ORACLE_DBM)"
     exit 3
 fi
-CAPI_SO="$CARGO_TARGET_DIR/release/libpinyin_capi.so"
-# Always rebuild — cargo is a no-op when the artifact is current, and a
-# stale libpinyin_capi.so on disk would otherwise mask the change under
-# test.
-echo "building libpinyin_capi.so (release, $CAPI_FEATURE)..."
-(cd "$REPO_ROOT" && CARGO_TARGET_DIR="$CARGO_TARGET_DIR" cargo build --release -p oxpinyin-capi \
-    --no-default-features --features "$CAPI_FEATURE") || exit 1
+# Supply OXPINYIN_CAPI_SO to run without Cargo; otherwise build dev opt-level 1.
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi || exit 1
+CAPI_SO=$OXPINYIN_CAPI_SO
+mkdir -p "$CARGO_TARGET_DIR"
 
 echo "--- cc phrase-surface-diff.c ---"
 DRIVER="$CARGO_TARGET_DIR/phrase-surface-diff"
