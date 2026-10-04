@@ -1,5 +1,6 @@
 /*
- * locale-diff.c — the process-locale differential (#539, register row 39).
+ * locale-diff.c — the process-locale differential (#539, register row 39),
+ * over the forms of the user-dir argument (#619, register row 46).
  *
  * The pin's table.conf and user.conf codecs each run
  * `char * locale = setlocale(LC_NUMERIC, "C"); ... setlocale(LC_NUMERIC,
@@ -13,15 +14,37 @@
  * 1143; zhuyin.cpp:548-552, :695), and pinyin_fini unconditionally
  * (pinyin.cpp:1200). zhuyin_fini writes nothing (zhuyin.cpp:741-757).
  *
+ * Which of those a context reaches turns on its user dir, and the user-dir
+ * guards test the pointer (pinyin.cpp:1133, :2671; zhuyin.cpp:548, :1697).
+ * The inits keep `g_strdup(userdir)` (pinyin.cpp:332, zhuyin.cpp:276) and
+ * build every user file's path as `g_build_filename(m_user_dir, <name>,
+ * NULL)` when the file is touched; g_build_filename drops an empty element
+ * and stops at a NULL one. So:
+ *
+ *   ""    is the working directory: every path is a bare file name, resolved
+ *         against the directory that is current when the file is opened, not
+ *         the one that was current at init. The context trains, and a dirty
+ *         save writes the profile there and resets LC_NUMERIC.
+ *   NULL  is no user dir: train and save answer false, every path is the
+ *         empty string and nothing is written.
+ *   "."   and an absolute directory are ordinary user dirs.
+ *
  * This driver plays the consumer that adopted its environment's locale
  * (the runner exports LC_ALL=zh_CN.UTF-8) and reads LC_NUMERIC and the
  * LC_ALL composite back after every entry point, re-adopting the
- * environment before each step so each site is measured on its own:
+ * environment before each step so each site is measured on its own. With
+ * them it prints what the step left on disk — each watched directory's
+ * inventory (name:size:mode) and its user.conf text — since where the
+ * profile lands is what the user-dir forms differ in:
  *
  *   before            setlocale(LC_ALL, "") alone
- *   init-ok           a good system dir and a fresh user dir
+ *   init-ok           a good system dir and the user dir under test
+ *   chdir             (only with <chdir-to>) the consumer moves there
  *   save-unmodified   save straight after init (both guards: false, no write)
- *   train             one choose + train, which sets m_modified
+ *   train             choose the first listed candidate + train, which sets
+ *                     m_modified; the watched word's unigram frequency is
+ *                     printed first — the system value on a fresh profile,
+ *                     the trained one once a saved profile was read back
  *   save-modified     save past both guards
  *   fini              teardown
  *   init-missing      a system dir that does not exist
@@ -34,22 +57,33 @@
  *
  * Usage:
  *   locale-diff <pinyin|zhuyin> <lib.so> <systemdir> <userdir> <scratchdir>
+ *               [<chdir-to>]
  *
- * <scratchdir> holds the failure fixtures (missing/, empty/, garbage/,
- * truncated/), which the runner prepares. Both sides print one line per
- * step; run-locale-diff.sh diffs the two logs byte for byte.
+ * <userdir> is passed to init as given, so "" and "." are the working
+ * directory forms; the word NULL passes a NULL pointer. <scratchdir> holds
+ * the failure fixtures (missing/, empty/, garbage/, truncated/), which the
+ * runner prepares. The watched directories are the working directory and,
+ * beside it, an absolute <userdir> or — with <chdir-to> — the directory the
+ * process started in. No path is printed, so each side may run in
+ * directories of its own; run-locale-diff.sh runs every form twice in the
+ * same directories and diffs the two sides' logs byte for byte.
  *
  * This file is part of oxpinyin, GPL-3.0-or-later like the rest of it.
  */
 
 #define _POSIX_C_SOURCE 200809L
+#include <dirent.h>
 #include <dlfcn.h>
+#include <errno.h>
+#include <limits.h>
 #include <locale.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <glib.h>
 
@@ -63,8 +97,9 @@ typedef void candidate_t;
  * SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY. */
 #define SORT_OPTION (0x4 | 0x8 | 0x10)
 
-/* The training target: the first two-character listed candidate below the
- * sentence rows for this input, identical on both sides (the same pair
+/* The typed input and the watched word: the first listed candidate below
+ * the sentence rows on a fresh profile, identical on both sides, which the
+ * first process therefore trains (the same pair
  * tools/bisection/open-counter-diff.c trains first). The zhuyin keys are
  * STANDARD keyboard keys with a tone on every syllable (FORCE_TONE). */
 static const char *PINYIN_TYPED = "li'shi", *PINYIN_WORD = "\xe5\x8e\x86\xe6\x97\xb6"; /* 历时 */
@@ -72,6 +107,11 @@ static const char *ZHUYIN_TYPED = "2u04vu04", *ZHUYIN_WORD = "\xe7\x99\xab\xe7\x
 
 static void *lib;
 static const char *prefix;
+
+/* The directory printed beside the working directory after every step: an
+ * absolute user dir, or the directory the process started in. */
+static const char *watched_label;
+static const char *watched_dir;
 
 /* `<prefix>_<name>`: the two libraries name every entry point alike. */
 static void *sym(const char *name) {
@@ -96,15 +136,106 @@ static void adopt_environment(void) {
     }
 }
 
+static void print_escaped(const char *data, size_t len) {
+    for (size_t i = 0; i < len; ++i) {
+        unsigned char c = (unsigned char)data[i];
+        if (c == '\n')
+            fputs("\\n", stdout);
+        else if (c == '\\')
+            fputs("\\\\", stdout);
+        else if (c < 0x20 || c == 0x7f)
+            printf("\\x%02x", c);
+        else
+            fputc(c, stdout);
+    }
+}
+
+static int by_name(const struct dirent **a, const struct dirent **b) {
+    return strcmp((*a)->d_name, (*b)->d_name);
+}
+
+static int not_dots(const struct dirent *entry) {
+    return strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0;
+}
+
+/* One directory's inventory as `name:size:mode`, byte-ordered, and its
+ * user.conf text (the open counter lives there). */
+static void show_dir(const char *step, const char *label, const char *dir) {
+    struct dirent **names = NULL;
+    int n = scandir(dir, &names, not_dots, by_name);
+    if (n < 0) {
+        fprintf(stderr, "fatal: scandir(%s): %s\n", dir, strerror(errno));
+        exit(1);
+    }
+    printf("%s\t%s:", step, label);
+    if (n == 0)
+        fputs(" (empty)", stdout);
+    for (int i = 0; i < n; ++i) {
+        char path[PATH_MAX];
+        struct stat st;
+        snprintf(path, sizeof path, "%s/%s", dir, names[i]->d_name);
+        fputc(' ', stdout);
+        print_escaped(names[i]->d_name, strlen(names[i]->d_name));
+        if (stat(path, &st) == 0)
+            printf(":%lld:%o", (long long)st.st_size, (unsigned)(st.st_mode & 07777));
+        else
+            fputs(":?:?", stdout);
+        free(names[i]);
+    }
+    free(names);
+    fputc('\n', stdout);
+
+    char conf[PATH_MAX];
+    snprintf(conf, sizeof conf, "%s/user.conf", dir);
+    printf("%s\t%s/user.conf: ", step, label);
+    FILE *file = fopen(conf, "r");
+    if (!file) {
+        fputs("(absent)\n", stdout);
+        return;
+    }
+    char text[1024];
+    size_t got = fread(text, 1, sizeof text, file);
+    fclose(file);
+    print_escaped(text, got);
+    fputc('\n', stdout);
+}
+
 static void probe(const char *step) {
     const char *numeric = setlocale(LC_NUMERIC, NULL);
     const char *all = setlocale(LC_ALL, NULL);
     printf("%s\tLC_NUMERIC=%s\tLC_ALL=%s\n", step, numeric ? numeric : "(null)", all ? all : "(null)");
+    show_dir(step, "cwd", ".");
+    if (watched_dir)
+        show_dir(step, watched_label, watched_dir);
 }
 
-/* Choose the target at offset 0, then train the ibus way: re-guess after
- * the choose, train, reset. pinyin_train trains n-best row 0; zhuyin_train
- * takes no index. */
+/* The watched word's unigram frequency as the context holds it now. */
+static void show_watched(instance_t *inst, bool zhuyin) {
+    bool (*lookup_tokens)(instance_t *, const char *, GArray *) = sym("lookup_tokens");
+    bool (*unigram)(instance_t *, guint32, guint *) = sym("token_get_unigram_frequency");
+    const char *word = zhuyin ? ZHUYIN_WORD : PINYIN_WORD;
+    GArray *tokens = g_array_new(FALSE, FALSE, sizeof(guint32));
+
+    printf("train: watched %s unigram", word);
+    if (!lookup_tokens(inst, word, tokens) || tokens->len == 0)
+        fputs(" (no token)", stdout);
+    for (guint i = 0; i < tokens->len; ++i) {
+        guint32 token = g_array_index(tokens, guint32, i);
+        guint freq = 0;
+        if (unigram(inst, token, &freq))
+            printf(" 0x%08x=%u", token, freq);
+        else
+            printf(" 0x%08x=(none)", token);
+    }
+    fputc('\n', stdout);
+    g_array_free(tokens, TRUE);
+}
+
+/* Choose the first listed candidate at offset 0, then train the ibus way:
+ * re-guess after the choose, train, reset. pinyin_train trains n-best row 0;
+ * zhuyin_train takes no index. The first listed candidate, not a fixed
+ * word: a second process on the same profile finds the word it trained
+ * promoted to a sentence row, and still has to train something. */
 static const char *train_target(instance_t *inst, bool zhuyin) {
     size_t (*parse)(instance_t *, const char *) =
         sym(zhuyin ? "parse_more_chewings" : "parse_more_full_pinyins");
@@ -118,10 +249,10 @@ static const char *train_target(instance_t *inst, bool zhuyin) {
     bool (*reset)(instance_t *) = sym("reset");
 
     const char *typed = zhuyin ? ZHUYIN_TYPED : PINYIN_TYPED;
-    const char *word = zhuyin ? ZHUYIN_WORD : PINYIN_WORD;
     const char *result = "ok";
     guint n = 0;
     candidate_t *chosen = NULL;
+    const gchar *chosen_text = NULL;
 
     bool listed = strlen(typed) == parse(inst, typed) && guess_sentence(inst);
     if (listed) {
@@ -142,10 +273,12 @@ static const char *train_target(instance_t *inst, bool zhuyin) {
         int type = 0;
         const gchar *text = NULL;
         if (candidate(inst, i, &c) && c && candidate_type(inst, c, &type) &&
-            type == LISTED_CANDIDATE && candidate_string(inst, c, &text) && text &&
-            strcmp(text, word) == 0)
+            type == LISTED_CANDIDATE && candidate_string(inst, c, &text) && text) {
             chosen = c;
+            chosen_text = text;
+        }
     }
+    printf("train: target %s\n", chosen ? chosen_text : "(none)");
     if (!chosen) {
         if (strcmp(result, "ok") == 0)
             result = "no-candidate";
@@ -177,8 +310,10 @@ static void failing_init(const char *step, const char *system_dir, const char *u
 }
 
 int main(int argc, char **argv) {
-    if (argc != 6) {
-        fprintf(stderr, "usage: %s <pinyin|zhuyin> <lib.so> <systemdir> <userdir> <scratchdir>\n", argv[0]);
+    if (argc != 6 && argc != 7) {
+        fprintf(stderr,
+                "usage: %s <pinyin|zhuyin> <lib.so> <systemdir> <userdir> <scratchdir> [<chdir-to>]\n",
+                argv[0]);
         return 2;
     }
     prefix = argv[1];
@@ -187,7 +322,21 @@ int main(int argc, char **argv) {
         fprintf(stderr, "first argument must be pinyin or zhuyin\n");
         return 2;
     }
-    const char *system_dir = argv[3], *user_dir = argv[4], *scratch = argv[5];
+    const char *system_dir = argv[3], *scratch = argv[5];
+    const char *user_dir = strcmp(argv[4], "NULL") == 0 ? NULL : argv[4];
+    const char *chdir_to = argc == 7 ? argv[6] : NULL;
+    static char first_cwd[PATH_MAX];
+    if (chdir_to) {
+        if (!getcwd(first_cwd, sizeof first_cwd)) {
+            fprintf(stderr, "fatal: getcwd: %s\n", strerror(errno));
+            return 1;
+        }
+        watched_label = "first-cwd";
+        watched_dir = first_cwd;
+    } else if (user_dir && user_dir[0] == '/') {
+        watched_label = "userdir";
+        watched_dir = user_dir;
+    }
     lib = dlopen(argv[2], RTLD_NOW | RTLD_LOCAL);
     if (!lib) {
         fprintf(stderr, "dlopen: %s\n", dlerror());
@@ -211,6 +360,15 @@ int main(int argc, char **argv) {
     if (!ctx)
         return 1;
 
+    if (chdir_to) {
+        if (chdir(chdir_to) != 0) {
+            fprintf(stderr, "fatal: chdir(%s): %s\n", chdir_to, strerror(errno));
+            return 1;
+        }
+        printf("chdir: done\n");
+        probe("chdir");
+    }
+
     adopt_environment();
     printf("save-unmodified: save %d\n", save(ctx));
     probe("save-unmodified");
@@ -221,17 +379,15 @@ int main(int argc, char **argv) {
         printf("train: alloc NULL\n");
         return 1;
     }
-    const char *trained = train_target(inst, zhuyin);
-    printf("train: %s\n", trained);
+    show_watched(inst, zhuyin);
+    /* Whether this train had to succeed depends on the form — a NULL user
+     * dir refuses it on the pin (pinyin.cpp:2671, zhuyin.cpp:1697) — so the
+     * runner, which knows the form, is the one that fails a run whose oracle
+     * never reached the dirty save. The driver carries on either way: a
+     * train the pin makes and the other side refuses is a divergence, and
+     * the steps after it are part of it. */
+    printf("train: %s\n", train_target(inst, zhuyin));
     probe("train");
-    /* The dirty-save step below only measures the pin's `mark_version` write
-     * (pinyin.cpp:1143, zhuyin.cpp:695) when the train set m_modified. Two
-     * matching "no-candidate" logs would otherwise pass without ever reaching
-     * it, so a train that did not succeed is a run failure, not a result. */
-    if (strcmp(trained, "ok") != 0) {
-        fprintf(stderr, "train did not set m_modified (%s); save-modified is not measured\n", trained);
-        return 1;
-    }
 
     adopt_environment();
     printf("save-modified: save %d\n", save(ctx));
