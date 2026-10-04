@@ -239,6 +239,101 @@ def _(k):
     return out
 
 
+def sentence_out(k, inst, index):
+    out = P(UNTOUCHED)
+    ret = k.fn('get_sentence', B, P, C.c_ubyte, C.POINTER(P))(inst, index, C.byref(out))
+    if out.value == UNTOUCHED:
+        return [ret, 'untouched']
+    return [ret, k.text(out.value)]
+
+
+# lane C, #542 rows 2, 6, 7, 20: out-params the pin leaves alone, or writes.
+@case('empty-parse-sentence')
+def _(k):
+    out = {}
+    for t in (b'', b'!'):
+        inst = k.alloc()
+        n = k.fn('parse_more_full_pinyins', Z, P, S)(inst, t)
+        guessed = k.fn('guess_sentence', B, P)(inst)
+        out[repr(t)] = [n, guessed, sentence_out(k, inst, 0)]
+    inst = k.alloc()
+    out['fresh'] = [k.fn('guess_sentence', B, P)(inst), sentence_out(k, inst, 0)]
+    return out
+
+
+@case('character-offset-out')
+def _(k):
+    fn = k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))
+    out = {}
+    full, double = 'parse_more_full_pinyins', 'parse_more_double_pinyins'
+    for label, parse, text, phrase, offset in (
+            ('recursion-fails-1', full, b'nihao', '啊', 3), ('recursion-fails-2', full, b'nihao', '你', 5),
+            ('recursion-fails-3', full, b'nihao', '好', 5), ('hit', full, b'nihao', '你好', 5),
+            ('no-token', full, b'nihao', 'x', 2), ('empty-phrase', full, b'nihao', '', 2),
+            ('no-parse', full, b'', '你好', 0), ('keyless', full, b"'", '你好', 0),
+            ('double-fails', double, b'nihk', '啊', 2), ('double-hit', double, b'nihk', '你好', 4)):
+        inst = k.alloc()
+        k.fn(parse, Z, P, S)(inst, text)
+        length = Z(UNTOUCHED)
+        ret = fn(inst, phrase.encode(), offset, C.byref(length))
+        out[label] = [ret, 'untouched' if length.value == UNTOUCHED else length.value]
+    return out
+
+
+@case('token-get-phrase-out')
+def _(k):
+    out = {}
+    for token in (0xFFFFFFFF, 0x0DEADBEE, 0x01000000):
+        length, text = U(UNTOUCHED), P(UNTOUCHED)
+        ret = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
+            k.inst, token, C.byref(length), C.byref(text))
+        out[hex(token)] = [ret, 'untouched' if length.value == UNTOUCHED else length.value,
+                           'untouched' if text.value == UNTOUCHED else k.text(text.value)]
+    return out
+
+
+class Arr(C.Structure):
+    _fields_ = [('data', P), ('len', U)]
+
+
+def tokens_of(k, phrase):
+    new = k.glib.g_array_new
+    new.restype, new.argtypes = P, [I, I, U]
+    arr = new(0, 0, 4)
+    k.fn('lookup_tokens', B, P, S, P)(k.inst, phrase.encode(), arr)
+    view = C.cast(arr, C.POINTER(Arr)).contents
+    return C.cast(view.data, C.POINTER(U))[:view.len]
+
+
+@case('nth-pronunciation-range')
+def _(k):
+    token = tokens_of(k, '你好')[0]
+    new = k.glib.g_array_new
+    new.restype, new.argtypes = P, [I, I, U]
+    count = U(UNTOUCHED)
+    k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(k.inst, token, C.byref(count))
+    out = {'n': count.value}
+    for nth in (0, count.value - 1, count.value, count.value + 1, 0xFFFFFFFF):
+        keys = new(0, 0, 2)
+        ret = k.fn('token_get_nth_pronunciation', B, P, U, U, P)(k.inst, token, nth, keys)
+        view = C.cast(keys, C.POINTER(Arr)).contents
+        content = C.string_at(view.data, view.len * 2).hex() if view.len else ''
+        in_range = nth < count.value
+        out['nth %d' % nth] = [ret, view.len] + ([content] if in_range else [])
+        # Past the last reading the pin returns whatever its stack held; the
+        # ruled answer is zeroed keys (class (b) for the content).
+        out['~content nth %d' % nth] = content
+    # An unknown token still empties the caller's array first.
+    append = k.glib.g_array_append_vals
+    append.restype, append.argtypes = P, [P, P, U]
+    keys = new(0, 0, 2)
+    seed = C.c_ushort(0x1234)
+    append(keys, C.byref(seed), 1)
+    ret = k.fn('token_get_nth_pronunciation', B, P, U, U, P)(k.inst, 0xFFFFFFFF, 0, keys)
+    out['unknown token'] = [ret, C.cast(keys, C.POINTER(Arr)).contents.len]
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):

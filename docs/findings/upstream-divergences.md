@@ -2317,3 +2317,22 @@ test:
   carries the same unchecked index (`src/pinyin.cpp:589`), but the
   audit recorded library 255 *accepted* there (D-12), so that side is
   not a stable crash and is not part of this entry.
+
+### `pinyin_token_get_nth_pronunciation` past the last reading (policy row 51)
+
+- **Upstream source cite:** `src/pinyin.cpp:2801-2819`
+  (`ChewingKey buffer[MAX_PHRASE_LENGTH]` at `:2808`, never initialised;
+  the return value of `item.get_nth_pronunciation(nth, buffer, freq)` at
+  `:2815` ignored; `g_array_append_vals(keys, buffer, len)` at `:2817`);
+  `src/storage/phrase_index.cpp:33-44` (`get_nth_pronunciation` refuses an
+  out-of-range read through `MemoryChunk::get_content` and writes nothing).
+- **Mechanism:** an `nth` past the last reading leaves `buffer` as it was,
+  and the function appends `phrase_length` keys of it and answers `true`:
+  an uninitialised read. What the stack held depends on earlier calls
+  (bdb, 2026-10-04: `0000 0000` for `nth` 1 and 2, `604f0000` for
+  `nth` 2^32−1).
+- **What oxpinyin does instead:** answers `true` and appends
+  `phrase_length` zeroed keys (`crates/oxpinyin-capi/src/dict.rs`,
+  `pinyin_token_get_nth_pronunciation`). The return value and the number of
+  keys are the pin's.
+- **Externally observable:** the content only. Class (b).

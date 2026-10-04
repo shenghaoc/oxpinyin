@@ -3,6 +3,8 @@
 use std::ffi::CString;
 use std::os::raw::c_char;
 
+use oxpinyin_core::Dictionary as _;
+
 use crate::ffi::{cstr_to_strict, cstr_to_string};
 use crate::state::{CapiCandidate, instance_mut, instance_ref};
 use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
@@ -144,12 +146,8 @@ pub extern "C" fn pinyin_get_sentence(
         return if let Some(decoded) = inst.core.session.sentence_text(index) {
             write_owned_sentence(decoded, sentence)
         } else {
-            if !sentence.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *sentence = std::ptr::null_mut();
-                }
-            }
+            // The pin returns without touching `*sentence`
+            // (`pinyin.cpp:1470-1471`; past the rows it asserts).
             false
         };
     }
@@ -170,6 +168,10 @@ pub extern "C" fn pinyin_get_sentence(
     } else {
         inst.core.session.preedit().text().to_owned()
     };
+    if text.is_empty() {
+        // Nothing to answer, and the pin leaves `*sentence` untouched.
+        return false;
+    }
     write_owned_sentence(&text, sentence)
 }
 
@@ -217,8 +219,22 @@ pub extern "C" fn pinyin_get_character_offset(
     let Some(text) = cstr_to_strict(phrase) else {
         return false;
     };
-    let Ok(Some(char_count)) = inst.core.character_offset(&text, offset) else {
-        return false;
+    let char_count = match inst.core.character_offset(&text, offset) {
+        Ok(Some(char_count)) => char_count,
+        Ok(None) => {
+            // The walk's own `false` still stores the length it reached
+            // (`*plength = length`, `pinyin.cpp:3238`); the earlier
+            // returns (no keys, empty phrase, a character without a
+            // token) leave it untouched.
+            if character_walk_ran(inst, &text) && !length.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *length = 0;
+                }
+            }
+            return false;
+        }
+        Err(_) => return false,
     };
     if !length.is_null() {
         // SAFETY: Null-checked above.
@@ -227,6 +243,27 @@ pub extern "C" fn pinyin_get_character_offset(
         }
     }
     true
+}
+
+/// Whether `pinyin_get_character_offset` got past its early `false`
+/// returns (`pinyin.cpp:3200-3228`): a non-empty matrix, a non-empty
+/// phrase and a dictionary token for every character. The engine answers
+/// all of them, and the walk's own failure, with `Ok(None)`.
+fn character_walk_ran(inst: &crate::state::CapiInstance, text: &str) -> bool {
+    let Ok((keys, input, _)) = inst.core.mode_keys() else {
+        return false;
+    };
+    if input.is_empty() || keys.is_empty() || text.is_empty() {
+        return false;
+    }
+    text.chars().all(|character| {
+        let mut buffer = [0_u8; 4];
+        !inst
+            .core
+            .dict
+            .tokens_for_text(character.encode_utf8(&mut buffer))
+            .is_empty()
+    })
 }
 
 /// Guess candidates at the given offset with sort option.
@@ -524,7 +561,9 @@ mod character_offset_tests {
             );
         }
         // A phrase whose characters do not pronounce the keys: no path.
-        assert_eq!(character_offset(instance, "好你", 2), (false, usize::MAX));
+        // The walk's own `false` stores the length it reached, 0
+        // (`*plength = length`, `pinyin.cpp:3238`).
+        assert_eq!(character_offset(instance, "好你", 2), (false, 0));
         // An empty phrase and a NULL phrase are the pin's `false`.
         assert_eq!(character_offset(instance, "", 0), (false, usize::MAX));
         let mut length = usize::MAX;
