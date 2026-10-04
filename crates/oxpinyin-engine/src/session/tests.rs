@@ -638,6 +638,49 @@ fn train_observes_each_recorded_token_after_its_prefix() {
 }
 
 #[test]
+fn train_nbest_observes_partial_selection_for_fallback_model() {
+    let mut session = train_session();
+    assert!(!session.model.has_real_unigrams());
+    type_and_select(&mut session, "ni", 1);
+    for character in "hao".chars() {
+        session
+            .process_key(&KeyInput::character(character))
+            .expect("typing cannot fail");
+    }
+    assert_eq!(session.selected_tokens(), [PhraseToken::new(1)]);
+    assert!(session.guess_sentence().expect("guess cannot fail"));
+    let row = session.sentence.rows.first().expect("decoded fallback row");
+    assert!(!row.tokens.is_empty());
+    assert!(row.spans.is_empty());
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    assert!(
+        session
+            .train_nbest(0, &mut recorder)
+            .expect("training cannot fail")
+    );
+    assert_eq!(recorder.observed, vec![(Vec::new(), PhraseToken::new(1))]);
+}
+
+#[test]
+fn train_nbest_without_results_does_not_observe_selection_history() {
+    let mut session = train_session();
+    type_and_select(&mut session, "ni", 1);
+    assert!(!session.selected_tokens().is_empty());
+    assert!(session.sentence.rows.is_empty());
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    assert!(
+        !session
+            .train_nbest(0, &mut recorder)
+            .expect("empty results are quiet")
+    );
+    assert!(recorder.observed.is_empty());
+}
+
+#[test]
 fn train_reports_a_failing_user_model() {
     struct Failing;
     impl UserModel for Failing {
