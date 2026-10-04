@@ -2,7 +2,7 @@
 //! `oxpinyin-capi/src/test_support.rs`.
 
 use std::ffi::CString;
-use std::os::raw::c_uint;
+use std::os::raw::{c_char, c_uint};
 use std::path::{Path, PathBuf};
 
 use crate::candidates::{zhuyin_get_candidate, zhuyin_get_n_candidate};
@@ -53,17 +53,22 @@ pub fn cstr(value: impl AsRef<str>) -> CString {
     CString::new(value.as_ref().as_bytes()).expect("no interior NUL")
 }
 
-/// Opens the fixture context with no user directory (the corpus
-/// driver's shape) and one instance on it.
+/// Opens the fixture context with no user directory — a NULL one, the
+/// corpus driver's shape; `""` would be the working directory — and one
+/// instance on it.
 pub fn open() -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
-    open_with_user("")
+    open_at(std::ptr::null())
 }
 
 /// Opens the fixture context with `user_dir` and one instance on it.
 pub fn open_with_user(user_dir: impl AsRef<Path>) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
-    let system = cstr(system_dir().to_str().expect("UTF-8 path"));
     let user = cstr(user_dir.as_ref().to_str().expect("UTF-8 path"));
-    let context = zhuyin_init(system.as_ptr(), user.as_ptr());
+    open_at(user.as_ptr())
+}
+
+fn open_at(user: *const c_char) -> (*mut ZhuyinContext, *mut ZhuyinInstance) {
+    let system = cstr(system_dir().to_str().expect("UTF-8 path"));
+    let context = zhuyin_init(system.as_ptr(), user);
     assert!(!context.is_null(), "the mini fixture must open");
     let instance = zhuyin_alloc_instance(context);
     assert!(!instance.is_null());

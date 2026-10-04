@@ -50,7 +50,7 @@ impl CapiContext {
     /// Berkeley DB) plus the optional user dir, seeded with
     /// `PINYIN_INCOMPLETE` (the pinyin facade's option word).
     /// Opens a context; the failure is kept for `pinyin_init`'s log line.
-    pub(crate) fn try_new(system_dir: &str, user_dir: &str) -> Result<Self, OpenFailure> {
+    pub(crate) fn try_new(system_dir: &str, user_dir: Option<&str>) -> Result<Self, OpenFailure> {
         // W8 fork-bootstrap wiring lives in the shared assembly: the
         // constructor opens the DBM handles and chunk mappings, installs λ
         // from table.conf when present, degrades an unusable user dir to

@@ -821,6 +821,24 @@ Semantics this reverts or preserves, on purpose:
   sequence, and the `abort-*` expectation channel asserts the pin's
   SIGABRT against the refusal.
 
+* **Amendment (2026-10-04, #619): an empty user dir is the working
+  directory, and only NULL is no user dir.** Task 9 opened the store on
+  a non-empty path only, and the two inits turned a NULL user dir into
+  `""` first, so both arguments meant "no user dir". Upstream keeps
+  `g_strdup(userdir)` (`pinyin.cpp:332`, `zhuyin.cpp:276`), tests only
+  the pointer (`pinyin.cpp:1133`, `:2671`; `zhuyin.cpp:548`, `:1697`)
+  and builds each path with `g_build_filename`, which drops an empty
+  element: a `""` user dir is a profile of bare file names, resolved
+  against the directory current at each file operation, so a consumer
+  that changes directory after init saves into the new one. A NULL user
+  dir still trains nothing and writes nothing. The two now stay apart
+  from `pinyin_init`/`zhuyin_init` down (`ContextCore::try_open` takes
+  `Option<&str>`), `Runtime::open` opens the store on an empty path and
+  keeps it relative, and the DBM sidecar cleanup unlinks its two names
+  by path instead of walking the directory, which an empty path cannot
+  open. The differential is `tools/bisection/run-locale-diff.sh`,
+  which now runs every form of the user-dir argument.
+
 Verification: unit goldens and round-trips at every layer (codecs,
 persistence, bridge, e2e); the backend matrix through the
 `oxpinyin-validate` container (Kyoto Cabinet and tkrzw suites, 282 and

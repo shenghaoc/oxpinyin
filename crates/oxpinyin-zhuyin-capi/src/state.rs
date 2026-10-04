@@ -39,7 +39,7 @@ impl CapiContext {
     /// optional user dir, health-checked, with `USE_TONE | FORCE_TONE` as
     /// the seeding option word.
     /// Opens a context; the failure is kept for `zhuyin_init`'s log line.
-    pub(crate) fn try_open(system_dir: &str, user_dir: &str) -> Result<Self, OpenFailure> {
+    pub(crate) fn try_open(system_dir: &str, user_dir: Option<&str>) -> Result<Self, OpenFailure> {
         Ok(Self {
             core: ContextCore::try_open(
                 system_dir,

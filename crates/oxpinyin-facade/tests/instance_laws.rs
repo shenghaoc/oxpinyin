@@ -33,7 +33,7 @@ fn open_context(option_word: u32) -> ContextCore {
         }
         if let Some(context) = ContextCore::open(
             dir.to_str().expect("UTF-8 path"),
-            "",
+            None,
             option_word,
             UserConfLaw::Pinyin,
         ) {

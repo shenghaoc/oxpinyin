@@ -1106,24 +1106,17 @@ const DBM_SIDECAR_SUFFIXES: [&str; 2] = ["-lock", "-shm"];
 
 /// Removes the sidecar files a DBM backend created beside `dbm_path`.
 /// Absence is not an error: most backends create no sidecar at all.
+///
+/// The allowlisted names are unlinked where they would be, not looked
+/// for: `dir` may be empty — the pin's `""` user dir, the working
+/// directory (#619) — and an empty path joins to the bare names, where
+/// a walk of it has nothing to open.
 fn remove_dbm_sidecars(dir: &Path, dbm_path: &Path) {
     let Some(file_name) = dbm_path.file_name().and_then(|s| s.to_str()) else {
         return;
     };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if DBM_SIDECAR_SUFFIXES
-            .iter()
-            .any(|suffix| name == format!("{file_name}{suffix}"))
-        {
-            let _ = std::fs::remove_file(entry.path());
-        }
+    for suffix in DBM_SIDECAR_SUFFIXES {
+        let _ = std::fs::remove_file(dir.join(format!("{file_name}{suffix}")));
     }
 }
 

@@ -379,13 +379,11 @@ fn training_through_the_abi_records_the_pinned_counts() {
 
 #[test]
 fn training_entry_points_refuse_without_a_user_store() {
-    let empty = cstr("");
+    // No user store is a NULL user dir. An empty string is a user dir —
+    // the working directory, as the pin's is (#619).
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
-    let context = oxpinyin_init_for_fixtures(system.as_ptr(), empty.as_ptr());
-    assert!(
-        !context.is_null(),
-        "an empty user dir is not an init failure"
-    );
+    let context = oxpinyin_init_for_fixtures(system.as_ptr(), ptr::null());
+    assert!(!context.is_null(), "a NULL user dir is not an init failure");
     let instance = pinyin_alloc_instance(context);
     assert!(!instance.is_null());
 

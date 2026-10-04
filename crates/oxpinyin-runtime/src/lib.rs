@@ -1274,7 +1274,9 @@ impl Runtime {
     /// When `user_dir` is given, the learning store opens too (its
     /// creation or read failure degrades to "no user state", matching the
     /// C ABI so a bad user dir cannot fail init), under libpinyin's
-    /// `user.conf` law ([`UserConfLaw::Pinyin`]).
+    /// `user.conf` law ([`UserConfLaw::Pinyin`]). An empty `user_dir` is
+    /// given, not absent: it is the working directory, as `pinyin_init`'s
+    /// `""` is, and stays relative for the life of the store.
     ///
     /// Nothing is read beyond the handles: the DBMs are opened, the chunk
     /// files mapped and checksummed, `table.conf` parsed for λ.
@@ -1323,14 +1325,21 @@ impl Runtime {
         // pinned default stands.
         lm.set_lambda_from_table_conf(&system_dir.join("table.conf"));
 
-        // An empty path means no user directory; otherwise an unusable
-        // directory must not fail init either — training then refuses,
-        // upstream-style. The store persists in libpinyin's own user-dir
-        // file set (drop-in task 9): the profile is read through
+        // `None` is no user directory — the pin's NULL `m_user_dir`. An
+        // empty path is a user directory like any other: the pin keeps
+        // `g_strdup("")` (`pinyin.cpp:332`, `zhuyin.cpp:276`) and
+        // `g_build_filename` drops the empty element, so its user files
+        // are bare names in the working directory (#619). `Path::join`
+        // on an empty path gives the same bare names, and the store
+        // keeps the path as given, so each file resolves against the
+        // directory current when it is opened, as the pin's does. An
+        // unusable directory must not fail init either — training then
+        // refuses, upstream-style. The store persists in libpinyin's own
+        // user-dir file set (drop-in task 9): the profile is read through
         // check_format, the session runs in memory, and `pinyin_save`
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
-        let user = match user_dir.filter(|dir| !dir.as_os_str().is_empty()) {
+        let user = match user_dir {
             None => None,
             Some(dir) => open_user_store(system_dir, dir, &dict, law)?,
         };
