@@ -6,4 +6,4 @@
 # Does not edit run-import-diff.sh or run-train-diff.sh.
 set -euo pipefail
 cd "$(dirname "$0")"
-exec ./run-w11-diff.sh predict-diff
+exec ./run-w11-diff.sh predict-diff "$@"

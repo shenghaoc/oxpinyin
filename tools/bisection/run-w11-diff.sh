@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run-w11-diff.sh — shared pin-gated runner for W11 unique differentials.
 #
-# Usage: run-w11-diff.sh <driver-stem> <extra-capi-system-dir-setup>
+# Usage: run-w11-diff.sh <driver-stem> [prebuilt-library]
 #   driver-stem is user-candidate-diff | addon-candidate-diff | predict-diff
 # Env: PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle)
 #      CAPI_W11_SYSTEM_DIR, or OXPINYIN_SYSTEM_DIR -- the oxpinyin system
@@ -14,50 +14,56 @@ set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
 STEM="${1:?driver stem}"
-shift || true
+OXPINYIN_CAPI_SO=${2:-${OXPINYIN_CAPI_SO:-}}
 # shellcheck source=oracle-cell.sh
 source ./oracle-cell.sh
-
-echo "--- building ${STEM} driver ---"
-gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$STEM" "${STEM}.c" -ldl
-echo "build: ok"
-
-echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" \
-    --no-default-features --features "$CAPI_FEATURE" 2>&1
-CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
-if [ ! -f "$CAPI_SO" ]; then
-    echo "fatal: $CAPI_SO not found"
-    exit 1
-fi
-
+case $STEM in
+    *[!a-z0-9-]*|'') echo "FAIL: invalid driver stem: $STEM" >&2; exit 1 ;;
+esac
 PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"
 ORACLE_SO="$PREFIX/lib/libpinyin.so"
 ORACLE_DATA="$PREFIX/lib/libpinyin/data"
 
 if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
-    exit 0
+    exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
     "$PREFIX/oracle-pin.txt"; then
-    echo "SKIP: oracle prefix at $PREFIX is off-pin"
-    exit 0
+    echo "FAIL: oracle prefix at $PREFIX is off-pin"
+    exit 1
 fi
 echo "oracle: $ORACLE_SO"
+
+
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+DRIVER=$WORK/$STEM
+
+echo "--- building ${STEM} driver ---"
+gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$DRIVER" "${STEM}.c" -ldl
+echo "build: ok"
+
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
+if [ ! -f "$CAPI_SO" ]; then
+    echo "fatal: $CAPI_SO not found"
+    exit 1
+fi
+
 
 # shellcheck source=tools/bisection/system-dir.sh
 . ./system-dir.sh
 CAPI_SYS="$(resolve_system_dir CAPI_W11_SYSTEM_DIR "w11-diff/${STEM}")"
-CAPI_LOG="$(mktemp)"
-ORACLE_LOG="$(mktemp)"
-if ! ./"$STEM" "$CAPI_SO" "$CAPI_SYS" > "$CAPI_LOG" 2> /dev/null; then
+CAPI_LOG="$WORK/capi.log"
+ORACLE_LOG="$WORK/oracle.log"
+if ! "$DRIVER" "$CAPI_SO" "$CAPI_SYS" > "$CAPI_LOG" 2> /dev/null; then
     echo "FAIL: $STEM crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     rm -f "$CAPI_LOG" "$ORACLE_LOG"
     exit 1
 fi
-if ! ./"$STEM" "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> /dev/null; then
+if ! "$DRIVER" "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> /dev/null; then
     echo "FAIL: $STEM crashed against the oracle"
     cat "$ORACLE_LOG"
     rm -f "$CAPI_LOG" "$ORACLE_LOG"

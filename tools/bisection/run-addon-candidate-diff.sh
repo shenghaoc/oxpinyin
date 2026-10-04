@@ -22,4 +22,4 @@ cp -a "$REPO_ROOT/fixtures/w3/$FIXTURE_EXT/." "$SYS/"
 printf '%s\n' '\data model interpolation' '\1-gram' '\item 1 ok count 1' \
     > "$SYS/interpolation2.text"
 export CAPI_W11_SYSTEM_DIR="$SYS"
-exec ./run-w11-diff.sh addon-candidate-diff
+./run-w11-diff.sh addon-candidate-diff "$@"
