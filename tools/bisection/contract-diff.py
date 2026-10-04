@@ -661,6 +661,75 @@ def _(k):
     return out
 
 
+# batch2 group 8: choose_predicted_candidate's return table (PR 8, #542, #540)
+def predicted_rows(k, inst, prefix, limit=12):
+    """The first rows of a predicted list: (type, text)."""
+    k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(inst, prefix.encode())
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    rows = []
+    for i in range(min(count.value, limit)):
+        cand, kind, text = P(), I(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        rows.append([kind.value, text.value.decode()])
+    return rows, count.value
+
+
+def choose_predicted_of(k, inst, want_kind, skip=0):
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    for i in range(count.value):
+        cand, kind = P(), I()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        if kind.value == want_kind:
+            if skip:
+                skip -= 1
+                continue
+            return k.fn('choose_predicted_candidate', B, P, P)(inst, cand)
+    return None
+
+
+@case('choose-predicted-types')
+def _(k):
+    # The return table: a punctuation row has no frequency and answers true,
+    # a prefix row answers true. (The prefix row's bigram is not compared:
+    # the pin trains its unigram only.)
+    out = {}
+    inst = k.inst
+    out['before'] = predicted_rows(k, inst, '我')
+    out['punctuation'] = choose_predicted_of(k, inst, 8)
+    out['punctuation again'] = choose_predicted_of(k, inst, 8)
+    out['prefix'] = choose_predicted_of(k, inst, 5)
+    return out
+
+
+def remember_negative(count):
+    def run(k):
+        inst = k.inst
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihaoshijie')
+        out = {'remember': k.fn('remember_user_input', B, P, S, I)(inst, '你好世界'.encode(), count)}
+        it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
+        has = k.fn('iterator_has_next_phrase', B, P)
+        nxt = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))
+        rows = []
+        while has(it):
+            ph, py, n = P(), P(), I()
+            nxt(it, C.byref(ph), C.byref(py), C.byref(n))
+            rows.append([k.text(ph.value), k.text(py.value), n.value])
+        out['rows'] = rows
+        return out
+    return run
+
+
+for _count in (-2, -5, -2147483648):
+    case('remember-count-%d' % -_count if _count > -100 else 'remember-count-min')(remember_negative(_count))
+case('remember-count-default', control=True)(remember_negative(-1))
+case('remember-count-seven', control=True)(remember_negative(7))
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):

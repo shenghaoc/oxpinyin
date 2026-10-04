@@ -15,7 +15,7 @@
 //! the predicted flat `+69`, remember-as-index-only, and
 //! `InvalidPhrase` → `false`.
 
-use oxpinyin_core::{LanguageModel, PhraseToken};
+use oxpinyin_core::{Dictionary as _, LanguageModel, PhraseToken};
 use std::ffi::c_uint;
 use std::ptr;
 
@@ -204,15 +204,11 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
         assert_eq!(phrase.pronunciations()[0].count(), 12);
     }
 
-    // Invalid inputs: empty phrase, a bad count, and a key-count mismatch
-    // (composition "n" is one key against the two-character phrase) all
-    // return false without touching the index.
+    // Invalid inputs: empty phrase and a key-count mismatch (composition
+    // "n" is one key against the two-character phrase) return false without
+    // touching the index. A count below -1 is not invalid: the pin uses the
+    // `gint` as the `guint32` it becomes (register row 57).
     assert!(!pinyin_remember_user_input(instance, cstr("").as_ptr(), -1));
-    assert!(!pinyin_remember_user_input(
-        instance,
-        cstr("你好").as_ptr(),
-        -2
-    ));
     assert_eq!(
         pinyin_parse_more_full_pinyins(instance, cstr("n").as_ptr()),
         1
@@ -325,6 +321,79 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
     crate::context::pinyin_fini(context);
 }
 
+/// The first snapshot row of `kind`, with its token.
+fn predicted_row(
+    instance: *mut PinyinInstance,
+    kind: lookup_candidate_type_t,
+) -> (*mut LookupCandidate, u32) {
+    // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+    let inst = unsafe { instance_ref(instance) };
+    let index = inst
+        .candidates
+        .iter()
+        .position(|c| c.candidate_type == kind && c.token.is_some())
+        .expect("the prediction holds a row of this kind");
+    let mut cand: *mut LookupCandidate = ptr::null_mut();
+    assert!(pinyin_get_candidate(
+        instance,
+        u32::try_from(index).expect("small candidate index"),
+        &raw mut cand
+    ));
+    (cand, token_of(instance, cand))
+}
+
+/// `_get_previous_token(instance, 0)` (`pinyin.cpp:1711-1740`): a predicted
+/// bigram is trained after the longest token of the prediction prefix, not
+/// after `sentence_start`.
+#[test]
+fn a_predicted_bigram_trains_from_the_prediction_prefix() {
+    use crate::predict::pinyin_guess_predicted_candidates;
+
+    let user_dir = TempUserDir::new("predicted-prefix");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let prefix = cstr("你");
+    let ni = {
+        // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
+        let inst = unsafe { instance_ref(instance) };
+        inst.core.dict.tokens_for_text("你")[0].value()
+    };
+
+    // A prefix row makes the next prediction hold a bigram row for it.
+    assert!(pinyin_guess_predicted_candidates(instance, prefix.as_ptr()));
+    let (prefix_row, word) = predicted_row(
+        instance,
+        lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
+    );
+    assert!(pinyin_choose_predicted_candidate(instance, prefix_row));
+
+    assert!(pinyin_guess_predicted_candidates(instance, prefix.as_ptr()));
+    let (bigram_row, bigram_word) = predicted_row(
+        instance,
+        lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
+    );
+    assert_eq!(bigram_word, word, "the bigram row is the trained word");
+    let before = store_of(instance).bigram_count(ni, word).unwrap();
+    let sentence_start_before = store_of(instance)
+        .bigram_count(SENTENCE_START, word)
+        .unwrap();
+    assert!(pinyin_choose_predicted_candidate(instance, bigram_row));
+    assert_eq!(
+        store_of(instance).bigram_count(ni, word).unwrap(),
+        before + 69,
+        "the predecessor is the prefix token"
+    );
+    assert_eq!(
+        store_of(instance)
+            .bigram_count(SENTENCE_START, word)
+            .unwrap(),
+        sentence_start_before,
+        "not sentence_start"
+    );
+
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 #[test]
 fn training_through_the_abi_records_the_pinned_counts() {
     let user_dir = TempUserDir::new("train");
@@ -358,19 +427,19 @@ fn training_through_the_abi_records_the_pinned_counts() {
         assert_eq!(store.unigram_delta(t4).unwrap(), 966);
     }
 
-    // After a selection in the same composition, the predicted predecessor
-    // is the last selected token.
+    // A selection in the same composition does not change the predecessor:
+    // the pin takes it from the prediction prefix, and no prefix was
+    // computed here (`_get_previous_token`, `pinyin.cpp:1711-1740`), so it
+    // stays `sentence_start`.
     let other = candidate(instance, "zhongguo", 1);
     let t5 = token_of(instance, other);
     assert!(pinyin_choose_candidate(instance, 0, other) > 0);
     assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    assert_eq!(store_of(instance).bigram_count(t5, t4).unwrap(), 69);
+    assert_eq!(store_of(instance).bigram_count(t5, t4).unwrap(), 0);
     assert_eq!(
         store_of(instance).bigram_count(SENTENCE_START, t4).unwrap(),
-        138
-    ); // unchanged
-    assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    assert_eq!(store_of(instance).bigram_count(t5, t4).unwrap(), 138);
+        207
+    );
 
     remember_user_input_indexes_without_training(instance);
 

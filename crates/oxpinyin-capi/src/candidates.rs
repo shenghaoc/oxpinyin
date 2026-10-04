@@ -538,8 +538,16 @@ fn try_promote_addon(inst: &mut CapiInstance, index: usize) -> Option<PhraseToke
 /// The §2.3 flat path: raises the candidate token's unigram by
 /// `69 * 7 = 483` and the user bigram `(last → token)` — and `last`'s total —
 /// by a flat `69`, never the reselection doubling of [`pinyin_train`]. `last`
-/// is the most recent selected token, or `sentence_start` when nothing was
-/// selected yet (upstream's `_get_previous_token` default).
+/// is the predecessor `_get_previous_token(instance, 0)` finds
+/// (`pinyin.cpp:1711-1740`): the longest token among the prefixes the last
+/// `pinyin_guess_predicted_candidates` or `pinyin_guess_sentence_with_prefix`
+/// computed, `sentence_start` when there are none.
+///
+/// The pin's return table (`pinyin.cpp:2591-2640`): a punctuation row has no
+/// frequency and answers `true` without training anything (`:2604-2605`); a
+/// unigram add that overflows its library's total answers `false` before the
+/// bigram (`:2609-2612`, [`UserStoreError::UnigramTotalOverflow`]); otherwise
+/// `true`.
 ///
 /// Returns `false` for a candidate the snapshot does not hold, a candidate
 /// without a token, an instance without a user store, or a store failure.
@@ -563,19 +571,50 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     else {
         return false;
     };
+    // "The punctuation candidate does not have the frequency."
+    if inst.candidates[index].candidate_type
+        == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
+    {
+        return true;
+    }
     let Some(token) = inst.candidates[index].token else {
         return false;
     };
+    let last = previous_token(inst);
     let Some(user) = inst.core.user.as_mut() else {
         return false;
     };
-    let last = inst
-        .core
-        .session
-        .selected_tokens()
-        .last()
-        .map_or(SENTENCE_START, |token| token.value());
     user.observe_predicted(last, token.value()).is_ok()
+}
+
+/// `_get_previous_token(instance, 0)` (`pinyin.cpp:1711-1740`): the longest
+/// phrase among the instance's prefixes, `sentence_start` when there is none.
+fn previous_token(inst: &CapiInstance) -> u32 {
+    let mut previous = SENTENCE_START;
+    let Some(store) = inst.core.user.as_ref() else {
+        return previous;
+    };
+    let mut longest = 0;
+    for &token in &inst.prefixes {
+        if token == SENTENCE_START {
+            continue;
+        }
+        // `get_phrase_item` answers `ERROR_NO_SUB_PHRASE_INDEX` for an
+        // unloaded library and the pin's loop skips the token
+        // (`pinyin.cpp:1722-1730`).
+        if !inst.core.dict.library_visible_token(token) {
+            continue;
+        }
+        let Some(text) = crate::predict::phrase_text(&inst.core.dict, store, token) else {
+            continue;
+        };
+        let length = text.chars().count();
+        if length > longest {
+            previous = token;
+            longest = length;
+        }
+    }
+    previous
 }
 
 /// Train the current sentence with the given n-best index.
@@ -604,5 +643,56 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
             false
         }
         Err(_) => false,
+    }
+}
+
+#[cfg(test)]
+mod previous_token_tests {
+    use super::previous_token;
+    use crate::config::{pinyin_load_phrase_library, pinyin_unload_phrase_library};
+    use crate::parse::pinyin_parse_more_full_pinyins;
+    use crate::sentence::pinyin_guess_candidates;
+    use crate::state::{instance_mut, instance_ref};
+    use crate::test_support::{DEFAULT_SORT, TempUserDir, cstr, open};
+
+    /// `_get_previous_token(instance, 0)` skips a prefix token whose library
+    /// is unloaded (`get_phrase_item` fails, `pinyin.cpp:1722-1730`) and falls
+    /// back to `sentence_start`. The pin cannot show it: only a predicted
+    /// bigram row reads the predecessor there and the harness never gets
+    /// one, so this is a unit test.
+    #[test]
+    fn an_unloaded_library_prefix_is_not_the_predecessor() {
+        let user_dir = TempUserDir::new("prev-token-unloaded");
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert_eq!(
+            pinyin_parse_more_full_pinyins(instance, cstr("ni").as_ptr()),
+            2
+        );
+        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        // SAFETY: live instance immediately after the guess.
+        let gbk = unsafe { instance_ref(instance) }
+            .candidates
+            .iter()
+            .filter_map(|c| c.token.map(oxpinyin_core::PhraseToken::value))
+            .find(|token| token >> 24 == 2)
+            .expect("the fixture carries a GBK candidate under ni");
+
+        // SAFETY: as above.
+        unsafe { instance_mut(instance) }.prefixes = vec![gbk];
+        assert_eq!(previous(instance), gbk);
+
+        assert!(pinyin_unload_phrase_library(context, 2));
+        assert_eq!(previous(instance), oxpinyin_user::SENTENCE_START);
+
+        assert!(pinyin_load_phrase_library(context, 2));
+        assert_eq!(previous(instance), gbk);
+
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+
+    fn previous(instance: *mut crate::types::PinyinInstance) -> u32 {
+        // SAFETY: a live `pinyin_alloc_instance` handle of the caller.
+        previous_token(unsafe { instance_ref(instance) })
     }
 }

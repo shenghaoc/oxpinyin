@@ -31,6 +31,9 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // `m_prefixes` becomes `[sentence_start]` before the lookup runs
+    // (`pinyin.cpp:1376-1377`).
+    inst.prefixes.clear();
     if !matrix_has_keys(inst) {
         return false;
     }
@@ -84,11 +87,12 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
         return false;
     }
     let prefix = cstr_to_strict(prefix).unwrap_or_default();
+    let prefixes =
+        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
+    inst.prefixes.clone_from(&prefixes);
     if !matrix_has_keys(inst) {
         return false;
     }
-    let prefixes =
-        oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
     let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
         .iter()
         .map(|&token| oxpinyin_core::PhraseToken::new(token))

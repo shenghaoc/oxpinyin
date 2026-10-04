@@ -68,6 +68,7 @@ impl CapiContext {
     pub(crate) fn alloc_instance(&self, context: *mut PinyinContext) -> Option<CapiInstance> {
         Some(CapiInstance {
             context,
+            prefixes: Vec::new(),
             candidates: Vec::new(),
             core: self.core.alloc_instance()?,
         })
@@ -203,6 +204,13 @@ pub struct CapiInstance {
     /// word, parse-mode state machine, re-anchored window — shared with
     /// the zhuyin facade.
     pub(crate) core: InstanceCore,
+    /// The pin's `instance->m_prefixes` minus its `sentence_start` entry:
+    /// the tokens `pinyin_guess_predicted_candidates` and
+    /// `pinyin_guess_sentence_with_prefix` computed from their prefix text,
+    /// empty after `pinyin_guess_sentence` and `pinyin_reset`. The
+    /// predecessor of `pinyin_choose_predicted_candidate`'s bigram is the
+    /// longest of them (`_get_previous_token`, `pinyin.cpp:1711-1740`).
+    pub(crate) prefixes: Vec<u32>,
     /// Snapshotted candidates, rebuilt by `pinyin_guess_candidates`.
     /// `lookup_candidate_t *` pointers borrow into this vec.
     pub(crate) candidates: Vec<CapiCandidate>,
