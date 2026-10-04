@@ -2239,6 +2239,10 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
     `storage/pinyin_parser2.cpp:170`; `pinyin.cpp:3311` (group B), reached
     by a leading `'` (`'nihao`, `''ni`): column 0 stays empty and all three
     aux-text functions assert on every cursor (review of #652).
+  - PR 12c: `pinyin.cpp:2507`, `:2593`, `:2883`, `:3734`, `:3738`
+    (`pinyin_choose_candidate`, `pinyin_choose_predicted_candidate`,
+    `pinyin_get_candidate_nbest_index`, `pinyin_remove_user_candidate`;
+    policy row 64).
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|

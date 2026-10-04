@@ -409,37 +409,48 @@ fn training_through_the_abi_records_the_pinned_counts() {
     assert!(pinyin_reset(instance));
 
     // ── pinyin_choose_predicted_candidate: flat +69, no doubling ──
-    let predicted = candidate(instance, "zhongguo", 0);
-    let t4 = token_of(instance, predicted);
-    // Nothing selected in this composition yet: predecessor is
-    // sentence_start (upstream's _get_previous_token default).
+    // The pin asserts a predicted row (`pinyin.cpp:2593`), so the row comes
+    // from a prediction; its predecessor is the longest token of that
+    // prediction's prefix (`_get_previous_token`, `pinyin.cpp:1711-1740`).
+    let prefix = cstr("你");
+    assert!(crate::predict::pinyin_guess_predicted_candidates(
+        instance,
+        prefix.as_ptr()
+    ));
+    let (predicted, t4) = predicted_row(
+        instance,
+        lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
+    );
     assert!(pinyin_choose_predicted_candidate(instance, predicted));
     {
         let store = store_of(instance);
-        assert_eq!(store.bigram_count(SENTENCE_START, t4).unwrap(), 69);
         assert_eq!(store.unigram_delta(t4).unwrap(), 483);
     }
-    // Flat again — 138, not the training path's 414.
+    // Flat again — the unigram doubles nothing and the count stays linear.
     assert!(pinyin_choose_predicted_candidate(instance, predicted));
     {
         let store = store_of(instance);
-        assert_eq!(store.bigram_count(SENTENCE_START, t4).unwrap(), 138);
         assert_eq!(store.unigram_delta(t4).unwrap(), 966);
     }
-
     // A selection in the same composition does not change the predecessor:
-    // the pin takes it from the prediction prefix, and no prefix was
-    // computed here (`_get_previous_token`, `pinyin.cpp:1711-1740`), so it
-    // stays `sentence_start`.
+    // the pin takes it from the prediction prefix.
     let other = candidate(instance, "zhongguo", 1);
     let t5 = token_of(instance, other);
     assert!(pinyin_choose_candidate(instance, 0, other) > 0);
-    assert!(pinyin_choose_predicted_candidate(instance, predicted));
-    assert_eq!(store_of(instance).bigram_count(t5, t4).unwrap(), 0);
-    assert_eq!(
-        store_of(instance).bigram_count(SENTENCE_START, t4).unwrap(),
-        207
+    assert!(crate::predict::pinyin_guess_predicted_candidates(
+        instance,
+        prefix.as_ptr()
+    ));
+    let (predicted, chosen) = predicted_row(
+        instance,
+        lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
     );
+    let before = store_of(instance).bigram_count(t5, chosen).unwrap();
+    assert!(pinyin_choose_predicted_candidate(instance, predicted));
+    assert_eq!(store_of(instance).bigram_count(t5, chosen).unwrap(), before);
+    // The bigram under the prefix token is not asserted: a prefix row trains
+    // the unigram only at the pin (`pinyin.cpp:2615-2616`), and the bigram
+    // this port writes for it is the recorded divergence of row 58.
 
     remember_user_input_indexes_without_training(instance);
 

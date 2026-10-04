@@ -154,9 +154,10 @@ pub extern "C" fn pinyin_get_candidate_string(
 ///                                       guint8 * index);
 /// ```
 ///
-/// W14: the stored tail rank of an `NBEST_MATCH_CANDIDATE` row (upstream
-/// asserts the type and returns `m_nbest_index`, `pinyin.cpp:2878-2884`);
-/// `0` for every non-row candidate.
+/// W14: the stored tail rank of an `NBEST_MATCH_CANDIDATE` row
+/// (`m_nbest_index`, `pinyin.cpp:2878-2884`). Any other row type is the
+/// pin's `assert`, answered `false` with the out-param untouched and one
+/// warning — class (c).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_candidate_nbest_index(
     instance: *mut PinyinInstance,
@@ -170,6 +171,14 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
     // SAFETY: `candidate` is non-null and was produced by
     // `pinyin_get_candidate`.
     let cand = unsafe { candidate_ref(candidate) };
+    // Class (c), `pinyin.cpp:2883`: `assert(NBEST_MATCH_CANDIDATE == type)`.
+    // The pin dies before it writes `*index`.
+    if cand.candidate_type != lookup_candidate_type_t::NBEST_MATCH_CANDIDATE {
+        crate::ffi::log_warning(
+            "pinyin_get_candidate_nbest_index: assertion 'NBEST_MATCH_CANDIDATE == type' failed",
+        );
+        return false;
+    }
     if !index.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
@@ -243,10 +252,21 @@ pub extern "C" fn pinyin_remove_user_candidate(
     else {
         return false;
     };
+    // Class (c): `assert(NORMAL_CANDIDATE == type)` (`pinyin.cpp:3734`) and
+    // `assert(USER_DICTIONARY == index)` (`:3738`).
+    if inst.candidates[index].candidate_type != lookup_candidate_type_t::NORMAL_CANDIDATE {
+        crate::ffi::log_warning(
+            "pinyin_remove_user_candidate: assertion 'NORMAL_CANDIDATE == type' failed",
+        );
+        return false;
+    }
     let Some(token) = inst.candidates[index].token else {
         return false;
     };
     if !is_user_token(token.value()) {
+        crate::ffi::log_warning(
+            "pinyin_remove_user_candidate: assertion 'USER_DICTIONARY == index' failed",
+        );
         return false;
     }
     let Some(user) = inst.core.user.as_mut() else {
@@ -328,6 +348,19 @@ pub extern "C" fn pinyin_choose_candidate(
     else {
         return -1;
     };
+    // Class (c), `pinyin.cpp:2507`: the pin asserts the row is not a
+    // predicted bigram or prefix row (those go to
+    // `pinyin_choose_predicted_candidate`).
+    if matches!(
+        inst.candidates[index].candidate_type,
+        lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
+            | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
+    ) {
+        crate::ffi::log_warning(
+            "pinyin_choose_candidate: assertion 'PREDICTED_BIGRAM_CANDIDATE != type' failed",
+        );
+        return 0;
+    }
     // `index` is the candidate's position in the SNAPSHOT, which
     // `try_promote_addon` reads (it indexes `inst.candidates`); the
     // snapshot may omit entries (the engine's `Fallback` row, a
@@ -571,6 +604,19 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     else {
         return false;
     };
+    // Class (c), `pinyin.cpp:2593`: only the three predicted row types are
+    // chosen here.
+    if !matches!(
+        inst.candidates[index].candidate_type,
+        lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
+            | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
+            | lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
+    ) {
+        crate::ffi::log_warning(
+            "pinyin_choose_predicted_candidate: assertion on the candidate type failed",
+        );
+        return false;
+    }
     // "The punctuation candidate does not have the frequency."
     if inst.candidates[index].candidate_type
         == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
