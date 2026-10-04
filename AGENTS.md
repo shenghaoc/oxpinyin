@@ -188,6 +188,41 @@ example: the capi-commands fuzz leak fix, first put on #512, belonged
 on #502, which made BDB the default and turned the harness defect into
 a failing job).
 
+## Verification cells
+
+Maintainer ruling 2026-10-04 UTC. A cell is one DBM backend on both sides
+(`tools/bisection/oracle-cell.sh`). These rules decide which cells a
+change runs on; they replace any lane prompt that says "all three cells
+always".
+
+1. The reference cell is Berkeley DB (`PINYIN_ORACLE_DBM=bdb`, the
+   default). Baseline, differential, revert-and-check and the gate run
+   there and nowhere else by default.
+2. Run all three cells (bdb, kc, tkrzw) only when the diff touches
+   backend code. Decide by path check, not by judgement — either of:
+   - `git diff --name-only origin/main...HEAD` lists a file under
+     `crates/oxpinyin-store/`;
+   - a changed file contains `feature = "bdb"`, `feature = "tkrzw"` or
+     `feature = "kyotocabinet"`
+     (`git diff --name-only origin/main...HEAD | xargs grep -lE
+     'feature *= *"(bdb|tkrzw|kyotocabinet)"'`).
+   State the check's output in the PR body. A result you believe is
+   backend-dependent but that fails the check is a finding to report,
+   not a licence to run three cells.
+3. Every differential runs on all three cells once at the start of each
+   sweep and once before a release. That run, not the per-change gate,
+   is what covers kc and tkrzw.
+4. Revert-and-check runs on the reference cell only.
+5. The local test gate is `cargo test -p <crate>` for each crate the
+   diff touches, plus fmt and clippy on those crates. The workspace
+   sweep is CI's job; do not run it locally as a gate.
+6. No new bespoke driver plus runner per issue where an existing driver
+   can take a case file. Add cases to the existing driver; a new driver
+   needs a line in the PR body saying why none could.
+7. Differentials build debug, never release. Keep one target directory
+   per cell and reuse it; do not delete target directories between
+   issues. Clean once, at the end of the lane.
+
 ## Operational rules that live with their procedures
 
 The procedure-level rules used to accumulate here as incident notes;
