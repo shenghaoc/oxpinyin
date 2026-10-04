@@ -24,6 +24,60 @@ fn w3_dir() -> PathBuf {
 }
 
 #[test]
+fn trellis_records_filter_user_tones_and_refresh_after_import() {
+    let dir = std::env::temp_dir().join(format!("oxpinyin-trellis-records-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("user dir");
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
+    let dict = runtime.dict();
+    let syllables = [
+        SyllableKey::from_text("ni").unwrap(),
+        SyllableKey::from_text("hao").unwrap(),
+    ];
+    assert!(
+        !dict
+            .trellis_records(&syllables, &[3, 3])
+            .unwrap()
+            .iter()
+            .any(|entry| entry.text() == "你鎄")
+    );
+    let keys: Vec<_> = syllables
+        .iter()
+        .map(|key| oxpinyin_user::toned_key(key.index(), 3).unwrap())
+        .collect();
+    let token = runtime
+        .user_store()
+        .unwrap()
+        .add_phrase("你鎄", &keys, Some(5))
+        .unwrap();
+    let records = dict.trellis_records(&syllables, &[3, 3]).unwrap();
+    assert_eq!(
+        records
+            .iter()
+            .filter(|entry| entry.token().value() == token)
+            .count(),
+        1
+    );
+    assert!(
+        dict.trellis_records(&syllables, &[1, 3])
+            .unwrap()
+            .iter()
+            .all(|entry| entry.token().value() != token)
+    );
+    assert_eq!(
+        dict.lookup(&syllables)
+            .unwrap()
+            .iter()
+            .filter(|entry| entry.token().value() == token)
+            .count(),
+        1
+    );
+    drop(runtime);
+    drop(dict);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+#[test]
 fn sends_and_syncs() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<RuntimeSession>();

@@ -26,6 +26,9 @@ pub(super) struct InputBuffer {
     /// The raw characters typed so far, never longer than
     /// [`MAX_INPUT_BYTES`].
     raw: String,
+    /// Whether apostrophes came from canonical formatting rather than typing.
+    /// Used only by trellis generation, never by the ordinary scan or graph.
+    formatting_separators: bool,
     /// Pre-parsed exact syllables over `raw` — the scheme-parse seam
     /// (zhuyin, double pinyin). Empty is the full-pinyin mode, where the
     /// scan parses `raw` itself; non-empty pins the graph to exactly
@@ -76,6 +79,7 @@ impl InputBuffer {
             return false;
         }
         self.exact.clear();
+        self.formatting_separators = false;
         self.raw.push(character);
         true
     }
@@ -84,6 +88,7 @@ impl InputBuffer {
     /// which shrinks the buffer under a live composition.
     pub(super) fn pop(&mut self) {
         self.exact.clear();
+        self.formatting_separators = false;
         self.raw.pop();
     }
 
@@ -92,12 +97,19 @@ impl InputBuffer {
     pub(super) fn clear(&mut self) {
         self.raw.clear();
         self.exact.clear();
+        self.formatting_separators = false;
     }
 
     /// Exits exact mode without touching `raw` — the plain replace seam,
     /// which clears the chain before refilling.
     pub(super) fn clear_exact(&mut self) {
         self.exact.clear();
+        self.formatting_separators = false;
+    }
+
+    /// Stores separator provenance for the private trellis generation view.
+    pub(super) fn set_physical_separators(&mut self, physical: bool) {
+        self.formatting_separators = !physical;
     }
 
     /// Replaces `raw` with `text` clamped to [`MAX_INPUT_BYTES`], keeping
@@ -119,6 +131,7 @@ impl InputBuffer {
     /// the (already clamped) buffer end so `end() <= raw.len()` stays an
     /// invariant of the stored segments.
     pub(super) fn set_exact(&mut self, segments: &[ExactSegment]) {
+        self.formatting_separators = false;
         let raw_len = self.raw.len();
         self.exact = segments
             .iter()

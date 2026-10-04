@@ -405,6 +405,29 @@ impl Dictionary for SystemDictionary {
         Ok(entries)
     }
 
+    fn trellis_records(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+    ) -> Result<Vec<PhraseEntry>, DictError> {
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(Vec::new());
+        };
+        let query: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| key.with_tone(tones.get(index).copied().unwrap_or(0)))
+            .collect();
+        let mut items = self.pinyin.search(&query)?;
+        // 074a2219 chewing_large_table2.h::_append_items files ranges
+        // into per-library arrays, preserving their index-record order.
+        items.sort_by_key(|item| item.token >> 24);
+        let mut entries = Vec::with_capacity(items.len());
+        // Preserve the ordinary lookup's pronunciation-pricing query.
+        resolve_items(&self.libraries, &keys, &items, &mut entries);
+        Ok(entries)
+    }
+
     fn lookup_into(
         &self,
         syllables: &[SyllableKey],

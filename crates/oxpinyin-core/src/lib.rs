@@ -111,6 +111,24 @@ pub trait Dictionary {
     /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error>;
 
+    /// Returns every matching pronunciation index record in library, range,
+    /// and item order, retaining repeated tokens for the sentence trellis.
+    /// `tones` supplies the query tones; missing tones are zero.
+    /// Ordinary lookup consumers continue to use [`Self::lookup`].
+    ///
+    /// The default preserves existing dictionary implementations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
+    fn trellis_records(
+        &self,
+        syllables: &[Self::Syllable],
+        _tones: &[u8],
+    ) -> Result<Vec<Self::Entry>, Self::Error> {
+        self.lookup(syllables)
+    }
+
     /// [`Self::lookup`] into a caller-owned buffer, which keeps capacity
     /// across keystrokes on the window-scan path.
     ///
@@ -321,6 +339,14 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         (**self).lookup(syllables)
+    }
+
+    fn trellis_records(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+    ) -> Result<Vec<Self::Entry>, Self::Error> {
+        (**self).trellis_records(syllables, tones)
     }
 
     fn lookup_into(

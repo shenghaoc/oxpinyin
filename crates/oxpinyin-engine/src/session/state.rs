@@ -223,9 +223,31 @@ where
     /// Returns [`EngineError`] when the refresh under the new input hits
     /// a backend failure.
     pub fn replace_raw(&mut self, text: &str) -> Result<(), EngineError> {
+        self.replace_raw_with_physical_separators(text, true)
+    }
+
+    /// Replaces raw input while identifying whether its separators are physical.
+    ///
+    /// This exists for the facade's canonical re-parse path: pass `false`
+    /// when apostrophes were inserted to format canonical syllables. The
+    /// bit is read only by trellis generation; ordinary lookup, matrix
+    /// construction and the exact graph retain their existing behavior.
+    /// This method is expected to be removed when the full-pinyin parser
+    /// intake (#585/#626) lands.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when refreshing the replaced input hits a
+    /// backend failure.
+    pub fn replace_raw_with_physical_separators(
+        &mut self,
+        text: &str,
+        physical_separators: bool,
+    ) -> Result<(), EngineError> {
         self.input.clear_exact();
         let continuous = self.replacement_extends_selection(text);
         self.refill_raw(text);
+        self.input.set_physical_separators(physical_separators);
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
