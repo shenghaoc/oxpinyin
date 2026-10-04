@@ -185,7 +185,12 @@ impl InstanceCore {
             let use_tone = self.options().contains(USE_TONE);
             let parsed = parse_full_pinyin_index(text.as_bytes(), use_tone, index);
             let full = parsed.full_pinyin();
-            if !full.is_empty() && self.session.replace_raw(&full).is_err() {
+            if !full.is_empty()
+                && self
+                    .session
+                    .replace_raw_with_physical_separators(&full, false)
+                    .is_err()
+            {
                 return 0;
             }
             self.parsed_len = parsed.consumed();

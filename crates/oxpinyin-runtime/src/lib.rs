@@ -270,6 +270,12 @@ pub struct TokenIntrospection {
 /// The generation-stamped user-phrase lookup cache shared by clones.
 type LookupCache = Arc<Mutex<Option<(u64, Arc<UserLookup>)>>>;
 
+// Only the trellis consumes this unreduced index. Ordinary UserLookup stays
+// unchanged. The initial projection bounds partial and complete queries alike.
+type TrellisBucket = Vec<(Vec<oxpinyin_core::ChewingKey>, PhraseEntry)>;
+type TrellisIndex = HashMap<Vec<u8>, TrellisBucket>;
+type TrellisCache = Arc<Mutex<Option<(u64, Arc<TrellisIndex>)>>>;
+
 #[derive(Default)]
 struct UnigramOverlay {
     tokens: HashMap<u32, u64>,
@@ -285,6 +291,7 @@ pub struct RuntimeDict {
     system: Arc<SystemDictionary>,
     user: Option<UserStore>,
     user_lookup_cache: LookupCache,
+    trellis_cache: TrellisCache,
     addons: Arc<RwLock<AddonSet>>,
     punct: Arc<PunctTable>,
     /// The `add_unigram_frequency` overlay: in-memory per-token deltas
@@ -334,6 +341,68 @@ impl RuntimeDict {
             || Arc::new(UserLookup::empty()),
             |(_, lookup)| Arc::clone(lookup),
         ))
+    }
+
+    fn user_trellis_index(&self) -> Result<Arc<TrellisIndex>, DictError> {
+        let Some(store) = self.user.as_ref() else {
+            return Ok(Arc::new(HashMap::new()));
+        };
+        let mut cache = self
+            .trellis_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let generation = store.phrase_generation();
+        if let Some((seen, index)) = cache.as_ref()
+            && *seen == generation
+        {
+            return Ok(Arc::clone(index));
+        }
+        let mut index: TrellisIndex = HashMap::new();
+        for phrase in store
+            .phrases()
+            .map_err(|error| DictError::Parse(error.to_string()))?
+        {
+            for pronunciation in phrase
+                .pronunciations()
+                .iter()
+                .filter(|reading| reading.indexed())
+            {
+                let Some(pinyin) = pronunciation.render_pinyin_toneless() else {
+                    continue;
+                };
+                let Some(keys) = pinyin
+                    .split('\'')
+                    .zip(pronunciation.keys())
+                    .map(|(text, key)| {
+                        oxpinyin_core::ChewingKey::from_pinyin(text)
+                            .map(|key_| key_.with_tone(oxpinyin_user::key_tone(*key)))
+                    })
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    continue;
+                };
+                let initial = keys.iter().map(|key| key.initial).collect();
+                let entry =
+                    PhraseEntry::new(PhraseToken::new(phrase.token()), phrase.text().to_owned());
+                index.entry(initial).or_default().push((keys, entry));
+            }
+        }
+        for bucket in index.values_mut() {
+            bucket.sort_by_cached_key(|(keys, entry)| {
+                (
+                    entry.token().value() >> 24,
+                    keys.iter().map(|key| key.initial).collect::<Vec<_>>(),
+                    keys.iter()
+                        .map(|key| (key.middle, key.final_))
+                        .collect::<Vec<_>>(),
+                    keys.iter().map(|key| key.tone).collect::<Vec<_>>(),
+                    entry.token().value(),
+                )
+            });
+        }
+        let index = Arc::new(index);
+        *cache = Some((generation, Arc::clone(&index)));
+        Ok(index)
     }
 
     /// The underlying system table set, without the user overlay.
@@ -705,6 +774,63 @@ impl Dictionary for RuntimeDict {
         let mut entries = Vec::new();
         self.lookup_into(syllables, &mut entries)?;
         Ok(entries)
+    }
+
+    fn trellis_records(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+    ) -> Result<Vec<Self::Entry>, Self::Error> {
+        let Some(query) = syllables
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                oxpinyin_core::ChewingKey::from_pinyin(key.text())
+                    .map(|key| key.with_tone(tones.get(index).copied().unwrap_or(0)))
+            })
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Ok(Vec::new());
+        };
+        let mut records = self.system.trellis_records(syllables, tones)?;
+        let initial: Vec<_> = query.iter().map(|key| key.initial).collect();
+        if let Some(bucket) = self.user_trellis_index()?.get(&initial) {
+            records.extend(
+                bucket
+                    .iter()
+                    .filter(|(keys, _)| {
+                        query.len() == keys.len()
+                            && query.iter().zip(keys).all(|(query, stored)| {
+                                query.initial == stored.initial
+                                    && ((query.middle == stored.middle
+                                        && query.final_ == stored.final_)
+                                        || (query.middle == 0 && query.final_ == 0)
+                                        || (stored.middle == 0 && stored.final_ == 0))
+                                    && (query.tone == stored.tone
+                                        || query.tone == 0
+                                        || stored.tone == 0)
+                            })
+                    })
+                    .map(|(_, entry)| entry.clone()),
+            );
+        }
+        // Pricing and visibility remain the ordinary runtime's laws. Only
+        // record multiplicity/order is different on this additional path.
+        let priced: HashMap<_, _> = self
+            .lookup(syllables)?
+            .into_iter()
+            .map(|entry| (entry.token().value(), entry))
+            .collect();
+        records.retain_mut(|entry| {
+            if let Some(priced) = priced.get(&entry.token().value()) {
+                *entry = priced.clone();
+                true
+            } else {
+                false
+            }
+        });
+        records.sort_by_key(|entry| entry.token().value() >> 24);
+        Ok(records)
     }
 
     fn lookup_into(
@@ -1218,6 +1344,7 @@ impl Runtime {
             system: Arc::new(dict),
             user: user.clone(),
             user_lookup_cache: LookupCache::default(),
+            trellis_cache: TrellisCache::default(),
             addons: Arc::clone(&addons),
             punct: Arc::new(punct),
             unigram_overlay: Arc::new(Mutex::new(UnigramOverlay::default())),

@@ -551,6 +551,7 @@ pub fn oxpinyin_engine::Session<D, L>::preedit(&self) -> oxpinyin_engine::Preedi
 pub fn oxpinyin_engine::Session<D, L>::raw_input(&self) -> &str
 pub fn oxpinyin_engine::Session<D, L>::replace_raw(&mut self, &str) -> core::result::Result<(), oxpinyin_engine::EngineError>
 pub fn oxpinyin_engine::Session<D, L>::replace_raw_exact(&mut self, &str, &[oxpinyin_core::graph::ExactSegment]) -> core::result::Result<(), oxpinyin_engine::EngineError>
+pub fn oxpinyin_engine::Session<D, L>::replace_raw_with_physical_separators(&mut self, &str, bool) -> core::result::Result<(), oxpinyin_engine::EngineError>
 pub fn oxpinyin_engine::Session<D, L>::reset(&mut self)
 pub fn oxpinyin_engine::Session<D, L>::reset_composition(&mut self)
 pub const fn oxpinyin_engine::Session<D, L>::scoring_config(&self) -> &oxpinyin_core::scoring::ScoringConfig
