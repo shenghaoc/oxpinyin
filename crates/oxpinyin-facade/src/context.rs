@@ -169,17 +169,21 @@ impl ContextCore {
     /// `user.conf` lifecycle (per-facade: [`UserConfLaw::Pinyin`] /
     /// [`UserConfLaw::Zhuyin`]).
     ///
+    /// Both directories are paths, not text: the pin keeps `g_strdup` of the
+    /// caller's bytes (`pinyin.cpp:332`, `zhuyin.cpp:276`) and opens them
+    /// as they are, so a directory whose name is not UTF-8 opens too.
+    ///
     /// `user_dir` is the init's own argument: `None` is a NULL user dir —
     /// no user store — while `Some("")` is a user dir, the working
-    /// directory, as upstream's `g_strdup("")` is (`pinyin.cpp:332`,
-    /// `zhuyin.cpp:276`; #619). The two are different inputs.
+    /// directory, as upstream's `g_strdup("")` is (#619). The two are
+    /// different inputs.
     ///
     /// `None` is the C init's NULL: an empty system dir or a runtime
     /// that cannot open. [`Self::try_open`] says which.
     #[must_use]
     pub fn open(
-        system_dir: &str,
-        user_dir: Option<&str>,
+        system_dir: &Path,
+        user_dir: Option<&Path>,
         option_word: u32,
         law: UserConfLaw,
     ) -> Option<Self> {
@@ -195,16 +199,16 @@ impl ContextCore {
     /// [`OpenFailure::EmptySystemDir`] for an empty `system_dir`;
     /// [`OpenFailure::Runtime`] with the typed [`OpenError`] otherwise.
     pub fn try_open(
-        system_dir: &str,
-        user_dir: Option<&str>,
+        system_dir: &Path,
+        user_dir: Option<&Path>,
         option_word: u32,
         law: UserConfLaw,
     ) -> Result<Self, OpenFailure> {
-        if system_dir.is_empty() {
+        if system_dir.as_os_str().is_empty() {
             return Err(OpenFailure::EmptySystemDir);
         }
-        let runtime = Runtime::open_with_law(Path::new(system_dir), user_dir.map(Path::new), law)
-            .map_err(OpenFailure::Runtime)?;
+        let runtime =
+            Runtime::open_with_law(system_dir, user_dir, law).map_err(OpenFailure::Runtime)?;
         let user = runtime.user_store();
         Ok(Self {
             config: Config::default(),
@@ -320,6 +324,8 @@ impl ContextCore {
 
 #[cfg(test)]
 mod open_failure_tests {
+    use std::path::Path;
+
     use super::{ContextCore, OpenFailure};
     use crate::PINYIN_DEFAULT_OPTION_WORD as WORD;
     use oxpinyin_runtime::OpenError;
@@ -327,20 +333,19 @@ mod open_failure_tests {
 
     #[test]
     fn empty_system_dir_is_named() {
-        let failure = ContextCore::try_open("", None, WORD, UserConfLaw::Pinyin)
+        let failure = ContextCore::try_open(Path::new(""), None, WORD, UserConfLaw::Pinyin)
             .err()
             .expect("an empty system dir cannot open");
         assert!(matches!(failure, OpenFailure::EmptySystemDir));
         assert_eq!(failure.to_string(), "system directory is empty");
-        assert!(ContextCore::open("", None, WORD, UserConfLaw::Pinyin).is_none());
+        assert!(ContextCore::open(Path::new(""), None, WORD, UserConfLaw::Pinyin).is_none());
     }
 
     #[test]
     fn missing_system_dir_carries_the_runtime_error_and_path() {
         let dir =
             std::env::temp_dir().join(format!("oxpinyin-facade-missing-{}", std::process::id()));
-        let dir = dir.to_str().expect("UTF-8 temp path");
-        let failure = ContextCore::try_open(dir, None, WORD, UserConfLaw::Pinyin)
+        let failure = ContextCore::try_open(&dir, None, WORD, UserConfLaw::Pinyin)
             .err()
             .expect("a missing system dir cannot open");
         let OpenFailure::Runtime(error) = &failure else {
@@ -348,7 +353,9 @@ mod open_failure_tests {
         };
         assert!(matches!(error, OpenError::Missing(_)), "got {error:?}");
         assert!(
-            failure.to_string().contains(dir),
+            failure
+                .to_string()
+                .contains(dir.to_str().expect("UTF-8 temp path")),
             "the message names the path: {failure}"
         );
         assert!(std::error::Error::source(&failure).is_some());

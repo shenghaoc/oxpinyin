@@ -587,7 +587,7 @@ mod phrase_cursor_tests {
             .into_iter()
             .find_map(|ext| {
                 super::ContextCore::open(
-                    root.join(ext).to_str().unwrap(),
+                    &root.join(ext),
                     None,
                     crate::PINYIN_DEFAULT_OPTION_WORD,
                     oxpinyin_user::UserConfLaw::Pinyin,

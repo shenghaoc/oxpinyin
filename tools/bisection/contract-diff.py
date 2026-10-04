@@ -1365,12 +1365,60 @@ def _(k):
     return out
 
 
+# batch2 group 13: directory names that are not UTF-8 (PR 13, #587)
+def non_utf8_dirs(k, bad_system, bad_user):
+    """Opens a context whose system and/or user directory name holds a 0xFF byte."""
+    tag = str(os.getpid()).encode()
+    scratch = os.fsencode(k.scratch)
+    system = os.path.join(scratch, b'system-\xff' + tag) if bad_system else os.fsencode(k.data)
+    if bad_system:
+        os.symlink(os.fsencode(k.data), system)
+    user = os.path.join(scratch, b'user-\xff' + tag) if bad_user else os.fsencode(k.user)
+    if bad_user:
+        os.mkdir(user)
+    ctx = k.init(system=system, user=user)
+    out = {'init': bool(ctx)}
+    if ctx:
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+        out['guess'] = k.fn('guess_sentence', B, P)(inst)
+        out['train'] = k.fn('train', B, P, C.c_ubyte)(inst, 0)
+        out['save'] = k.fn('save', B, P)(ctx)
+        out['user files'] = sorted(os.fsdecode(n) for n in os.listdir(user) if not n.startswith(b'.'))
+    return out
+
+
+for _label, _system, _user in (('system', True, False), ('user', False, True), ('both', True, True)):
+    case('non-utf8-directory-' + _label)(
+        lambda k, system=_system, user=_user: non_utf8_dirs(k, system, user))
+
+
+@case('non-utf8-directory-zhuyin-both', mode='zhuyin')
+def _(k):
+    tag = str(os.getpid()).encode()
+    scratch = os.fsencode(k.scratch)
+    system = os.path.join(scratch, b'system-\xff' + tag)
+    os.symlink(os.fsencode(k.data), system)
+    user = os.path.join(scratch, b'user-\xff' + tag)
+    os.mkdir(user)
+    ctx = k.init(system=system, user=user)
+    out = {'init': bool(ctx)}
+    if ctx:
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')
+        out['guess'] = k.fn('guess_sentence', B, P)(inst)
+        out['train'] = k.fn('train', B, P)(inst)
+        out['save'] = k.fn('save', B, P)(ctx)
+        out['user files'] = sorted(os.fsdecode(n) for n in os.listdir(user) if not n.startswith(b'.'))
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):
     env = dict(os.environ, TMPDIR=str(scratch))
     proc = subprocess.run([sys.executable, __file__, '--worker', mode, str(so), str(data), name],
-                          capture_output=True, text=True, env=env)
+                          capture_output=True, text=True, errors='replace', env=env)
     lines = [json.loads(line) for line in proc.stdout.splitlines() if line.startswith('{')]
     return dict(exit=proc.returncode, result=lines[-1] if lines else None,
                 stderr_lines=len(proc.stderr.splitlines()))

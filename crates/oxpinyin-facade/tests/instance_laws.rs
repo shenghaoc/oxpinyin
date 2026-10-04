@@ -31,12 +31,7 @@ fn open_context(option_word: u32) -> ContextCore {
         if !dir.is_dir() {
             continue;
         }
-        if let Some(context) = ContextCore::open(
-            dir.to_str().expect("UTF-8 path"),
-            None,
-            option_word,
-            UserConfLaw::Pinyin,
-        ) {
+        if let Some(context) = ContextCore::open(&dir, None, option_word, UserConfLaw::Pinyin) {
             return context;
         }
     }

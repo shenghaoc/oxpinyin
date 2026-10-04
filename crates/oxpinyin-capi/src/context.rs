@@ -3,7 +3,9 @@
 use std::os::raw::c_char;
 use std::ptr;
 
-use crate::ffi::{cstr_to_owned_lossy, cstr_to_strict};
+#[cfg(not(feature = "shipped"))]
+use crate::ffi::cstr_to_owned_lossy;
+use crate::ffi::cstr_to_path;
 use crate::state::{CapiContext, box_context, context_mut};
 // Only the harness-gated fixture hooks below take a shared context ref; the
 // shipped build (--features shipped) does not compile them.
@@ -19,13 +21,14 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     // empty or missing system dir leaves the same locale behind as a
     // successful init.
     crate::locale::pin_table_info_locale();
-    // SAFETY: Both pointers are C strings from the caller (null OK).
-    let system_path = cstr_to_owned_lossy(systemdir);
-    // The pin keeps `g_strdup(userdir)` (`pinyin.cpp:332`) and its guards
-    // test the pointer (`:1133`, `:2671`): NULL is no user dir, while ""
-    // is one — the working directory (#619) — so the two stay apart. A
-    // path that is not UTF-8 reads as no user dir, as it did before.
-    let user_path = cstr_to_strict(userdir);
+    // The pin keeps `g_strdup` of both arguments and opens them by those
+    // bytes, so the names are paths, not text (#587). A NULL system dir
+    // reads as the empty one the pin refuses first.
+    let system_path = cstr_to_path(systemdir).unwrap_or_default();
+    // The pin's guards test the user pointer (`pinyin.cpp:1133`, `:2671`):
+    // NULL is no user dir, while "" is one — the working directory (#619) —
+    // so the two stay apart.
+    let user_path = cstr_to_path(userdir);
     match CapiContext::try_new(&system_path, user_path.as_deref()) {
         Ok(context) => {
             let handle = box_context(context);
