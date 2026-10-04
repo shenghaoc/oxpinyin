@@ -1,5 +1,5 @@
 // plant-oracle-bigram.cc — write raw user-bigram rows into libpinyin's
-// user_bigram.db (Tkrzw HashDBM + SingleGram blob).
+// user_bigram.db (selected native backend + SingleGram blob).
 //
 // Public pinyin_train first-seeds 69 (23*3), so counts 9 and 10 cannot
 // be produced through the C ABI. This helper plants them so
@@ -13,7 +13,13 @@
 //
 // Usage: plant-oracle-bigram <userdir> <prev> <cur9> 9 <cur10> 10
 
+#if defined(ORACLE_BDB)
+#include <db.h>
+#elif defined(ORACLE_KC)
+#include <kcstashdb.h>
+#else
 #include <tkrzw_dbm_hash.h>
+#endif
 
 #include <cstdint>
 #include <cstdio>
@@ -58,6 +64,52 @@ int main(int argc, char **argv) {
     memcpy(blob.data() + sizeof(uint32_t), items.data(), sizeof(Item) * items.size());
 
     const std::string path = std::string(argv[1]) + "/user_bigram.db";
+#if defined(ORACLE_BDB)
+    // Pin 074a2219, storage/ngram_bdb.cpp:110-120, read in the
+    // work-bdb/src/libpinyin-074a2219c90feaf962d0d24f034514033ece5f99 tree: user bigrams are DB_HASH.
+    DB *db = nullptr;
+    int status = db_create(&db, nullptr, 0);
+    if (status == 0)
+        status = db->open(db, nullptr, path.c_str(), nullptr, DB_HASH, 0, 0);
+    DBT key = {}, value = {};
+    uint32_t key_token = prev;
+    key.data = &key_token;
+    key.size = sizeof(key_token);
+    value.data = blob.data();
+    value.size = static_cast<uint32_t>(blob.size());
+    if (status == 0)
+        status = db->put(db, nullptr, &key, &value, 0);
+    if (db) {
+        const int close_status = db->close(db, 0);
+        if (status == 0) status = close_status;
+    }
+    if (status != 0) {
+        fprintf(stderr, "plant %s: %s\n", path.c_str(), db_strerror(status));
+        return 1;
+    }
+#elif defined(ORACLE_KC)
+    // Pin 074a2219, src/storage/ngram_kyotodb.cpp:53-103, read in the
+    // same work-bdb pin tree: user bigrams are a StashDB snapshot.
+    kyotocabinet::StashDB db;
+    bool ok = db.open("-", kyotocabinet::BasicDB::OREADER |
+                           kyotocabinet::BasicDB::OWRITER |
+                           kyotocabinet::BasicDB::OCREATE);
+    if (ok) ok = db.load_snapshot(path);
+    if (ok) ok = db.set(reinterpret_cast<const char *>(&prev), sizeof(prev),
+                        blob.data(), blob.size());
+    if (ok) {
+        // Match the pin's save_db: replace the snapshot, not a file HashDB.
+        if (std::remove(path.c_str()) != 0) {
+            std::perror(path.c_str());
+            return 1;
+        }
+        ok = db.dump_snapshot(path);
+    }
+    if (!ok) fprintf(stderr, "plant %s: %s\n", path.c_str(), db.error().message());
+    const bool closed = db.close();
+    if (!closed) fprintf(stderr, "close %s: %s\n", path.c_str(), db.error().message());
+    if (!ok || !closed) return 1;
+#else
     tkrzw::HashDBM db;
     const tkrzw::Status open_st = db.Open(path, true, tkrzw::File::OPEN_DEFAULT);
     if (!open_st.IsOK()) {
@@ -73,5 +125,6 @@ int main(int argc, char **argv) {
     }
     db.Synchronize(false);
     db.Close();
+#endif
     return 0;
 }

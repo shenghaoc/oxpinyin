@@ -13,9 +13,8 @@
 # Sort profile is recorded in the driver output. The empty-store parity
 # profile never trains; this script uses the live guess/predict masks.
 #
-# Capi needs the window-scan construction (real unigrams) plus Option A
-# addon_4 tables. A temp system dir carries the W3 mini tables, the mini
-# art export, and a tiny interpolation2.text.
+# Capi uses the complete native W3 fixture for the selected backend,
+# including the art chunk and shared addon indexes.
 #
 # Env: PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle).
 # Exit: 0 identical or skipped; 1 build/run failure; 2 divergence.
@@ -28,8 +27,14 @@ echo "--- building union-diff drivers ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o union-diff union-diff.c -ldl
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o union-edge-diff union-edge-diff.c -ldl
 echo "--- building plant-oracle-bigram ---"
+case "${OXPINYIN_CAPI_BACKEND_EXT:-db}" in
+    db) planter_flags=(-DORACLE_BDB -ldb) ;;
+    kct) planter_flags=(-DORACLE_KC -lkyotocabinet) ;;
+    tkt) planter_flags=(-ltkrzw -lpthread) ;;
+    *) echo "fatal: invalid fixture backend" >&2; exit 1 ;;
+esac
 g++ -std=c++17 -Wall -Wextra -Werror -O2 plant-oracle-bigram.cc \
-    -ltkrzw -lpthread -o plant-oracle-bigram
+    "${planter_flags[@]}" -o plant-oracle-bigram
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
@@ -59,11 +64,14 @@ CAPI_SYS="$(mktemp -d)"
 CAPI_EDGE_USER="$(mktemp -d)"
 ORACLE_EDGE_USER="$(mktemp -d)"
 trap 'rm -rf "$CAPI_SYS" "$CAPI_EDGE_USER" "$ORACLE_EDGE_USER"' EXIT
-cp "$REPO_ROOT/fixtures/w3/pinyin_index".* "$CAPI_SYS/"
-cp "$REPO_ROOT/fixtures/w3/phrase_index".* "$CAPI_SYS/"
-cp "$REPO_ROOT/fixtures/w3/bigram".* "$CAPI_SYS/"
-cp "$REPO_ROOT/fixtures/w3/addon_4_pinyin_index".* "$CAPI_SYS/"
-cp "$REPO_ROOT/fixtures/w3/addon_4_phrase_index".* "$CAPI_SYS/"
+# Each backend directory is a complete native-layout data set, including
+# table.conf, chunk files and the shared addon index pair.
+FIXTURE_EXT=${OXPINYIN_CAPI_BACKEND_EXT:-db}
+case "$FIXTURE_EXT" in
+    db|kct|tkt) ;;
+    *) echo "fatal: invalid fixture backend: $FIXTURE_EXT" >&2; exit 1 ;;
+esac
+cp -a "$REPO_ROOT/fixtures/w3/$FIXTURE_EXT/." "$CAPI_SYS/"
 printf '%s\n' '\data model interpolation' '\1-gram' '\item 1 ok count 1' \
     > "$CAPI_SYS/interpolation2.text"
 
@@ -109,7 +117,9 @@ if ! ./union-edge-diff "$ORACLE_SO" "$ORACLE_DATA" setup "$ORACLE_EDGE_USER"; th
     echo "FAIL: oracle edge setup"
     exit 1
 fi
-if ! ./union-edge-diff "$CAPI_SO" "$CAPI_SYS" plant "$CAPI_EDGE_USER"; then
+# Both sides now persist the same native file format. Plant the saved
+# files directly: the in-process test hook does not dirty/save a profile.
+if ! ./plant-oracle-bigram "$CAPI_EDGE_USER" 0x07000001 0x07000002 9 0x07000003 10; then
     echo "FAIL: capi edge plant"
     exit 1
 fi
