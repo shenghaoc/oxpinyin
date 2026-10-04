@@ -10,6 +10,16 @@ use crate::parse::pinyin_parse_more_full_pinyins;
 use crate::sentence::pinyin_guess_candidates;
 use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
+/// Serialises the tests that read the pin's process-wide key slots
+/// (`pinyin_get_pinyin_key`, `pinyin_get_pinyin_key_rest`): the slots are
+/// statics, so two such tests running on different threads overwrite each
+/// other's answers. Hold the guard for the whole test.
+pub fn key_slot_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`.
 pub const DEFAULT_SORT: c_uint = 0x1e;
 

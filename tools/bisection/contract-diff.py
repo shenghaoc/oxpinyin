@@ -334,6 +334,42 @@ def _(k):
     return out
 
 
+# lane C, #542 rows 14 and 19: the pin's function-static slots and u16 length.
+@case('static-key-slots')
+def _(k):
+    first, second = k.alloc(), k.alloc()
+    k.fn('parse_more_full_pinyins', Z, P, S)(first, b'ni')
+    k.fn('parse_more_full_pinyins', Z, P, S)(second, b'hao')
+    key = k.fn('get_pinyin_key', B, P, Z, C.POINTER(P))
+    rest = k.fn('get_pinyin_key_rest', B, P, Z, C.POINTER(P))
+    a, b, ra, rb = P(), P(), P(), P()
+    out = {'ret': [key(first, 0, C.byref(a)), key(second, 0, C.byref(b)),
+                   rest(first, 0, C.byref(ra)), rest(second, 0, C.byref(rb))]}
+    out['key same pointer'] = a.value == b.value
+    out['rest same pointer'] = ra.value == rb.value
+    out['first key now'] = C.string_at(a.value, 2).hex()
+    out['first rest now'] = C.string_at(ra.value, 4).hex()
+    k.fn('free_instance', None, P)(first)
+    out['key after free'] = C.string_at(a.value, 2).hex()
+    out['rest after free'] = C.string_at(ra.value, 4).hex()
+    return out
+
+
+class Rest(C.Structure):
+    _fields_ = [('begin', C.c_ushort), ('end', C.c_ushort)]
+
+
+@case('key-rest-length')
+def _(k):
+    fn = k.fn('get_pinyin_key_rest_length', B, P, C.POINTER(Rest), C.POINTER(C.c_ushort))
+    out = {}
+    for begin, end in ((0, 2), (5, 2), (2, 2), (0, 65535), (65535, 0), (1, 65535)):
+        length = C.c_ushort(0xBEEF)
+        rest = Rest(begin, end)
+        out['%d..%d' % (begin, end)] = [fn(k.inst, C.byref(rest), C.byref(length)), length.value]
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):
