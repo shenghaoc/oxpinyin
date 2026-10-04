@@ -97,7 +97,7 @@ for driver in "${drivers[@]}"; do
     # Each side gets a fresh working directory: several drivers create
     # user state relative to the cwd, and both sides must start equal.
     local side=$1 so=$2 log=$3
-    rm -rf "$work/$side"; mkdir -p "$work/$side"
+    rm -rf "${work:?}/$side"; mkdir -p "$work/$side"
     ( cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")" "$work/$driver" "$so" "$data" ) >"$log" 2>"$log.err"
   }
   if [[ $driver == dynamic-adjust-diff ]]; then
@@ -108,7 +108,8 @@ for driver in "${drivers[@]}"; do
       if [[ $engine == oracle ]]; then so=$oracle_so; else so=$capi_so; fi
       for mode in on off; do
         dest="$work/$engine-$mode"
-        mkdir -p "$dest" "$dest/user"
+        rm -rf "$dest"
+        mkdir -p "$dest/user"
         if ! ( cd "$dest" && LD_LIBRARY_PATH="$(dirname "$so")" \
             "$work/$driver" "$so" "$data" "$mode" "$dest/user" ) \
             >"$dest.log" 2>"$dest.err"; then
@@ -142,7 +143,7 @@ for driver in "${drivers[@]}"; do
         echo "  DYNAMIC_ADJUST=$mode: IDENTICAL ($(wc -l <"$work/oracle-$mode.log") log lines)"
       else
         echo "  DYNAMIC_ADJUST=$mode: DIVERGENCE"
-        head -60 "$work/$mode.diff"
+        head -60 "$work/$mode.diff" | sed 's/^/    /'
         [[ $status == 0 ]] && status=2
       fi
     done
