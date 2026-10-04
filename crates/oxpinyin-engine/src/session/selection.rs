@@ -7,6 +7,7 @@
 //! parent module.
 
 use super::*;
+use crate::constraint::PhraseSpan;
 
 impl<D, L> Session<D, L>
 where
@@ -335,62 +336,89 @@ where
         U: UserModel<Token = PhraseToken>,
         U::Error: Display,
     {
-        // 074a2219 lookup/phonetic_lookup.h:854-866,932: every decoded
-        // phrase advances the predecessor, but only OneStep or train_next
-        // observes it. A constraint-free result therefore trains nothing.
-        // In particular pinyin.cpp:2515-2520 diffs an n-best choose against
-        // result 0; choosing result 0 adds no forcing (lookup/
-        // phonetic_lookup.cpp:178-188). The recorded tokens must not bypass
-        // that gate. Only a model with no decoded spans uses the fixture
-        // selection-history fallback below.
         if !self.sentence.last_result.is_empty() {
-            // A no-op needs no matrix rebuild: train_next starts false
-            // and only a OneStep can start training (pin :854-872).
-            if !self
-                .sentence
-                .last_result
-                .iter()
-                .any(|span| self.constraints.is_one_step_at(span.start))
-            {
-                return Ok(());
-            }
-            let mut context: Vec<PhraseToken> = Vec::with_capacity(self.sentence.last_result.len());
-            let mut train_next = false;
-            let graph = self.build_graph_at(0, self.input.as_bytes())?;
-            let matrix =
-                build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
-            for (index, span) in self.sentence.last_result.iter().enumerate() {
-                let forced = self.constraints.is_one_step_at(span.start);
-                if train_next || forced {
-                    train_next = forced;
-                    // 074a2219 phonetic_lookup.h:911-920 scans to the next
-                    // non-null result token, not the forced constraint end.
-                    let next = self
-                        .sentence
-                        .last_result
-                        .get(index + 1)
-                        .map_or(matrix.len().saturating_sub(1), |next| next.start);
-                    // :921 clamps the last span to constraints->length()-1;
-                    // :923-927 trains every matching path of this span.
-                    let end = next.min(matrix.len().saturating_sub(1));
-                    let mut readings = training_readings(
-                        &matrix,
-                        self.input.as_bytes(),
-                        span.start,
-                        end,
-                        span.text.chars().count(),
-                    );
-                    user.observe_with_keys(&context, &span.token, &mut readings)
-                        .map_err(|error| EngineError::UserModel(error.to_string()))?;
-                }
-                context.push(span.token);
-            }
-            return Ok(());
+            return self.train_spans(&self.sentence.last_result, user);
         }
         let history = self.record.history();
         for (index, token) in history.iter().enumerate() {
             user.observe(&history[..index], token)
                 .map_err(|error| EngineError::UserModel(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Train decoded n-best row `index` using the current constraints.
+    ///
+    /// Returns `Ok(false)` when no decoded results exist, as the pinned
+    /// `pinyin_train`/`zhuyin_train` gate requires. Selection history alone
+    /// does not satisfy this gate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError::CandidateIndexOutOfRange`] for an index beyond
+    /// the nonempty decoded results, before observing any user data; returns
+    /// [`EngineError::UserModel`] when an observation fails.
+    pub fn train_nbest<U>(&self, index: u8, user: &mut U) -> Result<bool, EngineError>
+    where
+        U: UserModel<Token = PhraseToken>,
+        U::Error: Display,
+    {
+        if self.sentence.rows.is_empty() {
+            return Ok(false);
+        }
+        let row = self.sentence.rows.get(usize::from(index)).ok_or(
+            EngineError::CandidateIndexOutOfRange {
+                index: usize::from(index),
+                len: self.sentence.rows.len(),
+            },
+        )?;
+        self.train_spans(&row.spans, user)?;
+        Ok(true)
+    }
+
+    fn train_spans<U>(&self, spans: &[PhraseSpan], user: &mut U) -> Result<(), EngineError>
+    where
+        U: UserModel<Token = PhraseToken>,
+        U::Error: Display,
+    {
+        // 074a2219 phonetic_lookup.h:854-866,932: only OneStep or
+        // train_next observes a phrase; every phrase advances its predecessor.
+        // A no-op needs no matrix rebuild: train_next starts false
+        // and only a OneStep can start training (pin :854-872).
+        if !spans
+            .iter()
+            .any(|span| self.constraints.is_one_step_at(span.start))
+        {
+            return Ok(());
+        }
+        let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
+        let mut train_next = false;
+        let graph = self.build_graph_at(0, self.input.as_bytes())?;
+        let matrix =
+            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+        for (index, span) in spans.iter().enumerate() {
+            let forced = self.constraints.is_one_step_at(span.start);
+            if train_next || forced {
+                train_next = forced;
+                // 074a2219 phonetic_lookup.h:911-920 scans to the next
+                // non-null result token, not the forced constraint end.
+                let next = spans
+                    .get(index + 1)
+                    .map_or(matrix.len().saturating_sub(1), |next| next.start);
+                // :921 clamps the last span to constraints->length()-1;
+                // :923-927 trains every matching path of this span.
+                let end = next.min(matrix.len().saturating_sub(1));
+                let mut readings = training_readings(
+                    &matrix,
+                    self.input.as_bytes(),
+                    span.start,
+                    end,
+                    span.text.chars().count(),
+                );
+                user.observe_with_keys(&context, &span.token, &mut readings)
+                    .map_err(|error| EngineError::UserModel(error.to_string()))?;
+            }
+            context.push(span.token);
         }
         Ok(())
     }

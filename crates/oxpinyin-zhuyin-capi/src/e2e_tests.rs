@@ -44,8 +44,17 @@ fn train_records_the_pinned_doubling_sequence() {
     let first = candidate(instance, "su3cl3", 0);
     let t1 = token_of(instance, first);
     assert!(zhuyin_choose_candidate(instance, 0, first) > 0);
+    assert!(
+        !zhuyin_train(instance),
+        "a choose without decoded results refuses"
+    );
+    with_store(instance, |store| {
+        assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 0);
+        assert_eq!(store.unigram_delta(t1).unwrap(), 0);
+    });
 
     // 69 on first selection; the predecessor is sentence_start.
+    assert!(zhuyin_guess_sentence(instance));
     assert!(zhuyin_train(instance));
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 69);
@@ -54,10 +63,12 @@ fn train_records_the_pinned_doubling_sequence() {
     });
 
     // 138 on reselection (count 207), then 414 (count 621).
+    assert!(zhuyin_guess_sentence(instance));
     assert!(zhuyin_train(instance));
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 207);
     });
+    assert!(zhuyin_guess_sentence(instance));
     assert!(zhuyin_train(instance));
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t1).unwrap(), 621);
@@ -72,6 +83,7 @@ fn train_records_the_pinned_doubling_sequence() {
     let t2 = token_of(instance, second);
     assert_ne!(t1, t2, "distinct rows carry distinct tokens");
     assert!(zhuyin_choose_candidate(instance, 0, second) > 0);
+    assert!(zhuyin_guess_sentence(instance));
     assert!(zhuyin_train(instance));
     with_store(instance, |store| {
         assert_eq!(store.bigram_count(SENTENCE_START, t2).unwrap(), 69);
@@ -128,6 +140,7 @@ fn save_is_the_gated_dirty_flag() {
 
     let chosen = candidate(instance, "su3cl3", 0);
     assert!(zhuyin_choose_candidate(instance, 0, chosen) > 0);
+    assert!(zhuyin_guess_sentence(instance));
     assert!(zhuyin_train(instance));
     assert!(zhuyin_save(context), "the training write dirtied it");
     assert!(

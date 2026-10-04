@@ -233,12 +233,14 @@ fn predicted_candidates_include_trained_bigram_successors() {
 
     let first = candidate(instance, "nihao", 0);
     assert!(pinyin_choose_candidate(instance, 0, first) > 0);
+    assert!(crate::sentence::pinyin_guess_sentence(instance));
     assert!(crate::candidates::pinyin_train(instance, 0));
     // First train already seeds 69, which is above the copied filter of 10.
     for _ in 0..4 {
         assert!(crate::instance::pinyin_reset(instance));
         let again = candidate(instance, "nihao", 0);
         assert!(pinyin_choose_candidate(instance, 0, again) > 0);
+        assert!(crate::sentence::pinyin_guess_sentence(instance));
         assert!(crate::candidates::pinyin_train(instance, 0));
     }
 
@@ -447,6 +449,7 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
     let mut candidate: *mut crate::types::LookupCandidate = std::ptr::null_mut();
     assert!(pinyin_get_candidate(instance, 0, &raw mut candidate));
     assert!(pinyin_choose_candidate(instance, 0, candidate) > 0);
+    assert!(crate::sentence::pinyin_guess_sentence(instance));
     assert!(crate::candidates::pinyin_train(instance, 0));
 
     // The plain variant for prefix 你: rows are the sliced suggestion

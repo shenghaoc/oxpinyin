@@ -587,6 +587,7 @@ pub fn oxpinyin_engine::Session<D, L>::select_anchored_promoted(&mut self, usize
 pub fn oxpinyin_engine::Session<D, L>::select_promoted(&mut self, usize, oxpinyin_core::vocab::PhraseToken) -> core::result::Result<oxpinyin_engine::Selection, oxpinyin_engine::EngineError>
 pub fn oxpinyin_engine::Session<D, L>::selected_tokens(&self) -> &[oxpinyin_core::vocab::PhraseToken]
 pub fn oxpinyin_engine::Session<D, L>::train<U>(&self, &mut U) -> core::result::Result<(), oxpinyin_engine::EngineError> where U: oxpinyin_core::UserModel<Token = oxpinyin_core::vocab::PhraseToken>, <U as oxpinyin_core::UserModel>::Error: core::fmt::Display
+pub fn oxpinyin_engine::Session<D, L>::train_nbest<U>(&self, u8, &mut U) -> core::result::Result<bool, oxpinyin_engine::EngineError> where U: oxpinyin_core::UserModel<Token = oxpinyin_core::vocab::PhraseToken>, <U as oxpinyin_core::UserModel>::Error: core::fmt::Display
 impl<D, L> oxpinyin_engine::Session<D, L> where D: oxpinyin_core::Dictionary<Syllable = oxpinyin_core::vocab::SyllableKey, Entry = oxpinyin_core::vocab::PhraseEntry>, <D as oxpinyin_core::Dictionary>::Error: core::fmt::Display, L: oxpinyin_core::LanguageModel<Token = oxpinyin_core::vocab::PhraseToken>, <L as oxpinyin_core::LanguageModel>::Error: core::fmt::Display
 pub fn oxpinyin_engine::Session<D, L>::guess_sentence(&mut self) -> core::result::Result<bool, oxpinyin_engine::EngineError>
 pub fn oxpinyin_engine::Session<D, L>::guess_sentence_with_prefix(&mut self, &[oxpinyin_core::vocab::PhraseToken]) -> core::result::Result<bool, oxpinyin_engine::EngineError>

@@ -2029,27 +2029,48 @@ section.
 
 ### `pinyin_train`/`zhuyin_train` gate (policy row 38)
 
-- **Scope correction (2026-09-27 UTC, #550, audit D-02, #524).** The
-  train entry is broader than the gate: `pinyin_train` asserts
-  `index < results.size()` (`src/pinyin.cpp:2684`, `assert`) and trains
-  the `index`-th result (`:2685-2688`); oxpinyin ignores `index`
-  (`crates/oxpinyin-capi/src/candidates.rs:550`), so `train(1)`/`train(2)`
-  write `train(0)`'s deltas and `train(255)` answers `true` where the
-  pin aborts. That index arm is open (REVERT TARGET, #524); the refuse
-  arms below stay closed.
+Updated 2026-10-04 UTC for #524. Valid-index and both empty-result defects
+closed in code; the approved bounds class (c) case is measured on all three cells.
 
-- **Upstream source cite:** `src/pinyin.cpp:2669-2690` (`pinyin_train`:
-  refuse without a user dir, `:2670-2671`; refuse on empty
-  `m_nbest_results`, `:2677-2678`); `src/zhuyin.cpp:1696-1705`.
-- **What oxpinyin does:** since PR #496 the gate is a recorded
-  selection or an active sentence lookup
-  (`crates/oxpinyin-facade/src/instance.rs:259`), so a train after a
-  guess with no choose answers `true` and writes nothing, as the pin's
-  does.
-- **Status:** the refuse arms are closed on the pinyin side (the ABI
-  probe's longer-choose phase, IDENTICAL); the zhuyin differential is
-  owed (`probe-coverage-abi.md`, "The train gate under the widened
-  law").
+The pin tree read and built is `074a2219c90feaf962d0d24f034514033ece5f99`.
+`src/pinyin.cpp:2678-2688` refuses empty decoded results, asserts the index
+bound, marks the context modified and trains the requested result.
+`src/zhuyin.cpp:1704-1713` has the same empty gate and trains row zero.
+Selection history alone is insufficient on both facades; the previous
+claim that these refuse arms were closed was wrong.
+
+The fix adds `Session::train_nbest(index, user)` using each existing row's
+spans (`crates/oxpinyin-engine/src/session/selection.rs:361-376`), retaining
+the pin's OneStep/train-next observation gate in `train_spans` (:379-424).
+`InstanceCore::train(index)` returns `Result<bool, EngineError>` and leaves
+empty and bounds calls unmodified (`crates/oxpinyin-facade/src/instance.rs:245-259`).
+The pinyin facade maps bounds to false and exactly one `log_warning`
+(`crates/oxpinyin-capi/src/candidates.rs:600-606`), domain `libpinyin`,
+warning level 16: approved availability class (c), replacing the pin assert.
+Empty results return false quietly, including zhuyin
+(`crates/oxpinyin-zhuyin-capi/src/candidates.rs:272`).
+
+Measured on linux/amd64, debian:testing digest
+`sha256:16faa8d1cd99fcb2d30eebe90454e26b20499055fa7094e9b55d32d1a7666f08`:
+`python3 tools/bisection/train-index-diff.py bdb PREFIX PINYIN_SO ZHUYIN_SO`
+passes all 10 cases on bdb; replacing `bdb` with `kc` or `tkrzw` also
+passes all 10 cases (30 total). Identical pre-training pinyin rows are 今天/今田/今添;
+zhuyin row zero is 你好. Valid calls match returns, native exported records
+and complete saved `.dbin` bytes. Pinyin rows 0/1/2 train 今 followed by
+天/田/添 respectively, each credited bigram +69, each unigram +483,
+each pronunciation +69. Bounds len=3 and 255 isolate pin SIGABRT and
+observe subject false, zero training writes and exactly one warning.
+Both facades' fresh and parse/choose-without-guess cases are quiet false.
+The same command with `--expect-parent` against parent `1dc42d7e`
+(the shipped training sources are unchanged from `215365d3`) reproduces
+row-1/2 D0 writes, both selection-only training defects, and bounds
+true/write/no-warning. §12 passes 491/396/390 on all three cells.
+
+Bdb and tkrzw raw user index-container bytes differ after valid saves while exported
+records match; no register row covers that container-byte difference.
+Row 18 covers padding in index values, a different issue. No container-byte
+fix is included. Kc raw index-container bytes also match. Captures are
+not committed; temporary profiles are discarded by the driver.
 
 ### An unknown `database format:` in `user.conf` aborts the pin; oxpinyin refuses the open (policy row 44)
 

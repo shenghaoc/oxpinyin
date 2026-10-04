@@ -269,7 +269,7 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    inst.core.train()
+    inst.core.train(0).unwrap_or(false)
 }
 
 /// Fill the instance's candidate snapshot from a `CandidateList`.

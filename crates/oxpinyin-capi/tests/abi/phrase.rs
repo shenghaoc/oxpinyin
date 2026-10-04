@@ -175,6 +175,7 @@ fn plain_predicted_candidates_match_the_with_punctuations_body() {
         &raw mut candidate
     ));
     assert!(pinyin_choose_candidate(fixture.instance, 0, candidate) > 0);
+    assert!(pinyin_capi::pinyin_guess_sentence(fixture.instance));
     assert!(pinyin_train(fixture.instance, 0));
 
     let mut num: u32 = 0;
