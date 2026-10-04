@@ -31,6 +31,7 @@ import ctypes as C
 import json
 import os
 from pathlib import Path
+import re
 import resource
 import shutil
 import subprocess
@@ -49,13 +50,16 @@ NO_ABORT = object()
 WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
-def case(name, mode='pinyin', control=False, abort=NO_ABORT):
-    """Registers a case. `abort=<value>` marks a class (c) site: the pin
+def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False):
+    """Registers a case. `stderr=True` also compares what the library wrote
+    to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
+    with the scratch directory names normalised. `abort=<value>` marks a
+    class (c) site: the pin
     must die of SIGABRT, and the subject must return `<value>` in its `ret`
     field with exactly one GLib warning in the facade's domain (`libpinyin`,
     or `libzhuyin` for the zhuyin facade; level 16)."""
     def register(fn):
-        CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort)
+        CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr)
         return fn
     return register
 
@@ -1608,15 +1612,178 @@ def _(k):
     return {'live instance': bool(live), '~instance after fini': bool(after)}
 
 
+# batch2 group 15: the pin's stderr and the save report (PR 15, #545)
+def save_after_training(k, remove_dir, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
+    ctx = k.ctx
+    inst = k.alloc()
+    k.fn(parse, Z, P, S)(inst, text)
+    k.fn('guess_sentence', B, P)(inst)
+    out = {'train': k.fn('train', B, P, *train_args)(inst, *((0,) if train_args else ()))}
+    if remove_dir:
+        shutil.rmtree(k.user)
+    out['save'] = k.fn('save', B, P)(ctx)
+    return out
+
+
+def blocked_save(k, blocked, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
+    """A second, modified save with one path of the file set blocked by a
+    non-empty directory: what each side prints and which files it updates."""
+    import hashlib
+    ctx = k.ctx
+    inst = k.alloc()
+    k.fn(parse, Z, P, S)(inst, text)
+    k.fn('guess_sentence', B, P)(inst)
+    train = k.fn('train', B, P, *train_args)
+    train(inst, *((0,) if train_args else ()))
+    out = {'first': k.fn('save', B, P)(ctx)}
+
+    def snapshot():
+        files = {}
+        for name in sorted(os.listdir(k.user)):
+            path = os.path.join(k.user, name)
+            files[name] = ('dir:' + ','.join(sorted(os.listdir(path)))) if os.path.isdir(path) \
+                else hashlib.md5(open(path, 'rb').read()).hexdigest()[:8]
+        return files
+    before = snapshot()
+    train(inst, *((0,) if train_args else ()))
+    path = os.path.join(k.user, blocked)
+    if os.path.isdir(path) or os.path.exists(path):
+        os.replace(path, path + '.moved')
+    os.mkdir(path)
+    open(os.path.join(path, 'keep'), 'w').write('x')
+    out['second'] = k.fn('save', B, P)(ctx)
+    after = snapshot()
+    out['files'] = {n: ('new' if n not in before else 'changed' if before[n] != after[n] else 'same')
+                    for n in after if not n.endswith('.moved')}
+    return out
+
+
+# The pin writes and renames file by file (`pinyin.cpp:940-1130`): with one
+# path blocked every other file is updated, one line is printed and the
+# profile mixes two saves.
+@case('stderr-save-one-tmp-blocked', stderr=True)
+def _(k):
+    return blocked_save(k, 'user_pinyin_index.bin.tmp')
+
+
+@case('stderr-save-one-final-blocked', stderr=True)
+def _(k):
+    return blocked_save(k, 'user_phrase_index.bin')
+
+
+@case('stderr-save-one-tmp-blocked-zhuyin', mode='zhuyin', stderr=True)
+def _(k):
+    return blocked_save(k, 'user_pinyin_index.bin.tmp', 'parse_more_chewings', b'su3cl3', ())
+
+
+@case('stderr-fresh-user-dir', stderr=True)
+def _(k):
+    ctx = k.ctx
+    k.fn('fini', None, P)(ctx)
+    return {'init': bool(ctx)}
+
+
+@case('stderr-fresh-user-dir-zhuyin', mode='zhuyin', stderr=True)
+def _(k):
+    ctx = k.ctx
+    k.fn('fini', None, P)(ctx)
+    return {'init': bool(ctx)}
+
+
+@case('stderr-init-missing-system-dir', stderr=True)
+def _(k):
+    return {'ctx': bool(k.init(system='/nonexistent-system-dir'))}
+
+
+@case('stderr-init-missing-system-dir-zhuyin', mode='zhuyin', stderr=True)
+def _(k):
+    return {'ctx': bool(k.init(system='/nonexistent-system-dir'))}
+
+
+@case('stderr-init-system-dir-without-table-conf', stderr=True)
+def _(k):
+    empty = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
+    return {'ctx': bool(k.init(system=empty + '//'))}
+
+
+@case('stderr-save-dir-removed', stderr=True)
+def _(k):
+    return save_after_training(k, True)
+
+
+@case('stderr-save-dir-removed-zhuyin', mode='zhuyin', stderr=True)
+def _(k):
+    return save_after_training(k, True, 'parse_more_chewings', b'su3cl3', ())
+
+
+@case('stderr-fini-dir-removed', stderr=True)
+def _(k):
+    ctx = k.ctx
+    shutil.rmtree(k.user)
+    k.fn('fini', None, P)(ctx)
+    return {}
+
+
+@case('stderr-fini-dir-removed-zhuyin', mode='zhuyin', stderr=True)
+def _(k):
+    ctx = k.ctx
+    shutil.rmtree(k.user)
+    k.fn('fini', None, P)(ctx)
+    return {}
+
+
+# The paths that stay quiet at the pin: a save that has nothing to save, a
+# save that works, a reopen of the profile it wrote.
+# Paths in the pin's lines are the caller's bytes, not text.
+@case('stderr-non-utf8-user-dir', stderr=True)
+def _(k):
+    user = os.path.join(os.fsencode(k.scratch), b'user-\xff' + os.path.basename(k.user.encode())[5:])
+    os.mkdir(user)
+    ctx = k.init(user=user)
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    k.fn('guess_sentence', B, P)(inst)
+    out = {'train': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
+    shutil.rmtree(user)
+    out['save'] = k.fn('save', B, P)(ctx)
+    k.fn('fini', None, P)(ctx)
+    return out
+
+
+@case('stderr-quiet-saves', stderr=True)
+def _(k):
+    ctx = k.ctx
+    out = {'unmodified save': k.fn('save', B, P)(ctx)}
+    out.update(save_after_training(k, False))
+    k.fn('fini', None, P)(ctx)
+    ctx2 = k.init()
+    out['reopen'] = bool(ctx2)
+    out['second save'] = k.fn('save', B, P)(ctx2)
+    k.fn('fini', None, P)(ctx2)
+    return out
+
+
+@case('stderr-unmodified-save-dir-removed', stderr=True)
+def _(k):
+    ctx = k.ctx
+    shutil.rmtree(k.user)
+    return {'save': k.fn('save', B, P)(ctx)}
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):
     env = dict(os.environ, TMPDIR=str(scratch))
     proc = subprocess.run([sys.executable, __file__, '--worker', mode, str(so), str(data), name],
-                          capture_output=True, text=True, errors='replace', env=env)
-    lines = [json.loads(line) for line in proc.stdout.splitlines() if line.startswith('{')]
+                          capture_output=True, env=env)
+    stdout = proc.stdout.decode('utf-8', 'replace')
+    # stderr keeps invalid UTF-8 apart from a real U+FFFD (`surrogateescape`),
+    # since the pin writes paths as their bytes.
+    stderr = proc.stderr.decode('utf-8', 'surrogateescape')
+    lines = [json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
     return dict(exit=proc.returncode, result=lines[-1] if lines else None,
-                stderr_lines=len(proc.stderr.splitlines()))
+                stderr_lines=len(stderr.splitlines()),
+                stderr=re.sub(r'(user|sys)-(\udcff)?[A-Za-z0-9_]+', r'\1-\2X', stderr))
 
 
 def main():
@@ -1665,6 +1832,8 @@ def main():
                 # --expect-parent as a difference).
                 same = all(r['exit'] == 0 and r['result'] is not None for r in (pin, subject)) and \
                     observed(pin['result']) == observed(subject['result'])
+                if spec['stderr']:
+                    same = same and pin['stderr'] == subject['stderr']
             expected = same if (not args.expect_parent or spec['control']) else not same
             verdict = 'MATCH' if same else 'DIFFER'
             print(json.dumps(dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,
@@ -1677,6 +1846,8 @@ def main():
                     for side, r in (('pin', pin), ('subject', subject)):
                         print('  %s exit=%s %s' % (side, r['exit'], json.dumps(
                             r['result'] and observed(r['result']), sort_keys=True, ensure_ascii=False)))
+                        if spec['stderr']:
+                            print('  %s stderr=%r' % (side, r['stderr']))
     return 1 if failures else 0
 
 

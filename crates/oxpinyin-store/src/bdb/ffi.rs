@@ -230,6 +230,10 @@ pub(crate) struct Db {
     /// Whether this handle is a `DB_HASH` (unordered) rather than a
     /// `DB_BTREE` — the store's raw-walk strategy branches on it.
     hash: bool,
+    /// Whether `DB->open` succeeded. libdb refuses `DB->sync` on a handle
+    /// that was never opened and says so on stderr (`BDB1565`), so a handle
+    /// whose open failed is closed without the flush.
+    opened: bool,
 }
 
 /// The mode libpinyin's `attach` passes to `DB->open` — the system
@@ -309,10 +313,11 @@ impl Db {
         }
         // From here on the handle is owned: every early return must close
         // it, which `this` does by construction.
-        let this = Self {
+        let mut this = Self {
             handle,
             read_only,
             hash: db_type == DB_HASH,
+            opened: false,
         };
 
         let mut flags = sys::DB_THREAD;
@@ -342,6 +347,7 @@ impl Db {
             )
         };
         check(code, "DB->open")?;
+        this.opened = true;
         Ok(this)
     }
 
@@ -522,7 +528,8 @@ impl Drop for Db {
         // regardless of what `close` returns, so the codes are
         // discarded. Callers who need to know that a flush succeeded
         // call `sync` first, which does report.
-        if !self.read_only
+        if self.opened
+            && !self.read_only
             && let Ok(sync) = method!(self.handle, sync, "DB->sync")
         {
             // SAFETY: the handle is live and owned.

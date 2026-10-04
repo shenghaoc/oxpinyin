@@ -98,14 +98,23 @@ impl FiniGuard {
 impl Drop for FiniGuard {
     fn drop(&mut self) {
         if let Some(target) = self.0.take() {
-            // Unreported, as `pinyin_fini` ignores `mark_version`'s result
-            // (`pinyin.cpp:1200`): a fini has no caller to answer.
-            let _ = persistence::fini(
+            // `pinyin_fini` ignores `mark_version`'s result
+            // (`pinyin.cpp:1200`): a fini has no caller to answer, only the
+            // line `UserTableInfo::save` prints (`table_info.cpp:382`).
+            if persistence::fini(
                 &target.dir,
                 &target.versions,
                 target.law,
                 target.open_counter,
-            );
+            )
+            .is_err()
+            {
+                crate::persistence::diagnostic(&[
+                    b"write ",
+                    target.dir.join("user.conf").as_os_str().as_encoded_bytes(),
+                    b" failed.\n",
+                ]);
+            }
         }
     }
 }
@@ -171,17 +180,6 @@ impl GenericUserStore<DefaultStore> {
             open_counter: loaded.open_counter,
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
-        if loaded.wiped {
-            // Upstream prints its own note when check_format cleans the
-            // profile (`table_info.cpp` load failure, `user.conf` open);
-            // this is ours, for the same operator-facing reason.
-            let user_dir = user_dir.display();
-            eprintln!(
-                "oxpinyin: non-conforming user profile wiped (user dir {user_dir}, \
-                 see docs/findings/compatibility-policy.md)"
-            );
-        }
-
         let has_user_data = db.write(|txn| {
             seed_txn(txn, &loaded.state, &target.originals)?;
             let total_rows = count_tables(txn)?;
@@ -773,6 +771,62 @@ mod tests {
             assert!(store.save().expect("save"));
         }
         std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    /// The pin's save never stops at a failure (`pinyin.cpp:1132-1147`): with
+    /// the user dir gone every rename and the marker write fail, each one is
+    /// reported in the pin's order, and the save has still run. A save that
+    /// works reports nothing.
+    #[test]
+    fn save_reporting_names_each_failure_in_the_pins_order() {
+        let dir = tempdir("report");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        store.observe_selection(1, 0x0100_0001).expect("train");
+        let clean = store.save_reporting().expect("save");
+        assert_eq!(clean, crate::SaveReport::default());
+
+        store.observe_selection(1, 0x0100_0001).expect("train");
+        std::fs::remove_dir_all(&dir).expect("remove the user dir");
+        let report = store
+            .save_reporting()
+            .expect("a missing dir is not an error");
+        assert!(!store.is_modified(), "the store is clean after the save");
+        let finals: Vec<&str> = report
+            .renames_failed
+            .iter()
+            .map(|(_, target)| target.file_name().and_then(|n| n.to_str()).expect("name"))
+            .collect();
+        assert_eq!(
+            finals,
+            [
+                "gb_char.dbin",
+                "gbk_char.dbin",
+                "opengram.dbin",
+                "merged.dbin",
+                "addon.bin",
+                "network.bin",
+                "user.bin",
+                "user_pinyin_index.bin",
+                "user_phrase_index.bin",
+                "user_bigram.db",
+            ]
+        );
+        for (tmp, target) in &report.renames_failed {
+            assert_eq!(tmp.parent(), target.parent());
+            assert_eq!(
+                tmp.file_name().and_then(|n| n.to_str()),
+                Some(
+                    format!(
+                        "{}.tmp",
+                        target.file_name().and_then(|n| n.to_str()).expect("name")
+                    )
+                    .as_str()
+                )
+            );
+        }
+        assert_eq!(report.user_conf_write_failed, Some(dir.join("user.conf")));
     }
 
     #[test]

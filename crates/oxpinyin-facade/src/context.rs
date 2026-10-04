@@ -284,10 +284,36 @@ impl ContextCore {
 
     /// `save`'s body: `false` without a user dir, otherwise the store's
     /// gated save — `false` when unmodified, `true` after a dirty save.
+    ///
+    /// The pin never stops at a failing write or rename: it prints what
+    /// failed (`rename %s to %s failed.`, `write %s failed.`, raw
+    /// `fprintf(stderr, …)`, `pinyin.cpp:1061`…`:1123`,
+    /// `table_info.cpp:382`) and answers `true`. The store's
+    /// [`oxpinyin_user::SaveReport`] says what failed; the lines are
+    /// printed here, one per failure, in the pin's order.
     pub fn save_user(&mut self) -> bool {
-        self.user
-            .as_mut()
-            .is_some_and(|store| store.save().unwrap_or(false))
+        let Some(store) = self.user.as_mut() else {
+            return false;
+        };
+        if !store.is_modified() {
+            return false;
+        }
+        let Ok(report) = store.save_reporting() else {
+            return false;
+        };
+        for (tmp, target) in &report.renames_failed {
+            diagnostic(&[
+                b"rename ",
+                path_bytes(tmp),
+                b" to ",
+                path_bytes(target),
+                b" failed.\n",
+            ]);
+        }
+        if let Some(conf) = &report.user_conf_write_failed {
+            diagnostic(&[b"write ", path_bytes(conf), b" failed.\n"]);
+        }
+        true
     }
 
     /// `mask_out`'s body: the store-level deletion, or `false` without a
@@ -320,6 +346,20 @@ impl ContextCore {
     pub fn user_store(&self) -> Option<UserStore> {
         self.user.clone()
     }
+}
+
+/// A path's bytes as they are, which is what the pin's `fprintf("%s", …)`
+/// writes; `Path::display()` would turn invalid UTF-8 into U+FFFD.
+fn path_bytes(path: &Path) -> &[u8] {
+    path.as_os_str().as_encoded_bytes()
+}
+
+/// One raw diagnostic line on stderr, as the pin's `fprintf(stderr, …)`.
+fn diagnostic(parts: &[&[u8]]) {
+    use std::io::Write as _;
+
+    let line: Vec<u8> = parts.concat();
+    let _ = std::io::stderr().write_all(&line);
 }
 
 #[cfg(test)]
