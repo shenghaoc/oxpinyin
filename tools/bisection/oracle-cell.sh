@@ -59,3 +59,60 @@ if [[ -z $oracle_cell_version || -z $oracle_cell_sha || -z $oracle_cell_model ]]
 	exit 1
 fi
 EXPECTED_PIN_REF="pin_ref=libpinyin-$oracle_cell_version-$oracle_cell_sha+model20-$oracle_cell_model+dbm-$ORACLE_DBM"
+
+# Retained, cell-specific targets. Relative overrides are repository-relative,
+# consistently with the original surface runners (which cd before sourcing).
+CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-${OXPINYIN_TARGET_ROOT:-$REPO_ROOT/target/cells}/$ORACLE_DBM}
+case $CARGO_TARGET_DIR in
+    /*) ;;
+    *) CARGO_TARGET_DIR=$REPO_ROOT/$CARGO_TARGET_DIR ;;
+esac
+export CARGO_TARGET_DIR
+export CARGO_PROFILE_DEV_OPT_LEVEL=1
+export ORACLE_DBM ORACLE_DBM_NAME CAPI_FEATURE EXPECTED_PIN_REF
+
+# Resolve/build only the requested artifact. Explicit prebuilt paths never
+# invoke Cargo, and are checked before a driver can consume them.
+oracle_cell_artifact() {
+    local variable=$1 filename=$2 package=$3 artifact
+    artifact=${!variable:-}
+    if [[ -z $artifact ]]; then
+        cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+            -p "$package" --no-default-features --features "$CAPI_FEATURE" >&2 || return 1
+        artifact=$CARGO_TARGET_DIR/debug/$filename
+    else
+        case $artifact in
+            /*) ;;
+            *) artifact=$REPO_ROOT/$artifact ;;
+        esac
+    fi
+    if [[ ! -f $artifact ]]; then
+        printf 'FAIL: missing %s artifact: %s\n' "$variable" "$artifact" >&2
+        return 1
+    fi
+    printf -v "$variable" '%s' "$artifact"
+    export "${variable?}"
+}
+
+# Resolve a registry-selected oracle variant beside the unpatched cell prefix.
+# Keep this separate from subject artifact resolution: a runner's oracle patch
+# must never change the cell's Cargo target or another runner's oracle.
+oracle_cell_resolve_prefix() {
+    local base=$1 variant=${2:-unpatched} patch_digest
+    PINYIN_ORACLE_PREFIX=$base
+    EXPECTED_ORACLE_PIN_REF=$EXPECTED_PIN_REF
+    ORACLE_PATCH_FILE=
+    case $variant in
+        unpatched) ;;
+        bigram-export-strjoinv)
+            PINYIN_ORACLE_PREFIX=$base-$variant
+            ORACLE_PATCH_FILE=pin-bigram-export-strjoinv.patch
+            patch_digest=$(cd "$REPO_ROOT/tools/bisection/patches/$variant" &&
+                find . -maxdepth 1 -type f -name '*.patch' -print0 |
+                sort -z | xargs -0 sha256sum | sha256sum) || return 1
+            EXPECTED_ORACLE_PIN_REF+=+patches-${patch_digest%% *}
+            ;;
+        *) printf 'FAIL: unknown oracle variant: %s\n' "$variant" >&2; return 1 ;;
+    esac
+    export PINYIN_ORACLE_PREFIX EXPECTED_ORACLE_PIN_REF ORACLE_PATCH_FILE
+}

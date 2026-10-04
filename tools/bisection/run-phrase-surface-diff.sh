@@ -62,17 +62,6 @@ if ! grep -Fxq "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
     echo "  (build it with build-oracle.sh --dbm $ORACLE_DBM, or set PINYIN_ORACLE_DBM)"
     exit 3
 fi
-# Honour CARGO_TARGET_DIR so a caller who redirects cargo output (a
-# distro-package builder, a shared-target CI, a per-worktree target)
-# ends up loading the .so cargo actually wrote instead of a stale one
-# at $REPO_ROOT/target. Anchor a relative value to $REPO_ROOT rather
-# than `$(pwd)` — the shell is `cd`'d into tools/bisection by this
-# point, which is not what a caller means by a relative path.
-CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
-case "$CARGO_TARGET_DIR" in
-    /*) ;;
-    *) CARGO_TARGET_DIR="$REPO_ROOT/$CARGO_TARGET_DIR" ;;
-esac
 CAPI_SO="$CARGO_TARGET_DIR/release/libpinyin_capi.so"
 # Always rebuild — cargo is a no-op when the artifact is current, and a
 # stale libpinyin_capi.so on disk would otherwise mask the change under
