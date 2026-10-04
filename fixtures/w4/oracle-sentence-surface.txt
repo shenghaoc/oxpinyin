@@ -1,5 +1,5 @@
 # pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+model20-59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155+dbm-tkrzw
-# sample=504
+# sample=507
 a	true	阿阿啊	n/0/阿n/2/啊N/-/呵N/-/腌N/-/吖N/-/嗄
 bu	true	不不部	n/0/不n/2/部N/-/布N/-/步N/-/补N/-/堡
 chang	true	长场	n/0/长n/1/场N/-/常N/-/厂N/-/唱N/-/昌
@@ -504,3 +504,7 @@ nihao	true	你好	n/0/你好N/-/你N/-/尼N/-/呢N/-/泥N/-/妮
 nihaoshijie	true	你好世界你好时节你好是届	n/0/你好世界n/1/你好时节n/2/你好是届N/-/你好N/-/你N/-/尼
 cecenihao	true	测测你好测测你号	n/0/测测你好n/1/测测你号N/-/测测N/-/册N/-/侧N/-/测
 zhongguoren	true	中国人中国人中国任	n/0/中国人n/2/中国任N/-/中国N/-/中N/-/种N/-/重
+yaomeichong	true	要梅冲要枚冲妖媚虫	n/0/要梅冲n/1/要枚冲n/2/妖媚虫N/-/妖媚N/-/要N/-/约
+xiehenshuaitong	true	写很帅同写很帅通写很率同	n/0/写很帅同n/1/写很帅通n/2/写很率同N/-/泄恨N/-/写N/-/叶
+nuanmanqianzhaofang	true	暖满前罩房暖满前朝方暖满其按照方	n/0/暖满前罩房n/1/暖满前朝方n/2/暖满其按照方N/-/暖N/-/臑N/-/餪
+nic	true	尼采你从	n/0/尼采n/1/你从N/-/你猜N/-/你才N/-/你N/-/尼

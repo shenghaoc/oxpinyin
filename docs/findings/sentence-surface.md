@@ -1,8 +1,8 @@
 # Sentence surface (W14)
 
 Date: 2026-08-17 · Current status: the lane-D amendment in §12 supersedes
-its historical blanket classification. The approved selection port measures
-495 / 495 / 495; only six named shared-comparison rows are class (a).
+its historical blanket classification. The approved selection port and coverage extension measure
+499 / 499 / 499; only six named shared-comparison rows are class (a).
 The other eight corpus rows remain unattributed. §§1–11 and the earlier
 §12 rulings retain the historical characterization and decision record.
 
@@ -772,3 +772,25 @@ Bulk comparison captures were ephemeral and are not retained or committed.
 The #574 coverage member corrects the sample header and adds four inputs
 with native-cost assertions, detecting a +1 per-step mutation even when
 the visible sentence surface does not move.
+
+### G-m1 coverage extension — 2026-10-04 UTC (#574)
+
+The historical sample=504 header described 503 data rows. Four pin-generated
+rows (yaomeichong, xiehenshuaitong, nuanmanqianzhaofang, nic), identical on
+bdb/kc/tkrzw, extend the fixture to **507 rows / 500 comparable inputs**.
+The surface gate is **499 / 499 / 499**. A companion ignored integration
+test in sentence_surface_parity.rs asserts native first-sentence costs
+32746, 46792, 59752 and 17763, respectively. Adding one cost unit per
+phrase expansion must fail; reverting it must pass. These assertions
+cover the four recovered G-m1 inputs even if the port's retention changes
+which visible rows the mutation alters. This extension changes coverage,
+not scoring or selection. Run both tests with --include-ignored under
+PINYIN_EXPORT_DIR and PINYIN_MODEL_DIR. No mutable test hook ships.
+
+The fixture generator keeps these four inputs as anchors. The old header
+count included `#yaguai`, whose rendered capture is a comment to the reader;
+the corrected header counts readable data rows and retains capture order.
+Regenerate with the unpatched tkrzw oracle using `cargo run --release
+--locked -p pinyin-oracle --no-default-features --features tkrzw,oracle-ffi
+--bin oracle_sentence_surface` and `PINYIN_ORACLE_PREFIX` pointing to that
+pin-built prefix.
