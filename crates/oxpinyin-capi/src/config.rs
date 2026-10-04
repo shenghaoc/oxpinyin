@@ -3,7 +3,7 @@
 use std::os::raw::c_int;
 use std::sync::atomic::Ordering;
 
-use crate::state::{context_mut, context_ref};
+use crate::state::{PHRASE_INDEX_LIBRARY_COUNT, context_mut, context_ref};
 use crate::types::{PinyinContext, PinyinOptionT};
 
 /// Set pinyin options on the context.
@@ -64,6 +64,9 @@ pub extern "C" fn pinyin_set_full_pinyin_scheme(
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
     if !matches!(scheme, 1..=3) {
+        // Class (c), `pinyin_parser2.cpp:398`: `set_scheme`'s `default:` is
+        // an **`abort()`**.
+        crate::ffi::log_warning("pinyin_set_full_pinyin_scheme: scheme is not a FullPinyinScheme");
         return false;
     }
     ctx.core.live.full_scheme.store(scheme, Ordering::Relaxed);
@@ -112,7 +115,13 @@ pub extern "C" fn pinyin_set_double_pinyin_scheme(
         6 => oxpinyin_core::DoublePinyinScheme::Xhe,
         // CUSTOMIZED (30): no compiled table, upstream aborts;
         // oxpinyin reports `false` and leaves the live scheme intact.
-        30 => return false,
+        30 => {
+            // Class (c), `pinyin_parser2.cpp:611`: **`abort()`**.
+            crate::ffi::log_warning(
+                "pinyin_set_double_pinyin_scheme: CUSTOMIZED has no compiled table",
+            );
+            return false;
+        }
         // Out-of-enum: upstream's unconditional `m_fallback_table = NULL`
         // (`:580`) fires before the switch falls through to `return false`
         // (`:614`), and the wrapper ignores that `false` and answers `true`
@@ -160,6 +169,10 @@ pub extern "C" fn pinyin_set_zhuyin_scheme(context: *mut PinyinContext, scheme: 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_mut(context) };
     if !matches!(scheme, 1 | 2 | 3 | 4 | 5 | 6 | 8 | 9) {
+        // Class (c): `pinyin.cpp:1189` (`default:`) and, for the
+        // `STANDARD_DVORAK` slot, `zhuyin_parser2.cpp:295`; both are
+        // **`abort()`**, with the old parser already deleted.
+        crate::ffi::log_warning("pinyin_set_zhuyin_scheme: scheme is not a ZhuyinScheme");
         return false;
     }
     ctx.core.live.zhuyin_scheme.store(scheme, Ordering::Relaxed);
@@ -240,6 +253,17 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
+    // Class (c), `pinyin.cpp:457`: the stock `table.conf` leaves index 0
+    // (reserved) and 8..=15 unused, and the pin **`assert`**s that a loaded
+    // library is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or more
+    // answers `false` first, `:448`).
+    if index == 0 || (8..PHRASE_INDEX_LIBRARY_COUNT).contains(&index) {
+        crate::ffi::log_warning(
+            "pinyin_load_phrase_library: assertion 'SYSTEM_FILE == table_info->m_file_type \
+             || USER_FILE == table_info->m_file_type' failed",
+        );
+        return false;
+    }
     ctx.core
         .runtime
         .as_ref()
@@ -267,6 +291,13 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
+    if index >= PHRASE_INDEX_LIBRARY_COUNT {
+        // Class (c), `pinyin.cpp:466`: **`assert`**.
+        crate::ffi::log_warning(
+            "pinyin_unload_phrase_library: assertion 'index < PHRASE_INDEX_LIBRARY_COUNT' failed",
+        );
+        return false;
+    }
     ctx.unload_phrase_library(index)
 }
 
