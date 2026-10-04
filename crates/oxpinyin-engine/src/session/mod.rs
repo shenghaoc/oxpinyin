@@ -30,10 +30,15 @@ use crate::storage::StoragePaths;
 
 /// Largest raw input a session accepts, in bytes.
 ///
-/// Matches the largest input the frozen F-A fixtures and the parity corpus
-/// carry. Typing past it is reported as [`KeyOutcome::Ignored`]: refusing more
-/// input is a state, not a failure.
-pub const MAX_INPUT_BYTES: usize = 4_096;
+/// The pin's parser keeps its progress in `gint16`s (`parsed_len`,
+/// `m_last_step`, `pinyin_parser2.cpp:333`), so no parse consumes more than
+/// `i16::MAX` bytes: `ni` repeated 65537 times consumes 32767. The session
+/// accepts exactly that much. Typing past it is reported as
+/// [`KeyOutcome::Ignored`]: refusing more input is a state, not a failure.
+///
+/// The fuzz targets keep their own, shorter input length; the cap is not what
+/// they exercise.
+pub const MAX_INPUT_BYTES: usize = 32_767;
 
 /// Configuration key for the candidate page size.
 const KEY_PAGE_SIZE: &str = "lookup-table-page-size";

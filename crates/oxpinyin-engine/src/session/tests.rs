@@ -436,14 +436,14 @@ fn backspace_undoes_a_selection_before_reporting_nothing_to_do() {
 #[test]
 fn a_full_buffer_ignores_further_input() {
     // Apostrophes on purpose: they fill the buffer without building a
-    // decodable graph, so this measures the bound and not the decoder.
+    // decodable graph, so this measures the bound and not the decoder. The
+    // buffer is filled in one replace: typing 32767 keys one at a time
+    // re-reads the buffer after each.
     let mut session = session();
-    for _ in 0..MAX_INPUT_BYTES {
-        session
-            .process_key(&KeyInput::character('\''))
-            .expect("no failure");
-    }
-    assert_eq!(session.raw_input().len(), MAX_INPUT_BYTES);
+    session
+        .replace_raw(&"'".repeat(MAX_INPUT_BYTES + 1))
+        .expect("no failure");
+    assert_eq!(session.raw_input().len(), MAX_INPUT_BYTES, "clamped");
     assert_eq!(
         session
             .process_key(&KeyInput::character('\''))

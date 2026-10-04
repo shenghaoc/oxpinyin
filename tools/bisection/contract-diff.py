@@ -730,6 +730,30 @@ case('remember-count-default', control=True)(remember_negative(-1))
 case('remember-count-seven', control=True)(remember_negative(7))
 
 
+# batch2 group 9: the input length cap (PR 9, #540)
+@case('input-length-cap')
+def _(k):
+    out = {}
+    for length in (4096, 4097, 32766, 32767, 32768, 65537):
+        inst = k.alloc()
+        text = (b'ni' * length)[:length]
+        out[str(length)] = [k.fn('parse_more_full_pinyins', Z, P, S)(inst, text),
+                            k.fn('get_parsed_input_length', Z, P)(inst)]
+    return out
+
+
+@case('long-input-sentence')
+def _(k):
+    # A decode past the old cap: the sentence is as long as the pin's.
+    inst = k.alloc()
+    text = b'ni' * 2400
+    out = {'parsed': k.fn('parse_more_full_pinyins', Z, P, S)(inst, text),
+           'guess': k.fn('guess_sentence', B, P)(inst)}
+    row = sentence_out(k, inst, 0)
+    out['sentence'] = [row[0], len(row[1]) if isinstance(row[1], str) else row[1]]
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):
