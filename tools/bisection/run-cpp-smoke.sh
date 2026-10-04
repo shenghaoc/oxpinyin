@@ -12,11 +12,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source ./oracle-cell.sh
 
-CAPI_DIR="$REPO_ROOT/target/debug"
-CAPI_SO="$CAPI_DIR/libpinyin_capi.so"
 echo "--- building oxpinyin-capi for the C++ smoke gate ---"
-cargo build -p oxpinyin-capi --locked --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
@@ -80,15 +81,19 @@ printf '%s\n' '\data model interpolation' '\1-gram' '\item 1 ok count 1' \
 # which is how this gate first caught the change. The symlink makes rpath
 # resolve the SONAME to the build under test, so the gate exercises the
 # drop-in identity instead of working around it.
-ln -sf libpinyin_capi.so "$CAPI_DIR/libpinyin.so.15"
+CAPI_DIR="$BUILD_DIR/lib"
+mkdir "$CAPI_DIR"
+ln -s "$CAPI_SO" "$CAPI_DIR/libpinyin_capi.so"
+ln -s libpinyin_capi.so "$CAPI_DIR/libpinyin.so.15"
 
 echo "--- compiling C++ smoke TU against pinyin.h ---"
 # pinyin.h -> novel_types.h/pinyin_custom2.h -> <glib.h>, and libpinyin.pc
 # declares `Requires: glib-2.0`. Supply the glib include dirs (or an explicit
 # GLIB_CFLAGS override for constrained builders) so the header tuple resolves.
 GLIB_CFLAGS="${GLIB_CFLAGS:-$(pkg-config --cflags glib-2.0 2>/dev/null)}"
+read -r -a glib_cflags <<< "$GLIB_CFLAGS"
 g++ -std=c++17 -Wall -Wextra -Werror -O2 \
-    $GLIB_CFLAGS \
+    "${glib_cflags[@]}" \
     -I"$REPO_ROOT/crates/oxpinyin-capi" \
     cpp-smoke.cc \
     -L"$CAPI_DIR" -Wl,-rpath,"$CAPI_DIR" \
@@ -100,7 +105,7 @@ if [ "$needed" != "libpinyin.so.15" ]; then
     echo "fatal: smoke binary needs '$needed', expected libpinyin.so.15"
     exit 1
 fi
-resolved=$(LD_LIBRARY_PATH= ldd "$BUILD_DIR/cpp-smoke" | sed -n 's/.*libpinyin\.so\.15 => \([^ ]*\).*/\1/p')
+resolved=$(LD_LIBRARY_PATH="" ldd "$BUILD_DIR/cpp-smoke" | sed -n 's/.*libpinyin\.so\.15 => \([^ ]*\).*/\1/p')
 case "$resolved" in
     "$CAPI_DIR"/*) ;;
     *) echo "fatal: libpinyin.so.15 resolved to '$resolved', not the build under test"; exit 1 ;;

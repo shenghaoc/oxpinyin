@@ -20,7 +20,7 @@
 # system-dir.sh (DYNAMIC_ADJUST_SYSTEM or OXPINYIN_SYSTEM_DIR), like the
 # residue probes.
 #
-# Exit codes: 0 = identical or skipped; 1 = build/run failure;
+# Exit codes: 0 = identical; 77 = skipped; 1 = build/run failure;
 #             2 = divergence; 3 = probe is vacuous.
 
 set -euo pipefail
@@ -28,6 +28,8 @@ cd "$(dirname "$0")"
 # shellcheck source=tools/bisection/system-dir.sh
 . ./system-dir.sh
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source ./oracle-cell.sh
 
 echo "--- building dynamic-adjust-diff driver ---"
 DRIVER="$(mktemp -d)/dynamic-adjust-diff"
@@ -35,8 +37,8 @@ trap 'rm -rf "$(dirname "$DRIVER")"' EXIT
 gcc -Wall -Wextra -Werror -O2 -o "$DRIVER" dynamic-adjust-diff.c -ldl
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --locked --manifest-path "$REPO_ROOT/Cargo.toml"
-OX_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+OX_SO=$OXPINYIN_CAPI_SO
 [ -f "$OX_SO" ] || { echo "fatal: $OX_SO not found"; exit 1; }
 
 PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"
@@ -53,7 +55,7 @@ if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "  0, the term lifting only the credited token) but agrees with"
     echo "  nothing external; a green suite without this run says nothing"
     echo "  about whether the bit matches upstream."
-    exit 0
+    exit 77
 fi
 
 OX_DATA="$(resolve_system_dir DYNAMIC_ADJUST_SYSTEM dynamic-adjust)"

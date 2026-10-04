@@ -20,7 +20,7 @@
 # backend — another backend's directory FAILS with BACKEND MISMATCH
 # (exit 1). The oracle reads its own data dir.
 #
-# Exit codes: 0 = identical or skipped; 1 = build/run failure (including a
+# Exit codes: 0 = identical; 77 = skipped; 1 = build/run failure (including a
 # backend mismatch); 2 = divergence.
 
 set -euo pipefail
@@ -40,9 +40,8 @@ echo "build: ok"
 # ── Build oxpinyin-capi ────────────────────────────────────────────────────
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" \
-    --no-default-features --features "$CAPI_FEATURE" 2>&1
-CAPI_SO="$CARGO_TARGET_DIR/debug/libpinyin_capi.so"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
@@ -58,13 +57,13 @@ ORACLE_DATA="$PREFIX/lib/libpinyin/data"
 if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
     echo "  build it with tools/oracle/build-oracle.sh and set PINYIN_ORACLE_PREFIX"
-    exit 0
+    exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
     "$PREFIX/oracle-pin.txt"; then
     echo "SKIP: oracle prefix at $PREFIX is off-pin"
     echo "  expected libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99"
-    exit 0
+    exit 77
 fi
 # The pin_ref above is prefix-matched (the full value is composite), so pin
 # the runtime inputs it folds in as explicit fields too: a prefix rebuilt
@@ -82,11 +81,11 @@ if ! grep -q "^model_sha256=$MODEL_SHA256_EXPECTED" "$PREFIX/oracle-pin.txt" \
     || ! grep -qx "dbm=$DBM_EXPECTED" "$PREFIX/oracle-pin.txt"; then
     echo "SKIP: oracle prefix at $PREFIX is off-pin (model/dbm fields)"
     echo "  expected model_sha256=$MODEL_SHA256_EXPECTED dbm=$DBM_EXPECTED"
-    exit 0
+    exit 77
 fi
 if [ ! -f "$ORACLE_DATA/bigram.db" ]; then
     echo "SKIP: oracle data not found at $ORACLE_DATA"
-    exit 0
+    exit 77
 fi
 echo "oracle: $ORACLE_SO"
 echo "data:   $ORACLE_DATA"
@@ -199,17 +198,17 @@ IBUS_PREFIX="${PINYIN_IBUS_PREFIX:-$IBUS_BUILD/prefix}"
 
 if [ -z "$IBUS_BUILD" ] || [ -z "$IBUS_SRC" ] || [ ! -f "$SCHEMA_SRC" ]; then
     echo "SKIP: ibus-libpinyin build tree not found (set PINYIN_IBUS_BUILD_DIR)"
-    exit 0
+    exit 77
 fi
 IBUS_PIN_REF='libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99'
 if [ ! -f "$IBUS_PREFIX/oracle-pin.txt" ] || ! grep -q "^pin_ref=$IBUS_PIN_REF" "$IBUS_PREFIX/oracle-pin.txt"; then
     echo "SKIP: ibus-libpinyin build at $IBUS_BUILD is off-pin"
-    exit 0
+    exit 77
 fi
 for command in g++ pkg-config glib-compile-schemas; do
     command -v "$command" > /dev/null 2>&1 || {
         echo "SKIP: $command not found for frontend interop harness"
-        exit 0
+        exit 77
     }
 done
 
@@ -241,9 +240,8 @@ run_frontend() {
     fi
 }
 
-DICTOOL="$CARGO_TARGET_DIR/debug/oxpinyin-dictool"
-cargo build -p oxpinyin-dictool --manifest-path "$REPO_ROOT/Cargo.toml" \
-    --no-default-features --features "$CAPI_FEATURE" 2>&1
+oracle_cell_artifact OXPINYIN_DICTOOL oxpinyin-dictool oxpinyin-dictool
+DICTOOL=$OXPINYIN_DICTOOL
 
 run_frontend "$FIXTURE" "$WORK/frontend-a.txt" "$WORK/frontend-cache-a"
 "$DICTOOL" import --user-dir "$WORK/dictool-user" "$FIXTURE"

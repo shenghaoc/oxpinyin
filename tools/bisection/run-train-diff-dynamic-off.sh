@@ -10,14 +10,16 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source ./oracle-cell.sh
 
 echo "--- building train-diff driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o train-diff train-diff.c -ldl
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --no-default-features --features tkrzw --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
-CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+CAPI_SO=$OXPINYIN_CAPI_SO
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
     exit 1
@@ -28,23 +30,33 @@ ORACLE_SO="$PREFIX/lib/libpinyin.so"
 ORACLE_DATA="$PREFIX/lib/libpinyin/data"
 if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
-    exit 0
+    exit 77
 fi
 
+DRIVER_ERROR=$(mktemp)
+trap 'rm -f "$DRIVER_ERROR"' EXIT
 OPTIONS="${TRAINDIFF_OFF_OPTIONS:-0x00000188}"
 echo "options: $OPTIONS"
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
 
-if ! TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" \
-    ./train-diff "$CAPI_SO" "$REPO_ROOT/fixtures/w3" > "$CAPI_LOG" 2>/dev/null; then
-    echo "FAIL: train-diff crashed against oxpinyin-capi"
+if TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" \
+    ./train-diff "$CAPI_SO" "$REPO_ROOT/fixtures/w3/$OXPINYIN_CAPI_BACKEND_EXT" > "$CAPI_LOG" 2> "$DRIVER_ERROR"; then
+    :
+else
+    driver_status=$?
+    cat "$DRIVER_ERROR" >&2
+    echo "FAIL: train-diff failed against oxpinyin-capi (exit $driver_status)"
     cat "$CAPI_LOG"
     exit 1
 fi
-if ! TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" \
-    ./train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>/dev/null; then
-    echo "FAIL: train-diff crashed against the oracle"
+if TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" \
+    ./train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$DRIVER_ERROR"; then
+    :
+else
+    driver_status=$?
+    cat "$DRIVER_ERROR" >&2
+    echo "FAIL: train-diff failed against the oracle (exit $driver_status)"
     cat "$ORACLE_LOG"
     exit 1
 fi
@@ -67,8 +79,8 @@ rm -f "$CAPI_LOG" "$ORACLE_LOG"
 # index). Full system tables on both sides so ranking is the real-frequency
 # construction, not the mini-fixture cost fallback.
 
-if [ -n "${OPTION_SWEEP_CAPI_DATA:-}" ]; then
-    CAPI_DATA="$OPTION_SWEEP_CAPI_DATA"
+if [ -n "${OPTION_SWEEP_CAPI_DATA:-${OXPINYIN_SYSTEM_DIR:-}}" ]; then
+    CAPI_DATA="${OPTION_SWEEP_CAPI_DATA:-$OXPINYIN_SYSTEM_DIR}"
 elif [ -f /tmp/oxpinyin-export/pinyin_index.bin ] \
 	&& grep -q '^backend=tkt$' /tmp/oxpinyin-export/datagen-manifest.txt; then
     CAPI_DATA="$(mktemp -d /tmp/traindiff-capi-data-XXXXXX)"
@@ -90,24 +102,32 @@ fi
 if [ -z "$CAPI_DATA" ] || [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
     echo "SKIP: no full capi tables + interpolation2.text; cannot run populated-store candidate dump"
     echo "train-diff dynamic-off: PASS (exports only)"
-    exit 0
+    exit 77
 fi
 
 echo "--- populated-store candidate dump (DYNAMIC_ADJUST clear) ---"
 echo "capi data: $CAPI_DATA"
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
-if ! TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" TRAINDIFF_DUMP_CANDIDATES=1 \
+if TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" TRAINDIFF_DUMP_CANDIDATES=1 \
     TRAINDIFF_REOPEN=1 \
-    ./train-diff "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2>/dev/null; then
-    echo "FAIL: train-diff candidate dump crashed against oxpinyin-capi"
+    ./train-diff "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2> "$DRIVER_ERROR"; then
+    :
+else
+    driver_status=$?
+    cat "$DRIVER_ERROR" >&2
+    echo "FAIL: train-diff candidate dump failed against oxpinyin-capi (exit $driver_status)"
     cat "$CAPI_LOG"
     exit 1
 fi
-if ! TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" TRAINDIFF_DUMP_CANDIDATES=1 \
+if TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" TRAINDIFF_DUMP_CANDIDATES=1 \
     TRAINDIFF_REOPEN=1 \
-    ./train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>/dev/null; then
-    echo "FAIL: train-diff candidate dump crashed against the oracle"
+    ./train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$DRIVER_ERROR"; then
+    :
+else
+    driver_status=$?
+    cat "$DRIVER_ERROR" >&2
+    echo "FAIL: train-diff candidate dump failed against the oracle (exit $driver_status)"
     cat "$ORACLE_LOG"
     exit 1
 fi
