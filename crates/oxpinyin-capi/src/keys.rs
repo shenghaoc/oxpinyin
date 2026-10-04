@@ -251,9 +251,8 @@ fn display_string_getter(
 ///
 /// `CHEWING_ZERO_MIDDLE == m_middle && CHEWING_ZERO_FINAL == m_final`
 /// (`pinyin.cpp:2758-2766`). Upstream asserts the tone is zero in the
-/// true branch — a toned initial-only key aborts the pin; the no-abort
-/// policy answers `true` (the divergence recorded for the toned
-/// initial-only key family in `docs/findings/upstream-divergences.md`).
+/// true branch — a toned initial-only key aborts the pin; oxpinyin answers
+/// `false` and emits one warning (class (c), register row 4).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_get_pinyin_is_incomplete(
     instance: *mut PinyinInstance,
@@ -265,5 +264,14 @@ pub extern "C" fn pinyin_get_pinyin_is_incomplete(
 
     // SAFETY: Null-checked above.
     let core = unsafe { *key }.to_core();
-    core.middle == 0 && core.final_ == 0
+    let incomplete = core.middle == 0 && core.final_ == 0;
+    // Class (c), `pinyin.cpp:2769`: `assert(CHEWING_ZERO_TONE == key->m_tone)`
+    // on an initial-only key.
+    if incomplete && core.tone != 0 {
+        crate::ffi::log_warning(
+            "pinyin_get_pinyin_is_incomplete: assertion 'CHEWING_ZERO_TONE == key->m_tone' failed",
+        );
+        return false;
+    }
+    incomplete
 }

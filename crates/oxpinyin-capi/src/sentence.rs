@@ -34,7 +34,7 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     // `m_prefixes` becomes `[sentence_start]` before the lookup runs
     // (`pinyin.cpp:1376-1377`).
     inst.prefixes.clear();
-    if !matrix_has_keys(inst) {
+    if !matrix_has_keys(inst) || refuse_toned_initial(inst, "pinyin_guess_sentence") {
         return false;
     }
     inst.core.session.guess_sentence().unwrap_or(false)
@@ -53,6 +53,21 @@ fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
             .wrapping_add(u64::from(inst.core.dict.unigram_total_delta()))
             & u64::from(u32::MAX)
             == 0
+}
+
+/// Class (c), `pinyin_phrase3.h:152`: the pin's phrase-table search asserts
+/// `CHEWING_ZERO_TONE == key.m_tone` on an initial-only key
+/// (`contains_incomplete_pinyin`), so a lookup over a matrix holding a toned
+/// initial (`n4` under `USE_TONE | PINYIN_INCOMPLETE`) aborts. The lookup is
+/// refused with `false` and one warning.
+fn refuse_toned_initial(inst: &crate::state::CapiInstance, name: &str) -> bool {
+    let toned = crate::aux_matrix::SharedMatrix::of(inst).is_some_and(|m| m.has_toned_initial());
+    if toned {
+        crate::ffi::log_warning(&format!(
+            "{name}: assertion 'CHEWING_ZERO_TONE == key.m_tone' failed"
+        ));
+    }
+    toned
 }
 
 /// Whether the parse placed a key. `get_nbest_match` answers `false` before
@@ -105,7 +120,7 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
     let prefixes =
         oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
     inst.prefixes.clone_from(&prefixes);
-    if !matrix_has_keys(inst) {
+    if !matrix_has_keys(inst) || refuse_toned_initial(inst, "pinyin_guess_sentence_with_prefix") {
         return false;
     }
     let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
@@ -350,6 +365,10 @@ pub extern "C" fn pinyin_guess_candidates(
     // without a step before it stores the sort word
     // (`pinyin.cpp:2193-2198`); a keyless parse is such a matrix.
     if !matrix_has_keys(inst) {
+        inst.candidates.clear();
+        return false;
+    }
+    if refuse_toned_initial(inst, "pinyin_guess_candidates") {
         inst.candidates.clear();
         return false;
     }

@@ -445,16 +445,22 @@ fn pinyin_strings_contract() {
 }
 
 /// A hand-crafted toned initial-only key: the pin asserts (abort) in
-/// `pinyin_get_pinyin_is_incomplete`'s true branch; the no-abort policy
-/// answers `true`.
+/// `pinyin_get_pinyin_is_incomplete`'s true branch (`pinyin.cpp:2769`);
+/// oxpinyin answers `false` and emits one warning (class (c), register row 4).
+/// The untoned initial and the zero key keep the pin's `true`.
 #[test]
-fn toned_initial_only_key_is_incomplete_without_aborting() {
+fn toned_initial_only_key_refuses_instead_of_aborting() {
     let fixture = Fixture::new("keys-toned-incomplete");
     // middle 0, final 0, tone 3.
     let mut key = ChewingKey { packed: 3 << 12 };
-    assert!(pinyin_get_pinyin_is_incomplete(
+    assert!(!pinyin_get_pinyin_is_incomplete(
         fixture.instance,
         &raw mut key
+    ));
+    let mut untoned = ChewingKey { packed: 0 };
+    assert!(pinyin_get_pinyin_is_incomplete(
+        fixture.instance,
+        &raw mut untoned
     ));
 }
 

@@ -127,6 +127,15 @@ impl SharedMatrix {
         })
     }
 
+    /// Whether a key is an initial alone carrying a tone — the shape
+    /// `contains_incomplete_pinyin` asserts on (`pinyin_phrase3.h:152`) in
+    /// every phrase-table search that holds it.
+    pub(crate) fn has_toned_initial(&self) -> bool {
+        self.keys
+            .iter()
+            .any(|k| k.key.middle == 0 && k.key.final_ == 0 && k.key.tone != 0)
+    }
+
     fn size(&self) -> usize {
         self.columns.len()
     }
