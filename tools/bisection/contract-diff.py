@@ -584,6 +584,83 @@ def _(k):
     return out
 
 
+# batch2 group 7: the sub-index unigram total guard (PR 7, #540)
+def choose_text(k, inst, offset, wanted):
+    k.fn('guess_candidates', B, P, Z, U)(inst, offset, 0)
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    for i in range(count.value):
+        cand, text = P(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        if text.value == wanted.encode():
+            return k.fn('choose_candidate', Z, P, Z, P)(inst, offset, cand)
+    return None
+
+
+def unigram_of(k, token):
+    freq = U(UNTOUCHED)
+    ret = k.fn('token_get_unigram_frequency', B, P, U, C.POINTER(U))(k.inst, token, C.byref(freq))
+    return [ret, freq.value]
+
+
+@case('train-unigram-total')
+def _(k):
+    # Once the library's guint32 total would overflow the item stops growing:
+    # at the pin 你 freezes at 2122897296 after about 20000 trainings.
+    inst = k.inst
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    k.fn('guess_sentence', B, P)(inst)
+    ni, hao = tokens_of(k, '你')[0], tokens_of(k, '好')[0]
+    first = choose_text(k, inst, 0, '你')
+    second = choose_text(k, inst, first, '好') if first else None
+    k.fn('guess_sentence', B, P)(inst)
+    out = {'chosen': [first, second], 'before': [unigram_of(k, ni), unigram_of(k, hao)]}
+    train = k.fn('train', B, P, C.c_ubyte)
+    for step, count in ((1, 1), (2, 9999), (3, 10000), (4, 10000)):
+        rets = {train(inst, 0) for _ in range(count)}
+        out['after %d' % sum(c for s, c in ((1, 1), (2, 9999), (3, 10000), (4, 10000)) if s <= step)] = [
+            sorted(rets), unigram_of(k, ni), unigram_of(k, hao)]
+    return out
+
+
+@case('predicted-unigram-overflow')
+def _(k):
+    # Training 你 and 好 fills library 1 to within one seed of its guint32
+    # total; accepted predicted candidates (483 each) then run it out, and
+    # the pin answers false from the call that no longer fits.
+    inst = k.inst
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    k.fn('guess_sentence', B, P)(inst)
+    first = choose_text(k, inst, 0, '你')
+    second = choose_text(k, inst, first, '好') if first else None
+    k.fn('guess_sentence', B, P)(inst)
+    train = k.fn('train', B, P, C.c_ubyte)
+    for _ in range(20000):
+        train(inst, 0)
+    k.fn('guess_predicted_candidates', B, P, S)(inst, '你'.encode())
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    pick = None
+    for i in range(count.value):
+        cand, kind, text = P(), I(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        if kind.value == 5 and (tokens_of(k, text.value.decode()) or [0])[0] >> 24 == 1:
+            pick = cand
+            break
+    out = {'chosen': [first, second], 'found': pick is not None}
+    if pick is None:
+        return out
+    accepted = 0
+    choose = k.fn('choose_predicted_candidate', B, P, P)
+    while accepted < 1000 and choose(inst, pick):
+        accepted += 1
+    out['accepted before the first refusal'] = accepted
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):
