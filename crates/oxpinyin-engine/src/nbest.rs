@@ -142,9 +142,6 @@ struct Value {
     keys: u32,
     /// Accumulated surprisal (`m_poss`, negated: lower is better).
     cost: Cost,
-    /// Insertion sequence, the deterministic stand-in for upstream's heap
-    /// order when the comparator ties.
-    seq: u64,
 }
 
 impl Value {
@@ -157,7 +154,6 @@ impl Value {
             length: 0,
             keys: 0,
             cost: 0,
-            seq: 0,
         }
     }
 }
@@ -171,34 +167,128 @@ struct BeamEntry {
     slot: usize,
 }
 
-/// `trellis_value_less_than`: whether `left` loses to `right`.
-///
-/// Port of `phonetic_lookup.h:66-87` in surprisal space (poss = −cost): a
-/// sentence one key shorter is preferred unless the longer one's cost is
-/// more than [`LONG_SENTENCE_PENALTY`] lower; any longer sentence otherwise
-/// loses; at equal length the higher cost loses.
-///
-/// Deliberately **not** a strict weak order — upstream's comparator is
-/// not either — which is why the sort closures below fall back to `seq`
-/// on a tie: that keeps `sort_by` well-defined on the transitive data
-/// the pins were measured under. The residual contract caveat and the
-/// measured rejection of a heap-shaped selection are recorded in
-/// `docs/findings/sentence-surface.md` §3.
-fn loses_to(left: &Value, right: &Value) -> bool {
-    match left.length.cmp(&right.length) {
-        core::cmp::Ordering::Less if right.length - left.length == 1 => {
-            // The shorter keeps its place unless beaten by more than the
-            // penalty.
-            left.cost > right.cost.saturating_add(LONG_SENTENCE_PENALTY)
+/// 074a2219 phonetic_lookup.h:66-91, including the nstore gate. The
+/// longer-by-one branch is result-redundant: the final longer clause wins
+/// regardless. This comparator is cyclic; never pass it to a Rust sort.
+fn loses_to(left: &Value, right: &Value, nstore: usize) -> bool {
+    (nstore > 1
+        && ((left.length.checked_add(1) == Some(right.length)
+            && left.cost > right.cost.saturating_add(LONG_SENTENCE_PENALTY))
+            || (left.length == right.length.saturating_add(1)
+                && left.cost.saturating_add(LONG_SENTENCE_PENALTY) > right.cost)))
+        || (left.length == right.length && left.cost > right.cost)
+        || left.length > right.length
+}
+
+// Literal libstdc++ stl_heap.h algorithms (__push_heap, __adjust_heap,
+// __pop_heap, __make_heap), not an ordered-sort approximation. Equal and
+// cyclic comparisons make each assignment and the right-child tie matter.
+fn heap_push<T: Clone>(
+    values: &mut [T],
+    mut hole: usize,
+    top: usize,
+    value: T,
+    less: &impl Fn(&T, &T) -> bool,
+) {
+    while hole > top {
+        let parent = (hole - 1) / 2;
+        if !less(&values[parent], &value) {
+            break;
         }
-        core::cmp::Ordering::Greater if left.length - right.length == 1 => {
-            // The longer must be better by at least the penalty.
-            left.cost > right.cost.saturating_sub(LONG_SENTENCE_PENALTY)
+        values[hole] = values[parent].clone();
+        hole = parent;
+    }
+    values[hole] = value;
+}
+
+fn heap_adjust<T: Clone>(
+    values: &mut [T],
+    mut hole: usize,
+    len: usize,
+    value: T,
+    less: &impl Fn(&T, &T) -> bool,
+) {
+    let top = hole;
+    let mut child = hole;
+    while child < (len - 1) / 2 {
+        child = 2 * (child + 1);
+        if less(&values[child], &values[child - 1]) {
+            child -= 1;
         }
-        core::cmp::Ordering::Equal => left.cost > right.cost,
-        // A gap of two or more: the longer loses outright.
-        core::cmp::Ordering::Greater => true,
-        core::cmp::Ordering::Less => false,
+        values[hole] = values[child].clone();
+        hole = child;
+    }
+    if len.is_multiple_of(2) && child == (len - 2) / 2 {
+        child = 2 * (child + 1);
+        values[hole] = values[child - 1].clone();
+        hole = child - 1;
+    }
+    heap_push(values, hole, top, value, less);
+}
+
+fn heap_pop<T: Clone>(values: &mut [T], less: &impl Fn(&T, &T) -> bool) {
+    if values.len() > 1 {
+        let last = values.len() - 1;
+        let value = values[last].clone();
+        values[last] = values[0].clone();
+        heap_adjust(values, 0, last, value, less);
+    }
+}
+
+fn heap_make<T: Clone>(values: &mut [T], less: &impl Fn(&T, &T) -> bool) {
+    if values.len() < 2 {
+        return;
+    }
+    let mut parent = (values.len() - 2) / 2;
+    loop {
+        let value = values[parent].clone();
+        heap_adjust(values, parent, values.len(), value, less);
+        if parent == 0 {
+            break;
+        }
+        parent -= 1;
+    }
+}
+
+fn heap_top<T: Clone>(mut values: Vec<T>, count: usize, less: impl Fn(&T, &T) -> bool) -> Vec<T> {
+    heap_make(&mut values, &less);
+    let mut result = Vec::with_capacity(count.min(values.len()));
+    while !values.is_empty() && result.len() < count {
+        result.push(values[0].clone());
+        heap_pop(&mut values, &less);
+        values.pop();
+    }
+    result
+}
+
+/// The final tail comparison (074a2219 phonetic_lookup.h:174-178) has
+/// gint truncation. GLib 2.90.0 g_ptr_array_sort delegates to g_sort_array,
+/// gqsort.c:msort_with_tmp: split n/2, merge left on <= 0 (stable).
+/// Keep native costs; class (a) does not replace the native scorer.
+fn tail_compare(left: &Value, right: &Value) -> i32 {
+    let poss = |cost: Cost| (-(cost as f64) * core::f64::consts::LN_2 / 1000.0) as f32;
+    (-(poss(left.cost) - poss(right.cost))) as i32
+}
+
+fn tail_merge(values: &mut [Value]) {
+    if values.len() < 2 {
+        return;
+    }
+    let mid = values.len() / 2;
+    let (left, right) = values.split_at_mut(mid);
+    tail_merge(left);
+    tail_merge(right);
+    let left = left.to_vec();
+    let right = right.to_vec();
+    let (mut l, mut r) = (0, 0);
+    for slot in values {
+        if r == right.len() || (l < left.len() && tail_compare(&left[l], &right[r]) <= 0) {
+            *slot = left[l].clone();
+            l += 1;
+        } else {
+            *slot = right[r].clone();
+            r += 1;
+        }
     }
 }
 
@@ -208,12 +298,11 @@ type NodeValues = SmallVec<[Value; NSTORE]>;
 struct Trellis {
     /// The surface's `<nstore, nbest>`.
     shape: NbestShape,
-    /// `nodes[position][token]` = up to `shape.nstore()` values, best-first.
+    /// `nodes[position][token]` = the physical pinned heap slots.
     nodes: Vec<HashMap<u32, NodeValues>>,
+    node_order: Vec<Vec<u32>>,
     /// Token → phrase text, gathered from the span searches.
     texts: HashMap<u32, CompactString>,
-    /// Next insertion sequence.
-    seq: u64,
 }
 
 impl Trellis {
@@ -224,116 +313,82 @@ impl Trellis {
     /// token list; the single-seed `new` stays the sentence path's law.
     fn with_seeds(bound: usize, seeds: &[u32], shape: NbestShape) -> Self {
         let mut nodes = vec![HashMap::new(); bound + 1];
+        let mut node_order = vec![Vec::new(); bound + 1];
         for &seed_token in seeds {
             let mut seed_values = NodeValues::new();
             seed_values.push(Value::seed(seed_token));
+            if !nodes[0].contains_key(&seed_token) {
+                node_order[0].push(seed_token);
+            }
             nodes[0].insert(seed_token, seed_values);
         }
         Self {
             shape,
             nodes,
+            node_order,
             texts: HashMap::new(),
-            seq: 1,
         }
     }
 
-    /// `trellis_node::eval_item`: keep the best `nstore` values.
+    /// 074a2219 phonetic_lookup_heap.h:56-81: a full heap replaces its
+    /// front when the newcomer wins. At equal length the front is BEST,
+    /// so reproducing the pin deliberately evicts the best stored value.
     fn insert(&mut self, position: usize, value: Value) {
         let nstore = self.shape.nstore();
-        let node = self.nodes[position].entry(value.token).or_default();
-        if node.len() < nstore {
-            // Insert best-first: before the first value this one beats.
-            let slot = node
-                .iter()
-                .position(|stored| loses_to(stored, &value))
-                .unwrap_or(node.len());
-            node.insert(slot, value);
-            return;
+        if !self.nodes[position].contains_key(&value.token) {
+            self.node_order[position].push(value.token);
         }
-        // Full: replace the worst when the newcomer beats it (upstream
-        // replaces the min-heap front; on a comparator tie the stored value
-        // wins).
-        if let Some(worst) = node.last()
-            && loses_to(worst, &value)
-        {
+        let node = self.nodes[position].entry(value.token).or_default();
+        let less = |left: &Value, right: &Value| loses_to(left, right, nstore);
+        if node.len() < nstore {
+            node.push(value.clone());
             let last = node.len() - 1;
-            node[last] = value;
-            let mut index = last;
-            while index > 0 && loses_to(&node[index], &node[index - 1]) {
-                node.swap(index, index - 1);
-                index -= 1;
-            }
+            heap_push(node, last, 0, value, &less);
+        } else if less(&node[0], &value) {
+            heap_pop(node, &less);
+            let last = node.len() - 1;
+            heap_push(node, last, 0, value, &less);
         }
     }
 
-    /// The step's beam: every value at `position` with its node slot,
-    /// best-first, capped at [`NBEAM`] (`get_candidates` +
-    /// `get_top_results`).
-    fn beam(&mut self, position: usize) -> SmallVec<[BeamEntry; NBEAM]> {
-        // Token-sorted node iteration: HashMap iteration order must not
-        // reach the sort input, and the `(rank, seq)` ordering below makes
-        // the output independent of it regardless.
-        let mut tokens: Vec<_> = self.nodes[position].keys().copied().collect();
-        tokens.sort_unstable();
-        let mut entries: SmallVec<[BeamEntry; NBEAM]> = tokens
-            .into_iter()
-            .filter_map(|token| self.nodes[position].get(&token))
+    /// 074a2219 phonetic_lookup.h:272-297: creation order, physical slots.
+    fn candidates(&self, position: usize) -> Vec<BeamEntry> {
+        self.node_order[position]
+            .iter()
+            .filter_map(|token| self.nodes[position].get(token))
             .flat_map(|node| {
                 node.iter().enumerate().map(|(slot, value)| BeamEntry {
                     value: value.clone(),
                     slot,
                 })
             })
-            .collect();
-        entries.sort_by(|left, right| {
-            if loses_to(&right.value, &left.value) {
-                core::cmp::Ordering::Less
-            } else if loses_to(&left.value, &right.value) {
-                core::cmp::Ordering::Greater
-            } else {
-                left.value.seq.cmp(&right.value.seq)
-            }
-        });
-        entries.truncate(NBEAM);
-        entries
+            .collect()
     }
 
-    /// The tails: the top `nbest` values at the furthest position that
-    /// carries any, ordered by cost ascending (upstream selects with the
-    /// comparator in `get_top_results`, then sorts the tails by raw poss
-    /// with `trellis_value_compare`).
+    fn beam(&mut self, position: usize) -> SmallVec<[BeamEntry; NBEAM]> {
+        heap_top(self.candidates(position), NBEAM, |left, right| {
+            loses_to(&left.value, &right.value, self.shape.nstore())
+        })
+        .into_iter()
+        .collect()
+    }
+
+    /// 074a2219 phonetic_lookup.h:329-339: only the fixed final step,
+    /// heap selection, then GLib's stable merge with gint comparison.
     fn tails(&mut self) -> Vec<Value> {
-        let Some(position) = self
-            .nodes
-            .iter()
-            .rposition(|node| !node.is_empty())
-            .filter(|position| *position > 0)
-        else {
-            return Vec::new();
-        };
-        let mut tokens: Vec<_> = self.nodes[position].keys().copied().collect();
-        tokens.sort_unstable();
-        let mut values: Vec<Value> = tokens
-            .into_iter()
-            .filter_map(|token| self.nodes[position].get(&token))
-            .flat_map(|node| node.iter().cloned())
-            .collect();
-        values.sort_by(|left, right| {
-            if loses_to(right, left) {
-                core::cmp::Ordering::Less
-            } else if loses_to(left, right) {
-                core::cmp::Ordering::Greater
-            } else {
-                left.seq.cmp(&right.seq)
-            }
-        });
-        values.truncate(self.shape.nbest());
-        values.sort_by_key(|value| (value.cost, value.seq));
+        let position = self.nodes.len() - 1;
+        let mut values: Vec<_> = heap_top(
+            self.candidates(position),
+            self.shape.nbest(),
+            |left, right| loses_to(&left.value, &right.value, self.shape.nstore()),
+        )
+        .into_iter()
+        .map(|entry| entry.value)
+        .collect();
+        tail_merge(&mut values);
         values
     }
 
-    /// Backtracks one tail into its phrase spans, forward order
-    /// (`extract_result`).
     fn extract(&self, tail: &Value) -> Vec<(usize, u32)> {
         let mut spans = Vec::new();
         let mut current = tail.clone();
@@ -384,6 +439,7 @@ struct SpanEntry {
 /// fixed end expanding only the forced token, and free spans break before
 /// ending inside a forced run. `None` — or a store with no forcings — is
 /// today's walk, bit for bit.
+#[cfg(test)]
 pub fn nbest_sentences<D, L>(
     matrix: &[Vec<ScanKey>],
     bound: usize,
@@ -399,15 +455,51 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
+    nbest_sentences_generation(
+        GenerationInput {
+            matrix,
+            bound,
+            physical_separators: true,
+        },
+        dictionary,
+        model,
+        history,
+        constraints,
+        shape,
+    )
+}
+
+pub(super) fn nbest_sentences_generation<D, L>(
+    input: GenerationInput<'_>,
+    dictionary: &D,
+    model: &L,
+    history: &[PhraseToken],
+    constraints: Option<&ConstraintStore>,
+    shape: NbestShape,
+) -> Result<Vec<NbestRow>, EngineError>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    let GenerationInput {
+        matrix,
+        bound,
+        physical_separators,
+    } = input;
     // The sentence path's single-seed law: the constrained decode seeds
     // the virtual start; the free walk seeds the history's last token.
     let seed = match constraints {
         Some(_) => SENTENCE_START,
         None => history.last().map_or(SENTENCE_START, |token| token.value()),
     };
-    nbest_sentences_with_seeds(
-        matrix,
-        bound,
+    nbest_sentences_with_seeds_generation(
+        GenerationInput {
+            matrix,
+            bound,
+            physical_separators,
+        },
         dictionary,
         model,
         &[PhraseToken::new(seed)],
@@ -420,9 +512,8 @@ where
 /// initial node, upstream's `fill_prefixes` over `m_prefixes =
 /// [sentence_start] + _compute_prefixes(prefix)` — the exact shape
 /// `pinyin_guess_sentence_with_prefix` drives.
-pub fn nbest_sentences_with_seeds<D, L>(
-    matrix: &[Vec<ScanKey>],
-    bound: usize,
+pub(super) fn nbest_sentences_with_seeds_generation<D, L>(
+    input: GenerationInput<'_>,
     dictionary: &D,
     model: &L,
     seeds: &[PhraseToken],
@@ -435,6 +526,12 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
+    let GenerationInput {
+        matrix,
+        bound,
+        physical_separators,
+    } = input;
+    let generation = GenerationView::new(matrix, bound, physical_separators);
     let seed_values: Vec<u32> = seeds.iter().map(|token| token.value()).collect();
     let mut trellis = Trellis::with_seeds(bound, &seed_values, shape);
     // Memoised step costs: the beam revisits (prev, token) pairs.
@@ -453,25 +550,20 @@ where
             position += 1;
             continue;
         }
-        let head_seq = beam.first().map(|entry| entry.value.seq);
 
         if let Some(Cell::OneStep { token, end, .. }) = cell_at(position).cloned() {
             // One span search to the fixed end, the forced token only —
             // `search_bigram2`/`search_unigram2`'s ONESTEP branches —
             // then move on: no widening, no other token starts there.
             if end > position && end <= bound {
-                let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
                 let mut entries: Vec<SpanEntry> = Vec::new();
-                span_entries(matrix, position, end, &mut path, dictionary, &mut entries)?;
+                generation.search(position, end, dictionary, &mut entries)?;
                 if let Some(entry) = entries.iter().find(|entry| entry.token == token.value()) {
-                    expand_entry(
-                        &Expansion {
-                            entry,
-                            beam: &beam,
-                            head_seq,
-                            start: position,
-                            end,
-                        },
+                    expand_entries(
+                        core::slice::from_ref(entry),
+                        &beam,
+                        position,
+                        end,
                         model,
                         &mut costs,
                         &mut trellis,
@@ -483,28 +575,16 @@ where
         }
 
         let env = NbestEnv {
-            matrix,
+            generation: &generation,
             bound,
             dictionary,
             model,
         };
-        widen_free_span(
-            &env,
-            constraints,
-            position,
-            &beam,
-            head_seq,
-            &mut costs,
-            &mut trellis,
-        )?;
+        widen_free_span(&env, constraints, position, &beam, &mut costs, &mut trellis)?;
         position += 1;
     }
 
-    let span = trellis
-        .nodes
-        .iter()
-        .rposition(|node| !node.is_empty())
-        .unwrap_or(0);
+    let span = bound;
     let mut rows = Vec::new();
     for tail in trellis.tails() {
         let spans = trellis.extract(&tail);
@@ -535,11 +615,167 @@ where
     Ok(rows)
 }
 
+pub(super) struct GenerationInput<'a> {
+    pub(super) matrix: &'a [Vec<ScanKey>],
+    pub(super) bound: usize,
+    pub(super) physical_separators: bool,
+}
+
+#[derive(Default)]
+struct GenerationPath {
+    keys: SmallVec<[SyllableKey; 16]>,
+    tones: SmallVec<[u8; 16]>,
+}
+
+/// Additional trellis-only view of the unchanged ordinary scan matrix.
+/// 074a2219 phonetic_key_matrix.cpp:350-455 represents each physical
+/// separator by a zero-key hop, including every doubled/trailing byte.
+/// Exact-scheme formatting separators are not physical zero keys.
+struct GenerationView {
+    columns: Vec<Vec<ScanKey>>,
+    zeros: Vec<bool>,
+}
+
+impl GenerationView {
+    fn new(matrix: &[Vec<ScanKey>], bound: usize, physical: bool) -> Self {
+        let mut columns = vec![Vec::new(); bound + 1];
+        let mut zeros = vec![false; bound + 1];
+        let mut last_key_end = 0;
+        for key in matrix.iter().flatten().copied() {
+            let mut raw = key;
+            if physical && key.crosses_separator {
+                for column in zeros
+                    .iter_mut()
+                    .take(key.syllable_start.min(bound))
+                    .skip(key.from)
+                {
+                    *column = true;
+                }
+                raw.from = key.syllable_start;
+            }
+            raw.crosses_separator = false;
+            raw.syllable_start = raw.from;
+            if let Some(column) = columns.get_mut(raw.from) {
+                column.push(raw);
+            }
+            last_key_end = last_key_end.max(raw.to);
+        }
+        if physical {
+            // The parser's consumed bound includes trailing apostrophes even
+            // when junk follows them; no ordinary edge represents those bytes.
+            for column in zeros.iter_mut().take(bound).skip(last_key_end) {
+                *column = true;
+            }
+        }
+        Self { columns, zeros }
+    }
+
+    fn search<D>(
+        &self,
+        start: usize,
+        end: usize,
+        dictionary: &D,
+        into: &mut Vec<SpanEntry>,
+    ) -> Result<bool, EngineError>
+    where
+        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D::Error: core::fmt::Display,
+    {
+        let Some(column) = self.columns.get(start) else {
+            return Ok(false);
+        };
+        if column.is_empty() && !self.zeros.get(start).copied().unwrap_or(false) {
+            return Ok(false);
+        }
+        // search_matrix's empty-end-column gate is independent of paths.
+        if end + 1 < self.columns.len() && self.columns[end].is_empty() && !self.zeros[end] {
+            return Ok(true);
+        }
+        let mut path = GenerationPath::default();
+        let mut continued = false;
+        self.walk(start, end, dictionary, &mut path, into, &mut continued)?;
+        // search_matrix files each path's ranges into per-library arrays.
+        // This sort takes only integer library ids, never the trellis comparator.
+        into.sort_by_key(|entry| entry.token >> 24);
+        Ok(continued)
+    }
+
+    fn walk<D>(
+        &self,
+        start: usize,
+        end: usize,
+        dictionary: &D,
+        path: &mut GenerationPath,
+        into: &mut Vec<SpanEntry>,
+        continued: &mut bool,
+    ) -> Result<(), EngineError>
+    where
+        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D::Error: core::fmt::Display,
+    {
+        if start > end {
+            return Ok(());
+        }
+        if start == end {
+            if path.keys.len() > MAX_PHRASE_LENGTH {
+                return Ok(());
+            }
+            if path.keys.is_empty() {
+                *continued = true;
+                return Ok(());
+            }
+            let entries = dictionary
+                .trellis_records(&path.keys, &path.tones)
+                .map_err(|error| {
+                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+                })?;
+            *continued |= dictionary
+                .phrase_prefix_exists(&path.keys)
+                .map_err(|error| {
+                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+                })?;
+            for entry in entries {
+                let pronunciation = entry.pronunciation_possibility();
+                into.push(SpanEntry {
+                    token: entry.token().value(),
+                    text: entry.into_text(),
+                    keys: path.keys.len().try_into().unwrap_or(u32::MAX),
+                    pronunciation,
+                });
+            }
+            return Ok(());
+        }
+        if self.zeros.get(start).copied().unwrap_or(false) {
+            return self.walk(start + 1, end, dictionary, path, into, continued);
+        }
+        let Some(column) = self.columns.get(start) else {
+            return Ok(());
+        };
+        for key in column {
+            if key.to > end {
+                *continued = true;
+                continue;
+            }
+            if key.to <= start {
+                continue;
+            }
+            path.keys.push(key.key);
+            path.tones.push(key.tone);
+            if path.keys.len() <= MAX_PHRASE_LENGTH {
+                self.walk(key.to, end, dictionary, path, into, continued)?;
+            }
+            path.keys.pop();
+            path.tones.pop();
+        }
+        Ok(())
+    }
+}
+
 /// The shared, immutable environment of one `nbest_sentences` walk: the
 /// scan matrix and its bound, the dictionary, and the language model.
 struct NbestEnv<'a, D, L> {
     /// The scan matrix columns.
-    matrix: &'a [Vec<ScanKey>],
+    generation: &'a GenerationView,
     /// The walk's one-past-end column.
     bound: usize,
     /// The lexicon dictionary.
@@ -548,9 +784,8 @@ struct NbestEnv<'a, D, L> {
     model: &'a L,
 }
 
-/// The free widening walk from `position`: grow the span end one column at
-/// a time while the spans keep widening, never ending inside a forced run,
-/// and expand the first entry per token over the whole beam.
+/// The free widening walk preserves all pronunciation records and ranges;
+/// no first-token reduction is permitted on the trellis generation path.
 ///
 /// # Errors
 ///
@@ -560,7 +795,6 @@ fn widen_free_span<D, L>(
     constraints: Option<&ConstraintStore>,
     position: usize,
     beam: &[BeamEntry],
-    head_seq: Option<u64>,
     costs: &mut HashMap<(u32, u32), NbestStepCosts>,
     trellis: &mut Trellis,
 ) -> Result<(), EngineError>
@@ -578,48 +812,11 @@ where
             // A span may not end inside a forced run.
             break;
         }
-        widening = false;
-        let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
-        let mut entries: Vec<SpanEntry> = Vec::new();
-        span_entries(
-            env.matrix,
-            position,
-            end,
-            &mut path,
-            env.dictionary,
-            &mut entries,
-        )?;
-        widen_probe(
-            env.matrix,
-            position,
-            end,
-            &mut path,
-            env.dictionary,
-            &mut widening,
-        )?;
-
-        // First path per token wins: equal-cost duplicates from other
-        // paths of the same span would only fill node slots.
-        let mut first_of_token: SmallVec<[u32; 32]> = SmallVec::new();
-        for entry in entries {
-            if !first_of_token.contains(&entry.token) {
-                first_of_token.push(entry.token);
-            } else {
-                continue;
-            }
-            expand_entry(
-                &Expansion {
-                    entry: &entry,
-                    beam,
-                    head_seq,
-                    start: position,
-                    end,
-                },
-                env.model,
-                costs,
-                trellis,
-            )?;
-        }
+        let mut entries = Vec::new();
+        widening = env
+            .generation
+            .search(position, end, env.dictionary, &mut entries)?;
+        expand_entries(&entries, beam, position, end, env.model, costs, trellis)?;
         end += 1;
     }
     Ok(())
@@ -659,23 +856,13 @@ where
         .any(|entry| entry.token == token.value() && !matches!(entry.pronunciation, Some((0, _)))))
 }
 
-/// One span expansion over the whole beam: the entry to push, the beam it
-/// rides, and the span it covers.
-#[derive(Clone, Copy)]
-struct Expansion<'a> {
-    entry: &'a SpanEntry,
-    beam: &'a [BeamEntry],
-    head_seq: Option<u64>,
+/// 074a2219 phonetic_lookup.h:542-642, 787-788: all bigram
+/// predecessors first, each over library/range/item order, then head unigram.
+fn expand_entries<L>(
+    entries: &[SpanEntry],
+    beam: &[BeamEntry],
     start: usize,
     end: usize,
-}
-
-/// Expands one span entry over the whole beam — the shared body of the
-/// free widening loop and the forced one-step expansion. The unigram
-/// branch rides only the beam's head (`search_unigram2` uses
-/// `topresults[0]`); the bigram branch every beam value.
-fn expand_entry<L>(
-    expansion: &Expansion<'_>,
     model: &L,
     costs: &mut HashMap<(u32, u32), NbestStepCosts>,
     trellis: &mut Trellis,
@@ -684,75 +871,52 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    let &Expansion {
-        entry,
-        beam,
-        head_seq,
-        start: position,
-        end,
-    } = expansion;
-    trellis
-        .texts
-        .entry(entry.token)
-        .or_insert_with(|| entry.text.clone());
-    let chars: u32 = trellis.texts[&entry.token]
-        .chars()
-        .count()
-        .try_into()
-        .unwrap_or(u32::MAX);
-    let keys = entry.keys;
-    // `pinyin_poss` as a step-cost term: matched/total over the item's
-    // pronunciations, `None` (poss 1) without counts. A matched share of
-    // 0 is upstream's below-ε skip of the step.
-    let pronunciation = match entry.pronunciation {
-        Some((matched, total)) if matched > 0 && total > 0 => {
-            Some(oxpinyin_core::cost::surprisal(matched, total))
-        }
-        Some((0, _)) => return Ok(()),
-        _ => None,
-    };
-    for predecessor in beam {
-        let key = (predecessor.value.token, entry.token);
-        let step = if let Some(step) = costs.get(&key) {
-            *step
-        } else {
-            let step = model
-                .nbest_step_costs(
-                    &PhraseToken::new(predecessor.value.token),
-                    &PhraseToken::new(entry.token),
-                )
-                .map_err(|error| {
-                    EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                })?;
-            costs.insert(key, step);
-            step
-        };
-        let push = |mut cost: Cost, trellis: &mut Trellis| {
-            if let Some(pron) = pronunciation {
-                cost = cost.saturating_add(pron);
+    for unigram in [false, true] {
+        for predecessor in beam.iter().take(if unigram { 1 } else { beam.len() }) {
+            for entry in entries {
+                let pronunciation = match entry.pronunciation {
+                    Some((matched, total)) if matched > 0 && total > 0 => {
+                        Some(oxpinyin_core::cost::surprisal(matched, total))
+                    }
+                    Some((0, _)) => continue,
+                    _ => None,
+                };
+                let key = (predecessor.value.token, entry.token);
+                let step = if let Some(step) = costs.get(&key) {
+                    *step
+                } else {
+                    let step = model
+                        .nbest_step_costs(&PhraseToken::new(key.0), &PhraseToken::new(key.1))
+                        .map_err(|error| {
+                            EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+                        })?;
+                    costs.insert(key, step);
+                    step
+                };
+                let Some(mut cost) = (if unigram { step.unigram } else { step.blended }) else {
+                    continue;
+                };
+                if let Some(pronunciation) = pronunciation {
+                    cost = cost.saturating_add(pronunciation);
+                }
+                trellis
+                    .texts
+                    .entry(entry.token)
+                    .or_insert_with(|| entry.text.clone());
+                let chars = entry.text.chars().count().try_into().unwrap_or(u32::MAX);
+                trellis.insert(
+                    end,
+                    Value {
+                        token: entry.token,
+                        prev_token: predecessor.value.token,
+                        from: start,
+                        sub: predecessor.slot,
+                        length: predecessor.value.length.saturating_add(chars),
+                        keys: predecessor.value.keys.saturating_add(entry.keys),
+                        cost: predecessor.value.cost.saturating_add(cost),
+                    },
+                );
             }
-            trellis.insert(
-                end,
-                Value {
-                    token: entry.token,
-                    prev_token: predecessor.value.token,
-                    from: position,
-                    sub: predecessor.slot,
-                    length: predecessor.value.length.saturating_add(chars),
-                    keys: predecessor.value.keys.saturating_add(keys),
-                    cost: predecessor.value.cost.saturating_add(cost),
-                    seq: trellis.seq,
-                },
-            );
-            trellis.seq += 1;
-        };
-        if Some(predecessor.value.seq) == head_seq
-            && let Some(step_cost) = step.unigram
-        {
-            push(step_cost, trellis);
-        }
-        if let Some(step_cost) = step.blended {
-            push(step_cost, trellis);
         }
     }
     Ok(())
@@ -784,43 +948,6 @@ where
             extend_and_lookup(path, path.len(), dictionary, into)?;
         } else if path.len() < MAX_PHRASE_LENGTH {
             span_entries(matrix, scan_key.to, end, path, dictionary, into)?;
-        }
-        path.pop();
-    }
-    Ok(())
-}
-
-/// Whether any longer phrase could still start at the span being widened
-/// (`SEARCH_CONTINUED`).
-fn widen_probe<D>(
-    matrix: &[Vec<ScanKey>],
-    start: usize,
-    end: usize,
-    path: &mut SmallVec<[SyllableKey; 16]>,
-    dictionary: &D,
-    continued: &mut bool,
-) -> Result<(), EngineError>
-where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
-    D::Error: core::fmt::Display,
-{
-    let Some(column) = matrix.get(start) else {
-        return Ok(());
-    };
-    for scan_key in column.iter().copied() {
-        if scan_key.to > end {
-            // A key overhanging the window: the phrase could continue.
-            *continued = true;
-            continue;
-        }
-        path.push(scan_key.key);
-        if scan_key.to == end {
-            let can_extend = dictionary.phrase_prefix_exists(path).map_err(|error| {
-                EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-            })?;
-            *continued |= can_extend;
-        } else if path.len() < MAX_PHRASE_LENGTH {
-            widen_probe(matrix, scan_key.to, end, path, dictionary, continued)?;
         }
         path.pop();
     }
@@ -878,7 +1005,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{LONG_SENTENCE_PENALTY, NbestRow, NbestShape, Value, loses_to, nbest_sentences};
+    use super::{LONG_SENTENCE_PENALTY, NbestRow, NbestShape, Value, nbest_sentences};
     use crate::session::ScanKey;
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{Cost, LanguageModel, NbestStepCosts, OptionBits, PhraseToken};
@@ -889,7 +1016,11 @@ mod tests {
     use crate::session::build_scan_matrix;
     use crate::storage::StoragePaths;
 
-    fn value(cost: Cost, length: u32, seq: u64) -> Value {
+    fn loses_to(left: &Value, right: &Value) -> bool {
+        super::loses_to(left, right, 2)
+    }
+
+    fn value(cost: Cost, length: u32, _seq: u64) -> Value {
         Value {
             token: 1,
             prev_token: 0,
@@ -898,7 +1029,6 @@ mod tests {
             length,
             keys: length,
             cost,
-            seq,
         }
     }
 
@@ -906,7 +1036,7 @@ mod tests {
     fn equal_length_compares_pure_cost() {
         assert!(loses_to(&value(20, 3, 0), &value(10, 3, 1)));
         assert!(!loses_to(&value(10, 3, 0), &value(20, 3, 1)));
-        // Comparator ties (equal cost and length) keep the earlier value.
+        // Equal cost and length are comparator ties.
         assert!(!loses_to(&value(10, 3, 0), &value(10, 3, 1)));
         assert!(!loses_to(&value(10, 3, 1), &value(10, 3, 0)));
     }
@@ -928,16 +1058,37 @@ mod tests {
             &value(11 + LONG_SENTENCE_PENALTY, 2, 0),
             &value(10, 3, 1)
         ));
-        // The longer (3) must be better by at least P: 0 ≤ 263 − 263 keeps
-        // it, 1 does not.
+        // The final longer clause loses regardless of cost; it does not
+        // depend on the shorter-by-one penalty clause.
         assert!(loses_to(
             &value(1, 3, 0),
             &value(LONG_SENTENCE_PENALTY, 2, 1)
         ));
-        assert!(!loses_to(
+        assert!(loses_to(
             &value(0, 3, 0),
             &value(LONG_SENTENCE_PENALTY, 2, 1)
         ));
+    }
+
+    #[test]
+    fn the_comparator_cycle_requires_heap_selection() {
+        let a = value(70_848, 4, 0);
+        let b = value(69_469, 5, 0);
+        let c = value(68_730, 6, 0);
+        assert!(loses_to(&a, &b));
+        assert!(loses_to(&b, &c));
+        assert!(loses_to(&c, &a));
+        assert!(!super::loses_to(&a, &b, 1), "nstore gate");
+    }
+
+    #[test]
+    fn a_full_store_evicts_its_best_cost_and_preserves_slots() {
+        let mut trellis = super::Trellis::with_seeds(1, &[0], NbestShape::PINYIN);
+        for cost in [10, 20, 5] {
+            trellis.insert(1, value(cost, 1, 0));
+        }
+        let costs: Vec<_> = trellis.nodes[1][&1].iter().map(|item| item.cost).collect();
+        assert_eq!(costs, [5, 20], "pin discards 10, despite it beating 20");
     }
 
     /// A model answering fixed step costs, so the tests measure the trellis
@@ -1016,9 +1167,9 @@ mod tests {
     /// libzhuyin's `PhoneticLookup<1, 1>` keeps one value per node and
     /// extracts one tail, where libpinyin's `<2, 3>` extracts up to three:
     /// two readings of `ni` give the pinyin shape two rows and the zhuyin
-    /// shape exactly one, the same 1-best.
+    /// shape exactly one; equal-cost heap ties can select different heads.
     #[test]
-    fn the_zhuyin_shape_extracts_a_single_tail() {
+    fn the_zhuyin_shape_has_its_own_single_tail_heap_order() {
         const VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
                              token=2\tkeys=ni\ttext=尼\tunigram=900\n\
                              token=3\tkeys=hao\ttext=好\tunigram=900\n";
@@ -1041,10 +1192,8 @@ mod tests {
             1,
             "libzhuyin's shape extracts one tail: {zhuyin:?}"
         );
-        assert_eq!(
-            zhuyin[0].text, pinyin[0].text,
-            "the 1-best is the same tail"
-        );
+        assert_eq!(pinyin[0].text, "你好");
+        assert_eq!(zhuyin[0].text, "尼好", "one-store heap tie order");
         assert_eq!(NbestShape::default(), NbestShape::PINYIN);
     }
 

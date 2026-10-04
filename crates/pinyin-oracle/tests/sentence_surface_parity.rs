@@ -1,32 +1,24 @@
-//! The gate for the sentence-surface residual `docs/findings/sentence-
-//! surface.md` §12 records: the port's `guess_sentence` surface against the
-//! pinned oracle fixture, at the three named strictnesses. The residual is
-//! FROZEN as a permanent Stage-1 divergence (maintainer ruling 2026-09-02),
-//! so this gate asserts a defined residual, not a parity target: it holds the
-//! frozen numbers and the mechanism invariants, and any move is a deliberate
-//! re-freeze of §12.
+//! The measured sentence-surface gate recorded in
+//! `docs/findings/sentence-surface.md` §12. Passing this gate does not classify
+//! the remaining rows or freeze unattributed defects permanently. Only the
+//! six named shared-comparison rows have the approved math classification.
 //!
-//! Runs the same `pinyin_oracle::sentence_tail::measure` the `sentence-tail`
-//! binary prints, so the asserted numbers and the reported numbers are one
-//! implementation. **Self-skips** when the exported model20 tables or the
-//! model cache are absent — the same self-skip the rest of the real-tables
-//! tier uses — so `cargo test --workspace` stays green on a runner without
-//! them; it asserts on any runner (or maintainer) that has them.
+//! Uses the same `pinyin_oracle::sentence_tail::measure` as `sentence-tail`.
+//! This ignored real-table test fails if its required inputs are absent.
+//! Provision `PINYIN_EXPORT_DIR` with exported tables and `PINYIN_MODEL_DIR`
+//! with the complete extracted model20 directory (all 18 files), then run
+//! with `--include-ignored`.
 //!
-//! Provisioning: `PINYIN_EXPORT_DIR` → the exported tables,
-//! `PINYIN_MODEL_DIR` → a **complete** extracted model20 directory (all 18
-//! files; the partial 4-file `~/.cache/oxpinyin-data` is rejected).
-//!
-//! When the pin moves, regenerate the fixture
-//! (`cargo run -p pinyin-oracle --features oracle-ffi --bin
-//! oracle-sentence-surface`) and re-measure — a change here is a deliberate
-//! re-freeze of the §12 residual, not a silent drift.
+//! Approved repairs update these measured numbers and §12 in the same PR.
+//! A pin move also requires regenerating the oracle fixture with
+//! `cargo run -p pinyin-oracle --features oracle-ffi --bin
+//! oracle_sentence_surface` and re-measuring.
 
 use pinyin_oracle::sentence_tail;
 
 /// The §12 measured residual, over the 496 comparable inputs of the frozen
-/// W2 sample. A change to any of these is a pin move: re-measure and update
-/// §12 (a re-freeze the maintainer signs off), do not just edit the number.
+/// W2 sample. Re-measure and obtain approval before updating these numbers
+/// and §12 together; do not silently change the expected surface.
 #[test]
 #[ignore = "needs the system-table export and the model20 cache (PINYIN_EXPORT_DIR, PINYIN_MODEL_DIR); run with --include-ignored"]
 fn sentence_surface_matches_the_declared_residual() {
@@ -50,33 +42,32 @@ fn sentence_surface_matches_the_declared_residual() {
         "guess_sentence retval must agree on every comparable input"
     );
 
-    // The three strictnesses of §12. 1-best 491, distinct-set 396, ordered 390.
-    assert_eq!(report.row0_match, 491, "1-best agreement moved (§12: 491)");
+    // The three strictnesses of §12. 1-best 495, distinct-set 495, ordered 495.
+    assert_eq!(report.row0_match, 495, "1-best agreement moved (§12: 495)");
     assert_eq!(
         report.distinct_set_match(),
-        396,
-        "n-best distinct-set agreement moved (§12: 396)"
+        495,
+        "n-best distinct-set agreement moved (§12: 495)"
     );
     assert_eq!(
-        report.list_ordered_match, 390,
-        "n-best ordered-list agreement moved (§12: 390)"
+        report.list_ordered_match, 495,
+        "n-best ordered-list agreement moved (§12: 495)"
     );
     assert_eq!(
-        report.rows_match, 390,
-        "first-6 candidate-row agreement moved (§12: 390, coincides with ordered)"
+        report.rows_match, 495,
+        "first-6 candidate-row agreement moved (§12: 495, coincides with ordered)"
     );
 
-    // The mechanism invariant: the residual is hypothesis selection, not
-    // display order. No case is one list merely reordered.
+    // Measured invariant: no residual list is merely reordered.
+    // This observation does not attribute its cause.
     assert_eq!(
         report.list_order_only, 0,
-        "an order-only sentence divergence appeared — the residual is no longer \
-         pure hypothesis selection; revisit §12's mechanism claim"
+        "an order-only sentence divergence appeared; re-measure §12"
     );
 
-    // The 396 − 390 = 6 duplicate-path ranks (the distinct-same rows).
+    // The 495 − 495 = 0 duplicate-path ranks (the distinct-same rows).
     assert_eq!(
-        report.list_distinct_extra, 6,
-        "the distinct-set minus ordered gap moved from 6 (§12)"
+        report.list_distinct_extra, 0,
+        "the distinct-set minus ordered gap moved from 0 (§12)"
     );
 }

@@ -1,10 +1,10 @@
 # Sentence surface (W14)
 
-Date: 2026-08-17 · Status: **frozen** — §12's residual is a permanent
-Stage-1 divergence by maintainer ruling 2026-09-02, re-frozen 2026-09-04 at
-491 / 396 / 390 after P6 (header brought in line with §12 on 2026-09-12,
-maintainer ruling). §§1–11 are the characterization (pre-implementation)
-and the record that led there.
+Date: 2026-08-17 · Current status: the lane-D amendment in §12 supersedes
+its historical blanket classification. The approved selection port measures
+495 / 495 / 495; only six named shared-comparison rows are class (a).
+The other eight corpus rows remain unattributed. §§1–11 and the earlier
+§12 rulings retain the historical characterization and decision record.
 
 The three-part W14 divergence (#100): sentence candidates do not emit with
 real unigrams, the merged rows are not typed `NBEST_MATCH`, and
@@ -712,3 +712,63 @@ missing at the freeze).
 Mechanism invariants held: guessed_disagree 0, list_order_only 0,
 list_distinct_extra 6. New frozen numbers: **491 / 396 / 390**.
 Maintainer ruling: 2026-09-04.
+
+### Lane D selection port — 2026-10-04 UTC (#535, #594, #574)
+
+Seven selection differences are ported together against libpinyin 2.11.92
+`074a2219`: retention and physical heap slot order
+(`src/lookup/phonetic_lookup_heap.h:25–29,56–81`), unreduced library/range/item
+stream, nstore-gated comparator (`phonetic_lookup.h:66–91`), heap-pop beam
+and tails (`:272–297,329–339`), fixed-final-step tails (`:825–837`), and
+final `trellis_value_compare` gint truncation (`:174–178`).
+`g_ptr_array_sort` calls GLib's stable `g_sort_array` merge
+(`gqsort.c:msort_with_tmp`, split n/2, left on <= 0).
+The Rust port uses hand-written libstdc++ push/pop/make-heap assignments
+and that merge; no Rust sort takes the cyclic trellis comparator.
+The remaining generation sort orders integer library identifiers only.
+See `crates/oxpinyin-engine/src/nbest.rs` (`loses_to`, `heap_push`,
+`heap_adjust`, `heap_pop`, `heap_make`, `tail_compare`, `tail_merge`,
+`GenerationView`) and `session/guess.rs` (private separator provenance).
+
+The fixture has **503 data rows**, despite sample=504, and 496 comparable
+inputs. The approved port gate is **495 / 495 / 495**, one fixture
+surface difference. The full corpus residual is **14 / 10,465**, versus
+main's 2,185 differences, with zero regressions among main-matching inputs.
+All 14 declared #594 cases and 36 Luoma/secondary-zhuyin cases close:
+**129 / 129** assembly cases match. Canonical formatting carries its
+separator provenance through the temporary
+`Session::replace_raw_with_physical_separators` intake; ordinary lookup,
+matrix construction, ScanKey and the exact graph are unchanged.
+The intake is expected to disappear with #585/#626.
+
+Only the following six shared-comparison rows are class (a), as ruled.
+These are the Phase-1 captures at the deciding comparison, not attributions
+inferred merely from a float call graph. Pin costs differ in float bits;
+the subject retains its native fixed-point costs.
+
+| Input | Pin deciding f32 bits | Subject native costs |
+|---|---|---|
+| bo | c110d58e / c110d429 | 13059 / 13059 |
+| quguan | c171e63c / c171e5cd | 21812 / 21812 |
+| kaliantai | c1c7778d / c1c7769d | 35970 / 35970 |
+| huilianpei | c13f886e / c13f8796 | 17270 / 17270 |
+| yunhoulvlvlunqianaonaoruoqubeiji | c2a2cba9 / c2a2cba1 | 117432 / 117433 |
+| nou'y | c193a149 / c193a09f | 26623 / 26623 |
+
+The other eight remain **unattributed**, by name:
+`pang'rao'xiane'qing'lo'sheiting'suanzhi`,
+`nvchi'chui'lianai'baobeng'fang`, `bu'qing'na'wanou'panyao'you`,
+`bianrang'lianai'seng'sunguo`, `'`, `''`, `'''`, and `'ni`.
+The first four have different generation counts (pin/subject:
+3534/1462, 2583/1165, 2510/2062, 2307/882); the suspected resplit rule
+at `session/mod.rs:673–695` is outside this lane. The four separator
+rows pre-exist the port. No arithmetic attribution is claimed for these.
+
+Reproduction: `sentence-tail`, `sentence_surface_parity --include-ignored`,
+full 10,465-input C-ABI corpus enumeration, and
+`run-candidate-assembly-diff.sh` over pin-built data, plus ZIGUANG and the
+卧 selection replay; the per-cell PR tables record results and commands.
+Bulk comparison captures were ephemeral and are not retained or committed.
+The #574 coverage member corrects the sample header and adds four inputs
+with native-cost assertions, detecting a +1 per-step mutation even when
+the visible sentence surface does not move.

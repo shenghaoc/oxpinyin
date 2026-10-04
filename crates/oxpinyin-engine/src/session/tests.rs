@@ -1847,11 +1847,13 @@ fn the_forcing_survives_typing_and_releases_only_on_reset() {
         session.guess_sentence().expect("guess cannot fail"),
         "the walk runs over the extended buffer"
     );
-    assert!(
-        session
-            .sentence_text(0)
-            .expect("row 0 exists")
-            .starts_with('\u{4f60}'),
+    // TRAIN_VOCAB has no record for the appended suffix. The pin reads
+    // only the final trellis step (phonetic_lookup.h:329-339), so it must
+    // not return a prefix-only sentence from an earlier step.
+    assert!(session.sentence_text(0).is_none());
+    assert_eq!(
+        session.selected_tokens(),
+        [PhraseToken::new(1)],
         "the forcing survived the keystroke"
     );
 
@@ -1953,11 +1955,13 @@ fn clearing_a_tail_forcing_reopens_a_committed_composition() {
         session.guess_sentence().expect("guess cannot fail"),
         "the walk runs"
     );
-    assert!(
-        session
-            .sentence_text(0)
-            .expect("row 0 exists")
-            .starts_with('\u{4f60}'),
+    // TRAIN_VOCAB has no record for the appended suffix. The pin reads
+    // only the final trellis step (phonetic_lookup.h:329-339), so it must
+    // not return a prefix-only sentence from an earlier step.
+    assert!(session.sentence_text(0).is_none());
+    assert_eq!(
+        session.selected_tokens(),
+        [PhraseToken::new(1)],
         "the surviving head forcing outlived the clearing and the typing"
     );
 }
@@ -2124,11 +2128,13 @@ fn the_forcing_survives_the_engine_backspace_and_retype() {
         session.guess_sentence().expect("guess cannot fail"),
         "the retype walks"
     );
-    assert!(
-        session
-            .sentence_text(0)
-            .expect("row 0 exists")
-            .starts_with('\u{4f60}'),
+    // TRAIN_VOCAB has no record for the appended suffix. The pin reads
+    // only the final trellis step (phonetic_lookup.h:329-339), so it must
+    // not return a prefix-only sentence from an earlier step.
+    assert!(session.sentence_text(0).is_none());
+    assert_eq!(
+        session.selected_tokens(),
+        [PhraseToken::new(1)],
         "the forcing survived the backspace and the retype"
     );
 

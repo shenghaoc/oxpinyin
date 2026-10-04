@@ -107,6 +107,11 @@ impl InputBuffer {
         self.formatting_separators = false;
     }
 
+    /// Separator provenance is observable only in trellis generation.
+    pub(super) fn physical_separators(&self) -> bool {
+        !self.formatting_separators && self.exact.is_empty()
+    }
+
     /// Stores separator provenance for the private trellis generation view.
     pub(super) fn set_physical_separators(&mut self, physical: bool) {
         self.formatting_separators = !physical;
