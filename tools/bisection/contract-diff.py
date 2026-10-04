@@ -370,6 +370,99 @@ def _(k):
     return out
 
 
+# lane C, #542 rows 1, 3, 10, 21: return values of sentence and unload.
+@case('sentence-before-guess')
+def _(k):
+    out = {}
+    inst = k.alloc()
+    out['fresh'] = [sentence_out(k, inst, 0), sentence_out(k, inst, 255)]
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    out['parsed'] = [sentence_out(k, inst, 0), sentence_out(k, inst, 255)]
+    k.fn('guess_sentence', B, P)(inst)
+    out['guessed'] = sentence_out(k, inst, 0)
+    k.fn('reset', B, P)(inst)
+    out['reset'] = sentence_out(k, inst, 0)
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    out['reparsed'] = sentence_out(k, inst, 0)
+    # A parse alone keeps the rows of the last guess.
+    k.fn('guess_sentence', B, P)(inst)
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'xian')
+    out['guessed then reparsed'] = sentence_out(k, inst, 0)
+    return out
+
+
+@case('sentence-before-guess-schemes')
+def _(k):
+    out = {}
+    inst = k.alloc()
+    k.fn('parse_more_double_pinyins', Z, P, S)(inst, b'nihk')
+    out['double'] = sentence_out(k, inst, 0)
+    inst = k.alloc()
+    k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')
+    out['chewing'] = sentence_out(k, inst, 0)
+    return out
+
+
+@case('guess-sentence-keyless')
+def _(k):
+    out = {}
+    for t in (b"'", b"''", b'', b'!', b"nihao'"):
+        inst = k.alloc()
+        n = k.fn('parse_more_full_pinyins', Z, P, S)(inst, t)
+        ret = k.fn('guess_sentence', B, P)(inst)
+        out[repr(t)] = [n, ret, sentence_out(k, inst, 0)]
+    # A keyless guess answers false before it clears anything: the rows of
+    # the last guess stay.
+    for t in (b"'", b'!'):
+        inst = k.alloc()
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+        first = k.fn('guess_sentence', B, P)(inst)
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, t)
+        out['stale after ' + repr(t)] = [first, k.fn('guess_sentence', B, P)(inst), sentence_out(k, inst, 0)]
+        inst = k.alloc()
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, t)
+        out['with-prefix ' + repr(t)] = [k.fn('guess_sentence_with_prefix', B, P, S)(inst, '你'.encode()),
+                                         sentence_out(k, inst, 0)]
+    return out
+
+
+@case('guess-candidates-keyless')
+def _(k):
+    # `0 == matrix.size()`: the candidates are freed and the answer is
+    # false, whatever sentence rows an earlier guess left.
+    out = {}
+    for t in (b"'", b"'''", b'!', b'', b"ni'"):
+        for stale in (False, True):
+            inst = k.alloc()
+            if stale:
+                k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+                k.fn('guess_sentence', B, P)(inst)
+            k.fn('parse_more_full_pinyins', Z, P, S)(inst, t)
+            ret = k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1E)
+            count = U(UNTOUCHED)
+            k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+            out['%r stale=%s' % (t, stale)] = [ret, count.value > 0]
+    return out
+
+
+@case('unload-phrase-library-repeat')
+def _(k):
+    unload = k.fn('unload_phrase_library', B, P, U)
+    return {'unload': [unload(k.ctx, i) for i in (2, 2, 2, 1, 3, 15, 2)]}
+
+
+@case('sentence-with-prefix-bytes')
+def _(k):
+    out = {}
+    for label, prefix in (('invalid', b'\xff\xfe'), ('valid', '你'.encode()), ('empty', b''),
+                          ('tail-invalid', '你'.encode() + b'\xff')):
+        inst = k.alloc()
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+        ret = k.fn('guess_sentence_with_prefix', B, P, S)(inst, prefix)
+        out[label] = [ret, sentence_out(k, inst, 0), sentence_out(k, inst, 1)]
+    return out
+
+
 # --------------------------------------------------------------------------
 
 def run_worker(mode, so, data, name, scratch):

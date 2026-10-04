@@ -447,9 +447,10 @@ impl RuntimeDict {
 
     /// The library-visibility mask: bit `n` set = library `n` unloaded.
     /// Only `GBK_DICTIONARY` (2) is ever settable — upstream's
-    /// `pinyin_unload_phrase_library` refuses every other index and
-    /// answers `false` on an already-unloaded one
-    /// (`phrase_index.cpp:260-268`).
+    /// `pinyin_unload_phrase_library` refuses every other index with
+    /// `false`, and for the GBK index calls `unload` and answers `true`
+    /// whatever it returned (`pinyin.cpp:464-475`), so a repeat unload
+    /// answers `true` too.
     #[must_use]
     pub fn unload_library(&self, index: u32) -> bool {
         if index != GBK_DICTIONARY {
@@ -460,9 +461,9 @@ impl RuntimeDict {
         // walk can detect that visibility moved under it and retry
         // (see `library_epoch`).
         self.library_epoch.fetch_add(1, Ordering::SeqCst);
-        let newly_unloaded = self.library_mask.fetch_or(mask, Ordering::SeqCst) & mask == 0;
+        self.library_mask.fetch_or(mask, Ordering::SeqCst);
         self.library_epoch.fetch_add(1, Ordering::SeqCst);
-        newly_unloaded
+        true
     }
 
     /// Re-loads library `index` after an unload — upstream re-attaches
@@ -1552,7 +1553,8 @@ impl Runtime {
     }
 
     /// Unloads default library `index` — GBK-only; `false` for any
-    /// other index or when already unloaded.
+    /// other index, `true` for GBK on every call (the pin ignores what
+    /// `unload` returns, `pinyin.cpp:473-474`).
     #[must_use]
     pub fn unload_library(&self, index: u32) -> bool {
         self.dict.unload_library(index)

@@ -2090,11 +2090,16 @@ mod parse_termination {
         assert_eq!(parse_len(context, instance, PARITY, "nihao'"), 6);
         assert_eq!(parse_len(context, instance, PARITY, "ni'"), 3);
         assert_eq!(parse_len(context, instance, PARITY, "'''"), 3);
-        // Apostrophe-only parses hold no keys but are NOT empty parses:
-        // the pin answers true with zero rows there, never the engine's
-        // raw-input fallback row.
-        assert!(pinyin_guess_sentence(instance));
-        assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
+        // Apostrophe-only parses hold no keys but are NOT empty parses: no
+        // candidate and never the engine's raw-input fallback row. The
+        // sentence guess answers `false` there: `get_nbest_match` returns
+        // before it clears anything when the matrix has no step
+        // (`phonetic_lookup.h:743-745`; measured at 074a2219 on bdb for one,
+        // two and three apostrophes under the default and the parity word).
+        assert!(!pinyin_guess_sentence(instance));
+        // `pinyin_guess_candidates` frees the list and answers `false` for
+        // the same step-less matrix (`pinyin.cpp:2193-2196`).
+        assert!(!pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
         let mut n = 0;
         assert!(pinyin_get_n_candidate(instance, &raw mut n));
         assert_eq!(

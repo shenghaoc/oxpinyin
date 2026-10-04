@@ -13,6 +13,12 @@ This note characterizes the pinned oracle (libpinyin 2.11.91 @ 0c5e80e, tree
 at `target/oracle-pin-build/src/libpinyin-2.11.91/`, `$S` below) from source
 and from a live probe over the model20 tables.
 
+> **Amended 2026-10-04 (lane C, #542).** The third part, the raw form from
+> `pinyin_get_sentence`, is closed in code: with no n-best row the call
+> answers `false` and leaves `*sentence` untouched, as the pin does
+> (`pinyin.cpp:1470-1471`). Register row 53 in `compatibility-policy.md`
+> carries the measurement; the paragraph above is the record as filed.
+
 ## 1. Where the rows come from
 
 > **Backend removed (2026-09-20 UTC, branch `refactor/drop-redb-backend`).** The `sentence_tail::measure` re-measure (tip `4eb72efd`) and the `PINYIN_EXPORT_DIR=<exported redb>` provisioning ran on redb; the sentence-surface laws they pin are backend-independent. The figures stand as measured at the recorded tip.
@@ -110,11 +116,9 @@ the full `PhoneticKeyMatrix`:
 sentence row selected by `index`, rendered through the phrase index
 (`lookup.cpp:27-70`) — only when an active sentence lookup has a result at
 `index < m_nbest_results.size()`; otherwise it returns `false`. Index 0 is
-the 1-best. In this fork, the pre-W14 raw form (scheme keystroke buffer /
-session preedit) remains the pre-lookup fallback until
-`pinyin_guess_sentence` runs; after that gate is active,
-`pinyin_get_sentence` answers only from the decoded rows or `false`,
-including when the lookup produced no rows.
+the 1-best. When no n-best row exists, including before any lookup,
+`pinyin_get_sentence` returns `false` and leaves the output untouched.
+The raw scheme keystroke buffer / session preedit is never an answer.
 
 `pinyin_choose_candidate` on an NBEST row (`pinyin.cpp:2511-2519`) diffs
 `constraints` between result 0 and the chosen index and returns
@@ -212,8 +216,9 @@ Ported divergences (recorded, not chased):
   `false` — never the raw form — even when the lookup produced no rows
   (upstream's `get_nbest_match` clears `m_nbest_results` before every
   attempt, so the `0 == results.size()` false covers that case too). The
-  pre-W14 raw form survives only before any lookup, for scheme parses
-  and un-guessed instances. `pinyin_get_candidate_nbest_index` reports
+  raw form is not returned before a lookup either: without an n-best
+  row, the call returns `false` and leaves the output untouched.
+  `pinyin_get_candidate_nbest_index` reports
   the tail rank; `pinyin_guess_candidates` honours
   `SORT_WITHOUT_SENTENCE_CANDIDATE` by excluding sentence candidates.
 
