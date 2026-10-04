@@ -2381,6 +2381,33 @@ test:
   `phrase_length` zeroed keys (`crates/oxpinyin-zhuyin-capi/src/dict.rs`).
 - **Externally observable:** the content only. Class (b).
 
+### A save whose write fails for one file (policy rows 68 and 69)
+
+- **Upstream source cite:** `src/pinyin.cpp:940-1147` (`_write_files`
+  ignores each file's write result; `_rename_files` renames every file of
+  the set and prints `rename %s to %s failed.` for the ones that fail;
+  `pinyin_save` answers `_write_files(...) && _rename_files(...)`, `true`),
+  `src/storage/table_info.cpp:377-397` (`write %s failed.` for the marker),
+  `src/zhuyin.cpp` for the twin.
+- **Mechanism:** the files are written and renamed one by one. Blocking
+  `user_pinyin_index.bin.tmp` leaves the first `user_pinyin_index.bin` at
+  its active final path while the other files take the second save. In the
+  final-blocked fixture, the harness first moves `user_phrase_index.bin`
+  to `user_phrase_index.bin.moved`; that backup keeps the first save, the
+  active final path is a blocking directory, and the other files take the
+  second save. Both print one failure line and answer `true`: distinct
+  mixed profiles.
+- **What oxpinyin does:** the same, since lane C PR 15
+  (`persistence::save_with_bigram_reporting`). It had removed what it
+  staged and reported all ten renames, leaving the previous profile whole;
+  that was a REVERT TARGET (row 69) for a day and is reverted.
+  `UserStore::save()` keeps its all-or-nothing commit; only the reporting
+  save, which the C `save` entry points use, follows the pin.
+- **Externally observable:** yes — the stderr lines, the files left in the
+  user dir. Closed: `stderr-save-one-tmp-blocked`,
+  `stderr-save-one-final-blocked`, `stderr-save-one-tmp-blocked-zhuyin`
+  MATCH the pin.
+
 ### `pinyin_alloc_instance` on a finalised context (policy row 60)
 
 - **Upstream source cite:** `src/pinyin.cpp:1194-1222` (`pinyin_fini`

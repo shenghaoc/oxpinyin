@@ -41,6 +41,10 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             // failure keeps the descriptive one.
             if error.unknown_database_format() {
                 crate::ffi::log_warning(oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING);
+            } else if crate::ffi::report_unopenable_table_conf(&system_path) {
+                // The pin stops at its first step, the `table.conf` it
+                // cannot open, and says so in two raw lines (#545); that is
+                // the whole report.
             } else {
                 crate::ffi::log_warning(&format!(
                     "pinyin_init: {error} (systemdir {system_path:?})"

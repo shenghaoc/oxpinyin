@@ -53,5 +53,5 @@ pub use phrase::{
     toned_key,
 };
 pub use store::{
-    ExportedPhrase, GenericUserStore, SENTENCE_START, Token, UserStore, UserStoreError,
+    ExportedPhrase, GenericUserStore, SENTENCE_START, SaveReport, Token, UserStore, UserStoreError,
 };

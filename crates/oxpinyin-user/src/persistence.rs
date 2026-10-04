@@ -50,8 +50,19 @@ use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
 };
 
+use crate::store::SaveReport;
+
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
+
+/// One raw diagnostic on stderr, as the pin's `fprintf(stderr, …)`: paths go
+/// out as their bytes, not through `Path::display()`'s U+FFFD.
+pub(crate) fn diagnostic(parts: &[&[u8]]) {
+    use std::io::Write as _;
+
+    let line: Vec<u8> = parts.concat();
+    let _ = std::io::stderr().write_all(&line);
+}
 
 /// Reads `user.conf`'s bytes, splitting upstream's two failure kinds the
 /// way `check_format` meets them.
@@ -337,7 +348,17 @@ pub fn load(
     let conf_path = dir.join(USER_CONF);
     let existing = match std::fs::read(&conf_path) {
         Ok(bytes) => parse_user_conf(&bytes)?,
-        Err(_) => None,
+        Err(_) => {
+            // `UserTableInfo::load`'s raw `fprintf` (`table_info.cpp:332`):
+            // no newline, as the pin's has none, and the same line when the
+            // marker is absent as when it cannot be opened.
+            diagnostic(&[
+                b"open ",
+                conf_path.as_os_str().as_encoded_bytes(),
+                b" failed.",
+            ]);
+            None
+        }
     };
 
     let conform = existing
@@ -816,36 +837,124 @@ pub fn save_with_bigram(
     bigram_db: Option<&DefaultUserBigramDb>,
 ) -> Result<(), PersistenceError> {
     let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
-    let result = (|| -> Result<(), PersistenceError> {
-        if let Some(db) = bigram_db {
-            let final_path = dir.join(UserDbm::Bigram.file_name());
-            let tmp = dir.join(format!("{}.tmp", UserDbm::Bigram.file_name()));
-            remove_dbm_sidecars(dir, &tmp);
-            db.save_db(&tmp)?;
+    let result = stage_all(dir, state, originals, bigram_db, false, &mut staged);
+    finish_save(dir, versions, open_counter, &staged, result)
+}
+
+/// The files of a save in the pin's rename order (`_rename_files`,
+/// `pinyin.cpp:1025-1130`): the libraries by index, then the two indices
+/// and the bigram.
+fn pin_rename_order() -> Vec<String> {
+    let mut libraries: Vec<(u8, &str)> = SYSTEM_LOG_FILES
+        .iter()
+        .chain(USER_LIBRARY_FILES.iter())
+        .copied()
+        .collect();
+    libraries.sort_by_key(|&(nibble, _)| nibble);
+    let mut order: Vec<String> = libraries
+        .into_iter()
+        .map(|(_, name)| name.to_owned())
+        .collect();
+    order.push(UserDbm::PinyinIndex.file_name().to_owned());
+    order.push(UserDbm::PhraseIndex.file_name().to_owned());
+    order.push(UserDbm::Bigram.file_name().to_owned());
+    order
+}
+
+/// [`save_with_bigram`] the way the pin saves: no failure stops it. Each file
+/// is written on its own; a file that cannot be written is a file that
+/// cannot be renamed, a rename that fails is reported and the next one runs,
+/// the marker is written last whatever happened, and the save answers as
+/// having saved (`pinyin_save`'s `_write_files(context) &&
+/// _rename_files(context)` is `true` for both, `pinyin.cpp:1132-1147`). One
+/// failing file therefore leaves the others updated, as the pin does.
+///
+/// # Errors
+///
+/// Returns [`PersistenceError::Codec`] when a record cannot be encoded: an
+/// internal failure the pin has no counterpart for.
+pub(crate) fn save_with_bigram_reporting(
+    dir: &Path,
+    state: &UserState,
+    originals: &BTreeMap<u8, SystemLibrary>,
+    versions: &SystemVersions,
+    open_counter: i32,
+    bigram_db: Option<&DefaultUserBigramDb>,
+) -> Result<SaveReport, PersistenceError> {
+    // `_write_files` writes every file whatever the one before did
+    // (`pinyin.cpp:940-1020`): a write that fails leaves no `.tmp` and the
+    // next file is written anyway.
+    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    stage_all(dir, state, originals, bigram_db, true, &mut staged)?;
+    // `_rename_files` then renames every file of the set in its own order and
+    // prints the ones that fail (`:1025-1130`), a file whose write failed
+    // among them: the unaffected files are updated and the profile can mix
+    // two saves.
+    let mut outcome = SaveReport::default();
+    for name in pin_rename_order() {
+        let tmp = dir.join(format!("{name}.tmp"));
+        let final_path = dir.join(&name);
+        if std::fs::rename(&tmp, &final_path).is_err() {
+            outcome.renames_failed.push((tmp, final_path));
+        }
+    }
+    if write_marker(dir, versions, open_counter).is_err() {
+        outcome.user_conf_write_failed = Some(dir.join(USER_CONF));
+    }
+    Ok(outcome)
+}
+
+/// [`save_with_bigram`]'s staging half, shared with the reporting save.
+fn stage_all(
+    dir: &Path,
+    state: &UserState,
+    originals: &BTreeMap<u8, SystemLibrary>,
+    bigram_db: Option<&DefaultUserBigramDb>,
+    lenient: bool,
+    staged: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<(), PersistenceError> {
+    if let Some(db) = bigram_db {
+        let final_path = dir.join(UserDbm::Bigram.file_name());
+        let tmp = dir.join(format!("{}.tmp", UserDbm::Bigram.file_name()));
+        remove_dbm_sidecars(dir, &tmp);
+        let written = db.save_db(&tmp).map_err(PersistenceError::from);
+        if tolerate(lenient, written)? {
             remove_dbm_sidecars(dir, &tmp);
             staged.push((tmp, final_path));
-            return stage_rest(dir, state, originals, &mut staged);
         }
-        // ---- the user bigram hash, by key --------------------------------
-        let bigram_rows: Vec<(Vec<u8>, Vec<u8>)> = state
-            .bigram
-            .iter()
-            .map(|(prev, gram)| {
-                let records: Vec<(u32, u32)> = gram
-                    .items
-                    .iter()
-                    .map(|(&next, &count)| (next, count))
-                    .collect();
-                (
-                    prev.to_le_bytes().to_vec(),
-                    encode_single_gram(gram.total, &records),
-                )
-            })
-            .collect();
-        stage_user_bigram(dir, &bigram_rows)?;
-        stage_rest(dir, state, originals, &mut staged)
-    })();
-    finish_save(dir, versions, open_counter, &staged, result)
+        return stage_rest(dir, state, originals, lenient, staged);
+    }
+    let bigram_rows: Vec<(Vec<u8>, Vec<u8>)> = state
+        .bigram
+        .iter()
+        .map(|(prev, gram)| {
+            let records: Vec<(u32, u32)> = gram
+                .items
+                .iter()
+                .map(|(&next, &count)| (next, count))
+                .collect();
+            (
+                prev.to_le_bytes().to_vec(),
+                encode_single_gram(gram.total, &records),
+            )
+        })
+        .collect();
+    tolerate(lenient, stage_user_bigram(dir, &bigram_rows))?;
+    stage_rest(dir, state, originals, lenient, staged)
+}
+
+/// The reporting save carries on past a file it could not write, as the pin's
+/// `_write_files` does; the strict save stops at the first. An encoding
+/// failure is internal and stops both. `Ok(true)` when the write succeeded.
+fn tolerate<T>(
+    lenient: bool,
+    result: Result<T, PersistenceError>,
+) -> Result<bool, PersistenceError> {
+    match result {
+        Ok(_) => Ok(true),
+        Err(PersistenceError::Io(_) | PersistenceError::Store(_)) if lenient => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Every file of the set but the user bigram, staged as `.tmp` siblings.
@@ -853,6 +962,7 @@ fn stage_rest(
     dir: &Path,
     state: &UserState,
     originals: &BTreeMap<u8, SystemLibrary>,
+    lenient: bool,
     staged: &mut Vec<(PathBuf, PathBuf)>,
 ) -> Result<(), PersistenceError> {
     {
@@ -907,17 +1017,23 @@ fn stage_rest(
                 }
             }
         }
-        stage_dbm(
-            dir,
-            UserDbm::PinyinIndex,
-            &pinyin_index_entries(&chewing_rows),
-            staged,
+        tolerate(
+            lenient,
+            stage_dbm(
+                dir,
+                UserDbm::PinyinIndex,
+                &pinyin_index_entries(&chewing_rows),
+                staged,
+            ),
         )?;
-        stage_dbm(
-            dir,
-            UserDbm::PhraseIndex,
-            &phrase_index_entries(&phrase_rows),
-            staged,
+        tolerate(
+            lenient,
+            stage_dbm(
+                dir,
+                UserDbm::PhraseIndex,
+                &phrase_index_entries(&phrase_rows),
+                staged,
+            ),
         )?;
 
         // ---- the USER_FILE chunk stores ---------------------------------
@@ -930,7 +1046,7 @@ fn stage_rest(
                         .collect()
                 });
             let bytes = build_chunk(&pairs)?;
-            stage_chunk(dir, name, &bytes, staged)?;
+            tolerate(lenient, stage_chunk(dir, name, &bytes, staged))?;
         }
 
         // ---- the SYSTEM_FILE diff logs -----------------------------------
@@ -946,7 +1062,7 @@ fn stage_rest(
             let payload =
                 encode_log_records(&records).map_err(|e| PersistenceError::Codec(e.to_string()))?;
             let bytes = build_memory_chunk(&payload).map_err(PersistenceError::from)?;
-            stage_chunk(dir, name, &bytes, staged)?;
+            tolerate(lenient, stage_chunk(dir, name, &bytes, staged))?;
         }
 
         Ok(())

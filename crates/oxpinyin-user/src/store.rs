@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::ops::Bound;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -36,6 +36,25 @@ use crate::store_libpinyin::FiniGuard;
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
 pub type Token = u32;
+
+/// What a save left undone, in the pin's own terms.
+///
+/// The pin's `pinyin_save` and `zhuyin_save` never stop at a failure: a
+/// write that fails leaves a missing `.tmp`, the rename of it fails and is
+/// printed (`rename %s to %s failed.`, `pinyin.cpp:1061`…`:1123`), the
+/// marker write fails and is printed (`write %s failed.`,
+/// `table_info.cpp:382`), and the save answers `true`
+/// (`pinyin.cpp:1132-1147`). [`GenericUserStore::save_reporting`] returns
+/// those failures instead of printing them, so the caller can.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct SaveReport {
+    /// `(tmp, final)` of every rename that failed, in the pin's order: the
+    /// libraries by index, then the pinyin index, the phrase index and the
+    /// bigram.
+    pub renames_failed: Vec<(PathBuf, PathBuf)>,
+    /// The `user.conf` whose write failed, if it did.
+    pub user_conf_write_failed: Option<PathBuf>,
+}
 
 /// One §9 export row for a user phrase: the phrase text, one pronunciation's
 /// `'`-joined pinyin spelling, and that pronunciation's stored count.
@@ -1545,6 +1564,48 @@ impl<S: WriteStore> GenericUserStore<S> {
         drop(cache);
         self.inner.dirty.store(false, Ordering::Relaxed);
         Ok(true)
+    }
+
+    /// [`Self::save`] the way the pin saves, without its `m_modified` gate
+    /// (the caller's: [`Self::is_modified`]): the file set is written and
+    /// renamed and the marker rewritten whatever fails on the way, and the
+    /// failures come back in the [`SaveReport`] instead of ending the save.
+    /// A store with no libpinyin target (no directory to write) reports
+    /// nothing. The store is clean afterwards, as after [`Self::save`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the session values cannot be
+    /// exported or encoded, or the in-memory session store cannot be
+    /// compacted — failures the pin has no counterpart for. A filesystem
+    /// failure is never one.
+    pub fn save_reporting(&mut self) -> Result<SaveReport, UserStoreError> {
+        let mut report = SaveReport::default();
+        if let Some(target) = self.inner.libpinyin.clone() {
+            let state = crate::store_libpinyin::export_state(self, &target.originals)?;
+            let bigram_db = self
+                .inner
+                .bigram_db
+                .as_ref()
+                .map(|db| db.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+            report = crate::persistence::save_with_bigram_reporting(
+                &target.dir,
+                &state,
+                &target.originals,
+                &target.versions,
+                target.open_counter,
+                bigram_db.as_deref(),
+            )?;
+            drop(bigram_db);
+        }
+        let mut cache = self.count_cache();
+        *cache = None;
+        let mut db = self.database();
+        db.compact()?;
+        drop(db);
+        drop(cache);
+        self.inner.dirty.store(false, Ordering::Relaxed);
+        Ok(report)
     }
 
     /// `Bigram::get_all_items` (`pinyin.cpp:779`): every predecessor with
