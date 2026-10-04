@@ -430,6 +430,8 @@ line.)
 
 ### N-best trellis accumulates gfloat log costs — not reproducible in fixed point, FROZEN as a permanent Stage-1 divergence
 
+**Current scope (2026-10-04 UTC, lane D):** selection is ported. Only bo, quguan, kaliantai, huilianpei, yunhoulvlvlunqianaonaoruoqubeiji and nou'y are class (a); eight other residuals remain unattributed by name in sentence-surface.md §12's lane-D amendment. Current gate: 495/495/495 of 496; corpus: 14/10,465. The historical record below is superseded for current scope and counts.
+
 - **Scope shrinks, pending lane D (2026-09-27 UTC, #550, #535, audit
   D-13; policy row 11).** Two rules inside the frozen residual are
   selection logic, not arithmetic, and are not class (a): the node keep

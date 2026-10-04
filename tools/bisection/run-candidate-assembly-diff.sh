@@ -80,9 +80,6 @@ run zhuyin ox "$zhuyin_so"
 # go stale silently (for the #594 rows that means the trellis moved:
 # re-measure, do not just edit the table).
 declared=$(cat <<'TABLE'
-pinyin	^A word=0x(0|1e) import=(true|false) input=ba'kua$	lists-only: trellis selection logic, not class (a): pin 2 n-best rows, oxpinyin 3 (#594, with #535)
-pinyin	^N word=0x(0|1e) import=(true|false) input=li'shi->ba'kua$	lists-only: trellis selection logic, not class (a): the re-guessed ba'kua rows (#594, with #535)
-pinyin	^S[123] word=0x(0|1e) input=li'shi'ba'kua$	lists-only: trellis selection logic, not class (a): one more n-best row for li'shi'ba'kua (#594, with #535)
 TABLE
 )
 

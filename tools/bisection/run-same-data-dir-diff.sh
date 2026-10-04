@@ -40,11 +40,12 @@ capi_so=$(cd "$(dirname "$capi_so")" && pwd)/$(basename "$capi_so")
 data=$(cd "$data" && pwd)
 cd "$(dirname "$0")"
 
-# Every driver that takes exactly `<so> <systemdir>` and needs no user
+# Drivers taking `<so> <systemdir>` and needing no user
 # state beyond what it creates itself. pred-order-diff is included on
 # purpose: its divergence is the registered prediction tie order
 # (`docs/findings/upstream-divergences.md`, "Predicted-candidate tie
-# order"), which this runner reports rather than hides.
+# order"), which this runner reports rather than hides. DYNAMIC_ADJUST
+# additionally runs on/off with fresh profiles and checks non-vacuity.
 default_drivers=(
   key-surface-diff
   key-parse-diff
@@ -60,6 +61,7 @@ default_drivers=(
   import-diff
   live-typing-diff
   nbest-train-diff
+  dynamic-adjust-diff
 )
 # bisect's surface mode is not in the default set: its offset sweep trips
 # an upstream `_check_offset` assertion inside the pin itself — at the pin
@@ -98,6 +100,54 @@ for driver in "${drivers[@]}"; do
     rm -rf "$work/$side"; mkdir -p "$work/$side"
     ( cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")" "$work/$driver" "$so" "$data" ) >"$log" 2>"$log.err"
   }
+  if [[ $driver == dynamic-adjust-diff ]]; then
+    # This driver also needs a bit state and a fresh user profile. Preserve
+    # its standalone runner's non-vacuity requirement before comparing.
+    failed=0
+    for engine in oracle oxpinyin; do
+      if [[ $engine == oracle ]]; then so=$oracle_so; else so=$capi_so; fi
+      for mode in on off; do
+        dest="$work/$engine-$mode"
+        mkdir -p "$dest" "$dest/user"
+        if ! ( cd "$dest" && LD_LIBRARY_PATH="$(dirname "$so")" \
+            "$work/$driver" "$so" "$data" "$mode" "$dest/user" ) \
+            >"$dest.log" 2>"$dest.err"; then
+          echo "  $driver crashed against $engine ($mode)"
+          tail -5 "$dest.err"; status=1; failed=1
+        fi
+      done
+    done
+    [[ $failed == 0 ]] || continue
+    for side in oracle-on oracle-off oxpinyin-on oxpinyin-off; do
+      if ! grep '^CHOICE|' "$work/$side.log" > "$work/$side.choices" ||
+          [[ $(wc -l < "$work/$side.choices") -ne 7 ]]; then
+        echo "  FAIL: $side did not report all fixed choices"
+        status=1; failed=1
+      elif ! cmp -s "$work/oracle-on.choices" "$work/$side.choices"; then
+        echo "  FAIL: chosen identity or advanced cursor differs for $side"
+        status=1; failed=1
+      fi
+    done
+    [[ $failed == 0 ]] || continue
+    for engine in oracle oxpinyin; do
+      if cmp -s "$work/$engine-on.log" "$work/$engine-off.log"; then
+        echo "  VACUOUS: $engine produced identical output with the bit set and clear."
+        status=1; failed=1
+      fi
+    done
+    [[ $failed == 0 ]] || continue
+    echo "  non-vacuity: both engines' output changes with the bit"
+    for mode in on off; do
+      if diff -u "$work/oracle-$mode.log" "$work/oxpinyin-$mode.log" >"$work/$mode.diff"; then
+        echo "  DYNAMIC_ADJUST=$mode: IDENTICAL ($(wc -l <"$work/oracle-$mode.log") log lines)"
+      else
+        echo "  DYNAMIC_ADJUST=$mode: DIVERGENCE"
+        head -60 "$work/$mode.diff"
+        [[ $status == 0 ]] && status=2
+      fi
+    done
+    continue
+  fi
   if ! run oracle "$oracle_so" "$work/$driver.oracle"; then
     echo "  $driver crashed against the oracle:"; tail -5 "$work/$driver.oracle.err" | sed 's/^/    /'; status=1; continue
   fi

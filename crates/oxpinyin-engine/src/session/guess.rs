@@ -79,9 +79,12 @@ where
             self.rebuild_selection_from_constraints();
         }
 
-        self.sentence.rows = crate::nbest::nbest_sentences(
-            &matrix,
-            bound,
+        self.sentence.rows = crate::nbest::nbest_sentences_generation(
+            crate::nbest::GenerationInput {
+                matrix: &matrix,
+                bound,
+                physical_separators: self.input.physical_separators(),
+            },
             &self.dictionary,
             &self.model,
             &[],
@@ -162,9 +165,12 @@ where
         let mut seeds = Vec::with_capacity(prefix_tokens.len() + 1);
         seeds.push(PhraseToken::new(crate::nbest::SENTENCE_START));
         seeds.extend_from_slice(prefix_tokens);
-        self.sentence.rows = crate::nbest::nbest_sentences_with_seeds(
-            &matrix,
-            bound,
+        self.sentence.rows = crate::nbest::nbest_sentences_with_seeds_generation(
+            crate::nbest::GenerationInput {
+                matrix: &matrix,
+                bound,
+                physical_separators: self.input.physical_separators(),
+            },
             &self.dictionary,
             &self.model,
             &seeds,
@@ -201,9 +207,12 @@ where
         self.sentence.rows = if self.model.has_real_unigrams() {
             let matrix =
                 build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
-            crate::nbest::nbest_sentences(
-                &matrix,
-                bound,
+            crate::nbest::nbest_sentences_generation(
+                crate::nbest::GenerationInput {
+                    matrix: &matrix,
+                    bound,
+                    physical_separators: self.input.physical_separators(),
+                },
                 &self.dictionary,
                 &self.model,
                 self.record.history(),
