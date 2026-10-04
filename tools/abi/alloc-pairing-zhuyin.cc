@@ -44,10 +44,10 @@ const Slot kSlots[] = {
     {"zhuyin_get_candidate_string", "utf8_str",  "borrowed",                      "false-unreachable"},
     {"zhuyin_get_zhuyin_key",       "key",       "borrowed",                      "false-nulls"},
     {"zhuyin_get_zhuyin_key_rest",  "key_rest",  "borrowed",                      "false-nulls"},
-    {"zhuyin_get_sentence",         "sentence",  "g_free",                        "false-nulls"},
+    {"zhuyin_get_sentence",         "sentence",  "g_free",                        "false-untouched"},
     {"zhuyin_get_zhuyin_string",    "utf8_str",  "g_free",                        "false-unreachable"},
     {"zhuyin_get_pinyin_string",    "utf8_str",  "g_free",                        "false-unreachable"},
-    {"zhuyin_token_get_phrase",     "utf8_str",  "g_free",                        "false-nulls"},
+    {"zhuyin_token_get_phrase",     "utf8_str",  "g_free",                        "false-untouched"},
     {"zhuyin_in_chewing_keyboard",  "symbols",   "g_strfreev",                    "false-nulls"},
 };
 // clang-format on

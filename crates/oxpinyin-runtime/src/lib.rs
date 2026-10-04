@@ -33,7 +33,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-const GBK_DICTIONARY: u32 = 2;
+/// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
+const PHRASE_INDEX_LIBRARY_COUNT: u32 = 16;
 use std::sync::{Arc, Mutex, RwLock};
 
 use oxpinyin_core::scoring::key_cost_table;
@@ -309,10 +310,9 @@ pub struct RuntimeDict {
     /// The loaded-library mask: bit `n` **set** = library `n` unloaded
     /// (matches `library_visible` at :344 and the query surface —
     /// `library_visible_token`, `visible_item_count`, and the
-    /// `unload_library` setter — that all consult it).  Only
-    /// `GBK_DICTIONARY` (2) is ever settable — upstream's
-    /// `pinyin_unload_phrase_library` refuses every other index
-    /// (`pinyin.cpp:464-472`).
+    /// `unload_library` setter — that all consult it).  The pinyin ABI only
+    /// ever sets bit 2 (`GBK_DICTIONARY`, `pinyin.cpp:464-472`); the zhuyin
+    /// ABI any bit but 1 (`zhuyin.cpp:378-388`).
     library_mask: Arc<AtomicU32>,
     /// Seqlock epoch bracketing every [`RuntimeDict::load_library`] /
     /// [`RuntimeDict::unload_library`] mask flip: each bumps it once
@@ -445,15 +445,17 @@ impl RuntimeDict {
         addons.unload(index)
     }
 
-    /// The library-visibility mask: bit `n` set = library `n` unloaded.
-    /// Only `GBK_DICTIONARY` (2) is ever settable — upstream's
-    /// `pinyin_unload_phrase_library` refuses every other index with
-    /// `false`, and for the GBK index calls `unload` and answers `true`
-    /// whatever it returned (`pinyin.cpp:464-475`), so a repeat unload
-    /// answers `true` too.
+    /// Unloads default library `index`: sets bit `n` of the visibility mask,
+    /// so library `n` stops answering. `false` only for an index outside the
+    /// sixteen sub-indices; the pin ignores what its `unload` returns
+    /// (`pinyin.cpp:473-474`, `zhuyin.cpp:386-387`), so a repeat unload
+    /// answers `true` too. Which indices a facade lets through is the C
+    /// ABI's rule, not the runtime's: `pinyin_unload_phrase_library` refuses
+    /// everything but `GBK_DICTIONARY` (2), `zhuyin_unload_phrase_library`
+    /// everything but `TSI_DICTIONARY` (1).
     #[must_use]
     pub fn unload_library(&self, index: u32) -> bool {
-        if index != GBK_DICTIONARY {
+        if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
         let mask = 1u32 << index;
@@ -468,17 +470,16 @@ impl RuntimeDict {
 
     /// Re-loads library `index` after an unload — upstream re-attaches
     /// the sub-index from disk and answers `true`; already-loaded (mask
-    /// clear) answers `false` (`pinyin.cpp:234-243`). Every other index
-    /// is `false`: the system tables are loaded at init, so upstream's
-    /// already-loaded rule applies there too.
+    /// clear) answers `false` (`pinyin.cpp:234-243`). A library that was
+    /// never unloaded is already loaded: the system tables load at init, so
+    /// upstream's already-loaded rule answers `false` there too.
     #[must_use]
     pub fn load_library(&self, index: u32) -> bool {
-        // The GBK-reload path alone: the system tables (1, 2, 4) and the
-        // USER_FILE library (7) all load at init (the default-tables loop
-        // includes the USER_DICTIONARY row — measured `load(7)` = false
-        // on the pin), so the already-loaded rule answers `false` for
-        // every index but a GBK that an unload cleared.
-        if index != GBK_DICTIONARY {
+        // The system tables (1, 2, 4) and the USER_FILE library (7) all load
+        // at init (the default-tables loop includes the USER_DICTIONARY row —
+        // measured `load(7)` = false on the pin), so the already-loaded rule
+        // answers `false` for every index an unload has not cleared.
+        if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
         // Bracketed like `unload_library`'s flip (see `library_epoch`).
@@ -735,6 +736,9 @@ impl RuntimeDict {
             // own nibbles 4..15 are a different token space (the
             // `DICTIONARY` rows, art.bin … technology.bin).
             5..=7 => {
+                if !self.library_visible(nibble) {
+                    return None;
+                }
                 let store = self.user.as_ref()?;
                 let phrase = store.phrase(token).ok()??;
                 Some(TokenIntrospection {
@@ -1550,9 +1554,10 @@ impl Runtime {
         self.dict.load_library(index)
     }
 
-    /// Unloads default library `index` — GBK-only; `false` for any
-    /// other index, `true` for GBK on every call (the pin ignores what
-    /// `unload` returns, `pinyin.cpp:473-474`).
+    /// Unloads default library `index`; `false` only outside the sixteen
+    /// sub-indices, `true` on every call otherwise (the pin ignores what
+    /// `unload` returns, `pinyin.cpp:473-474`). Which indices a facade lets
+    /// through is the C ABI's rule.
     #[must_use]
     pub fn unload_library(&self, index: u32) -> bool {
         self.dict.unload_library(index)

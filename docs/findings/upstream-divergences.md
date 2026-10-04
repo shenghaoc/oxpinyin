@@ -2365,6 +2365,22 @@ test:
   keys are the pin's.
 - **Externally observable:** the content only. Class (b).
 
+### `zhuyin_token_get_nth_pronunciation` past the last reading (policy row 70)
+
+- **Upstream source cite:** `src/zhuyin.cpp:1793-1811`
+  (`ChewingKey buffer[MAX_PHRASE_LENGTH]` at `:1800`, never initialised;
+  the return value of `item.get_nth_pronunciation(nth, buffer, freq)` at
+  `:1807` ignored; `g_array_append_vals(keys, buffer, len)` at `:1809`);
+  `src/storage/phrase_index.cpp:33-44`, the same refusing read as the
+  pinyin entry above.
+- **Mechanism:** as the pinyin entry: an `nth` past the last reading leaves
+  `buffer` as it was, and the function appends `phrase_length` keys of it
+  and answers `true`. bdb, 2026-10-04: `nth` 1, 2 and 2^32−1 on `你好`
+  answer `true` with two keys.
+- **What oxpinyin does instead:** answers `true` and appends
+  `phrase_length` zeroed keys (`crates/oxpinyin-zhuyin-capi/src/dict.rs`).
+- **Externally observable:** the content only. Class (b).
+
 ### `pinyin_alloc_instance` on a finalised context (policy row 60)
 
 - **Upstream source cite:** `src/pinyin.cpp:1194-1222` (`pinyin_fini`
@@ -2387,3 +2403,8 @@ test:
   build exits with SIGSEGV, this change returns NULL and exits 0. Class (b).
   A new context at a reused address is live again, which the registry cannot
   tell from the old one.
+- **The zhuyin twin (lane C, PR 14):** `zhuyin_alloc_instance` reads the
+  freed context the same way (`zhuyin.cpp:845-857`). `zhuyin_init` and
+  `zhuyin_fini` keep their own registry (`crates/oxpinyin-zhuyin-capi/src/live.rs`)
+  and the call answers NULL, silently; `zhuyin-alloc-instance-after-fini`
+  holds the exit status.

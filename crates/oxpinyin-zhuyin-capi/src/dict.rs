@@ -2,7 +2,6 @@
 //! the unigram-frequency write.
 
 use std::os::raw::{c_char, c_uint, c_void};
-use std::ptr;
 
 use oxpinyin_core::Dictionary;
 
@@ -84,13 +83,10 @@ pub extern "C" fn zhuyin_token_get_phrase(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
+    // An unknown token answers `false` with both out-params untouched
+    // (`_token_get_phrase` returns before writing, `pinyin.cpp:1627`; the
+    // zhuyin twin shares it).
     let Some(intro) = inst.core.dict.token_introspection(token) else {
-        if !utf8_str.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *utf8_str = ptr::null_mut();
-            }
-        }
         return false;
     };
     if !len.is_null() {
@@ -184,7 +180,19 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
         return false;
     };
     let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
-        return false;
+        // Past the last reading: `phrase_length` keys of indeterminate
+        // content at the pin; zeroed here (class (b) for the content).
+        let zeroed = vec![0_u16; intro.text.chars().count()];
+        // SAFETY: Null-checked above; the caller creates the keys array
+        // with element_size = sizeof(u16), as for the in-range path.
+        unsafe {
+            g_array_append_vals(
+                keys,
+                zeroed.as_ptr().cast::<c_void>(),
+                c_uint::try_from(zeroed.len()).unwrap_or(0),
+            );
+        }
+        return true;
     };
     let mut packed: Vec<u16> = Vec::with_capacity(keys_list.len());
     for &key in keys_list {

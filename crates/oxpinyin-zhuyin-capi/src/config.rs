@@ -9,6 +9,9 @@ use crate::types::{PinyinOptionT, ZhuyinContext};
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`phrase_index.h`): sixteen sub-indices.
 const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
 
+/// `TSI_DICTIONARY` (`novel_types.h`): the one default library that stays.
+const TSI_DICTIONARY: u8 = 1;
+
 /// Set the zhuyin scheme.
 ///
 /// # C signature
@@ -163,6 +166,11 @@ pub extern "C" fn zhuyin_unload_phrase_library(context: *mut ZhuyinContext, inde
         crate::ffi::log_warning(
             "zhuyin_unload_phrase_library: assertion 'index < PHRASE_INDEX_LIBRARY_COUNT' failed",
         );
+        return false;
+    }
+    // `tsi.bin` can't be unloaded (`zhuyin.cpp:383-385`); any other library
+    // is, and the pin ignores what `unload` returns.
+    if index == TSI_DICTIONARY {
         return false;
     }
     ctx.unload_phrase_library(index)

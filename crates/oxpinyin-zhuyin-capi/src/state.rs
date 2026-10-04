@@ -18,7 +18,7 @@ use std::path::Path;
 
 use oxpinyin_facade::{ContextCore, OpenFailure};
 
-use crate::types::{ChewingKey, ChewingKeyRest, LookupCandidate, ZhuyinContext, ZhuyinInstance};
+use crate::types::{LookupCandidate, ZhuyinContext, ZhuyinInstance};
 
 /// `USE_TONE | FORCE_TONE` — the option word `zhuyin_init` seeds
 /// (`zhuyin.cpp:273` at 0c5e80e1 and at the 074a2219 pin). This is the zhuyin facade's
@@ -69,8 +69,6 @@ impl CapiContext {
         Some(CapiInstance {
             context,
             core,
-            key_slot: ChewingKey::ZERO,
-            key_rest_slot: ChewingKeyRest { begin: 0, end: 0 },
             candidates: Vec::new(),
         })
     }
@@ -152,9 +150,6 @@ pub struct CapiInstance {
     /// word, parse-mode state machine, re-anchored window — shared with
     /// the pinyin facade.
     pub(crate) core: InstanceCore,
-    /// Per-instance slots the `zhuyin_get_zhuyin_key` family hands out.
-    pub(crate) key_slot: ChewingKey,
-    pub(crate) key_rest_slot: ChewingKeyRest,
     /// Snapshotted candidates, rebuilt by `zhuyin_guess_candidates_*`.
     pub(crate) candidates: Vec<CapiCandidate>,
 }

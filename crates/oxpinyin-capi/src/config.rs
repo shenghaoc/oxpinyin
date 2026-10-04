@@ -6,6 +6,10 @@ use std::sync::atomic::Ordering;
 use crate::state::{PHRASE_INDEX_LIBRARY_COUNT, context_mut, context_ref};
 use crate::types::{PinyinContext, PinyinOptionT};
 
+/// `GBK_DICTIONARY` (`novel_types.h`): the one default library that can be
+/// unloaded.
+const GBK_DICTIONARY: u8 = 2;
+
 /// Set pinyin options on the context.
 ///
 /// # C signature
@@ -296,6 +300,10 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
         crate::ffi::log_warning(
             "pinyin_unload_phrase_library: assertion 'index < PHRASE_INDEX_LIBRARY_COUNT' failed",
         );
+        return false;
+    }
+    // Only the GBK table can be unloaded (`pinyin.cpp:468-470`).
+    if index != GBK_DICTIONARY {
         return false;
     }
     ctx.unload_phrase_library(index)

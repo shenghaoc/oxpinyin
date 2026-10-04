@@ -38,10 +38,10 @@ zhuyin_get_zhuyin_key                    key         borrowed                   
 zhuyin_get_zhuyin_key_rest               key_rest    borrowed                      false-nulls
 
 # ── Caller-owned strings (g_free) ─────────────────────────────────────
-zhuyin_get_sentence                      sentence    g_free                        false-nulls
+zhuyin_get_sentence                      sentence    g_free                        false-untouched
 zhuyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable
 zhuyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable
-zhuyin_token_get_phrase                  utf8_str    g_free                        false-nulls
+zhuyin_token_get_phrase                  utf8_str    g_free                        false-untouched
 
 # ── Caller-owned string vectors (g_strfreev) ──────────────────────────
 zhuyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls
