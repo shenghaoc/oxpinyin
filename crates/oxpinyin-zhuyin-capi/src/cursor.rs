@@ -6,9 +6,36 @@
 //! answer `false` per the no-abort policy (divergence class (c)).
 
 use std::ptr;
+use std::sync::atomic::{AtomicU16, Ordering};
 
 use crate::state::{CapiInstance, instance_mut, instance_ref};
 use crate::types::{ChewingKey, ChewingKeyRest, ZhuyinInstance};
+
+/// The slot `zhuyin_get_zhuyin_key` hands out: the pin's function-local
+/// `static ChewingKey key` (`zhuyin.cpp:1898`), one process-wide word that
+/// every instance overwrites and that outlives every instance. An atomic
+/// word keeps the Rust side free of a data race; the C side reads it
+/// through the pointer, as it reads the pin's static.
+static KEY_SLOT: AtomicU16 = AtomicU16::new(0);
+
+/// The `ChewingKeyRest` twin of [`KEY_SLOT`] (`static ChewingKeyRest
+/// key_rest`, `zhuyin.cpp:1921`): `m_raw_begin` then `m_raw_end`.
+#[repr(C)]
+struct KeyRestSlot {
+    begin: AtomicU16,
+    end: AtomicU16,
+}
+
+const _: () = {
+    assert!(size_of::<KeyRestSlot>() == size_of::<ChewingKeyRest>());
+    assert!(align_of::<KeyRestSlot>() == align_of::<ChewingKeyRest>());
+    assert!(size_of::<AtomicU16>() == size_of::<ChewingKey>());
+};
+
+static KEY_REST_SLOT: KeyRestSlot = KeyRestSlot {
+    begin: AtomicU16::new(0),
+    end: AtomicU16::new(0),
+};
 
 /// Whether the parse placed a key. The pin's matrix is empty (size 0) for a
 /// fresh instance or a keyless parse (`phonetic_key_matrix.cpp:34-38`); an
@@ -61,13 +88,22 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
         warn_on_empty_matrix(inst, "zhuyin_get_zhuyin_key_rest");
         return false;
     };
-    inst.key_rest_slot.begin = u16::try_from(found.begin).unwrap_or(u16::MAX);
-    inst.key_rest_slot.end = u16::try_from(found.end).unwrap_or(u16::MAX);
+    KEY_REST_SLOT.begin.store(
+        u16::try_from(found.begin).unwrap_or(u16::MAX),
+        Ordering::Relaxed,
+    );
+    KEY_REST_SLOT.end.store(
+        u16::try_from(found.end).unwrap_or(u16::MAX),
+        Ordering::Relaxed,
+    );
     if !key_rest.is_null() {
-        // SAFETY: Null-checked above; the slot lives as long as the
-        // instance.
+        // SAFETY: Null-checked above; the slot is a `static`, so the
+        // pointer never dangles. `KeyRestSlot` is `repr(C)` over two
+        // `AtomicU16`, the layout of `ChewingKeyRest` (asserted above).
         unsafe {
-            *key_rest = &raw mut inst.key_rest_slot;
+            *key_rest = ptr::addr_of!(KEY_REST_SLOT)
+                .cast_mut()
+                .cast::<ChewingKeyRest>();
         }
     }
     true
@@ -132,7 +168,7 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest_length(
     if !length.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *length = rest.end.saturating_sub(rest.begin);
+            *length = rest.end.wrapping_sub(rest.begin);
         }
     }
     true
@@ -175,12 +211,16 @@ pub extern "C" fn zhuyin_get_zhuyin_key(
     // cursor.rs) rather than propagating lookup failure: a stale matrix
     // key is not a reachable state, and the fallback keeps the ABI's
     // boolean success semantics identical to the pin.
-    inst.key_slot = ChewingKey::from_spelling(found.text, found.tone).unwrap_or(ChewingKey::ZERO);
+    let packed = ChewingKey::from_spelling(found.text, found.tone)
+        .unwrap_or(ChewingKey::ZERO)
+        .packed;
+    KEY_SLOT.store(packed, Ordering::Relaxed);
     if !key.is_null() {
-        // SAFETY: Null-checked above; the slot lives as long as the
-        // instance.
+        // SAFETY: Null-checked above; the slot is a `static`, so the
+        // pointer never dangles. `AtomicU16` has the size and alignment of
+        // the two-byte `ChewingKey` (asserted above).
         unsafe {
-            *key = &raw mut inst.key_slot;
+            *key = KEY_SLOT.as_ptr().cast::<ChewingKey>();
         }
     }
     true

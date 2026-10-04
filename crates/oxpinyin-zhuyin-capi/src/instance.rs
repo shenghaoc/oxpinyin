@@ -19,6 +19,12 @@ pub extern "C" fn zhuyin_alloc_instance(context: *mut ZhuyinContext) -> *mut Zhu
     if context.is_null() {
         return ptr::null_mut();
     }
+    // A finalised context is freed memory the pin reads
+    // (`zhuyin.cpp:845-857`): class (b), answered NULL without a log
+    // (register row 60).
+    if !crate::live::is_live(context) {
+        return ptr::null_mut();
+    }
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_ref(context) };

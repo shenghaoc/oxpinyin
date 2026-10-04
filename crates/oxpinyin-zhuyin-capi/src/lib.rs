@@ -66,6 +66,7 @@ mod ffi;
 mod instance;
 mod iterators;
 mod keys;
+mod live;
 mod locale;
 mod parse;
 mod phrase;
@@ -313,7 +314,7 @@ mod tests {
             assert_eq!(length, usize::MAX, "offset {offset}");
         }
         let phrase = cstr("你好");
-        for (offset, expected) in [(0, 0), (3, 1), (6, 2)] {
+        for (offset, expected) in [(0, 0), (3, 1)] {
             let mut length = usize::MAX;
             assert!(zhuyin_get_character_offset(
                 instance,
@@ -323,6 +324,17 @@ mod tests {
             ));
             assert_eq!(length, expected, "offset {offset}");
         }
+        // At the reserved slot the pin's zhuyin walk has no zero-key skip: it
+        // steps onto the last column, finds no reading and fails, storing the
+        // length it reached (`zhuyin.cpp:2095-2140`, `:2192`).
+        let mut length = usize::MAX;
+        assert!(!zhuyin_get_character_offset(
+            instance,
+            phrase.as_ptr(),
+            6,
+            &raw mut length
+        ));
+        assert_eq!(length, 0);
 
         zhuyin_free_instance(instance);
         zhuyin_fini(context);

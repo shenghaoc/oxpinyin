@@ -71,7 +71,9 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
 ///                          char ** sentence);
 /// ```
 ///
-/// Out-param `sentence` is caller-owned (`g_free`).
+/// Out-param `sentence` is caller-owned (`g_free`). Decoded-or-nothing, as
+/// the pin: the 1-best row's text while a sentence lookup is active, `false`
+/// with `*sentence` untouched otherwise.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_sentence(
     instance: *mut ZhuyinInstance,
@@ -84,31 +86,17 @@ pub extern "C" fn zhuyin_get_sentence(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    if inst.core.session.sentence_lookup_active() {
-        const INDEX: u8 = 0;
-        return if let Some(decoded) = inst.core.session.sentence_text(INDEX) {
-            write_owned_sentence(decoded, sentence)
-        } else {
-            if !sentence.is_null() {
-                // SAFETY: Null-checked above.
-                unsafe {
-                    *sentence = std::ptr::null_mut();
-                }
-            }
-            false
-        };
+    // The pin answers from `m_nbest_results` alone: with no row — no
+    // `zhuyin_guess_sentence` since the last reset — it returns `false` and
+    // leaves `*sentence` untouched (`zhuyin.cpp:988-989`). The raw preedit
+    // is never an answer.
+    if !inst.core.session.sentence_lookup_active() {
+        return false;
     }
-    let text = if inst
-        .core
-        .zhuyin_parse
-        .as_ref()
-        .is_some_and(|parse| !parse.keys().is_empty())
-    {
-        inst.core.zhuyin_input.clone()
-    } else {
-        inst.core.session.preedit().text().to_owned()
-    };
-    write_owned_sentence(&text, sentence)
+    match inst.core.session.sentence_text(0) {
+        Some(decoded) => write_owned_sentence(decoded, sentence),
+        None => false,
+    }
 }
 
 // The `char **`-out sentence writer, stamped from the shared marshalling
@@ -154,9 +142,35 @@ pub extern "C" fn zhuyin_get_character_offset(
     let Some(text) = cstr_to_strict(phrase) else {
         return false;
     };
+    // At the reserved slot (`offset == parsed_len`) the pin's zhuyin walk has
+    // no zero-key skip (`zhuyin.cpp:2095-2140`, unlike `pinyin.cpp:3140`): it
+    // steps onto the last column, finds no reading there and fails, storing
+    // the length it reached. The pinyin walk's end-of-input success is not
+    // the zhuyin one.
+    if offset == inst.core.parsed_len && character_walk_ran(inst, &text) {
+        if !length.is_null() {
+            // SAFETY: Null-checked above.
+            unsafe {
+                *length = 0;
+            }
+        }
+        return false;
+    }
     let char_count = match inst.core.character_offset(&text, offset) {
         Ok(Some(char_count)) => char_count,
-        Ok(None) => return false,
+        Ok(None) => {
+            // The walk's own `false` still stores the length it reached
+            // (`*plength = length`, `zhuyin.cpp:2192`); the earlier returns
+            // (no keys, empty phrase, a character without a token) leave it
+            // untouched.
+            if character_walk_ran(inst, &text) && !length.is_null() {
+                // SAFETY: Null-checked above.
+                unsafe {
+                    *length = 0;
+                }
+            }
+            return false;
+        }
         Err(_) => {
             // Class (c): `zhuyin.cpp:2110` and `:2158`.
             crate::ffi::log_warning("zhuyin_get_character_offset: assertion failed");
@@ -170,6 +184,29 @@ pub extern "C" fn zhuyin_get_character_offset(
         }
     }
     true
+}
+
+/// Whether `zhuyin_get_character_offset` got past its early `false` returns
+/// (`zhuyin.cpp:2152-2182`): a non-empty matrix, a non-empty phrase and a
+/// dictionary token for every character. The engine answers all of them, and
+/// the walk's own failure, with `Ok(None)`.
+fn character_walk_ran(inst: &crate::state::CapiInstance, text: &str) -> bool {
+    use oxpinyin_core::Dictionary as _;
+
+    let Ok((keys, input, _)) = inst.core.mode_keys() else {
+        return false;
+    };
+    if input.is_empty() || keys.is_empty() || text.is_empty() {
+        return false;
+    }
+    text.chars().all(|character| {
+        let mut buffer = [0_u8; 4];
+        !inst
+            .core
+            .dict
+            .tokens_for_text(character.encode_utf8(&mut buffer))
+            .is_empty()
+    })
 }
 
 /// Guess candidates at the after-cursor offset.

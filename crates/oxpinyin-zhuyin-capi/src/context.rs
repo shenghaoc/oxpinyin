@@ -51,7 +51,11 @@ pub extern "C" fn zhuyin_init(
     // so the two stay apart.
     let user_path = cstr_to_path(userdir);
     match CapiContext::try_open(&system_path, user_path.as_deref()) {
-        Ok(ctx) => box_context(ctx),
+        Ok(ctx) => {
+            let handle = box_context(ctx);
+            crate::live::register(handle);
+            handle
+        }
         Err(error) => {
             // The user marker's class-(c) refusal has its own fixed line
             // (`OpenFailure::unknown_database_format`); every other
@@ -85,6 +89,7 @@ pub extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
         return;
     }
 
+    crate::live::unregister(context);
     // SAFETY: `context` was created by `zhuyin_init` via `box_context`
     // (= `Box::into_raw`). The caller transfers ownership back.
     unsafe {
