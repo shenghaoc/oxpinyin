@@ -168,7 +168,7 @@ done
 export PINYIN_EXPORT_DIR="$export_dir"
 export PINYIN_MODEL_DIR="$model"
 run_suite "segment ngseg live parity (toned tables)" \
-	cargo test --locked -q -p oxpinyin-segment "${feat[@]}" --test differential -- \
+	cargo test --locked -q -p oxpinyin-training "${feat[@]}" --test segment-differential -- \
 	--include-ignored rust_matches_live_ngseg
 
 # w3 tier: the KMM and spseg corpora are w3-token-space, so the tables
@@ -189,7 +189,7 @@ for gate in gen_and_export to_interpolation merge validate; do
 		--include-ignored "rust_kmm_matches_pin_$gate"
 done
 run_suite "segment spseg live parity (w3 tables)" \
-	cargo test --locked -q -p oxpinyin-segment "${feat[@]}" --test spseg_mergeseq -- \
+	cargo test --locked -q -p oxpinyin-training "${feat[@]}" --test segment-spseg-mergeseq -- \
 	--include-ignored rust_matches_live_spseg
 
 # Drop-in tier: the flagship — oxpinyin-datagen's output against the

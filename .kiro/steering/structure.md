@@ -20,16 +20,11 @@ inclusion: always
 | oxpinyin-store | ordered byte-KV seam; Berkeley DB (default since 2026-09-20), Kyoto Cabinet, Tkrzw backends — one per binary, compile-time selected; all are system C-library deps, Linux-verified and macOS-buildable via Homebrew (the CI portable lanes install each OS's backend; the peer matrix stays on Linux) | deny | yes | via engine |
 | oxpinyin-datagen | model20 → runtime data compiler for every backend, writing libpinyin's own file formats (libpinyin's names on KC/tkrzw/BDB); takes the on-disk layouts from `oxpinyin-data` — the `MemoryChunk`/`SubPhraseIndex` constants and checksum from `chunk_format`, the four DBM row schemas and the library name tables from `row_format`/`system_files`, so reader and writer share one definition | forbid | yes | never |
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | forbid | yes | never |
+| oxpinyin-training | backend-sensitive training package; named modules `segment`, `counter`, `lambda`, `emitter`, `eval`, `train`; existing stage binary names remain; one backend feature selection for all | forbid | yes | never |
 | oxpinyin-testsupport | shared test doubles (fixture Dictionary/LanguageModel) plus the model20 cache locator; dev-lane only — its one non-dev consumer is datagen, which itself never ships | forbid | yes | never |
-| oxpinyin-segment | training segmenter (`ngseg`; `spseg`/`mergeseq` per W9 re-audit) | forbid | yes | never |
-| oxpinyin-counter | legacy interpolation utility: `gen_ngram`, a libpinyin util the trainer never invokes (trainer-parity-audit §4) — kept because its counting machinery is shared by corpus, lambda, eval and train | forbid | yes | never |
-| oxpinyin-lambda | training λ estimator (`estimate_interpolation` EM — on the trainer path via `evaluate.py`; `gen_deleted_ngram` held-out) | forbid | yes | never |
-| oxpinyin-emitter | legacy interpolation utility: `export_interpolation` → `interpolation2.text`, a libpinyin util the trainer never invokes (trainer-parity-audit §4) — kept; corpus and train emit through it | forbid | yes | never |
 | oxpinyin-kmm | K-mixture-model pipeline (generate/estimate/merge/validate/prune/export/import/→interpolation) — W9 | forbid | yes | never |
 | oxpinyin-punct | punctuation-table generator (`genpunct.py` reproduction) — W9 | forbid | yes | never |
 | oxpinyin-word | word-recognition pipeline (populate/partialword/newword/markpinyin) — W9 | forbid | yes | never |
-| oxpinyin-eval | training correction-rate evaluator (`evaluate.py` + `eval_correction_rate` reproduction) — W9 | forbid | yes | never |
-| oxpinyin-train | native trainer orchestrator (config/status/epoch, segment → KMM → interpolation → λ → correction rate) — W9 | forbid | yes | never |
 
 **Centralized assembly:** the concrete construction of a decodable engine
 (system tables + unigram model + λ + optional user store + addon/punct

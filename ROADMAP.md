@@ -76,7 +76,7 @@ same-backend requirement (maintainer ruling;
 | W6 | User store (ACID store over the compiled-in `DefaultStore`; began on redb) | oxpinyin-user, oxpinyin-store |
 | W7 | Classic text-format interop via oxpinyin-dictool (import + export) | oxpinyin-dictool, oxpinyin-capi |
 | W8 | libpinyin drop-in: full 79-symbol `.so` ABI under `libpinyin.so.15` (see `.kiro/specs/drop-in/`) | oxpinyin-capi |
-| W9 | Training toolchain — full trainer-workflow parity (KMM in scope; see `docs/findings/trainer-parity-audit.md`) | oxpinyin-segment, oxpinyin-kmm, oxpinyin-eval, oxpinyin-word, oxpinyin-punct, oxpinyin-lambda, oxpinyin-corpus, oxpinyin-train (legacy: oxpinyin-counter, oxpinyin-emitter) |
+| W9 | Training toolchain — full trainer-workflow parity (KMM in scope; see `docs/findings/trainer-parity-audit.md`) | oxpinyin-training (`segment`, `counter`, `lambda`, `emitter`, `eval`, `train` modules), oxpinyin-kmm, oxpinyin-corpus, oxpinyin-word, oxpinyin-punct |
 | W10 | Option bits: correction, fuzzy/ambiguity, dynamic-adjust gating | oxpinyin-core, oxpinyin-engine |
 | W11 | Phrase-index union at lookup (user, network, addon) | oxpinyin-engine, oxpinyin-data, oxpinyin-user |
 | W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
@@ -291,13 +291,13 @@ parked.
   (kept, correct, retitled); `estimate_interpolation`'s λ EM stays on the
   real path inside `evaluate.py`. The scope was
   decomposed as Parts B–H in the audit: `spseg`/`mergeseq`
-  (`oxpinyin-segment`); the KMM pipeline (`oxpinyin-kmm`); the evaluator
-  (`oxpinyin-eval`, reusing the engine decoder); word recognition
+  (`oxpinyin-training::segment`); the KMM pipeline (`oxpinyin-kmm`); the
+  evaluator (`oxpinyin-training::eval`, reusing the engine decoder); word recognition
   (`oxpinyin-word`); punctuation (`oxpinyin-punct`); native end-to-end
   orchestration.
 
   **W9 LANDED (2026-08-31).** Parts B–H are all implemented and tested,
-  including the `oxpinyin-train` orchestrator (raw corpus → segment →
+  including the `oxpinyin-training::train` orchestrator (raw corpus → segment →
   KMM → interpolation model → λ → correction rate, no Python/make/SQLite/
   libpinyin at runtime). The audit's §15 status table records each part
   and states that nothing remains for trainer-workflow parity; the

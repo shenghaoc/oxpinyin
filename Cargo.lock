@@ -598,19 +598,8 @@ dependencies = [
 name = "oxpinyin-corpus"
 version = "0.1.0"
 dependencies = [
- "oxpinyin-counter",
- "oxpinyin-emitter",
- "oxpinyin-lambda",
- "oxpinyin-segment",
  "oxpinyin-testsupport",
-]
-
-[[package]]
-name = "oxpinyin-counter"
-version = "0.1.0"
-dependencies = [
- "oxpinyin-segment",
- "oxpinyin-testsupport",
+ "oxpinyin-training",
 ]
 
 [[package]]
@@ -641,16 +630,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-emitter"
-version = "0.1.0"
-dependencies = [
- "oxpinyin-counter",
- "oxpinyin-data",
- "oxpinyin-segment",
- "oxpinyin-testsupport",
-]
-
-[[package]]
 name = "oxpinyin-engine"
 version = "0.1.0"
 dependencies = [
@@ -659,17 +638,6 @@ dependencies = [
  "oxpinyin-core",
  "oxpinyin-testsupport",
  "smallvec",
-]
-
-[[package]]
-name = "oxpinyin-eval"
-version = "0.1.0"
-dependencies = [
- "oxpinyin-core",
- "oxpinyin-counter",
- "oxpinyin-data",
- "oxpinyin-lambda",
- "oxpinyin-testsupport",
 ]
 
 [[package]]
@@ -687,15 +655,6 @@ name = "oxpinyin-kmm"
 version = "0.1.0"
 
 [[package]]
-name = "oxpinyin-lambda"
-version = "0.1.0"
-dependencies = [
- "oxpinyin-counter",
- "oxpinyin-segment",
- "oxpinyin-testsupport",
-]
-
-[[package]]
 name = "oxpinyin-punct"
 version = "0.1.0"
 
@@ -707,14 +666,6 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-user",
-]
-
-[[package]]
-name = "oxpinyin-segment"
-version = "0.1.0"
-dependencies = [
- "oxpinyin-data",
- "oxpinyin-testsupport",
 ]
 
 [[package]]
@@ -734,16 +685,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "oxpinyin-train"
+name = "oxpinyin-training"
 version = "0.1.0"
 dependencies = [
  "oxpinyin-core",
- "oxpinyin-counter",
  "oxpinyin-data",
- "oxpinyin-eval",
  "oxpinyin-kmm",
- "oxpinyin-lambda",
- "oxpinyin-segment",
  "oxpinyin-testsupport",
 ]
 

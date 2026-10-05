@@ -82,10 +82,10 @@ env:
 # Three job groups (plus path gate and aggregate):
 #   lint — rustfmt + clippy + the Lizard CCN ratchet
 #   test — cargo test for the whole workspace (the ONE full sweep per
-#          PR), and the portable workspace (all but capi, zhuyin-capi,
-#          and the seven backend-independent training crates — corpus,
-#          counter, emitter, kmm, lambda, punct, word, which run once
-#          here on Linux) on macOS and Windows
+#          PR), and the portable workspace (all but capi, zhuyin-capi, and
+#          the backend-independent corpus, KMM, punctuation, and word
+#          tools) on macOS and Windows. The combined training package stays
+#          in these lanes because segment/eval/train use the selected backend.
 #   deny — supply-chain gate: RustSec advisories, licenses, sources,
 #          duplicate-version drift (docs/safety/oxpinyin-safety-profile.md
 #          layer 6)
@@ -290,9 +290,10 @@ jobs:
   # it explicitly, because the workspace default is Berkeley DB. Windows
   # links vcpkg's Berkeley DB 4.8 and rides that default. Both jobs keep
   # the exclude set these jobs already have on main: the two C-ABI crates
-  # (glib and cargo-c, Linux-only) and the seven backend-independent
-  # training crates (corpus, counter, emitter, kmm, lambda, punct, word),
-  # which run once per PR in the Linux `test` job. oxpinyin-dictool stays
+  # (glib and cargo-c, Linux-only) and the backend-independent corpus,
+  # KMM, punctuation, and word tools. The combined training package remains
+  # in these lanes because its segment/eval/train modules use the backend.
+  # oxpinyin-dictool stays
   # in the set: its C-ABI dependency was cut, and it drives the facade's
   # import/export machinery directly.
   #
@@ -333,8 +334,7 @@ jobs:
       - run: >
           cargo test --locked --workspace --no-default-features --features tkrzw
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
-          --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
+          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word
 
   test-windows:
@@ -391,8 +391,7 @@ jobs:
       - run: >
           cargo test --locked --workspace
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter
-          --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct
+          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word
 
   # Supply-chain gate. cargo-deny's advisories check consumes the same

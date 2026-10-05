@@ -22,7 +22,7 @@ on:
       - crates/oxpinyin-user/**
       - crates/oxpinyin-data/**
       - crates/oxpinyin-facade/**
-      - crates/oxpinyin-segment/**
+      - crates/oxpinyin-training/**
       - crates/oxpinyin-chewing/**
       - crates/oxpinyin-capi-marshal/**
       - crates/oxpinyin-store/**

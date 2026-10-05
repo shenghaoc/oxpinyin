@@ -1,0 +1,61 @@
+[package]
+name = "oxpinyin-training"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Private training stages and command-line tools; never ships."
+
+[lints]
+workspace = true
+
+[features]
+default = ["bdb"]
+# The shared segment/data path opens phrase-index and related system files
+# using the selected on-disk backend. Every backend-sensitive stage and
+# command therefore shares this single selection.
+kyotocabinet = ["oxpinyin-data/kyotocabinet"]
+bdb = ["oxpinyin-data/bdb"]
+tkrzw = ["oxpinyin-data/tkrzw"]
+
+[[bin]]
+name = "oxpinyin-segment"
+path = "src/bin/oxpinyin-segment.rs"
+
+[[bin]]
+name = "oxpinyin-spseg"
+path = "src/bin/oxpinyin-spseg.rs"
+
+[[bin]]
+name = "oxpinyin-mergeseq"
+path = "src/bin/oxpinyin-mergeseq.rs"
+
+[[bin]]
+name = "oxpinyin-counter"
+path = "src/bin/oxpinyin-counter.rs"
+
+[[bin]]
+name = "oxpinyin-lambda"
+path = "src/bin/oxpinyin-lambda.rs"
+
+[[bin]]
+name = "oxpinyin-emitter"
+path = "src/bin/oxpinyin-emitter.rs"
+
+[[bin]]
+name = "oxpinyin-eval"
+path = "src/bin/oxpinyin-eval.rs"
+
+[[bin]]
+name = "oxpinyin-train"
+path = "src/bin/oxpinyin-train.rs"
+
+[dependencies]
+oxpinyin-core.workspace = true
+oxpinyin-data.workspace = true
+oxpinyin-kmm = { path = "../oxpinyin-kmm" }
+
+[dev-dependencies]
+oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
