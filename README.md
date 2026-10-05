@@ -36,7 +36,7 @@ cargo test --locked --workspace
 
 | Path | What |
 |---|---|
-| `crates/*` | 26 crates, none stubs (grouped below); crate map in `.kiro/steering/structure.md` |
+| `crates/*` | 20 workspace packages, none stubs (grouped below); crate map in `.kiro/steering/structure.md` |
 | `ROADMAP.md` | Stages, pin, workstream names |
 | `AGENTS.md` | Agent/collaborator contract |
 | `docs/runbooks/` | How to: backends, the oracle and differentials, benches, goldens and pins, releases |
@@ -51,9 +51,13 @@ cargo test --locked --workspace
 | Group | Crates |
 |---|---|
 | Engine / data / runtime / bindings | `oxpinyin-core`, `oxpinyin-chewing`, `oxpinyin-store`, `oxpinyin-data`, `oxpinyin-user`, `oxpinyin-engine`, `oxpinyin-facade`, `oxpinyin-runtime`, `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, `oxpinyin-capi-marshal` |
-| Training toolchain (never ships) | `oxpinyin-corpus`, `oxpinyin-segment`, `oxpinyin-kmm`, `oxpinyin-lambda`, `oxpinyin-word`, `oxpinyin-punct`, `oxpinyin-eval`, `oxpinyin-train`, `oxpinyin-datagen`; legacy interpolation utilities the trainer never invokes but the others share: `oxpinyin-counter`, `oxpinyin-emitter` |
+| Training toolchain (never ships) | `oxpinyin-training` (modules: `segment`, `counter`, `lambda`, `emitter`, `eval`, `train`; existing stage binary names remain), `oxpinyin-corpus`, `oxpinyin-kmm`, `oxpinyin-word`, `oxpinyin-punct`, `oxpinyin-datagen` |
 | Tools | `oxpinyin-dictool` |
 | Oracle / testing | `pinyin-oracle`, `oxpinyin-testsupport` |
+
+Training commands keep their existing executable names and arguments. Select
+the consolidated Cargo package when running or testing them, for example:
+`cargo run --locked -p oxpinyin-training --bin oxpinyin-segment -- --help`.
 
 ## Upstream
 

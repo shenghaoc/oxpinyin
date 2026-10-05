@@ -16,15 +16,10 @@ name = "oxpinyin-corpus"
 path = "src/bin/oxpinyin-corpus.rs"
 
 [dev-dependencies]
-# default-features = false so these edges must not re-default the
-# backend selection a workspace sweep has made. A standalone
-# `cargo test -p oxpinyin-corpus` runs the same tests over the store's
-# selected peer; the committed per-backend fixture tables serve each
-# peer selection.
-oxpinyin-segment = { path = "../oxpinyin-segment", default-features = false }
-oxpinyin-counter = { path = "../oxpinyin-counter", default-features = false }
-oxpinyin-lambda = { path = "../oxpinyin-lambda", default-features = false }
-oxpinyin-emitter = { path = "../oxpinyin-emitter", default-features = false }
+# The corpus end-to-end differential exercises the backend-sensitive stage
+# modules through one package. Keep this edge test-only and disable defaults
+# so workspace backend selection reaches the same peer as the other crates.
+oxpinyin-training = { path = "../oxpinyin-training", default-features = false }
 # Dev-only edge: the end-to-end differential shares the pin-harness
 # helpers (PinDir, locate_bin, parse_estimate_stdout) with the tool
 # suites. No shipping code depends on oxpinyin-testsupport.

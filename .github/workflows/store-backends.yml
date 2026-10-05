@@ -14,7 +14,7 @@ name: Store backends
 # Five jobs:
 #   - store-features is a matrix over the peer backends. Each child
 #     runs the workspace's backend-relevant crates (everything but the
-#     seven backend-independent training crates — see the test step)
+#     backend-independent corpus, KMM, punctuation, and word packages)
 #     under exactly ONE peer, on its
 #     own runner, so the sweeps run in PARALLEL (fail-fast: false,
 #     max-parallel: 4) instead of sequentially inside one job. Every pass
@@ -201,15 +201,15 @@ jobs:
       # indirection — ${{ }} inside a run: body is a template-injection
       # surface — and never spliced into a command.
       #
-      # The sweep excludes the seven backend-independent training crates
-      # (corpus, counter, emitter, kmm, lambda, punct, word): none has a
-      # dependency on the store chain, so their result is byte-identical
-      # under every backend — they run once per PR in ci.yml's `test` job
-      # (the one full sweep) and in the nightly overflow/nextest lanes.
+      # Corpus, KMM, punctuation, and word remain backend-independent and
+      # run once per PR in ci.yml's full test job. The consolidated training
+      # package stays in this matrix: its segment, eval, and trainer stages
+      # use the selected store backend, and the other stage modules compile
+      # against that same selection.
       # What stays is everything a backend choice can change: the store
       # itself, the user store, data readers, datagen writers, runtime,
       # engine, facade, both C ABIs, dictool, the oracle harness, and the
-      # store-touching training crates (segment, eval, train).
+      # training package (segment, eval, train modules).
       - name: Test the workspace under this backend
         id: backend-test
         env:
@@ -219,10 +219,7 @@ jobs:
           start=$EPOCHSECONDS
           excludes=(
             --exclude oxpinyin-corpus
-            --exclude oxpinyin-counter
-            --exclude oxpinyin-emitter
             --exclude oxpinyin-kmm
-            --exclude oxpinyin-lambda
             --exclude oxpinyin-punct
             --exclude oxpinyin-word
           )

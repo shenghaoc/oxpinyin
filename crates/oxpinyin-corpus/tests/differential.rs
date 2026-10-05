@@ -19,13 +19,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use oxpinyin_counter::{count_ngseg, parse_interpolation_dump};
-use oxpinyin_emitter::emit_interpolation2;
-use oxpinyin_lambda::{count_deleted, estimate_lambda};
-use oxpinyin_segment::{
+use oxpinyin_testsupport::{PinDir, locate_bin, locate_data, parse_estimate_stdout};
+use oxpinyin_training::counter::{count_ngseg, parse_interpolation_dump};
+use oxpinyin_training::emitter::emit_interpolation2;
+use oxpinyin_training::lambda::{count_deleted, estimate_lambda};
+use oxpinyin_training::segment::{
     PINNED_LAMBDA, Segmenter, SegmenterPaths, locate_export_dir, locate_model_dir,
 };
-use oxpinyin_testsupport::{PinDir, locate_bin, locate_data, parse_estimate_stdout};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
