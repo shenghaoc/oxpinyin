@@ -83,12 +83,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 
-PREFIX="${LOCALE_DIFF_ORACLE_PREFIX:-}"
+PREFIX="${LOCALE_DIFF_ORACLE_PREFIX:-${PINYIN_ORACLE_PREFIX:-}}"
 if [[ -z "$PREFIX" || ! -d "$PREFIX" ]]; then
     echo "missing input: LOCALE_DIFF_ORACLE_PREFIX is unset or not a directory" >&2
     echo "  build it with tools/oracle/build-oracle.sh, configure line plus --enable-libzhuyin" >&2
-    exit 3
+    exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
     "$PREFIX/oracle-pin.txt" 2>/dev/null; then
@@ -101,8 +103,8 @@ PREFIX="$(cd "$PREFIX" && pwd)"
 DATA="$PREFIX/lib/libpinyin/data"
 declare -A ORACLE_SO=([pinyin]="$PREFIX/lib/libpinyin.so.15" [zhuyin]="$PREFIX/lib/libzhuyin.so.15")
 declare -A OX_SO=(
-    [pinyin]="${LOCALE_DIFF_PINYIN_SO:-$REPO_ROOT/target/debug/libpinyin_capi.so}"
-    [zhuyin]="${LOCALE_DIFF_ZHUYIN_SO:-$REPO_ROOT/target/debug/libzhuyin_capi.so}"
+    [pinyin]="${LOCALE_DIFF_PINYIN_SO:-${OXPINYIN_CAPI_SO:-$CARGO_TARGET_DIR/debug/libpinyin_capi.so}}"
+    [zhuyin]="${LOCALE_DIFF_ZHUYIN_SO:-${OXPINYIN_ZHUYIN_SO:-$CARGO_TARGET_DIR/debug/libzhuyin_capi.so}}"
 )
 read -r -a LIBS <<< "${LOCALE_DIFF_LIBS:-pinyin zhuyin}"
 read -r -a FORMS <<< "${LOCALE_DIFF_FORMS:-abs empty empty-chdir null dot}"
@@ -147,8 +149,9 @@ else
     trap 'rm -rf "$OUT"' EXIT
 fi
 
+read -r -a glib_flags <<< "$(pkg-config --cflags --libs glib-2.0)"
 cc -std=c11 -O1 -Wall -Wextra -o "$OUT/locale-diff" "$SCRIPT_DIR/locale-diff.c" \
-    $(pkg-config --cflags glib-2.0) $(pkg-config --libs glib-2.0) -ldl
+    "${glib_flags[@]}" -ldl
 
 # The failure fixtures, shared by both sides (nothing writes into them).
 scratch="$OUT/scratch"

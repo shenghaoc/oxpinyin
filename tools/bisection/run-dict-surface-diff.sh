@@ -52,7 +52,7 @@ ORACLE_DATA="$PREFIX/lib/libpinyin/data"
 
 if [[ ! -f "$PREFIX/oracle-pin.txt" || ! -f "$ORACLE_SO" ]]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
-    exit 0
+    exit 77
 fi
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 # The backend cell (PINYIN_ORACLE_DBM, default bdb) fixes the expected
@@ -68,15 +68,16 @@ if ! grep -Fxq "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
     echo "SKIP: oracle prefix at $PREFIX is off-pin for the $ORACLE_DBM cell"
     echo "  expected $EXPECTED_PIN_REF"
     echo "  (build it with build-oracle.sh --dbm $ORACLE_DBM, or set PINYIN_ORACLE_DBM)"
-    exit 3
+    exit 77
 fi
 # Supply OXPINYIN_CAPI_SO to run without Cargo; otherwise build dev opt-level 1.
 oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi || exit 1
 CAPI_SO=$OXPINYIN_CAPI_SO
-mkdir -p "$CARGO_TARGET_DIR"
+DRIVER_DIR=$(mktemp -d)
+trap 'rm -rf "$DRIVER_DIR"' EXIT
 
 echo "--- cc dict-surface-diff.c ---"
-DRIVER="$CARGO_TARGET_DIR/dict-surface-diff"
+DRIVER="$DRIVER_DIR/dict-surface-diff"
 if ! GLIB_LIBS="$(pkg-config --libs glib-2.0 2>/dev/null)"; then
     echo "FAIL: pkg-config could not resolve glib-2.0; install libglib2.0-dev (Debian/Ubuntu) or glib2-devel (Fedora)" >&2
     exit 1
@@ -100,7 +101,7 @@ done
 if ((${#missing[@]})); then
     echo "SKIP: DICT_SYSTEM must name a $ORACLE_DBM_NAME system data dir"
     echo "  missing: ${missing[*]}"
-    exit 3
+    exit 77
 fi
 if ! data_ext=$(system_dir_data_ext "$SYSTEM"); then
     echo "FAIL: cannot tell which backend wrote DICT_SYSTEM=$SYSTEM"
@@ -124,7 +125,7 @@ ORACLE_LOG="$(mktemp)"
 # from elsewhere.
 CAPI_CWD="$(mktemp -d)"
 ORACLE_CWD="$(mktemp -d)"
-trap 'rm -rf "$CAPI_LOG" "$ORACLE_LOG" "$CAPI_CWD" "$ORACLE_CWD"' EXIT
+trap 'rm -rf "$DRIVER_DIR" "$CAPI_LOG" "$ORACLE_LOG" "$CAPI_CWD" "$ORACLE_CWD"' EXIT
 SYSTEM="$(cd "$SYSTEM" && pwd)"
 ORACLE_DATA="$(cd "$ORACLE_DATA" && pwd)"
 ORACLE_SO="$(cd "$(dirname "$ORACLE_SO")" && pwd)/$(basename "$ORACLE_SO")"

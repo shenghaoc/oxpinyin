@@ -27,7 +27,7 @@
 #            --prefix=DIR [--libdir=DIR] [--includedir=DIR]
 #            [--build-subject=FEATURES] [--modules="libpinyin libzhuyin"]
 #   --build-subject  run install.sh for both libraries into --subject-root
-#                    first (emptying it), with `--release --locked
+#                    first (emptying it), with `--profile dev --locked
 #                    --no-default-features --features FEATURES` (libpinyin
 #                    also gets `shipped`); FEATURES is the backend
 #                    (bdb|kyotocabinet|tkrzw).
@@ -71,15 +71,23 @@ done
 [ -n "$PIN_ROOT" ] && [ -n "$SUBJECT_ROOT" ] && [ -n "$PREFIX" ] || usage
 command -v pkg-config >/dev/null || { echo "error: pkg-config not found" >&2; exit 2; }
 
+REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+case $BUILD_FEATURES in
+  kyotocabinet) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-kc} ;;
+  bdb|tkrzw) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-$BUILD_FEATURES} ;;
+esac
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
+
 if [ -n "$BUILD_FEATURES" ]; then
   rm -rf -- "$SUBJECT_ROOT"
   layout=(--prefix="$PREFIX" --destdir="$SUBJECT_ROOT")
   [ -n "$LIBDIR" ] && layout+=(--libdir="$LIBDIR")
   [ -n "$INCLUDEDIR" ] && layout+=(--includedir="$INCLUDEDIR")
   "$SCRIPT_DIR/install.sh" libpinyin "${layout[@]}" -- \
-    --release --locked --no-default-features --features "$BUILD_FEATURES,shipped"
+    --profile dev --locked --no-default-features --features "$BUILD_FEATURES,shipped"
   "$SCRIPT_DIR/install.sh" libzhuyin "${layout[@]}" -- \
-    --release --locked --no-default-features --features "$BUILD_FEATURES"
+    --profile dev --locked --no-default-features --features "$BUILD_FEATURES"
 fi
 
 PIN_ROOT="$(cd -- "$PIN_ROOT" && pwd)" || { echo "error: no pin root" >&2; exit 2; }

@@ -56,12 +56,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 
-PREFIX="${SESSION_FORK_ORACLE_PREFIX:-}"
+PREFIX="${SESSION_FORK_ORACLE_PREFIX:-${PINYIN_ORACLE_PREFIX:-}}"
 if [[ -z "$PREFIX" || ! -d "$PREFIX" ]]; then
     echo "missing input: SESSION_FORK_ORACLE_PREFIX is unset or not a directory" >&2
     echo "  build it with tools/oracle/build-oracle.sh" >&2
-    exit 3
+    exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
     "$PREFIX/oracle-pin.txt" 2>/dev/null; then
@@ -70,7 +72,7 @@ if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f9
 fi
 DATA="$PREFIX/lib/libpinyin/data"
 ORACLE_SO="$PREFIX/lib/libpinyin.so.15"
-OX_SO="${SESSION_FORK_PINYIN_SO:-$REPO_ROOT/target/debug/libpinyin_capi.so}"
+OX_SO="${SESSION_FORK_PINYIN_SO:-${OXPINYIN_CAPI_SO:-$CARGO_TARGET_DIR/debug/libpinyin_capi.so}}"
 read -r -a MODES <<< "${SESSION_FORK_MODES:-fork-_exit fork-exit fork-nosave crash}"
 TIMEOUT="${SESSION_FORK_TIMEOUT:-60}"
 

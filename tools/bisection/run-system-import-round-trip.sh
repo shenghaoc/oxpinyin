@@ -2,6 +2,9 @@
 # #599: byte-for-byte same-backend SYSTEM_FILE interchange, both directions.
 # Usage: <pinyin|zhuyin> <pin-so> <ox-so> <system-data-dir>
 set -euo pipefail
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 facade=${1:?pinyin or zhuyin}
 pin=$(realpath "${2:?pin-so}")
 ox=$(realpath "${3:?ox-so}")
@@ -9,9 +12,10 @@ data=$(realpath "${4:?system-data-dir}")
 root=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+read -r -a glib_flags <<< "$(pkg-config --cflags --libs glib-2.0)"
 case $facade in
   pinyin) cc -std=gnu11 -Wall -Wextra -Werror -O2 "$root/import-semantics-diff.c" -ldl -o "$work/driver" ;;
-  zhuyin) cc -std=gnu11 -Wall -Wextra -Werror -O2 "$root/zhuyin-import-diff.c" $(pkg-config --cflags --libs glib-2.0) -ldl -o "$work/driver" ;;
+  zhuyin) cc -std=gnu11 -Wall -Wextra -Werror -O2 "$root/zhuyin-import-diff.c" "${glib_flags[@]}" -ldl -o "$work/driver" ;;
   *) exit 2 ;;
 esac
 run() {

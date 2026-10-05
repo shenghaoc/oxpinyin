@@ -31,19 +31,14 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+REPO_ROOT=$(pwd)
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 
 shipped=0
 if [[ "${1:-}" == "--shipped" ]]; then
 	shipped=1
 fi
-
-features=()
-if ((shipped)); then
-	features=(--features shipped)
-fi
-
-echo "--- building oxpinyin-capi and oxpinyin-zhuyin-capi ($( ((shipped)) && echo "--features shipped" || echo default)) ---"
-cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi ${features[@]+"${features[@]}"}
 
 case "$(uname -s)" in
 Linux)
@@ -59,6 +54,13 @@ Darwin)
 	exit 2
 	;;
 esac
+
+if ((shipped)); then
+    CAPI_FEATURE="$CAPI_FEATURE,shipped" oracle_cell_artifact OXPINYIN_CAPI_SO "libpinyin_capi.$ext" oxpinyin-capi
+else
+    oracle_cell_artifact OXPINYIN_CAPI_SO "libpinyin_capi.$ext" oxpinyin-capi
+fi
+oracle_cell_artifact OXPINYIN_ZHUYIN_SO "libzhuyin_capi.$ext" oxpinyin-zhuyin-capi
 
 # The `global:` names of a version script, one per line, sorted.
 ver_globals() {
@@ -122,8 +124,8 @@ if ((!shipped)); then
 	# (crates/oxpinyin-capi/src/context.rs).
 	hooks=(oxpinyin_init_for_fixtures oxpinyin_test_set_user_bigram)
 fi
-check libpinyin "target/debug/libpinyin_capi.$ext" crates/oxpinyin-capi/libpinyin.ver pinyin ${hooks[@]+"${hooks[@]}"}
-check libzhuyin "target/debug/libzhuyin_capi.$ext" crates/oxpinyin-zhuyin-capi/libzhuyin.ver zhuyin
+check libpinyin "$OXPINYIN_CAPI_SO" crates/oxpinyin-capi/libpinyin.ver pinyin ${hooks[@]+"${hooks[@]}"}
+check libzhuyin "$OXPINYIN_ZHUYIN_SO" crates/oxpinyin-zhuyin-capi/libzhuyin.ver zhuyin
 
 if ((status)); then
 	echo "FAIL: the exported symbol set is not the pin's version script"

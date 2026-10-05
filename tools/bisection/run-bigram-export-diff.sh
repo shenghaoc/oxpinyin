@@ -32,8 +32,12 @@
 #
 # Exit codes: 0 = pass; 1 = build/run/provisioning failure; 2 = divergence.
 set -euo pipefail
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 oracle_so=${1:?path to the patched pin-built libpinyin.so}
-capi_so=${2:?path to the oxpinyin libpinyin_capi.so}
+[[ -f $oracle_so ]] || { echo "SKIP: missing oracle: $oracle_so" >&2; exit 77; }
+capi_so=${2:-${OXPINYIN_CAPI_SO:?prebuilt libpinyin required}}
 data=${3:?data directory}
 gate=${BIGRAM_DIFF_GATE:-full}
 oracle_so=$(cd "$(dirname "$oracle_so")" && pwd)/$(basename "$oracle_so")

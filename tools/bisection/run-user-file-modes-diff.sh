@@ -54,12 +54,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 
-PREFIX="${MODES_ORACLE_PREFIX:-}"
+PREFIX="${MODES_ORACLE_PREFIX:-${PINYIN_ORACLE_PREFIX:-}}"
 if [[ -z "$PREFIX" || ! -d "$PREFIX" ]]; then
     echo "missing input: MODES_ORACLE_PREFIX is unset or not a directory" >&2
     echo "  build it with tools/oracle/build-oracle.sh, configure line plus --enable-libzhuyin" >&2
-    exit 3
+    exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
     "$PREFIX/oracle-pin.txt" 2>/dev/null; then
@@ -69,8 +71,8 @@ fi
 DATA="$PREFIX/lib/libpinyin/data"
 declare -A ORACLE_SO=([pinyin]="$PREFIX/lib/libpinyin.so.15" [zhuyin]="$PREFIX/lib/libzhuyin.so.15")
 declare -A OX_SO=(
-    [pinyin]="${MODES_PINYIN_SO:-$REPO_ROOT/target/debug/libpinyin_capi.so}"
-    [zhuyin]="${MODES_ZHUYIN_SO:-$REPO_ROOT/target/debug/libzhuyin_capi.so}"
+    [pinyin]="${MODES_PINYIN_SO:-${OXPINYIN_CAPI_SO:-$CARGO_TARGET_DIR/debug/libpinyin_capi.so}}"
+    [zhuyin]="${MODES_ZHUYIN_SO:-${OXPINYIN_ZHUYIN_SO:-$CARGO_TARGET_DIR/debug/libzhuyin_capi.so}}"
 )
 read -r -a LIBS <<< "${MODES_LIBS:-pinyin zhuyin}"
 read -r -a UMASKS <<< "${MODES_UMASKS:-022 002 077}"
@@ -128,8 +130,10 @@ run_side() {
     : > "$log"
     : > "$log.stderr"
     for mask in "${UMASKS[@]}"; do
-        local user="$WORK/user-$mask-$(basename "$log" .log)"
-        local tmp="$WORK/tmp-$mask-$(basename "$log" .log)"
+        local user
+        user="$WORK/user-$mask-$(basename "$log" .log)"
+        local tmp
+        tmp="$WORK/tmp-$mask-$(basename "$log" .log)"
         rm -rf "$user" "$tmp"
         mkdir -p "$user" "$tmp"
         launch "$mask" "$lib" "$so" "$user" 1 "$log" "$tmp" || return 1
