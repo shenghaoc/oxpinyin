@@ -19,7 +19,9 @@
 #     never reopen the file.
 #   -flto  gives most LTO partitions their own copy of the NOOP/REMOVE backing
 #     literal, so `value.data() == NOOP.data()` fails. `Remove` stores the
-#     REMOVE sentinel as the record's value instead of deleting it.
+#     REMOVE sentinel as the record's value instead of deleting it. (Before
+#     tkrzw 1.0.34 only: that release backs each sentinel with one named
+#     array, and an LTO build of it passes the remove check below.)
 #
 # Ubuntu applies both to every package it builds; Debian applies neither; Arch
 # applies LTO only. See docs/findings/tkrzw-distro-compat.md.

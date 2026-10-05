@@ -14,9 +14,10 @@
 //       -L PREFIX/lib -Wl,-rpath,PREFIX/lib -ltkrzw -llzma -llz4 -lzstd -lz -lpthread
 //   ./identity-probe /tmp/some-empty-dir
 //
-// Rows (b)-(e) come back broken on any build linked with
-// -Wl,-Bsymbolic-functions, which is every Ubuntu package. Exit status is 0
-// when every row is correct and 1 otherwise.
+// Row (b) comes back broken on any build linked with
+// -Wl,-Bsymbolic-functions, and rows (c)-(e) on any LTO build of tkrzw older
+// than 1.0.34; Ubuntu's packages, through 1.0.32, are built both ways. Exit
+// status is 0 when every row is correct and 1 otherwise.
 
 #include <tkrzw_dbm_hash.h>
 #include <tkrzw_dbm_tree.h>
