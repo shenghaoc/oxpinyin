@@ -1874,6 +1874,104 @@ mod tests {
         drop(store);
     }
 
+    /// tkrzw's record processors answer "keep this record" and "delete
+    /// it" with two sentinels that libtkrzw recognises by the *address*
+    /// of their backing bytes, and every `remove` this backend issues
+    /// ends in that comparison inside the library. A libtkrzw holding
+    /// more than one copy of those bytes compares against the wrong one
+    /// — the known cause is an LTO build of tkrzw older than 1.0.34.
+    /// Removing an absent record then stores one and removing a stored
+    /// record leaves it in place, each carrying the sentinel's five
+    /// bytes as its value and each write reporting success; and on the
+    /// two file classes the rebuild behind `compact` answers
+    /// `CANCELED_ERROR` (`docs/findings/tkrzw-distro-compat.md`).
+    ///
+    /// The shared suites trip over the same faults; this test names
+    /// them, on each of the four DBM classes the backend opens: the two
+    /// file classes, the libpinyin session's in-memory `BabyDBM`, and
+    /// the user bigram's `TinyDBM`.
+    #[cfg(feature = "tkrzw")]
+    #[test]
+    fn tkrzw_library_honours_its_sentinel_protocol() {
+        use super::{TkrzwUserBigramDb, UserBigramDb};
+
+        type Create = fn(&std::path::Path) -> Result<TkrzwStore, StoreError>;
+
+        const CAUSE: &str = "the linked libtkrzw does not recognise its own NOOP/REMOVE \
+             sentinels (known cause: an LTO build of tkrzw older than 1.0.34); see \
+             docs/findings/tkrzw-distro-compat.md";
+
+        fn check(class: &str, mut store: TkrzwStore) {
+            store
+                .write(|txn| {
+                    txn.put("t", b"kept", b"v")?;
+                    txn.put("t", b"removed", b"v")
+                })
+                .unwrap();
+
+            // NOOP: the callback's answer for a record that is not there.
+            store.write(|txn| txn.remove("t", b"absent")).unwrap();
+            assert_eq!(
+                store.get("t", b"absent").unwrap(),
+                None,
+                "{class}: removing an absent record stored one: {CAUSE}"
+            );
+
+            // REMOVE: its answer for a record that is. A separate
+            // transaction from the put, so the record is really stored
+            // when the removal reaches the library.
+            store.write(|txn| txn.remove("t", b"removed")).unwrap();
+            assert_eq!(
+                store.get("t", b"removed").unwrap(),
+                None,
+                "{class}: a removed record is still stored: {CAUSE}"
+            );
+
+            // On the file classes the rebuild replays every record
+            // through a processor that answers NOOP and takes any other
+            // answer as a cancellation; `BabyDBM`'s rebuild does nothing.
+            if let Err(error) = store.compact() {
+                panic!("{class}: compact failed ({error}): {CAUSE}");
+            }
+            assert_eq!(store.get("t", b"kept").unwrap(), Some(b"v".to_vec()));
+        }
+
+        let file_classes: [(&str, Create); 2] = [
+            ("TreeDBM", TkrzwStore::create),
+            ("HashDBM", TkrzwStore::create_hash),
+        ];
+        for (class, create) in file_classes {
+            let path = std::env::temp_dir().join(format!(
+                "oxpinyin-store-tkrzw-sentinel-{class}-{}.tkrzw",
+                std::process::id(),
+            ));
+            let _ = std::fs::remove_file(&path);
+            let _cleanup = RemoveTkrzw(path.clone());
+            check(class, create(&path).unwrap());
+        }
+
+        // The container a libpinyin session runs on.
+        check("BabyDBM", TkrzwStore::create_in_memory().unwrap());
+
+        // The user bigram's in-memory TinyDBM takes the same two answers.
+        let bigram = TkrzwUserBigramDb::empty().unwrap();
+        bigram.store(b"kept", b"v").unwrap();
+        bigram.store(b"removed", b"v").unwrap();
+        bigram.remove(b"absent").unwrap();
+        assert_eq!(
+            bigram.get(b"absent").unwrap(),
+            None,
+            "TinyDBM: removing an absent record stored one: {CAUSE}"
+        );
+        bigram.remove(b"removed").unwrap();
+        assert_eq!(
+            bigram.get(b"removed").unwrap(),
+            None,
+            "TinyDBM: a removed record is still stored: {CAUSE}"
+        );
+        assert_eq!(bigram.get(b"kept").unwrap(), Some(b"v".to_vec()));
+    }
+
     // ── per-peer key-ordering conformance ─────────────────────────
     //
     // The byte-order contract must hold *identically* across every
