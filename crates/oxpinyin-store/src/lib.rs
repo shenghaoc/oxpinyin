@@ -444,10 +444,8 @@ pub trait WriteStore: ReadStore {
     ///
     /// **Stable storage is [`WriteStore::compact`]'s guarantee, not
     /// this one.** The Kyoto Cabinet and tkrzw backends commit with a
-    /// soft `kcdbsync` / `Synchronize` and hard-sync in `compact`;
-    /// `UserStore::save` calls `compact`, so `pinyin_save` is where the
-    /// user's data reaches the device. Berkeley DB exceeds
-    /// the floor: it has no softer primitive to
+    /// soft `kcdbsync` / `Synchronize` and hard-sync in `compact`.
+    /// Berkeley DB exceeds the floor: it has no softer primitive to
     /// offer — `DB->sync` is the only flush libdb gives an
     /// environment-less handle, while skipping it would strand the
     /// batch in a private mpool no other process can read. Callers must
@@ -462,6 +460,18 @@ pub trait WriteStore: ReadStore {
     /// the numbers and the decision. That measurement is tkrzw's. The
     /// equivalent per-commit cost on Berkeley DB, which has no soft tier
     /// to fall back to, has not been measured.
+    ///
+    /// `compact` is no longer where `pinyin_save` reaches storage,
+    /// though. `UserStore::save` still calls it, but since the libpinyin
+    /// session moved into memory (#621) the store it compacts on that
+    /// path is the [`WriteStore::create_in_memory`] one, which has no
+    /// file. The profile `pinyin_save` writes goes out through
+    /// [`WriteStore::write_user_index`] and the user bigram's `save_db`,
+    /// at each backend's own level: tkrzw ends in the soft
+    /// `Synchronize` and Kyoto Cabinet dumps a snapshot with no sync
+    /// call at all; only Berkeley DB, which has no softer tier, ends in
+    /// `DB->sync`. A completed save is therefore not a promise that the
+    /// profile is on the device, and callers must not read it as one.
     ///
     /// One residual difference, documented per backend: a crash
     /// *during* the commit call itself can tear the batch on KC, tkrzw

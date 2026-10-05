@@ -64,14 +64,12 @@
 //! duration, so the batch lands as a unit against any other reader or
 //! writer.
 //!
-//! Every commit then calls `Synchronize(hard=false)`: buffered data is
-//! flushed to the operating system, so once the call returns the file
-//! is consistent and visible to any reader, and the write survives a
-//! process crash — the IME's included. It is not yet on the device.
+//! Every commit then calls `Synchronize(hard=false)`: on a file-backed
+//! store buffered data is flushed to the operating system, so once the
+//! call returns the file is consistent and visible to any reader, and
+//! the write survives a process crash. It is not yet on the device.
 //! [`WriteStore::compact`] is the hard sync (`Synchronize(hard=true)`),
-//! and `UserStore::save` — the `pinyin_save` path — calls it, so the
-//! user's data reaches stable storage at the point the consumer asks
-//! for it.
+//! the one point at which a file-backed store reaches stable storage.
 //!
 //! **That split is measured, not assumed.** `hard=true` on every commit
 //! costs +1.18–1.85 ms per commit here, because `TreeDBM` is mmap-backed
@@ -80,6 +78,19 @@
 //! per-commit regression on a path the C ABI runs synchronously from a
 //! keystroke. `docs/findings/perf-train-commit-fsync-2026-09-09.md`
 //! carries the measurement and the decision.
+//!
+//! `compact` is no longer where `pinyin_save` reaches storage, though.
+//! `UserStore::save` still calls it, but since the libpinyin session
+//! moved into memory (#621) the store it compacts is the `BabyDBM` of
+//! [`WriteStore::create_in_memory`], which has no file: a session's
+//! commits stay in process memory until a save, and that store's
+//! rebuild and synchronize have nothing to act on. The profile
+//! `pinyin_save` writes goes out through `write_user_index` and the
+//! user bigram's `save_db`, which synchronize soft (`hard=false`)
+//! before closing — the level the pin's own `save_db` uses
+//! (`chewing_large_table2_tkrzwdb.cpp:126`,
+//! `phrase_large_table3_tkrzwdb.cpp:117`, `ngram_tkrzwdb.cpp:80` at
+//! `074a2219`).
 //!
 //! What `TreeDBM` cannot give at any sync level is crash-*atomic*
 //! application: it has no write-ahead log, so a crash *during* the
@@ -912,8 +923,9 @@ impl WriteStore for TkrzwStore {
         }
         if !mutations.is_empty() {
             db_apply(db, &mutations)?;
-            // Soft: the commit is visible and process-crash durable.
-            // `compact` (the `pinyin_save` path) is the hard sync.
+            // Soft: on a file-backed store the commit is visible and
+            // process-crash durable, and `compact` is its hard sync. The
+            // in-memory session store has no file for either level.
             db_synchronize(db, false)?;
         }
         Ok(result)
@@ -924,8 +936,10 @@ impl WriteStore for TkrzwStore {
             return Err(StoreError::ReadOnly);
         }
         db_rebuild(&self.db)?;
-        // The store's one stable-storage point: `UserStore::save` calls
-        // it, so `pinyin_save` lands the user's data on the device.
+        // A file-backed store's one stable-storage point. It is no
+        // longer where `pinyin_save` reaches storage: `UserStore::save`
+        // still calls this, but on the in-memory session store (#621),
+        // where the rebuild and the synchronize have nothing to do.
         db_synchronize(&self.db, true)
     }
 }
