@@ -36,10 +36,20 @@
 //! operating system, so another process — or another handle in this one
 //! — observes it and it survives a process crash, but it is not yet on
 //! the device. [`WriteStore::compact`] is the hard `kcdbsync(hard = 1)`,
-//! and `UserStore::save` (the `pinyin_save` path) calls it, so the
-//! user's data reaches stable storage where the consumer asks for it.
+//! the one point at which a file-backed store reaches stable storage.
 //! The tkrzw backend documents the same split and the measurement
 //! behind it (`docs/findings/perf-train-commit-fsync-2026-09-09.md`).
+//!
+//! `compact` is no longer where `pinyin_save` reaches storage, though.
+//! `UserStore::save` still calls it, but since the libpinyin session
+//! moved into memory (#621) the store it compacts is the `ProtoTreeDB`
+//! of [`WriteStore::create_in_memory`], which has no file. The profile
+//! `pinyin_save` writes goes out through `write_user_index` and the
+//! user bigram's `save_db`, which dump a snapshot (`kcdbdumpsnap`) and
+//! issue no `kcdbsync` at all — as the pin's own `save_db` does
+//! (`chewing_large_table2_kyotodb.cpp:124-130`,
+//! `phrase_large_table3_kyotodb.cpp:139-145`,
+//! `ngram_kyotodb.cpp:82-101` at `074a2219`).
 //!
 //! A power cut *during* the commit itself can still tear the
 //! transaction — TreeDB writes through no write-ahead log — the same
@@ -415,8 +425,10 @@ impl WriteStore for KcStore {
         // backends' `compact` does either (Berkeley DB's successful
         // `compact` also does not shrink the file). Making the current state
         // durable on the device is the honest implementation — and it is
-        // the store's one stable-storage point, which `UserStore::save`
-        // reaches through `pinyin_save`.
+        // a file-backed store's one stable-storage point. It is no longer
+        // where `pinyin_save` reaches storage: `UserStore::save` still
+        // calls this, but on the in-memory session store (#621), which
+        // has no file.
         self.db.sync(true)
     }
 }
