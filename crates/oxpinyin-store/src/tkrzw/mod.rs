@@ -107,6 +107,28 @@
 //! the library's own globals, so client and library cannot disagree
 //! about what a sentinel is.
 //!
+//! What the C API cannot remove is a libtkrzw that disagrees with
+//! *itself*. Past the wrapper's comparison the sentinel is the C++
+//! `string_view` again, recognised by the address of its backing bytes,
+//! and a library built with GCC's LTO before tkrzw 1.0.34 holds several
+//! copies of those bytes (Ubuntu's 1.0.27 and 1.0.32 packages; a source
+//! build under Arch's default flags). Against such a library this
+//! backend opens and writes without an error and is wrong three ways:
+//! removing an absent record stores one, removing a stored record
+//! leaves it in place — each carrying the sentinel's five bytes as its
+//! value — and on the two file classes the rebuild behind
+//! [`WriteStore::compact`] fails with status 6 (`CANCELED_ERROR`).
+//! The in-memory container of [`WriteStore::create_in_memory`] shares
+//! the first two and not the third: `BabyDBM`'s rebuild does nothing,
+//! so compacting a libpinyin session cannot fail this way, and what is
+//! left there is the two removal faults, whose writes report success.
+//! tkrzw 1.0.34 backs each sentinel with one named array and is sound
+//! under the same flags; the C API's two values and its callback
+//! contract are the same before and after. Nothing here checks for the
+//! fault at open. The store suite's
+//! `tkrzw_library_honours_its_sentinel_protocol` names it, and
+//! `docs/findings/tkrzw-distro-compat.md` carries the measurements.
+//!
 //! # Unsafe waiver
 //!
 //! This module and its `ffi` each carry an explicit

@@ -31,6 +31,15 @@
 //! library's own globals at each use, so agreement with whatever the
 //! library compares against is by construction, never by assumption.
 //!
+//! The values are tags, not the address of anything: `(char*)-1` and
+//! `(char*)-2` (`tkrzw_langc.cc`, the same through 1.0.34). They are
+//! not the C++ `DBM::RecordProcessor::NOOP` / `REMOVE` sentinels, which
+//! libtkrzw's C wrapper substitutes for them and which the library
+//! recognises by address — an identity that is the library's alone to
+//! keep, and that a GCC LTO build older than 1.0.34 does not keep.
+//! `super` ("Platform and the library build") says what that does to
+//! this backend.
+//!
 //! # Status codes
 //!
 //! The C enum's numbering is the ABI (`tkrzw_langc.h` pins
