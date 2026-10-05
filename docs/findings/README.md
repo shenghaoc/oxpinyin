@@ -118,7 +118,7 @@ series lives in `../perf/`.
 | [`session-replay`](session-replay.md) | Session replay SPEC | frozen |
 | [`spec-derivation`](spec-derivation.md) | Findings — Specification by Execution | method |
 | [`store-key-ordering`](store-key-ordering.md) | Store key-ordering contract — one place for the whole stack | contract |
-| [`tkrzw-distro-compat`](tkrzw-distro-compat.md) | Debian now ships libpinyin on tkrzw; Ubuntu's tkrzw silently corrupts records | record (distro matrix) |
+| [`tkrzw-distro-compat`](tkrzw-distro-compat.md) | Debian now ships libpinyin on tkrzw; Ubuntu's tkrzw silently corrupts records | record (distro matrix; amended 2026-10-05 — tkrzw 1.0.34 fixes the sentinel defect upstream; what a defect-1 library does to the backend before and after #621) |
 | [`tkrzw-langc-exception-classification`](tkrzw-langc-exception-classification.md) | Findings — tkrzw C-API exception classification divergence | ruled accepted |
 | [`trainer-parity-audit`](trainer-parity-audit.md) | Trainer-workflow parity audit (W9 full-scope re-audit) | audit (current trainer record) |
 | [`trainer-replacement-report`](trainer-replacement-report.md) | Trainer replacement — final report (W9) | report (W9 final) |

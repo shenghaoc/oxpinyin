@@ -3,6 +3,13 @@
 Date: 2026-08-28 (cross-distro matrix measured 2026-08-29) · Status:
 **investigation finding** (no shipping code changed; guidance and two
 probes added) · Branch: `claude/tkrzw-distro-compat-9o3k8h`.
+**Amended 2026-10-05:** tkrzw 1.0.34 (`9ee8416`, 2026-09-20) fixes
+defect 1 upstream and leaves defect 2, so everything below about
+defect 1 describes 1.0.33 and earlier. The measurements — and what a
+defect-1 library does to this backend, before and after its libpinyin
+session moved into memory — are the last section, "tkrzw 1.0.34 fixes
+defect 1 upstream" (branch `claude/tkrzw-134-sentinel-finding`; no
+shipping code changed, one store test added).
 
 `oxpinyin-store`'s tkrzw backend already carried a warning that Ubuntu
 noble's `libtkrzw-dev 1.0.27-1.1build1` breaks tkrzw's pointer-identity
@@ -403,6 +410,14 @@ sync, the Launchpad bug stops being about a command-line tool.
 
 ## Upstream
 
+> **Amended 2026-10-05.** Defect 1 was fixed upstream on 2026-09-20, in
+> `9ee8416` (release 1.0.34), by neither remedy proposed below. The
+> check is still `value.data() == NOOP.data()`, an address identity;
+> what changed is that each sentinel is backed by one named array
+> instead of a string literal, so there is exactly one address to
+> compare against. That is enough: an LTO build of 1.0.34 is healthy.
+> Defect 2 is untouched by that commit. See the last section.
+
 Upstream is unfixed as of `bcaa0fb` (last commit 2026-07-30, so it is
 actively maintained). Both defects are the same underlying decision:
 identifying a value by an address that C++ only guarantees under
@@ -504,3 +519,577 @@ source build under the distro's own flags.
 rows of the bisection: it reports A broken on both, B broken on the
 comparator only, C broken on `remove` only, and D healthy. A distro that
 prints `RESULT : healthy` has neither defect.
+
+## tkrzw 1.0.34 fixes defect 1 upstream
+
+Measured 2026-10-01 (UTC) at `c99ffb57`, and again 2026-10-05 at
+`e985b581`, after #621 (`eaeb26fd`, merged 2026-10-03) moved the
+libpinyin session into memory. The second measurement changes what a
+defect-1 library does to this backend, so the two are kept apart below.
+Branch `claude/tkrzw-134-sentinel-finding`.
+
+Upstream changed how the sentinels are stored on 2026-09-20:
+`estraier/tkrzw` commit `9ee8416`, "Change the object format of
+DBM::RecordProcessor::NOOP and DBM::RecordProcessor::REMOVE" — ChangeLog
+"Fix bugs of address instability of NOOP and REMOVE", release 1.0.34,
+library 1.77.0. It answers the sentinel half of "Upstream" above by a
+third route, and for defect 1 it is complete: an LTO build of 1.0.34 is
+healthy. Defect 2 is not touched.
+
+This section exists because that commit first arrived here as a
+suspect. A run of the tkrzw cell against a from-source `9ee8416` was
+reported on 2026-10-01 with `pinyin_save` returning `false` after any
+import or train on both C ABIs, the pin-built libpinyin saving fine
+against the same library, and a rebuild at the 1.0.32 state (`bcaa0fb`)
+passing — and the commit's "object format" change was taken to be the
+regression. **That attribution does not hold, and the failure did not
+reproduce**: oxpinyin passes against every build of `9ee8416` measured
+below, on two architectures. The symptom itself is real and exact,
+though. It is what a *defect-1* library did to this backend as it stood
+that day — the fault `9ee8416` removes. The reported run's environment
+was not examined, so which libtkrzw it actually loaded is not
+established here; the inversion is recorded as unexplained rather than
+explained away.
+
+### What the commit changes, and what it does not
+
+```cpp
+// tkrzw_dbm.cc at bcaa0fb (1.0.32)
+const std::string_view DBM::RecordProcessor::NOOP("\x00\xBE\xEF\x02\x11", 5);
+const std::string_view DBM::RecordProcessor::REMOVE("\x00\xDE\xAD\x02\x11", 5);
+
+// tkrzw_dbm.cc at 9ee8416 (1.0.34)
+namespace {
+const char DBM_RECORD_PROCESSOR_NOOP[] = "\x00\xBE\xEF\x02\x11";
+const char DBM_RECORD_PROCESSOR_REMOVE[] = "\x00\xDE\xAD\x02\x11";
+}  // namespace
+const std::string_view DBM::RecordProcessor::NOOP(
+    DBM_RECORD_PROCESSOR_NOOP, sizeof(DBM_RECORD_PROCESSOR_NOOP) - 1);
+const std::string_view DBM::RecordProcessor::REMOVE(
+    DBM_RECORD_PROCESSOR_REMOVE, sizeof(DBM_RECORD_PROCESSOR_REMOVE) - 1);
+```
+
+Same type, same five bytes, same size. What changes is only what each
+`string_view` points at: an anonymous string literal, which GCC may
+materialise once per LTO partition, becomes a named array, which is one
+object with one address. `DBM::ANY_DATA` gets the same treatment.
+
+Nothing a client is compiled against moves:
+
+- `tkrzw_langc.h`, `tkrzw_langc.cc` and `tkrzw_dbm.h` are the same git
+  blobs at both commits (`7f25a305`, `fc8e56ae`, `61d13d2d`), and the two
+  installed include trees are byte-identical.
+- The C API's sentinels were never the C++ ones.
+  `TKRZW_REC_PROC_NOOP` and `TKRZW_REC_PROC_REMOVE` are `(char*)-1` and
+  `(char*)-2` (`tkrzw_langc.cc:60,62`) — tags, the address of nothing —
+  and both built libraries read back `0xffffffffffffffff` and
+  `0xfffffffffffffffe`.
+- The callback contract is the same: a `tkrzw_record_processor`
+  (`tkrzw_langc.h:144-153`) returns one of the two tags or a pointer
+  whose length it stores through its last argument, and
+  `RecordProcessorWrapper` (`tkrzw_langc.cc:64-91`) compares that return
+  against the tags by value before substituting the C++ sentinel.
+
+So `oxpinyin-store`'s tkrzw backend needs no change to work with both
+versions and no means of telling them apart: it reads the two tags from
+the library's own globals and hands them back, and everything after that
+happens inside libtkrzw on either version. A version gate that refused
+1.0.34 would refuse the one release that is immune to defect 1.
+
+`bcaa0fb..9ee8416` holds two more commits, and neither is involved.
+`9db46db` (the 1.0.33 change) frees a leaked iterator key buffer in
+`TreeDBM` and `BabyDBM`, reachable only by keys longer than 128 bytes;
+`17926f7` is the version number and a regenerated `configure` that emits
+the same compiler and linker flags.
+
+Upstream was read from a fresh clone of `https://github.com/estraier/tkrzw`
+at those commits; the blob ids are `git rev-parse <commit>:<file>`.
+
+### Measured 2026-10-01, at `c99ffb57`
+
+oxpinyin at `c99ffb57`: a libpinyin session still ran on a file-backed
+`TreeDBM` scratch, and the store suite counted 39 unit tests with this
+section's test in its first, three-class form.
+
+Each commit built with `./configure --prefix=… && make && make install`
+in `debian:testing` (g++ 16.2.0) under three flag sets: **plain**
+(tkrzw's defaults, `-g -O2`), **LTO** (`-flto=auto -ffat-lto-objects`;
+LTO alone, as on Arch) and **Ubuntu** (LTO plus
+`-Wl,-Bsymbolic-functions`). arm64:
+
+| tkrzw | flags | `.rodata` copies, NOOP / REMOVE | probe (c) (d) (e) | probe (b) | store suite | `pinyin_save`, `zhuyin_save` | the pin's save |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1.0.32 `bcaa0fb` | plain | 1 / 1 | ok | ok | 39 + 6 pass | `true` | `true` |
+| `9db46db` | plain | 1 / 1 | ok | ok | 39 + 6 pass | `true` | `true` |
+| 1.0.33 `17926f7` | plain | 1 / 1 | ok | ok | 39 + 6 pass | `true` | `true` |
+| 1.0.34 `9ee8416` | plain | 1 / 1 | ok | ok | 39 + 6 pass | `true` | `true` |
+| 1.0.32 `bcaa0fb` | LTO | 9 / 10 | **broken** | ok | **5 of 39 fail** | **`false`** | `true` |
+| 1.0.34 `9ee8416` | LTO | 1 / 1 | ok | ok | 39 + 6 pass | `true` | `true` |
+| 1.0.32 `bcaa0fb` | Ubuntu | 9 / 10 | **broken** | **broken** | **5 of 39 fail** | **`false`** | `true` |
+| 1.0.34 `9ee8416` | Ubuntu | 1 / 1 | ok | **broken** | 39 + 6 pass | `true` | `true` |
+
+"probe" is `tools/tkrzw/identity-probe.cc`; the store suite is
+`oxpinyin-store`'s unit tests plus `tests/trait_laws.rs`; the two saves
+are the `save:` line of `tools/bisection/import-diff.c` and
+`zhuyin-import-diff.c` driven into oxpinyin's C ABI objects and into the
+pin-built libpinyin and libzhuyin, each loading the build in that row.
+Wherever both saves read `true` the two logs are identical, and so are
+the two `nbest-train-diff` logs (the train path); where oxpinyin reads
+`false`, `nbest-train-diff` stops at `reopen: pinyin_save failed` and the
+pin's run completes. `distro-probe.sh` agrees with the probe columns on
+all eight builds. (`9db46db` reports itself as 1.0.32: its checked-in
+`configure` was not regenerated until `17926f7`.) Debian testing's own
+package, `1.0.32-1+b2` — the library CI's tkrzw child links — passes the
+same 39 + 6.
+
+On the two plain builds the wider gates pass as well: the tkrzw child of
+`store-backends.yml` (101 suites, 1076 passed, 0 failed, 16 ignored —
+the same counts on `bcaa0fb` and `9ee8416`),
+`tools/oracle/user-dir-round-trip.sh` end to end (Phase C IDENTICAL,
+Phase D READABLE, its system-import phase IDENTICAL for pinyin libraries
+1–4) and `tools/bisection/run-system-import-round-trip.sh zhuyin`
+(IDENTICAL, libraries 1–4).
+
+The same four cells on amd64 (the same image under emulation; the pin
+prefix is arm64, so oxpinyin's side only) and the plain pair on macOS
+(arm64, Apple clang 21.0.0, store suite only):
+
+| tkrzw | flags | host | `.rodata` copies | probe (c) (d) (e) | store suite | `pinyin_save`, `zhuyin_save` |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1.0.32 `bcaa0fb` | plain | amd64 | 1 / 1 | ok | 39 + 6 pass | `true` |
+| 1.0.32 `bcaa0fb` | LTO | amd64 | 9 / 12 | **broken** | **5 of 39 fail** | **`false`** |
+| 1.0.34 `9ee8416` | plain | amd64 | 1 / 1 | ok | 39 + 6 pass | `true` |
+| 1.0.34 `9ee8416` | LTO | amd64 | 1 / 1 | ok | 39 + 6 pass | `true` |
+| 1.0.32 `bcaa0fb` | plain | macOS | – | – | 39 + 6 pass | – |
+| 1.0.34 `9ee8416` | plain | macOS | – | – | 39 + 6 pass | – |
+
+Three things follow.
+
+**Defect 1 is fixed at the mechanism, not masked.** The LTO build of
+1.0.32 carries nine and ten copies of the two literals in `.rodata`
+(nine and twelve on amd64); the LTO build of 1.0.34 carries one of each,
+on both architectures.
+
+**Defect 2 is where it was.** With Ubuntu's flags 1.0.34 still keeps no
+GOT relocation for the comparators and still fails probe row (b). That
+does not reach this backend, which installs no comparator: its whole
+suite passes on that build, and its logs match the pin's. On that
+evidence a 1.0.34 built with Ubuntu's two flags is sound for oxpinyin
+and for libpinyin, and still unsound for `tkrzw_dbm_util` and any client
+that names a comparator. Ubuntu's own package, when it has one, still
+has to be probed rather than assumed.
+
+**The literal count needs a section now.** An unstripped 1.0.34 holds
+each five-byte pattern twice in the file — once in `.rodata`, once in
+`.debug_info` as the named array's constant value — so the whole-file
+count under "Defect 1" reads 2 on a healthy build. Count within
+`.rodata`.
+
+### What a defect-1 library did at `c99ffb57`
+
+The row that matters is 1.0.32 with LTO, because it is the reported
+symptom line for line:
+
+- `pinyin_save` and `zhuyin_save` returned `false` after an import or a
+  train, and nothing was logged. In the `import-diff` log the `save:`
+  line was the only line that differed from a healthy run.
+- The pin-built libpinyin, loading the same library, returned `true`.
+  Its tkrzw sources never call `Rebuild` (`src/storage/*tkrzw*` at
+  `074a2219`), so nothing on its save path can fail this way. Its three
+  `Remove()` sites are where the fault would land instead, silently, as
+  described above — read from the source, not measured in the pin.
+- The error oxpinyin swallowed was `tkrzw status 6`
+  (`TKRZW_STATUS_CANCELED_ERROR`, empty message) from
+  `tkrzw_dbm_rebuild`, reached through `TkrzwStore::compact`, which
+  `UserStore::save` called on the session's scratch file after it had
+  written the profile. `ContextCore::save_user` turns any `Err` into
+  `false`, which is also the ABI's answer for "nothing modified" and "no
+  user dir", so the three cannot be told apart from outside. The rebuild
+  cancels because it replays every record through a processor that
+  answers `NOOP` (`tkrzw_dbm_hash.cc:1914-1934`) and takes any other
+  answer as a cancellation (`tkrzw_dbm_hash_impl.cc:427-428`, the only
+  place the DBM classes produce that status) — the same `data()`
+  comparison, between two partitions' copies of the literal. `TreeDBM`
+  rebuilds through its `HashDBM` (`tkrzw_dbm_tree.cc:907`), so both file
+  classes fail alike.
+- The profile was on disk by then: after `save: false` the user dir held
+  the same eleven files, at the same sizes, as after a successful save.
+  The `false` was the session scratch store failing to compact, not the
+  write failing.
+- Removal is wrong as well, and silently. Removing an absent record
+  stores one whose value is `NOOP`'s five bytes (`00 be ef 02 11`);
+  removing a stored record leaves it in place carrying `REMOVE`'s
+  (`00 de ad 02 11`); both writes report success. That held on all
+  three DBM classes the backend then opened (`TreeDBM`, `HashDBM`, the
+  user bigram's `TinyDBM`).
+
+In the store suite the same faults read:
+
+```
+tests::tkrzw_write::remove_in_write                 left: Some([0, 190, 239, 2, 17])  right: None
+user_bigram_db_tests::store_get_remove_and_the_walk_see_the_same_records
+                                                    left: Some([0, 222, 173, 2, 17])  right: None
+tests::tkrzw_write::compact_preserves_data          Err(Backend(TkrzwError { code: 6, message: "" }))
+tests::tkrzw_write::user_bigram_round_trips_through_its_own_seam
+                                                    Err(Backend(TkrzwError { code: 6, message: "" }))
+```
+
+and `tests::tkrzw_library_honours_its_sentinel_protocol`, added with
+this section, says so in words and names this document. In its first
+form it passed on the six healthy builds above and failed on the two
+defect-1 builds.
+
+The C API does not shield the backend from any of this, and the note in
+"It is not only the CLI" already says why: the sentinel fault is inside
+libtkrzw, between the wrapper that returns the C++ sentinel and the DBM
+class that compares it. Reading the tags from the library's globals
+guarantees agreement at the boundary and nothing beyond it.
+
+### What #621 changed — re-measured 2026-10-05, at `e985b581`
+
+#621 (`eaeb26fd`) took the libpinyin session off its temp file. It now
+runs on `WriteStore::create_in_memory`, which on this backend is tkrzw's
+`BabyDBM` through PolyDBM's empty-path form — a fourth DBM class beside
+`TreeDBM`, `HashDBM` and the user bigram's `TinyDBM`.
+
+**The save path still reaches `tkrzw_dbm_rebuild`, and the call can no
+longer fail.** Every shipping save — `pinyin_save`, `zhuyin_save`,
+`oxpinyin-dictool import` — goes through `ContextCore::save_user`
+(`crates/oxpinyin-facade/src/context.rs:284-287`) into
+`GenericUserStore::save`, which still ends by compacting the session
+store (`crates/oxpinyin-user/src/store.rs:1516`), and
+`TkrzwStore::compact` still calls `tkrzw_dbm_rebuild`. On a `BabyDBM`
+that is a no-op: `PolyDBM::RebuildAdvanced` falls through to
+`BabyDBM::Rebuild` (`tkrzw_dbm_poly.cc:755`), whose whole body is
+`return Status(Status::SUCCESS)` under the comment "This method does
+nothing" (`tkrzw_dbm_baby.h:284-290`, blob `0b934760` at both commits).
+The only other `compact` call outside tests, benches and examples is the
+default `WriteStore::write_user_bigram`
+(`crates/oxpinyin-store/src/lib.rs:419`), on a `HashDBM` file, and no
+shipping path reaches it: `persistence::save_with_bigram` takes that
+branch only without a bigram container, a libpinyin session always
+passes its own, and `persistence::save`, which passes none, has test
+callers only. A store opened on a file path (`UserStore::open`,
+`create_standalone`) would still compact a `TreeDBM`, and only tests,
+benches, examples and the fuzz target open one. So the record replay
+that cancels — the mechanism behind every `false` in the table above —
+is out of reach of a shipping save.
+
+**The defect is still in reach, through removal.** The same drivers at
+`e985b581`, each side loading the build in its row, and
+`tools/bisection/abi-probe-diff.c` (sort word `1e`), which saves after
+an import and again after a `pinyin_mask_out`:
+
+| tkrzw | flags | store suite | `import-diff`, `zhuyin-import-diff` save | `nbest-train-diff` | `abi-probe-diff` save after import, after `mask_out` | the pin, same four |
+| --- | --- | --- | --- | --- | --- | --- |
+| Debian `1.0.32-1+b2` | package | 40 + 6 pass | – | – | – | – |
+| 1.0.32 `bcaa0fb` | LTO | **6 of 40 fail** | `true` | completes | `true`, **`false`** | `true`, completes, `true`, `true` |
+| 1.0.34 `9ee8416` | LTO | 40 + 6 pass | `true` | completes | `true`, `true` | `true`, completes, `true`, `true` |
+
+On the LTO 1.0.32 the first three drivers' logs are now identical to the
+pin's — the `false` of 2026-10-01 is gone — and the fourth differs in
+three observations: `save(after-mask)`, `false` against the pin's
+`true`, and, in the context it then opens on the same user dir,
+`lookup_tokens(你好)` (two tokens against one) and the token
+`phrase_token[0]` reports, because the mask that could not be saved is
+not in the profile. On the LTO 1.0.34 all four logs are identical.
+
+This is the removal fault of the list above, now inside the session.
+`GenericUserStore::mask_out` issues `WriteTxn::remove` on the session
+store — as `remove_user_phrase` does behind
+`pinyin_remove_user_candidate`, and as a train that empties a
+predecessor's row does on the user bigram's `TinyDBM`. On a defect-1
+library `pinyin_mask_out` returns `true` while the rows it removed stay
+in the `BabyDBM`, carrying `REMOVE`'s five bytes. The next save that has
+something to write — the probe's context was already modified — runs
+`export_state`, which reads a pronunciation row that should be gone,
+finds five bytes where a value is 8 or 13, and fails with
+`corrupt pronunciation value`; `ContextCore::save_user` turns that into
+`false`. The pin, on the same library, answers `true`.
+
+So since #621 a defect-1 library is quieter on this backend, not safer.
+A save after an import or a train succeeds and matches the pin; the
+first removal breaks the session, and no call says so until the next
+save with something to write. #677 tracks it and carries the sequence
+save by save.
+
+In the store suite the in-memory class adds a sixth failure on the LTO
+1.0.32, `tests::tkrzw_write::in_memory_store_behaves_as_a_tree_store`
+(`left: Some([0, 222, 173, 2, 17])`), and this section's test now checks
+four classes. On that library `BabyDBM` stores a record for an absent
+removal and keeps a removed one, as the other three classes do, and its
+`compact` succeeds.
+
+### The removal behind `save(after-mask)`, call by call
+
+Three facts for whoever takes that failing save further; they are the
+first two things #677 asks to have established before a fix. Nothing
+here is implemented: how the store removes a record is shipped code, and
+changing it is that issue's work.
+
+**The oxpinyin call that relies on the sentinel.** The rows that outlive
+the mask are the masked phrases' pronunciation rows, which
+`GenericUserStore::mask_out` removes with `txn.remove(PRONUNCIATION, …)`
+at `crates/oxpinyin-user/src/store.rs:1724`, after the bigram, unigram
+and phrase rows at `:1643-1718`. The tkrzw backend only buffers that
+(`TkrzwWriteTxn::remove`, `crates/oxpinyin-store/src/tkrzw/mod.rs:1012-1016`).
+The call that relies on the sentinel comes at commit: `db_apply` hands
+the batch to `tkrzw_dbm_process_multi` (`mod.rs:741`), whose callback
+`apply_one` answers `TKRZW_REC_PROC_REMOVE` for a record that exists
+(`mod.rs:569`) and `TKRZW_REC_PROC_NOOP` for one that does not (`:567`).
+libtkrzw's wrapper turns the tag into the C++ `REMOVE`, and `BabyDBM`
+compares that by address (`tkrzw_dbm_baby.cc:1081-1103`). The user
+bigram's `TinyDBM` takes the same route (`TkrzwUserBigramDb::remove`,
+`mod.rs:1141`, through `db_set_one`, `:1078`). The next save reads the
+surviving row back at `crates/oxpinyin-user/src/store_libpinyin.rs:441`.
+All at `e985b581`.
+
+**How the pin removes the same record.** It does not ask tkrzw to: the
+record is not in tkrzw. A phrase's pronunciations live in its
+`PhraseItem` in the in-memory phrase index, and `pinyin_mask_out`
+(`src/pinyin.cpp:1224-1296` at `074a2219`) drops the item there
+(`:1290`, into `SubPhraseIndex::mask_out`,
+`src/storage/phrase_index.cpp:677-697`). The two tkrzw index tables it
+masks are the user ones, in-memory `BabyDBM`s
+(`chewing_large_table2_tkrzwdb.cpp:98`,
+`phrase_large_table3_tkrzwdb.cpp:89`), and it rewrites them in place: a
+writable `ProcessEach` whose processor returns each record's masked
+value (`chewing_large_table2_tkrzwdb.cpp:419-491`,
+`phrase_large_table3_tkrzwdb.cpp:277-315`). Taking one entry out of an
+index record is likewise a `Set` of the shorter record (`:377` and
+`:271` of the same two files), never a removal. The one container the
+pin deletes records from is the user bigram, a `TinyDBM`
+(`ngram_tkrzwdb.cpp:52`): `Bigram::mask_out` (`:175-212`) calls
+`Bigram::remove`, which is tkrzw's plain `m_db->Remove(key)` (`:140`).
+
+**Whether tkrzw's plain remove avoids the sentinel path.** It does not,
+on any class the store uses. `tkrzw_dbm_remove` is `PolyDBM::Remove`
+(`tkrzw_langc.cc:791-803`, `tkrzw_dbm_poly.cc:612-617`), and
+`DBM::Remove` is itself a record processor: `RecordProcessorRemove`
+answers the C++ `REMOVE` for a stored record and `NOOP` for an absent
+one (`tkrzw_dbm.h:217-242`) through the same `Process`
+(`tkrzw_dbm.h:1196-1204`; `HashDBM`'s override differs by one flag,
+`tkrzw_dbm_hash.cc:2448-2456`). It skips the C wrapper's two tags and
+nothing after them. `tkrzw_dbm_remove` on the LTO 1.0.32, two records
+stored:
+
+| class | removing a stored key | removing an absent key | records left |
+| --- | --- | --- | --- |
+| `TreeDBM`, `HashDBM`, `BabyDBM`, `TinyDBM` | returns `true`; the record stays, value `00 de ad 02 11` | returns `false`, `NOT_FOUND`; a record appears, value `00 be ef 02 11` | 3 |
+
+On the LTO 1.0.34 and on Debian's 1.0.32 package the same calls return
+`true` and `false`, both keys read back absent, and one record is left,
+on all four classes.
+
+The pin's own exposure is that one call: its user-bigram `Remove`
+(`ngram_tkrzwdb.cpp:140`) is `DBM::Remove` on a `TinyDBM` and goes
+through the same sentinel — one of the three `Remove()` sites under
+"Does anything actually ship against this?". **That is inferred, not
+measured.** It rests on the probe above, whose `TinyDBM` case reaches
+the same `DBM::Remove` through the C API, and on the source. The pin was
+not driven through `Bigram::remove` on the LTO 1.0.32: the
+`abi-probe-diff` run observed its `pinyin_mask_out` and both of its
+saves answering `true` and nothing below the ABI, so whether that
+mask-out reached the call, and what the pin's user bigram held
+afterwards, are not established here. Where the pin's mask-out differs
+from oxpinyin's is in where the masked records live, not in how tkrzw
+removes them: its phrase items are not tkrzw records, and its index
+records are rewritten rather than removed.
+
+### If `pinyin_save` returns `false` on tkrzw
+
+Which saves fail depends on the tree. Before #621 (`eaeb26fd`): any save
+after an import or a train, while the pin saves `true`. From #621 on: no
+save fails until the context removes something — `pinyin_mask_out` is
+the measured case — and the next save with something to write does,
+while the pin still saves `true` (#677). On `e985b581` neither failure
+is logged; save's diagnostics and return value belong to #545 (PR #666
+when this was written), and nothing below depends on them.
+
+In both cases check the build of the library, not its version; below
+1.0.34 the version says nothing.
+
+1. **Find the libtkrzw the failing process loaded.** It need not be the
+   one the build linked. `oxpinyin-store`'s build script puts a RUNPATH
+   on that package's own targets (its unit-test, `trait_laws` and example
+   binaries, by `readelf -d`) and on nothing else — `rustc-link-arg` is
+   package-scoped. `libpinyin_capi.so`, `libzhuyin_capi.so` and the other
+   crates' test binaries (`oxpinyin-user`, `-data`, `-runtime` checked)
+   carry none, and take whichever `libtkrzw.so.1` `LD_LIBRARY_PATH` or the
+   loader cache names. `tools/bisection/run-system-import-round-trip.sh` also
+   replaces `LD_LIBRARY_PATH` with the directory of the object under
+   test, so there the loader cache decides for both sides. A store suite
+   that passes and a C-ABI driver that fails in the same shell can be
+   two different libraries. `ldd`, or `LD_DEBUG=libs` on the failing
+   command, settles it.
+2. **Probe that library.** Build `tools/tkrzw/identity-probe.cc` against
+   it (rows (c)–(e)), or run this backend's own check:
+
+   ```sh
+   PKG_CONFIG_PATH=$P/lib/pkgconfig LD_LIBRARY_PATH=$P/lib \
+     cargo test -p oxpinyin-store --no-default-features --features tkrzw \
+       tkrzw_library_honours_its_sentinel_protocol
+   ```
+3. **Then read the version.** 1.0.34 passed under every flag set
+   measured here. 1.0.33 and earlier are healthy or not according to how
+   they were built: fine from `./configure && make` and from Debian,
+   Fedora and EPEL; broken from Ubuntu and under Arch's default flags.
+
+Debian testing still carried `1.0.32-1+b2` on 2026-10-05, as on
+2026-10-01 (`apt-cache policy libtkrzw-dev`); no other distro row of
+this note was re-measured. CI runs this backend's suite, and with it the
+test above, in three places: `store-backends.yml`'s tkrzw child and its
+two sanitizer arms, all in `debian:testing` on that package, and
+`ci.yml`'s `test-macos` on Homebrew's bottle. No job links an Ubuntu- or
+Arch-built libtkrzw. Homebrew's formula was at 1.0.34 on both dates
+(`brew info tkrzw`), while the hosted macOS runner still poured the
+1.0.32 bottle on 2026-10-01 (`test-macos`, run 36832757541). The suite
+passes against the 1.0.32 bottle on the measuring host (macOS 27.0.1,
+arm64, 2026-10-05), and the lane pins only the 1.x line, so it will move
+to 1.0.34 on its own.
+
+### Provenance — the command behind each figure
+
+2026-10-01 (UTC), on an arm64 macOS host in Docker: `debian:testing` at
+`debian@sha256:16faa8d1cd99fcb2d30eebe90454e26b20499055fa7094e9b55d32d1a7666f08`
+(native, and `--platform linux/amd64` for the amd64 rows), g++ 16.2.0
+(Debian 16.2.0-3), GNU ld 2.47, rustc 1.97.1; apt set = the
+`store-backends.yml` test job's without `libtkrzw-dev`,
+`libkyotocabinet-dev` and `libdb-dev`, plus `python3` and `gdb`, so no
+distro libtkrzw existed in either container and a binary that missed the
+build under test could not fall back to another. oxpinyin at `c99ffb57`
+plus this section's change in its first form.
+
+2026-10-05 (UTC), the same host under Apple `container` 1.5.0: the same
+image digest, arm64 native, the same g++, ld and rustc; apt set = that
+test job's in full, plus `python3` and `gdb`. Debian's `libtkrzw-dev
+1.0.32-1+b2` therefore sat beside the two from-source LTO builds, and
+every run was checked for the libtkrzw it loaded (the row below).
+oxpinyin at `e985b581` plus this change.
+
+`$P` is one build's prefix, `$T` a `CARGO_TARGET_DIR` of its own per
+build, `$ORACLE` a prefix from `tools/oracle/build-oracle.sh` (libpinyin
+2.11.92 at `074a2219`, `--with-dbm=Tkrzw`, with libzhuyin). The oracle
+was built once, on 2026-09-25 against Debian testing's 1.0.32 package,
+and not rebuilt per row: it reaches each build through the loader, which
+the identical headers make sound.
+
+| figure | command |
+| --- | --- |
+| sources | `git clone https://github.com/estraier/tkrzw`, then `git archive <commit>` into one tree per build |
+| the commits in the range, their dates | `git log --format='%h %cs %s' bcaa0fb..9ee8416` |
+| what each commit changes | `git show --stat <commit>`; the sentinel change is `git diff bcaa0fb 9ee8416 -- tkrzw_dbm.cc`; the leak fix is `git show 9db46db`, its bound `sizeof(stack_)` with `ITER_BUFFER_SIZE = 128` (`tkrzw_dbm_tree.cc:55`, `tkrzw_dbm_baby.cc:35`) |
+| release and library numbers | `git show 9ee8416:ChangeLog \| head -6` |
+| cited tkrzw lines | `git show <commit>:<file> \| sed -n '<first>,<last>p'`; apart from the two `tkrzw_dbm.cc` quotations, every range cited in this section reads the same at `bcaa0fb` and at `9ee8416` |
+| blob ids | `git rev-parse <commit>:<file>` |
+| build, plain | `./configure --prefix=$P && make && make install` |
+| build, LTO | the same with `CXXFLAGS="-g -O2 -flto=auto -ffat-lto-objects"`, the same `CFLAGS`, `LDFLAGS="-flto=auto -ffat-lto-objects"` |
+| build, Ubuntu | as LTO, with `LDFLAGS="-Wl,-Bsymbolic-functions -flto=auto -ffat-lto-objects -Wl,-z,relro"` |
+| same flags across the range | `grep -m1 'tkrzw_dbm.cc' make.log` and `grep -m1 -e '-shared' make.log` on each build's `make` output; across the four commits the two lines differ only in the prefix, the two version macros and the library's file name |
+| the version a build reports | the `tkrzw  :` line of `distro-probe.sh`, which is `$P/bin/tkrzw_build_util version`; `PKG_CONFIG_PATH=$P/lib/pkgconfig pkg-config --modversion tkrzw` agrees |
+| include trees | `diff -r $P_bcaa0fb/include $P_9ee8416/include` |
+| tag values | `gdb -batch -ex 'p/x (long)TKRZW_REC_PROC_NOOP' -ex 'p/x (long)TKRZW_REC_PROC_REMOVE' $P/lib/libtkrzw.so.1` |
+| `.rodata` copies | `objcopy --dump-section .rodata=ro.bin $P/lib/libtkrzw.so.1 discard.so && LC_ALL=C grep -a -o -P '\x00\xBE\xEF\x02\x11' ro.bin \| wc -l` for `NOOP`, `'\x00\xDE\xAD\x02\x11'` for `REMOVE`; `.debug_info` the same way, and the `grep` on the library itself for the whole-file count. The tables' counts were first read by a script that placed each whole-file match in a section by the offsets of `readelf -SW`; this command gave the same counts on the two LTO builds when re-run on 2026-10-05 |
+| comparator relocations | `readelf -rW $P/lib/libtkrzw.so.1 \| grep -c KeyComparator` |
+| probe rows | `g++ -std=c++17 -O2 -I $P/include tools/tkrzw/identity-probe.cc -o probe -L $P/lib -Wl,-rpath,$P/lib -ltkrzw -lpthread && ./probe DIR` |
+| `distro-probe.sh` | `PATH=$P/bin:$PATH LD_LIBRARY_PATH=$P/lib sh tools/tkrzw/distro-probe.sh` |
+| store suite | `PKG_CONFIG_PATH=$P/lib/pkgconfig LD_LIBRARY_PATH=$P/lib CARGO_TARGET_DIR=$T cargo test --locked --no-fail-fast -p oxpinyin-store --no-default-features --features tkrzw` |
+| store suite, Debian package | the `store-backends.yml` test job's apt line in a fresh `debian:testing`, then `RUSTFLAGS="-D warnings" cargo test --locked --no-fail-fast -p oxpinyin-store --no-default-features --features tkrzw`; the package is `dpkg-query -W libtkrzw-dev libtkrzw1t64` |
+| store suite, macOS | `env -u PKG_CONFIG_PATH PKG_CONFIG_LIBDIR=/nonexistent OXPINYIN_TKRZW_INCLUDE_DIR=$P/include OXPINYIN_TKRZW_LIB_DIR=$P/lib OXPINYIN_TKRZW_LIB_NAME=tkrzw CARGO_TARGET_DIR=$T cargo test …` as above; pkg-config is pointed away because a from-source `tkrzw.pc` names `-lstdc++`, which macOS does not have, on both commits |
+| each class, each fault | the test stops at its first failed assertion — on the LTO 1.0.32, `TreeDBM`'s absent removal — so the other class-and-fault pairs were read from scratch copies of `crates/oxpinyin-store/src/lib.rs`, never committed: the class under study moved ahead of the others, the assertions before the one under study deleted, each copy run with the store-suite command and the test's name as its filter. Both dates; the 2026-10-05 copies add `BabyDBM` |
+| workspace sweep | the store suite's three variables and `cargo test --locked --workspace --no-default-features --features tkrzw --exclude oxpinyin-corpus --exclude oxpinyin-counter --exclude oxpinyin-emitter --exclude oxpinyin-kmm --exclude oxpinyin-lambda --exclude oxpinyin-punct --exclude oxpinyin-word --no-fail-fast`, the `store-backends.yml` tkrzw child's command at `c99ffb57`; the totals are `awk '/^test result:/ {p+=$4; f+=$6; i+=$8; n++} END {print n, p, f, i}'` over its output |
+| C ABI objects | the same three variables, `cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi --no-default-features --features tkrzw` |
+| `pinyin_save` | `gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o import-diff tools/bisection/import-diff.c -ldl`, then `LD_LIBRARY_PATH=$P/lib ./import-diff $T/debug/libpinyin_capi.so $ORACLE/lib/libpinyin/data` |
+| the pin's save | `LD_LIBRARY_PATH=$P/lib:$ORACLE/lib ./import-diff $ORACLE/lib/libpinyin.so $ORACLE/lib/libpinyin/data` |
+| `zhuyin_save`, both sides | `cc -std=gnu11 -Wall -Wextra -Werror -O2 tools/bisection/zhuyin-import-diff.c $(pkg-config --cflags --libs glib-2.0) -ldl -o zhuyin-import-diff`, then, in an empty directory, `LD_LIBRARY_PATH=$P/lib ./zhuyin-import-diff $T/debug/libzhuyin_capi.so $ORACLE/lib/libpinyin/data 1`; the pin's form is `$ORACLE/lib/libzhuyin.so` with `:$ORACLE/lib` on the library path |
+| train path | `gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o nbest-train-diff tools/bisection/nbest-train-diff.c -ldl`; `cp -r $ORACLE/lib/libpinyin/data sysdir`, model20's `interpolation2.text` copied into it; then `LD_LIBRARY_PATH=$P/lib ./nbest-train-diff $T/debug/libpinyin_capi.so sysdir`, and the pin's form on `$ORACLE/lib/libpinyin.so` |
+| log identity, oxpinyin against the pin | each log is a driver's stdout: `diff <(sort pin.log) <(sort ox.log)` for `import-diff`, plain `diff pin.log ox.log` for `zhuyin-import-diff`, `nbest-train-diff` and `abi-probe-diff`. "The only line that differed from a healthy run" is `diff` of oxpinyin's `import-diff` stdout on the plain and on the LTO build of `bcaa0fb` |
+| round trips | `echo $P/lib > /etc/ld.so.conf.d/00-tkrzw-under-test.conf && ldconfig`, then `PKG_CONFIG_PATH=$P/lib/pkgconfig CARGO_TARGET_DIR=$T tools/oracle/user-dir-round-trip.sh $ORACLE` and `tools/bisection/run-system-import-round-trip.sh zhuyin $ORACLE/lib/libzhuyin.so.15 $T/debug/libzhuyin_capi.so $ORACLE/lib/libpinyin/data` |
+| the swallowed error | the one-line scratch patch printed below the table, at `c99ffb57`; the C ABI objects rebuilt against the LTO 1.0.32 into a `$T` of their own; then the three drivers with `2>&1 \| grep -E 'save\|SCRATCH-DIAG'` |
+| files after `save: false` | `ls -la /tmp/importdiff-user-*` after the `import-diff` run, which leaves its user dir there, on the LTO 1.0.32 and on the LTO 1.0.34 |
+| what the pin calls | `git grep -nE 'Rebuild\|Remove\(\|Synchronize\|ProcessEach' 074a2219 -- 'src/storage/*tkrzw*'` |
+| RUNPATH | `readelf -d <object> \| grep RUNPATH` on `oxpinyin-store`'s unit-test, `trait_laws` and example binaries, on the `oxpinyin-user`, `-data` and `-runtime` test binaries and on the two C ABI objects, all under `$T/debug` |
+| environment | `g++ --version`, `ld --version` and `rustc --version` in the container; `sw_vers`, `clang --version` and `container --version` on the host; the image digest is `docker image inspect --format '{{index .RepoDigests 0}}' debian:testing` on 2026-10-01, and the 2026-10-05 container was started from that digest |
+| 2026-10-05: store suite | the store-suite command at `e985b581`, without its first two variables for Debian's package |
+| 2026-10-05: the library a run loaded | `ldd <test binary> \| grep tkrzw`; `LD_DEBUG=libs <driver> … 2>&1 \| grep 'calling init: .*libtkrzw'` |
+| 2026-10-05: the three earlier drivers | as above, each run in an empty directory of its own |
+| 2026-10-05: save after import, after `mask_out` | `gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o abi-probe-diff tools/bisection/abi-probe-diff.c -ldl`, then `LD_LIBRARY_PATH=$P/lib ./abi-probe-diff $T/debug/libpinyin_capi.so sysdir 1e` on the train path's `sysdir`, and the pin's form on `$ORACLE/lib/libpinyin.so` |
+| 2026-10-05: the swallowed error after `mask_out` | the same scratch patch at `e985b581`; `libpinyin_capi.so` rebuilt against the LTO 1.0.32; then the `abi-probe-diff` command with `2>&1 \| grep -E 'SCRATCH-DIAG\|^save\|^mask_out'` |
+| 2026-10-05: Homebrew | `LIBRARY_PATH=$(brew --prefix)/lib cargo test --locked --no-fail-fast -p oxpinyin-store --no-default-features --features tkrzw` on the macOS host (`brew list --versions tkrzw`: 1.0.32) |
+| the hosted runner's bottle, 2026-10-01 | `gh run view 36832757541 --job 110272962477 --log \| grep 'Pouring tkrzw'` |
+| 2026-10-05: `compact` callers | `git grep -nE '\.compact\(' e985b581 -- 'crates/*.rs'`, then the callers of `write_user_bigram`, `stage_user_bigram`, `persistence::save`, `UserStore::open` and `create_standalone` |
+| 2026-10-05: tkrzw's plain remove, per class | the scratch program printed below the table, which is in no repository: `gcc -std=gnu11 -Wall -Wextra -O2 -I $P/include plain-remove-probe.c -o probe -L $P/lib -Wl,-rpath,$P/lib -ltkrzw`, then `./probe` in an empty directory; for Debian's package, the same without `-I`, `-L` and `-rpath` |
+| 2026-10-05: the pin's mask-out | libpinyin at `074a2219` from a local mirror clone; blobs `f27f7cf7` (`src/pinyin.cpp`), `d58e37e2` (`phrase_index.cpp`), `8ae83e01` (`chewing_large_table2_tkrzwdb.cpp`), `0e4094fe` (`phrase_large_table3_tkrzwdb.cpp`), `c826a444` (`ngram_tkrzwdb.cpp`) by `git rev-parse 074a2219:<file>` |
+| 2026-10-05: CI's libtkrzw per job | every `container:`, `runs-on:`, `libtkrzw`, `brew install` and `--features` line of `.github/workflows/*.yml` at `e985b581`, and the `cargo` lines of the scripts they call |
+
+Two rows rest on scratch sources that are in no repository, so both are
+printed here in full.
+
+The swallowed error. One line of `ContextCore::save_user`
+(`crates/oxpinyin-facade/src/context.rs`), the same line at `c99ffb57`
+and at `e985b581`, changed for the measurement and never committed:
+
+```diff
+-            .is_some_and(|store| store.save().unwrap_or(false))
++            .is_some_and(|store| store.save().unwrap_or_else(|e| { eprintln!("SCRATCH-DIAG save error: {e} / {e:?}"); false }))
+```
+
+tkrzw's plain remove, per class — `plain-remove-probe.c`. This is a
+shortened form of the program that first produced the per-class table,
+re-run on 2026-10-05 against the same three libraries with the same
+results. On a healthy library every class prints `remove(stored)=1
+remove(absent)=0/status 7 removed=absent absent=absent count=1`; on the
+LTO 1.0.32 every class prints `removed=00dead0211 absent=00beef0211
+count=3` after the same two answers:
+
+```c
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <tkrzw_langc.h>
+
+static void show(TkrzwDBM *dbm, const char *key) {
+    int32_t size = 0;
+    char *value = tkrzw_dbm_get(dbm, key, -1, &size);
+    printf(" %s=", key);
+    if (value == NULL) {
+        printf("absent");
+    } else {
+        for (int32_t i = 0; i < size; i++) printf("%02x", (unsigned char)value[i]);
+        free(value);
+    }
+}
+
+static void probe(const char *name, const char *path, const char *params) {
+    TkrzwDBM *dbm = tkrzw_dbm_open(path, true, params);
+    tkrzw_dbm_set(dbm, "kept", -1, "v", -1, true);
+    tkrzw_dbm_set(dbm, "removed", -1, "v", -1, true);
+    bool stored = tkrzw_dbm_remove(dbm, "removed", -1);
+    bool absent = tkrzw_dbm_remove(dbm, "absent", -1);
+    int32_t code = tkrzw_get_last_status().code;
+    printf("%s remove(stored)=%d remove(absent)=%d/status %d", name, stored, absent, code);
+    show(dbm, "removed");
+    show(dbm, "absent");
+    printf(" count=%lld\n", (long long)tkrzw_dbm_count(dbm));
+    tkrzw_dbm_close(dbm);
+}
+
+int main(void) {
+    probe("TreeDBM", "plain-remove.tkt", "dbm=tree,truncate=true");
+    probe("HashDBM", "plain-remove.tkh", "dbm=hash,truncate=true");
+    probe("BabyDBM", "", "dbm=baby");
+    probe("TinyDBM", "", "dbm=tiny");
+    return 0;
+}
+```
+
+### Evidence
+
+Per `docs/runbooks/benches.md`, this document commits no captures, and
+the raw capture behind this section is not retained: no build, probe,
+test or driver log of either date is committed, attached to a pull
+request or linked from anywhere, and none will be. Every figure above
+therefore stands on the command recorded for it in the table, which
+reproduces it; where a command needs a source that is in no repository,
+that source is printed in full beneath the table.
