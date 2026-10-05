@@ -1,0 +1,1721 @@
+[
+  {
+    "name": "abi-probe-diff",
+    "kind": "gate",
+    "issues": [
+      "row:33",
+      "row:34",
+      "row:35",
+      "row:36",
+      "row:37"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-abi-probe-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "addon-candidate-diff",
+    "kind": "gate",
+    "issues": [
+      "W11"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "committed fixtures/w3 native cell tables"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-addon-candidate-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "bigram-export-diff",
+    "kind": "gate",
+    "issues": [
+      "541",
+      "row:1"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "oracle patched with bigram-export-strjoinv (runner reports FAIL if absent)"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-bigram-export-diff.sh",
+      "{prefix}/lib/libpinyin.so",
+      "{capi}",
+      "{prefix}/lib/libpinyin/data"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ],
+    "oracle_variant": "bigram-export-strjoinv"
+  },
+  {
+    "name": "bisect",
+    "kind": "gate",
+    "issues": [
+      "coverage:20",
+      "coverage:2",
+      "coverage:4"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "committed fixtures/w3 native cell tables"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-bisect.sh",
+      "{prefix}/lib/libpinyin.so",
+      "{prefix}/lib/libpinyin/data"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ],
+    "optional_skips": [
+      "not requested (set BISECT_LD_PRELOAD=1",
+      "valgrind not found",
+      "ibus-engine-libpinyin not found"
+    ]
+  },
+  {
+    "name": "callgrind-differential",
+    "kind": "not-a-gate",
+    "issues": [
+      "measurement recipe"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-callgrind-differential.sh"
+    ],
+    "env": {},
+    "input_paths": [],
+    "reason": "measurement recipe; excluded from aggregate gates"
+  },
+  {
+    "name": "candidate-assembly-diff",
+    "kind": "gate",
+    "issues": [
+      "582"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "pin-built libzhuyin and prebuilt dev libzhuyin for the cell"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-candidate-assembly-diff.sh",
+      "{prefix}",
+      "{capi}",
+      "{zhuyin}"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
+    "name": "cpp-smoke",
+    "kind": "gate",
+    "issues": [
+      "register:abi-reference"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "prebuilt dev libpinyin",
+      "committed per-cell W3 fixture",
+      "g++, glib, readelf, ldd"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-cpp-smoke.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ],
+    "oracle": false
+  },
+  {
+    "name": "dict-surface-diff",
+    "kind": "gate",
+    "issues": [
+      "register:probe-coverage-abi/Tier-C"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "full subject tables plus interpolation2.text via --data CELL=DIR"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "surface-native-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-dict-surface-diff.sh"
+    ],
+    "env": {
+      "DICT_SYSTEM": "{data}"
+    },
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "dynamic-adjust-diff",
+    "kind": "gate",
+    "issues": [
+      "W10"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-dynamic-adjust-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "export-diff",
+    "kind": "gate",
+    "issues": [
+      "533"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-export-diff.sh",
+      "{prefix}/lib/libpinyin.so",
+      "{capi}",
+      "{prefix}/lib/libpinyin/data"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "import-diff",
+    "kind": "gate",
+    "issues": [
+      "W7-T1"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "committed fixtures/w3 native cell tables",
+      "tools/bisection/classic-import.txt",
+      "prebuilt oxpinyin-dictool",
+      "PINYIN_IBUS_BUILD_DIR and PINYIN_IBUS_PREFIX (matching frontend build)"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-import-diff.sh"
+    ],
+    "env": {
+      "IMPORT_SYSTEM": "{data}"
+    },
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "import-semantics-diff",
+    "kind": "gate",
+    "issues": [
+      "534"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-import-semantics-diff.sh",
+      "{prefix}/lib/libpinyin.so",
+      "{capi}",
+      "{prefix}/lib/libpinyin/data"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "key-surface-diff",
+    "kind": "gate",
+    "issues": [
+      "109"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "full subject tables plus interpolation2.text via --data CELL=DIR"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "surface-native-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-key-surface-diff.sh"
+    ],
+    "env": {
+      "KEY_SYSTEM": "{data}"
+    },
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "live-typing-diff",
+    "kind": "gate",
+    "issues": [
+      "W12"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-live-typing-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "locale-diff",
+    "kind": "gate",
+    "issues": [
+      "539",
+      "619",
+      "545"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "pin-built libzhuyin and prebuilt dev libzhuyin for the cell",
+      "generated zh_CN.UTF-8 locale (or LOCALE_DIFF_LOCALE override)"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-locale-diff.sh"
+    ],
+    "env": {
+      "LOCALE_DIFF_ORACLE_PREFIX": "{prefix}",
+      "LOCALE_DIFF_PINYIN_SO": "{capi}",
+      "LOCALE_DIFF_ZHUYIN_SO": "{zhuyin}"
+    },
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
+    "name": "nbest-choose-train-diff",
+    "kind": "gate",
+    "issues": [
+      "row:38"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "native backend dump tools",
+      "pin-built libzhuyin and prebuilt dev libzhuyin for the cell"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-nbest-choose-train-diff.sh",
+      "{cell}",
+      "{prefix}",
+      "{capi}",
+      "{zhuyin}",
+      "{work}/nbest"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
+    "name": "nbest-train-diff",
+    "kind": "gate",
+    "issues": [
+      "W14"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-nbest-train-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "open-counter-diff",
+    "kind": "gate",
+    "issues": [
+      "523",
+      "583",
+      "589",
+      "590"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "pin-built libzhuyin and prebuilt dev libzhuyin for the cell"
+    ],
+    "timeout": 1800,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-open-counter-diff.sh"
+    ],
+    "env": {
+      "OPEN_COUNTER_ORACLE_PREFIX": "{prefix}",
+      "OPEN_COUNTER_PINYIN_SO": "{capi}",
+      "OPEN_COUNTER_ZHUYIN_SO": "{zhuyin}"
+    },
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
+    "name": "option-sweep",
+    "kind": "gate",
+    "issues": [
+      "W10",
+      "row:17"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data",
+      "committed fixtures/w3 native cell tables"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-option-sweep.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "perf-baseline",
+    "kind": "not-a-gate",
+    "issues": [
+      "370"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-perf-baseline.sh"
+    ],
+    "env": {},
+    "input_paths": [],
+    "reason": "measurement recipe; excluded from aggregate gates"
+  },
+  {
+    "name": "perf-matrix",
+    "kind": "not-a-gate",
+    "issues": [
+      "measurement recipe"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-perf-matrix.sh"
+    ],
+    "env": {},
+    "input_paths": [],
+    "reason": "measurement recipe; excluded from aggregate gates"
+  },
+  {
+    "name": "perf-same-data",
+    "kind": "not-a-gate",
+    "issues": [
+      "260"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-perf-same-data.sh"
+    ],
+    "env": {},
+    "input_paths": [],
+    "reason": "measurement recipe; excluded from aggregate gates"
+  },
+  {
+    "name": "phrase-surface-diff",
+    "kind": "gate",
+    "issues": [
+      "coverage:68",
+      "coverage:69",
+      "coverage:70"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "full subject tables plus interpolation2.text via --data CELL=DIR"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "surface-native-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-phrase-surface-diff.sh"
+    ],
+    "env": {
+      "PHRASE_SYSTEM": "{data}"
+    },
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "pred-order-diff",
+    "kind": "gate",
+    "issues": [
+      "row:12"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-pred-order-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "predict-diff",
+    "kind": "gate",
+    "issues": [
+      "W11",
+      "104"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-predict-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "punct-diff",
+    "kind": "gate",
+    "issues": [
+      "104"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-punct-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "residue-a-tail-diff",
+    "kind": "gate",
+    "issues": [
+      "row:33",
+      "row:34",
+      "row:35",
+      "row:37",
+      "row:1"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data",
+      "oracle patched with bigram-export-strjoinv (missing prefix or marker is FAIL)"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-residue-a-tail-diff.sh"
+    ],
+    "env": {
+      "RESIDUE_A_CAPI_SO": "{capi}"
+    },
+    "input_paths": [
+      "{capi}"
+    ],
+    "oracle_variant": "bigram-export-strjoinv"
+  },
+  {
+    "name": "residue-mechanism-diff",
+    "kind": "gate",
+    "issues": [
+      "row:34"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-residue-mechanism-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "rss-diag",
+    "kind": "not-a-gate",
+    "issues": [
+      "measurement recipe"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-rss-diag.sh"
+    ],
+    "env": {},
+    "input_paths": [],
+    "reason": "measurement recipe; excluded from aggregate gates"
+  },
+  {
+    "name": "same-data-dir-diff",
+    "kind": "gate",
+    "issues": [
+      "635",
+      "636",
+      "637"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-same-data-dir-diff.sh",
+      "{prefix}/lib/libpinyin.so",
+      "{capi}",
+      "{prefix}/lib/libpinyin/data"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "scheme-diff",
+    "kind": "gate",
+    "issues": [
+      "W13",
+      "W15"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-scheme-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "session-fork-diff",
+    "kind": "gate",
+    "issues": [
+      "531",
+      "546"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "timeout utility; SESSION_FORK_TIMEOUT defaults to 60s per process"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-session-fork-diff.sh"
+    ],
+    "env": {
+      "SESSION_FORK_ORACLE_PREFIX": "{prefix}",
+      "SESSION_FORK_PINYIN_SO": "{capi}",
+      "SESSION_FORK_ZHUYIN_SO": "{zhuyin}"
+    },
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "shipped-check",
+    "kind": "not-a-gate",
+    "issues": [
+      "measurement recipe"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-shipped-check.sh"
+    ],
+    "env": {},
+    "input_paths": [],
+    "reason": "measurement recipe; excluded from aggregate gates"
+  },
+  {
+    "name": "system-import-profile",
+    "kind": "not-a-gate",
+    "issues": [
+      "599"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-system-import-profile.sh"
+    ],
+    "env": {},
+    "input_paths": [],
+    "reason": "measurement recipe; excluded from aggregate gates"
+  },
+  {
+    "name": "system-import-round-trip",
+    "kind": "gate",
+    "issues": [
+      "599"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-system-import-round-trip.sh",
+      "pinyin",
+      "{prefix}/lib/libpinyin.so",
+      "{capi}",
+      "{prefix}/lib/libpinyin/data"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "train-diff-dynamic-off",
+    "kind": "gate",
+    "issues": [
+      "W10"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "committed fixtures/w3 native cell tables"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-train-diff-dynamic-off.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "train-diff",
+    "kind": "gate",
+    "issues": [
+      "W6-T7"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-train-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "tree-recipe-control",
+    "kind": "not-a-gate",
+    "issues": [
+      "measurement recipe"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-tree-recipe-control.sh"
+    ],
+    "env": {},
+    "input_paths": [],
+    "reason": "measurement recipe; excluded from aggregate gates"
+  },
+  {
+    "name": "two-context-diff",
+    "kind": "gate",
+    "issues": [
+      "538",
+      "578"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "pin-built libzhuyin and prebuilt dev libzhuyin for the cell"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-two-context-diff.sh"
+    ],
+    "env": {
+      "TWO_CONTEXT_ORACLE_PREFIX": "{prefix}",
+      "TWO_CONTEXT_PINYIN_SO": "{capi}",
+      "TWO_CONTEXT_ZHUYIN_SO": "{zhuyin}"
+    },
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
+    "name": "uncovered-surface-diff",
+    "kind": "gate",
+    "issues": [
+      "W12"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-uncovered-surface-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "union-diff",
+    "kind": "gate",
+    "issues": [
+      "W11"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "committed fixtures/w3 native cell tables"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-union-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "user-candidate-diff",
+    "kind": "gate",
+    "issues": [
+      "W11"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-user-candidate-diff.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "user-file-modes-diff",
+    "kind": "gate",
+    "issues": [
+      "544"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "pin-built libzhuyin and prebuilt dev libzhuyin for the cell"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-user-file-modes-diff.sh"
+    ],
+    "env": {
+      "MODES_ORACLE_PREFIX": "{prefix}",
+      "MODES_PINYIN_SO": "{capi}",
+      "MODES_ZHUYIN_SO": "{zhuyin}"
+    },
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
+    "name": "w11-diff",
+    "kind": "gate",
+    "issues": [
+      "W11"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "matching full subject system tables via OXPINYIN_SYSTEM_DIR / --data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [
+      "bisection-source-output"
+    ],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-w11-diff.sh",
+      "predict-diff"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "zhuyin-diff",
+    "kind": "gate",
+    "issues": [
+      "row:24",
+      "row:25",
+      "row:26",
+      "row:27",
+      "row:28",
+      "row:29"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "pin-built libzhuyin and prebuilt dev libzhuyin for the cell",
+      "full subject tables plus interpolation2.text via --data CELL=DIR"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-zhuyin-diff.sh"
+    ],
+    "env": {
+      "ZHUYIN_ORACLE_PREFIX": "{prefix}",
+      "ZHUYIN_RUST_SO": "{zhuyin}",
+      "ZHUYIN_RUST_DATA": "{data}",
+      "ZHUYIN_ORACLE_DATA": "{data}"
+    },
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
+    "name": "zhuyin-import-diff",
+    "kind": "gate",
+    "issues": [
+      "575",
+      "600",
+      "601"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
+      "pin-built libzhuyin and prebuilt dev libzhuyin for the cell"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-zhuyin-import-diff.sh",
+      "{prefix}/lib/libzhuyin.so",
+      "{zhuyin}",
+      "{prefix}/lib/libpinyin/data"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
+    "name": "system-import-round-trip-zhuyin",
+    "kind": "gate",
+    "issues": [
+      "599"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "native compiler and runner prerequisites",
+      "prebuilt dev libpinyin for the cell",
+      "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-system-import-round-trip.sh",
+      "zhuyin",
+      "{prefix}/lib/libzhuyin.so",
+      "{zhuyin}",
+      "{prefix}/lib/libpinyin/data"
+    ],
+    "env": {},
+    "input_paths": [
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
+    "name": "train-index-diff",
+    "kind": "gate",
+    "issues": [
+      "row:38"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "cell oracle and prebuilt libraries",
+      "Python 3",
+      "native backend dump tools"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "python3",
+      "{root}/tools/bisection/train-index-diff.py",
+      "{cell}",
+      "{prefix}",
+      "{capi}",
+      "{zhuyin}"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}"
+    ]
+  },
+  {
+    "name": "transformed-options-sweep",
+    "kind": "gate",
+    "issues": [
+      "634"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "cell oracle and prebuilt libraries",
+      "Python 3",
+      "committed transformed-options input and word files"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "python3",
+      "{root}/tools/oracle/transformed-options-sweep.py",
+      "--oracle",
+      "{prefix}/lib/libpinyin.so",
+      "--subject",
+      "{capi}",
+      "--data",
+      "{prefix}/lib/libpinyin/data",
+      "--expect",
+      "fixed"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}"
+    ]
+  },
+  {
+    "name": "abi-exports",
+    "kind": "gate",
+    "issues": [
+      "register:libpinyin.ver",
+      "register:libzhuyin.ver"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "oracle": false,
+    "required_inputs": [
+      "registered headers and version scripts",
+      "native compiler, pkg-config, glib"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/abi/check-exports.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}"
+    ]
+  },
+  {
+    "name": "abi-alloc",
+    "kind": "gate",
+    "issues": [
+      "register:libpinyin.alloc",
+      "register:libzhuyin.alloc"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "oracle": false,
+    "required_inputs": [
+      "registered headers and version scripts",
+      "native compiler, pkg-config, glib",
+      "compiler AddressSanitizer/LeakSanitizer support"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/abi/check-alloc-pairing.sh"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}"
+    ]
+  },
+  {
+    "name": "pc-version",
+    "kind": "gate",
+    "issues": [
+      "register:oracle-pin.txt"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "oracle": false,
+    "required_inputs": [
+      "registered headers and version scripts",
+      "native compiler, pkg-config, glib"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/packaging/check-pc-version.sh"
+    ],
+    "env": {},
+    "input_paths": []
+  },
+  {
+    "name": "pc-metadata",
+    "kind": "gate",
+    "issues": [
+      "register:oracle-pin.txt"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "oracle": true,
+    "required_inputs": [
+      "registered headers and version scripts",
+      "native compiler, pkg-config, glib",
+      "matching pre-staged pin and subject installation trees"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/packaging/check-pc-metadata.sh",
+      "--pin-root={env[OXPINYIN_METADATA_PIN_ROOT]}",
+      "--subject-root={env[OXPINYIN_METADATA_SUBJECT_ROOT]}",
+      "--prefix={env[OXPINYIN_METADATA_PREFIX]}"
+    ],
+    "env": {},
+    "input_paths": [
+      "{env[OXPINYIN_METADATA_PIN_ROOT]}",
+      "{env[OXPINYIN_METADATA_SUBJECT_ROOT]}"
+    ],
+    "required_env": [
+      "OXPINYIN_METADATA_PIN_ROOT",
+      "OXPINYIN_METADATA_SUBJECT_ROOT",
+      "OXPINYIN_METADATA_PREFIX"
+    ]
+  },
+  {
+    "name": "user-dir-round-trip",
+    "kind": "gate",
+    "issues": [
+      "task:9",
+      "599"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "oracle": true,
+    "required_inputs": [
+      "registered headers and version scripts",
+      "native compiler, pkg-config, glib",
+      "prebuilt user_dir_round_trip integration-test executable",
+      "pin-built oracle headers and library"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/oracle/user-dir-round-trip.sh",
+      "{prefix}"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}",
+      "{env[OXPINYIN_USER_RT_TEST]}"
+    ]
+  }
+]
