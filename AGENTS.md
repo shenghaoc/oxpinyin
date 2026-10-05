@@ -199,13 +199,16 @@ always".
    default). Baseline, differential, revert-and-check and the gate run
    there and nowhere else by default.
 2. Run all three cells (bdb, kc, tkrzw) only when the diff touches
-   backend code. Decide by path check, not by judgement — either of:
+   backend code. Decide by path check, not by judgement — any of three:
    - `git diff --name-only origin/main...HEAD` lists a file under
      `crates/oxpinyin-store/`;
    - a changed file contains `feature = "bdb"`, `feature = "tkrzw"` or
      `feature = "kyotocabinet"`
      (`git diff --name-only origin/main...HEAD | xargs grep -lE
-     'feature *= *"(bdb|tkrzw|kyotocabinet)"'`).
+     'feature *= *"(bdb|tkrzw|kyotocabinet)"'`);
+   - the diff changes a line naming a backend in any Cargo.toml
+     (`git diff -U0 origin/main...HEAD -- '*Cargo.toml' | grep -E
+     '^[+-][^+-].*(bdb|tkrzw|kyotocabinet)'`).
    State the check's output in the PR body. A result you believe is
    backend-dependent but that fails the check is a finding to report,
    not a licence to run three cells.
