@@ -5,6 +5,10 @@ The corpus pipeline, the oracle environment, the differential fixtures
 oracle is `../runbooks/oracle.md`; how goldens and pins are refreshed
 is `../runbooks/goldens-and-pins.md`.
 
+For the live ABI gate registry, cell selection, prebuilt artifacts and aggregate
+result protocol, see [live parity gates](../runbooks/parity-gates.md). The
+[tooling-lane run](../findings/tooling-lane-gates.md) records the three-cell table.
+
 ## Tests that need inputs CI never has
 
 A test that needs the model20 cache, the system-table export, a
