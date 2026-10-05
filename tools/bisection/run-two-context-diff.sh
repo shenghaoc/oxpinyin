@@ -59,12 +59,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 
-PREFIX="${TWO_CONTEXT_ORACLE_PREFIX:-}"
+PREFIX="${TWO_CONTEXT_ORACLE_PREFIX:-${PINYIN_ORACLE_PREFIX:-}}"
 if [[ -z "$PREFIX" || ! -d "$PREFIX" ]]; then
     echo "missing input: TWO_CONTEXT_ORACLE_PREFIX is unset or not a directory" >&2
     echo "  build it with tools/oracle/build-oracle.sh, configure line plus --enable-libzhuyin" >&2
-    exit 3
+    exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
     "$PREFIX/oracle-pin.txt" 2>/dev/null; then
@@ -74,8 +76,8 @@ fi
 DATA="$PREFIX/lib/libpinyin/data"
 declare -A ORACLE_SO=([pinyin]="$PREFIX/lib/libpinyin.so.15" [zhuyin]="$PREFIX/lib/libzhuyin.so.15")
 declare -A OX_SO=(
-    [pinyin]="${TWO_CONTEXT_PINYIN_SO:-$REPO_ROOT/target/debug/libpinyin_capi.so}"
-    [zhuyin]="${TWO_CONTEXT_ZHUYIN_SO:-$REPO_ROOT/target/debug/libzhuyin_capi.so}"
+    [pinyin]="${TWO_CONTEXT_PINYIN_SO:-${OXPINYIN_CAPI_SO:-$CARGO_TARGET_DIR/debug/libpinyin_capi.so}}"
+    [zhuyin]="${TWO_CONTEXT_ZHUYIN_SO:-${OXPINYIN_ZHUYIN_SO:-$CARGO_TARGET_DIR/debug/libzhuyin_capi.so}}"
 )
 read -r -a LIBS <<< "${TWO_CONTEXT_LIBS:-pinyin zhuyin cross}"
 SCENARIOS=(one-learns fini-reversed both-learn late-save)
@@ -119,8 +121,10 @@ echo "build: ok"
 run_side() {
     local lib=$1 scenario=$2 log=$3
     shift 3
-    local user="$WORK/user-$(basename "$log" .log)"
-    local tmp="$WORK/tmp-$(basename "$log" .log)"
+    local user
+    user="$WORK/user-$(basename "$log" .log)"
+    local tmp
+    tmp="$WORK/tmp-$(basename "$log" .log)"
     rm -rf "$user" "$tmp"
     mkdir -p "$user" "$tmp"
     if ! TMPDIR="$tmp" "$DRIVER" "$lib" "$@" "$DATA" "$user" "$scenario" \

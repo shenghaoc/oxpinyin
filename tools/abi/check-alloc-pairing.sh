@@ -56,6 +56,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO_ROOT=$(pwd)
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 
 static_only=0
 if [[ "${1:-}" == "--static-only" ]]; then
@@ -364,8 +366,12 @@ if ((static_only)); then
 fi
 
 echo "--- building oxpinyin-capi and oxpinyin-zhuyin-capi ---"
-cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi
-CAPI_DIR="$REPO_ROOT/target/debug"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
+oracle_cell_artifact OXPINYIN_ZHUYIN_SO libzhuyin_capi.so oxpinyin-zhuyin-capi
+CAPI_DIR="$WORK/lib"
+mkdir "$CAPI_DIR"
+ln -s "$OXPINYIN_CAPI_SO" "$CAPI_DIR/libpinyin_capi.so"
+ln -s "$OXPINYIN_ZHUYIN_SO" "$CAPI_DIR/libzhuyin_capi.so"
 built=(libpinyin_capi.so libzhuyin_capi.so)
 soname=(libpinyin.so.15 libzhuyin.so.15)
 for i in 0 1; do

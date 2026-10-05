@@ -28,9 +28,13 @@
 # Exit codes: 0 = identical on every driver; 1 = build/run failure;
 # 2 = at least one driver's logs differ (each divergence is printed).
 set -euo pipefail
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 
 oracle_so=${1:?path to the pin-built libpinyin.so}
-capi_so=${2:?path to the oxpinyin libpinyin_capi.so}
+[[ -f $oracle_so ]] || { echo "SKIP: missing oracle: $oracle_so" >&2; exit 77; }
+capi_so=${2:-${OXPINYIN_CAPI_SO:?prebuilt libpinyin required}}
 data=${3:?data directory}
 shift 3
 # Resolve the caller's (possibly relative) paths before moving into the

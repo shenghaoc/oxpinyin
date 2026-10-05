@@ -29,6 +29,7 @@ inputs=("$@")
 script_dir=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$script_dir/../.." && pwd)
 data_dir=$prefix/lib/libpinyin/data
+[[ -f $prefix/oracle-pin.txt && -f $prefix/lib/libpinyin.so ]] || { echo "SKIP: missing oracle: $prefix" >&2; exit 77; }
 [[ -d $data_dir ]] || { printf 'no data dir under prefix: %s\n' "$data_dir" >&2; exit 1; }
 
 header_dir=$(find "$prefix/include" -maxdepth 1 -type d -name 'libpinyin-*' | head -1)
@@ -40,9 +41,11 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/oxpinyin-user-rt.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 # ---- the pin-side driver -------------------------------------------------
+read -r -a glib_cflags <<< "$(pkg-config --cflags glib-2.0)"
+read -r -a glib_libs <<< "$(pkg-config --libs glib-2.0)"
 cc -O2 -o "$work/user_driver" "$script_dir/user_driver.c" \
-   -I"$header_dir" $(pkg-config --cflags glib-2.0) \
-   -L"$prefix/lib" -lpinyin $(pkg-config --libs glib-2.0) \
+   -I"$header_dir" "${glib_cflags[@]}" \
+   -L"$prefix/lib" -lpinyin "${glib_libs[@]}" \
    -Wl,-rpath,"$(dirname "$so")"
 
 mkdir "$work/pin" "$work/ox"
@@ -85,13 +88,28 @@ Tkrzw) ox_default_feature=tkrzw ;;
 	exit 1
 	;;
 esac
-# shellcheck disable=SC2206
-feature_flags=(${OX_CARGO_FEATURES:---no-default-features --features $ox_default_feature})
+REPO_ROOT=$root
+case $ox_default_feature in
+    kyotocabinet) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-kc} ;;
+    *) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-$ox_default_feature} ;;
+esac
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$root/tools/bisection/oracle-cell.sh"
+read -r -a feature_flags <<< "${OX_CARGO_FEATURES:---no-default-features --features $CAPI_FEATURE}"
+run_round_trip_test() {
+    if [[ -n ${OXPINYIN_USER_RT_TEST:-} ]]; then
+        "$OXPINYIN_USER_RT_TEST" --ignored --nocapture "$1"
+    elif [[ -n ${OXPINYIN_CAPI_SO:-} ]]; then
+        echo "FAIL: a supplied library requires OXPINYIN_USER_RT_TEST (prebuilt user_dir_round_trip test)" >&2
+        return 1
+    else
+        cargo test --locked --profile dev --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \
+            "${feature_flags[@]}" --test user_dir_round_trip -- --ignored --nocapture "$1"
+    fi
+}
 OX_SYSTEM_DIR="$data_dir" \
 OX_PIN_DIR="$work/pin" \
-cargo test --locked --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \
-    "${feature_flags[@]}" \
-    --test user_dir_round_trip -- --ignored --nocapture a_pin_profile
+run_round_trip_test a_pin_profile
 
 printf '== Phase C: the pin renders the original and oxpinyin rewrite ==\n'
 # The seamless direction, divergence-free: both dumps are rendered by the
@@ -123,9 +141,7 @@ OX_SYSTEM_DIR="$data_dir" \
 OX_OWNED_DIR="$work/ox" \
 OX_INPUTS="${inputs[*]}" \
 OX_EXPECTED_PHRASES="$work/expected-phrases" \
-cargo test --locked --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \
-    "${feature_flags[@]}" \
-    --test user_dir_round_trip -- --ignored --nocapture oxpinyin_trains
+run_round_trip_test oxpinyin_trains
 
 "$work/user_driver" phrases "$data_dir" "$work/ox" | sort > "$work/pin-reads-ox-owned.dump"
 rows=$(wc -l < "$work/pin-reads-ox-owned.dump" | tr -d ' ')
@@ -151,6 +167,6 @@ printf 'READABLE: the pin loads and renders oxpinyin own profile (%s rows, %s ph
 # #599: creation and pronunciation edits in SYSTEM_FILE libraries 1–4.
 # Build the same facade/backend used above; both readers consume each other's
 # saved .dbin files, including a pin -> oxpinyin -> pin rewrite.
-cargo build --locked --manifest-path "$root/Cargo.toml" -p oxpinyin-capi "${feature_flags[@]}"
+oracle_cell_artifact OXPINYIN_CAPI_SO libpinyin_capi.so oxpinyin-capi
 "$root/tools/bisection/run-system-import-round-trip.sh" \
-    pinyin "$so" "${CARGO_TARGET_DIR:-$root/target}/debug/libpinyin_capi.so" "$data_dir"
+    pinyin "$so" "$OXPINYIN_CAPI_SO" "$data_dir"

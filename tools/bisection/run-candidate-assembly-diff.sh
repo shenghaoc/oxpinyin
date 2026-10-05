@@ -22,16 +22,22 @@
 # Exit: 0 = as declared; 1 = missing input or a crash; 2 = a divergence
 # outside the table, or a declared case that no longer diverges.
 set -euo pipefail
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 
 # Resolved before the `cd` below: the usage text allows relative paths, and
 # the existence checks, the dlopen of the shared objects and the logs all
 # have to mean the same file as the caller's directory did.
 prefix=$(realpath -- "${1:?oracle prefix}")
-capi_so=$(realpath -- "${2:?path to libpinyin_capi.so}")
-zhuyin_so=$(realpath -- "${3:?path to libzhuyin_capi.so}")
+capi_so=$(realpath -- "${2:-${OXPINYIN_CAPI_SO:?prebuilt libpinyin required}}")
+zhuyin_so=$(realpath -- "${3:-${OXPINYIN_ZHUYIN_SO:?prebuilt libzhuyin required}}")
 out=${4:-}
 [[ -z "$out" ]] || out=$(realpath -m -- "$out")
 
+[[ -f $prefix/oracle-pin.txt && -f $prefix/lib/libpinyin.so ]] || {
+    echo "SKIP: missing oracle: $prefix" >&2; exit 77;
+}
 for f in "$prefix/oracle-pin.txt" "$prefix/lib/libpinyin.so" "$prefix/lib/libzhuyin.so" \
     "$prefix/lib/libpinyin/data/bigram.db" "$capi_so" "$zhuyin_so"; do
     [[ -e "$f" ]] || { echo "FAIL: missing input $f" >&2; exit 1; }
@@ -44,7 +50,9 @@ fi
 data="$prefix/lib/libpinyin/data"
 
 cd "$(dirname "$0")"
-gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o candidate-assembly-diff \
+build=$(mktemp -d)
+trap 'rm -rf "$build"' EXIT
+gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$build/candidate-assembly-diff" \
     candidate-assembly-diff.c -ldl
 
 if [[ -z "$out" ]]; then
@@ -57,7 +65,8 @@ fi
 
 run() {
     local mode=$1 side=$2 so=$3
-    if ! ./candidate-assembly-diff "$mode" "$so" "$data" \
+    mkdir -p "$build/$mode-$side"
+    if ! (cd "$build/$mode-$side" && "$build/candidate-assembly-diff" "$mode" "$so" "$data") \
         > "$out/$mode-$side.log" 2> "$out/$mode-$side.err"; then
         echo "FAIL: $mode driver crashed against $side ($so)" >&2
         tail -5 "$out/$mode-$side.err" >&2

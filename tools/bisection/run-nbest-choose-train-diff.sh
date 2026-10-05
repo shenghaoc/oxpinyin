@@ -3,12 +3,19 @@
 # Usage: <bdb|kc|tkrzw> <oracle-prefix> <pinyin-so> <zhuyin-so> <new-out-dir>
 # Snapshots and dumps remain in out for review and revert-and-check.
 set -euo pipefail
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+PINYIN_ORACLE_DBM=${1:?backend}
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 cell=${1:?backend}
 prefix=${2:?oracle prefix}
 pinyin_so=${3:?subject libpinyin}
 zhuyin_so=${4:?subject libzhuyin}
 out=${5:?new output directory}
 case "$cell" in bdb|kc|tkrzw) ;; *) exit 1;; esac
+[[ -f $prefix/oracle-pin.txt && -f $prefix/lib/libpinyin.so ]] || {
+    echo "SKIP: missing oracle: $prefix" >&2; exit 77;
+}
 for f in "$prefix/oracle-pin.txt" "$prefix/lib/libpinyin.so" \
     "$prefix/lib/libzhuyin.so" "$prefix/lib/libpinyin/data/bigram.db" \
     "$pinyin_so" "$zhuyin_so"; do

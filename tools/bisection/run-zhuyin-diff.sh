@@ -34,37 +34,42 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 
+ZHUYIN_ORACLE_PREFIX=${ZHUYIN_ORACLE_PREFIX:-${PINYIN_ORACLE_PREFIX:-}}
 if [[ -z "${ZHUYIN_ORACLE_PREFIX:-}" || ! -d "$ZHUYIN_ORACLE_PREFIX" ]]; then
     echo "SKIP: ZHUYIN_ORACLE_PREFIX is unset or not a directory" >&2
     echo "  build the pin-built libzhuyin oracle (tools/oracle/build-oracle.sh patched" >&2
     echo "  with --enable-libzhuyin) and set ZHUYIN_ORACLE_PREFIX to its prefix." >&2
-    exit 3
+    exit 77
 fi
 
 ORACLE_SO="${ZHUYIN_ORACLE_SO:-$ZHUYIN_ORACLE_PREFIX/lib/libzhuyin.so.15.0.0}"
 ORACLE_DATA="${ZHUYIN_ORACLE_DATA:-$ZHUYIN_ORACLE_PREFIX/lib/libpinyin/data}"
-RUST_SO="${ZHUYIN_RUST_SO:-$REPO_ROOT/target/debug/libzhuyin_capi.so}"
+RUST_SO="${ZHUYIN_RUST_SO:-${OXPINYIN_ZHUYIN_SO:-$CARGO_TARGET_DIR/debug/libzhuyin_capi.so}}"
 RUST_DATA="${ZHUYIN_RUST_DATA:-}"
 # Each side gets its own user dir so neither run observes user-state files the
 # other creates (libzhuyin writes user.conf / the user store under here). A
 # caller-supplied ZHUYIN_USER_DIR pins the RUST side and is never removed; the
 # scratch dirs this script creates are cleaned on exit.
-ORACLE_USER_DIR="$(mktemp -d)"
+WORK=$(mktemp -d)
+ORACLE_USER_DIR="$WORK/oracle-user"
+mkdir "$ORACLE_USER_DIR"
 if [[ -n "${ZHUYIN_USER_DIR:-}" ]]; then
     RUST_USER_DIR="$ZHUYIN_USER_DIR"
     mkdir -p "$RUST_USER_DIR"
-    trap 'rm -rf "$ORACLE_USER_DIR"' EXIT
+    trap 'rm -rf "$WORK"' EXIT
 else
     RUST_USER_DIR="$(mktemp -d)"
-    trap 'rm -rf "$ORACLE_USER_DIR" "$RUST_USER_DIR"' EXIT
+    trap 'rm -rf "$WORK" "$RUST_USER_DIR"' EXIT
 fi
 
 if [[ -z "$RUST_DATA" || ! -d "$RUST_DATA" ]]; then
     echo "SKIP: ZHUYIN_RUST_DATA is unset or not a directory" >&2
     echo "  point it at an oxpinyin-native converted systemdir (pinyin_index.bin," >&2
     echo "  phrase_index.bin, bigram.db, punct.bin + interpolation2.text)." >&2
-    exit 3
+    exit 77
 fi
 
 for p in "$ORACLE_SO" "$RUST_SO"; do
@@ -75,7 +80,7 @@ for d in "$ORACLE_DATA" "$RUST_DATA"; do
 done
 
 echo "== building zhuyin-diff =="
-cc -O2 -Wall -Wextra -o "$SCRIPT_DIR/zhuyin-diff" "$SCRIPT_DIR/zhuyin-diff.c" -ldl || {
+cc -O2 -Wall -Wextra -o "$WORK/zhuyin-diff" "$SCRIPT_DIR/zhuyin-diff.c" -ldl || {
     echo "build failed" >&2; exit 1; }
 
 echo "== running against oracle (data=$ORACLE_DATA) =="
@@ -84,40 +89,41 @@ echo "== running against oracle (data=$ORACLE_DATA) =="
 # merged into the compared stdout log — but it is NOT discarded: a failing
 # side emits its captured diagnostics (the driver's own failure reason)
 # before the script exits.
-if ! "$SCRIPT_DIR/zhuyin-diff" "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_USER_DIR" \
-        > "$SCRIPT_DIR/zhuyin-oracle.log" 2> "$SCRIPT_DIR/zhuyin-oracle.stderr"; then
+if ! "$WORK/zhuyin-diff" "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_USER_DIR" \
+        > "$WORK/zhuyin-oracle.log" 2> "$WORK/zhuyin-oracle.stderr"; then
     echo "FAIL: the oracle driver exited nonzero" >&2
-    cat "$SCRIPT_DIR/zhuyin-oracle.stderr" >&2
+    cat "$WORK/zhuyin-oracle.stderr" >&2
     exit 1
 fi
-rm -f "$SCRIPT_DIR/zhuyin-oracle.stderr"
-echo "oracle log lines: $(wc -l < "$SCRIPT_DIR/zhuyin-oracle.log")"
+rm -f "$WORK/zhuyin-oracle.stderr"
+echo "oracle log lines: $(wc -l < "$WORK/zhuyin-oracle.log")"
 
 echo "== running against rust facade (data=$RUST_DATA) =="
-if ! "$SCRIPT_DIR/zhuyin-diff" "$RUST_SO" "$RUST_DATA" "$RUST_USER_DIR" \
-        > "$SCRIPT_DIR/zhuyin-rust.log" 2> "$SCRIPT_DIR/zhuyin-rust.stderr"; then
+if ! "$WORK/zhuyin-diff" "$RUST_SO" "$RUST_DATA" "$RUST_USER_DIR" \
+        > "$WORK/zhuyin-rust.log" 2> "$WORK/zhuyin-rust.stderr"; then
     echo "FAIL: the rust driver exited nonzero" >&2
-    cat "$SCRIPT_DIR/zhuyin-rust.stderr" >&2
+    cat "$WORK/zhuyin-rust.stderr" >&2
     exit 1
 fi
-rm -f "$SCRIPT_DIR/zhuyin-rust.stderr"
-echo "rust log lines: $(wc -l < "$SCRIPT_DIR/zhuyin-rust.log")"
+rm -f "$WORK/zhuyin-rust.stderr"
+echo "rust log lines: $(wc -l < "$WORK/zhuyin-rust.log")"
 
 # Both sides must produce a non-empty log for the diff to mean anything: an
 # empty log means the side failed to init or crashed before writing output, so
 # a byte-identical comparison would be vacuous. Fail loudly instead.
-if [[ ! -s "$SCRIPT_DIR/zhuyin-oracle.log" || ! -s "$SCRIPT_DIR/zhuyin-rust.log" ]]; then
+if [[ ! -s "$WORK/zhuyin-oracle.log" || ! -s "$WORK/zhuyin-rust.log" ]]; then
     echo "FAIL: one side produced no output (empty log)" >&2
-    echo "  oracle: $SCRIPT_DIR/zhuyin-oracle.log ($(wc -l < "$SCRIPT_DIR/zhuyin-oracle.log") lines)" >&2
-    echo "  rust:   $SCRIPT_DIR/zhuyin-rust.log ($(wc -l < "$SCRIPT_DIR/zhuyin-rust.log") lines)" >&2
+    echo "  oracle: $WORK/zhuyin-oracle.log ($(wc -l < "$WORK/zhuyin-oracle.log") lines)" >&2
+    echo "  rust:   $WORK/zhuyin-rust.log ($(wc -l < "$WORK/zhuyin-rust.log") lines)" >&2
     exit 1
 fi
 
 echo "== diff (oracle vs rust) =="
-if diff -u "$SCRIPT_DIR/zhuyin-oracle.log" "$SCRIPT_DIR/zhuyin-rust.log" > "$SCRIPT_DIR/zhuyin.diff"; then
+if diff -u "$WORK/zhuyin-oracle.log" "$WORK/zhuyin-rust.log" > "$WORK/zhuyin.diff"; then
     echo "IDENTICAL"
     exit 0
 else
-    echo "DIFF FOUND (see $SCRIPT_DIR/zhuyin.diff)"
+    echo "DIFF FOUND"
+    cat "$WORK/zhuyin.diff"
     exit 2
 fi
