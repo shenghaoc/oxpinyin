@@ -182,8 +182,14 @@ impl InstanceCore {
         if let Some(scheme) = full_scheme(self.live.full_scheme.load(Ordering::Relaxed))
             && let Some(index) = scheme.index()
         {
-            let parsed =
-                parse_full_pinyin_index_with_options(text.as_bytes(), self.options(), index);
+            let parsed = match parse_full_pinyin_index_with_options(
+                text.as_bytes(),
+                self.options(),
+                index,
+            ) {
+                Ok(parsed) => parsed,
+                Err(_) => return 0,
+            };
             let full = parsed.full_pinyin();
             let mut offset = 0;
             let segments: Vec<_> = parsed

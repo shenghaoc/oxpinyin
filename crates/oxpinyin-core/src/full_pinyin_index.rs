@@ -992,15 +992,27 @@ pub fn parse_full_pinyin_index(
     index: &[(&'static str, &'static str)],
 ) -> FullPinyinIndexParse {
     let options = crate::OptionBits::from_bits(if use_tone { crate::USE_TONE } else { 0 });
-    parse_full_pinyin_index_with_options(input, options, index)
+    parse_index(input, options, index)
 }
 
 /// Parses an indexed full-pinyin scheme under the complete option word.
 /// `FORCE_TONE` requires a tone only when `USE_TONE` is also set, matching
 /// pin 074a2219 `pinyin_parser2.cpp:176-190`. Other option bits do not
 /// gate these plain index rows. The boolean entry retains its behavior.
+///
+/// # Errors
+/// The parser currently has no error cases: a rejected key ends the parsed
+/// prefix. The error type is [`core::convert::Infallible`].
 #[must_use]
 pub fn parse_full_pinyin_index_with_options(
+    input: &[u8],
+    options: crate::OptionBits,
+    index: &[(&'static str, &'static str)],
+) -> Result<FullPinyinIndexParse, core::convert::Infallible> {
+    Ok(parse_index(input, options, index))
+}
+
+fn parse_index(
     input: &[u8],
     options: crate::OptionBits,
     index: &[(&'static str, &'static str)],
@@ -1241,7 +1253,8 @@ mod option_tests {
         ] {
             for bits in [0, FORCE_TONE, USE_TONE, USE_TONE | FORCE_TONE] {
                 let options = OptionBits::from_bits(bits);
-                let plain = parse_full_pinyin_index_with_options(input.as_bytes(), options, index);
+                let plain = parse_full_pinyin_index_with_options(input.as_bytes(), options, index)
+                    .expect("infallible parse");
                 assert_eq!(
                     plain.consumed(),
                     if bits == USE_TONE | FORCE_TONE {
@@ -1251,7 +1264,8 @@ mod option_tests {
                     }
                 );
                 let toned = format!("{input}4");
-                let parsed = parse_full_pinyin_index_with_options(toned.as_bytes(), options, index);
+                let parsed = parse_full_pinyin_index_with_options(toned.as_bytes(), options, index)
+                    .expect("infallible parse");
                 assert_eq!(
                     parsed.consumed(),
                     if bits & USE_TONE != 0 {
