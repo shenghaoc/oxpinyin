@@ -8,6 +8,7 @@ No captures are written: full ordered observations are compared in memory.
 
 import argparse
 import ctypes as c
+from concurrent.futures import ThreadPoolExecutor
 import json
 import pathlib
 import subprocess
@@ -113,7 +114,7 @@ def worker(library, data, word, cases):
     command = [sys.executable, str(pathlib.Path(__file__).resolve()),
                "--worker", library, data, hex(word), json.dumps(cases)]
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=90, check=True)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=600, check=True)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         stderr = exc.stderr
         if isinstance(stderr, bytes):
@@ -136,13 +137,34 @@ def main():
     parser.add_argument("--data", required=True)
     parser.add_argument("--expect", choices=["parent", "fixed"], required=True)
     parser.add_argument("--list-differences", action="store_true")
+    parser.add_argument("--jobs", type=int, default=1, help="concurrent option-word comparisons")
+    parser.add_argument("--lane-j-session", action="store_true",
+                        help="check #585/#626 using existing transformed cases")
     args = parser.parse_args()
+    if args.lane_j_session:
+        cases = [case for case in CASES if case[0] in ("luoma", "secondary")]
+        for word in (0x2, 0x20, 0x28):
+            pin = worker(args.oracle, args.data, word, cases)
+            ox = worker(args.subject, args.data, word, cases)
+            for case, left, right in zip(cases, pin, ox, strict=True):
+                changed = [key for key in left if encoded(left[key]) != encoded(right[key])]
+                print(json.dumps({"case": case, "word": hex(word),
+                                  "pin_n": left["n"], "subject_n": right["n"],
+                                  "differing_fields": changed}), flush=True)
+                if args.expect == "fixed" or word == 0x28:
+                    assert not changed, "parsed full-pinyin intake differs"
+                else:
+                    assert changed, "parent must reproduce #585/#626"
+        return
     modes = sorted({case[0] for case in CASES})
     ordinary = {mode: set() for mode in modes}
     complete = {mode: set() for mode in modes}
-    for number, word in enumerate(WORDS, 1):
-        pin = worker(args.oracle, args.data, word, CASES)
-        ox = worker(args.subject, args.data, word, CASES)
+    def compare_word(word):
+        return (word, worker(args.oracle, args.data, word, CASES),
+                worker(args.subject, args.data, word, CASES))
+
+    pool = ThreadPoolExecutor(max_workers=max(1, args.jobs))
+    for number, (word, pin, ox) in enumerate(pool.map(compare_word, WORDS), 1):
         for case, left, right in zip(CASES, pin, ox, strict=True):
             mode = case[0]
             if encoded(left) != encoded(right):

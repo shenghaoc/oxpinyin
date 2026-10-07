@@ -185,10 +185,21 @@ impl InstanceCore {
             let use_tone = self.options().contains(USE_TONE);
             let parsed = parse_full_pinyin_index(text.as_bytes(), use_tone, index);
             let full = parsed.full_pinyin();
+            let mut offset = 0;
+            let segments: Vec<_> = parsed
+                .keys()
+                .iter()
+                .filter_map(|key| {
+                    let start = offset;
+                    offset += key.canonical().len() + 1;
+                    SyllableKey::from_canonical_text(key.canonical())
+                        .map(|syllable| ExactSegment::new(start, offset - 1, syllable, key.tone()))
+                })
+                .collect();
             if !full.is_empty()
                 && self
                     .session
-                    .replace_raw_with_physical_separators(&full, false)
+                    .replace_raw_full_pinyin(&full, &segments)
                     .is_err()
             {
                 return 0;

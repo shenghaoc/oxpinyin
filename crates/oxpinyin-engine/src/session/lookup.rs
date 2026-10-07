@@ -304,8 +304,7 @@ where
         // SEARCH_NONE`) and longer than `prefix_len * 2` (`:472-475`).
         let max_keys = (prefix_len * 2).min(MAX_PHRASE_LENGTH);
 
-        let matrix =
-            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
         let end = graph.consumed();
         if matrix.first().is_none_or(std::vec::Vec::is_empty) {
             return Ok(None);
@@ -584,8 +583,7 @@ where
     ) -> Result<usize, EngineError> {
         out.clear();
         let graph = self.build_prefix_graph(offset)?;
-        let matrix =
-            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
         let bound = graph.consumed().min(offset);
 
         let Scratch {
@@ -696,7 +694,7 @@ where
     /// [`EngineError::Graph`] when the composition cannot be represented
     /// as a segment graph.
     pub(super) fn spans_a_matrix_key(&self, offset: usize) -> Result<bool, EngineError> {
-        if !self.input.exact().is_empty() {
+        if !self.input.full_pinyin() {
             return Ok(self.input.as_bytes().get(offset) == Some(&b'\'')
                 || self
                     .input
@@ -704,8 +702,7 @@ where
                     .iter()
                     .any(|segment| segment.start() == offset));
         }
-        let graph = SegmentGraph::build_with_options(self.input.as_bytes(), self.settings.options)
-            .map_err(EngineError::Graph)?;
+        let graph = self.build_graph_at(0, self.input.as_bytes())?;
         // The split alternates are a full-pinyin-parse artifact — the same
         // law the scan applies (`build_scan_matrix`'s `divided` argument at
         // the anchored call site) — and exact keys never gain them.
@@ -1085,7 +1082,7 @@ where
         into: &mut Vec<Candidate>,
         scratch: &mut ScanScratch<'_>,
     ) -> Result<(), EngineError> {
-        let matrix = build_scan_matrix(graph, options, self.input.exact().is_empty());
+        let matrix = build_scan_matrix(graph, options, self.input.full_pinyin());
         let bound = graph.consumed();
         let mut end = 1usize;
         while end <= bound {

@@ -419,8 +419,7 @@ where
         let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
         let mut train_next = false;
         let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        let matrix =
-            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
         for (index, span) in spans.iter().enumerate() {
             let forced = self.constraints.is_one_step_at(span.start);
             if train_next || forced {
