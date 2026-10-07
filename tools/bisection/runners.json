@@ -199,6 +199,40 @@
     ]
   },
   {
+    "name": "contract-diff",
+    "kind": "gate",
+    "issues": [
+      "lane-C-contract"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "required_inputs": [
+      "pin-built oracle at the selected cell",
+      "python3 and libglib-2.0.so.0",
+      "prebuilt dev libpinyin and libzhuyin for the cell",
+      "matching PREFIX/oracle-pin.txt and pin-built pinyin/zhuyin system tables"
+    ],
+    "timeout": 900,
+    "exclusive_resources": [],
+    "command": [
+      "bash",
+      "{root}/tools/bisection/run-contract-diff.sh",
+      "{cell}",
+      "{prefix}",
+      "{capi}",
+      "{zhuyin}"
+    ],
+    "env": {},
+    "input_paths": [
+      "{capi}",
+      "{zhuyin}",
+      "{prefix}/lib/libzhuyin.so"
+    ]
+  },
+  {
     "name": "cpp-smoke",
     "kind": "gate",
     "issues": [
