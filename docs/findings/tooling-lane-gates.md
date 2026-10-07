@@ -7,7 +7,31 @@ profile with `CARGO_PROFILE_DEV_OPT_LEVEL=1`, one retained target per cell. The
 eight measurement recipes remain unchanged and outside the gate set. No oracle
 output cache, shipped crate, dependency manifest or CI policy was changed.
 
-## Final sweep
+## Sweep after the review restack
+
+Date: 2026-10-07 UTC (captured with `date -u`). The stack was restacked onto
+origin/main `b9f315fe` and review fixes landed on their owning members. The
+[table](https://github.com/shenghaoc/oxpinyin/pull/675#issuecomment-6031878566)
+is attached to #675; no captures are committed. Started
+`2026-10-07T05:28:37Z`, finished `2026-10-07T05:47:34Z`, runner revision
+`623092b6a7275d1a2cdb9a6911cd8ffbf16425da`, same invocation as below with the
+tree at `/lane/gate3` and `--json` pointed at a fresh directory. Aggregate
+exit: **1**.
+
+| Cell | PASS | SKIPPED | FAIL |
+| --- | ---: | ---: | ---: |
+| bdb | 44 | 0 | 2 |
+| kc | 44 | 0 | 2 |
+| tkrzw | 44 | 0 | 2 |
+
+The six FAIL rows are `bisect` (valgrind reports 104 bytes definitely lost in
+the subject) and `transformed-options-sweep` (`protocol counts moved`) on every
+cell. The stack changes no `crates/` file, so the subject is origin/main's; both
+runners passed in the sweep below at the earlier base `e985b581`. Neither is a
+tooling change, and answering them would need a shipped-crate change, which this
+lane does not make. They are reported, not waived.
+
+## Final sweep (earlier base `e985b581`)
 
 The [final 138-row table](https://github.com/shenghaoc/oxpinyin/pull/675#issuecomment-5986931505) is attached to #675; no captures are committed.
 Started `2026-10-05T01:51:13Z`, finished `2026-10-05T02:11:10Z` (both captured with
