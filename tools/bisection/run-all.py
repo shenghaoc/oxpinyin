@@ -44,7 +44,7 @@ def execute(command, env, cwd, timeout, output):
             process = subprocess.Popen(command, env=env, cwd=cwd, stdout=log,
                                        stderr=subprocess.STDOUT, start_new_session=True)
         except OSError as exc:
-            return 1, time.monotonic() - start, str(exc)
+            return 1, time.monotonic() - start, str(exc), False
         expired = False
         try:
             process.wait(timeout=timeout)
@@ -61,12 +61,14 @@ def execute(command, env, cwd, timeout, output):
                 os.killpg(process.pid, signal.SIGKILL)
             process.wait()
     text = output.read_text(errors='replace')
-    return (124 if expired else process.returncode), time.monotonic() - start, text
+    return process.returncode, time.monotonic() - start, text, expired
 
 
-def reason_for(rc, output, timeout):
-    if rc == 124:
-        return f'timeout after {timeout}s'
+def reason_for(rc, output, timeout, expired=False):
+    # Only the aggregate deadline is a timeout here; a runner that wraps its own
+    # processes in timeout(1) and exits 124 is reported by its own output.
+    if expired:
+        return f'timeout after {timeout}s (exit {rc})'
     lines = [line.strip() for line in output.splitlines() if line.strip()]
     important = [line for line in lines if re.search(
         r'FAIL|DIVERGEN|SKIP|missing input|fatal:|Assertion .* failed|error:', line)]
@@ -237,12 +239,12 @@ def main():
                 continue
             if not args.no_build:
                 print(f'Building dev opt-level 1 artifacts: {cell}', file=sys.stderr, flush=True)
-                rc, seconds, output = execute(['bash', str(HERE / 'cell-artifacts.sh')], env, ROOT,
-                                              args.build_timeout, scratch / f'build-{cell}.log')
-                if rc:
+                rc, seconds, output, expired = execute(['bash', str(HERE / 'cell-artifacts.sh')], env, ROOT,
+                                                       args.build_timeout, scratch / f'build-{cell}.log')
+                if rc or expired:
                     for _, result, _ in build_candidates:
                         result.update(status='FAIL', seconds=round(seconds, 3),
-                                      reason='cell build: ' + reason_for(rc, output, args.build_timeout))
+                                      reason='cell build: ' + reason_for(rc, output, args.build_timeout, expired))
                         results.append(result)
                     continue
             for row, result, runner_prefix in build_candidates:
@@ -275,15 +277,15 @@ def main():
                 for resource in sorted(row['exclusive_resources']):
                     lock = stack.enter_context((lock_root / resource).open('a'))
                     fcntl.flock(lock, fcntl.LOCK_EX)
-                rc, seconds, output = execute(command, env, ROOT, timeout, work / 'runner.log')
+                rc, seconds, output, expired = execute(command, env, ROOT, timeout, work / 'runner.log')
             # Legacy CI behavior is preserved in the direct live-typing runner;
             # aggregate skips cannot silently turn into passes.
             required_skips = [line for line in output.splitlines() if 'SKIP:' in line and
                               not any(token in line for token in row.get('optional_skips', []))]
-            if rc == 0 and required_skips:
+            if rc == 0 and required_skips and not expired:
                 rc, output = 77, '\n'.join(required_skips)
-            result.update(status='PASS' if rc == 0 else 'SKIPPED' if rc == 77 else 'FAIL',
-                          seconds=round(seconds, 3), reason=reason_for(rc, output, timeout))
+            result.update(status='FAIL' if expired else 'PASS' if rc == 0 else 'SKIPPED' if rc == 77 else 'FAIL',
+                          seconds=round(seconds, 3), reason=reason_for(rc, output, timeout, expired))
             print(f"Completed {result['runner']} / {result['cell']}: {result['status']}",
                   file=sys.stderr, flush=True)
             return result
