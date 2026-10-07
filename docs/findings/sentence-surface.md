@@ -2,8 +2,9 @@
 
 Date: 2026-08-17 · Current status: the lane-D amendment in §12 supersedes
 its historical blanket classification. The approved selection port and coverage extension measure
-499 / 499 / 499; only six named shared-comparison rows are class (a).
-The other eight corpus rows remain unattributed. §§1–11 and the earlier
+500 / 500 / 500 after the #639 resplit repair (was 499 / 499 / 499); only
+six named shared-comparison rows are class (a). Four separator rows
+(`'`, `''`, `'''`, `'ni`) remain unattributed. §§1–11 and the earlier
 §12 rulings retain the historical characterization and decision record.
 
 The three-part W14 divergence (#100): sentence candidates do not emit with
@@ -740,7 +741,7 @@ inputs. The approved port gate is **495 / 495 / 495**, one fixture
 surface difference. The full corpus residual is **14 / 10,465**, versus
 main's 2,185 differences, with zero regressions among main-matching inputs.
 All 14 declared #594 cases and 36 Luoma/secondary-zhuyin cases close:
-**129 / 129** assembly cases match. Canonical formatting carries its
+**129 / 129** assembly cases matched at the port (the suite has since grown; register row 11 carries the current count). Canonical formatting carries its
 separator provenance through the temporary
 `Session::replace_raw_with_physical_separators` intake; ordinary lookup,
 matrix construction, ScanKey and the exact graph are unchanged.
@@ -764,10 +765,10 @@ The other eight remain **unattributed**, by name:
 `pang'rao'xiane'qing'lo'sheiting'suanzhi`,
 `nvchi'chui'lianai'baobeng'fang`, `bu'qing'na'wanou'panyao'you`,
 `bianrang'lianai'seng'sunguo`, `'`, `''`, `'''`, and `'ni`.
-The first four have different generation counts (pin/subject:
-3534/1462, 2583/1165, 2510/2062, 2307/882); the suspected resplit rule
-at `session/mod.rs:673–695` is outside this lane. The four separator
-rows pre-exist the port. No arithmetic attribution is claimed for these.
+The first four had different generation counts (pin/subject:
+3534/1462, 2583/1165, 2510/2062, 2307/882); the cause is attributed
+below (#639) and they now match. The four separator rows pre-exist the
+port. No arithmetic attribution is claimed for these.
 
 Reproduction: `sentence-tail`, `sentence_surface_parity --include-ignored`,
 full 10,465-input C-ABI corpus enumeration, and
@@ -799,3 +800,23 @@ Regenerate with the unpatched tkrzw oracle using `cargo run --release
 --locked -p pinyin-oracle --no-default-features --features tkrzw,oracle-ffi
 --bin oracle_sentence_surface` and `PINYIN_ORACLE_PREFIX` pointing to that
 pin-built prefix.
+
+### Resplit after a separator — 2026-10-07 UTC (#639)
+
+`resplit_additions` (`session/mod.rs`) rejected a pair whose first key
+followed a separator, and would have measured the split from the key's
+`from`, the apostrophe. The pin keys that first key at its own
+`m_raw_begin`, after the apostrophe, and measures from there
+(`phonetic_key_matrix.cpp:113-150`, pin 074a2219; `pinyin_parser2.cpp:282`).
+`lia` in `chui'lianai` therefore never became `lian` + `ai`, and the four
+rows above decoded 俩乃 / 下呢 / 纳瓦耨 instead of 恋爱 / 限额 / 那玩偶. The
+guard is dropped and the split is measured from `syllable_start`; the
+left half keeps the separator-riding span. Not a class (a), (b) or (c)
+divergence: it was a defect and is repaired.
+
+Measured on bdb with `sentence-tail` (debug): 1-best **500 / 500**, n-best
+distinct-set **500 / 500**, ordered **500 / 500**, first-6 rows **500 / 500**,
+guessed disagreements 0. The `sentence_surface_parity` expectations move
+from 499 to 500 with this repair. The full 10,465-input corpus residual
+(14 before) is not re-measured here. The `'`, `''`, `'''` and `'ni` rows
+are unchanged.

@@ -42,20 +42,20 @@ fn sentence_surface_matches_the_declared_residual() {
         "guess_sentence retval must agree on every comparable input"
     );
 
-    // The three strictnesses of §12. 1-best 499, distinct-set 499, ordered 499.
-    assert_eq!(report.row0_match, 499, "1-best agreement moved (§12: 499)");
+    // The three strictnesses of §12. 1-best 500, distinct-set 500, ordered 500.
+    assert_eq!(report.row0_match, 500, "1-best agreement moved (§12: 500)");
     assert_eq!(
         report.distinct_set_match(),
-        499,
-        "n-best distinct-set agreement moved (§12: 499)"
+        500,
+        "n-best distinct-set agreement moved (§12: 500)"
     );
     assert_eq!(
-        report.list_ordered_match, 499,
-        "n-best ordered-list agreement moved (§12: 499)"
+        report.list_ordered_match, 500,
+        "n-best ordered-list agreement moved (§12: 500)"
     );
     assert_eq!(
-        report.rows_match, 499,
-        "first-6 candidate-row agreement moved (§12: 499, coincides with ordered)"
+        report.rows_match, 500,
+        "first-6 candidate-row agreement moved (§12: 500, coincides with ordered)"
     );
 
     // Measured invariant: no residual list is merely reordered.
@@ -65,7 +65,7 @@ fn sentence_surface_matches_the_declared_residual() {
         "an order-only sentence divergence appeared; re-measure §12"
     );
 
-    // The 499 − 499 = 0 duplicate-path ranks (the distinct-same rows).
+    // The 500 − 500 = 0 duplicate-path ranks (the distinct-same rows).
     assert_eq!(
         report.list_distinct_extra, 0,
         "the distinct-set minus ordered gap moved from 0 (§12)"

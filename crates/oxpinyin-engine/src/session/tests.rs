@@ -1700,6 +1700,24 @@ fn scan_matrix_tone_rides_fuzzy_and_locks_the_split_tables() {
             .any(|key| key.key.text() == "an" && key.to == 2)
     );
 
+    // A first key that follows a separator resplits too, with the split
+    // measured from where its syllable starts (`chui'lianai`: `lia` +
+    // `nai` becomes `lian` + `ai`, pin `phonetic_key_matrix.cpp:113-150`).
+    let after_separator =
+        SegmentGraph::build_with_options(b"chui'lianai", incomplete).expect("valid");
+    let columns = super::build_scan_matrix(&after_separator, incomplete, true);
+    let lian = columns[4]
+        .iter()
+        .find(|key| key.key.text() == "lian")
+        .expect("lian is added at the apostrophe column");
+    assert_eq!((lian.from, lian.syllable_start, lian.to), (4, 5, 9));
+    assert!(lian.crosses_separator);
+    let ai = columns[9]
+        .iter()
+        .find(|key| key.key.text() == "ai")
+        .expect("ai is added at the split column");
+    assert_eq!((ai.from, ai.to, ai.crosses_separator), (9, 11, false));
+
     let toned_pair = SegmentGraph::build_with_options(b"a4nan", toned).expect("valid");
     let columns = super::build_scan_matrix(&toned_pair, toned, true);
     assert!(!columns[0].iter().any(|key| key.key.text() == "an"));
