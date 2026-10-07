@@ -3259,3 +3259,43 @@ fn parsed_full_pinyin_retains_incomplete_keys_without_enabling_incomplete_input(
     session.replace_raw("sh").expect("ordinary input");
     assert_eq!(session.full_parsed_len(), 0);
 }
+
+#[test]
+fn retained_full_pinyin_cursor_keys_match_the_pin_spans() {
+    use oxpinyin_core::graph::ExactSegment;
+    let mut session = session();
+    session
+        .set_options(oxpinyin_core::OptionBits::from_bits(
+            oxpinyin_core::USE_TONE,
+        ))
+        .expect("options");
+    let segments: Vec<_> = [(0, 2, "li"), (3, 5, "sh"), (6, 8, "ba"), (9, 12, "kua")]
+        .into_iter()
+        .map(|(start, end, text)| {
+            ExactSegment::new(
+                start,
+                end,
+                SyllableKey::from_canonical_text(text).expect("key"),
+                0,
+            )
+        })
+        .collect();
+    session
+        .replace_raw_full_pinyin("li'sh'ba'kua", &segments)
+        .expect("intake");
+    // Pin Luoma lishihbakua: keys at 0..2, 2..6, 6..8, 8..11;
+    // the same keys in the session's canonical coordinate space below.
+    let (keys, parsed) = session.matrix_keys().expect("matrix");
+    assert_eq!(parsed, 12);
+    assert_eq!(
+        keys.iter()
+            .map(|k| (k.key().text(), k.syllable_start(), k.end()))
+            .collect::<Vec<_>>(),
+        vec![("li", 0, 2), ("sh", 3, 5), ("ba", 6, 8), ("kua", 9, 12)]
+    );
+    // Pin right(2)=6, left(6)=2; canonical sh spans 3..5, and the
+    // left result includes the formatting separator at canonical 2.
+    assert_eq!(session.right_word_offset(2).expect("right"), Some(5));
+    assert_eq!(session.left_word_offset(5).expect("left"), 2);
+    assert_eq!(session.lookup_offset_for_cursor(4).expect("lookup"), 2);
+}

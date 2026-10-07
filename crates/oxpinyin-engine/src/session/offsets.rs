@@ -68,11 +68,12 @@ where
     /// error: like the pin, the cursor is clamped to the parsed length, so
     /// there is no out-of-range shape here.
     pub fn lookup_offset_for_cursor(&self, cursor: usize) -> Result<usize, EngineError> {
-        crate::cursor::lookup_offset_for_cursor(
-            self.input.as_bytes(),
-            self.settings.options,
-            cursor,
-        )
+        let (keys, parsed) = self.matrix_keys()?;
+        let spans: Vec<_> = keys
+            .iter()
+            .map(|key| (key.syllable_start(), key.end()))
+            .collect();
+        crate::cursor::lookup_offset_over_spans(self.input.as_bytes(), parsed, &spans, true, cursor)
     }
 
     /// The word-level left move over the session's own buffer and options
@@ -89,7 +90,18 @@ where
     /// buffer's one-past-end position (upstream reads its matrix out of
     /// bounds there).
     pub fn left_word_offset(&self, offset: usize) -> Result<usize, EngineError> {
-        crate::cursor::left_word_offset(self.input.as_bytes(), self.settings.options, offset)
+        let (keys, parsed) = self.matrix_keys()?;
+        let spans: Vec<_> = keys
+            .iter()
+            .map(|key| (key.syllable_start(), key.end()))
+            .collect();
+        crate::cursor::left_word_offset_over_spans(
+            self.input.as_bytes(),
+            parsed,
+            &spans,
+            true,
+            offset,
+        )
     }
 
     /// The word-level right move over the session's own buffer and options
@@ -107,7 +119,18 @@ where
     /// buffer's one-past-end position (upstream reads its matrix out of
     /// bounds there).
     pub fn right_word_offset(&self, offset: usize) -> Result<Option<usize>, EngineError> {
-        crate::cursor::right_word_offset(self.input.as_bytes(), self.settings.options, offset)
+        let (keys, parsed) = self.matrix_keys()?;
+        let spans: Vec<_> = keys
+            .iter()
+            .map(|key| (key.syllable_start(), key.end()))
+            .collect();
+        crate::cursor::right_word_offset_over_spans(
+            self.input.as_bytes(),
+            parsed,
+            &spans,
+            true,
+            offset,
+        )
     }
 
     /// The composition's scan-matrix keys with their raw byte spans.
@@ -122,6 +145,20 @@ where
     /// [`EngineError::Graph`] when the raw buffer cannot be built into a
     /// segment graph.
     pub fn matrix_keys(&self) -> Result<(Vec<crate::cursor::MatrixKey>, usize), EngineError> {
+        if self.input.full_pinyin() && !self.input.exact().is_empty() {
+            // pinyin.cpp:1497-1525 fills the matrix from the indexed parser's
+            // keys, including initial-only keys accepted without INCOMPLETE.
+            let graph = self.build_graph_at(0, self.input.as_bytes())?;
+            let matrix = build_scan_matrix(&graph, self.settings.options, true);
+            let keys = matrix
+                .iter()
+                .flatten()
+                .map(|key| {
+                    crate::cursor::MatrixKey::new(key.key, key.tone, key.syllable_start, key.to)
+                })
+                .collect();
+            return Ok((keys, graph.consumed()));
+        }
         crate::cursor::matrix_keys(self.input.as_bytes(), self.settings.options)
     }
 
