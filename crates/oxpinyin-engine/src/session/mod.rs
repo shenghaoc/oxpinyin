@@ -554,6 +554,8 @@ struct ScanScratch<'a> {
 
 struct ScanBuf<'a> {
     path: &'a mut SmallVec<[SyllableKey; 16]>,
+    /// The typed tone of each key on `path`, in step with it.
+    tones: SmallVec<[u8; 16]>,
     system: &'a mut Vec<Candidate>,
     addon: &'a mut Vec<Candidate>,
     continued: &'a mut bool,

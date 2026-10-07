@@ -3171,3 +3171,72 @@ fn choosing_behind_the_composition_moves_the_record_back() {
     assert_eq!((runs[0].0, runs[0].1, runs[0].3.as_str()), (0, 2, "你"));
     assert_eq!(session.preedit().text(), "你hao");
 }
+
+/// One phrase stored as `ni3'hao3`:
+/// `lookup` is toneless, `trellis_records` applies the pin's tone match
+/// (`pinyin_compare_tone3`, `pinyin_phrase3.h:97-105`).
+struct StoredTone3;
+
+impl Dictionary for StoredTone3 {
+    type Entry = PhraseEntry;
+    type Error = EngineError;
+    type Syllable = SyllableKey;
+
+    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
+        let texts: Vec<&str> = syllables.iter().map(|key| key.text()).collect();
+        Ok(if texts == ["ni", "hao"] {
+            vec![PhraseEntry::new(
+                PhraseToken::new(0x0f00_0001),
+                "你鎄".to_owned(),
+            )]
+        } else {
+            Vec::new()
+        })
+    }
+
+    fn trellis_records(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+    ) -> Result<Vec<PhraseEntry>, EngineError> {
+        let matches_stored = tones.iter().all(|tone| matches!(*tone, 0 | 3));
+        if matches_stored {
+            self.lookup(syllables)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+}
+
+#[test]
+fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
+    // The pin's user index keeps the stored tones and its search rejects
+    // two different non-zero tones, so `ni2hao3` does not list a phrase
+    // stored as ni3'hao3 while `ni3hao3` and toneless `nihao` do.
+    let texts = |input: &str| -> Vec<String> {
+        let mut session = Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            StoredTone3,
+            FixedUnigrams {
+                system: 14,
+                addon: 7,
+                total: 51_051_831,
+                addon_total: 25_525_916,
+            },
+        )
+        .expect("Session::new");
+        session
+            .set_options(oxpinyin_core::OptionBits::from_bits(0x1aa))
+            .expect("options apply");
+        session.type_pinyin(input).expect("typing cannot fail");
+        session
+            .candidates()
+            .iter()
+            .map(|candidate| candidate.text().to_owned())
+            .collect()
+    };
+    assert!(texts("ni3hao3").contains(&"你鎄".to_owned()));
+    assert!(texts("nihao").contains(&"你鎄".to_owned()));
+    assert!(!texts("ni2hao3").contains(&"你鎄".to_owned()));
+}
