@@ -221,6 +221,7 @@ if [ -n "$ORACLE_SO" ] && [ -n "$ORACLE_DATA" ]; then
         exit 1
     fi
     if ! ./bisect "$CAPI_SO" "$ORACLE_DATA" --right-tail-case > "$CASE_LOG" 2>&1 ||
+       ! grep -Fxq 'right-tail input=nihao offset=5 flags=0x0000018a' "$CASE_LOG" ||
        ! grep -Fxq 'right-tail: false; output untouched' "$CASE_LOG"; then
         echo "FAIL: unexpected C API right-tail observation"
         cat "$CASE_LOG"

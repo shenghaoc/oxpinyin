@@ -82,7 +82,7 @@ rm -f "$CAPI_LOG" "$ORACLE_LOG"
 if [ -n "${OPTION_SWEEP_CAPI_DATA:-${OXPINYIN_SYSTEM_DIR:-}}" ]; then
     CAPI_DATA="${OPTION_SWEEP_CAPI_DATA:-$OXPINYIN_SYSTEM_DIR}"
 elif [ -f /tmp/oxpinyin-export/pinyin_index.bin ] \
-	&& grep -q '^backend=tkt$' /tmp/oxpinyin-export/datagen-manifest.txt; then
+	&& grep -Fxq "backend=$OXPINYIN_CAPI_BACKEND_EXT" /tmp/oxpinyin-export/datagen-manifest.txt; then
     CAPI_DATA="$(mktemp -d /tmp/traindiff-capi-data-XXXXXX)"
     for table in pinyin_index.bin phrase_index.bin bigram.db; do
         cp "/tmp/oxpinyin-export/$table" "$CAPI_DATA/$table"
