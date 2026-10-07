@@ -139,9 +139,9 @@ if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "  build it with tools/oracle/build-oracle.sh and set PINYIN_ORACLE_PREFIX"
     exit 77
 fi
-if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
-    "$PREFIX/oracle-pin.txt"; then
-    echo "SKIP: oracle prefix at $PREFIX is off-pin"
+if ! grep -Fxq "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
+    echo "SKIP: oracle prefix at $PREFIX is off-pin for the $ORACLE_DBM cell"
+    echo "  expected $EXPECTED_PIN_REF"
     exit 77
 fi
 
