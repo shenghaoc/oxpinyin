@@ -36,7 +36,8 @@ python3 tools/oracle/transformed-options-sweep.py \
 
 `--expect parent` asserts the pre-fix 29/31 ordinary-candidate differing
 words for double/chewing. `--expect fixed` asserts zero for both. Both
-assert the unchanged Hanyu/Luoma/secondary counts (0/437/437).
+assert the unchanged Hanyu/Luoma/secondary ordinary counts (0/437/437) and the
+complete-protocol counts (0/439/439; Hanyu was 437 before #651).
 
 Each word and library runs in an isolated subprocess, with a fresh user
 profile, no training, and a fresh instance per input. Options are always
@@ -58,9 +59,11 @@ silently treating them as parity.
 After the sweep, targeted checks cover `nihk` / `su3cl3` at `0x8002`,
 MS double `n` at `0x800a`, chewing `su` at `0x8002`, and Hanyu `sh` /
 `lishbakua` at `0x2`, `0xa`, `0x20`, `0x28`. Fixed transformed cases and
-nonempty Hanyu controls must match byte for byte on the observed surface.
-Empty-key Hanyu controls retain the declared `guess_sentence` difference
-owned by #542, lane C; conditional sentence-get calls are reported too.
+every Hanyu control, the empty-key `sh` included, must match byte for byte on
+the observed surface. #651 made `pinyin_guess_sentence` return false on a parse
+that placed no key, as the pin does (`phonetic_lookup.h:743-745`), so the
+`guess_sentence` difference #542 owned is gone and the Hanyu complete count is
+0, where it was 437 (all from `sh`; `lishbakua` already matched).
 
 Fresh profile directories are removed on normal completion. A worker
 crash or timeout fails the run instead of counting as a candidate mismatch.
