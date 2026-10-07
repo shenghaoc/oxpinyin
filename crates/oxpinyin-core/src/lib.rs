@@ -27,7 +27,7 @@ pub use zhuyin_map::{zhuyin_display_for_pinyin, zhuyin_for_pinyin};
 pub use full_pinyin_index::{
     FullPinyinIndexKey, FullPinyinIndexParse, LUOMA_PINYIN_COUNT, LUOMA_PINYIN_INDEX,
     MAX_INDEX_SPELLING_LEN, SECONDARY_ZHUYIN_COUNT, SECONDARY_ZHUYIN_INDEX,
-    parse_full_pinyin_index,
+    parse_full_pinyin_index, parse_full_pinyin_index_with_options,
 };
 pub use options::{
     DYNAMIC_ADJUST, FORCE_TONE, OptionBits, PINYIN_AMB_ALL, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH,

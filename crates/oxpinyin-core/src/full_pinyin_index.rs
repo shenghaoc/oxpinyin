@@ -945,16 +945,17 @@ struct Step {
 /// no option-gated rows).
 fn parse_one_index_key(
     input: &[u8],
-    use_tone: bool,
+    options: crate::OptionBits,
     index: &[(&'static str, &'static str)],
 ) -> Option<FullPinyinIndexKey> {
+    let use_tone = options.contains(crate::USE_TONE);
     let mut parsed_len = input.len();
     let mut tone = 0;
     if use_tone && parsed_len > 0 && matches!(input[parsed_len - 1], b'1'..=b'5') {
         tone = input[parsed_len - 1] - b'0';
         parsed_len -= 1;
     }
-    if parsed_len == 0 {
+    if parsed_len == 0 || (use_tone && options.contains(crate::FORCE_TONE) && tone == 0) {
         return None;
     }
 
@@ -988,6 +989,20 @@ fn parse_one_index_key(
 pub fn parse_full_pinyin_index(
     input: &[u8],
     use_tone: bool,
+    index: &[(&'static str, &'static str)],
+) -> FullPinyinIndexParse {
+    let options = crate::OptionBits::from_bits(if use_tone { crate::USE_TONE } else { 0 });
+    parse_full_pinyin_index_with_options(input, options, index)
+}
+
+/// Parses an indexed full-pinyin scheme under the complete option word.
+/// `FORCE_TONE` requires a tone only when `USE_TONE` is also set, matching
+/// pin 074a2219 `pinyin_parser2.cpp:176-190`. Other option bits do not
+/// gate these plain index rows. The boolean entry retains its behavior.
+#[must_use]
+pub fn parse_full_pinyin_index_with_options(
+    input: &[u8],
+    options: crate::OptionBits,
     index: &[(&'static str, &'static str)],
 ) -> FullPinyinIndexParse {
     let mut steps = vec![
@@ -1032,7 +1047,7 @@ pub fn parse_full_pinyin_index(
                 .unwrap_or(input.len() - position);
         let try_end = (position + MAX_LOOKAHEAD).min(next_sep);
         for end in (position + 1)..=try_end {
-            let Some(key) = parse_one_index_key(&input[position..end], use_tone, index) else {
+            let Some(key) = parse_one_index_key(&input[position..end], options, index) else {
                 continue;
             };
             let previous = steps[position];
@@ -1210,5 +1225,46 @@ mod tests {
         // An initial-only target parses with no option bit: these
         // indexes have no gated rows (secondary spells ㄘ-only "tsz").
         assert_eq!(parse("tsz").full_pinyin(), "c");
+    }
+}
+
+#[cfg(test)]
+mod option_tests {
+    use super::*;
+    use crate::{FORCE_TONE, OptionBits, USE_TONE};
+
+    #[test]
+    fn force_tone_is_nested_under_use_tone_for_both_indexes() {
+        for (index, input) in [
+            (&LUOMA_PINYIN_INDEX[..], "shih"),
+            (&SECONDARY_ZHUYIN_INDEX[..], "tsz"),
+        ] {
+            for bits in [0, FORCE_TONE, USE_TONE, USE_TONE | FORCE_TONE] {
+                let options = OptionBits::from_bits(bits);
+                let plain = parse_full_pinyin_index_with_options(input.as_bytes(), options, index);
+                assert_eq!(
+                    plain.consumed(),
+                    if bits == USE_TONE | FORCE_TONE {
+                        0
+                    } else {
+                        input.len()
+                    }
+                );
+                let toned = format!("{input}4");
+                let parsed = parse_full_pinyin_index_with_options(toned.as_bytes(), options, index);
+                assert_eq!(
+                    parsed.consumed(),
+                    if bits & USE_TONE != 0 {
+                        toned.len()
+                    } else {
+                        input.len()
+                    }
+                );
+                assert_eq!(
+                    parsed.keys()[0].tone(),
+                    if bits & USE_TONE != 0 { 4 } else { 0 }
+                );
+            }
+        }
     }
 }

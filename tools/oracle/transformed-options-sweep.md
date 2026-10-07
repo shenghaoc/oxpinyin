@@ -36,8 +36,8 @@ python3 tools/oracle/transformed-options-sweep.py \
 
 `--expect parent` asserts the pre-fix 29/31 ordinary-candidate differing
 words for double/chewing. `--expect fixed` asserts zero for both. Both
-assert the unchanged Hanyu/Luoma/secondary ordinary counts (0/2/2) and the
-complete-protocol counts (0/2/2; the two residual words belong to #641).
+assert the unchanged Hanyu/Luoma/secondary ordinary counts (0/0/0) and the
+complete-protocol counts (0/0/0).
 
 Each word and library runs in an isolated subprocess, with a fresh user
 profile, no training, and a fresh instance per input. Options are always
@@ -72,8 +72,9 @@ stdout summaries; it retains no logs.
 
 ## Lane J parsed-key intake and cursor review
 
-After #690, observed Luoma and secondary-zhuyin differing-word counts are
-2 ordinary / 2 complete-protocol each (`0x60` and `0xffffffff`, #641).
+After #691, observed Luoma and secondary-zhuyin differing-word counts are
+0 ordinary / 0 complete-protocol each. #690 leaves two residual words
+(`0x60` and `0xffffffff`), which #691 fixes.
 Hanyu remains 0/0 as established by #688; fixed double and chewing remain
 0/0. Run `--expect fixed` to enforce these counts on this stack member.
 `--lane-j-session` checks the seven repaired inputs at 0x2/0x20/0x28.

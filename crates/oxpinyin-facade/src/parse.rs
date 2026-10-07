@@ -6,7 +6,7 @@ use oxpinyin_core::graph::ExactSegment;
 use oxpinyin_core::{
     ChewingKey, DoublePinyinKey, DoublePinyinParser, DoublePinyinScheme, FullPinyinParser,
     FullPinyinScheme, PINYIN_CORRECT_ALL, SyllableKey, USE_TONE, ZHUYIN_CORRECT_ALL, ZhuyinKey,
-    ZhuyinParser, ZhuyinScheme, parse_full_pinyin_index,
+    ZhuyinParser, ZhuyinScheme, parse_full_pinyin_index_with_options,
 };
 
 use crate::instance::InstanceCore;
@@ -182,8 +182,8 @@ impl InstanceCore {
         if let Some(scheme) = full_scheme(self.live.full_scheme.load(Ordering::Relaxed))
             && let Some(index) = scheme.index()
         {
-            let use_tone = self.options().contains(USE_TONE);
-            let parsed = parse_full_pinyin_index(text.as_bytes(), use_tone, index);
+            let parsed =
+                parse_full_pinyin_index_with_options(text.as_bytes(), self.options(), index);
             let full = parsed.full_pinyin();
             let mut offset = 0;
             let segments: Vec<_> = parsed
