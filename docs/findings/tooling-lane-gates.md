@@ -1,35 +1,74 @@
 # Tooling lane: final three-cell gate run
 
-Date: 2026-10-05 UTC (captured with `date -u`).
+Date: 2026-10-07 UTC (captured with `date -u`).
 
 The stack changes only tooling and documentation. Parity artifacts use the dev
 profile with `CARGO_PROFILE_DEV_OPT_LEVEL=1`, one retained target per cell. The
 eight measurement recipes remain unchanged and outside the gate set. No oracle
 output cache, shipped crate, dependency manifest or CI policy was changed.
 
-## Sweep after the review restack
+## Sweep after restack onto `8e76b17d`
 
-Date: 2026-10-07 UTC (captured with `date -u`). The stack was restacked onto
-origin/main `b9f315fe` and review fixes landed on their owning members. The
-[table](https://github.com/shenghaoc/oxpinyin/pull/675#issuecomment-6031878566)
-is attached to #675; no captures are committed. Started
-`2026-10-07T05:28:37Z`, finished `2026-10-07T05:47:34Z`, runner revision
-`623092b6a7275d1a2cdb9a6911cd8ffbf16425da`, same invocation as below with the
-tree at `/lane/gate3` and `--json` pointed at a fresh directory. Aggregate
-exit: **1**.
+Date: 2026-10-07 UTC (captured with `date -u`). The eight-member stack
+was restacked, in order, onto origin/main `8e76b17d`. The existing
+`contract-diff` runner was registered on #674; the registry now runs 47 gates
+per cell. Main's `transformed-options-sweep.py`, `candidate-assembly-diff.c`
+and `contract-diff.py` blobs are unchanged, including every case and expectation.
+
+The [replacement table](https://github.com/shenghaoc/oxpinyin/pull/675#issuecomment-6031878566)
+is attached to #675 in place of the previous 132 PASS / 6 FAIL table.
+The single invocation started `2026-10-07T14:15:38Z`, finished
+`2026-10-07T14:53:32Z`, and tested final runner tip
+`ccea6eb7b2d700b67d09f5ca942374aa8935e428`. Aggregate exit: **1**.
+This findings-count update is a subsequent **docs-only commit** on #675;
+no runtime/runner changes or second sweep follow the recorded test.
 
 | Cell | PASS | SKIPPED | FAIL |
 | --- | ---: | ---: | ---: |
-| bdb | 44 | 0 | 2 |
-| kc | 44 | 0 | 2 |
-| tkrzw | 44 | 0 | 2 |
+| bdb | 46 | 0 | 1 |
+| kc | 46 | 0 | 1 |
+| tkrzw | 46 | 0 | 1 |
 
-The six FAIL rows are `bisect` (valgrind reports 104 bytes definitely lost in
-the subject) and `transformed-options-sweep` (`protocol counts moved`) on every
-cell. The stack changes no `crates/` file, so the subject is origin/main's; both
-runners passed in the sweep below at the earlier base `e985b581`. Neither is a
-tooling change, and answering them would need a shipped-crate change, which this
-lane does not make. They are reported, not waived.
+**138 PASS; 3 FAIL; 0 SKIPPED.**
+
+- `transformed-options-sweep` / `bdb`: first failing line
+  `Completed transformed-options-sweep / bdb: FAIL`. The unchanged registry deadline expired (timeout after 900s (exit -15)); last runner output: compared 100/470 option words. The aggregate terminated the process group before the sweep printed its final comparison/assertion results, so this is a runtime deadline failure, not evidence of a completed parity mismatch.
+- `transformed-options-sweep` / `kc`: first failing line
+  `Completed transformed-options-sweep / kc: FAIL`. The unchanged registry deadline expired (timeout after 900s (exit -15)); last runner output: compared 200/470 option words. The aggregate terminated the process group before the sweep printed its final comparison/assertion results, so this is a runtime deadline failure, not evidence of a completed parity mismatch.
+- `transformed-options-sweep` / `tkrzw`: first failing line
+  `Completed transformed-options-sweep / tkrzw: FAIL`. The unchanged registry deadline expired (timeout after 900s (exit -15)); last runner output: compared 250/470 option words. The aggregate terminated the process group before the sweep printed its final comparison/assertion results, so this is a runtime deadline failure, not evidence of a completed parity mismatch.
+
+The prior bisect failure no longer occurs with main's merged changes.
+No gate outcome was fixed, waived or rerun in this restack.
+The eight measurement recipes remain excluded.
+
+Execution used the retained `oxpinyin-tools-phase1` (`debian:testing`) container,
+Rust 1.97.1, dev opt-level 1 and `/lane/work/cells/{bdb,kc,tkrzw}` targets.
+The original oracle prefixes remained mounted read-only and lane-j was untouched.
+The exact host command was:
+
+```bash
+podman exec oxpinyin-tools-phase1 bash /lane/restack-evidence-20261007/sweep.sh
+```
+
+That retained script invokes `bash tools/bisection/run-all.sh --cells
+bdb,kc,tkrzw --jobs 4` once from `/lane/restack-20261007`, with the same oracle,
+data, IBus, target and staged-metadata arguments in the earlier command below;
+its `--json` is `/lane/restack-evidence-20261007/results.json`.
+The script refuses a second execution when its start marker exists.
+An external Python retention hook prevents only the aggregate scratch directory's
+normal cleanup; commands, comparisons, timeouts and result handling are unchanged.
+All three build logs, all 141 runner logs, the result JSON, table, timestamps,
+exact tested SHA, command script and previous table are retained under host
+`/home/sheng/work/lane-tools/restack-evidence-20261007`; no captures enter Git.
+
+Rule 7: #667, #668, #670, #671, #672 and #673 rebased without conflicts or
+upstream/member file overlap, so require no local re-gate. #674 changes the
+registry only: fmt, shell/Python/registry validation and the explicitly requested
+single sweep cover it; no Rust crate is touched, so crate clippy/test has no
+scope. #675 is docs/findings-only: fmt then push, without another build or sweep.
+Each member's PR body records its case. Rule 2's three backend path/content
+checks are empty; the explicit maintainer request authorizes the all-cell sweep.
 
 ## Final sweep (earlier base `e985b581`)
 
