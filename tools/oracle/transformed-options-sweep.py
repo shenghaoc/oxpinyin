@@ -233,6 +233,7 @@ def main():
     parser.add_argument("--list-differences", action="store_true")
     parser.add_argument("--cursor-family", choices=["pinyin", "zhuyin"])
     parser.add_argument("--jobs", type=int, default=1, help="concurrent option-word comparisons")
+    parser.add_argument("--lane-j-force", action="store_true", help="check #641")
     parser.add_argument("--lane-j-session", action="store_true",
                         help="check #585/#626 using existing transformed cases")
     args = parser.parse_args()
@@ -264,9 +265,10 @@ def main():
                               "differences": different, "pin": records[0], "subject": records[1]}, ensure_ascii=False), flush=True)
             assert not different, "cursor surface differs"
         return
-    if args.lane_j_session:
+    if args.lane_j_session or args.lane_j_force:
         cases = [case for case in CASES if case[0] in ("luoma", "secondary")]
-        for word in (0x2, 0x20, 0x28):
+        words = (0x60, 0xFFFFFFFF) if args.lane_j_force else (0x2, 0x20, 0x28)
+        for word in words:
             pin = worker(args.oracle, args.data, word, cases)
             ox = worker(args.subject, args.data, word, cases)
             for case, left, right in zip(cases, pin, ox, strict=True):
@@ -298,7 +300,7 @@ def main():
                 ordinary[mode].add(word)
         if number % 50 == 0:
             print(f"compared {number}/{len(WORDS)} option words", file=sys.stderr, flush=True)
-    expected = {"hanyu": 0, "luoma": 2, "secondary": 2,
+    expected = {"hanyu": 0, "luoma": 0, "secondary": 0,
                 "double-ms": 29 if args.expect == "parent" else 0,
                 "chewing-standard": 31 if args.expect == "parent" else 0}
     summary = {mode: {"ordinary": len(ordinary[mode]), "complete": len(complete[mode])}
@@ -310,7 +312,7 @@ def main():
     assert {mode: len(ordinary[mode]) for mode in modes} == expected, "sweep counts moved"
     # Hanyu is 0 since #651: pinyin_guess_sentence returns false on a parse that
     # placed no key (phonetic_lookup.h:743-745), so `sh` now matches the pin.
-    expected_complete = {**expected, "luoma": 2, "secondary": 2}
+    expected_complete = {**expected, "luoma": 0, "secondary": 0}
     assert {mode: len(complete[mode]) for mode in modes} == expected_complete, "protocol counts moved"
 
     targeted = [("double-ms", 2, "nihk", 0x8002),
