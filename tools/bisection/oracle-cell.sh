@@ -71,6 +71,20 @@ export CARGO_TARGET_DIR
 export CARGO_PROFILE_DEV_OPT_LEVEL=1
 export ORACLE_DBM ORACLE_DBM_NAME CAPI_FEATURE EXPECTED_PIN_REF
 
+# The general subject-library overrides are repository-relative like the
+# target directory, whether a runner resolves them through
+# oracle_cell_artifact or reads them directly after its own `cd`.
+for oracle_cell_variable in OXPINYIN_CAPI_SO OXPINYIN_ZHUYIN_SO; do
+    case ${!oracle_cell_variable:-} in
+        '' | /*) ;;
+        *)
+            printf -v "$oracle_cell_variable" '%s' "$REPO_ROOT/${!oracle_cell_variable}"
+            export "${oracle_cell_variable?}"
+            ;;
+    esac
+done
+unset oracle_cell_variable
+
 # Resolve/build only the requested artifact. Explicit prebuilt paths never
 # invoke Cargo, and are checked before a driver can consume them.
 oracle_cell_artifact() {
