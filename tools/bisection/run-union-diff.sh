@@ -17,11 +17,16 @@
 # including the art chunk and shared addon indexes.
 #
 # Env: PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle).
+#      PINYIN_ORACLE_DBM=bdb|kc|tkrzw (default bdb; oracle-cell.sh) selects
+#      the cell: the capi is built with the matching cargo feature, the
+#      fixture and planter follow it, and the oracle must be that cell's.
 # Exit: 0 identical or skipped; 1 build/run failure; 2 divergence.
 
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=oracle-cell.sh
+source ./oracle-cell.sh
 
 echo "--- building union-diff drivers ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o union-diff union-diff.c -ldl
@@ -38,7 +43,8 @@ g++ -std=c++17 -Wall -Wextra -Werror -O2 plant-oracle-bigram.cc \
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" \
+    --no-default-features --features "$CAPI_FEATURE" 2>&1
 CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
@@ -53,9 +59,9 @@ if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "SKIP: pin-built oracle not found at $PREFIX"
     exit 0
 fi
-if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
-    "$PREFIX/oracle-pin.txt"; then
-    echo "SKIP: oracle prefix at $PREFIX is off-pin"
+if ! grep -qxF "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
+    echo "SKIP: oracle prefix at $PREFIX is off-pin for the $ORACLE_DBM cell"
+    echo "  expected $EXPECTED_PIN_REF"
     exit 0
 fi
 echo "oracle: $ORACLE_SO"

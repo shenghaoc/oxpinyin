@@ -7,6 +7,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
+# shellcheck source=oracle-cell.sh
+source ./oracle-cell.sh
 SYS="$(mktemp -d)"
 trap 'rm -rf "$SYS"' EXIT
 # Each backend directory is a complete native-layout data set, including

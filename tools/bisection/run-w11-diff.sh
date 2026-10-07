@@ -15,13 +15,16 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
 STEM="${1:?driver stem}"
 shift || true
+# shellcheck source=oracle-cell.sh
+source ./oracle-cell.sh
 
 echo "--- building ${STEM} driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$STEM" "${STEM}.c" -ldl
 echo "build: ok"
 
 echo "--- building oxpinyin-capi ---"
-cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" 2>&1
+cargo build -p oxpinyin-capi --manifest-path "$REPO_ROOT/Cargo.toml" \
+    --no-default-features --features "$CAPI_FEATURE" 2>&1
 CAPI_SO="$REPO_ROOT/target/debug/libpinyin_capi.so"
 if [ ! -f "$CAPI_SO" ]; then
     echo "fatal: $CAPI_SO not found"
