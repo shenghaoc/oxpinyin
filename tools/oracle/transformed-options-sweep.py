@@ -10,6 +10,8 @@ import argparse
 import ctypes as c
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
+import signal
 import pathlib
 import subprocess
 import sys
@@ -110,6 +112,98 @@ def observe(library, data, word, cases):
     return records
 
 
+
+def isolated_cursor_call(fn):
+    """Record pin asserts and the subject's class-(c) false+warning safely."""
+    read_fd, write_fd = os.pipe()
+    with tempfile.TemporaryFile() as errors:
+        pid = os.fork()
+        if pid == 0:
+            os.close(read_fd)
+            os.dup2(errors.fileno(), 2)
+            try:
+                os.write(write_fd, json.dumps(fn()).encode())
+            finally:
+                os._exit(0)
+        os.close(write_fd)
+        with os.fdopen(read_fd, "rb") as output:
+            payload = output.read()
+        _, status = os.waitpid(pid, 0)
+        errors.seek(0)
+        diagnostic = errors.read().decode(errors="replace")
+    return {"signal": os.WTERMSIG(status) if os.WIFSIGNALED(status) else None,
+            "result": json.loads(payload) if payload else None,
+            "warnings": diagnostic.count("WARNING"), "diagnostic": diagnostic}
+
+
+def observe_cursors(library, data, word, cases, family):
+    """All original-input byte offsets, including the terminal position."""
+    lib = c.CDLL(library)
+    ptr, size, boolean = c.c_void_p, c.c_size_t, c.c_bool
+    key_name = "pinyin" if family == "pinyin" else "zhuyin"
+
+    def bind(name, result, *args):
+        fn = getattr(lib, family + "_" + name)
+        fn.restype, fn.argtypes = result, list(args)
+        return fn
+
+    init = bind("init", ptr, c.c_char_p, c.c_char_p)
+    fini = bind("fini", None, ptr)
+    alloc = bind("alloc_instance", ptr, ptr)
+    free = bind("free_instance", None, ptr)
+    options = bind("set_options", boolean, ptr, c.c_uint32)
+    scheme = bind("set_full_pinyin_scheme", boolean, ptr, c.c_int)
+    parse = bind("parse_more_full_pinyins", size, ptr, c.c_char_p)
+    offsets = {name: bind("get_" + name + key_name + "_offset", boolean,
+                          ptr, size, c.POINTER(size)) for name in ("", "left_", "right_")}
+    get_key = bind("get_" + key_name + "_key", boolean, ptr, size, c.POINTER(ptr))
+    get_rest = bind("get_" + key_name + "_key_rest", boolean, ptr, size, c.POINTER(ptr))
+    positions = bind("get_" + key_name + "_key_rest_positions", boolean,
+                     ptr, ptr, c.POINTER(c.c_uint16), c.POINTER(c.c_uint16))
+    rest_length = bind("get_" + key_name + "_key_rest_length", boolean,
+                       ptr, ptr, c.POINTER(c.c_uint16))
+    character = bind("get_character_offset", boolean, ptr, c.c_char_p, size, c.POINTER(size))
+    phrases = {"lishihbakua": "历史把跨", "chih": "出", "rih": "人",
+               "sih": "三", "zih": "在", "shih": "是", "tsz": "从"}
+    records = []
+    with tempfile.TemporaryDirectory(prefix="lane-j-cursor-") as user:
+        context = init(data.encode(), user.encode())
+        if not context:
+            raise RuntimeError("cursor init failed")
+        try:
+            assert options(context, word)
+            for mode, number, text in cases:
+                assert scheme(context, number)
+                instance = alloc(context)
+                if not instance:
+                    raise RuntimeError("cursor alloc failed")
+                try:
+                    consumed = int(parse(instance, text.encode()))
+                    for offset in range(len(text.encode()) + 1):
+                        row = dict(case=[mode, number, text], input_offset=offset, consumed=consumed)
+                        for name, fn in offsets.items():
+                            out = size(-1)
+                            row[name + "offset"] = isolated_cursor_call(lambda: [bool(fn(instance, offset, c.byref(out))), out.value])
+                        key = ptr()
+                        ok = bool(get_key(instance, offset, c.byref(key)))
+                        row["key"] = [ok, c.cast(key, c.POINTER(c.c_uint16))[0] if ok else None]
+                        rest = ptr()
+                        ok = bool(get_rest(instance, offset, c.byref(rest)))
+                        row["rest"] = [ok]
+                        if ok:
+                            begin, end, length = c.c_uint16(65535), c.c_uint16(65535), c.c_uint16(65535)
+                            row["positions"] = [bool(positions(instance, rest, c.byref(begin), c.byref(end))), begin.value, end.value]
+                            row["length"] = [bool(rest_length(instance, rest, c.byref(length))), length.value]
+                        out = size(-1)
+                        row["character"] = isolated_cursor_call(lambda: [bool(character(instance, phrases[text].encode(), offset, c.byref(out))), out.value])
+                        records.append(row)
+                finally:
+                    free(instance)
+        finally:
+            fini(context)
+    return records
+
+
 def worker(library, data, word, cases):
     command = [sys.executable, str(pathlib.Path(__file__).resolve()),
                "--worker", library, data, hex(word), json.dumps(cases)]
@@ -137,10 +231,39 @@ def main():
     parser.add_argument("--data", required=True)
     parser.add_argument("--expect", choices=["parent", "fixed"], required=True)
     parser.add_argument("--list-differences", action="store_true")
+    parser.add_argument("--cursor-family", choices=["pinyin", "zhuyin"])
     parser.add_argument("--jobs", type=int, default=1, help="concurrent option-word comparisons")
     parser.add_argument("--lane-j-session", action="store_true",
                         help="check #585/#626 using existing transformed cases")
     args = parser.parse_args()
+    if args.cursor_family:
+        cases = [case for case in CASES if case[0] in ("luoma", "secondary")]
+        for word in (0x2, 0x20, 0x28):
+            records = []
+            for library in (args.oracle, args.subject):
+                command = [sys.executable, str(pathlib.Path(__file__).resolve()),
+                           "--cursor-worker", library, args.data, hex(word), json.dumps(cases), args.cursor_family]
+                result = subprocess.run(command, capture_output=True, text=True, timeout=600, check=True)
+                records.append(json.loads(result.stdout))
+            different, refusals = [], 0
+            for left, right in zip(*records, strict=True):
+                for key in left:
+                    a, b = left[key], right[key]
+                    if key in ("offset", "left_offset", "right_offset", "character"):
+                        if a["signal"] == signal.SIGABRT:
+                            refusals += 1
+                            same = b["signal"] is None and b["result"] is not None and b["result"][0] is False and b["warnings"] == 1
+                        else:
+                            same = a["signal"] is None and b["signal"] is None and a["result"] == b["result"] and b["warnings"] == 0
+                    else:
+                        same = a == b
+                    if not same:
+                        different.append({"case": left["case"], "offset": left["input_offset"], "function": key, "pin": a, "subject": b})
+            print(json.dumps({"family": args.cursor_family, "word": hex(word),
+                              "offsets": len(records[0]), "class_c": refusals,
+                              "differences": different, "pin": records[0], "subject": records[1]}, ensure_ascii=False), flush=True)
+            assert not different, "cursor surface differs"
+        return
     if args.lane_j_session:
         cases = [case for case in CASES if case[0] in ("luoma", "secondary")]
         for word in (0x2, 0x20, 0x28):
@@ -175,7 +298,7 @@ def main():
                 ordinary[mode].add(word)
         if number % 50 == 0:
             print(f"compared {number}/{len(WORDS)} option words", file=sys.stderr, flush=True)
-    expected = {"hanyu": 0, "luoma": 437, "secondary": 437,
+    expected = {"hanyu": 0, "luoma": 2, "secondary": 2,
                 "double-ms": 29 if args.expect == "parent" else 0,
                 "chewing-standard": 31 if args.expect == "parent" else 0}
     summary = {mode: {"ordinary": len(ordinary[mode]), "complete": len(complete[mode])}
@@ -187,7 +310,7 @@ def main():
     assert {mode: len(ordinary[mode]) for mode in modes} == expected, "sweep counts moved"
     # Hanyu is 0 since #651: pinyin_guess_sentence returns false on a parse that
     # placed no key (phonetic_lookup.h:743-745), so `sh` now matches the pin.
-    expected_complete = {**expected, "luoma": 439, "secondary": 439}
+    expected_complete = {**expected, "luoma": 2, "secondary": 2}
     assert {mode: len(complete[mode]) for mode in modes} == expected_complete, "protocol counts moved"
 
     targeted = [("double-ms", 2, "nihk", 0x8002),
@@ -212,7 +335,10 @@ def main():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "--worker":
+    if len(sys.argv) > 1 and sys.argv[1] == "--cursor-worker":
+        print(json.dumps(observe_cursors(sys.argv[2], sys.argv[3], int(sys.argv[4], 0),
+                                       json.loads(sys.argv[5]), sys.argv[6]), ensure_ascii=False))
+    elif len(sys.argv) > 1 and sys.argv[1] == "--worker":
         print(json.dumps(observe(sys.argv[2], sys.argv[3], int(sys.argv[4], 0),
                                  json.loads(sys.argv[5])), ensure_ascii=False))
     else:

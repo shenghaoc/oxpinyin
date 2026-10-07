@@ -30,14 +30,14 @@ Build the pin with `tools/oracle/build-oracle.sh --dbm CELL
 ```sh
 python3 tools/oracle/transformed-options-sweep.py \
   --oracle "$PREFIX/lib/libpinyin.so" \
-  --subject "$TARGET/release/libpinyin_capi.so" \
+  --subject "$TARGET/debug/libpinyin_capi.so" \
   --data "$PREFIX/lib/libpinyin/data" --expect fixed
 ```
 
 `--expect parent` asserts the pre-fix 29/31 ordinary-candidate differing
 words for double/chewing. `--expect fixed` asserts zero for both. Both
-assert the unchanged Hanyu/Luoma/secondary ordinary counts (0/437/437) and the
-complete-protocol counts (0/439/439; Hanyu was 437 before #651).
+assert the unchanged Hanyu/Luoma/secondary ordinary counts (0/2/2) and the
+complete-protocol counts (0/2/2; the two residual words belong to #641).
 
 Each word and library runs in an isolated subprocess, with a fresh user
 profile, no training, and a fresh instance per input. Options are always
@@ -67,5 +67,23 @@ that placed no key, as the pin does (`phonetic_lookup.h:743-745`), so the
 
 Fresh profile directories are removed on normal completion. A worker
 crash or timeout fails the run instead of counting as a candidate mismatch.
-Subprocess timeout is 90 seconds per word/library. The runner writes only
+Subprocess timeout is 600 seconds per word/library. The runner writes only
 stdout summaries; it retains no logs.
+
+## Lane J parsed-key intake and cursor review
+
+After #690, observed Luoma and secondary-zhuyin differing-word counts are
+2 ordinary / 2 complete-protocol each (`0x60` and `0xffffffff`, #641).
+Hanyu remains 0/0 as established by #688; fixed double and chewing remain
+0/0. Run `--expect fixed` to enforce these counts on this stack member.
+`--lane-j-session` checks the seven repaired inputs at 0x2/0x20/0x28.
+
+`--cursor-family pinyin` (or `zhuyin`, with the corresponding library)
+checks all offsets 0 through input length for the same seven inputs at
+0x2/0x20/0x28: cursor normalization, left/right, packed key, key-rest
+positions/length, and character offset. Each family checks 38 positions
+per option word. Cursor calls are isolated so the pin's right-offset
+asserts are recorded; each requires the subject's established class-(c)
+false return and exactly one warning. Other results and out-parameters
+must match. Output includes complete observations; retain it outside the
+repository as evidence.
