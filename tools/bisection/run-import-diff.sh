@@ -59,16 +59,14 @@ if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     echo "  build it with tools/oracle/build-oracle.sh and set PINYIN_ORACLE_PREFIX"
     exit 77
 fi
-if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
-    "$PREFIX/oracle-pin.txt"; then
-    echo "SKIP: oracle prefix at $PREFIX is off-pin"
-    echo "  expected libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99"
+if ! grep -Fxq "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
+    echo "SKIP: oracle prefix at $PREFIX is off-pin for the $ORACLE_DBM cell"
+    echo "  expected $EXPECTED_PIN_REF"
     exit 77
 fi
-# The pin_ref above is prefix-matched (the full value is composite), so pin
-# the runtime inputs it folds in as explicit fields too: a prefix rebuilt
-# against a different model archive or dbm backend must not import-diff as
-# if it were this pin. Expected values come from build-oracle.sh, the same
+# The pin_ref above is matched whole; also pin the runtime inputs it folds in
+# as explicit fields: a prefix rebuilt against a different model archive or
+# dbm backend must not import-diff as if it were this pin. Expected values come from build-oracle.sh, the same
 # single source the workflow's drift check reads.
 MODEL_SHA256_EXPECTED=$(sed -n 's/^MODEL_SHA256=//p' "$REPO_ROOT/tools/oracle/build-oracle.sh")
 # The dbm field follows the backend cell (PINYIN_ORACLE_DBM, default bdb;

@@ -61,8 +61,16 @@ if [[ ! -f "$PREFIX/oracle-pin.txt" || ! -f "$ORACLE_SO" ]]; then
     echo "FAIL: patched pin-built oracle not found at $PREFIX"
     exit 1
 fi
-if ! grep -q "^${EXPECTED_PIN_REF}+patches-" "$PREFIX/oracle-pin.txt"; then
-    echo "FAIL: oracle prefix at $PREFIX is off-pin or wrong-cell"
+# Require exactly the committed patch set: the digest of the sorted *.patch
+# files, folded into pin_ref as build-oracle.sh does, not any +patches- suffix.
+patch_digest=$(cd "$REPO_ROOT/tools/bisection/patches/bigram-export-strjoinv" &&
+    find . -maxdepth 1 -type f -name '*.patch' -print0 |
+    sort -z | xargs -0 sha256sum | sha256sum)
+patch_digest=${patch_digest%% *}
+if ! grep -Fxq "${EXPECTED_PIN_REF}+patches-${patch_digest}" "$PREFIX/oracle-pin.txt" ||
+    ! grep -Fxq "patches_manifest_sha256=${patch_digest}" "$PREFIX/oracle-pin.txt"; then
+    echo "FAIL: oracle prefix at $PREFIX is off-pin, wrong-cell or carries a different patch set"
+    echo "  expected ${EXPECTED_PIN_REF}+patches-${patch_digest}"
     exit 1
 fi
 if [[ ! -f "$ORACLE_DATA/bigram.db" ]]; then

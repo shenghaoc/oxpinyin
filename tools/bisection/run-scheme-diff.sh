@@ -102,7 +102,7 @@ if [[ "$SCHEME" == "full" && "${SCHEME_ARGS[0]:-1}" =~ ^(2|3)$ ]]; then
     expected_patches_sha=$(cd "$REPO_ROOT/tools/oracle/patches" \
         && find . -maxdepth 1 -type f -name '*.patch' -print0 \
         | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
-    if ! grep -q "^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99.*+patches-$expected_patches_sha$" \
+    if ! grep -Fxq "$EXPECTED_PIN_REF+patches-$expected_patches_sha" \
         "$PATCHED_PREFIX/oracle-pin.txt"; then
         echo "SKIP: patched oracle at $PATCHED_PREFIX is off-pin or carries a different patch set"
         echo "  expected +patches-$expected_patches_sha (from tools/oracle/patches)"
