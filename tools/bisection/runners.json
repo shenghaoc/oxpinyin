@@ -1409,7 +1409,7 @@
       "prebuilt dev libpinyin for the cell",
       "matching PREFIX/oracle-pin.txt, lib/libpinyin.so and lib/libpinyin/data",
       "pin-built libzhuyin and prebuilt dev libzhuyin for the cell",
-      "full subject tables plus interpolation2.text via --data CELL=DIR"
+      "full subject tables plus interpolation2.text via --data CELL=DIR, its tables byte-identical to the oracle prefix (the oracle side reads this directory)"
     ],
     "timeout": 900,
     "exclusive_resources": [],
