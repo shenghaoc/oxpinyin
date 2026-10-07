@@ -671,10 +671,16 @@ pub fn build_scan_matrix(
 /// Phase 2 of [`build_scan_matrix`]: the resplit alternates along the
 /// selected path — two zero-tone keys sharing a boundary with no
 /// apostrophe between them, split through [`RESPLIT_TABLE`].
+///
+/// A first key that itself follows a separator still resplits: the pin
+/// keys it at its own `m_raw_begin`, after the apostrophe, and measures
+/// the split from there (`phonetic_key_matrix.cpp:113,145`, pin
+/// `074a2219`). The split is therefore measured from `syllable_start`,
+/// and the left half keeps the separator-riding span.
 fn resplit_additions(selected: &[ScanKey]) -> Vec<ScanKey> {
     let mut additions: Vec<ScanKey> = Vec::new();
     for pair in selected.windows(2) {
-        if pair[1].from != pair[0].to || pair[0].crosses_separator || pair[1].crosses_separator {
+        if pair[1].from != pair[0].to || pair[1].crosses_separator {
             continue;
         }
         if pair[0].tone != 0 || pair[1].tone != 0 {
@@ -691,13 +697,13 @@ fn resplit_additions(selected: &[ScanKey]) -> Vec<ScanKey> {
         let Some(right_key) = SyllableKey::from_text(right) else {
             continue;
         };
-        let split = pair[0].from + left.len();
+        let split = pair[0].syllable_start + left.len();
         additions.push(ScanKey {
             key: left_key,
             from: pair[0].from,
             to: split,
-            syllable_start: pair[0].from,
-            crosses_separator: false,
+            syllable_start: pair[0].syllable_start,
+            crosses_separator: pair[0].crosses_separator,
             tone: 0,
         });
         additions.push(ScanKey {

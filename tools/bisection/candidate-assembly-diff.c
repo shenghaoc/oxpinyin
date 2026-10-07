@@ -822,6 +822,17 @@ int main(int argc, char **argv) {
     scheme_kind = 0;
     for (size_t i = 0; i < sizeof(toned_inputs) / sizeof(toned_inputs[0]); ++i)
         case_a(systemdir, 0x1aa, 0x1e, false, toned_inputs[i]);
+    /* A key that follows a separator still resplits (#639): the pin keys it
+     * after the apostrophe (`phonetic_key_matrix.cpp:113-150`). The four
+     * corpus inputs and the three smallest reproductions, at `0x18a`
+     * (INCOMPLETE | USE_TONE | USE_DIVIDED_TABLE | USE_RESPLIT_TABLE). */
+    static const char *resplit_inputs[] = {
+        "pang'rao'xiane'qing'lo'sheiting'suanzhi", "nvchi'chui'lianai'baobeng'fang",
+        "bu'qing'na'wanou'panyao'you", "bianrang'lianai'seng'sunguo",
+        "chui'lianai", "rao'xiane", "na'wanou",
+    };
+    for (size_t i = 0; i < sizeof(resplit_inputs) / sizeof(resplit_inputs[0]); ++i)
+        case_a(systemdir, 0x18a, 0x1e, false, resplit_inputs[i]);
     case_forced_duplicate(systemdir);
     return 0;
 }
