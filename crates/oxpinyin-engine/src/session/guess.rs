@@ -62,8 +62,7 @@ where
         if bound == 0 {
             return Ok(false);
         }
-        let matrix =
-            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
 
         // `pinyin_update_constraints`: re-sync the store to the matrix —
         // grow with free cells (forcings survive typing), shrink by
@@ -148,8 +147,7 @@ where
         if bound == 0 {
             return Ok(false);
         }
-        let matrix =
-            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
 
         let mut store = core::mem::take(&mut self.constraints);
         let dropped = store.validate(bound + 1, |start, end, token| {
@@ -205,8 +203,7 @@ where
 
         let offset = self.record.consumed();
         self.sentence.rows = if self.model.has_real_unigrams() {
-            let matrix =
-                build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+            let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
             crate::nbest::nbest_sentences_generation(
                 crate::nbest::GenerationInput {
                     matrix: &matrix,

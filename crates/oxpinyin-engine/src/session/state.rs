@@ -287,6 +287,28 @@ where
         self.refresh()
     }
 
+    /// Replaces input with parsed full-pinyin keys, without reparsing their
+    /// canonical spelling. Unlike the double/zhuyin exact seam, full-pinyin
+    /// resplit and divided matrix processing remains enabled (pin 074a2219,
+    /// `pinyin.cpp:1497-1525`). Inserted apostrophes are formatting separators.
+    /// Segments use byte offsets in `text` and are clamped to the input cap.
+    ///
+    /// # Errors
+    /// Returns [`EngineError`] if refreshing the new input fails.
+    pub fn replace_raw_full_pinyin(
+        &mut self,
+        text: &str,
+        segments: &[ExactSegment],
+    ) -> Result<(), EngineError> {
+        let continuous = self.replacement_extends_selection(text);
+        self.refill_raw(text);
+        self.input.set_full_pinyin(segments);
+        if !continuous {
+            self.reconcile_replaced_selection()?;
+        }
+        self.refresh()
+    }
+
     /// Whether `text` extends the bytes the selection record was built
     /// over (`raw[..consumed]`) — the continuity retaining the record
     /// requires. The parse seams' own prefix checks run in the caller's
@@ -317,8 +339,7 @@ where
         let graph = self.build_graph_at(0, self.input.as_bytes())?;
         let bound = graph.consumed();
         if bound > 0 {
-            let matrix =
-                build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+            let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
             self.constraints.validate(bound + 1, |start, end, token| {
                 crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
             })?;

@@ -150,8 +150,7 @@ where
         // the session's matrix has it.
         let graph = self.build_graph_at(0, self.input.as_bytes())?;
         let parsed = graph.consumed();
-        let matrix =
-            build_scan_matrix(&graph, self.settings.options, self.input.exact().is_empty());
+        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
         let keys: Vec<crate::cursor::MatrixKey> = matrix
             .iter()
             .flatten()

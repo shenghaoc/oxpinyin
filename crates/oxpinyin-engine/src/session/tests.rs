@@ -3240,3 +3240,22 @@ fn typed_tones_keep_only_user_phrases_with_a_matching_stored_tone() {
     assert!(texts("nihao").contains(&"你鎄".to_owned()));
     assert!(!texts("ni2hao3").contains(&"你鎄".to_owned()));
 }
+
+#[test]
+fn parsed_full_pinyin_retains_incomplete_keys_without_enabling_incomplete_input() {
+    use oxpinyin_core::graph::ExactSegment;
+    let mut session = session();
+    session
+        .set_options(oxpinyin_core::OptionBits::from_bits(
+            oxpinyin_core::USE_TONE,
+        ))
+        .expect("options");
+    let sh = SyllableKey::from_canonical_text("sh").expect("initial");
+    session
+        .replace_raw_full_pinyin("sh", &[ExactSegment::new(0, 2, sh, 0)])
+        .expect("parsed key");
+    assert_eq!(session.full_parsed_len(), 2);
+    assert!(session.spans_a_matrix_key(0).expect("column"));
+    session.replace_raw("sh").expect("ordinary input");
+    assert_eq!(session.full_parsed_len(), 0);
+}

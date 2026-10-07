@@ -35,6 +35,8 @@ pub(super) struct InputBuffer {
     /// these keys. Spans are absolute over `raw`, and `end() <= raw.len()`
     /// holds for every segment.
     exact: Vec<ExactSegment>,
+    /// Pre-parsed full pinyin retains the full-pinyin matrix transforms.
+    parsed_full_pinyin: bool,
 }
 
 impl InputBuffer {
@@ -69,6 +71,16 @@ impl InputBuffer {
         &self.exact
     }
 
+    pub(super) fn full_pinyin(&self) -> bool {
+        self.exact.is_empty() || self.parsed_full_pinyin
+    }
+
+    pub(super) fn set_full_pinyin(&mut self, segments: &[ExactSegment]) {
+        self.set_exact(segments);
+        self.parsed_full_pinyin = true;
+        self.formatting_separators = true;
+    }
+
     /// Appends `character` and exits exact mode, unless it would push the
     /// buffer past [`MAX_INPUT_BYTES`] — then nothing changes and `false`
     /// is returned (the caller reports the key as ignored, or stops the
@@ -79,6 +91,7 @@ impl InputBuffer {
             return false;
         }
         self.exact.clear();
+        self.parsed_full_pinyin = false;
         self.formatting_separators = false;
         self.raw.push(character);
         true
@@ -88,6 +101,7 @@ impl InputBuffer {
     /// which shrinks the buffer under a live composition.
     pub(super) fn pop(&mut self) {
         self.exact.clear();
+        self.parsed_full_pinyin = false;
         self.formatting_separators = false;
         self.raw.pop();
     }
@@ -97,6 +111,7 @@ impl InputBuffer {
     pub(super) fn clear(&mut self) {
         self.raw.clear();
         self.exact.clear();
+        self.parsed_full_pinyin = false;
         self.formatting_separators = false;
     }
 
@@ -104,6 +119,7 @@ impl InputBuffer {
     /// which clears the chain before refilling.
     pub(super) fn clear_exact(&mut self) {
         self.exact.clear();
+        self.parsed_full_pinyin = false;
         self.formatting_separators = false;
     }
 
@@ -137,6 +153,7 @@ impl InputBuffer {
     /// invariant of the stored segments.
     pub(super) fn set_exact(&mut self, segments: &[ExactSegment]) {
         self.formatting_separators = false;
+        self.parsed_full_pinyin = false;
         let raw_len = self.raw.len();
         self.exact = segments
             .iter()
