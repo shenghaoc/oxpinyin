@@ -35,7 +35,7 @@ if [[ ${OXPINYIN_BUILD_USER_RT:-0} == 1 ]]; then
 		--no-default-features --features "$CAPI_FEATURE" \
 		--test user_dir_round_trip >"$manifest"
 	python3 - "$manifest" "$CARGO_TARGET_DIR/debug/user-dir-round-trip-test" <<'PY'
-import json, pathlib, sys
+import json, os, pathlib, sys
 executables = []
 for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
     row = json.loads(line)
@@ -46,7 +46,11 @@ for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
 if len(executables) != 1:
     raise SystemExit('FAIL: expected exactly one user_dir_round_trip executable')
 link = pathlib.Path(sys.argv[2])
-link.unlink(missing_ok=True)
-link.symlink_to(executables[0])
+# Concurrent builds of the same cell share this path: rename a private link
+# over it, so no invocation sees it missing or fails on a competing create.
+staged = link.with_name(f'.{link.name}.{os.getpid()}')
+staged.unlink(missing_ok=True)
+staged.symlink_to(executables[0])
+os.replace(staged, link)
 PY
 fi
