@@ -78,6 +78,19 @@ done
 for d in "$ORACLE_DATA" "$RUST_DATA"; do
     [[ -f "$d/interpolation2.text" ]] || { echo "data dir missing interpolation2.text: $d" >&2; exit 1; }
 done
+# The pinned prefix does not ship interpolation2.text, so a caller may point
+# ZHUYIN_ORACLE_DATA at a copy that adds it. That copy must still be the
+# pin's own tables: the oracle side never reads subject data.
+pinned_oracle_data="$ZHUYIN_ORACLE_PREFIX/lib/libpinyin/data"
+if [[ "$(realpath -- "$ORACLE_DATA")" != "$(realpath -- "$pinned_oracle_data")" ]]; then
+    for table in "$pinned_oracle_data"/*; do
+        [[ -f "$table" ]] || continue
+        cmp -s -- "$table" "$ORACLE_DATA/${table##*/}" || {
+            echo "FAIL: ZHUYIN_ORACLE_DATA differs from the pinned oracle's ${table##*/}: $ORACLE_DATA" >&2
+            exit 1
+        }
+    done
+fi
 
 echo "== building zhuyin-diff =="
 cc -O2 -Wall -Wextra -o "$WORK/zhuyin-diff" "$SCRIPT_DIR/zhuyin-diff.c" -ldl || {
