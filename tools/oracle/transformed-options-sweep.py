@@ -163,7 +163,9 @@ def main():
             summary[mode]["differing_words"] = [f"0x{word:08x}" for word in sorted(ordinary[mode])]
     print(json.dumps({"words": len(WORDS), "inputs": len(CASES), "schemes": summary}))
     assert {mode: len(ordinary[mode]) for mode in modes} == expected, "sweep counts moved"
-    expected_complete = {**expected, "hanyu": 437, "luoma": 439, "secondary": 439}
+    # Hanyu is 0 since #651: pinyin_guess_sentence returns false on a parse that
+    # placed no key (phonetic_lookup.h:743-745), so `sh` now matches the pin.
+    expected_complete = {**expected, "luoma": 439, "secondary": 439}
     assert {mode: len(complete[mode]) for mode in modes} == expected_complete, "protocol counts moved"
 
     targeted = [("double-ms", 2, "nihk", 0x8002),
@@ -181,10 +183,7 @@ def main():
                           "pin_n": left["n"], "subject_n": right["n"],
                           "pin_consumed": left["consumed"], "subject_consumed": right["consumed"],
                           "differing_fields": changed}))
-        if mode == "hanyu" and left["consumed"] == 0:
-            # #542, lane C: do not treat empty-key sentence returns as #586.
-            assert changed == ["sentence_ok", "sentence_get"]
-        elif args.expect == "fixed" or mode == "hanyu":
+        if args.expect == "fixed" or mode == "hanyu":
             assert not changed, "targeted returned surface differs byte for byte"
         else:
             assert changed, "parent no longer reproduces the target defect"
