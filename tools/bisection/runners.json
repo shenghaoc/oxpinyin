@@ -1580,7 +1580,7 @@
       "Python 3",
       "committed transformed-options input and word files"
     ],
-    "timeout": 900,
+    "timeout": 3600,
     "exclusive_resources": [],
     "command": [
       "python3",
@@ -1597,7 +1597,8 @@
     "env": {},
     "input_paths": [
       "{capi}"
-    ]
+    ],
+    "timeout_reason": "Measured approximately 1,766 s alone on bdb at 8e76b17 with dev opt-level 1; allow the complete transformed-options sweep."
   },
   {
     "name": "abi-exports",
