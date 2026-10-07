@@ -29,9 +29,9 @@ source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 # Resolved before the `cd` below: the usage text allows relative paths, and
 # the existence checks, the dlopen of the shared objects and the logs all
 # have to mean the same file as the caller's directory did.
-prefix=$(realpath -- "${1:?oracle prefix}")
-capi_so=$(realpath -- "${2:-${OXPINYIN_CAPI_SO:?prebuilt libpinyin required}}")
-zhuyin_so=$(realpath -- "${3:-${OXPINYIN_ZHUYIN_SO:?prebuilt libzhuyin required}}")
+prefix=$(realpath -m -- "${1:?oracle prefix}")
+capi_so=$(realpath -m -- "${2:-${OXPINYIN_CAPI_SO:?prebuilt libpinyin required}}")
+zhuyin_so=$(realpath -m -- "${3:-${OXPINYIN_ZHUYIN_SO:?prebuilt libzhuyin required}}")
 out=${4:-}
 [[ -z "$out" ]] || out=$(realpath -m -- "$out")
 
