@@ -100,6 +100,57 @@ Exit 0 is identical on every driver; 2 prints each divergence. The
 per-surface drivers (`tools/bisection/run-*-diff.sh`) run one surface
 each; their headers say what they prove.
 
+### Contract differentials in a macOS-hosted Linux container
+
+Keep the contract harness's scratch directory and generated user directories
+on the container's local filesystem, outside macOS bind mounts. Create the
+directory and export `TMPDIR` **inside the Linux container** before starting
+`tools/bisection/run-contract-diff.sh`:
+
+```sh
+mkdir -p /var/tmp/lane-c-contract
+export TMPDIR=/var/tmp/lane-c-contract
+```
+
+The harness creates its per-run scratch under `TMPDIR` and passes that path
+to both workers, which create their fresh user directories beneath it. The
+non-UTF-8 pathname cases need this: in the amd64/Rosetta macOS session, a
+`mkdir` containing byte `0xFF` under the Mac-mounted `/lane/tmp` failed with
+`EPERM`, while the same operation under container-local `/var/tmp` succeeded.
+The bounded probe recorded these two results:
+
+| Probe pathname (byte `0xFF` shown as `\\xff`) | Result |
+| --- | --- |
+| `/lane/tmp/lane-c-invalid-\xff-check` (Mac bind mount) | `mkdir` failed with errno 1 (`EPERM`); no directory was created. |
+| `/var/tmp/lane-c-invalid-\xff-check` (container-local) | `mkdir` succeeded and the probe removed the directory. |
+
+Using `TMPDIR=/var/tmp/lane-c-contract`, the full Lane C BDB suite passed
+**151 of 151 at `dcc635576153291619b08c839b210d6d8293a03c`**. The single
+full run omitted `--cases` and used the debug subject libraries against
+libpinyin 2.11.92 pin `074a2219c90feaf962d0d24f034514033ece5f99`, both on
+BDB. All 302 worker stdout/stderr observations are retained outside the
+commits; no harness or expectation change was needed.
+
+The earlier pre-restack baseline was **149 of 149 at
+`5995db2cdbbfd1dbf1bd3f383863b728e714ad20`**. That historical registry did
+not yet contain the two user-library-token unload cases included in the
+151-case run.
+
+From the repository root, print the current number of registered cases
+without running the CLI or any case:
+
+```sh
+python3 -c "import runpy; print(len(runpy.run_path('tools/bisection/contract-diff.py')['CASES']))"
+```
+
+The harness runs `sorted(CASES)` when `--cases` is omitted. Count the
+registry at the tested commit rather than assuming an earlier count still
+applies; a selected-case run does not establish a complete-suite result.
+
+Retain the original failure logs when diagnosing this setup error. Evidence
+logs may be written or copied back to the mounted work directory, but keep
+scratch and the user directories exercised by the cases container-local.
+
 ### Training through the C API
 
 `pinyin_train(instance, index)` trains the n-best result `index` and
