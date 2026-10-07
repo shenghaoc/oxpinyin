@@ -611,6 +611,7 @@ where
             {
                 let mut buf = ScanBuf {
                     path: &mut path,
+                    tones: SmallVec::new(),
                     system: &mut window_phrase,
                     addon: &mut window_addon,
                     continued: &mut continued,
@@ -1096,6 +1097,7 @@ where
             {
                 let mut buf = ScanBuf {
                     path: scratch.path,
+                    tones: SmallVec::new(),
                     system: scratch.window_phrase,
                     addon: scratch.window_addon,
                     continued: &mut continued,
@@ -1156,12 +1158,14 @@ where
             return Ok(());
         }
         buf.path.push(scan_key.key);
+        buf.tones.push(scan_key.tone);
         if to == end {
             self.search_scan_path(buf, end)?;
         } else if buf.path.len() < MAX_PHRASE_LENGTH {
             self.scan_paths(matrix, to, end, buf)?;
         }
         buf.path.pop();
+        buf.tones.pop();
         Ok(())
     }
 
@@ -1201,6 +1205,7 @@ where
     ) -> Result<(), EngineError> {
         let ScanBuf {
             path,
+            tones,
             system,
             addon,
             continued,
@@ -1212,17 +1217,10 @@ where
 
         if has_incomplete && !self.dictionary.handles_partial_keys() {
             for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
-                self.lookup_and_append(
-                    sequence.as_slice(),
-                    path.len(),
-                    end,
-                    system,
-                    addon,
-                    entries,
-                )?;
+                self.lookup_and_append(sequence.as_slice(), tones, end, system, addon, entries)?;
             }
         } else {
-            self.lookup_and_append(path, path.len(), end, system, addon, entries)?;
+            self.lookup_and_append(path, tones, end, system, addon, entries)?;
         }
 
         let can_extend = self
@@ -1237,10 +1235,18 @@ where
         Ok(())
     }
 
+    /// `tones` are the typed tones of `sequence`. The dictionary's
+    /// `lookup_into` is toneless, but the pin's user index keeps each
+    /// phrase's stored tones and its search compares them with
+    /// `pinyin_compare_tone3` (`pinyin_phrase3.h:97-105`: a zero tone on
+    /// either side matches, two different tones do not, pin 074a2219). A
+    /// path that types a tone on complete syllables therefore keeps only
+    /// the entries `trellis_records` also returns — the tone-aware match
+    /// the sentence trellis already uses.
     pub(super) fn lookup_and_append(
         &self,
         sequence: &[SyllableKey],
-        keys: usize,
+        tones: &[u8],
         end: usize,
         system: &mut Vec<Candidate>,
         addon: &mut Vec<Candidate>,
@@ -1249,11 +1255,34 @@ where
         self.dictionary
             .lookup_into(sequence, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        append_scan_entries(entries.drain(..), keys, end, CandidateKind::Phrase, system);
+        if tones.iter().any(|tone| *tone != 0) {
+            let mut toned: Vec<u32> = self
+                .dictionary
+                .trellis_records(sequence, tones)
+                .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?
+                .iter()
+                .map(|record| record.token().value())
+                .collect();
+            toned.sort_unstable();
+            entries.retain(|entry| toned.binary_search(&entry.token().value()).is_ok());
+        }
+        append_scan_entries(
+            entries.drain(..),
+            sequence.len(),
+            end,
+            CandidateKind::Phrase,
+            system,
+        );
         self.dictionary
             .lookup_addon_into(sequence, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        append_scan_entries(entries.drain(..), keys, end, CandidateKind::Addon, addon);
+        append_scan_entries(
+            entries.drain(..),
+            sequence.len(),
+            end,
+            CandidateKind::Addon,
+            addon,
+        );
         Ok(())
     }
 }

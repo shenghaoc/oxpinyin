@@ -60,6 +60,11 @@
  *
  *   U  full pinyin with USE_TONE in 0x1aa: numeric-toned ni3hao3 and
  *      chang/zhang, hang/xing, le/yue heteronyms, alone and in context.
+ *   R  keys that follow a separator resplit (#639): the corpus sentences
+ *      and three small ones at 0x18a.
+ *   T  typed tones against imported user phrases (#645): 你鎄 imported
+ *      under one or two tonal readings (`import_spec`), queried toned and
+ *      toneless at 0x1aa.
  *   F  choose NORMAL 得 by identity over the incomplete d span in dshi;
  *      its two matching de/dei records must not duplicate a forced step.
  *
@@ -175,6 +180,20 @@ static const char *scheme_tag(void) {
     return tags[scheme_kind];
 }
 
+/* The imports an `import=true` case installs: `phrase/reading/freq`
+ * entries separated by `;`, in order. NULL is the default single
+ * 罢跨/ba'kua/5 import. The spec is part of the case header, so cases
+ * that differ only in their imports keep distinct names. */
+static const char *import_spec = NULL;
+
+static const char *import_tag(void) {
+    static char tag[256];
+    if (!import_spec)
+        return "";
+    snprintf(tag, sizeof(tag), " imports=%s", import_spec);
+    return tag;
+}
+
 static void *must(const char *name) {
     void *sym = dlsym(lib, name);
     if (!sym) {
@@ -244,8 +263,31 @@ static bool open_session(struct session *ss, const char *systemdir, guint option
          * (`zhuyin.cpp:515-526`): bopomofo, not pinyin. */
         const char *phrase = zhuyin ? "罷跨" : "罢跨";
         const char *reading = zhuyin ? ZHUYIN_READING : "ba'kua";
-        bool added = it && s.add_phrase(it, phrase, reading, 5);
-        printf("import %s/%s/5=%s\n", phrase, reading, yesno(added));
+        bool added = true;
+        char spec[256];
+        if (import_spec) {
+            snprintf(spec, sizeof(spec), "%s", import_spec);
+            char *save = NULL;
+            for (char *entry = strtok_r(spec, ";", &save); entry;
+                 entry = strtok_r(NULL, ";", &save)) {
+                char *slash = strchr(entry, '/');
+                char *last = slash ? strrchr(slash, '/') : NULL;
+                if (!slash || last == slash) {
+                    fprintf(stderr, "bad import spec %s\n", entry);
+                    exit(1);
+                }
+                *slash = *last = '\0';
+                gint freq = atoi(last + 1);
+                bool one = it && s.add_phrase(it, entry, slash + 1, freq);
+                printf("import %s/%s/%d=%s\n", entry, slash + 1, freq, yesno(one));
+                added = added && one;
+                phrase = entry;
+                reading = slash + 1;
+            }
+        } else {
+            added = it && s.add_phrase(it, phrase, reading, 5);
+            printf("import %s/%s/5=%s\n", phrase, reading, yesno(added));
+        }
         if (it)
             s.end_add(it);
         if (!added) {
@@ -387,7 +429,8 @@ static int choose_row(instance_t *inst, const char *label, int index) {
 static void case_a(const char *systemdir, guint options, guint word, bool import,
                    const char *input) {
     struct session ss;
-    printf("== A word=0x%x import=%s input=%s%s\n", word, yesno(import), input, scheme_tag());
+    printf("== A word=0x%x import=%s input=%s%s%s\n", word, yesno(import), input, scheme_tag(),
+           import ? import_tag() : "");
     if (!open_session(&ss, systemdir, options, import))
         return;
     printf("parse=%zu\n", s.parse(ss.inst, input));
@@ -833,6 +876,38 @@ int main(int argc, char **argv) {
     };
     for (size_t i = 0; i < sizeof(resplit_inputs) / sizeof(resplit_inputs[0]); ++i)
         case_a(systemdir, 0x18a, 0x1e, false, resplit_inputs[i]);
+    /* #645: a typed tone keeps only the user phrases whose stored tone
+     * matches (`pinyin_compare_tone3`, `pinyin_phrase3.h:97-105`). Options
+     * `0x1aa` (USE_TONE), word 0x1e. A re-import of an existing token adds
+     * a pronunciation but no index entry (`pinyin.cpp:569-582`), so the
+     * first-imported reading is the one a query meets. */
+    static const struct {
+        const char *imports;
+        const char *input;
+    } toned_imports[] = {
+        {"你鎄/ni3'hao3/5;你鎄/ni2'hao3/500", "ni2hao3ba4kua4"},
+        {"你鎄/ni3'hao3/5", "ni2hao3ba4kua4"},
+        {"你鎄/ni3'hao3/5", "ni3hao3ba4kua4"},
+        {"你鎄/ni2'hao3/500;你鎄/ni3'hao3/5", "ni2hao3ba4kua4"},
+        {"你鎄/ni3'hao3/5;你鎄/ni2'hao3/500", "ni1hao3"},
+        {"你鎄/ni'hao/5", "ni2hao3ba4kua4"},
+        {"你鎄/ni3'hao3/5", "nihao"},
+        {"你鎄/ni3'hao3/5", "ni2h"},
+        {"你鎄/ni3'hao3/5", "ni3h"},
+        {"你鎄/ni3'hao3/5", "ni3ha"},
+        {"你鎄/ni3'hao3/5", "nih"},
+        {"你鎄/ni3'hao3/5", "ni2hao3"},
+    };
+    for (size_t i = 0; i < sizeof(toned_imports) / sizeof(toned_imports[0]); ++i) {
+        import_spec = toned_imports[i].imports;
+        case_a(systemdir, 0x1aa, 0x1e, true, toned_imports[i].input);
+    }
+    import_spec = NULL;
+    /* System phrases only, a tone typed and an incomplete last key: the
+     * filter must not drop them. */
+    static const char *system_toned[] = {"ni3h", "chang2ji", "yin1yu"};
+    for (size_t i = 0; i < sizeof(system_toned) / sizeof(system_toned[0]); ++i)
+        case_a(systemdir, 0x1aa, 0x1e, false, system_toned[i]);
     case_forced_duplicate(systemdir);
     return 0;
 }
