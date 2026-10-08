@@ -1,6 +1,7 @@
 # ABI allocator pairing — the audit and the gate
 
-Date: 2026-09-09 · Status: contract (the register) + audit (§2)
+Date: 2026-09-09, amended 2026-10-08 (#681) · Status: contract (the
+register) + audit (§2)
 
 `oxpinyin-capi` and `oxpinyin-zhuyin-capi` ship as drop-in replacements for
 `libpinyin.so.15` / `libzhuyin.so.15`. Every pointer the ABI hands a consumer
@@ -114,6 +115,45 @@ The general lesson is the one this document exists to make mechanical: a
 register that is only read is a register that drifts. The notes are now
 executable, and the gate rejects any entry whose contract was never probed.
 
+**(d) The bigram iterator's note was wrong (2026-10-08, #681).** The
+register called both `pinyin_bigram_iterator_get_next_phrase` slots
+`false-untouched`, on the strength of the call after exhaustion. The
+iterator's reachable `false` is its terminal row: the pin answers
+`pinyin_bigram_iterator_has_next_phrase` after taking a row
+(`pinyin.cpp:904-910`, compatibility-policy row 36), so the row after which
+`has_next` is false comes back `false` with both strings written, and
+oxpinyin does the same. A consumer that frees only on `true` leaks that
+row. Both slots are now `false-allocates`, and the pinyin driver probes the
+terminal row and still releases it. A call with no row pending is not a
+path a consumer can rely on: the pin asserts there (`:902`) or reads NULL
+(`:905`), and oxpinyin answers `false` without writing.
+
+Measured on the bdb cell at `3b016f48`, against a pin built with the
+instrumentation patch that the bigram differential requires (it changes no
+returns):
+
+```
+tools/oracle/build-oracle.sh --dbm bdb \
+    --apply-patches tools/bisection/patches/bigram-export-strjoinv \
+    --prefix <patched-prefix> --model-dir <model20>/extracted
+PINYIN_ORACLE_DBM=bdb tools/bisection/run-bigram-export-diff.sh \
+    <patched-prefix>/lib/libpinyin.so <target>/debug/libpinyin_capi.so \
+    <patched-prefix>/lib/libpinyin/data
+```
+
+Every scenario is identical (`empty` 0 rows, `one` 1, `two` 1, `many` 14,
+`repeat` 2, `reopen` 14, `mask` 11; `bigram-export-diff (full): PASS`).
+The runner's driver, run alone on each library,
+
+```
+gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o bigram-export-diff \
+    tools/bisection/bigram-export-diff.c -ldl $(pkg-config --cflags --libs glib-2.0)
+(cd "$(mktemp -d)" && <dir>/bigram-export-diff <so> <patched-prefix>/lib/libpinyin/data one)
+```
+
+prints the row `你好`, `ni'hao`, `138`, `get=false` for both: the `false`
+row carries its phrase and pinyin. The raw capture is not retained.
+
 ## 3. The gate
 
 `tools/abi/check-alloc-pairing.sh`, run in CI's `test` job beside the two
@@ -168,7 +208,8 @@ Three checks, then a control:
    - **The notes are executable.** For every slot whose note is not `n/a` or
      `false-unreachable`, the driver drives a failure path a *conforming*
      consumer can reach — an empty parse, an out-of-range index, an
-     exhausted iterator, an unmapped key, `null_token` — and asserts the
+     exhausted unigram iterator, the bigram iterator's terminal row, an
+     unmapped key, `null_token` — and asserts the
      state the register declares. Which assertion runs is read from the slot
      table, never chosen at the call site, so a note that does not match the
      library fails rather than being echoed back unchallenged. NULL-argument
