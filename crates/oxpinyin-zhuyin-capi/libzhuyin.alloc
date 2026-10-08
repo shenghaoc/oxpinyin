@@ -15,8 +15,8 @@
 # | n/a — each EXECUTABLE, probed by alloc-pairing-zhuyin.cc against a
 # failure path a conforming consumer can reach.
 # Verified: pin-probe:<case> | pin-aborts:row<N> | source:<file>:<lines> |
-# unverified | n/a — how <notes> was established. The gate does not read
-# it; libpinyin.alloc defines each value.
+# unverified | n/a — how <notes> was established. The gate checks its form
+# only; libpinyin.alloc defines each value.
 #
 # The zhuyin facade allocates through its own `ffi.rs` — `owned_cstr` and
 # `owned_cstr_list` are duplicated from the pinyin one by design, because

@@ -174,7 +174,10 @@ because a green gate proves it against oxpinyin only:
 | `unverified` | executed against oxpinyin only, never compared with the pin |
 | `n/a` | the note is `n/a` |
 
-The script reads the first four fields only. Every `pin-probe` and
+The script checks that every line has exactly five fields and a fifth of
+one of these kinds, and a negative control requires that check to reject a
+four-field line and a misspelled kind; it cannot test the evidence a kind
+names. Every `pin-probe` and
 `pin-aborts` value was re-run on bdb at `3b016f48` (2026-10-08 UTC), all
 `MATCH`:
 
@@ -282,6 +285,9 @@ reverted afterwards; each is reproducible from the description alone:
 | mark a probed slot `false-unreachable` | the reachability claim is contradicted | `the driver probed a failure path the register calls unreachable` |
 | delete one probe call | its note is prose again | `FAIL: unprobed false-return contract`, naming the slot |
 | run one exercise during the warm-up only | the measured pass earns no coverage for it | `slots the driver never reached with a live pointer: pinyin_in_chewing_keyboard symbols` |
+| drop the fifth field of one register line | the shape check names the line | `line 102: 4 fields, not 5` |
+| misspell one `<verified>` kind (`unverifed`) | the shape check names the kind | `line 39: <verified> unverifed is not a documented kind` |
+| make the shape check accept every line | its negative control fires | `shape control did not fire: a register with a four-fields line passes`, and the same for `misspelled-kind` |
 
 ## 5. What this does not cover
 

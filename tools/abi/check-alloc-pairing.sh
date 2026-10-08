@@ -23,7 +23,9 @@
 #      `g_strfreev`; a `const T **` is `borrowed`; a pointer return is a
 #      handle or borrowed. Every `handle:<fn>` names a symbol the version
 #      script exports, so no handle is declared with an unreachable
-#      destructor.
+#      destructor. Every line carries exactly five fields, the fifth one of
+#      the `<verified>` kinds `libpinyin.alloc` defines: the gate checks
+#      that shape, never the evidence a kind names.
 #
 #   3. DYNAMIC — the declaration is true. A C++ consumer per ABI
 #      (alloc-pairing-*.cc) drives the real `.so`, releases every slot with
@@ -35,10 +37,12 @@
 #      pointer, because a gate that never exercises the allocation it checks
 #      is green for the wrong reason.
 #
-# And a negative control. Each driver is built a second time with
+# And negative controls. Each driver is built a second time with
 # -DOXPINYIN_ALLOC_PAIRING_LEAK, which drops the frees, and that build is
 # REQUIRED to fail with a LeakSanitizer report. Without it a sanitizer that
-# silently stopped working would leave the gate passing forever.
+# silently stopped working would leave the gate passing forever. Likewise the
+# shape check must reject two corrupted copies of each register: one whose
+# first entry has lost its fifth field, one whose fifth field is misspelled.
 #
 # No new dependency: the CI container's `g++` already carries libasan/liblsan
 # (verified on debian:testing with the test job's apt set), the Rust side is
@@ -134,9 +138,42 @@ header_slots() {
 # `<symbol> <slot> <class> <on-false>` from a register file — the four
 # fields the dynamic half compares against what the driver actually did,
 # rather than just the symbol and slot name. The fifth, <verified>, says how
-# the note was checked against the pin; nothing here can test that.
+# the note was checked against the pin: register_shape below holds its form,
+# and nothing here can test the evidence it names.
 register_slots() {
 	awk '!/^[[:space:]]*#/ && NF >= 4 { print $1, $2, $3, $4 }' "$1"
+}
+
+# The `<verified>` kinds `libpinyin.alloc` defines, one per register line.
+VERIFIED_KINDS='^(pin-probe:[A-Za-z0-9_.-]+|pin-aborts:row[0-9]+[a-d]?|source:[A-Za-z0-9_./-]+:[0-9]+(-[0-9]+)?|unverified|n/a)$'
+
+# Every register line with other than five fields, or whose fifth is not one
+# of the kinds, printed with its line number; fails when there was one.
+register_shape() {
+	awk -v kinds="$VERIFIED_KINDS" '
+		/^[[:space:]]*#/ || NF == 0 { next }
+		NF != 5 { printf "    line %d: %d fields, not 5\n", NR, NF; bad = 1; next }
+		$5 !~ kinds { printf "    line %d: <verified> %s is not a documented kind\n", NR, $5; bad = 1 }
+		END { exit bad }' "$1"
+}
+
+# The shape check's negative control: a copy of the register whose first
+# entry has lost its fifth field, and one whose fifth field is misspelled.
+# Both must be rejected, or the check is not evidence.
+register_shape_control() {
+	local abi=$1 reg=$2 broken
+	awk '!done && !/^[[:space:]]*#/ && NF { $0 = $1 " " $2 " " $3 " " $4; done = 1 } { print }' \
+		"$reg" > "$WORK/$abi.four-fields"
+	awk '!done && !/^[[:space:]]*#/ && NF { $5 = "unverifed"; done = 1 } { print }' \
+		"$reg" > "$WORK/$abi.misspelled-kind"
+	local fired=0
+	for broken in four-fields misspelled-kind; do
+		if register_shape "$WORK/$abi.$broken" > /dev/null; then
+			fail "shape control did not fire: a register with a $broken line passes"
+			fired=1
+		fi
+	done
+	return $fired
 }
 
 # The `global:` names of a version script.
@@ -216,6 +253,19 @@ check_static() {
 
 	((status == before)) &&
 		echo "  OK: every header slot classified, every class and destructor sound"
+
+	# Every line has the five fields and a documented <verified> kind, and the
+	# check that says so must reject the two ways a line goes wrong.
+	local shape shape_ok=1
+	if ! shape=$(register_shape "$reg"); then
+		echo "  register lines with the wrong shape:"
+		printf '%s\n' "$shape"
+		fail "register line is not <symbol> <slot> <class> <notes> <verified>"
+		shape_ok=0
+	fi
+	register_shape_control "$abi" "$reg" || shape_ok=0
+	((shape_ok)) &&
+		echo "  OK: five fields and a documented <verified> kind on every line; shape control fired"
 	return 0
 }
 
