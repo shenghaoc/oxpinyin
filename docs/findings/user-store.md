@@ -917,3 +917,12 @@ harnesses on this surface: never put a render-vs-render assertion across
 two trainers or two renderers that carry registered divergences — diff
 one renderer over one dataset, or diff the raw containers — and never
 verify a per-backend claim on one backend.
+
+### NULL directory sessions (2026-10-08 UTC, #642)
+
+NULL retains an independent in-memory user index and native bigram store.
+It has no directory, unlike the non-NULL empty path (cwd at each operation).
+Import, lookup, mask, remember and frequency changes use session state;
+train and save refuse before mutation or persistence. Pinyin emits the
+pin's failed empty-filename marker diagnostics at init/fini without writing
+files. See [the additive internal APIs](../api/transient-user-store.md).

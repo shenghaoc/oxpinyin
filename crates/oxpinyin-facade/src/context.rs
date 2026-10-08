@@ -175,7 +175,7 @@ impl ContextCore {
     /// as they are, so a directory whose name is not UTF-8 opens too.
     ///
     /// `user_dir` is the init's own argument: `None` is a NULL user dir —
-    /// no user store — while `Some("")` is a user dir, the working
+    /// transient user state — while `Some("")` is a user dir, the working
     /// directory, as upstream's `g_strdup("")` is (#619). The two are
     /// different inputs.
     ///
@@ -292,7 +292,7 @@ impl ContextCore {
         let Some(store) = self.user.as_mut() else {
             return false;
         };
-        if !store.is_modified() {
+        if !store.has_user_directory() || !store.is_modified() {
             return false;
         }
         let Ok(report) = store.save_reporting() else {

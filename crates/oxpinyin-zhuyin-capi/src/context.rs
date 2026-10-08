@@ -6,7 +6,6 @@ use std::ptr;
 use crate::ffi::cstr_to_path;
 use crate::state::{CapiContext, box_context, context_mut};
 use crate::types::ZhuyinContext;
-use oxpinyin_user::UserStore;
 
 /// Create a new zhuyin context.
 ///
@@ -128,7 +127,12 @@ pub extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
     // writes user.conf and resets LC_NUMERIC to "C" (`:695`,
     // `table_info.cpp:378`; register row 39); the two early returns do
     // not reach it.
-    if ctx.core.user.as_ref().is_some_and(UserStore::is_modified) {
+    if ctx
+        .core
+        .user
+        .as_ref()
+        .is_some_and(|user| user.has_user_directory() && user.is_modified())
+    {
         crate::locale::pin_table_info_locale();
     }
     ctx.save_user()

@@ -247,6 +247,11 @@ impl InstanceCore {
         let Some(user) = self.user.as_mut() else {
             return Ok(false);
         };
+        // The pin checks the directory before nbest (pinyin.cpp:2671,
+        // zhuyin.cpp:1697). Transient imports do not enable training.
+        if !user.has_user_directory() {
+            return Ok(false);
+        }
         let result = self.session.train_nbest(index, user);
         if !matches!(
             &result,

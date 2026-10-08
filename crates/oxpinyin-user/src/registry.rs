@@ -81,7 +81,8 @@ pub struct StoreInner<S: WriteStore> {
     /// opening no store transaction. Recomputed at `open` and maintained only
     /// by `UserStore::mark_committed_write`.
     pub(crate) has_user_data: AtomicBool,
-    /// The libpinyin user-dir target when this store persists in the
+    /// The libpinyin session metadata (optional directory, system originals).
+    /// Transient sessions retain originals without a directory; others use the
     /// pin's own file shapes (`open_libpinyin`): `save()` exports the
     /// session values and writes the file set. `None` on plain
     /// `open`/`create_standalone` stores.

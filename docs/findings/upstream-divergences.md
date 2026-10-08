@@ -2460,3 +2460,25 @@ remember/export symbols. Existing contract driver cases remember-tones-pinyin
 and remember-api-absent-zhuyin verify this distinction on BDB.
 Source read from /home/sheng/work/libpinyin at the pin, pinyin.cpp blob
 f27f7cf776724ead8d55e14b4af390e790054a91. This is plain parity.
+
+### NULL user sessions (#642; row 73, closed 2026-10-08 UTC)
+
+At 074a2219, pinyin.cpp:326-444 / zhuyin.cpp:269-358 allocate user
+indexes even with NULL userdir. Imports (pinyin.cpp:514-654,
+zhuyin.cpp:392-545) modify those indexes. Train (2670-2691 / 1696-1715)
+and save (1132-1147 / 547-552) first refuse NULL, without writes.
+Pinyin fini attempts an empty marker filename (1194-1200); Zhuyin
+fini (741-757) does not write. Source: clean /home/sheng/work/libpinyin
+at the pin. Runtime previously passed no UserStore, so imports refused.
+
+The transient store preserves the session without a filesystem target.
+Import 你好你好 at toned count 100000 now succeeds and exposes library-7
+token 117440513 on both facades; Pinyin candidate zero is the user phrase.
+Train/save remain false. Cwd and TMPDIR snapshots remain unchanged after
+init, import, lookup, train, save and fini. Exact failed-empty-filename
+stderr matches, including Pinyin fini's diagnostic. Ordinary and NULL
+fresh-context imports to each library 1–7 are separate contract cases.
+The ordinary imports already matched at main 3b016f48; the historical
+#525 refusal claim for 1–4 is stale. Zhuyin has no phrase-export API.
+Approved additive internal Rust APIs are documented in
+../api/transient-user-store.md; C ABI and dependencies are unchanged.

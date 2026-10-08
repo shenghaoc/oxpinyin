@@ -1328,7 +1328,7 @@ impl Runtime {
         // pinned default stands.
         lm.set_lambda_from_table_conf(&system_dir.join("table.conf"));
 
-        // `None` is no user directory — the pin's NULL `m_user_dir`. An
+        // `None` has transient user state without a directory (#642). An
         // empty path is a user directory like any other: the pin keeps
         // `g_strdup("")` (`pinyin.cpp:332`, `zhuyin.cpp:276`) and
         // `g_build_filename` drops the empty element, so its user files
@@ -1343,7 +1343,16 @@ impl Runtime {
         // writes the pin's files — a same-backend libpinyin picks them
         // up seamlessly.
         let user = match user_dir {
-            None => None,
+            None => Some(
+                UserStore::open_transient(
+                    oxpinyin_user::system_originals(dict.libraries()),
+                    SystemVersions::from_table_conf(
+                        &std::fs::read_to_string(system_dir.join("table.conf")).unwrap_or_default(),
+                    ),
+                    law,
+                )
+                .map_err(|error| OpenError::Dict(DictError::Parse(error.to_string())))?,
+            ),
             Some(dir) => open_user_store(system_dir, dir, &dict, law)?,
         };
 
