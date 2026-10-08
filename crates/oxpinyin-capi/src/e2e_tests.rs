@@ -557,7 +557,7 @@ fn directories_with_non_utf8_names_open() {
 }
 
 #[test]
-fn training_entry_points_refuse_without_a_user_store() {
+fn null_user_directory_refuses_training_but_keeps_mutable_state() {
     // No user store is a NULL user dir. An empty string is a user dir —
     // the working directory, as the pin's is (#619).
     let system = cstr(system_dir().to_str().expect("UTF-8 path"));
@@ -574,12 +574,12 @@ fn training_entry_points_refuse_without_a_user_store() {
 
     let cand = candidate(instance, "nihao", 0);
     assert!(!pinyin_choose_predicted_candidate(instance, cand));
-    assert!(!pinyin_remember_user_input(
+    assert!(pinyin_remember_user_input(
         instance,
         cstr("你好").as_ptr(),
         -1
     ));
-    assert!(!pinyin_mask_out(context, 0, 0));
+    assert!(pinyin_mask_out(context, 0, 0));
 
     // Selection still works: recording the constraint needs no store.
     assert!(pinyin_choose_candidate(instance, 0, cand) > 0);

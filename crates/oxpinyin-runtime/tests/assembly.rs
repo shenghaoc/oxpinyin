@@ -244,13 +244,14 @@ fn regular_file_as_user_dir_degrades_to_no_user_state() {
 }
 
 #[test]
-fn no_user_path_means_no_user_state() {
+fn no_user_path_means_transient_user_state() {
     // capi contract: a NULL user dir disables learning (the pin's NULL
     // `m_user_dir`). The empty path is a different argument — the
     // working directory, as the pin's `""` is — and writes there, so it
     // has an executable of its own: `tests/empty_user_dir.rs`.
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
-    assert!(runtime.user_store().is_none());
+    let store = runtime.user_store().expect("transient store");
+    assert!(!store.has_user_directory());
 }
 
 #[test]

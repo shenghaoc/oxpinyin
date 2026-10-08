@@ -12,7 +12,6 @@ use crate::state::{CapiContext, box_context, context_mut};
 #[cfg(not(feature = "shipped"))]
 use crate::state::context_ref;
 use crate::types::PinyinContext;
-use oxpinyin_user::UserStore;
 
 fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut PinyinContext {
     // The pin's first step is `SystemTableInfo2::load` on table.conf
@@ -198,7 +197,12 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     // writes user.conf and resets LC_NUMERIC to "C" (`:1143`,
     // `table_info.cpp:378`; register row 39); the two early returns do
     // not reach it.
-    if ctx.core.user.as_ref().is_some_and(UserStore::is_modified) {
+    if ctx
+        .core
+        .user
+        .as_ref()
+        .is_some_and(|user| user.has_user_directory() && user.is_modified())
+    {
         crate::locale::pin_table_info_locale();
     }
     ctx.save_user()

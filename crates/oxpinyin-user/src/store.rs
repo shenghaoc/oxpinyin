@@ -1520,6 +1520,16 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(rows)
     }
 
+    /// Whether this session has a user-directory argument, including "".
+    /// A transient NULL-user session has mutable state but no directory.
+    #[must_use]
+    pub fn has_user_directory(&self) -> bool {
+        self.inner
+            .libpinyin
+            .as_ref()
+            .is_some_and(|target| target.dir.is_some())
+    }
+
     /// The `pinyin_save` write side (§4).
     ///
     /// # Errors
@@ -1534,6 +1544,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         // compaction below still runs — it keeps the in-memory session
         // tidy — but the durable write is the file set, not the session.
         if let Some(target) = self.inner.libpinyin.clone() {
+            let Some(dir) = target.dir.as_deref() else {
+                return Ok(false);
+            };
             // Arc clone: the originals hold every system item (~138k
             // ChunkItems) and a dirty save must not copy them — both
             // halves take the Arc by reference.
@@ -1544,7 +1557,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .as_ref()
                 .map(|db| db.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
             crate::persistence::save_with_bigram(
-                &target.dir,
+                dir,
                 &state,
                 &target.originals,
                 &target.versions,
@@ -1582,6 +1595,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn save_reporting(&mut self) -> Result<SaveReport, UserStoreError> {
         let mut report = SaveReport::default();
         if let Some(target) = self.inner.libpinyin.clone() {
+            let Some(dir) = target.dir.as_deref() else {
+                return Ok(report);
+            };
             let state = crate::store_libpinyin::export_state(self, &target.originals)?;
             let bigram_db = self
                 .inner
@@ -1589,7 +1605,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .as_ref()
                 .map(|db| db.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
             report = crate::persistence::save_with_bigram_reporting(
-                &target.dir,
+                dir,
                 &state,
                 &target.originals,
                 &target.versions,

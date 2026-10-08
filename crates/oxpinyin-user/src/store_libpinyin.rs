@@ -45,7 +45,9 @@ use std::sync::Arc;
 
 use oxpinyin_data::chunk_write::ChunkItem;
 use oxpinyin_data::user_files::SystemVersions;
-use oxpinyin_store::{DefaultStore, StoreError, WriteStore, WriteTxn};
+use oxpinyin_store::{
+    DefaultStore, DefaultUserBigramDb, StoreError, UserBigramDb, WriteStore, WriteTxn,
+};
 
 use crate::codec;
 use crate::persistence::{self, PersistenceError, SystemLibrary, UserConfLaw, UserState};
@@ -64,7 +66,7 @@ use crate::store::{
 #[derive(Clone, Debug)]
 pub struct Target {
     /// The user directory holding the profile.
-    pub(crate) dir: PathBuf,
+    pub(crate) dir: Option<PathBuf>,
     /// The system libraries by nibble, as loaded at open.
     pub(crate) originals: BTreeMap<u8, SystemLibrary>,
     /// This build's identity triple.
@@ -98,20 +100,22 @@ impl FiniGuard {
 impl Drop for FiniGuard {
     fn drop(&mut self) {
         if let Some(target) = self.0.take() {
+            let Some(dir) = target.dir.as_deref() else {
+                // mark_version still attempts the empty filename at NULL
+                // (074a2219 pinyin.cpp:1194-1200); reproduce its diagnostic
+                // without issuing filesystem operations.
+                if target.law == UserConfLaw::Pinyin {
+                    persistence::diagnostic(&[b"write  failed.\n"]);
+                }
+                return;
+            };
             // `pinyin_fini` ignores `mark_version`'s result
             // (`pinyin.cpp:1200`): a fini has no caller to answer, only the
             // line `UserTableInfo::save` prints (`table_info.cpp:382`).
-            if persistence::fini(
-                &target.dir,
-                &target.versions,
-                target.law,
-                target.open_counter,
-            )
-            .is_err()
-            {
+            if persistence::fini(dir, &target.versions, target.law, target.open_counter).is_err() {
                 crate::persistence::diagnostic(&[
                     b"write ",
-                    target.dir.join("user.conf").as_os_str().as_encoded_bytes(),
+                    dir.join("user.conf").as_os_str().as_encoded_bytes(),
                     b" failed.\n",
                 ]);
             }
@@ -161,6 +165,31 @@ impl GenericUserStore<DefaultStore> {
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
+        Self::open_session(Some(user_dir), originals, versions, law)
+    }
+
+    /// Open the pin's NULL-user-directory session entirely in memory.
+    /// Imports and lookup work; no profile is read, written or removed.
+    /// The failed empty-filename marker diagnostics follow `law`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] if an in-memory container cannot be created
+    /// or seeded with the system libraries' allocation bases.
+    pub fn open_transient(
+        originals: BTreeMap<u8, SystemLibrary>,
+        versions: SystemVersions,
+        law: UserConfLaw,
+    ) -> Result<Self, UserStoreError> {
+        Self::open_session(None, originals, versions, law)
+    }
+
+    fn open_session(
+        user_dir: Option<&Path>,
+        originals: BTreeMap<u8, SystemLibrary>,
+        versions: SystemVersions,
+        law: UserConfLaw,
+    ) -> Result<Self, UserStoreError> {
         // Create the session's own container before touching the
         // profile, so a failure here cannot follow a `check_format` that
         // already raised the open counter and wiped a non-conforming
@@ -168,12 +197,22 @@ impl GenericUserStore<DefaultStore> {
         // with no other open and no other process.
         let db = DefaultStore::create_in_memory()?;
 
-        let loaded = persistence::load(user_dir, &originals, &versions, law)?;
+        let loaded = if let Some(dir) = user_dir {
+            persistence::load(dir, &originals, &versions, law)?
+        } else {
+            // check_format reads ""; pinyin also tries to write "".
+            // Neither operation can succeed. Do not redirect into cwd/temp.
+            persistence::diagnostic(&[b"open  failed."]);
+            if law == UserConfLaw::Pinyin {
+                persistence::diagnostic(&[b"write  failed.\n"]);
+            }
+            persistence::Loaded::default()
+        };
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
         // failed open reads as a finished session, not a crash.
         let target = Arc::new(Target {
-            dir: user_dir.to_path_buf(),
+            dir: user_dir.map(Path::to_path_buf),
             originals,
             versions,
             law,
@@ -209,9 +248,10 @@ impl GenericUserStore<DefaultStore> {
             write_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_generation: std::sync::atomic::AtomicU64::new(0),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
-            bigram_db: Some(std::sync::Mutex::new(persistence::load_user_bigram_db(
-                &target.dir,
-            )?)),
+            bigram_db: Some(std::sync::Mutex::new(match target.dir.as_deref() {
+                Some(dir) => persistence::load_user_bigram_db(dir)?,
+                None => DefaultUserBigramDb::empty()?,
+            })),
             libpinyin: Some(target),
         });
         Ok(Self::from_parts(inner, None, fini))
