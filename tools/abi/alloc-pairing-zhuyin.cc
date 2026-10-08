@@ -27,7 +27,8 @@
 
 namespace {
 
-// All four of the register's fields; the script compares the whole entry.
+// The register's first four fields; the script compares all four. The
+// fifth, how a note was verified against the pin, is not the driver's.
 struct Slot {
     const char *symbol;
     const char *name;

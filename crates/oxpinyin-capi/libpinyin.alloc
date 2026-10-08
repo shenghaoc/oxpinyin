@@ -14,10 +14,10 @@
 # THEM. A new entry point with an out-pointer fails the gate until it is
 # classified here.
 #
-# Format — four whitespace-separated fields, `#` comments, blank lines
+# Format — five whitespace-separated fields, `#` comments, blank lines
 # ignored:
 #
-#   <symbol>  <slot>  <class>  <notes>
+#   <symbol>  <slot>  <class>  <notes>  <verified>
 #
 #   <slot>   `return`, or the parameter's name as `pinyin.h` spells it.
 #   <class>  one of:
@@ -55,6 +55,19 @@
 #                        claimed. An explicit claim about reachability, not
 #                        a skip: challenge it in review like any other.
 #     n/a                the slot is a return value.
+#   <verified>  How <notes> was established. The gate reads the first four
+#            fields only, so a green run says nothing about this one:
+#     pin-probe:<case>       measured at the pin and on oxpinyin, identical,
+#                            on the reference cell (bdb) by <case>: a
+#                            `tools/bisection/contract-diff.py` case, or a
+#                            runner in `tools/bisection/`.
+#     pin-aborts:row<N>      the path the gate probes aborts the pin; <notes>
+#                            is oxpinyin's answer there, registered as row
+#                            <N> of `docs/findings/compatibility-policy.md`.
+#     source:<file>:<lines>  argued from the pin's `src/<file>` at 074a2219.
+#     unverified             executed against oxpinyin only, never compared
+#                            with the pin.
+#     n/a                    <notes> is n/a.
 #
 # Corrected 2026-09-10 when the notes became executable: six slots were
 # described from a reading of the code rather than from running it, and
@@ -64,51 +77,54 @@
 #
 # Corrected 2026-10-08 (#681): the bigram iterator's two slots said
 # `false-untouched`, but its terminal row answers `false` having written
-# both strings, so they are `false-allocates`.
+# both strings, so they are `false-allocates`. <verified> was added the
+# same day.
 
 # ── Handles: allocated by Box::into_raw, released by their destructor ──
-pinyin_init                              return      handle:pinyin_fini            n/a
-pinyin_alloc_instance                    return      handle:pinyin_free_instance   n/a
-pinyin_begin_add_phrases                 return      handle:pinyin_end_add_phrases n/a
-pinyin_begin_get_phrases                 return      handle:pinyin_end_get_phrases n/a
-pinyin_begin_get_bigram_phrases          return      handle:pinyin_end_get_bigram_phrases n/a
+pinyin_init                              return      handle:pinyin_fini            n/a                n/a
+pinyin_alloc_instance                    return      handle:pinyin_free_instance   n/a                n/a
+pinyin_begin_add_phrases                 return      handle:pinyin_end_add_phrases n/a                n/a
+pinyin_begin_get_phrases                 return      handle:pinyin_end_get_phrases n/a                n/a
+pinyin_begin_get_bigram_phrases          return      handle:pinyin_end_get_bigram_phrases n/a                n/a
 
 # ── Borrowed pointers: never freed by the caller ──────────────────────
 # The context the instance was allocated from — the same pointer
 # `pinyin_init` returned, not a second handle.
-pinyin_get_context                       return      borrowed                      n/a
-pinyin_get_candidate                     candidate   borrowed                      false-nulls
-pinyin_get_candidate_string              utf8_str    borrowed                      false-unreachable
-pinyin_get_pinyin_key                    key         borrowed                      false-nulls
-pinyin_get_pinyin_key_rest               key_rest    borrowed                      false-nulls
+pinyin_get_context                       return      borrowed                      n/a                n/a
+pinyin_get_candidate                     candidate   borrowed                      false-nulls        unverified
+# The candidate string has no `false` at the pin: it stores the pointer and
+# answers `true` (pinyin.cpp:2873-2878).
+pinyin_get_candidate_string              utf8_str    borrowed                      false-unreachable  source:pinyin.cpp:2873-2878
+pinyin_get_pinyin_key                    key         borrowed                      false-nulls        pin-aborts:row63
+pinyin_get_pinyin_key_rest               key_rest    borrowed                      false-nulls        pin-aborts:row63
 
 # ── Caller-owned strings (g_free) ─────────────────────────────────────
-pinyin_get_sentence                      sentence    g_free                        false-untouched
-pinyin_get_full_pinyin_auxiliary_text    aux_text    g_free                        false-allocates
-pinyin_get_double_pinyin_auxiliary_text  aux_text    g_free                        false-allocates
-pinyin_get_chewing_auxiliary_text        aux_text    g_free                        false-allocates
-pinyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable
-pinyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable
-pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-unreachable
-pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-unreachable
+pinyin_get_sentence                      sentence    g_free                        false-untouched    pin-probe:sentence-before-guess
+pinyin_get_full_pinyin_auxiliary_text    aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
+pinyin_get_double_pinyin_auxiliary_text  aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
+pinyin_get_chewing_auxiliary_text        aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
+pinyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable  unverified
+pinyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable  unverified
+pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-unreachable  unverified
+pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-unreachable  unverified
 # The table_index == 0 refusal, the only non-NULL-argument `false` these
 # reach, needs an unset ChewingKey — and `ChewingKey` is an opaque typedef,
 # so a conforming consumer cannot make one. Unreachable, not unclaimed.
-pinyin_get_pinyin_strings                shengmu     g_free                        false-unreachable
-pinyin_get_pinyin_strings                yunmu       g_free                        false-unreachable
-pinyin_token_get_phrase                  utf8_str    g_free                        false-untouched
+pinyin_get_pinyin_strings                shengmu     g_free                        false-unreachable  unverified
+pinyin_get_pinyin_strings                yunmu       g_free                        false-unreachable  unverified
+pinyin_token_get_phrase                  utf8_str    g_free                        false-untouched    pin-probe:token-get-phrase-out
 # The unigram iterator answers `true` on every row it hands out
 # (pinyin.cpp:698-769); its `false` is the call with no next row, where the
 # pin asserts (:709) and oxpinyin answers without writing.
-pinyin_iterator_get_next_phrase          phrase      g_free                        false-untouched
-pinyin_iterator_get_next_phrase          pinyin      g_free                        false-untouched
+pinyin_iterator_get_next_phrase          phrase      g_free                        false-untouched    pin-aborts:row62
+pinyin_iterator_get_next_phrase          pinyin      g_free                        false-untouched    pin-aborts:row62
 # The bigram iterator answers has_next after taking a row
 # (pinyin.cpp:904-910), so the row after which has_next is false comes back
 # `false` having written both strings, and a loop that frees only on `true`
 # leaks it. Called with no row pending, the pin asserts (:902) or reads NULL
 # (:905); oxpinyin answers `false` there without writing.
-pinyin_bigram_iterator_get_next_phrase   phrase      g_free                        false-allocates
-pinyin_bigram_iterator_get_next_phrase   pinyin      g_free                        false-allocates
+pinyin_bigram_iterator_get_next_phrase   phrase      g_free                        false-allocates    pin-probe:run-bigram-export-diff.sh
+pinyin_bigram_iterator_get_next_phrase   pinyin      g_free                        false-allocates    pin-probe:run-bigram-export-diff.sh
 
 # ── Caller-owned string vectors (g_strfreev) ──────────────────────────
-pinyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls
+pinyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls        unverified
