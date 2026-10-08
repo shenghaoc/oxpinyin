@@ -1,13 +1,245 @@
-# Tooling lane: final three-cell gate run
+# Tooling lane: gate evidence and scoped follow-up
 
-Date: 2026-10-07 UTC (captured with `date -u`).
+Date: 2026-10-08 UTC (captured from the executing host).
 
 The stack changes only tooling and documentation. Parity artifacts use the dev
 profile with `CARGO_PROFILE_DEV_OPT_LEVEL=1`, one retained target per cell. The
 eight measurement recipes remain unchanged and outside the gate set. No oracle
 output cache, shipped crate, dependency manifest or CI policy was changed.
 
-## Sweep after restack onto `8e76b17d`
+## Cumulative evidence after the selected sweep reruns
+
+Date: 2026-10-08 UTC (captured from the executing host).
+
+This is **not a new full-suite run**. Only `transformed-options-sweep` was
+executed, sequentially KC, Tkrzw, then BDB, at retained execution snapshot
+`6192bd33bd712f8134281ca1856d1151a8955baa`. The final published findings differ
+from that snapshot only in documentation. All other 138 rows retain their
+original result, elapsed time and pin ref from the once-only full sweep at
+`ccea6eb7b2d700b67d09f5ca942374aa8935e428`, 2026-10-07
+14:15:38–14:53:32 UTC. The three earlier 900-second timeout results remain
+historical evidence below; only their current table rows are superseded.
+
+| Selected cell | Result | Measured seconds | Exit | UTC start | UTC end |
+| --- | --- | ---: | ---: | --- | --- |
+| kc | PASS | 1263.426 | 0 | 2026-10-07T17:04:50Z | 2026-10-07T17:25:54Z |
+| tkrzw | PASS | 1110.761 | 0 | 2026-10-07T17:25:54Z | 2026-10-08T00:16:19Z |
+| bdb | PASS | 1798.929 | 0 | 2026-10-08T00:16:19Z | 2026-10-08T00:49:44Z |
+
+| Cell | Cumulative PASS | FAIL | SKIPPED |
+| --- | ---: | ---: | ---: |
+| bdb | 47 | 0 | 0 |
+| kc | 47 | 0 | 0 |
+| tkrzw | 47 | 0 | 0 |
+
+All three selected runs exited zero and reported ordinary/complete mismatch
+counts 0/0 for Hanyu, Double-MS, Chewing-standard, Luoma and secondary. No
+FAIL remains in the cumulative table; no outcome was changed or waived.
+
+Commands, once for each CELL in the order `kc tkrzw bdb`, from the isolated
+runner worktree in retained `oxpinyin-timing-20261007`:
+
+```bash
+export LC_ALL=C CARGO_PROFILE_DEV_OPT_LEVEL=1
+unset CARGO_TARGET_DIR PINYIN_ORACLE_PREFIX OXPINYIN_SYSTEM_DIR
+bash tools/bisection/run-all.sh --runners transformed-options-sweep \
+  --cells CELL --jobs 1 --no-build --oracle-root /oracle \
+  --target-root /lane/work/cells --json RESULTS_JSON
+```
+
+There is no command-line deadline override: the registry supplies 3600 seconds.
+The retained per-cell dev-opt1 artifacts were reused because shipped crates,
+Cargo manifests/lock and toolchain are unchanged from their verified build.
+BDB was explicitly required: the timing run used an external instrumented
+copy and separate timing target; the registry uses the uninstrumented
+repository driver and ordinary cell target. Neither path was substituted for
+the other. The driver cases/expectations remain identical to main `8e76b17`.
+
+Tkrzw's original process survived host suspend from 2026-10-07 17:26:30 to
+23:59:32 UTC. Its measured duration/timeout use the runner's monotonic clock;
+the calendar interval therefore is not comparable to uninterrupted elapsed.
+BDB also survived suspend on 2026-10-08 from 00:43:14 to 00:47:48 UTC.
+Neither process was restarted. Monitoring was interrupted, but per-cell
+results and logs completed independently; the outer orchestration log became
+stale, so terminal status is taken from each cell's result/exit/end files.
+Host-load observations have a disconnect gap and resumed afterward. These
+selected-runner durations are gate evidence, not controlled benchmarks.
+
+The [updated cumulative table](https://github.com/shenghaoc/oxpinyin/pull/675#issuecomment-6031878566)
+labels every row's provenance. The timing archive remains withheld for the
+home-directory paths described below. No other runner deadline, gate behavior,
+case, expectation, shipped code, host setting or CI policy changed.
+
+## Transformed-options timing and scoped deadline follow-up
+
+Date: 2026-10-07 UTC (captured from the executing host).
+
+The maintainer accepted added successful decoding work, with no demonstrated
+scheme-specific penalty. #674 changes only `transformed-options-sweep` from
+900 to 3600 seconds and records the approximately 1,766-second isolated BDB
+measurement at `8e76b17`, dev opt-level 1. Every other registry deadline is
+unchanged. The three historical 900-second timeouts below remain evidence;
+this follow-up replaces only those runner rows, not the whole-suite provenance.
+
+### Isolated BDB measurements
+
+Both revisions used the same pinned BDB oracle/data, 470 option words and 11
+inputs, plus the driver's targeted checks. Each full sweep had one worker and
+no aggregate deadline; the original internal worker timeout was unchanged.
+
+| Revision | Elapsed seconds | Exit | Ordinary/complete mismatches |
+| --- | ---: | ---: | --- |
+| `044bfb318ee750127bbfdb5edff8f355039b4032` | 510.697807148 | 0 | Luoma 437/439; secondary 437/439; other schemes 0/0 |
+| `8e76b17de37d632d99589965aface6c8ac1ac319` | 1765.696517355 | 0 | All five schemes 0/0 |
+
+The newer full run is 3.457419 times the older duration. Its non-overlapping
+case-section times include parse/decode, candidate enumeration and instance
+cleanup, including targeted checks:
+
+| Scheme | Pin seconds | Subject seconds | Combined seconds |
+| --- | ---: | ---: | ---: |
+| Hanyu | 1.406682223 | 162.455086304 | 163.861768527 |
+| Double-MS | 0.559331334 | 33.257426350 | 33.816757684 |
+| Chewing-standard | 0.413442844 | 31.610433647 | 32.023876491 |
+| Luoma | 13.975991379 | 1277.419018858 | 1291.395010237 |
+| Secondary | 1.715526581 | 162.682269227 | 164.397795808 |
+
+Shared observe setup/teardown adds 3.857895851 seconds; time outside observe
+adds 76.343412757 seconds. These categories sum to full elapsed time without
+counting overlapping work twice. Luoma plus secondary account for 82.4486%.
+Subject nonempty cases rose from 623 to 2808 of 2820 for Luoma, and from 31
+to 468 of 470 for secondary. Candidate enumeration counts rose from 340929
+to 2729671 and from 23728 to 380124, respectively. Their combined case time
+rose from 134.008791256 to 1455.792806045 seconds, while the other scheme
+totals decreased. This supports additional now-successful decoding work.
+
+Build commands, run sequentially in each detached revision worktree:
+
+```bash
+export LC_ALL=C CARGO_PROFILE_DEV_OPT_LEVEL=1
+CARGO_TARGET_DIR=/lane/timing-evidence-20261007/targets/before-bdb \
+  cargo build --locked -p oxpinyin-capi --no-default-features --features bdb
+# In the newer worktree, use targets/after-bdb instead.
+```
+
+External observational driver copies inserted per-case monotonic timers and
+recorded setup/teardown separately. Removing only inserted AST nodes restored
+the original AST; the original observe function was identical across revisions.
+No tracked case, comparison or expected result was changed. The retained
+`full_sweeps.py` ran the older command followed by the newer command; after an
+external container stop, `full_after_repeat.py` repeated only the interrupted
+newer sweep in the dedicated container:
+
+```bash
+python3 /lane/timing-evidence-20261007/instrumented/before/transformed-options-sweep.py \
+  --oracle /oracle/bdb/lib/libpinyin.so \
+  --subject /lane/timing-evidence-20261007/targets/before-bdb/debug/libpinyin_capi.so \
+  --data /oracle/bdb/lib/libpinyin/data --expect fixed
+python3 /lane/timing-evidence-20261007/instrumented/after/transformed-options-sweep.py \
+  --oracle /oracle/bdb/lib/libpinyin.so \
+  --subject /lane/timing-evidence-20261007/targets/after-bdb/debug/libpinyin_capi.so \
+  --data /oracle/bdb/lib/libpinyin/data --expect fixed --jobs 1
+```
+
+### Matched-input sample and limits
+
+The fixed 20-word sample was `0x8, 0xc, 0x18, 0x28, 0x108, 0x18a, 0x408,
+0x808, 0x2008, 0x4008, 0x10008, 0x40008, 0x80008, 0x400008, 0x800008,
+0x2000008, 0x4000008, 0x10000008, 0x20000008, 0x80000008`: `0x28` plus
+19 equally spaced ranks among committed words with INCOMPLETE (`0x8`) and
+without FORCE_TONE (`0x40`). It samples active comparable decoding, not the
+frequency distribution of all 470 words. Fresh workers/contexts ran
+sequentially, with rotated family order and alternating pin/subject order:
+
+```bash
+podman exec oxpinyin-timing-20261007 \
+  python3 /lane/timing-evidence-20261007/sample_timing.py
+# Each worker uses the retained instrumented newer driver:
+python3 "$DRIVER" --worker "$LIBRARY" /oracle/bdb/lib/libpinyin/data \
+  "$WORD" "$CASES_JSON"
+```
+
+Luoma inputs `lishihbakua,chih,rih,sih,zih,shih` match Hanyu
+`lishbakua,ch,r,s,z,sh`; secondary `tsz` matches Hanyu `c`, from the pinned
+parser indexes. All 160 workers exited zero. Observations matched in 120/120
+Luoma/control and 20/20 secondary/control pairs on each side, excluding only
+spelling-dependent consumed/parsed byte lengths. Means sum six case sections
+per Luoma word and one per secondary word:
+
+| Family | Pin mean seconds | Subject mean seconds | Subject/pin |
+| --- | ---: | ---: | ---: |
+| Luoma, raw 20 words | 0.027995609 | 5.817082894 | 207.785549 |
+| Matched Hanyu for Luoma | 0.026575842 | 2.386331631 | 89.793267 |
+| Secondary, raw 20 words | 0.004019771 | 0.534221051 | 132.898374 |
+| Matched Hanyu for secondary | 0.003749125 | 0.524279208 | 139.840418 |
+
+The host suspended at 16:27:37 UTC and resumed at 16:47:08 UTC, after the
+full newer sweep finished at 16:26:54 UTC. This overlaps the `0x408` Luoma
+subject worker: recorded wall 71.641445629 seconds, case total 71.574644062,
+and `lishihbakua` alone 69.046344624. Raw results remain unchanged. Monotonic
+elapsed is not CPU time and does not equal calendar elapsed across suspend;
+no suspend-duration subtraction was applied.
+
+A labeled sensitivity calculation excludes the entire `0x408` word from all
+families and both sides, not just the outlier. Remaining 19-word means:
+
+| Family | Pin case seconds | Subject case seconds | Subject/pin |
+| --- | ---: | ---: | ---: |
+| Luoma | 0.027545095 | 2.356158622 | 85.538230 |
+| Matched Hanyu for Luoma | 0.026387237 | 2.374867125 | 90.000597 |
+| Secondary | 0.003592542 | 0.477133684 | 132.812265 |
+| Matched Hanyu for secondary | 0.003333283 | 0.471599005 | 141.481851 |
+
+Subject transformed/control ratios are 0.992122 (Luoma) and 1.011736
+(secondary); pin ratios are 1.043879 and 1.077779. Raw 20-word subject ratios
+are 2.437667 and 1.018963; the former is contaminated. The dev-opt1 subject
+has a large general pin-relative cost also present in Hanyu controls; this
+sample does not demonstrate an additional transformed-scheme penalty, nor
+prove its absence for every option or for release builds.
+
+TeX Live installation and ordinary desktop load were present, explicitly
+accepted by the maintainer. Retained repeat/sample vmstat intervals had
+80/87/94% minimum/median/maximum CPU idle, with swap and I/O traffic. Full
+elapsed includes observational overhead: measured bookkeeping 0.046632883
+seconds and metric serialization/first writes 0.194739520 seconds; timer,
+imports and second-write overhead were not fully calibrated. There was no
+concurrent benchmark from this task; this is not a quiet-host performance
+claim. The prior aggregate used four runner slots but one worker per sweep:
+BDB/KC overlapped about 67.409 seconds and KC/Tkrzw 586.086 seconds, with no
+three-way overlap, based on retained launch-log times and result durations.
+
+### Container stop and evidence retention
+
+The interrupted first newer attempt is retained separately (461 completed
+pin/subject pairs plus one pin record). Podman events recorded exit 137,
+`StoppedByUser=true`, `OOMKilled=false`. Journal command attribution points
+to `podman --log-level error system migrate`, UID 1000 from Konsole, during
+the same sequence that stopped both containers. `loginctl show-user sheng -p
+Linger` returned `Linger=no`; no session-end/user-manager shutdown was found.
+The checks were read-only. The shared container stayed stopped. The dedicated
+`oxpinyin-timing-20261007` uses the same image ID and mounts; the retained
+installed runtime was copied from the stopped source without rebuilding the
+subjects. No host settings changed.
+
+All 6907 evidence archive members, including regular-file contents, were
+inspected for home-directory paths. Fifteen members contain such paths, so
+**the archive is withheld from #675**, neither uploaded nor silently sanitized.
+Raw evidence, scripts, partial attempt, targets and containers remain retained
+locally. This document records commands and findings, not captures.
+Historical host-specific paths below are explicitly represented by local
+`WORK_ROOT` and `ORACLE_ROOT` placeholders rather than private home-directory
+paths. Set them to the retained work and oracle roots when reproducing those
+historical commands; exact original command captures remain local. The archive
+was not sanitized or uploaded.
+
+Rule 7: #674 is registry tooling only; JSON/syntax/diff checks and the explicitly
+requested selected-runner executions cover it. No Rust crate changed, so no
+crate clippy/test or full-suite re-gate applies. #675 is findings/docs only:
+fmt/diff checks, no extra build or runtime rerun. Only #675 is restacked above
+#674; lower members retain their heads and prior evidence. The explicit request
+authorizes KC, Tkrzw and BDB despite the empty backend-change path checks.
+
+## Historical full sweep after restack onto `8e76b17d`
 
 Date: 2026-10-07 UTC (captured with `date -u`). The eight-member stack
 was restacked, in order, onto origin/main `8e76b17d`. The existing
@@ -20,8 +252,9 @@ is attached to #675 in place of the previous 132 PASS / 6 FAIL table.
 The single invocation started `2026-10-07T14:15:38Z`, finished
 `2026-10-07T14:53:32Z`, and tested final runner tip
 `ccea6eb7b2d700b67d09f5ca942374aa8935e428`. Aggregate exit: **1**.
-This findings-count update is a subsequent **docs-only commit** on #675;
-no runtime/runner changes or second sweep follow the recorded test.
+That findings-count update was a subsequent **docs-only commit** on #675.
+The later selected-runner follow-up above is separate from this historical
+full sweep; its other 138 runner rows were not rerun.
 
 | Cell | PASS | SKIPPED | FAIL |
 | --- | ---: | ---: | ---: |
@@ -60,7 +293,7 @@ An external Python retention hook prevents only the aggregate scratch directory'
 normal cleanup; commands, comparisons, timeouts and result handling are unchanged.
 All three build logs, all 141 runner logs, the result JSON, table, timestamps,
 exact tested SHA, command script and previous table are retained under host
-`/home/sheng/work/lane-tools/restack-evidence-20261007`; no captures enter Git.
+`$WORK_ROOT/lane-tools/restack-evidence-20261007`; no captures enter Git.
 
 Rule 7: #667, #668, #670, #671, #672 and #673 rebased without conflicts or
 upstream/member file overlap, so require no local re-gate. #674 changes the
@@ -90,8 +323,8 @@ match after the sweep.
 The one final invocation runs in the retained `oxpinyin-tools-phase1` container,
 from `/lane/phase2`, with Rust 1.97.1 and shipped-code base
 `e985b581592c155d63c6dc7e146f206de096c7b2`. Host
-`/home/sheng/work/lane-tools` is mounted at `/lane`, and host
-`/home/sheng/work/oracle` is mounted read-only at `/oracle`. Subject data copies
+`$WORK_ROOT/lane-tools` is mounted at `/lane`, and host
+`$ORACLE_ROOT` is mounted read-only at `/oracle`. Subject data copies
 use each cell's backend and include pinned `interpolation2.text`. Packaging
 metadata inputs are staged independently of the reference installations.
 
@@ -106,13 +339,13 @@ bash tools/bisection/run-all.sh --cells bdb,kc,tkrzw --jobs 4 \
   --ibus-build tkrzw=/oracle/work-tkrzw \
   --cell-env bdb:OXPINYIN_METADATA_PIN_ROOT=/lane/work/pc-pin-root \
   --cell-env bdb:OXPINYIN_METADATA_SUBJECT_ROOT=/lane/work/pr6-metadata-dev \
-  --cell-env bdb:OXPINYIN_METADATA_PREFIX=/home/sheng/work/oracle/bdb \
+  --cell-env bdb:OXPINYIN_METADATA_PREFIX=$ORACLE_ROOT/bdb \
   --cell-env kc:OXPINYIN_METADATA_PIN_ROOT=/lane/work/pc-pin-kc \
   --cell-env kc:OXPINYIN_METADATA_SUBJECT_ROOT=/lane/work/pc-subject-kc \
-  --cell-env kc:OXPINYIN_METADATA_PREFIX=/home/sheng/work/oracle/kc \
+  --cell-env kc:OXPINYIN_METADATA_PREFIX=$ORACLE_ROOT/kc \
   --cell-env tkrzw:OXPINYIN_METADATA_PIN_ROOT=/lane/work/pc-pin-tkrzw \
   --cell-env tkrzw:OXPINYIN_METADATA_SUBJECT_ROOT=/lane/work/pc-subject-tkrzw \
-  --cell-env tkrzw:OXPINYIN_METADATA_PREFIX=/home/sheng/work/oracle/tkrzw \
+  --cell-env tkrzw:OXPINYIN_METADATA_PREFIX=$ORACLE_ROOT/tkrzw \
   --json /lane/work/patched-evidence/final-results.json
 ```
 
@@ -140,7 +373,7 @@ variables. Both used Rust 1.97.1 unoptimized dev; 22 crate files changed between
 those revisions but neither residue driver nor runner did. These differences
 are recorded context, not competing explanations for the row-1 over-read.
 
-Three separate patched prefixes were built under `/home/sheng/work/oracle`:
+Three separate patched prefixes were built under `$ORACLE_ROOT`:
 `bdb-bigram-export-strjoinv`, `kc-bigram-export-strjoinv`, and
 `tkrzw-bigram-export-strjoinv`. Original `bdb`, `kc` and `tkrzw` prefixes were
 mounted read-only throughout; before/after SHA256 inventories match for all
@@ -169,7 +402,7 @@ unchanged. [Build commands, dates and repeated bigram captures](https://github.c
 
 The pin source was read at exact commit
 `074a2219c90feaf962d0d24f034514033ece5f99` from
-`/home/sheng/work/oracle/work-bdb/src/libpinyin-074a2219c90feaf962d0d24f034514033ece5f99`;
+`$ORACLE_ROOT/work-bdb/src/libpinyin-074a2219c90feaf962d0d24f034514033ece5f99`;
 the new builds apply only the named instrumentation patch to that pin. Other
 runners keep their original oracle because the iterator patch can change
 UB-derived crash/garbage observations wherever that iterator is called.
