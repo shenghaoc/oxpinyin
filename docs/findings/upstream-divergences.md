@@ -2501,3 +2501,108 @@ including tokens, unigram counts, exported readings where supported,
 dirty state and profile bytes before/after refusal. Zhuyin has no export
 API. No interface, ABI or dependency change. This row covers the import
 call measured here, not every independent caller of reduce_tokens.
+
+### `pinyin_bigram_iterator_get_next_phrase` after a walk that ends on a real predecessor (policy row 74)
+
+- **Upstream source cite:** `src/pinyin.cpp:896-911` (`get_next`: the
+  assert at `:902`, then `g_strdup(iter->m_phrase)` at `:904` and
+  `g_strdup((gchar *) g_ptr_array_index(iter->m_pinyins,
+  iter->m_pinyin_index))` at `:905`, then `return
+  pinyin_bigram_iterator_has_next_phrase(iter)` at `:910`); `:789-894`
+  (`has_next` frees `m_pinyins` and replaces it with an empty array at
+  `:798-801` before it looks for the next row, and leaves `m_index_token` at
+  the predecessor it loaded last, `:885-886`); `:779` and
+  `src/storage/ngram_bdb.cpp:178-200` (the predecessors come in the user
+  bigram's hash order, `DB_HASH`).
+- **Mechanism:** a walk's `false` row leaves `m_pinyins` empty. If the
+  predecessor loaded last is `null_token` or `sentence_start`, a further
+  `get_next` asserts (policy row 62). If it is a real phrase token the assert
+  passes and `:905` indexes the empty array: on GLib 2.90 `g_ptr_array_new`
+  allocates no storage, so the read goes through a NULL pointer and the pin
+  dies of SIGSEGV. Undefined behaviour.
+- **What oxpinyin does instead:** answers `false` with `phrase`, `pinyin`
+  and `count` untouched and logs nothing
+  (`crates/oxpinyin-capi/src/iterators.rs:443-444`; the walk names the state
+  `BigramStep::Undefined`, `crates/oxpinyin-facade/src/export_rows.rs:369-371`).
+- **Externally observable:** yes: the pin's process dies, and oxpinyin
+  answers `false`. Class (b). Not a `contract-diff.py` case, because which
+  predecessor a walk loads last depends on the backend's hash order.
+- **Measured** on bdb, linux/amd64 under Rosetta (native amd64 not run),
+  2026-10-08 UTC, from the repository root at `3b016f48`, with `TMPDIR` on the
+  container's own filesystem:
+
+  ```
+  gcc -shared -fPIC -o segv-report.so segv-report.c
+  LD_PRELOAD=$PWD/segv-report.so python3 bigram-905.py \
+      <prefix>/lib/libpinyin.so <prefix>/lib/libpinyin/data
+  addr2line -f -i -C -e <prefix>/lib/libpinyin.so.15.0.0 0x97748
+  python3 bigram-905.py <target>/debug/libpinyin_capi.so <prefix>/lib/libpinyin/data
+  ```
+
+  The pin prints `has_next True` and `get_next False 你好`, then
+  `SIGSEGV addr=(nil) pc=<prefix>/lib/libpinyin.so+0x97748` and exits 139;
+  `addr2line` names `pinyin_bigram_iterator_get_next_phrase` at
+  `pinyin.cpp:905`. The pin built with the `bigram-export-strjoinv` patch,
+  whose walk cannot over-read (row 1), prints the same two lines and faults
+  at `+0x97768`, its `pinyin.cpp:907`: the same statement, two patch lines
+  down. oxpinyin prints the same two lines, then
+  `get_next again False [True, True, True] []`: `false`, the three
+  out-params untouched, no log record. The raw capture is not retained.
+
+  `bigram-905.py`:
+
+  ```python
+  # Run from the repository root: python3 bigram-905.py <libpinyin.so> <data-dir>
+  import ctypes as C, runpy, sys, tempfile
+  h = runpy.run_path('tools/bisection/contract-diff.py')
+  P, B, I, S, Z = h['P'], h['B'], h['I'], h['S'], h['Z']
+  k = h['Kit']('pinyin', sys.argv[1], sys.argv[2], tempfile.mkdtemp())
+  for text, first, second in ((b'nihao', '你', '好'), (b'shijie', '世', '界')):
+      inst = k.alloc()
+      k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+      k.fn('guess_sentence', B, P)(inst)
+      h['choose_text'](k, inst, h['choose_text'](k, inst, 0, first), second)
+      k.fn('guess_sentence', B, P)(inst)
+      k.fn('train', B, P, C.c_ubyte)(inst, 0)
+  it = k.fn('begin_get_bigram_phrases', P, P)(k.ctx)
+  get_next = k.fn('bigram_iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))
+  out = [P(h['UNTOUCHED']), P(h['UNTOUCHED']), I(h['UNTOUCHED'])]
+  print('has_next', k.fn('bigram_iterator_has_next_phrase', B, P)(it), flush=True)
+  print('get_next', get_next(it, *map(C.byref, out)), k.text(out[0].value), flush=True)
+  out = [P(h['UNTOUCHED']), P(h['UNTOUCHED']), I(h['UNTOUCHED'])]
+  print('get_next again', get_next(it, *map(C.byref, out)),
+        [o.value == h['UNTOUCHED'] for o in out], k.logs, flush=True)
+  ```
+
+  `segv-report.c` (gdb cannot ptrace under Rosetta):
+
+  ```c
+  /* LD_PRELOAD: on SIGSEGV print the fault address and the faulting PC as a
+   * module offset for addr2line (gdb cannot ptrace under Rosetta). */
+  #define _GNU_SOURCE
+  #include <dlfcn.h>
+  #include <signal.h>
+  #include <stdio.h>
+  #include <string.h>
+  #include <ucontext.h>
+
+  static void report(int sig, siginfo_t *si, void *ctx) {
+      void *pc = (void *)((ucontext_t *)ctx)->uc_mcontext.gregs[REG_RIP];
+      Dl_info d;
+      memset(&d, 0, sizeof d);
+      dladdr(pc, &d);
+      fprintf(stderr, "SIGSEGV addr=%p pc=%s+0x%lx\n", si->si_addr,
+              d.dli_fname ? d.dli_fname : "?",
+              (unsigned long)((char *)pc - (char *)d.dli_fbase));
+      signal(sig, SIG_DFL);
+      raise(sig);
+  }
+
+  __attribute__((constructor)) static void install(void) {
+      struct sigaction sa;
+      memset(&sa, 0, sizeof sa);
+      sa.sa_sigaction = report;
+      sa.sa_flags = SA_SIGINFO;
+      sigaction(SIGSEGV, &sa, NULL);
+  }
+  ```
