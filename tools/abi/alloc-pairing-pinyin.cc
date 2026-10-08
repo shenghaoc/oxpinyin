@@ -43,11 +43,12 @@
 
 namespace {
 
-// One entry per line of crates/oxpinyin-capi/libpinyin.alloc, carrying all
-// four of the register's fields. The script compares the whole entry, so a
+// One entry per line of crates/oxpinyin-capi/libpinyin.alloc, carrying the
+// register's first four fields. The script compares all four, so a
 // register change the driver does not follow — a class flipped from
 // `handle:pinyin_fini` to `borrowed`, a destructor renamed, a false-note
-// edited — fails the gate rather than passing unnoticed.
+// edited — fails the gate rather than passing unnoticed. The fifth field,
+// how a note was verified against the pin, is not the driver's to check.
 struct Slot {
     const char *symbol;
     const char *name;

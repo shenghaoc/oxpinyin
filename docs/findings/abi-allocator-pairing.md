@@ -163,6 +163,32 @@ export gates. It stands on a checked-in register per ABI —
 carrying one line per pointer-shaped slot: its class (`handle:<fn>`, `g_free`,
 `g_strfreev`, `borrowed`) and what the slot holds on a `false` return.
 
+A fifth field, added 2026-10-08 (#681), says how that note was established,
+because a green gate proves it against oxpinyin only:
+
+| `<verified>` | Meaning |
+|---|---|
+| `pin-probe:<case>` | measured identical at the pin and on oxpinyin, on the reference cell (bdb), by a `tools/bisection/contract-diff.py` case or a `tools/bisection/` runner |
+| `pin-aborts:row<N>` | the path the gate probes aborts the pin; the note is oxpinyin's answer there, registered as row N of `docs/findings/compatibility-policy.md` |
+| `source:<file>:<lines>` | argued from the pin's `src/<file>` at 074a2219 |
+| `unverified` | executed against oxpinyin only, never compared with the pin |
+| `n/a` | the note is `n/a` |
+
+The script reads the first four fields only. Every `pin-probe` and
+`pin-aborts` value was re-run on bdb at `3b016f48` (2026-10-08 UTC), all
+`MATCH`:
+
+```
+tools/bisection/run-contract-diff.sh bdb <oracle-prefix> <pinyin-so> <zhuyin-so> -- \
+    --cases sentence-before-guess,aux-text-no-parse,token-get-phrase-out,\
+zhuyin-sentence-before-guess,zhuyin-token-get-phrase-out,\
+abort-iterator-get-next-phrase,abort-get-pinyin-key-empty-matrix,\
+abort-get-pinyin-key-rest-empty-matrix,abort-zhuyin-get-zhuyin-key-empty-matrix,\
+abort-zhuyin-get-zhuyin-key-rest-empty-matrix
+```
+
+plus `run-bigram-export-diff.sh` for the bigram iterator's two slots, §2(d).
+
 Three checks, then a control:
 
 1. **Coverage of the frozen header.** Every pointer return and every `T **`
@@ -200,8 +226,8 @@ Three checks, then a control:
      so carrying its bit forward would report coverage the measured pass
      never earned.
    - **No driver/register drift.** Each driver echoes the register's own
-     class and note back with every slot, and the script compares the whole
-     four-field entry rather than the symbol and slot name alone. A class
+     class and note back with every slot, and the script compares the first
+     four fields rather than the symbol and slot name alone. A class
      flipped from `handle:pinyin_fini` to `borrowed`, a renamed destructor,
      or an edited note fails here instead of passing because the key still
      lines up.

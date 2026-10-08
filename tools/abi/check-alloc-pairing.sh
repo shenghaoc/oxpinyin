@@ -131,9 +131,10 @@ header_slots() {
 	done
 }
 
-# `<symbol> <slot> <class> <on-false>` from a register file — the whole
-# entry, so the dynamic half can compare all four fields against what the
-# driver actually did rather than just the symbol and slot name.
+# `<symbol> <slot> <class> <on-false>` from a register file — the four
+# fields the dynamic half compares against what the driver actually did,
+# rather than just the symbol and slot name. The fifth, <verified>, says how
+# the note was checked against the pin; nothing here can test that.
 register_slots() {
 	awk '!/^[[:space:]]*#/ && NF >= 4 { print $1, $2, $3, $4 }' "$1"
 }
