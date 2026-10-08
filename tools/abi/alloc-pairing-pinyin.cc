@@ -81,8 +81,8 @@ const Slot kSlots[] = {
     {"pinyin_token_get_phrase",                 "utf8_str",  "g_free",                              "false-untouched"},
     {"pinyin_iterator_get_next_phrase",         "phrase",    "g_free",                              "false-untouched"},
     {"pinyin_iterator_get_next_phrase",         "pinyin",    "g_free",                              "false-untouched"},
-    {"pinyin_bigram_iterator_get_next_phrase",  "phrase",    "g_free",                              "false-untouched"},
-    {"pinyin_bigram_iterator_get_next_phrase",  "pinyin",    "g_free",                              "false-untouched"},
+    {"pinyin_bigram_iterator_get_next_phrase",  "phrase",    "g_free",                              "false-allocates"},
+    {"pinyin_bigram_iterator_get_next_phrase",  "pinyin",    "g_free",                              "false-allocates"},
     {"pinyin_in_chewing_keyboard",              "symbols",   "g_strfreev",                          "false-nulls"},
 };
 // clang-format on
@@ -437,25 +437,30 @@ void exercise_iterators(pinyin_context_t *context) {
     mark("pinyin_begin_get_bigram_phrases", "return", bigram_iter);
     if (bigram_iter != nullptr) {
         while (pinyin_bigram_iterator_has_next_phrase(bigram_iter)) {
-            gchar *phrase = nullptr;
-            gchar *pinyin = nullptr;
+            gchar *phrase = kSentinel;
+            gchar *pinyin = kSentinel;
             gint count = 0;
             const bool more = pinyin_bigram_iterator_get_next_phrase(
                 bigram_iter, &phrase, &pinyin, &count);
-            // The terminal row owns both outputs even though get_next is false.
-            release_g_free("pinyin_bigram_iterator_get_next_phrase", "phrase", phrase);
-            release_g_free("pinyin_bigram_iterator_get_next_phrase", "pinyin", pinyin);
+            if (!more) {
+                // The terminal row is the reachable failure path: get_next
+                // answers has_next after taking the row, `false` here, having
+                // written both strings. expect_declared hands each buffer
+                // back when the register says `false-allocates`.
+                phrase = static_cast<gchar *>(expect_declared(
+                    "pinyin_bigram_iterator_get_next_phrase", "phrase", more, phrase));
+                pinyin = static_cast<gchar *>(expect_declared(
+                    "pinyin_bigram_iterator_get_next_phrase", "pinyin", more, pinyin));
+            }
+            // An out-param still holding the sentinel was never handed over.
+            release_g_free("pinyin_bigram_iterator_get_next_phrase", "phrase",
+                           phrase == kSentinel ? nullptr : phrase);
+            release_g_free("pinyin_bigram_iterator_get_next_phrase", "pinyin",
+                           pinyin == kSentinel ? nullptr : pinyin);
             if (!more) {
                 break;
             }
         }
-        gchar *phrase = kSentinel;
-        gchar *pinyin = kSentinel;
-        gint count = 0;
-        const bool more =
-            pinyin_bigram_iterator_get_next_phrase(bigram_iter, &phrase, &pinyin, &count);
-        expect_declared("pinyin_bigram_iterator_get_next_phrase", "phrase", more, phrase);
-        expect_declared("pinyin_bigram_iterator_get_next_phrase", "pinyin", more, pinyin);
         pinyin_end_get_bigram_phrases(bigram_iter);
     }
 }

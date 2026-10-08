@@ -46,7 +46,7 @@
 #     false-allocates    the call can return `false` HAVING ALLOCATED, so a
 #                        consumer that frees only on `true` leaks. Upstream
 #                        parity, not an oxpinyin choice (`pinyin.cpp:3382-
-#                        3386, 3442-3445`).
+#                        3386, 3442-3445, 904-910`).
 #     false-nulls        the out-param is NULL on the reachable `false`.
 #     false-untouched    the out-param is left as the caller set it, so the
 #                        caller must initialize it.
@@ -61,6 +61,10 @@
 # three of those were wrong — pinyin_get_candidate, pinyin_get_pinyin_key
 # and pinyin_get_pinyin_key_rest all NULL their out-param on the reachable
 # refusal, where this file said they left it untouched.
+#
+# Corrected 2026-10-08 (#681): the bigram iterator's two slots said
+# `false-untouched`, but its terminal row answers `false` having written
+# both strings, so they are `false-allocates`.
 
 # ── Handles: allocated by Box::into_raw, released by their destructor ──
 pinyin_init                              return      handle:pinyin_fini            n/a
@@ -93,12 +97,18 @@ pinyin_get_secondary_zhuyin_string       utf8_str    g_free                     
 pinyin_get_pinyin_strings                shengmu     g_free                        false-unreachable
 pinyin_get_pinyin_strings                yunmu       g_free                        false-unreachable
 pinyin_token_get_phrase                  utf8_str    g_free                        false-untouched
-# Both iterators answer `false` at exhaustion without writing, so the
-# loop must not free what it did not receive.
+# The unigram iterator answers `true` on every row it hands out
+# (pinyin.cpp:698-769); its `false` is the call with no next row, where the
+# pin asserts (:709) and oxpinyin answers without writing.
 pinyin_iterator_get_next_phrase          phrase      g_free                        false-untouched
 pinyin_iterator_get_next_phrase          pinyin      g_free                        false-untouched
-pinyin_bigram_iterator_get_next_phrase   phrase      g_free                        false-untouched
-pinyin_bigram_iterator_get_next_phrase   pinyin      g_free                        false-untouched
+# The bigram iterator answers has_next after taking a row
+# (pinyin.cpp:904-910), so the row after which has_next is false comes back
+# `false` having written both strings, and a loop that frees only on `true`
+# leaks it. Called with no row pending, the pin asserts (:902) or reads NULL
+# (:905); oxpinyin answers `false` there without writing.
+pinyin_bigram_iterator_get_next_phrase   phrase      g_free                        false-allocates
+pinyin_bigram_iterator_get_next_phrase   pinyin      g_free                        false-allocates
 
 # ── Caller-owned string vectors (g_strfreev) ──────────────────────────
 pinyin_in_chewing_keyboard               symbols     g_strfreev                    false-nulls
