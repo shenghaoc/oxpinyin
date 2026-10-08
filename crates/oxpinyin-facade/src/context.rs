@@ -16,7 +16,8 @@ use oxpinyin_user::{UserConfLaw, UserStore};
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum OpenFailure {
-    /// The system directory argument was empty (upstream's first check).
+    /// Legacy empty-path failure, retained for source compatibility.
+    /// Current opens resolve an empty system path against the working directory.
     EmptySystemDir,
     /// The runtime could not open the system directory.
     Runtime(OpenError),
@@ -178,8 +179,8 @@ impl ContextCore {
     /// directory, as upstream's `g_strdup("")` is (#619). The two are
     /// different inputs.
     ///
-    /// `None` is the C init's NULL: an empty system dir or a runtime
-    /// that cannot open. [`Self::try_open`] says which.
+    /// An empty system path resolves files in the working directory.
+    /// `None` means the runtime cannot open. [`Self::try_open`] says why.
     #[must_use]
     pub fn open(
         system_dir: &Path,
@@ -196,17 +197,13 @@ impl ContextCore {
     ///
     /// # Errors
     ///
-    /// [`OpenFailure::EmptySystemDir`] for an empty `system_dir`;
-    /// [`OpenFailure::Runtime`] with the typed [`OpenError`] otherwise.
+    /// [`OpenFailure::Runtime`] with the typed [`OpenError`].
     pub fn try_open(
         system_dir: &Path,
         user_dir: Option<&Path>,
         option_word: u32,
         law: UserConfLaw,
     ) -> Result<Self, OpenFailure> {
-        if system_dir.as_os_str().is_empty() {
-            return Err(OpenFailure::EmptySystemDir);
-        }
         let runtime =
             Runtime::open_with_law(system_dir, user_dir, law).map_err(OpenFailure::Runtime)?;
         let user = runtime.user_store();
@@ -364,22 +361,11 @@ fn diagnostic(parts: &[&[u8]]) {
 
 #[cfg(test)]
 mod open_failure_tests {
-    use std::path::Path;
 
     use super::{ContextCore, OpenFailure};
     use crate::PINYIN_DEFAULT_OPTION_WORD as WORD;
     use oxpinyin_runtime::OpenError;
     use oxpinyin_user::UserConfLaw;
-
-    #[test]
-    fn empty_system_dir_is_named() {
-        let failure = ContextCore::try_open(Path::new(""), None, WORD, UserConfLaw::Pinyin)
-            .err()
-            .expect("an empty system dir cannot open");
-        assert!(matches!(failure, OpenFailure::EmptySystemDir));
-        assert_eq!(failure.to_string(), "system directory is empty");
-        assert!(ContextCore::open(Path::new(""), None, WORD, UserConfLaw::Pinyin).is_none());
-    }
 
     #[test]
     fn missing_system_dir_carries_the_runtime_error_and_path() {

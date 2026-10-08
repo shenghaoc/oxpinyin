@@ -92,10 +92,13 @@ class Kit:
         f.restype, f.argtypes = res, list(args)
         return f
 
-    def init(self, system=None, user=None):
+    def init(self, system=None, user=None, *, literal=False):
+        """literal=True passes None/empty bytes unchanged instead of defaults."""
         def raw(value):
-            return value if isinstance(value, bytes) else value.encode()
-        return self.fn('init', P, S, S)(raw(system or self.data), raw(user or self.user))
+            return value if value is None or isinstance(value, bytes) else value.encode()
+        if not literal:
+            system, user = system or self.data, user or self.user
+        return self.fn('init', P, S, S)(raw(system), raw(user))
 
     @property
     def ctx(self):
@@ -1771,6 +1774,39 @@ def _(k):
 
 
 # --------------------------------------------------------------------------
+
+# #643: g_build_filename drops empty elements, but stops at NULL.
+def init_system_argument(k, form):
+    with tempfile.TemporaryDirectory(prefix='sys-', dir=k.scratch) as cwd:
+        if form != 'empty-missing':
+            # Read-only system files; only the separate user directory is writable.
+            for path in Path(k.data).iterdir():
+                if path.is_file():
+                    os.symlink(path, Path(cwd) / path.name)
+        os.chdir(cwd)
+        system = {'empty': b'', 'empty-missing': b'', 'null': None,
+                  'dot': b'.', 'absolute': os.fsencode(cwd)}[form]
+        ctx = k.init(system, k.user, literal=True)
+        out = {'init': bool(ctx)}
+        if ctx:
+            k._ctx = ctx
+            inst = k.inst
+            name = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+            out['parse'] = k.fn(name, Z, P, S)(inst, b'ni3hao3' if k.mode == 'pinyin' else b'su3cl3')
+            out['guess'] = k.fn('guess_sentence', B, P)(inst)
+            k.fn('free_instance', None, P)(inst)
+            k.fn('fini', None, P)(ctx)
+        out['files'] = sorted(os.listdir(k.user))
+        os.chdir(k.scratch)
+        return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _form in ('empty', 'empty-missing', 'null', 'dot', 'absolute'):
+        case('init-system-' + _form + '-' + _mode, mode=_mode,
+             control=_form in ('empty-missing', 'dot', 'absolute'), stderr=True)(
+                 lambda k, form=_form: init_system_argument(k, form))
+
 
 def run_worker(mode, so, data, name, scratch):
     env = dict(os.environ, TMPDIR=str(scratch))

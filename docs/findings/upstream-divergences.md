@@ -2435,3 +2435,14 @@ test:
   `zhuyin_fini` keep their own registry (`crates/oxpinyin-zhuyin-capi/src/live.rs`)
   and the call answers NULL, silently; `zhuyin-alloc-instance-after-fini`
   holds the exit status.
+
+
+### Empty system directory (#643; row 71, closed 2026-10-08 UTC)
+
+This was a port defect, not an exception: at pin 074a2219,
+`pinyin.cpp:331-338` / `zhuyin.cpp:275-282` resolve an empty system
+directory in cwd; NULL instead fails on the empty filename. Both C
+facades now preserve that distinction and the NULL failure's exact raw
+stderr. `contract-diff.py`'s ten `init-system-*` cases cover both facades,
+including parse/guess after a successful open and dot/absolute controls.
+The pin tree read was `/home/sheng/work/libpinyin` at 074a2219.

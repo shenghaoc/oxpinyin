@@ -16,10 +16,10 @@ use oxpinyin_user::UserStore;
 /// ```
 ///
 /// Opens the system dictionary and language model tables from `systemdir`.
-/// Returns NULL when `systemdir` is empty, any table fails to open, or the
-/// system dir has no parsable `interpolation2.text` real-unigram model.
-/// The reason is logged through `GLib` at warning level under the
-/// `libzhuyin` domain; the return value is unchanged.
+/// An empty `systemdir` string opens data from the current working directory.
+/// A NULL `systemdir` returns NULL and writes the pin's raw stderr lines
+/// `open  failed.` and `load  failed!`, without a GLib warning. Required-file
+/// failures also return NULL; diagnostics follow the failing load path.
 ///
 /// **Divergence note (the pin seeds `USE_TONE | FORCE_TONE`).** The zhuyin
 /// facade's context defaults to `m_options = USE_TONE | FORCE_TONE`
@@ -43,9 +43,14 @@ pub extern "C" fn zhuyin_init(
     // successful init.
     crate::locale::pin_table_info_locale();
     // The pin keeps `g_strdup` of both arguments and opens them by those
-    // bytes, so the names are paths, not text (#587). A NULL system dir
-    // reads as the empty one the pin refuses first.
-    let system_path = cstr_to_path(systemdir).unwrap_or_default();
+    // bytes, so the names are paths, not text (#587). g_build_filename
+    // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
+    // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
+    let Some(system_path) = cstr_to_path(systemdir) else {
+        use std::io::Write as _;
+        let _ = std::io::stderr().write_all(b"open  failed.\nload  failed!\n");
+        return ptr::null_mut();
+    };
     // The pin's guards test the user pointer (`zhuyin.cpp:548`, `:1697`):
     // NULL is no user dir, while "" is one — the working directory (#619) —
     // so the two stay apart.

@@ -22,9 +22,14 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     // successful init.
     crate::locale::pin_table_info_locale();
     // The pin keeps `g_strdup` of both arguments and opens them by those
-    // bytes, so the names are paths, not text (#587). A NULL system dir
-    // reads as the empty one the pin refuses first.
-    let system_path = cstr_to_path(systemdir).unwrap_or_default();
+    // bytes, so the names are paths, not text (#587). g_build_filename
+    // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
+    // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
+    let Some(system_path) = cstr_to_path(systemdir) else {
+        use std::io::Write as _;
+        let _ = std::io::stderr().write_all(b"open  failed.\nload  failed!\n");
+        return ptr::null_mut();
+    };
     // The pin's guards test the user pointer (`pinyin.cpp:1133`, `:2671`):
     // NULL is no user dir, while "" is one — the working directory (#619) —
     // so the two stay apart.
@@ -65,11 +70,10 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
 /// Opens the system data directory from `systemdir` the way libpinyin
 /// does — the pinyin and phrase DBMs, the per-library chunk files,
 /// `bigram.db`, `punct.bin`, the addon DBM pair, λ from `table.conf`.
-/// Returns NULL when `systemdir` is empty or a required file fails to
-/// open. The reason is logged through `GLib` at warning level under the
-/// `libpinyin` domain (the same channel an `IBus` or fcitx consumer already
-/// captures), since NULL alone cannot say which file was missing or
-/// corrupt; the return value is unchanged.
+/// An empty `systemdir` string opens data from the current working directory.
+/// A NULL `systemdir` returns NULL and writes the pin's raw stderr lines
+/// `open  failed.` and `load  failed!`, without a GLib warning. Required-file
+/// failures also return NULL; diagnostics follow the failing load path.
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_init(
     systemdir: *const c_char,
