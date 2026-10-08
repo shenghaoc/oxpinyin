@@ -67,6 +67,9 @@
 #     source:<file>:<lines>  argued from the pin's `src/<file>` at 074a2219.
 #     unverified             executed against oxpinyin only, never compared
 #                            with the pin.
+#     unexecuted             declared, never executed on either side: the
+#                            driver does not probe the note and no pin
+#                            probe has run it.
 #     n/a                    <notes> is n/a.
 #
 # Corrected 2026-09-10 when the notes became executable: six slots were
@@ -103,15 +106,15 @@ pinyin_get_sentence                      sentence    g_free                     
 pinyin_get_full_pinyin_auxiliary_text    aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
 pinyin_get_double_pinyin_auxiliary_text  aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
 pinyin_get_chewing_auxiliary_text        aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
-pinyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable  unverified
-pinyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable  unverified
-pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-unreachable  unverified
-pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-unreachable  unverified
+pinyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable  unexecuted
+pinyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable  unexecuted
+pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-unreachable  unexecuted
+pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-unreachable  unexecuted
 # The table_index == 0 refusal, the only non-NULL-argument `false` these
 # reach, needs an unset ChewingKey — and `ChewingKey` is an opaque typedef,
 # so a conforming consumer cannot make one. Unreachable, not unclaimed.
-pinyin_get_pinyin_strings                shengmu     g_free                        false-unreachable  unverified
-pinyin_get_pinyin_strings                yunmu       g_free                        false-unreachable  unverified
+pinyin_get_pinyin_strings                shengmu     g_free                        false-unreachable  unexecuted
+pinyin_get_pinyin_strings                yunmu       g_free                        false-unreachable  unexecuted
 pinyin_token_get_phrase                  utf8_str    g_free                        false-untouched    pin-probe:token-get-phrase-out
 # The unigram iterator answers `true` on every row it hands out
 # (pinyin.cpp:698-769); its `false` is the call with no next row, where the

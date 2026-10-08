@@ -172,6 +172,7 @@ because a green gate proves it against oxpinyin only:
 | `pin-aborts:row<N>` | the path the gate probes aborts the pin; the note is oxpinyin's answer there, registered as row N of `docs/findings/compatibility-policy.md` |
 | `source:<file>:<lines>` | argued from the pin's `src/<file>` at 074a2219 |
 | `unverified` | executed against oxpinyin only, never compared with the pin |
+| `unexecuted` | declared, never executed on either side: the driver does not probe the note and no pin probe has run it |
 | `n/a` | the note is `n/a` |
 
 The script checks that every line has exactly five fields and a fifth of
@@ -285,7 +286,7 @@ reverted afterwards; each is reproducible from the description alone:
 | mark a probed slot `false-unreachable` | the reachability claim is contradicted | `the driver probed a failure path the register calls unreachable` |
 | delete one probe call | its note is prose again | `FAIL: unprobed false-return contract`, naming the slot |
 | run one exercise during the warm-up only | the measured pass earns no coverage for it | `slots the driver never reached with a live pointer: pinyin_in_chewing_keyboard symbols` |
-| drop the fifth field of one register line | the shape check names the line | `line 102: 4 fields, not 5` |
+| drop the fifth field of one register line | the shape check names the line | `line 105: 4 fields, not 5` |
 | misspell one `<verified>` kind (`unverifed`) | the shape check names the kind | `line 39: <verified> unverifed is not a documented kind` |
 | make the shape check accept every line | its negative control fires | `shape control did not fire: a register with a four-fields line passes`, and the same for `misspelled-kind` |
 
