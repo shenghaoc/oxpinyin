@@ -142,21 +142,16 @@ pub extern "C" fn zhuyin_get_character_offset(
     let Some(text) = cstr_to_strict(phrase) else {
         return false;
     };
-    // At the reserved slot (`offset == parsed_len`) the pin's zhuyin walk has
-    // no zero-key skip (`zhuyin.cpp:2095-2140`, unlike `pinyin.cpp:3140`): it
-    // steps onto the last column, finds no reading there and fails, storing
-    // the length it reached. The pinyin walk's end-of-input success is not
-    // the zhuyin one.
-    if offset == inst.core.parsed_len && character_walk_ran(inst, &text) {
-        if !length.is_null() {
-            // SAFETY: Null-checked above.
-            unsafe {
-                *length = 0;
-            }
-        }
-        return false;
-    }
     let char_count = match inst.core.character_offset(&text, offset) {
+        Ok(Some(_)) if offset == inst.core.parsed_len && character_walk_ran(inst, &text) => {
+            if !length.is_null() {
+                // SAFETY: Null-checked above; caller supplied the output.
+                unsafe {
+                    *length = 0;
+                }
+            }
+            return false;
+        }
         Ok(Some(char_count)) => char_count,
         Ok(None) => {
             // The walk's own `false` still stores the length it reached
@@ -252,13 +247,16 @@ pub extern "C" fn zhuyin_guess_candidates_before_cursor(
 /// `zero_key != key` on the column before the offset (`:1441-1456`): an
 /// offset past the reserved slot aborts. Class (c), `false` and one warning.
 fn validated_lookup_offset(inst: &crate::state::CapiInstance, offset: usize) -> Option<usize> {
-    match inst.core.validate_lookup_offset(offset) {
+    match inst.core.validate_abi_lookup_offset(offset, true) {
         Ok(normalized) => Some(normalized),
         Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { .. }) => {
             crate::ffi::log_warning("zhuyin_guess_candidates: offset lies past the matrix");
             None
         }
-        Err(_) => None,
+        Err(_) => {
+            crate::ffi::log_warning("zhuyin_guess_candidates: zero-column assertion");
+            None
+        }
     }
 }
 

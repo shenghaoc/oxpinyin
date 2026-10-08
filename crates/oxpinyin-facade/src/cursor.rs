@@ -19,6 +19,8 @@ use oxpinyin_engine::{EngineError, MatrixKey};
 
 use crate::instance::InstanceCore;
 
+type AbiColumns = Vec<Option<(u16, usize, usize)>>;
+
 /// The active parse mode's span source: the coordinate input bytes, its
 /// parsed length, the key spans `(start, end)`, and whether `'` is a
 /// zero-key separator in that mode.
@@ -133,6 +135,10 @@ impl InstanceCore {
     ///
     /// Forwards [`EngineError`] where the pin aborts.
     pub fn left_offset(&self, offset: usize) -> Result<usize, EngineError> {
+        self.abi_left_offset(offset, false)
+    }
+
+    fn left_offset_impl(&self, offset: usize) -> Result<usize, EngineError> {
         match self.span_source() {
             Some(source) => oxpinyin_engine::left_word_offset_over_spans(
                 source.input,
@@ -286,6 +292,140 @@ impl InstanceCore {
         )
     }
 
+    /// Original-coordinate columns: a real first item, a zero key, or empty.
+    fn abi_columns(&self) -> Result<AbiColumns, EngineError> {
+        let (keys, input, separators) = self.mode_keys()?;
+        let mut columns = vec![None; self.parsed_len + 1];
+        for key in &keys {
+            if let Some(column) = columns.get_mut(key.begin)
+                && column.is_none()
+            {
+                let packed = oxpinyin_core::ChewingKey::from_pinyin(key.text)
+                    .map_or(0, |k| k.with_tone(key.tone).to_packed());
+                *column = Some((packed, key.begin, key.end));
+            }
+        }
+        if keys.is_empty() {
+            return Ok(columns);
+        }
+        let first = keys.iter().map(|key| key.begin).min();
+        if separators {
+            for (position, column) in columns.iter_mut().enumerate().take(self.parsed_len) {
+                if column.is_none()
+                    && input.get(position) == Some(&b'\'')
+                    && first.is_none_or(|begin| position >= begin)
+                {
+                    *column = Some((0, position, position + 1));
+                }
+            }
+        }
+        for (position, column) in columns.iter_mut().enumerate().skip(self.parsed_len) {
+            if column.is_none() {
+                *column = Some((0, position, position + 1));
+            }
+        }
+        Ok(columns)
+    }
+
+    /// Packed key and raw rest for the two ABI accessor laws.
+    ///
+    /// # Errors
+    /// Returns the pin's zhuyin zero-column assertion as an error.
+    pub fn abi_key_at(
+        &self,
+        offset: usize,
+        zhuyin: bool,
+    ) -> Result<Option<(u16, usize, usize)>, EngineError> {
+        let columns = self.abi_columns()?;
+        if offset >= columns.len().saturating_sub(1) {
+            return Ok(None);
+        }
+        if zhuyin
+            && offset > 0
+            && columns
+                .get(offset - 1)
+                .is_some_and(|c| matches!(c, Some((0, _, _))))
+        {
+            return Err(EngineError::ZeroKeyOffsetCheck { offset });
+        }
+        let Some(mut item) = columns[offset] else {
+            return Ok(None);
+        };
+        if !zhuyin {
+            let mut at = offset;
+            while item.0 == 0 && at + 1 < columns.len() {
+                at += 1;
+                let Some(next) = columns[at] else {
+                    return Ok(None);
+                };
+                item = next;
+            }
+        }
+        Ok(Some(item))
+    }
+
+    /// Validate the caller's original column before any facade mapping.
+    ///
+    /// # Errors
+    /// Returns out-of-range or the pin's zhuyin zero-column assertion.
+    pub fn validate_abi_lookup_offset(
+        &self,
+        offset: usize,
+        zhuyin: bool,
+    ) -> Result<usize, EngineError> {
+        let columns = self.abi_columns()?;
+        oxpinyin_engine::check_lookup_offset_range(self.parsed_len, offset)?;
+        if zhuyin {
+            if offset > 0
+                && columns
+                    .get(offset - 1)
+                    .is_some_and(|c| matches!(c, Some((0, _, _))))
+            {
+                return Err(EngineError::ZeroKeyOffsetCheck { offset });
+            }
+            return Ok(offset);
+        }
+        let (_, input, _) = self.mode_keys()?;
+        if input.first() == Some(&b'\'') && columns.first() == Some(&None) {
+            // pinyin.cpp:2226 ignores _check_offset's Boolean result and
+            // searches this original column, including leading empties.
+            return Ok(offset);
+        }
+        self.validate_lookup_offset_impl(offset)
+    }
+
+    /// Facade-specific left movement, retaining zhuyin.cpp:2019's typo.
+    ///
+    /// # Errors
+    /// Returns the pin's zero-column assertion as an error.
+    pub fn abi_left_offset(&self, offset: usize, zhuyin: bool) -> Result<usize, EngineError> {
+        if !zhuyin {
+            return self.left_offset_impl(offset);
+        }
+        let columns = self.abi_columns()?;
+        oxpinyin_engine::check_lookup_offset_range(self.parsed_len, offset)?;
+        if offset > 0
+            && columns
+                .get(offset - 1)
+                .is_some_and(|c| matches!(c, Some((0, _, _))))
+        {
+            return Err(EngineError::ZeroKeyOffsetCheck { offset });
+        }
+        let mut left = offset.saturating_sub(1);
+        while left > 0 && columns[left].is_none_or(|item| item.2 != offset) {
+            left -= 1;
+        }
+        // The pin normalizes offset, not left. Validate the unnormalized left.
+        if left > 0
+            && columns
+                .get(left - 1)
+                .is_some_and(|c| matches!(c, Some((0, _, _))))
+        {
+            return Err(EngineError::ZeroKeyOffsetCheck { offset: left });
+        }
+        Ok(left)
+    }
+
     /// The key the pin's `get_pinyin_key`/`get_zhuyin_key` family answers
     /// at `offset`.
     ///
@@ -295,34 +435,19 @@ impl InstanceCore {
     /// and the answer is that column's first item.
     #[must_use]
     pub fn key_at(&self, offset: usize) -> Option<KeyAt> {
-        let (keys, input, separators) = self.mode_keys().ok()?;
-        // matrix.size() is input.len() + 1; the last column is the
-        // reserved slot. `input` and the key spans share one coordinate
-        // space — the active mode's own buffer — so the separator walk
-        // reads it, not the session's `'`-joined canonical spelling.
-        if offset >= input.len() {
+        let (packed, begin, end) = self.abi_key_at(offset, false).ok()??;
+        if packed == 0 {
             return None;
         }
-        let mut at = offset;
-        loop {
-            if let Some(found) = keys.iter().find(|k| k.begin == at) {
-                return Some(KeyAt {
-                    text: found.text,
-                    tone: found.tone,
-                    begin: found.begin,
-                    end: found.end,
-                });
-            }
-            // A lone zero-key column is a consumed separator; the pin
-            // walks past the run. Only the separator modes hold one —
-            // zhuyin and double pinyin carry `'` as content or not at
-            // all, so their empty columns end the walk. Anything else is
-            // an empty mid-syllable column.
-            if separators && input.get(at).copied() == Some(b'\'') && at + 1 < input.len() {
-                at += 1;
-                continue;
-            }
-            return None;
-        }
+        let (keys, _, _) = self.mode_keys().ok()?;
+        let found = keys
+            .iter()
+            .find(|key| key.begin == begin && key.end == end)?;
+        Some(KeyAt {
+            text: found.text,
+            tone: found.tone,
+            begin,
+            end,
+        })
     }
 }

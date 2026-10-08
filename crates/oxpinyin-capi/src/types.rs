@@ -60,16 +60,6 @@ impl ChewingKey {
     /// `false` on it, the pin's `0 == key->get_table_index()` guard.
     pub const ZERO: Self = Self { packed: 0 };
 
-    /// Packs a canonical spelling (a `content_table` pinyin) and tone
-    /// into the ABI word; `None` for a spelling outside the table.
-    #[must_use]
-    pub(crate) fn from_spelling(text: &str, tone: u8) -> Option<Self> {
-        let key = oxpinyin_chewing::ChewingKey::from_pinyin(text)?;
-        Some(Self {
-            packed: key.with_tone(tone).to_packed(),
-        })
-    }
-
     /// Packs the core elements into the ABI word.
     #[must_use]
     pub(crate) const fn from_core(key: oxpinyin_chewing::ChewingKey) -> Self {

@@ -134,19 +134,17 @@ fn a_leading_or_trailing_run_never_walks_off_the_input() {
     let user_dir = TempUserDir::new("guess-zero-edges");
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
 
-    // Leading run: the walk stops at byte 1, so the offset one past the
-    // run stays unnormalized and the check refuses it — upstream's
-    // `_check_offset` assert, answered as `false` with an emptied
-    // snapshot instead of an abort.
+    // The leading gap is empty, while the real key remains live at byte 1.
+    // pinyin.cpp:2226 ignores _check_offset's Boolean return.
     assert_eq!(parse(instance, "'ni"), 3, "the leading run parses whole");
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    assert!(!pinyin_guess_candidates(instance, 1, DEFAULT_SORT));
+    assert!(pinyin_guess_candidates(instance, 1, DEFAULT_SORT));
     let mut num: c_uint = 77;
     assert!(pinyin_get_n_candidate(instance, &raw mut num));
-    assert_eq!(num, 0, "a refused guess leaves the freed-list shape");
+    assert!(num > 0, "the ni key remains available at its own offset");
     assert!(
         pinyin_guess_candidates(instance, 0, DEFAULT_SORT),
-        "the refusal leaves the instance usable"
+        "the empty leading column leaves the instance usable"
     );
 
     // Trailing run: one past the input's last byte normalizes back to the
@@ -425,7 +423,7 @@ fn luoma_input_carries_the_full_offset_law() {
     let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
     // FULL_PINYIN_LUOMA: the pinned index parse consumes `'` as the
     // zero-key separator in original coordinates, so the whole law
-    // applies — normalize across the run, refuse the leading run and
+    // applies — normalize across internal runs, retain the leading gap and
     // out-of-range. "ni" and "hao" spell the same as hanyu in the index.
     assert!(pinyin_set_full_pinyin_scheme(context, 2));
 
@@ -455,8 +453,7 @@ fn luoma_input_carries_the_full_offset_law() {
         pinyin_get_parsed_input_length(instance)
     );
 
-    // Out of range refused; the leading run cannot normalize (upstream
-    // aborts, oxpinyin refuses).
+    // Out of range refused; the leading gap does not erase its real key.
     assert_eq!(parse(instance, "ni'hao"), 6);
     assert!(pinyin_guess_candidates(instance, 7, DEFAULT_SORT));
     assert!(!pinyin_guess_candidates(instance, 8, DEFAULT_SORT));
@@ -476,7 +473,7 @@ fn luoma_input_carries_the_full_offset_law() {
     );
     assert_eq!(parse(instance, "'ni"), 3);
     assert!(pinyin_guess_candidates(instance, 0, DEFAULT_SORT));
-    assert!(!pinyin_guess_candidates(instance, 1, DEFAULT_SORT));
+    assert!(pinyin_guess_candidates(instance, 1, DEFAULT_SORT));
 
     // An unparsed suffix is outside the law's domain: the bound is the
     // parse's consumed prefix, not the stored buffer, exactly like the

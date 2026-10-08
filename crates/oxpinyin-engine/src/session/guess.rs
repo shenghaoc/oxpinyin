@@ -43,6 +43,7 @@ where
     ///
     /// Returns [`EngineError`] when a backend fails during the lookup.
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError> {
+        self.ensure_matrix()?;
         self.sentence.begin();
         if self.input.is_empty() {
             return Ok(false);
@@ -83,6 +84,7 @@ where
                 matrix: &matrix,
                 bound,
                 physical_separators: self.input.physical_separators(),
+                topology: self.input.matrix.as_ref(),
             },
             &self.dictionary,
             &self.model,
@@ -138,6 +140,7 @@ where
         &mut self,
         prefix_tokens: &[PhraseToken],
     ) -> Result<bool, EngineError> {
+        self.ensure_matrix()?;
         self.sentence.begin();
         if self.input.is_empty() {
             return Ok(false);
@@ -168,6 +171,7 @@ where
                 matrix: &matrix,
                 bound,
                 physical_separators: self.input.physical_separators(),
+                topology: self.input.matrix.as_ref(),
             },
             &self.dictionary,
             &self.model,
@@ -209,6 +213,9 @@ where
                     matrix: &matrix,
                     bound,
                     physical_separators: self.input.physical_separators(),
+                    topology: (offset == 0)
+                        .then_some(self.input.matrix.as_ref())
+                        .flatten(),
                 },
                 &self.dictionary,
                 &self.model,

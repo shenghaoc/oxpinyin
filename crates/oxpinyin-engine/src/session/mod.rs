@@ -275,6 +275,7 @@ struct Scratch {
 // The composition state is decomposed into types that own their own
 // invariants; each lives in its own module and the session composes them.
 mod buffer;
+pub(crate) mod matrix;
 mod record;
 mod sentence;
 
@@ -553,6 +554,7 @@ struct ScanScratch<'a> {
 }
 
 struct ScanBuf<'a> {
+    span_base: usize,
     path: &'a mut SmallVec<[SyllableKey; 16]>,
     /// The typed tone of each key on `path`, in step with it.
     tones: SmallVec<[u8; 16]>,
@@ -565,7 +567,7 @@ struct ScanBuf<'a> {
 /// One key of the scan matrix at its byte position, with the byte position
 /// it ends at and where its own text starts — the two differ from
 /// `from + len` exactly when the key rides over an apostrophe separator.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ScanKey {
     pub(crate) key: SyllableKey,
     pub(crate) from: usize,
@@ -847,6 +849,12 @@ pub fn normalize_lookup_offset(input: &[u8], offset: usize) -> Result<usize, Eng
     while index > 0 && input.get(index) == Some(&b'\'') {
         normalized = index;
         index -= 1;
+    }
+    // Leading separators propagate parser state but do not create zero
+    // columns (074a2219 phonetic_key_matrix.cpp:68-78).
+    let leading = input.iter().take_while(|byte| **byte == b'\'').count();
+    if normalized <= leading && input.get(leading).is_some() {
+        return Ok(offset);
     }
     if normalized > 0 && input.get(normalized - 1) == Some(&b'\'') {
         return Err(EngineError::LookupOffsetPastSeparator { offset, normalized });
