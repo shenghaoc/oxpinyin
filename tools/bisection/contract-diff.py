@@ -1984,6 +1984,61 @@ for _mode in ('pinyin', 'zhuyin'):
                 lambda k, library=_library, null=_null: transient_library(k, library, null))
 
 
+# #525: reduce_tokens asserts on the sixth add, with five existing tokens.
+def combined_import_bound(k, guard=True):
+    phrase = '你好'
+    reading = b"ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode()
+    added = []
+    for library in range(1, 6):
+        it = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
+        added.append(k.fn('iterator_add_phrase', B, P, S, S, I)(it, phrase.encode(), reading, 100000))
+        k.fn('end_add_phrases', None, P)(it)
+    assert added == [True] * 5
+    if not guard:
+        return {'added': added}
+    assert k.fn('save', B, P)(k.ctx)
+    files = transient_files(k.user)
+    tokens = [16802309, 33570045, 50359794, 67109866, 83886081]
+    frequencies = [unigram_of(k, token) for token in tokens]
+    exports = [remember_export(k, library, phrase) for library in range(1, 8)]
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 6)
+    ret = k.fn('iterator_add_phrase', B, P, S, S, I)(it, phrase.encode(), reading, 100000)
+    # The pin aborts above. These fields are checked by the existing class(c)
+    # driver and prove the subject refused before changing prior state.
+    out = {'ret': ret,
+           'untouched-tokens': tokens_of(k, phrase) == tokens,
+           'untouched-frequencies': [unigram_of(k, token) for token in tokens] == frequencies,
+           'untouched-readings': [remember_export(k, library, phrase) for library in range(1, 8)] == exports,
+           'untouched-dirty': not k.fn('save', B, P)(k.ctx),
+           'untouched-files': transient_files(k.user) == files}
+    k.fn('end_add_phrases', None, P)(it)
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    return out
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('combined-library-sixth-add-' + _mode, mode=_mode, abort=False)(combined_import_bound)
+    case('combined-library-fifth-add-' + _mode, mode=_mode, control=True)(
+        lambda k: combined_import_bound(k, guard=False))
+
+
+def import_review(k, invalid=False):
+    out = combined_import_bound(k, guard=False)
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 6 if invalid else 8)
+    reading = b'ni3' if invalid else b"ni3'hao3"
+    if k.mode == 'zhuyin':
+        reading = ('ㄋㄧˇ' if invalid else 'ㄋㄧˇ ㄏㄠˇ').encode()
+    out['ret'] = k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), reading, 3)
+    k.fn('end_add_phrases', None, P)(it)
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    return out
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('combined-library-invalid-reading-' + _mode, mode=_mode, control=True)(lambda k: import_review(k, True))
+    case('combined-library-unused-index-' + _mode, mode=_mode, abort=False)(import_review)
+
+
 def run_worker(mode, so, data, name, scratch):
     env = dict(os.environ, TMPDIR=str(scratch))
     proc = subprocess.run([sys.executable, __file__, '--worker', mode, str(so), str(data), name],

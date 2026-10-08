@@ -5,7 +5,7 @@ use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 use oxpinyin_core::{FORCE_TONE, USE_TONE, parse_zhuyin_direct};
-use oxpinyin_user::{PinyinKey, UserStore, is_user_file_library, toned_key};
+use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, is_user_file_library, toned_key};
 
 use crate::ffi::cstr_to_owned_lossy;
 use crate::state::context_ref;
@@ -87,9 +87,6 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     // SAFETY: `iter` is non-null and was produced by
     // `zhuyin_begin_add_phrases`.
     let handle = unsafe { &mut *(iter.cast::<ImportHandle>()) };
-    if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
-        return false;
-    }
     let Some(user) = handle.user.as_mut() else {
         return false;
     };
@@ -100,6 +97,38 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     else {
         return false;
     };
+    // The iterator validates the phrase/key lengths before _add_phrase:
+    // 074a2219 pinyin.cpp:639-646 / zhuyin.cpp:525-532.
+    let length = phrase.chars().count();
+    if length == 0 || length >= MAX_PHRASE_LENGTH || length != keys.len() {
+        return false;
+    }
+    // 074a2219 phrase_large_table3.h:95, called by _add_phrase before
+    // mutation: reduce_tokens asserts when more than four tokens already
+    // spell this phrase. A fifth token is allowed; the next add refuses.
+    if handle.dict.as_ref().is_some_and(|dict| {
+        // Direct keyed probes avoid rebuilding the complete UserLookup
+        // after every import. Each library has at most one token per text.
+        let mut tokens = dict.system().tokens_for_text(&phrase).unwrap_or_default();
+        for library in 1..=7 {
+            if let Ok(Some(token)) = user.token_for_phrase_in(library, &phrase) {
+                tokens.push(token);
+            }
+        }
+        tokens.retain(|token| dict.library_visible_token(*token));
+        tokens.sort_unstable();
+        tokens.dedup();
+        tokens.len() > 4
+    }) {
+        crate::ffi::log_warning(
+            "zhuyin_iterator_add_phrase: assertion '0 <= num && num <= 4' failed",
+        );
+        return false;
+    }
+    // The pin reduces tokens before get_range rejects an unused library.
+    if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
+        return false;
+    }
     if (1..=4).contains(&handle.index) {
         let Some(dict) = handle.dict.as_ref() else {
             return false;

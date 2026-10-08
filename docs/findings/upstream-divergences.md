@@ -2482,3 +2482,22 @@ The ordinary imports already matched at main 3b016f48; the historical
 #525 refusal claim for 1–4 is stale. Zhuyin has no phrase-export API.
 Approved additive internal Rust APIs are documented in
 ../api/transient-user-store.md; C ABI and dependencies are unchanged.
+
+### Import token-count assertion (#525; row 74, class (c), 2026-10-08 UTC)
+
+Read /home/sheng/work/libpinyin at 074a2219. The asserts-live pin calls
+reduce_tokens from _add_phrase (pinyin.cpp:541 / zhuyin.cpp:427);
+src/storage/phrase_large_table3.h:77-95 counts matching tokens and asserts
+`0 <= num && num <= 4` before any insertion. In a fresh ordinary context,
+add 你好 with ni3'hao3 (Zhuyin ㄋㄧˇ ㄏㄠˇ), count100000, to libraries
+1,2,3,4,5 in sequence: all succeed. Begin library6 succeeds; its add
+SIGABRTs on both facades, with five existing tokens. The frequency
+argument 100000 is not the bound: the asserted count is matching tokens.
+
+The subject now returns false at that add with exactly one g_warning
+under libpinyin / libzhuyin respectively. No state is changed. Existing
+contract cases test the fifth-add success boundary and sixth-add refusal,
+including tokens, unigram counts, exported readings where supported,
+dirty state and profile bytes before/after refusal. Zhuyin has no export
+API. No interface, ABI or dependency change. This row covers the import
+call measured here, not every independent caller of reduce_tokens.
