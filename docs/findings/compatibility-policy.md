@@ -442,13 +442,15 @@ revert targets is `revert-plan.md`.
 | 69 | A save whose write fails for one file: the pin updates the rest | **CLOSED** in code (#545, lane C) | measured on bdb, both facades: with `user_pinyin_index.bin.tmp` a non-empty directory (or `user_phrase_index.bin` itself one) a second, modified `pinyin_save` / `zhuyin_save` at the pin ignores the failed write (`_write_files`, `pinyin.cpp:940-1020`), renames every other file, prints one line — `rename <dir>/user_pinyin_index.bin.tmp to <dir>/user_pinyin_index.bin failed.` (`:1096`; `user_phrase_index.bin` for the blocked final, `:1110`) — rewrites `user.conf` and answers `true`. In the temporary-blocked fixture, the first `user_pinyin_index.bin` stays at its active final path while the other files take the second save. In the final-blocked fixture, the harness first moves `user_phrase_index.bin` to `user_phrase_index.bin.moved`: that backup keeps the first save, the active final path is the blocking directory, and the other files take the second save. These are two distinct **mixed profiles**. oxpinyin first removed what it had staged and reported all ten renames, leaving the previous profile whole (ten lines against one; ruled a REVERT TARGET 2026-10-04 and reverted the same day). `save_with_bigram_reporting` (`crates/oxpinyin-user/src/persistence.rs`) now writes each file on its own, tolerating an I/O or store failure of that file, then renames every file of the set in the pin's order and reports the failures; only an encoding failure stops it. `save()` keeps its all-or-nothing `finish_save`. Held by `stderr-save-one-tmp-blocked`, `stderr-save-one-final-blocked` and `stderr-save-one-tmp-blocked-zhuyin` of `contract-diff.py` (stderr text, return value and which files changed, all MATCH), with `stderr-save-dir-removed` still the all-fail case. |
 | 70 | `zhuyin_token_get_nth_pronunciation` keys past the last reading | **(b)** | the zhuyin twin of row 51, ruled with it: an `nth` past the last reading appends `phrase_length` keys read from `ChewingKey buffer[MAX_PHRASE_LENGTH]`, a stack array that is never initialised, because the return value of `PhraseItem::get_nth_pronunciation` is ignored (`zhuyin.cpp:1800-1810`; the out-of-range read writes nothing). No safe construction reproduces a read of uninitialised stack. The answer (`true`) and the number of keys (`phrase_length`) are the pin's and are held by `zhuyin-nth-pronunciation-range` of `contract-diff.py`, which leaves the content out of the comparison; the content is zeroed (`crates/oxpinyin-zhuyin-capi/src/dict.rs`). Entry in `docs/findings/upstream-divergences.md`. |
 
+| 71 | Empty system directory and NULL system directory (#643) | **CLOSED** in code (2026-10-08 UTC) | At 074a2219, `pinyin.cpp:331-338` and `zhuyin.cpp:275-282` keep the argument then call `g_build_filename`: empty names cwd/table.conf, NULL names the empty filename and fails with two raw stderr lines. The facade rejected both. Both C boundaries now preserve NULL, including its exact failed-open stderr, and the facade forwards an empty Path unchanged. `contract-diff.py` `init-system-{empty,empty-missing,null,dot,absolute}-{pinyin,zhuyin}` compares init, parse, guess, user files and stderr on BDB. Source read from `/home/sheng/work/libpinyin` at the pin (pinyin.cpp blob f27f7cf7, zhuyin.cpp d1520c18); no exception class applies. |
+
 Totals at `e1d915d0` with this change (2026-09-27 UTC, recounted from
 the class column; #548): **(a)** 1 (row 11, scope shrinking, #535) · **(b)** 8 (1, 18,
 41, 42, 43, 51, 60, 70) · **(c)** 17 (38, 44, 45, 61, 5a, 62, 10, 14, 63, 64, 6, 4, 5c, 5d, 19, 21 and 66, both halves met) · **(d)** 0 (retired 2026-09-06) ·
 **REVERT TARGET** 3 ·
-**OPEN DEFECT** 0 · **CLOSED** 37 (3, 5b, 7, 8, 9, 12, 13, 15, 16, 17,
-24, 25, 26, 27, 28, 30, 32, 33, 34, 35, 36, 37, 39, 46, 47, 48, 50, 52, 53, 55, 56, 57, 59, 49, 67, 68, 69) · **CONTRADICTED** 0 · **STANDING** 1 (40) · **reattributed** 1 (20 → 33) ·
-**no ABI divergence** 4 (2, 23, 29, 31) · **WITHDRAWN** 1 (22) — 73 rows (amended the same
+**OPEN DEFECT** 0 · **CLOSED** 38 (3, 5b, 7, 8, 9, 12, 13, 15, 16, 17,
+24, 25, 26, 27, 28, 30, 32, 33, 34, 35, 36, 37, 39, 46, 47, 48, 50, 52, 53, 55, 56, 57, 59, 49, 67, 68, 69, 71) · **CONTRADICTED** 0 · **STANDING** 1 (40) · **reattributed** 1 (20 → 33) ·
+**no ABI divergence** 4 (2, 23, 29, 31) · **WITHDRAWN** 1 (22) — 74 rows (amended the same
 day for #550: row 20 reattributed, row 38's index arm opened; for
 #577: rows 25 and 26 contradicted; and for #591: row 44 registered; amended
 2026-10-02 UTC at `a3ef00f5`: rows 36 and 39 closed in code by lane B, #607/#608,
@@ -770,3 +772,6 @@ where a ruling was given earlier, its own date is stated too.
    §1, "Method: code and data basis"). Findings rest on code plus
    data; logs are not evidence. The E2E rule's verification clause
    above carries it.
+
+
+Amended 2026-10-08 UTC, init lane: row 71 (#643) registered closed with its fix; CLOSED 37 → 38, total 73 → 74.

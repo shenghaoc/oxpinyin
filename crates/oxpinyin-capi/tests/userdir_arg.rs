@@ -101,6 +101,14 @@ fn null_and_empty_user_dirs_are_different_arguments() {
     pinyin_capi::pinyin_fini(context);
     assert_eq!(names(&null), Vec::<String>::new());
 
+    // #643: empty system path loads cwd, while NULL still names no file.
+    std::env::set_current_dir(system.to_str().expect("UTF-8 fixture path"))
+        .expect("enter fixture directory");
+    let context = pinyin_capi::pinyin_init(c"".as_ptr(), ptr::null());
+    assert!(!context.is_null(), "empty system path opens cwd data");
+    pinyin_capi::pinyin_fini(context);
+    assert!(pinyin_capi::pinyin_init(ptr::null(), ptr::null()).is_null());
+
     std::env::set_current_dir(std::env::temp_dir()).expect("leave the scratch dirs");
     let _ = std::fs::remove_dir_all(&empty);
     let _ = std::fs::remove_dir_all(&null);
