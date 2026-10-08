@@ -2502,7 +2502,7 @@ dirty state and profile bytes before/after refusal. Zhuyin has no export
 API. No interface, ABI or dependency change. This row covers the import
 call measured here, not every independent caller of reduce_tokens.
 
-### `pinyin_bigram_iterator_get_next_phrase` after a walk that ends on a real predecessor (policy row 74)
+### `pinyin_bigram_iterator_get_next_phrase` after a walk that ends on a real predecessor (policy row 75)
 
 - **Upstream source cite:** `src/pinyin.cpp:896-911` (`get_next`: the
   assert at `:902`, then `g_strdup(iter->m_phrase)` at `:904` and
