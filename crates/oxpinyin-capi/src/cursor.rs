@@ -81,16 +81,23 @@ pub extern "C" fn pinyin_get_pinyin_key_rest(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    let Some(found) = inst.core.key_at(offset) else {
-        warn_on_empty_matrix(inst, "pinyin_get_pinyin_key_rest");
-        return false;
+    let found = match inst.core.abi_key_at(offset, false) {
+        Ok(Some(found)) => found,
+        Ok(None) => {
+            warn_on_empty_matrix(inst, "pinyin_get_pinyin_key_rest");
+            return false;
+        }
+        Err(_) => {
+            crate::ffi::log_warning("pinyin_get_pinyin_key_rest: zero-column assertion");
+            return false;
+        }
     };
     KEY_REST_SLOT.begin.store(
-        u16::try_from(found.begin).unwrap_or(u16::MAX),
+        u16::try_from(found.1).unwrap_or(u16::MAX),
         Ordering::Relaxed,
     );
     KEY_REST_SLOT.end.store(
-        u16::try_from(found.end).unwrap_or(u16::MAX),
+        u16::try_from(found.2).unwrap_or(u16::MAX),
         Ordering::Relaxed,
     );
     if !key_rest.is_null() {
@@ -660,13 +667,18 @@ pub extern "C" fn pinyin_get_pinyin_key(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    let Some(found) = inst.core.key_at(offset) else {
-        warn_on_empty_matrix(inst, "pinyin_get_pinyin_key");
-        return false;
+    let found = match inst.core.abi_key_at(offset, false) {
+        Ok(Some(found)) => found,
+        Ok(None) => {
+            warn_on_empty_matrix(inst, "pinyin_get_pinyin_key");
+            return false;
+        }
+        Err(_) => {
+            crate::ffi::log_warning("pinyin_get_pinyin_key: zero-column assertion");
+            return false;
+        }
     };
-    let packed = ChewingKey::from_spelling(found.text, found.tone)
-        .unwrap_or(ChewingKey::ZERO)
-        .packed;
+    let packed = found.0;
     KEY_SLOT.store(packed, Ordering::Relaxed);
     if !key.is_null() {
         // SAFETY: Null-checked above; the slot is a `static`, so the

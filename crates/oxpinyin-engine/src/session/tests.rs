@@ -944,12 +944,8 @@ fn normalized_lookup_offset_walks_the_zero_run_and_refuses_a_leading_one() {
         .expect("batch typing cannot fail");
     assert_eq!(
         session.normalized_lookup_offset(1),
-        Err(EngineError::LookupOffsetPastSeparator {
-            offset: 1,
-            normalized: 1
-        }),
-        "the walk never crosses byte 0, so a leading run refuses \
-         (_check_offset aborts upstream)"
+        Ok(1),
+        "a leading empty column is not a physical zero-key separator"
     );
     assert_eq!(session.normalized_lookup_offset(0), Ok(0));
 
@@ -3298,4 +3294,43 @@ fn retained_full_pinyin_cursor_keys_match_the_pin_spans() {
     assert_eq!(session.right_word_offset(2).expect("right"), Some(5));
     assert_eq!(session.left_word_offset(5).expect("left"), 2);
     assert_eq!(session.lookup_offset_for_cursor(4).expect("lookup"), 2);
+}
+
+#[test]
+fn retained_matrix_keeps_leading_gaps_empty_and_invalidates_on_input_change() {
+    let mut session = session();
+    session.replace_raw("'ni''hao'").expect("parsed input");
+    session.ensure_matrix().expect("retained matrix");
+    let matrix = session.input.matrix.as_ref().expect("matrix");
+    assert!(matrix.columns[0].is_empty());
+    assert!(!matrix.zeros[0], "leading gap cannot carry a zero-key hop");
+    assert!(
+        !matrix.columns[1].is_empty(),
+        "ni remains live at its own begin"
+    );
+    assert!(matrix.zeros[3] && matrix.zeros[4], "internal zero-key run");
+    assert!(!matrix.columns[5].is_empty(), "hao retains its raw begin");
+    assert!(
+        matrix.zeros[8] && matrix.zeros[9],
+        "tail and reserved column"
+    );
+
+    session.replace_raw("nihao").expect("replacement");
+    session.ensure_matrix().expect("replacement matrix");
+    let matrix = session.input.matrix.as_ref().expect("matrix");
+    assert!(
+        !matrix.columns[0].is_empty(),
+        "old leading gap must disappear"
+    );
+    assert!(
+        !matrix.zeros[3],
+        "old separator must not survive replacement"
+    );
+    session.set_collapse_sentence_rows_to_best(true);
+    assert!(session.input.matrix.is_some());
+    assert!(session.input.ending_matrix.is_none());
+    session
+        .ensure_matrix()
+        .expect("zhuyin before-cursor matrix");
+    assert!(session.input.ending_matrix.is_some());
 }

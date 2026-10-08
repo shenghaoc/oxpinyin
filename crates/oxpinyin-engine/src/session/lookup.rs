@@ -33,6 +33,7 @@ where
         // The cached list is anchored at the composition offset the session
         // owns. Reuse its buffer so the scan keeps its capacity across
         // keystrokes.
+        self.ensure_matrix()?;
         let anchor = self.record.consumed();
         let mut items = Vec::new();
         self.lookup.candidates.swap_items(&mut items);
@@ -541,32 +542,7 @@ where
         Ok(CandidateList::from_vec(items))
     }
 
-    /// The prefix graph the backward-anchored scan walks: the raw input cut
-    /// to `offset`, with only the exact segments fully inside the cut. A
-    /// key crossing the lookup boundary cannot end within the prefix —
-    /// upstream's matrix keeps such a key but `search_matrix` can only
-    /// report it as overhang (`SEARCH_CONTINUED`), never as a match for
-    /// this end — so dropping it changes no candidate, and keeping it
-    /// (beyond the cut) would poison the graph's own bound. Exact-segment
-    /// coordinates are absolute from the buffer start, so no rebasing is
-    /// needed at anchor 0.
-    pub(super) fn build_prefix_graph(&self, offset: usize) -> Result<SegmentGraph, EngineError> {
-        let remaining = &self.input.as_bytes()[..offset];
-        if self.input.exact().is_empty() {
-            return SegmentGraph::build_with_options(remaining, self.settings.options)
-                .map_err(EngineError::Graph);
-        }
-        let rebased: Vec<ExactSegment> = self
-            .input
-            .exact()
-            .iter()
-            .copied()
-            .filter(|segment| segment.end() <= offset)
-            .collect();
-        SegmentGraph::build_exact(remaining, &rebased).map_err(EngineError::Graph)
-    }
-
-    /// The backward-anchored scan proper: the prefix graph's matrix, every
+    /// The backward-anchored scan proper: the complete retained parse, every
     /// live start enumerated ascending (the pin's longest span first), each
     /// span's batch flushed and ranked with its own previous-token gram (the
     /// pin resolves `_get_previous_token` per `len` slice), groups appended
@@ -574,7 +550,7 @@ where
     /// prepend, and [`Session::prepend_nbest_rows`] re-runs it over the
     /// joined list.
     ///
-    /// Returns the filtered parse length of the prefix slice, mirroring
+    /// Returns the retained parse length bounded by the cursor, mirroring
     /// [`Session::scan_window`]'s return.
     pub(super) fn scan_window_ending(
         &mut self,
@@ -582,9 +558,16 @@ where
         out: &mut Vec<Candidate>,
     ) -> Result<usize, EngineError> {
         out.clear();
-        let graph = self.build_prefix_graph(offset)?;
-        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
-        let bound = graph.consumed().min(offset);
+        self.ensure_matrix()?;
+        let matrix = if self.collapse_sentence_rows_to_best {
+            self.input.ending_matrix.as_ref()
+        } else {
+            self.input.matrix.as_ref()
+        };
+        let Some(matrix) = matrix else {
+            return Ok(0);
+        };
+        let bound = matrix.bound.min(offset);
 
         let Scratch {
             mut collected,
@@ -602,12 +585,18 @@ where
             // `SEARCH_NONE` start (`search_matrix`,
             // `phonetic_key_matrix.cpp:416-418`): the span contributes
             // nothing and the walk skips it.
-            if matrix.get(start).is_none_or(std::vec::Vec::is_empty) {
+            if matrix
+                .columns
+                .get(start)
+                .is_none_or(std::vec::Vec::is_empty)
+                && !matrix.zeros.get(start).copied().unwrap_or(false)
+            {
                 continue;
             }
             let mut continued = false;
             {
                 let mut buf = ScanBuf {
+                    span_base: 0,
                     path: &mut path,
                     tones: SmallVec::new(),
                     system: &mut window_phrase,
@@ -615,7 +604,7 @@ where
                     continued: &mut continued,
                     entries: &mut entries,
                 };
-                self.scan_paths(&matrix, start, offset, &mut buf)?;
+                self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
             }
             group.clear();
             flush_window_batch(&mut window_phrase, &mut group);
@@ -625,7 +614,7 @@ where
             }
             // Every row of this slice spans `[start, offset)` — the pin's
             // `template_item.m_begin = start; m_end = offset`
-            // (`zhuyin.cpp:1595`). The prefix graph's coordinates are
+            // (`zhuyin.cpp:1595`). The retained matrix's coordinates are
             // absolute, so the start is recorded as such; the end is the
             // row's `consumed_bytes` already.
             for candidate in &mut group {
@@ -714,7 +703,10 @@ where
         {
             return Ok(true);
         }
-        Ok(offset < graph.consumed() && self.input.as_bytes().get(offset) == Some(&b'\''))
+        let first = matrix.iter().flatten().map(|key| key.syllable_start).min();
+        Ok(offset < graph.consumed()
+            && first.is_some_and(|start| offset >= start)
+            && self.input.as_bytes().get(offset) == Some(&b'\''))
     }
 
     /// Prepends the stored n-best rows onto `collected`, head first, then
@@ -1083,7 +1075,13 @@ where
         scratch: &mut ScanScratch<'_>,
     ) -> Result<(), EngineError> {
         let matrix = build_scan_matrix(graph, options, self.input.full_pinyin());
-        let bound = graph.consumed();
+        let retained = self.input.matrix.as_ref().filter(|_| {
+            self.input.physical_separators() && self.input.as_bytes().first() == Some(&b'\'')
+        });
+        let anchor = self.input.len().saturating_sub(input.len());
+        let bound = retained.map_or(graph.consumed(), |matrix| {
+            matrix.bound.saturating_sub(anchor)
+        });
         let mut end = 1usize;
         while end <= bound {
             // An end position no key starts at is an empty column: widen.
@@ -1093,6 +1091,7 @@ where
             scratch.window_addon.clear();
             {
                 let mut buf = ScanBuf {
+                    span_base: if retained.is_some() { anchor } else { 0 },
                     path: scratch.path,
                     tones: SmallVec::new(),
                     system: scratch.window_phrase,
@@ -1100,7 +1099,11 @@ where
                     continued: &mut continued,
                     entries: scratch.entries,
                 };
-                self.scan_paths(&matrix, 0, end, &mut buf)?;
+                if let Some(retained) = retained {
+                    self.scan_parsed_paths(retained, anchor, anchor + end, &mut buf)?;
+                } else {
+                    self.scan_paths(&matrix, 0, end, &mut buf)?;
+                }
             }
             // Flush the window in the pin's array order: the default
             // facade's tokens ascending, then the addon facade's — the
@@ -1166,6 +1169,44 @@ where
         Ok(())
     }
 
+    /// search_matrix over the retained parse, including physical zero hops.
+    /// No key can be manufactured by cutting the caller's end inside it.
+    fn scan_parsed_paths(
+        &self,
+        matrix: &matrix::ParsedMatrix,
+        node: usize,
+        end: usize,
+        buf: &mut ScanBuf<'_>,
+    ) -> Result<(), EngineError> {
+        if matrix.columns.get(end).is_none_or(Vec::is_empty)
+            && !matrix.zeros.get(end).copied().unwrap_or(false)
+        {
+            return Ok(());
+        }
+        if node < end && matrix.zeros.get(node).copied().unwrap_or(false) {
+            return self.scan_parsed_paths(matrix, node + 1, end, buf);
+        }
+        let Some(column) = matrix.columns.get(node) else {
+            return Ok(());
+        };
+        for key in column {
+            if key.to > end {
+                *buf.continued = true;
+                continue;
+            }
+            buf.path.push(key.key);
+            buf.tones.push(key.tone);
+            if key.to == end {
+                self.search_scan_path(buf, end)?;
+            } else if buf.path.len() < MAX_PHRASE_LENGTH {
+                self.scan_parsed_paths(matrix, key.to, end, buf)?;
+            }
+            buf.path.pop();
+            buf.tones.pop();
+        }
+        Ok(())
+    }
+
     /// The table search on one complete key-path, and the prefix probe that
     /// decides whether the window keeps widening.
     ///
@@ -1201,6 +1242,7 @@ where
         end: usize,
     ) -> Result<(), EngineError> {
         let ScanBuf {
+            span_base,
             path,
             tones,
             system,
@@ -1208,6 +1250,7 @@ where
             continued,
             entries,
         } = buf;
+        let end = end.saturating_sub(*span_base);
         let has_incomplete = path
             .iter()
             .any(|key| key.completeness() == Completeness::Partial);

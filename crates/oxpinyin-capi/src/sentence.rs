@@ -80,7 +80,7 @@ fn refuse_toned_initial(inst: &crate::state::CapiInstance, name: &str) -> bool {
 /// `false` and one warning. The leading-separator refusal keeps its silent
 /// `false`.
 fn validated_lookup_offset(inst: &crate::state::CapiInstance, offset: usize) -> Option<usize> {
-    match inst.core.validate_lookup_offset(offset) {
+    match inst.core.validate_abi_lookup_offset(offset, false) {
         Ok(normalized) => Some(normalized),
         Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { offset, len })
             if offset == len + 1 =>

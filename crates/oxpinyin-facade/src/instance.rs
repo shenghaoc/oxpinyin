@@ -25,8 +25,8 @@ use crate::context::LiveOptions;
 /// - **After-cursor** (`Session::candidates_at(offset)`) rebases its graph
 ///   onto `raw[offset..]`, so `consumed_bytes` is a LENGTH measured from
 ///   the lookup offset. Its anchor is that offset.
-/// - **Before-cursor** (`Session::candidates_ending_at(offset)`) runs on
-///   the prefix graph `raw[..offset]`, whose coordinates are absolute from
+/// - **Before-cursor** (`Session::candidates_ending_at(offset)`) reads
+///   the retained matrix, whose coordinates are absolute from
 ///   the buffer start, so every row's `consumed_bytes` is the span's
 ///   ABSOLUTE END — the lookup offset itself, shared by every row in the
 ///   window, whatever byte each span starts on. The anchor that reproduces
@@ -219,6 +219,10 @@ impl InstanceCore {
     /// Returns [`EngineError`] when `offset` exceeds the active parse's
     /// consumed input, per the range law above.
     pub fn validate_lookup_offset(&self, offset: usize) -> Result<usize, EngineError> {
+        self.validate_abi_lookup_offset(offset, false)
+    }
+
+    pub(crate) fn validate_lookup_offset_impl(&self, offset: usize) -> Result<usize, EngineError> {
         if let Some(parse) = self.zhuyin_parse.as_ref() {
             return check_lookup_offset_range(parse.consumed(), offset);
         }

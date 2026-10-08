@@ -26,6 +26,9 @@ pub(super) struct InputBuffer {
     /// The raw characters typed so far, never longer than
     /// [`MAX_INPUT_BYTES`].
     raw: String,
+    /// Derived topology only; every input/provenance mutation invalidates it.
+    pub(super) matrix: Option<super::matrix::ParsedMatrix>,
+    pub(super) ending_matrix: Option<super::matrix::ParsedMatrix>,
     /// Whether apostrophes came from canonical formatting rather than typing.
     /// Used only by trellis generation, never by the ordinary scan or graph.
     formatting_separators: bool,
@@ -76,6 +79,8 @@ impl InputBuffer {
     }
 
     pub(super) fn set_full_pinyin(&mut self, segments: &[ExactSegment]) {
+        self.matrix = None;
+        self.ending_matrix = None;
         self.set_exact(segments);
         self.parsed_full_pinyin = true;
         self.formatting_separators = true;
@@ -87,6 +92,8 @@ impl InputBuffer {
     /// batch). The exact chain is cleared only on an accepted push, so a
     /// character refused at the cap leaves a scheme composition intact.
     pub(super) fn try_push(&mut self, character: char) -> bool {
+        self.matrix = None;
+        self.ending_matrix = None;
         if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
             return false;
         }
@@ -100,6 +107,8 @@ impl InputBuffer {
     /// Drops the last character and exits exact mode — the erase path,
     /// which shrinks the buffer under a live composition.
     pub(super) fn pop(&mut self) {
+        self.matrix = None;
+        self.ending_matrix = None;
         self.exact.clear();
         self.parsed_full_pinyin = false;
         self.formatting_separators = false;
@@ -109,6 +118,8 @@ impl InputBuffer {
     /// Empties the buffer and the exact chain — `pinyin_reset`'s input
     /// half.
     pub(super) fn clear(&mut self) {
+        self.matrix = None;
+        self.ending_matrix = None;
         self.raw.clear();
         self.exact.clear();
         self.parsed_full_pinyin = false;
@@ -118,6 +129,8 @@ impl InputBuffer {
     /// Exits exact mode without touching `raw` — the plain replace seam,
     /// which clears the chain before refilling.
     pub(super) fn clear_exact(&mut self) {
+        self.matrix = None;
+        self.ending_matrix = None;
         self.exact.clear();
         self.parsed_full_pinyin = false;
         self.formatting_separators = false;
@@ -130,6 +143,8 @@ impl InputBuffer {
 
     /// Stores separator provenance for the private trellis generation view.
     pub(super) fn set_physical_separators(&mut self, physical: bool) {
+        self.matrix = None;
+        self.ending_matrix = None;
         self.formatting_separators = !physical;
     }
 
@@ -139,6 +154,8 @@ impl InputBuffer {
     /// already cleared it and the scheme seam sets it afterwards through
     /// [`InputBuffer::set_exact`].
     pub(super) fn refill(&mut self, text: &str) {
+        self.matrix = None;
+        self.ending_matrix = None;
         self.raw.clear();
         for character in text.chars() {
             if self.raw.len() + character.len_utf8() > MAX_INPUT_BYTES {
@@ -152,6 +169,8 @@ impl InputBuffer {
     /// the (already clamped) buffer end so `end() <= raw.len()` stays an
     /// invariant of the stored segments.
     pub(super) fn set_exact(&mut self, segments: &[ExactSegment]) {
+        self.matrix = None;
+        self.ending_matrix = None;
         self.formatting_separators = false;
         self.parsed_full_pinyin = false;
         let raw_len = self.raw.len();

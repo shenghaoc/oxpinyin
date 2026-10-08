@@ -84,16 +84,23 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    let Some(found) = inst.core.key_at(offset) else {
-        warn_on_empty_matrix(inst, "zhuyin_get_zhuyin_key_rest");
-        return false;
+    let found = match inst.core.abi_key_at(offset, true) {
+        Ok(Some(found)) => found,
+        Ok(None) => {
+            warn_on_empty_matrix(inst, "zhuyin_get_zhuyin_key_rest");
+            return false;
+        }
+        Err(_) => {
+            crate::ffi::log_warning("zhuyin_get_zhuyin_key_rest: zero-column assertion");
+            return false;
+        }
     };
     KEY_REST_SLOT.begin.store(
-        u16::try_from(found.begin).unwrap_or(u16::MAX),
+        u16::try_from(found.1).unwrap_or(u16::MAX),
         Ordering::Relaxed,
     );
     KEY_REST_SLOT.end.store(
-        u16::try_from(found.end).unwrap_or(u16::MAX),
+        u16::try_from(found.2).unwrap_or(u16::MAX),
         Ordering::Relaxed,
     );
     if !key_rest.is_null() {
@@ -200,20 +207,18 @@ pub extern "C" fn zhuyin_get_zhuyin_key(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    let Some(found) = inst.core.key_at(offset) else {
-        warn_on_empty_matrix(inst, "zhuyin_get_zhuyin_key");
-        return false;
+    let found = match inst.core.abi_key_at(offset, true) {
+        Ok(Some(found)) => found,
+        Ok(None) => {
+            warn_on_empty_matrix(inst, "zhuyin_get_zhuyin_key");
+            return false;
+        }
+        Err(_) => {
+            crate::ffi::log_warning("zhuyin_get_zhuyin_key: zero-column assertion");
+            return false;
+        }
     };
-    // `found.text` comes from `mode_keys`, which reads the parsed keys /
-    // the session matrix — always a syllable present in the content table —
-    // so `from_spelling` cannot fail in practice. Keep the fetch-failure
-    // `unwrap_or(ChewingKey::ZERO)` fallback (matching oxpinyin-capi,
-    // cursor.rs) rather than propagating lookup failure: a stale matrix
-    // key is not a reachable state, and the fallback keeps the ABI's
-    // boolean success semantics identical to the pin.
-    let packed = ChewingKey::from_spelling(found.text, found.tone)
-        .unwrap_or(ChewingKey::ZERO)
-        .packed;
+    let packed = found.0;
     KEY_SLOT.store(packed, Ordering::Relaxed);
     if !key.is_null() {
         // SAFETY: Null-checked above; the slot is a `static`, so the
@@ -278,7 +283,7 @@ pub extern "C" fn zhuyin_get_left_zhuyin_offset(
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_ref(instance) };
-    let Ok(result) = inst.core.left_offset(offset) else {
+    let Ok(result) = inst.core.abi_left_offset(offset, true) else {
         // Class (c): the pin's `get_column_size` asserts past the matrix.
         crate::ffi::log_warning(
             "zhuyin_get_left_zhuyin_offset: assertion 'index < m_table_content->len' failed",

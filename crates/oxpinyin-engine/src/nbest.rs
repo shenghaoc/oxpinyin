@@ -460,6 +460,7 @@ where
             matrix,
             bound,
             physical_separators: true,
+            topology: None,
         },
         dictionary,
         model,
@@ -487,6 +488,7 @@ where
         matrix,
         bound,
         physical_separators,
+        topology,
     } = input;
     // The sentence path's single-seed law: the constrained decode seeds
     // the virtual start; the free walk seeds the history's last token.
@@ -499,6 +501,7 @@ where
             matrix,
             bound,
             physical_separators,
+            topology,
         },
         dictionary,
         model,
@@ -530,8 +533,21 @@ where
         matrix,
         bound,
         physical_separators,
+        topology,
     } = input;
-    let generation = GenerationView::new(matrix, bound, physical_separators);
+    let owned;
+    let generation = if let Some(topology) = topology {
+        GenerationView {
+            columns: &topology.columns,
+            zeros: &topology.zeros,
+        }
+    } else {
+        owned = crate::session::matrix::ParsedMatrix::from_scan(matrix, bound, physical_separators);
+        GenerationView {
+            columns: &owned.columns,
+            zeros: &owned.zeros,
+        }
+    };
     let seed_values: Vec<u32> = seeds.iter().map(|token| token.value()).collect();
     let mut trellis = Trellis::with_seeds(bound, &seed_values, shape);
     // Memoised step costs: the beam revisits (prev, token) pairs.
@@ -619,6 +635,7 @@ pub(super) struct GenerationInput<'a> {
     pub(super) matrix: &'a [Vec<ScanKey>],
     pub(super) bound: usize,
     pub(super) physical_separators: bool,
+    pub(super) topology: Option<&'a crate::session::matrix::ParsedMatrix>,
 }
 
 #[derive(Default)]
@@ -631,45 +648,12 @@ struct GenerationPath {
 /// 074a2219 phonetic_key_matrix.cpp:350-455 represents each physical
 /// separator by a zero-key hop, including every doubled/trailing byte.
 /// Exact-scheme formatting separators are not physical zero keys.
-struct GenerationView {
-    columns: Vec<Vec<ScanKey>>,
-    zeros: Vec<bool>,
+struct GenerationView<'a> {
+    columns: &'a [Vec<ScanKey>],
+    zeros: &'a [bool],
 }
 
-impl GenerationView {
-    fn new(matrix: &[Vec<ScanKey>], bound: usize, physical: bool) -> Self {
-        let mut columns = vec![Vec::new(); bound + 1];
-        let mut zeros = vec![false; bound + 1];
-        let mut last_key_end = 0;
-        for key in matrix.iter().flatten().copied() {
-            let mut raw = key;
-            if physical && key.crosses_separator {
-                for column in zeros
-                    .iter_mut()
-                    .take(key.syllable_start.min(bound))
-                    .skip(key.from)
-                {
-                    *column = true;
-                }
-                raw.from = key.syllable_start;
-            }
-            raw.crosses_separator = false;
-            raw.syllable_start = raw.from;
-            if let Some(column) = columns.get_mut(raw.from) {
-                column.push(raw);
-            }
-            last_key_end = last_key_end.max(raw.to);
-        }
-        if physical {
-            // The parser's consumed bound includes trailing apostrophes even
-            // when junk follows them; no ordinary edge represents those bytes.
-            for column in zeros.iter_mut().take(bound).skip(last_key_end) {
-                *column = true;
-            }
-        }
-        Self { columns, zeros }
-    }
-
+impl GenerationView<'_> {
     fn search<D>(
         &self,
         start: usize,
@@ -775,7 +759,7 @@ impl GenerationView {
 /// scan matrix and its bound, the dictionary, and the language model.
 struct NbestEnv<'a, D, L> {
     /// The scan matrix columns.
-    generation: &'a GenerationView,
+    generation: &'a GenerationView<'a>,
     /// The walk's one-past-end column.
     bound: usize,
     /// The lexicon dictionary.

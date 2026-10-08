@@ -788,6 +788,17 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    /* #640: full-pinyin input on both public facades. Keep the legacy
+     * suite selectable for an identical before/after timing workload. */
+    if (!getenv("CAND_ASSEMBLY_BASELINE_ONLY")) {
+        fn_parse saved_parse = s.parse;
+        s.parse = (fn_parse)must_prefixed("parse_more_full_pinyins");
+        const char *leading[] = {"'ni", "''ni", "'nihao", "'ni'hao", "'ni'", "'a"};
+        for (size_t i = 0; i < sizeof(leading) / sizeof(leading[0]); ++i)
+            case_a(systemdir, 0x18a, zhuyin ? 0 : 0x1e, false, leading[i]);
+        s.parse = saved_parse;
+    }
+
     if (zhuyin) {
         /* Import state off only: libzhuyin's import reading parser
          * diverges on its own (issue #575 — the pin takes bopomofo, the
