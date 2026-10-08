@@ -2,7 +2,9 @@
 
 use std::os::raw::{c_char, c_int};
 
-use oxpinyin_user::PinyinKey;
+use oxpinyin_core::SyllableKey;
+use oxpinyin_engine::MatrixKey;
+use oxpinyin_user::{PinyinKey, toned_key};
 
 use crate::ffi::cstr_to_string;
 use crate::state::instance_mut;
@@ -48,16 +50,51 @@ pub extern "C" fn pinyin_remember_user_input(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    let Some(user) = inst.core.user.as_mut() else {
+    let Ok(syllables) = inst.core.session.composition_keys() else {
         return false;
     };
-    // Key ids are the dense inventory index (< u16::MAX by
-    // construction: 405 complete + 23 initial keys).
-    let Some(keys) = inst.core.session.composition_keys().ok().and_then(|keys| {
-        keys.into_iter()
-            .map(|key| u16::try_from(key.index()).ok())
-            .collect::<Option<Vec<PinyinKey>>>()
-    }) else {
+    if syllables.is_empty() || syllables.len() >= oxpinyin_user::MAX_PHRASE_LENGTH {
+        return false;
+    }
+    // Keep the existing selected syllable sequence, adding its parsed tones.
+    // 074a2219 pinyin.cpp:3578-3668 carries complete ChewingKeys through
+    // _remember_phrase_recur into _add_phrase, rather than syllable IDs.
+    let tones: Vec<u8> = if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
+        parse.keys().iter().map(|key| key.tone()).collect()
+    } else if let Some(parse) = inst.core.double_parse.as_ref() {
+        parse.keys().iter().map(|key| key.tone()).collect()
+    } else if let Some(parse) = inst.core.full_parse.as_ref() {
+        parse.keys().iter().map(|key| key.tone()).collect()
+    } else {
+        // set_options changes the context, not the parsed matrix
+        // (074a2219 pinyin.cpp:1299-1306, 3585). Read the session's
+        // parse-time matrix instead of parsing again with live options.
+        let Ok((matrix, end)) = inst.core.session.matrix_keys() else {
+            return false;
+        };
+        let Some(tones) = selected_tones(
+            &matrix,
+            inst.core.session.raw_input().as_bytes(),
+            &syllables,
+            0,
+            end,
+        ) else {
+            return false;
+        };
+        tones
+    };
+    if syllables.len() != tones.len() {
+        return false;
+    }
+    let Some(keys) = syllables
+        .into_iter()
+        .zip(tones)
+        .map(|(key, tone)| toned_key(key.index(), tone))
+        .collect::<Option<Vec<PinyinKey>>>()
+    else {
+        return false;
+    };
+    let Some(user) = inst.core.user.as_mut() else {
         return false;
     };
     // `if (-1 == count) count = default_count;` otherwise the `gint` is
@@ -66,4 +103,34 @@ pub extern "C" fn pinyin_remember_user_input(
     // below -1 is accepted and exported as it went in.
     let count = (count != -1).then(|| u64::from(count.cast_unsigned()));
     user.add_phrase(&phrase, &keys, count).is_ok()
+}
+
+// Match the selected syllable path through the retained scan matrix. Matrix
+// alternatives need not have the same spans, so require a complete path;
+// apostrophe separator hops do not consume a syllable. Depth is bounded by
+// the validated phrase length above.
+fn selected_tones(
+    matrix: &[MatrixKey],
+    input: &[u8],
+    syllables: &[SyllableKey],
+    mut start: usize,
+    end: usize,
+) -> Option<Vec<u8>> {
+    while start < end && input.get(start) == Some(&b'\'') {
+        start += 1;
+    }
+    let Some((syllable, rest)) = syllables.split_first() else {
+        return (start == end).then(Vec::new);
+    };
+    for edge in matrix {
+        if edge.syllable_start() == start
+            && edge.end() > start
+            && edge.key() == *syllable
+            && let Some(mut tones) = selected_tones(matrix, input, rest, edge.end(), end)
+        {
+            tones.insert(0, edge.tone());
+            return Some(tones);
+        }
+    }
+    None
 }

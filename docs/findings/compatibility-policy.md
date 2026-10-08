@@ -443,14 +443,15 @@ revert targets is `revert-plan.md`.
 | 70 | `zhuyin_token_get_nth_pronunciation` keys past the last reading | **(b)** | the zhuyin twin of row 51, ruled with it: an `nth` past the last reading appends `phrase_length` keys read from `ChewingKey buffer[MAX_PHRASE_LENGTH]`, a stack array that is never initialised, because the return value of `PhraseItem::get_nth_pronunciation` is ignored (`zhuyin.cpp:1800-1810`; the out-of-range read writes nothing). No safe construction reproduces a read of uninitialised stack. The answer (`true`) and the number of keys (`phrase_length`) are the pin's and are held by `zhuyin-nth-pronunciation-range` of `contract-diff.py`, which leaves the content out of the comparison; the content is zeroed (`crates/oxpinyin-zhuyin-capi/src/dict.rs`). Entry in `docs/findings/upstream-divergences.md`. |
 
 | 71 | Empty system directory and NULL system directory (#643) | **CLOSED** in code (2026-10-08 UTC) | At 074a2219, `pinyin.cpp:331-338` and `zhuyin.cpp:275-282` keep the argument then call `g_build_filename`: empty names cwd/table.conf, NULL names the empty filename and fails with two raw stderr lines. The facade rejected both. Both C boundaries now preserve NULL, including its exact failed-open stderr, and the facade forwards an empty Path unchanged. `contract-diff.py` `init-system-{empty,empty-missing,null,dot,absolute}-{pinyin,zhuyin}` compares init, parse, guess, user files and stderr on BDB. Source read from `/home/sheng/work/libpinyin` at the pin (pinyin.cpp blob f27f7cf7, zhuyin.cpp d1520c18); no exception class applies. |
+| 72 | Remembered phrase pronunciation tones (#699) | **CLOSED** in code (2026-10-08 UTC) | `pinyin.cpp:3578-3668` at 074a2219 retains ChewingKey tones; the C remember path projected to syllable IDs. It now combines the existing selected syllables with their parsed tones. Ordinary-userdir import/remember/export is covered by `remember-tones-pinyin`; Zhuyin has no equivalent API. Plain match, no interface change. |
 
 Totals at `e1d915d0` with this change (2026-09-27 UTC, recounted from
 the class column; #548): **(a)** 1 (row 11, scope shrinking, #535) · **(b)** 8 (1, 18,
 41, 42, 43, 51, 60, 70) · **(c)** 17 (38, 44, 45, 61, 5a, 62, 10, 14, 63, 64, 6, 4, 5c, 5d, 19, 21 and 66, both halves met) · **(d)** 0 (retired 2026-09-06) ·
 **REVERT TARGET** 3 ·
-**OPEN DEFECT** 0 · **CLOSED** 38 (3, 5b, 7, 8, 9, 12, 13, 15, 16, 17,
-24, 25, 26, 27, 28, 30, 32, 33, 34, 35, 36, 37, 39, 46, 47, 48, 50, 52, 53, 55, 56, 57, 59, 49, 67, 68, 69, 71) · **CONTRADICTED** 0 · **STANDING** 1 (40) · **reattributed** 1 (20 → 33) ·
-**no ABI divergence** 4 (2, 23, 29, 31) · **WITHDRAWN** 1 (22) — 74 rows (amended the same
+**OPEN DEFECT** 0 · **CLOSED** 39 (3, 5b, 7, 8, 9, 12, 13, 15, 16, 17,
+24, 25, 26, 27, 28, 30, 32, 33, 34, 35, 36, 37, 39, 46, 47, 48, 50, 52, 53, 55, 56, 57, 59, 49, 67, 68, 69, 71, 72) · **CONTRADICTED** 0 · **STANDING** 1 (40) · **reattributed** 1 (20 → 33) ·
+**no ABI divergence** 4 (2, 23, 29, 31) · **WITHDRAWN** 1 (22) — 75 rows (amended the same
 day for #550: row 20 reattributed, row 38's index arm opened; for
 #577: rows 25 and 26 contradicted; and for #591: row 44 registered; amended
 2026-10-02 UTC at `a3ef00f5`: rows 36 and 39 closed in code by lane B, #607/#608,

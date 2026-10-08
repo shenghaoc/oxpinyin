@@ -2446,3 +2446,17 @@ facades now preserve that distinction and the NULL failure's exact raw
 stderr. `contract-diff.py`'s ten `init-system-*` cases cover both facades,
 including parse/guess after a successful open and dot/absolute controls.
 The pin tree read was `/home/sheng/work/libpinyin` at 074a2219.
+
+### Remembered pronunciation tones (#699; row 72, closed 2026-10-08 UTC)
+
+Ordinary userdir, library 7, import 你好你好 / ni3'hao3'ni3'hao3 / 100000,
+parse ni3hao3ni3hao3, guess, remember count 3: the pin exports the toned
+reading at 100003; the pre-fix subject exported toned 100000 plus toneless 3.
+`src/pinyin.cpp:3578-3668` at 074a2219 carries complete matrix keys;
+`capi/src/user_data.rs` dropped tone while projecting selected syllables.
+The fix retains parsed tones without changing the selected syllable sequence.
+No public interface, ABI or dependency changes. Both Zhuyin libraries lack
+remember/export symbols. Existing contract driver cases remember-tones-pinyin
+and remember-api-absent-zhuyin verify this distinction on BDB.
+Source read from /home/sheng/work/libpinyin at the pin, pinyin.cpp blob
+f27f7cf776724ead8d55e14b4af390e790054a91. This is plain parity.
