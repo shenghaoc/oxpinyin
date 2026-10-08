@@ -15,7 +15,7 @@
 # | n/a — each EXECUTABLE, probed by alloc-pairing-zhuyin.cc against a
 # failure path a conforming consumer can reach.
 # Verified: pin-probe:<case> | pin-aborts:row<N> | source:<file>:<lines> |
-# unverified | n/a — how <notes> was established. The gate checks its form
+# unverified | unexecuted | n/a — how <notes> was established. The gate checks its form
 # only; libpinyin.alloc defines each value.
 #
 # The zhuyin facade allocates through its own `ffi.rs` — `owned_cstr` and
@@ -45,8 +45,8 @@ zhuyin_get_zhuyin_key_rest               key_rest    borrowed                   
 
 # ── Caller-owned strings (g_free) ─────────────────────────────────────
 zhuyin_get_sentence                      sentence    g_free                        false-untouched    pin-probe:zhuyin-sentence-before-guess
-zhuyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable  unverified
-zhuyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable  unverified
+zhuyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable  unexecuted
+zhuyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable  unexecuted
 zhuyin_token_get_phrase                  utf8_str    g_free                        false-untouched    pin-probe:zhuyin-token-get-phrase-out
 
 # ── Caller-owned string vectors (g_strfreev) ──────────────────────────

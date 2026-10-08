@@ -145,7 +145,7 @@ register_slots() {
 }
 
 # The `<verified>` kinds `libpinyin.alloc` defines, one per register line.
-VERIFIED_KINDS='^(pin-probe:[A-Za-z0-9_.-]+|pin-aborts:row[0-9]+[a-d]?|source:[A-Za-z0-9_./-]+:[0-9]+(-[0-9]+)?|unverified|n/a)$'
+VERIFIED_KINDS='^(pin-probe:[A-Za-z0-9_.-]+|pin-aborts:row[0-9]+[a-d]?|source:[A-Za-z0-9_./-]+:[0-9]+(-[0-9]+)?|unverified|unexecuted|n/a)$'
 
 # Every register line with other than five fields, or whose fifth is not one
 # of the kinds, printed with its line number; fails when there was one.
