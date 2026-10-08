@@ -55,8 +55,8 @@
 #                        claimed. An explicit claim about reachability, not
 #                        a skip: challenge it in review like any other.
 #     n/a                the slot is a return value.
-#   <verified>  How <notes> was established. The gate reads the first four
-#            fields only, so a green run says nothing about this one:
+#   <verified>  How <notes> was established. The gate checks that every
+#            line carries one of these kinds, never the evidence it names:
 #     pin-probe:<case>       measured at the pin and on oxpinyin, identical,
 #                            on the reference cell (bdb) by <case>: a
 #                            `tools/bisection/contract-diff.py` case, or a
