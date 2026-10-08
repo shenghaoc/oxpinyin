@@ -860,8 +860,9 @@ def _(k):
 
 # #681, row 62: the bigram twin. A fresh user dir has an empty user bigram,
 # so the iterator's predecessor is still null_token and the pin asserts
-# (`pinyin.cpp:902`) before it writes anything.
-@case('abort-bigram-iterator-get-next-phrase', abort=False)
+# (`pinyin.cpp:902`) before it writes anything. A control: the parent build
+# already answers this way; the case registers behaviour, it changes none.
+@case('abort-bigram-iterator-get-next-phrase', control=True, abort=False)
 def _(k):
     it = k.fn('begin_get_bigram_phrases', P, P)(k.ctx)
     phrase, pinyin, count = P(UNTOUCHED), P(UNTOUCHED), I(UNTOUCHED)
