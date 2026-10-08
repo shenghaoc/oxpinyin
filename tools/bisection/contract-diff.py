@@ -858,6 +858,22 @@ def _(k):
                 it, C.byref(phrase), C.byref(pinyin), C.byref(count))}
 
 
+# #681, row 62: the bigram twin. A fresh user dir has an empty user bigram,
+# so the iterator's predecessor is still null_token and the pin asserts
+# (`pinyin.cpp:902`) before it writes anything.
+@case('abort-bigram-iterator-get-next-phrase', abort=False)
+def _(k):
+    it = k.fn('begin_get_bigram_phrases', P, P)(k.ctx)
+    phrase, pinyin, count = P(UNTOUCHED), P(UNTOUCHED), I(UNTOUCHED)
+    has_next = k.fn('bigram_iterator_has_next_phrase', B, P)(it)
+    ret = k.fn('bigram_iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
+        it, C.byref(phrase), C.byref(pinyin), C.byref(count))
+    return {'has next': has_next, 'ret': ret,
+            'untouched phrase': phrase.value == UNTOUCHED,
+            'untouched pinyin': pinyin.value == UNTOUCHED,
+            'untouched count': count.value == UNTOUCHED}
+
+
 # The in-range neighbours answer without a warning, as at the pin.
 @case('scheme-and-library-neighbours', control=True)
 def _(k):
