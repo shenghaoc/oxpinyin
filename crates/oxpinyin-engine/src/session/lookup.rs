@@ -110,7 +110,11 @@ where
             // A fully-consumed (or past-end) anchor still carries its
             // sentence rows — upstream's window prepends `m_nbest_results`
             // whether or not any phrase candidate remains at the cursor (the
-            // L1 terminal-choose surface).
+            // L1 terminal-choose surface) — and its LONGER row, which the
+            // pin prepends at every valid offset (`pinyin.cpp:2292-2293`;
+            // row 65: the reserved slot's column holds no key, so the span
+            // loop finds nothing but the prepends still run).
+            self.prepend_longer_row(out)?;
             self.prepend_nbest_rows(out);
             return Ok(0);
         }
@@ -240,11 +244,7 @@ where
         // zero span: upstream never sets `m_begin`/`m_end` for it
         // (`_prepend_longer_candidates` leaves both zero), which is also
         // the marker the C ABI reads back as `LONGER_CANDIDATE`.
-        if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
-            && let Some(candidate) = self.longer_candidate()?
-        {
-            collected.insert(0, candidate);
-        }
+        self.prepend_longer_row(&mut collected)?;
 
         // W14: prepend the stored n-best rows, head first, then drop every
         // later candidate with the same text — upstream prepends after the
@@ -264,6 +264,31 @@ where
             window_addon,
         };
         Ok(parsed_prefix)
+    }
+
+    /// Prepends the LONGER candidate row when the sort word leaves
+    /// `SORT_WITHOUT_LONGER_CANDIDATE` clear — the pin's
+    /// `_prepend_longer_candidates` call (`pinyin.cpp:2292-2293`).
+    ///
+    /// The pin runs this after the span loop, for every valid lookup
+    /// offset: the span loop's result is empty at an offset no span
+    /// starts at (a mid-key byte, an apostrophe column, the reserved
+    /// slot), and the prepend still fires (row 65). Callers put this
+    /// before [`Session::prepend_nbest_rows`] so the n-best rows rotate
+    /// above the LONGER one, exactly the pin's two prepends.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the whole-composition suggestion walk
+    /// or a model read fails — the surfaces [`Session::longer_candidate`]
+    /// reads.
+    fn prepend_longer_row(&self, out: &mut Vec<Candidate>) -> Result<(), EngineError> {
+        if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
+            && let Some(candidate) = self.longer_candidate()?
+        {
+            out.insert(0, candidate);
+        }
+        Ok(())
     }
 
     /// The LONGER candidate row — `_prepend_longer_candidates`
@@ -306,7 +331,14 @@ where
         let max_keys = (prefix_len * 2).min(MAX_PHRASE_LENGTH);
 
         let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
-        let end = graph.consumed();
+        // `search_suggestion_with_matrix` walks to `matrix->size() - 1`
+        // (`phonetic_key_matrix.cpp:512`), the parse's reserved slot: the
+        // last byte the SELECTED parse covers. That is not
+        // `graph.consumed()`, which also counts incomplete edges — a
+        // trailing byte the parser left unparsed (row 65's `nih`) would
+        // otherwise put `end` past the last key's column, the walk would
+        // find no path, and the LONGER row would vanish.
+        let end = selected.last().map_or(0, |edge| edge.to());
         if matrix.first().is_none_or(std::vec::Vec::is_empty) {
             return Ok(None);
         }
@@ -476,6 +508,12 @@ where
                 None,
                 None,
             ));
+            // Row 65: an offset no span starts at is an EMPTY matrix column,
+            // but the pin's two prepends run after the span loop regardless
+            // of it — the LONGER row (`pinyin.cpp:2292-2293`) first, then the
+            // sentence rows (`:2295-2296`). The n-best rows rotate above the
+            // LONGER one, matching the pin's two prepends.
+            self.prepend_longer_row(&mut items)?;
             self.prepend_nbest_rows(&mut items);
             return Ok(CandidateList::from_vec(items));
         }
