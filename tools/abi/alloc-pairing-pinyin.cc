@@ -73,12 +73,12 @@ const Slot kSlots[] = {
     {"pinyin_get_full_pinyin_auxiliary_text",   "aux_text",  "g_free",                              "false-allocates"},
     {"pinyin_get_double_pinyin_auxiliary_text", "aux_text",  "g_free",                              "false-allocates"},
     {"pinyin_get_chewing_auxiliary_text",       "aux_text",  "g_free",                              "false-allocates"},
-    {"pinyin_get_pinyin_string",                "utf8_str",  "g_free",                              "false-unreachable"},
-    {"pinyin_get_zhuyin_string",                "utf8_str",  "g_free",                              "false-unreachable"},
-    {"pinyin_get_luoma_pinyin_string",          "utf8_str",  "g_free",                              "false-unreachable"},
-    {"pinyin_get_secondary_zhuyin_string",      "utf8_str",  "g_free",                              "false-unreachable"},
-    {"pinyin_get_pinyin_strings",               "shengmu",   "g_free",                              "false-unreachable"},
-    {"pinyin_get_pinyin_strings",               "yunmu",     "g_free",                              "false-unreachable"},
+    {"pinyin_get_pinyin_string",                "utf8_str",  "g_free",                              "false-nulls"      },
+    {"pinyin_get_zhuyin_string",                "utf8_str",  "g_free",                              "false-nulls"      },
+    {"pinyin_get_luoma_pinyin_string",          "utf8_str",  "g_free",                              "false-nulls"      },
+    {"pinyin_get_secondary_zhuyin_string",      "utf8_str",  "g_free",                              "false-nulls"      },
+    {"pinyin_get_pinyin_strings",               "shengmu",   "g_free",                              "false-untouched"},
+    {"pinyin_get_pinyin_strings",               "yunmu",     "g_free",                              "false-untouched"},
     {"pinyin_token_get_phrase",                 "utf8_str",  "g_free",                              "false-untouched"},
     {"pinyin_iterator_get_next_phrase",         "phrase",    "g_free",                              "false-untouched"},
     {"pinyin_iterator_get_next_phrase",         "pinyin",    "g_free",                              "false-untouched"},
@@ -466,16 +466,55 @@ void exercise_iterators(pinyin_context_t *context) {
     }
 }
 
+// The key-string getters on a zero key. `xi'` parses to one key and a
+// separator column; the key getter answers the zero key at offset 2, which
+// is in contract for a consumer and which every display getter refuses.
+// pinyin_get_pinyin_strings returns before it writes either out-param
+// (`false-untouched`); the other four NULL theirs first (`false-nulls`).
+void probe_zero_key_strings(pinyin_instance_t *instance) {
+    pinyin_reset(instance);
+    pinyin_parse_more_full_pinyins(instance, "xi'");
+
+    ChewingKey *zero = nullptr;
+    if (!pinyin_get_pinyin_key(instance, 2, &zero) || zero == nullptr) {
+        contract_failed("pinyin_get_pinyin_key", "key", "the zero key",
+                        "no key came back at the separator column");
+        return;
+    }
+
+    gchar *utf8 = kSentinel;
+    bool ok = pinyin_get_pinyin_string(instance, zero, &utf8);
+    expect_declared("pinyin_get_pinyin_string", "utf8_str", ok, utf8);
+
+    utf8 = kSentinel;
+    ok = pinyin_get_zhuyin_string(instance, zero, &utf8);
+    expect_declared("pinyin_get_zhuyin_string", "utf8_str", ok, utf8);
+
+    utf8 = kSentinel;
+    ok = pinyin_get_luoma_pinyin_string(instance, zero, &utf8);
+    expect_declared("pinyin_get_luoma_pinyin_string", "utf8_str", ok, utf8);
+
+    utf8 = kSentinel;
+    ok = pinyin_get_secondary_zhuyin_string(instance, zero, &utf8);
+    expect_declared("pinyin_get_secondary_zhuyin_string", "utf8_str", ok, utf8);
+
+    gchar *shengmu = kSentinel;
+    gchar *yunmu = kSentinel;
+    ok = pinyin_get_pinyin_strings(instance, zero, &shengmu, &yunmu);
+    expect_declared("pinyin_get_pinyin_strings", "shengmu", ok, shengmu);
+    expect_declared("pinyin_get_pinyin_strings", "yunmu", ok, yunmu);
+}
+
 // Every reachable false-return contract, driven from an empty parse. Runs
 // last in the lifecycle because it resets the instance.
 //
-// The `false-unreachable` slots are absent by construction: `ChewingKey` is
-// an opaque typedef, so a conforming consumer cannot fabricate the unset key
-// that is the only non-NULL-argument way into those refusals, and
+// The `false-unreachable` slots are absent by construction:
 // pinyin_get_candidate_string answers true for every candidate the ABI
-// hands out. Those notes are a claim about reachability, and the script
-// requires them to be spelled `false-unreachable` rather than silently
-// skipped.
+// hands out. The key-string getters are not among them: a separator column
+// holds a zero key, which pinyin_get_pinyin_key answers with `true`, and
+// every getter below refuses it (`0 == key->get_table_index()`,
+// pinyin.cpp:2711, :2722, :2733, :2744, :2755). Their step is
+// probe_zero_key_strings.
 void probe_false_contracts(pinyin_instance_t *instance) {
     pinyin_reset(instance);
 
@@ -538,6 +577,8 @@ void probe_false_contracts(pinyin_instance_t *instance) {
         expect_declared("pinyin_in_chewing_keyboard", "symbols", false, symbols);
         break;
     }
+
+    probe_zero_key_strings(instance);
 }
 
 // One full consumer lifecycle: the two handles, a parse, a decode, a train

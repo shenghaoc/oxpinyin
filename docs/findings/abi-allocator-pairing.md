@@ -154,6 +154,46 @@ gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o bigram-export-diff \
 prints the row `你好`, `ni'hao`, `138`, `get=false` for both: the `false`
 row carries its phrase and pinyin. The raw capture is not retained.
 
+**(e) The key-string getters are reachable (2026-10-09, #681).** Items (b) and
+(c) above reclassified these eight lines `false-unreachable` because a
+conforming consumer could not make an unset `ChewingKey`. That is wrong: a
+separator column holds a zero key, and `pinyin_get_pinyin_key` /
+`zhuyin_get_zhuyin_key` hand it out with `true` (`xi'` at offset 2 for
+pinyin, `xi1'` at offset 3 for zhuyin). Every getter then takes its refusal,
+`0 == key->get_table_index()` (`pinyin.cpp:2711`, `:2722`, `:2733`, `:2744`,
+`:2755`; `zhuyin.cpp:1736`, `:1750`). Measured on bdb at 074a2219, pin and
+oxpinyin identical:
+
+| Slot | Return | Out-param |
+|---|---|---|
+| `pinyin_get_pinyin_string`, `_zhuyin_string`, `_luoma_pinyin_string`, `_secondary_zhuyin_string` | `false` | NULL |
+| `pinyin_get_pinyin_strings` (`shengmu`, `yunmu`) | `false` | both untouched |
+| `zhuyin_get_zhuyin_string`, `zhuyin_get_pinyin_string` | `false` | NULL |
+
+The figures come from the fourteen `alloc-register-*` cases (the seven
+`-zero-key` probes and their `-real-key` controls), run as
+
+```
+python3 tools/bisection/contract-diff.py bdb <oracle-prefix> \
+    <target>/debug/libpinyin_capi.so \
+    --zhuyin-so <target>/debug/libzhuyin_capi.so \
+    --cases alloc-register-pinyin_get_pinyin-zero-key,\
+alloc-register-pinyin_get_zhuyin-zero-key,\
+alloc-register-pinyin_get_luoma_pinyin-zero-key,\
+alloc-register-pinyin_get_secondary_zhuyin-zero-key,\
+alloc-register-pinyin_get_strings-zero-key,\
+alloc-register-zhuyin_get_zhuyin-zero-key,\
+alloc-register-zhuyin_get_pinyin-zero-key
+```
+
+where `<oracle-prefix>` is the pin-built bdb prefix. Add `--expect-parent`
+for the parent-build check; the cases are controls, so they match there too.
+
+The eight lines are now `false-nulls` (six) and `false-untouched` (two),
+verified by the `alloc-register-*-zero-key` cases of `contract-diff.py`, and
+both C++ drivers call the getters on the zero key. The statements in (b) and
+(c) that these slots are unreachable are superseded by this item.
+
 ## 3. The gate
 
 `tools/abi/check-alloc-pairing.sh`, run in CI's `test` job beside the two

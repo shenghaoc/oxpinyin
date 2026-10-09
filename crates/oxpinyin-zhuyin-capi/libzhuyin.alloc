@@ -34,8 +34,8 @@ zhuyin_begin_add_phrases                 return      handle:zhuyin_end_add_phras
 
 # ── Borrowed pointers: never freed by the caller ──────────────────────
 # The key getters NULL their out-param on the reachable refusal (no key at
-# the offset); the string getters' only non-NULL-argument `false` needs an
-# unset ChewingKey, which an opaque typedef denies a conforming consumer.
+# the offset). The string getters (below) refuse on the zero key a
+# separator column holds (`xi1'` at offset 3), so they are reachable too.
 zhuyin_get_candidate                     candidate   borrowed                      false-nulls        unverified
 # The candidate string has no `false` at the pin: it stores the pointer and
 # answers `true` (zhuyin.cpp:1865-1870).
@@ -45,8 +45,8 @@ zhuyin_get_zhuyin_key_rest               key_rest    borrowed                   
 
 # ── Caller-owned strings (g_free) ─────────────────────────────────────
 zhuyin_get_sentence                      sentence    g_free                        false-untouched    pin-probe:zhuyin-sentence-before-guess
-zhuyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable  unexecuted
-zhuyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable  unexecuted
+zhuyin_get_zhuyin_string                 utf8_str    g_free                        false-nulls        pin-probe:alloc-register-zhuyin_get_zhuyin-zero-key
+zhuyin_get_pinyin_string                 utf8_str    g_free                        false-nulls        pin-probe:alloc-register-zhuyin_get_pinyin-zero-key
 zhuyin_token_get_phrase                  utf8_str    g_free                        false-untouched    pin-probe:zhuyin-token-get-phrase-out
 
 # ── Caller-owned string vectors (g_strfreev) ──────────────────────────
