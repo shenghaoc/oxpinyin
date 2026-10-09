@@ -341,7 +341,7 @@ pub fn load(
     Ok(load_checked(dir, originals, &check))
 }
 
-/// What [`check_format`] decided about a profile: the open counter this
+/// What `check_format` decided about a profile: the open counter this
 /// session starts from and whether the files are kept.
 #[derive(Clone, Copy, Debug)]
 pub struct ProfileCheck {
@@ -353,12 +353,12 @@ pub struct ProfileCheck {
 /// the counter, wipe a non-conform profile and write the marker. The pin
 /// runs it first in `pinyin_init`, before any library is loaded
 /// (`pinyin.cpp:337-346`), so a facade whose init can fail later runs it
-/// ahead of those loads, then reads the profile with [`load_checked`].
+/// ahead of those loads, then reads the profile with `load_checked`.
 ///
 /// # Errors
 ///
 /// As [`load`].
-pub fn check_format(
+pub(crate) fn check_format(
     dir: &Path,
     versions: &SystemVersions,
     law: UserConfLaw,
@@ -405,10 +405,10 @@ pub fn check_format(
     })
 }
 
-/// The profile half of [`load`], over a profile [`check_format`] judged:
+/// The profile half of [`load`], over a profile `check_format` judged:
 /// nothing to read when it was wiped.
 #[must_use]
-pub fn load_checked(
+pub(crate) fn load_checked(
     dir: &Path,
     originals: &BTreeMap<u8, SystemLibrary>,
     check: &ProfileCheck,
