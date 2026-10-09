@@ -2371,6 +2371,66 @@ for _mode, _text, _zero, _real, _names in (
             alloc_register_case(_mode, _text, _real, _name))
 
 
+
+# #695, row 54: parse replaces the matrix even for empty input; every
+# candidate guess searches the currently loaded libraries without a reparse.
+def row54_empty(parse_name, text):
+    def probe(k):
+        k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+        inst = k.inst
+        parse = k.fn(parse_name, Z, P, S)
+        guess = k.fn('guess_sentence', B, P)
+        out = {'first_parse': parse(inst, text), 'first_guess': guess(inst)}
+        out['empty_parse'] = parse(inst, b'')
+        out['empty_guess'] = guess(inst)
+        out['reparse'] = parse(inst, text)
+        out['recovered_guess'] = guess(inst)
+        return out
+    return probe
+
+
+def row54_unload(direction, reparse):
+    def probe(k):
+        k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+        inst = k.inst
+        parse = k.fn('parse_more_full_pinyins', Z, P, S)
+        out = {'parse': parse(inst, b'nihao')}
+        def rows():
+            if k.mode == 'pinyin':
+                ret = k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1e)
+            else:
+                ret = k.fn('guess_candidates_' + direction + '_cursor', B, P, Z)(
+                    inst, 0 if direction == 'after' else 5)
+            count = U(UNTOUCHED)
+            counted = k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+            strings = []
+            for index in range(count.value):
+                candidate, text = P(), S()
+                assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(candidate))
+                assert k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, candidate, C.byref(text))
+                strings.append(text.value.decode())
+            return [ret, counted, count.value, strings]
+        out['before'] = rows()
+        out['unload'] = k.fn('unload_phrase_library', B, P, C.c_ubyte)(k.ctx, 2)
+        if reparse:
+            out['reparse'] = parse(inst, b'nihao')
+        out['after'] = rows()
+        out['repeated'] = rows()
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _parser, _text in (('full_pinyins', b'nihao'), ('chewings', b'su3cl3')):
+        case(f'row54-empty-{_mode}-{_parser}', mode=_mode)(
+            row54_empty('parse_more_' + _parser, _text))
+    for _reparse in (False, True):
+        case(f'row54-unload-{_mode}' + ('-reparse' if _reparse else ''),
+             mode=_mode, control=_reparse)(row54_unload('after', _reparse))
+case('row54-empty-pinyin-double')(row54_empty('parse_more_double_pinyins', b'nihk'))
+case('row54-unload-zhuyin-before', mode='zhuyin', control=True)(row54_unload('before', False))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('cell', choices=['bdb', 'kc', 'tkrzw'])
