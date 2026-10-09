@@ -26,7 +26,22 @@ pub extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    if refuse_zero_consumption(inst) {
+        return false;
+    }
     inst.core.session.guess_sentence().unwrap_or(false)
+}
+
+// fill_matrix leaves an empty matrix after any zero-consumption parse.
+// Validate against it, but keep the previous sentence rows: get_nbest_match
+// returns false before results->clear (074a2219, phonetic_lookup.h:743-748;
+// zhuyin.cpp:902-907). The same rule applies to the prefix-seeded lookup.
+fn refuse_zero_consumption(inst: &mut crate::state::CapiInstance) -> bool {
+    if inst.core.parsed_len != 0 {
+        return false;
+    }
+    inst.core.session.discard_composition();
+    true
 }
 
 /// Guess a sentence seeded with prefix tokens.
@@ -51,6 +66,9 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
     let Some(prefix) = cstr_to_strict(prefix) else {
         return false;
     };
+    if refuse_zero_consumption(inst) {
+        return false;
+    }
     let prefixes =
         oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
     let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes
