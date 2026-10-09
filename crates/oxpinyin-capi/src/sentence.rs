@@ -34,7 +34,15 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     // `m_prefixes` becomes `[sentence_start]` before the lookup runs
     // (`pinyin.cpp:1376-1377`).
     inst.prefixes.clear();
-    if !matrix_has_keys(inst) || refuse_toned_initial(inst, "pinyin_guess_sentence") {
+    if !matrix_has_keys(inst) {
+        if inst.core.session.raw_input().is_empty() {
+            // The pin validates constraints against the empty matrix
+            // before returning false (074a2219 pinyin.cpp:1379-1380).
+            inst.core.session.discard_composition();
+        }
+        return false;
+    }
+    if refuse_toned_initial(inst, "pinyin_guess_sentence") {
         return false;
     }
     inst.core.session.guess_sentence().unwrap_or(false)
@@ -145,7 +153,15 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
     let prefixes =
         oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
     inst.prefixes.clone_from(&prefixes);
-    if !matrix_has_keys(inst) || refuse_toned_initial(inst, "pinyin_guess_sentence_with_prefix") {
+    if !matrix_has_keys(inst) {
+        if inst.core.session.raw_input().is_empty() {
+            // The pin validates constraints against the empty matrix
+            // before returning false (074a2219 pinyin.cpp:1379-1380).
+            inst.core.session.discard_composition();
+        }
+        return false;
+    }
+    if refuse_toned_initial(inst, "pinyin_guess_sentence_with_prefix") {
         return false;
     }
     let prefix_tokens: Vec<oxpinyin_core::PhraseToken> = prefixes

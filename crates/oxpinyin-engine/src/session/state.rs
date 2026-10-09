@@ -357,7 +357,13 @@ where
     /// refresh under their own parse mode (the exact seam must set its
     /// segments first).
     pub(super) fn refill_raw(&mut self, text: &str) {
+        let restoring = self.input.is_empty() && !text.is_empty() && self.constraints.is_active();
         self.input.refill(text);
+        if restoring {
+            // An empty parse clamped the cursor but kept the forcings.
+            // Restore their selection record when the input returns.
+            self.rebuild_selection_from_constraints();
+        }
         // A stale consumed from the replaced composition may now sit inside
         // a multi-byte character of the new raw (`a` selected to consumed 1,
         // then `，` replaces it). `refresh`/`scan_window` slice

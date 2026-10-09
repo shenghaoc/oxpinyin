@@ -46,6 +46,11 @@ where
         self.ensure_matrix()?;
         self.sentence.begin();
         if self.input.is_empty() {
+            // validate_constraint shrinks the store to the empty matrix
+            // before get_nbest_match refuses it (074a2219,
+            // phonetic_lookup.cpp:123-138, pinyin.cpp:1379-1380).
+            self.constraints.clear();
+            self.record.clear();
             return Ok(false);
         }
         let remaining_empty = self.record.consumed() >= self.input.len();
@@ -143,6 +148,11 @@ where
         self.ensure_matrix()?;
         self.sentence.begin();
         if self.input.is_empty() {
+            // validate_constraint shrinks the store to the empty matrix
+            // before get_nbest_match refuses it (074a2219,
+            // phonetic_lookup.cpp:123-138, pinyin.cpp:1379-1380).
+            self.constraints.clear();
+            self.record.clear();
             return Ok(false);
         }
         let graph = self.build_graph_at(0, self.input.as_bytes())?;

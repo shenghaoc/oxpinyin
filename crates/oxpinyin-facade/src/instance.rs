@@ -91,7 +91,9 @@ pub struct InstanceCore {
     /// when the last parse call was the full-pinyin entry point under
     /// such a scheme. Used for aux-text rendering over the raw input.
     pub full_parse: Option<FullPinyinIndexParse>,
-    /// Original full-pinyin input for aux-text cursor mapping.
+    /// Original full-pinyin input for aux-text cursor mapping. With no
+    /// active parse and empty session input, also retains the preceding
+    /// original input for continuity through an empty parse.
     pub full_input: String,
 }
 
@@ -173,18 +175,25 @@ impl InstanceCore {
     /// not mis-anchor its window before validate could drop the
     /// mismatched forcings.
     pub fn begin_parse(&mut self, original: &[u8]) {
-        let stored: &[u8] = if self.zhuyin_parse.is_some() {
-            self.zhuyin_input.as_bytes()
+        let stored = if self.zhuyin_parse.is_some() {
+            self.zhuyin_input.as_str()
         } else if self.double_parse.is_some() {
-            self.double_input.as_bytes()
-        } else if self.full_parse.is_some() {
-            self.full_input.as_bytes()
+            self.double_input.as_str()
+        } else if self.full_parse.is_some() || self.session.raw_input().is_empty() {
+            self.full_input.as_str()
         } else {
-            self.session.raw_input().as_bytes()
+            self.session.raw_input()
         };
-        let continues = self.session.parse_continues(stored, original);
-        let committed_continues =
-            !continues && self.session.committed_parse_continues(stored, original);
+        // Parsing empty clears the matrix, not the constraints. Retain the
+        // preceding original input in the existing, inactive full-input
+        // buffer so restoring it follows the same continuity law as a
+        // direct reparse (074a2219, pinyin.cpp:1497-1525).
+        let empty_continuity = original.is_empty().then(|| stored.to_owned());
+        let continues = self.session.parse_continues(stored.as_bytes(), original);
+        let committed_continues = !continues
+            && self
+                .session
+                .committed_parse_continues(stored.as_bytes(), original);
         // The committed-continues shape needs exactly `reset_parse_state`:
         // its `reset_composition` keeps the store and the selection
         // record, so the discard below must not run there. Neither path
@@ -192,6 +201,9 @@ impl InstanceCore {
         // `m_nbest_results` (`pinyin.cpp:1497-1524`), which only the full
         // reset clears (register row 34).
         self.reset_parse_state();
+        if let Some(input) = empty_continuity {
+            self.full_input = input;
+        }
         if !continues && !committed_continues {
             self.session.discard_composition();
         }
