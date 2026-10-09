@@ -25,17 +25,23 @@ pub fn path_bytes(path: &Path) -> &[u8] {
     path.as_os_str().as_encoded_bytes()
 }
 
+/// Whether `byte` is a directory separator to `g_build_filename`: `/` on
+/// Unix; `/` and `\` on Windows, where GLib accepts both.
+const fn is_separator(byte: u8) -> bool {
+    byte == std::path::MAIN_SEPARATOR as u8 || (cfg!(windows) && byte == b'/')
+}
+
 /// `g_build_filename(dir, name, NULL)` as bytes: one separator between the
 /// two, the trailing ones of `dir` gone, and an empty `dir` leaving the bare
-/// name.
+/// name. The separator is the platform's: `/` on Unix, the pin's bytes.
 #[must_use]
 pub fn build_filename(dir: &Path, name: &str) -> Vec<u8> {
     let mut joined = path_bytes(dir).to_vec();
-    while joined.last() == Some(&b'/') {
+    while joined.last().is_some_and(|&byte| is_separator(byte)) {
         joined.pop();
     }
     if !dir.as_os_str().is_empty() {
-        joined.push(b'/');
+        joined.push(std::path::MAIN_SEPARATOR as u8);
     }
     joined.extend_from_slice(name.as_bytes());
     joined
@@ -66,20 +72,25 @@ pub fn mmap_failed(path: &Path) {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_filename, path_bytes};
-    use std::path::Path;
+    use super::build_filename;
+    use std::path::{MAIN_SEPARATOR_STR as SEP, Path};
 
     #[test]
     fn build_filename_joins_as_glib_does() {
-        assert_eq!(build_filename(Path::new("/a/b"), "x.bin"), b"/a/b/x.bin");
-        assert_eq!(build_filename(Path::new("/a/b//"), "x.bin"), b"/a/b/x.bin");
-        assert_eq!(build_filename(Path::new(""), "x.bin"), b"x.bin");
-        assert_eq!(build_filename(Path::new("/"), "x.bin"), b"/x.bin");
+        // Written with `/` and spelled with the platform's separator, so
+        // Unix checks the pin's bytes and Windows its own.
+        let join = |dir: &str| build_filename(Path::new(&dir.replace('/', SEP)), "x.bin");
+        let want = |text: &str| text.replace('/', SEP).into_bytes();
+        assert_eq!(join("/a/b"), want("/a/b/x.bin"));
+        assert_eq!(join("/a/b//"), want("/a/b/x.bin"));
+        assert_eq!(join(""), b"x.bin");
+        assert_eq!(join("/"), want("/x.bin"));
     }
 
     #[test]
     #[cfg(unix)]
     fn paths_are_written_as_their_bytes() {
+        use super::path_bytes;
         use std::os::unix::ffi::OsStrExt as _;
         let path = Path::new(std::ffi::OsStr::from_bytes(b"/d\xffir"));
         assert_eq!(path_bytes(path), b"/d\xffir");

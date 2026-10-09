@@ -166,7 +166,7 @@ impl GenericUserStore<DefaultStore> {
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(Some(user_dir), originals, versions, law)
+        Self::open_session(Some(user_dir), originals, versions, law, None)
     }
 
     /// Open the pin's NULL-user-directory session entirely in memory.
@@ -182,7 +182,39 @@ impl GenericUserStore<DefaultStore> {
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
-        Self::open_session(None, originals, versions, law)
+        Self::open_session(None, originals, versions, law, None)
+    }
+
+    /// [`UserStore::open_libpinyin`] for a profile [`UserStore::check_profile`]
+    /// already judged: the profile is read, not judged again.
+    ///
+    /// # Errors
+    ///
+    /// As [`UserStore::open_libpinyin`], less the `user.conf` judgement.
+    pub fn open_libpinyin_checked(
+        user_dir: &Path,
+        originals: BTreeMap<u8, SystemLibrary>,
+        versions: SystemVersions,
+        law: UserConfLaw,
+        check: crate::persistence::ProfileCheck,
+    ) -> Result<Self, UserStoreError> {
+        Self::open_session(Some(user_dir), originals, versions, law, Some(check))
+    }
+
+    /// `check_format` alone, for an init that must judge the profile before
+    /// it loads the system libraries, as the pin does: the `user.conf`
+    /// diagnostic, the wipe of a non-conform profile and the marker write.
+    ///
+    /// # Errors
+    ///
+    /// [`UserStoreError::UnknownDatabaseFormat`] at the abort point, or the
+    /// marker write failing.
+    pub fn check_profile(
+        user_dir: &Path,
+        versions: &SystemVersions,
+        law: UserConfLaw,
+    ) -> Result<crate::persistence::ProfileCheck, UserStoreError> {
+        Ok(persistence::check_format(user_dir, versions, law)?)
     }
 
     fn open_session(
@@ -190,6 +222,7 @@ impl GenericUserStore<DefaultStore> {
         originals: BTreeMap<u8, SystemLibrary>,
         versions: SystemVersions,
         law: UserConfLaw,
+        checked: Option<crate::persistence::ProfileCheck>,
     ) -> Result<Self, UserStoreError> {
         // Create the session's own container before touching the
         // profile, so a failure here cannot follow a `check_format` that
@@ -199,7 +232,10 @@ impl GenericUserStore<DefaultStore> {
         let db = DefaultStore::create_in_memory()?;
 
         let loaded = if let Some(dir) = user_dir {
-            persistence::load(dir, &originals, &versions, law)?
+            match checked {
+                Some(check) => persistence::load_checked(dir, &originals, &check),
+                None => persistence::load(dir, &originals, &versions, law)?,
+            }
         } else {
             // check_format reads ""; pinyin also tries to write "".
             // Neither operation can succeed. Do not redirect into cwd/temp.

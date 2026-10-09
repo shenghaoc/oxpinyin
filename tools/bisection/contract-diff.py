@@ -1852,17 +1852,20 @@ def library_probe(site, how):
     def probe(k):
         name, index, parse, text, train_args = LIBRARY_FACADES[k.mode]
         system = private_system(k)
-        if site in ('init', 'init-fresh'):
-            if site == 'init':
-                # A profile the pin finds conforming, so that its own line
-                # is the only one: the pin checks the profile before it
-                # loads the libraries, and an init that fails on a library
-                # never gets to the profile here (register row 68).
+        if site in ('init', 'init-fresh', 'init-nonconform'):
+            # The pin judges the user profile before it loads a library, so
+            # the failing init writes the profile's line first when the
+            # profile is fresh or non-conforming and nothing of it when the
+            # profile conforms: the three user dirs below.
+            if site != 'init-fresh':
                 settled = k.init()
                 assert settled, 'init failed'
                 train_once(k, settled, parse, text, train_args)
                 assert k.fn('save', B, P)(settled), 'save failed'
                 k.fn('fini', None, P)(settled)
+            if site == 'init-nonconform':
+                conf = Path(k.user, 'user.conf')
+                conf.write_text(re.sub(r'(model data version:)\d+', r'\g<1>999', conf.read_text()))
             break_library(k, system, name, how)
             return {'ctx': bool(k.init(system=system))}
         ctx = k.init(system=system)
@@ -1897,7 +1900,7 @@ def library_expected(site, how, mode):
     """What the subject answers at a site where the pin dies: its answers
     from before the lines were added, held unchanged. An init that fails on a
     library logs one warning in its own domain and answers NULL."""
-    if site in ('init', 'init-fresh'):
+    if site.startswith('init'):
         failed = how != 'missing'
         return {'ctx': not failed, 'logs': [[WARNING_DOMAIN[mode], 16]] if failed else []}
     return dict(logs=[], **{
@@ -1914,9 +1917,10 @@ for _mode in ('pinyin', 'zhuyin'):
         for _site in ('init', 'load', 'save', 'mask-out') + (('addon',) if _mode == 'pinyin' else ()):
             case(f'stderr-library-{_site}-{_how}' + _suffix, mode=_mode,
                  crash=library_expected(_site, _how, _mode))(library_probe(_site, _how))
-    # Both lines in the pin's order: the profile's, then the library's.
-    case('stderr-library-init-fresh-user-dir-missing' + _suffix, mode=_mode,
-         crash=library_expected('init-fresh', 'missing', _mode))(library_probe('init-fresh', 'missing'))
+        # Both lines in the pin's order: the profile's, then the library's.
+        for _site, _label in (('init-fresh', 'fresh-user-dir'), ('init-nonconform', 'nonconforming-user-dir')):
+            case(f'stderr-library-init-{_label}-{_how}' + _suffix, mode=_mode,
+                 crash=library_expected(_site, _how, _mode))(library_probe(_site, _how))
 
 
 # The guards that keep the pin silent with the same broken library: the

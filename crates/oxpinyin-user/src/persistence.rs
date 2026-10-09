@@ -337,6 +337,32 @@ pub fn load(
     versions: &SystemVersions,
     law: UserConfLaw,
 ) -> Result<Loaded, PersistenceError> {
+    let check = check_format(dir, versions, law)?;
+    Ok(load_checked(dir, originals, &check))
+}
+
+/// What [`check_format`] decided about a profile: the open counter this
+/// session starts from and whether the files are kept.
+#[derive(Clone, Copy, Debug)]
+pub struct ProfileCheck {
+    open_counter: i32,
+    conform: bool,
+}
+
+/// `check_format`'s half of [`load`]: judge the `user.conf` marker, raise
+/// the counter, wipe a non-conform profile and write the marker. The pin
+/// runs it first in `pinyin_init`, before any library is loaded
+/// (`pinyin.cpp:337-346`), so a facade whose init can fail later runs it
+/// ahead of those loads, then reads the profile with [`load_checked`].
+///
+/// # Errors
+///
+/// As [`load`].
+pub fn check_format(
+    dir: &Path,
+    versions: &SystemVersions,
+    law: UserConfLaw,
+) -> Result<ProfileCheck, PersistenceError> {
     let conf_path = dir.join(USER_CONF);
     let existing = match std::fs::read(&conf_path) {
         Ok(bytes) => parse_user_conf(&bytes)?,
@@ -367,29 +393,38 @@ pub fn load(
         UserConfLaw::Zhuyin => 0,
     };
 
-    let mut loaded = Loaded {
-        open_counter,
-        wiped: !conform,
-        ..Loaded::default()
-    };
-
     if !conform {
         clean_user_files(dir);
-        if law == UserConfLaw::Pinyin {
-            write_marker(dir, versions, open_counter)?;
-        }
-        return Ok(loaded);
     }
-
-    load_bigram(dir, &mut loaded);
-    load_libraries(dir, &mut loaded);
-    load_user_pinyin_index(dir, &mut loaded);
-    load_logs(dir, originals, &mut loaded);
-
     if law == UserConfLaw::Pinyin {
         write_marker(dir, versions, open_counter)?;
     }
-    Ok(loaded)
+    Ok(ProfileCheck {
+        open_counter,
+        conform,
+    })
+}
+
+/// The profile half of [`load`], over a profile [`check_format`] judged:
+/// nothing to read when it was wiped.
+#[must_use]
+pub fn load_checked(
+    dir: &Path,
+    originals: &BTreeMap<u8, SystemLibrary>,
+    check: &ProfileCheck,
+) -> Loaded {
+    let mut loaded = Loaded {
+        open_counter: check.open_counter,
+        wiped: !check.conform,
+        ..Loaded::default()
+    };
+    if check.conform {
+        load_bigram(dir, &mut loaded);
+        load_libraries(dir, &mut loaded);
+        load_user_pinyin_index(dir, &mut loaded);
+        load_logs(dir, originals, &mut loaded);
+    }
+    loaded
 }
 
 /// `pinyin_fini`'s arithmetic (`pinyin.cpp:1196-1197`): the counter the
@@ -1615,6 +1650,29 @@ mod tests {
         assert_eq!(next.state, UserState::default());
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn check_format_then_load_checked_is_load() {
+        for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+            let whole = tempdir("split-whole");
+            let split = tempdir("split-parts");
+            let originals = originals();
+            for dir in [&whole, &split] {
+                save(dir, &state(), &originals, &versions(), 1).expect("save");
+            }
+            let loaded = load(&whole, &originals, &versions(), law).expect("load");
+            // The judgement alone already raised the counter and wrote the
+            // marker, as it does ahead of the system libraries.
+            let check = check_format(&split, &versions(), law).expect("check");
+            assert_eq!(recorded_counter(&split), recorded_counter(&whole));
+            let parts = load_checked(&split, &originals, &check);
+            assert_eq!(parts.state, loaded.state);
+            assert_eq!(parts.open_counter, loaded.open_counter);
+            assert_eq!(parts.wiped, loaded.wiped);
+            std::fs::remove_dir_all(&whole).expect("cleanup");
+            std::fs::remove_dir_all(&split).expect("cleanup");
+        }
     }
 
     /// The counter `user.conf` holds, read back as the next init reads it.

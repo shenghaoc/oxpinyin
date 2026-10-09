@@ -1259,6 +1259,49 @@ pub struct Runtime {
     key_costs: RwLock<Option<(u32, Arc<[Cost]>)>>,
 }
 
+/// The user profile's `check_format`, run ahead of the system libraries.
+enum EarlyProfile {
+    /// Not run here: no user dir, or no readable `table.conf` to judge
+    /// against; [`open_user_store`] judges it as before.
+    Unchecked,
+    /// Judged under these versions.
+    Checked(SystemVersions, oxpinyin_user::ProfileCheck),
+    /// The judgement could not be written; the store degrades to no user
+    /// state.
+    Degraded,
+}
+
+/// `check_format` where the pin runs it: right after `table.conf` loads,
+/// before any table or library (`pinyin.cpp:337-346`, `zhuyin.cpp:281-292`),
+/// so an init that fails later on a library has already written the
+/// profile's diagnostic, wiped what it wipes and marked it, as the pin has
+/// when it dies. Only a readable `table.conf` is judged against; a fixture
+/// dir without one keeps the late judgement.
+fn check_profile_early(
+    system_dir: &Path,
+    user_dir: &Path,
+    law: UserConfLaw,
+) -> Result<EarlyProfile, OpenError> {
+    let Ok(text) = std::fs::read_to_string(system_dir.join("table.conf")) else {
+        return Ok(EarlyProfile::Unchecked);
+    };
+    let versions = SystemVersions::from_table_conf(&text);
+    match UserStore::check_profile(user_dir, &versions, law) {
+        Ok(check) => Ok(EarlyProfile::Checked(versions, check)),
+        Err(UserStoreError::UnknownDatabaseFormat) => {
+            Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
+        }
+        Err(error) => {
+            let user_dir = user_dir.display();
+            eprintln!(
+                "oxpinyin: user store degraded to no-user-state \
+                 (user dir {user_dir}: {error})"
+            );
+            Ok(EarlyProfile::Degraded)
+        }
+    }
+}
+
 /// Opens the optional user dir: `check_format`'s `user.conf` half.
 ///
 /// A bad user dir does not fail the open — the C ABI degrades to "no user
@@ -1276,26 +1319,41 @@ fn open_user_store(
     user_dir: &Path,
     dict: &SystemDictionary,
     law: UserConfLaw,
+    early: EarlyProfile,
 ) -> Result<Option<UserStore>, OpenError> {
+    let (judged, check) = match early {
+        EarlyProfile::Degraded => return Ok(None),
+        EarlyProfile::Checked(versions, check) => (Some(versions), Some(check)),
+        EarlyProfile::Unchecked => (None, None),
+    };
     // An absent table.conf is the fixture-dir case: the pinned versions
     // stand. An unreadable *existing* one must not fall back to them —
     // the profile would be judged non-conforming against the wrong
     // triple and wiped, so the store degrades to no-user-state instead.
-    let versions = match std::fs::read_to_string(system_dir.join("table.conf")) {
-        Ok(text) => SystemVersions::from_table_conf(&text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => SystemVersions::from_table_conf(""),
-        Err(e) => {
-            let system_dir = system_dir.display();
-            eprintln!(
-                "oxpinyin: table.conf unreadable (system dir \
+    let versions = match judged {
+        Some(versions) => versions,
+        None => match std::fs::read_to_string(system_dir.join("table.conf")) {
+            Ok(text) => SystemVersions::from_table_conf(&text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                SystemVersions::from_table_conf("")
+            }
+            Err(e) => {
+                let system_dir = system_dir.display();
+                eprintln!(
+                    "oxpinyin: table.conf unreadable (system dir \
                  {system_dir}: {e}); user store degraded to \
                  no-user-state rather than risk wiping the profile"
-            );
-            return Ok(None);
-        }
+                );
+                return Ok(None);
+            }
+        },
     };
     let originals = oxpinyin_user::system_originals(dict.libraries());
-    match UserStore::open_libpinyin(user_dir, originals, versions, law) {
+    let opened = match check {
+        Some(check) => UserStore::open_libpinyin_checked(user_dir, originals, versions, law, check),
+        None => UserStore::open_libpinyin(user_dir, originals, versions, law),
+    };
+    match opened {
         Ok(store) => Ok(Some(store)),
         Err(UserStoreError::UnknownDatabaseFormat) => {
             Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
@@ -1352,6 +1410,10 @@ impl Runtime {
         user_dir: Option<&Path>,
         law: UserConfLaw,
     ) -> Result<Self, OpenError> {
+        let early = match user_dir {
+            Some(dir) => check_profile_early(system_dir, dir, law)?,
+            None => EarlyProfile::Unchecked,
+        };
         let pinyin_index = system_dir.join(SystemDbm::PinyinIndex.file_name());
         let phrase_index = system_dir.join(SystemDbm::PhraseIndex.file_name());
         let bigram = system_dir.join(SystemDbm::Bigram.file_name());
@@ -1399,7 +1461,7 @@ impl Runtime {
                 )
                 .map_err(|error| OpenError::Dict(DictError::Parse(error.to_string())))?,
             ),
-            Some(dir) => open_user_store(system_dir, dir, &dict, law)?,
+            Some(dir) => open_user_store(system_dir, dir, &dict, law, early)?,
         };
 
         let addons = Arc::new(RwLock::new(AddonSet {
