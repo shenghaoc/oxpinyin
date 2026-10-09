@@ -1025,6 +1025,31 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.update(last, cur, SeedPolicy::Predicted)
     }
 
+    /// Record an accepted predicted prefix candidate, training only its
+    /// unigram (`074a2219 pinyin.cpp:2607-2616`).
+    ///
+    /// Returns the flat predicted seed (69); the unigram increment is that
+    /// seed times seven (483). The C facade uses only whether this succeeds.
+    /// No bigram is written and the modified/save gate is left unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError::UnigramTotalOverflow`] if the library total
+    /// cannot accept 483. The facade-total increment is retained even on
+    /// refusal, as at the pin. Other store failures return [`UserStoreError`].
+    pub fn observe_predicted_prefix(&mut self, cur: Token) -> Result<u64, UserStoreError> {
+        let seed = seed::predicted_seed();
+        let delta = seed::unigram_delta(seed) as u32;
+        let db = self.database();
+        let accepted = db
+            .write(|txn| add_unigram_frequency(txn, phrase_index_library_index(cur), cur, delta))?;
+        self.mark_committed_write(db, true);
+        if !accepted {
+            return Err(UserStoreError::UnigramTotalOverflow);
+        }
+        Ok(seed)
+    }
+
     /// Single atomic update: compute the seed under `policy`, then raise the
     /// bigram count for `(last, cur)` and `last`'s total by the seed, and
     /// `cur`'s unigram delta by `seed * 7`.
@@ -2550,6 +2575,42 @@ mod tests {
                     assert_eq!(store.bigram_count(1, 200).unwrap(), 138);
                     assert_eq!(store.bigram_total(1).unwrap(), 138);
                     assert_eq!(store.unigram_delta(200).unwrap(), 483 * 2);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn predicted_prefix_invalidates_counts_without_training_a_bigram() {
+                    let path = temp_path("pred-prefix");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    store.set_bigram_count(1, 200, 10).unwrap();
+                    assert_eq!(store.count_delta(Some(1), 200).unwrap().unigram_delta, 0);
+                    let generation = store.generation();
+                    for _ in 0..2 {
+                        assert_eq!(store.observe_predicted_prefix(200).unwrap(), 69);
+                    }
+                    assert!(store.generation() > generation);
+                    assert_eq!(store.count_delta(Some(1), 200).unwrap().unigram_delta, 966);
+                    assert_eq!(store.unigram_total().unwrap(), 966);
+                    assert_eq!(store.bigram_count(1, 200).unwrap(), 10);
+                    assert_eq!(store.bigram_total(1).unwrap(), 10);
+                    assert!(!store.is_modified());
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn predicted_prefix_overflow_keeps_only_the_facade_total_increment() {
+                    let path = temp_path("pred-prefix-overflow");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    let token = store
+                        .add_phrase("你好", &[10, 20], Some(1_431_655_631))
+                        .unwrap();
+                    let before = store.unigram_delta(token).unwrap();
+                    let total = store.unigram_total().unwrap();
+                    let error = store.observe_predicted_prefix(token).unwrap_err();
+                    assert!(matches!(error, UserStoreError::UnigramTotalOverflow));
+                    assert_eq!(store.unigram_delta(token).unwrap(), before);
+                    assert_eq!(store.unigram_total().unwrap(), total + 483);
+                    assert!(store.export_bigrams().unwrap().is_empty());
                     cleanup(&path);
                 }
 

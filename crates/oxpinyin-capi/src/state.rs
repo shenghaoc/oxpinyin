@@ -33,6 +33,23 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
 // ── Context ─────────────────────────────────────────────────────────────
 
+// table_info.cpp:220 scans directly into gfloat. Passing the decoder's exact
+// rational through f64 can round twice near an f32 midpoint. Keep this read
+// private to prediction and retain the regular-file guard against a FIFO.
+fn read_predicted_lambda(path: &Path) -> f32 {
+    if !path.is_file() {
+        return oxpinyin_data::PINNED_LAMBDA;
+    }
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| {
+            text.lines()
+                .find_map(|line| line.strip_prefix("lambda parameter:"))
+                .and_then(|literal| literal.trim().parse::<f32>().ok())
+        })
+        .unwrap_or(oxpinyin_data::PINNED_LAMBDA)
+}
+
 /// State behind `pinyin_context_t *`.
 ///
 /// Owns the shared [`Runtime`] (when this context has system tables).
@@ -43,6 +60,9 @@ pub struct CapiContext {
     /// The shared orchestration half: assembly, user store, layered
     /// configuration, and the live option/scheme word.
     pub(crate) core: ContextCore,
+    /// Prediction reads the same table.conf lambda at context construction
+    /// (`074a2219 table_info.cpp:220`), retained independently of the decoder.
+    predicted_lambda: f32,
 }
 
 impl CapiContext {
@@ -57,6 +77,7 @@ impl CapiContext {
         // from table.conf when present, degrades an unusable user dir to
         // "no learning", and wires addons + punctuation.
         Ok(Self {
+            predicted_lambda: read_predicted_lambda(&system_dir.join("table.conf")),
             core: ContextCore::try_open(
                 system_dir,
                 user_dir,
@@ -69,6 +90,7 @@ impl CapiContext {
     pub(crate) fn alloc_instance(&self, context: *mut PinyinContext) -> Option<CapiInstance> {
         Some(CapiInstance {
             context,
+            predicted_lambda: self.predicted_lambda,
             prefixes: Vec::new(),
             candidates: Vec::new(),
             core: self.core.alloc_instance()?,
@@ -207,6 +229,8 @@ pub struct CapiInstance {
     /// word, parse-mode state machine, re-anchored window — shared with
     /// the zhuyin facade.
     pub(crate) core: InstanceCore,
+    /// The context's initial gfloat interpolation weight for prediction.
+    pub(crate) predicted_lambda: f32,
     /// The pin's `instance->m_prefixes` minus its `sentence_start` entry:
     /// the tokens `pinyin_guess_predicted_candidates` and
     /// `pinyin_guess_sentence_with_prefix` computed from their prefix text,

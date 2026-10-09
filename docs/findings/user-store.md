@@ -168,12 +168,68 @@ train a unigram directly:
 
 ### 2.3 Prediction path — `pinyin_choose_predicted_candidate`
 
-`pinyin_choose_predicted_candidate` (`src/pinyin.cpp:2589-2639`, **SHOWN**)
-uses a *flat* increment, not the doubling of §2.1: it adds `initial_seed *
-unigram_factor` to the unigram (`:2607`), and for the user bigram inserts or
-adds a flat `initial_seed` (69) to `(prev_token → token)` and to
-`prev_token`'s total (`:2630-2636`). This is the simpler learning applied to
-accepted *predictions*.
+`pinyin_choose_predicted_candidate` at pin `074a2219`
+(`src/pinyin.cpp:2591-2640`, **SHOWN**) uses a flat seed of 69, rather than
+§2.1's reselection expansion. Punctuation returns without training. Other
+predicted rows first add `69 * 7 = 483` to the unigram; integer overflow
+returns `false` before any bigram write. A prefix row then returns `true`
+(`:2614-2616`). Only a bigram row adds 69 to `(prev_token → token)` and to
+its predecessor's total (`:2618-2639`). These choices leave `m_modified`
+unchanged.
+
+`GenericUserStore<S>::observe_predicted_prefix(&mut self, cur: Token) ->
+Result<u64, UserStoreError>` implements the prefix arm. Its returned `u64`
+is the **seed 69**, not the unigram increment 483 or the resulting counter.
+The actual caller, `pinyin_choose_predicted_candidate` in the C facade,
+uses `.is_ok()` and discards the seed. The method preserves the guarded
+unigram add and the facade-total increment on overflow, touches no bigram,
+and leaves the save gate unchanged. `observe_predicted(last, cur)` remains
+the bigram-row arm.
+
+
+Prediction ranking at the same pin reads the live `guint32` item counter
+and wrapped facade total. Prefix rows compute `(1 - lambda) * unigram /
+(float)total * 256 * 256 * 256` in `gfloat`
+(`pinyin.cpp:1812-1825`). The general scorer can add the bigram term only
+with `DYNAMIC_ADJUST` and a non-null predecessor (`:1845-1866`), but the
+prediction caller initializes its predecessor to null and never changes it
+(`:2418,2438`). Thus predicted bigram rows use the same unigram law in
+both option states. Lambda is parsed directly as `gfloat` from `table.conf`
+(`table_info.cpp:220`), not through the decoder's rational-to-f64 conversion
+or a fitted constant. A decimal just below an f32 midpoint distinguishes
+these paths (`0.9999999701976776123036`).
+
+The `guint32` assignment truncates. The pinned x86-64 build performs a
+64-bit signed float-to-integer conversion followed by a low-32-bit store;
+finite amplified scores beyond `guint32::MAX` therefore wrap, rather than
+saturate. The prediction code reproduces that conversion safely, including
+the zero low bits of the invalid-conversion sentinel. The source expression
+is `pinyin.cpp:1821-1824,1862-1866`; the reference instructions are
+`cvttss2si %xmm1,%rax` followed by `mov %eax,0x1c(%r15)`.
+
+Sorting is by displayed length, then `-(lhs_frequency - rhs_frequency)`
+with unsigned subtraction and a signed `gint` return (`:1678-1708`).
+For high scores this comparator is not transitive. The safe index merge
+uses the loaded GLib 2.90.0 half-split order and chooses the left row for
+comparison <= 0 ([`glib/gqsort.c:64-183`](https://github.com/GNOME/glib/blob/2.90.0/glib/gqsort.c#L64)).
+It takes O(n log n) comparisons and two usize arrays instead of a temporary
+array of candidate structs; the extra comparisons on already ordered input
+trade against smaller scratch space. Equal scores preserve collection order.
+Dedup retains the numeric score winner in its sorted position (`:2128-2136`).
+Imported phrases also create index keys for their proper prefixes, without
+requiring a phrase token for that prefix (`phrase_large_table3_bdb.cpp:297-315`
+and its KC/tkrzw twins).
+
+The general scorer asserts a positive total (`pinyin.cpp:1859`); prefix
+rows bypass this assert. A prediction containing a bigram row with zero
+total is the existing policy row 61 class (c): both plain and punctuation
+entry points answer `false`, keep the list empty, and emit exactly one
+`libpinyin` warning. It is an `assert`, live in the reference build.
+
+Source read from a clean tree at full pin
+`074a2219c90feaf962d0d24f034514033ece5f99`; cited source contents were
+verified against the pin's Git blobs (pinyin.cpp `f27f7cf776724ead8d55e14b4af390e790054a91`),
+and matched against the bdb oracle's source. Captured 2026-10-09 UTC.
 
 ---
 
