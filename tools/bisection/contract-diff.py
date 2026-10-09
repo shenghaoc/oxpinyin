@@ -2431,6 +2431,60 @@ case('row54-empty-pinyin-double')(row54_empty('parse_more_double_pinyins', b'nih
 case('row54-unload-zhuyin-before', mode='zhuyin', control=True)(row54_unload('before', False))
 
 
+
+# PR #709 review: keep a non-first NORMAL choice through an empty parse
+# until a sentence guess validates the constraints against that empty matrix.
+def row54_forcing(sequence, restored=b'nihao'):
+    def probe(k):
+        k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+        inst = k.inst
+        parse = k.fn('parse_more_full_pinyins', Z, P, S)
+        guess = k.fn('guess_sentence', B, P)
+        def sentence():
+            text = P(UNTOUCHED)
+            if k.mode == 'pinyin':
+                ret = k.fn('get_sentence', B, P, U, C.POINTER(P))(inst, 0, C.byref(text))
+            else:
+                ret = k.fn('get_sentence', B, P, C.POINTER(P))(inst, C.byref(text))
+            return [ret, 'untouched' if text.value == UNTOUCHED else k.text(text.value)]
+        out = {'parse': parse(inst, b'nihao'), 'initial_guess': guess(inst),
+               'initial_sentence': sentence()}
+        if k.mode == 'pinyin':
+            out['candidates'] = k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1e)
+        else:
+            out['candidates'] = k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+        count = U()
+        assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+        chosen = None
+        for index in range(count.value):
+            cand, text, kind = P(), S(), I()
+            assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(cand))
+            assert k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+            assert k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+            if kind.value == 2 and text.value == '泥'.encode():
+                assert index > 0, 'the chosen NORMAL candidate must not be first'
+                out['chosen_index'], out['chosen_text'] = index, text.value.decode()
+                chosen = cand
+                break
+        assert chosen, 'missing non-first NORMAL candidate 泥'
+        out['choose'] = k.fn('choose_candidate', I, P, Z, P)(inst, 0, chosen)
+        if sequence != 'no-empty':
+            out['empty_parse'] = parse(inst, b'')
+            if sequence == 'empty-guess':
+                out['empty_guess'] = guess(inst)
+        out['restored_parse'] = parse(inst, restored)
+        out['restored_guess'] = guess(inst)
+        out['restored_sentence'] = sentence()
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _sequence in ('empty', 'empty-guess', 'no-empty'):
+        case(f'row54-forcing-{_mode}-{_sequence}', mode=_mode,
+             control=_sequence != 'empty')(row54_forcing(_sequence))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('cell', choices=['bdb', 'kc', 'tkrzw'])
