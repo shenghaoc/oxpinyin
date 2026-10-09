@@ -506,7 +506,26 @@ pub extern "C" fn pinyin_guess_candidates(
         if cand.kind() == oxpinyin_engine::CandidateKind::Fallback {
             continue;
         }
-        if sentence_rows_only && cand.kind() != oxpinyin_engine::CandidateKind::Sentence {
+        // §9: a LONGER row is the engine's token-carrying row with the
+        // zero span the pin's prepend leaves (`m_begin == m_end == 0`,
+        // never set for the type) — a normal phrase row always covers at
+        // least one key, so `token && consumed_bytes == 0` names the type
+        // uniquely on this surface. The RAW span decides the type: under a
+        // transform (double pinyin, the zhuyin keyboards) the exported
+        // `consumed_bytes` is the original-input offset a transform maps
+        // the raw 0 to — nonzero and useless as the LONGER marker there.
+        // `pinyin_get_candidate_type` answers `LONGER_CANDIDATE` (7) for
+        // the row and ibus maps it (`CANDIDATE_LONGER`/
+        // `CANDIDATE_LONGER_USER`, `PYPLibPinyinCandidates.cc:56-62`).
+        let is_longer = cand.token().is_some() && cand.consumed_bytes() == 0;
+        // A lookup strictly inside a key: the pin's column there is empty,
+        // so the span loop finds no phrase row, but its two prepends still
+        // run (`pinyin.cpp:2292-2296`) — the list is the sentence rows with
+        // the LONGER row beneath them (row 65). Keep exactly those kinds.
+        if sentence_rows_only
+            && cand.kind() != oxpinyin_engine::CandidateKind::Sentence
+            && !is_longer
+        {
             continue;
         }
         let Ok(text) = CString::new(cand.text().as_bytes()) else {
@@ -521,18 +540,9 @@ pub extern "C" fn pinyin_guess_candidates(
             },
             |parse| oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes()),
         );
-        // §9: a LONGER row is the engine's token-carrying row with the
-        // zero span the pin's prepend leaves (`m_begin == m_end == 0`,
-        // never set for the type) — a normal phrase row always covers at
-        // least one key, so `token && consumed_bytes == 0` names the type
-        // uniquely on this surface. The RAW span decides the type: under a
-        // transform (double pinyin, the zhuyin keyboards) the exported
-        // `consumed_bytes` is the original-input offset a transform maps
-        // the raw 0 to — nonzero and useless as the LONGER marker there.
-        // `pinyin_get_candidate_type` answers `LONGER_CANDIDATE` (7) for
-        // the row and ibus maps it (`CANDIDATE_LONGER`/
-        // `CANDIDATE_LONGER_USER`, `PYPLibPinyinCandidates.cc:56-62`).
-        let is_longer = cand.token().is_some() && cand.consumed_bytes() == 0;
+        // §9: the LONGER type is decided above (raw zero span); the
+        // transformed `consumed_bytes` below is only what the caller
+        // reads back, never the type marker.
         inst.candidates.push(CapiCandidate {
             text,
             kind: cand.kind(),

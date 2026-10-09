@@ -1389,15 +1389,111 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(full_inst(k, b'nihao'), 99, 0)}
 
 
-# One past the reserved slot is an ordinary lookup that finds nothing.
+# Row 65 / #696. The pin's LONGER row is a property of the whole parse,
+# not the lookup offset: `_prepend_longer_candidates` (`pinyin.cpp:1870-
+# 1933`) searches the whole matrix with `prefix_len = m_parsed_key_len`
+# (`:1876`, `:1883`) and is called for every offset whose sort word leaves
+# `SORT_WITHOUT_LONGER_CANDIDATE` clear (`:2292-2293`). Only the main span
+# search starts at `offset` (`:2229`), so an offset no span starts on — and
+# the reserved slot past the parse — answers the LONGER row alone.
+def candidate_rows(k, inst):
+    """The instance's full candidate list as ordered [type, string] rows."""
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    rows = []
+    for i in range(count.value):
+        cand, kind, text = P(), I(), S()
+        if k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand)):
+            k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+            k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+            rows.append([kind.value, text.value.decode('utf-8', 'replace')])
+        else:
+            rows.append(None)
+    return rows
+
+
+def guess_rows(k, inst, offset, sort):
+    """One `pinyin_guess_candidates` call: the return and the full list."""
+    ret = k.fn('guess_candidates', B, P, Z, U)(inst, offset, sort)
+    return {'ret': ret, 'rows': candidate_rows(k, inst)}
+
+
+def zhuyin_guess_rows(k, inst, offset):
+    """One `zhuyin_guess_candidates_after_cursor` call: return and list."""
+    ret = k.fn('guess_candidates_after_cursor', B, P, Z)(inst, offset)
+    return {'ret': ret, 'rows': candidate_rows(k, inst)}
+
+
+# The characterisation set: single and multi-syllable, a bare partial tail,
+# apostrophes, and inputs whose longer phrases exist (nihao -> 你好吗,
+# women -> 我们…) and do not (woshi, xian). Every matrix offset of each input
+# — 0 through the reserved slot — three sort words — 0 (LONGER kept,
+# unsorted) plus the two sorted words with and without the LONGER bit — and
+# with and without a prior sentence lookup, which is what stores the n-best
+# rows. Full lists, not returns.
+#
+# The pin's matrix holds `parsed + 1` columns for the pinyin facade; an
+# offset past that reads through `_check_offset`'s `get_column_size` assert
+# (`pinyin.cpp:2163-2182`, `:2226`) and aborts — the class (c) sites
+# `abort-guess-candidates-past-matrix` and its zhuyin twin hold. The walk
+# therefore stops at `parsed` (the reserved slot) and `parsed + 1`.
+GUESS_CANDIDATE_INPUTS = (b'ni', b'n', b'nihao', b'nih', b"ni'hao",
+                          b'hao', b'women', b'zhongguo', b'woshi', b'xian')
+GUESS_CANDIDATE_SORTS = (0, 0x1c, 0x1e)
+
+
+@case('guess-candidates-lookup-offset')
+def _(k):
+    out = {}
+    for text in GUESS_CANDIDATE_INPUTS:
+        for previous in (0, 1):
+            inst = k.alloc()
+            parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+            if previous:
+                k.fn('guess_sentence', B, P)(inst)
+            for sort in GUESS_CANDIDATE_SORTS:
+                for offset in range(parsed + 2):
+                    label = '%s prev=%d sort=%#x off=%d' % (
+                        text.decode(), previous, sort, offset)
+                    out[label] = guess_rows(k, inst, offset, sort)
+    return out
+
+
+# The zhuyin facade has no LONGER prepend (`zhuyin.cpp:1460-1539` prepends
+# only the sentence rows at `:1533`), so the same full-list walk must already
+# match at every offset; it is the control that bounds the rule to the pinyin
+# facade. Its reserved slot is the LAST valid column (`parsed`); one past it
+# aborts (row 66,
+# `abort-zhuyin-guess-candidates-after-cursor-reserved-slot-plus-one`).
+GUESS_CANDIDATE_ZHUYIN_INPUTS = (b'su3', b'su', b'su3cl3', b'su3cl',
+                                 b"su3'cl3", b'cl3', b'ji3', b'ji3cl3',
+                                 b'zhong1', b'xian1')
+
+
+@case('guess-candidates-lookup-offset-zhuyin', mode='zhuyin', control=True)
+def _(k):
+    out = {}
+    for text in GUESS_CANDIDATE_ZHUYIN_INPUTS:
+        for previous in (0, 1):
+            inst = k.alloc()
+            parsed = k.fn('parse_more_chewings', Z, P, S)(inst, text)
+            if previous:
+                k.fn('guess_sentence', B, P)(inst)
+            for offset in range(parsed + 1):
+                label = '%s prev=%d off=%d' % (text.decode(), previous, offset)
+                out[label] = zhuyin_guess_rows(k, inst, offset)
+    return out
+
+
+# One past the reserved slot is an ordinary lookup that finds nothing —
+# except the LONGER row, which the pin still lists there (row 65). The full
+# list is compared, not the return alone.
 @case('guess-candidates-past-the-reserved-slot')
 def _(k):
     out = {}
     inst = full_inst(k, b'nihao')
     for offset in (5, 6):
-        # The returns only: at these offsets the pin still lists the LONGER
-        # row (policy row 65), which oxpinyin does not.
-        out['offset %d' % offset] = k.fn('guess_candidates', B, P, Z, U)(inst, offset, 0)
+        out['offset %d' % offset] = guess_rows(k, inst, offset, 0)
     return out
 
 

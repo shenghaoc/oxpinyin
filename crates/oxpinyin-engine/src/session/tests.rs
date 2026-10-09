@@ -552,6 +552,45 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
     );
 }
 
+#[test]
+fn a_longer_row_rides_an_empty_column_and_the_reserved_slot() {
+    // Row 65: the pin runs the LONGER prepend after the span loop for
+    // every valid offset, so an offset no span starts at — a mid-syllable
+    // byte, and the reserved slot — answers it even though the span search
+    // found nothing. `_prepend_longer_candidates` searches the whole
+    // composition (`prefix_len = m_parsed_key_len`, `pinyin.cpp:1876`)
+    // regardless of the lookup offset.
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
+        FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
+    )
+    .expect("the fixtures open");
+    for character in "fang".chars() {
+        session
+            .process_key(&KeyInput::character(character))
+            .expect("typing cannot fail");
+    }
+    session
+        .set_sort_options(SORT_IBUS_DEFAULT)
+        .expect("set cannot fail");
+    session.guess_sentence().expect("guess cannot fail");
+
+    // The key spans bytes 0..4; 1/2/3 are its empty columns and 4 is the
+    // reserved slot.
+    for offset in [1usize, 2, 3, 4] {
+        let window = session
+            .candidates_at(offset)
+            .expect("every one of these offsets is in range");
+        let longer = window
+            .iter()
+            .find(|candidate| candidate.token().is_some() && candidate.consumed_bytes() == 0)
+            .unwrap_or_else(|| panic!("offset {offset} carries the LONGER row"));
+        assert_eq!(longer.text(), "方面", "offset {offset}");
+    }
+}
+
 /// Authored mini vocabulary for the training tests: two single-key
 /// phrases, no model bytes (`docs/testing/fixture-adapters.md`).
 const TRAIN_VOCAB: &str =
