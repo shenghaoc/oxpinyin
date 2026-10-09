@@ -12,13 +12,13 @@
 //! one the addon libraries (`m_addon_phrase_index`, indexes 4–15, loaded
 //! on demand by `pinyin_load_addon_phrase_library`).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use oxpinyin_core::ChewingKey;
 
 use crate::chewing_table::keys_match;
-use crate::phrase_library::{LibraryError, PhraseLibrary};
+use crate::phrase_library::{LibraryError, PhraseLibrary, verify_chunk};
 
 pub use crate::system_files::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 
@@ -39,6 +39,8 @@ pub struct LibraryPronunciation {
 /// A loaded library plus its lazily tallied item count.
 struct Loaded {
     library: PhraseLibrary,
+    /// The file it was mapped from, as `load` was given it.
+    path: PathBuf,
     /// Resident items, tallied once on the first query — upstream keeps
     /// `m_length` as O(1) bookkeeping; the reader pays one offset-array
     /// scan per library at the first count query, never at open.
@@ -63,6 +65,8 @@ impl Loaded {
 pub struct PhraseLibraries {
     /// nibble → library, `None` = not loaded.
     by_nibble: [Option<Loaded>; 16],
+    /// Files `open` found absent.
+    unmapped: Vec<PathBuf>,
 }
 
 impl PhraseLibraries {
@@ -71,6 +75,7 @@ impl PhraseLibraries {
     pub fn empty() -> Self {
         Self {
             by_nibble: Default::default(),
+            unmapped: Vec::new(),
         }
     }
 
@@ -99,12 +104,49 @@ impl PhraseLibraries {
             }
             seen[slot] = true;
             let path = dir.join(file);
-            if !path.is_file() {
-                continue;
+            match std::fs::metadata(&path) {
+                // Not a regular file: skipped without a word, as before.
+                Ok(meta) if !meta.is_file() => continue,
+                Ok(_) => {}
+                // The pin's `open` fails and `MemoryChunk::mmap` answers
+                // `false`; the library stays unloaded here.
+                Err(_) => {
+                    this.unmapped.push(path);
+                    continue;
+                }
             }
             this.load(nibble, &path)?;
         }
         Ok(this)
+    }
+
+    /// The files [`PhraseLibraries::open`] found absent, in the order it
+    /// met them: where the pin writes `mmap %s failed!` at init and goes on
+    /// with an empty chunk (`pinyin.cpp:256`).
+    #[must_use]
+    pub fn unmapped(&self) -> &[PathBuf] {
+        &self.unmapped
+    }
+
+    /// The files of the loaded libraries that `MemoryChunk::mmap` would
+    /// refuse now, in nibble order: where the pin maps a system library
+    /// again and writes `mmap %s failed!` (save, mask-out, reload,
+    /// `pinyin.cpp:956`, `:1265`). Only the nibbles `visible` accepts are
+    /// looked at — an unloaded library is skipped, as the pin's
+    /// `get_range` skips it — and with `only` set, only that one.
+    #[must_use]
+    pub fn unmappable_now(&self, visible: impl Fn(u8) -> bool, only: Option<u8>) -> Vec<PathBuf> {
+        (0u8..)
+            .zip(&self.by_nibble)
+            .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && visible(nibble))
+            .filter_map(|(_, slot)| slot.as_ref())
+            .filter(|loaded| {
+                verify_chunk(&loaded.path)
+                    .err()
+                    .is_some_and(|error| error.unmappable_path().is_some())
+            })
+            .map(|loaded| loaded.path.clone())
+            .collect()
     }
 
     /// Loads `path` as library `nibble` — `FacadePhraseIndex::load`.
@@ -128,6 +170,7 @@ impl PhraseLibraries {
         let library = PhraseLibrary::open(path)?;
         self.by_nibble[slot] = Some(Loaded {
             library,
+            path: path.to_path_buf(),
             item_count: OnceLock::new(),
         });
         Ok(true)

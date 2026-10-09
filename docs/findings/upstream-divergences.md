@@ -2606,3 +2606,104 @@ call measured here, not every independent caller of reduce_tokens.
       sigaction(SIGSEGV, &sa, NULL);
   }
   ```
+
+### `mmap %s failed!`: a system library the pin cannot map, and the empty chunk it dies on (#545; policy row 76)
+
+- **Upstream source cite:** `src/pinyin.cpp:256`, `:290`, `:956`, `:1265` and
+  `src/zhuyin.cpp:200`, `:234`, `:589`, `:800` (`if (!chunk->mmap(chunkfilename))
+  fprintf(stderr, "mmap %s failed!\n", chunkfilename);`, the `open %s failed!`
+  branches beside them being the `#else` of `LIBPINYIN_USE_MMAP`, defined by
+  `src/include/memory_chunk.h:31-34` whenever `HAVE_MMAP` is, and
+  `config.h:42` of the pin's build defines it); `src/include/memory_chunk.h:470-520`
+  (`MemoryChunk::mmap` resets the chunk, then answers `false` for a file that
+  will not open, one shorter than the 8-byte header, a length word that is not
+  the payload length, or a checksum that does not verify);
+  `src/storage/phrase_index.cpp:244` and `:278` (`FacadePhraseIndex::load` and
+  `diff` hand the chunk to `SubPhraseIndex::load`, `:335-363`, whose
+  `g_return_val_if_fail(*(buf_begin + offset) == c_separate, FALSE)` at `:354`
+  reads `buf_begin + 16`). Also `src/storage/facade_chewing_table.h:115` and
+  `src/storage/facade_phrase_table2.h:96`, which no public call reaches (below).
+- **Mechanism:** every site prints the line and carries on with the chunk
+  `mmap` reset, which is empty: `begin()` is NULL and `size()` is 0, so
+  `SubPhraseIndex::load` reads the separator byte at `NULL + 16` before its own
+  bounds check can refuse the chunk. The pin dies of SIGSEGV. The sites are
+  reached by `pinyin_init` / `zhuyin_init` (each default `SYSTEM_FILE`
+  library, in index order), `pinyin_load_phrase_library` /
+  `zhuyin_load_phrase_library` (a library that was unloaded),
+  `pinyin_load_addon_phrase_library` (`:290`, the only entry to a `DICTIONARY`
+  library), a modified `pinyin_save` / `zhuyin_save` (every loaded system
+  library is mapped again to `diff` it) and `pinyin_mask_out` /
+  `zhuyin_mask_out` (every loaded system library is reloaded). A library
+  already loaded, an unloaded one in a save or mask-out, an unmodified save
+  and a reload of a whole file stay silent. `zhuyin.cpp:234` is reached by no
+  call: `zhuyin_init` and `zhuyin_load_phrase_library` `assert` that the default
+  table is not a `DICTIONARY` (`:330`, `:372`; the pin is built without
+  `NDEBUG`) and the zhuyin facade has no addon entry point.
+  `FacadeChewingTable` and `FacadePhraseTable2` are included by
+  `src/pinyin_internal.cpp` into the uninstalled `libpinyin_internal.a` and
+  instantiated nowhere in `src/`, `tests/` or `utils/`; `libpinyin.so.15` and
+  `libzhuyin.so.15` define no symbol of either class.
+- **What oxpinyin does instead:** writes the pin's `mmap <path> failed!` line,
+  the path as its bytes, at each reachable site on both facades, from
+  `oxpinyin_data::pin_stderr`, and answers what it answered before: NULL with
+  one GLib warning from an init whose library is short or corrupt, non-NULL
+  from one whose library is absent (the library stays unloaded), `true` from a
+  reload, a modified save and a mask-out, `false` from the addon load. It
+  never reads through the empty chunk. The failure is the typed
+  `LibraryError::Unmappable` the chunk reader raises for exactly what
+  `MemoryChunk::mmap` refuses; a layout fault past the chunk is
+  `LibraryError::Format` and has no line, as `SubPhraseIndex::load`'s
+  `g_return_val_if_fail` has none. With several libraries broken it writes one
+  line for each, in library order; the pin's bytes are the first. Not
+  reproduced: an init that fails on a library never reaches the user profile
+  here, so on a fresh or non-conforming user dir the pin's own
+  `open <user>/user.conf failed.` and the profile's wipe come first and
+  oxpinyin's NULL-answering init writes only the library's line.
+- **Externally observable:** yes: the pin's process dies, with the line as its
+  last output; oxpinyin writes the line and goes on. Class (b).
+- **Measured** on bdb, native amd64, 2026-10-09 UTC, in a Debian testing
+  container over `1be4e35d` with this change: the `stderr-library-*` cases
+  of `tools/bisection/contract-diff.py` break `merged.bin`, `gbk_char.bin` or
+  `art.bin` in a private copy of the system directory (absent, cut to four
+  bytes, last payload byte flipped) and compare stderr up to the crash. 29
+  crash cases (16 pinyin, 13 zhuyin, the fresh-user-dir order among them) match:
+  the pin dies of SIGSEGV after the same bytes, and oxpinyin's answers are
+  the ones listed above; the 11 controls match. Against the parent build the
+  29 differ and the 11 match. Fault address, with a preload that prints
+  `si_addr` and re-raises:
+
+  ```
+  gcc -shared -fPIC -o segv-addr.so segv-addr.c
+  LD_PRELOAD=$PWD/segv-addr.so tools/bisection/run-contract-diff.sh bdb <prefix> \
+      <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so \
+      -- --cases stderr-library-save-missing --observations obs.jsonl
+  ```
+
+  The pin's stderr in `obs.jsonl` ends `SEGV si_addr=0x10` for `-init-`,
+  `-load-`, `-save-`, `-mask-out-` and `-addon-` alike, pinyin and zhuyin.
+
+  `segv-addr.c`:
+
+  ```c
+  #define _GNU_SOURCE
+  #include <signal.h>
+  #include <stdio.h>
+  #include <string.h>
+  #include <unistd.h>
+
+  static void on_segv(int sig, siginfo_t *info, void *ctx) {
+      char line[64];
+      int n = snprintf(line, sizeof line, "SEGV si_addr=%p\n", info->si_addr);
+      (void)!write(2, line, n);
+      signal(sig, SIG_DFL);
+      raise(sig);
+  }
+
+  __attribute__((constructor)) static void install(void) {
+      struct sigaction sa;
+      memset(&sa, 0, sizeof sa);
+      sa.sa_sigaction = on_segv;
+      sa.sa_flags = SA_SIGINFO | SA_NODEFER;
+      sigaction(SIGSEGV, &sa, NULL);
+  }
+  ```

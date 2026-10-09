@@ -42,6 +42,7 @@ use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseToken,
     SyllableKey, UserCountDelta,
 };
+use oxpinyin_data::phrase_library::LibraryError;
 use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
@@ -139,6 +140,20 @@ pub enum OpenError {
     UnknownDatabaseFormat(PathBuf),
 }
 
+impl OpenError {
+    /// The system library file the pin's `MemoryChunk::mmap` refuses, when
+    /// that is why the open failed: the pin writes `mmap %s failed!` for it
+    /// (`pinyin.cpp:256`) and dies on the empty chunk it goes on with. A
+    /// layout fault past the chunk and every other failure answer `None`.
+    #[must_use]
+    pub fn unmappable_library(&self) -> Option<&Path> {
+        match self {
+            Self::Dict(DictError::Library(error)) => error.unmappable_path(),
+            _ => None,
+        }
+    }
+}
+
 impl core::fmt::Display for OpenError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -181,8 +196,8 @@ impl AddonSet {
         self.dict.unload(index)
     }
 
-    fn load(&mut self, index: u8, system_dir: &Path) -> bool {
-        self.dict.load(index, system_dir)
+    fn load_reporting(&mut self, index: u8, system_dir: &Path) -> Result<bool, LibraryError> {
+        self.dict.load_reporting(index, system_dir)
     }
 
     fn lookup_into(
@@ -423,11 +438,42 @@ impl RuntimeDict {
     /// loaded or the tables are missing/unopenable.
     #[must_use]
     pub fn load_addon(&self, index: u8, system_dir: &Path) -> bool {
+        self.load_addon_reporting(index, system_dir)
+            .unwrap_or(false)
+    }
+
+    /// [`RuntimeDict::load_addon`] with the failure kept: an error when
+    /// the library file is absent or does not verify, where
+    /// [`LibraryError::unmappable_path`] names the file the pin could not
+    /// map. `Ok(false)` for an index that names no addon library and for
+    /// one already loaded.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError`] when the library file is absent or does not verify.
+    pub fn load_addon_reporting(&self, index: u8, system_dir: &Path) -> Result<bool, LibraryError> {
         let mut addons = self
             .addons
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        addons.load(index, system_dir)
+        addons.load_reporting(index, system_dir)
+    }
+
+    /// The system library files absent when the runtime opened, in the
+    /// pin's load order.
+    #[must_use]
+    pub fn unmapped_system_libraries(&self) -> &[PathBuf] {
+        self.system.libraries().unmapped()
+    }
+
+    /// The loaded, visible system libraries whose files no longer map, in
+    /// library order; with `only` set, that library alone. An unloaded
+    /// library is not looked at.
+    #[must_use]
+    pub fn unmappable_system_libraries(&self, only: Option<u8>) -> Vec<PathBuf> {
+        self.system
+            .libraries()
+            .unmappable_now(|nibble| self.library_visible(u32::from(nibble)), only)
     }
 
     /// Unloads addon library `index`.
@@ -1545,6 +1591,33 @@ impl Runtime {
             return false;
         };
         self.load_addon(index, system_dir)
+    }
+
+    /// [`Runtime::load_system_addon`] with the failure kept; `Ok(false)`
+    /// when the runtime has no system directory or the library is already
+    /// loaded.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError`] when the library file is absent or does not verify.
+    pub fn load_system_addon_reporting(&self, index: u8) -> Result<bool, LibraryError> {
+        let Some(system_dir) = self.paths.system_data_dirs().first() else {
+            return Ok(false);
+        };
+        self.dict.load_addon_reporting(index, system_dir)
+    }
+
+    /// The system library files absent when this runtime opened.
+    #[must_use]
+    pub fn unmapped_system_libraries(&self) -> &[PathBuf] {
+        self.dict.unmapped_system_libraries()
+    }
+
+    /// The loaded, visible system libraries whose files no longer map; see
+    /// [`RuntimeDict::unmappable_system_libraries`].
+    #[must_use]
+    pub fn unmappable_system_libraries(&self, only: Option<u8>) -> Vec<PathBuf> {
+        self.dict.unmappable_system_libraries(only)
     }
 
     /// Unloads addon library `index` from this runtime's dictionary.

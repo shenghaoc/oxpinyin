@@ -181,36 +181,6 @@ pub fn owned_cstr_list(items: &[impl AsRef<str>]) -> *mut *mut c_char {
     arr
 }
 
-/// The pin's own report of a `table.conf` it cannot open
-/// (`table_info.cpp:201` and `zhuyin.cpp:282`): two raw lines naming the file as
-/// `g_build_filename` spells it, and the init is over. Prints them and
-/// answers `true` when `system_dir/table.conf` cannot be opened; answers
-/// `false`, printing nothing, when it can.
-pub fn report_unopenable_table_conf(system_dir: &std::path::Path) -> bool {
-    use std::io::Write as _;
-
-    if std::fs::File::open(system_dir.join("table.conf")).is_ok() {
-        return false;
-    }
-    // `g_build_filename` joins with one separator: trailing ones go, and an
-    // empty directory leaves the bare name.
-    let mut name = system_dir.as_os_str().as_encoded_bytes().to_vec();
-    while name.last() == Some(&b'/') {
-        name.pop();
-    }
-    if !system_dir.as_os_str().is_empty() {
-        name.push(b'/');
-    }
-    name.extend_from_slice(b"table.conf");
-    let mut lines = b"open ".to_vec();
-    lines.extend_from_slice(&name);
-    lines.extend_from_slice(b" failed.\nload ");
-    lines.extend_from_slice(&name);
-    lines.extend_from_slice(b" failed!\n");
-    let _ = std::io::stderr().write_all(&lines);
-    true
-}
-
 /// Logs `message` through `GLib` at warning level under the `libzhuyin`
 /// domain. The library's only diagnostic channel: the C ABI's frozen
 /// return shapes (`false` / NULL) carry no reason, and glib is already

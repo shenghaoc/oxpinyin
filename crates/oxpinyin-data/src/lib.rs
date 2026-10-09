@@ -37,6 +37,7 @@ pub mod lm;
 pub mod phrase_libraries;
 pub mod phrase_library;
 pub(crate) mod phrase_table;
+pub mod pin_stderr;
 pub mod punct;
 pub mod row_format;
 pub mod single_gram;

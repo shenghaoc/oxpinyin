@@ -268,10 +268,7 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
         );
         return false;
     }
-    ctx.core
-        .runtime
-        .as_ref()
-        .is_some_and(|runtime| runtime.load_library(index as u32))
+    ctx.core.load_phrase_library(u32::from(index))
 }
 
 /// Unload a default phrase library by index.

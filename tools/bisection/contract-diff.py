@@ -12,13 +12,20 @@ crash is a result: an exit code or a signal. The two JSON documents must be
 identical, byte for byte. A key that starts with "~" is recorded but left out
 of the comparison (an indeterminate value at the pin).
 
-The raw `fprintf(stderr)` text of the pin is not compared; stderr is only
-counted. Cases that make the pin abort belong to the class (c) logging
-differential, not to this one.
+The raw `fprintf(stderr)` text of the pin is compared only by the cases
+that ask for it (`stderr=True`, below); every other case counts the lines.
+Cases that make the pin abort belong to the class (c) logging differential,
+not to this one.
 
 A class (c) case (`abort=`) holds when the pin dies of SIGABRT and the subject
 answers the declared value with exactly one warning in its own library's domain
 (`libpinyin`, or `libzhuyin` for the zhuyin facade).
+
+A class (b) case (`crash=`) holds when the pin dies of SIGSEGV after its raw
+stderr line (an empty chunk read through a NULL base) and the subject, which
+does not crash, wrote the same stderr bytes and answers the declared fields.
+The pin's bytes are compared up to the crash; the invalid read is never
+reproduced.
 
 --expect-parent runs the same cases against a parent build: a case marked
 `control` must still match, every other case must differ.
@@ -34,6 +41,7 @@ from pathlib import Path
 import re
 import resource
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -50,16 +58,20 @@ NO_ABORT = object()
 WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
-def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False):
+def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
     class (c) site: the pin
     must die of SIGABRT, and the subject must return `<value>` in its `ret`
     field with exactly one GLib warning in the facade's domain (`libpinyin`,
-    or `libzhuyin` for the zhuyin facade; level 16)."""
+    or `libzhuyin` for the zhuyin facade; level 16). `crash=<fields>` marks a
+    class (b) site: the pin must die of SIGSEGV (after the stderr it wrote
+    up to then), and the subject must exit normally, write the same stderr
+    bytes and answer `<fields>` (a dict of result fields)."""
     def register(fn):
-        CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr)
+        CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
+                           crash=crash)
         return fn
     return register
 
@@ -1790,6 +1802,171 @@ def _(k):
     return {'save': k.fn('save', B, P)(ctx)}
 
 
+# The raw `mmap %s failed!` lines of the pin's library loaders (#545;
+# `pinyin.cpp:256`, `:290`, `:956`, `:1265`, `zhuyin.cpp:200`, `:589`,
+# `:800`). Each site hands the chunk it failed to map, empty, on: the
+# library load reads `NULL + 16` and the save's `diff` does the same on the
+# old chunk, so the pin dies of SIGSEGV right after the line (register
+# row 68, class (b)). The system directory is a private copy of the oracle's
+# (every file a link back to it) with one library broken; the oracle's own
+# files are never touched.
+def private_system(k):
+    system = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
+    for entry in os.listdir(k.data):
+        os.symlink(os.path.join(k.data, entry), os.path.join(system, entry))
+    return system
+
+
+def break_library(k, system, name, how):
+    """Replaces the link to library `name` with a file `MemoryChunk::mmap`
+    refuses: none (`missing`), shorter than the 8-byte header (`short`), or a
+    payload whose checksum does not verify (`checksum`)."""
+    path = os.path.join(system, name)
+    os.unlink(path)
+    if how == 'short':
+        Path(path).write_bytes(b'\0\0\0\0')
+    elif how == 'checksum':
+        data = bytearray(Path(k.data, name).read_bytes())
+        data[-1] ^= 0xff
+        Path(path).write_bytes(bytes(data))
+    else:
+        assert how == 'missing'
+
+
+def train_once(k, ctx, parse, text, train_args):
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    k.fn(parse, Z, P, S)(inst, text)
+    k.fn('guess_sentence', B, P)(inst)
+    return k.fn('train', B, P, *train_args)(inst, *((0,) if train_args else ()))
+
+
+LIBRARY_BREAKS = ('missing', 'short', 'checksum')
+# mode -> (library file, index, parse call, text, train args)
+LIBRARY_FACADES = {
+    'pinyin': ('merged.bin', 4, 'parse_more_full_pinyins', b'nihao', (C.c_ubyte,)),
+    'zhuyin': ('merged.bin', 4, 'parse_more_chewings', b'su3cl3', ()),
+}
+
+
+def library_probe(site, how):
+    def probe(k):
+        name, index, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        system = private_system(k)
+        if site in ('init', 'init-fresh'):
+            if site == 'init':
+                # A profile the pin finds conforming, so that its own line
+                # is the only one: the pin checks the profile before it
+                # loads the libraries, and an init that fails on a library
+                # never gets to the profile here (register row 68).
+                settled = k.init()
+                assert settled, 'init failed'
+                train_once(k, settled, parse, text, train_args)
+                assert k.fn('save', B, P)(settled), 'save failed'
+                k.fn('fini', None, P)(settled)
+            break_library(k, system, name, how)
+            return {'ctx': bool(k.init(system=system))}
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        load = k.fn('load_phrase_library', B, P, C.c_ubyte)
+        if site == 'load':
+            # GBK is the one library `pinyin_unload_phrase_library` lets go
+            # (TSI_DICTIONARY, 1, is the one `zhuyin_unload_phrase_library`
+            # keeps); index 2 is unloadable on both facades.
+            out = {'unload': k.fn('unload_phrase_library', B, P, C.c_ubyte)(ctx, 2)}
+            break_library(k, system, 'gbk_char.bin', how)
+            out['load'] = load(ctx, 2)
+            return out
+        if site == 'addon':
+            addon = k.fn('load_addon_phrase_library', B, P, C.c_ubyte)
+            out = {'unload': k.fn('unload_addon_phrase_library', B, P, C.c_ubyte)(ctx, 4)}
+            break_library(k, system, 'art.bin', how)
+            out['load'] = addon(ctx, 4)
+            return out
+        out = {'train': train_once(k, ctx, parse, text, train_args)}
+        break_library(k, system, name, how)
+        if site == 'save':
+            out['save'] = k.fn('save', B, P)(ctx)
+        else:
+            assert site == 'mask-out'
+            out['mask_out'] = k.fn('mask_out', B, P, U, U)(ctx, 0xff000000, 0x04000000)
+        return out
+    return probe
+
+
+def library_expected(site, how, mode):
+    """What the subject answers at a site where the pin dies: its answers
+    from before the lines were added, held unchanged. An init that fails on a
+    library logs one warning in its own domain and answers NULL."""
+    if site in ('init', 'init-fresh'):
+        failed = how != 'missing'
+        return {'ctx': not failed, 'logs': [[WARNING_DOMAIN[mode], 16]] if failed else []}
+    return dict(logs=[], **{
+        'load': {'unload': True, 'load': True},
+        'addon': {'unload': True, 'load': False},
+        'save': {'train': True, 'save': True},
+        'mask-out': {'train': True, 'mask_out': True},
+    }[site])
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    for _how in LIBRARY_BREAKS:
+        for _site in ('init', 'load', 'save', 'mask-out') + (('addon',) if _mode == 'pinyin' else ()):
+            case(f'stderr-library-{_site}-{_how}' + _suffix, mode=_mode,
+                 crash=library_expected(_site, _how, _mode))(library_probe(_site, _how))
+    # Both lines in the pin's order: the profile's, then the library's.
+    case('stderr-library-init-fresh-user-dir-missing' + _suffix, mode=_mode,
+         crash=library_expected('init-fresh', 'missing', _mode))(library_probe('init-fresh', 'missing'))
+
+
+# The guards that keep the pin silent with the same broken library: the
+# library is already loaded (a load asks for nothing), it is unloaded (a
+# save and a mask-out skip it), nothing is modified (a save writes nothing),
+# or it is whole (a reload maps it).
+def library_control(site):
+    def probe(k):
+        name, index, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        system = private_system(k)
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        unload = k.fn('unload_phrase_library', B, P, C.c_ubyte)
+        load = k.fn('load_phrase_library', B, P, C.c_ubyte)
+        out = {}
+        if site == 'load-already-loaded':
+            break_library(k, system, 'gbk_char.bin', 'checksum')
+            out['load'] = load(ctx, 2)
+        elif site == 'load-whole':
+            out['unload'] = unload(ctx, 2)
+            out['load'] = load(ctx, 2)
+        elif site == 'addon-already-loaded':
+            addon = k.fn('load_addon_phrase_library', B, P, C.c_ubyte)
+            out['first'] = addon(ctx, 4)
+            break_library(k, system, 'art.bin', 'checksum')
+            out['again'] = addon(ctx, 4)
+        elif site == 'save-unmodified':
+            break_library(k, system, name, 'checksum')
+            out['save'] = k.fn('save', B, P)(ctx)
+        else:
+            assert site in ('save-unloaded', 'mask-out-unloaded')
+            out['train'] = train_once(k, ctx, parse, text, train_args)
+            out['unload'] = unload(ctx, 2)
+            break_library(k, system, 'gbk_char.bin', 'checksum')
+            if site == 'save-unloaded':
+                out['save'] = k.fn('save', B, P)(ctx)
+            else:
+                out['mask_out'] = k.fn('mask_out', B, P, U, U)(ctx, 0xff000000, 0x04000000)
+        k.fn('fini', None, P)(ctx)
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _site in ('load-already-loaded', 'load-whole', 'save-unmodified', 'save-unloaded', 'mask-out-unloaded') + \
+            (('addon-already-loaded',) if _mode == 'pinyin' else ()):
+        case(f'stderr-library-control-{_site}' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode,
+             control=True, stderr=True)(library_control(_site))
+
+
 # --------------------------------------------------------------------------
 
 def remember_export(k, library, phrase):
@@ -2527,7 +2704,12 @@ def main():
             if args.observations:
                 with args.observations.open('a') as capture:
                     capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
-            if spec['abort'] is not NO_ABORT:
+            if spec['crash'] is not None:
+                shown = subject['result'] or {}
+                same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
+                    pin['stderr'] == subject['stderr'] and \
+                    all(shown.get(key) == value for key, value in spec['crash'].items())
+            elif spec['abort'] is not NO_ABORT:
                 shown = subject['result'] or {}
                 same = pin['exit'] == -6 and subject['exit'] == 0 and \
                     shown.get('ret') == spec['abort'] and shown.get('logs') == [[WARNING_DOMAIN[spec['mode']], 16]] and \

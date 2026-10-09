@@ -44,6 +44,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use oxpinyin_data::chunk_write::ChunkItem;
+use oxpinyin_data::pin_stderr;
 use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, StoreError, UserBigramDb, WriteStore, WriteTxn,
@@ -105,7 +106,7 @@ impl Drop for FiniGuard {
                 // (074a2219 pinyin.cpp:1194-1200); reproduce its diagnostic
                 // without issuing filesystem operations.
                 if target.law == UserConfLaw::Pinyin {
-                    persistence::diagnostic(&[b"write  failed.\n"]);
+                    pin_stderr::emit(&[b"write  failed.\n"]);
                 }
                 return;
             };
@@ -113,9 +114,9 @@ impl Drop for FiniGuard {
             // (`pinyin.cpp:1200`): a fini has no caller to answer, only the
             // line `UserTableInfo::save` prints (`table_info.cpp:382`).
             if persistence::fini(dir, &target.versions, target.law, target.open_counter).is_err() {
-                crate::persistence::diagnostic(&[
+                pin_stderr::emit(&[
                     b"write ",
-                    dir.join("user.conf").as_os_str().as_encoded_bytes(),
+                    pin_stderr::path_bytes(&dir.join("user.conf")),
                     b" failed.\n",
                 ]);
             }
@@ -202,9 +203,9 @@ impl GenericUserStore<DefaultStore> {
         } else {
             // check_format reads ""; pinyin also tries to write "".
             // Neither operation can succeed. Do not redirect into cwd/temp.
-            persistence::diagnostic(&[b"open  failed."]);
+            pin_stderr::emit(&[b"open  failed."]);
             if law == UserConfLaw::Pinyin {
-                persistence::diagnostic(&[b"write  failed.\n"]);
+                pin_stderr::emit(&[b"write  failed.\n"]);
             }
             persistence::Loaded::default()
         };

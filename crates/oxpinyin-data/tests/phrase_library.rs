@@ -17,7 +17,8 @@ use std::path::PathBuf;
 use oxpinyin_data::chunk_format::{
     CHUNK_HEADER_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR, chunk_checksum,
 };
-use oxpinyin_data::phrase_library::PhraseLibrary;
+use oxpinyin_data::phrase_library::{PhraseLibrary, verify_chunk};
+use oxpinyin_data::{AddonDictionary, PhraseLibraries};
 
 /// Builds one phrase-library chunk file from slot → item entries.
 /// One item's pieces: `(unigram, text, pronunciations as (packed
@@ -371,6 +372,116 @@ fn u32_at(bytes: &[u8]) -> u32 {
 fn fix_checksum(bytes: &mut [u8]) {
     let sum = chunk_checksum(&bytes[CHUNK_HEADER_SIZE..]);
     bytes[4..CHUNK_HEADER_SIZE].copy_from_slice(&sum.to_le_bytes());
+}
+
+// ── the files the pin's `MemoryChunk::mmap` refuses (#545) ──────────
+
+fn temp_dir(name: &str) -> PathBuf {
+    let path = write_temp(name, b"");
+    std::fs::remove_file(&path).expect("remove the placeholder");
+    std::fs::create_dir(&path).expect("create temp dir");
+    path
+}
+
+#[test]
+fn chunk_level_refusals_name_the_file_and_layout_faults_do_not() {
+    let sample = sample();
+    // `MemoryChunk::mmap` answers false: no bytes at all, a header cut short,
+    // a length word that is not the payload length, a bad checksum.
+    let chunk_faults: Vec<(&str, Vec<u8>)> = vec![
+        ("empty", Vec::new()),
+        ("short header", sample[..7].to_vec()),
+        ("payload truncation", sample[..sample.len() - 1].to_vec()),
+        ("checksum drift", {
+            let mut bytes = sample.clone();
+            bytes[4] ^= 0xFF;
+            bytes
+        }),
+    ];
+    for (name, bytes) in chunk_faults {
+        let path = write_temp(name, &bytes);
+        let error = PhraseLibrary::open(&path).expect_err(name);
+        assert_eq!(error.unmappable_path(), Some(path.as_path()), "{name}");
+        let error = verify_chunk(&path).expect_err(name);
+        assert_eq!(error.unmappable_path(), Some(path.as_path()), "{name}");
+        let _ = std::fs::remove_file(&path);
+    }
+    // No file: the open fails, which is the same refusal.
+    let absent = std::env::temp_dir().join("oxpinyin-phrase-library-absent.bin");
+    let error = PhraseLibrary::open(&absent).expect_err("absent file");
+    assert_eq!(error.unmappable_path(), Some(absent.as_path()));
+
+    // A chunk that maps but whose sub-index layout `SubPhraseIndex::load`
+    // refuses is the pin's `g_return_val_if_fail`, not an `mmap` line.
+    let mut bytes = sample;
+    bytes[8 + 16] = b'!';
+    fix_checksum(&mut bytes);
+    let path = write_temp("layout", &bytes);
+    let error = PhraseLibrary::open(&path).expect_err("layout fault");
+    assert!(error.unmappable_path().is_none(), "{error}");
+    verify_chunk(&path).expect("the chunk itself maps");
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
+    let dir = temp_dir("recheck");
+    let first = dir.join("a.bin");
+    std::fs::write(&first, sample()).expect("write a.bin");
+    let libraries =
+        PhraseLibraries::open(&dir, &[(1, "a.bin"), (2, "b.bin")]).expect("b.bin is absent");
+    assert!(libraries.is_loaded(1) && !libraries.is_loaded(2));
+    assert_eq!(libraries.unmapped(), [dir.join("b.bin")]);
+    assert!(libraries.unmappable_now(|_| true, None).is_empty());
+
+    // The file goes bad after the open: the pin maps it again on a save.
+    let mut bytes = sample();
+    bytes[4] ^= 0xFF;
+    std::fs::write(&first, bytes).expect("damage a.bin");
+    assert_eq!(
+        libraries.unmappable_now(|_| true, None),
+        std::slice::from_ref(&first)
+    );
+    assert_eq!(
+        libraries.unmappable_now(|n| n == 1, Some(1)),
+        std::slice::from_ref(&first)
+    );
+    assert!(
+        libraries.unmappable_now(|_| true, Some(2)).is_empty(),
+        "only the named library is looked at"
+    );
+    assert!(
+        libraries.unmappable_now(|_| false, None).is_empty(),
+        "an unloaded library is skipped"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn addon_load_keeps_its_answer_and_reports_the_refusal() {
+    let dir = temp_dir("addon");
+    let mut addons = AddonDictionary::empty();
+    // Absent: `false`, and the file the pin cannot map.
+    assert!(!addons.load(4, &dir));
+    let error = addons
+        .load_reporting(4, &dir)
+        .expect_err("art.bin is absent");
+    assert_eq!(error.unmappable_path(), Some(dir.join("art.bin").as_path()));
+    // Damaged chunk: the same.
+    let mut bytes = sample();
+    bytes[4] ^= 0xFF;
+    std::fs::write(dir.join("art.bin"), bytes).expect("write art.bin");
+    assert!(!addons.load(4, &dir));
+    assert!(addons.load_reporting(4, &dir).is_err());
+    // Whole: loads once, and a second load is the pin's silent guard even
+    // with the file gone.
+    std::fs::write(dir.join("art.bin"), sample()).expect("write art.bin");
+    assert!(matches!(addons.load_reporting(4, &dir), Ok(true)));
+    std::fs::remove_file(dir.join("art.bin")).expect("remove art.bin");
+    assert!(matches!(addons.load_reporting(4, &dir), Ok(false)));
+    // An index that names no addon library is `false`, not a refusal.
+    assert!(matches!(addons.load_reporting(3, &dir), Ok(false)));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // ── the real thing ──────────────────────────────────────────────────
