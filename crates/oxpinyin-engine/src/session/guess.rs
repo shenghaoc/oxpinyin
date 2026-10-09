@@ -80,7 +80,9 @@ where
             crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
         });
         self.constraints = store;
-        if dropped? {
+        if dropped? || (self.constraints.is_active() && self.record.history().is_empty()) {
+            // A temporary incompatible parse may have cleared the safe
+            // selection record while retaining the actual constraints.
             self.rebuild_selection_from_constraints();
         }
 
@@ -167,7 +169,9 @@ where
             crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
         });
         self.constraints = store;
-        if dropped? {
+        if dropped? || (self.constraints.is_active() && self.record.history().is_empty()) {
+            // A temporary incompatible parse may have cleared the safe
+            // selection record while retaining the actual constraints.
             self.rebuild_selection_from_constraints();
         }
 

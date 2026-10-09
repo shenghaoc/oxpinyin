@@ -35,11 +35,10 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     // (`pinyin.cpp:1376-1377`).
     inst.prefixes.clear();
     if !matrix_has_keys(inst) {
-        if inst.core.session.raw_input().is_empty() {
-            // The pin validates constraints against the empty matrix
-            // before returning false (074a2219 pinyin.cpp:1379-1380).
-            inst.core.session.discard_composition();
-        }
+        // Validate against the empty matrix for every keyless parse,
+        // including nonempty zero-consumption text. Keep the sentence
+        // rows (074a2219, pinyin.cpp:1379-1380, phonetic_lookup.h:743-748).
+        inst.core.session.discard_composition();
         return false;
     }
     if refuse_toned_initial(inst, "pinyin_guess_sentence") {
@@ -154,11 +153,10 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
         oxpinyin_facade::compute_prefixes(&inst.core.dict, inst.core.user.as_ref(), &prefix);
     inst.prefixes.clone_from(&prefixes);
     if !matrix_has_keys(inst) {
-        if inst.core.session.raw_input().is_empty() {
-            // The pin validates constraints against the empty matrix
-            // before returning false (074a2219 pinyin.cpp:1379-1380).
-            inst.core.session.discard_composition();
-        }
+        // Validate against the empty matrix for every keyless parse,
+        // including nonempty zero-consumption text. Keep the sentence
+        // rows (074a2219, pinyin.cpp:1379-1380, phonetic_lookup.h:743-748).
+        inst.core.session.discard_composition();
         return false;
     }
     if refuse_toned_initial(inst, "pinyin_guess_sentence_with_prefix") {

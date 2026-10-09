@@ -91,9 +91,7 @@ pub struct InstanceCore {
     /// when the last parse call was the full-pinyin entry point under
     /// such a scheme. Used for aux-text rendering over the raw input.
     pub full_parse: Option<FullPinyinIndexParse>,
-    /// Original full-pinyin input for aux-text cursor mapping. With no
-    /// active parse and empty session input, also retains the preceding
-    /// original input for continuity through an empty parse.
+    /// Original full-pinyin input for aux-text cursor mapping.
     pub full_input: String,
 }
 
@@ -165,48 +163,14 @@ impl InstanceCore {
         self.session.reset();
     }
 
-    /// Begin a parse of `original` (the caller's input, in the active
-    /// mode's own coordinates): continue the current composition when the
-    /// buffer evolved from the stored one — extension, backspace, or
-    /// re-send — whether the composition is open or a selection consumed
-    /// it (the store survives every re-parse; only the full reset clears
-    /// it). Only a divergent buffer starts fresh: a different string is a
-    /// different composition, and a stale selection-derived cursor must
-    /// not mis-anchor its window before validate could drop the
-    /// mismatched forcings.
-    pub fn begin_parse(&mut self, original: &[u8]) {
-        let stored = if self.zhuyin_parse.is_some() {
-            self.zhuyin_input.as_str()
-        } else if self.double_parse.is_some() {
-            self.double_input.as_str()
-        } else if self.full_parse.is_some() || self.session.raw_input().is_empty() {
-            self.full_input.as_str()
-        } else {
-            self.session.raw_input()
-        };
-        // Parsing empty clears the matrix, not the constraints. Retain the
-        // preceding original input in the existing, inactive full-input
-        // buffer so restoring it follows the same continuity law as a
-        // direct reparse (074a2219, pinyin.cpp:1497-1525).
-        let empty_continuity = original.is_empty().then(|| stored.to_owned());
-        let continues = self.session.parse_continues(stored.as_bytes(), original);
-        let committed_continues = !continues
-            && self
-                .session
-                .committed_parse_continues(stored.as_bytes(), original);
-        // The committed-continues shape needs exactly `reset_parse_state`:
-        // its `reset_composition` keeps the store and the selection
-        // record, so the discard below must not run there. Neither path
-        // drops the n-best rows: upstream's parse never touches
-        // `m_nbest_results` (`pinyin.cpp:1497-1524`), which only the full
-        // reset clears (register row 34).
+    /// Begin a parse without discarding instance-level constraints or
+    /// sentence rows. Every input replaces the matrix, including changed
+    /// and empty text; the next guess validates the stored constraints
+    /// against it (074a2219, pinyin.cpp:1497-1525, zhuyin.cpp:1017-1043,
+    /// lookup/phonetic_lookup.cpp:120-160). The engine separately keeps
+    /// its selection record safe for the replaced buffer.
+    pub fn begin_parse(&mut self, _original: &[u8]) {
         self.reset_parse_state();
-        if let Some(input) = empty_continuity {
-            self.full_input = input;
-        }
-        if !continues && !committed_continues {
-            self.session.discard_composition();
-        }
     }
 
     /// The generalized lookup-offset law in the active parse mode's own
