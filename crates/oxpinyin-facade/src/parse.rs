@@ -177,6 +177,10 @@ impl InstanceCore {
             return 0;
         }
         if text.is_empty() {
+            // fill_matrix clears the old matrix before testing keys->len
+            // (074a2219, phonetic_key_matrix.cpp:34-38). Keep sentence
+            // results until the next guess, but replace the session input.
+            let _ = self.session.replace_raw("");
             return 0;
         }
         if let Some(scheme) = full_scheme(self.live.full_scheme.load(Ordering::Relaxed))
@@ -260,6 +264,8 @@ impl InstanceCore {
         };
 
         if text.is_empty() {
+            // The same fill_matrix empty-input law as full pinyin.
+            let _ = self.session.replace_raw("");
             self.parsed_len = 0;
             return 0;
         }
@@ -310,6 +316,8 @@ impl InstanceCore {
         let parsed = parser.parse_with_options(text.as_bytes(), self.options().bits());
 
         if text.is_empty() {
+            // The same fill_matrix empty-input law as full pinyin.
+            let _ = self.session.replace_raw("");
             self.parsed_len = 0;
             return 0;
         }

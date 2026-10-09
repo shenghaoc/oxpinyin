@@ -404,8 +404,8 @@ pub extern "C" fn pinyin_guess_candidates(
     // `instance->m_sort_option = sort_option` (`pinyin.cpp:2203`) — the
     // engine's sort keys, the LONGER gate and the snapshot's LONGER row
     // are all functions of it. A word that changes the list refreshes a
-    // composing session; the same word is a no-op, so a caller passing a
-    // constant pays nothing per keystroke.
+    // composing session; the same word is a no-op here. The lookup below
+    // still searches the live dictionary on every call.
     if inst.core.session.set_sort_options(sort_option).is_err() {
         return false;
     }
@@ -419,15 +419,9 @@ pub extern "C" fn pinyin_guess_candidates(
     inst.candidates.clear();
     let double_parse = inst.core.double_parse.clone();
     let zhuyin_parse = inst.core.zhuyin_parse.clone();
-    // Mirror the pin's per-offset span search. `pinyin_guess_candidates`
-    // anchors its window at `start = offset` (`pinyin.cpp:2224-2262`); the
-    // session's cached list is anchored at the composition offset it owns.
-    // When the caller's normalized lookup offset differs — a
-    // mid-composition cursor with no prior choose, or a cursor behind a
-    // choose — rebuild the window at that offset. When it matches (offset
-    // 0 unconstrained, and every post-choose lookup at the chosen
-    // cursor), the cached list already answers, so those paths stay
-    // bit-identical.
+    // Search on every guess, including the composition offset: library
+    // visibility can change without a parse (074a2219 pinyin.cpp:2193,
+    // :2224-2262). The session's cached list predates such a change.
     //
     // The caller's offset lives in the active parse mode's ORIGINAL input
     // coordinates — the pin's matrix keeps each key at its key rest's
@@ -452,21 +446,8 @@ pub extern "C" fn pinyin_guess_candidates(
     // an index into the cached list would select a different row
     // whenever the two differ. `anchored_window` is set here and a later
     // `pinyin_choose_candidate` resolves its index against it.
-    // Re-anchor at any session offset other than the composition offset;
-    // one equal to it is the composition-anchored cached list. An offset
-    // BELOW it — ibus's `moveCursorLeft` looks up at 0 behind a choose
-    // (`PYPPhoneticEditor.cc:595-604`) — builds its own window: amended
-    // 2026-09-27 (maintainer ruling, register row 37), the pin keeps no
-    // composition offset and builds every window from `start = offset`
-    // (`pinyin.cpp:2224-2262`), and a choose from a window behind the
-    // composition moves the record back to the chosen span
-    // (`Session::select_anchored`). That holds for the transformed input
-    // schemes too — double pinyin, the chewing keyboards, Luoma and
-    // secondary zhuyin (maintainer ruling 2026-10-03: required by the
-    // tenet, `pinyin.cpp:2224-2262`).
-    inst.core.anchored_window = if session_offset == inst.core.session.composition_offset() {
-        None
-    } else if let Ok(window) = inst.core.session.candidates_at(session_offset) {
+    inst.core.anchored_window = if let Ok(window) = inst.core.session.candidates_at(session_offset)
+    {
         Some((session_offset, window))
     } else {
         // Unreachable for a well-formed lookup: the offset-shaped

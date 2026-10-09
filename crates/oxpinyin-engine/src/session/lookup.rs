@@ -425,11 +425,9 @@ where
     /// re-runs `search_matrix` from `start = offset` (`pinyin.cpp:2224-2262`),
     /// its candidates all beginning at `offset` — and returns it without
     /// disturbing the cached list or any composition state (constraints,
-    /// consumed, history). The C ABI uses this only when the caller's
-    /// normalized lookup offset differs from [`Session::composition_offset`]:
-    /// a mid-composition cursor with no prior choose. At an equal offset the
-    /// cached [`Session::candidates`] already answers, so offset-0 and every
-    /// post-choose lookup stay bit-identical.
+    /// consumed, history). The C ABI uses this on every guess, including
+    /// [`Session::composition_offset`]: the dictionary's loaded libraries
+    /// may have changed since the cached [`Session::candidates`] were built.
     ///
     /// A byte no matrix key starts on — a mid-syllable position of the
     /// composition's own parse — is one of the pin's empty columns:
