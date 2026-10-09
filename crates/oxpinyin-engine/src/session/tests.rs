@@ -2130,6 +2130,37 @@ fn a_divergent_replacement_reconciles_the_committed_selection() {
     );
 }
 
+/// A temporary edit sanitises the engine's selection record without
+/// destroying the choice. Only a guess validates the actual store.
+#[test]
+fn temporary_reparses_keep_constraints_until_a_guess_validates_them() {
+    for intermediate in ["mihao", "n", "", "ni"] {
+        for validate in [false, true] {
+            let mut session = trellis_session();
+            session.replace_raw("nihao").expect("initial parse");
+            let index = session
+                .candidates()
+                .iter()
+                .position(|candidate| candidate.token() == Some(PhraseToken::new(1)))
+                .expect("the fixture offers 你");
+            session.select(index).expect("choose 你");
+            session.replace_raw(intermediate).expect("temporary parse");
+            assert!(session.constraints.is_one_step_at(0));
+            if validate {
+                session.guess_sentence().expect("intermediate guess");
+            }
+            session.replace_raw("nihao").expect("restore input");
+            assert!(session.guess_sentence().expect("restored guess"));
+            assert_eq!(session.sentence_text(0), Some("你好"));
+            assert_eq!(
+                session.constraints.is_one_step_at(0),
+                !validate || intermediate == "ni",
+                "constraint after {intermediate:?}, intervening guess={validate}",
+            );
+        }
+    }
+}
+
 /// The engine-internal backspace keeps the forcing: erase shrinks
 /// the raw buffer one keystroke at a time (the engine's own
 /// backspace path — the capi's shrink is the same rule through

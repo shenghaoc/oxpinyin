@@ -149,7 +149,8 @@ where
     }
 
     /// Discards the composition but keeps the last sentence lookup's
-    /// n-best rows — the reset a parse of a *different* buffer takes.
+    /// n-best rows. Parsing itself never discards constraints; an empty
+    /// matrix guess uses this to clear them without replacing the rows.
     ///
     /// The input, the selection record and the constraint store go, as
     /// in [`Session::reset`]; the n-best state does not, because
@@ -194,13 +195,12 @@ where
     /// Replaces the raw input with `text` in one step — the capi parse
     /// path's `parse_more` contract (the frontend re-sends the whole
     /// buffer every keystroke). The selection record and the constraint
-    /// store survive (whether they should is the caller's
-    /// [`Session::parse_continues`] decision); the cursor is clamped into
+    /// store survive every replacement; the cursor is clamped into
     /// the new buffer and the candidates refresh, so the session is never
     /// observable with a cursor past its input. A replacement that does
     /// not extend the covered selection span — a clamp below it, or a
-    /// byte divergence inside it — reconciles the store and record
-    /// (`Session::reconcile_replaced_selection`), so
+    /// byte divergence inside it — reconciles the record from a temporary
+    /// constraint copy (`Session::reconcile_replaced_selection`), so
     /// [`Session::commit`] answers only text valid for the current
     /// input.
     ///
@@ -265,9 +265,8 @@ where
     /// `text` (the [`MAX_INPUT_BYTES`] clamp) are dropped, keeping
     /// `end <= raw.len()` an invariant of the stored segments.
     ///
-    /// The selection record and the constraint store survive while the
-    /// replacement extends the covered span, and a discontinuous one
-    /// reconciles, exactly as in [`Session::replace_raw`].
+    /// Constraints survive every replacement; a discontinuous one
+    /// reconciles only the selection record, as in [`Session::replace_raw`].
     ///
     /// # Errors
     ///
@@ -323,32 +322,30 @@ where
             .starts_with(&self.input.as_bytes()[..self.record.consumed()])
     }
 
-    /// Reconciles the selection to a replacement it does not extend:
-    /// the full validate the next guess would run — bounds and spelling
-    /// over the new input's matrix, so a forcing that no longer spells
-    /// under the divergent replacement drops here instead of surviving
-    /// under a stale record — then the record re-derived from the
-    /// surviving runs, whatever the validate dropped. A backward clamp
-    /// is the runs-empty extreme: the whole record goes and the
-    /// composition re-opens at 0. The empty-record parse path pays only
-    /// the continuity check.
+    /// Reconciles the selection record to the new input without changing
+    /// the stored constraints. Upstream has no selection record, and its
+    /// parse never touches m_constraints (074a2219, pinyin.cpp:1497-1525).
+    /// Validate a temporary copy so commit/preedit cannot use stale text;
+    /// the real store is resized and validated at the next guess.
     pub(super) fn reconcile_replaced_selection(&mut self) -> Result<(), EngineError> {
         if self.record.consumed() == 0 {
             return Ok(());
         }
         let graph = self.build_graph_at(0, self.input.as_bytes())?;
         let bound = graph.consumed();
+        let mut retained = self.constraints.clone();
         if bound > 0 {
             let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
-            self.constraints.validate(bound + 1, |start, end, token| {
+            retained.validate(bound + 1, |start, end, token| {
                 crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
             })?;
         } else {
-            // Nothing spells over the replaced buffer: every forcing is
-            // dead and the record with it.
-            self.constraints.clear();
+            // No selection text is valid for this matrix. The real
+            // constraints still survive until something validates them.
+            retained.clear();
         }
-        self.rebuild_selection_from_constraints();
+        self.record
+            .rebuild_from_constraints(self.input.as_str(), &retained.runs());
         Ok(())
     }
 
