@@ -372,15 +372,19 @@ fn predicted_frequency(
     total: u64,
     lambda: f32,
 ) -> u64 {
-    let unigram = dict
-        .system_unigram_count(token)
-        .unwrap_or(0)
-        .wrapping_add(
-            user.and_then(|store| store.unigram_delta(token).ok())
-                .unwrap_or(0),
-        )
-        .wrapping_add(dict.unigram_delta(token).unwrap_or(0))
-        & u64::from(u32::MAX);
+    let store_count = || {
+        user.and_then(|store| store.unigram_delta(token).ok())
+            .unwrap_or(0)
+    };
+    // An imported system-library token missing from the immutable dictionary
+    // has a complete live count in system_item_override. Its UNIGRAM value
+    // must not be added twice. Existing immutable items need base + delta.
+    let item_count = match dict.system().unigram_count(token) {
+        Some(base) => base.wrapping_add(store_count()),
+        None => dict.system_unigram_count(token).unwrap_or_else(store_count),
+    };
+    let unigram =
+        item_count.wrapping_add(dict.unigram_delta(token).unwrap_or(0)) & u64::from(u32::MAX);
     amplified_frequency(unigram, total, lambda)
 }
 
