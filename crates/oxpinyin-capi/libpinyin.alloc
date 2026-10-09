@@ -106,15 +106,17 @@ pinyin_get_sentence                      sentence    g_free                     
 pinyin_get_full_pinyin_auxiliary_text    aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
 pinyin_get_double_pinyin_auxiliary_text  aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
 pinyin_get_chewing_auxiliary_text        aux_text    g_free                        false-allocates    pin-probe:aux-text-no-parse
-pinyin_get_pinyin_string                 utf8_str    g_free                        false-unreachable  unexecuted
-pinyin_get_zhuyin_string                 utf8_str    g_free                        false-unreachable  unexecuted
-pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-unreachable  unexecuted
-pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-unreachable  unexecuted
-# The table_index == 0 refusal, the only non-NULL-argument `false` these
-# reach, needs an unset ChewingKey — and `ChewingKey` is an opaque typedef,
-# so a conforming consumer cannot make one. Unreachable, not unclaimed.
-pinyin_get_pinyin_strings                shengmu     g_free                        false-unreachable  unexecuted
-pinyin_get_pinyin_strings                yunmu       g_free                        false-unreachable  unexecuted
+pinyin_get_pinyin_string                 utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_pinyin-zero-key
+pinyin_get_zhuyin_string                 utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_zhuyin-zero-key
+pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_luoma_pinyin-zero-key
+pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_secondary_zhuyin-zero-key
+# The refusal is `0 == key->get_table_index()` (pinyin.cpp:2711, :2722,
+# :2733, :2744, :2755), reached by passing the zero key that
+# `pinyin_get_pinyin_key` answers at a separator column (`xi'` at offset
+# 2). The four single-string getters NULL their out-param before the test;
+# `pinyin_get_pinyin_strings` returns before it writes either.
+pinyin_get_pinyin_strings                shengmu     g_free                        false-untouched    pin-probe:alloc-register-pinyin_get_strings-zero-key
+pinyin_get_pinyin_strings                yunmu       g_free                        false-untouched    pin-probe:alloc-register-pinyin_get_strings-zero-key
 pinyin_token_get_phrase                  utf8_str    g_free                        false-untouched    pin-probe:token-get-phrase-out
 # The unigram iterator answers `true` on every row it hands out
 # (pinyin.cpp:698-769); its `false` is the call with no next row, where the

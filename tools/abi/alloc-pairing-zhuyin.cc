@@ -46,8 +46,8 @@ const Slot kSlots[] = {
     {"zhuyin_get_zhuyin_key",       "key",       "borrowed",                      "false-nulls"},
     {"zhuyin_get_zhuyin_key_rest",  "key_rest",  "borrowed",                      "false-nulls"},
     {"zhuyin_get_sentence",         "sentence",  "g_free",                        "false-untouched"},
-    {"zhuyin_get_zhuyin_string",    "utf8_str",  "g_free",                        "false-unreachable"},
-    {"zhuyin_get_pinyin_string",    "utf8_str",  "g_free",                        "false-unreachable"},
+    {"zhuyin_get_zhuyin_string",    "utf8_str",  "g_free",                        "false-nulls"      },
+    {"zhuyin_get_pinyin_string",    "utf8_str",  "g_free",                        "false-nulls"      },
     {"zhuyin_token_get_phrase",     "utf8_str",  "g_free",                        "false-untouched"},
     {"zhuyin_in_chewing_keyboard",  "symbols",   "g_strfreev",                    "false-nulls"},
 };
@@ -257,11 +257,35 @@ void exercise_import_iterator(zhuyin_context_t *context) {
     }
 }
 
+// The key-string getters on a zero key. `xi1'` parses to one key and a
+// separator column; the key getter answers the zero key at offset 3, which
+// is in contract for a consumer, and both getters refuse it
+// (`0 == key->get_table_index()`, zhuyin.cpp:1736, :1750) after NULLing
+// the out-param (`false-nulls`).
+void probe_zero_key_strings(zhuyin_instance_t *instance) {
+    zhuyin_reset(instance);
+    zhuyin_parse_more_full_pinyins(instance, "xi1'");
+
+    ChewingKey *zero = nullptr;
+    if (!zhuyin_get_zhuyin_key(instance, 3, &zero) || zero == nullptr) {
+        contract_failed("zhuyin_get_zhuyin_key", "key", "the zero key",
+                        "no key came back at the separator column");
+        return;
+    }
+
+    gchar *utf8 = kSentinel;
+    bool ok = zhuyin_get_zhuyin_string(instance, zero, &utf8);
+    expect_declared("zhuyin_get_zhuyin_string", "utf8_str", ok, utf8);
+
+    utf8 = kSentinel;
+    ok = zhuyin_get_pinyin_string(instance, zero, &utf8);
+    expect_declared("zhuyin_get_pinyin_string", "utf8_str", ok, utf8);
+}
+
 // Every reachable false-return contract, driven from an empty parse. The
-// `false-unreachable` slots are absent by construction: `ChewingKey` is an
-// opaque typedef, so a conforming consumer cannot fabricate the unset key
-// those refusals need, and zhuyin_get_candidate_string answers true for
-// every candidate the ABI hands out.
+// `false-unreachable` slots are absent by construction:
+// zhuyin_get_candidate_string answers true for every candidate the ABI
+// hands out.
 void probe_false_contracts(zhuyin_instance_t *instance) {
     zhuyin_reset(instance);
 
@@ -295,6 +319,8 @@ void probe_false_contracts(zhuyin_instance_t *instance) {
         expect_declared("zhuyin_in_chewing_keyboard", "symbols", false, symbols);
         break;
     }
+
+    probe_zero_key_strings(instance);
 }
 
 int lifecycle(const char *systemdir, const char *userdir) {
