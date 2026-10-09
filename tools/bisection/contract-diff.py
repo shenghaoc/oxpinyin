@@ -2921,6 +2921,67 @@ for _dynamic in (False, True):
     case('row58-lambda-rounding-' + ('on' if _dynamic else 'off'))(row58_lambda_rounding(_dynamic))
 
 
+
+# #712 review 4232017129: an imported system-library item has a complete
+# override count, whereas an immutable item still needs its store delta.
+def row58_system_import(library, dynamic=False, existing=False):
+    def probe(k):
+        phrase = '我是谁' if existing else '我甲甲'
+        prefix, suffix = '我', ('是谁' if existing else '甲甲')
+        if k.mode == 'pinyin':
+            reading = "wo3'shi4'shei2" if existing else "wo3'jia3'jia3"
+            assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        else:
+            reading = 'ㄨㄛˇ ㄕˋ ㄕㄟˊ' if existing else 'ㄨㄛˇ ㄐㄧㄚˇ ㄐㄧㄚˇ'
+        initial = tokens_of(k, phrase)
+        target_library = (initial[0] >> 24) if existing else library
+        assert 1 <= target_library <= 4
+        before = [t for t in initial if t >> 24 == target_library]
+        assert bool(before) == existing
+        it = k.fn('begin_add_phrases', P, P, U)(k.ctx, target_library)
+        assert it
+        added = k.fn('iterator_add_phrase', B, P, S, S, I)(
+            it, phrase.encode(), reading.encode(), 33)
+        assert added
+        k.fn('end_add_phrases', None, P)(it)
+        tokens = [t for t in tokens_of(k, phrase) if t >> 24 == target_library]
+        assert len(tokens) == 1
+        token = tokens[0]
+        out = dict(tokens_before=before, added=added, tokens_after=tokens,
+                   imported_count=unigram_of(k, token))
+        if k.mode == 'pinyin':
+            if not existing:
+                # Place an immutable competitor between the correct count
+                # after three accepts (33*3 + 3*483) and its erroneous double.
+                rival = tokens_of(k, '我是谁')[0]
+                rival_count = (33 * 3 + 3 * 483) * 3 // 2
+                delta = rival_count - unigram_of(k, rival)[1]
+                assert k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, rival, delta)
+                out['rival_count'] = unigram_of(k, rival)
+            out['rows-0'] = row58_rows(k, prefix)
+            # Three acceptances in two snapshots exercise the live override,
+            # not only its initial import value. Preserve every candidate.
+            for accepted in (1, 2):
+                out['chosen-%d' % accepted] = row58_choose(k, 5, suffix, accepted)
+                out['count-%d' % accepted] = unigram_of(k, token)
+                out['rows-%d' % accepted] = row58_rows(k, prefix)
+        return out
+    return probe
+
+
+for _library in range(1, 5):
+    for _dynamic in (False, True):
+        case('row58-system-import-%d-%s' % (_library, 'on' if _dynamic else 'off'))(
+            row58_system_import(_library, _dynamic))
+    # The import/count twin exists; libzhuyin has no predicted API twin.
+    case('row58-system-import-zhuyin-%d' % _library, mode='zhuyin', control=True)(
+        row58_system_import(_library))
+for _dynamic in (False, True):
+    case('row58-system-existing-' + ('on' if _dynamic else 'off'), control=True)(
+        row58_system_import(4, _dynamic, existing=True))
+case('row58-system-existing-zhuyin', mode='zhuyin', control=True)(
+    row58_system_import(4, existing=True))
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('cell', choices=['bdb', 'kc', 'tkrzw'])
