@@ -118,10 +118,7 @@ impl CapiContext {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
-        self.core
-            .runtime
-            .as_ref()
-            .is_some_and(|runtime| runtime.load_system_addon(index))
+        self.core.load_addon_phrase_library(index)
     }
 
     /// Unload addon library `index`.

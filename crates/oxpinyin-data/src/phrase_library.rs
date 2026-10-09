@@ -41,7 +41,7 @@
 
 use std::fmt;
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[cfg(not(target_endian = "little"))]
 compile_error!(
@@ -62,6 +62,32 @@ pub enum LibraryError {
     /// The chunk header, checksum, or sub-index layout is not what the
     /// upstream reader would accept.
     Format(String),
+    /// Upstream's `MemoryChunk::mmap` answers `false` for `path`: the file
+    /// cannot be opened or mapped, is shorter than the chunk header, its
+    /// length word is not the payload length, or its checksum does not
+    /// verify. The pin then writes `mmap %s failed!` (`pinyin.cpp:256`) and
+    /// goes on with an empty chunk. A layout fault past the chunk
+    /// (`SubPhraseIndex::load`'s checks) is [`LibraryError::Format`] and
+    /// writes no such line. `cause` is the [`LibraryError::Io`] or
+    /// [`LibraryError::Format`] that says which.
+    Unmappable {
+        /// The file, as the caller named it.
+        path: PathBuf,
+        /// Why the chunk did not map.
+        cause: Box<LibraryError>,
+    },
+}
+
+impl LibraryError {
+    /// The file `MemoryChunk::mmap` refused, when this error is that
+    /// refusal; `None` for any other fault.
+    #[must_use]
+    pub fn unmappable_path(&self) -> Option<&Path> {
+        match self {
+            Self::Unmappable { path, .. } => Some(path),
+            Self::Io(_) | Self::Format(_) => None,
+        }
+    }
 }
 
 impl fmt::Display for LibraryError {
@@ -69,6 +95,7 @@ impl fmt::Display for LibraryError {
         match self {
             Self::Io(e) => write!(f, "phrase library I/O error: {e}"),
             Self::Format(message) => write!(f, "phrase library format error: {message}"),
+            Self::Unmappable { cause, .. } => cause.fmt(f),
         }
     }
 }
@@ -78,6 +105,7 @@ impl std::error::Error for LibraryError {
         match self {
             Self::Io(e) => Some(e),
             Self::Format(_) => None,
+            Self::Unmappable { cause, .. } => Some(cause.as_ref()),
         }
     }
 }
@@ -375,6 +403,40 @@ impl PhraseItemView<'_> {
 
 // ── the library ─────────────────────────────────────────────────────
 
+/// `MemoryChunk::mmap` (`memory_chunk.h:470-520`): maps the file and checks
+/// that the header's length word is the payload length and that the
+/// checksum verifies. Every refusal is [`LibraryError::Unmappable`], the
+/// one error after which the pin writes `mmap %s failed!`.
+fn map_chunk(path: &Path) -> Result<map::MappedFile, LibraryError> {
+    let unmappable = |cause: LibraryError| LibraryError::Unmappable {
+        path: path.to_path_buf(),
+        cause: Box::new(cause),
+    };
+    let bad = |message: &str| unmappable(LibraryError::Format(message.to_owned()));
+    let file = map::MappedFile::open(path).map_err(unmappable)?;
+    let bytes = file.as_slice();
+    let declared_len = u32_at(bytes, 0).ok_or_else(|| bad("chunk shorter than its header"))?;
+    if bytes.len() < CHUNK_HEADER_SIZE || declared_len as usize != bytes.len() - CHUNK_HEADER_SIZE {
+        return Err(bad("chunk length word does not match the file"));
+    }
+    let checksum = u32_at(bytes, 4).ok_or_else(|| bad("chunk checksum unreadable"))?;
+    if checksum != chunk_checksum(&bytes[CHUNK_HEADER_SIZE..]) {
+        return Err(bad("chunk checksum mismatch"));
+    }
+    Ok(file)
+}
+
+/// Whether `MemoryChunk::mmap` accepts the file at `path` now, keeping
+/// nothing: the pin maps a system library again on every save, mask-out and
+/// reload, and writes `mmap %s failed!` when it cannot.
+///
+/// # Errors
+///
+/// [`LibraryError::Unmappable`] when the chunk does not map.
+pub fn verify_chunk(path: &Path) -> Result<(), LibraryError> {
+    map_chunk(path).map(drop)
+}
+
 /// One per-library phrase index over a mapped libpinyin `*.bin` chunk
 /// file — the `SubPhraseIndex` of `FacadePhraseIndex`, upstream's
 /// mmap-backed half of the system data.
@@ -401,23 +463,10 @@ impl PhraseLibrary {
     /// header or checksum does not verify, or the sub-index layout is
     /// not what the upstream loader accepts.
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
-        let file = map::MappedFile::open(path)?;
+        let file = map_chunk(path)?;
         let bytes = file.as_slice();
         let bad = |message: &str| LibraryError::Format(message.to_owned());
-
-        // MemoryChunk::mmap's checks: the header's length word must be
-        // the payload length, and the checksum must verify.
-        let declared_len = u32_at(bytes, 0).ok_or_else(|| bad("chunk shorter than its header"))?;
-        if bytes.len() < CHUNK_HEADER_SIZE
-            || declared_len as usize != bytes.len() - CHUNK_HEADER_SIZE
-        {
-            return Err(bad("chunk length word does not match the file"));
-        }
         let payload = CHUNK_HEADER_SIZE..bytes.len();
-        let checksum = u32_at(bytes, 4).ok_or_else(|| bad("chunk checksum unreadable"))?;
-        if checksum != chunk_checksum(&bytes[payload.clone()]) {
-            return Err(bad("chunk checksum mismatch"));
-        }
 
         // SubPhraseIndex::load's checks: the four leading words, the
         // separator at the end of each, and bounds.

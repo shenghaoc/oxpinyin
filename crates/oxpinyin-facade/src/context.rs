@@ -8,6 +8,7 @@ use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinSche
 use oxpinyin_engine::{Config, ConfigValue};
 use oxpinyin_runtime::{OpenError, Runtime};
 use oxpinyin_user::SystemVersions;
+use oxpinyin_user::pin_stderr;
 use oxpinyin_user::{UserConfLaw, UserStore};
 
 /// Why a context did not open — what `pinyin_init` / `zhuyin_init` hide
@@ -204,8 +205,21 @@ impl ContextCore {
         option_word: u32,
         law: UserConfLaw,
     ) -> Result<Self, OpenFailure> {
-        let runtime =
-            Runtime::open_with_law(system_dir, user_dir, law).map_err(OpenFailure::Runtime)?;
+        let runtime = Runtime::open_with_law(system_dir, user_dir, law).map_err(|error| {
+            // A system library the pin cannot map: its line, then the
+            // pin dies on the empty chunk (`pinyin.cpp:256`,
+            // `zhuyin.cpp:200`); this open answers NULL as it did.
+            if let Some(path) = error.unmappable_library() {
+                pin_stderr::mmap_failed(path);
+            }
+            OpenFailure::Runtime(error)
+        })?;
+        // The libraries whose file is absent load as unloaded and the open
+        // goes on; the pin's lines for them follow the user profile's
+        // (`check_format` runs before the library loop).
+        for path in runtime.unmapped_system_libraries() {
+            pin_stderr::mmap_failed(path);
+        }
         let user = runtime.user_store();
         Ok(Self {
             config: Config::default(),
@@ -289,33 +303,55 @@ impl ContextCore {
     /// [`oxpinyin_user::SaveReport`] says what failed; the lines are
     /// printed here, one per failure, in the pin's order.
     pub fn save_user(&mut self) -> bool {
-        let Some(store) = self.user.as_mut() else {
+        let Some(store) = self.user.as_ref() else {
             return false;
         };
         if !store.has_user_directory() || !store.is_modified() {
             return false;
         }
+        // `_write_files` maps every loaded system library again to diff it
+        // against the live one (`pinyin.cpp:956`, `zhuyin.cpp:589`), before
+        // it writes anything.
+        self.report_unmappable_libraries(None);
+        let Some(store) = self.user.as_mut() else {
+            return false;
+        };
         let Ok(report) = store.save_reporting() else {
             return false;
         };
         for (tmp, target) in &report.renames_failed {
-            diagnostic(&[
+            pin_stderr::emit(&[
                 b"rename ",
-                path_bytes(tmp),
+                pin_stderr::path_bytes(tmp),
                 b" to ",
-                path_bytes(target),
+                pin_stderr::path_bytes(target),
                 b" failed.\n",
             ]);
         }
         if let Some(conf) = &report.user_conf_write_failed {
-            diagnostic(&[b"write ", path_bytes(conf), b" failed.\n"]);
+            pin_stderr::emit(&[b"write ", pin_stderr::path_bytes(conf), b" failed.\n"]);
         }
         true
     }
 
+    /// The system libraries (with `only`, that one) whose file the pin would
+    /// map again at this call and cannot: one `mmap %s failed!` each, in
+    /// library order. The pin dies on the first; nothing here does, and the
+    /// call answers what it answered before.
+    fn report_unmappable_libraries(&self, only: Option<u8>) {
+        let Some(runtime) = &self.runtime else {
+            return;
+        };
+        for path in runtime.unmappable_system_libraries(only) {
+            pin_stderr::mmap_failed(&path);
+        }
+    }
+
     /// `mask_out`'s body: the store-level deletion, or `false` without a
-    /// user store.
+    /// user store. The pin maps every loaded system library again first
+    /// (`pinyin.cpp:1265`, `zhuyin.cpp:800`).
     pub fn mask_out(&mut self, mask: u32, value: u32) -> bool {
+        self.report_unmappable_libraries(None);
         self.user
             .as_mut()
             .is_some_and(|store| store.mask_out(mask, value).is_ok())
@@ -325,9 +361,37 @@ impl ContextCore {
     /// (mask-clear) rule; `false` without a runtime.
     #[must_use]
     pub fn load_phrase_library(&self, index: u32) -> bool {
-        self.runtime
-            .as_ref()
-            .is_some_and(|runtime| runtime.load_library(index))
+        let Some(runtime) = self.runtime.as_ref() else {
+            return false;
+        };
+        let loaded = runtime.load_library(index);
+        if loaded && let Ok(index) = u8::try_from(index) {
+            // The pin maps the file again for a library it had unloaded
+            // (`pinyin.cpp:256`, `zhuyin.cpp:200`); this reload only lifts
+            // the mask, and answers as before.
+            self.report_unmappable_libraries(Some(index));
+        }
+        loaded
+    }
+
+    /// `load_addon_phrase_library`'s body: the runtime's addon load, with
+    /// the `mmap %s failed!` line the pin writes when the library file does
+    /// not map (`pinyin.cpp:290`); the answer is the runtime's, `false` for
+    /// a failure. `false` without a runtime.
+    #[must_use]
+    pub fn load_addon_phrase_library(&self, index: u8) -> bool {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return false;
+        };
+        match runtime.load_system_addon_reporting(index) {
+            Ok(loaded) => loaded,
+            Err(error) => {
+                if let Some(path) = error.unmappable_path() {
+                    pin_stderr::mmap_failed(path);
+                }
+                false
+            }
+        }
     }
 
     /// `unload_phrase_library`'s read side; `false` without a runtime.
@@ -343,20 +407,6 @@ impl ContextCore {
     pub fn user_store(&self) -> Option<UserStore> {
         self.user.clone()
     }
-}
-
-/// A path's bytes as they are, which is what the pin's `fprintf("%s", …)`
-/// writes; `Path::display()` would turn invalid UTF-8 into U+FFFD.
-fn path_bytes(path: &Path) -> &[u8] {
-    path.as_os_str().as_encoded_bytes()
-}
-
-/// One raw diagnostic line on stderr, as the pin's `fprintf(stderr, …)`.
-fn diagnostic(parts: &[&[u8]]) {
-    use std::io::Write as _;
-
-    let line: Vec<u8> = parts.concat();
-    let _ = std::io::stderr().write_all(&line);
 }
 
 #[cfg(test)]

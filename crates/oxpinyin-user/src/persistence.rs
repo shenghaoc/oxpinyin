@@ -39,6 +39,7 @@ use oxpinyin_data::chunk_write::{
     encode_phrase_item,
 };
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
+use oxpinyin_data::pin_stderr;
 use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::single_gram::{decode_single_gram, encode_single_gram};
 use oxpinyin_data::table_entries::{phrase_index_entries, pinyin_index_entries};
@@ -54,15 +55,6 @@ use crate::store::SaveReport;
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
-
-/// One raw diagnostic on stderr, as the pin's `fprintf(stderr, …)`: paths go
-/// out as their bytes, not through `Path::display()`'s U+FFFD.
-pub(crate) fn diagnostic(parts: &[&[u8]]) {
-    use std::io::Write as _;
-
-    let line: Vec<u8> = parts.concat();
-    let _ = std::io::stderr().write_all(&line);
-}
 
 /// Reads `user.conf`'s bytes, splitting upstream's two failure kinds the
 /// way `check_format` meets them.
@@ -352,11 +344,7 @@ pub fn load(
             // `UserTableInfo::load`'s raw `fprintf` (`table_info.cpp:332`):
             // no newline, as the pin's has none, and the same line when the
             // marker is absent as when it cannot be opened.
-            diagnostic(&[
-                b"open ",
-                conf_path.as_os_str().as_encoded_bytes(),
-                b" failed.",
-            ]);
+            pin_stderr::emit(&[b"open ", pin_stderr::path_bytes(&conf_path), b" failed."]);
             None
         }
     };

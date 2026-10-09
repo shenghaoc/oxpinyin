@@ -28,6 +28,7 @@ use oxpinyin_store::{DefaultStore, ReadStore};
 
 use crate::chewing_table::{ChewingTable, PinyinIndexItem, RawChewingDbm, prefix_keys_match};
 use crate::phrase_libraries::PhraseLibraries;
+use crate::phrase_library::LibraryError;
 use crate::phrase_table::PhraseTable;
 use crate::system_files::{
     ADDON_LIBRARY_FILES, SYSTEM_LIBRARY_FILES, SystemDbm, addon_library_file,
@@ -558,14 +559,39 @@ impl AddonDictionary {
     /// addon library, the library is already loaded, or the file is
     /// missing or malformed.
     pub fn load(&mut self, index: u8, dir: &Path) -> bool {
+        self.load_reporting(index, dir).unwrap_or(false)
+    }
+
+    /// [`AddonDictionary::load`] with the failure it answers `false` for
+    /// kept: `Ok(true)` loaded, `Ok(false)` for an index that names no
+    /// addon library or one already loaded (the pin's guard, silent), and
+    /// an error otherwise — [`LibraryError::Unmappable`] when the chunk
+    /// does not map, where the pin writes `mmap %s failed!`
+    /// (`pinyin.cpp:290`). A file that is not a regular file is not an
+    /// error: it answers `Ok(false)` as before.
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryError`] when the file is absent or does not verify.
+    pub fn load_reporting(&mut self, index: u8, dir: &Path) -> Result<bool, LibraryError> {
         let Some(file) = addon_library_file(index) else {
-            return false;
+            return Ok(false);
         };
-        let path = dir.join(file);
-        if !path.is_file() {
-            return false;
+        if self.libraries.is_loaded(index) {
+            return Ok(false);
         }
-        self.libraries.load(index, &path).unwrap_or(false)
+        let path = dir.join(file);
+        match std::fs::metadata(&path) {
+            Ok(meta) if !meta.is_file() => return Ok(false),
+            Ok(_) => {}
+            Err(error) => {
+                return Err(LibraryError::Unmappable {
+                    path,
+                    cause: Box::new(LibraryError::Io(error)),
+                });
+            }
+        }
+        self.libraries.load(index, &path)
     }
 
     /// Drops addon library `index` — `pinyin_unload_addon_phrase_library`.

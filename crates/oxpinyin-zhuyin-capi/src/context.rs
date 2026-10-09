@@ -46,8 +46,7 @@ pub extern "C" fn zhuyin_init(
     // stops at NULL but drops an empty element (074a2219 pinyin.cpp:335,
     // zhuyin.cpp:279): NULL names no file; "" names cwd/table.conf.
     let Some(system_path) = cstr_to_path(systemdir) else {
-        use std::io::Write as _;
-        let _ = std::io::stderr().write_all(b"open  failed.\nload  failed!\n");
+        oxpinyin_data::pin_stderr::emit(&[b"open  failed.\nload  failed!\n"]);
         return ptr::null_mut();
     };
     // The pin's guards test the user pointer (`zhuyin.cpp:548`, `:1697`):
@@ -66,7 +65,7 @@ pub extern "C" fn zhuyin_init(
             // failure keeps the descriptive one.
             if error.unknown_database_format() {
                 crate::ffi::log_warning(oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING);
-            } else if crate::ffi::report_unopenable_table_conf(&system_path) {
+            } else if oxpinyin_data::pin_stderr::report_unopenable_table_conf(&system_path) {
                 // The pin stops at its first step, the `table.conf` it
                 // cannot open, and says so in two raw lines (#545); that is
                 // the whole report.
