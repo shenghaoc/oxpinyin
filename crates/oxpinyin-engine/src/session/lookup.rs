@@ -272,10 +272,15 @@ where
     ///
     /// The pin runs this after the span loop, for every valid lookup
     /// offset: the span loop's result is empty at an offset no span
-    /// starts at (a mid-key byte, an apostrophe column, the reserved
-    /// slot), and the prepend still fires (row 65). Callers put this
-    /// before [`Session::prepend_nbest_rows`] so the n-best rows rotate
-    /// above the LONGER one, exactly the pin's two prepends.
+    /// starts at (a mid-key byte, the reserved slot), and the prepend
+    /// still fires (row 65). An in-span apostrophe is a live separator
+    /// column, not an empty one: the span loop steps over the zero key
+    /// and continues to the next key (`search_matrix_recur`,
+    /// `phonetic_key_matrix.cpp:388-394` — measured: `ni'hao` at the
+    /// apostrophe byte answers the `hao` window), and the prepend still
+    /// runs. Callers put this before [`Session::prepend_nbest_rows`] so
+    /// the n-best rows rotate above the LONGER one, exactly the pin's
+    /// two prepends.
     ///
     /// # Errors
     ///
