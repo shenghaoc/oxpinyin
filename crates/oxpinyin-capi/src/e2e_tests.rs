@@ -358,13 +358,19 @@ fn a_predicted_bigram_trains_from_the_prediction_prefix() {
         inst.core.dict.tokens_for_text("你")[0].value()
     };
 
-    // A prefix row makes the next prediction hold a bigram row for it.
+    // A prefix choice raises only its unigram. Seed an existing bigram
+    // explicitly to test the separate bigram-choice predecessor.
     assert!(pinyin_guess_predicted_candidates(instance, prefix.as_ptr()));
     let (prefix_row, word) = predicted_row(
         instance,
         lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
     );
     assert!(pinyin_choose_predicted_candidate(instance, prefix_row));
+    assert_eq!(store_of(instance).bigram_count(ni, word).unwrap(), 0);
+    store_of(instance)
+        .clone()
+        .set_bigram_count(ni, word, 10)
+        .unwrap();
 
     assert!(pinyin_guess_predicted_candidates(instance, prefix.as_ptr()));
     let (bigram_row, bigram_word) = predicted_row(
@@ -448,9 +454,18 @@ fn training_through_the_abi_records_the_pinned_counts() {
     let before = store_of(instance).bigram_count(t5, chosen).unwrap();
     assert!(pinyin_choose_predicted_candidate(instance, predicted));
     assert_eq!(store_of(instance).bigram_count(t5, chosen).unwrap(), before);
-    // The bigram under the prefix token is not asserted: a prefix row trains
-    // the unigram only at the pin (`pinyin.cpp:2615-2616`), and the bigram
-    // this port writes for it is the recorded divergence of row 58.
+    // A prefix row leaves both predecessor bigrams unchanged.
+    let prefix_token = {
+        // SAFETY: `instance` is a live allocated handle.
+        let inst = unsafe { instance_ref(instance) };
+        inst.core.dict.tokens_for_text("你")[0].value()
+    };
+    assert_eq!(
+        store_of(instance)
+            .bigram_count(prefix_token, chosen)
+            .unwrap(),
+        0
+    );
 
     remember_user_input_indexes_without_training(instance);
 
@@ -1811,10 +1826,18 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
         .iter()
         .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
         .map(|c| {
-            let baked = c
-                .token
-                .and_then(|t| inst.core.dict.system().unigram_count(t.value()))
-                .unwrap_or(0);
+            let baked = c.token.map_or(0, |token| {
+                inst.core
+                    .dict
+                    .system_unigram_count(token.value())
+                    .unwrap_or(0)
+                    + inst
+                        .core
+                        .user
+                        .as_ref()
+                        .and_then(|store| store.unigram_delta(token.value()).ok())
+                        .unwrap_or(0)
+            });
             (
                 c.text.to_str().expect("candidate text is UTF-8").to_owned(),
                 c.text
@@ -1836,7 +1859,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
     // (length desc, amplified frequency desc) with TEXT ASCENDING inside
     // every tie group — equivalently, no later row in the same group may
     // sort before an earlier one. Covers the user seam: 华 and 年 tie
-    // (both user rows, equal baked count 0) and must appear 华-first.
+    // (both user rows, equal live count 21) and must appear 华-first.
     for (i, (text_a, len_a, freq_a)) in rows.iter().enumerate() {
         for (text_b, len_b, freq_b) in rows.iter().skip(i + 1) {
             if len_a == len_b && freq_a == freq_b {

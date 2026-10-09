@@ -569,8 +569,9 @@ fn try_promote_addon(inst: &mut CapiInstance, index: usize) -> Option<PhraseToke
 /// ```
 ///
 /// The §2.3 flat path: raises the candidate token's unigram by
-/// `69 * 7 = 483` and the user bigram `(last → token)` — and `last`'s total —
-/// by a flat `69`, never the reselection doubling of [`pinyin_train`]. `last`
+/// `69 * 7 = 483`. A prefix row returns after that add. A bigram row also
+/// raises `(last → token)` and `last`'s total by a flat `69`, never the
+/// reselection doubling of [`pinyin_train`]. `last`
 /// is the predecessor `_get_previous_token(instance, 0)` finds
 /// (`pinyin.cpp:1711-1740`): the longest token among the prefixes the last
 /// `pinyin_guess_predicted_candidates` or `pinyin_guess_sentence_with_prefix`
@@ -630,7 +631,12 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     let Some(user) = inst.core.user.as_mut() else {
         return false;
     };
-    user.observe_predicted(last, token.value()).is_ok()
+    if inst.candidates[index].candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
+    {
+        user.observe_predicted_prefix(token.value()).is_ok()
+    } else {
+        user.observe_predicted(last, token.value()).is_ok()
+    }
 }
 
 /// `_get_previous_token(instance, 0)` (`pinyin.cpp:1711-1740`): the longest

@@ -2666,6 +2666,261 @@ for _mode in ('pinyin', 'zhuyin'):
              control=_sequence != 'empty')(row54_forcing(_sequence))
 
 
+# #697, row 58: capture the entire list, including row types and order.
+def row58_rows(k, prefix):
+    inst = k.inst
+    ret = k.fn('guess_predicted_candidates', B, P, S)(inst, prefix.encode())
+    n = U()
+    assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(n))
+    rows = []
+    for i in range(n.value):
+        cand, kind, text = P(), I(), S()
+        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        assert k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        assert k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        rows.append([kind.value, text.value.decode()])
+    return dict(ret=ret, rows=rows)
+
+
+def row58_seed_bigrams(k):
+    # Constrain valid n-best results before training, following the existing
+    # training cases. Shanghai has more bigram observations; independently
+    # boost Beijing's unigram so those two proposed sort keys disagree.
+    k.fn('set_options', B, P, U)(k.ctx, 0x18a | (1 << 9))
+    for text, phrase, repeats in ((b'wobeijing', '北京', 1), (b'woshanghai', '上海', 3)):
+        inst = k.inst
+        assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, text) == len(text)
+        assert k.fn('guess_sentence', B, P)(inst)
+        offset = choose_text(k, inst, 0, '我')
+        assert offset == 2
+        assert choose_text(k, inst, offset, phrase) == len(text)
+        assert k.fn('guess_sentence', B, P)(inst)
+        for _ in range(repeats):
+            assert k.fn('train', B, P, C.c_ubyte)(inst, 0)
+        assert k.fn('reset', B, P)(inst)
+    beijing, shanghai = tokens_of(k, '北京')[0], tokens_of(k, '上海')[0]
+    assert k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, beijing, 100000)
+    return {'北京': unigram_of(k, beijing), '上海': unigram_of(k, shanghai)}
+
+
+def row58_scoring(dynamic):
+    def probe(k):
+        counts = row58_seed_bigrams(k)
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        return dict(unigrams=counts, prediction=row58_rows(k, '我'))
+    return probe
+
+
+for _dynamic in (False, True):
+    case('row58-bigram-scoring-' + ('on' if _dynamic else 'off'))(row58_scoring(_dynamic))
+
+
+def row58_choose(k, kind, text, times):
+    n = U()
+    assert k.fn('get_n_candidate', B, P, C.POINTER(U))(k.inst, C.byref(n))
+    for i in range(n.value):
+        cand, found_kind, found_text = P(), I(), S()
+        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(k.inst, i, C.byref(cand))
+        assert k.fn('get_candidate_type', B, P, P, C.POINTER(I))(k.inst, cand, C.byref(found_kind))
+        assert k.fn('get_candidate_string', B, P, P, C.POINTER(S))(k.inst, cand, C.byref(found_text))
+        if found_kind.value == kind and found_text.value.decode() == text:
+            return [k.fn('choose_predicted_candidate', B, P, P)(k.inst, cand) for _ in range(times)]
+    raise AssertionError('missing predicted row: %s %s' % (kind, text))
+
+
+def row58_prefix(dynamic, text, times):
+    def probe(k):
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        token = tokens_of(k, '我' + text)[0]
+        before = row58_rows(k, '我')
+        count_before = unigram_of(k, token)
+        chosen = row58_choose(k, 5, text, times)
+        return dict(before=before, count_before=count_before, chosen=chosen,
+                    count_after=unigram_of(k, token), after=row58_rows(k, '我'))
+    return probe
+
+
+def row58_bigram_choices(dynamic):
+    def probe(k):
+        counts = row58_seed_bigrams(k)
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        out = dict(unigrams=counts, before=row58_rows(k, '我'))
+        # Fixed observation points, not a ranking threshold: each acceptance
+        # contributes 483 unigram and 69 bigram independently of options.
+        for times in (1, 20, 200):
+            out['chosen-%d' % times] = row58_choose(k, 4, '上海', times)
+            out['rows-%d' % times] = row58_rows(k, '我')
+        return out
+    return probe
+
+
+def row58_import(k, rows):
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    assert it
+    for text, reading, count in rows:
+        assert k.fn('iterator_add_phrase', B, P, S, S, I)(it, text.encode(), reading.encode(), count)
+    k.fn('end_add_phrases', None, P)(it)
+
+
+def row58_conversion(dynamic):
+    def probe(k):
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        # Unigram = import count * 3. Counts 3/6 quantize to the same
+        # amplified integer; 99 ties a baked 100 after amplification.
+        # Insert in reverse UCS-4 byte order to distinguish order from token.
+        row58_import(k, [('我乙乙', "wo3'yi3'yi3", 33),
+                         ('我甲甲', "wo3'jia3'jia3", 33),
+                         ('我丙丙', "wo3'bing3'bing3", 1),
+                         ('我丁丁', "wo3'ding1'ding1", 2)])
+        out = dict(ties=row58_rows(k, '我'))
+        row58_import(k, [('我戊戊', "wo3'wu4'wu4", 5592405),
+                         ('我己己', "wo3'ji3'ji3", 5592406)])
+        # 2^24-1 and 2^24+2: the integer-to-float representability edge.
+        out['float-edge'] = row58_rows(k, '我')
+        out['unigrams'] = {text: unigram_of(k, tokens_of(k, text)[0])
+                           for text in ('我戊戊', '我己己')}
+        return out
+    return probe
+
+
+def row58_lambda(dynamic):
+    def probe(k):
+        system = private_system(k)
+        conf = Path(system, 'table.conf')
+        text = conf.read_text()
+        conf.unlink()
+        conf.write_text(re.sub(r'lambda parameter:[^\n]+', 'lambda parameter:1', text))
+        k._ctx = k.init(system=system)
+        assert k._ctx
+        # lambda=1 makes every predicted score zero. A nonuniform unigram
+        # overlay must therefore leave only the source collection tie order.
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        token = tokens_of(k, '我是谁')[0]
+        assert k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 100000)
+        return dict(prediction=row58_rows(k, '我'))
+    return probe
+
+
+for _dynamic in (False, True):
+    _state = 'on' if _dynamic else 'off'
+    case('row58-prefix-no-bigram-' + _state)(row58_prefix(_dynamic, '是', 1))
+    case('row58-prefix-live-21-' + _state)(row58_prefix(_dynamic, '是谁', 21))
+    case('row58-bigram-choices-' + _state)(row58_bigram_choices(_dynamic))
+    case('row58-conversions-' + _state)(row58_conversion(_dynamic))
+    case('row58-lambda-ties-' + _state)(row58_lambda(_dynamic))
+
+
+def row58_prefix_overflow(dynamic):
+    def probe(k):
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        # Library 7 has only 399 left before guint32::MAX. The next 483
+        # cannot fit, but the facade total still advances and wraps. An
+        # explicit prefix keeps this refusal observable in the parent too;
+        # the conversion cases separately cover implicit prefix index keys.
+        row58_import(k, [('我', 'wo3', 1),
+                         ('我甲甲', "wo3'jia3'jia3", 1431655631)])
+        token = tokens_of(k, '我甲甲')[0]
+        before = row58_rows(k, '我')
+        count_before = unigram_of(k, token)
+        chosen = row58_choose(k, 5, '甲甲', 1)
+        return dict(before=before, count_before=count_before, chosen=chosen,
+                    count_after=unigram_of(k, token), after=row58_rows(k, '我'))
+    return probe
+
+
+for _dynamic in (False, True):
+    case('row58-prefix-overflow-' + ('on' if _dynamic else 'off'))(row58_prefix_overflow(_dynamic))
+
+
+def row58_signed_score(dynamic, duplicate=False, denominator=20000000):
+    def probe(k):
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        phrase = ('我的心', "wo3'de5'xin1") if duplicate else ('我甲甲', "wo3'jia3'jia3")
+        row58_import(k, [(*phrase, 1431655631)])
+        # The absent-token add advances only the facade total. Make the
+        # denominator 20,000,000: score exceeds gint::MAX; at 10,000,000
+        # it also exceeds guint32::MAX. Pin x86-64 converts via gint64
+        # then retains the low 32 bits, rather than saturating.
+        total = (51051831 + 1431655631 * 3) % (1 << 32)
+        delta = (denominator - total) % (1 << 32)
+        added = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, 0x01ffffff, delta)
+        return dict(absent_add=added, prediction=row58_rows(k, '我'))
+    return probe
+
+
+for _dynamic in (False, True):
+    _state = 'on' if _dynamic else 'off'
+    case('row58-signed-score-' + _state)(row58_signed_score(_dynamic))
+    case('row58-signed-duplicate-' + _state)(row58_signed_score(_dynamic, True))
+    case('row58-unsigned-score-' + _state)(row58_signed_score(_dynamic, denominator=10000000))
+
+
+def row58_zero_total(dynamic, punct=False):
+    def probe(k):
+        tokens = {token for text in ('我', '北京', '上海') for token in tokens_of(k, text)}
+        before = sum(unigram_of(k, token)[1] for token in tokens)
+        row58_seed_bigrams(k)
+        after = sum(unigram_of(k, token)[1] for token in tokens)
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        # Only these three phrases were trained/added: use their live delta,
+        # including 我's reselection seed, rather than a guessed threshold.
+        total = FACADE_TOTAL + after - before
+        added = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, 0x01ffffff,
+                                                            (-total) % (1 << 32))
+        name = 'guess_predicted_candidates_with_punctuations' if punct else 'guess_predicted_candidates'
+        ret = k.fn(name, B, P, S)(k.inst, '我'.encode())
+        n = U()
+        assert k.fn('get_n_candidate', B, P, C.POINTER(U))(k.inst, C.byref(n))
+        if not ret:
+            assert n.value == 0
+        return dict(add=added, ret=ret, rows=[] if n.value == 0 else ['not empty'])
+    return probe
+
+
+for _dynamic in (False, True):
+    for _punct in (False, True):
+        name = 'row58-total-zero-' + ('punct-' if _punct else '') + ('on' if _dynamic else 'off')
+        case(name, abort=False)(row58_zero_total(_dynamic, _punct))
+
+
+def row58_prefix_zero_total(dynamic):
+    def probe(k):
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        added = wrap_total_to_zero(k, k.inst)
+        # Prefix rows bypass pinyin.cpp:1859. The pin's invalid conversion
+        # has zero low bits; the complete list retains collection tie order.
+        return dict(add=added, prediction=row58_rows(k, '我'))
+    return probe
+
+
+for _dynamic in (False, True):
+    case('row58-prefix-zero-total-' + ('on' if _dynamic else 'off'), control=True)(
+        row58_prefix_zero_total(_dynamic))
+
+
+def row58_lambda_rounding(dynamic):
+    def probe(k):
+        system = private_system(k)
+        conf = Path(system, 'table.conf')
+        text = conf.read_text()
+        conf.unlink()
+        # Just below the f32 midpoint between 1 and its predecessor. Direct
+        # %f parsing yields the predecessor; a rational -> f64 -> f32 rounds
+        # to 1 and erases every score. The large live user count exposes it.
+        conf.write_text(re.sub(r'lambda parameter:[^\n]+',
+                              'lambda parameter:0.9999999701976776123036', text))
+        k._ctx = k.init(system=system)
+        assert k._ctx
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | ((1 << 9) if dynamic else 0))
+        row58_import(k, [('我甲甲', "wo3'jia3'jia3", 1431655631)])
+        return dict(prediction=row58_rows(k, '我'))
+    return probe
+
+
+for _dynamic in (False, True):
+    case('row58-lambda-rounding-' + ('on' if _dynamic else 'off'))(row58_lambda_rounding(_dynamic))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('cell', choices=['bdb', 'kc', 'tkrzw'])

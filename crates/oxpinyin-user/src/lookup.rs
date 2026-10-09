@@ -300,17 +300,15 @@ impl UserLookup {
         tokens
     }
 
-    /// Tokens whose phrase text starts with `prefix` and is longer, when
-    /// `prefix` itself is a stored phrase.
+    /// Tokens whose phrase text starts with `prefix` and is longer.
     ///
-    /// Rows come out in the DEFINED prediction order — the reverse map's
-    /// text-ascending walk, token-ascending within one text — the same
-    /// order the system seam yields (`SystemDictionary::suggest_after`),
-    /// so populated user stores cannot reorder the tie groups
-    /// (`upstream-divergences.md`, "Predicted-candidate tie order").
+    /// Import creates an empty phrase-index key for every proper prefix
+    /// (`074a2219 phrase_large_table3_bdb.cpp:297-315`, with KC/tkrzw twins).
+    /// A prefix need not have a phrase token of its own. Rows are merged into
+    /// the DBM walk order by the runtime before the stable prediction sort.
     #[must_use]
     pub fn suggest_after(&self, prefix: &str) -> Vec<(u32, String)> {
-        if prefix.is_empty() || !self.text_tokens.contains_key(prefix) {
+        if prefix.is_empty() {
             return Vec::new();
         }
         let mut out = Vec::new();
