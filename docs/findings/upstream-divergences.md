@@ -2654,22 +2654,20 @@ call measured here, not every independent caller of reduce_tokens.
   `MemoryChunk::mmap` refuses; a layout fault past the chunk is
   `LibraryError::Format` and has no line, as `SubPhraseIndex::load`'s
   `g_return_val_if_fail` has none. With several libraries broken it writes one
-  line for each, in library order; the pin's bytes are the first. Not
-  reproduced: an init that fails on a library never reaches the user profile
-  here, so on a fresh or non-conforming user dir the pin's own
-  `open <user>/user.conf failed.` and the profile's wipe come first and
-  oxpinyin's NULL-answering init writes only the library's line.
+  line for each, in library order; the pin's bytes are the first. An init that
+  fails on a library judges the user profile first, as the pin does, so the pin's
+  `open <user>/user.conf failed.`, wipe and marker write precede its line and its NULL.
 - **Externally observable:** yes: the pin's process dies, with the line as its
   last output; oxpinyin writes the line and goes on. Class (b).
 - **Measured** on bdb, native amd64, 2026-10-09 UTC, in a Debian testing
   container over `1be4e35d` with this change: the `stderr-library-*` cases
   of `tools/bisection/contract-diff.py` break `merged.bin`, `gbk_char.bin` or
   `art.bin` in a private copy of the system directory (absent, cut to four
-  bytes, last payload byte flipped) and compare stderr up to the crash. 29
-  crash cases (16 pinyin, 13 zhuyin, the fresh-user-dir order among them) match:
+  bytes, last payload byte flipped) and compare stderr up to the crash. 39
+  crash cases (21 pinyin, 18 zhuyin, fresh and non-conforming user dirs among them) match:
   the pin dies of SIGSEGV after the same bytes, and oxpinyin's answers are
   the ones listed above; the 11 controls match. Against the parent build the
-  29 differ and the 11 match. Fault address, with a preload that prints
+  39 differ and the 11 match. Fault address, with a preload that prints
   `si_addr` and re-raises:
 
   ```
