@@ -430,14 +430,6 @@ impl RuntimeDict {
         Ok(index)
     }
 
-    /// The system dictionary's count of index tokens whose library is loaded
-    /// but whose item is unreadable; see
-    /// [`SystemDictionary::unreadable_items`].
-    #[must_use]
-    pub fn unreadable_items(&self) -> u64 {
-        self.system.unreadable_items()
-    }
-
     /// The underlying system table set, without the user overlay.
     #[must_use]
     pub fn system(&self) -> &SystemDictionary {
@@ -902,7 +894,15 @@ impl Dictionary for RuntimeDict {
         syllables: &[Self::Syllable],
         out: &mut Vec<Self::Entry>,
     ) -> Result<(), Self::Error> {
-        self.system.lookup_into(syllables, out)?;
+        self.lookup_into_flagged(syllables, out).map(|_| ())
+    }
+
+    fn lookup_into_flagged(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<bool, Self::Error> {
+        let unreadable = self.system.lookup_into_flagged(syllables, out)?;
         out.extend(self.user_lookup()?.lookup(syllables));
         // 074a2219 phrase_index.h:136-163 uses wrapping guint32 sums;
         // pinyin_lookup2.cpp:437-466 reads pronunciation possibility from
@@ -952,7 +952,7 @@ impl Dictionary for RuntimeDict {
             // mask keeps the monolithic tables resident but invisible.
             out.retain(|entry| self.library_visible_token(entry.token().value()));
         }
-        Ok(())
+        Ok(unreadable)
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {

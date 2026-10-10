@@ -308,7 +308,6 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     if inst.core.session.set_options(inst.core.options()).is_err() {
         return false;
     }
-    let unreadable_before = inst.core.dict.unreadable_items();
     if !inst.core.session.is_composing() {
         return false;
     }
@@ -379,7 +378,12 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     // cannot be read leaves `m_phrase_string` unset, and the pin's duplicate
     // removal compares it (SIGSEGV). Only a `table.conf` that points a
     // library at another file (or at none) gets here. The call fails, once.
-    if inst.core.dict.unreadable_items() != unreadable_before {
+    if inst
+        .core
+        .anchored_window
+        .as_ref()
+        .is_some_and(|(_, window)| window.had_unreadable_item())
+    {
         inst.core.anchored_window = None;
         inst.candidates.clear();
         crate::ffi::log_warning(

@@ -363,6 +363,7 @@ impl BigramLanguageModel {
     /// Sets the interpolation weight λ directly.
     pub const fn set_lambda(&mut self, lambda: Lambda) {
         self.lambda = lambda;
+        self.lambda_raw = None;
     }
 
     /// Installs λ from the parsed system `table.conf`.
@@ -387,6 +388,7 @@ impl BigramLanguageModel {
         match crate::table_conf::read_table_conf_lambda(table_conf_path) {
             Some(lambda) => {
                 self.lambda = lambda;
+                self.lambda_raw = None;
                 true
             }
             None => false,

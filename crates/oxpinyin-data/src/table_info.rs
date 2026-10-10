@@ -41,7 +41,8 @@
 //! `source table format:` line leaves the pin comparing an uninitialised
 //! buffer (`:228-229`): [`TableConfError::UninitialisedSourceFormat`].
 
-use std::path::Path;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 
 use crate::table_conf::{Lambda, PINNED_LAMBDA};
 
@@ -101,15 +102,93 @@ impl DatabaseFormat {
     }
 }
 
+/// A file name as a `table.conf` column spells it: the bytes of the `%s`
+/// word, kept raw (the pin opens whatever bytes it read), and joined to a
+/// directory the way `g_build_filename` does — never as `Path::join` does.
+///
+/// A name that starts with a separator stays beneath the directory
+/// (`g_build_filename("/u", "/tmp/x", NULL)` is `/u/tmp/x`); only an empty
+/// directory leaves the name as it is. The type is not `AsRef<Path>` so that
+/// no caller can join it by accident.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileName(OsString);
+
+impl FileName {
+    /// The name made of `bytes`.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt as _;
+            Self(OsStr::from_bytes(bytes).to_owned())
+        }
+        #[cfg(not(unix))]
+        {
+            Self(OsString::from(String::from_utf8_lossy(bytes).into_owned()))
+        }
+    }
+
+    /// `g_build_filename(dir, name, NULL)`.
+    #[must_use]
+    pub fn under(&self, dir: &Path) -> PathBuf {
+        pin_join(dir, &self.0)
+    }
+
+    /// The name with `suffix` appended (`g_strdup_printf("%s.tmp", name)`).
+    #[must_use]
+    pub fn with_suffix(&self, suffix: &str) -> Self {
+        let mut name = self.0.clone();
+        name.push(suffix);
+        Self(name)
+    }
+
+    /// The name for a message (invalid bytes replaced).
+    #[must_use]
+    pub fn display(&self) -> std::borrow::Cow<'_, str> {
+        self.0.to_string_lossy()
+    }
+}
+
+impl AsRef<OsStr> for FileName {
+    fn as_ref(&self) -> &OsStr {
+        &self.0
+    }
+}
+
+/// `g_build_filename(dir, name, NULL)`: the leading separators of `name` are
+/// dropped when `dir` is not empty, so a name never leaves its directory
+/// by being absolute; an empty `name` is `dir`; an empty `dir` leaves `name`
+/// as it is. (`..` stays, as in GLib.)
+#[must_use]
+pub fn pin_join(dir: &Path, name: &OsStr) -> PathBuf {
+    if dir.as_os_str().is_empty() {
+        return PathBuf::from(name);
+    }
+    #[cfg(unix)]
+    let relative: OsString = {
+        use std::os::unix::ffi::OsStrExt as _;
+        let bytes = name.as_bytes();
+        let skip = bytes.iter().take_while(|&&byte| byte == b'/').count();
+        OsStr::from_bytes(bytes.get(skip..).unwrap_or(&[])).to_owned()
+    };
+    #[cfg(not(unix))]
+    let relative: OsString = OsString::from(name.to_string_lossy().trim_start_matches(['/', '\\']));
+    if relative.is_empty() {
+        dir.to_path_buf()
+    } else {
+        dir.join(relative)
+    }
+}
+
 /// One `pinyin_table_info_t` (`table_info.h:51-57`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TableRow {
     /// The model source table (`m_table_filename`); `None` is `NULL`.
-    pub table: Option<String>,
+    pub table: Option<FileName>,
     /// The system chunk file (`m_system_filename`).
-    pub system: Option<String>,
+    pub system: Option<FileName>,
     /// The user chunk or diff log (`m_user_filename`).
-    pub user: Option<String>,
+    pub user: Option<FileName>,
     /// How the pin loads and saves the library.
     pub file_type: FileType,
 }
@@ -126,8 +205,8 @@ impl TableRow {
         }
     }
 
-    fn named(table: &str, system: &str, user: &str, file_type: FileType) -> Self {
-        let name = |text: &str| (text != "NULL").then(|| text.to_owned());
+    fn named(table: &[u8], system: &[u8], user: &[u8], file_type: FileType) -> Self {
+        let name = |text: &[u8]| (text != b"NULL").then(|| FileName::from_bytes(text));
         Self {
             table: name(table),
             system: name(system),
@@ -267,9 +346,9 @@ impl TableConf {
         let system = |conf: &mut Self, index: usize, stem: &str| {
             if let Some(slot) = conf.default.get_mut(index) {
                 *slot = TableRow::named(
-                    &format!("{stem}.table"),
-                    &format!("{stem}.bin"),
-                    &format!("{stem}.dbin"),
+                    format!("{stem}.table").as_bytes(),
+                    format!("{stem}.bin").as_bytes(),
+                    format!("{stem}.dbin").as_bytes(),
                     FileType::SystemFile,
                 );
             }
@@ -279,15 +358,15 @@ impl TableConf {
         }
         for (index, file) in [(5, "addon.bin"), (6, "network.bin"), (7, "user.bin")] {
             if let Some(slot) = conf.default.get_mut(index) {
-                *slot = TableRow::named("NULL", "NULL", file, FileType::UserFile);
+                *slot = TableRow::named(b"NULL", b"NULL", file.as_bytes(), FileType::UserFile);
             }
         }
         for &(index, stem) in crate::system_files::ADDON_LIBRARY_NAMES {
             if let Some(slot) = conf.addon.get_mut(usize::from(index)) {
                 *slot = TableRow::named(
-                    &format!("{stem}.table"),
-                    &format!("{stem}.bin"),
-                    "NULL",
+                    format!("{stem}.table").as_bytes(),
+                    format!("{stem}.bin").as_bytes(),
+                    b"NULL",
                     FileType::Dictionary,
                 );
             }
@@ -331,7 +410,7 @@ impl TableConf {
         }
         let lambda_text = scan.float().ok_or(TableConfError::Header)?;
         scan.skip_space();
-        let lambda: f32 = lambda_text.parse().map_err(|_| TableConfError::Header)?;
+        let lambda = c_float(&lambda_text).ok_or(TableConfError::Header)?;
         let lambda_unit = Lambda::from_decimal(&lambda_text);
 
         // :228-229 — a directive that does not convert leaves `str`
@@ -403,14 +482,14 @@ impl TableConf {
                 b"USER_FILE" => FileType::UserFile,
                 _ => return Err(TableConfError::Abort(TableConfSite::FileType)),
             };
-            let text = |word: &[u8]| String::from_utf8_lossy(c_string(word)).into_owned();
             let slot = if is_default {
                 conf.default.get_mut(index)
             } else {
                 conf.addon.get_mut(index)
             };
             if let Some(slot) = slot {
-                *slot = TableRow::named(&text(table), &text(system), &text(user), file_type);
+                *slot =
+                    TableRow::named(c_string(table), c_string(system), c_string(user), file_type);
             }
         }
         Ok(conf)
@@ -575,6 +654,31 @@ fn default_index(name: &[u8]) -> Option<usize> {
     })
 }
 
+/// `strtol` over the digits after an optional sign: the value, saturating at
+/// `LONG_MIN`/`LONG_MAX` (accumulated toward the sign, so `LONG_MIN` is
+/// reachable), and how many digits it took.
+fn strtol_digits(negative: bool, digits: &[u8]) -> (i64, usize) {
+    let mut value = Some(0_i64);
+    let mut taken = 0_usize;
+    for &byte in digits.iter().take_while(|byte| byte.is_ascii_digit()) {
+        let digit = i64::from(byte - b'0');
+        value = value
+            .and_then(|value| value.checked_mul(10))
+            .and_then(|value| {
+                if negative {
+                    value.checked_sub(digit)
+                } else {
+                    value.checked_add(digit)
+                }
+            });
+        taken += 1;
+    }
+    (
+        value.unwrap_or(if negative { i64::MIN } else { i64::MAX }),
+        taken,
+    )
+}
+
 /// `atoi` returned through a `guint8` (`:159-161`): `strtol`'s saturating
 /// value, cut to the low byte.
 fn atoi_guint8(word: &[u8]) -> u8 {
@@ -590,17 +694,100 @@ fn atoi_guint8(word: &[u8]) -> u8 {
     if matches!(rest.first(), Some(b'-' | b'+')) {
         rest = rest.get(1..).unwrap_or(&[]);
     }
-    let mut value: i64 = 0;
-    for &digit in rest.iter().take_while(|byte| byte.is_ascii_digit()) {
-        value = value
-            .saturating_mul(10)
-            .saturating_add(i64::from(digit - b'0'));
-    }
-    if negative {
-        value = -value;
-    }
+    let (value, _) = strtol_digits(negative, rest);
     // `(int)` of a `long`, then `(guint8)` of that.
     (value & 0xFF) as u8
+}
+
+/// The `gfloat` `strtof` makes of the text [`Scan::float`] took.
+fn c_float(text: &str) -> Option<f32> {
+    let (negative, body) = match text.as_bytes().first() {
+        Some(b'-') => (true, text.get(1..)?),
+        Some(b'+') => (false, text.get(1..)?),
+        _ => (false, text),
+    };
+    let lower = body.to_ascii_lowercase();
+    let magnitude = if lower.starts_with("nan") {
+        f32::NAN
+    } else if lower.starts_with("inf") {
+        f32::INFINITY
+    } else if let Some(hex) = lower.strip_prefix("0x") {
+        hex_float(hex)?
+    } else {
+        lower.parse::<f32>().ok()?
+    };
+    Some(if negative { -magnitude } else { magnitude })
+}
+
+/// A hexadecimal float (`0x` already removed): `hexdigits[.hexdigits][p[+-]digits]`,
+/// rounded to nearest even as `strtof` does.
+fn hex_float(text: &str) -> Option<f32> {
+    let (mantissa, exponent) = match text.split_once('p') {
+        Some((mantissa, exponent)) => (mantissa, exponent),
+        None => (text, "0"),
+    };
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let mut accumulated: u64 = 0;
+    let mut scale: i64 = 0;
+    let mut sticky = false;
+    for (digit, after_point) in whole
+        .chars()
+        .map(|digit| (digit, false))
+        .chain(fraction.chars().map(|digit| (digit, true)))
+    {
+        let digit = u64::from(digit.to_digit(16)?);
+        if accumulated >> 60 == 0 {
+            accumulated = accumulated * 16 + digit;
+            if after_point {
+                scale -= 4;
+            }
+        } else {
+            sticky |= digit != 0;
+            if !after_point {
+                scale += 4;
+            }
+        }
+    }
+    let (negative, digits) = match exponent.as_bytes().first() {
+        Some(b'-') => (true, exponent.get(1..)?),
+        Some(b'+') => (false, exponent.get(1..)?),
+        _ => (false, exponent),
+    };
+    let (power, _) = strtol_digits(negative, digits.as_bytes());
+    let power = power.clamp(-100_000, 100_000);
+    Some(round_to_f32(accumulated, scale + power, sticky))
+}
+
+/// `mantissa × 2^exponent`, with `sticky` marking nonzero bits already
+/// dropped below the mantissa, rounded to the nearest `f32` (ties to even,
+/// subnormals and overflow included).
+fn round_to_f32(mantissa: u64, exponent: i64, sticky: bool) -> f32 {
+    if mantissa == 0 {
+        return 0.0;
+    }
+    let leading = i64::from(mantissa.leading_zeros());
+    let mantissa = mantissa << leading;
+    // The value lies in [2^top, 2^(top+1)).
+    let top = exponent - leading + 63;
+    if top > 127 {
+        return f32::INFINITY;
+    }
+    let keep = if top >= -126 { 24 } else { 24 - (-126 - top) };
+    if keep < 0 {
+        return 0.0;
+    }
+    let shift = 64 - keep;
+    let (mut kept, remainder) = if shift >= 64 {
+        (0_u64, mantissa)
+    } else {
+        (mantissa >> shift, mantissa & ((1_u64 << shift) - 1))
+    };
+    let half = 1_u64 << (shift - 1);
+    if remainder > half || (remainder == half && (sticky || kept & 1 == 1)) {
+        kept += 1;
+    }
+    let scale = top - keep + 1;
+    (kept as f64 * 2_f64.powi(i32::try_from(scale).unwrap_or(i32::MIN))) as f32
 }
 
 const fn is_space(byte: u8) -> bool {
@@ -643,39 +830,28 @@ impl<'a> Scan<'a> {
         true
     }
 
-    /// `%d`: white space, an optional sign, at least one digit.
+    /// `%d`: white space, an optional sign, at least one digit; `strtol`
+    /// saturates at `long`, and the store into an `int` keeps the low 32 bits.
     fn int(&mut self) -> Option<i32> {
         self.skip_space();
-        let negative = match self.peek() {
-            Some(b'-') => {
-                self.at += 1;
-                true
-            }
-            Some(b'+') => {
-                self.at += 1;
-                false
-            }
-            _ => false,
-        };
-        let start = self.at;
-        let mut value: i64 = 0;
-        while let Some(digit) = self.peek().filter(u8::is_ascii_digit) {
-            value = value
-                .saturating_mul(10)
-                .saturating_add(i64::from(digit - b'0'));
-            self.at += 1;
-        }
-        if self.at == start {
+        let negative = self.peek() == Some(b'-');
+        let sign = usize::from(matches!(self.peek(), Some(b'-' | b'+')));
+        let digits = self.bytes.get(self.at + sign..).unwrap_or(&[]);
+        let (value, taken) = strtol_digits(negative, digits);
+        if taken == 0 {
             return None;
         }
-        let value = if negative { -value } else { value };
-        // `strtol` saturates at `long`; the store into an `int` keeps the
-        // low 32 bits.
+        self.at += sign + taken;
         Some((value & 0xFFFF_FFFF) as u32 as i32)
     }
 
-    /// `%f`: white space, then the longest `strtod`-shaped prefix
-    /// (decimal, `inf`/`infinity`, `nan`); returns its text.
+    /// `%f`: white space, then what glibc's scanner takes for `strtof`: a
+    /// sign; `inf` or `infinity`; `nan` with an optional parenthesised
+    /// `[0-9A-Za-z_]*`; a decimal with an optional exponent; or a hexadecimal
+    /// float `0x` hex digits, an optional `.`, an optional `p` exponent. Unlike
+    /// `strtod`, the scanner does not back up: an `e` or `p` with no digits
+    /// after it, a `0x` with no hex digit, or an `infi…` that is not
+    /// `infinity` fails the conversion. Returns the text taken.
     fn float(&mut self) -> Option<String> {
         self.skip_space();
         let start = self.at;
@@ -684,10 +860,48 @@ impl<'a> Scan<'a> {
         }
         let rest = self.bytes.get(self.at..).unwrap_or(&[]);
         let lower: Vec<u8> = rest.iter().take(8).map(u8::to_ascii_lowercase).collect();
-        if lower.starts_with(b"infinity") {
-            self.at += 8;
-        } else if lower.starts_with(b"inf") || lower.starts_with(b"nan") {
+        if lower.starts_with(b"inf") {
+            if lower.get(3).is_some_and(|byte| *byte == b'i') {
+                if !lower.starts_with(b"infinity") {
+                    return None;
+                }
+                self.at += 8;
+            } else {
+                self.at += 3;
+            }
+        } else if lower.starts_with(b"nan") {
             self.at += 3;
+            if self.peek() == Some(b'(') {
+                self.at += 1;
+                while self
+                    .peek()
+                    .is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                {
+                    self.at += 1;
+                }
+                if self.peek() != Some(b')') {
+                    return None;
+                }
+                self.at += 1;
+            }
+        } else if lower.starts_with(b"0x") {
+            self.at += 2;
+            let mut digits = 0;
+            while self.peek().is_some_and(|byte| byte.is_ascii_hexdigit()) {
+                self.at += 1;
+                digits += 1;
+            }
+            if self.peek() == Some(b'.') {
+                self.at += 1;
+                while self.peek().is_some_and(|byte| byte.is_ascii_hexdigit()) {
+                    self.at += 1;
+                    digits += 1;
+                }
+            }
+            if digits == 0 {
+                return None;
+            }
+            self.exponent(b'p')?;
         } else {
             let mut digits = 0;
             while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
@@ -702,26 +916,29 @@ impl<'a> Scan<'a> {
                 }
             }
             if digits == 0 {
-                self.at = start;
                 return None;
             }
-            if matches!(self.peek(), Some(b'e' | b'E')) {
-                let mark = self.at;
-                self.at += 1;
-                if matches!(self.peek(), Some(b'+' | b'-')) {
-                    self.at += 1;
-                }
-                let exponent = self.at;
-                while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
-                    self.at += 1;
-                }
-                if self.at == exponent {
-                    self.at = mark;
-                }
-            }
+            self.exponent(b'e')?;
         }
         let text = self.bytes.get(start..self.at)?;
         Some(String::from_utf8_lossy(text).into_owned())
+    }
+
+    /// An optional exponent introduced by `marker` (either case): once the
+    /// marker is read the scanner needs a digit after the optional sign.
+    fn exponent(&mut self, marker: u8) -> Option<()> {
+        if self.peek().map(|byte| byte.to_ascii_lowercase()) != Some(marker) {
+            return Some(());
+        }
+        self.at += 1;
+        if matches!(self.peek(), Some(b'+' | b'-')) {
+            self.at += 1;
+        }
+        let digits = self.at;
+        while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
+            self.at += 1;
+        }
+        (self.at > digits).then_some(())
     }
 
     /// `%255s`: skips white space (newlines included) and takes up to 255
@@ -766,8 +983,9 @@ mod tests {
         let user: Vec<_> = conf.user_libraries().map(|(index, _)| index).collect();
         assert_eq!(user, [7]);
         assert_eq!(
-            conf.addon_row(4).and_then(|row| row.system.as_deref()),
-            Some("art.bin")
+            conf.addon_row(4)
+                .and_then(|row| row.system.as_ref().map(|name| name.display().into_owned())),
+            Some("art.bin".to_owned())
         );
         assert_eq!(conf.default_row(2), Some(&TableRow::unused()));
     }
@@ -788,8 +1006,9 @@ mod tests {
         let text = format!("{STOCK}addon 256 w.table w.bin NULL DICTIONARY\n");
         let conf = parse(&text).expect("256 wraps to a valid slot");
         assert_eq!(
-            conf.addon_row(0).and_then(|row| row.system.as_deref()),
-            Some("w.bin")
+            conf.addon_row(0)
+                .and_then(|row| row.system.as_ref().map(|name| name.display().into_owned())),
+            Some("w.bin".to_owned())
         );
     }
 
@@ -873,6 +1092,122 @@ mod tests {
         assert_eq!(conf.lambda_unit(), None);
         let conf = parse(&STOCK.replace("0.312699", "nan")).expect("parses");
         assert!(conf.lambda_f32().is_nan());
+    }
+
+    /// What glibc's `sscanf("%f%n")` answered for each spelling, measured on
+    /// the pin's platform (glibc 2.43): the value and the bytes taken, or a
+    /// failed conversion.
+    #[test]
+    fn float_spellings_read_like_glibc() {
+        let cases: &[(&str, Option<(f32, usize)>)] = &[
+            ("0x1p-1 Z", Some((0.5, 6))),
+            ("0x.8 Z", Some((0.5, 4))),
+            ("0x Z", None),
+            ("0x1p Z", None),
+            ("0xg Z", None),
+            ("0x.p1 Z", None),
+            ("0x1.8p+1z Z", Some((3.0, 8))),
+            ("0X1P1 Z", Some((2.0, 5))),
+            ("0x1.p0 Z", Some((1.0, 6))),
+            ("  +0x10 Z", Some((16.0, 7))),
+            ("0x1e Z", Some((30.0, 4))),
+            ("inf Z", Some((f32::INFINITY, 3))),
+            ("infinity Z", Some((f32::INFINITY, 8))),
+            ("infin Z", None),
+            ("1e Z", None),
+            ("1e+ Z", None),
+            (".e1 Z", None),
+            ("+.5 Z", Some((0.5, 3))),
+            ("1_0 Z", Some((1.0, 1))),
+            ("1.5.5 Z", Some((1.5, 3))),
+            ("1e5000 Z", Some((f32::INFINITY, 6))),
+            ("- Z", None),
+        ];
+        for &(input, expected) in cases {
+            let mut scan = Scan::new(input.as_bytes());
+            let got = scan
+                .float()
+                .and_then(|text| c_float(&text))
+                .map(|value| (value, scan.at));
+            assert_eq!(got, expected, "{input:?}");
+        }
+        for (input, taken) in [
+            ("nan(1) Z", 6),
+            ("nan(1_a) Z", 8),
+            ("nan() Z", 5),
+            ("-nan Z", 4),
+            ("nanx Z", 3),
+        ] {
+            let mut scan = Scan::new(input.as_bytes());
+            let value = scan.float().and_then(|text| c_float(&text));
+            assert!(
+                value.is_some_and(f32::is_nan) && scan.at == taken,
+                "{input:?}"
+            );
+        }
+        for input in ["nan( Z", "nan(1 Z"] {
+            assert!(Scan::new(input.as_bytes()).float().is_none(), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn hex_floats_round_like_strtof() {
+        // 24 bits kept; a tie goes to even, a nonzero tail breaks it upward.
+        let bits = |text: &str| hex_float(text).map(f32::to_bits);
+        assert_eq!(bits("1.000001p0"), Some(0x3f80_0000));
+        assert_eq!(bits("1.000002p0"), Some(0x3f80_0001));
+        assert_eq!(bits("1.000003p0"), Some(0x3f80_0002));
+        assert_eq!(bits("1.0000010000000001p0"), Some(0x3f80_0001));
+        // The smallest subnormal, half of it (a tie to even), and overflow.
+        assert_eq!(hex_float("1p-149"), Some(f32::from_bits(1)));
+        assert_eq!(hex_float("1p-150"), Some(0.0));
+        assert_eq!(hex_float("1.8p-150"), Some(f32::from_bits(1)));
+        assert_eq!(hex_float("1p128"), Some(f32::INFINITY));
+        assert_eq!(hex_float("1.ffffffp127"), Some(f32::INFINITY));
+        assert_eq!(hex_float("0p0"), Some(0.0));
+    }
+
+    #[test]
+    fn integers_saturate_at_long_min_like_strtol() {
+        assert_eq!(strtol_digits(true, b"9223372036854775808"), (i64::MIN, 19));
+        assert_eq!(strtol_digits(true, b"99999999999999999999"), (i64::MIN, 20));
+        assert_eq!(strtol_digits(false, b"9223372036854775808"), (i64::MAX, 19));
+        assert_eq!(atoi_guint8(b"-99999999999999999999"), 0);
+        assert_eq!(atoi_guint8(b"-256"), 0);
+        assert_eq!(atoi_guint8(b"-1"), 255);
+        let mut scan = Scan::new(b"-9223372036854775808x");
+        assert_eq!(scan.int(), Some(0));
+        assert_eq!(scan.at, 20);
+    }
+
+    #[test]
+    fn file_names_stay_beneath_their_directory() {
+        let under = |dir: &str, name: &[u8]| FileName::from_bytes(name).under(Path::new(dir));
+        assert_eq!(under("/u", b"/tmp/x"), Path::new("/u/tmp/x"));
+        assert_eq!(under("/u", b"//x//y/"), Path::new("/u/x//y/"));
+        assert_eq!(under("/u", b"../x"), Path::new("/u/../x"));
+        assert_eq!(under("/u", b""), Path::new("/u"));
+        assert_eq!(under("", b"/tmp/x"), Path::new("/tmp/x"));
+        assert_eq!(under("a/", b"x"), Path::new("a/x"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_name_columns_keep_their_raw_bytes() {
+        use std::os::unix::ffi::OsStrExt as _;
+        // The word holds the byte 0xFF, which is not UTF-8.
+        let mut bytes = STOCK.as_bytes().to_vec();
+        let at = bytes
+            .windows(12)
+            .position(|window| window == b"gb_char.dbin")
+            .expect("marker");
+        bytes.splice(at..at + 12, *b"gb\xff.dbin");
+        let conf = TableConf::parse(&bytes).expect("parses");
+        let user = conf
+            .default_row(1)
+            .and_then(|row| row.user.as_ref())
+            .expect("user file");
+        assert_eq!(AsRef::<OsStr>::as_ref(user).as_bytes(), b"gb\xff.dbin");
     }
 
     #[test]

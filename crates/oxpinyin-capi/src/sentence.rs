@@ -414,7 +414,6 @@ pub extern "C" fn pinyin_guess_candidates(
     if inst.core.session.set_options(inst.core.options()).is_err() {
         return false;
     }
-    let unreadable_before = inst.core.dict.unreadable_items();
     // §9: the whole sort word, re-stored per call exactly as the pin's
     // `instance->m_sort_option = sort_option` (`pinyin.cpp:2203`) — the
     // engine's sort keys, the LONGER gate and the snapshot's LONGER row
@@ -479,7 +478,12 @@ pub extern "C" fn pinyin_guess_candidates(
     // the pin's duplicate removal compares it (a NULL or wild read, SIGSEGV).
     // Only a `table.conf` that points a library at another file (or at
     // none) gets here. The call fails, once.
-    if inst.core.dict.unreadable_items() != unreadable_before {
+    if inst
+        .core
+        .anchored_window
+        .as_ref()
+        .is_some_and(|(_, window)| window.had_unreadable_item())
+    {
         inst.core.anchored_window = None;
         inst.candidates.clear();
         crate::ffi::log_warning(

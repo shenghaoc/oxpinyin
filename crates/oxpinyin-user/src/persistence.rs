@@ -43,6 +43,7 @@ use oxpinyin_data::pin_stderr;
 use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::single_gram::{decode_single_gram, encode_single_gram};
 use oxpinyin_data::table_entries::{phrase_index_entries, pinyin_index_entries};
+use oxpinyin_data::table_info::FileName;
 use oxpinyin_data::user_files::{
     LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout, UserTableInfo,
     decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
@@ -527,17 +528,18 @@ fn write_marker(
 /// `zhuyin.cpp:141-159`): libpinyin has already rewritten it by then, and
 /// libzhuyin leaves the non-conform marker in place until a save.
 fn clean_user_files(dir: &Path, layout: &UserFileLayout) {
-    let mut names: Vec<String> = [
+    let mut names: Vec<FileName> = [
         UserDbm::Bigram.file_name(),
         UserDbm::PinyinIndex.file_name(),
         UserDbm::PhraseIndex.file_name(),
     ]
     .into_iter()
+    .map(|name| FileName::from_bytes(name.as_bytes()))
     .collect();
     names.extend(layout.user_libraries().iter().map(|(_, name)| name.clone()));
     names.extend(layout.system_logs().iter().map(|(_, name)| name.clone()));
     for name in names {
-        let _ = std::fs::remove_file(dir.join(name));
+        let _ = std::fs::remove_file(name.under(dir));
     }
 }
 
@@ -670,12 +672,10 @@ pub(crate) fn load_user_bigram_db(dir: &Path) -> Result<DefaultUserBigramDb, Per
 
 /// The `USER_FILE` chunk stores.
 fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded) {
-    for (nibble, name) in layout
-        .user_libraries()
-        .iter()
-        .map(|(n, name)| (*n, name.as_str()))
-    {
-        let path = dir.join(name);
+    for (nibble, file) in layout.user_libraries() {
+        let nibble = *nibble;
+        let name = file.display();
+        let path = file.under(dir);
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             // Absent is the normal fresh-profile case. Any other error
@@ -719,13 +719,10 @@ fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded) {
 /// `merge` returns false mid-log and `_load_phrase_library` keeps the
 /// partially-merged index).
 fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
-    for (nibble, name) in originals
-        .layout()
-        .system_logs()
-        .iter()
-        .map(|(n, name)| (*n, name.as_str()))
-    {
-        let path = dir.join(name);
+    for (nibble, file) in originals.layout().system_logs() {
+        let nibble = *nibble;
+        let name = file.display();
+        let path = file.under(dir);
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
@@ -913,30 +910,51 @@ pub fn save_with_bigram(
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
 ) -> Result<(), PersistenceError> {
-    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut staged = Staged::default();
     let result = stage_all(dir, state, originals, bigram_db, false, &mut staged);
-    finish_save(dir, versions, open_counter, &staged, result)
+    finish_save(dir, versions, open_counter, &staged.pending, result)
 }
 
 /// The files of a save in the pin's rename order (`_rename_files`,
 /// `pinyin.cpp:1025-1130`): the libraries by index, then the two indices
 /// and the bigram.
-fn pin_rename_order(layout: &UserFileLayout) -> Vec<String> {
-    let mut libraries: Vec<(u8, &str)> = layout
+fn pin_rename_order(layout: &UserFileLayout) -> Vec<FileName> {
+    let mut order: Vec<FileName> = libraries_in_pin_order(layout)
+        .into_iter()
+        .map(|(_, name, _)| name.clone())
+        .collect();
+    for dbm in [UserDbm::PinyinIndex, UserDbm::PhraseIndex, UserDbm::Bigram] {
+        order.push(FileName::from_bytes(dbm.file_name().as_bytes()));
+    }
+    order
+}
+
+/// Which kind of library file a save writes.
+#[derive(Clone, Copy)]
+enum LibraryFile {
+    /// A `SYSTEM_FILE` library's `.dbin` diff log.
+    Log,
+    /// A `USER_FILE` library's chunk.
+    User,
+}
+
+/// The library files in the pin's loop order: one pass over the sub-indices
+/// (`_write_files`, `_rename_files`, `pinyin.cpp:933-1090`), a stable sort
+/// keeping the log before the chunk where a layout gives one index both.
+fn libraries_in_pin_order(layout: &UserFileLayout) -> Vec<(u8, &FileName, LibraryFile)> {
+    let mut libraries: Vec<(u8, &FileName, LibraryFile)> = layout
         .system_logs()
         .iter()
-        .chain(layout.user_libraries())
-        .map(|(nibble, name)| (*nibble, name.as_str()))
+        .map(|(nibble, name)| (*nibble, name, LibraryFile::Log))
+        .chain(
+            layout
+                .user_libraries()
+                .iter()
+                .map(|(nibble, name)| (*nibble, name, LibraryFile::User)),
+        )
         .collect();
-    libraries.sort_by_key(|&(nibble, _)| nibble);
-    let mut order: Vec<String> = libraries
-        .into_iter()
-        .map(|(_, name)| name.to_owned())
-        .collect();
-    order.push(UserDbm::PinyinIndex.file_name().to_owned());
-    order.push(UserDbm::PhraseIndex.file_name().to_owned());
-    order.push(UserDbm::Bigram.file_name().to_owned());
-    order
+    libraries.sort_by_key(|&(nibble, _, _)| nibble);
+    libraries
 }
 
 /// [`save_with_bigram`] the way the pin saves: no failure stops it. Each file
@@ -958,28 +976,61 @@ pub(crate) fn save_with_bigram_reporting(
     versions: &SystemVersions,
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
+    interleaved: bool,
 ) -> Result<SaveReport, PersistenceError> {
     // `_write_files` writes every file whatever the one before did
     // (`pinyin.cpp:940-1020`): a write that fails leaves no `.tmp` and the
     // next file is written anyway.
-    let mut staged: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut staged = Staged {
+        immediate: interleaved,
+        ..Staged::default()
+    };
     stage_all(dir, state, originals, bigram_db, true, &mut staged)?;
     // `_rename_files` then renames every file of the set in its own order and
     // prints the ones that fail (`:1025-1130`), a file whose write failed
     // among them: the unaffected files are updated and the profile can mix
     // two saves.
     let mut outcome = SaveReport::default();
-    for name in pin_rename_order(originals.layout()) {
-        let tmp = dir.join(format!("{name}.tmp"));
-        let final_path = dir.join(&name);
-        if std::fs::rename(&tmp, &final_path).is_err() {
-            outcome.renames_failed.push((tmp, final_path));
+    if interleaved {
+        // `zhuyin_save` renames each file as soon as it has written it.
+        outcome.renames_failed = staged.failed;
+    } else {
+        for name in pin_rename_order(originals.layout()) {
+            let tmp = name.with_suffix(".tmp").under(dir);
+            let final_path = name.under(dir);
+            if std::fs::rename(&tmp, &final_path).is_err() {
+                outcome.renames_failed.push((tmp, final_path));
+            }
         }
     }
     if write_marker(dir, versions, open_counter).is_err() {
         outcome.user_conf_write_failed = Some(dir.join(USER_CONF));
     }
     Ok(outcome)
+}
+
+/// The files a save has written to `.tmp` siblings. libpinyin writes them
+/// all (`_write_files`) and then renames them all (`_rename_files`); libzhuyin
+/// renames each as soon as it is written (`zhuyin_save`), so a name two roles
+/// share ends with the other role's contents.
+#[derive(Default)]
+struct Staged {
+    /// Waiting for the rename pass.
+    pending: Vec<(PathBuf, PathBuf)>,
+    /// Rename on the spot (libzhuyin).
+    immediate: bool,
+    /// The immediate renames that failed.
+    failed: Vec<(PathBuf, PathBuf)>,
+}
+
+impl Staged {
+    fn push(&mut self, (tmp, final_path): (PathBuf, PathBuf)) {
+        if !self.immediate {
+            self.pending.push((tmp, final_path));
+        } else if std::fs::rename(&tmp, &final_path).is_err() {
+            self.failed.push((tmp, final_path));
+        }
+    }
 }
 
 /// [`save_with_bigram`]'s staging half, shared with the reporting save.
@@ -989,8 +1040,13 @@ fn stage_all(
     originals: &SystemOriginals,
     bigram_db: Option<&DefaultUserBigramDb>,
     lenient: bool,
-    staged: &mut Vec<(PathBuf, PathBuf)>,
+    staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
+    // `_write_files` writes the libraries by sub-index, then the user pinyin
+    // index, the user phrase index and the bigram (`pinyin.cpp:933-1020`):
+    // where a `table.conf` gives two roles one name, the last writer's
+    // contents are what the first rename moves into place.
+    stage_rest(dir, state, originals, lenient, staged)?;
     if let Some(db) = bigram_db {
         let final_path = dir.join(UserDbm::Bigram.file_name());
         let tmp = dir.join(format!("{}.tmp", UserDbm::Bigram.file_name()));
@@ -1000,7 +1056,7 @@ fn stage_all(
             remove_dbm_sidecars(dir, &tmp);
             staged.push((tmp, final_path));
         }
-        return stage_rest(dir, state, originals, lenient, staged);
+        return Ok(());
     }
     let bigram_rows: Vec<(Vec<u8>, Vec<u8>)> = state
         .bigram
@@ -1018,7 +1074,7 @@ fn stage_all(
         })
         .collect();
     tolerate(lenient, stage_user_bigram(dir, &bigram_rows))?;
-    stage_rest(dir, state, originals, lenient, staged)
+    Ok(())
 }
 
 /// The reporting save carries on past a file it could not write, as the pin's
@@ -1041,9 +1097,39 @@ fn stage_rest(
     state: &UserState,
     originals: &SystemOriginals,
     lenient: bool,
-    staged: &mut Vec<(PathBuf, PathBuf)>,
+    staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     {
+        // ---- the library files, by sub-index -----------------------------
+        let empty_library = SystemLibrary::default();
+        for (nibble, name, kind) in libraries_in_pin_order(originals.layout()) {
+            let bytes = match kind {
+                LibraryFile::User => {
+                    let pairs: Vec<(u32, ChunkItem)> =
+                        state.libraries.get(&nibble).map_or(Vec::new(), |slots| {
+                            slots
+                                .iter()
+                                .map(|(&slot, item)| (slot, item.clone()))
+                                .collect()
+                        });
+                    build_chunk(&pairs)?
+                }
+                LibraryFile::Log => {
+                    let original = originals.get(&nibble).unwrap_or(&empty_library);
+                    let overrides = state
+                        .system_overrides
+                        .get(&nibble)
+                        .cloned()
+                        .unwrap_or_default();
+                    let records = diff_records(nibble, original, &overrides)?;
+                    let payload = encode_log_records(&records)
+                        .map_err(|e| PersistenceError::Codec(e.to_string()))?;
+                    build_memory_chunk(&payload).map_err(PersistenceError::from)?
+                }
+            };
+            tolerate(lenient, stage_chunk(dir, name, &bytes, staged))?;
+        }
+
         // ---- the two index trees, from the USER_FILE items ---------------
         // The phrase index holds every item; the pinyin index only the
         // readings `add_index` saw (`UserState::indexed`).
@@ -1113,45 +1199,6 @@ fn stage_rest(
                 staged,
             ),
         )?;
-
-        // ---- the USER_FILE chunk stores ---------------------------------
-        for (nibble, name) in originals
-            .layout()
-            .user_libraries()
-            .iter()
-            .map(|(n, name)| (*n, name.as_str()))
-        {
-            let pairs: Vec<(u32, ChunkItem)> =
-                state.libraries.get(&nibble).map_or(Vec::new(), |slots| {
-                    slots
-                        .iter()
-                        .map(|(&slot, item)| (slot, item.clone()))
-                        .collect()
-                });
-            let bytes = build_chunk(&pairs)?;
-            tolerate(lenient, stage_chunk(dir, name, &bytes, staged))?;
-        }
-
-        // ---- the SYSTEM_FILE diff logs -----------------------------------
-        let empty_library = SystemLibrary::default();
-        for (nibble, name) in originals
-            .layout()
-            .system_logs()
-            .iter()
-            .map(|(n, name)| (*n, name.as_str()))
-        {
-            let original = originals.get(&nibble).unwrap_or(&empty_library);
-            let overrides = state
-                .system_overrides
-                .get(&nibble)
-                .cloned()
-                .unwrap_or_default();
-            let records = diff_records(nibble, original, &overrides)?;
-            let payload =
-                encode_log_records(&records).map_err(|e| PersistenceError::Codec(e.to_string()))?;
-            let bytes = build_memory_chunk(&payload).map_err(PersistenceError::from)?;
-            tolerate(lenient, stage_chunk(dir, name, &bytes, staged))?;
-        }
 
         Ok(())
     }
@@ -1276,7 +1323,7 @@ fn stage_dbm(
     dir: &Path,
     dbm: UserDbm,
     rows: &[(Vec<u8>, Vec<u8>)],
-    staged: &mut Vec<(PathBuf, PathBuf)>,
+    staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     debug_assert!(!dbm.is_hash(), "stage_dbm serves the two index trees");
     let final_path = dir.join(dbm.file_name());
@@ -1327,12 +1374,12 @@ fn remove_dbm_sidecars(dir: &Path, dbm_path: &Path) {
 /// Writes one chunk file to its `.tmp` sibling and registers the rename.
 fn stage_chunk(
     dir: &Path,
-    name: &str,
+    name: &FileName,
     bytes: &[u8],
-    staged: &mut Vec<(PathBuf, PathBuf)>,
+    staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
-    let final_path = dir.join(name);
-    let tmp = dir.join(format!("{name}.tmp"));
+    let final_path = name.under(dir);
+    let tmp = name.with_suffix(".tmp").under(dir);
     write_chunk_file(&tmp, bytes)?;
     staged.push((tmp, final_path));
     Ok(())
@@ -1474,8 +1521,18 @@ mod tests {
             "user.conf".to_owned(),
         ];
         let layout = UserFileLayout::stock();
-        expected.extend(layout.user_libraries().iter().map(|(_, n)| n.clone()));
-        expected.extend(layout.system_logs().iter().map(|(_, n)| n.clone()));
+        expected.extend(
+            layout
+                .user_libraries()
+                .iter()
+                .map(|(_, n)| n.display().into_owned()),
+        );
+        expected.extend(
+            layout
+                .system_logs()
+                .iter()
+                .map(|(_, n)| n.display().into_owned()),
+        );
         expected.sort();
         assert_eq!(names, expected, "the save left an unexpected file");
 
@@ -2118,7 +2175,7 @@ mod tests {
         }
         let layout = UserFileLayout::stock();
         for (_, name) in layout.user_libraries().iter().chain(layout.system_logs()) {
-            expected.push((name.clone(), 0o644));
+            expected.push((name.display().into_owned(), 0o644));
         }
         for (name, request) in &expected {
             assert_eq!(mode_of(&dir.join(name)), request & !umask, "{name}");

@@ -119,6 +119,7 @@ where
             lookup: Lookup::default(),
             sentence: SentenceState::default(),
             scratch: Scratch::default(),
+            scan_unreadable: false,
         }
     }
 
