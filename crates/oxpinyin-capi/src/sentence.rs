@@ -351,6 +351,13 @@ fn character_walk_ran(inst: &crate::state::CapiInstance, text: &str) -> bool {
     })
 }
 
+/// The one log line both overlong-index surfaces of
+/// [`pinyin_guess_candidates`] answer: the eager sort-word refresh's
+/// LONGER-row build and the re-anchored lookup both reach the same pin
+/// abort (`chewing_large_table2_bdb.cpp:282`).
+const OVERLONG_INDEX_WARNING: &str = "pinyin_guess_candidates: a user pinyin index key is longer than \
+     MAX_PHRASE_LENGTH syllables (upstream aborts, chewing_large_table2_bdb.cpp:282)";
+
 /// Guess candidates at the given offset with sort option.
 ///
 /// # C signature
@@ -420,8 +427,20 @@ pub extern "C" fn pinyin_guess_candidates(
     // are all functions of it. A word that changes the list refreshes a
     // composing session; the same word is a no-op here. The lookup below
     // still searches the live dictionary on every call.
-    if inst.core.session.set_sort_options(sort_option).is_err() {
-        return false;
+    //
+    // The refresh builds the LONGER row, so it is a second surface of the
+    // same overlong-index gate as the re-anchored lookup below
+    // (`chewing_large_table2_bdb.cpp:282`): the pin reaches its abort
+    // inside `_guess_candidates`' `_prepend_longer_candidates`, which this
+    // eager refresh runs first.
+    match inst.core.session.set_sort_options(sort_option) {
+        Ok(()) => {}
+        Err(oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }) => {
+            crate::ffi::log_warning(OVERLONG_INDEX_WARNING);
+            inst.candidates.clear();
+            return false;
+        }
+        Err(_) => return false,
     }
     if !inst.core.session.is_composing() {
         return false;
@@ -460,18 +479,27 @@ pub extern "C" fn pinyin_guess_candidates(
     // an index into the cached list would select a different row
     // whenever the two differ. `anchored_window` is set here and a later
     // `pinyin_choose_candidate` resolves its index against it.
-    inst.core.anchored_window = if let Ok(window) = inst.core.session.candidates_at(session_offset)
-    {
-        Some((session_offset, window))
-    } else {
-        // Unreachable for a well-formed lookup: the offset-shaped
-        // contracts are refused by `validate_lookup_offset` and
-        // `candidates_at`'s own range/char-boundary checks, and a
-        // mid-syllable byte is not an error — the window answers the
-        // pin's empty-column law. The arm remains for genuine backend
-        // failures during the re-anchored scan.
-        inst.candidates.clear();
-        return false;
+    inst.core.anchored_window = match inst.core.session.candidates_at(session_offset) {
+        Ok(window) => Some((session_offset, window)),
+        Err(oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }) => {
+            // Class (c), `chewing_large_table2_bdb.cpp:282`: the suggestion
+            // walk reached a user index key past MAX_PHRASE_LENGTH syllables
+            // that extends this path and the pin's `search_suggestion` switch
+            // falls to `default: abort()`.
+            crate::ffi::log_warning(OVERLONG_INDEX_WARNING);
+            inst.candidates.clear();
+            return false;
+        }
+        Err(_) => {
+            // Unreachable for a well-formed lookup: the offset-shaped
+            // contracts are refused by `validate_lookup_offset` and
+            // `candidates_at`'s own range/char-boundary checks, and a
+            // mid-syllable byte is not an error — the window answers the
+            // pin's empty-column law. The arm remains for genuine backend
+            // failures during the re-anchored scan.
+            inst.candidates.clear();
+            return false;
+        }
     };
     // Class (b), `pinyin.cpp:1635-1637` / `:2053`: a token of a loaded
     // library whose item cannot be read leaves `m_phrase_string` unset, and

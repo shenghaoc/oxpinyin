@@ -77,6 +77,13 @@ pub struct Target {
     /// The open counter the session's `user.conf` writes start from
     /// ([`persistence::Loaded::open_counter`]).
     pub(crate) open_counter: i32,
+    /// The user pinyin index's readings past `MAX_PHRASE_LENGTH` syllables
+    /// (`user_pinyin_index.bin`), as packed `ChewingKey` words — the pin's
+    /// `ChewingLargeTable2` user table aborts on them at
+    /// `chewing_large_table2_bdb.cpp:282`/`:529`, and the value model
+    /// cannot carry them, so the two abort sites read them here
+    /// ([`persistence::LoadedProfile::overlong_index_keys`]).
+    pub(crate) overlong_index_keys: Vec<Vec<u16>>,
 }
 
 /// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
@@ -254,6 +261,7 @@ impl GenericUserStore<DefaultStore> {
         let persistence::LoadedProfile {
             loaded,
             phrase_table,
+            overlong_index_keys,
         } = profile;
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
@@ -264,6 +272,7 @@ impl GenericUserStore<DefaultStore> {
             versions,
             law,
             open_counter: loaded.open_counter,
+            overlong_index_keys,
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let has_user_data = db.write(|txn| {

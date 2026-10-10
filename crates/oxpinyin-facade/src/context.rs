@@ -41,6 +41,36 @@ impl SaveOutcome {
     }
 }
 
+/// What `mask_out` did, for the C facades' `pinyin_mask_out` /
+/// `zhuyin_mask_out`.
+///
+/// The pin's `pinyin_mask_out` calls `m_pinyin_table->mask_out` (the
+/// facade over the system and user `ChewingLargeTable2`s) and ignores the
+/// answer; the user table's `mask_out` walks every `user_pinyin_index.bin`
+/// record and dies of SIGABRT at the `switch` whose `default` is
+/// `abort()` when a key is past `MAX_PHRASE_LENGTH` syllables
+/// (`chewing_large_table2_bdb.cpp:529`). The class (c) answer is that
+/// failure alone, told apart from the quiet `true`/`false`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MaskOutOutcome {
+    /// The store's mask ran (`bool` is its own success), or there is no
+    /// user store to mask (the pin's `false`).
+    Done(bool),
+    /// The user pinyin index carried a key past `MAX_PHRASE_LENGTH`
+    /// syllables; the C ABI answers `false` and the facade logs one
+    /// warning in its own domain.
+    OverlongIndexKey,
+}
+
+impl MaskOutOutcome {
+    /// The C ABI's answer: [`MaskOutOutcome::Done`] carries the store's
+    /// own answer; the abort site is `false`.
+    #[must_use]
+    pub fn is_done(self) -> bool {
+        matches!(self, Self::Done(true))
+    }
+}
+
 /// Why a context did not open — what `pinyin_init` / `zhuyin_init` hide
 /// behind NULL. Carried out of [`ContextCore::try_open`] so the facades
 /// can log it; the return value stays NULL either way.
@@ -414,14 +444,26 @@ impl ContextCore {
         }
     }
 
-    /// `mask_out`'s body: the store-level deletion, or `false` without a
-    /// user store. The pin maps every loaded system library again first
+    /// `mask_out`'s body: the store-level deletion, or
+    /// [`MaskOutOutcome::Done(false)`](MaskOutOutcome::Done) without a user
+    /// store. The pin maps every loaded system library again first
     /// (`pinyin.cpp:1265`, `zhuyin.cpp:800`).
-    pub fn mask_out(&mut self, mask: u32, value: u32) -> bool {
+    ///
+    /// A user pinyin index key past `MAX_PHRASE_LENGTH` syllables sends the
+    /// pin's user `ChewingLargeTable2::mask_out` into `switch`'s
+    /// `default: abort()` (`chewing_large_table2_bdb.cpp:529`); the store
+    /// reports it as [`UserStoreError::OverlongIndexKey`] and this answers
+    /// [`MaskOutOutcome::OverlongIndexKey`] so the facade can log it.
+    pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
         self.report_unmappable_libraries(None);
-        self.user
-            .as_mut()
-            .is_some_and(|store| store.mask_out(mask, value).is_ok())
+        let Some(store) = self.user.as_mut() else {
+            return MaskOutOutcome::Done(false);
+        };
+        match store.mask_out(mask, value) {
+            Ok(()) => MaskOutOutcome::Done(true),
+            Err(UserStoreError::OverlongIndexKey) => MaskOutOutcome::OverlongIndexKey,
+            Err(_) => MaskOutOutcome::Done(false),
+        }
     }
 
     /// `load_phrase_library`'s read side: the runtime's library-load

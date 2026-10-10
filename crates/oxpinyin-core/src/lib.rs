@@ -349,6 +349,20 @@ pub trait Dictionary {
     fn phrase_text_for_token(&self, _token: u32) -> Option<String> {
         None
     }
+
+    /// The pin's user-chewing-table over-long-key gate
+    /// (`src/storage/chewing_large_table2_bdb.cpp:282`): `true` when the
+    /// dictionary's user index holds a reading past `MAX_PHRASE_LENGTH`
+    /// syllables that extends `syllables`, so the pin's longer-candidate
+    /// walk reaches the key and dies at `switch`'s `default: abort()`.
+    ///
+    /// Defaulted to `false` so existing implementors and fixture doubles
+    /// compile unchanged (the seam grows by defaulted methods only,
+    /// `docs/findings/core-trait-seam.md`): only a user-index-backed
+    /// dictionary answers otherwise.
+    fn overlong_extension_gate(&self, _syllables: &[Self::Syllable]) -> bool {
+        false
+    }
 }
 
 impl<D: Dictionary + ?Sized> Dictionary for &D {
@@ -428,6 +442,10 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn phrase_text_for_token(&self, token: u32) -> Option<String> {
         (**self).phrase_text_for_token(token)
+    }
+
+    fn overlong_extension_gate(&self, syllables: &[Self::Syllable]) -> bool {
+        (**self).overlong_extension_gate(syllables)
     }
 }
 

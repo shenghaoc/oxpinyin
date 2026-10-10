@@ -2914,3 +2914,71 @@ warning; the internal zero-key case completes `true` on both), the three abort
 cases DIFFER against the parent build, and both controls match on both. No
 interface, ABI or dependency change.
 
+### An over-long user chewing index key aborts `mask_out` and the longer-candidate walk (#525; row 84, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`ChewingLargeTable2` builds its `m_entries` array for phrase lengths 1..=16
+only (`src/storage/chewing_large_table2.cpp:26`, `init_entries`, sized
+`MAX_PHRASE_LENGTH + 1` with index 0 left NULL), and two walks index that
+array by dividing a DB key's byte length by `sizeof(ChewingKey)` (2 bytes):
+
+- `mask_out` (`:471-547`) takes `phrase_length = db_key.size / sizeof(ChewingKey)`
+  (`:489`) over every record and dispatches through a `switch` with cases
+  1..=16, `default: abort()` (`:529`).
+- `search_suggestion_internal` (`:251-287`) does the same on each extending key
+  the `search_suggestion` cursor walk reaches (`:550`), with
+  `default: abort()` (`:282`), after `assert(prefix_len < phrase_length)`.
+
+A `user_pinyin_index.bin` whose btree carries a key past `MAX_PHRASE_LENGTH`
+(16) syllables — `sizeof(ChewingKey) * 17 = 34` bytes or more — therefore
+aborts the pin. Both facades walk the same user chewing table:
+`pinyin_mask_out` and `zhuyin_mask_out` (`src/zhuyin.cpp:763`) through
+`FacadeChewingTable2::mask_out`, and `pinyin_guess_candidates` through
+`_prepend_longer_candidates` (`src/pinyin.cpp:2292-2293`). No public call can
+write such a key: `_add_phrase` refuses `phrase_length >= MAX_PHRASE_LENGTH`
+(`src/pinyin.cpp:643`), so both reproductions craft the btree directly.
+
+Reproduced on bdb with a ctypes driver that writes a Berkeley DB btree
+holding `[first, first * 17]`, where `first` is the 2-byte packed key of the
+parse:
+
+- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `mask_out`.
+- `zhuyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `mask_out`. The zhuyin
+  context needs a conforming `user.conf` in the user dir first, because
+  `zhuyin_check_format` (`src/zhuyin.cpp:126`) wipes the user tables when the
+  marker is missing and only `zhuyin_save` writes one; `pinyin_check_format`
+  (`src/pinyin.cpp:172`) rewrites it on every open.
+- `pinyin_parse_more_full_pinyins(inst, ni)` →
+  `pinyin_guess_candidates(inst, 0, 0)` (sort word 0, LONGER candidate
+  enabled): SIGABRT in `search_suggestion_internal`.
+
+oxpinyin records every reading past `MAX_PHRASE_LENGTH` from the key's length
+alone, before touching the value, in the loaded profile
+(`crates/oxpinyin-user/src/persistence.rs`, `overlong_index_keys`).
+`GenericUserStore::mask_out` refuses the whole call with
+`UserStoreError::OverlongIndexKey` when any such reading is present
+(`crates/oxpinyin-user/src/store.rs`, `has_overlong_index_key`), and both C
+facades map that to exactly one `g_warning` in their own domain (`libpinyin`
+for `pinyin_mask_out`, `libzhuyin` for `zhuyin_mask_out`) and answer `false`
+(`crates/oxpinyin-capi/src/config.rs`, `crates/oxpinyin-zhuyin-capi/src/config.rs`).
+For the longer-candidate walk, `RuntimeDict::overlong_extension_gate` answers
+whether any recorded reading strictly extends the pack's key path
+(`crates/oxpinyin-runtime/src/lib.rs`, `crates/oxpinyin-user/src/store.rs`),
+and `Session::longer_candidate` raises `EngineError::OverlongUserIndexKey`
+before it reads the index (`crates/oxpinyin-engine/src/session/lookup.rs`).
+`pinyin_guess_candidates` answers `false`, clears the list and emits exactly
+one `libpinyin` warning at both surfaces the engine can raise it — the eager
+`set_sort_options` refresh (which builds the LONGER row) and the re-anchored
+`candidates_at` lookup (`crates/oxpinyin-capi/src/sentence.rs`).
+
+Held by `contract-diff.py` cases `abort-mask-out-overlong-index-key`,
+`abort-zhuyin-mask-out-overlong-index-key` and
+`abort-guess-candidates-overlong-index-key`: MATCH on bdb (pin SIGABRT -6,
+subject `false` with one warning), and all three DIFFER against the parent
+build. The kc and tkrzw chewing tables carry the same switch
+(`src/storage/chewing_large_table2_kyotodb.cpp:268`/`:498`,
+`src/storage/chewing_large_table2_tkrzwdb.cpp:251`/`:465`), but their user
+index is not a Berkeley DB btree, so the bdb fixture cannot reach the site on
+those cells and the three cases declare `cells=('bdb',)`. No interface, ABI or
+dependency change.
+
