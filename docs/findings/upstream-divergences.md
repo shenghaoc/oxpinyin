@@ -2931,7 +2931,10 @@ array by dividing a DB key's byte length by `sizeof(ChewingKey)` (2 bytes):
 
 A `user_pinyin_index.bin` whose btree carries a key past `MAX_PHRASE_LENGTH`
 (16) syllables — `sizeof(ChewingKey) * 17 = 34` bytes or more — therefore
-aborts the pin. Both facades walk the same user chewing table:
+aborts the pin. The length is integer division (`db_key.size /
+sizeof(ChewingKey)`, `:470`), so a malformed 35-byte key also reads as 17
+words and reaches the same `default`. Both facades walk the same user chewing
+table:
 `pinyin_mask_out` and `zhuyin_mask_out` (`src/zhuyin.cpp:763`) through
 `FacadeChewingTable2::mask_out`, and `pinyin_guess_candidates` through
 `_prepend_longer_candidates` (`src/pinyin.cpp:2292-2293`). No public call can
@@ -2954,7 +2957,11 @@ parse:
 
 oxpinyin records every reading past `MAX_PHRASE_LENGTH` from the key's length
 alone, before touching the value, in the loaded profile
-(`crates/oxpinyin-user/src/persistence.rs`, `overlong_index_keys`).
+(`crates/oxpinyin-user/src/persistence.rs`, `overlong_index_keys`). The
+length is the same integer division the pin's switch reads, so the complete
+words of a 35-byte key are recorded too and only the malformed trailing byte
+is dropped (`load_user_pinyin_index`); every even-length raw row is also kept
+in `index_keys`, the query-key set the exact-prefix probe reads below.
 `GenericUserStore::mask_out` refuses the whole call with
 `UserStoreError::OverlongIndexKey` when any such reading is present
 (`crates/oxpinyin-user/src/store.rs`, `has_overlong_index_key`), and both C
@@ -2963,22 +2970,38 @@ for `pinyin_mask_out`, `libzhuyin` for `zhuyin_mask_out`) and answer `false`
 (`crates/oxpinyin-capi/src/config.rs`, `crates/oxpinyin-zhuyin-capi/src/config.rs`).
 For the longer-candidate walk, `RuntimeDict::overlong_extension_gate` answers
 whether any recorded reading strictly extends the pack's key path
-(`crates/oxpinyin-runtime/src/lib.rs`, `crates/oxpinyin-user/src/store.rs`),
-and `Session::longer_candidate` raises `EngineError::OverlongUserIndexKey`
-before it reads the index (`crates/oxpinyin-engine/src/session/lookup.rs`).
-`pinyin_guess_candidates` answers `false`, clears the list and emits exactly
-one `libpinyin` warning at both surfaces the engine can raise it — the eager
-`set_sort_options` refresh (which builds the LONGER row) and the re-anchored
-`candidates_at` lookup (`crates/oxpinyin-capi/src/sentence.rs`).
+(`crates/oxpinyin-runtime/src/lib.rs`, `crates/oxpinyin-user/src/store.rs`).
+The pin's `search_suggestion` probes the exact query key first
+(`cursorp->c_get(..., DB_SET)`, `chewing_large_table2_bdb.cpp:576`) and
+answers `SEARCH_NONE` without walking when it is absent, so the gate also
+requires that key (`index_keys`); an over-long row whose prefix row is missing
+is unreachable at the pin. `Session::longer_candidate` raises
+`EngineError::OverlongUserIndexKey` before it reads the index
+(`crates/oxpinyin-engine/src/session/lookup.rs`). `pinyin_guess_candidates`
+answers `false`, clears the list and emits exactly one `libpinyin` warning at
+the re-anchored `candidates_at` lookup
+(`crates/oxpinyin-capi/src/sentence.rs`): the pin reaches its abort only
+inside `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`), which a parse or
+the eager `set_sort_options` refresh never runs, so those refresh the walk
+without the gate. The incomplete projection keeps
+`compute_incomplete_chewing_index`'s zero initial — a vowel-initial syllable
+and `ng` pack to `ChewingKey::new(0, 0, 0, 0)`, not to a missing key — so an
+incomplete reading's index key still matches.
 
-Held by `contract-diff.py` cases `abort-mask-out-overlong-index-key`,
-`abort-zhuyin-mask-out-overlong-index-key` and
-`abort-guess-candidates-overlong-index-key`: MATCH on bdb (pin SIGABRT -6,
-subject `false` with one warning), and all three DIFFER against the parent
-build. The kc and tkrzw chewing tables carry the same switch
+Held by `contract-diff.py` abort cases `abort-mask-out-overlong-index-key`,
+`abort-zhuyin-mask-out-overlong-index-key`,
+`abort-guess-candidates-overlong-index-key`,
+`abort-guess-candidates-overlong-odd-index-key`,
+`abort-mask-out-overlong-odd-index-key` and
+`abort-guess-candidates-overlong-incomplete-index-key`, plus the non-abort
+probes `guess-after-overlong-index-key-without-prefix-answers-true` and
+`reparse-after-guess-ignores-overlong-index-key`: MATCH on bdb (pin SIGABRT
+-6 for the abort cases, subject `false` with one warning), and the six abort
+cases and the two probes DIFFER against the pre-fix build. The kc and tkrzw
+chewing tables carry the same switch
 (`src/storage/chewing_large_table2_kyotodb.cpp:268`/`:498`,
 `src/storage/chewing_large_table2_tkrzwdb.cpp:251`/`:465`), but their user
 index is not a Berkeley DB btree, so the bdb fixture cannot reach the site on
-those cells and the three cases declare `cells=('bdb',)`. No interface, ABI or
+those cells and the cases declare `cells=('bdb',)`. No interface, ABI or
 dependency change.
 

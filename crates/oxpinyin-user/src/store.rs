@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta, syllable_initial};
+use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta};
 use oxpinyin_data::single_gram::encode_single_gram;
 use oxpinyin_store::{DefaultStore, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn};
 
@@ -247,12 +247,17 @@ fn index_projection(syllables: &[SyllableKey]) -> Option<Vec<u16>> {
     syllables
         .iter()
         .map(|key| {
-            let text = if incomplete {
-                syllable_initial(key.text())?
+            let full = ChewingKey::from_pinyin(key.text())?;
+            if incomplete {
+                // `compute_incomplete_chewing_index` sets only `m_initial`,
+                // so a vowel-initial syllable and `ng` project to the zero
+                // initial (`ChewingKey::new(0, 0, 0, 0)`), not to a missing
+                // key. Building the packed word directly keeps those zeros
+                // representable.
+                Some(ChewingKey::new(full.initial, 0, 0, 0).to_packed())
             } else {
-                key.text()
-            };
-            ChewingKey::from_pinyin(text).map(|key| key.with_tone(0).to_packed())
+                Some(full.with_tone(0).to_packed())
+            }
         })
         .collect()
 }
@@ -783,15 +788,26 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// The pin's user-table `search_suggestion` gate
     /// (`chewing_large_table2_bdb.cpp:282`): `true` when some reading past
     /// `MAX_PHRASE_LENGTH` syllables strictly extends `syllables` in the
-    /// keyspace `add_index` writes. The pin's `DB_SET`/`DB_NEXT` walk then
-    /// reaches that key and its `switch`'s `default: abort()` dies; the
-    /// engine surfaces the same search as an error instead.
+    /// keyspace `add_index` writes. The pin's `DB_SET` probe first requires
+    /// the exact query key to exist (`:576-582`); only then does its
+    /// `DB_NEXT` walk reach an over-long extension and its `switch`'s
+    /// `default: abort()` die. A crafted index that carries the over-long
+    /// key but omits the exact prefix row walks nothing, so the gate must
+    /// consult the raw key set too. The engine surfaces the pin's abort as
+    /// an error instead.
     #[must_use]
     pub fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
         let Some(projection) = index_projection(syllables) else {
             return false;
         };
-        self.overlong_index_readings()
+        let Some(target) = self.inner.libpinyin.as_ref() else {
+            return false;
+        };
+        if !target.index_keys.contains(&projection) {
+            return false;
+        }
+        target
+            .overlong_index_keys
             .iter()
             .any(|reading| reading.len() > projection.len() && reading.starts_with(&projection))
     }

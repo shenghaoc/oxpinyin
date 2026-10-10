@@ -428,19 +428,13 @@ pub extern "C" fn pinyin_guess_candidates(
     // composing session; the same word is a no-op here. The lookup below
     // still searches the live dictionary on every call.
     //
-    // The refresh builds the LONGER row, so it is a second surface of the
-    // same overlong-index gate as the re-anchored lookup below
-    // (`chewing_large_table2_bdb.cpp:282`): the pin reaches its abort
-    // inside `_guess_candidates`' `_prepend_longer_candidates`, which this
-    // eager refresh runs first.
-    match inst.core.session.set_sort_options(sort_option) {
-        Ok(()) => {}
-        Err(oxpinyin_engine::EngineError::OverlongUserIndexKey { .. }) => {
-            crate::ffi::log_warning(OVERLONG_INDEX_WARNING);
-            inst.candidates.clear();
-            return false;
-        }
-        Err(_) => return false,
+    // The refresh builds the LONGER row, but it is not a surface of the
+    // over-long-index gate: the pin reaches its abort only inside
+    // `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`), which a parse
+    // never runs, so this refresh cannot fail on an over-long key. The
+    // re-anchored lookup below applies the gate instead.
+    if inst.core.session.set_sort_options(sort_option).is_err() {
+        return false;
     }
     if !inst.core.session.is_composing() {
         return false;

@@ -29,6 +29,13 @@ where
     /// best sentence the DP over the segment lattice would produce — so the
     /// pooled phrase candidates are ranked by the three-key order and
     /// deduplicated directly, with no sentence prepend.
+    ///
+    /// This is also the eager refresh a parse (`replace_raw`) and every
+    /// other non-guess operation runs, so it does **not** apply the
+    /// over-long user-index gate: the pin's parse never calls
+    /// `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`) and cannot
+    /// reach its abort. Only an explicit guess ([`Session::candidates_at`])
+    /// gates.
     pub(super) fn refresh(&mut self) -> Result<(), EngineError> {
         // The cached list is anchored at the composition offset the session
         // owns. Reuse its buffer so the scan keeps its capacity across
@@ -37,7 +44,7 @@ where
         let anchor = self.record.consumed();
         let mut items = Vec::new();
         self.lookup.candidates.swap_items(&mut items);
-        self.lookup.parsed_prefix = self.scan_window(anchor, &mut items)?;
+        self.lookup.parsed_prefix = self.scan_window(anchor, &mut items, false)?;
         self.lookup.candidates.swap_items(&mut items);
         Ok(())
     }
@@ -104,6 +111,7 @@ where
         &mut self,
         anchor: usize,
         out: &mut Vec<Candidate>,
+        gate_overlong: bool,
     ) -> Result<usize, EngineError> {
         out.clear();
         self.ensure_matrix()?;
@@ -115,7 +123,7 @@ where
             // pin prepends at every valid offset (`pinyin.cpp:2292-2293`;
             // row 65: the reserved slot's column holds no key, so the span
             // loop finds nothing but the prepends still run).
-            self.prepend_longer_row(out)?;
+            self.prepend_longer_row(out, gate_overlong)?;
             self.prepend_nbest_rows(out);
             return Ok(0);
         }
@@ -242,7 +250,7 @@ where
         // zero span: upstream never sets `m_begin`/`m_end` for it
         // (`_prepend_longer_candidates` leaves both zero), which is also
         // the marker the C ABI reads back as `LONGER_CANDIDATE`.
-        self.prepend_longer_row(&mut collected)?;
+        self.prepend_longer_row(&mut collected, gate_overlong)?;
 
         // W14: prepend the stored n-best rows, head first, then drop every
         // later candidate with the same text — upstream prepends after the
@@ -284,10 +292,15 @@ where
     ///
     /// Returns [`EngineError`] when the whole-composition suggestion walk
     /// or a model read fails — the surfaces [`Session::longer_candidate`]
-    /// reads.
-    fn prepend_longer_row(&self, out: &mut Vec<Candidate>) -> Result<(), EngineError> {
+    /// reads — and, when `gate_overlong` is set, the over-long user index
+    /// key the pin's suggestion walk aborts on.
+    fn prepend_longer_row(
+        &self,
+        out: &mut Vec<Candidate>,
+        gate_overlong: bool,
+    ) -> Result<(), EngineError> {
         if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
-            && let Some(candidate) = self.longer_candidate()?
+            && let Some(candidate) = self.longer_candidate(gate_overlong)?
         {
             out.insert(0, candidate);
         }
@@ -310,8 +323,13 @@ where
     /// # Errors
     ///
     /// Returns [`EngineError`] when the dictionary walk or a model read
-    /// fails — the same surfaces the window scan reads.
-    pub(super) fn longer_candidate(&self) -> Result<Option<Candidate>, EngineError> {
+    /// fails — the same surfaces the window scan reads — and, when
+    /// `gate_overlong` is set, the over-long user index key the pin's
+    /// suggestion walk aborts on.
+    pub(super) fn longer_candidate(
+        &self,
+        gate_overlong: bool,
+    ) -> Result<Option<Candidate>, EngineError> {
         if !self.model.has_real_unigrams() {
             // The pre-frequency construction never runs the pin's prepend:
             // its candidate rows carry no amplified frequency at all.
@@ -360,11 +378,20 @@ where
             // The pin's `search_suggestion` gate: the walk reaches a user
             // index key past `MAX_PHRASE_LENGTH` syllables that extends this
             // path and `switch`'s `default: abort()` dies
-            // (`chewing_large_table2_bdb.cpp:282`). Answer an error instead.
+            // (`chewing_large_table2_bdb.cpp:282`). The pin reaches it only
+            // inside `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`),
+            // called from `pinyin_guess_candidates`; a parse or another
+            // non-guess operation refreshes the cached list without that
+            // prepend. So answer an error on an explicit guess, and skip
+            // the path rather than building a LONGER row from a corrupt
+            // index on any other refresh.
             if self.dictionary.overlong_extension_gate(keys.as_slice()) {
-                return Err(EngineError::OverlongUserIndexKey {
-                    syllables: keys.len(),
-                });
+                if gate_overlong {
+                    return Err(EngineError::OverlongUserIndexKey {
+                        syllables: keys.len(),
+                    });
+                }
+                continue;
             }
             let tokens = self
                 .dictionary
@@ -526,11 +553,11 @@ where
             // of it — the LONGER row (`pinyin.cpp:2292-2293`) first, then the
             // sentence rows (`:2295-2296`). The n-best rows rotate above the
             // LONGER one, matching the pin's two prepends.
-            self.prepend_longer_row(&mut items)?;
+            self.prepend_longer_row(&mut items, true)?;
             self.prepend_nbest_rows(&mut items);
             return Ok(CandidateList::from_vec(items));
         }
-        self.scan_window(offset, &mut items)?;
+        self.scan_window(offset, &mut items, true)?;
         Ok(CandidateList::from_vec(items).with_unreadable_item(self.scan_unreadable))
     }
 
