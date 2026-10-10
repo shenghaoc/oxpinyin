@@ -1285,6 +1285,32 @@ def _(k):
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
 
 
+# batch G review fix: the separator between keys is a zero-key column, not
+# an empty one. `fill_matrix` fills it (`phonetic_key_matrix.cpp:52-78`), so
+# the pin's `get_column_size(start) > 0` (`:663`) passes and training
+# completes when the stale span's end lands on a key column. After a
+# re-parse to `ni'ha`, the stale second span starts on the apostrophe
+# column and the pin trains; the engine accepts the zero-key column too.
+@case('train-after-reparse-internal-zero-key', control=True)
+def _(k):
+    inst = reparse_after_choose(k, b"ni'ha")
+    return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
+
+
+# The stale end can still land on an empty column: after a re-parse to
+# `ni'hao`, the pin passes `:663` (the apostrophe column holds a zero key)
+# and aborts at `:664` (`get_column_size(end) > 0`). The engine refuses with
+# the same fault.
+@case('abort-train-after-reparse-empty-end-column', abort=False)
+def _(k):
+    inst = reparse_after_choose(k, b"ni'hao")
+    return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
+
+
+
+
+
+
 # The keys the :661/:663 guard leaves alone: the same choose-and-look-up
 # with no shortening re-parse, and a re-parse that repeats the input.
 @case('train-after-choose-lookup-control', control=True)

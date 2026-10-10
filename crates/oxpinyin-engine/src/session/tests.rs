@@ -783,6 +783,108 @@ fn train_after_an_apostrophe_reparse_refuses_an_empty_start_column() {
     );
 }
 
+/// A stale span that starts on an internal separator column — a zero key,
+/// which `fill_matrix` installs between keys
+/// (`storage/phonetic_key_matrix.cpp:52-78`) — is not an empty column. The
+/// pin's `get_column_size(start) > 0` (`:663`) passes and, when the stale
+/// end lands on a key column, training completes; the engine must accept
+/// the zero-key column rather than refuse it as `EmptyStartColumn`.
+#[test]
+fn train_after_a_reparse_onto_an_internal_zero_key_column_trains() {
+    let mut session = trellis_session();
+    session.replace_raw("nihao").expect("initial parse");
+    assert!(session.guess_sentence().expect("guess"));
+    session.select(1).expect("choose 你");
+    session
+        .replace_raw("ni'ha")
+        .expect("re-parse onto the apostrophe");
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    assert!(
+        session
+            .train_nbest(0, &mut recorder)
+            .expect("the zero-key column trains"),
+        "the stale row still trains"
+    );
+}
+
+/// The stale end can still land on an empty column: after a re-parse to
+/// `ni'hao` the pin passes `:663` (the apostrophe column holds a zero key)
+/// and aborts at `:664` (`get_column_size(end) > 0`). The engine refuses
+/// with [`TrainingSpanFault::EndEmptyColumn`] before observing anything.
+#[test]
+fn train_after_a_reparse_onto_an_empty_end_column_refuses() {
+    let mut session = trellis_session();
+    session.replace_raw("nihao").expect("initial parse");
+    assert!(session.guess_sentence().expect("guess"));
+    session.select(1).expect("choose 你");
+    session.replace_raw("ni'hao").expect("re-parse");
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    let error = session
+        .train_nbest(0, &mut recorder)
+        .expect_err("the empty end column refuses");
+    assert_eq!(
+        error,
+        EngineError::StaleTrainingSpan {
+            position: 2,
+            fault: TrainingSpanFault::EndEmptyColumn,
+        }
+    );
+    assert!(
+        recorder.observed.is_empty(),
+        "the refusal precedes every observation"
+    );
+}
+
+/// 074a2219 `train_result3` walks the spans in order: an earlier span's
+/// `increase_pronunciation_possibility` bounds assert
+/// (`storage/phonetic_key_matrix.cpp:661`) is reached before a later
+/// span's forced-token assert (`phonetic_lookup.h:868`), so the earlier
+/// fault is the one the facade must name.
+#[test]
+fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
+    use crate::constraint::PhraseSpan;
+    let mut session = trellis_session();
+    session.replace_raw("ni").expect("parse");
+    session.constraints.resize(6);
+    session
+        .constraints
+        .add(0, 2, PhraseToken::new(1), "你".into());
+    // The later forcing's token differs from the decoded span's token.
+    session
+        .constraints
+        .add(4, 6, PhraseToken::new(9), "X".into());
+    let spans = vec![
+        PhraseSpan {
+            start: 0,
+            token: PhraseToken::new(1),
+            text: "你".into(),
+        },
+        PhraseSpan {
+            start: 4,
+            token: PhraseToken::new(1),
+            text: "X".into(),
+        },
+    ];
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    let error = session
+        .train_spans(&spans, &mut recorder)
+        .expect_err("the earlier bounds fault wins");
+    assert_eq!(
+        error,
+        EngineError::StaleTrainingSpan {
+            position: 0,
+            fault: TrainingSpanFault::PastMatrixEnd,
+        }
+    );
+    assert!(recorder.observed.is_empty());
+}
+
 #[test]
 fn train_reports_a_failing_user_model() {
     struct Failing;

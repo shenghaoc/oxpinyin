@@ -390,7 +390,11 @@ where
         Ok(true)
     }
 
-    fn train_spans<U>(&self, spans: &[PhraseSpan], user: &mut U) -> Result<(), EngineError>
+    pub(super) fn train_spans<U>(
+        &self,
+        spans: &[PhraseSpan],
+        user: &mut U,
+    ) -> Result<(), EngineError>
     where
         U: UserModel<Token = PhraseToken>,
         U::Error: Display,
@@ -406,17 +410,8 @@ where
             return Ok(());
         }
         // `assert(token == constraint->m_token)` at a forced position
-        // (`phonetic_lookup.h:868`): checked before the first observation,
-        // since the pin's abort leaves nothing behind.
-        if let Some(span) = spans.iter().find(|span| {
-            self.constraints
-                .one_step_token_at(span.start)
-                .is_some_and(|forced| forced != span.token)
-        }) {
-            return Err(EngineError::StaleTrainingConstraint {
-                position: span.start,
-            });
-        }
+        // (`phonetic_lookup.h:868`): checked in the walk below, in span
+        // order, since the pin's abort leaves nothing behind.
         let graph = self.build_graph_at(0, self.input.as_bytes())?;
         let scan = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
         // The walk indexes raw-buffer positions, separators included. The
@@ -432,6 +427,7 @@ where
             self.input.physical_separators(),
         );
         let matrix = &parsed.columns;
+        let zeros = &parsed.zeros;
         // 074a2219 phonetic_lookup.h:921 tails the last span at
         // `constraints->length() - 1`, NOT the CURRENT matrix's last
         // column: the store survives a parse (`pinyin.cpp:1497-1525`,
@@ -453,6 +449,23 @@ where
             if !(train_next || forced) {
                 continue;
             }
+            // 074a2219 train_result3 walks the spans in order: the forced
+            // position's `assert(token == constraint->m_token)`
+            // (`phonetic_lookup.h:868`) precedes
+            // `increase_pronunciation_possibility`'s three asserts
+            // (`storage/phonetic_key_matrix.cpp:661`, `:663`, `:664`) for
+            // the same span, so an earlier span's bounds fault is reached
+            // before a later span's token fault. Both are preflight.
+            if forced
+                && self
+                    .constraints
+                    .one_step_token_at(span.start)
+                    .is_some_and(|forced_token| forced_token != span.token)
+            {
+                return Err(EngineError::StaleTrainingConstraint {
+                    position: span.start,
+                });
+            }
             train_next = forced;
             // 074a2219 phonetic_lookup.h:911-920 scans to the next
             // non-null result token, not the forced constraint end.
@@ -465,13 +478,16 @@ where
                     fault: TrainingSpanFault::PastMatrixEnd,
                 });
             }
-            if matrix
-                .get(span.start)
-                .is_none_or(|column| column.is_empty())
-            {
+            if column_is_empty(matrix, zeros, span.start) {
                 return Err(EngineError::StaleTrainingSpan {
                     position: span.start,
                     fault: TrainingSpanFault::EmptyStartColumn,
+                });
+            }
+            if column_is_empty(matrix, zeros, end) {
+                return Err(EngineError::StaleTrainingSpan {
+                    position: span.start,
+                    fault: TrainingSpanFault::EndEmptyColumn,
                 });
             }
             ends[index] = Some(end);
@@ -577,6 +593,14 @@ where
         self.reset();
         Ok(text)
     }
+}
+
+/// 074a2219 `get_column_size(offset) > 0` (`storage/phonetic_key_matrix.cpp`):
+/// a column is occupied by either a real key or a zero key. `from_scan`
+/// records real keys in `matrix` and internal separator zero keys (and the
+/// reserved end slot) in `zeros`.
+fn column_is_empty(matrix: &[Vec<ScanKey>], zeros: &[bool], offset: usize) -> bool {
+    matrix.get(offset).is_none_or(Vec::is_empty) && !zeros.get(offset).copied().unwrap_or(false)
 }
 
 /// 074a2219 storage/phonetic_key_matrix.cpp:603-670: lazy depth-first

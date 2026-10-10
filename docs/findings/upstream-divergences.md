@@ -2857,9 +2857,12 @@ survives the next `pinyin_parse_more_full_pinyins` unvalidated
 (`src/pinyin.cpp:1497-1525`), so a re-parse that shortens the input leaves it
 longer than the matrix the walk now indexes. `increase_pronunciation_possibility`
 (`src/storage/phonetic_key_matrix.cpp:657-668`) then asserts
-`end < matrix->size()` (`:661`) and, when the shortened input begins with an
-apostrophe so its column 0 is empty, `matrix->get_column_size(start) > 0`
-(`:663`); the pin dies of SIGABRT at the first failing call.
+`end < matrix->size()` (`:661`), `matrix->get_column_size(start) > 0`
+(`:663`) and `matrix->get_column_size(end) > 0` (`:664`); the pin dies of
+SIGABRT at the first failing call. `fill_matrix` (`:52-78`) fills an internal
+separator between keys with a zero key, and `get_column_size` counts it, so
+an internal apostrophe column satisfies `:663`/`:664`; only a genuine gap — a
+leading separator run — is empty.
 
 Reproduced on bdb with a small ctypes driver under an `LD_PRELOAD`
 `__assert_fail` wrapper that prints the failing statement
@@ -2874,25 +2877,40 @@ and `+0x2b008 (…:663 …)`):
 - The same recipe with the re-parse `'ni`: SIGABRT at `:663`, because the
   leading apostrophe leaves column 0 empty while the tail still passes the
   end check on the shorter matrix.
+- The same recipe with the re-parse `ni'ha`: the stale second span starts on
+  the internal apostrophe column, a zero key, so `:663` passes, and its stale
+  end lands on a key column, so all three asserts pass and
+  `pinyin_train(inst, 0)` returns `true`.
+- The same recipe with the re-parse `ni'hao`: `:663` passes for the same
+  reason but the stale end lands on an empty column, so the pin dies at
+  `:664`.
 
-oxpinyin's `Session::train`/`train_nbest` pre-scans every trained span against
-the constraints tail and refuses with `EngineError::StaleTrainingSpan`
-(`crates/oxpinyin-engine/src/session/selection.rs`), before observing any user
-state, so nothing is written for a call the pin would have aborted
-(`InstanceCore::train` also leaves the context unmodified). The two C facades
-emit exactly one `g_warning` in their own domain (`libpinyin` for
+oxpinyin's `Session::train`/`train_nbest` walks the spans in order, checking
+each trained span's forced token (`assert(token == constraint->m_token)`,
+`phonetic_lookup.h:868`) and then the three matrix preconditions before
+recording any span, so the first fault in walk order is the one reported and
+nothing is observed for a call the pin would have aborted
+(`InstanceCore::train` also leaves the context unmodified). A column counts as
+occupied when `from_scan` holds a real key there or marked it a zero key
+(`column_is_empty`), so the internal separator column is accepted and the
+stale row trains, as at the pin. The refusal is
+`EngineError::StaleTrainingSpan`, carrying which precondition failed; the two
+C facades emit exactly one `g_warning` in their own domain (`libpinyin` for
 `pinyin_train`, `libzhuyin` for `zhuyin_train`), carrying the pin's assertion
-text (`end < matrix->size()` or `matrix->get_column_size(start) > 0`), and
-answer `false`. The walk now indexes the separator-adjusted scan topology the
+text (`end < matrix->size()`, `matrix->get_column_size(start) > 0` or
+`matrix->get_column_size(end) > 0`), and answer `false`. The walk now indexes the separator-adjusted scan topology the
 lookup indexes (`ParsedMatrix::from_scan`), so a span over a leading
 separator's empty column is refused rather than silently reading the key the
 raw scan re-anchored to offset 0 — the shape that made the `'ni` fork
 observable.
 
-Held by `contract-diff.py` cases `abort-train-after-reparse-past-matrix-end`
-and `abort-train-after-reparse-empty-start-column`, with the control
-`train-after-choose-lookup-control`: MATCH on bdb, kc and tkrzw (pin SIGABRT
--6, subject `false` with one `libpinyin` warning), the two abort cases DIFFER
-against the parent build, and the control matches on both. No interface, ABI
-or dependency change.
+Held by `contract-diff.py` cases `abort-train-after-reparse-past-matrix-end`,
+`abort-train-after-reparse-empty-start-column` and
+`abort-train-after-reparse-empty-end-column`, with the controls
+`train-after-choose-lookup-control` and
+`train-after-reparse-internal-zero-key`: MATCH on bdb (the three abort cases
+run the pin to SIGABRT -6 and the subject to `false` with one `libpinyin`
+warning; the internal zero-key case completes `true` on both), the three abort
+cases DIFFER against the parent build, and both controls match on both. No
+interface, ABI or dependency change.
 

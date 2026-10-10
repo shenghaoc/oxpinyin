@@ -15,8 +15,15 @@ pub enum TrainingSpanFault {
     /// current matrix (`phonetic_key_matrix.cpp:661`).
     PastMatrixEnd,
     /// `assert(matrix->get_column_size(start) > 0)` — the span starts on
-    /// a column the current matrix leaves empty (`:663`).
+    /// a column the current matrix leaves empty (`:663`). An internal
+    /// separator between keys is filled with a zero key (not empty), so it
+    /// is accepted; only a genuine gap (a leading separator run) trips this.
     EmptyStartColumn,
+    /// `assert(matrix->get_column_size(end) > 0)` — the span ends on a
+    /// column the current matrix leaves empty (`:664`). The internal
+    /// apostrophe can leave the start column non-empty (a zero key) while
+    /// the stale end still lands on an empty column.
+    EndEmptyColumn,
 }
 
 /// Anything a session can fail at.
@@ -118,7 +125,8 @@ pub enum EngineError {
     /// result no longer fits the current matrix because a re-parse
     /// shortened the input after the last sentence lookup. The pin aborts
     /// (`assert(end < matrix->size())`, `storage/phonetic_key_matrix.cpp:661`;
-    /// `assert(matrix->get_column_size(start) > 0)`, `:663` at the pin);
+    /// `assert(matrix->get_column_size(start) > 0)`, `:663`;
+    /// `assert(matrix->get_column_size(end) > 0)`, `:664` at the pin);
     /// the engine answers an error instead, before observing anything.
     StaleTrainingSpan {
         /// The matrix position of the offending phrase.
