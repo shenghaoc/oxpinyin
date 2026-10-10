@@ -47,6 +47,12 @@ impl ParsedMatrix {
                 *zero = true;
             }
         }
+        // fill_matrix always installs its reserved zero-key end slot,
+        // including exact-key schemes without physical separators
+        // (phonetic_key_matrix.cpp:60-66 at pin 074a2219).
+        if first.is_some() {
+            zeros[bound] = true;
+        }
         Self {
             columns,
             zeros,
@@ -71,19 +77,21 @@ where
             // transforms applied by pinyin.cpp:1521-1523.
             if self.collapse_sentence_rows_to_best {
                 let ending = build_scan_matrix(&graph, self.settings.options, false);
-                let mut retained = ParsedMatrix::from_scan(
+                let retained = ParsedMatrix::from_scan(
                     &ending,
                     graph.consumed(),
                     self.input.physical_separators(),
                 );
-                // Even formatted/exact keys have a live reserved end column
-                // for search_matrix (phonetic_key_matrix.cpp:60-66).
-                if ending.iter().any(|column| !column.is_empty()) {
-                    retained.zeros[graph.consumed()] = true;
-                }
                 self.input.ending_matrix = Some(retained);
             }
-            let scan = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
+            // The two facades have different full-pinyin parse orders:
+            // pinyin.cpp:1514-1522 includes both split passes; zhuyin.cpp:
+            // 1038-1040 runs fill then fuzzy only (pin 074a2219).
+            let scan = build_scan_matrix(
+                &graph,
+                self.settings.options,
+                self.input.full_pinyin() && !self.collapse_sentence_rows_to_best,
+            );
             self.input.matrix = Some(ParsedMatrix::from_scan(
                 &scan,
                 graph.consumed(),

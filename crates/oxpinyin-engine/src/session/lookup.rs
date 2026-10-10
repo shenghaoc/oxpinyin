@@ -106,6 +106,7 @@ where
         out: &mut Vec<Candidate>,
     ) -> Result<usize, EngineError> {
         out.clear();
+        self.ensure_matrix()?;
         if anchor >= self.input.len() {
             // A fully-consumed (or past-end) anchor still carries its
             // sentence rows — upstream's window prepends `m_nbest_results`
@@ -161,13 +162,7 @@ where
                     window_phrase: &mut window_phrase,
                     window_addon: &mut window_addon,
                 };
-                self.collect_window_scan(
-                    &graph,
-                    remaining.as_bytes(),
-                    self.settings.options,
-                    &mut collected,
-                    &mut scratch,
-                )?;
+                self.collect_window_scan(remaining.as_bytes(), &mut collected, &mut scratch)?;
             }
 
             // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2214`), hoisted
@@ -736,7 +731,11 @@ where
         // The split alternates are a full-pinyin-parse artifact — the same
         // law the scan applies (`build_scan_matrix`'s `divided` argument at
         // the anchored call site) — and exact keys never gain them.
-        let matrix = build_scan_matrix(&graph, self.settings.options, true);
+        let matrix = build_scan_matrix(
+            &graph,
+            self.settings.options,
+            !self.collapse_sentence_rows_to_best,
+        );
         if matrix
             .iter()
             .flatten()
@@ -1092,9 +1091,9 @@ where
 
     /// The expanding-window scan of the pinned candidate collection.
     ///
-    /// Start is fixed at the composition offset (byte 0 of the remaining
-    /// input); `end` walks outward over every byte position the graph
-    /// reaches. At each `[start, end)` window every key-path through the scan
+    /// Start is fixed at the requested offset in the retained matrix;
+    /// `end` walks outward over the whole parse's remaining columns. At
+    /// each `[start, end)` window every key-path through the scan
     /// matrix — the selected parse plus the resplit/divided additions,
     /// `docs/findings/matrix-split-tables.md` — is enumerated and the phrase
     /// table is searched on the accumulated sequence; a key path with any
@@ -1109,30 +1108,31 @@ where
     /// repeat the same key sequence.
     pub(super) fn collect_window_scan(
         &self,
-        graph: &SegmentGraph,
         input: &[u8],
-        options: OptionBits,
         into: &mut Vec<Candidate>,
         scratch: &mut ScanScratch<'_>,
     ) -> Result<(), EngineError> {
-        let matrix = build_scan_matrix(graph, options, self.input.full_pinyin());
-        let retained = self.input.matrix.as_ref().filter(|_| {
-            self.input.physical_separators() && self.input.as_bytes().first() == Some(&b'\'')
-        });
+        // pinyin.cpp:2229-2262 searches from the offset in the existing
+        // whole-parse matrix. Re-parsing the suffix loses resplit/divided
+        // keys whose spans were created by the earlier whole-parse passes.
+        let Some(retained) = self.input.matrix.as_ref() else {
+            return Ok(());
+        };
         let anchor = self.input.len().saturating_sub(input.len());
-        let bound = retained.map_or(graph.consumed(), |matrix| {
-            matrix.bound.saturating_sub(anchor)
-        });
+        let bound = retained.bound.saturating_sub(anchor);
         let mut end = 1usize;
         while end <= bound {
             // An end position no key starts at is an empty column: widen.
-            let mut continued = matrix.get(end).is_none_or(std::vec::Vec::is_empty);
+            let mut continued = retained
+                .columns
+                .get(anchor + end)
+                .is_none_or(std::vec::Vec::is_empty);
             scratch.path.clear();
             scratch.window_phrase.clear();
             scratch.window_addon.clear();
             {
                 let mut buf = ScanBuf {
-                    span_base: if retained.is_some() { anchor } else { 0 },
+                    span_base: anchor,
                     path: scratch.path,
                     tones: SmallVec::new(),
                     system: scratch.window_phrase,
@@ -1140,11 +1140,7 @@ where
                     continued: &mut continued,
                     entries: scratch.entries,
                 };
-                if let Some(retained) = retained {
-                    self.scan_parsed_paths(retained, anchor, anchor + end, &mut buf)?;
-                } else {
-                    self.scan_paths(&matrix, 0, end, &mut buf)?;
-                }
+                self.scan_parsed_paths(retained, anchor, anchor + end, &mut buf)?;
             }
             // Flush the window in the pin's array order: the default
             // facade's tokens ascending, then the addon facade's — the
@@ -1162,51 +1158,6 @@ where
                 end += 1;
             }
         }
-        Ok(())
-    }
-
-    /// Enumerates every key-path from `node` to `end` and searches the table on
-    /// each complete path.
-    pub(super) fn scan_paths(
-        &self,
-        matrix: &[Vec<ScanKey>],
-        node: usize,
-        end: usize,
-        buf: &mut ScanBuf<'_>,
-    ) -> Result<(), EngineError> {
-        let Some(column) = matrix.get(node) else {
-            return Ok(());
-        };
-        for scan_key in column.iter().copied() {
-            self.visit_scan_key(matrix, scan_key, end, buf)?;
-        }
-        Ok(())
-    }
-
-    /// One matrix key during the scan.
-    pub(super) fn visit_scan_key(
-        &self,
-        matrix: &[Vec<ScanKey>],
-        scan_key: ScanKey,
-        end: usize,
-        buf: &mut ScanBuf<'_>,
-    ) -> Result<(), EngineError> {
-        let to = scan_key.to;
-        if to > end {
-            // A key overhanging the window: the phrase could continue, which is
-            // upstream's `longest > end` CONTINUED.
-            *buf.continued = true;
-            return Ok(());
-        }
-        buf.path.push(scan_key.key);
-        buf.tones.push(scan_key.tone);
-        if to == end {
-            self.search_scan_path(buf, end)?;
-        } else if buf.path.len() < MAX_PHRASE_LENGTH {
-            self.scan_paths(matrix, to, end, buf)?;
-        }
-        buf.path.pop();
-        buf.tones.pop();
         Ok(())
     }
 

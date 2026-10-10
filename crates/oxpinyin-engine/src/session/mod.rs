@@ -621,7 +621,8 @@ pub fn build_scan_matrix(
     // Both exact-key paths still run fill then fuzzy: double pinyin at
     // pinyin.cpp:1557-1559 and chewing at :1602-1604 (pin 074a2219).
 
-    // 2. Resplit pairs along the selected path. A pair only resplits when
+    // 2. Resplit every key in each column, including right halves that an
+    // earlier column appended during this pass. A pair only resplits when
     // the two keys share a boundary with no apostrophe between them: the
     // pin fills a zero key at a separator, so its pairs never span one.
     // A toned key never resplits: upstream matches the full ChewingKey
@@ -631,9 +632,7 @@ pub fn build_scan_matrix(
     // `options & USE_RESPLIT_TABLE` (`phonetic_key_matrix.cpp:89`) and
     // returns false without it. At `0x0` neither table bit is set.
     if divided && options.has_resplit_table() {
-        for addition in &resplit_additions(&selected) {
-            columns[addition.from].push(*addition);
-        }
+        resplit_step(&mut columns);
     }
 
     // 3. Divided syllables over every key collected so far. The split parts
@@ -648,14 +647,8 @@ pub fn build_scan_matrix(
     // returns false without it. At `0x0` the bit is clear, so `xian`'s
     // divided pairs (`xi` + `an`) are not in the inventory.
     if divided && options.has_divided_table() {
-        for addition in &divided_additions(&columns) {
-            columns[addition.from].push(*addition);
-        }
+        inner_split_step(&mut columns);
     }
-
-    // Pre-fuzzy pin: first `SyllableKey` in a column. Fuzzy is off on the
-    // parity word, so this is the all-off / 0x18a matrix.
-    keep_first_in_column(&mut columns, false);
 
     // 4. `fuzzy_syllable_step`. Upstream `PhoneticTable::append` is a bag
     // push (`phonetic_key_matrix.h:92-99`); `ChewingKeyRest` is the span
@@ -667,113 +660,83 @@ pub fn build_scan_matrix(
     for addition in &fuzzy_additions(&columns, options) {
         columns[addition.from].push(*addition);
     }
-    keep_first_in_column(&mut columns, true);
+    keep_first_in_column(&mut columns);
 
     columns
 }
 
-/// Phase 2 of [`build_scan_matrix`]: the resplit alternates along the
-/// selected path — two zero-tone keys sharing a boundary with no
-/// apostrophe between them, split through [`RESPLIT_TABLE`].
-///
-/// A first key that itself follows a separator still resplits: the pin
-/// keys it at its own `m_raw_begin`, after the apostrophe, and measures
-/// the split from there (`phonetic_key_matrix.cpp:113,145`, pin
-/// `074a2219`). The split is therefore measured from `syllable_start`,
-/// and the left half keeps the separator-riding span.
-fn resplit_additions(selected: &[ScanKey]) -> Vec<ScanKey> {
-    let mut additions: Vec<ScanKey> = Vec::new();
-    for pair in selected.windows(2) {
-        if pair[1].from != pair[0].to || pair[1].crosses_separator {
-            continue;
+/// The pin's forward resplit pass (074a2219,
+/// `phonetic_key_matrix.cpp:87-167`). Snapshot the current column when
+/// reached, and the end column for each key. Appending to the current
+/// column does not extend that snapshot; right halves appended to later
+/// columns are visited when those columns are reached in this same pass.
+fn resplit_step(columns: &mut [Vec<ScanKey>]) {
+    for index in 0..columns.len().saturating_sub(1) {
+        let keys = columns[index].clone();
+        for key in keys {
+            let Some(next_keys) = columns.get(key.to).cloned() else {
+                continue;
+            };
+            for next_key in next_keys {
+                if next_key.crosses_separator || key.tone != 0 || next_key.tone != 0 {
+                    continue;
+                }
+                let Some((_, _, left, right)) =
+                    RESPLIT_TABLE.iter().find(|(first, second, _, _)| {
+                        *first == key.key.text() && *second == next_key.key.text()
+                    })
+                else {
+                    continue;
+                };
+                append_split(columns, key, next_key.to, left, right);
+            }
         }
-        if pair[0].tone != 0 || pair[1].tone != 0 {
-            continue;
-        }
-        let Some((_, _, left, right)) = RESPLIT_TABLE.iter().find(|(first, second, _, _)| {
-            *first == pair[0].key.text() && *second == pair[1].key.text()
-        }) else {
-            continue;
-        };
-        let Some(left_key) = SyllableKey::from_text(left) else {
-            continue;
-        };
-        let Some(right_key) = SyllableKey::from_text(right) else {
-            continue;
-        };
-        let split = pair[0].syllable_start + left.len();
-        additions.push(ScanKey {
-            key: left_key,
-            from: pair[0].from,
-            to: split,
-            syllable_start: pair[0].syllable_start,
-            crosses_separator: pair[0].crosses_separator,
-            tone: 0,
-        });
-        additions.push(ScanKey {
-            key: right_key,
-            from: split,
-            to: pair[1].to,
-            syllable_start: split,
-            crosses_separator: false,
-            tone: 0,
-        });
     }
-    additions
 }
 
-/// Phase 3 of [`build_scan_matrix`]: the divided-syllable alternates for
-/// every zero-tone key collected so far, split through [`DIVIDED_TABLE`].
-fn divided_additions(columns: &[Vec<ScanKey>]) -> Vec<ScanKey> {
-    let snapshot: Vec<ScanKey> = columns
-        .iter()
-        .enumerate()
-        .flat_map(|(position, keys)| keys.iter().map(move |key| (position, *key)))
-        .map(|(position, key)| ScanKey {
-            key: key.key,
-            from: position,
-            to: key.to,
-            syllable_start: key.syllable_start,
-            crosses_separator: key.crosses_separator,
-            tone: key.tone,
-        })
-        .collect();
-    let mut additions: Vec<ScanKey> = Vec::new();
-    for scan_key in &snapshot {
-        if scan_key.tone != 0 {
-            continue;
+/// The divided pass follows resplit over the updated matrix, taking one
+/// column snapshot at a time (`phonetic_key_matrix.cpp:169-228`).
+fn inner_split_step(columns: &mut [Vec<ScanKey>]) {
+    for index in 0..columns.len() {
+        let keys = columns[index].clone();
+        for key in keys {
+            if key.tone != 0 {
+                continue;
+            }
+            let Some((_, left, right)) = DIVIDED_TABLE
+                .iter()
+                .find(|(syllable, _, _)| *syllable == key.key.text())
+            else {
+                continue;
+            };
+            append_split(columns, key, key.to, left, right);
         }
-        let Some((_, left, right)) = DIVIDED_TABLE
-            .iter()
-            .find(|(syllable, _, _)| *syllable == scan_key.key.text())
-        else {
-            continue;
-        };
-        let Some(left_key) = SyllableKey::from_text(left) else {
-            continue;
-        };
-        let Some(right_key) = SyllableKey::from_text(right) else {
-            continue;
-        };
-        let split = scan_key.syllable_start + left.len();
-        additions.push(ScanKey {
-            key: left_key,
-            from: scan_key.from,
-            to: split,
-            syllable_start: scan_key.syllable_start,
-            crosses_separator: scan_key.crosses_separator,
-            tone: 0,
-        });
-        additions.push(ScanKey {
-            key: right_key,
-            from: split,
-            to: scan_key.to,
-            syllable_start: split,
-            crosses_separator: false,
-            tone: 0,
-        });
     }
-    additions
+}
+
+fn append_split(columns: &mut [Vec<ScanKey>], key: ScanKey, end: usize, left: &str, right: &str) {
+    let (Some(left_key), Some(right_key)) =
+        (SyllableKey::from_text(left), SyllableKey::from_text(right))
+    else {
+        return;
+    };
+    let split = key.syllable_start + left.len();
+    if split >= columns.len() {
+        return;
+    }
+    columns[key.from].push(ScanKey {
+        key: left_key,
+        to: split,
+        ..key
+    });
+    columns[split].push(ScanKey {
+        key: right_key,
+        from: split,
+        to: end,
+        syllable_start: split,
+        crosses_separator: false,
+        tone: 0,
+    });
 }
 
 /// Phase 4 of [`build_scan_matrix`]: the fuzzy alternates of every key in
@@ -800,14 +763,16 @@ fn fuzzy_additions(columns: &[Vec<ScanKey>], options: OptionBits) -> Vec<ScanKey
     additions
 }
 
-/// Keep the first column entry. `by_span` false is key-only (pre-fuzzy
-/// pin); true is `(key, to)` (upstream Rest span).
-fn keep_first_in_column(columns: &mut [Vec<ScanKey>], by_span: bool) {
+/// Collapse only identical key/span/tone paths after all mutation passes.
+/// The pin appends a bag: the same key with a different end must survive.
+fn keep_first_in_column(columns: &mut [Vec<ScanKey>]) {
     for column in columns {
         let mut kept = 0_usize;
         for index in 0..column.len() {
             let duplicate = column[..kept].iter().any(|earlier| {
-                earlier.key == column[index].key && (!by_span || earlier.to == column[index].to)
+                earlier.key == column[index].key
+                    && earlier.to == column[index].to
+                    && earlier.tone == column[index].tone
             });
             if !duplicate {
                 column.swap(kept, index);
