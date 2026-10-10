@@ -716,10 +716,15 @@ Architecture — a session scratch behind the value engine:
   then all renames) and fini, each writing `user.conf` under the
   facade's law (`UserConfLaw`, amendment below). `user_phrase_index.bin`
   is rebuilt at save from the USER_FILE items; at load it is read back
-  only as a token→text membership set (`PHRASE_TABLE`) for
-  `remove_user_phrase`'s phrase-table check (`pinyin.cpp:3750`; policy
-  row 78), never as a text source — the value engine's text lookups still
-  derive from `user.bin`. `user_pinyin_index.bin` is not (amendment
+  only as a set of exact `(token, text)` membership pairs
+  (`PHRASE_TABLE`) for `remove_user_phrase`'s phrase-table check
+  (`pinyin.cpp:3750`; policy row 81) — a token may sit under several
+  texts, and the pin matches the exact pair — never as a text source.
+  A standalone store opening a profile written before the table existed
+  backfills the pairs from its `PHRASE` rows; a libpinyin session does
+  not (a missing row there is the pin's `:3750` state). The value
+  engine's text lookups still derive from `user.bin`.
+  `user_pinyin_index.bin` is not (amendment
   2026-09-27, #534): a reading merged into an existing phrase is never
   indexed (`pinyin.cpp:569-582`), so its records are loaded and saved
   back as the per-reading `indexed` flag.

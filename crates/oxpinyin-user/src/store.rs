@@ -89,10 +89,12 @@ pub const PHRASE_BY_TEXT: &str = "user_phrase_by_text";
 pub const PHRASE_BY_LIB_TEXT: &str = "user_phrase_by_lib_text";
 /// The pin's `m_phrase_table` membership loaded from
 /// `user_phrase_index.bin` — `phrase_table->remove_index`'s table
-/// (`pinyin.cpp:3750`), as token → phrase text. The subject's text
-/// lookups use [`PHRASE_BY_LIB_TEXT`], derived from the `USER_FILE`
-/// items; this row set exists only so `remove_user_phrase` can reproduce
-/// the pin's phrase-table miss.
+/// (`pinyin.cpp:3750`), as exact `(token, phrase text)` pairs. The
+/// subject's text lookups use [`PHRASE_BY_LIB_TEXT`], derived from the
+/// `USER_FILE` items; this row set exists only so `remove_user_phrase`
+/// can reproduce the pin's phrase-table miss. A token may sit under more
+/// than one text, so the row key is the whole pair (see
+/// [`phrase_table_key`]), not the token alone.
 pub const PHRASE_TABLE: &str = "user_phrase_table";
 pub const PRONUNCIATION: &str = "user_pronunciation";
 pub const ALLOC: &str = "user_phrase_alloc";
@@ -102,6 +104,17 @@ pub const UNIGRAM_TOTAL_KEY: u8 = 0;
 
 /// Sole key in the `user_phrase_alloc` table.
 pub const ALLOC_CURSOR: u8 = 0;
+
+/// The row key of a [`PHRASE_TABLE`] membership: the exact `(token, phrase
+/// text)` pair as 4 big-endian token bytes followed by the UTF-8 text. Keying
+/// the pair — rather than the token with the text as the value — keeps every
+/// membership when a token is listed under more than one text, so
+/// `remove_user_phrase` succeeds whenever the exact pair is present, as
+/// `phrase_table->remove_index` (`pinyin.cpp:3750`) does.
+#[must_use]
+pub(crate) fn phrase_table_key(token: Token, text: &str) -> Vec<u8> {
+    codec::encode_token_bytes(token, text.as_bytes())
+}
 
 /// Which seed rule an update applies.
 #[derive(Clone, Copy)]
@@ -796,6 +809,30 @@ impl<S: WriteStore> GenericUserStore<S> {
             if txn.get(ALLOC, &alloc_key)?.is_none() {
                 txn.put(ALLOC, &alloc_key, &codec::encode_token(FIRST_USER_TOKEN))?;
             }
+
+            // Backfill `PHRASE_TABLE` for a store written before the table
+            // existed: derive each phrase's exact `(token, text)` pair from
+            // its `PHRASE` row, so a pre-upgrade phrase stays removable.
+            // Only standalone stores run `init_and_wrap`; a libpinyin session
+            // seeds the table from `user_phrase_index.bin` instead, where a
+            // missing row is intentional state `pinyin_remove_user_candidate`
+            // reproduces at `pinyin.cpp:3750` (see `remove_user_phrase`), so
+            // that path must not be backfilled here.
+            if txn.is_empty(PHRASE_TABLE)? {
+                let mut memberships: Vec<(Token, String)> = Vec::new();
+                txn.for_each(PHRASE, &mut |k, v| {
+                    let token = codec::decode_token(k)
+                        .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
+                    let text = codec::decode_str(v)
+                        .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?
+                        .to_owned();
+                    memberships.push((token, text));
+                    Ok(())
+                })?;
+                for (token, text) in memberships {
+                    txn.put(PHRASE_TABLE, &phrase_table_key(token, &text), &[])?;
+                }
+            }
             has_user_data_in_write_txn(txn)
         })?;
 
@@ -1255,13 +1292,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                     )?;
                     // `_add_phrase`'s new-item path calls
                     // `phrase_table->add_index` (`pinyin.cpp:596`), so the
-                    // pin's phrase table gains the token and a later
-                    // `remove_index` finds it.
-                    txn.put(
-                        PHRASE_TABLE,
-                        &codec::encode_token(token),
-                        codec::encode_str(phrase),
-                    )?;
+                    // pin's phrase table gains the `(token, text)` pair and
+                    // a later `remove_index` finds it.
+                    txn.put(PHRASE_TABLE, &phrase_table_key(token, phrase), &[])?;
                 }
 
                 // The new-item path (`pinyin.cpp:585-607`): indexed
@@ -1886,7 +1919,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             let pron_keys = collect_pronunciation_keys_from_txn(txn, &matched_tokens)?;
             for (token, text) in matched {
                 txn.remove(PHRASE, &codec::encode_token(token))?;
-                txn.remove(PHRASE_TABLE, &codec::encode_token(token))?;
+                txn.remove(PHRASE_TABLE, &phrase_table_key(token, &text))?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
                     txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
                 }
@@ -1942,14 +1975,13 @@ impl<S: WriteStore> GenericUserStore<S> {
 
                 // `phrase_table->remove_index` (`pinyin.cpp:3750`): the
                 // phrase table loaded from `user_phrase_index.bin` must
-                // hold this token under this text, or the pin asserts.
-                // Nothing else reads these rows (the subject's text
-                // lookups derive from `user.bin`; see
-                // `docs/findings/user-store.md` §11).
-                let Some(table_bytes) = txn.get(PHRASE_TABLE, &token_key)? else {
-                    return Ok(None);
-                };
-                if table_bytes.as_slice() != text.as_bytes() {
+                // hold this exact `(token, text)` pair, or the pin asserts.
+                // Keying the whole pair keeps every membership when a token
+                // is listed under more than one text. Nothing else reads
+                // these rows (the subject's text lookups derive from
+                // `user.bin`; see `docs/findings/user-store.md` §11).
+                let table_key = phrase_table_key(token, &text);
+                if txn.get(PHRASE_TABLE, &table_key)?.is_none() {
                     return Ok(None);
                 }
 
@@ -1963,7 +1995,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 }
 
                 txn.remove(PHRASE, &token_key)?;
-                txn.remove(PHRASE_TABLE, &token_key)?;
+                txn.remove(PHRASE_TABLE, &table_key)?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
                     txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
                 }
@@ -2931,6 +2963,72 @@ mod tests {
                     assert_eq!(got.pronunciations()[0].count(), 5);
                     assert_eq!(got.pronunciations()[1].keys(), &[11, 20]);
                     assert_eq!(got.pronunciations()[1].count(), 8);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn phrase_table_membership_keeps_each_token_text_pair() {
+                    // The pin's `m_phrase_table` lists a token under every
+                    // text it indexes, and `remove_index` matches the exact
+                    // `(token, text)` pair (`pinyin.cpp:3750`). A later row
+                    // for the same token must not evict the phrase's own
+                    // membership, or the phrase would stop being removable.
+                    let path = temp_path("pair-set");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    let token = store.add_phrase("甲", &[7], None).unwrap();
+                    // A later-walked phrase-index entry: same token, new text.
+                    store
+                        .database()
+                        .write(|txn| txn.put(PHRASE_TABLE, &phrase_table_key(token, "乙"), &[]))
+                        .unwrap();
+
+                    // The own pair is still present, so removal succeeds and
+                    // drops only that pair; the unrelated membership stays.
+                    assert!(store.remove_user_phrase(token).unwrap());
+                    assert!(store.phrase(token).unwrap().is_none());
+                    assert!(
+                        store
+                            .database()
+                            .get(PHRASE_TABLE, &phrase_table_key(token, "乙"))
+                            .unwrap()
+                            .is_some(),
+                        "removing the phrase drops only its own pair"
+                    );
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn reopening_a_standalone_store_backfills_phrase_table() {
+                    // A store written before `PHRASE_TABLE` existed has
+                    // `PHRASE` rows but no membership rows. Opening it
+                    // standalone must derive the pairs from `PHRASE`, or
+                    // every pre-upgrade phrase would refuse removal.
+                    let path = temp_path("backfill");
+                    let token = {
+                        let mut store = Store::create_standalone(&path).unwrap();
+                        let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                        // Parent-written shape: drop the membership row.
+                        store
+                            .database()
+                            .write(|txn| txn.remove(PHRASE_TABLE, &phrase_table_key(token, "你好")))
+                            .unwrap();
+                        assert!(
+                            store
+                                .database()
+                                .get(PHRASE_TABLE, &phrase_table_key(token, "你好"))
+                                .unwrap()
+                                .is_none()
+                        );
+                        token
+                    };
+
+                    let mut reopened = Store::create_standalone(&path).unwrap();
+                    assert!(reopened.phrase(token).unwrap().is_some());
+                    assert!(
+                        reopened.remove_user_phrase(token).unwrap(),
+                        "the reopen backfilled the phrase-table membership"
+                    );
+                    assert!(reopened.phrase(token).unwrap().is_none());
                     cleanup(&path);
                 }
 
