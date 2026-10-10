@@ -156,13 +156,16 @@ where
         // candidates, cost order, adjacent dedup.
         if self.model.has_real_unigrams() {
             {
+                let mut unreadable = false;
                 let mut scratch = ScanScratch {
+                    unreadable: &mut unreadable,
                     path: &mut path,
                     entries: &mut entries,
                     window_phrase: &mut window_phrase,
                     window_addon: &mut window_addon,
                 };
                 self.collect_window_scan(remaining.as_bytes(), &mut collected, &mut scratch)?;
+                self.scan_unreadable = unreadable;
             }
 
             // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2214`), hoisted
@@ -497,6 +500,7 @@ where
                 len: self.input.len(),
             });
         }
+        self.scan_unreadable = false;
         let mut items = Vec::new();
         if offset < self.input.len() && !self.spans_a_matrix_key(offset)? {
             items.push(Candidate::new(
@@ -518,7 +522,7 @@ where
             return Ok(CandidateList::from_vec(items));
         }
         self.scan_window(offset, &mut items)?;
-        Ok(CandidateList::from_vec(items))
+        Ok(CandidateList::from_vec(items).with_unreadable_item(self.scan_unreadable))
     }
 
     /// Builds the candidate window over spans ENDING at byte `offset` in the
@@ -566,6 +570,7 @@ where
                 len: self.input.len(),
             });
         }
+        self.scan_unreadable = false;
         let mut items = Vec::new();
         // A span cannot end at the composition start, and an end on an
         // apostrophe separator byte is upstream's empty end column: the
@@ -575,7 +580,7 @@ where
             return Ok(CandidateList::from_vec(items));
         }
         self.scan_window_ending(offset, &mut items)?;
-        Ok(CandidateList::from_vec(items))
+        Ok(CandidateList::from_vec(items).with_unreadable_item(self.scan_unreadable))
     }
 
     /// The backward-anchored scan proper: the complete retained parse, every
@@ -615,6 +620,7 @@ where
         } = core::mem::take(&mut self.scratch);
         collected.clear();
         let mut group: Vec<Candidate> = Vec::new();
+        let mut unreadable = false;
 
         for start in 0..bound {
             // An empty column — no key starts here — is the pin's
@@ -638,6 +644,7 @@ where
                     system: &mut window_phrase,
                     addon: &mut window_addon,
                     continued: &mut continued,
+                    unreadable: &mut unreadable,
                     entries: &mut entries,
                 };
                 self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
@@ -692,6 +699,7 @@ where
             window_addon,
         };
 
+        self.scan_unreadable = unreadable;
         dedup_by_text_keep_first(out);
         self.prepend_nbest_rows(out);
         Ok(bound)
@@ -1138,6 +1146,7 @@ where
                     system: scratch.window_phrase,
                     addon: scratch.window_addon,
                     continued: &mut continued,
+                    unreadable: &mut *scratch.unreadable,
                     entries: scratch.entries,
                 };
                 self.scan_parsed_paths(retained, anchor, anchor + end, &mut buf)?;
@@ -1240,6 +1249,7 @@ where
             system,
             addon,
             continued,
+            unreadable,
             entries,
         } = buf;
         let end = end.saturating_sub(*span_base);
@@ -1249,10 +1259,17 @@ where
 
         if has_incomplete && !self.dictionary.handles_partial_keys() {
             for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
-                self.lookup_and_append(sequence.as_slice(), tones, end, system, addon, entries)?;
+                **unreadable |= self.lookup_and_append(
+                    sequence.as_slice(),
+                    tones,
+                    end,
+                    system,
+                    addon,
+                    entries,
+                )?;
             }
         } else {
-            self.lookup_and_append(path, tones, end, system, addon, entries)?;
+            **unreadable |= self.lookup_and_append(path, tones, end, system, addon, entries)?;
         }
 
         let can_extend = self
@@ -1283,9 +1300,12 @@ where
         system: &mut Vec<Candidate>,
         addon: &mut Vec<Candidate>,
         entries: &mut Vec<PhraseEntry>,
-    ) -> Result<(), EngineError> {
-        self.dictionary
-            .lookup_into(sequence, entries)
+    ) -> Result<bool, EngineError> {
+        // The flag rides this call: a token of a loaded library whose item
+        // cannot be read, which the pin's candidate listing dies on.
+        let unreadable = self
+            .dictionary
+            .lookup_into_flagged(sequence, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         if tones.iter().any(|tone| *tone != 0) {
             let mut toned: Vec<u32> = self
@@ -1315,6 +1335,6 @@ where
             CandidateKind::Addon,
             addon,
         );
-        Ok(())
+        Ok(unreadable)
     }
 }

@@ -87,10 +87,14 @@ impl PhraseLibraries {
     /// Returns [`LibraryError`] when a present file does not verify as a
     /// well-formed `SubPhraseIndex` chunk, or when a nibble is named
     /// twice or lies outside the sixteen-library space.
-    pub fn open(dir: &Path, stems: &[(u8, &str)]) -> Result<Self, LibraryError> {
+    pub fn open<S: AsRef<std::ffi::OsStr>>(
+        dir: &Path,
+        stems: &[(u8, S)],
+    ) -> Result<Self, LibraryError> {
         let mut this = Self::empty();
         let mut seen = [false; 16];
-        for &(nibble, file) in stems {
+        for (nibble, file) in stems {
+            let nibble = *nibble;
             let slot = usize::from(nibble);
             if slot >= 16 {
                 return Err(LibraryError::Format(format!(
@@ -103,7 +107,8 @@ impl PhraseLibraries {
                 )));
             }
             seen[slot] = true;
-            let path = dir.join(file);
+            // `g_build_filename`: a name never leaves the directory.
+            let path = crate::table_info::pin_join(dir, file.as_ref());
             match std::fs::metadata(&path) {
                 // Not a regular file: skipped without a word, as before.
                 Ok(meta) if !meta.is_file() => continue,

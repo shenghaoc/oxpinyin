@@ -167,11 +167,29 @@ impl Candidate {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CandidateList {
     items: Vec<Candidate>,
+    unreadable_item: bool,
 }
 
 impl CandidateList {
     pub(crate) const fn from_vec(items: Vec<Candidate>) -> Self {
-        Self { items }
+        Self {
+            items,
+            unreadable_item: false,
+        }
+    }
+
+    pub(crate) const fn with_unreadable_item(mut self, unreadable_item: bool) -> Self {
+        self.unreadable_item = unreadable_item;
+        self
+    }
+
+    /// Whether the lookups that built this list met a token of a loaded
+    /// library whose item cannot be read. The pin's candidate listing dies
+    /// there (`pinyin.cpp:1635-1637`, `:2053`); the entry is left out of the
+    /// list and the C ABIs fail the call.
+    #[must_use]
+    pub const fn had_unreadable_item(&self) -> bool {
+        self.unreadable_item
     }
 
     /// Swap the live list with `items`, returning the previous buffer so

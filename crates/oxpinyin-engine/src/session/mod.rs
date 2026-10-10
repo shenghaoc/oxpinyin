@@ -202,6 +202,10 @@ pub struct Session<D, L> {
     /// Reused scan buffers, threaded through one window scan and handed
     /// straight back — allocation reuse, never observable state.
     scratch: Scratch,
+    /// Whether the scan in progress (or the last one) met a token of a
+    /// loaded library whose item cannot be read; set by the lookups of that
+    /// scan alone and read back into the [`CandidateList`] it built.
+    scan_unreadable: bool,
 }
 
 /// The candidate list and the parse length behind it — the output of one
@@ -547,6 +551,9 @@ const DIVIDED_TABLE: &[(&str, &str, &str)] = &[
 /// The window scan's borrowed scratch: the session-owned buffers one scan
 /// reuses, grouped so the scan takes a single argument.
 struct ScanScratch<'a> {
+    /// Set when a lookup of this scan met a token of a loaded library whose
+    /// item cannot be read.
+    unreadable: &'a mut bool,
     path: &'a mut SmallVec<[SyllableKey; 16]>,
     entries: &'a mut Vec<PhraseEntry>,
     window_phrase: &'a mut Vec<Candidate>,
@@ -561,6 +568,8 @@ struct ScanBuf<'a> {
     system: &'a mut Vec<Candidate>,
     addon: &'a mut Vec<Candidate>,
     continued: &'a mut bool,
+    /// As [`ScanScratch::unreadable`].
+    unreadable: &'a mut bool,
     entries: &'a mut Vec<PhraseEntry>,
 }
 

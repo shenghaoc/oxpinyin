@@ -3296,7 +3296,8 @@ def conf_system(k, *edits):
     the lines naming it, ('re', pattern, replacement) substitutes."""
     system = private_system(k)
     path = os.path.join(system, 'table.conf')
-    text = Path(k.data, 'table.conf').read_text()
+    # A name may hold a byte that is not UTF-8 (`\udcff`, round-tripped).
+    text = Path(k.data, 'table.conf').read_text(errors='surrogateescape')
     for edit in edits:
         if edit[0] == '+':
             text += edit[1] + '\n'
@@ -3309,14 +3310,14 @@ def conf_system(k, *edits):
             assert edit[0] in text, edit
             text = text.replace(edit[0], edit[1])
     os.unlink(path)
-    Path(path).write_text(text)
+    Path(path).write_text(text, errors='surrogateescape')
     return system
 
 
 CONF_TEXTS = {'pinyin': (b'nihao', b'yishu'), 'zhuyin': (b'ni3hao3', b'yi4shu4')}
 
 
-def guess_rows(k, inst, limit=12):
+def conf_guess_rows(k, inst, limit=12):
     """`guess_candidates` at offset 0: the call's answer and the first rows."""
     if k.mode == 'pinyin':
         ok = k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
@@ -3350,20 +3351,30 @@ def conf_view(k, ctx):
         inst = k.fn('alloc_instance', P, P)(ctx)
         k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
         k.fn('guess_sentence', B, P)(inst)
-        view[text.decode()] = [conf_sentence(k, inst), *guess_rows(k, inst)]
+        view[text.decode()] = [conf_sentence(k, inst), *conf_guess_rows(k, inst)]
     return view
 
 
-def user_listing(k):
+def user_listing(k, directory=None):
+    """The files of the user directory (or of `directory`): names as bytes,
+    `user.conf` by text, library chunks by size, and the DBM files named
+    `user_*` by whether a chunk was written over them (a chunk's length word
+    is its size less the 8-byte header)."""
+    directory = directory or k.user
     listing = {}
-    for name in sorted(os.listdir(k.user)):
-        file = os.path.join(k.user, name)
-        if name == 'user.conf':
-            listing[name] = Path(file).read_text().replace('\n', '|')
-        elif not name.startswith('user_') and name.endswith(('.bin', '.dbin')):
-            listing[name] = os.path.getsize(file)
+    for name in sorted(os.listdir(directory)):
+        file = os.path.join(directory, name)
+        key = os.fsencode(name).decode('latin-1')
+        if os.path.isdir(file):
+            listing[key] = 'dir'
+        elif name == 'user.conf':
+            listing[key] = Path(file).read_text().replace('\n', '|')
+        elif name.endswith(('.bin', '.dbin')):
+            data = Path(file).read_bytes()
+            framed = len(data) >= 8 and int.from_bytes(data[:4], 'little') == len(data) - 8
+            listing[key] = len(data) if not name.startswith('user_') else ('chunk' if framed else 'dbm')
         else:
-            listing[name] = None
+            listing[key] = None
     return listing
 
 
@@ -3401,7 +3412,8 @@ def addon_session(k, system, indexes=(0, 3, 4, 5, 15)):
 # Files the parent already answered like the pin: the header fields it read,
 # the words it never needed, an alias, a row that changes nothing observable.
 CONF_CONTROLS = {'addon-duplicate-row', 'addon-files-swapped', 'comment-dropped', 'extra-word-dropped',
-                 'lambda-exponent', 'lambda-half', 'lambda-one', 'lambda-tiny', 'lambda-zero',
+                 'lambda-exponent', 'lambda-half', 'lambda-hex', 'lambda-hex-fraction', 'lambda-hex-upper',
+                 'lambda-one', 'lambda-tiny', 'lambda-zero',
                  'reserved-as-system-file', 'short-row-dropped', 'source-format-zhuyin', 'tsi-is-gb',
                  'versions-other'}
 
@@ -3528,13 +3540,70 @@ conf_abort('source-format-line-missing', ('-', 'source table format'))
 
 # The pin's ordinary `false`: a header directive that does not match answers
 # NULL with the raw `load %s failed!` line and no warning.
-def header_probe(k):
-    return {'ctx': bool(k.init(system=conf_system(k, ('-', 'lambda parameter'))))}
+def header_probe(*edits):
+    def probe(k):
+        return {'ctx': bool(k.init(system=conf_system(k, *edits)))}
+    return probe
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('table-conf-lambda-line-missing' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode,
-         stderr=True)(header_probe)
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    case('table-conf-lambda-line-missing' + _suffix, mode=_mode,
+         stderr=True)(header_probe(('-', 'lambda parameter')))
+    # glibc's scanner does not back up: an exponent mark with no digit after
+    # it, a `0x` with no hex digit and `infin` fail the `%f` conversion.
+    for _name, _spelling in (('exponent-without-digits', '1e'), ('hex-without-digits', '0x'),
+                             ('hex-exponent-without-digits', '0x1p'), ('infin', 'infin')):
+        case('table-conf-lambda-' + _name + _suffix, mode=_mode,
+             stderr=True)(header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
+
+
+# Every spelling glibc's `%f` accepts, hexadecimal floats included.
+for _name, _spelling in (('hex', '0x1p-1'), ('hex-fraction', '0x.8'), ('hex-upper', '0X1.P-1')):
+    conf_case('lambda-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _spelling),
+              modes=('pinyin', 'zhuyin'))
+
+
+# A file name never leaves its directory: `g_build_filename(user_dir,
+# "/abs/u.bin")` is `<user_dir>/abs/u.bin`, not `/abs/u.bin`.
+def absolute_user_file(k):
+    nested = k.user + '/nest'
+    os.makedirs(nested)
+    os.makedirs(k.user + nested)
+    out = conf_session(k, conf_system(k, ('user.bin USER_FILE', nested + '/u.bin USER_FILE')))
+    out['beside'] = user_listing(k, nested)
+    out['beneath'] = user_listing(k, k.user + nested)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('table-conf-user-file-absolute' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode)(absolute_user_file)
+
+# The `strtol` behind `%d` and `atoi` saturates at LONG_MIN on a negative
+# overflow, which the stores into an `int` and a `guint8` cut to 0.
+conf_case('versions-negative-overflow', ('binary format version:7', 'binary format version:-9223372036854775808'),
+          ('model data version:14', 'model data version:-99999999999999999999'))
+conf_case('addon-index-negative-overflow', ('+', 'addon -99999999999999999999 art.table art.bin NULL DICTIONARY'),
+          modes=('pinyin',), session=addon_session)
+
+# The names are the bytes the word holds.
+conf_case('user-file-not-utf8', ('user.bin USER_FILE', 'u\udcff.bin USER_FILE'))
+
+# `_write_files` writes the library files by sub-index, then the two indices
+# and the bigram, and `_rename_files` renames in the same order: where a file
+# of the set is given two roles one name, the later writer's contents are what
+# the first rename moves into place, and the second rename fails.
+def stderr_conf_case(name, *edits):
+    for mode in ('pinyin', 'zhuyin'):
+        def probe(k, edits=edits):
+            return conf_session(k, conf_system(k, *edits))
+        case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode, stderr=True)(probe)
+
+
+stderr_conf_case('colliding-library-files', ('network.bin USER_FILE', 'shared.bin USER_FILE'),
+                 ('user.bin USER_FILE', 'shared.bin USER_FILE'))
+stderr_conf_case('library-named-like-an-index', ('user.bin USER_FILE', 'user_pinyin_index.bin USER_FILE'))
+stderr_conf_case('log-named-like-a-library', ('gb_char.dbin SYSTEM_FILE', 'user.bin SYSTEM_FILE'))
 
 
 # Class (b): a library whose rows no longer match the index points the
@@ -3547,7 +3616,7 @@ def candidates_probe(*edits):
         inst = k.fn('alloc_instance', P, P)(ctx)
         k.fn('parse_more_full_pinyins', Z, P, S)(inst, CONF_TEXTS[k.mode][0])
         sentence = k.fn('guess_sentence', B, P)(inst)
-        ok = guess_rows(k, inst)[0]
+        ok = conf_guess_rows(k, inst)[0]
         return {'ret': ok, 'sentence': sentence}
     return probe
 

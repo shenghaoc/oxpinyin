@@ -150,6 +150,25 @@ pub trait Dictionary {
         Ok(())
     }
 
+    /// [`Self::lookup_into`], also answering whether the lookup met a token
+    /// of a loaded library whose item could not be read (the entry is
+    /// dropped, as ever). The pin's candidate listing dies on such a token
+    /// (`pinyin.cpp:1635-1637`, `:2053`); the answer rides the call that met
+    /// it, not shared state, so the caller can fail exactly the listing it
+    /// was building.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::lookup_into`].
+    fn lookup_into_flagged(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<bool, Self::Error> {
+        self.lookup_into(syllables, out)?;
+        Ok(false)
+    }
+
     /// Whether a stored phrase's pinyin can extend `syllables`.
     ///
     /// This is libpinyin's `SEARCH_CONTINUED` probe: the phrase index reports
@@ -355,6 +374,14 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         out: &mut Vec<Self::Entry>,
     ) -> Result<(), Self::Error> {
         (**self).lookup_into(syllables, out)
+    }
+
+    fn lookup_into_flagged(
+        &self,
+        syllables: &[Self::Syllable],
+        out: &mut Vec<Self::Entry>,
+    ) -> Result<bool, Self::Error> {
+        (**self).lookup_into_flagged(syllables, out)
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {

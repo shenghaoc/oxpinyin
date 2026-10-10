@@ -23,6 +23,7 @@
 //! those files, and a same-backend oxpinyin pair is what stays conform.
 
 use crate::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
+use crate::table_info::FileName;
 use oxpinyin_store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT, DEFAULT_STORE_IS_LIBPINYIN_DBM};
 
 /// A `MemoryChunk` file that does not frame a valid payload.
@@ -141,8 +142,8 @@ impl UserDbm {
 /// in `_write_files`/`_rename_files`/`_clean_user_files`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserFileLayout {
-    user: Vec<(u8, String)>,
-    logs: Vec<(u8, String)>,
+    user: Vec<(u8, FileName)>,
+    logs: Vec<(u8, FileName)>,
 }
 
 impl UserFileLayout {
@@ -173,13 +174,13 @@ impl UserFileLayout {
 
     /// The `USER_FILE` chunk files by sub-index.
     #[must_use]
-    pub fn user_libraries(&self) -> &[(u8, String)] {
+    pub fn user_libraries(&self) -> &[(u8, FileName)] {
         &self.user
     }
 
     /// The `SYSTEM_FILE` diff logs by sub-index.
     #[must_use]
-    pub fn system_logs(&self) -> &[(u8, String)] {
+    pub fn system_logs(&self) -> &[(u8, FileName)] {
         &self.logs
     }
 
@@ -888,8 +889,14 @@ mod tests {
         assert!(UserDbm::Bigram.is_hash());
         assert!(!UserDbm::PinyinIndex.is_hash());
         let layout = UserFileLayout::stock();
-        assert_eq!(layout.user_libraries()[2], (7, "user.bin".to_owned()));
-        assert_eq!(layout.system_logs()[0], (1, "gb_char.dbin".to_owned()));
+        assert_eq!(
+            layout.user_libraries()[2],
+            (7, FileName::from_bytes(b"user.bin"))
+        );
+        assert_eq!(
+            layout.system_logs()[0],
+            (1, FileName::from_bytes(b"gb_char.dbin"))
+        );
     }
 
     #[test]

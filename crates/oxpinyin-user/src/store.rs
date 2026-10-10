@@ -1651,6 +1651,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 &target.versions,
                 target.open_counter,
                 bigram_db.as_deref(),
+                target.law == crate::persistence::UserConfLaw::Zhuyin,
             )?;
             drop(bigram_db);
         }
