@@ -820,3 +820,83 @@ guessed disagreements 0. The `sentence_surface_parity` expectations move
 from 499 to 500 with this repair. The full 10,465-input corpus residual
 (14 before) is not re-measured here. The `'`, `''`, `'''` and `'ni` rows
 are unchanged.
+
+
+### Fixed-final-step coverage — 2026-10-10 UTC (#594)
+
+The fixed-final-step rule already landed in `55d861de`; this lane adds
+regression coverage, with no selection or scoring change. Read from
+`/home/sheng/work/oracle/work-bdb/src/libpinyin-074a2219c90feaf962d0d24f034514033ece5f99`
+at the pin; `src/lookup/phonetic_lookup.h` hashes to Git blob
+`c092e7610cb0e3bdcc29394e6f7f1ba3515d3214`, equal to the committed blob.
+The source law is
+[`get_tails`:330–340](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/lookup/phonetic_lookup.h#L330):
+`size() - 1` → `get_candidates` (:272–297) → `get_top_results` (:143–171).
+If that step has fewer than `nbest` values, the heap drains and returns
+only those values. If it has none, `get_top_results` clears the output
+and returns false; `get_tails` ignores that return, succeeds with an empty
+list, and the extraction loop (:825–841) adds no results and returns true.
+There is no earlier-step fallback. A zero-sized input matrix instead
+returns false before clearing existing results (:743–748).
+
+On the retained bdb oracle under Fedora 44, both facades match in **50/50**
+`final-step-*` cases of `contract-diff.py`: `ba'kua`, `li'shi`, `xi'an`,
+`ni'hao`, `ba'ku`, `ni'h`, `nihao'`, `n`, `nih`, `ni`, `nihao`, `zhongguo`
+at explicit `USE_TONE` (0x20) and `USE_TONE | PINYIN_INCOMPLETE` (0x28),
+plus a fresh `罢跨/ba'kua/5` import on each facade. Complete ordered
+sentence vectors retain duplicate texts; complete candidate lists retain
+type/text and, for pinyin NBEST rows, their tail indices. Pinyin covers
+sort words 0, 1, 0x1c, 0x1d, 0x1e, 0x1f. Zhuyin exposes one sentence and
+no sort-word argument; its after-cursor candidate list is compared whole.
+
+| `ba'kua`, explicit 0x20 | Indexed sentences, pin = subject | Displayed NBEST rows | Candidate count |
+|---|---|---|---|
+| pinyin, fresh | 把跨 / 把跨 / 把夸 | 把跨 (index 0), 把夸 (index 2) | 107 with sentences; 105 without |
+| pinyin, imported | 罢跨 / 把跨 / 把跨 | 罢跨 (index 0), 把跨 (index 1) | 107 with sentences; 106 without |
+| zhuyin, fresh | 把跨 | 把跨 | 106 |
+| zhuyin, imported | 罢跨 | 罢跨 | 106 |
+
+The retained oracle binary and stable/unstable data manifests verify
+against `oracle-pin.txt` and both SHA-256 manifests. This capture has
+three indexed pinyin results (including a duplicate), unlike the issue's
+historical two indexed results; two displayed NBEST rows alone do not
+establish an indexed count. No explanation for the historical count change
+is inferred from this capture. There is no pin/subject difference here,
+including no extra 把垮. These are controls against current main, which
+already implements the rule, not claims of a new production repair.
+The frozen fixture expectations are not re-measured by this scoped lane.
+
+Reproduction inside `oxpinyin-lane-594`, with a fresh user directory per
+worker, read-only `/oracle` bound to `/home/sheng/work/oracle`, one Cargo
+job, a 3 GiB memory cap, and retained `/lane/target/bdb`:
+
+```bash
+cargo build --locked -j 1 -p oxpinyin-capi -p oxpinyin-zhuyin-capi
+cases=$(python3 - <<'PYCASES'
+import runpy
+cases = runpy.run_path('tools/bisection/contract-diff.py')['CASES']
+print(','.join(name for name in cases if name.startswith('final-step-')))
+PYCASES
+)
+tools/bisection/run-contract-diff.sh bdb /oracle/bdb \
+  /lane/target/bdb/debug/libpinyin_capi.so \
+  /lane/target/bdb/debug/libzhuyin_capi.so -- --cases "$cases" \
+  --observations /lane/evidence/gate-bdb.jsonl
+```
+
+Full observations and logs are retained in the lane's workspace evidence
+directory for review; no bulk captures are committed. The engine guards
+cover an empty final step after three earlier values on both shapes and
+a two-value final step after three earlier values on the pinyin shape.
+
+Scoped gate: `cargo test --locked -j 1 -p oxpinyin-engine --features
+oxpinyin-testsupport/bdb` passes 184 tests plus 4 doctests; `cargo fmt -p
+oxpinyin-engine --check` and `cargo clippy --locked -j 1 -p oxpinyin-engine
+--all-targets --features oxpinyin-testsupport/bdb -- -D warnings` pass.
+One bdb revert-and-check temporarily reinstates the earlier-populated-step
+selection: `cargo test -p oxpinyin-engine --features oxpinyin-testsupport/bdb
+nbest::tests::tails_` fails the empty-final-step assertion (exit 101), then
+both guards pass after byte-for-byte source restoration. The 50 facade
+cases also match under this single-rule mutation and again after restoration:
+these current-model controls confirm parity; the direct engine guard supplies
+the fallback-rule sensitivity. No wider differential was run.
