@@ -3059,22 +3059,29 @@ answer `false` (`crates/oxpinyin-capi/src/config.rs`,
 refuses the same way before touching the store, so `pinyin_remove_user_candidate`
 answers `false` with one `libpinyin` warning (`crates/oxpinyin-user/src/store.rs`,
 `crates/oxpinyin-capi/src/candidates.rs`). `pinyin_guess_predicted_candidates`
-checks `has_short_bigram_value` (before its empty-gram check, since a corrupt
-container cannot exist at the pin and the per-prefix abort order has no
-observable answer), emits one `libpinyin` warning and answers `false` with the
-candidate list cleared (`crates/oxpinyin-capi/src/predict.rs`,
-`predicted_bigram_fault`).
+refuses the call only when a resolved prefix's own gram is short — the pin's
+`_compute_predicted_bigram_candidates` loads no other row
+(`src/pinyin.cpp:2322-2330`) — checking `has_short_bigram_value_for` before
+its per-prefix empty-gram check (a corrupt container cannot exist at the pin
+and the per-prefix abort order has no observable answer), emitting one
+`libpinyin` warning and answering `false` with the candidate list cleared
+(`crates/oxpinyin-capi/src/predict.rs`, `predicted_bigram_fault`).
 
 Held by `contract-diff.py` cases `abort-mask-out-short-bigram-value`,
 `abort-zhuyin-mask-out-short-bigram-value`,
 `abort-guess-predicted-short-bigram-value` and
 `abort-remove-user-candidate-short-bigram-value`: MATCH on bdb (pin SIGABRT -6,
 subject `false` with one warning), and all four DIFFER against the parent
-build. The control `mask-out-short-bigram-value-masked-key` holds the
-complement — a short value whose key the mask erases is never loaded, so pin
-and subject both complete — and MATCHes on bdb and against the parent build
-alike; it exists so the guard cannot over-refuse. The fixture is a Berkeley
-DB hash, so the five cases declare
+build. Two controls hold the complement so the guard cannot over-refuse: in
+`mask-out-short-bigram-value-masked-key` a short value whose key the mask
+erases is never loaded, and in `guess-predicted-unrelated-short-bigram-value`
+a short value under `你`'s token is never loaded by a prediction for `我`, so
+pin and subject both complete; both MATCH on bdb and against the parent build
+alike. The prediction control is the one the store-wide first cut of this
+refusal failed: the review of #525 batch D measured the pin answering `true`
+on it while the un-scoped `predicted_bigram_fault` answered `false` with one
+warning, and the case now holds the prefix-scoped check. The fixture is a
+Berkeley DB hash, so the six cases declare
 `cells=('bdb',)`. No interface, ABI or dependency change.
 
 ### A non-`phrase_token_t` user-bigram key aborts `mask_out`, the removal and the export iterator (#525; row 86, class (c), 2026-10-10 UTC)
@@ -3216,14 +3223,21 @@ is `7` and whose item count is `0`:
 oxpinyin's `load_bigram` records every row that decodes to zero items and a
 nonzero total, keeping the gram in the value model
 (`crates/oxpinyin-user/src/persistence.rs`, `bigram_empty_with_total`).
-`pinyin_guess_predicted_candidates` checks `has_empty_bigram_gram`, emits one
-`libpinyin` warning and answers `false` with the candidate list cleared
-(`crates/oxpinyin-capi/src/predict.rs`, `predicted_bigram_fault`); since the
-mask is not a failing operation, `mask_out` is left to complete on this state,
-as the pin's does.
+`pinyin_guess_predicted_candidates` refuses the call only when a resolved
+prefix's own gram is item-less with a residual total — the pin loads no other
+row (`src/pinyin.cpp:2322-2336`) — checking `has_empty_bigram_gram_for` after
+its short-value check, emitting one `libpinyin` warning and answering `false`
+with the candidate list cleared (`crates/oxpinyin-capi/src/predict.rs`,
+`predicted_bigram_fault`); since the mask is not a failing operation,
+`mask_out` is left to complete on this state, as the pin's does.
 
 Held by `contract-diff.py` case `abort-guess-predicted-empty-bigram-gram`:
 MATCH on bdb (pin SIGABRT -6, subject `false` with one warning), DIFFER
-against the parent build; the fixture is a Berkeley DB hash, so the case
-declares `cells=('bdb',)`. No interface, ABI or dependency change.
+against the parent build. The control
+`guess-predicted-unrelated-empty-bigram-gram` holds the complement — an
+item-less residual gram under `你`'s token is never loaded by a prediction for
+`我`, so pin and subject both complete — and MATCHes on bdb and against the
+parent build alike; the store-wide first cut of this refusal failed it for the
+same reason as row 85's prediction control. The fixture is a Berkeley DB hash,
+so the cases declare `cells=('bdb',)`. No interface, ABI or dependency change.
 
