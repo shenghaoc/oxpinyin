@@ -9,7 +9,37 @@ use oxpinyin_engine::{Config, ConfigValue};
 use oxpinyin_runtime::{FileType, OpenError, RowFault, Runtime, TableConf, TableConfError};
 use oxpinyin_user::SystemVersions;
 use oxpinyin_user::pin_stderr;
-use oxpinyin_user::{UserConfLaw, UserStore};
+use oxpinyin_user::{ChunkHeaderField, UserConfLaw, UserStore, UserStoreError};
+
+/// What `save_user` did, for the C facades' `pinyin_save` / `zhuyin_save`
+/// and the `pinyin_end_add_phrases` import commit.
+///
+/// Upstream's save never stops at a filesystem failure and answers `true`
+/// (`pinyin.cpp:1132-1147`); the one failure it *does* stop at is the
+/// chunk header `assert` (`memory_chunk.h:543`/`:547`), where it dies.
+/// The class (c) answer is that failure alone, so it must be told apart
+/// from the quiet `false` and from the pin's `true`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SaveOutcome {
+    /// No user directory, nothing modified, or an internal encode/compact
+    /// failure the pin has no counterpart for: the deliberate quiet
+    /// `false`.
+    NotSaved,
+    /// The file set was written and renamed: the pin's `true`.
+    Saved,
+    /// A chunk file's `MemoryChunk::save` header write failed; the pin
+    /// `assert`s and dies of SIGABRT. The C ABI answers `false` and the
+    /// facade logs exactly one warning in its own domain.
+    ChunkWriteFailed(ChunkHeaderField),
+}
+
+impl SaveOutcome {
+    /// The C ABI's answer: only [`SaveOutcome::Saved`] is `true`.
+    #[must_use]
+    pub fn is_saved(self) -> bool {
+        matches!(self, Self::Saved)
+    }
+}
 
 /// Why a context did not open — what `pinyin_init` / `zhuyin_init` hide
 /// behind NULL. Carried out of [`ContextCore::try_open`] so the facades
@@ -320,8 +350,9 @@ impl ContextCore {
         ))
     }
 
-    /// `save`'s body: `false` without a user dir, otherwise the store's
-    /// gated save — `false` when unmodified, `true` after a dirty save.
+    /// `save`'s body: [`SaveOutcome::NotSaved`] without a user dir or when
+    /// unmodified, [`SaveOutcome::Saved`] after a dirty save, and
+    /// [`SaveOutcome::ChunkWriteFailed`] at the one write the pin dies on.
     ///
     /// The pin never stops at a failing write or rename: it prints what
     /// failed (`rename %s to %s failed.`, `write %s failed.`, raw
@@ -329,22 +360,31 @@ impl ContextCore {
     /// `table_info.cpp:382`) and answers `true`. The store's
     /// [`oxpinyin_user::SaveReport`] says what failed; the lines are
     /// printed here, one per failure, in the pin's order.
-    pub fn save_user(&mut self) -> bool {
+    ///
+    /// A chunk header write is the exception: `MemoryChunk::save`'s
+    /// `assert`s (`memory_chunk.h:543`, `:547`) kill the process there, so
+    /// the store's `save_reporting` stops instead of reporting, and this
+    /// surface must fail the call. The caller logs the point.
+    pub fn save_user(&mut self) -> SaveOutcome {
         let Some(store) = self.user.as_ref() else {
-            return false;
+            return SaveOutcome::NotSaved;
         };
         if !store.has_user_directory() || !store.is_modified() {
-            return false;
+            return SaveOutcome::NotSaved;
         }
         // `_write_files` maps every loaded system library again to diff it
         // against the live one (`pinyin.cpp:956`, `zhuyin.cpp:589`), before
         // it writes anything.
         self.report_unmappable_libraries(None);
         let Some(store) = self.user.as_mut() else {
-            return false;
+            return SaveOutcome::NotSaved;
         };
-        let Ok(report) = store.save_reporting() else {
-            return false;
+        let report = match store.save_reporting() {
+            Ok(report) => report,
+            Err(UserStoreError::ChunkHeaderWrite(field)) => {
+                return SaveOutcome::ChunkWriteFailed(field);
+            }
+            Err(_) => return SaveOutcome::NotSaved,
         };
         for (tmp, target) in &report.renames_failed {
             pin_stderr::emit(&[
@@ -358,7 +398,7 @@ impl ContextCore {
         if let Some(conf) = &report.user_conf_write_failed {
             pin_stderr::emit(&[b"write ", pin_stderr::path_bytes(conf), b" failed.\n"]);
         }
-        true
+        SaveOutcome::Saved
     }
 
     /// The system libraries (with `only`, that one) whose file the pin would

@@ -1807,6 +1807,60 @@ def _(k):
     return blocked_save(k, 'user_pinyin_index.bin.tmp', 'parse_more_chewings', b'su3cl3', ())
 
 
+# Batch A (#525): `MemoryChunk::save`'s header writes (`memory_chunk.h:543`,
+# `:547`). The pin writes the header as two `guint32`s and `assert`s each, so
+# a filesystem that refuses a header word kills it mid-save. The save is the
+# one failure the pin does not carry past: oxpinyin fails the call and logs
+# one warning in the facade's own domain.
+def _dirty_for_save(k, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
+    ctx = k.ctx
+    inst = k.alloc()
+    k.fn(parse, Z, P, S)(inst, text)
+    k.fn('guess_sentence', B, P)(inst)
+    train = k.fn('train', B, P, *train_args)
+    train(inst, *((0,) if train_args else ()))
+    return ctx
+
+
+def save_header_dev_full(k, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
+    """`user.bin.tmp` symlinked to `/dev/full`: its every write fails, so the
+    very first header word does (`memory_chunk.h:543`,
+    `ret_len == sizeof(length)`)."""
+    ctx = _dirty_for_save(k, parse, text, train_args)
+    Path(k.user, 'user.bin.tmp').symlink_to('/dev/full')
+    return {'ret': k.fn('save', B, P)(ctx)}
+
+
+def save_header_rlimit(k, parse='parse_more_full_pinyins', text=b'nihao', train_args=(C.c_ubyte,)):
+    """`RLIMIT_FSIZE` of one header word: the length word fits (file size 4)
+    and the checksum word past it is refused (`memory_chunk.h:547`,
+    `ret_len == sizeof(checksum)`)."""
+    ctx = _dirty_for_save(k, parse, text, train_args)
+    signal.signal(signal.SIGXFSZ, signal.SIG_IGN)
+    resource.setrlimit(resource.RLIMIT_FSIZE, (4, 4))
+    return {'ret': k.fn('save', B, P)(ctx)}
+
+
+@case('abort-save-chunk-header-length', abort=False)
+def _(k):
+    return save_header_dev_full(k)
+
+
+@case('abort-save-chunk-header-checksum', abort=False)
+def _(k):
+    return save_header_rlimit(k)
+
+
+@case('abort-zhuyin-save-chunk-header-length', mode='zhuyin', abort=False)
+def _(k):
+    return save_header_dev_full(k, 'parse_more_chewings', b'su3cl3', ())
+
+
+@case('abort-zhuyin-save-chunk-header-checksum', mode='zhuyin', abort=False)
+def _(k):
+    return save_header_rlimit(k, 'parse_more_chewings', b'su3cl3', ())
+
+
 @case('stderr-fresh-user-dir', stderr=True)
 def _(k):
     ctx = k.ctx

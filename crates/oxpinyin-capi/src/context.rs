@@ -211,7 +211,19 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     {
         crate::locale::pin_table_info_locale();
     }
-    ctx.save_user()
+    match ctx.save_user() {
+        // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header
+        // write failed and the pin `assert`s there. The save fails and
+        // logs one line, as every class-(c) site does.
+        oxpinyin_facade::SaveOutcome::ChunkWriteFailed(field) => {
+            crate::ffi::log_warning(&format!(
+                "pinyin_save: assertion '{}' failed",
+                field.assert_expression()
+            ));
+            false
+        }
+        outcome => outcome.is_saved(),
+    }
 }
 
 /// Save user data.

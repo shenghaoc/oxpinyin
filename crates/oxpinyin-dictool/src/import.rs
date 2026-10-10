@@ -179,7 +179,7 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
     // `m_modified` unconditionally, `pinyin.cpp:657-658`), so the gated
     // save below compacts even for an all-no-op re-run.
     user.mark_modified();
-    let saved = context.core_mut().save_user();
+    let saved = context.core_mut().save_user().is_saved();
 
     if let Some(line) = first_error {
         return Err(ImportError::Add { line });
