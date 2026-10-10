@@ -391,6 +391,9 @@ pub fn expand_keys(keys: &[SyllableKey], limit: usize) -> Vec<ExpandedKeys> {
     // initial-only keys cost one full inventory scan per key per call.
     let mut alternatives: SmallVec<[KeyCompletions; 16]> = SmallVec::new();
     let mut product = 1_usize;
+    if product > limit {
+        return Vec::new();
+    }
     for key in keys {
         let choices = completions(*key);
         if choices.is_empty() {
@@ -539,6 +542,17 @@ mod tests {
         let empty = expand_keys(&[], 64);
         assert_eq!(empty.len(), 1);
         assert!(empty[0].is_empty());
+    }
+
+    #[test]
+    fn the_expansion_limit_includes_the_empty_product() {
+        assert!(expand_keys(&[], 0).is_empty());
+        for limit in [1, 64] {
+            let empty = expand_keys(&[], limit);
+            assert_eq!(empty.len(), 1);
+            assert!(empty[0].is_empty());
+        }
+        assert!(expand_keys(&keys("ni"), 0).is_empty());
     }
 
     #[test]
