@@ -11,6 +11,7 @@ pub(crate) struct ParsedMatrix {
     pub(crate) columns: Vec<Vec<ScanKey>>,
     pub(crate) zeros: Vec<bool>,
     pub(crate) bound: usize,
+    collapse_sentence_rows_to_best: bool,
 }
 
 impl ParsedMatrix {
@@ -57,6 +58,7 @@ impl ParsedMatrix {
             columns,
             zeros,
             bound,
+            collapse_sentence_rows_to_best: false,
         }
     }
 }
@@ -69,19 +71,28 @@ where
     L::Error: Display,
 {
     pub(super) fn ensure_matrix(&mut self) -> Result<(), EngineError> {
-        if self.input.matrix.is_none()
-            || (self.collapse_sentence_rows_to_best && self.input.ending_matrix.is_none())
+        let collapse = self.collapse_sentence_rows_to_best;
+        let matches_mode =
+            |matrix: &ParsedMatrix| matrix.collapse_sentence_rows_to_best == collapse;
+        if !self.input.matrix.as_ref().is_some_and(matches_mode)
+            || (collapse && !self.input.ending_matrix.as_ref().is_some_and(matches_mode))
         {
+            // The public const setter can change the facade mode without
+            // dropping cached allocations. Reject both old topologies at
+            // their next use, including the zhuyin -> pinyin transition.
+            self.input.matrix = None;
+            self.input.ending_matrix = None;
             let graph = self.build_graph_at(0, self.input.as_bytes())?;
             // zhuyin.cpp:1017-1040 omits the full-pinyin divided/resplit
             // transforms applied by pinyin.cpp:1521-1523.
-            if self.collapse_sentence_rows_to_best {
+            if collapse {
                 let ending = build_scan_matrix(&graph, self.settings.options, false);
-                let retained = ParsedMatrix::from_scan(
+                let mut retained = ParsedMatrix::from_scan(
                     &ending,
                     graph.consumed(),
                     self.input.physical_separators(),
                 );
+                retained.collapse_sentence_rows_to_best = collapse;
                 self.input.ending_matrix = Some(retained);
             }
             // The two facades have different full-pinyin parse orders:
@@ -90,13 +101,12 @@ where
             let scan = build_scan_matrix(
                 &graph,
                 self.settings.options,
-                self.input.full_pinyin() && !self.collapse_sentence_rows_to_best,
+                self.input.full_pinyin() && !collapse,
             );
-            self.input.matrix = Some(ParsedMatrix::from_scan(
-                &scan,
-                graph.consumed(),
-                self.input.physical_separators(),
-            ));
+            let mut retained =
+                ParsedMatrix::from_scan(&scan, graph.consumed(), self.input.physical_separators());
+            retained.collapse_sentence_rows_to_best = collapse;
+            self.input.matrix = Some(retained);
         }
         Ok(())
     }
