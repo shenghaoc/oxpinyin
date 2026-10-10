@@ -48,6 +48,9 @@ import tempfile
 
 P, U, I, S, B, Z = C.c_void_p, C.c_uint, C.c_int, C.c_char_p, C.c_bool, C.c_size_t
 UNTOUCHED = 0xABCDEF  # out-param sentinel
+# The DBM cell the run is for (set by `main`, inherited by every worker):
+# fixtures that craft a user table write it in that backend's own format.
+CELL = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
 
 CASES = {}
 
@@ -1191,21 +1194,21 @@ def _removable_user_bigram_context(k, rows_for):
     return inst, candidates[0]
 
 
-@case('abort-remove-user-candidate-short-bigram-value', abort=False, cells=('bdb',))
+@case('abort-remove-user-candidate-short-bigram-value', abort=False)
 def _(k):
     inst, cand = _removable_user_bigram_context(
         k, lambda _token: [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
 
 
-@case('abort-remove-user-candidate-non-token-bigram-key', abort=False, cells=('bdb',))
+@case('abort-remove-user-candidate-non-token-bigram-key', abort=False)
 def _(k):
     inst, cand = _removable_user_bigram_context(
         k, lambda _token: [(b'\x00\x01', b'\x07\x00\x00\x00')])
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
 
 
-@case('abort-remove-user-candidate-residual-bigram-gram', abort=False, cells=('bdb',))
+@case('abort-remove-user-candidate-residual-bigram-gram', abort=False)
 def _(k):
     # `total_freq` 7 with one item of the removed token and frequency 3:
     # `SingleGram::mask_out` drops the item and leaves 4, so the pin's
@@ -1407,13 +1410,76 @@ def _(k):
 # longer-candidate walk (`:282`) into their `switch`'s `default: abort()`. The
 # key cannot be written through the API (`_add_phrase` refuses
 # `phrase_length >= MAX_PHRASE_LENGTH`, `pinyin.cpp:643`), so the case crafts
-# the Berkeley DB btree directly (the btree is the pin's own layout,
-# `chewing_large_table2_bdb.cpp:58`). The kc and tkrzw chewing tables carry
-# the same switch (`chewing_large_table2_kyotodb.cpp:498`, `:268`;
-# `chewing_large_table2_tkrzwdb.cpp:465`, `:251`) but their user index is not
-# a btree, so a bdb fixture cannot reach the site there and the three cases
-# are `cells=('bdb',)`.
+# the user index directly, in the running cell's own format (`_craft_db`): a
+# Berkeley DB btree on bdb (the pin's own layout,
+# `chewing_large_table2_bdb.cpp:58`), a Kyoto Cabinet snapshot on kc and a
+# tkrzw `TreeDBM` file on tkrzw. The kc and tkrzw chewing tables carry the
+# same switch (`chewing_large_table2_kyotodb.cpp:498`, `:268`;
+# `chewing_large_table2_tkrzwdb.cpp:465`, `:251`), so each cell's pin dies at
+# its own line.
 def _craft_db(path, rows, dbtype):
+    """A user-table container of raw `key -> value` records in the running
+    cell's own format: a Berkeley DB `dbtype` container on bdb, the Kyoto
+    Cabinet snapshot the pin's `load_db` reads on kc (every user table
+    there is loaded with `load_snapshot`, `chewing_large_table2_kyotodb.cpp:106`,
+    `ngram_kyotodb.cpp:54`, `phrase_large_table3_kyotodb.cpp:109`), or the
+    tkrzw `TreeDBM` file the pin's `load_db` opens on tkrzw
+    (`chewing_large_table2_tkrzwdb.cpp:83`, `ngram_tkrzwdb.cpp:48`,
+    `phrase_large_table3_tkrzwdb.cpp:83`); the bigram is a `HashDBM` there
+    (`ngram_tkrzwdb.cpp:50`). `dbtype` picks the container kind (1 btree/tree,
+    2 hash); the rows are the same records in every cell."""
+    if CELL == 'kc':
+        return _craft_kc(path, rows)
+    if CELL == 'tkrzw':
+        return _craft_tkrzw(path, rows, 'HashDBM' if dbtype == 2 else 'TreeDBM')
+    return _craft_bdb(path, rows, dbtype)
+
+
+def _craft_kc(path, rows):
+    """A Kyoto Cabinet snapshot of the records (`BasicDB::dump_snapshot`),
+    written through the C API from an in-memory database."""
+    kc = C.CDLL('libkyotocabinet.so.16')
+    kc.kcdbnew.restype = C.c_void_p
+    kc.kcdbdel.argtypes = [C.c_void_p]
+    kc.kcdbopen.argtypes = [C.c_void_p, C.c_char_p, C.c_uint32]
+    kc.kcdbset.argtypes = [C.c_void_p, C.c_char_p, C.c_size_t, C.c_char_p, C.c_size_t]
+    kc.kcdbdumpsnap.argtypes = [C.c_void_p, C.c_char_p]
+    kc.kcdbclose.argtypes = [C.c_void_p]
+    if os.path.exists(path):
+        os.unlink(path)
+    db = kc.kcdbnew()
+    assert db
+    # KCOWRITER | KCOCREATE on the in-memory database "-".
+    assert kc.kcdbopen(db, b'-', (1 << 1) | (1 << 2))
+    for key, value in rows:
+        assert kc.kcdbset(db, key, len(key), value, len(value))
+    assert kc.kcdbdumpsnap(db, path.encode())
+    assert kc.kcdbclose(db)
+    kc.kcdbdel(db)
+
+
+def _craft_tkrzw(path, rows, kind):
+    """A tkrzw `kind` file (`TreeDBM` for the chewing and phrase tables,
+    `HashDBM` for the bigram, as each pin `load_db` opens it) of the records,
+    written through the C API with the default tuning the pin's `save_db`
+    uses."""
+    tk = C.CDLL('libtkrzw.so.1')
+    tk.tkrzw_dbm_open.restype = C.c_void_p
+    tk.tkrzw_dbm_open.argtypes = [C.c_char_p, C.c_bool, C.c_char_p]
+    tk.tkrzw_dbm_set.restype = C.c_bool
+    tk.tkrzw_dbm_set.argtypes = [C.c_void_p, C.c_char_p, C.c_int32, C.c_char_p, C.c_int32, C.c_bool]
+    tk.tkrzw_dbm_close.restype = C.c_bool
+    tk.tkrzw_dbm_close.argtypes = [C.c_void_p]
+    if os.path.exists(path):
+        os.unlink(path)
+    db = tk.tkrzw_dbm_open(path.encode(), True, ('dbm=' + kind).encode())
+    assert db
+    for key, value in rows:
+        assert tk.tkrzw_dbm_set(db, key, len(key), value, len(value), True)
+    assert tk.tkrzw_dbm_close(db)
+
+
+def _craft_bdb(path, rows, dbtype):
     """A Berkeley DB `dbtype` container of raw `key -> value` records."""
     import ctypes.util
 
@@ -1530,13 +1596,13 @@ def overlong_index_context(k, parse=None, rows=None, options=None):
     return ctx
 
 
-@case('abort-mask-out-overlong-index-key', abort=False, cells=('bdb',))
+@case('abort-mask-out-overlong-index-key', abort=False)
 def _(k):
     ctx = overlong_index_context(k)
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-zhuyin-mask-out-overlong-index-key', mode='zhuyin', abort=False, cells=('bdb',))
+@case('abort-zhuyin-mask-out-overlong-index-key', mode='zhuyin', abort=False)
 def _(k):
     # libzhuyin masks `m_pinyin_table` too (`zhuyin.cpp:763`), the same user
     # chewing table, so the same :529 walk aborts there.
@@ -1544,7 +1610,7 @@ def _(k):
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-guess-candidates-overlong-index-key', abort=False, cells=('bdb',))
+@case('abort-guess-candidates-overlong-index-key', abort=False)
 def _(k):
     ctx = overlong_index_context(k, parse=b'ni')
     inst = k.fn('alloc_instance', P, P)(ctx)
@@ -1554,7 +1620,7 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('abort-guess-candidates-overlong-odd-index-key', abort=False, cells=('bdb',))
+@case('abort-guess-candidates-overlong-odd-index-key', abort=False)
 def _(k):
     # A 35-byte key is not one upstream writes, but `phrase_length =
     # db_key.size / sizeof(ChewingKey)` is integer division
@@ -1568,14 +1634,14 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('abort-mask-out-overlong-odd-index-key', abort=False, cells=('bdb',))
+@case('abort-mask-out-overlong-odd-index-key', abort=False)
 def _(k):
     ctx = overlong_index_context(
         k, rows=lambda first: [first, first * 17 + b'\x07'])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('guess-after-overlong-index-key-without-prefix-answers-true', cells=('bdb',))
+@case('guess-after-overlong-index-key-without-prefix-answers-true')
 def _(k):
     # The pin's `search_suggestion` probes the exact query key first
     # (`cursorp->c_get(..., DB_SET)`, `chewing_large_table2_bdb.cpp:576`) and
@@ -1587,7 +1653,7 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('reparse-after-guess-ignores-overlong-index-key', cells=('bdb',))
+@case('reparse-after-guess-ignores-overlong-index-key')
 def _(k):
     # `_prepend_longer_candidates` runs only from `pinyin_guess_candidates`
     # (`pinyin.cpp:2292-2293`); a parse refreshes the cached list without it,
@@ -1600,7 +1666,7 @@ def _(k):
     return {'guess_hao': guessed, 'reparse_ni': reparsed}
 
 
-@case('abort-guess-candidates-overlong-incomplete-index-key', abort=False, cells=('bdb',))
+@case('abort-guess-candidates-overlong-incomplete-index-key', abort=False)
 def _(k):
     # `compute_incomplete_chewing_index` sets only `m_initial`, so the partial
     # `n` projects to its initial and the vowel-initial `an` to the zero
@@ -1626,9 +1692,11 @@ def _(k):
 # (`ngram.cpp:70`, reached by `_compute_predicted_bigram_candidates`); and a
 # gram whose total its items do not cover dies at `get_length` after the mask
 # removes every item (`ngram.cpp:70`, reached by `Bigram::mask_out`,
-# `ngram_bdb.cpp:243`). The container is a Berkeley DB hash (the pin's own
-# layout, `ngram_bdb.cpp:56`), and only the bdb cell opens it, so the cases
-# are `cells=('bdb',)`.
+# `ngram_bdb.cpp:243`). The container is written in the running cell's own
+# format (`_craft_db`): a Berkeley DB hash on bdb (the pin's own layout,
+# `ngram_bdb.cpp:56`), a Kyoto Cabinet snapshot on kc (`ngram_kyotodb.cpp:54`)
+# and a tkrzw `HashDBM` file on tkrzw (`ngram_tkrzwdb.cpp:48`), each read by
+# that cell's pin through its own `Bigram` twin.
 def crafted_bigram_context(k, rows):
     """A context whose user dir carries crafted `user_bigram.db` rows
     (`(key_bytes, value_bytes)` records). The first init writes the
@@ -1668,7 +1736,7 @@ def predicted_bigram_context(k, phrase, value):
     return ctx
 
 
-@case('abort-mask-out-short-bigram-value', abort=False, cells=('bdb',))
+@case('abort-mask-out-short-bigram-value', abort=False)
 def _(k):
     # The pin's `mask_out` loads the gram and `get_total_freq` asserts on
     # the three-byte value (`memory_chunk.h:390`, `ngram.cpp:80`).
@@ -1676,13 +1744,13 @@ def _(k):
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-zhuyin-mask-out-short-bigram-value', mode='zhuyin', abort=False, cells=('bdb',))
+@case('abort-zhuyin-mask-out-short-bigram-value', mode='zhuyin', abort=False)
 def _(k):
     ctx = crafted_bigram_context(k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('mask-out-short-bigram-value-masked-key', control=True, cells=('bdb',))
+@case('mask-out-short-bigram-value-masked-key', control=True)
 def _(k):
     # A short value whose key the mask erases wholesale is never loaded, so
     # the pin erases it and completes (`ngram_bdb.cpp:231-238`); the
@@ -1693,7 +1761,7 @@ def _(k):
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 1)}
 
 
-@case('abort-mask-out-non-token-bigram-key', abort=False, cells=('bdb',))
+@case('abort-mask-out-non-token-bigram-key', abort=False)
 def _(k):
     # The pin's `mask_out` walks the container with `get_all_items`, whose
     # `key.size == sizeof(phrase_token_t)` assert dies on the two-byte key
@@ -1702,7 +1770,7 @@ def _(k):
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-zhuyin-mask-out-non-token-bigram-key', mode='zhuyin', abort=False, cells=('bdb',))
+@case('abort-zhuyin-mask-out-non-token-bigram-key', mode='zhuyin', abort=False)
 def _(k):
     ctx = crafted_bigram_context(k, [(b'\x00\x01', b'\x07\x00\x00\x00')])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
@@ -1713,21 +1781,21 @@ def _(k):
 # left alone, so `SingleGram::mask_out` leaves a residual total and
 # `Bigram::mask_out`'s `get_length` assert dies (`ngram.cpp:70`,
 # `ngram_bdb.cpp:243`).
-@case('abort-mask-out-residual-bigram-gram', abort=False, cells=('bdb',))
+@case('abort-mask-out-residual-bigram-gram', abort=False)
 def _(k):
     ctx = crafted_bigram_context(
         k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00\x00' + b'\x00' * 8)])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-zhuyin-mask-out-residual-bigram-gram', mode='zhuyin', abort=False, cells=('bdb',))
+@case('abort-zhuyin-mask-out-residual-bigram-gram', mode='zhuyin', abort=False)
 def _(k):
     ctx = crafted_bigram_context(
         k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00\x00' + b'\x00' * 8)])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-begin-bigram-phrases-non-token-key', abort=False, cells=('bdb',))
+@case('abort-begin-bigram-phrases-non-token-key', abort=False)
 def _(k):
     # `pinyin_begin_get_bigram_phrases` walks the same container through
     # `get_all_items` (`pinyin.cpp:776-787`), so the two-byte key aborts at
@@ -1736,7 +1804,7 @@ def _(k):
     return {'ret': bool(k.fn('begin_get_bigram_phrases', P, P)(ctx))}
 
 
-@case('abort-guess-predicted-short-bigram-value', abort=False, cells=('bdb',))
+@case('abort-guess-predicted-short-bigram-value', abort=False)
 def _(k):
     # `_compute_predicted_bigram_candidates` merges the three-byte gram and
     # `get_total_freq` asserts (`memory_chunk.h:390`, `pinyin.cpp:2330`).
@@ -1745,7 +1813,7 @@ def _(k):
     return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
 
 
-@case('abort-guess-predicted-empty-bigram-gram', abort=False, cells=('bdb',))
+@case('abort-guess-predicted-empty-bigram-gram', abort=False)
 def _(k):
     # An item-less gram with a residual total merges to `total_freq != 0`
     # and `SingleGram::get_length` asserts (`ngram.cpp:70`,
@@ -1760,14 +1828,14 @@ def _(k):
 # prediction never resolves to is never read: the call completes. The
 # `我` prefixes do not include `你`'s token, so these are controls for the
 # two faults above — the prefix-scoped guard must not over-refuse.
-@case('guess-predicted-unrelated-short-bigram-value', control=True, cells=('bdb',))
+@case('guess-predicted-unrelated-short-bigram-value', control=True)
 def _(k):
     ctx = predicted_bigram_context(k, '你', b'\x07\x00\x00')
     inst = k.fn('alloc_instance', P, P)(ctx)
     return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
 
 
-@case('guess-predicted-unrelated-empty-bigram-gram', control=True, cells=('bdb',))
+@case('guess-predicted-unrelated-empty-bigram-gram', control=True)
 def _(k):
     ctx = predicted_bigram_context(k, '你', b'\x07\x00\x00\x00')
     inst = k.fn('alloc_instance', P, P)(ctx)
@@ -4405,8 +4473,8 @@ for _mode in ('pinyin', 'zhuyin'):
 # total, so a corrupt tail after two headers aborts too; the mask loop
 # only walks libraries `get_range` still holds, so an unloaded library's
 # `.dbin` is never merged. A `.dbin` is a backend-independent `MemoryChunk`,
-# so those fixtures are the same in every cell; only the zhuyin import cases
-# craft a Berkeley DB btree and are `cells=('bdb',)`.
+# so those fixtures are the same in every cell; the zhuyin import cases craft
+# the user phrase table in the running cell's own format (`_craft_db`).
 def _chunk(payload):
     """A `MemoryChunk` image: the length and checksum header words
     (`memory_chunk.h:543-547`) then `payload`."""
@@ -4536,13 +4604,16 @@ for _mode in ('pinyin', 'zhuyin'):
 # whose sub-index equals the target trips `assert(PHRASE_INDEX_LIBRARY_INDEX
 # (token) != index)` (`:440`); a lone match whose phrase-index item text
 # differs from the phrase trips the `memcmp` assert (`:457`). The crafted
-# `user_phrase_index.bin` is a Berkeley DB btree (the pin's own layout,
-# `chewing_large_table2_bdb.cpp:58`), so the cases are `cells=('bdb',)`.
+# `user_phrase_index.bin` is written in the running cell's own format
+# (`_craft_db`): a Berkeley DB btree on bdb (the pin's own layout,
+# `chewing_large_table2_bdb.cpp:58`), a Kyoto Cabinet snapshot on kc
+# (`phrase_large_table3_kyotodb.cpp:109`) and a tkrzw `TreeDBM` file on tkrzw
+# (`phrase_large_table3_tkrzwdb.cpp:83`).
 def _ucs4_key(text):
     return b''.join(ord(character).to_bytes(4, 'little') for character in text)
 
 
-@case('abort-zhuyin-add-phrase-duplicate-library-token', mode='zhuyin', abort=False, cells=('bdb',))
+@case('abort-zhuyin-add-phrase-duplicate-library-token', mode='zhuyin', abort=False)
 def _(k):
     # Two tokens for 你好, both in library 7 (the target): the pin's second
     # in-index candidate asserts at `:440`.
@@ -4559,7 +4630,7 @@ def _(k):
         it, '你好'.encode(), 'ㄋㄧˇ ㄏㄠˇ'.encode(), 1)}
 
 
-@case('abort-zhuyin-add-phrase-index-text-mismatch', mode='zhuyin', abort=False, cells=('bdb',))
+@case('abort-zhuyin-add-phrase-index-text-mismatch', mode='zhuyin', abort=False)
 def _(k):
     # Persist 你們, then point 你好's phrase-table row at 你們's token: the
     # lone in-library match names an item whose text differs, `:457`.
@@ -4594,6 +4665,7 @@ def main():
     parser.add_argument('--observations', type=Path, default=os.environ.get('CONTRACT_DIFF_OBSERVATIONS'),
                         help='retain both complete observations as JSONL (also CONTRACT_DIFF_OBSERVATIONS)')
     args = parser.parse_args()
+    os.environ['CONTRACT_DIFF_CELL'] = args.cell
     lib = args.prefix / 'lib'
     data = lib / 'libpinyin/data'
     inputs = [args.prefix / 'oracle-pin.txt', lib / 'libpinyin.so', args.pinyin_so, data / 'bigram.db']
