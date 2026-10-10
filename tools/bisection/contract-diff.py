@@ -671,12 +671,71 @@ def token_unigram_user(k):
     return out
 
 
+def train_selected_top(k, wanted, token):
+    """Choose a normal phrase, guess n-best, then train result 0 without reset.
+
+    This test-only sequence preserves the runbook's train_top precondition:
+    a candidate list alone cannot be trained. The normal selection also
+    installs the OneStep constraint that train_result3 needs to write counts.
+    """
+    inst = k.inst
+    if k.mode == 'pinyin':
+        # SORT_WITHOUT_SENTENCE (0x1) would train during choose instead
+        # of installing a constraint (074a2219 pinyin.cpp:2566-2576).
+        assert k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1e)
+    else:
+        assert k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+    count = U()
+    assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    for index in range(count.value):
+        candidate, text, kind = P(), S(), I()
+        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(
+            inst, index, C.byref(candidate))
+        assert k.fn('get_candidate_string', B, P, P, C.POINTER(S))(
+            inst, candidate, C.byref(text))
+        assert k.fn('get_candidate_type', B, P, P, C.POINTER(I))(
+            inst, candidate, C.byref(kind))
+        # NORMAL_CANDIDATE / NORMAL_CANDIDATE_AFTER_CURSOR are both 2.
+        # The zhuyin BEST_MATCH row installs no constraint (074a2219
+        # zhuyin.cpp:1643-1654), so selecting it would make this a no-op.
+        if kind.value == 2 and text.value == wanted.encode():
+            cursor = k.fn('choose_candidate', I, P, Z, P)(inst, 0, candidate)
+            assert cursor > 0, 'normal phrase selection failed'
+            after_choose = unigram_of(k, token)
+            guessed = k.fn('guess_sentence', B, P)(inst)
+            assert guessed, 'training needs a guessed n-best result'
+            if k.mode == 'pinyin':
+                trained = k.fn('train', B, P, C.c_ubyte)(inst, 0)
+            else:
+                trained = k.fn('train', B, P)(inst)
+            assert trained, 'training n-best result 0 failed'
+            return {'chosen': wanted, 'kind': kind.value, 'cursor': cursor,
+                    'after-choose': after_choose, 'guess': guessed, 'train': trained}
+    raise AssertionError('missing normal candidate: ' + wanted)
+
+
+def token_unigram_trained(k):
+    token = 0x01003e57  # 癫痫: one constrained train adds 69 * 7 = 483.
+    assert tokens_of(k, '癫痫') == [token]
+    parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+    text = b'dian4xian4' if k.mode == 'pinyin' else b'2u04vu04'
+    parsed = k.fn(parse, Z, P, S)(k.inst, text)
+    assert parsed == len(text), 'the whole training input must parse'
+    out = {'token': hex(token), 'parsed': parsed, 'before': unigram_of(k, token)}
+    out['training'] = train_selected_top(k, '癫痫', token)
+    assert out['training']['after-choose'] == out['before'], 'selection must not train'
+    out['after'] = unigram_of(k, token)
+    return out
+
+
 for _mode in ('pinyin', 'zhuyin'):
     _prefix = 'zhuyin-' if _mode == 'zhuyin' else ''
     case(_prefix + 'token-unigram-system', mode=_mode, control=_mode == 'pinyin')(
         token_unigram_system)
     case(_prefix + 'token-unigram-user', mode=_mode, control=_mode == 'pinyin')(
         token_unigram_user)
+    case(_prefix + 'token-unigram-trained', mode=_mode, control=_mode == 'pinyin')(
+        token_unigram_trained)
 
 
 @case('train-unigram-total')
