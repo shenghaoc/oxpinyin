@@ -1119,6 +1119,9 @@ def _guessed_user_phrase(k, text, readings, parse=b'dada'):
 def _(k):
     inst, rows = _guessed_user_phrase(k, '龘龘', [b"da2'da2"])
     first = k.fn('remove_user_candidate', B, P, P)(inst, rows[0])
+    # The first removal must complete, or the second call would assert for
+    # the wrong reason (the phrase still present).
+    assert first, 'the first removal did not complete'
     # The phrase is gone from the user dictionary: the pin asserts at :3743.
     return {'first': first, 'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
 

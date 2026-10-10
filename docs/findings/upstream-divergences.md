@@ -2260,7 +2260,7 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
     rows; `include/memory_chunk.h:493` and `:434` behind a `NULL` file name.
   - PR 12g (batch C, 2026-10-10): `pinyin.cpp:3743`, `:3750`, `:3759`
     (`pinyin_remove_user_candidate`'s three removal asserts; policy row
-    78). `:3750` leaves group C, which had called it not applicable to
+    81). `:3750` leaves group C, which had called it not applicable to
     the value store; `:3743` and `:3759` leave groups A and B.
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
@@ -2292,7 +2292,7 @@ test:
   to it (`:760-768`), never reading an item back to compare.
 
 `pinyin.cpp:3750` was listed here as a fourth not-applicable site; it was
-reproduced and is now logged (PR 12g, policy row 78), with the phrase
+reproduced and is now logged (PR 12g, policy row 81), with the phrase
 table loaded from `user_phrase_index.bin` as the membership set the
 removal checks.
 
