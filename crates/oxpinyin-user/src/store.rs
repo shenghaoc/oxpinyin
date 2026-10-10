@@ -195,7 +195,8 @@ pub enum UserStoreError {
     /// returns `false` before it trains the bigram (`pinyin.cpp:2609-2612`).
     UnigramTotalOverflow,
     /// `pinyin_mask_out` / `zhuyin_mask_out` met a `user_pinyin_index.bin`
-    /// key past `MAX_PHRASE_LENGTH` syllables: the pin's user
+    /// key past `MAX_PHRASE_LENGTH` syllables, or with no whole syllable
+    /// (an empty or one-byte key): the pin's user
     /// `ChewingLargeTable2::mask_out` walks every record and its
     /// `switch`'s `default: abort()` fires on the key
     /// (`chewing_large_table2_bdb.cpp:529`). The class-(c) answer: the
@@ -273,8 +274,8 @@ impl fmt::Display for UserStoreError {
             ),
             Self::OverlongIndexKey => write!(
                 f,
-                "user pinyin index key past MAX_PHRASE_LENGTH syllables (upstream aborts, \
-                 chewing_large_table2_bdb.cpp:529)"
+                "user pinyin index key past MAX_PHRASE_LENGTH syllables or without a whole \
+                 syllable (upstream aborts, chewing_large_table2_bdb.cpp:529)"
             ),
             Self::NonTokenUserBigramKey => write!(
                 f,
@@ -884,9 +885,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Whether `user_pinyin_index.bin` carried a key past
-    /// `MAX_PHRASE_LENGTH` syllables. `pinyin_mask_out` / `zhuyin_mask_out`
-    /// walk every record, so any such key aborts the whole mask
-    /// (`chewing_large_table2_bdb.cpp:529`).
+    /// `MAX_PHRASE_LENGTH` syllables, or one with no whole syllable.
+    /// `pinyin_mask_out` / `zhuyin_mask_out` walk every record, so any such
+    /// key aborts the whole mask (`chewing_large_table2_bdb.cpp:529`).
     #[must_use]
     pub fn has_overlong_index_key(&self) -> bool {
         !self.overlong_index_readings().is_empty()
