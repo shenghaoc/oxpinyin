@@ -1413,8 +1413,10 @@ def _(k):
 # `chewing_large_table2_tkrzwdb.cpp:465`, `:251`) but their user index is not
 # a btree, so a bdb fixture cannot reach the site there and the three cases
 # are `cells=('bdb',)`.
-def _craft_db(path, rows, dbtype):
-    """A Berkeley DB `dbtype` container of raw `key -> value` records."""
+def _craft_db(path, rows, dbtype, keep=False):
+    """A Berkeley DB `dbtype` container of raw `key -> value` records;
+    `keep=True` adds the rows to the existing container instead of
+    replacing it."""
     import ctypes.util
 
     class DBT(C.Structure):
@@ -1441,7 +1443,7 @@ def _craft_db(path, rows, dbtype):
     db.__db_put_pp.restype = C.c_int
     db.__db_close_pp.argtypes = [C.c_void_p, C.c_uint]
     db.__db_close_pp.restype = C.c_int
-    if os.path.exists(path):
+    if os.path.exists(path) and not keep:
         os.unlink(path)
     handle = C.c_void_p()
     assert db.db_create(C.byref(handle), None, 0) == 0
@@ -1573,6 +1575,68 @@ def _(k):
     ctx = overlong_index_context(
         k, rows=lambda first: [first, first * 17 + b'\x07'])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+# A key of no whole word (empty, or one byte) reads as `size / 2 == 0` words
+# and `mask_out`'s `switch` has no such case: `default: abort()`
+# (`chewing_large_table2_bdb.cpp:529`).
+@case('abort-mask-out-empty-index-key', abort=False, userdir=True, cells=('bdb',))
+def _(k):
+    ctx = overlong_index_context(k, rows=lambda first: [b'', first])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('abort-mask-out-one-byte-index-key', abort=False, userdir=True, cells=('bdb',))
+def _(k):
+    ctx = overlong_index_context(k, rows=lambda first: [first, b'\x07'])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('abort-zhuyin-mask-out-empty-index-key', mode='zhuyin', abort=False, userdir=True, cells=('bdb',))
+def _(k):
+    ctx = overlong_index_context(k, rows=lambda first: [b'', first])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+# The system `pinyin_index.bin` is the same `ChewingLargeTable2` btree, and
+# `FacadeChewingTable2::search_suggestion` walks it too
+# (`chewing_large_table2_bdb.cpp:282`): a key past 16 words that extends the
+# query dies at the same `default: abort()`. The stock index has none, so the
+# fixture is a private copy (never a link into the oracle) with one row added.
+def system_overlong_index_context(k, trailing=b''):
+    ctx = k.init()
+    assert ctx, 'the first init failed'
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+    key = C.c_void_p()
+    assert k.fn('get_pinyin_key', B, P, Z, C.POINTER(P))(inst, 0, C.byref(key))
+    first = C.string_at(key.value, 2)
+    k.fn('free_instance', None, P)(inst)
+    k.fn('fini', None, P)(ctx)
+    system = private_system(k)
+    path = os.path.join(system, 'pinyin_index.bin')
+    os.unlink(path)  # the link into the oracle's data
+    shutil.copyfile(os.path.join(k.data, 'pinyin_index.bin'), path)
+    _craft_db(path, [(first * 17 + trailing, b'')], 1, keep=True)
+    ctx = k.init(system=system)
+    assert ctx, 'the open on the private system dir failed'
+    return ctx
+
+
+@case('abort-guess-candidates-overlong-system-index-key', abort=False, userdir=True, cells=('bdb',))
+def _(k):
+    ctx = system_overlong_index_context(k)
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+    return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
+
+
+@case('abort-guess-candidates-overlong-odd-system-index-key', abort=False, userdir=True, cells=('bdb',))
+def _(k):
+    ctx = system_overlong_index_context(k, trailing=b'\x07')
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+    return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
 @case('guess-after-overlong-index-key-without-prefix-answers-true', cells=('bdb',))
@@ -4581,6 +4645,60 @@ def _(k):
     it = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
     return {'ret': k.fn('iterator_add_phrase', B, P, S, S, I)(
         it, '你好'.encode(), 'ㄋㄧˇ ㄏㄠˇ'.encode(), 1)}
+
+
+# The pinyin import iterator's `_add_phrase` walks the same phrase table
+# (`pinyin.cpp:533-571`): two tokens in the target library trip the assert at
+# `:554`; a lone one whose phrase-index item has another length trips `:568`,
+# one with the same length and other text `:571`. The crafted
+# `user_phrase_index.bin` is a Berkeley DB btree, so the cases are bdb only.
+def _persist_pinyin_phrase(k, text, reading):
+    """Adds `text` to library 7, saves, and returns its token; the context
+    is closed."""
+    ctx = k.ctx
+    it = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+    assert k.fn('iterator_add_phrase', B, P, S, S, I)(
+        it, text.encode(), reading.encode(), 1), 'the setup phrase did not add'
+    k.fn('end_add_phrases', None, P)(it)
+    assert k.fn('save', B, P)(ctx)
+    token = int(tokens_of(k, text)[0])
+    assert token >> 24 == 7, 'the setup phrase is not new to library 7'
+    k.fn('free_instance', None, P)(k._inst)
+    k._inst = None
+    k.fn('fini', None, P)(ctx)
+    k._ctx = None
+    return token
+
+
+def _add_pinyin_phrase_after_index(k, value):
+    """Points 你好's phrase-table row at `value` and adds 你好 to library 7."""
+    _craft_db(os.path.join(k.user, 'user_phrase_index.bin'), [(_ucs4_key('你好'), value)], 1)
+    _write_user_conf(k)
+    ctx = k.init()
+    assert ctx, 'the reopen failed'
+    it = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+    return {'ret': k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), b"ni'hao", 1)}
+
+
+@case('abort-add-phrase-duplicate-library-token', abort=False, userdir=True, cells=('bdb',))
+def _(k):
+    ctx = k.init()
+    assert ctx, 'the first init failed'
+    k.fn('fini', None, P)(ctx)
+    value = (0x07000001).to_bytes(4, 'little') + (0x07000002).to_bytes(4, 'little')
+    return _add_pinyin_phrase_after_index(k, value)
+
+
+@case('abort-add-phrase-index-length-mismatch', abort=False, userdir=True, cells=('bdb',))
+def _(k):
+    token = _persist_pinyin_phrase(k, '你好嗷', "ni'hao'ao")
+    return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
+
+
+@case('abort-add-phrase-index-text-mismatch', abort=False, userdir=True, cells=('bdb',))
+def _(k):
+    token = _persist_pinyin_phrase(k, '你們', "ni'men")
+    return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
 
 
 def main():

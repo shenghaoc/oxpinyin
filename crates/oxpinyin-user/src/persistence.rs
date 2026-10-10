@@ -434,7 +434,10 @@ pub(crate) struct LoadedProfile {
     /// (its `(token, keys)` item exists only for a `user.bin` reading of
     /// at most `MAX_PHRASE_LENGTH`), so the raw keys ride here as a
     /// sibling of [`UserState`] for the two abort sites — recorded from
-    /// the DB key's length alone, independent of the value decoding.
+    /// the DB key's length alone, independent of the value decoding. A key
+    /// with no whole word (empty, or one byte) is recorded as an empty
+    /// reading: the same `switch` has no case for a word count of 0, so
+    /// `mask_out` aborts on it (`:529`).
     pub(crate) overlong_index_keys: Vec<Vec<u16>>,
     /// Every raw key `user_pinyin_index.bin` carries, as packed
     /// `ChewingKey` words — the pin's user `ChewingLargeTable2` btree rows
@@ -857,7 +860,16 @@ fn load_user_pinyin_index(
     // `overlong` for the callers that read it as a slice.
     let mut seen: BTreeSet<Vec<u16>> = BTreeSet::new();
     let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
-        if key.is_empty() {
+        if key.len() < 2 {
+            // No whole word: the pin's word count `key.size /
+            // sizeof(ChewingKey)` is 0, which `mask_out`'s `switch` has no
+            // case for (`chewing_large_table2_bdb.cpp:529`; kc `:499`,
+            // tkrzw `:466`). Record the empty reading beside the over-long
+            // ones so the same mask refusal covers it. Nothing else reads
+            // it: it extends no query and is not an exact key.
+            if seen.insert(Vec::new()) {
+                overlong.push(Vec::new());
+            }
             return Ok(()); // not a key upstream writes
         }
         let words: Vec<u16> = key

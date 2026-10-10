@@ -257,7 +257,33 @@ impl ChewingTable {
             })?;
         Ok(found)
     }
+
+    /// Whether some row extending the query's index key is past
+    /// [`MAX_INDEX_KEY_WORDS`] words — the key the pin's
+    /// `ChewingLargeTable2::search_suggestion` reads with `phrase_length =
+    /// key.size / sizeof(ChewingKey)` (so a trailing odd byte counts as no
+    /// word) and whose `switch` has no case for it: `default: abort()`
+    /// (`chewing_large_table2_bdb.cpp:282`). Only the keys are read, never
+    /// the values, and the scan stops at the first such key.
+    pub(crate) fn has_overlong_extension(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
+        if keys.is_empty() {
+            return Ok(false);
+        }
+        let encoded = index_key(keys);
+        let upper = prefix_upper_bound(&encoded);
+        let mut found = false;
+        self.dbm
+            .walk(&encoded, upper.as_deref(), &mut |key, _value| {
+                found = key.len() / 2 > MAX_INDEX_KEY_WORDS;
+                Ok(found)
+            })?;
+        Ok(found)
+    }
 }
+
+/// The most words a `ChewingLargeTable2` index key can hold: the pin
+/// instantiates its entries for lengths 1 through `MAX_PHRASE_LENGTH` (16).
+const MAX_INDEX_KEY_WORDS: usize = 16;
 
 /// `contains_incomplete_pinyin` (`pinyin_phrase3.h:146`): a syllable with
 /// neither middle nor final is an initial-only (incomplete) key.
@@ -589,6 +615,59 @@ mod tests {
             .walk_extensions(&[ni], &mut |_, items| Ok(items[0].token >> 24 == 2))
             .unwrap();
         assert!(found);
+    }
+
+    #[test]
+    fn has_overlong_extension_reads_keys_past_sixteen_words_under_the_query() {
+        let ni = ChewingKey::from_pinyin("ni").unwrap();
+        let hao = ChewingKey::from_pinyin("hao").unwrap();
+        let table_with = |rows: &[Vec<u8>]| {
+            let dbm = MemoryDbm::new();
+            dbm.put(encode_complete_key(&[ni]), Vec::new());
+            for row in rows {
+                dbm.put(row.clone(), Vec::new());
+            }
+            ChewingTable::new(Box::new(dbm))
+        };
+        // Sixteen words is the longest key the pin's switch instantiates.
+        let sixteen = encode_complete_key(&[ni; 16]);
+        assert!(
+            !table_with(std::slice::from_ref(&sixteen))
+                .has_overlong_extension(&[ni])
+                .unwrap()
+        );
+        // Seventeen words under the query: the pin's `default: abort()`.
+        let seventeen = encode_complete_key(&[ni; 17]);
+        assert!(
+            table_with(std::slice::from_ref(&seventeen))
+                .has_overlong_extension(&[ni])
+                .unwrap()
+        );
+        // A trailing odd byte still reads as seventeen words (`size / 2`).
+        let mut odd = seventeen.clone();
+        odd.push(7);
+        assert!(table_with(&[odd]).has_overlong_extension(&[ni]).unwrap());
+        // Eight-and-a-half words is not past sixteen.
+        let mut short_odd = encode_complete_key(&[ni; 8]);
+        short_odd.push(7);
+        assert!(
+            !table_with(&[short_odd])
+                .has_overlong_extension(&[ni])
+                .unwrap()
+        );
+        // A seventeen-word key under another prefix is not an extension.
+        let elsewhere = encode_complete_key(&[hao; 17]);
+        assert!(
+            !table_with(&[elsewhere])
+                .has_overlong_extension(&[ni])
+                .unwrap()
+        );
+        // No query, nothing to extend.
+        assert!(
+            !table_with(&[seventeen])
+                .has_overlong_extension(&[])
+                .unwrap()
+        );
     }
 
     #[test]

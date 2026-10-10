@@ -124,11 +124,12 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
         oxpinyin_facade::MaskOutOutcome::Done(answer) => answer,
         oxpinyin_facade::MaskOutOutcome::OverlongIndexKey => {
             // Class (c), `chewing_large_table2_bdb.cpp:529`: the user
-            // pinyin index carries a key past MAX_PHRASE_LENGTH syllables
-            // and the pin's `mask_out` switch falls to `default: abort()`.
+            // pinyin index carries a key past MAX_PHRASE_LENGTH syllables,
+            // or one with no whole syllable, and the pin's `mask_out`
+            // switch falls to `default: abort()`.
             crate::ffi::log_warning(
                 "zhuyin_mask_out: a user pinyin index key is longer than MAX_PHRASE_LENGTH \
-                 syllables (upstream aborts, chewing_large_table2_bdb.cpp:529)",
+                 syllables or has no whole syllable (upstream aborts, chewing_large_table2_bdb.cpp:529)",
             );
             false
         }
