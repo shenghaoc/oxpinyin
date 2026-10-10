@@ -1,6 +1,6 @@
 # Matrix split tables SPEC
 
-Date: 2026-08-14 · Status: **frozen.**
+Date: 2026-08-14 · Status: **frozen; amended `2026-10-10` by #716, approved by the maintainer**
 
 The candidate window scan (`candidate-construction.md` §8) walks the key set the
 pinned oracle's matrix admits at each byte position: the selected parse's keys
@@ -18,10 +18,12 @@ an oracle pin change re-verifies them, it does not extend them.
 
 ## Resplit pairs (85)
 
-A pair `(first, second)` that the selected parse placed adjacently admits the
-alternative `(left, right)` at the same byte positions: `left` occupies the
-start of `first`, `right` runs from its end to `second`'s end. A pair never
-resplits across an apostrophe separator.
+A pair `(first, second)` whose first key ends at the second key's column
+admits the alternative `(left, right)` at the same byte positions: `left`
+occupies the start of `first`, `right` runs from its end to `second`'s end.
+The pair may include keys added earlier in the same resplit pass. A pair
+never resplits across an apostrophe separator; a separator before the first
+key is allowed.
 
 - `a + nan` → `an + an`
 - `an + gang` → `ang + ang`
@@ -137,10 +139,30 @@ inside the syllable; the parts run from the syllable's own text start.
 - `zuan` → `zu + an`
 ## Semantics
 
-- **Resplit** applies to adjacent pairs along the selected parse only, and only
-  when neither key rides an apostrophe separator.
-- **Divided** applies to every matrix key (selected or added), including keys
-  that ride an apostrophe; the parts are positioned from the syllable text
-  start, so `bu'tian` still offers `补体` from the divided `ti`.
-- Both lists only ever add keys; they never remove one, so the selected parse's
-  own candidates are always offered.
+- **Resplit** walks columns in increasing byte order, excluding the reserved
+  final column. It snapshots the current column once, visits every key in
+  that snapshot, and for each key snapshots the column at its raw end. Every
+  matching pair appends the left key to the current column and the right key
+  at the current byte index plus the left syllable's text length. Keys added
+  to the current column do not extend its existing snapshot. Right halves
+  appended by earlier columns are present when their later column is
+  visited in the same pass, so resplits chain: `ba + nan + gang` admits
+  `ban + an + gang`, then `ban + ang + ang`. This follows
+  [`resplit_step` at pin `074a2219`, lines 113–157](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phonetic_key_matrix.cpp#L113-L157).
+- **Separators** prevent resplitting across an apostrophe, because
+  [`fill_matrix` inserts zero keys in the gap](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phonetic_key_matrix.cpp#L68-L78)
+  and the resplit table cannot match that zero key. An apostrophe before the
+  first real key of a pair does not prevent its resplit: `chui'lianai`
+  still admits `lia + nai` → `lian + ai`, positioned from `lia`'s own raw
+  begin. The former requirement that neither key ride a separator was too
+  restrictive.
+- **Divided** runs after resplit and also walks forward with a snapshot per
+  column. It applies to every matching matrix key, including keys added by
+  resplit or earlier divided columns. A preceding apostrophe does not block
+  it; the parts start at the syllable's own raw begin, so `bu'tian` still
+  offers `补体` from the divided `ti`. See
+  [`inner_split_step` at the same pin](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phonetic_key_matrix.cpp#L169-L228).
+- Both tables compare the full key, including tone, against zero-tone table
+  entries. Both passes only add keys; they never remove one, so the selected
+  parse's own keys remain available. The pinyin full-parser order is
+  [fill → resplit → divided → fuzzy](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/pinyin.cpp#L1497-L1524).

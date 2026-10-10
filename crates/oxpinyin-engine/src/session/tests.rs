@@ -3437,6 +3437,62 @@ fn chained_resplit_and_divided_windows_read_the_retained_matrix() {
 }
 
 #[test]
+fn changing_sentence_collapse_rebuilds_full_pinyin_split_windows() {
+    use oxpinyin_core::OptionBits;
+
+    const HALF_VOCAB: &str = "token=1\tkeys=an\ttext=安\tunigram=1000\n\
+                              token=2\tkeys=ang\ttext=昂\tunigram=900\n";
+    for (raw, offset, wanted, end) in [("banangang", 6, "昂", 9), ("lianai", 2, "安", 4)] {
+        let mut session = Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            FixtureDictionary::parse(HALF_VOCAB).expect("fixture"),
+            FixedUnigrams {
+                system: 1000,
+                addon: 0,
+                total: 10000,
+                addon_total: 1,
+            },
+        )
+        .expect("session");
+        session
+            .set_options(OptionBits::from_bits(0x18a))
+            .expect("options");
+        session.set_collapse_sentence_rows_to_best(true);
+        session.replace_raw(raw).expect("full pinyin parse");
+        assert!(
+            !session
+                .candidates_at(offset)
+                .expect("zhuyin window")
+                .iter()
+                .any(|row| row.text() == wanted),
+            "zhuyin's full-pinyin matrix omits the split passes"
+        );
+        assert!(session.input.matrix.is_some());
+        assert!(session.input.ending_matrix.is_some());
+
+        session.set_collapse_sentence_rows_to_best(false);
+        let rows = session.candidates_at(offset).expect("pinyin window");
+        let row = rows.iter().find(|row| row.text() == wanted).expect(wanted);
+        assert_eq!(row.consumed_bytes(), end - offset);
+        assert!(session.input.ending_matrix.is_none());
+        assert_eq!(session.raw_input(), raw);
+
+        session.set_collapse_sentence_rows_to_best(true);
+        session.candidates_at(0).expect("live zhuyin window");
+        assert!(
+            !session
+                .candidates_at(offset)
+                .expect("rebuilt zhuyin window")
+                .iter()
+                .any(|row| row.text() == wanted),
+            "switching back must remove the pinyin split topology"
+        );
+        assert!(session.input.ending_matrix.is_some());
+    }
+}
+
+#[test]
 fn retained_exact_key_windows_search_the_reserved_end_slot() {
     use oxpinyin_core::graph::ExactSegment;
 
