@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::{Config, ConfigValue};
-use oxpinyin_runtime::{OpenError, Runtime};
+use oxpinyin_runtime::{FileType, OpenError, RowFault, Runtime, TableConf, TableConfError};
 use oxpinyin_user::SystemVersions;
 use oxpinyin_user::pin_stderr;
 use oxpinyin_user::{UserConfLaw, UserStore};
@@ -67,6 +67,33 @@ impl OpenFailure {
             Self::Runtime(oxpinyin_runtime::OpenError::UnknownDatabaseFormat(_))
         )
     }
+
+    /// The system `table.conf` failure behind this open, if that is why it
+    /// failed: [`TableConfError::Header`] is the pin's ordinary `false`
+    /// return (the facade writes `load %s failed!`, no warning); every
+    /// other kind is a site the pin dies on, answered with one warning.
+    #[must_use]
+    pub fn table_conf_error(&self) -> Option<TableConfError> {
+        match self {
+            Self::Runtime(oxpinyin_runtime::OpenError::TableConf(error)) => Some(*error),
+            _ => None,
+        }
+    }
+}
+
+/// The pin `assert`s on the type of the `table.conf` row a library call
+/// names: `pinyin.cpp:457` / `zhuyin.cpp:372` (a default library that is
+/// neither `SYSTEM_FILE` nor `USER_FILE`), `pinyin.cpp:491` (an addon row that
+/// is neither `DICTIONARY` nor `NOT_USED`), or `MemoryChunk` reading a
+/// directory because the row names no file (`memory_chunk.h:493`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LibraryRowAssert {
+    /// `SYSTEM_FILE == m_file_type || USER_FILE == m_file_type` failed.
+    NotLoadable,
+    /// `DICTIONARY == m_file_type` failed.
+    NotDictionary,
+    /// `ret_len == sizeof(length)` failed in `MemoryChunk::mmap`.
+    NullChunkName,
 }
 
 /// Bit 30 of [`LiveOptions::double_scheme`]: when set, the live
@@ -245,7 +272,7 @@ impl ContextCore {
         let user = UserStore::open_libpinyin(
             Path::new(user_dir),
             std::collections::BTreeMap::new(),
-            SystemVersions::from_table_conf(""),
+            SystemVersions::from_conf(&TableConf::stock()),
             law,
         )
         .ok()?;
@@ -359,11 +386,26 @@ impl ContextCore {
 
     /// `load_phrase_library`'s read side: the runtime's library-load
     /// (mask-clear) rule; `false` without a runtime.
-    #[must_use]
-    pub fn load_phrase_library(&self, index: u32) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// [`LibraryRowAssert::NotLoadable`] where the pin `assert`s: the
+    /// index is in range and its default row is neither `SYSTEM_FILE` nor
+    /// `USER_FILE` (`pinyin.cpp:457`, `zhuyin.cpp:372`).
+    pub fn load_phrase_library(&self, index: u32) -> Result<bool, LibraryRowAssert> {
         let Some(runtime) = self.runtime.as_ref() else {
-            return false;
+            return Ok(false);
         };
+        let Ok(row_index) = u8::try_from(index) else {
+            return Ok(false);
+        };
+        let Some(row) = runtime.table_conf().default_row(row_index) else {
+            // Out of the sixteen sub-indices: the pin's first guard.
+            return Ok(false);
+        };
+        if !matches!(row.file_type, FileType::SystemFile | FileType::UserFile) {
+            return Err(LibraryRowAssert::NotLoadable);
+        }
         let loaded = runtime.load_library(index);
         if loaded && let Ok(index) = u8::try_from(index) {
             // The pin maps the file again for a library it had unloaded
@@ -371,25 +413,33 @@ impl ContextCore {
             // the mask, and answers as before.
             self.report_unmappable_libraries(Some(index));
         }
-        loaded
+        Ok(loaded)
     }
 
     /// `load_addon_phrase_library`'s body: the runtime's addon load, with
     /// the `mmap %s failed!` line the pin writes when the library file does
     /// not map (`pinyin.cpp:290`); the answer is the runtime's, `false` for
     /// a failure. `false` without a runtime.
-    #[must_use]
-    pub fn load_addon_phrase_library(&self, index: u8) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// The [`LibraryRowAssert`] the pin dies on: the addon row is neither
+    /// `DICTIONARY` nor `NOT_USED` (`pinyin.cpp:491`), or names no chunk.
+    pub fn load_addon_phrase_library(&self, index: u8) -> Result<bool, LibraryRowAssert> {
         let Some(runtime) = self.runtime.as_ref() else {
-            return false;
+            return Ok(false);
         };
         match runtime.load_system_addon_reporting(index) {
-            Ok(loaded) => loaded,
+            Ok(loaded) => Ok(loaded),
+            Err(oxpinyin_runtime::LibraryError::Row(fault)) => Err(match fault {
+                RowFault::NotDictionary => LibraryRowAssert::NotDictionary,
+                RowFault::NullChunkName => LibraryRowAssert::NullChunkName,
+            }),
             Err(error) => {
                 if let Some(path) = error.unmappable_path() {
                     pin_stderr::mmap_failed(path);
                 }
-                false
+                Ok(false)
             }
         }
     }

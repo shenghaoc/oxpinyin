@@ -41,7 +41,8 @@ mod parse;
 mod predict;
 
 pub use context::{
-    ContextCore, FALLBACK_CLEARED_BIT, LiveOptions, OpenFailure, UNKNOWN_DATABASE_FORMAT_WARNING,
+    ContextCore, FALLBACK_CLEARED_BIT, LibraryRowAssert, LiveOptions, OpenFailure,
+    UNKNOWN_DATABASE_FORMAT_WARNING,
 };
 pub use cursor::{KeyAt, SpanSource};
 pub use export_rows::{BigramExportWalk, BigramStep, ExportedBigramRow, PhraseExportCursor};

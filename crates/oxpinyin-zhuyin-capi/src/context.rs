@@ -65,6 +65,13 @@ pub extern "C" fn zhuyin_init(
             // failure keeps the descriptive one.
             if error.unknown_database_format() {
                 crate::ffi::log_warning(oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING);
+            } else if let Some(conf_error) = error.table_conf_error() {
+                // A `table.conf` the pin refuses is `false` and one raw
+                // line; one it dies on is one warning (#694, #525).
+                match conf_error.warning() {
+                    Some(text) => crate::ffi::log_warning(text),
+                    None => oxpinyin_data::pin_stderr::report_rejected_table_conf(&system_path),
+                }
             } else if oxpinyin_data::pin_stderr::report_unopenable_table_conf(&system_path) {
                 // The pin stops at its first step, the `table.conf` it
                 // cannot open, and says so in two raw lines (#545); that is

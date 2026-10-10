@@ -132,22 +132,63 @@ impl UserDbm {
     }
 }
 
-/// The `USER_FILE` sub-indexes' chunk files by nibble — `table.conf`'s
-/// `default …_DICTIONARY` `USER_FILE` rows' user filenames.
-pub const USER_LIBRARY_FILES: &[(u8, &str)] =
-    &[(5, "addon.bin"), (6, "network.bin"), (7, "user.bin")];
-
-/// The `SYSTEM_FILE` libraries' diff-log files by nibble.
+/// The user dir's library files, as the system `table.conf` lists them:
+/// the `USER_FILE` rows' chunk files and the `SYSTEM_FILE` rows' `.dbin`
+/// diff logs (`pinyin.cpp:150-169`, `:933-1090`), by default sub-index.
 ///
-/// `table.conf`'s `default …_DICTIONARY` `SYSTEM_FILE` rows' user
-/// filenames (the `.dbin` logs `_write_files` writes through
-/// `FacadePhraseIndex::diff`).
-pub const SYSTEM_LOG_FILES: &[(u8, &str)] = &[
-    (1, "gb_char.dbin"),
-    (2, "gbk_char.dbin"),
-    (3, "opengram.dbin"),
-    (4, "merged.dbin"),
-];
+/// A row typed `NOT_USED`, or without a user file name, owns no file: it
+/// is neither loaded, saved nor cleaned (`NULL == userfilename` skips it
+/// in `_write_files`/`_rename_files`/`_clean_user_files`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UserFileLayout {
+    user: Vec<(u8, String)>,
+    logs: Vec<(u8, String)>,
+}
+
+impl UserFileLayout {
+    /// The layout every libpinyin install ships: `addon.bin`,
+    /// `network.bin`, `user.bin` for sub-indices 5–7 and the four `.dbin`
+    /// logs for 1–4.
+    #[must_use]
+    pub fn stock() -> Self {
+        Self::from_conf(&crate::table_info::TableConf::stock())
+    }
+
+    /// The files `conf`'s default rows name.
+    #[must_use]
+    pub fn from_conf(conf: &crate::table_info::TableConf) -> Self {
+        // `_clean_user_files`, `_write_files` and `_rename_files` all start at
+        // sub-index 1: "skip the reserved zero phrase library".
+        let named = |(index, row): (u8, &crate::table_info::TableRow)| {
+            row.user
+                .clone()
+                .filter(|_| index != 0)
+                .map(|name| (index, name))
+        };
+        Self {
+            user: conf.user_libraries().filter_map(named).collect(),
+            logs: conf.system_libraries().filter_map(named).collect(),
+        }
+    }
+
+    /// The `USER_FILE` chunk files by sub-index.
+    #[must_use]
+    pub fn user_libraries(&self) -> &[(u8, String)] {
+        &self.user
+    }
+
+    /// The `SYSTEM_FILE` diff logs by sub-index.
+    #[must_use]
+    pub fn system_logs(&self) -> &[(u8, String)] {
+        &self.logs
+    }
+
+    /// Whether sub-index `index` is a `USER_FILE` library with a file.
+    #[must_use]
+    pub fn has_user_library(&self, index: u8) -> bool {
+        self.user.iter().any(|&(nibble, _)| nibble == index)
+    }
+}
 
 /// The version triple `user.conf` conforms against — the system
 /// `table.conf`'s identity lines.
@@ -157,9 +198,8 @@ pub struct SystemVersions {
     pub binary_format_version: u32,
     /// `model data version:` (14 at the pin).
     pub model_data_version: u32,
-    /// `database format:` — the DBM the writing libpinyin was built
-    /// against (`BerkeleyDB`, `KyotoCabinet`, `Tkrzw`; this build's own
-    /// token).
+    /// `database format:` as the system `table.conf` declares it
+    /// (`BerkeleyDB`, `KyotoCabinet`, `Tkrzw`).
     pub database_format: &'static str,
 }
 
@@ -175,31 +215,16 @@ impl SystemVersions {
         }
     }
 
-    /// The versions a system `table.conf` declares; the pin's values
-    /// (`7` / `14`, stable across 2.8.1→pin) when the file is absent
-    /// or silent. Each is an unsigned decimal, nothing else — this
-    /// marker's own law, and **not** `user.conf`'s: upstream reads
-    /// `table.conf` through GLib's key file and the user marker through
-    /// [`UserTableInfo::parse`]'s `fscanf` sequence, which do not accept
-    /// the same text.
+    /// The versions and database format a system `table.conf` declares
+    /// (`UserTableInfo::is_conform`, `table_info.cpp:399-413`, compares the
+    /// user marker against exactly these three fields).
     #[must_use]
-    pub fn from_table_conf(text: &str) -> Self {
-        let mut binary_format_version = PINNED_BINARY_FORMAT_VERSION;
-        let mut model_data_version = PINNED_MODEL_DATA_VERSION;
-        for line in text.lines() {
-            if let Some(parsed) = line
-                .strip_prefix("binary format version:")
-                .and_then(|value| value.trim().parse().ok())
-            {
-                binary_format_version = parsed;
-            } else if let Some(parsed) = line
-                .strip_prefix("model data version:")
-                .and_then(|value| value.trim().parse().ok())
-            {
-                model_data_version = parsed;
-            }
+    pub fn from_conf(conf: &crate::table_info::TableConf) -> Self {
+        Self {
+            binary_format_version: u32::from_ne_bytes(conf.binary_format_version().to_ne_bytes()),
+            model_data_version: u32::from_ne_bytes(conf.model_data_version().to_ne_bytes()),
+            database_format: conf.database_format().token(),
         }
-        Self::for_this_build(binary_format_version, model_data_version)
     }
 }
 
@@ -262,7 +287,9 @@ pub struct UserTableInfo {
 }
 
 /// The `database format:` tokens upstream recognises
-/// (`to_table_database_format_type`); anything else is `UNKNOWN_FORMAT`.
+/// (`to_table_database_format_type`, `table_info.cpp:122-133`); any other
+/// token reaches its `abort()` (`:132`). `UNKNOWN_FORMAT` is only the
+/// initial value a missing directive leaves.
 const UPSTREAM_DB_FORMATS: [&str; 3] = ["BerkeleyDB", "KyotoCabinet", "Tkrzw"];
 
 impl UserTableInfo {
@@ -860,8 +887,9 @@ mod tests {
         }
         assert!(UserDbm::Bigram.is_hash());
         assert!(!UserDbm::PinyinIndex.is_hash());
-        assert_eq!(USER_LIBRARY_FILES[2], (7, "user.bin"));
-        assert_eq!(SYSTEM_LOG_FILES[0], (1, "gb_char.dbin"));
+        let layout = UserFileLayout::stock();
+        assert_eq!(layout.user_libraries()[2], (7, "user.bin".to_owned()));
+        assert_eq!(layout.system_logs()[0], (1, "gb_char.dbin".to_owned()));
     }
 
     #[test]
@@ -956,17 +984,19 @@ mod tests {
         assert_eq!(get_open_counter(-3), -3);
         assert_eq!(get_open_counter(i32::MIN), i32::MIN);
 
-        // The table.conf reader takes the pin's values when the file
-        // is silent, and the declared ones when it speaks.
+        // The marker conforms against what table.conf declares.
+        let declared = crate::table_info::TableConf::parse(
+            b"binary format version:9\nmodel data version:20\nlambda parameter:1\n\
+              source table format:pinyin\ndatabase format:Tkrzw\n",
+        )
+        .expect("parses");
         assert_eq!(
-            SystemVersions::from_table_conf("lambda parameter:0.312699\n"),
-            SystemVersions::for_this_build(7, 14)
-        );
-        assert_eq!(
-            SystemVersions::from_table_conf(
-                "binary format version:9\nmodel data version:20\nlambda parameter:1\n"
-            ),
-            SystemVersions::for_this_build(9, 20)
+            SystemVersions::from_conf(&declared),
+            SystemVersions {
+                binary_format_version: 9,
+                model_data_version: 20,
+                database_format: "Tkrzw",
+            }
         );
 
         // The third directive running off the end of the file leaves

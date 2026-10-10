@@ -308,6 +308,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     if inst.core.session.set_options(inst.core.options()).is_err() {
         return false;
     }
+    let unreadable_before = inst.core.dict.unreadable_items();
     if !inst.core.session.is_composing() {
         return false;
     }
@@ -374,6 +375,18 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         inst.core.anchored_window = Some((session_offset, window.clone()));
         window
     };
+    // Class (b), `zhuyin.cpp:1096`: a token of a loaded library whose item
+    // cannot be read leaves `m_phrase_string` unset, and the pin's duplicate
+    // removal compares it (SIGSEGV). Only a `table.conf` that points a
+    // library at another file (or at none) gets here. The call fails, once.
+    if inst.core.dict.unreadable_items() != unreadable_before {
+        inst.core.anchored_window = None;
+        inst.candidates.clear();
+        crate::ffi::log_warning(
+            "zhuyin_guess_candidates: a candidate's phrase item cannot be read",
+        );
+        return false;
+    }
     let before_end = if before_cursor {
         Some(normalized)
     } else {

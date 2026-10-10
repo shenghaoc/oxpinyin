@@ -73,7 +73,10 @@ impl CapiContext {
         })
     }
 
-    pub(crate) fn load_phrase_library(&self, index: u32) -> bool {
+    pub(crate) fn load_phrase_library(
+        &self,
+        index: u32,
+    ) -> Result<bool, oxpinyin_facade::LibraryRowAssert> {
         self.core.load_phrase_library(index)
     }
 

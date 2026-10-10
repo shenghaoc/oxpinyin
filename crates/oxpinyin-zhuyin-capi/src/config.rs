@@ -132,18 +132,20 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_ref(context) };
-    // Class (c), `zhuyin.cpp:372`: the stock `table.conf` leaves library 0
-    // (reserved) and 8..=15 unused, and the pin **`assert`**s that a loaded
-    // library is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or more
-    // answers `false` first, `:362`).
-    if index == 0 || (8..PHRASE_INDEX_LIBRARY_COUNT).contains(&index) {
-        crate::ffi::log_warning(
-            "zhuyin_load_phrase_library: assertion 'SYSTEM_FILE == table_info->m_file_type \
-             || USER_FILE == table_info->m_file_type' failed",
-        );
-        return false;
+    // Class (c), `zhuyin.cpp:372`: the pin **`assert`**s that the row of a
+    // loaded library is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or
+    // more answers `false` first, `:362`); which rows are is the
+    // context's `table.conf`.
+    match ctx.load_phrase_library(u32::from(index)) {
+        Ok(loaded) => loaded,
+        Err(_) => {
+            crate::ffi::log_warning(
+                "zhuyin_load_phrase_library: assertion 'SYSTEM_FILE == table_info->m_file_type \
+                 || USER_FILE == table_info->m_file_type' failed",
+            );
+            false
+        }
     }
-    ctx.load_phrase_library(index as u32)
 }
 
 /// Unload a default phrase library by index.

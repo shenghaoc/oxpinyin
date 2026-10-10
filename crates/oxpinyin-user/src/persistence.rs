@@ -44,8 +44,8 @@ use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::single_gram::{decode_single_gram, encode_single_gram};
 use oxpinyin_data::table_entries::{phrase_index_entries, pinyin_index_entries};
 use oxpinyin_data::user_files::{
-    LogRecord, SYSTEM_LOG_FILES, SystemVersions, USER_LIBRARY_FILES, UserConfError, UserDbm,
-    UserTableInfo, decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
+    LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout, UserTableInfo,
+    decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
 };
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
@@ -163,6 +163,50 @@ impl SystemLibrary {
     }
 }
 
+/// The `SYSTEM_FILE` libraries' originals together with the user dir's
+/// file layout (`table.conf`'s user file names): everything a profile's
+/// load and save need to know about the system side.
+#[derive(Clone, Debug)]
+pub struct SystemOriginals {
+    libraries: BTreeMap<u8, SystemLibrary>,
+    layout: UserFileLayout,
+}
+
+impl SystemOriginals {
+    /// `libraries` under `layout`.
+    #[must_use]
+    pub const fn new(libraries: BTreeMap<u8, SystemLibrary>, layout: UserFileLayout) -> Self {
+        Self { libraries, layout }
+    }
+
+    /// The user dir's file layout.
+    #[must_use]
+    pub const fn layout(&self) -> &UserFileLayout {
+        &self.layout
+    }
+}
+
+impl std::ops::Deref for SystemOriginals {
+    type Target = BTreeMap<u8, SystemLibrary>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.libraries
+    }
+}
+
+impl std::ops::DerefMut for SystemOriginals {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.libraries
+    }
+}
+
+/// The libraries under the stock layout.
+impl From<BTreeMap<u8, SystemLibrary>> for SystemOriginals {
+    fn from(libraries: BTreeMap<u8, SystemLibrary>) -> Self {
+        Self::new(libraries, UserFileLayout::stock())
+    }
+}
+
 /// Builds the `SYSTEM_FILE` libraries' originals from the runtime's
 /// opened chunks — the `.dbin` diff base, and the conformance source
 /// for replaying a profile's logs.
@@ -170,9 +214,9 @@ impl SystemLibrary {
 /// Items whose UCS-4 text does not
 /// decode are skipped (a malformed entry, never a panic).
 #[must_use]
-pub fn system_originals(libraries: &PhraseLibraries) -> BTreeMap<u8, SystemLibrary> {
+pub fn system_originals(libraries: &PhraseLibraries, layout: UserFileLayout) -> SystemOriginals {
     let mut out = BTreeMap::new();
-    for &(nibble, _name) in SYSTEM_LOG_FILES {
+    for &(nibble, _) in layout.system_logs() {
         let Some(library) = libraries.library((u32::from(nibble) << 24) | 1) else {
             continue;
         };
@@ -186,7 +230,7 @@ pub fn system_originals(libraries: &PhraseLibraries) -> BTreeMap<u8, SystemLibra
             },
         );
     }
-    out
+    SystemOriginals::new(out, layout)
 }
 
 /// The user state, in the value shapes the file set carries.
@@ -333,11 +377,11 @@ const fn token_of(nibble: u8, slot: u32) -> u32 {
 /// degrade per-file (see [`Loaded::skipped`]), as upstream's do.
 pub fn load(
     dir: &Path,
-    originals: &BTreeMap<u8, SystemLibrary>,
+    originals: &SystemOriginals,
     versions: &SystemVersions,
     law: UserConfLaw,
 ) -> Result<Loaded, PersistenceError> {
-    let check = check_format(dir, versions, law)?;
+    let check = check_format(dir, versions, originals.layout(), law)?;
     Ok(load_checked(dir, originals, &check))
 }
 
@@ -361,6 +405,7 @@ pub struct ProfileCheck {
 pub(crate) fn check_format(
     dir: &Path,
     versions: &SystemVersions,
+    layout: &UserFileLayout,
     law: UserConfLaw,
 ) -> Result<ProfileCheck, PersistenceError> {
     let conf_path = dir.join(USER_CONF);
@@ -394,7 +439,7 @@ pub(crate) fn check_format(
     };
 
     if !conform {
-        clean_user_files(dir);
+        clean_user_files(dir, layout);
     }
     if law == UserConfLaw::Pinyin {
         write_marker(dir, versions, open_counter)?;
@@ -410,7 +455,7 @@ pub(crate) fn check_format(
 #[must_use]
 pub(crate) fn load_checked(
     dir: &Path,
-    originals: &BTreeMap<u8, SystemLibrary>,
+    originals: &SystemOriginals,
     check: &ProfileCheck,
 ) -> Loaded {
     let mut loaded = Loaded {
@@ -420,7 +465,7 @@ pub(crate) fn load_checked(
     };
     if check.conform {
         load_bigram(dir, &mut loaded);
-        load_libraries(dir, &mut loaded);
+        load_libraries(dir, originals.layout(), &mut loaded);
         load_user_pinyin_index(dir, &mut loaded);
         load_logs(dir, originals, &mut loaded);
     }
@@ -481,7 +526,7 @@ fn write_marker(
 /// neither pin's `check_format` unlinks it (`pinyin.cpp:194-215`,
 /// `zhuyin.cpp:141-159`): libpinyin has already rewritten it by then, and
 /// libzhuyin leaves the non-conform marker in place until a save.
-fn clean_user_files(dir: &Path) {
+fn clean_user_files(dir: &Path, layout: &UserFileLayout) {
     let mut names: Vec<String> = [
         UserDbm::Bigram.file_name(),
         UserDbm::PinyinIndex.file_name(),
@@ -489,8 +534,8 @@ fn clean_user_files(dir: &Path) {
     ]
     .into_iter()
     .collect();
-    names.extend(USER_LIBRARY_FILES.iter().map(|&(_, name)| name.to_owned()));
-    names.extend(SYSTEM_LOG_FILES.iter().map(|&(_, name)| name.to_owned()));
+    names.extend(layout.user_libraries().iter().map(|(_, name)| name.clone()));
+    names.extend(layout.system_logs().iter().map(|(_, name)| name.clone()));
     for name in names {
         let _ = std::fs::remove_file(dir.join(name));
     }
@@ -624,8 +669,12 @@ pub(crate) fn load_user_bigram_db(dir: &Path) -> Result<DefaultUserBigramDb, Per
 }
 
 /// The `USER_FILE` chunk stores.
-fn load_libraries(dir: &Path, loaded: &mut Loaded) {
-    for &(nibble, name) in USER_LIBRARY_FILES {
+fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded) {
+    for (nibble, name) in layout
+        .user_libraries()
+        .iter()
+        .map(|(n, name)| (*n, name.as_str()))
+    {
         let path = dir.join(name);
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
@@ -669,8 +718,13 @@ fn load_libraries(dir: &Path, loaded: &mut Loaded) {
 /// match the current item stops that library's replay (upstream's
 /// `merge` returns false mid-log and `_load_phrase_library` keeps the
 /// partially-merged index).
-fn load_logs(dir: &Path, originals: &BTreeMap<u8, SystemLibrary>, loaded: &mut Loaded) {
-    for &(nibble, name) in SYSTEM_LOG_FILES {
+fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
+    for (nibble, name) in originals
+        .layout()
+        .system_logs()
+        .iter()
+        .map(|(n, name)| (*n, name.as_str()))
+    {
         let path = dir.join(name);
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
@@ -834,7 +888,7 @@ pub fn system_new_total(
 pub fn save(
     dir: &Path,
     state: &UserState,
-    originals: &BTreeMap<u8, SystemLibrary>,
+    originals: &SystemOriginals,
     versions: &SystemVersions,
     open_counter: i32,
 ) -> Result<(), PersistenceError> {
@@ -854,7 +908,7 @@ pub fn save(
 pub fn save_with_bigram(
     dir: &Path,
     state: &UserState,
-    originals: &BTreeMap<u8, SystemLibrary>,
+    originals: &SystemOriginals,
     versions: &SystemVersions,
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
@@ -867,11 +921,12 @@ pub fn save_with_bigram(
 /// The files of a save in the pin's rename order (`_rename_files`,
 /// `pinyin.cpp:1025-1130`): the libraries by index, then the two indices
 /// and the bigram.
-fn pin_rename_order() -> Vec<String> {
-    let mut libraries: Vec<(u8, &str)> = SYSTEM_LOG_FILES
+fn pin_rename_order(layout: &UserFileLayout) -> Vec<String> {
+    let mut libraries: Vec<(u8, &str)> = layout
+        .system_logs()
         .iter()
-        .chain(USER_LIBRARY_FILES.iter())
-        .copied()
+        .chain(layout.user_libraries())
+        .map(|(nibble, name)| (*nibble, name.as_str()))
         .collect();
     libraries.sort_by_key(|&(nibble, _)| nibble);
     let mut order: Vec<String> = libraries
@@ -899,7 +954,7 @@ fn pin_rename_order() -> Vec<String> {
 pub(crate) fn save_with_bigram_reporting(
     dir: &Path,
     state: &UserState,
-    originals: &BTreeMap<u8, SystemLibrary>,
+    originals: &SystemOriginals,
     versions: &SystemVersions,
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
@@ -914,7 +969,7 @@ pub(crate) fn save_with_bigram_reporting(
     // among them: the unaffected files are updated and the profile can mix
     // two saves.
     let mut outcome = SaveReport::default();
-    for name in pin_rename_order() {
+    for name in pin_rename_order(originals.layout()) {
         let tmp = dir.join(format!("{name}.tmp"));
         let final_path = dir.join(&name);
         if std::fs::rename(&tmp, &final_path).is_err() {
@@ -931,7 +986,7 @@ pub(crate) fn save_with_bigram_reporting(
 fn stage_all(
     dir: &Path,
     state: &UserState,
-    originals: &BTreeMap<u8, SystemLibrary>,
+    originals: &SystemOriginals,
     bigram_db: Option<&DefaultUserBigramDb>,
     lenient: bool,
     staged: &mut Vec<(PathBuf, PathBuf)>,
@@ -984,7 +1039,7 @@ fn tolerate<T>(
 fn stage_rest(
     dir: &Path,
     state: &UserState,
-    originals: &BTreeMap<u8, SystemLibrary>,
+    originals: &SystemOriginals,
     lenient: bool,
     staged: &mut Vec<(PathBuf, PathBuf)>,
 ) -> Result<(), PersistenceError> {
@@ -1060,7 +1115,12 @@ fn stage_rest(
         )?;
 
         // ---- the USER_FILE chunk stores ---------------------------------
-        for &(nibble, name) in USER_LIBRARY_FILES {
+        for (nibble, name) in originals
+            .layout()
+            .user_libraries()
+            .iter()
+            .map(|(n, name)| (*n, name.as_str()))
+        {
             let pairs: Vec<(u32, ChunkItem)> =
                 state.libraries.get(&nibble).map_or(Vec::new(), |slots| {
                     slots
@@ -1074,7 +1134,12 @@ fn stage_rest(
 
         // ---- the SYSTEM_FILE diff logs -----------------------------------
         let empty_library = SystemLibrary::default();
-        for &(nibble, name) in SYSTEM_LOG_FILES {
+        for (nibble, name) in originals
+            .layout()
+            .system_logs()
+            .iter()
+            .map(|(n, name)| (*n, name.as_str()))
+        {
             let original = originals.get(&nibble).unwrap_or(&empty_library);
             let overrides = state
                 .system_overrides
@@ -1298,7 +1363,7 @@ mod tests {
         }
     }
 
-    fn originals() -> BTreeMap<u8, SystemLibrary> {
+    fn originals() -> SystemOriginals {
         let mut merged = BTreeMap::new();
         merged.insert(
             1,
@@ -1325,6 +1390,7 @@ mod tests {
                 items: merged,
             },
         )])
+        .into()
     }
 
     fn state() -> UserState {
@@ -1407,8 +1473,9 @@ mod tests {
             UserDbm::PhraseIndex.file_name(),
             "user.conf".to_owned(),
         ];
-        expected.extend(USER_LIBRARY_FILES.iter().map(|&(_, n)| n.to_owned()));
-        expected.extend(SYSTEM_LOG_FILES.iter().map(|&(_, n)| n.to_owned()));
+        let layout = UserFileLayout::stock();
+        expected.extend(layout.user_libraries().iter().map(|(_, n)| n.clone()));
+        expected.extend(layout.system_logs().iter().map(|(_, n)| n.clone()));
         expected.sort();
         assert_eq!(names, expected, "the save left an unexpected file");
 
@@ -1664,7 +1731,8 @@ mod tests {
             let loaded = load(&whole, &originals, &versions(), law).expect("load");
             // The judgement alone already raised the counter and wrote the
             // marker, as it does ahead of the system libraries.
-            let check = check_format(&split, &versions(), law).expect("check");
+            let check =
+                check_format(&split, &versions(), &UserFileLayout::stock(), law).expect("check");
             assert_eq!(recorded_counter(&split), recorded_counter(&whole));
             let parts = load_checked(&split, &originals, &check);
             assert_eq!(parts.state, loaded.state);
@@ -2048,8 +2116,9 @@ mod tests {
         for dbm in [UserDbm::Bigram, UserDbm::PinyinIndex, UserDbm::PhraseIndex] {
             expected.push((dbm.file_name(), dbm_request));
         }
-        for &(_, name) in USER_LIBRARY_FILES.iter().chain(SYSTEM_LOG_FILES) {
-            expected.push((name.to_owned(), 0o644));
+        let layout = UserFileLayout::stock();
+        for (_, name) in layout.user_libraries().iter().chain(layout.system_logs()) {
+            expected.push((name.clone(), 0o644));
         }
         for (name, request) in &expected {
             assert_eq!(mode_of(&dir.join(name)), request & !umask, "{name}");
@@ -2309,7 +2378,7 @@ mod tests {
     /// One fixed user state: two user phrases in library 7, one in the
     /// addon library 5, one system-token MODIFY in library 1, and two
     /// grams. Every table the file set carries is non-empty.
-    fn cross_backend_state() -> (UserState, BTreeMap<u8, SystemLibrary>) {
+    fn cross_backend_state() -> (UserState, SystemOriginals) {
         let k = |i: u8, m: u8, f: u8| ChewingKey::new(i, m, f, 0).to_packed();
         let mut libraries = BTreeMap::new();
         libraries.insert(
@@ -2395,7 +2464,7 @@ mod tests {
                 indexed: std::collections::BTreeSet::new(),
             }
             .index_every_reading(),
-            originals,
+            originals.into(),
         )
     }
 

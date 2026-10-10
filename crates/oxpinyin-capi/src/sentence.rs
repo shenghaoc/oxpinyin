@@ -414,6 +414,7 @@ pub extern "C" fn pinyin_guess_candidates(
     if inst.core.session.set_options(inst.core.options()).is_err() {
         return false;
     }
+    let unreadable_before = inst.core.dict.unreadable_items();
     // §9: the whole sort word, re-stored per call exactly as the pin's
     // `instance->m_sort_option = sort_option` (`pinyin.cpp:2203`) — the
     // engine's sort keys, the LONGER gate and the snapshot's LONGER row
@@ -473,6 +474,19 @@ pub extern "C" fn pinyin_guess_candidates(
         inst.candidates.clear();
         return false;
     };
+    // Class (b), `pinyin.cpp:1635-1637` / `:2053`: a token of a loaded
+    // library whose item cannot be read leaves `m_phrase_string` unset, and
+    // the pin's duplicate removal compares it (a NULL or wild read, SIGSEGV).
+    // Only a `table.conf` that points a library at another file (or at
+    // none) gets here. The call fails, once.
+    if inst.core.dict.unreadable_items() != unreadable_before {
+        inst.core.anchored_window = None;
+        inst.candidates.clear();
+        crate::ffi::log_warning(
+            "pinyin_guess_candidates: a candidate's phrase item cannot be read",
+        );
+        return false;
+    }
     // A lookup strictly inside a key of the active transformed parse: the
     // pin's matrix column there is empty (keys sit on their key rests'
     // `m_raw_begin` only), so the search finds nothing and the list is the

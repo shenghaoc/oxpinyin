@@ -17,11 +17,10 @@
 //! value-stably, and that the bigram grams survived byte-for-byte.
 #![cfg(target_os = "linux")]
 
-use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
-use oxpinyin_runtime::Runtime;
+use oxpinyin_data::user_files::UserFileLayout;
+use oxpinyin_runtime::{Runtime, TableConf};
 use oxpinyin_user::persistence;
 use oxpinyin_user::{SystemVersions, UserConfLaw, system_originals};
 
@@ -169,10 +168,14 @@ fn a_pin_profile_loads_and_saves_back_in_place() {
     // The rewrite re-reads value-stably: same bigram grams, same user
     // items. This is the load→save→load fixed point; the script's
     // pin-rendered diff is the cross-library authority on top of it.
-    let versions = SystemVersions::from_table_conf(
-        &fs::read_to_string(Path::new(&system).join("table.conf")).unwrap_or_default(),
+    let conf = TableConf::read(&Path::new(&system).join("table.conf"))
+        .and_then(Result::ok)
+        .unwrap_or_else(TableConf::stock);
+    let versions = SystemVersions::from_conf(&conf);
+    let originals = system_originals(
+        runtime.dict().system().libraries(),
+        UserFileLayout::from_conf(&conf),
     );
-    let originals: BTreeMap<u8, _> = system_originals(runtime.dict().system().libraries());
     let first = persistence::load(
         Path::new(&pin_dir),
         &originals,

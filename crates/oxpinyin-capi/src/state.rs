@@ -33,23 +33,6 @@ use crate::types::{LookupCandidate, PinyinContext, PinyinInstance};
 
 // ── Context ─────────────────────────────────────────────────────────────
 
-// table_info.cpp:220 scans directly into gfloat. Passing the decoder's exact
-// rational through f64 can round twice near an f32 midpoint. Keep this read
-// private to prediction and retain the regular-file guard against a FIFO.
-fn read_predicted_lambda(path: &Path) -> f32 {
-    if !path.is_file() {
-        return oxpinyin_data::PINNED_LAMBDA;
-    }
-    std::fs::read_to_string(path)
-        .ok()
-        .and_then(|text| {
-            text.lines()
-                .find_map(|line| line.strip_prefix("lambda parameter:"))
-                .and_then(|literal| literal.trim().parse::<f32>().ok())
-        })
-        .unwrap_or(oxpinyin_data::PINNED_LAMBDA)
-}
-
 /// State behind `pinyin_context_t *`.
 ///
 /// Owns the shared [`Runtime`] (when this context has system tables).
@@ -76,14 +59,23 @@ impl CapiContext {
         // constructor opens the DBM handles and chunk mappings, installs λ
         // from table.conf when present, degrades an unusable user dir to
         // "no learning", and wires addons + punctuation.
+        let core = ContextCore::try_open(
+            system_dir,
+            user_dir,
+            oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
+            oxpinyin_user::UserConfLaw::Pinyin,
+        )?;
+        // `table_info.cpp:220` scans λ straight into a `gfloat`; the exact
+        // rational the decoder may hold is not that value.
+        let predicted_lambda = core
+            .runtime
+            .as_ref()
+            .map_or(oxpinyin_data::PINNED_LAMBDA, |runtime| {
+                runtime.table_conf().lambda_f32()
+            });
         Ok(Self {
-            predicted_lambda: read_predicted_lambda(&system_dir.join("table.conf")),
-            core: ContextCore::try_open(
-                system_dir,
-                user_dir,
-                oxpinyin_facade::PINYIN_DEFAULT_OPTION_WORD,
-                oxpinyin_user::UserConfLaw::Pinyin,
-            )?,
+            predicted_lambda,
+            core,
         })
     }
 
@@ -140,7 +132,24 @@ impl CapiContext {
         if index >= PHRASE_INDEX_LIBRARY_COUNT {
             return false;
         }
-        self.core.load_addon_phrase_library(index)
+        // Class (c): `pinyin.cpp:491` asserts a loaded addon row is a
+        // `DICTIONARY`; a row naming no chunk asserts inside `MemoryChunk`
+        // (`memory_chunk.h:493`).
+        match self.core.load_addon_phrase_library(index) {
+            Ok(loaded) => loaded,
+            Err(assert) => {
+                crate::ffi::log_warning(match assert {
+                    oxpinyin_facade::LibraryRowAssert::NullChunkName => {
+                        oxpinyin_data::table_info::TableConfSite::NullSystemFile.warning()
+                    }
+                    _ => {
+                        "pinyin_load_addon_phrase_library: assertion \
+                         'DICTIONARY == table_info->m_file_type' failed"
+                    }
+                });
+                false
+            }
+        }
     }
 
     /// Unload addon library `index`.

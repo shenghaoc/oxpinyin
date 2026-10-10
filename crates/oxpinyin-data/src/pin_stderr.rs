@@ -62,6 +62,15 @@ pub fn report_unopenable_table_conf(system_dir: &Path) -> bool {
     true
 }
 
+/// The pin's report of a `table.conf` it opened but whose header does not
+/// match (`SystemTableInfo2::load` answers `false` at `table_info.cpp:209-224`,
+/// then `pinyin.cpp:338` / `zhuyin.cpp:282`): the single line `load %s
+/// failed!` naming the file as `g_build_filename` spells it.
+pub fn report_rejected_table_conf(system_dir: &Path) {
+    let name = build_filename(system_dir, "table.conf");
+    emit(&[b"load ", &name, b" failed!\n"]);
+}
+
 /// `mmap %s failed!\n`: `MemoryChunk::mmap` refused `path`
 /// (`pinyin.cpp:256`, `:290`, `:956`, `:1265`; `zhuyin.cpp:200`, `:589`,
 /// `:800`). The pin carries on with an empty chunk and dies reading it; the

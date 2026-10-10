@@ -2132,8 +2132,7 @@ and at `main`.
   `abort-*` expectation channel asserts the pair instead.
 - **Class:** (c), both halves met — the first class-(c) row that is.
   The `table.conf` route to the same `abort()` (`table_info.cpp:232-233`)
-  is not covered: oxpinyin ignores that line silently (the ledger
-  below, group B).
+  is covered since 2026-10-10 UTC (policy row 78).
 
 ### `pinyin_choose_candidate` under `SORT_WITHOUT_SENTENCE_CANDIDATE` with a nonzero offset aborts the pin (policy row 45)
 
@@ -2253,8 +2252,12 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
     `phonetic_key_matrix.h:103` through `zhuyin_get_zhuyin_key` and `_key_rest`;
     `storage/pinyin_parser2.cpp:170` through `zhuyin_parse_full_pinyin`;
     `zhuyin.cpp:2110` through `zhuyin_get_character_offset`. The zhuyin ABI
-    logs in its own domain, `libzhuyin`. `zhuyin.cpp:330`, `:440` and `:457` are
+    logs in its own domain, `libzhuyin`. `zhuyin.cpp:440` and `:457` are
     file-triggered and wait for their own ruling (`:454` is refuted).
+  - #694 (2026-10-10 UTC, policy rows 77–79): `storage/table_info.cpp:119`,
+    `:132` (the `table.conf` half), `:142`, `:156`, `:175`, `:276`;
+    `pinyin.cpp:388`, `:491`, `:457` and `zhuyin.cpp:330`, `:372` driven by the
+    rows; `include/memory_chunk.h:493` and `:434` behind a `NULL` file name.
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|
@@ -2705,3 +2708,53 @@ call measured here, not every independent caller of reduce_tokens.
       sigaction(SIGSEGV, &sa, NULL);
   }
   ```
+
+### `table.conf` follows its rows; malformed ones fail the triggering call (#694 and #525 batch B; policy rows 77–80)
+
+Registered 2026-10-10 UTC. Pin source read at `074a2219c90feaf962d0d24f034514033ece5f99`
+(`src/storage/table_info.cpp`, `src/pinyin.cpp`, `src/zhuyin.cpp`,
+`src/include/memory_chunk.h`, `src/lookup/phonetic_lookup.h`).
+
+- **What the pin does:** `SystemTableInfo2::load` (`table_info.cpp:194-294`)
+  reads `binary format version:`, `model data version:`, `lambda parameter:`,
+  `source table format:` and `database format:` with five `fscanf`s over one
+  stream, then rows of six words (`default <enum name>` or `addon <number>`,
+  table, system and user file names, file type) until `feof`. The rows fill
+  two arrays of sixteen `pinyin_table_info_t` (default and addon). The init
+  loops (`pinyin.cpp:377-392`, `zhuyin.cpp:318-334`) load every default row
+  that is not `NOT_USED`; `pinyin_load_addon_phrase_library` loads one addon
+  row; `_write_files`/`_rename_files`/`_clean_user_files` write, rename and
+  unlink the files the rows name.
+- **What oxpinyin did:** read the lambda and version lines only, and
+  hard-coded the library layout. A valid but non-stock `table.conf` was
+  ignored; a malformed one was accepted without a word.
+- **What it does now:** `oxpinyin_data::table_info::TableConf::parse` is the one
+  reader (the decoder's λ, the prediction λ, the user marker's versions and
+  database format and the library layout all come from it); the layout reaches
+  the system dictionary, the addon dictionary and the user store
+  (`oxpinyin_user::SystemOriginals`, `UserStore::has_user_library`), and the
+  two C ABIs' library calls follow the rows. Malformed files fail the call that
+  triggers the pin's abort, with exactly one warning (policy row 78). The
+  header's ordinary `false` returns answer NULL with the raw `load %s failed!`
+  line and no warning; a missing `source table format:` line is an
+  uninitialised read at the pin (row 79). λ is read as `%f` reads it; what the
+  integer cost scale cannot hold outside `[0, 1]` is row 80.
+- **Evidence:** `tools/bisection/run-contract-diff.sh bdb <oracle prefix>
+  <libpinyin_capi.so> <libzhuyin_capi.so> -- --cases <the table-conf-* names>`
+  (97 cases; the abort cases hold the pin's SIGABRT, the crash cases its
+  SIGSEGV, and the init aborts compare the user directory each side leaves).
+  The SIGSEGV shapes were traced with `gdb -batch -ex run -ex bt --args python3
+  <script that opens the pin's libpinyin.so on the private system directory,
+  parses nihao, calls pinyin_guess_sentence and pinyin_guess_candidates>` in the
+  `debian:testing` container on Linux x86-64.
+- **Not held:** (1) a `NULL` user-file name on libzhuyin, where the pin's answer
+  depends on the file system (row 78); (2) a default row retyped across the
+  fixed roles of sub-indices 5–7 beyond the cases measured (row 77); (3) λ
+  outside `[0, 1]` (row 80); (4) the libzhuyin candidate list at λ = 0, 1 and
+  1e-30, where it orders tied rows differently from the pin (measured on the
+  parent as well, so not caused by this change; unclassified, no case).
+- **Found on the way:** the `SystemVersions` documentation said upstream reads
+  `table.conf` through GLib's key file; it reads it with `fscanf`, as above.
+  `UPSTREAM_DB_FORMATS`' comment said an unknown token is `UNKNOWN_FORMAT`; it
+  reaches the `abort()` at `table_info.cpp:132`.
+

@@ -76,6 +76,23 @@ pub enum LibraryError {
         /// Why the chunk did not map.
         cause: Box<LibraryError>,
     },
+    /// The library's `table.conf` row is one the pin `assert`s on at this
+    /// call (`pinyin.cpp:491`, `memory_chunk.h:493`).
+    Row(RowFault),
+}
+
+/// What is wrong with a library's `table.conf` row, where the pin's load
+/// path dies.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RowFault {
+    /// `assert(DICTIONARY == table_info->m_file_type)`
+    /// (`pinyin.cpp:491`): the addon row is neither `DICTIONARY` nor
+    /// `NOT_USED`.
+    NotDictionary,
+    /// The row names no system chunk (`NULL`), so the path is the
+    /// directory itself and `MemoryChunk::mmap` asserts on reading it
+    /// (`memory_chunk.h:493`).
+    NullChunkName,
 }
 
 impl LibraryError {
@@ -85,7 +102,7 @@ impl LibraryError {
     pub fn unmappable_path(&self) -> Option<&Path> {
         match self {
             Self::Unmappable { path, .. } => Some(path),
-            Self::Io(_) | Self::Format(_) => None,
+            Self::Io(_) | Self::Format(_) | Self::Row(_) => None,
         }
     }
 }
@@ -96,6 +113,10 @@ impl fmt::Display for LibraryError {
             Self::Io(e) => write!(f, "phrase library I/O error: {e}"),
             Self::Format(message) => write!(f, "phrase library format error: {message}"),
             Self::Unmappable { cause, .. } => cause.fmt(f),
+            Self::Row(RowFault::NotDictionary) => {
+                f.write_str("addon table.conf row is not a DICTIONARY")
+            }
+            Self::Row(RowFault::NullChunkName) => f.write_str("table.conf row names no chunk file"),
         }
     }
 }
@@ -104,7 +125,7 @@ impl std::error::Error for LibraryError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Format(_) => None,
+            Self::Format(_) | Self::Row(_) => None,
             Self::Unmappable { cause, .. } => Some(cause.as_ref()),
         }
     }
