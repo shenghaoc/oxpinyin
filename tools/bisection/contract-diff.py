@@ -1248,6 +1248,67 @@ def _(k):
             'again': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
 
 
+# batch G: a stored forcing outlives a re-parse that shortened the input
+# (PR G, #525, row 82). The walk tails the LAST span at
+# `constraints->length() - 1` (phonetic_lookup.h:921), not the current
+# matrix's last column, and the store survives the parse unvalidated
+# (pinyin.cpp:1497-1525). `increase_pronunciation_possibility` then asserts
+# `end < matrix->size()` (`storage/phonetic_key_matrix.cpp:661`) on a matrix
+# the re-parse shrank; the pin aborts, the subject refuses before observing
+# anything and warns once in the `libpinyin` domain.
+def reparse_after_choose(k, shrink):
+    """nihao decoded, a phrase chosen past row 1, looked up again, re-parsed."""
+    inst = k.alloc()
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    k.fn('guess_sentence', B, P)(inst)
+    k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+    chosen = P()
+    k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, 2, C.byref(chosen))
+    k.fn('choose_candidate', I, P, Z, P)(inst, 0, chosen)
+    k.fn('guess_sentence', B, P)(inst)
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, shrink)
+    return inst
+
+
+@case('abort-train-after-reparse-past-matrix-end', abort=False)
+def _(k):
+    inst = reparse_after_choose(k, b'ni')
+    return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
+
+
+# The `'ni` twin walks the same clamp into a matrix whose column 0 the
+# leading apostrophe left empty (`:663`): reproduced, SIGABRT at
+# `phonetic_key_matrix.cpp:663` under the `__assert_fail` wrapper.
+@case('abort-train-after-reparse-empty-start-column', abort=False)
+def _(k):
+    inst = reparse_after_choose(k, b"'ni")
+    return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
+
+
+# The keys the :661/:663 guard leaves alone: the same choose-and-look-up
+# with no shortening re-parse, and a re-parse that repeats the input.
+@case('train-after-choose-lookup-control', control=True)
+def _(k):
+    def choose_and_relook(inst):
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+        k.fn('guess_sentence', B, P)(inst)
+        k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+        chosen = P()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, 2, C.byref(chosen))
+        k.fn('choose_candidate', I, P, Z, P)(inst, 0, chosen)
+        k.fn('guess_sentence', B, P)(inst)
+
+    inst = k.alloc()
+    choose_and_relook(inst)
+    out = {'no-reparse': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
+
+    inst = k.alloc()
+    choose_and_relook(inst)
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    out['same-length-reparse'] = k.fn('train', B, P, C.c_ubyte)(inst, 0)
+    return out
+
+
 # batch2 group 12e: a tone digit on an initial-only key (PR 12e, #525, row 4)
 TONE_INCOMPLETE = (1 << 5) | (1 << 3)
 

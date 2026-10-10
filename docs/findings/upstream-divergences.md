@@ -2846,3 +2846,53 @@ Held by `contract-diff.py` cases `abort-remove-user-candidate-twice`,
 the subject exits 0 with one `libpinyin` warning and `false`; all three MATCH
 on bdb, kc and tkrzw, and DIFFER against the parent build. No interface, ABI
 or dependency change.
+
+### `increase_pronunciation_possibility`'s matrix asserts after a shortening re-parse (#525; row 82, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`TrainResult3` walks a decoded sentence's spans and tails the LAST span at
+`constraints->length() - 1` (`src/lookup/phonetic_lookup.h:921`), not the
+current matrix's last column. The constraint store is written by a choose and
+survives the next `pinyin_parse_more_full_pinyins` unvalidated
+(`src/pinyin.cpp:1497-1525`), so a re-parse that shortens the input leaves it
+longer than the matrix the walk now indexes. `increase_pronunciation_possibility`
+(`src/storage/phonetic_key_matrix.cpp:657-668`) then asserts
+`end < matrix->size()` (`:661`) and, when the shortened input begins with an
+apostrophe so its column 0 is empty, `matrix->get_column_size(start) > 0`
+(`:663`); the pin dies of SIGABRT at the first failing call.
+
+Reproduced on bdb with a small ctypes driver under an `LD_PRELOAD`
+`__assert_fail` wrapper that prints the failing statement
+(`ASSERTRA libpinyin.so.15.0.0+0x2b04b (storage/phonetic_key_matrix.cpp:661 …)`
+and `+0x2b008 (…:663 …)`):
+
+- `pinyin_parse_more_full_pinyins(inst, nihao)` → `pinyin_guess_sentence` →
+  `pinyin_guess_candidates(inst, 0, 0)` → `pinyin_choose_candidate(inst, 0, i)`
+  with `i >= 2` → `pinyin_guess_sentence` →
+  `pinyin_parse_more_full_pinyins(inst, ni)` → `pinyin_train(inst, 0)`:
+  SIGABRT at `:661`, because the store still tails the old `nihao` length.
+- The same recipe with the re-parse `'ni`: SIGABRT at `:663`, because the
+  leading apostrophe leaves column 0 empty while the tail still passes the
+  end check on the shorter matrix.
+
+oxpinyin's `Session::train`/`train_nbest` pre-scans every trained span against
+the constraints tail and refuses with `EngineError::StaleTrainingSpan`
+(`crates/oxpinyin-engine/src/session/selection.rs`), before observing any user
+state, so nothing is written for a call the pin would have aborted
+(`InstanceCore::train` also leaves the context unmodified). The two C facades
+emit exactly one `g_warning` in their own domain (`libpinyin` for
+`pinyin_train`, `libzhuyin` for `zhuyin_train`), carrying the pin's assertion
+text (`end < matrix->size()` or `matrix->get_column_size(start) > 0`), and
+answer `false`. The walk now indexes the separator-adjusted scan topology the
+lookup indexes (`ParsedMatrix::from_scan`), so a span over a leading
+separator's empty column is refused rather than silently reading the key the
+raw scan re-anchored to offset 0 — the shape that made the `'ni` fork
+observable.
+
+Held by `contract-diff.py` cases `abort-train-after-reparse-past-matrix-end`
+and `abort-train-after-reparse-empty-start-column`, with the control
+`train-after-choose-lookup-control`: MATCH on bdb, kc and tkrzw (pin SIGABRT
+-6, subject `false` with one `libpinyin` warning), the two abort cases DIFFER
+against the parent build, and the control matches on both. No interface, ABI
+or dependency change.
+
