@@ -640,6 +640,45 @@ def unigram_of(k, token):
     return [ret, freq.value]
 
 
+# #576: zhuyin.cpp:1813-1826 at 074a2219 reads the phrase item's
+# stored unigram, including generation-time +1 and the in-memory overlay.
+# e2853126 already ported the getter; keep the pinyin twin as a control.
+def token_unigram_system(k):
+    token = 0x01001225  # 你; the stored system field is 52887, not 52888.
+    out = {'token': hex(token), 'before': unigram_of(k, token)}
+    out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
+    out['after'] = unigram_of(k, token)
+    out['absent-item'] = unigram_of(k, 0x01FFFFFF)
+    out['absent-library'] = unigram_of(k, 0x0FFFFFFF)
+    return out
+
+
+def token_unigram_user(k):
+    phrase = '你好你好'
+    reading = "ni3'hao3'ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ ㄋㄧˇ ㄏㄠˇ'
+    iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    assert iterator
+    added = k.fn('iterator_add_phrase', B, P, S, S, I)(
+        iterator, phrase.encode(), reading.encode(), 9)
+    k.fn('end_add_phrases', None, P)(iterator)
+    assert added
+    tokens = [token for token in tokens_of(k, phrase) if token >> 24 == 7]
+    assert len(tokens) == 1, tokens
+    token = tokens[0]
+    out = {'imported': added, 'token': hex(token), 'before': unigram_of(k, token)}
+    out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
+    out['after'] = unigram_of(k, token)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _prefix = 'zhuyin-' if _mode == 'zhuyin' else ''
+    case(_prefix + 'token-unigram-system', mode=_mode, control=_mode == 'pinyin')(
+        token_unigram_system)
+    case(_prefix + 'token-unigram-user', mode=_mode, control=_mode == 'pinyin')(
+        token_unigram_user)
+
+
 @case('train-unigram-total')
 def _(k):
     # Once the library's guint32 total would overflow the item stops growing:
