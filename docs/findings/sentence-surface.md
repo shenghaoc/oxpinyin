@@ -825,9 +825,9 @@ are unchanged.
 ### Fixed-final-step coverage — 2026-10-10 UTC (#594)
 
 The fixed-final-step rule already landed in `55d861de`; this lane adds
-regression coverage, with no selection or scoring change. Read from
-`/home/sheng/work/oracle/work-bdb/src/libpinyin-074a2219c90feaf962d0d24f034514033ece5f99`
-at the pin; `src/lookup/phonetic_lookup.h` hashes to Git blob
+regression coverage, with no selection or scoring change. Read from the
+retained bdb oracle source checkout at the pin;
+`src/lookup/phonetic_lookup.h` hashes to Git blob
 `c092e7610cb0e3bdcc29394e6f7f1ba3515d3214`, equal to the committed blob.
 The source law is
 [`get_tails`:330–340](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/lookup/phonetic_lookup.h#L330):
@@ -867,8 +867,8 @@ already implements the rule, not claims of a new production repair.
 The frozen fixture expectations are not re-measured by this scoped lane.
 
 Reproduction inside `oxpinyin-lane-594`, with a fresh user directory per
-worker, read-only `/oracle` bound to `/home/sheng/work/oracle`, one Cargo
-job, a 3 GiB memory cap, and retained `/lane/target/bdb`:
+worker, read-only oracle data, one Cargo job, a 3 GiB memory cap, and
+one retained bdb target directory:
 
 ```bash
 cargo build --locked -j 1 -p oxpinyin-capi -p oxpinyin-zhuyin-capi
@@ -878,15 +878,13 @@ cases = runpy.run_path('tools/bisection/contract-diff.py')['CASES']
 print(','.join(name for name in cases if name.startswith('final-step-')))
 PYCASES
 )
-tools/bisection/run-contract-diff.sh bdb /oracle/bdb \
-  /lane/target/bdb/debug/libpinyin_capi.so \
-  /lane/target/bdb/debug/libzhuyin_capi.so -- --cases "$cases" \
-  --observations /lane/evidence/gate-bdb.jsonl
+tools/bisection/run-contract-diff.sh bdb <bdb-oracle-prefix> \
+  <pinyin-debug-so> <zhuyin-debug-so> -- --cases "$cases"
 ```
 
-Full observations and logs are retained in the lane's workspace evidence
-directory for review; no bulk captures are committed. The engine guards
-cover an empty final step after three earlier values on both shapes and
+Per the user instruction on 2026-10-10 UTC, results are recorded as text
+only. Captures remain local; no evidence archive, log or attachment is
+uploaded or linked. The engine guards cover an empty final step after three earlier values on both shapes and
 a two-value final step after three earlier values on the pinyin shape.
 
 Scoped gate: `cargo test --locked -j 1 -p oxpinyin-engine --features
