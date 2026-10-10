@@ -33,7 +33,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use oxpinyin_core::ChewingKey;
-use oxpinyin_data::chunk_format::build_memory_chunk;
+use oxpinyin_data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk};
 use oxpinyin_data::chunk_write::{
     ChunkItem, PHRASE_MASK, build_chunk, decode_phrase_item, decode_sub_phrase_index,
     encode_phrase_item,
@@ -271,6 +271,36 @@ impl UserState {
     }
 }
 
+/// Which of `MemoryChunk::save`'s two header writes the filesystem
+/// refused (`src/include/memory_chunk.h`): the `length` word (`:543`,
+/// `assert(ret_len == sizeof(length))`) or the `checksum` word (`:547`,
+/// `assert(ret_len == sizeof(checksum))`).
+///
+/// Both sit under `pinyin_save` / `zhuyin_save`, which write every
+/// library chunk (`pinyin.cpp:988`, `zhuyin.cpp:645`), and the pin is
+/// built with asserts live, so a full filesystem or an `RLIMIT_FSIZE`
+/// that cuts the header kills the process. The class-(c) answer keeps
+/// only the failure; the save stops there, as the abort would have.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChunkHeaderField {
+    /// `write(fd, &length, sizeof(guint32))` — `memory_chunk.h:543`.
+    Length,
+    /// `write(fd, &checksum, sizeof(guint32))` — `memory_chunk.h:547`.
+    Checksum,
+}
+
+impl ChunkHeaderField {
+    /// The pin's assert expression at this write, for the facade's
+    /// class-(c) warning.
+    #[must_use]
+    pub const fn assert_expression(self) -> &'static str {
+        match self {
+            Self::Length => "ret_len == sizeof(length)",
+            Self::Checksum => "ret_len == sizeof(checksum)",
+        }
+    }
+}
+
 /// A persistence failure: I/O, a container, or a byte stream that does
 /// not parse.
 #[derive(Debug)]
@@ -281,6 +311,17 @@ pub enum PersistenceError {
     Store(StoreError),
     /// A byte stream did not parse under its frozen format.
     Codec(String),
+    /// A library chunk's `MemoryChunk::save` header write failed
+    /// (`memory_chunk.h:543`/`:547`): the pin `assert`s and dies of
+    /// SIGABRT. Carried apart from [`Self::Io`] because a short *payload*
+    /// write is the pin's own soft failure (`save` answers `false` and
+    /// every caller ignores it), not an abort.
+    ChunkHeaderWrite {
+        /// Which header word the write refused.
+        field: ChunkHeaderField,
+        /// The underlying write error.
+        source: std::io::Error,
+    },
     /// `user.conf` names a database format upstream's
     /// `to_table_database_format_type` does not know, where that function
     /// `abort()`s (`table_info.cpp:122-133`). The class-(c) answer: the
@@ -295,6 +336,11 @@ impl std::fmt::Display for PersistenceError {
             Self::Io(error) => write!(f, "user file io: {error}"),
             Self::Store(error) => write!(f, "user file store: {error}"),
             Self::Codec(message) => write!(f, "user file codec: {message}"),
+            Self::ChunkHeaderWrite { field, source } => write!(
+                f,
+                "user chunk header ({}): {source}",
+                field.assert_expression()
+            ),
             Self::UnknownDatabaseFormat => write!(
                 f,
                 "user.conf: unknown database format (upstream aborts, \
@@ -968,7 +1014,11 @@ fn libraries_in_pin_order(layout: &UserFileLayout) -> Vec<(u8, &FileName, Librar
 /// # Errors
 ///
 /// Returns [`PersistenceError::Codec`] when a record cannot be encoded: an
-/// internal failure the pin has no counterpart for.
+/// internal failure the pin has no counterpart for. Returns
+/// [`PersistenceError::ChunkHeaderWrite`] when a chunk file's header write
+/// fails: the pin `assert`s and dies right there, so this is the one
+/// failure the save does not carry past — no rename pass and no marker
+/// follow it, and the caller logs the point.
 pub(crate) fn save_with_bigram_reporting(
     dir: &Path,
     state: &UserState,
@@ -1078,8 +1128,9 @@ fn stage_all(
 }
 
 /// The reporting save carries on past a file it could not write, as the pin's
-/// `_write_files` does; the strict save stops at the first. An encoding
-/// failure is internal and stops both. `Ok(true)` when the write succeeded.
+/// `_write_files` does; the strict save stops at the first. A chunk header
+/// write the pin `assert`s on and an encoding failure stop both. `Ok(true)`
+/// when the write succeeded.
 fn tolerate<T>(
     lenient: bool,
     result: Result<T, PersistenceError>,
@@ -1389,12 +1440,35 @@ fn stage_chunk(
 /// O_WRONLY | O_TRUNC, 0644)` over `path`, then the bytes. The process
 /// umask applies to 0644, and a file that already exists keeps its own
 /// mode, as upstream's does — `std::fs::write` would ask for 0666.
-fn write_chunk_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+///
+/// The header is two `guint32` writes in the pin (`memory_chunk.h:542`
+/// and `:546`), each `assert`ed; here they are two writes too, so a
+/// filesystem that refuses the header names the word it refused
+/// ([`ChunkHeaderField`]). The payload after them is the pin's soft
+/// failure (`MemoryChunk::save` answers `false` and every caller ignores
+/// it) and stays an ordinary [`PersistenceError::Io`].
+fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o644);
-    std::io::Write::write_all(&mut options.open(path)?, bytes)
+    let mut file = options.open(path).map_err(PersistenceError::Io)?;
+    let split = bytes.len().min(CHUNK_HEADER_SIZE);
+    let (header, payload) = bytes.split_at(split);
+    let (length, checksum) = header.split_at(header.len().min(4));
+    std::io::Write::write_all(&mut file, length).map_err(|source| {
+        PersistenceError::ChunkHeaderWrite {
+            field: ChunkHeaderField::Length,
+            source,
+        }
+    })?;
+    std::io::Write::write_all(&mut file, checksum).map_err(|source| {
+        PersistenceError::ChunkHeaderWrite {
+            field: ChunkHeaderField::Checksum,
+            source,
+        }
+    })?;
+    std::io::Write::write_all(&mut file, payload).map_err(PersistenceError::Io)
 }
 
 #[cfg(test)]
@@ -2117,6 +2191,30 @@ mod tests {
                 .expect("load")
                 .wiped
         );
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// `memory_chunk.h:543`/`:547`: the pin `assert`s on a chunk header
+    /// write the filesystem refuses, and `/dev/full` refuses every write.
+    /// The reporting save is the one place the pin's "carry on" stops, so
+    /// the failure has to come back typed, naming the header word, for the
+    /// facade to turn into its class-(c) warning.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn reporting_save_stops_at_a_chunk_header_write() {
+        let dir = tempdir("chunk-header");
+        let originals = originals();
+        std::os::unix::fs::symlink("/dev/full", dir.join("user.bin.tmp")).expect("symlink");
+        let error =
+            save_with_bigram_reporting(&dir, &state(), &originals, &versions(), 0, None, false)
+                .expect_err("the header write must fail");
+        match error {
+            PersistenceError::ChunkHeaderWrite {
+                field: ChunkHeaderField::Length,
+                ..
+            } => {}
+            other => panic!("expected the length write to fail: {other:?}"),
+        }
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 

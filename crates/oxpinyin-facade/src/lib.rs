@@ -41,7 +41,7 @@ mod parse;
 mod predict;
 
 pub use context::{
-    ContextCore, FALLBACK_CLEARED_BIT, LibraryRowAssert, LiveOptions, OpenFailure,
+    ContextCore, FALLBACK_CLEARED_BIT, LibraryRowAssert, LiveOptions, OpenFailure, SaveOutcome,
     UNKNOWN_DATABASE_FORMAT_WARNING,
 };
 pub use cursor::{KeyAt, SpanSource};

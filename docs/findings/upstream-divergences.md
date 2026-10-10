@@ -2755,3 +2755,32 @@ Registered 2026-10-10 UTC. Pin source read at `074a2219c90feaf962d0d24f034514033
   `UPSTREAM_DB_FORMATS`' comment said an unknown token is `UNKNOWN_FORMAT`; it
   reaches the `abort()` at `table_info.cpp:132`.
 
+### Chunk-header write failure during save (#525; row 77, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`MemoryChunk::save` (`src/include/memory_chunk.h`) writes a chunk's 4-byte
+length word and then its 4-byte checksum, each with a `check_result` assert
+that the `write` returned the full word (`:543`, `:547`). A filesystem that
+refuses the write aborts the pin: with `user.bin.tmp` symlinked to `/dev/full`
+the very first write (`:543`) fails, and with `RLIMIT_FSIZE` of 4 the length
+word lands and the checksum word (`:547`) is refused. Both abort
+`pinyin_save`/`zhuyin_save` of a dirty context on both facades (SIGABRT,
+exit -6).
+
+The subject's reporting save already stopped and answered `false` at exactly
+these two writes — they are its only per-file stop conditions besides a codec
+error — but logged nothing. It now answers `false` naming the header word and
+the facade emits exactly one `g_warning`: under `libpinyin` for `pinyin_save`
+and `libzhuyin` for `zhuyin_save`. The soft chunk payload writes are
+unchanged: a refused payload write stays an ordinary per-file I/O failure that
+row 69 tolerates, the save continues and reports the renames and the marker.
+No state is changed before the failure; no interface, ABI or dependency
+change. This row covers the chunk header writes reached through the save
+calls, not the unrelated `MemoryChunk::mmap` reads of row 76.
+
+Held by `contract-diff.py` cases `abort-save-chunk-header-length`,
+`abort-save-chunk-header-checksum`,
+`abort-zhuyin-save-chunk-header-length` and
+`abort-zhuyin-save-chunk-header-checksum`: the pin dies of SIGABRT (exit -6),
+the subject exits 0 with one warning in its own domain and `false`; all four
+MATCH on bdb, kc and tkrzw, and DIFFER against the parent build.

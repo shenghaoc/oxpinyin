@@ -25,6 +25,7 @@ use oxpinyin_data::single_gram::encode_single_gram;
 use oxpinyin_store::{DefaultStore, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn};
 
 use crate::codec;
+use crate::persistence::ChunkHeaderField;
 use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN,
     PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase,
@@ -128,6 +129,11 @@ pub enum UserStoreError {
     /// (`table_info.cpp:122-133`). The class-(c) answer: the store does
     /// not open, and nothing is cleaned or written.
     UnknownDatabaseFormat,
+    /// A library chunk's `MemoryChunk::save` header write failed
+    /// (`memory_chunk.h:543`/`:547`) — the pin `assert`s and dies of
+    /// SIGABRT. The class-(c) answer: the save fails, and the facade logs
+    /// the point in its own domain.
+    ChunkHeaderWrite(ChunkHeaderField),
     /// The unigram add of an accepted predicted candidate overflowed its
     /// library's `guint32` total: `FacadePhraseIndex::add_unigram_frequency`
     /// answers `ERROR_INTEGER_OVERFLOW` and `pinyin_choose_predicted_candidate`
@@ -155,6 +161,12 @@ impl fmt::Display for UserStoreError {
                 f,
                 "user.conf: unknown database format (upstream aborts, table_info.cpp:122-133)"
             ),
+            Self::ChunkHeaderWrite(field) => write!(
+                f,
+                "user chunk header write failed ({}; upstream asserts, \
+                 memory_chunk.h:543/547)",
+                field.assert_expression()
+            ),
             Self::UnigramTotalOverflow => write!(
                 f,
                 "unigram total overflow (upstream ERROR_INTEGER_OVERFLOW, pinyin.cpp:2609-2612)"
@@ -174,6 +186,7 @@ impl std::error::Error for UserStoreError {
             | Self::TokenSpaceExhausted
             | Self::Persistence(_)
             | Self::UnknownDatabaseFormat
+            | Self::ChunkHeaderWrite(_)
             | Self::UnigramTotalOverflow => None,
         }
     }

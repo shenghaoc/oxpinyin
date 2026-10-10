@@ -45,7 +45,7 @@ pub use lookup::UserLookup;
 pub use oxpinyin_data::pin_stderr;
 pub use oxpinyin_data::user_files::SystemVersions;
 pub use persistence::{
-    ProfileCheck, SystemLibrary, SystemOriginals, UserConfLaw, system_originals,
+    ChunkHeaderField, ProfileCheck, SystemLibrary, SystemOriginals, UserConfLaw, system_originals,
 };
 pub use phrase::{
     ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, FIRST_NETWORK_TOKEN,

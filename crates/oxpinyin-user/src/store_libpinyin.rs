@@ -126,10 +126,14 @@ impl Drop for FiniGuard {
 
 impl From<PersistenceError> for UserStoreError {
     fn from(error: PersistenceError) -> Self {
-        // The class-(c) refusal keeps its own variant: it is not a
-        // degraded store but a failed open (see `persistence::load`).
+        // The two class-(c) sites keep their own variants: neither is a
+        // degraded store — one is a failed open (see `persistence::load`),
+        // the other a failed save the facade must log.
         match error {
             PersistenceError::UnknownDatabaseFormat => UserStoreError::UnknownDatabaseFormat,
+            PersistenceError::ChunkHeaderWrite { field, .. } => {
+                UserStoreError::ChunkHeaderWrite(field)
+            }
             other => UserStoreError::Persistence(other.to_string()),
         }
     }

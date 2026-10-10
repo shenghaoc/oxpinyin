@@ -107,8 +107,10 @@ impl CapiContext {
 
     /// `pinyin_save`'s body (§4): `false` without a user dir (upstream
     /// `pinyin.cpp:1133`), otherwise the store's gated save — `false` when
-    /// unmodified (`:1136`), `true` after a dirty save.
-    pub(crate) fn save_user(&mut self) -> bool {
+    /// unmodified (`:1136`), `true` after a dirty save. A chunk header
+    /// write the pin dies on comes back as [`SaveOutcome::ChunkWriteFailed`]
+    /// so the caller can log it.
+    pub(crate) fn save_user(&mut self) -> oxpinyin_facade::SaveOutcome {
         self.core.save_user()
     }
 

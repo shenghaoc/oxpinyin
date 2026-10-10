@@ -90,8 +90,9 @@ impl CapiContext {
     }
 
     /// `zhuyin_save`'s body: `false` without a user dir, otherwise the
-    /// store's gated save.
-    pub(crate) fn save_user(&mut self) -> bool {
+    /// store's gated save. A chunk header write the pin dies on comes back
+    /// as [`SaveOutcome::ChunkWriteFailed`] so the caller can log it.
+    pub(crate) fn save_user(&mut self) -> oxpinyin_facade::SaveOutcome {
         self.core.save_user()
     }
 
