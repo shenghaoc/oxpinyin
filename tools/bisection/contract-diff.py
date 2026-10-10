@@ -3661,12 +3661,15 @@ def final_step_sentences(k, inst):
         read_fd, write_fd = os.pipe()
         pid = os.fork()
         if pid == 0:
-            os.close(read_fd)
-            with open(os.devnull, 'w') as quiet:
-                os.dup2(quiet.fileno(), 2)
-            with os.fdopen(write_fd, 'w') as output:
-                json.dump(sentence_out(k, inst, index), output)
-            os._exit(0)
+            try:
+                os.close(read_fd)
+                with open(os.devnull, 'w') as quiet:
+                    os.dup2(quiet.fileno(), 2)
+                with os.fdopen(write_fd, 'w') as output:
+                    json.dump(sentence_out(k, inst, index), output)
+                os._exit(0)
+            except BaseException:
+                os._exit(1)
         os.close(write_fd)
         with os.fdopen(read_fd) as source:
             payload = source.read()
@@ -3674,7 +3677,8 @@ def final_step_sentences(k, inst):
         exit_code = os.waitstatus_to_exitcode(status)
         if exit_code == -signal.SIGABRT:
             break
-        assert exit_code == 0 and payload, 'sentence probe failed'
+        assert exit_code == 0 and payload, (
+            f'sentence probe failed (exit code {exit_code})')
         ret, text = json.loads(payload)
         if not ret:
             break

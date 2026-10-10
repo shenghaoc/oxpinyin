@@ -878,8 +878,11 @@ cases = runpy.run_path('tools/bisection/contract-diff.py')['CASES']
 print(','.join(name for name in cases if name.startswith('final-step-')))
 PYCASES
 )
-tools/bisection/run-contract-diff.sh bdb <bdb-oracle-prefix> \
-  <pinyin-debug-so> <zhuyin-debug-so> -- --cases "$cases"
+oracle_prefix=/path/to/bdb-oracle-prefix
+pinyin_so=target/debug/libpinyin_capi.so
+zhuyin_so=target/debug/libzhuyin_capi.so
+tools/bisection/run-contract-diff.sh bdb "$oracle_prefix" \
+  "$pinyin_so" "$zhuyin_so" -- --cases "$cases"
 ```
 
 Per the user instruction on 2026-10-10 UTC, results are recorded as text
