@@ -84,6 +84,11 @@ pub struct Target {
     /// cannot carry them, so the two abort sites read them here
     /// ([`persistence::LoadedProfile::overlong_index_keys`]).
     pub(crate) overlong_index_keys: Vec<Vec<u16>>,
+    /// Every raw key `user_pinyin_index.bin` carried, as packed
+    /// `ChewingKey` words — the exact query key the pin's `m_db->Get` /
+    /// `DB_SET` probe tests before it walks extensions
+    /// ([`persistence::LoadedProfile::index_keys`]).
+    pub(crate) index_keys: BTreeSet<Vec<u16>>,
 }
 
 /// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
@@ -262,6 +267,7 @@ impl GenericUserStore<DefaultStore> {
             loaded,
             phrase_table,
             overlong_index_keys,
+            index_keys,
         } = profile;
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
@@ -273,6 +279,7 @@ impl GenericUserStore<DefaultStore> {
             law,
             open_counter: loaded.open_counter,
             overlong_index_keys,
+            index_keys,
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let has_user_data = db.write(|txn| {

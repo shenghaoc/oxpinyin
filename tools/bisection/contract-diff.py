@@ -1419,14 +1419,20 @@ def _write_user_conf(k):
         user_conf.write('open counter:0\n')
 
 
-def overlong_index_context(k, parse=None):
-    """A context whose user dir carries a 17-syllable `user_pinyin_index.bin`
-    key. The first init writes the conforming `user.conf`; the crafted key is
-    then added and the profile reopened. With `parse`, the key extends the
-    packed first syllable of that parse, so the longer-candidate walk reaches
-    it."""
+def overlong_index_context(k, parse=None, rows=None, options=None):
+    """A context whose user dir carries crafted `user_pinyin_index.bin` rows,
+    by default the packed first syllable of `parse` and a 17-syllable key that
+    extends it. The first init writes the conforming `user.conf`; the crafted
+    keys are then added and the profile reopened, so the longer-candidate walk
+    reaches them. `rows(first)` overrides the crafted key list — e.g. the exact
+    prefix row can be dropped, or the over-long row's trailing byte made odd.
+    `options` sets the option word of both the build context and the reopened
+    one (e.g. `PINYIN_INCOMPLETE = 8`, so a partial first syllable projects to
+    a zero-initial word)."""
     ctx = k.init()
     assert ctx, 'the first init failed'
+    if options is not None:
+        k.fn('set_options', B, P, U)(ctx, options)
     if parse is None:
         first = b'\x00\x01'
     else:
@@ -1437,10 +1443,16 @@ def overlong_index_context(k, parse=None):
         first = C.string_at(key.value, 2)
         k.fn('free_instance', None, P)(inst)
     k.fn('fini', None, P)(ctx)
-    _craft_btree(os.path.join(k.user, 'user_pinyin_index.bin'), [first, first * 17])
+    if rows is None:
+        rows = [first, first * 17]
+    else:
+        rows = rows(first)
+    _craft_btree(os.path.join(k.user, 'user_pinyin_index.bin'), rows)
     _write_user_conf(k)
     ctx = k.init()
     assert ctx, 'the reopen failed'
+    if options is not None:
+        k.fn('set_options', B, P, U)(ctx, options)
     return ctx
 
 
@@ -1465,6 +1477,72 @@ def _(k):
     assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
     # sort 0 clears SORT_WITHOUT_LONGER_CANDIDATE, so the walk runs and
     # reaches the crafted extension (`pinyin.cpp:2292-2293`).
+    return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
+
+
+@case('abort-guess-candidates-overlong-odd-index-key', abort=False, cells=('bdb',))
+def _(k):
+    # A 35-byte key is not one upstream writes, but `phrase_length =
+    # db_key.size / sizeof(ChewingKey)` is integer division
+    # (`chewing_large_table2_bdb.cpp:470`), so the pin reads it as 17 words
+    # and its `default: abort()` dies. The subject classifies the complete-word
+    # prefix the same way and drops the trailing byte only after.
+    ctx = overlong_index_context(
+        k, parse=b'ni', rows=lambda first: [first, first * 17 + b'\x07'])
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+    return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
+
+
+@case('abort-mask-out-overlong-odd-index-key', abort=False, cells=('bdb',))
+def _(k):
+    ctx = overlong_index_context(
+        k, rows=lambda first: [first, first * 17 + b'\x07'])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('guess-after-overlong-index-key-without-prefix-answers-true', cells=('bdb',))
+def _(k):
+    # The pin's `search_suggestion` probes the exact query key first
+    # (`cursorp->c_get(..., DB_SET)`, `chewing_large_table2_bdb.cpp:576`) and
+    # answers SEARCH_NONE when it is absent, so an over-long key whose prefix
+    # row was never written walks nothing and the abort is unreachable.
+    ctx = overlong_index_context(k, parse=b'ni', rows=lambda first: [first * 17])
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+    return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
+
+
+@case('reparse-after-guess-ignores-overlong-index-key', cells=('bdb',))
+def _(k):
+    # `_prepend_longer_candidates` runs only from `pinyin_guess_candidates`
+    # (`pinyin.cpp:2292-2293`); a parse refreshes the cached list without it,
+    # so the pin cannot reach the abort from the re-parse.
+    ctx = overlong_index_context(k, parse=b'ni')
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'hao')
+    guessed = k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+    reparsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+    return {'guess_hao': guessed, 'reparse_ni': reparsed}
+
+
+@case('abort-guess-candidates-overlong-incomplete-index-key', abort=False, cells=('bdb',))
+def _(k):
+    # `compute_incomplete_chewing_index` sets only `m_initial`, so the partial
+    # `n` projects to its initial and the vowel-initial `an` to the zero
+    # initial. The 17-word key extends that two-word projection, so the pin's
+    # `default: abort()` dies at the guess.
+    ctx = overlong_index_context(
+        k,
+        parse=b'n',
+        options=8,  # PINYIN_INCOMPLETE
+        rows=lambda first: [
+            first + b'\x00\x00',
+            first + b'\x00\x00' + b'\x01\x00' * 15,
+        ],
+    )
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b"n'an")
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
