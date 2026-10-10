@@ -384,6 +384,26 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
             );
             false
         }
+        oxpinyin_facade::MaskOutOutcome::SystemLogHeaderToken => {
+            // Class (c), `phrase_index_logger.h:202`: a system library's
+            // user .dbin carries a non-null-token MODIFY_HEADER and the
+            // pin's `next_record` assert dies.
+            crate::ffi::log_warning(
+                "pinyin_mask_out: a system library's user .dbin carries a non-null-token \
+                 MODIFY_HEADER (upstream asserts, phrase_index_logger.h:202)",
+            );
+            false
+        }
+        oxpinyin_facade::MaskOutOutcome::SystemLogMultipleHeaders => {
+            // Class (c), `phrase_index.cpp:745`: a system library's user
+            // .dbin carries more than one MODIFY_HEADER and the pin's
+            // `_peek_header` assert dies.
+            crate::ffi::log_warning(
+                "pinyin_mask_out: a system library's user .dbin carries more than one \
+                 MODIFY_HEADER (upstream asserts, phrase_index.cpp:745)",
+            );
+            false
+        }
     }
 }
 

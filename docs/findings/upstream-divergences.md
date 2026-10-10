@@ -3241,3 +3241,137 @@ parent build alike; the store-wide first cut of this refusal failed it for the
 same reason as row 85's prediction control. The fixture is a Berkeley DB hash,
 so the cases declare `cells=('bdb',)`. No interface, ABI or dependency change.
 
+### A duplicate same-library phrase-table token aborts `zhuyin_iterator_add_phrase` (#525; row 89, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`_add_phrase` (`src/zhuyin.cpp:404-`) searches the phrase table, reduces the
+returned tokens to a `GArray` and walks it through `show_class_phrase`
+semantics (`src/zhuyin.cpp`): the first candidate is stored unconditionally,
+and for every later candidate whose `PHRASE_INDEX_LIBRARY_INDEX` equals the
+target `index` it asserts `PHRASE_INDEX_LIBRARY_INDEX(token) != index`
+(`:440`). Two tokens for the same phrase in the same sub-index library
+therefore abort `zhuyin_iterator_add_phrase` with SIGABRT. No public call
+writes two such tokens in one library — `_add_phrase` keeps one token per
+sub-index — so the case crafts `user_phrase_index.bin`, a Berkeley DB btree
+(the pin's own layout, `chewing_large_table2_bdb.cpp:58`), with one phrase
+key (`你好` as two little-endian `ucs4_t`) mapping to two tokens in library 7.
+
+Reproduced on bdb with a conforming `user.conf` so `check_format` keeps the
+crafted index: `zhuyin_init` succeeds, then `zhuyin_iterator_add_phrase` on
+`你好` dies at `zhuyin.cpp:440` (SIGABRT, exit -6).
+
+oxpinyin's `zhuyin_iterator_add_phrase` reads the phrase-table membership
+from the store (`UserStore::phrase_table_tokens_for_text`, the
+`user_phrase_index.bin` pairs) plus the system phrase index, keeps the tokens
+whose library equals the target index (`same_library_phrase_table_tokens`)
+and refuses with exactly one `libzhuyin` warning and `false` when more than
+one remains (`crates/oxpinyin-zhuyin-capi/src/iterators.rs`). Held by
+`contract-diff.py` case `abort-zhuyin-add-phrase-duplicate-library-token`:
+MATCH on bdb (pin SIGABRT -6, subject `false` with one `libzhuyin` warning),
+DIFFER against the parent build. The fixture is a Berkeley DB btree, so the
+case declares `cells=('bdb',)`. No interface, ABI or dependency change.
+
+### A phrase-index item text mismatch aborts `zhuyin_iterator_add_phrase` (#525; row 90, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+In the same `_add_phrase` walk, when the lone token in the target sub-index
+library names a phrase-index item, the pin fetches it and asserts the lengths
+match (`src/zhuyin.cpp:456`) and `0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t)
+* phrase_length)` (`:457`). A phrase table that points a phrase at a token
+whose item text differs — a stale `user_phrase_index.bin`, or a phrase
+reindexed elsewhere — aborts the add.
+
+Reproduced on bdb with a ctypes driver that persists `你們` in library 7, reads
+its token, rewrites `user_phrase_index.bin` so `你好` maps to that token, and
+reopens: `zhuyin_iterator_add_phrase` on `你好` dies at `zhuyin.cpp:457`
+(SIGABRT, exit -6); the subject's subject token introspection still reads `你們`.
+
+oxpinyin's `zhuyin_iterator_add_phrase` compares the token's phrase-index item
+text (`RuntimeDict::token_introspection`) with the phrase and refuses with
+exactly one `libzhuyin` warning and `false` when they differ
+(`crates/oxpinyin-zhuyin-capi/src/iterators.rs`). Held by `contract-diff.py`
+case `abort-zhuyin-add-phrase-index-text-mismatch`: MATCH on bdb (pin SIGABRT
+-6, subject `false` with one warning), DIFFER against the parent build. The
+fixture is a Berkeley DB btree, so the case declares `cells=('bdb',)`. No
+interface, ABI or dependency change.
+
+### A non-null-token `MODIFY_HEADER` in a user `.dbin` aborts init and `mask_out` (#525; row 91, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`PhraseIndexLogger::next_record` reads each record's `LOG_TYPE` and
+`phrase_token_t` and, for a `MODIFY_HEADER` record, asserts
+`token == null_token` (`src/storage/phrase_index_logger.h:202`). A user
+`.dbin` for a `SYSTEM_FILE` or `DICTIONARY` library that holds such a record
+aborts both reads of it: the library load's `merge` at init
+(`FacadePhraseIndex`'s `load_phrase_index`), and `mask_out`'s
+`merge_with_mask` (the pin re-reads each such library and its `.dbin`,
+`pinyin.cpp:1273-1285`, `zhuyin.cpp:808-820`).
+
+Reproduced on bdb with a ctypes driver that writes a `MemoryChunk` holding one
+`MODIFY_HEADER` record with a non-null token (`0x01000001`) to
+`gb_char.dbin`, with a conforming `user.conf`:
+
+- `pinyin_init` / `zhuyin_init`: SIGABRT at `phrase_index_logger.h:202`.
+- `pinyin_mask_out(ctx, 0, 0)` / `zhuyin_mask_out(ctx, 0, 0)`, with the
+  `.dbin` corrupted **after** a successful init: SIGABRT at the same site.
+
+oxpinyin's `decode_log_records` already rejected the record
+(`LogDecodeError::header_token`); `load_logs` now records it as
+`strict_log_fault` (`crates/oxpinyin-data/src/user_files.rs`,
+`crates/oxpinyin-user/src/persistence.rs`) and the store open fails with
+`UserStoreError::SystemLogHeaderToken`, mapped to
+`OpenError::CorruptLogHeader` (`crates/oxpinyin-user/src/store_libpinyin.rs`,
+`crates/oxpinyin-runtime/src/lib.rs`), so `pinyin_init`/`zhuyin_init` answer
+NULL with exactly one warning in the facade's domain
+(`crates/oxpinyin-capi/src/context.rs`,
+`crates/oxpinyin-zhuyin-capi/src/context.rs`). For the mask,
+`GenericUserStore::validate_system_logs` reads and validates every loaded
+`SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` from the user directory
+(skipping a library the runtime reports unloaded, as the pin's `get_range`
+skips a missing sub-index) **before** `mask_out` changes any state (`crates/oxpinyin-user/src/store.rs`),
+so a refused mask leaves the store byte-for-byte where the pin's partial
+reloads die with its abort; both facades answer `false` with one warning
+(`MaskOutOutcome::SystemLogHeaderToken`, `crates/oxpinyin-facade/src/context.rs`,
+both `config.rs` files). Held by `contract-diff.py` cases
+`abort-init-log-header-token-{pinyin,zhuyin}`,
+`abort-mask-out-log-header-token-{pinyin,zhuyin}` and the atomicity cases
+`abort-mask-out-log-header-untouched-{pinyin,zhuyin}` (whose `untouched-*`
+fields hold the added phrase and the user-directory bytes unchanged): MATCH on
+bdb, kc and tkrzw (pin SIGABRT -6, subject `false`/NULL with one warning) and
+all DIFFER against the parent build. The `.dbin` is a backend-independent
+`MemoryChunk`, so those cases run in every cell. No interface, ABI or
+dependency change.
+
+### More than one `MODIFY_HEADER` in a user `.dbin` aborts `mask_out` only (#525; row 92, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`_peek_header` walks a logger's records counting `MODIFY_HEADER`s and asserts
+`1 >= header_count` (`src/storage/phrase_index.cpp:745`). It is reached only
+by `merge_with_mask` — the `mask_out` read of the `.dbin`; init's `merge`
+applies every header (`m_total_freq += new_total - old_total`) without
+peeking. A `.dbin` with two null-token `MODIFY_HEADER` records therefore loads
+cleanly at init and aborts `pinyin_mask_out` / `zhuyin_mask_out`.
+
+Reproduced on bdb with a `MemoryChunk` holding two null-token `MODIFY_HEADER`
+records:
+
+- `pinyin_init` / `zhuyin_init`, with a conforming `user.conf`: complete
+  (both headers applied), no abort.
+- `pinyin_mask_out(ctx, 0, 0)` / `zhuyin_mask_out(ctx, 0, 0)`: SIGABRT at
+  `phrase_index.cpp:745`.
+
+oxpinyin's `validate_system_logs` counts the headers decoded before any
+malformed tail (the pin's `_peek_header` accumulates them until `next_record`
+answers false) and refuses the
+mask with `UserStoreError::SystemLogMultipleHeaders` (`MaskOutOutcome::
+SystemLogMultipleHeaders`) — one warning in the facade's domain, `false` —
+before any state change; init keeps loading the file exactly as the pin does
+(`crates/oxpinyin-user/src/store.rs`, `crates/oxpinyin-facade/src/context.rs`,
+both `config.rs` files). Held by `contract-diff.py` cases
+`abort-mask-out-multiple-log-headers-{pinyin,zhuyin}` and the controls
+`init-multiple-log-headers-{pinyin,zhuyin}`: the abort cases MATCH on bdb, kc
+and tkrzw and DIFFER against the parent build; both controls MATCH on every
+cell and against the parent. The `.dbin` is a backend-independent
+`MemoryChunk`, so those cases run in every cell. No interface, ABI or
+dependency change.
+

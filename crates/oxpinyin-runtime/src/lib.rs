@@ -147,6 +147,13 @@ pub enum OpenError {
     /// every other kind a class-(b)/(c) site the C ABI answers with NULL and
     /// one warning.
     TableConf(TableConfError),
+    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` carries a
+    /// non-null-token `MODIFY_HEADER` record. `PhraseIndexLogger::next_record`
+    /// asserts `token == null_token` there (`phrase_index_logger.h:202`),
+    /// reached while the library loads at init. The class-(c) availability
+    /// answer: the open fails and the C ABI answers NULL, where upstream
+    /// takes the process down.
+    CorruptLogHeader(PathBuf),
 }
 
 impl OpenError {
@@ -179,6 +186,12 @@ impl core::fmt::Display for OpenError {
                 path.join("user.conf").display()
             ),
             Self::TableConf(error) => write!(f, "table.conf: {error}"),
+            Self::CorruptLogHeader(path) => write!(
+                f,
+                "a system library's user .dbin under {} carries a non-null-token \
+                 MODIFY_HEADER (upstream asserts, phrase_index_logger.h:202)",
+                path.display()
+            ),
         }
     }
 }
@@ -1434,6 +1447,9 @@ fn open_user_store(
         Ok(store) => Ok(Some(store)),
         Err(UserStoreError::UnknownDatabaseFormat) => {
             Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
+        }
+        Err(UserStoreError::SystemLogHeaderToken) => {
+            Err(OpenError::CorruptLogHeader(user_dir.to_path_buf()))
         }
         Err(error) => {
             let user_dir = user_dir.display();

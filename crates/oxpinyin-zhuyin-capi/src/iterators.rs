@@ -106,10 +106,13 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     // 074a2219 phrase_large_table3.h:95, called by _add_phrase before
     // mutation: reduce_tokens asserts when more than four tokens already
     // spell this phrase. A fifth token is allowed; the next add refuses.
-    if handle.dict.as_ref().is_some_and(|dict| {
+    if let Some(dict) = handle.dict.as_ref() {
         // Direct keyed probes avoid rebuilding the complete UserLookup
         // after every import. Each library has at most one token per text.
-        let mut tokens = dict.system().tokens_for_text(&phrase).unwrap_or_default();
+        let Ok(mut tokens) = dict.system().tokens_for_text(&phrase) else {
+            crate::ffi::log_warning("zhuyin_iterator_add_phrase: phrase-table lookup failed");
+            return false;
+        };
         for library in 1..=7 {
             if let Ok(Some(token)) = user.token_for_phrase_in(library, &phrase) {
                 tokens.push(token);
@@ -118,15 +121,49 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
         tokens.retain(|token| dict.library_visible_token(*token));
         tokens.sort_unstable();
         tokens.dedup();
-        tokens.len() > 4
-    }) {
-        crate::ffi::log_warning(
-            "zhuyin_iterator_add_phrase: assertion '0 <= num && num <= 4' failed",
-        );
-        return false;
+        if tokens.len() > 4 {
+            crate::ffi::log_warning(
+                "zhuyin_iterator_add_phrase: assertion '0 <= num && num <= 4' failed",
+            );
+            return false;
+        }
     }
     // The pin reduces tokens before get_range rejects an unused library.
     if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
+        return false;
+    }
+    // 074a2219 zhuyin.cpp:431-458: the pin then walks the phrase table's
+    // tokens for the phrase. Two tokens in the same sub-index library trip
+    // `assert(PHRASE_INDEX_LIBRARY_INDEX(token) != index)` (`:440`); one
+    // whose phrase-index item text differs from the phrase trips the
+    // `memcmp` assert (`:457`). The phrase table is the `user_phrase_index`
+    // membership plus the system phrase index; the item text is the token
+    // introspection. Each refusal is one `libzhuyin` warning; a lookup that
+    // fails outright refuses before either add call rather than reading an
+    // empty token list.
+    let same_library =
+        match same_library_phrase_table_tokens(user, handle.dict.as_ref(), &phrase, handle.index) {
+            Ok(tokens) => tokens,
+            Err(()) => {
+                crate::ffi::log_warning("zhuyin_iterator_add_phrase: phrase-table lookup failed");
+                return false;
+            }
+        };
+    if same_library.len() > 1 {
+        crate::ffi::log_warning(
+            "zhuyin_iterator_add_phrase: assertion \
+             'PHRASE_INDEX_LIBRARY_INDEX(token) != index' failed",
+        );
+        return false;
+    }
+    if let (Some(&token), Some(dict)) = (same_library.first(), handle.dict.as_ref())
+        && let Some(introspection) = dict.token_introspection(token)
+        && introspection.text != phrase
+    {
+        crate::ffi::log_warning(
+            "zhuyin_iterator_add_phrase: assertion \
+             '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed",
+        );
         return false;
     }
     if (1..=4).contains(&handle.index) {
@@ -138,18 +175,52 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
         }
         // 074a2219 pinyin.cpp:533-571 / zhuyin.cpp:419-457: choose the
         // same-library token. The store also searches prior imported items.
-        let original = dict
-            .system()
-            .tokens_for_text(&phrase)
-            .unwrap_or_default()
-            .into_iter()
-            .find(|token| token >> 24 == u32::from(handle.index));
+        let original = match dict.system().tokens_for_text(&phrase) {
+            Ok(tokens) => tokens
+                .into_iter()
+                .find(|token| token >> 24 == u32::from(handle.index)),
+            Err(_) => {
+                crate::ffi::log_warning("zhuyin_iterator_add_phrase: phrase-table lookup failed");
+                return false;
+            }
+        };
         user.add_system_phrase_in(handle.index, original, &phrase, &keys, count)
             .is_ok()
     } else {
         user.add_phrase_in(handle.index, &phrase, &keys, count)
             .is_ok()
     }
+}
+
+/// The phrase-table tokens for `phrase` in `index`, in the pin's
+/// `phrase_table->search` shape (`zhuyin.cpp:426`): the `user_phrase_index`
+/// membership ([`UserStore::phrase_table_tokens_for_text`]) plus the system
+/// phrase index, filtered to the visible libraries. Sorted but **not**
+/// deduped: the pin's `reduce_tokens` (`phrase_large_table3.h:77-95`)
+/// concatenates the per-library arrays unchanged, so a token that is both in
+/// the membership and in the system index appears twice and the caller's
+/// `:440` check forbids the second one.
+///
+/// # Errors
+///
+/// `Err(())` when either lookup fails, so the caller answers `false` without
+/// letting an empty token list pass the same-library refusal.
+fn same_library_phrase_table_tokens(
+    user: &UserStore,
+    dict: Option<&oxpinyin_runtime::RuntimeDict>,
+    phrase: &str,
+    index: u8,
+) -> Result<Vec<u32>, ()> {
+    let mut tokens = user.phrase_table_tokens_for_text(phrase).map_err(|_| ())?;
+    if let Some(dict) = dict {
+        tokens.extend(dict.system().tokens_for_text(phrase).map_err(|_| ())?);
+        tokens.retain(|token| dict.library_visible_token(*token));
+    }
+    tokens.sort_unstable();
+    Ok(tokens
+        .into_iter()
+        .filter(|token| token >> 24 == u32::from(index))
+        .collect())
 }
 
 /// End the import iterator, arm `m_modified`, and free it.

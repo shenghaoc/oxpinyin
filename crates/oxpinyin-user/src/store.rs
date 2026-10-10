@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta};
 use oxpinyin_data::single_gram::encode_single_gram;
+use oxpinyin_data::user_files::{LogRecord, decode_log_records_partial, read_chunk_payload};
 use oxpinyin_store::{DefaultStore, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn};
 
 use crate::codec;
@@ -116,6 +117,40 @@ pub(crate) fn phrase_table_key(token: Token, text: &str) -> Vec<u8> {
     codec::encode_token_bytes(token, text.as_bytes())
 }
 
+/// The text-keyed index over [`PHRASE_TABLE`], so one phrase's membership is
+/// a contiguous prefix instead of a walk over every row. Kept in step with
+/// [`PHRASE_TABLE`] by every writer and backfilled for a store that predates
+/// it.
+pub const PHRASE_TABLE_BY_TEXT: &str = "user_phrase_table_by_text";
+
+/// Row key of [`PHRASE_TABLE_BY_TEXT`]: the phrase's UTF-8 bytes, a `0x00`
+/// separator (text never holds one), then the four big-endian token bytes.
+/// The text comes first so one phrase's rows are a contiguous prefix, unlike
+/// the token-first [`PHRASE_TABLE`] pair.
+#[must_use]
+pub(crate) fn phrase_table_text_key(text: &str, token: Token) -> Vec<u8> {
+    let mut key = Vec::with_capacity(text.len() + 5);
+    key.extend_from_slice(text.as_bytes());
+    key.push(0);
+    key.extend_from_slice(&token.to_be_bytes());
+    key
+}
+
+/// The half-open `[lo, hi)` bounds of one text's [`PHRASE_TABLE_BY_TEXT`]
+/// prefix: `text ++ 0x00` up to `text ++ 0x01`. The bytes after `0x00` are
+/// the token, so every one of the text's rows sorts inside the bounds and no
+/// other text's row does.
+#[must_use]
+pub(crate) fn phrase_table_text_bounds(text: &str) -> (Vec<u8>, Vec<u8>) {
+    let mut lo = Vec::with_capacity(text.len() + 1);
+    lo.extend_from_slice(text.as_bytes());
+    lo.push(0);
+    let mut hi = Vec::with_capacity(text.len() + 1);
+    hi.extend_from_slice(text.as_bytes());
+    hi.push(1);
+    (lo, hi)
+}
+
 /// Which seed rule an update applies.
 #[derive(Clone, Copy)]
 enum SeedPolicy {
@@ -190,6 +225,20 @@ pub enum UserStoreError {
     /// dies (`ngram.cpp:70`, `ngram_bdb.cpp:243`). The class-(c) answer:
     /// the mask fails.
     ResidualUserBigramGram,
+    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` holds a
+    /// `MODIFY_HEADER` record whose token is not `null_token`:
+    /// `PhraseIndexLogger::next_record` asserts `token == null_token`
+    /// (`phrase_index_logger.h:202`). Reached at init (the library load's
+    /// `merge`) and at `mask_out` (`merge_with_mask`). The class-(c)
+    /// answer: the load/mask fails, and the facade logs one warning in its
+    /// own domain.
+    SystemLogHeaderToken,
+    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` holds more than
+    /// one `MODIFY_HEADER` record: `_peek_header` asserts
+    /// `1 >= header_count` (`phrase_index.cpp:745`), reached only by
+    /// `mask_out`'s `merge_with_mask` (init's `merge` never peeks). The
+    /// class-(c) answer: the mask fails.
+    SystemLogMultipleHeaders,
 }
 
 impl fmt::Display for UserStoreError {
@@ -245,6 +294,16 @@ impl fmt::Display for UserStoreError {
                 f,
                 "masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)"
             ),
+            Self::SystemLogHeaderToken => write!(
+                f,
+                "a system library's user .dbin carries a non-null-token MODIFY_HEADER \
+                 (upstream asserts, phrase_index_logger.h:202)"
+            ),
+            Self::SystemLogMultipleHeaders => write!(
+                f,
+                "a system library's user .dbin carries more than one MODIFY_HEADER \
+                 (upstream asserts, phrase_index.cpp:745)"
+            ),
         }
     }
 }
@@ -266,7 +325,9 @@ impl std::error::Error for UserStoreError {
             | Self::NonTokenUserBigramKey
             | Self::ShortUserBigramValue
             | Self::EmptyUserBigramGram
-            | Self::ResidualUserBigramGram => None,
+            | Self::ResidualUserBigramGram
+            | Self::SystemLogHeaderToken
+            | Self::SystemLogMultipleHeaders => None,
         }
     }
 }
@@ -1087,6 +1148,30 @@ impl<S: WriteStore> GenericUserStore<S> {
                     txn.put(PHRASE_TABLE, &phrase_table_key(token, &text), &[])?;
                 }
             }
+            // The text index is derived, so rebuild it whenever it is
+            // missing, from `PHRASE_TABLE` (the backfill above or a store
+            // written before the index existed). One O(rows) walk per
+            // upgraded store; every later lookup is a prefix range.
+            if txn.is_empty(PHRASE_TABLE_BY_TEXT)? {
+                let mut indexed: Vec<(Token, String)> = Vec::new();
+                txn.for_each(PHRASE_TABLE, &mut |k, _v| {
+                    if k.len() > 4 {
+                        let mut raw = [0_u8; 4];
+                        raw.copy_from_slice(&k[..4]);
+                        let text = String::from_utf8(k[4..].to_vec())
+                            .map_err(|_| StoreError::Backend("corrupt phrase-table text".into()))?;
+                        indexed.push((Token::from_be_bytes(raw), text));
+                    }
+                    Ok(())
+                })?;
+                for (token, text) in indexed {
+                    txn.put(
+                        PHRASE_TABLE_BY_TEXT,
+                        &phrase_table_text_key(&text, token),
+                        &[],
+                    )?;
+                }
+            }
             has_user_data_in_write_txn(txn)
         })?;
 
@@ -1549,6 +1634,11 @@ impl<S: WriteStore> GenericUserStore<S> {
                     // pin's phrase table gains the `(token, text)` pair and
                     // a later `remove_index` finds it.
                     txn.put(PHRASE_TABLE, &phrase_table_key(token, phrase), &[])?;
+                    txn.put(
+                        PHRASE_TABLE_BY_TEXT,
+                        &phrase_table_text_key(phrase, token),
+                        &[],
+                    )?;
                 }
 
                 // The new-item path (`pinyin.cpp:585-607`): indexed
@@ -1712,6 +1802,43 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
         }
         Ok(None)
+    }
+
+    /// The tokens the pin's `m_phrase_table` maps `text` to — the
+    /// `user_phrase_index.bin` membership seeded into [`PHRASE_TABLE`]
+    /// ([`crate::store_libpinyin::seed_txn`]), which the subject's text
+    /// lookups otherwise never read.
+    ///
+    /// The zhuyin import guard uses it to reproduce `phrase_table->search`'s
+    /// two assert conditions (`zhuyin.cpp:440`, `:457`); it reads the
+    /// [`PHRASE_TABLE_BY_TEXT`] index, so one phrase's membership is a prefix
+    /// range rather than a walk over every row (a bulk import stays linear in
+    /// the number of adds). Multiplicity is preserved: the pin's
+    /// `reduce_tokens` does not deduplicate (`phrase_large_table3.h:77-95`),
+    /// so a token that is both in the membership and in the system phrase
+    /// index appears twice and trips `zhuyin.cpp:440`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the table cannot be read.
+    pub fn phrase_table_tokens_for_text(&self, text: &str) -> Result<Vec<Token>, UserStoreError> {
+        let db = self.database();
+        let (lo, hi) = phrase_table_text_bounds(text);
+        let mut tokens = Vec::new();
+        db.range(
+            PHRASE_TABLE_BY_TEXT,
+            Bound::Included(lo.as_slice()),
+            Bound::Excluded(hi.as_slice()),
+            &mut |key, _value| {
+                if key.len() >= 4 {
+                    let mut raw = [0_u8; 4];
+                    raw.copy_from_slice(&key[key.len() - 4..]);
+                    tokens.push(Token::from_be_bytes(raw));
+                }
+                Ok(())
+            },
+        )?;
+        Ok(tokens)
     }
 
     /// Current write generation: moves on every committed write, counts
@@ -2078,6 +2205,69 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(())
     }
 
+    /// Reads and validates every loaded `SYSTEM_FILE`/`DICTIONARY`
+    /// library's user `.dbin` from the user directory, before a mask
+    /// touches any state. `visible` names the libraries the runtime still
+    /// holds: the pin's `mask_out` walks `index` 1..`PHRASE_INDEX_LIBRARY_
+    /// COUNT` and `continue`s when `get_range` answers
+    /// `ERROR_NO_SUB_PHRASE_INDEX` (`pinyin.cpp:1235-1241`,
+    /// `zhuyin.cpp:792-798`), so an unloaded library's `.dbin` is never
+    /// merged and must not refuse the mask.
+    ///
+    /// The pin's `merge_with_mask` (`pinyin.cpp:1273-1285`,
+    /// `zhuyin.cpp:808-820`) `_peek_header`s each merged log, whose
+    /// `assert(1 >= header_count)` (`phrase_index.cpp:745`) and
+    /// `assert(token == null_token)` (`phrase_index_logger.h:202`) are the
+    /// pin's abort sites. Reading the file here, rather than a load-time
+    /// snapshot, also covers a `.dbin` corrupted after a successful init.
+    ///
+    /// # Errors
+    ///
+    /// [`UserStoreError::SystemLogHeaderToken`] for a non-null-token
+    /// `MODIFY_HEADER` and [`UserStoreError::SystemLogMultipleHeaders`] for
+    /// more than one `MODIFY_HEADER` record. A missing, unreadable, or
+    /// otherwise malformed `.dbin` is the pin's graceful empty-log path and
+    /// is not an error.
+    pub fn validate_system_logs(&self, visible: impl Fn(u8) -> bool) -> Result<(), UserStoreError> {
+        let Some(target) = self.inner.libpinyin.as_ref() else {
+            return Ok(());
+        };
+        let Some(dir) = target.dir.as_deref() else {
+            return Ok(());
+        };
+        for (nibble, file) in target.originals.layout().system_logs() {
+            if !visible(*nibble) {
+                continue;
+            }
+            let path = file.under(dir);
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            let Ok(payload) = read_chunk_payload(&bytes) else {
+                continue;
+            };
+            // Count the headers decoded before any malformed tail: the
+            // pin's `_peek_header` accumulates them until `next_record`
+            // answers false and then asserts on the total
+            // (`phrase_index.cpp:721-746`), so two valid headers followed
+            // by a bad record still abort there.
+            let (records, error) = decode_log_records_partial(payload);
+            let headers = records
+                .iter()
+                .filter(|record| matches!(record, LogRecord::ModifyHeader { .. }))
+                .count();
+            // The non-null-token assert fires while parsing the record,
+            // before the post-loop header-count assert.
+            if error.is_some_and(|error| error.non_null_header_token().is_some()) {
+                return Err(UserStoreError::SystemLogHeaderToken);
+            }
+            if headers > 1 {
+                return Err(UserStoreError::SystemLogMultipleHeaders);
+            }
+        }
+        Ok(())
+    }
+
     /// `pinyin_mask_out`'s store side.
     ///
     /// # Errors
@@ -2187,6 +2377,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             for (token, text) in matched {
                 txn.remove(PHRASE, &codec::encode_token(token))?;
                 txn.remove(PHRASE_TABLE, &phrase_table_key(token, &text))?;
+                txn.remove(PHRASE_TABLE_BY_TEXT, &phrase_table_text_key(&text, token))?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
                     txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
                 }
@@ -2272,6 +2463,7 @@ impl<S: WriteStore> GenericUserStore<S> {
 
                 txn.remove(PHRASE, &token_key)?;
                 txn.remove(PHRASE_TABLE, &table_key)?;
+                txn.remove(PHRASE_TABLE_BY_TEXT, &phrase_table_text_key(&text, token))?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
                     txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
                 }
