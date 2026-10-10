@@ -257,6 +257,63 @@ pub struct BigramLanguageModel {
     /// `data-formats.md` §3) otherwise. Read from config rather than
     /// hardcoded.
     lambda: Lambda,
+    /// λ as the pin's `gfloat` when `table.conf` spells a value the exact
+    /// decimal form cannot hold (outside `[0, 1]`, an exponent, `inf`,
+    /// `nan`): the interpolation then runs the pin's `gfloat`/`gdouble`
+    /// arithmetic (`phonetic_lookup.h:663`, `:693`) up to the `log`.
+    lambda_raw: Option<f32>,
+}
+
+/// `unigram_lambda(1. - lambda)` (`phonetic_lookup.h:712-713`): the double
+/// subtraction, stored as a `gfloat`.
+fn unigram_lambda(lambda: f32) -> f32 {
+    (1.0_f64 - f64::from(lambda)) as f32
+}
+
+/// The cost of a probability `x` computed the pin's way: `-log₂ x` on the
+/// fixed-point scale. `None` where the pin's `log` has no finite value
+/// (`x ≤ 0`, `nan`) or the probability underflows the scale; a probability
+/// of one or more costs nothing (the scale has no negative costs).
+fn probability_cost(x: f64) -> Option<Cost> {
+    const SCALE: u64 = 1 << 62;
+    if !x.is_finite() || x <= 0.0 {
+        return None;
+    }
+    let count = (x.min(1.0) * SCALE as f64) as u64;
+    match surprisal(count, SCALE) {
+        UNKNOWN_COST => None,
+        cost => Some(cost),
+    }
+}
+
+/// `log(elem_poss * unigram_lambda)` without the pronunciation factor
+/// (`phonetic_lookup.h:663`).
+fn raw_unigram_cost(lambda: f32, unigram: u64, unigram_total: u64) -> Option<Cost> {
+    if unigram == 0 || unigram_total == 0 {
+        return None;
+    }
+    let elem_poss = unigram as f64 / unigram_total as f64;
+    probability_cost(elem_poss * f64::from(unigram_lambda(lambda)))
+}
+
+/// `log(bigram_lambda * bigram_poss + unigram_lambda * unigram_poss)`
+/// without the pronunciation factor (`phonetic_lookup.h:608`, `:693`): the
+/// bigram term in `gfloat`, the unigram term in `gdouble`.
+fn raw_blend_cost(
+    lambda: f32,
+    bigram_count: u64,
+    bigram_total: u64,
+    unigram: u64,
+    unigram_total: u64,
+) -> Option<Cost> {
+    if bigram_total == 0 || unigram_total == 0 {
+        return None;
+    }
+    let bigram_poss = bigram_count as f32 / bigram_total as f32;
+    let unigram_poss = unigram as f64 / unigram_total as f64;
+    probability_cost(
+        f64::from(lambda * bigram_poss) + f64::from(unigram_lambda(lambda)) * unigram_poss,
+    )
 }
 
 impl BigramLanguageModel {
@@ -293,6 +350,7 @@ impl BigramLanguageModel {
             libraries,
             library_mask,
             lambda: Lambda::PINNED,
+            lambda_raw: None,
         })
     }
 
@@ -305,6 +363,17 @@ impl BigramLanguageModel {
     /// Sets the interpolation weight λ directly.
     pub const fn set_lambda(&mut self, lambda: Lambda) {
         self.lambda = lambda;
+    }
+
+    /// Installs λ from the parsed system `table.conf`.
+    pub fn set_lambda_from_conf(&mut self, conf: &crate::table_info::TableConf) {
+        match conf.lambda_unit() {
+            Some(lambda) => {
+                self.lambda = lambda;
+                self.lambda_raw = None;
+            }
+            None => self.lambda_raw = Some(conf.lambda_f32()),
+        }
     }
 
     /// Reads λ from a model's `table.conf` and installs it (`data-formats.md`
@@ -453,6 +522,13 @@ impl BigramLanguageModel {
         };
 
         match self.merged_transition(prev.value(), token.value(), user)? {
+            Some((bigram_count, bigram_total)) if self.lambda_raw.is_some() => {
+                let lambda = self.lambda_raw.unwrap_or_default();
+                Ok(
+                    raw_blend_cost(lambda, bigram_count, bigram_total, unigram, unigram_total)
+                        .unwrap_or(UNKNOWN_COST),
+                )
+            }
             Some((bigram_count, bigram_total)) => {
                 // λ·b/bt + (1 − λ)·u/ut over a common denominator, with λ =
                 // lambda_num / lambda_den from the model config. Checked
@@ -593,6 +669,19 @@ impl BigramLanguageModel {
         let unigram_total = merge_counts(self.unigram_total(), user.unigram_total_delta);
         if unigram_total == 0 {
             return Ok(oxpinyin_core::NbestStepCosts::default());
+        }
+
+        if let Some(lambda) = self.lambda_raw {
+            let blended = match self.merged_transition(prev.value(), token.value(), user)? {
+                Some((bigram_count, bigram_total)) if bigram_count > 0 => {
+                    raw_blend_cost(lambda, bigram_count, bigram_total, count, unigram_total)
+                }
+                _ => None,
+            };
+            return Ok(oxpinyin_core::NbestStepCosts {
+                blended,
+                unigram: raw_unigram_cost(lambda, count, unigram_total),
+            });
         }
 
         let lambda_num = self.lambda.numerator();

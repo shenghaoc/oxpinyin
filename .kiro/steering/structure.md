@@ -43,8 +43,12 @@ all cited against the pin in its source.
 **Drop-in data path (P6, 2026-09-02):** there is no compatibility layer.
 `oxpinyin-data` reads libpinyin's own files through lazy readers — the
 pinyin and phrase DBMs, the per-library `MemoryChunk` files (mmap,
-checksummed), `bigram.db`, `punct.bin`, the addon DBM pair, λ from
-`table.conf` — a handle plus a point read each, nothing scanned at open.
+checksummed), `bigram.db`, `punct.bin`, the addon DBM pair — a handle plus
+a point read each, nothing scanned at open. `table.conf` is read once
+(`oxpinyin-data`'s `table_info`, the way `SystemTableInfo2::load` reads it):
+its rows decide which libraries exist, what their files are called and
+which calls accept them; its header gives λ and the versions the user
+profile conforms against.
 `oxpinyin-runtime` opens a system directory the way `pinyin_init` does;
 on Kyoto Cabinet, tkrzw and Berkeley DB that directory can be an
 unmodified libpinyin install's `data/`, and on every backend it is what

@@ -29,11 +29,11 @@ use oxpinyin_store::{DefaultStore, ReadStore};
 use crate::chewing_table::{ChewingTable, PinyinIndexItem, RawChewingDbm, prefix_keys_match};
 use crate::phrase_libraries::PhraseLibraries;
 use crate::phrase_library::LibraryError;
+use crate::phrase_library::RowFault;
 use crate::phrase_table::PhraseTable;
-use crate::system_files::{
-    ADDON_LIBRARY_FILES, SYSTEM_LIBRARY_FILES, SystemDbm, addon_library_file,
-};
+use crate::system_files::{SYSTEM_LIBRARY_FILES, SystemDbm};
 use crate::table::TableError;
+use crate::table_info::{FileType, TableConf, TableRow};
 
 /// Error conditions for dictionary lookups.
 #[derive(Debug)]
@@ -102,14 +102,29 @@ fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
 /// Resolves the surviving records of one search through `libraries`:
 /// text from the chunk item, possibility over its pronunciations. A token
 /// without a loaded item is dropped (upstream's `NULL == head` skip).
+///
+/// A token whose library is loaded but whose item cannot be read (the slot
+/// is past the chunk, or the text does not decode) is counted in
+/// `unreadable` when given: `_token_get_phrase` fails for it
+/// (`pinyin.cpp:1635-1637`) and the pin's candidate listing goes on to
+/// compare the string it never set.
 fn resolve_items(
     libraries: &PhraseLibraries,
     keys: &[ChewingKey],
     items: &[PinyinIndexItem],
     out: &mut Vec<PhraseEntry>,
+    unreadable: Option<(&std::sync::atomic::AtomicU64, u32)>,
 ) {
     for item in items {
         let Some(text) = libraries.phrase_text(item.token) else {
+            if let Some((counter, user_nibbles)) = unreadable
+                && (libraries.library(item.token).is_some()
+                    || 1_u32
+                        .checked_shl(item.token >> 24)
+                        .is_some_and(|bit| user_nibbles & bit != 0))
+            {
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             continue;
         };
         let mut entry = PhraseEntry::new(PhraseToken::new(item.token), text);
@@ -181,6 +196,13 @@ pub struct SystemDictionary {
     pinyin: ChewingTable,
     phrase: PhraseTable,
     libraries: Arc<PhraseLibraries>,
+    /// Lookups that met a token of a loaded library whose item cannot be
+    /// read; see [`SystemDictionary::unreadable_items`].
+    unreadable: std::sync::atomic::AtomicU64,
+    /// The default sub-indices `table.conf` types `USER_FILE`: libraries the
+    /// pin has loaded (a user chunk, or a fresh empty one) although no
+    /// system chunk backs them, bit `n` for sub-index `n`.
+    user_nibbles: u32,
 }
 
 impl SystemDictionary {
@@ -213,14 +235,63 @@ impl SystemDictionary {
         phrase_index: &Path,
         library_dir: &Path,
     ) -> Result<Self, DictError> {
+        Self::open_files_with(
+            pinyin_index,
+            phrase_index,
+            library_dir,
+            SYSTEM_LIBRARY_FILES,
+        )
+    }
+
+    /// [`Self::open`] with the libraries `conf`'s `SYSTEM_FILE` rows name.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub fn open_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
+        let stems: Vec<(u8, &str)> = conf
+            .system_libraries()
+            .filter_map(|(index, row)| row.system.as_deref().map(|file| (index, file)))
+            .collect();
+        let mut dict = Self::open_files_with(
+            &system_dir.join(SystemDbm::PinyinIndex.file_name()),
+            &system_dir.join(SystemDbm::PhraseIndex.file_name()),
+            system_dir,
+            &stems,
+        )?;
+        dict.user_nibbles = conf
+            .user_libraries()
+            .fold(0, |mask, (index, _)| mask | (1_u32 << index));
+        Ok(dict)
+    }
+
+    fn open_files_with(
+        pinyin_index: &Path,
+        phrase_index: &Path,
+        library_dir: &Path,
+        stems: &[(u8, &str)],
+    ) -> Result<Self, DictError> {
         let pinyin = open_tree(pinyin_index)?;
         let phrase = open_phrase_table(phrase_index)?;
-        let libraries = PhraseLibraries::open(library_dir, SYSTEM_LIBRARY_FILES)?;
+        let libraries = PhraseLibraries::open(library_dir, stems)?;
         Ok(Self {
             pinyin,
             phrase,
             libraries: Arc::new(libraries),
+            unreadable: std::sync::atomic::AtomicU64::new(0),
+            user_nibbles: 0,
         })
+    }
+
+    /// How many index tokens of a loaded library, across every lookup so
+    /// far, had no readable item. A caller that brackets one operation with
+    /// two reads learns whether it met any: the pin's candidate listing dies
+    /// on such a token (`pinyin.cpp:1635`, `:2053`), where a `table.conf`
+    /// that names a different file for a library leaves the index pointing
+    /// past the chunk.
+    #[must_use]
+    pub fn unreadable_items(&self) -> u64 {
+        self.unreadable.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The facade's phrase libraries, shared with the language model
@@ -390,7 +461,13 @@ impl SystemDictionary {
             return Ok(());
         };
         let items = self.pinyin.search(&keys)?;
-        resolve_items(&self.libraries, &keys, &items, out);
+        resolve_items(
+            &self.libraries,
+            &keys,
+            &items,
+            out,
+            Some((&self.unreadable, self.user_nibbles)),
+        );
         Ok(())
     }
 }
@@ -425,7 +502,7 @@ impl Dictionary for SystemDictionary {
         items.sort_by_key(|item| item.token >> 24);
         let mut entries = Vec::with_capacity(items.len());
         // Preserve the ordinary lookup's pronunciation-pricing query.
-        resolve_items(&self.libraries, &keys, &items, &mut entries);
+        resolve_items(&self.libraries, &keys, &items, &mut entries, None);
         Ok(entries)
     }
 
@@ -517,6 +594,19 @@ pub struct AddonDictionary {
     pinyin: Option<ChewingTable>,
     phrase: Option<PhraseTable>,
     libraries: PhraseLibraries,
+    /// The `addon` rows of `table.conf`, by sub-index.
+    rows: Vec<TableRow>,
+}
+
+fn addon_rows(conf: &TableConf) -> Vec<TableRow> {
+    (0..=u8::MAX)
+        .take(crate::table_info::PHRASE_INDEX_LIBRARY_COUNT)
+        .map(|index| {
+            conf.addon_row(index)
+                .cloned()
+                .unwrap_or_else(TableRow::unused)
+        })
+        .collect()
 }
 
 impl AddonDictionary {
@@ -527,6 +617,15 @@ impl AddonDictionary {
     ///
     /// Returns [`DictError`] when a present DBM cannot be opened.
     pub fn open(system_dir: &Path) -> Result<Self, DictError> {
+        Self::open_with(system_dir, &TableConf::stock())
+    }
+
+    /// [`Self::open`] with the `addon` rows of `conf`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::open`].
+    pub fn open_with(system_dir: &Path, conf: &TableConf) -> Result<Self, DictError> {
         let pinyin_path = system_dir.join(SystemDbm::AddonPinyinIndex.file_name());
         let phrase_path = system_dir.join(SystemDbm::AddonPhraseIndex.file_name());
         let pinyin = pinyin_path
@@ -541,6 +640,7 @@ impl AddonDictionary {
             pinyin,
             phrase,
             libraries: PhraseLibraries::empty(),
+            rows: addon_rows(conf),
         })
     }
 
@@ -551,6 +651,7 @@ impl AddonDictionary {
             pinyin: None,
             phrase: None,
             libraries: PhraseLibraries::empty(),
+            rows: addon_rows(&TableConf::stock()),
         }
     }
 
@@ -574,12 +675,26 @@ impl AddonDictionary {
     ///
     /// [`LibraryError`] when the file is absent or does not verify.
     pub fn load_reporting(&mut self, index: u8, dir: &Path) -> Result<bool, LibraryError> {
-        let Some(file) = addon_library_file(index) else {
+        // `pinyin_load_addon_phrase_library`: an unused row answers false
+        // (`pinyin.cpp:487`); any other row that is not a DICTIONARY
+        // asserts (`:491`), loaded or not.
+        let Some(row) = self.rows.get(usize::from(index)) else {
             return Ok(false);
         };
+        match row.file_type {
+            FileType::NotUsed => return Ok(false),
+            FileType::Dictionary => {}
+            FileType::SystemFile | FileType::UserFile => {
+                return Err(LibraryError::Row(RowFault::NotDictionary));
+            }
+        }
+        let file = row.system.clone();
         if self.libraries.is_loaded(index) {
             return Ok(false);
         }
+        let Some(file) = file else {
+            return Err(LibraryError::Row(RowFault::NullChunkName));
+        };
         let path = dir.join(file);
         match std::fs::metadata(&path) {
             Ok(meta) if !meta.is_file() => return Ok(false),
@@ -617,8 +732,12 @@ impl AddonDictionary {
     /// The addon chunk files `table.conf` names, for callers that want to
     /// load them all.
     #[must_use]
-    pub const fn library_files() -> &'static [(u8, &'static str)] {
-        ADDON_LIBRARY_FILES
+    pub fn library_files(&self) -> Vec<(u8, &str)> {
+        (0_u8..)
+            .zip(&self.rows)
+            .filter(|(_, row)| row.file_type == FileType::Dictionary)
+            .filter_map(|(index, row)| row.system.as_deref().map(|file| (index, file)))
+            .collect()
     }
 
     /// The stored unigram of `token`'s addon item, if its library is
@@ -684,7 +803,7 @@ impl AddonDictionary {
             return Ok(());
         };
         let items = pinyin.search(&keys)?;
-        resolve_items(&self.libraries, &keys, &items, out);
+        resolve_items(&self.libraries, &keys, &items, out, None);
         Ok(())
     }
 

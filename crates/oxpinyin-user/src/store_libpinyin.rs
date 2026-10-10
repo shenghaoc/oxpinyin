@@ -51,7 +51,7 @@ use oxpinyin_store::{
 };
 
 use crate::codec;
-use crate::persistence::{self, PersistenceError, SystemLibrary, UserConfLaw, UserState};
+use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
 use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
@@ -69,7 +69,7 @@ pub struct Target {
     /// The user directory holding the profile.
     pub(crate) dir: Option<PathBuf>,
     /// The system libraries by nibble, as loaded at open.
-    pub(crate) originals: BTreeMap<u8, SystemLibrary>,
+    pub(crate) originals: SystemOriginals,
     /// This build's identity triple.
     pub(crate) versions: SystemVersions,
     /// Whose `user.conf` lifecycle the profile follows.
@@ -162,7 +162,7 @@ impl GenericUserStore<DefaultStore> {
     /// exactly as upstream's loader degrades.
     pub fn open_libpinyin(
         user_dir: &Path,
-        originals: BTreeMap<u8, SystemLibrary>,
+        originals: impl Into<SystemOriginals>,
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
@@ -178,7 +178,7 @@ impl GenericUserStore<DefaultStore> {
     /// Returns [`UserStoreError`] if an in-memory container cannot be created
     /// or seeded with the system libraries' allocation bases.
     pub fn open_transient(
-        originals: BTreeMap<u8, SystemLibrary>,
+        originals: impl Into<SystemOriginals>,
         versions: SystemVersions,
         law: UserConfLaw,
     ) -> Result<Self, UserStoreError> {
@@ -193,7 +193,7 @@ impl GenericUserStore<DefaultStore> {
     /// As [`UserStore::open_libpinyin`], less the `user.conf` judgement.
     pub fn open_libpinyin_checked(
         user_dir: &Path,
-        originals: BTreeMap<u8, SystemLibrary>,
+        originals: impl Into<SystemOriginals>,
         versions: SystemVersions,
         law: UserConfLaw,
         check: crate::persistence::ProfileCheck,
@@ -212,18 +212,20 @@ impl GenericUserStore<DefaultStore> {
     pub fn check_profile(
         user_dir: &Path,
         versions: &SystemVersions,
+        layout: &oxpinyin_data::user_files::UserFileLayout,
         law: UserConfLaw,
     ) -> Result<crate::persistence::ProfileCheck, UserStoreError> {
-        Ok(persistence::check_format(user_dir, versions, law)?)
+        Ok(persistence::check_format(user_dir, versions, layout, law)?)
     }
 
     fn open_session(
         user_dir: Option<&Path>,
-        originals: BTreeMap<u8, SystemLibrary>,
+        originals: impl Into<SystemOriginals>,
         versions: SystemVersions,
         law: UserConfLaw,
         checked: Option<crate::persistence::ProfileCheck>,
     ) -> Result<Self, UserStoreError> {
+        let originals: SystemOriginals = originals.into();
         // Create the session's own container before touching the
         // profile, so a failure here cannot follow a `check_format` that
         // already raised the open counter and wiped a non-conforming
@@ -305,7 +307,7 @@ fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
 fn seed_txn(
     txn: &mut dyn WriteTxn,
     state: &UserState,
-    originals: &BTreeMap<u8, SystemLibrary>,
+    originals: &SystemOriginals,
 ) -> Result<(), StoreError> {
     let mut unigram_total = 0_u64;
     let mut alloc_cursor: BTreeMap<u8, Token> = BTreeMap::new();
@@ -313,7 +315,7 @@ fn seed_txn(
     // ADD records own text/index rows just like USER_FILE items. MODIFY
     // records do not gain index rows (pinyin.cpp:566-607 at 074a2219).
     let mut libraries = state.libraries.clone();
-    for (&nibble, original) in originals {
+    for (&nibble, original) in originals.iter() {
         txn.put(
             SYSTEM_BASE,
             &codec::encode_u8(nibble),
@@ -495,7 +497,7 @@ fn seed_txn(
 /// libpinyin branch.
 pub fn export_state<S: WriteStore>(
     store: &GenericUserStore<S>,
-    originals: &BTreeMap<u8, SystemLibrary>,
+    originals: &SystemOriginals,
 ) -> Result<UserState, UserStoreError> {
     let db = store.database();
 
@@ -752,10 +754,11 @@ pub(crate) fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<
 mod tests {
     use super::*;
     use crate::persistence::Gram;
+    use crate::persistence::SystemLibrary;
     use crate::store::UserStore;
     use oxpinyin_core::ChewingKey;
 
-    fn originals() -> BTreeMap<u8, SystemLibrary> {
+    fn originals() -> SystemOriginals {
         let mut items = BTreeMap::new();
         items.insert(
             1_u32,
@@ -774,6 +777,7 @@ mod tests {
                 items,
             },
         )])
+        .into()
     }
 
     fn versions() -> SystemVersions {

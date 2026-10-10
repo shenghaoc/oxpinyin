@@ -42,8 +42,10 @@ use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseToken,
     SyllableKey, UserCountDelta,
 };
-use oxpinyin_data::phrase_library::LibraryError;
-use oxpinyin_data::user_files::SystemVersions;
+pub use oxpinyin_data::phrase_library::{LibraryError, RowFault};
+pub use oxpinyin_data::table_info::{FileType, TableConfSite};
+pub use oxpinyin_data::table_info::{TableConf, TableConfError};
+use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
     SystemDictionary, default_store_file, merge_bigram_row, ucs4_walk_key,
@@ -138,6 +140,13 @@ pub enum OpenError {
     /// is cleaned and no marker is written — upstream never reaches its
     /// wipe either.
     UnknownDatabaseFormat(PathBuf),
+    /// The system `table.conf` is one the pin refuses or dies on
+    /// (`SystemTableInfo2::load`, `table_info.cpp:194-294`, and the init
+    /// loop's asserts, `pinyin.cpp:377-392`): [`TableConfError::Header`] is
+    /// the pin's ordinary `false` return (`load %s failed!`, no warning),
+    /// every other kind a class-(b)/(c) site the C ABI answers with NULL and
+    /// one warning.
+    TableConf(TableConfError),
 }
 
 impl OpenError {
@@ -169,6 +178,7 @@ impl core::fmt::Display for OpenError {
                 "unknown database format in {} (upstream aborts, table_info.cpp:132)",
                 path.join("user.conf").display()
             ),
+            Self::TableConf(error) => write!(f, "table.conf: {error}"),
         }
     }
 }
@@ -418,6 +428,14 @@ impl RuntimeDict {
         let index = Arc::new(index);
         *cache = Some((generation, Arc::clone(&index)));
         Ok(index)
+    }
+
+    /// The system dictionary's count of index tokens whose library is loaded
+    /// but whose item is unreadable; see
+    /// [`SystemDictionary::unreadable_items`].
+    #[must_use]
+    pub fn unreadable_items(&self) -> u64 {
+        self.system.unreadable_items()
     }
 
     /// The underlying system table set, without the user overlay.
@@ -1242,6 +1260,7 @@ pub struct Runtime {
     dict: RuntimeDict,
     lm: RuntimeLm,
     user: Option<UserStore>,
+    conf: Arc<TableConf>,
     /// The per-key initial cost table, memoised alongside the
     /// library-visibility mask it was computed under. Deferred out of
     /// [`Runtime::open`]: computing it walks the dictionary, which dominates
@@ -1257,6 +1276,51 @@ pub struct Runtime {
     /// stamped with a mask it was not computed under. Addon load/unload
     /// never touch the mask, so they never invalidate it.
     key_costs: RwLock<Option<(u32, Arc<[Cost]>)>>,
+}
+
+/// The system `table.conf` as `pinyin_init` finds it.
+enum ConfFile {
+    /// Not there: a fixture directory keeps the stock layout, and the
+    /// profile is judged late.
+    Missing,
+    /// There but not readable as a regular file.
+    Unreadable(std::io::Error),
+    /// Read and accepted.
+    Read(Box<TableConf>),
+}
+
+impl ConfFile {
+    /// The layout the rest of the open follows.
+    fn conf(&self) -> TableConf {
+        match self {
+            Self::Read(conf) => (**conf).clone(),
+            Self::Missing | Self::Unreadable(_) => TableConf::stock(),
+        }
+    }
+}
+
+/// `SystemTableInfo2::load`'s `fopen` and parse. A file the pin would refuse
+/// is an [`OpenError::TableConf`].
+fn read_conf_file(system_dir: &Path) -> Result<ConfFile, OpenError> {
+    let path = system_dir.join("table.conf");
+    // A FIFO would block the read forever.
+    match std::fs::metadata(&path) {
+        Ok(meta) if !meta.is_file() => {
+            return Ok(ConfFile::Unreadable(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "not a regular file",
+            )));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(ConfFile::Missing),
+        Err(error) => return Ok(ConfFile::Unreadable(error)),
+    }
+    match std::fs::read(&path) {
+        Ok(bytes) => TableConf::parse(&bytes)
+            .map(|conf| ConfFile::Read(Box::new(conf)))
+            .map_err(OpenError::TableConf),
+        Err(error) => Ok(ConfFile::Unreadable(error)),
+    }
 }
 
 /// The user profile's `check_format`, run ahead of the system libraries.
@@ -1278,15 +1342,16 @@ enum EarlyProfile {
 /// when it dies. Only a readable `table.conf` is judged against; a fixture
 /// dir without one keeps the late judgement.
 fn check_profile_early(
-    system_dir: &Path,
+    conf: &ConfFile,
     user_dir: &Path,
     law: UserConfLaw,
 ) -> Result<EarlyProfile, OpenError> {
-    let Ok(text) = std::fs::read_to_string(system_dir.join("table.conf")) else {
+    let ConfFile::Read(conf) = conf else {
         return Ok(EarlyProfile::Unchecked);
     };
-    let versions = SystemVersions::from_table_conf(&text);
-    match UserStore::check_profile(user_dir, &versions, law) {
+    let versions = SystemVersions::from_conf(conf);
+    let layout = UserFileLayout::from_conf(conf);
+    match UserStore::check_profile(user_dir, &versions, &layout, law) {
         Ok(check) => Ok(EarlyProfile::Checked(versions, check)),
         Err(UserStoreError::UnknownDatabaseFormat) => {
             Err(OpenError::UnknownDatabaseFormat(user_dir.to_path_buf()))
@@ -1315,7 +1380,7 @@ fn check_profile_early(
 /// [`OpenError::UnknownDatabaseFormat`], with nothing cleaned and no
 /// marker written — upstream never reaches its wipe either.
 fn open_user_store(
-    system_dir: &Path,
+    conf_file: &ConfFile,
     user_dir: &Path,
     dict: &SystemDictionary,
     law: UserConfLaw,
@@ -1330,25 +1395,22 @@ fn open_user_store(
     // stand. An unreadable *existing* one must not fall back to them —
     // the profile would be judged non-conforming against the wrong
     // triple and wiped, so the store degrades to no-user-state instead.
-    let versions = match judged {
-        Some(versions) => versions,
-        None => match std::fs::read_to_string(system_dir.join("table.conf")) {
-            Ok(text) => SystemVersions::from_table_conf(&text),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                SystemVersions::from_table_conf("")
-            }
-            Err(e) => {
-                let system_dir = system_dir.display();
-                eprintln!(
-                    "oxpinyin: table.conf unreadable (system dir \
-                 {system_dir}: {e}); user store degraded to \
+    let versions = match (judged, conf_file) {
+        (Some(versions), _) => versions,
+        (None, ConfFile::Read(conf)) => SystemVersions::from_conf(conf),
+        (None, ConfFile::Missing) => SystemVersions::from_conf(&TableConf::stock()),
+        (None, ConfFile::Unreadable(e)) => {
+            eprintln!(
+                "oxpinyin: table.conf unreadable ({e}); user store degraded to \
                  no-user-state rather than risk wiping the profile"
-                );
-                return Ok(None);
-            }
-        },
+            );
+            return Ok(None);
+        }
     };
-    let originals = oxpinyin_user::system_originals(dict.libraries());
+    let originals = oxpinyin_user::system_originals(
+        dict.libraries(),
+        UserFileLayout::from_conf(&conf_file.conf()),
+    );
     let opened = match check {
         Some(check) => UserStore::open_libpinyin_checked(user_dir, originals, versions, law, check),
         None => UserStore::open_libpinyin(user_dir, originals, versions, law),
@@ -1410,10 +1472,19 @@ impl Runtime {
         user_dir: Option<&Path>,
         law: UserConfLaw,
     ) -> Result<Self, OpenError> {
+        let conf_file = read_conf_file(system_dir)?;
+        let conf = conf_file.conf();
         let early = match user_dir {
-            Some(dir) => check_profile_early(system_dir, dir, law)?,
+            Some(dir) => check_profile_early(&conf_file, dir, law)?,
             None => EarlyProfile::Unchecked,
         };
+        // The init loop over the default rows runs after `check_format`
+        // (`pinyin.cpp:344`, `:377-392`), so a profile judgement has been
+        // written when it dies.
+        if let ConfFile::Read(read) = &conf_file {
+            read.check_default_rows(user_dir)
+                .map_err(|site| OpenError::TableConf(TableConfError::Abort(site)))?;
+        }
         let pinyin_index = system_dir.join(SystemDbm::PinyinIndex.file_name());
         let phrase_index = system_dir.join(SystemDbm::PhraseIndex.file_name());
         let bigram = system_dir.join(SystemDbm::Bigram.file_name());
@@ -1421,7 +1492,7 @@ impl Runtime {
         require_file(&phrase_index)?;
         require_file(&bigram)?;
 
-        let dict = SystemDictionary::open(system_dir).map_err(OpenError::Dict)?;
+        let dict = SystemDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?;
         // The loaded-library mask is shared with the language model: an
         // unloaded library's items leave both the lookups and the unigram
         // denominator, as freeing the sub-index does upstream.
@@ -1434,7 +1505,7 @@ impl Runtime {
         .map_err(OpenError::Lm)?;
         // λ rides the install's table.conf when one ships; absent, the
         // pinned default stands.
-        lm.set_lambda_from_table_conf(&system_dir.join("table.conf"));
+        lm.set_lambda_from_conf(&conf);
 
         // `None` has transient user state without a directory (#642). An
         // empty path is a user directory like any other: the pin keeps
@@ -1453,19 +1524,20 @@ impl Runtime {
         let user = match user_dir {
             None => Some(
                 UserStore::open_transient(
-                    oxpinyin_user::system_originals(dict.libraries()),
-                    SystemVersions::from_table_conf(
-                        &std::fs::read_to_string(system_dir.join("table.conf")).unwrap_or_default(),
+                    oxpinyin_user::system_originals(
+                        dict.libraries(),
+                        UserFileLayout::from_conf(&conf),
                     ),
+                    SystemVersions::from_conf(&conf),
                     law,
                 )
                 .map_err(|error| OpenError::Dict(DictError::Parse(error.to_string())))?,
             ),
-            Some(dir) => open_user_store(system_dir, dir, &dict, law, early)?,
+            Some(dir) => open_user_store(&conf_file, dir, &dict, law, early)?,
         };
 
         let addons = Arc::new(RwLock::new(AddonSet {
-            dict: AddonDictionary::open(system_dir).map_err(OpenError::Dict)?,
+            dict: AddonDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?,
         }));
         let punct = PunctTable::open_optional(&system_dir.join(SystemDbm::Punct.file_name()));
 
@@ -1493,8 +1565,17 @@ impl Runtime {
             dict,
             lm,
             user,
+            conf: Arc::new(conf),
             key_costs: RwLock::new(None),
         })
+    }
+
+    /// The system `table.conf` this runtime opened (the stock layout for a
+    /// data directory without one): its rows decide which libraries exist,
+    /// what they are called, and which calls the pin accepts for them.
+    #[must_use]
+    pub fn table_conf(&self) -> &TableConf {
+        &self.conf
     }
 
     /// Builds a fresh session over this backend set. Sessions are cheap:

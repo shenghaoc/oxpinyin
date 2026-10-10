@@ -1125,6 +1125,18 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.add_phrase_in(USER_DICTIONARY, phrase, keys, count)
     }
 
+    /// Whether `table.conf` gives sub-index `library` a `USER_FILE` row
+    /// with a file: a `NOT_USED` row is not a library the pin loaded, and
+    /// nothing can be added to it. A store without a system `table.conf`
+    /// behind it keeps the stock layout.
+    #[must_use]
+    pub fn has_user_library(&self, library: u8) -> bool {
+        self.inner
+            .libpinyin
+            .as_ref()
+            .is_none_or(|target| target.originals.layout().has_user_library(library))
+    }
+
     /// Add a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
     ///
     /// # Errors
@@ -1137,7 +1149,10 @@ impl<S: WriteStore> GenericUserStore<S> {
         keys: &[PinyinKey],
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
-        if !is_user_file_library(library) || !phrase::phrase_and_keys_valid(phrase, keys) {
+        if !is_user_file_library(library)
+            || !self.has_user_library(library)
+            || !phrase::phrase_and_keys_valid(phrase, keys)
+        {
             return Err(UserStoreError::InvalidPhrase);
         }
         // `_add_phrase`'s `count` reaches the item as a `guint32` delta

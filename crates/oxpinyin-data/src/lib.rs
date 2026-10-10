@@ -45,6 +45,7 @@ pub mod system_files;
 pub mod table;
 pub mod table_conf;
 pub mod table_entries;
+pub mod table_info;
 pub mod user_files;
 
 pub use bigram_table::BigramTable;
