@@ -29,6 +29,89 @@ pub const COST_PER_BIT: i64 = 1_000;
 /// wins.
 pub const UNKNOWN_COST: Cost = 40 * COST_PER_BIT;
 
+/// A cost that is not a number: the pin's `m_poss` after a `log` of a
+/// negative argument, or `inf - inf`. It is sticky under [`cost_add`] and
+/// compares false against everything ([`cost_gt`]), as a NaN does. Reached
+/// only through a `lambda parameter:` outside `[0, 1]`.
+pub const NAN_COST: Cost = Cost::MIN;
+
+/// A cost of `+inf` — a possibility of 0, `log(0) = -inf` in the pin.
+pub const POS_INF_COST: Cost = Cost::MAX;
+
+/// A cost of `-inf` — a possibility of `+inf`, which `log(inf)` gives the pin.
+pub const NEG_INF_COST: Cost = Cost::MIN + 1;
+
+/// Whether `cost` is [`NAN_COST`].
+#[must_use]
+pub const fn cost_is_nan(cost: Cost) -> bool {
+    cost == NAN_COST
+}
+
+/// `a + b` with the IEEE rules for the special costs: NaN is sticky,
+/// `+inf + -inf` is NaN, an infinity absorbs a finite cost, and finite sums
+/// saturate short of the reserved values.
+#[must_use]
+pub const fn cost_add(a: Cost, b: Cost) -> Cost {
+    if a == NAN_COST || b == NAN_COST {
+        return NAN_COST;
+    }
+    match (a, b) {
+        (POS_INF_COST, NEG_INF_COST) | (NEG_INF_COST, POS_INF_COST) => NAN_COST,
+        (POS_INF_COST, _) | (_, POS_INF_COST) => POS_INF_COST,
+        (NEG_INF_COST, _) | (_, NEG_INF_COST) => NEG_INF_COST,
+        _ => {
+            let sum = a.saturating_add(b);
+            if sum == POS_INF_COST {
+                POS_INF_COST - 1
+            } else if sum <= NEG_INF_COST {
+                NEG_INF_COST + 1
+            } else {
+                sum
+            }
+        }
+    }
+}
+
+/// `a > b` as C compares two floats: false whenever either is NaN.
+#[must_use]
+pub const fn cost_gt(a: Cost, b: Cost) -> bool {
+    a != NAN_COST && b != NAN_COST && a > b
+}
+
+/// The cost of a probability `x` that may lie outside `(0, 1]`: `-log2(x)` on
+/// the fixed-point scale, computed from the bits of `x` with integer
+/// arithmetic only. `x` above one costs less than nothing; `0` is `+inf`;
+/// `+inf` is `-inf`; a negative `x` or NaN is NaN — what `log` gives the pin.
+#[must_use]
+pub fn cost_of_probability(x: f64) -> Cost {
+    if x.is_nan() || x < 0.0 {
+        return NAN_COST;
+    }
+    if x == 0.0 {
+        return POS_INF_COST;
+    }
+    if x.is_infinite() {
+        return NEG_INF_COST;
+    }
+    let bits = x.to_bits();
+    let biased = i64::try_from((bits >> 52) & 0x7ff).unwrap_or(0);
+    let fraction = bits & ((1_u64 << 52) - 1);
+    // x = mantissa × 2^(exponent − 52), mantissa in [2^52, 2^53) for a
+    // normal number; a subnormal is normalised first.
+    let (mantissa, exponent) = if biased == 0 {
+        let shift = i64::from(fraction.leading_zeros()) - 11;
+        (fraction << shift, -1022 - shift)
+    } else {
+        (fraction | (1_u64 << 52), biased - 1023)
+    };
+    // log2(x) = log2(mantissa) − 52 + exponent, fixed point.
+    let log2 = i128::from(log2_fixed(mantissa)) - (52_i128 << FRAC_BITS)
+        + (i128::from(exponent) << FRAC_BITS);
+    let scaled = (-log2 * i128::from(COST_PER_BIT) + i128::from(HALF)) >> FRAC_BITS;
+    let limit = i128::from(POS_INF_COST) - 1;
+    Cost::try_from(scaled.clamp(-limit, limit)).unwrap_or(POS_INF_COST - 1)
+}
+
 /// Fractional bits in the fixed-point logarithm.
 const FRAC_BITS: u32 = 32;
 
@@ -109,6 +192,36 @@ pub fn reduce_ratio(numerator: u128, denominator: u128) -> (u64, u64) {
 
 #[cfg(test)]
 mod tests {
+    use super::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt, cost_of_probability};
+
+    #[test]
+    fn special_costs_follow_ieee_addition_and_comparison() {
+        assert_eq!(cost_add(NAN_COST, 5), NAN_COST);
+        assert_eq!(cost_add(5, NAN_COST), NAN_COST);
+        assert_eq!(cost_add(POS_INF_COST, NEG_INF_COST), NAN_COST);
+        assert_eq!(cost_add(POS_INF_COST, 7), POS_INF_COST);
+        assert_eq!(cost_add(-7, NEG_INF_COST), NEG_INF_COST);
+        assert_eq!(cost_add(POS_INF_COST - 1, 10), POS_INF_COST - 1);
+        assert_eq!(cost_add(3, -8), -5);
+        assert!(cost_gt(2, 1) && !cost_gt(1, 2) && !cost_gt(1, 1));
+        assert!(!cost_gt(NAN_COST, 1) && !cost_gt(1, NAN_COST) && !cost_gt(NAN_COST, NAN_COST));
+        assert!(cost_gt(POS_INF_COST, 1) && cost_gt(1, NEG_INF_COST));
+    }
+
+    #[test]
+    fn probabilities_outside_the_unit_interval_have_their_ieee_costs() {
+        assert_eq!(cost_of_probability(0.5), COST_PER_BIT);
+        assert_eq!(cost_of_probability(1.0), 0);
+        assert_eq!(cost_of_probability(2.0), -COST_PER_BIT);
+        assert_eq!(cost_of_probability(8.0), -3 * COST_PER_BIT);
+        assert_eq!(cost_of_probability(0.0), POS_INF_COST);
+        assert_eq!(cost_of_probability(-0.0), POS_INF_COST);
+        assert_eq!(cost_of_probability(f64::INFINITY), NEG_INF_COST);
+        assert_eq!(cost_of_probability(-1.0), NAN_COST);
+        assert_eq!(cost_of_probability(f64::NAN), NAN_COST);
+        // A subnormal still has a finite cost: 2^-1074 is 1074 bits.
+        assert_eq!(cost_of_probability(f64::from_bits(1)), 1074 * COST_PER_BIT);
+    }
     use super::{COST_PER_BIT, FRAC_BITS, UNKNOWN_COST, log2_fixed, reduce_ratio, surprisal};
 
     #[test]

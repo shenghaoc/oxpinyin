@@ -687,6 +687,14 @@ pub trait LanguageModel {
     ) -> Result<NbestStepCosts, Self::Error> {
         Ok(NbestStepCosts::default())
     }
+
+    /// The `gfloat` λ of the install's `table.conf` — the weight the pin's
+    /// candidate frequency (`(λ·bigram + (1−λ)·unigram)·2²⁴`,
+    /// `pinyin.cpp:1862-1866`, `zhuyin.cpp:1236-1280`) is computed with.
+    /// Defaulted to the pinned model's `0.312699`.
+    fn amplification_lambda(&self) -> f32 {
+        0.312_699
+    }
 }
 
 /// The branch costs of [`LanguageModel::nbest_step_costs`].
@@ -755,6 +763,10 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         token: &Self::Token,
     ) -> Result<NbestStepCosts, Self::Error> {
         (**self).nbest_step_costs(prev, token)
+    }
+
+    fn amplification_lambda(&self) -> f32 {
+        (**self).amplification_lambda()
     }
     fn merged_successors(&self, prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
         (**self).merged_successors(prev)

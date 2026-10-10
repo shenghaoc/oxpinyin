@@ -3418,12 +3418,18 @@ CONF_CONTROLS = {'addon-duplicate-row', 'addon-files-swapped', 'comment-dropped'
                  'versions-other'}
 
 
+# The libzhuyin candidate law read the pinned λ, not the file's, so these tie-order
+# cases differ from the parent on libzhuyin only.
+CONF_ZHUYIN_CHANGED = {'lambda-zero', 'lambda-one', 'lambda-tiny'}
+
+
 def conf_case(name, *edits, modes=('pinyin', 'zhuyin'), session=conf_session, **options):
-    options.setdefault('control', name in CONF_CONTROLS)
     for mode in modes:
         def probe(k, edits=edits):
             return session(k, conf_system(k, *edits))
-        case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode, **options)(probe)
+        control = name in CONF_CONTROLS and not (mode == 'zhuyin' and name in CONF_ZHUYIN_CHANGED)
+        case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
+             **{'control': control, **options})(probe)
 
 
 # Valid files that are not the stock one: the pin follows the rows.
@@ -3444,14 +3450,19 @@ conf_case('network-as-system-file', ('default NETWORK_DICTIONARY NULL NULL netwo
                                       'default NETWORK_DICTIONARY art.table art.bin network.dbin SYSTEM_FILE'))
 conf_case('reserved-as-system-file', ('default RESERVED NULL NULL NULL NOT_USED',
                                        'default RESERVED merged.table merged.bin x_reserved.dbin SYSTEM_FILE'))
-# λ as `%f` reads it, inside the unit interval; outside it is register row
-# "table.conf λ outside [0, 1]" (class (a)), not held here.
-# At λ = 0 and 1 (and 1e-30, where every weight rounds to a tie) the libzhuyin
-# candidate list orders its tied rows differently from the pin, with or without
-# this change (checked against the parent): held for libpinyin only.
+# λ spelled inside [0, 1]. The candidate law `(λ·bigram + (1−λ)·unigram)·2²⁴`
+# reads the file's λ (it used to be the pinned constant, which listed tied
+# libzhuyin rows in another order at λ = 0, 1 and 1e-30).
 for _name, _value in (('zero', '0'), ('half', '0.5'), ('one', '1'), ('exponent', '5e-1'), ('tiny', '1e-30')):
-    conf_case('lambda-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _value),
-              modes=('pinyin', 'zhuyin') if _name in ('half', 'exponent') else ('pinyin',))
+    conf_case('lambda-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _value))
+# λ outside [0, 1]: below 0 the possibilities exceed one and the costs go
+# negative; above 1 `unigram_lambda` is negative, `log` of it is NaN and the
+# NaN is sticky through the trellis. The tail sort (`g_ptr_array_sort` over a
+# comparator that turns the float difference into a `gint`) then orders the
+# sentences.
+for _name, _value in (('negative-half', '-0.5'), ('negative-two', '-2'), ('one-and-a-half', '1.5'),
+                      ('two', '2'), ('million', '1e6'), ('inf', 'inf'), ('nan', 'nan')):
+    conf_case('lambda-' + _name, ('lambda parameter:0.312699', 'lambda parameter:' + _value))
 # The header fields the user marker conforms against.
 conf_case('database-format-other', ('re', r'database format:\w+', lambda found: 'database format:' + (
     'BerkeleyDB' if found.group(0).endswith('Tkrzw') else 'Tkrzw')))

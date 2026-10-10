@@ -2737,11 +2737,11 @@ Registered 2026-10-10 UTC. Pin source read at `074a2219c90feaf962d0d24f034514033
   triggers the pin's abort, with exactly one warning (policy row 79). The
   header's ordinary `false` returns answer NULL with the raw `load %s failed!`
   line and no warning; a missing `source table format:` line is an
-  uninitialised read at the pin (row 80). λ is read as `%f` reads it; what the
-  unsigned cost scale cannot hold outside `[0, 1]`, and the NaN order it would need to reproduce, are row 83 (open).
+  uninitialised read at the pin (row 80). λ is read as `%f` reads it; and
+  outside `[0, 1]` the costs go negative or NaN, reproduced with GLib's merge sorts ported (row 83).
 - **Evidence:** `tools/bisection/run-contract-diff.sh bdb <oracle prefix>
   <libpinyin_capi.so> <libzhuyin_capi.so> -- --cases <the table-conf-* names>`
-  (124 cases; the abort cases hold the pin's SIGABRT, the crash cases its
+  (141 cases; the abort cases hold the pin's SIGABRT, the crash cases its
   SIGSEGV, and the init aborts compare the user directory each side leaves).
   The SIGSEGV shapes were traced with `gdb -batch -ex run -ex bt --args python3
   <script that opens the pin's libpinyin.so on the private system directory,
@@ -2749,10 +2749,7 @@ Registered 2026-10-10 UTC. Pin source read at `074a2219c90feaf962d0d24f034514033
   `debian:testing` container on Linux x86-64.
 - **Not held:** (1) a `NULL` user-file name on libzhuyin, where the pin's answer
   depends on the file system (row 79); (2) a default row retyped across the
-  fixed roles of sub-indices 5–7 beyond the cases measured (row 78); (3) λ
-  outside `[0, 1]` (row 83); (4) the libzhuyin candidate list at λ = 0, 1 and
-  1e-30, where it orders tied rows differently from the pin (measured on the
-  parent as well, so not caused by this change; unclassified, no case).
+  fixed roles of sub-indices 5–7 beyond the cases measured (row 78).
 - **Found on the way:** the `SystemVersions` documentation said upstream reads
   `table.conf` through GLib's key file; it reads it with `fscanf`, as above.
   `UPSTREAM_DB_FORMATS`' comment said an unknown token is `UNKNOWN_FORMAT`; it

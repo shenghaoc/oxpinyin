@@ -44,7 +44,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use oxpinyin_core::cost::{UNKNOWN_COST, reduce_ratio, surprisal};
+use oxpinyin_core::cost::{UNKNOWN_COST, cost_of_probability, reduce_ratio, surprisal};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta};
 
 use crate::bigram_table::BigramTable;
@@ -262,6 +262,9 @@ pub struct BigramLanguageModel {
     /// `nan`): the interpolation then runs the pin's `gfloat`/`gdouble`
     /// arithmetic (`phonetic_lookup.h:663`, `:693`) up to the `log`.
     lambda_raw: Option<f32>,
+    /// λ as the pin's `gfloat`, whichever way it was installed: the weight of
+    /// the candidate frequency law.
+    lambda_f32: f32,
 }
 
 /// `unigram_lambda(1. - lambda)` (`phonetic_lookup.h:712-713`): the double
@@ -271,15 +274,17 @@ fn unigram_lambda(lambda: f32) -> f32 {
 }
 
 /// The cost of a probability `x` computed the pin's way: `-log₂ x` on the
-/// fixed-point scale. `None` where the pin's `log` has no finite value
-/// (`x ≤ 0`, `nan`) or the probability underflows the scale; a probability
-/// of one or more costs nothing (the scale has no negative costs).
+/// fixed-point scale. Where the pin's `log` is not a finite negative number
+/// the cost is the matching special value — NaN for a negative or NaN
+/// argument, `+inf` for 0, a negative cost above one, `-inf` for `inf` — and
+/// the pin keeps the step. `None` only where the probability underflows the
+/// scale, as before.
 fn probability_cost(x: f64) -> Option<Cost> {
     const SCALE: u64 = 1 << 62;
-    if !x.is_finite() || x <= 0.0 {
-        return None;
+    if x.is_nan() || x <= 0.0 || x > 1.0 {
+        return Some(cost_of_probability(x));
     }
-    let count = (x.min(1.0) * SCALE as f64) as u64;
+    let count = (x * SCALE as f64) as u64;
     match surprisal(count, SCALE) {
         UNKNOWN_COST => None,
         cost => Some(cost),
@@ -351,6 +356,7 @@ impl BigramLanguageModel {
             library_mask,
             lambda: Lambda::PINNED,
             lambda_raw: None,
+            lambda_f32: crate::table_conf::PINNED_LAMBDA,
         })
     }
 
@@ -361,13 +367,15 @@ impl BigramLanguageModel {
     }
 
     /// Sets the interpolation weight λ directly.
-    pub const fn set_lambda(&mut self, lambda: Lambda) {
+    pub fn set_lambda(&mut self, lambda: Lambda) {
         self.lambda = lambda;
         self.lambda_raw = None;
+        self.lambda_f32 = lambda.as_f64() as f32;
     }
 
     /// Installs λ from the parsed system `table.conf`.
     pub fn set_lambda_from_conf(&mut self, conf: &crate::table_info::TableConf) {
+        self.lambda_f32 = conf.lambda_f32();
         match conf.lambda_unit() {
             Some(lambda) => {
                 self.lambda = lambda;
@@ -389,6 +397,7 @@ impl BigramLanguageModel {
             Some(lambda) => {
                 self.lambda = lambda;
                 self.lambda_raw = None;
+                self.lambda_f32 = lambda.as_f64() as f32;
                 true
             }
             None => false,
@@ -724,6 +733,10 @@ impl BigramLanguageModel {
 impl LanguageModel for BigramLanguageModel {
     type Token = PhraseToken;
     type Error = LmError;
+
+    fn amplification_lambda(&self) -> f32 {
+        self.lambda_f32
+    }
 
     fn score(
         &self,

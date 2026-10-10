@@ -203,7 +203,7 @@ where
             // Stable sort, all three keys descending: an all-equal tie keeps
             // the collection order, which the scan now lays down in the
             // pin's array order (per window, token-ascending).
-            ranked.sort_by_key(|(key, _)| core::cmp::Reverse(*key));
+            glib_rank_sort(&mut ranked);
             collected.extend(ranked.drain(..).map(|(_, candidate)| candidate));
 
             dedup_by_text_keep_first(&mut collected);
@@ -683,7 +683,7 @@ where
                         (key, candidate)
                     }),
             );
-            ranked.sort_by_key(|(key, _)| core::cmp::Reverse(*key));
+            glib_rank_sort(&mut ranked);
             group.extend(ranked.drain(..).map(|(_, candidate)| candidate));
             collected.append(&mut group);
         }
@@ -889,6 +889,7 @@ where
         let mut frequencies: Option<Vec<u64>> = None;
         // The facade total, `get_phrase_index_total_freq()`: the sum of
         // every item's stored unigram (`gen_unigram`'s +1 included).
+        let lambda = self.model.amplification_lambda();
         let default_total = self
             .model
             .unigram_total()
@@ -914,7 +915,7 @@ where
                         EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                     })?
                     .unwrap_or(0);
-                Some(amplified_frequency(raw, addon_total))
+                Some(amplified_frequency(raw, addon_total, lambda))
             } else {
                 self.model
                     .unigram_freq(&token)
@@ -932,7 +933,7 @@ where
                             gram,
                             token.value(),
                         );
-                        amplified_frequency_with_bigram(count, default_total, bigram)
+                        amplified_frequency_with_bigram(count, default_total, bigram, lambda)
                     })
             };
             if let Some(count) = count {
