@@ -208,13 +208,21 @@ fuzz_target!(|data: &[u8]| {
             4 => {
                 let pick = payload.first().copied().unwrap_or(0) as usize % added.len().max(1);
                 if let Some(&token) = added.get(pick) {
+                    // A phrase is removable only while every reading is
+                    // indexed (`pinyin.cpp:3759`): a second reading merged
+                    // by a later add is never indexed, so removal then
+                    // reports false and the phrase stays.
+                    let removable = store
+                        .phrase(token)
+                        .expect("phrase lookup")
+                        .is_some_and(|row| row.pronunciations().iter().all(|p| p.indexed()));
                     let removed = store.remove_user_phrase(token).expect("remove");
                     // `mask_out` deletes phrases whose token matches its
                     // mask, so a tracked token can already be gone after
                     // one; absent is only legal then.
                     assert!(
-                        removed || masked_out,
-                        "removing a live tracked token must report true"
+                        removed || masked_out || !removable,
+                        "removing a live, fully indexed tracked token must report true"
                     );
                     added.retain(|&other| other != token);
                 }

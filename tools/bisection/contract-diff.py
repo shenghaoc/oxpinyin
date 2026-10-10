@@ -1078,6 +1078,78 @@ def _(k):
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, row_of(k, inst, 1))}
 
 
+# lane #525 batch C: the pin asserts when pinyin_remove_user_candidate cannot
+# remove a user phrase (class (c): pinyin.cpp:3743/3750/3759). The subject
+# fails the call with false and one warning in the libpinyin domain.
+def _add_user_phrase(k, text, readings, count=5):
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    assert it
+    add = k.fn('iterator_add_phrase', B, P, S, S, I)
+    added = [add(it, text.encode(), reading, count) for reading in readings]
+    k.fn('end_add_phrases', None, P)(it)
+    assert all(added)
+    return added
+
+
+def _user_candidate_rows(k, inst):
+    """The NORMAL user-dictionary candidates of the current guess list."""
+    rows = []
+    n = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(n))
+    for i in range(n.value):
+        cand, kind = P(), I()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        if kind.value == 2 and k.fn('is_user_candidate', B, P, P)(inst, cand):
+            rows.append(cand)
+    return rows
+
+
+def _guessed_user_phrase(k, text, readings, parse=b'dada'):
+    _add_user_phrase(k, text, readings)
+    inst = k.alloc()
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, parse)
+    k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+    rows = _user_candidate_rows(k, inst)
+    assert rows
+    return inst, rows
+
+
+@case('abort-remove-user-candidate-twice', abort=False)
+def _(k):
+    inst, rows = _guessed_user_phrase(k, '龘龘', [b"da2'da2"])
+    first = k.fn('remove_user_candidate', B, P, P)(inst, rows[0])
+    # The phrase is gone from the user dictionary: the pin asserts at :3743.
+    return {'first': first, 'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
+
+
+@case('abort-remove-user-candidate-missing-phrase-table', abort=False)
+def _(k):
+    _add_user_phrase(k, '龘龘', [b"da2'da2"])
+    assert k.fn('save', B, P)(k.ctx)
+    k.fn('fini', None, P)(k.ctx)
+    # user_phrase_index.bin holds the phrase table; user.bin still holds the
+    # phrase index, so :3743 passes and :3750 fires.
+    index = os.path.join(k.user, 'user_phrase_index.bin')
+    os.replace(index, index + '.gone')
+    ctx = k.init()
+    assert ctx
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'dada')
+    k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+    rows = _user_candidate_rows(k, inst)
+    assert rows
+    return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
+
+
+@case('abort-remove-user-candidate-multi-pron', abort=False)
+def _(k):
+    # Two readings for one phrase: the second is merged without a pinyin
+    # index entry, so :3759 fires when the phrase is removed.
+    inst, rows = _guessed_user_phrase(k, '龘龘', [b"da2'da2", b"da1'da1"])
+    return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
+
+
 @case('abort-choose-candidate-predicted-prefix-row', abort=0)
 def _(k):
     inst = predicted(k)

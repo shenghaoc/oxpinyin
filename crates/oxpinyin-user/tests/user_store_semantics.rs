@@ -10,11 +10,13 @@
 //!
 //! Divergences are asserted as the oxpinyin contract where the upstream
 //! shape has no equivalent: `set_bigram_count` unifies upstream's
-//! `insert_freq`/`set_freq` duality into one overwrite, totals are store-
-//! maintained (upstream makes the caller maintain `total_freq`), and
-//! `remove_user_phrase` drops a whole phrase token (upstream removes one
-//! (phrase, bopomofo) pair). See
-//! `docs/testing/upstream-test-coverage.md` for the ledger entries.
+//! `insert_freq`/`set_freq` duality into one overwrite, and totals are
+//! store-maintained (upstream makes the caller maintain `total_freq`).
+//! `remove_user_phrase` models `pinyin_remove_user_candidate` and drops a
+//! whole phrase token (upstream removes one (phrase, bopomofo) pair); as
+//! the pin does, it refuses when the token's phrase-table row or any of
+//! its indexed readings is missing (`pinyin.cpp:3743`, `:3750`, `:3759`).
+//! See `docs/testing/upstream-test-coverage.md` for the ledger entries.
 
 use std::path::PathBuf;
 
@@ -190,8 +192,7 @@ fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
     // Upstream: the same phrase under two bopomofo readings is stored
     // independently (remove-one-keeps-the-other), and re-adding the same
     // pair accumulates its count. oxpinyin keeps every reading of a phrase
-    // token as its own pronunciation row with its own count; removal drops
-    // the whole token (asserted as the oxpinyin contract below).
+    // token as its own pronunciation row with its own count.
     let path = temp_path("phrase-readings");
     let mut store = UserStore::create_standalone(&path).unwrap();
 
@@ -214,9 +215,14 @@ fn one_phrase_holds_several_readings_and_counts_accumulate_per_reading() {
         .count();
     assert_eq!(zhong_count, 10, "same reading accumulates");
 
-    // Removing the phrase takes every reading with it.
-    assert!(store.remove_user_phrase(token).unwrap());
-    assert!(store.phrase(token).unwrap().is_none());
+    // Only the reading a phrase was created with is indexed; the `chong`
+    // merge never touched the pinyin table (`pinyin.cpp:569-582`).
+    // `pinyin_remove_user_candidate` asserts `pinyin_table->remove_index`
+    // for every reading (`:3759`), so the pin aborts on this phrase and
+    // oxpinyin's removal refuses (class (c)); it does not take the
+    // readings with it.
+    assert!(!store.remove_user_phrase(token).unwrap());
+    assert!(store.phrase(token).unwrap().is_some());
 }
 
 #[test]

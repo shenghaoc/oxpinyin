@@ -715,11 +715,14 @@ Architecture — a session scratch behind the value engine:
   `_write_files`+`_rename_files`: every file whole to a `.tmp` sibling,
   then all renames) and fini, each writing `user.conf` under the
   facade's law (`UserConfLaw`, amendment below). `user_phrase_index.bin`
-  is a derivative of the USER_FILE items and is rebuilt at save, never
-  read. `user_pinyin_index.bin` is not (amendment 2026-09-27, #534): a
-  reading merged into an existing phrase is never indexed
-  (`pinyin.cpp:569-582`), so its records are loaded and saved back as
-  the per-reading `indexed` flag.
+  is rebuilt at save from the USER_FILE items; at load it is read back
+  only as a token→text membership set (`PHRASE_TABLE`) for
+  `remove_user_phrase`'s phrase-table check (`pinyin.cpp:3750`; policy
+  row 78), never as a text source — the value engine's text lookups still
+  derive from `user.bin`. `user_pinyin_index.bin` is not (amendment
+  2026-09-27, #534): a reading merged into an existing phrase is never
+  indexed (`pinyin.cpp:569-582`), so its records are loaded and saved
+  back as the per-reading `indexed` flag.
 * **Amendment (2026-09-27, #541): the session keeps the pin's own user
   bigram container.** Besides the scratch tables, a libpinyin session
   holds `Bigram::m_db` as the pin builds it — tkrzw `TinyDBM`, Kyoto
