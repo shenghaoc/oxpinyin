@@ -891,7 +891,7 @@ uploaded or linked. The engine guards cover an empty final step after three earl
 a two-value final step after three earlier values on the pinyin shape.
 
 Scoped gate: `cargo test --locked -j 1 -p oxpinyin-engine --features
-oxpinyin-testsupport/bdb` passes 184 tests plus 4 doctests; `cargo fmt -p
+oxpinyin-testsupport/bdb` passes 188 tests plus 4 doctests; `cargo fmt -p
 oxpinyin-engine --check` and `cargo clippy --locked -j 1 -p oxpinyin-engine
 --all-targets --features oxpinyin-testsupport/bdb -- -D warnings` pass.
 One bdb revert-and-check temporarily reinstates the earlier-populated-step
