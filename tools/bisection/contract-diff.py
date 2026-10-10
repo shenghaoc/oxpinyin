@@ -640,6 +640,104 @@ def unigram_of(k, token):
     return [ret, freq.value]
 
 
+# #576: zhuyin.cpp:1813-1826 at 074a2219 reads the phrase item's
+# stored unigram, including generation-time +1 and the in-memory overlay.
+# e2853126 already ported the getter; keep the pinyin twin as a control.
+def token_unigram_system(k):
+    token = 0x01001225  # 你; the stored system field is 52887, not 52888.
+    out = {'token': hex(token), 'before': unigram_of(k, token)}
+    out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
+    out['after'] = unigram_of(k, token)
+    out['absent-item'] = unigram_of(k, 0x01FFFFFF)
+    out['absent-library'] = unigram_of(k, 0x0FFFFFFF)
+    return out
+
+
+def token_unigram_user(k):
+    phrase = '你好你好'
+    reading = "ni3'hao3'ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ ㄋㄧˇ ㄏㄠˇ'
+    iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    assert iterator
+    added = k.fn('iterator_add_phrase', B, P, S, S, I)(
+        iterator, phrase.encode(), reading.encode(), 9)
+    k.fn('end_add_phrases', None, P)(iterator)
+    assert added
+    tokens = [token for token in tokens_of(k, phrase) if token >> 24 == 7]
+    assert len(tokens) == 1, tokens
+    token = tokens[0]
+    out = {'imported': added, 'token': hex(token), 'before': unigram_of(k, token)}
+    out['add'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
+    out['after'] = unigram_of(k, token)
+    return out
+
+
+def train_selected_top(k, wanted, token):
+    """Choose a normal phrase, guess n-best, then train result 0 without reset.
+
+    This test-only sequence preserves the runbook's train_top precondition:
+    a candidate list alone cannot be trained. The normal selection also
+    installs the OneStep constraint that train_result3 needs to write counts.
+    """
+    inst = k.inst
+    if k.mode == 'pinyin':
+        # SORT_WITHOUT_SENTENCE (0x1) would train during choose instead
+        # of installing a constraint (074a2219 pinyin.cpp:2566-2576).
+        assert k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1e)
+    else:
+        assert k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+    count = U()
+    assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    for index in range(count.value):
+        candidate, text, kind = P(), S(), I()
+        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(
+            inst, index, C.byref(candidate))
+        assert k.fn('get_candidate_string', B, P, P, C.POINTER(S))(
+            inst, candidate, C.byref(text))
+        assert k.fn('get_candidate_type', B, P, P, C.POINTER(I))(
+            inst, candidate, C.byref(kind))
+        # NORMAL_CANDIDATE / NORMAL_CANDIDATE_AFTER_CURSOR are both 2.
+        # The zhuyin BEST_MATCH row installs no constraint (074a2219
+        # zhuyin.cpp:1643-1654), so selecting it would make this a no-op.
+        if kind.value == 2 and text.value == wanted.encode():
+            cursor = k.fn('choose_candidate', I, P, Z, P)(inst, 0, candidate)
+            assert cursor > 0, 'normal phrase selection failed'
+            after_choose = unigram_of(k, token)
+            guessed = k.fn('guess_sentence', B, P)(inst)
+            assert guessed, 'training needs a guessed n-best result'
+            if k.mode == 'pinyin':
+                trained = k.fn('train', B, P, C.c_ubyte)(inst, 0)
+            else:
+                trained = k.fn('train', B, P)(inst)
+            assert trained, 'training n-best result 0 failed'
+            return {'chosen': wanted, 'kind': kind.value, 'cursor': cursor,
+                    'after-choose': after_choose, 'guess': guessed, 'train': trained}
+    raise AssertionError('missing normal candidate: ' + wanted)
+
+
+def token_unigram_trained(k):
+    token = 0x01003e57  # 癫痫: one constrained train adds 69 * 7 = 483.
+    assert tokens_of(k, '癫痫') == [token]
+    parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+    text = b'dian4xian4' if k.mode == 'pinyin' else b'2u04vu04'
+    parsed = k.fn(parse, Z, P, S)(k.inst, text)
+    assert parsed == len(text), 'the whole training input must parse'
+    out = {'token': hex(token), 'parsed': parsed, 'before': unigram_of(k, token)}
+    out['training'] = train_selected_top(k, '癫痫', token)
+    assert out['training']['after-choose'] == out['before'], 'selection must not train'
+    out['after'] = unigram_of(k, token)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _prefix = 'zhuyin-' if _mode == 'zhuyin' else ''
+    case(_prefix + 'token-unigram-system', mode=_mode, control=_mode == 'pinyin')(
+        token_unigram_system)
+    case(_prefix + 'token-unigram-user', mode=_mode, control=_mode == 'pinyin')(
+        token_unigram_user)
+    case(_prefix + 'token-unigram-trained', mode=_mode, control=_mode == 'pinyin')(
+        token_unigram_trained)
+
+
 @case('train-unigram-total')
 def _(k):
     # Once the library's guint32 total would overflow the item stops growing:
