@@ -56,8 +56,8 @@ use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
     ALLOC, ALLOC_CURSOR, BIGRAM, BIGRAM_TOTAL, GenericUserStore, PHRASE, PHRASE_BY_LIB_TEXT,
-    PHRASE_BY_TEXT, PHRASE_TABLE, PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM,
-    UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY, UserStoreError,
+    PHRASE_BY_TEXT, PHRASE_TABLE, PHRASE_TABLE_BY_TEXT, PRONUNCIATION, PronValue, SYSTEM_BASE,
+    Token, UNIGRAM, UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY, UserStoreError,
 };
 
 /// The persistence target a session store carries: the user dir, the
@@ -282,6 +282,13 @@ impl GenericUserStore<DefaultStore> {
             }
             persistence::LoadedProfile::default()
         };
+        // A non-null-`MODIFY_HEADER` token is the pin's
+        // `assert(token == null_token)` during the library load's `merge`
+        // (`phrase_index_logger.h:202`): the session open fails here, with
+        // the profile's open counter left raised as the pin leaves it.
+        if profile.loaded.strict_log_fault.is_some() {
+            return Err(UserStoreError::SystemLogHeaderToken);
+        }
         let persistence::LoadedProfile {
             loaded,
             phrase_table,
@@ -471,6 +478,11 @@ fn seed_txn(
         txn.put(
             PHRASE_TABLE,
             &crate::store::phrase_table_key(*token, text),
+            &[],
+        )?;
+        txn.put(
+            PHRASE_TABLE_BY_TEXT,
+            &crate::store::phrase_table_text_key(text, *token),
             &[],
         )?;
     }

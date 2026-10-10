@@ -76,6 +76,16 @@ pub enum MaskOutOutcome {
     /// `ngram_bdb.cpp:243`). The C ABI answers `false` and logs one
     /// warning.
     ResidualUserBigramGram,
+    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` carries a
+    /// non-null-token `MODIFY_HEADER` record; `PhraseIndexLogger::next_record`
+    /// asserts (`phrase_index_logger.h:202`). The C ABI answers `false`
+    /// and logs one warning.
+    SystemLogHeaderToken,
+    /// A `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` carries more
+    /// than one `MODIFY_HEADER` record; `_peek_header` asserts
+    /// `1 >= header_count` (`phrase_index.cpp:745`). The C ABI answers
+    /// `false` and logs one warning.
+    SystemLogMultipleHeaders,
 }
 
 impl MaskOutOutcome {
@@ -154,6 +164,18 @@ impl OpenFailure {
             Self::Runtime(oxpinyin_runtime::OpenError::TableConf(error)) => Some(*error),
             _ => None,
         }
+    }
+
+    /// Whether a `SYSTEM_FILE`/`DICTIONARY` library's user `.dbin` carried a
+    /// non-null-token `MODIFY_HEADER` record, where the pin's
+    /// `PhraseIndexLogger::next_record` asserts (`phrase_index_logger.h:202`).
+    /// The C facades answer NULL and log one warning in their own domain.
+    #[must_use]
+    pub fn corrupt_log_header(&self) -> bool {
+        matches!(
+            self,
+            Self::Runtime(oxpinyin_runtime::OpenError::CorruptLogHeader(_))
+        )
     }
 }
 
@@ -470,17 +492,48 @@ impl ContextCore {
     /// `default: abort()` (`chewing_large_table2_bdb.cpp:529`); the store
     /// reports it as [`UserStoreError::OverlongIndexKey`] and this answers
     /// [`MaskOutOutcome::OverlongIndexKey`] so the facade can log it.
+    ///
+    /// Before any state changes, every loaded `SYSTEM_FILE`/`DICTIONARY`
+    /// library's user `.dbin` is read from disk and validated
+    /// ([`UserStore::validate_system_logs`]): the pin's `merge_with_mask`
+    /// asserts on a non-null-token `MODIFY_HEADER`
+    /// (`phrase_index_logger.h:202`) and on more than one `MODIFY_HEADER`
+    /// (`phrase_index.cpp:745`). A refused mask leaves the store untouched,
+    /// where the pin's partial reloads die with its abort.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
         self.report_unmappable_libraries(None);
+        // The pin's mask loop walks `index` 1..`PHRASE_INDEX_LIBRARY_COUNT`
+        // and skips a sub-index `get_range` reports missing
+        // (`pinyin.cpp:1235-1241`, `zhuyin.cpp:792-798`); the runtime's
+        // visibility mask is that unloaded set.
+        let visible = |nibble: u8| {
+            self.runtime
+                .as_ref()
+                .is_none_or(|runtime| runtime.dict().library_visible(u32::from(nibble)))
+        };
         let Some(store) = self.user.as_mut() else {
             return MaskOutOutcome::Done(false);
         };
+        match store.validate_system_logs(visible) {
+            Ok(()) => {}
+            Err(UserStoreError::SystemLogHeaderToken) => {
+                return MaskOutOutcome::SystemLogHeaderToken;
+            }
+            Err(UserStoreError::SystemLogMultipleHeaders) => {
+                return MaskOutOutcome::SystemLogMultipleHeaders;
+            }
+            Err(_) => return MaskOutOutcome::Done(false),
+        }
         match store.mask_out(mask, value) {
             Ok(()) => MaskOutOutcome::Done(true),
             Err(UserStoreError::OverlongIndexKey) => MaskOutOutcome::OverlongIndexKey,
             Err(UserStoreError::NonTokenUserBigramKey) => MaskOutOutcome::NonTokenUserBigramKey,
             Err(UserStoreError::ShortUserBigramValue) => MaskOutOutcome::ShortUserBigramValue,
             Err(UserStoreError::ResidualUserBigramGram) => MaskOutOutcome::ResidualUserBigramGram,
+            Err(UserStoreError::SystemLogHeaderToken) => MaskOutOutcome::SystemLogHeaderToken,
+            Err(UserStoreError::SystemLogMultipleHeaders) => {
+                MaskOutOutcome::SystemLogMultipleHeaders
+            }
             Err(_) => MaskOutOutcome::Done(false),
         }
     }

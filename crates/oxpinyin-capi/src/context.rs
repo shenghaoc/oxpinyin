@@ -44,6 +44,15 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             // failure keeps the descriptive one.
             if error.unknown_database_format() {
                 crate::ffi::log_warning(oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING);
+            } else if error.corrupt_log_header() {
+                // Class (c), `phrase_index_logger.h:202`: a system
+                // library's user .dbin carries a non-null-token
+                // MODIFY_HEADER and the pin's `next_record` assert dies
+                // during init's library load.
+                crate::ffi::log_warning(
+                    "pinyin_init: a system library's user .dbin carries a non-null-token \
+                     MODIFY_HEADER (upstream asserts, phrase_index_logger.h:202)",
+                );
             } else if let Some(conf_error) = error.table_conf_error() {
                 // A `table.conf` the pin refuses is `false` and one raw
                 // line; one it dies on is one warning (#694, #525).

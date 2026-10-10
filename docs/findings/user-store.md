@@ -720,6 +720,11 @@ Architecture — a session scratch behind the value engine:
   (`PHRASE_TABLE`) for `remove_user_phrase`'s phrase-table check
   (`pinyin.cpp:3750`; policy row 81) — a token may sit under several
   texts, and the pin matches the exact pair — never as a text source.
+  A derived `PHRASE_TABLE_BY_TEXT` index (`text ++ 0x00 ++ token_be`)
+  gives one text's pairs a contiguous range for the membership read the
+  zhuyin import makes (`phrase_table_tokens_for_text`); every
+  `PHRASE_TABLE` writer maintains it and an empty one is rebuilt from
+  `PHRASE_TABLE`.
   A standalone store opening a profile written before the table existed
   backfills the pairs from its `PHRASE` rows; a libpinyin session does
   not (a missing row there is the pin's `:3750` state). The value

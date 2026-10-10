@@ -405,6 +405,13 @@ pub struct Loaded {
     /// them (upstream's own degrade — `chunk->load` failure leaves an
     /// empty library, never a failed init).
     pub skipped: Vec<String>,
+    /// A `SYSTEM_FILE`/`DICTIONARY` `.dbin` whose `MODIFY_HEADER` record
+    /// carried a non-null token. Upstream `assert(token == null_token)`s
+    /// there (`phrase_index_logger.h:202`), so this is a class (c) abort
+    /// site, not the graceful [`Self::skipped`] list: the session open
+    /// fails and the facade logs one warning in its own domain. Recorded
+    /// as `(file name, token)`.
+    pub strict_log_fault: Option<(String, u32)>,
 }
 
 /// The private result of a profile parse: the public [`Loaded`] plus the
@@ -1053,7 +1060,16 @@ fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
         let records = match decode_log_records(payload) {
             Ok(records) => records,
             Err(error) => {
-                loaded.skipped.push(format!("{name}: {error}"));
+                // A non-null-`MODIFY_HEADER` token is the pin's
+                // `assert(token == null_token)` (`phrase_index_logger.h:202`):
+                // a class (c) abort site, recorded for the session open to
+                // fail on. Every other malformed stream is the pin's
+                // graceful `next_record` false and stays a skip.
+                if let Some(token) = error.non_null_header_token() {
+                    loaded.strict_log_fault = Some((name.to_string(), token));
+                } else {
+                    loaded.skipped.push(format!("{name}: {error}"));
+                }
                 continue;
             }
         };
