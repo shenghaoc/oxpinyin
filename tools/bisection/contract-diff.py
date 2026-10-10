@@ -58,7 +58,8 @@ NO_ABORT = object()
 WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
-def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False):
+def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
+         cells=('bdb', 'kc', 'tkrzw')):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -71,10 +72,12 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     bytes and answer `<fields>` (a dict of result fields). `userdir=True`
     also holds the user directory a side leaves behind (file names, the
     `user.conf` text, the size of each library chunk) to the pin's, for an
-    abort that comes after the pin has written some of its profile."""
+    abort that comes after the pin has written some of its profile. `cells`
+    names the DBM cells whose storage format the case's fixture reproduces;
+    a case skipped on the others prints `SKIP` instead of a verdict."""
     def register(fn):
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
-                           crash=crash, userdir=userdir)
+                           crash=crash, userdir=userdir, cells=cells)
         return fn
     return register
 
@@ -1333,6 +1336,136 @@ def _(k):
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
     out['same-length-reparse'] = k.fn('train', B, P, C.c_ubyte)(inst, 0)
     return out
+
+
+# batch E: over-long user chewing keys (#525, row 84). The pin's user
+# `ChewingLargeTable2` instantiates its entries only for lengths 1..=16, so a
+# `user_pinyin_index.bin` key past `MAX_PHRASE_LENGTH` syllables drives both
+# `mask_out` (`storage/chewing_large_table2_bdb.cpp:529`) and the
+# longer-candidate walk (`:282`) into their `switch`'s `default: abort()`. The
+# key cannot be written through the API (`_add_phrase` refuses
+# `phrase_length >= MAX_PHRASE_LENGTH`, `pinyin.cpp:643`), so the case crafts
+# the Berkeley DB btree directly (the btree is the pin's own layout,
+# `chewing_large_table2_bdb.cpp:58`). The kc and tkrzw chewing tables carry
+# the same switch (`chewing_large_table2_kyotodb.cpp:498`, `:268`;
+# `chewing_large_table2_tkrzwdb.cpp:465`, `:251`) but their user index is not
+# a btree, so a bdb fixture cannot reach the site there and the three cases
+# are `cells=('bdb',)`.
+def _craft_btree(path, keys):
+    """A Berkeley DB btree of `key -> empty` records."""
+    import ctypes.util
+
+    class DBT(C.Structure):
+        # 40 bytes on x86_64: the `app_data` pointer between `doff` and
+        # `flags` (omitting it misaligns `flags`, and `__db_put_pp` then
+        # rejects the flag argument).
+        _fields_ = [
+            ('data', C.c_void_p),
+            ('size', C.c_uint),
+            ('ulen', C.c_uint),
+            ('dlen', C.c_uint),
+            ('doff', C.c_uint),
+            ('app_data', C.c_void_p),
+            ('flags', C.c_uint),
+        ]
+
+    db = C.CDLL(ctypes.util.find_library('db'))
+    db.db_create.argtypes = [C.POINTER(C.c_void_p), C.c_void_p, C.c_uint]
+    db.db_create.restype = C.c_int
+    db.__db_open_pp.argtypes = [C.c_void_p, C.c_void_p, C.c_char_p, C.c_char_p,
+                                C.c_int, C.c_uint, C.c_int]
+    db.__db_open_pp.restype = C.c_int
+    db.__db_put_pp.argtypes = [C.c_void_p, C.c_void_p, C.POINTER(DBT), C.POINTER(DBT), C.c_uint]
+    db.__db_put_pp.restype = C.c_int
+    db.__db_close_pp.argtypes = [C.c_void_p, C.c_uint]
+    db.__db_close_pp.restype = C.c_int
+    if os.path.exists(path):
+        os.unlink(path)
+    handle = C.c_void_p()
+    assert db.db_create(C.byref(handle), None, 0) == 0
+    # DB_BTREE == 1, DB_CREATE == 0x1; the pin opens the user index the same
+    # way (`chewing_large_table2_bdb.cpp:90`).
+    assert db.__db_open_pp(handle, None, path.encode(), None, 1, 0x1, 0o600) == 0
+    live = []
+    for key in keys:
+        buf = C.create_string_buffer(key)
+        live.append(buf)
+        kd = DBT(C.cast(buf, C.c_void_p), len(key), 0, 0, 0, None, 0)
+        vd = DBT(None, 0, 0, 0, 0, None, 0)
+        assert db.__db_put_pp(handle, None, C.byref(kd), C.byref(vd), 0) == 0
+    assert db.__db_close_pp(handle, 0) == 0
+    del live
+
+
+def _write_user_conf(k):
+    """A conforming `user.conf` for the cell's system tables.
+
+    The pin writes one at `pinyin_save` / `zhuyin_save` only, but
+    `check_format` (`pinyin.cpp:172`, `zhuyin.cpp:126`) wipes the user
+    tables when it is missing or stale. `pinyin_init`'s check_format
+    rewrites it on every open (so the pinyin cases survive without this);
+    `zhuyin_init`'s does not, so a crafted zhuyin index needs the marker
+    present before the reopen or it is unlinked."""
+    keys = ('binary format version:', 'model data version:', 'database format:')
+    values = {}
+    with open(os.path.join(k.data, 'table.conf')) as table_conf:
+        for line in table_conf:
+            for key in keys:
+                if line.startswith(key):
+                    values[key] = line[len(key):].strip()
+    with open(os.path.join(k.user, 'user.conf'), 'w') as user_conf:
+        for key in keys:
+            user_conf.write(key + values[key] + '\n')
+        user_conf.write('open counter:0\n')
+
+
+def overlong_index_context(k, parse=None):
+    """A context whose user dir carries a 17-syllable `user_pinyin_index.bin`
+    key. The first init writes the conforming `user.conf`; the crafted key is
+    then added and the profile reopened. With `parse`, the key extends the
+    packed first syllable of that parse, so the longer-candidate walk reaches
+    it."""
+    ctx = k.init()
+    assert ctx, 'the first init failed'
+    if parse is None:
+        first = b'\x00\x01'
+    else:
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, parse)
+        key = C.c_void_p()
+        assert k.fn('get_pinyin_key', B, P, Z, C.POINTER(P))(inst, 0, C.byref(key))
+        first = C.string_at(key.value, 2)
+        k.fn('free_instance', None, P)(inst)
+    k.fn('fini', None, P)(ctx)
+    _craft_btree(os.path.join(k.user, 'user_pinyin_index.bin'), [first, first * 17])
+    _write_user_conf(k)
+    ctx = k.init()
+    assert ctx, 'the reopen failed'
+    return ctx
+
+
+@case('abort-mask-out-overlong-index-key', abort=False, cells=('bdb',))
+def _(k):
+    ctx = overlong_index_context(k)
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('abort-zhuyin-mask-out-overlong-index-key', mode='zhuyin', abort=False, cells=('bdb',))
+def _(k):
+    # libzhuyin masks `m_pinyin_table` too (`zhuyin.cpp:763`), the same user
+    # chewing table, so the same :529 walk aborts there.
+    ctx = overlong_index_context(k)
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('abort-guess-candidates-overlong-index-key', abort=False, cells=('bdb',))
+def _(k):
+    ctx = overlong_index_context(k, parse=b'ni')
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+    # sort 0 clears SORT_WITHOUT_LONGER_CANDIDATE, so the walk runs and
+    # reaches the crafted extension (`pinyin.cpp:2292-2293`).
+    return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
 # batch2 group 12e: a tone digit on an initial-only key (PR 12e, #525, row 4)
@@ -3985,6 +4118,14 @@ def main():
     with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch:
         for n in names:
             spec = CASES[n]
+            if args.cell not in spec['cells']:
+                # The case crafts a fixture in another cell's storage format
+                # (e.g. a Berkeley DB btree); neither side can reach the site
+                # here, so there is nothing to compare.
+                print(json.dumps(dict(cell=args.cell, case=n, verdict='SKIP',
+                                      expected_ok=True, exit=[0, 0], stderr_lines=[0, 0]),
+                                 sort_keys=True), flush=True)
+                continue
             if spec['mode'] == 'zhuyin':
                 assert args.zhuyin_so and args.zhuyin_so.is_file() and (lib / 'libzhuyin.so').is_file(), \
                     'zhuyin case %s needs --zhuyin-so and the pin libzhuyin' % n

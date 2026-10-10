@@ -134,6 +134,17 @@ pub enum EngineError {
         /// Which precondition the span violates.
         fault: TrainingSpanFault,
     },
+    /// The longer-candidate walk met a user pinyin index key past
+    /// `MAX_PHRASE_LENGTH` syllables that extends the current prefix — the
+    /// pin's user `ChewingLargeTable2::search_suggestion` reaches the key
+    /// through its `DB_SET`/`DB_NEXT` walk and its `switch`'s
+    /// `default: abort()` dies (`storage/chewing_large_table2_bdb.cpp:282`
+    /// at the pin); the engine answers an error instead (the no-abort
+    /// policy).
+    OverlongUserIndexKey {
+        /// The prefix path length the walk was on when it reached the key.
+        syllables: usize,
+    },
     /// The user-model backend failed (the learning/observation seam).
     UserModel(String),
     /// The input could not be represented as a segment graph.
@@ -206,6 +217,13 @@ impl fmt::Display for EngineError {
                     "the training span at {position} leaves the current matrix ({fault:?})"
                 )
             }
+            Self::OverlongUserIndexKey { syllables } => {
+                write!(
+                    formatter,
+                    "a user pinyin index key past MAX_PHRASE_LENGTH syllables extends the \
+                     {syllables}-syllable prefix"
+                )
+            }
             Self::UserModel(message) => write!(formatter, "user model error: {message}"),
             Self::Graph(error) => write!(formatter, "graph error: {error}"),
             Self::Decode(error) => write!(formatter, "decode error: {error}"),
@@ -229,6 +247,7 @@ impl std::error::Error for EngineError {
             | Self::MatrixColumnAssert { .. }
             | Self::StaleTrainingConstraint { .. }
             | Self::StaleTrainingSpan { .. }
+            | Self::OverlongUserIndexKey { .. }
             | Self::UserModel(_) => None,
         }
     }

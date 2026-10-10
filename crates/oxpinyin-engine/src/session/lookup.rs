@@ -357,6 +357,15 @@ where
 
         let mut winner: Option<(PhraseToken, u64, String)> = None;
         for keys in &paths {
+            // The pin's `search_suggestion` gate: the walk reaches a user
+            // index key past `MAX_PHRASE_LENGTH` syllables that extends this
+            // path and `switch`'s `default: abort()` dies
+            // (`chewing_large_table2_bdb.cpp:282`). Answer an error instead.
+            if self.dictionary.overlong_extension_gate(keys.as_slice()) {
+                return Err(EngineError::OverlongUserIndexKey {
+                    syllables: keys.len(),
+                });
+            }
             let tokens = self
                 .dictionary
                 .suggest_extension_tokens(keys.as_slice())

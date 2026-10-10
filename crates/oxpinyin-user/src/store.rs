@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use oxpinyin_core::UserCountDelta;
+use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta, syllable_initial};
 use oxpinyin_data::single_gram::encode_single_gram;
 use oxpinyin_store::{DefaultStore, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn};
 
@@ -159,6 +159,13 @@ pub enum UserStoreError {
     /// answers `ERROR_INTEGER_OVERFLOW` and `pinyin_choose_predicted_candidate`
     /// returns `false` before it trains the bigram (`pinyin.cpp:2609-2612`).
     UnigramTotalOverflow,
+    /// `pinyin_mask_out` / `zhuyin_mask_out` met a `user_pinyin_index.bin`
+    /// key past `MAX_PHRASE_LENGTH` syllables: the pin's user
+    /// `ChewingLargeTable2::mask_out` walks every record and its
+    /// `switch`'s `default: abort()` fires on the key
+    /// (`chewing_large_table2_bdb.cpp:529`). The class-(c) answer: the
+    /// mask fails, and the facade logs the point in its own domain.
+    OverlongIndexKey,
 }
 
 impl fmt::Display for UserStoreError {
@@ -191,6 +198,11 @@ impl fmt::Display for UserStoreError {
                 f,
                 "unigram total overflow (upstream ERROR_INTEGER_OVERFLOW, pinyin.cpp:2609-2612)"
             ),
+            Self::OverlongIndexKey => write!(
+                f,
+                "user pinyin index key past MAX_PHRASE_LENGTH syllables (upstream aborts, \
+                 chewing_large_table2_bdb.cpp:529)"
+            ),
         }
     }
 }
@@ -207,7 +219,8 @@ impl std::error::Error for UserStoreError {
             | Self::Persistence(_)
             | Self::UnknownDatabaseFormat
             | Self::ChunkHeaderWrite(_)
-            | Self::UnigramTotalOverflow => None,
+            | Self::UnigramTotalOverflow
+            | Self::OverlongIndexKey => None,
         }
     }
 }
@@ -219,6 +232,29 @@ impl From<StoreError> for UserStoreError {
             other => Self::Store(other),
         }
     }
+}
+
+/// The user pinyin index projection of `syllables` — the DB key
+/// `add_index` would write for this reading: tone-zeroed complete keys, or
+/// initial-only keys when any syllable is incomplete
+/// (`compute_chewing_index` / `compute_incomplete_chewing_index`,
+/// `src/storage/pinyin_phrase3.h:160-178` at the pin). `None` when a
+/// syllable names no `ChewingKey`, which is never a key upstream writes.
+fn index_projection(syllables: &[SyllableKey]) -> Option<Vec<u16>> {
+    let incomplete = syllables
+        .iter()
+        .any(|key| key.completeness() == Completeness::Partial);
+    syllables
+        .iter()
+        .map(|key| {
+            let text = if incomplete {
+                syllable_initial(key.text())?
+            } else {
+                key.text()
+            };
+            ChewingKey::from_pinyin(text).map(|key| key.with_tone(0).to_packed())
+        })
+        .collect()
 }
 
 // ── codec helpers ─────────────────────────────────────────────────
@@ -719,6 +755,45 @@ impl<S: WriteStore> GenericUserStore<S> {
             .db
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// The user pinyin index's readings past `MAX_PHRASE_LENGTH` syllables,
+    /// as packed `ChewingKey` words — the pin's user `ChewingLargeTable2`
+    /// carries one DB key per reading, and any key past the table's
+    /// 16-syllable instantiation drives its `switch`'s `default: abort()`
+    /// sites. Empty for a plain or standalone store, which has no
+    /// `user_pinyin_index.bin`.
+    #[must_use]
+    pub(crate) fn overlong_index_readings(&self) -> &[Vec<u16>] {
+        self.inner
+            .libpinyin
+            .as_ref()
+            .map_or(&[][..], |target| target.overlong_index_keys.as_slice())
+    }
+
+    /// Whether `user_pinyin_index.bin` carried a key past
+    /// `MAX_PHRASE_LENGTH` syllables. `pinyin_mask_out` / `zhuyin_mask_out`
+    /// walk every record, so any such key aborts the whole mask
+    /// (`chewing_large_table2_bdb.cpp:529`).
+    #[must_use]
+    pub fn has_overlong_index_key(&self) -> bool {
+        !self.overlong_index_readings().is_empty()
+    }
+
+    /// The pin's user-table `search_suggestion` gate
+    /// (`chewing_large_table2_bdb.cpp:282`): `true` when some reading past
+    /// `MAX_PHRASE_LENGTH` syllables strictly extends `syllables` in the
+    /// keyspace `add_index` writes. The pin's `DB_SET`/`DB_NEXT` walk then
+    /// reaches that key and its `switch`'s `default: abort()` dies; the
+    /// engine surfaces the same search as an error instead.
+    #[must_use]
+    pub fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
+        let Some(projection) = index_projection(syllables) else {
+            return false;
+        };
+        self.overlong_index_readings()
+            .iter()
+            .any(|reading| reading.len() > projection.len() && reading.starts_with(&projection))
     }
 
     fn count_cache(&self) -> MutexGuard<'_, Option<CountCache>> {
@@ -1828,8 +1903,15 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError`] when the mask cannot be written.
+    /// Returns [`UserStoreError::OverlongIndexKey`] when the user pinyin
+    /// index carried a key past `MAX_PHRASE_LENGTH` syllables — the pin's
+    /// user `ChewingLargeTable2::mask_out` walks every record and aborts on
+    /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
+    /// the mask cannot otherwise be written.
     pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+        if self.has_overlong_index_key() {
+            return Err(UserStoreError::OverlongIndexKey);
+        }
         let db = self.database();
         let has_user_data = db.write(|txn| {
             // Bigram: collect all rows, then remove matching and rewrite totals.

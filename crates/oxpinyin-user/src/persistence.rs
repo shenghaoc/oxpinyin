@@ -418,6 +418,17 @@ pub struct Loaded {
 pub(crate) struct LoadedProfile {
     /// The public load result.
     pub(crate) loaded: Loaded,
+    /// The user pinyin index's readings longer than `MAX_PHRASE_LENGTH`
+    /// syllables, as packed `ChewingKey` words — the pin's user
+    /// `ChewingLargeTable2` carries one DB key per reading, and a key
+    /// past the table's 16-syllable instantiation drives
+    /// `chewing_large_table2_bdb.cpp:282`/`:529` into `switch`'s
+    /// `default: abort()`. The value model cannot hold such a reading
+    /// (its `(token, keys)` item exists only for a `user.bin` reading of
+    /// at most `MAX_PHRASE_LENGTH`), so the raw keys ride here as a
+    /// sibling of [`UserState`] for the two abort sites — recorded from
+    /// the DB key's length alone, independent of the value decoding.
+    pub(crate) overlong_index_keys: Vec<Vec<u16>>,
     /// The phrase-table membership as exact `(token, phrase text)` pairs —
     /// the pin's `m_phrase_table` rows keyed by their text. A token may
     /// legitimately appear under more than one text, so this is a set of
@@ -557,11 +568,12 @@ pub(crate) fn load_checked(
             ..Loaded::default()
         },
         phrase_table: BTreeSet::new(),
+        overlong_index_keys: Vec::new(),
     };
     if check.conform {
         load_bigram(dir, &mut profile.loaded);
         load_libraries(dir, originals.layout(), &mut profile.loaded);
-        load_user_pinyin_index(dir, &mut profile.loaded);
+        load_user_pinyin_index(dir, &mut profile.loaded, &mut profile.overlong_index_keys);
         load_user_phrase_index(dir, &mut profile.loaded.skipped, &mut profile.phrase_table);
         load_logs(dir, originals, &mut profile.loaded);
     }
@@ -702,7 +714,7 @@ fn load_bigram(dir: &Path, loaded: &mut Loaded) {
 /// readings lookup finds. Both keyspaces carry every record, so the set
 /// absorbs the duplicate. An absent or unreadable file indexes nothing,
 /// as an empty `ChewingLargeTable2` does.
-fn load_user_pinyin_index(dir: &Path, loaded: &mut Loaded) {
+fn load_user_pinyin_index(dir: &Path, loaded: &mut Loaded, overlong: &mut Vec<Vec<u16>>) {
     let path = dir.join(UserDbm::PinyinIndex.file_name());
     if !path.exists() {
         return;
@@ -719,8 +731,26 @@ fn load_user_pinyin_index(dir: &Path, loaded: &mut Loaded) {
     };
     let indexed = &mut loaded.state.indexed;
     let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
-        if value.is_empty() || key.is_empty() || !key.len().is_multiple_of(2) {
-            return Ok(()); // a prefix marker, or not a key upstream writes
+        if key.is_empty() || !key.len().is_multiple_of(2) {
+            return Ok(()); // not a key upstream writes
+        }
+        // The pin's user `ChewingLargeTable2` instantiates its entries only
+        // for lengths 1..=16, so a longer DB key sends both the
+        // longer-candidate walk (`chewing_large_table2_bdb.cpp:282`) and
+        // `mask_out` (`:529`) into `switch`'s `default: abort()`. Record
+        // the key from its length alone — the pin aborts on the key, before
+        // touching the value — as packed `ChewingKey` words.
+        if key.len() / 2 > crate::phrase::MAX_PHRASE_LENGTH {
+            let words: Vec<u16> = key
+                .chunks_exact(2)
+                .map(|word| u16::from_le_bytes([word[0], word[1]]))
+                .collect();
+            if !overlong.contains(&words) {
+                overlong.push(words);
+            }
+        }
+        if value.is_empty() {
+            return Ok(()); // a prefix marker names no reading
         }
         let Ok(items) = oxpinyin_data::row_format::pinyin_index::decode_items(value, key.len() / 2)
         else {

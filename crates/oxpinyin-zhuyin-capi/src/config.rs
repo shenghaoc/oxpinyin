@@ -105,6 +105,12 @@ pub extern "C" fn zhuyin_set_options(context: *mut ZhuyinContext, options: Pinyi
 ///                      phrase_token_t mask,
 ///                      phrase_token_t value);
 /// ```
+///
+/// The user table's `mask_out` walks every `user_pinyin_index.bin` record
+/// and dies of SIGABRT at the `switch` whose `default` is `abort()` when a
+/// key is past `MAX_PHRASE_LENGTH` syllables
+/// (`chewing_large_table2_bdb.cpp:529`); this entry answers `false` and one
+/// `libzhuyin` warning for that shape (class (c)).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value: u32) -> bool {
     if context.is_null() {
@@ -114,7 +120,19 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`;
     // the unique borrow lasts only for the mask call.
     let ctx = unsafe { context_mut(context) };
-    ctx.mask_out(mask, value)
+    match ctx.mask_out(mask, value) {
+        oxpinyin_facade::MaskOutOutcome::Done(answer) => answer,
+        oxpinyin_facade::MaskOutOutcome::OverlongIndexKey => {
+            // Class (c), `chewing_large_table2_bdb.cpp:529`: the user
+            // pinyin index carries a key past MAX_PHRASE_LENGTH syllables
+            // and the pin's `mask_out` switch falls to `default: abort()`.
+            crate::ffi::log_warning(
+                "zhuyin_mask_out: a user pinyin index key is longer than MAX_PHRASE_LENGTH \
+                 syllables (upstream aborts, chewing_large_table2_bdb.cpp:529)",
+            );
+            false
+        }
+    }
 }
 
 /// Load a default phrase library by index.
