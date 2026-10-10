@@ -372,6 +372,7 @@ fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
 /// `table_info.cpp:220,242`) — the same `f32` bits `oxpinyin_data`'s
 /// `PINNED_LAMBDA` names. Duplicated here because the engine depends on
 /// the core traits, not the data crate.
+#[cfg(test)]
 const PIN_LAMBDA_F32: f32 = 0.312_699;
 
 /// The pin's candidate `m_freq` under the default profile: the unigram
@@ -385,8 +386,8 @@ const PIN_LAMBDA_F32: f32 = 0.312_699;
 /// mirrors the C expression left-to-right (`f32` throughout, the three
 /// `* 256` factors kept as written); any `f64` intermediate or a
 /// pre-combined `* 2²⁴` risks drifting off the tie boundary.
-fn amplified_frequency(unigram: u64, total: u64) -> u64 {
-    amplified_frequency_with_bigram(unigram, total, 0.0)
+fn amplified_frequency(unigram: u64, total: u64, lambda: f32) -> u64 {
+    amplified_frequency_with_bigram(unigram, total, 0.0, lambda)
 }
 
 /// The pin's `BIGRAM_FREQUENCY_DISCOUNT` (`pinyin.cpp:33`).
@@ -418,13 +419,25 @@ const AMPLIFY_SCALE_F32: f32 = 256.0 * 256.0 * 256.0;
 /// `0.0 + x == x` in IEEE-754, so the DYNAMIC_ADJUST-clear path is
 /// bit-identical to the pre-existing unigram-only law by construction —
 /// not merely by the frozen words happening to leave the bit clear.
-fn amplified_frequency_with_bigram(unigram: u64, total: u64, bigram_poss: f32) -> u64 {
+fn amplified_frequency_with_bigram(unigram: u64, total: u64, bigram_poss: f32, lambda: f32) -> u64 {
     if total == 0 {
         return 0;
     }
-    let possibility = PIN_LAMBDA_F32 * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT_F32
-        + (1.0_f32 - PIN_LAMBDA_F32) * unigram as f32 / total as f32;
-    u64::from((possibility * AMPLIFY_SCALE_F32) as u32)
+    let possibility = lambda * bigram_poss * BIGRAM_FREQUENCY_DISCOUNT_F32
+        + (1.0_f32 - lambda) * unigram as f32 / total as f32;
+    guint32_of_score(possibility * AMPLIFY_SCALE_F32)
+}
+
+/// The `guint32` the pinned x86-64 build stores for a `float` score
+/// (`pinyin.cpp:1821-1824`): `cvttss2si` to a 64-bit integer, then the low
+/// 32 bits. A negative score therefore wraps (`-3.7` is `2³² − 3`) and one
+/// that does not fit 64 bits, NaN and infinity included, is `INT64_MIN`,
+/// whose low bits are 0.
+fn guint32_of_score(score: f32) -> u64 {
+    if !score.is_finite() || score >= i64::MAX as f32 || score < i64::MIN as f32 {
+        return 0;
+    }
+    u64::from(score as i64 as u32)
 }
 
 /// One resplit pair the scan matrix admits alongside the selected parse,
@@ -902,7 +915,56 @@ const SORT_WITHOUT_SENTENCE_CANDIDATE: u32 = 0x1;
 /// the LONGER row is suppressed (`pinyin.cpp:2292-2293`).
 const SORT_WITHOUT_LONGER_CANDIDATE: u32 = 0x2;
 
+/// The pin's candidate comparators (`compare_item_with_sort_option`,
+/// `pinyin.cpp:1678-1709`; `compare_item_with_length_and_frequency`,
+/// `zhuyin.cpp:1129-1144`) under GLib's stable merge sort
+/// (`g_array_sort_with_data`, `g_array_sort`): descending on each enabled key.
+/// The frequency key is `-(freq_lhs - freq_rhs)` in `guint32` arithmetic
+/// returned as a `gint`, so a difference of 2³¹ or more flips sign and the
+/// comparator stops being transitive — which the stock λ never reaches (the
+/// frequencies stay below 2²⁴) and a `table.conf` λ outside `[0, 1]` does
+/// (`(1−λ)` negative wraps the stored `guint32`). The order is then the merge
+/// sort's, so the sort is GLib's recursion, not the standard library's.
+fn glib_rank_sort(ranked: &mut Vec<(RankKey, Candidate)>) {
+    let mut order: Vec<(RankKey, usize)> = ranked
+        .iter()
+        .enumerate()
+        .map(|(index, (key, _))| (*key, index))
+        .collect();
+    crate::nbest::glib_merge_sort(&mut order, &|left, right| left.0.pin_compare(&right.0));
+    let mut slots: Vec<Option<(RankKey, Candidate)>> = ranked.drain(..).map(Some).collect();
+    ranked.extend(
+        order
+            .into_iter()
+            .filter_map(|(_, index)| slots[index].take()),
+    );
+}
+
 impl RankKey {
+    /// The comparator's `gint` for `self` against `other`; only its sign
+    /// matters to a merge, and it is the pin's, wrap included.
+    fn pin_compare(&self, other: &Self) -> i32 {
+        if self.phrase_length != other.phrase_length {
+            return if self.phrase_length > other.phrase_length {
+                -1
+            } else {
+                1
+            };
+        }
+        if self.pinyin_span != other.pinyin_span {
+            return if self.pinyin_span > other.pinyin_span {
+                -1
+            } else {
+                1
+            };
+        }
+        if self.frequency != other.frequency {
+            let (left, right) = (self.frequency as u32, other.frequency as u32);
+            return right.wrapping_sub(left) as i32;
+        }
+        0
+    }
+
     /// The key `compare_item_with_sort_option` sees under `sort_word`
     /// (`pinyin.cpp:1678-1709` at the pin): a field whose bit is clear
     /// compares equal for every candidate — zeroed here — so the sort

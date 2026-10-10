@@ -1040,15 +1040,16 @@ fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
     // is what a stub cannot satisfy: returning a constant zero
     // possibility leaves `adjusted` equal to `base`.
     let (unigram, total) = (1_234_u64, 51_051_831_u64);
-    let base = super::amplified_frequency_with_bigram(unigram, total, 0.0);
-    let adjusted = super::amplified_frequency_with_bigram(unigram, total, 0.5);
+    let base = super::amplified_frequency_with_bigram(unigram, total, 0.0, super::PIN_LAMBDA_F32);
+    let adjusted =
+        super::amplified_frequency_with_bigram(unigram, total, 0.5, super::PIN_LAMBDA_F32);
     assert!(
         adjusted > base,
         "a non-zero possibility must raise the amplified frequency ({adjusted} vs {base})"
     );
     assert_eq!(
         base,
-        super::amplified_frequency(unigram, total),
+        super::amplified_frequency(unigram, total, super::PIN_LAMBDA_F32),
         "the bit-clear path is the pre-existing unigram law exactly"
     );
 }
@@ -1340,23 +1341,56 @@ fn amplified_frequency_pins_the_class_a_probe_values() {
     // values are the amplified keys the 12 top-1 tie-swaps collapse on.
     const PIN_TOTAL: u64 = 51_051_831;
     // 0: the 量比/两笔, 建仓/减仓, 拜倒/白道, 冰坝/并把, 长着/唱着 pairs.
-    assert_eq!(super::amplified_frequency(1, PIN_TOTAL), 0);
-    assert_eq!(super::amplified_frequency(3, PIN_TOTAL), 0);
-    // 3: 写歌 16 vs 写稿 14 (`xiego`).
-    assert_eq!(super::amplified_frequency(14, PIN_TOTAL), 3);
-    assert_eq!(super::amplified_frequency(16, PIN_TOTAL), 3);
-    // 4: 古稀 21 vs 股息 20 (`guxi`), 酸楚 20 vs 算出 18 (`suanch`).
-    assert_eq!(super::amplified_frequency(18, PIN_TOTAL), 4);
-    assert_eq!(super::amplified_frequency(20, PIN_TOTAL), 4);
-    assert_eq!(super::amplified_frequency(21, PIN_TOTAL), 4);
-    // 17: 每家 78 vs 美加 77 (`meijia…`).
-    assert_eq!(super::amplified_frequency(77, PIN_TOTAL), 17);
-    assert_eq!(super::amplified_frequency(78, PIN_TOTAL), 17);
-    // 19: 狗狗 = 沟谷 = 87 (`goug`).
-    assert_eq!(super::amplified_frequency(87, PIN_TOTAL), 19);
-    assert_eq!(super::amplified_frequency(0, PIN_TOTAL), 0);
     assert_eq!(
-        super::amplified_frequency(20, 0),
+        super::amplified_frequency(1, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        0
+    );
+    assert_eq!(
+        super::amplified_frequency(3, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        0
+    );
+    // 3: 写歌 16 vs 写稿 14 (`xiego`).
+    assert_eq!(
+        super::amplified_frequency(14, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        3
+    );
+    assert_eq!(
+        super::amplified_frequency(16, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        3
+    );
+    // 4: 古稀 21 vs 股息 20 (`guxi`), 酸楚 20 vs 算出 18 (`suanch`).
+    assert_eq!(
+        super::amplified_frequency(18, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        4
+    );
+    assert_eq!(
+        super::amplified_frequency(20, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        4
+    );
+    assert_eq!(
+        super::amplified_frequency(21, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        4
+    );
+    // 17: 每家 78 vs 美加 77 (`meijia…`).
+    assert_eq!(
+        super::amplified_frequency(77, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        17
+    );
+    assert_eq!(
+        super::amplified_frequency(78, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        17
+    );
+    // 19: 狗狗 = 沟谷 = 87 (`goug`).
+    assert_eq!(
+        super::amplified_frequency(87, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        19
+    );
+    assert_eq!(
+        super::amplified_frequency(0, PIN_TOTAL, super::PIN_LAMBDA_F32),
+        0
+    );
+    assert_eq!(
+        super::amplified_frequency(20, 0, super::PIN_LAMBDA_F32),
         0,
         "no index total ranks as zero"
     );
@@ -1368,7 +1402,10 @@ fn amplified_frequency_is_c_float_not_f64() {
     // 3_081_671) where the C float chain and the same chain in f64
     // truncate apart — 530_766 vs 530_765 — so this pins the f32
     // arithmetic the oracle's m_freq runs in.
-    assert_eq!(super::amplified_frequency(2_349_890, 51_051_831), 530_766);
+    assert_eq!(
+        super::amplified_frequency(2_349_890, 51_051_831, super::PIN_LAMBDA_F32),
+        530_766
+    );
 }
 
 #[test]
@@ -3529,4 +3566,37 @@ fn retained_exact_key_windows_search_the_reserved_end_slot() {
     assert!(session.input.matrix.as_ref().expect("matrix").zeros[4]);
     let rows = session.candidates_at(2).expect("hao window");
     assert!(rows.iter().any(|row| row.text() == "好"));
+}
+
+/// The pin stores the candidate frequency as `cvttss2si` to 64 bits, low 32
+/// kept: a negative score wraps, NaN and the out-of-range are 0.
+#[test]
+fn candidate_scores_wrap_like_the_pinned_conversion() {
+    assert_eq!(super::guint32_of_score(3.9), 3);
+    assert_eq!(super::guint32_of_score(-3.7), 4_294_967_293);
+    assert_eq!(super::guint32_of_score(f32::NAN), 0);
+    assert_eq!(super::guint32_of_score(f32::INFINITY), 0);
+    assert_eq!(super::guint32_of_score(-1.0e30), 0);
+    assert_eq!(super::guint32_of_score(4_294_967_296.0), 0);
+    assert_eq!(super::guint32_of_score(8_589_934_592.0), 0);
+}
+
+/// `-(freq_lhs - freq_rhs)` in `guint32` arithmetic returned as a `gint`: a
+/// difference of 2³¹ or more flips sign, so the larger frequency can sort
+/// after the smaller (`pinyin.cpp:1700-1705`).
+#[test]
+fn the_candidate_comparator_wraps_large_frequency_gaps() {
+    let key = |frequency| super::RankKey {
+        phrase_length: 1,
+        pinyin_span: 1,
+        frequency,
+    };
+    assert!(key(10).pin_compare(&key(5)) < 0, "higher frequency first");
+    assert!(key(5).pin_compare(&key(10)) > 0);
+    assert_eq!(key(7).pin_compare(&key(7)), 0);
+    assert!(
+        key(1).pin_compare(&key(u64::from(u32::MAX))) < 0,
+        "the wrap puts 1 first"
+    );
+    assert!(key(u64::from(u32::MAX)).pin_compare(&key(1)) > 0);
 }

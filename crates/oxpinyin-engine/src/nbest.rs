@@ -27,6 +27,7 @@
 use std::collections::HashMap;
 
 use compact_str::CompactString;
+use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     Completeness, Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken,
@@ -170,13 +171,17 @@ struct BeamEntry {
 /// 074a2219 phonetic_lookup.h:66-91, including the nstore gate. The
 /// longer-by-one branch is result-redundant: the final longer clause wins
 /// regardless. This comparator is cyclic; never pass it to a Rust sort.
+///
+/// The possibility comparisons are float comparisons at the pin, so a NaN
+/// cost makes every one of them false ([`cost_gt`]); only the length clause
+/// is left standing.
 fn loses_to(left: &Value, right: &Value, nstore: usize) -> bool {
     (nstore > 1
         && ((left.length.checked_add(1) == Some(right.length)
-            && left.cost > right.cost.saturating_add(LONG_SENTENCE_PENALTY))
+            && cost_gt(left.cost, cost_add(right.cost, LONG_SENTENCE_PENALTY)))
             || (left.length == right.length.saturating_add(1)
-                && left.cost.saturating_add(LONG_SENTENCE_PENALTY) > right.cost)))
-        || (left.length == right.length && left.cost > right.cost)
+                && cost_gt(cost_add(left.cost, LONG_SENTENCE_PENALTY), right.cost))))
+        || (left.length == right.length && cost_gt(left.cost, right.cost))
         || left.length > right.length
 }
 
@@ -261,28 +266,53 @@ fn heap_top<T: Clone>(mut values: Vec<T>, count: usize, less: impl Fn(&T, &T) ->
     result
 }
 
-/// The final tail comparison (074a2219 phonetic_lookup.h:174-178) has
-/// gint truncation. GLib 2.90.0 g_ptr_array_sort delegates to g_sort_array,
-/// gqsort.c:msort_with_tmp: split n/2, merge left on <= 0 (stable).
-/// Keep native costs; class (a) does not replace the native scorer.
-fn tail_compare(left: &Value, right: &Value) -> i32 {
-    let poss = |cost: Cost| (-(cost as f64) * core::f64::consts::LN_2 / 1000.0) as f32;
-    (-(poss(left.cost) - poss(right.cost))) as i32
+/// `m_poss` of a cost: the natural-log possibility the pin keeps in a
+/// `gfloat`.
+fn poss(cost: Cost) -> f32 {
+    match cost {
+        NAN_COST => f32::NAN,
+        POS_INF_COST => f32::NEG_INFINITY,
+        NEG_INF_COST => f32::INFINITY,
+        _ => (-(cost as f64) * core::f64::consts::LN_2 / 1000.0) as f32,
+    }
 }
 
-fn tail_merge(values: &mut [Value]) {
+/// A C float converted to `gint` as x86-64 does it (`cvttss2si`): anything
+/// that does not fit, NaN included, is `INT_MIN`.
+fn c_float_to_gint(value: f32) -> i32 {
+    if value.is_nan() || !(-2_147_483_648.0..2_147_483_648.0).contains(&value) {
+        i32::MIN
+    } else {
+        value as i32
+    }
+}
+
+/// The final tail comparison (074a2219 phonetic_lookup.h:174-178):
+/// `-(lhs->m_poss - rhs->m_poss)` in `float`, truncated to `gint`. A NaN
+/// difference is `INT_MIN` for both orders, so NaN sorts before everything
+/// and before itself, and the comparator is not transitive: the order that
+/// results is the sort algorithm's (below).
+fn tail_compare(left: &Value, right: &Value) -> i32 {
+    c_float_to_gint(-(poss(left.cost) - poss(right.cost)))
+}
+
+/// GLib 2.90.0 `g_ptr_array_sort` (`g_sort_array`, gqsort.c:
+/// `msort_with_tmp`): split at `n / 2`, sort both halves, merge taking the
+/// left element on `cmp <= 0`. Stable for a consistent comparator; for the
+/// inconsistent one above its order is exactly this recursion's.
+pub(crate) fn glib_merge_sort<T: Clone>(values: &mut [T], compare: &impl Fn(&T, &T) -> i32) {
     if values.len() < 2 {
         return;
     }
     let mid = values.len() / 2;
     let (left, right) = values.split_at_mut(mid);
-    tail_merge(left);
-    tail_merge(right);
+    glib_merge_sort(left, compare);
+    glib_merge_sort(right, compare);
     let left = left.to_vec();
     let right = right.to_vec();
     let (mut l, mut r) = (0, 0);
     for slot in values {
-        if r == right.len() || (l < left.len() && tail_compare(&left[l], &right[r]) <= 0) {
+        if r == right.len() || (l < left.len() && compare(&left[l], &right[r]) <= 0) {
             *slot = left[l].clone();
             l += 1;
         } else {
@@ -290,6 +320,10 @@ fn tail_merge(values: &mut [Value]) {
             r += 1;
         }
     }
+}
+
+fn tail_merge(values: &mut [Value]) {
+    glib_merge_sort(values, &tail_compare);
 }
 
 /// The trellis state over the remaining input's byte positions.
@@ -881,7 +915,7 @@ where
                     continue;
                 };
                 if let Some(pronunciation) = pronunciation {
-                    cost = cost.saturating_add(pronunciation);
+                    cost = cost_add(cost, pronunciation);
                 }
                 trellis
                     .texts
@@ -897,7 +931,7 @@ where
                         sub: predecessor.slot,
                         length: predecessor.value.length.saturating_add(chars),
                         keys: predecessor.value.keys.saturating_add(entry.keys),
-                        cost: predecessor.value.cost.saturating_add(cost),
+                        cost: cost_add(predecessor.value.cost, cost),
                     },
                 );
             }
@@ -1013,6 +1047,68 @@ mod tests {
             length,
             keys: length,
             cost,
+        }
+    }
+
+    /// A NaN cost makes every possibility comparison false, so only the
+    /// length clause of `trellis_value_less_than` is left (`:66-91`).
+    #[test]
+    fn a_nan_cost_loses_only_by_length() {
+        use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST};
+        let nan = value(NAN_COST, 3, 0);
+        for other in [
+            value(10, 3, 0),
+            value(NAN_COST, 3, 0),
+            value(10, 2, 0),
+            value(10, 4, 0),
+        ] {
+            assert!(!loses_to(&nan, &other) || nan.length > other.length);
+            assert!(!loses_to(&other, &nan) || other.length > nan.length);
+        }
+        assert!(loses_to(&value(NAN_COST, 4, 0), &value(10, 3, 0)));
+        // Infinities order as floats do: a possibility of +inf (cost -inf)
+        // beats any finite one, 0 (cost +inf) loses to it.
+        assert!(loses_to(&value(0, 3, 0), &value(NEG_INF_COST, 3, 0)));
+        assert!(loses_to(&value(POS_INF_COST, 3, 0), &value(0, 3, 0)));
+        assert!(!loses_to(
+            &value(POS_INF_COST, 3, 0),
+            &value(POS_INF_COST, 3, 0)
+        ));
+    }
+
+    /// GLib's merge sort over the pin's tail comparator with NaN keys. The
+    /// order for `[-9.25, nan, -1.5, nan]` is glib 2.90's (measured; a plain
+    /// insertion sort over the same comparator leaves `[0, 1, 2, 3]`), and
+    /// `INT_MIN` (x86-64) and `0` (arm64) for the NaN comparison never give
+    /// different orders: a left element wins every `<= 0` merge step either
+    /// way, so the architecture's float-to-int conversion is not observable.
+    #[test]
+    fn the_tail_sort_is_glibs_merge_and_blind_to_the_nan_conversion() {
+        use super::{c_float_to_gint, glib_merge_sort};
+        let sorted = |poss: &[f32], nan_as_zero: bool| {
+            let mut items: Vec<(f32, usize)> = poss.iter().copied().zip(0..).collect();
+            glib_merge_sort(&mut items, &|a: &(f32, usize), b: &(f32, usize)| {
+                let difference = -(a.0 - b.0);
+                if nan_as_zero && difference.is_nan() {
+                    0
+                } else {
+                    c_float_to_gint(difference)
+                }
+            });
+            items.into_iter().map(|item| item.1).collect::<Vec<_>>()
+        };
+        assert_eq!(
+            sorted(&[-9.25, f32::NAN, -1.5, f32::NAN], false),
+            [2, 0, 1, 3]
+        );
+        let values = [f32::NAN, -1.5, -9.25, -20.5];
+        for count in 2..=6_u32 {
+            for code in 0..4_usize.pow(count) {
+                let poss: Vec<f32> = (0..count)
+                    .map(|slot| values[(code >> (2 * slot)) & 3])
+                    .collect();
+                assert_eq!(sorted(&poss, false), sorted(&poss, true), "{poss:?}");
+            }
         }
     }
 

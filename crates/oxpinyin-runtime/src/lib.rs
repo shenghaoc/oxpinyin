@@ -1125,6 +1125,10 @@ impl LanguageModel for RuntimeLm {
     type Token = PhraseToken;
     type Error = LmError;
 
+    fn amplification_lambda(&self) -> f32 {
+        self.inner.amplification_lambda()
+    }
+
     fn score(
         &self,
         history: &[Self::Token],
