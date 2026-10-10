@@ -1156,6 +1156,68 @@ def _(k):
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
 
 
+# batch 525-D: `pinyin_remove_user_candidate` also drives `Bigram::mask_out`
+# (`pinyin.cpp:3766`, mask `PHRASE_INDEX_LIBRARY_MASK|PHRASE_MASK`), so all
+# three corrupt user-bigram shapes reach it. The pin's phrase-index removals
+# are in memory only and die with the abort, so a failed call leaves the store
+# unchanged; the subject refuses before it removes anything.
+def _removable_user_bigram_context(k, rows_for):
+    """A context with one persisted user phrase and a crafted `user_bigram.db`
+    carrying `rows_for(token)`. The phrase makes the candidate row acceptable
+    (the batch-C checks pass), so the pin reaches `user_bigram->mask_out`
+    (`pinyin.cpp:3766`). `rows_for` gets the phrase's user token, which the
+    residual shape's item must equal — the pin's mask selects nothing
+    otherwise."""
+    _add_user_phrase(k, '龘龘', [b"da2'da2"])
+    assert k.fn('save', B, P)(k.ctx)
+    probe = k.alloc()
+    new = k.glib.g_array_new
+    new.restype, new.argtypes = P, [I, I, U]
+    arr = new(0, 0, 4)
+    assert k.fn('lookup_tokens', B, P, S, P)(probe, '龘龘'.encode(), arr)
+    view = C.cast(arr, C.POINTER(Arr)).contents
+    token = list(C.cast(view.data, C.POINTER(U))[:view.len])[0]
+    k.fn('free_instance', None, P)(probe)
+    k.fn('fini', None, P)(k.ctx)
+    _craft_hash(os.path.join(k.user, 'user_bigram.db'), rows_for(token))
+    _write_user_conf(k)
+    ctx = k.init()
+    assert ctx, 'the reopen failed'
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'dada')
+    assert k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+    candidates = _user_candidate_rows(k, inst)
+    assert candidates, 'no user candidate'
+    return inst, candidates[0]
+
+
+@case('abort-remove-user-candidate-short-bigram-value', abort=False, cells=('bdb',))
+def _(k):
+    inst, cand = _removable_user_bigram_context(
+        k, lambda _token: [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
+    return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
+
+
+@case('abort-remove-user-candidate-non-token-bigram-key', abort=False, cells=('bdb',))
+def _(k):
+    inst, cand = _removable_user_bigram_context(
+        k, lambda _token: [(b'\x00\x01', b'\x07\x00\x00\x00')])
+    return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
+
+
+@case('abort-remove-user-candidate-residual-bigram-gram', abort=False, cells=('bdb',))
+def _(k):
+    # `total_freq` 7 with one item of the removed token and frequency 3:
+    # `SingleGram::mask_out` drops the item and leaves 4, so the pin's
+    # `get_length` assert dies (`ngram.cpp:70`, `ngram_bdb.cpp:243`).
+    def rows(token):
+        value = b'\x07\x00\x00\x00' + token.to_bytes(4, 'little') + (3).to_bytes(4, 'little')
+        return [(b'\x01\x00\x00\x00', value)]
+
+    inst, cand = _removable_user_bigram_context(k, rows)
+    return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
+
+
 @case('abort-choose-candidate-predicted-prefix-row', abort=0)
 def _(k):
     inst = predicted(k)
@@ -1351,8 +1413,8 @@ def _(k):
 # `chewing_large_table2_tkrzwdb.cpp:465`, `:251`) but their user index is not
 # a btree, so a bdb fixture cannot reach the site there and the three cases
 # are `cells=('bdb',)`.
-def _craft_btree(path, keys):
-    """A Berkeley DB btree of `key -> empty` records."""
+def _craft_db(path, rows, dbtype):
+    """A Berkeley DB `dbtype` container of raw `key -> value` records."""
     import ctypes.util
 
     class DBT(C.Structure):
@@ -1383,18 +1445,30 @@ def _craft_btree(path, keys):
         os.unlink(path)
     handle = C.c_void_p()
     assert db.db_create(C.byref(handle), None, 0) == 0
-    # DB_BTREE == 1, DB_CREATE == 0x1; the pin opens the user index the same
-    # way (`chewing_large_table2_bdb.cpp:90`).
-    assert db.__db_open_pp(handle, None, path.encode(), None, 1, 0x1, 0o600) == 0
+    # DB_CREATE == 0x1; the pin opens its tables the same way
+    # (`chewing_large_table2_bdb.cpp:90`, `ngram_bdb.cpp:56`).
+    assert db.__db_open_pp(handle, None, path.encode(), None, dbtype, 0x1, 0o600) == 0
     live = []
-    for key in keys:
-        buf = C.create_string_buffer(key)
-        live.append(buf)
-        kd = DBT(C.cast(buf, C.c_void_p), len(key), 0, 0, 0, None, 0)
-        vd = DBT(None, 0, 0, 0, 0, None, 0)
+    for key, value in rows:
+        kbuf = C.create_string_buffer(key)
+        vbuf = C.create_string_buffer(value)
+        live += [kbuf, vbuf]
+        kd = DBT(C.cast(kbuf, C.c_void_p), len(key), 0, 0, 0, None, 0)
+        vd = DBT(C.cast(vbuf, C.c_void_p), len(value), 0, 0, 0, None, 0)
         assert db.__db_put_pp(handle, None, C.byref(kd), C.byref(vd), 0) == 0
     assert db.__db_close_pp(handle, 0) == 0
     del live
+
+
+def _craft_btree(path, keys):
+    """A Berkeley DB btree of `key -> empty` records."""
+    _craft_db(path, [(key, b'') for key in keys], 1)  # DB_BTREE == 1
+
+
+def _craft_hash(path, rows):
+    """A Berkeley DB hash of `key -> value` records (the pin's user bigram
+    layout, `ngram_bdb.cpp:56`)."""
+    _craft_db(path, rows, 2)  # DB_HASH == 2
 
 
 def _write_user_conf(k):
@@ -1544,6 +1618,141 @@ def _(k):
     inst = k.fn('alloc_instance', P, P)(ctx)
     assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b"n'an")
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
+# batch 525-D: crafted `user_bigram.db` rows the pin's bigram walk aborts on.
+# A value shorter than a `guint32` dies at `MemoryChunk::get_content<guint32>`
+# (`memory_chunk.h:390`, reached by `get_total_freq`); a key that is not four
+# bytes dies at `Bigram::get_all_items` (`ngram_bdb.cpp:199`); an item-less
+# gram with a residual total dies at `SingleGram::get_length`
+# (`ngram.cpp:70`, reached by `_compute_predicted_bigram_candidates`); and a
+# gram whose total its items do not cover dies at `get_length` after the mask
+# removes every item (`ngram.cpp:70`, reached by `Bigram::mask_out`,
+# `ngram_bdb.cpp:243`). The container is a Berkeley DB hash (the pin's own
+# layout, `ngram_bdb.cpp:56`), and only the bdb cell opens it, so the cases
+# are `cells=('bdb',)`.
+def crafted_bigram_context(k, rows):
+    """A context whose user dir carries crafted `user_bigram.db` rows
+    (`(key_bytes, value_bytes)` records). The first init writes the
+    conforming `user.conf`; the rows are then written and the profile
+    reopened."""
+    ctx = k.init()
+    assert ctx, 'the first init failed'
+    k.fn('fini', None, P)(ctx)
+    _craft_hash(os.path.join(k.user, 'user_bigram.db'), rows)
+    _write_user_conf(k)
+    ctx = k.init()
+    assert ctx, 'the reopen failed'
+    return ctx
+
+
+def predicted_bigram_context(k, phrase, value):
+    """A context whose user bigram carries `value` under every
+    phrase-table token of `phrase`, so `_compute_prefixes` reaches it. The
+    token is read from this side's own table, so the fixture matches the
+    pin and the subject alike."""
+    ctx = k.init()
+    assert ctx, 'the first init failed'
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    new = k.glib.g_array_new
+    new.restype, new.argtypes = P, [I, I, U]
+    arr = new(0, 0, 4)
+    assert k.fn('lookup_tokens', B, P, S, P)(inst, phrase.encode(), arr)
+    view = C.cast(arr, C.POINTER(Arr)).contents
+    tokens = list(C.cast(view.data, C.POINTER(U))[:view.len])
+    k.fn('free_instance', None, P)(inst)
+    k.fn('fini', None, P)(ctx)
+    _craft_hash(os.path.join(k.user, 'user_bigram.db'),
+                [(token.to_bytes(4, 'little'), value) for token in tokens])
+    _write_user_conf(k)
+    ctx = k.init()
+    assert ctx, 'the reopen failed'
+    return ctx
+
+
+@case('abort-mask-out-short-bigram-value', abort=False, cells=('bdb',))
+def _(k):
+    # The pin's `mask_out` loads the gram and `get_total_freq` asserts on
+    # the three-byte value (`memory_chunk.h:390`, `ngram.cpp:80`).
+    ctx = crafted_bigram_context(k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('abort-zhuyin-mask-out-short-bigram-value', mode='zhuyin', abort=False, cells=('bdb',))
+def _(k):
+    ctx = crafted_bigram_context(k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('mask-out-short-bigram-value-masked-key', control=True, cells=('bdb',))
+def _(k):
+    # A short value whose key the mask erases wholesale is never loaded, so
+    # the pin erases it and completes (`ngram_bdb.cpp:231-238`); the
+    # `get_total_freq` assert is reached only for a key the mask leaves
+    # alone. A control: the guard must not over-refuse here, so pin and
+    # subject both complete and the parent build (no bigram checks) matches.
+    ctx = crafted_bigram_context(k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 1)}
+
+
+@case('abort-mask-out-non-token-bigram-key', abort=False, cells=('bdb',))
+def _(k):
+    # The pin's `mask_out` walks the container with `get_all_items`, whose
+    # `key.size == sizeof(phrase_token_t)` assert dies on the two-byte key
+    # (`ngram_bdb.cpp:199`).
+    ctx = crafted_bigram_context(k, [(b'\x00\x01', b'\x07\x00\x00\x00')])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('abort-zhuyin-mask-out-non-token-bigram-key', mode='zhuyin', abort=False, cells=('bdb',))
+def _(k):
+    ctx = crafted_bigram_context(k, [(b'\x00\x01', b'\x07\x00\x00\x00')])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+# A gram whose `total_freq` is not covered by its items (total 7, one item of
+# frequency 0): the mask removes the item (token 0 == value 0) but the key is
+# left alone, so `SingleGram::mask_out` leaves a residual total and
+# `Bigram::mask_out`'s `get_length` assert dies (`ngram.cpp:70`,
+# `ngram_bdb.cpp:243`).
+@case('abort-mask-out-residual-bigram-gram', abort=False, cells=('bdb',))
+def _(k):
+    ctx = crafted_bigram_context(
+        k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00\x00' + b'\x00' * 8)])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('abort-zhuyin-mask-out-residual-bigram-gram', mode='zhuyin', abort=False, cells=('bdb',))
+def _(k):
+    ctx = crafted_bigram_context(
+        k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00\x00' + b'\x00' * 8)])
+    return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
+
+
+@case('abort-begin-bigram-phrases-non-token-key', abort=False, cells=('bdb',))
+def _(k):
+    # `pinyin_begin_get_bigram_phrases` walks the same container through
+    # `get_all_items` (`pinyin.cpp:776-787`), so the two-byte key aborts at
+    # `ngram_bdb.cpp:199` before any row is exported.
+    ctx = crafted_bigram_context(k, [(b'\x00\x01', b'\x07\x00\x00\x00')])
+    return {'ret': bool(k.fn('begin_get_bigram_phrases', P, P)(ctx))}
+
+
+@case('abort-guess-predicted-short-bigram-value', abort=False, cells=('bdb',))
+def _(k):
+    # `_compute_predicted_bigram_candidates` merges the three-byte gram and
+    # `get_total_freq` asserts (`memory_chunk.h:390`, `pinyin.cpp:2330`).
+    ctx = predicted_bigram_context(k, '我', b'\x07\x00\x00')
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
+
+
+@case('abort-guess-predicted-empty-bigram-gram', abort=False, cells=('bdb',))
+def _(k):
+    # An item-less gram with a residual total merges to `total_freq != 0`
+    # and `SingleGram::get_length` asserts (`ngram.cpp:70`,
+    # `pinyin.cpp:2332`).
+    ctx = predicted_bigram_context(k, '我', b'\x07\x00\x00\x00')
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
 
 
 # batch2 group 12e: a tone digit on an initial-only key (PR 12e, #525, row 4)

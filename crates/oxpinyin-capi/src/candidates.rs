@@ -274,11 +274,15 @@ pub extern "C" fn pinyin_remove_user_candidate(
     };
     match user.remove_user_phrase(token.value()) {
         Ok(true) => true,
-        // Class (c): the phrase item, its phrase-table row
+        // Class (c). Either the phrase item, its phrase-table row
         // (`user_phrase_index.bin`) or one of its indexed readings
-        // (`user_pinyin_index.bin`) is missing, and the pin aborts on the
+        // (`user_pinyin_index.bin`) is missing — the pin aborts on the
         // matching `assert(ERROR_OK == retval)` (`pinyin.cpp:3743`,
-        // `:3750`, `:3759`).
+        // `:3750`, `:3759`) — or the store carried a corrupt
+        // `user_bigram.db` row and the pin aborted in
+        // `Bigram::get_all_items` / `SingleGram::get_total_freq` /
+        // `get_length` when the call reached `user_bigram->mask_out`
+        // (`pinyin.cpp:3766`). One warning either way.
         Ok(false) | Err(_) => {
             crate::ffi::log_warning(
                 "pinyin_remove_user_candidate: assertion 'ERROR_OK == retval' failed",

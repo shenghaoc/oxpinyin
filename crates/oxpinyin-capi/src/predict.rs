@@ -41,6 +41,24 @@ pub fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
     guess_predicted_result(inst, prefix).unwrap_or(false)
 }
 
+/// The `user_bigram.db` fault a predicted-candidate call refuses, with the
+/// one warning to log. `None` for a clean container or no user store. The
+/// pin aborts on the first faulty prefix's gram; a corrupt container cannot
+/// exist at the pin, so short values are reported before empty grams.
+fn predicted_bigram_fault(user: Option<&UserStore>) -> Option<&'static str> {
+    let store = user?;
+    if store.has_short_bigram_value() {
+        return Some(
+            "pinyin_guess_predicted_candidates: a user bigram value is shorter than a guint32 \
+             total_freq (upstream aborts, memory_chunk.h:390)",
+        );
+    }
+    if store.has_empty_bigram_gram() {
+        return Some("pinyin_guess_predicted_candidates: assertion '0 == total_freq' failed");
+    }
+    None
+}
+
 // Err marks the scorer's assert site, distinct from a missing prefix. The
 // punctuation wrapper ignores a missing prefix but must refuse an assert.
 fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool, ()> {
@@ -52,6 +70,19 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
     inst.prefixes.clone_from(&prefixes);
     if prefixes.is_empty() {
         return Ok(false);
+    }
+
+    // `_compute_predicted_bigram_candidates` (`pinyin.cpp:2310-2341`) loads
+    // each prefix's user gram and merges it before reading its length. A
+    // `user_bigram.db` row the pin aborts on there (short value at
+    // `memory_chunk.h:390`, item-less gram with a residual total at
+    // `ngram.cpp:70`) is refused here: one warning and `false`, with the
+    // candidate list left empty in both APIs. (A corrupt container cannot
+    // exist at the pin, so the pin's per-prefix abort order has no
+    // observable answer; short values are reported before empty grams.)
+    if let Some(message) = predicted_bigram_fault(inst.core.user.as_ref()) {
+        crate::ffi::log_warning(message);
+        return Err(());
     }
 
     let mut items = Vec::new();

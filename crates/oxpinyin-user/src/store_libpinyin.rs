@@ -89,6 +89,25 @@ pub struct Target {
     /// `DB_SET` probe tests before it walks extensions
     /// ([`persistence::LoadedProfile::index_keys`]).
     pub(crate) index_keys: BTreeSet<Vec<u16>>,
+    /// `user_bigram.db` keys whose value is shorter than a `guint32`
+    /// `total_freq` ([`persistence::LoadedProfile::bigram_short_values`]):
+    /// the pin's `MemoryChunk::get_content<guint32>` asserts on them
+    /// (`memory_chunk.h:390`).
+    pub(crate) bigram_short_values: Vec<Token>,
+    /// `user_bigram.db` keys that are not four bytes
+    /// ([`persistence::LoadedProfile::bigram_non_token_keys`]): the pin's
+    /// `Bigram::get_all_items` asserts on them (`ngram_bdb.cpp:199`).
+    pub(crate) bigram_non_token_keys: Vec<Vec<u8>>,
+    /// `user_bigram.db` rows with no items and a residual total
+    /// ([`persistence::LoadedProfile::bigram_empty_with_total`]): the pin's
+    /// `SingleGram::get_length` asserts on them (`ngram.cpp:70`).
+    pub(crate) bigram_empty_with_total: Vec<Token>,
+    /// `user_bigram.db` rows whose total is not covered by their items,
+    /// with their item tokens
+    /// ([`persistence::LoadedProfile::bigram_residual_grams`]): the pin's
+    /// `Bigram::mask_out` reaches `SingleGram::get_length` on them and
+    /// asserts (`ngram.cpp:70`, `ngram_bdb.cpp:243`).
+    pub(crate) bigram_residual_grams: Vec<(Token, Vec<Token>)>,
 }
 
 /// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
@@ -268,6 +287,10 @@ impl GenericUserStore<DefaultStore> {
             phrase_table,
             overlong_index_keys,
             index_keys,
+            bigram_short_values,
+            bigram_non_token_keys,
+            bigram_empty_with_total,
+            bigram_residual_grams,
         } = profile;
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
@@ -280,6 +303,10 @@ impl GenericUserStore<DefaultStore> {
             open_counter: loaded.open_counter,
             overlong_index_keys,
             index_keys,
+            bigram_short_values,
+            bigram_non_token_keys,
+            bigram_empty_with_total,
+            bigram_residual_grams,
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let has_user_data = db.write(|txn| {

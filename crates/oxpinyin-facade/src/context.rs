@@ -60,6 +60,22 @@ pub enum MaskOutOutcome {
     /// syllables; the C ABI answers `false` and the facade logs one
     /// warning in its own domain.
     OverlongIndexKey,
+    /// The user bigram carried a key that is not a four-byte
+    /// `phrase_token_t`; the pin's `get_all_items` asserts
+    /// (`ngram_bdb.cpp:199`). The C ABI answers `false` and logs one
+    /// warning.
+    NonTokenUserBigramKey,
+    /// The user bigram carried a value shorter than a `guint32`
+    /// `total_freq`; the pin's `get_total_freq` asserts
+    /// (`memory_chunk.h:390`). The C ABI answers `false` and logs one
+    /// warning.
+    ShortUserBigramValue,
+    /// Masking the user bigram removed every item of a gram whose total
+    /// its items did not cover, leaving a residual `total_freq`; the pin's
+    /// `get_length` asserts (`ngram.cpp:70`, from `Bigram::mask_out`,
+    /// `ngram_bdb.cpp:243`). The C ABI answers `false` and logs one
+    /// warning.
+    ResidualUserBigramGram,
 }
 
 impl MaskOutOutcome {
@@ -462,8 +478,22 @@ impl ContextCore {
         match store.mask_out(mask, value) {
             Ok(()) => MaskOutOutcome::Done(true),
             Err(UserStoreError::OverlongIndexKey) => MaskOutOutcome::OverlongIndexKey,
+            Err(UserStoreError::NonTokenUserBigramKey) => MaskOutOutcome::NonTokenUserBigramKey,
+            Err(UserStoreError::ShortUserBigramValue) => MaskOutOutcome::ShortUserBigramValue,
+            Err(UserStoreError::ResidualUserBigramGram) => MaskOutOutcome::ResidualUserBigramGram,
             Err(_) => MaskOutOutcome::Done(false),
         }
+    }
+
+    /// Whether `user_bigram.db` carried a key that is not a four-byte
+    /// `phrase_token_t` ([`UserStoreError::NonTokenUserBigramKey`]). The
+    /// pin's `Bigram::get_all_items` assert dies (`ngram_bdb.cpp:199`),
+    /// reached by `pinyin_begin_get_bigram_phrases`.
+    #[must_use]
+    pub fn has_non_token_bigram_key(&self) -> bool {
+        self.user
+            .as_ref()
+            .is_some_and(UserStore::has_non_token_bigram_key)
     }
 
     /// `load_phrase_library`'s read side: the runtime's library-load

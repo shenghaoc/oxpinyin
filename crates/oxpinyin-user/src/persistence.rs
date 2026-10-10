@@ -446,6 +446,39 @@ pub(crate) struct LoadedProfile {
     /// does. A sibling of [`UserState`] rather than a field of it, so the
     /// load's state equality is unchanged.
     pub(crate) phrase_table: BTreeSet<(Token, String)>,
+    /// `user_bigram.db` keys whose value is shorter than a `guint32`
+    /// `total_freq`, by `prev` token. `SingleGram::get_total_freq` reads
+    /// four bytes through `MemoryChunk::get_content<guint32>`, whose
+    /// `assert(get_content(...))` dies of SIGABRT (`memory_chunk.h:390`);
+    /// the value model cannot hold such a gram, so the `prev` keys ride
+    /// here as siblings of [`UserState`] for the call sites that reach
+    /// `get_total_freq` directly (`ngram.cpp:49-82`).
+    pub(crate) bigram_short_values: Vec<Token>,
+    /// `user_bigram.db` keys that are not four bytes, verbatim.
+    /// `Bigram::get_all_items` asserts `key.size == sizeof(phrase_token_t)`
+    /// (`ngram_bdb.cpp:199`); the pin's `mask_out` and
+    /// `pinyin_begin_get_bigram_phrases` both drive that walk, and a
+    /// non-token key is never inserted into [`UserState`], so the raw keys
+    /// ride here. Membership alone is read, not the bytes.
+    pub(crate) bigram_non_token_keys: Vec<Vec<u8>>,
+    /// `user_bigram.db` rows that decode to a gram with no items and a
+    /// nonzero `total_freq`, by `prev` token. `SingleGram::get_length`
+    /// asserts `0 == total_freq` when the item walk leaves the chunk at
+    /// the bare total (`ngram.cpp:70`); `pinyin_guess_predicted_candidates`
+    /// reaches it through `_compute_predicted_bigram_candidates`
+    /// (`pinyin.cpp:2332`/`:2336`).
+    pub(crate) bigram_empty_with_total: Vec<Token>,
+    /// `user_bigram.db` rows whose `total_freq` is not the sum of their
+    /// items' frequencies, paired with their item tokens. `Bigram::mask_out`
+    /// removes the items a mask selects and then asks `SingleGram::get_length`
+    /// for the remainder (`ngram_bdb.cpp:243`, `ngram_kyotodb.cpp:224`,
+    /// `ngram_tkrzwdb.cpp:200`); when every item was removed and the residual
+    /// `total_freq` is still nonzero, `get_length`'s `assert(0 == total_freq)`
+    /// dies (`ngram.cpp:70`). A gram whose total covers its items cannot
+    /// leave such a residual, so only the inconsistent ones are recorded —
+    /// the masks and values that reach `mask_out` differ, so the removal is
+    /// recomputed per call rather than stored.
+    pub(crate) bigram_residual_grams: Vec<(Token, Vec<Token>)>,
 }
 
 /// The full token of a system-library item.
@@ -579,9 +612,20 @@ pub(crate) fn load_checked(
         phrase_table: BTreeSet::new(),
         overlong_index_keys: Vec::new(),
         index_keys: BTreeSet::new(),
+        bigram_short_values: Vec::new(),
+        bigram_non_token_keys: Vec::new(),
+        bigram_empty_with_total: Vec::new(),
+        bigram_residual_grams: Vec::new(),
     };
     if check.conform {
-        load_bigram(dir, &mut profile.loaded);
+        load_bigram(
+            dir,
+            &mut profile.loaded,
+            &mut profile.bigram_short_values,
+            &mut profile.bigram_non_token_keys,
+            &mut profile.bigram_empty_with_total,
+            &mut profile.bigram_residual_grams,
+        );
         load_libraries(dir, originals.layout(), &mut profile.loaded);
         load_user_pinyin_index(
             dir,
@@ -670,7 +714,22 @@ fn clean_user_files(dir: &Path, layout: &UserFileLayout) {
 /// snapshot stream, a tkrzw hash file
 /// (`RawReadStore::open_user_bigram`); the system `bigram.db` is a
 /// different container on Kyoto Cabinet and must not share an open path.
-fn load_bigram(dir: &Path, loaded: &mut Loaded) {
+///
+/// A row the pin would abort on (`memory_chunk.h:390` short value,
+/// `ngram_bdb.cpp:199` non-token key, `ngram.cpp:70` empty gram with a
+/// residual total, or an inconsistent total a mask leaves residual) is
+/// recorded in the `short`, `non_token`, `empty` and `residual`
+/// collectors; the row itself keeps the load's existing degrade (dropped,
+/// or inserted as a gram for `empty`), and the affected operation refuses
+/// later.
+fn load_bigram(
+    dir: &Path,
+    loaded: &mut Loaded,
+    short: &mut Vec<Token>,
+    non_token: &mut Vec<Vec<u8>>,
+    empty: &mut Vec<Token>,
+    residual: &mut Vec<(Token, Vec<Token>)>,
+) {
     let path = dir.join(UserDbm::Bigram.file_name());
     if !path.exists() {
         return;
@@ -694,21 +753,54 @@ fn load_bigram(dir: &Path, loaded: &mut Loaded) {
     };
     let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
         if key.len() != 4 {
-            return Ok(()); // not a token key; upstream never writes one
+            // `Bigram::get_all_items` asserts the key is a phrase_token_t
+            // (`ngram_bdb.cpp:199`); the walk reaches it from `mask_out`
+            // and `pinyin_begin_get_bigram_phrases`.
+            non_token.push(key.to_vec());
+            return Ok(());
         }
         let prev = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
         match decode_single_gram(value) {
             Ok((total, records)) => {
+                if records.is_empty() {
+                    if total != 0 {
+                        // An item-less gram with a residual total:
+                        // `SingleGram::get_length` asserts `0 == total_freq`
+                        // (`ngram.cpp:70`), reached by the predicted-bigram
+                        // merge (`pinyin.cpp:2332`). `Bigram::mask_out` skips
+                        // it (its item walk removes nothing).
+                        empty.push(prev);
+                    }
+                } else {
+                    // A total that does not cover the items: when a mask
+                    // removes every item, `get_length` finds a residual total
+                    // and asserts (`ngram.cpp:70`, from `Bigram::mask_out`,
+                    // `ngram_bdb.cpp:243`).
+                    let sum = records
+                        .iter()
+                        .fold(0u32, |acc, (_, count)| acc.wrapping_add(*count));
+                    if sum != total {
+                        residual.push((prev, records.iter().map(|(token, _)| *token).collect()));
+                    }
+                }
                 let gram = Gram {
                     total,
                     items: records.into_iter().collect(),
                 };
                 loaded.state.bigram.insert(prev, gram);
             }
-            Err(_) => loaded.skipped.push(format!(
-                "{}: gram {prev:#010x} does not parse",
-                UserDbm::Bigram.file_name()
-            )),
+            Err(_) => {
+                // `SingleGram::get_total_freq` reads four bytes through
+                // `MemoryChunk::get_content<guint32>`, whose assert kills
+                // the pin when the value is shorter (`memory_chunk.h:390`).
+                if value.len() < 4 {
+                    short.push(prev);
+                }
+                loaded.skipped.push(format!(
+                    "{}: gram {prev:#010x} does not parse",
+                    UserDbm::Bigram.file_name()
+                ));
+            }
         }
         Ok(())
     };
