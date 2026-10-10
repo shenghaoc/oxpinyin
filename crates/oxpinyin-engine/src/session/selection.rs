@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::constraint::PhraseSpan;
+use crate::error::TrainingSpanFault;
 
 impl<D, L> Session<D, L>
 where
@@ -416,24 +417,71 @@ where
                 position: span.start,
             });
         }
-        let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
-        let mut train_next = false;
         let graph = self.build_graph_at(0, self.input.as_bytes())?;
-        let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
+        let scan = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
+        // The walk indexes raw-buffer positions, separators included. The
+        // pin's `fill_matrix` leaves a leading separator gap empty
+        // (`phonetic_key_matrix.cpp:52-78`), but the raw scan has already
+        // re-anchored a key that crosses a separator to its buffer start.
+        // Re-apply the physical separators (`ParsedMatrix::from_scan` — the
+        // same retained topology the lookup indexes), or a span over the gap
+        // would silently read a filled column `:663` refuses.
+        let parsed = super::matrix::ParsedMatrix::from_scan(
+            &scan,
+            graph.consumed(),
+            self.input.physical_separators(),
+        );
+        let matrix = &parsed.columns;
+        // 074a2219 phonetic_lookup.h:921 tails the last span at
+        // `constraints->length() - 1`, NOT the CURRENT matrix's last
+        // column: the store survives a parse (`pinyin.cpp:1497-1525`,
+        // never validating), so a re-parse that shortened the input
+        // leaves it longer than the matrix the walk now indexes. The
+        // pin's `increase_pronunciation_possibility` then asserts the
+        // walk stays inside and starts on a filled column
+        // (`storage/phonetic_key_matrix.cpp:661`, `:663`), which the
+        // engine answers as an error before observing anything — the
+        // no-abort policy. The endpoints are pre-computed in one pass so
+        // the refusal precedes every observation, as the pin's abort
+        // leaves the process dead.
+        let constraint_len = self.constraints.cell_count();
+        let tail = constraint_len.saturating_sub(1);
+        let mut train_next = false;
+        let mut ends: Vec<Option<usize>> = vec![None; spans.len()];
         for (index, span) in spans.iter().enumerate() {
             let forced = self.constraints.is_one_step_at(span.start);
-            if train_next || forced {
-                train_next = forced;
-                // 074a2219 phonetic_lookup.h:911-920 scans to the next
-                // non-null result token, not the forced constraint end.
-                let next = spans
-                    .get(index + 1)
-                    .map_or(matrix.len().saturating_sub(1), |next| next.start);
-                // :921 clamps the last span to constraints->length()-1;
+            if !(train_next || forced) {
+                continue;
+            }
+            train_next = forced;
+            // 074a2219 phonetic_lookup.h:911-920 scans to the next
+            // non-null result token, not the forced constraint end.
+            let next = spans.get(index + 1).map_or(tail, |next| next.start);
+            // :921 clamps the last span to constraints->length()-1.
+            let end = next.min(tail);
+            if end >= matrix.len() {
+                return Err(EngineError::StaleTrainingSpan {
+                    position: span.start,
+                    fault: TrainingSpanFault::PastMatrixEnd,
+                });
+            }
+            if matrix
+                .get(span.start)
+                .is_none_or(|column| column.is_empty())
+            {
+                return Err(EngineError::StaleTrainingSpan {
+                    position: span.start,
+                    fault: TrainingSpanFault::EmptyStartColumn,
+                });
+            }
+            ends[index] = Some(end);
+        }
+        let mut context: Vec<PhraseToken> = Vec::with_capacity(spans.len());
+        for (index, span) in spans.iter().enumerate() {
+            if let Some(end) = ends[index] {
                 // :923-927 trains every matching path of this span.
-                let end = next.min(matrix.len().saturating_sub(1));
                 let mut readings = training_readings(
-                    &matrix,
+                    matrix,
                     self.input.as_bytes(),
                     span.start,
                     end,

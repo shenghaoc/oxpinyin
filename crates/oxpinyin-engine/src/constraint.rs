@@ -76,6 +76,14 @@ impl ConstraintStore {
         self.cells.get(index)
     }
 
+    /// The cell count — upstream's `m_constraints->len`, the length
+    /// `train_result3` walks and the tail `:921` clamps to. It survives a
+    /// re-parse (upstream's parse never validates, `pinyin.cpp:1497-1525`),
+    /// so it can exceed the current matrix's `size()`.
+    pub(crate) fn cell_count(&self) -> usize {
+        self.cells.len()
+    }
+
     /// The token the cell at `index` forces, `None` for any other cell.
     pub(crate) fn one_step_token_at(&self, index: usize) -> Option<PhraseToken> {
         match self.cell(index) {

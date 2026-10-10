@@ -110,7 +110,7 @@ use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel, FrequencyFix
 
 use super::{KeyOutcome, MAX_INPUT_BYTES, Selection, Session};
 use crate::config::EmptyConfigSource;
-use crate::error::EngineError;
+use crate::error::{EngineError, TrainingSpanFault};
 use crate::key::{KeyInput, LogicalKey, Modifiers};
 use crate::preedit::SpanStyle;
 use crate::storage::StoragePaths;
@@ -717,6 +717,70 @@ fn train_nbest_without_results_does_not_observe_selection_history() {
             .expect("empty results are quiet")
     );
     assert!(recorder.observed.is_empty());
+}
+
+/// A re-parse that shortened the input under the last sentence lookup
+/// leaves the store (`constraints->length() - 1`) past the current matrix.
+/// The pin's walk then asserts `end < matrix->size()`
+/// (`storage/phonetic_key_matrix.cpp:661`) and aborts; the engine refuses
+/// the row before observing anything (class (c), no-abort policy).
+#[test]
+fn train_after_a_shortening_reparse_refuses_a_span_past_the_matrix() {
+    let mut session = trellis_session();
+    session.replace_raw("nihao").expect("initial parse");
+    assert!(session.guess_sentence().expect("guess"));
+    session.select(1).expect("choose 你");
+    // No fresh lookup: the constraint is stored unvalidated, as the pin
+    // leaves it, so the stale result still trains (phonetic_lookup.h:921).
+    session.replace_raw("ni").expect("shrink");
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    let error = session
+        .train_nbest(0, &mut recorder)
+        .expect_err("the stale span refuses");
+    assert_eq!(
+        error,
+        EngineError::StaleTrainingSpan {
+            position: 2,
+            fault: TrainingSpanFault::PastMatrixEnd,
+        }
+    );
+    assert!(
+        recorder.observed.is_empty(),
+        "the refusal precedes every observation"
+    );
+}
+
+/// The `'ni` twin: the leading apostrophe leaves column 0 empty, so the
+/// pin asserts `matrix->get_column_size(start) > 0`
+/// (`storage/phonetic_key_matrix.cpp:663`) before any key is trained.
+#[test]
+fn train_after_an_apostrophe_reparse_refuses_an_empty_start_column() {
+    let mut session = trellis_session();
+    session.replace_raw("nihao").expect("initial parse");
+    assert!(session.guess_sentence().expect("guess"));
+    session.select(1).expect("choose 你");
+    session
+        .replace_raw("'ni")
+        .expect("shrink behind an apostrophe");
+    let mut recorder = Recorder {
+        observed: Vec::new(),
+    };
+    let error = session
+        .train_nbest(0, &mut recorder)
+        .expect_err("the empty column refuses");
+    assert_eq!(
+        error,
+        EngineError::StaleTrainingSpan {
+            position: 0,
+            fault: TrainingSpanFault::EmptyStartColumn,
+        }
+    );
+    assert!(
+        recorder.observed.is_empty(),
+        "the refusal precedes every observation"
+    );
 }
 
 #[test]

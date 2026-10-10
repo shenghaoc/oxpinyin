@@ -220,9 +220,9 @@ impl InstanceCore {
     ///
     /// # Errors
     ///
-    /// Returns the engine's invalid-index, stale-constraint or user-model
-    /// error. The C facade maps the first two to the pin's class (c) warning
-    /// and false.
+    /// Returns the engine's invalid-index, stale-constraint, stale-span or
+    /// user-model error. The C facade maps the first three to the pin's
+    /// class (c) warning and false.
     pub fn train(&mut self, index: u8) -> Result<bool, EngineError> {
         let Some(user) = self.user.as_mut() else {
             return Ok(false);
@@ -237,7 +237,8 @@ impl InstanceCore {
             &result,
             Ok(false)
                 | Err(EngineError::CandidateIndexOutOfRange { .. }
-                    | EngineError::StaleTrainingConstraint { .. })
+                    | EngineError::StaleTrainingConstraint { .. }
+                    | EngineError::StaleTrainingSpan { .. })
         ) {
             // A valid call still marks the context modified, including a
             // constraint-free result or a subsequent user-model failure

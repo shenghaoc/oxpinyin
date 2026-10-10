@@ -279,6 +279,17 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
             );
             false
         }
+        // Class (c), `storage/phonetic_key_matrix.cpp:661`/`:663`: a
+        // re-parse shortened the input under the last sentence lookup's
+        // result, so the training walk leaves the current matrix.
+        Err(oxpinyin_engine::EngineError::StaleTrainingSpan { fault, .. }) => {
+            let assertion = match fault {
+                oxpinyin_engine::TrainingSpanFault::PastMatrixEnd => "end < matrix->size()",
+                _ => "matrix->get_column_size(start) > 0",
+            };
+            crate::ffi::log_warning(&format!("zhuyin_train: assertion '{assertion}' failed"));
+            false
+        }
         Err(_) => false,
     }
 }

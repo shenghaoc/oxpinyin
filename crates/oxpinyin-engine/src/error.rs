@@ -6,6 +6,19 @@ use oxpinyin_core::graph::GraphError;
 use oxpinyin_core::kbest::DecodeError;
 use oxpinyin_core::scoring::ScoringError;
 
+/// Which `increase_pronunciation_possibility` precondition a stale
+/// training span violates (`storage/phonetic_key_matrix.cpp` at the pin).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum TrainingSpanFault {
+    /// `assert(end < matrix->size())` — the span's end sits past the
+    /// current matrix (`phonetic_key_matrix.cpp:661`).
+    PastMatrixEnd,
+    /// `assert(matrix->get_column_size(start) > 0)` — the span starts on
+    /// a column the current matrix leaves empty (`:663`).
+    EmptyStartColumn,
+}
+
 /// Anything a session can fail at.
 ///
 /// `#[non_exhaustive]`, so later tasks add variants without breaking callers.
@@ -100,6 +113,19 @@ pub enum EngineError {
         /// The matrix position of the forced phrase.
         position: usize,
     },
+    /// A training span met a matrix position the pin's
+    /// `increase_pronunciation_possibility` asserts on: the decoded
+    /// result no longer fits the current matrix because a re-parse
+    /// shortened the input after the last sentence lookup. The pin aborts
+    /// (`assert(end < matrix->size())`, `storage/phonetic_key_matrix.cpp:661`;
+    /// `assert(matrix->get_column_size(start) > 0)`, `:663` at the pin);
+    /// the engine answers an error instead, before observing anything.
+    StaleTrainingSpan {
+        /// The matrix position of the offending phrase.
+        position: usize,
+        /// Which precondition the span violates.
+        fault: TrainingSpanFault,
+    },
     /// The user-model backend failed (the learning/observation seam).
     UserModel(String),
     /// The input could not be represented as a segment graph.
@@ -166,6 +192,12 @@ impl fmt::Display for EngineError {
                     "matrix column {offset} has no key or mixes a zero key with real keys"
                 )
             }
+            Self::StaleTrainingSpan { position, fault } => {
+                write!(
+                    formatter,
+                    "the training span at {position} leaves the current matrix ({fault:?})"
+                )
+            }
             Self::UserModel(message) => write!(formatter, "user model error: {message}"),
             Self::Graph(error) => write!(formatter, "graph error: {error}"),
             Self::Decode(error) => write!(formatter, "decode error: {error}"),
@@ -188,6 +220,7 @@ impl std::error::Error for EngineError {
             | Self::ZeroKeyOffsetCheck { .. }
             | Self::MatrixColumnAssert { .. }
             | Self::StaleTrainingConstraint { .. }
+            | Self::StaleTrainingSpan { .. }
             | Self::UserModel(_) => None,
         }
     }
@@ -246,6 +279,14 @@ mod tests {
         assert_eq!(
             EngineError::MatrixColumnAssert { offset: 0 }.to_string(),
             "matrix column 0 has no key or mixes a zero key with real keys"
+        );
+        assert_eq!(
+            EngineError::StaleTrainingSpan {
+                position: 2,
+                fault: super::TrainingSpanFault::PastMatrixEnd,
+            }
+            .to_string(),
+            "the training span at 2 leaves the current matrix (PastMatrixEnd)"
         );
     }
 
