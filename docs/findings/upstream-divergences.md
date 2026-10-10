@@ -3005,3 +3005,225 @@ index is not a Berkeley DB btree, so the bdb fixture cannot reach the site on
 those cells and the cases declare `cells=('bdb',)`. No interface, ABI or
 dependency change.
 
+### A sub-`guint32` user-bigram value aborts `mask_out`, the removal and the predicted-candidate walk (#525; row 85, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`SingleGram::get_total_freq` (`src/storage/ngram.cpp:49-52`) reads the
+four-byte `total_freq` at the front of a gram's value through
+`MemoryChunk::get_content<guint32>`, whose body is
+`assert(get_content(offset, &value, sizeof(T)))`
+(`src/include/memory_chunk.h:390`). A `user_bigram.db` value shorter than
+four bytes therefore aborts the read. Two public call paths read the total:
+
+- `pinyin_mask_out` / `zhuyin_mask_out`, through `m_user_bigram->mask_out`
+  (`src/pinyin.cpp:1230`, `src/zhuyin.cpp:765`), whose
+  `Bigram::mask_out` (`ngram_bdb.cpp:225-247`) calls `gram.get_total_freq`
+  (`ngram.cpp:80`).
+- `pinyin_remove_user_candidate` (`src/pinyin.cpp:3766`), through the same
+  `user_bigram->mask_out` walk.
+- `pinyin_guess_predicted_candidates`, through
+  `_compute_predicted_bigram_candidates` (`src/pinyin.cpp:2310-2341`), which
+  loads each prefix's user gram and merges it (`:2330`), reading the total
+  in `merge_single_gram`.
+
+`pinyin_init` merely copies the row during load and does not read the total,
+so it does not abort. No public call can write such a value: the writer's
+`SingleGram::set_total_freq` always stores four bytes.
+
+Reproduced on bdb with a ctypes driver that writes a Berkeley DB **hash**
+container holding one four-byte key whose value is three bytes:
+
+- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_total_freq`.
+- `zhuyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_total_freq` (the
+  zhuyin context needs a conforming `user.conf` first, as row 84 records).
+- `pinyin_mask_out(ctx, 0xFFFFFFFF, 1)`: completes — the mask erases the
+  key `1` without loading it, so `get_total_freq` never runs.
+- `pinyin_remove_user_candidate(inst, cand)`: SIGABRT in `get_total_freq`,
+  with a valid user phrase so the call reaches the bigram walk.
+- `pinyin_parse_more_full_pinyins(inst, ni)` →
+  `pinyin_guess_predicted_candidates(inst, "ni")`: SIGABRT in
+  `get_total_freq`.
+
+oxpinyin's `load_bigram` records every four-byte key whose value does not
+parse because it is shorter than four bytes
+(`crates/oxpinyin-user/src/persistence.rs`, `bigram_short_values`).
+`GenericUserStore::mask_out` refuses the whole call with
+`UserStoreError::ShortUserBigramValue` when the mask leaves a short-valued
+key's gram to be loaded; a key the mask erases wholesale
+(`(key & mask) == value`) is never loaded, matching the pin
+(`crates/oxpinyin-user/src/store.rs`, `bigram_mask_fault`). Both C
+facades map that to exactly one `g_warning` in their own domain
+(`libpinyin` for `pinyin_mask_out`, `libzhuyin` for `zhuyin_mask_out`) and
+answer `false` (`crates/oxpinyin-capi/src/config.rs`,
+`crates/oxpinyin-zhuyin-capi/src/config.rs`). `GenericUserStore::remove_user_phrase`
+refuses the same way before touching the store, so `pinyin_remove_user_candidate`
+answers `false` with one `libpinyin` warning (`crates/oxpinyin-user/src/store.rs`,
+`crates/oxpinyin-capi/src/candidates.rs`). `pinyin_guess_predicted_candidates`
+checks `has_short_bigram_value` (before its empty-gram check, since a corrupt
+container cannot exist at the pin and the per-prefix abort order has no
+observable answer), emits one `libpinyin` warning and answers `false` with the
+candidate list cleared (`crates/oxpinyin-capi/src/predict.rs`,
+`predicted_bigram_fault`).
+
+Held by `contract-diff.py` cases `abort-mask-out-short-bigram-value`,
+`abort-zhuyin-mask-out-short-bigram-value`,
+`abort-guess-predicted-short-bigram-value` and
+`abort-remove-user-candidate-short-bigram-value`: MATCH on bdb (pin SIGABRT -6,
+subject `false` with one warning), and all four DIFFER against the parent
+build. The control `mask-out-short-bigram-value-masked-key` holds the
+complement — a short value whose key the mask erases is never loaded, so pin
+and subject both complete — and MATCHes on bdb and against the parent build
+alike; it exists so the guard cannot over-refuse. The fixture is a Berkeley
+DB hash, so the five cases declare
+`cells=('bdb',)`. No interface, ABI or dependency change.
+
+### A non-`phrase_token_t` user-bigram key aborts `mask_out`, the removal and the export iterator (#525; row 86, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`Bigram::get_all_items` (`src/storage/ngram_bdb.cpp:180-215`) walks the whole
+container with a `DBC` cursor and, for each row,
+`assert(key.size == sizeof(phrase_token_t))` (`:199`), then
+`memcpy(&token, key.get_buffer(), sizeof(phrase_token_t))`. A
+`user_bigram.db` key that is not four bytes therefore aborts the walk. Two
+public call paths walk it:
+
+- `pinyin_mask_out` / `zhuyin_mask_out`, through `m_user_bigram->mask_out`
+  (`src/pinyin.cpp:1230`, `src/zhuyin.cpp:765`).
+- `pinyin_remove_user_candidate` (`src/pinyin.cpp:3766`), through the same
+  `user_bigram->mask_out` walk.
+- `pinyin_begin_get_bigram_phrases` (`src/pinyin.cpp:779`), which opens the
+  export iterator over the same walk.
+
+`pinyin_guess_predicted_candidates` loads a named key instead of walking, so
+it does not reach the assert.
+
+Reproduced on bdb with a ctypes driver that writes a Berkeley DB **hash**
+container holding a five-byte key (`b"\x01\x00\x00\x00\x00"`) and a
+four-byte value:
+
+- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_all_items`.
+- `zhuyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_all_items`.
+- `pinyin_remove_user_candidate(inst, cand)`: SIGABRT in `get_all_items`,
+  with a valid user phrase so the call reaches the bigram walk.
+- `pinyin_begin_get_bigram_phrases(ctx)`: SIGABRT in `get_all_items`.
+
+oxpinyin's `load_bigram` records the raw bytes of every key that is not four
+bytes before touching the value
+(`crates/oxpinyin-user/src/persistence.rs`, `bigram_non_token_keys`).
+`GenericUserStore::mask_out` refuses the whole call with
+`UserStoreError::NonTokenUserBigramKey` when any is present
+(`crates/oxpinyin-user/src/store.rs`, `has_non_token_bigram_key`), and both C
+facades map that to exactly one `g_warning` in their own domain and answer
+`false` (`crates/oxpinyin-capi/src/config.rs`,
+`crates/oxpinyin-zhuyin-capi/src/config.rs`). `GenericUserStore::remove_user_phrase`
+refuses the same way before touching the store, so `pinyin_remove_user_candidate`
+answers `false` with one `libpinyin` warning (`crates/oxpinyin-user/src/store.rs`,
+`crates/oxpinyin-capi/src/candidates.rs`). `pinyin_begin_get_bigram_phrases`
+checks `has_non_token_bigram_key` and answers NULL with one `libpinyin`
+warning, the export's own failure shape
+(`crates/oxpinyin-capi/src/iterators.rs`, `crates/oxpinyin-capi/src/state.rs`).
+
+Held by `contract-diff.py` cases `abort-mask-out-non-token-bigram-key`,
+`abort-zhuyin-mask-out-non-token-bigram-key`,
+`abort-remove-user-candidate-non-token-bigram-key` and
+`abort-begin-bigram-phrases-non-token-key`: MATCH on bdb (pin SIGABRT -6,
+subject NULL/`false` with one warning), and all four DIFFER against the
+parent build; the fixture is a Berkeley DB hash, so the four cases declare
+`cells=('bdb',)`. No interface, ABI or dependency change.
+
+### A user gram whose total its items do not cover, masked to nothing, aborts `Bigram::mask_out` (#525; row 87, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`Bigram::mask_out` (`src/storage/ngram_bdb.cpp:218-249`, and its twins
+`ngram_kyotodb.cpp:198-227` and `ngram_tkrzwdb.cpp:174-203`) removes the items
+a mask selects from each gram and then, when the gram had items removed, asks
+`SingleGram::get_length` for the remainder (`:243`, `:224`, `:200`);
+`get_length` asserts `0 == total_freq` when no item is left
+(`src/storage/ngram.cpp:70`). `SingleGram::mask_out` (`:77-101`) subtracts
+each removed item's frequency from the stored total, so a gram whose stored
+`total_freq` is **not** the sum of its items' frequencies is left with a
+nonzero residual once every item is removed, and the assert dies.
+`pinyin_mask_out` / `zhuyin_mask_out` and `pinyin_remove_user_candidate` are
+the calls that reach it (through `m_user_bigram->mask_out` / `user_bigram->mask_out`,
+`src/pinyin.cpp:1230`, `src/zhuyin.cpp:765`, `src/pinyin.cpp:3766`).
+
+Reproduced on bdb with a ctypes driver that writes a Berkeley DB **hash**
+container holding one four-byte key (`\x01\x00\x00\x00`) and a value whose
+`total_freq` is `7` with a single item of token `0` and frequency `0`:
+
+- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_length`.
+- `zhuyin_mask_out(ctx, 0xFFFFFFFF, 0)`: SIGABRT in `get_length`.
+- `pinyin_remove_user_candidate(inst, cand)`: SIGABRT in `get_length`, with
+  a valid user phrase and the gram's single item carrying that phrase's token
+  (so `user_bigram->mask_out` selects and removes it, leaving the residual).
+- `pinyin_guess_predicted_candidates(inst, "我")`, `pinyin_train`, and
+  `pinyin_begin_get_bigram_phrases`: complete — the gram still carries its
+  item at load, so the predicted-candidate walk's `get_length` sees one and
+  no assert fires.
+
+An **item-less** gram with a nonzero total is a different state with a
+different failing call (row 88, below).
+
+oxpinyin's `load_bigram` records every four-byte key whose `total_freq` is
+not the wrapping sum of its item frequencies, with its item tokens
+(`crates/oxpinyin-user/src/persistence.rs`, `bigram_residual_grams`).
+`GenericUserStore::mask_out` recomputes the removal for the call's mask and
+value and refuses with `UserStoreError::ResidualUserBigramGram` when a
+recorded gram's key is left alone but every one of its items is selected
+(`crates/oxpinyin-user/src/store.rs`, `has_residual_bigram_gram`); both C
+facades map that to exactly one `g_warning` in their own domain and answer
+`false` (`crates/oxpinyin-capi/src/config.rs`,
+`crates/oxpinyin-zhuyin-capi/src/config.rs`). `GenericUserStore::remove_user_phrase`
+runs the same recomputation for its `PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK`
+/ token call and refuses before touching the store, so `pinyin_remove_user_candidate`
+answers `false` with one `libpinyin` warning (`crates/oxpinyin-user/src/store.rs`,
+`crates/oxpinyin-capi/src/candidates.rs`).
+
+Held by `contract-diff.py` cases `abort-mask-out-residual-bigram-gram`,
+`abort-zhuyin-mask-out-residual-bigram-gram` and
+`abort-remove-user-candidate-residual-bigram-gram`: MATCH on bdb (pin SIGABRT
+-6, subject `false` with one warning), and all three DIFFER against the parent
+build; the fixture is a Berkeley DB hash, so the cases declare
+`cells=('bdb',)`. No interface, ABI or dependency change.
+
+### An item-less user gram with a residual total aborts the predicted-candidate walk (#525; row 88, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`SingleGram::get_length` (`src/storage/ngram.cpp:64-75`) walks the gram's
+items and, when none is left over, `assert(0 == total_freq)` (`:70`) — a
+chunk that holds only the four-byte total with a nonzero value violates it.
+`pinyin_guess_predicted_candidates` is the call that reaches it:
+`_compute_predicted_bigram_candidates` (`src/pinyin.cpp:2310-2341`) loads each
+prefix's user gram and calls `get_length` on it (`:2332`). This corrects the
+Phase 1 ledger, which had said the state is read by `pinyin_mask_out`:
+`SingleGram::mask_out` answers 0 for an already item-less gram and the
+`get_length` check is skipped (`ngram_bdb.cpp:243`), so the pin **completes**
+the mask and leaves the gram as it was — the mask is not the failing
+operation, the predicted-candidate call is.
+
+`pinyin_mask_out` / `zhuyin_mask_out` therefore do not abort on this state,
+and neither do the load, the export iterator, or `pinyin_begin_get_bigram_phrases`.
+
+Reproduced on bdb with a ctypes driver that writes a Berkeley DB **hash**
+container holding one four-byte key and a four-byte value whose `total_freq`
+is `7` and whose item count is `0`:
+
+- `pinyin_parse_more_full_pinyins(inst, ni)` →
+  `pinyin_guess_predicted_candidates(inst, "ni")`: SIGABRT in `get_length`.
+- `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: completes (no abort), the mask
+  answering 0 and leaving the state.
+
+oxpinyin's `load_bigram` records every row that decodes to zero items and a
+nonzero total, keeping the gram in the value model
+(`crates/oxpinyin-user/src/persistence.rs`, `bigram_empty_with_total`).
+`pinyin_guess_predicted_candidates` checks `has_empty_bigram_gram`, emits one
+`libpinyin` warning and answers `false` with the candidate list cleared
+(`crates/oxpinyin-capi/src/predict.rs`, `predicted_bigram_fault`); since the
+mask is not a failing operation, `mask_out` is left to complete on this state,
+as the pin's does.
+
+Held by `contract-diff.py` case `abort-guess-predicted-empty-bigram-gram`:
+MATCH on bdb (pin SIGABRT -6, subject `false` with one warning), DIFFER
+against the parent build; the fixture is a Berkeley DB hash, so the case
+declares `cells=('bdb',)`. No interface, ABI or dependency change.
+

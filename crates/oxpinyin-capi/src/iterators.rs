@@ -405,6 +405,16 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
     if !ctx.can_render_export_bigrams() {
         return ptr::null_mut();
     }
+    // Class (c), `ngram_bdb.cpp:199`: the user bigram carries a key that is
+    // not a phrase_token_t and the pin's `get_all_items` assert dies. One
+    // warning and a NULL iterator, the export's own failure shape.
+    if ctx.has_non_token_bigram_key() {
+        crate::ffi::log_warning(
+            "pinyin_begin_get_bigram_phrases: a user bigram key is not a phrase_token_t \
+             (upstream aborts, ngram_bdb.cpp:199)",
+        );
+        return ptr::null_mut();
+    }
     let walk = ctx.bigram_export_walk().unwrap_or_default();
     Box::into_raw(Box::new(BigramHandle { walk })).cast()
 }

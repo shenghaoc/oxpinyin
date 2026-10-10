@@ -166,6 +166,30 @@ pub enum UserStoreError {
     /// (`chewing_large_table2_bdb.cpp:529`). The class-(c) answer: the
     /// mask fails, and the facade logs the point in its own domain.
     OverlongIndexKey,
+    /// A `user_bigram.db` key is not a four-byte `phrase_token_t`:
+    /// `Bigram::get_all_items` asserts `key.size == sizeof(phrase_token_t)`
+    /// (`ngram_bdb.cpp:199`), and the pin's `mask_out` and
+    /// `pinyin_begin_get_bigram_phrases` both drive that walk. The
+    /// class-(c) answer: the walk fails.
+    NonTokenUserBigramKey,
+    /// A `user_bigram.db` value is shorter than a `guint32`:
+    /// `SingleGram::get_total_freq` reads four bytes through
+    /// `MemoryChunk::get_content<guint32>`, whose assert dies
+    /// (`memory_chunk.h:390`). `mask_out` (`ngram.cpp:80`) and
+    /// `pinyin_guess_predicted_candidates` (`ngram.cpp:69`) both read it.
+    ShortUserBigramValue,
+    /// A `user_bigram.db` row decodes to a gram with no items and a
+    /// nonzero `total_freq`: `SingleGram::get_length` asserts
+    /// `0 == total_freq` (`ngram.cpp:70`), reached by
+    /// `pinyin_guess_predicted_candidates` through
+    /// `_compute_predicted_bigram_candidates` (`pinyin.cpp:2332`).
+    EmptyUserBigramGram,
+    /// A `user_bigram.db` gram's `total_freq` is not covered by its items
+    /// and a mask removes every item, leaving a residual total:
+    /// `Bigram::mask_out` then asks `SingleGram::get_length`, whose assert
+    /// dies (`ngram.cpp:70`, `ngram_bdb.cpp:243`). The class-(c) answer:
+    /// the mask fails.
+    ResidualUserBigramGram,
 }
 
 impl fmt::Display for UserStoreError {
@@ -203,6 +227,24 @@ impl fmt::Display for UserStoreError {
                 "user pinyin index key past MAX_PHRASE_LENGTH syllables (upstream aborts, \
                  chewing_large_table2_bdb.cpp:529)"
             ),
+            Self::NonTokenUserBigramKey => write!(
+                f,
+                "user bigram key is not a phrase_token_t (upstream aborts, ngram_bdb.cpp:199)"
+            ),
+            Self::ShortUserBigramValue => write!(
+                f,
+                "user bigram value is shorter than a guint32 total_freq (upstream aborts, \
+                 memory_chunk.h:390)"
+            ),
+            Self::EmptyUserBigramGram => write!(
+                f,
+                "user bigram gram has no items but a nonzero total_freq (upstream aborts, \
+                 ngram.cpp:70)"
+            ),
+            Self::ResidualUserBigramGram => write!(
+                f,
+                "masking a user bigram leaves a residual total_freq (upstream aborts, ngram.cpp:70)"
+            ),
         }
     }
 }
@@ -220,7 +262,11 @@ impl std::error::Error for UserStoreError {
             | Self::UnknownDatabaseFormat
             | Self::ChunkHeaderWrite(_)
             | Self::UnigramTotalOverflow
-            | Self::OverlongIndexKey => None,
+            | Self::OverlongIndexKey
+            | Self::NonTokenUserBigramKey
+            | Self::ShortUserBigramValue
+            | Self::EmptyUserBigramGram
+            | Self::ResidualUserBigramGram => None,
         }
     }
 }
@@ -783,6 +829,122 @@ impl<S: WriteStore> GenericUserStore<S> {
     #[must_use]
     pub fn has_overlong_index_key(&self) -> bool {
         !self.overlong_index_readings().is_empty()
+    }
+
+    /// The `user_bigram.db` keys whose value is shorter than a `guint32`
+    /// `total_freq` — the pin's `MemoryChunk::get_content<guint32>` assert
+    /// (`memory_chunk.h:390`). Empty for a store with no bigram rows.
+    fn short_bigram_values(&self) -> &[Token] {
+        self.inner
+            .libpinyin
+            .as_ref()
+            .map_or(&[][..], |target| target.bigram_short_values.as_slice())
+    }
+
+    /// Whether a `user_bigram.db` value is too short to hold a `guint32`
+    /// `total_freq`. `pinyin_mask_out` / `zhuyin_mask_out` and
+    /// `pinyin_guess_predicted_candidates` read the total directly
+    /// (`ngram.cpp:80`, `:69`), so any such value aborts them
+    /// (`memory_chunk.h:390`).
+    #[must_use]
+    pub fn has_short_bigram_value(&self) -> bool {
+        !self.short_bigram_values().is_empty()
+    }
+
+    /// The `user_bigram.db` keys that are not four bytes — the pin's
+    /// `Bigram::get_all_items` assert (`ngram_bdb.cpp:199`). Empty for a
+    /// store with no bigram rows.
+    fn non_token_bigram_keys(&self) -> &[Vec<u8>] {
+        self.inner
+            .libpinyin
+            .as_ref()
+            .map_or(&[][..], |target| target.bigram_non_token_keys.as_slice())
+    }
+
+    /// Whether a `user_bigram.db` key is not a four-byte `phrase_token_t`.
+    /// The pin's `mask_out` and `pinyin_begin_get_bigram_phrases` both walk
+    /// the whole container through `get_all_items`, so any such key aborts
+    /// them (`ngram_bdb.cpp:199`).
+    #[must_use]
+    pub fn has_non_token_bigram_key(&self) -> bool {
+        !self.non_token_bigram_keys().is_empty()
+    }
+
+    /// The `user_bigram.db` rows with no items and a residual
+    /// `total_freq` — the pin's `SingleGram::get_length` assert
+    /// (`ngram.cpp:70`). Empty for a store with no bigram rows.
+    fn empty_bigram_grams(&self) -> &[Token] {
+        self.inner
+            .libpinyin
+            .as_ref()
+            .map_or(&[][..], |target| target.bigram_empty_with_total.as_slice())
+    }
+
+    /// Whether a `user_bigram.db` row decodes to a gram with no items and a
+    /// nonzero `total_freq`. `pinyin_guess_predicted_candidates` reaches
+    /// `get_length` on it (`pinyin.cpp:2332`), and `get_length` asserts
+    /// (`ngram.cpp:70`).
+    #[must_use]
+    pub fn has_empty_bigram_gram(&self) -> bool {
+        !self.empty_bigram_grams().is_empty()
+    }
+
+    /// The `user_bigram.db` rows whose `total_freq` is not covered by their
+    /// items, with their item tokens — the pin's `Bigram::mask_out` reaches
+    /// `SingleGram::get_length` on them (`ngram.cpp:70`). Empty for a store
+    /// with no bigram rows.
+    fn residual_bigram_grams(&self) -> &[(Token, Vec<Token>)] {
+        self.inner
+            .libpinyin
+            .as_ref()
+            .map_or(&[][..], |target| target.bigram_residual_grams.as_slice())
+    }
+
+    /// Whether `mask_out(mask, value)` makes the pin abort: a recorded gram
+    /// whose key the mask leaves alone (`(key & mask) != value`) but every
+    /// item of which the mask selects is reduced to no items, leaving the
+    /// `total_freq` the mask could not subtract. `Bigram::mask_out` then
+    /// asks `SingleGram::get_length`, whose assert dies (`ngram.cpp:70`,
+    /// `ngram_bdb.cpp:243`). A gram already covered by its items cannot be
+    /// left with such a residual, so only inconsistent totals are recorded.
+    #[must_use]
+    pub fn has_residual_bigram_gram(&self, mask: Token, value: Token) -> bool {
+        self.residual_bigram_grams().iter().any(|(key, items)| {
+            (key & mask) != value && items.iter().all(|token| (token & mask) == value)
+        })
+    }
+
+    /// The fault the pin's `Bigram::mask_out(mask, value)` hits on the
+    /// recorded `user_bigram.db` faults, in the pin's own order, or `None`
+    /// when the walk completes. `pinyin_mask_out` / `zhuyin_mask_out` and
+    /// `pinyin_remove_user_candidate` (`user_bigram->mask_out`,
+    /// `pinyin.cpp:1230`, `zhuyin.cpp:765`, `pinyin.cpp:3766`) all reach the
+    /// same walk.
+    ///
+    /// `Bigram::mask_out` walks the whole container with `get_all_items`
+    /// first — a non-token key aborts before any gram (`ngram_bdb.cpp:199`)
+    /// — then, per gram whose key the mask does not remove wholesale,
+    /// loads it and calls `SingleGram::mask_out`, whose `get_total_freq`
+    /// aborts on a short value (`memory_chunk.h:390`), and asks
+    /// `get_length` for the remainder, which aborts on a residual
+    /// (`ngram.cpp:70`, `ngram_bdb.cpp:243`). A gram the mask removes
+    /// wholesale (`(key & mask) == value`) is never loaded, so the two
+    /// value faults are checked only for keys the mask leaves alone.
+    fn bigram_mask_fault(&self, mask: Token, value: Token) -> Option<UserStoreError> {
+        if self.has_non_token_bigram_key() {
+            return Some(UserStoreError::NonTokenUserBigramKey);
+        }
+        if self
+            .short_bigram_values()
+            .iter()
+            .any(|key| (key & mask) != value)
+        {
+            return Some(UserStoreError::ShortUserBigramValue);
+        }
+        if self.has_residual_bigram_gram(mask, value) {
+            return Some(UserStoreError::ResidualUserBigramGram);
+        }
+        None
     }
 
     /// The pin's user-table `search_suggestion` gate
@@ -1928,6 +2090,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         if self.has_overlong_index_key() {
             return Err(UserStoreError::OverlongIndexKey);
         }
+        // The bigram walk's faults, in the pin's order: a non-token key
+        // (`get_all_items`), then a short value (`get_total_freq`), then a
+        // mask residual (`get_length`).
+        if let Some(error) = self.bigram_mask_fault(mask, value) {
+            return Err(error);
+        }
         let db = self.database();
         let has_user_data = db.write(|txn| {
             // Bigram: collect all rows, then remove matching and rewrite totals.
@@ -2057,6 +2225,15 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// Returns [`UserStoreError`] when the phrase cannot be removed.
     pub fn remove_user_phrase(&mut self, token: Token) -> Result<bool, UserStoreError> {
+        // `pinyin_remove_user_candidate` reaches `user_bigram->mask_out`
+        // (`pinyin.cpp:3766`) after its phrase-index removals. Those are
+        // in-memory and die with the pin's abort, so a failed call must
+        // leave the store unchanged: refuse the recorded bigram faults
+        // before any removal.
+        if let Some(error) = self.bigram_mask_fault(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)
+        {
+            return Err(error);
+        }
         let db = self.database();
         let result: Result<Option<bool>, UserStoreError> = db
             .write(|txn| {

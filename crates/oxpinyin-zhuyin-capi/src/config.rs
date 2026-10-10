@@ -132,6 +132,37 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
             );
             false
         }
+        oxpinyin_facade::MaskOutOutcome::NonTokenUserBigramKey => {
+            // Class (c), `ngram_bdb.cpp:199`: the user bigram carries a key
+            // that is not a phrase_token_t and the pin's `get_all_items`
+            // assert dies.
+            crate::ffi::log_warning(
+                "zhuyin_mask_out: a user bigram key is not a phrase_token_t \
+                 (upstream aborts, ngram_bdb.cpp:199)",
+            );
+            false
+        }
+        oxpinyin_facade::MaskOutOutcome::ShortUserBigramValue => {
+            // Class (c), `memory_chunk.h:390`: the user bigram carries a
+            // value shorter than a guint32 total_freq and the pin's
+            // `get_total_freq` read asserts.
+            crate::ffi::log_warning(
+                "zhuyin_mask_out: a user bigram value is shorter than a guint32 total_freq \
+                 (upstream aborts, memory_chunk.h:390)",
+            );
+            false
+        }
+        oxpinyin_facade::MaskOutOutcome::ResidualUserBigramGram => {
+            // Class (c), `ngram.cpp:70`: masking a user bigram removed
+            // every item of a gram whose total its items did not cover,
+            // and the pin's `get_length` assert dies
+            // (`Bigram::mask_out`, `ngram_bdb.cpp:243`).
+            crate::ffi::log_warning(
+                "zhuyin_mask_out: masking a user bigram leaves a residual total_freq \
+                 (upstream aborts, ngram.cpp:70)",
+            );
+            false
+        }
     }
 }
 
