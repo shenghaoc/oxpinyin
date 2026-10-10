@@ -1073,15 +1073,18 @@ impl Dictionary for RuntimeDict {
         Ok(tokens.into_iter().map(PhraseToken::new).collect())
     }
 
-    /// The user table's half of the pin's `search_suggestion` gate
-    /// (`chewing_large_table2_bdb.cpp:282`): the facade consults both the
-    /// system and the user `ChewingLargeTable2` (`facade_chewing_table2.h`
-    /// `search_suggestion`), and only the user table loads
-    /// `user_pinyin_index.bin`, so only it can carry an over-long key.
+    /// The pin's `search_suggestion` gate (`chewing_large_table2_bdb.cpp:282`):
+    /// the facade consults both the system and the user `ChewingLargeTable2`
+    /// (`facade_chewing_table2.h` `search_suggestion`), so an over-long key in
+    /// either `pinyin_index.bin` drives the abort. The system half is the
+    /// walk's key range ([`SystemDictionary::overlong_extension_gate`]), the
+    /// user half the keys `user_pinyin_index.bin` carried at open.
     fn overlong_extension_gate(&self, syllables: &[Self::Syllable]) -> bool {
-        self.user
-            .as_ref()
-            .is_some_and(|store| store.overlong_extension_gate(syllables))
+        self.system.overlong_extension_gate(syllables)
+            || self
+                .user
+                .as_ref()
+                .is_some_and(|store| store.overlong_extension_gate(syllables))
     }
 
     /// `_token_get_phrase` over the facade: the system libraries' item
