@@ -3404,3 +3404,73 @@ fn retained_matrix_keeps_leading_gaps_empty_and_invalidates_on_input_change() {
         .expect("zhuyin before-cursor matrix");
     assert!(session.input.ending_matrix.is_some());
 }
+
+#[test]
+fn chained_resplit_and_divided_windows_read_the_retained_matrix() {
+    use oxpinyin_core::OptionBits;
+
+    const HALF_VOCAB: &str = "token=1\tkeys=an\ttext=安\tunigram=1000\n\
+                              token=2\tkeys=ang\ttext=昂\tunigram=900\n";
+    for (raw, offset, wanted, end) in [("banangang", 6, "昂", 9), ("lianai", 2, "安", 4)] {
+        let mut session = Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            FixtureDictionary::parse(HALF_VOCAB).expect("fixture"),
+            FixedUnigrams {
+                system: 1000,
+                addon: 0,
+                total: 10000,
+                addon_total: 1,
+            },
+        )
+        .expect("session");
+        session
+            .set_options(OptionBits::from_bits(0x18a))
+            .expect("options");
+        session.type_pinyin(raw).expect("parse");
+        let rows = session.candidates_at(offset).expect("window");
+        let row = rows.iter().find(|row| row.text() == wanted).expect(wanted);
+        assert_eq!(row.consumed_bytes(), end - offset);
+        assert_eq!(session.raw_input(), raw);
+        assert_eq!(session.composition_offset(), 0);
+    }
+}
+
+#[test]
+fn retained_exact_key_windows_search_the_reserved_end_slot() {
+    use oxpinyin_core::graph::ExactSegment;
+
+    const EXACT_VOCAB: &str = "token=1\tkeys=ni\ttext=你\tunigram=1000\n\
+                               token=2\tkeys=hao\ttext=好\tunigram=900\n";
+
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        FixtureDictionary::parse(EXACT_VOCAB).expect("fixture"),
+        FixedUnigrams {
+            system: 1000,
+            addon: 0,
+            total: 10000,
+            addon_total: 1,
+        },
+    )
+    .expect("session");
+    let segments = [
+        ExactSegment::new(
+            0,
+            2,
+            oxpinyin_core::SyllableKey::from_text("ni").expect("ni"),
+            0,
+        ),
+        ExactSegment::new(
+            2,
+            4,
+            oxpinyin_core::SyllableKey::from_text("hao").expect("hao"),
+            0,
+        ),
+    ];
+    session.replace_raw_exact("nihk", &segments).expect("parse");
+    assert!(session.input.matrix.as_ref().expect("matrix").zeros[4]);
+    let rows = session.candidates_at(2).expect("hao window");
+    assert!(rows.iter().any(|row| row.text() == "好"));
+}
