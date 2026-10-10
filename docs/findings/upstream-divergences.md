@@ -2794,7 +2794,7 @@ Held by `contract-diff.py` cases `abort-save-chunk-header-length`,
 the subject exits 0 with one warning in its own domain and `false`; all four
 MATCH on bdb, kc and tkrzw, and DIFFER against the parent build.
 
-### `pinyin_remove_user_candidate`'s removal asserts (#525; row 78, class (c), 2026-10-10 UTC)
+### `pinyin_remove_user_candidate`'s removal asserts (#525; row 81, class (c), 2026-10-10 UTC)
 
 Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
 `pinyin_remove_user_candidate` (`src/pinyin.cpp:3726-3769`) removes a user
@@ -2822,14 +2822,18 @@ under an `LD_PRELOAD` SIGABRT handler that prints the failing statement:
 
 oxpinyin already refused when the token was absent from `PHRASE` but removed
 everything else unconditionally, and `pinyin_remove_user_candidate` returned
-its `false` with no log. The store now loads `user_phrase_index.bin` as a
-token→text membership set (`PHRASE_TABLE`) that is checked against the
-`PHRASE` text, together with every stored reading's `indexed` flag, before
-anything is removed; a miss returns `Ok(false)` and leaves the store
-untouched. The C facade emits exactly one `g_warning` in `libpinyin` (level
-16, `pinyin_remove_user_candidate: assertion 'ERROR_OK == retval' failed`)
-and answers `false`. The subject's text lookups are unchanged: they still
-derive from `user.bin`, so the phrase table is read as a membership set only.
+its `false` with no log. The store now loads `user_phrase_index.bin` as a set
+of exact `(token, text)` membership pairs (`PHRASE_TABLE`) — a token may sit
+under several texts, and the pin's `remove_index` matches the pair — that is
+checked together with every stored reading's `indexed` flag before anything
+is removed, and a standalone store opening a profile written before the table
+existed backfills the pairs from its `PHRASE` rows (a libpinyin session does
+not: a missing row there is the `:3750` state). A miss returns `Ok(false)`
+and leaves the store untouched. The C facade emits exactly one `g_warning` in
+`libpinyin` (level 16, `pinyin_remove_user_candidate: assertion 'ERROR_OK ==
+retval' failed`) and answers `false`. The subject's text lookups are
+unchanged: they still derive from `user.bin`, so the phrase table is read as a
+membership set only.
 
 This retires the #525 ledger's earlier classification of `:3750` among the
 not-applicable sites (the different-storage-model note): the divergence was

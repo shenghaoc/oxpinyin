@@ -39,7 +39,7 @@
 //!   no per-pronunciation delta for system tokens — the pre-existing
 //!   engine-model gap, unchanged by this persistence.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -237,10 +237,10 @@ impl GenericUserStore<DefaultStore> {
         // with no other open and no other process.
         let db = DefaultStore::create_in_memory()?;
 
-        let loaded = if let Some(dir) = user_dir {
+        let profile = if let Some(dir) = user_dir {
             match checked {
                 Some(check) => persistence::load_checked(dir, &originals, &check),
-                None => persistence::load(dir, &originals, &versions, law)?,
+                None => persistence::load_profile(dir, &originals, &versions, law)?,
             }
         } else {
             // check_format reads ""; pinyin also tries to write "".
@@ -249,8 +249,12 @@ impl GenericUserStore<DefaultStore> {
             if law == UserConfLaw::Pinyin {
                 pin_stderr::emit(&[b"write  failed.\n"]);
             }
-            persistence::Loaded::default()
+            persistence::LoadedProfile::default()
         };
+        let persistence::LoadedProfile {
+            loaded,
+            phrase_table,
+        } = profile;
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
         // failed open reads as a finished session, not a crash.
@@ -263,7 +267,7 @@ impl GenericUserStore<DefaultStore> {
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let has_user_data = db.write(|txn| {
-            seed_txn(txn, &loaded.state, &loaded.phrase_table, &target.originals)?;
+            seed_txn(txn, &loaded.state, &phrase_table, &target.originals)?;
             let total_rows = count_tables(txn)?;
             Ok(total_rows)
         })?;
@@ -310,15 +314,16 @@ fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
 /// seed half of the value mapping.
 ///
 /// `phrase_table` is the pin's `m_phrase_table` membership read from
-/// `user_phrase_index.bin` ([`persistence::Loaded::phrase_table`]). It
-/// is seeded verbatim, not derived from `state.libraries`, so a profile
-/// whose phrase index disagrees with `user.bin` keeps the disagreement
-/// and `pinyin_remove_user_candidate` reproduces the pin's `:3750`
-/// assert against it. Nothing else reads the rows.
+/// `user_phrase_index.bin` (the crate-private
+/// [`persistence::LoadedProfile::phrase_table`]). It is seeded verbatim,
+/// not derived from `state.libraries`, so a profile whose phrase index
+/// disagrees with `user.bin` keeps the disagreement and
+/// `pinyin_remove_user_candidate` reproduces the pin's `:3750` assert
+/// against it. Nothing else reads the rows.
 fn seed_txn(
     txn: &mut dyn WriteTxn,
     state: &UserState,
-    phrase_table: &BTreeMap<u32, String>,
+    phrase_table: &BTreeSet<(Token, String)>,
     originals: &SystemOriginals,
 ) -> Result<(), StoreError> {
     let mut unigram_total = 0_u64;
@@ -422,8 +427,8 @@ fn seed_txn(
     for (token, text) in phrase_table {
         txn.put(
             PHRASE_TABLE,
-            &codec::encode_token(*token),
-            codec::encode_str(text),
+            &crate::store::phrase_table_key(*token, text),
+            &[],
         )?;
     }
 

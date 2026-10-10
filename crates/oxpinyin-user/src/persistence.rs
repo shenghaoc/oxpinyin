@@ -12,7 +12,7 @@
 //!   original system chunks, and the user pinyin index's records.
 //!   `user_phrase_index.bin` is a pure derivative of the `USER_FILE`
 //!   items and is rebuilt at save; the load reads it only for the pin's
-//!   phrase-table membership ([`Loaded::phrase_table`], which
+//!   phrase-table membership (the crate-private `LoadedProfile`, which
 //!   `pinyin_remove_user_candidate` asserts against at `pinyin.cpp:3750`)
 //!   and never for text, which stays derived from the `USER_FILE` items;
 //!   `user_pinyin_index.bin` is
@@ -34,7 +34,7 @@
 //! the pin's own lifecycle (`Bigram::load_db` copies into memory,
 //! `save_db` writes a fresh file).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use oxpinyin_core::ChewingKey;
@@ -58,7 +58,7 @@ use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
 };
 
-use crate::store::SaveReport;
+use crate::store::{SaveReport, Token};
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
 const USER_CONF: &str = "user.conf";
@@ -405,15 +405,27 @@ pub struct Loaded {
     /// them (upstream's own degrade — `chunk->load` failure leaves an
     /// empty library, never a failed init).
     pub skipped: Vec<String>,
-    /// The pin's `m_phrase_table` membership recovered from
-    /// `user_phrase_index.bin`, as `token → phrase text`. The subject's
-    /// text lookups derive their rows from the `USER_FILE` items instead
-    /// (`docs/findings/user-store.md` §11), but
-    /// `pinyin_remove_user_candidate` asserts the phrase table can drop
-    /// the item (`pinyin.cpp:3750`), so the loaded entries are kept to
-    /// answer exactly that check. A sibling of [`UserState`] rather than
-    /// a field of it, so the load's state equality is unchanged.
-    pub phrase_table: BTreeMap<u32, String>,
+}
+
+/// The private result of a profile parse: the public [`Loaded`] plus the
+/// pin's phrase-table membership recovered from `user_phrase_index.bin`.
+///
+/// The membership is consumed only by the crate-internal session wiring
+/// (`store_libpinyin::seed_txn`) for `pinyin_remove_user_candidate`'s
+/// phrase-table check (`pinyin.cpp:3750`); it is deliberately not a field
+/// of [`Loaded`], so the public interface is unchanged.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LoadedProfile {
+    /// The public load result.
+    pub(crate) loaded: Loaded,
+    /// The phrase-table membership as exact `(token, phrase text)` pairs —
+    /// the pin's `m_phrase_table` rows keyed by their text. A token may
+    /// legitimately appear under more than one text, so this is a set of
+    /// pairs, not a token → text map: removal succeeds whenever the exact
+    /// pair exists, as `phrase_table->remove_index` (`pinyin.cpp:3750`)
+    /// does. A sibling of [`UserState`] rather than a field of it, so the
+    /// load's state equality is unchanged.
+    pub(crate) phrase_table: BTreeSet<(Token, String)>,
 }
 
 /// The full token of a system-library item.
@@ -443,6 +455,22 @@ pub fn load(
     versions: &SystemVersions,
     law: UserConfLaw,
 ) -> Result<Loaded, PersistenceError> {
+    Ok(load_profile(dir, originals, versions, law)?.loaded)
+}
+
+/// [`load`] with the crate-private result: the judgement, the profile read
+/// and the phrase-table membership the session wiring needs. `load` is the
+/// public form and drops the membership.
+///
+/// # Errors
+///
+/// As [`load`].
+pub(crate) fn load_profile(
+    dir: &Path,
+    originals: &SystemOriginals,
+    versions: &SystemVersions,
+    law: UserConfLaw,
+) -> Result<LoadedProfile, PersistenceError> {
     let check = check_format(dir, versions, originals.layout(), law)?;
     Ok(load_checked(dir, originals, &check))
 }
@@ -513,26 +541,31 @@ pub(crate) fn check_format(
 }
 
 /// The profile half of [`load`], over a profile `check_format` judged:
-/// nothing to read when it was wiped.
+/// nothing to read when it was wiped. Returns the crate-private
+/// [`LoadedProfile`] so the phrase-table membership survives to the
+/// session wiring.
 #[must_use]
 pub(crate) fn load_checked(
     dir: &Path,
     originals: &SystemOriginals,
     check: &ProfileCheck,
-) -> Loaded {
-    let mut loaded = Loaded {
-        open_counter: check.open_counter,
-        wiped: !check.conform,
-        ..Loaded::default()
+) -> LoadedProfile {
+    let mut profile = LoadedProfile {
+        loaded: Loaded {
+            open_counter: check.open_counter,
+            wiped: !check.conform,
+            ..Loaded::default()
+        },
+        phrase_table: BTreeSet::new(),
     };
     if check.conform {
-        load_bigram(dir, &mut loaded);
-        load_libraries(dir, originals.layout(), &mut loaded);
-        load_user_pinyin_index(dir, &mut loaded);
-        load_user_phrase_index(dir, &mut loaded);
-        load_logs(dir, originals, &mut loaded);
+        load_bigram(dir, &mut profile.loaded);
+        load_libraries(dir, originals.layout(), &mut profile.loaded);
+        load_user_pinyin_index(dir, &mut profile.loaded);
+        load_user_phrase_index(dir, &mut profile.loaded.skipped, &mut profile.phrase_table);
+        load_logs(dir, originals, &mut profile.loaded);
     }
-    loaded
+    profile
 }
 
 /// `pinyin_fini`'s arithmetic (`pinyin.cpp:1196-1197`): the counter the
@@ -715,17 +748,25 @@ fn load_user_pinyin_index(dir: &Path, loaded: &mut Loaded) {
 }
 
 /// The user phrase table's rows (`user_phrase_index.bin`) — the pin's
-/// `m_phrase_table` membership, kept as token → phrase text.
+/// `m_phrase_table` membership, kept as exact `(token, phrase text)` pairs.
 ///
 /// The subject's text lookups derive their rows from the `USER_FILE`
 /// items and never read this file (`docs/findings/user-store.md` §11);
 /// this walk exists only so `pinyin_remove_user_candidate` can reproduce
 /// `phrase_table->remove_index`'s `assert(ERROR_OK == retval)`
-/// (`pinyin.cpp:3750`) when the file disagrees with `user.bin`. Prefix
-/// markers carry an empty value and name no token. An absent or
-/// unreadable file leaves the table empty, exactly as an empty
-/// `PhraseLargeTable3` does.
-fn load_user_phrase_index(dir: &Path, loaded: &mut Loaded) {
+/// (`pinyin.cpp:3750`) when the file disagrees with `user.bin`. A token
+/// may sit under more than one text — the file lists a text's tokens and
+/// the same token can be indexed under another text — so the pairs are
+/// kept whole, never collapsed to a token → text map: removal then
+/// succeeds whenever the exact `(token, text)` pair is present, as the
+/// pin's `remove_index` does. Prefix markers carry an empty value and
+/// name no token. An absent or unreadable file leaves the table empty,
+/// exactly as an empty `PhraseLargeTable3` does.
+fn load_user_phrase_index(
+    dir: &Path,
+    skipped: &mut Vec<String>,
+    table: &mut BTreeSet<(Token, String)>,
+) {
     let path = dir.join(UserDbm::PhraseIndex.file_name());
     if !path.exists() {
         return;
@@ -733,14 +774,11 @@ fn load_user_phrase_index(dir: &Path, loaded: &mut Loaded) {
     let store = match DefaultStore::open_user_index(&path) {
         Ok(store) => store,
         Err(error) => {
-            loaded
-                .skipped
-                .push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
+            skipped.push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
             remove_dbm_sidecars(dir, &path);
             return;
         }
     };
-    let table = &mut loaded.phrase_table;
     let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
         let Some(text) = decode_ucs4_key(key) else {
             return Ok(()); // not a UCS-4 key upstream writes
@@ -749,7 +787,7 @@ fn load_user_phrase_index(dir: &Path, loaded: &mut Loaded) {
             return Ok(()); // a corrupt value names no token
         };
         for token in tokens {
-            table.insert(token, text.clone());
+            table.insert((token, text.clone()));
         }
         Ok(())
     };
@@ -758,9 +796,7 @@ fn load_user_phrase_index(dir: &Path, loaded: &mut Loaded) {
         std::ops::Bound::Unbounded,
         &mut visit,
     ) {
-        loaded
-            .skipped
-            .push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
+        skipped.push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
     }
     drop(store);
     remove_dbm_sidecars(dir, &path);
@@ -1951,12 +1987,51 @@ mod tests {
                 check_format(&split, &versions(), &UserFileLayout::stock(), law).expect("check");
             assert_eq!(recorded_counter(&split), recorded_counter(&whole));
             let parts = load_checked(&split, &originals, &check);
-            assert_eq!(parts.state, loaded.state);
-            assert_eq!(parts.open_counter, loaded.open_counter);
-            assert_eq!(parts.wiped, loaded.wiped);
+            assert_eq!(parts.loaded.state, loaded.state);
+            assert_eq!(parts.loaded.open_counter, loaded.open_counter);
+            assert_eq!(parts.loaded.wiped, loaded.wiped);
             std::fs::remove_dir_all(&whole).expect("cleanup");
             std::fs::remove_dir_all(&split).expect("cleanup");
         }
+    }
+
+    /// `user_phrase_index.bin` lists a text's tokens, and one token can sit
+    /// under more than one text. The load must keep every `(token, text)`
+    /// pair rather than collapsing to a token → text map: the pin's
+    /// `phrase_table->remove_index` matches the exact pair
+    /// (`pinyin.cpp:3750`), so a later-walked text must not evict a
+    /// phrase's own membership.
+    #[test]
+    fn phrase_index_keeps_each_token_text_pair() {
+        use oxpinyin_data::row_format::phrase_index::{encode_tokens, encode_ucs4_key};
+
+        let dir = tempdir("phrase-index-pairs");
+        let originals = originals();
+        save(&dir, &state(), &originals, &versions(), 1).expect("save");
+
+        // Overwrite the saved index with one token under two texts — the
+        // shape the derived save never writes but a profile can hold.
+        let token = 0x0400_0001_u32;
+        let index_path = dir.join(UserDbm::PhraseIndex.file_name());
+        let _ = std::fs::remove_file(&index_path);
+        remove_dbm_sidecars(&dir, &index_path);
+        DefaultStore::write_user_index(
+            &index_path,
+            &[
+                (encode_ucs4_key("甲"), encode_tokens(&[token])),
+                (encode_ucs4_key("乙"), encode_tokens(&[token])),
+            ],
+        )
+        .expect("write index");
+
+        let check = check_format(&dir, &versions(), originals.layout(), UserConfLaw::Pinyin)
+            .expect("check");
+        let profile = load_checked(&dir, &originals, &check);
+        assert_eq!(profile.phrase_table.len(), 2, "no pair evicted another");
+        assert!(profile.phrase_table.contains(&(token, "甲".to_owned())));
+        assert!(profile.phrase_table.contains(&(token, "乙".to_owned())));
+
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     /// The counter `user.conf` holds, read back as the next init reads it.
