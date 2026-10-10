@@ -1236,6 +1236,27 @@ def _(k):
     return {'ret': k.fn('choose_predicted_candidate', B, P, P)(inst, row_of(k, inst, 1))}
 
 
+# `pinyin_choose_candidate` under SORT_WITHOUT_SENTENCE_CANDIDATE asserts
+# `0 == offset` on the NORMAL leg (`pinyin.cpp:2566`, register row 45).
+def choose_without_sentence(k, offset):
+    inst = full_inst(k, b'nihao')
+    k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1)
+    row = row_of(k, inst, 2)
+    assert row, 'no NORMAL row'
+    return {'ret': k.fn('choose_candidate', I, P, Z, P)(inst, offset, row)}
+
+
+@case('abort-choose-candidate-without-sentence-offset-1', abort=0)
+def _(k):
+    return choose_without_sentence(k, 1)
+
+
+# At offset 0 the leg trains the unigram and answers 1 on both sides.
+@case('choose-candidate-without-sentence-offset-0', control=True)
+def _(k):
+    return choose_without_sentence(k, 0)
+
+
 # The rows the guards leave alone answer without a warning.
 @case('candidate-type-neighbours', control=True)
 def _(k):
@@ -1304,6 +1325,17 @@ def _(k):
 def _(k):
     inst, _chosen = forced_sentence(k, False)
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
+
+
+# An index past a NONEMPTY result set, on a real user directory: the user-dir
+# gate passes and `assert(index < results.size())` fails (`pinyin.cpp:2684`).
+# `null-user-session-pinyin` trains with a NULL user directory and so stops
+# at the earlier gate.
+@case('abort-train-index-past-results', abort=False, userdir=True)
+def _(k):
+    inst = full_inst(k, b'nihao')
+    assert k.fn('guess_sentence', B, P)(inst), 'no sentence to train'
+    return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 255)}
 
 
 @case('train-forcing-after-lookup', control=True)
@@ -1666,6 +1698,45 @@ def predicted_bigram_context(k, phrase, value):
     ctx = k.init()
     assert ctx, 'the reopen failed'
     return ctx
+
+
+def predicted_bigram_row_context(k, phrase, successor, count=20):
+    """A context whose user bigram lists `successor` after `phrase` with
+    `count` (the pin lists a predicted-bigram row from a count of 10 and a
+    one- or two-word successor, `pinyin.cpp:2331-2368`). Both tokens are read
+    from this side's own table."""
+    ctx = k.init()
+    assert ctx, 'the first init failed'
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    new = k.glib.g_array_new
+    new.restype, new.argtypes = P, [I, I, U]
+    found = []
+    for text in (phrase, successor):
+        arr = new(0, 0, 4)
+        assert k.fn('lookup_tokens', B, P, S, P)(inst, text.encode(), arr)
+        view = C.cast(arr, C.POINTER(Arr)).contents
+        found.append(list(C.cast(view.data, C.POINTER(U))[:view.len]))
+    k.fn('free_instance', None, P)(inst)
+    k.fn('fini', None, P)(ctx)
+    value = count.to_bytes(4, 'little') + found[1][0].to_bytes(4, 'little') + count.to_bytes(4, 'little')
+    _craft_hash(os.path.join(k.user, 'user_bigram.db'), [(token.to_bytes(4, 'little'), value) for token in found[0]])
+    _write_user_conf(k)
+    ctx = k.init()
+    assert ctx, 'the reopen failed'
+    return ctx
+
+
+# `pinyin_choose_candidate` takes no predicted row of either kind
+# (`pinyin.cpp:2507`); the prefix arm is `abort-choose-candidate-predicted-prefix-row`.
+# The user bigram is a Berkeley DB hash here, so only the bdb cell opens it.
+@case('abort-choose-candidate-predicted-bigram-row', abort=0, cells=('bdb',))
+def _(k):
+    ctx = predicted_bigram_row_context(k, '我', '你好')
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(inst, '我'.encode())
+    row = row_of(k, inst, 4)
+    assert row, 'the planted gram listed no predicted-bigram row'
+    return {'ret': k.fn('choose_candidate', I, P, Z, P)(inst, 0, row)}
 
 
 @case('abort-mask-out-short-bigram-value', abort=False, cells=('bdb',))
@@ -4171,6 +4242,23 @@ conf_abort('file-type-unknown', ('+', 'default GB_DICTIONARY a b c FOO_FILE'))
 conf_abort('addon-index-99', ('+', 'addon 99 x.table x.bin NULL DICTIONARY'))
 conf_abort('addon-index-16', ('+', 'addon 16 x.table x.bin NULL DICTIONARY'))
 conf_abort('addon-index-negative', ('+', 'addon -1 x.table x.bin NULL DICTIONARY'))
+# `UserTableInfo::load` converts the `database format:` token of the user's
+# `user.conf` and aborts on one it does not know (`table_info.cpp:132`,
+# reached from `check_format`); the system `table.conf` reaches the same
+# converter above.
+@case('user-conf-abort-database-format-unknown', abort=False, userdir=True)
+def _(k):
+    _write_user_conf(k)
+    path = os.path.join(k.user, 'user.conf')
+    with open(path) as user_conf:
+        text = user_conf.read()
+    text = re.sub(r'database format:\w+', 'database format:LMDB', text)
+    assert 'database format:LMDB' in text
+    with open(path, 'w') as user_conf:
+        user_conf.write(text)
+    return {'ret': bool(k.init())}
+
+
 # The init loop (`pinyin.cpp:377-392`) runs after `check_format`: the profile
 # is judged and `user.conf` written when it dies.
 conf_abort('default-dictionary', (_STOCK_DBIN, 'gb_char.dbin DICTIONARY'))
