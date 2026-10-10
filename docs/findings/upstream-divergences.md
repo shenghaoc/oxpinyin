@@ -2258,21 +2258,26 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
     `:132` (the `table.conf` half), `:142`, `:156`, `:175`, `:276`;
     `pinyin.cpp:388`, `:491`, `:457` and `zhuyin.cpp:330`, `:372` driven by the
     rows; `include/memory_chunk.h:493` and `:434` behind a `NULL` file name.
+  - PR 12g (batch C, 2026-10-10): `pinyin.cpp:3743`, `:3750`, `:3759`
+    (`pinyin_remove_user_candidate`'s three removal asserts; policy row
+    78). `:3750` leaves group C, which had called it not applicable to
+    the value store; `:3743` and `:3759` leave groups A and B.
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|
-| A — refuses silently (34) | `include/memory_chunk.h:390` (`assert`, via `check_result`), `:493`, `:543`, `:547` (`assert`); `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1474`, `:3035`, `:3067`, `:3092`, `:3147`, `:3203`, `:3204`, `:3738`, `:3743` (`assert`), `:1189`, `:3488` (`abort()`); `storage/ngram_bdb.cpp:199`, `ngram_kyotodb.cpp:173`, `ngram_tkrzwdb.cpp:150` (`assert`); `storage/phonetic_key_matrix.h:103` (`assert`); `storage/pinyin_parser2.cpp:170` (`assert`), `:398`, `:611` (`abort()`); `storage/zhuyin_parser2.cpp:295` (`abort()`); `zhuyin.cpp:372`, `:381`, `:440` (trigger not established), `:457`, `:2110`, `:2158` (`assert`), `:736` (`abort()`) | `false`, `Err`, NULL, a skipped library or a dropped row — the false/`Err` half holds | one `g_warning` line per site |
-| B — no check at all (33) | `lookup/phonetic_lookup.h:868` (`assert`, row 6); `pinyin.cpp:388`, `:491`, `:902`, `:2507`, `:2566`, `:2593`, `:2684`, `:2769`, `:2883`, `:3311`, `:3734`, `:3759` (`assert`); `storage/chewing_large_table2_bdb.cpp:282`, `:529`, `_kyotodb.cpp:269`, `:499`, `_tkrzwdb.cpp:252`, `:466` (`abort()`); `storage/phonetic_key_matrix.cpp:661`, `:663` (`assert`); `storage/phrase_large_table3.h:95` (`assert`); `storage/pinyin_phrase3.h:152` (`assert`, row 4); `storage/ngram.cpp:70` (`assert`); `zhuyin.cpp:330`, `:1261`, `:1453` (arm (c) of #525's trigger; arms (a)/(b) refuse) (`assert`); `storage/table_info.cpp:119`, `:142`, `:156`, `:175` (`abort()`), `:276` (`assert`), and `:132`'s `table.conf` half (`abort()`; its `user.conf` half is policy row 44, both halves met) | `true`, data, a store write, or an ignored `table.conf` column — e.g. `pinyin_choose_candidate` has no candidate-type check for a predicted row (`:2507`, `crates/oxpinyin-capi/src/candidates.rs:304-409`) and `pinyin_remove_user_candidate` none for a non-`NORMAL` row (`:3734`, `candidates.rs:225-253`) | a guard answering `false`/`Err`, then the log line |
-| C — not applicable (4) | `pinyin.cpp:554`, `:568`, `:571`, `:3750` (`assert`) | no counterpart check can exist — see the note below | nothing |
+| A — refuses silently (33) | `include/memory_chunk.h:390` (`assert`, via `check_result`), `:493`, `:543`, `:547` (`assert`); `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1474`, `:3035`, `:3067`, `:3092`, `:3147`, `:3203`, `:3204`, `:3738` (`assert`), `:1189`, `:3488` (`abort()`); `storage/ngram_bdb.cpp:199`, `ngram_kyotodb.cpp:173`, `ngram_tkrzwdb.cpp:150` (`assert`); `storage/phonetic_key_matrix.h:103` (`assert`); `storage/pinyin_parser2.cpp:170` (`assert`), `:398`, `:611` (`abort()`); `storage/zhuyin_parser2.cpp:295` (`abort()`); `zhuyin.cpp:372`, `:381`, `:440` (trigger not established), `:457`, `:2110`, `:2158` (`assert`), `:736` (`abort()`) | `false`, `Err`, NULL, a skipped library or a dropped row — the false/`Err` half holds | one `g_warning` line per site |
+| B — no check at all (32) | `lookup/phonetic_lookup.h:868` (`assert`, row 6); `pinyin.cpp:388`, `:491`, `:902`, `:2507`, `:2566`, `:2593`, `:2684`, `:2769`, `:2883`, `:3311`, `:3734` (`assert`); `storage/chewing_large_table2_bdb.cpp:282`, `:529`, `_kyotodb.cpp:269`, `:499`, `_tkrzwdb.cpp:252`, `:466` (`abort()`); `storage/phonetic_key_matrix.cpp:661`, `:663` (`assert`); `storage/phrase_large_table3.h:95` (`assert`); `storage/pinyin_phrase3.h:152` (`assert`, row 4); `storage/ngram.cpp:70` (`assert`); `zhuyin.cpp:330`, `:1261`, `:1453` (arm (c) of #525's trigger; arms (a)/(b) refuse) (`assert`); `storage/table_info.cpp:119`, `:142`, `:156`, `:175` (`abort()`), `:276` (`assert`), and `:132`'s `table.conf` half (`abort()`; its `user.conf` half is policy row 44, both halves met) | `true`, data, a store write, or an ignored `table.conf` column — e.g. `pinyin_choose_candidate` has no candidate-type check for a predicted row (`:2507`, `crates/oxpinyin-capi/src/candidates.rs:304-409`) and `pinyin_remove_user_candidate` none for a non-`NORMAL` row (`:3734`, `candidates.rs:225-253`) | a guard answering `false`/`Err`, then the log line |
+| C — not applicable (3) | `pinyin.cpp:554`, `:568`, `:571` (`assert`) | no counterpart check can exist — see the note below | nothing |
 | refuted (8) | `include/memory_chunk.h:434`; `storage/bdb_utils.h:61`, `:67`; `storage/phrase_index_logger.h:245`; `storage/tkrzwdb_utils.h:65`, `:72`; `zhuyin.cpp:454`; `pinyin.cpp:2517` (`check_result`) — all `assert` | the executed trigger did not abort the pin | nothing |
 | not executed (5) | `include/memory_chunk.h:438`, `:497` (`assert`); `storage/chewing_large_table2_bdb.cpp:388`, `_kyotodb.cpp:367`, `_tkrzwdb.cpp:342` (`abort()`) | no trigger reached the site | a trigger |
 | unverified (3) | `storage/phrase_index.cpp:745`, `storage/phrase_index_logger.h:202`, `pinyin.cpp:1859` (`assert`) | the subject side was not traced (#525) | a trace |
 
-Totals 34 + 33 + 4 + 8 + 5 + 3 = 87; kinds 67 `assert` + 20
-`abort()`, as #525 counts them.
+Totals 33 + 32 + 3 + 8 + 5 + 3 = 84; kinds 64 `assert` + 20 `abort()`
+(three `assert`s moved to the logged list, above), out of #525's original
+87-site table.
 
 **Note — the not-applicable sites (different storage model).** Each of
-the four asserts an invariant of upstream's text-searched phrase index
+the three asserts an invariant of upstream's text-searched phrase index
 that oxpinyin's user store makes structural, so no check has anything to
 test:
 
@@ -2285,10 +2290,11 @@ test:
   input) — the pin reads the hit back and compares; oxpinyin looks the
   token up *by* that text (`store.rs:744-757`) and adds a pronunciation
   to it (`:760-768`), never reading an item back to compare.
-- `pinyin.cpp:3750` (`phrase_table->remove_index` returns `ERROR_OK`) —
-  oxpinyin removes the text-index rows unconditionally (`txn.remove`,
-  `store.rs:1303-1310`), a no-op for an absent key, so the removal has
-  no failure return to check.
+
+`pinyin.cpp:3750` was listed here as a fourth not-applicable site; it was
+reproduced and is now logged (PR 12g, policy row 78), with the phrase
+table loaded from `user_phrase_index.bin` as the membership set the
+removal checks.
 
 ### NULL pointer arguments: the pin dereferences, oxpinyin null-guards (policy row 41)
 
@@ -2787,3 +2793,52 @@ Held by `contract-diff.py` cases `abort-save-chunk-header-length`,
 `abort-zhuyin-save-chunk-header-checksum`: the pin dies of SIGABRT (exit -6),
 the subject exits 0 with one warning in its own domain and `false`; all four
 MATCH on bdb, kc and tkrzw, and DIFFER against the parent build.
+
+### `pinyin_remove_user_candidate`'s removal asserts (#525; row 78, class (c), 2026-10-10 UTC)
+
+Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
+`pinyin_remove_user_candidate` (`src/pinyin.cpp:3726-3769`) removes a user
+phrase from three structures in turn and asserts each removal
+(`assert(ERROR_OK == retval)`): the phrase index (`:3742-3743`,
+`phrase_index->remove_phrase_item`), the phrase table (`:3749-3750`,
+`phrase_table->remove_index`), and the pinyin table once per stored reading
+(`:3756-3759`, `pinyin_table->remove_index`). Three reachable triggers abort
+the pin (SIGABRT, exit -6), each reproduced on bdb with a small ctypes driver
+under an `LD_PRELOAD` SIGABRT handler that prints the failing statement:
+
+- **`:3743`, a candidate removed twice.** Add a single-reading user phrase,
+  `pinyin_guess_candidates` it up, remove it (the pin answers `true` and
+  deletes the item), then remove the same candidate again: the phrase index no
+  longer holds the token, so `remove_phrase_item` fails.
+- **`:3750`, `user_phrase_index.bin` absent.** Add a user phrase, `pinyin_save`,
+  `pinyin_fini`, delete (or rename away) `<user>/user_phrase_index.bin`, reopen,
+  guess and remove. The phrase index is loaded from `user.bin` (so `:3743`
+  passes), but the phrase table is loaded from `user_phrase_index.bin`, so
+  `remove_index` finds no row.
+- **`:3759`, a reading merged rather than indexed.** Add a user phrase with two
+  readings: `_add_phrase` indexes only the first reading
+  (`pinyin.cpp:569-582`) and merges the second into the same item without a
+  pinyin-table row (`#534`), so `remove_index` fails for it.
+
+oxpinyin already refused when the token was absent from `PHRASE` but removed
+everything else unconditionally, and `pinyin_remove_user_candidate` returned
+its `false` with no log. The store now loads `user_phrase_index.bin` as a
+token→text membership set (`PHRASE_TABLE`) that is checked against the
+`PHRASE` text, together with every stored reading's `indexed` flag, before
+anything is removed; a miss returns `Ok(false)` and leaves the store
+untouched. The C facade emits exactly one `g_warning` in `libpinyin` (level
+16, `pinyin_remove_user_candidate: assertion 'ERROR_OK == retval' failed`)
+and answers `false`. The subject's text lookups are unchanged: they still
+derive from `user.bin`, so the phrase table is read as a membership set only.
+
+This retires the #525 ledger's earlier classification of `:3750` among the
+not-applicable sites (the different-storage-model note): the divergence was
+real and reproducible, not structural. `:3750`'s neighbours `:554`, `:568`
+and `:571` remain separate sites.
+
+Held by `contract-diff.py` cases `abort-remove-user-candidate-twice`,
+`abort-remove-user-candidate-missing-phrase-table` and
+`abort-remove-user-candidate-multi-pron`: the pin dies of SIGABRT (exit -6),
+the subject exits 0 with one `libpinyin` warning and `false`; all three MATCH
+on bdb, kc and tkrzw, and DIFFER against the parent build. No interface, ABI
+or dependency change.

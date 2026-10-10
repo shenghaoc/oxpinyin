@@ -56,8 +56,8 @@ use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
     ALLOC, ALLOC_CURSOR, BIGRAM, BIGRAM_TOTAL, GenericUserStore, PHRASE, PHRASE_BY_LIB_TEXT,
-    PHRASE_BY_TEXT, PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM, UNIGRAM_TOTAL,
-    UNIGRAM_TOTAL_KEY, UserStoreError,
+    PHRASE_BY_TEXT, PHRASE_TABLE, PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM,
+    UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY, UserStoreError,
 };
 
 /// The persistence target a session store carries: the user dir, the
@@ -263,7 +263,7 @@ impl GenericUserStore<DefaultStore> {
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let has_user_data = db.write(|txn| {
-            seed_txn(txn, &loaded.state, &target.originals)?;
+            seed_txn(txn, &loaded.state, &loaded.phrase_table, &target.originals)?;
             let total_rows = count_tables(txn)?;
             Ok(total_rows)
         })?;
@@ -308,9 +308,17 @@ fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
 
 /// Writes the loaded profile's values into a fresh session store — the
 /// seed half of the value mapping.
+///
+/// `phrase_table` is the pin's `m_phrase_table` membership read from
+/// `user_phrase_index.bin` ([`persistence::Loaded::phrase_table`]). It
+/// is seeded verbatim, not derived from `state.libraries`, so a profile
+/// whose phrase index disagrees with `user.bin` keeps the disagreement
+/// and `pinyin_remove_user_candidate` reproduces the pin's `:3750`
+/// assert against it. Nothing else reads the rows.
 fn seed_txn(
     txn: &mut dyn WriteTxn,
     state: &UserState,
+    phrase_table: &BTreeMap<u32, String>,
     originals: &SystemOriginals,
 ) -> Result<(), StoreError> {
     let mut unigram_total = 0_u64;
@@ -405,6 +413,18 @@ fn seed_txn(
                 *cursor = token;
             }
         }
+    }
+
+    // The pin's phrase-table membership, verbatim. A row here is what
+    // `phrase_table->remove_index` can find (`pinyin.cpp:3750`); it is
+    // deliberately not derived from the `USER_FILE` items above, so a
+    // phrase index that disagrees with `user.bin` stays disagreeing.
+    for (token, text) in phrase_table {
+        txn.put(
+            PHRASE_TABLE,
+            &codec::encode_token(*token),
+            codec::encode_str(text),
+        )?;
     }
 
     // System-token deltas: the training mass on top of the originals.

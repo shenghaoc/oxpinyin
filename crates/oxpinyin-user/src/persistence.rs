@@ -11,8 +11,13 @@
 //!   `network.bin`), and the `SYSTEM_FILE` `.dbin` logs replayed onto the
 //!   original system chunks, and the user pinyin index's records.
 //!   `user_phrase_index.bin` is a pure derivative of the `USER_FILE`
-//!   items and is rebuilt at save, not read; `user_pinyin_index.bin` is
-//!   not — a reading merged into an existing phrase is never indexed
+//!   items and is rebuilt at save; the load reads it only for the pin's
+//!   phrase-table membership ([`Loaded::phrase_table`], which
+//!   `pinyin_remove_user_candidate` asserts against at `pinyin.cpp:3750`)
+//!   and never for text, which stays derived from the `USER_FILE` items;
+//!   `user_pinyin_index.bin` is
+//!   not a derivative — a reading merged into an existing phrase is
+//!   never indexed
 //!   (`pinyin.cpp:569-582`) — so its records are loaded
 //!   ([`UserState::indexed`]) and saved back.
 //! * save — the pin's `_write_files` + `_rename_files`: every file is
@@ -40,6 +45,7 @@ use oxpinyin_data::chunk_write::{
 };
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
 use oxpinyin_data::pin_stderr;
+use oxpinyin_data::row_format::phrase_index::{decode_tokens, decode_ucs4_key};
 use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
 use oxpinyin_data::single_gram::{decode_single_gram, encode_single_gram};
 use oxpinyin_data::table_entries::{phrase_index_entries, pinyin_index_entries};
@@ -399,6 +405,15 @@ pub struct Loaded {
     /// them (upstream's own degrade — `chunk->load` failure leaves an
     /// empty library, never a failed init).
     pub skipped: Vec<String>,
+    /// The pin's `m_phrase_table` membership recovered from
+    /// `user_phrase_index.bin`, as `token → phrase text`. The subject's
+    /// text lookups derive their rows from the `USER_FILE` items instead
+    /// (`docs/findings/user-store.md` §11), but
+    /// `pinyin_remove_user_candidate` asserts the phrase table can drop
+    /// the item (`pinyin.cpp:3750`), so the loaded entries are kept to
+    /// answer exactly that check. A sibling of [`UserState`] rather than
+    /// a field of it, so the load's state equality is unchanged.
+    pub phrase_table: BTreeMap<u32, String>,
 }
 
 /// The full token of a system-library item.
@@ -514,6 +529,7 @@ pub(crate) fn load_checked(
         load_bigram(dir, &mut loaded);
         load_libraries(dir, originals.layout(), &mut loaded);
         load_user_pinyin_index(dir, &mut loaded);
+        load_user_phrase_index(dir, &mut loaded);
         load_logs(dir, originals, &mut loaded);
     }
     loaded
@@ -693,6 +709,58 @@ fn load_user_pinyin_index(dir: &Path, loaded: &mut Loaded) {
         loaded
             .skipped
             .push(format!("{}: {error}", UserDbm::PinyinIndex.file_name()));
+    }
+    drop(store);
+    remove_dbm_sidecars(dir, &path);
+}
+
+/// The user phrase table's rows (`user_phrase_index.bin`) — the pin's
+/// `m_phrase_table` membership, kept as token → phrase text.
+///
+/// The subject's text lookups derive their rows from the `USER_FILE`
+/// items and never read this file (`docs/findings/user-store.md` §11);
+/// this walk exists only so `pinyin_remove_user_candidate` can reproduce
+/// `phrase_table->remove_index`'s `assert(ERROR_OK == retval)`
+/// (`pinyin.cpp:3750`) when the file disagrees with `user.bin`. Prefix
+/// markers carry an empty value and name no token. An absent or
+/// unreadable file leaves the table empty, exactly as an empty
+/// `PhraseLargeTable3` does.
+fn load_user_phrase_index(dir: &Path, loaded: &mut Loaded) {
+    let path = dir.join(UserDbm::PhraseIndex.file_name());
+    if !path.exists() {
+        return;
+    }
+    let store = match DefaultStore::open_user_index(&path) {
+        Ok(store) => store,
+        Err(error) => {
+            loaded
+                .skipped
+                .push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
+            remove_dbm_sidecars(dir, &path);
+            return;
+        }
+    };
+    let table = &mut loaded.phrase_table;
+    let mut visit = |key: &[u8], value: &[u8]| -> Result<(), StoreError> {
+        let Some(text) = decode_ucs4_key(key) else {
+            return Ok(()); // not a UCS-4 key upstream writes
+        };
+        let Ok(tokens) = decode_tokens(value) else {
+            return Ok(()); // a corrupt value names no token
+        };
+        for token in tokens {
+            table.insert(token, text.clone());
+        }
+        Ok(())
+    };
+    if let Err(error) = store.range_raw(
+        std::ops::Bound::Unbounded,
+        std::ops::Bound::Unbounded,
+        &mut visit,
+    ) {
+        loaded
+            .skipped
+            .push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
     }
     drop(store);
     remove_dbm_sidecars(dir, &path);

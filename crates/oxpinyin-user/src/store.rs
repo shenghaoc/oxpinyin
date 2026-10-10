@@ -87,6 +87,13 @@ pub const UNIGRAM_TOTAL: &str = "user_unigram_total";
 pub const PHRASE: &str = "user_phrase";
 pub const PHRASE_BY_TEXT: &str = "user_phrase_by_text";
 pub const PHRASE_BY_LIB_TEXT: &str = "user_phrase_by_lib_text";
+/// The pin's `m_phrase_table` membership loaded from
+/// `user_phrase_index.bin` — `phrase_table->remove_index`'s table
+/// (`pinyin.cpp:3750`), as token → phrase text. The subject's text
+/// lookups use [`PHRASE_BY_LIB_TEXT`], derived from the `USER_FILE`
+/// items; this row set exists only so `remove_user_phrase` can reproduce
+/// the pin's phrase-table miss.
+pub const PHRASE_TABLE: &str = "user_phrase_table";
 pub const PRONUNCIATION: &str = "user_pronunciation";
 pub const ALLOC: &str = "user_phrase_alloc";
 
@@ -1246,6 +1253,15 @@ impl<S: WriteStore> GenericUserStore<S> {
                         codec::encode_str(phrase),
                         &codec::encode_token(token),
                     )?;
+                    // `_add_phrase`'s new-item path calls
+                    // `phrase_table->add_index` (`pinyin.cpp:596`), so the
+                    // pin's phrase table gains the token and a later
+                    // `remove_index` finds it.
+                    txn.put(
+                        PHRASE_TABLE,
+                        &codec::encode_token(token),
+                        codec::encode_str(phrase),
+                    )?;
                 }
 
                 // The new-item path (`pinyin.cpp:585-607`): indexed
@@ -1870,6 +1886,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             let pron_keys = collect_pronunciation_keys_from_txn(txn, &matched_tokens)?;
             for (token, text) in matched {
                 txn.remove(PHRASE, &codec::encode_token(token))?;
+                txn.remove(PHRASE_TABLE, &codec::encode_token(token))?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
                     txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
                 }
@@ -1913,6 +1930,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         let result: Result<Option<bool>, UserStoreError> = db
             .write(|txn| {
                 let token_key = codec::encode_token(token);
+                // `phrase_index->remove_phrase_item` (`pinyin.cpp:3743`):
+                // no item under the token, so the pin asserts.
                 let Some(text_bytes) = txn.get(PHRASE, &token_key)? else {
                     return Ok(None);
                 };
@@ -1921,7 +1940,30 @@ impl<S: WriteStore> GenericUserStore<S> {
                 let text = String::from_utf8(text_bytes)
                     .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
 
+                // `phrase_table->remove_index` (`pinyin.cpp:3750`): the
+                // phrase table loaded from `user_phrase_index.bin` must
+                // hold this token under this text, or the pin asserts.
+                // Nothing else reads these rows (the subject's text
+                // lookups derive from `user.bin`; see
+                // `docs/findings/user-store.md` §11).
+                let Some(table_bytes) = txn.get(PHRASE_TABLE, &token_key)? else {
+                    return Ok(None);
+                };
+                if table_bytes.as_slice() != text.as_bytes() {
+                    return Ok(None);
+                }
+
+                // `pinyin_table->remove_index` for every reading
+                // (`pinyin.cpp:3759`): a reading merged into an existing
+                // phrase was never indexed (`pinyin.cpp:569-582`), so the
+                // pin asserts when it cannot drop one.
+                let readings = collect_pronunciations_from_txn(txn, token)?;
+                if readings.iter().any(|row| !row.value.indexed) {
+                    return Ok(None);
+                }
+
                 txn.remove(PHRASE, &token_key)?;
+                txn.remove(PHRASE_TABLE, &token_key)?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
                     txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
                 }

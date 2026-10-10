@@ -272,7 +272,20 @@ pub extern "C" fn pinyin_remove_user_candidate(
     let Some(user) = inst.core.user.as_mut() else {
         return false;
     };
-    user.remove_user_phrase(token.value()).unwrap_or(false)
+    match user.remove_user_phrase(token.value()) {
+        Ok(true) => true,
+        // Class (c): the phrase item, its phrase-table row
+        // (`user_phrase_index.bin`) or one of its indexed readings
+        // (`user_pinyin_index.bin`) is missing, and the pin aborts on the
+        // matching `assert(ERROR_OK == retval)` (`pinyin.cpp:3743`,
+        // `:3750`, `:3759`).
+        Ok(false) | Err(_) => {
+            crate::ffi::log_warning(
+                "pinyin_remove_user_candidate: assertion 'ERROR_OK == retval' failed",
+            );
+            false
+        }
+    }
 }
 
 /// Choose a candidate at an offset, returning the new cursor position.
