@@ -1442,11 +1442,12 @@ fn stage_chunk(
 /// mode, as upstream's does — `std::fs::write` would ask for 0666.
 ///
 /// The header is two `guint32` writes in the pin (`memory_chunk.h:542`
-/// and `:546`), each `assert`ed; here they are two writes too, so a
-/// filesystem that refuses the header names the word it refused
-/// ([`ChunkHeaderField`]). The payload after them is the pin's soft
-/// failure (`MemoryChunk::save` answers `false` and every caller ignores
-/// it) and stays an ordinary [`PersistenceError::Io`].
+/// and `:546`), each a single `write` whose own return value is `assert`ed;
+/// here they are two single writes too ([`write_header_word`]), so a
+/// filesystem that refuses the header names the word it refused and a
+/// partial word is a failure, not a retry. The payload after them is the
+/// pin's soft failure (`MemoryChunk::save` answers `false` and every caller
+/// ignores it) and stays an ordinary [`PersistenceError::Io`].
 fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -1456,19 +1457,35 @@ fn write_chunk_file(path: &Path, bytes: &[u8]) -> Result<(), PersistenceError> {
     let split = bytes.len().min(CHUNK_HEADER_SIZE);
     let (header, payload) = bytes.split_at(split);
     let (length, checksum) = header.split_at(header.len().min(4));
-    std::io::Write::write_all(&mut file, length).map_err(|source| {
-        PersistenceError::ChunkHeaderWrite {
-            field: ChunkHeaderField::Length,
-            source,
-        }
-    })?;
-    std::io::Write::write_all(&mut file, checksum).map_err(|source| {
-        PersistenceError::ChunkHeaderWrite {
-            field: ChunkHeaderField::Checksum,
-            source,
-        }
-    })?;
+    write_header_word(&mut file, length, ChunkHeaderField::Length)?;
+    write_header_word(&mut file, checksum, ChunkHeaderField::Checksum)?;
     std::io::Write::write_all(&mut file, payload).map_err(PersistenceError::Io)
+}
+
+/// One of `MemoryChunk::save`'s two header words (`memory_chunk.h:542-549`).
+///
+/// The pin makes a single `write` per word and `assert`s that call's own
+/// return value is the word's size; a short write is a failure there too.
+/// So this is one write, not `write_all`: a retry would finish the word and
+/// hide the short write the pin's `assert` would have caught.
+fn write_header_word(
+    writer: &mut impl std::io::Write,
+    word: &[u8],
+    field: ChunkHeaderField,
+) -> Result<(), PersistenceError> {
+    let written = writer
+        .write(word)
+        .map_err(|source| PersistenceError::ChunkHeaderWrite { field, source })?;
+    if written == word.len() {
+        return Ok(());
+    }
+    Err(PersistenceError::ChunkHeaderWrite {
+        field,
+        source: std::io::Error::new(
+            std::io::ErrorKind::WriteZero,
+            format!("short write: {written} of {} header bytes", word.len()),
+        ),
+    })
 }
 
 #[cfg(test)]
@@ -2216,6 +2233,42 @@ mod tests {
             other => panic!("expected the length write to fail: {other:?}"),
         }
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// `memory_chunk.h:543`/`:547`: the pin reads the `write` call's own
+    /// return value, so a *short* header write — a partial word the
+    /// filesystem accepted without error — must fail here too, where
+    /// `write_all` would retry the tail and report success. A real short
+    /// write to a regular file is not portable to trigger, so a writer that
+    /// returns a short count from its first `write` stands in for it.
+    #[test]
+    fn a_short_header_write_is_not_retried() {
+        struct ShortWriter {
+            count: usize,
+        }
+        impl std::io::Write for ShortWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                Ok(self.count.min(buf.len()))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut short = ShortWriter { count: 2 };
+        let error = write_header_word(&mut short, &[0_u8; 4], ChunkHeaderField::Length)
+            .expect_err("a short header write must fail");
+        match error {
+            PersistenceError::ChunkHeaderWrite { field, source } => {
+                assert_eq!(field, ChunkHeaderField::Length);
+                assert_eq!(source.kind(), std::io::ErrorKind::WriteZero);
+            }
+            other => panic!("expected the length write to fail: {other:?}"),
+        }
+
+        let mut whole = ShortWriter { count: 4 };
+        write_header_word(&mut whole, &[0_u8; 4], ChunkHeaderField::Checksum)
+            .expect("a whole header write must succeed");
     }
 
     /// The process umask, read without `unsafe`: a file created asking

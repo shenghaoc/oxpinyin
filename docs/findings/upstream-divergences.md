@@ -2767,16 +2767,19 @@ word lands and the checksum word (`:547`) is refused. Both abort
 `pinyin_save`/`zhuyin_save` of a dirty context on both facades (SIGABRT,
 exit -6).
 
-The subject's reporting save already stopped and answered `false` at exactly
-these two writes — they are its only per-file stop conditions besides a codec
-error — but logged nothing. It now answers `false` naming the header word and
-the facade emits exactly one `g_warning`: under `libpinyin` for `pinyin_save`
-and `libzhuyin` for `zhuyin_save`. The soft chunk payload writes are
-unchanged: a refused payload write stays an ordinary per-file I/O failure that
-row 69 tolerates, the save continues and reports the renames and the marker.
-No state is changed before the failure; no interface, ABI or dependency
-change. This row covers the chunk header writes reached through the save
-calls, not the unrelated `MemoryChunk::mmap` reads of row 76.
+Before this change the subject's header write was an ordinary `Io` error,
+which its reporting save tolerated as one more per-file write failure and
+carried past into its rename pass. It now stops at these two writes, answers
+`false` naming the header word, and the facade emits exactly one `g_warning`:
+under `libpinyin` for `pinyin_save` and `libzhuyin` for `zhuyin_save`. The
+soft chunk payload writes are unchanged: a refused payload write stays an
+ordinary per-file I/O failure that row 69 tolerates, the save continues and
+reports the renames and the marker. A header failure comes after staging
+starts, so the profile is not untouched: `stage_user_bigram` can already have
+replaced the bigram file in place, and the failing chunk is left as a partial
+`.tmp`. No interface, ABI or dependency change. This row covers the chunk
+header writes reached through the save calls, not the unrelated
+`MemoryChunk::mmap` reads of row 76.
 
 Held by `contract-diff.py` cases `abort-save-chunk-header-length`,
 `abort-save-chunk-header-checksum`,
