@@ -841,14 +841,14 @@ impl<S: WriteStore> GenericUserStore<S> {
             .map_or(&[][..], |target| target.bigram_short_values.as_slice())
     }
 
-    /// Whether a `user_bigram.db` value is too short to hold a `guint32`
-    /// `total_freq`. `pinyin_mask_out` / `zhuyin_mask_out` and
-    /// `pinyin_guess_predicted_candidates` read the total directly
-    /// (`ngram.cpp:80`, `:69`), so any such value aborts them
-    /// (`memory_chunk.h:390`).
+    /// Whether the gram stored under `token` is shorter than a `guint32`
+    /// `total_freq`. The predicted-candidate walk loads only the resolved
+    /// prefixes' own grams (`pinyin.cpp:2322-2330`), so a short row under
+    /// any other token never reaches `get_total_freq` and does not abort
+    /// the prediction.
     #[must_use]
-    pub fn has_short_bigram_value(&self) -> bool {
-        !self.short_bigram_values().is_empty()
+    pub fn has_short_bigram_value_for(&self, token: Token) -> bool {
+        self.short_bigram_values().contains(&token)
     }
 
     /// The `user_bigram.db` keys that are not four bytes — the pin's
@@ -880,13 +880,14 @@ impl<S: WriteStore> GenericUserStore<S> {
             .map_or(&[][..], |target| target.bigram_empty_with_total.as_slice())
     }
 
-    /// Whether a `user_bigram.db` row decodes to a gram with no items and a
-    /// nonzero `total_freq`. `pinyin_guess_predicted_candidates` reaches
-    /// `get_length` on it (`pinyin.cpp:2332`), and `get_length` asserts
-    /// (`ngram.cpp:70`).
+    /// Whether the gram stored under `token` has no items and a nonzero
+    /// `total_freq` — the pin's `SingleGram::get_length` assert
+    /// (`ngram.cpp:70`). `_compute_predicted_bigram_candidates` merges only
+    /// the resolved prefixes' own grams (`pinyin.cpp:2322-2336`), so an
+    /// item-less row under any other token never reaches `get_length`.
     #[must_use]
-    pub fn has_empty_bigram_gram(&self) -> bool {
-        !self.empty_bigram_grams().is_empty()
+    pub fn has_empty_bigram_gram_for(&self, token: Token) -> bool {
+        self.empty_bigram_grams().contains(&token)
     }
 
     /// The `user_bigram.db` rows whose `total_freq` is not covered by their

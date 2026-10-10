@@ -1755,6 +1755,25 @@ def _(k):
     return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
 
 
+# `_compute_predicted_bigram_candidates` loads only the resolved prefixes'
+# own grams (`pinyin.cpp:2322-2330`), so a faulty row under a token the
+# prediction never resolves to is never read: the call completes. The
+# `我` prefixes do not include `你`'s token, so these are controls for the
+# two faults above — the prefix-scoped guard must not over-refuse.
+@case('guess-predicted-unrelated-short-bigram-value', control=True, cells=('bdb',))
+def _(k):
+    ctx = predicted_bigram_context(k, '你', b'\x07\x00\x00')
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
+
+
+@case('guess-predicted-unrelated-empty-bigram-gram', control=True, cells=('bdb',))
+def _(k):
+    ctx = predicted_bigram_context(k, '你', b'\x07\x00\x00\x00')
+    inst = k.fn('alloc_instance', P, P)(ctx)
+    return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
+
+
 # batch2 group 12e: a tone digit on an initial-only key (PR 12e, #525, row 4)
 TONE_INCOMPLETE = (1 << 5) | (1 << 3)
 

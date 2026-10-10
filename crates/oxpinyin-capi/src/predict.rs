@@ -43,17 +43,26 @@ pub fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
 
 /// The `user_bigram.db` fault a predicted-candidate call refuses, with the
 /// one warning to log. `None` for a clean container or no user store. The
-/// pin aborts on the first faulty prefix's gram; a corrupt container cannot
-/// exist at the pin, so short values are reported before empty grams.
-fn predicted_bigram_fault(user: Option<&UserStore>) -> Option<&'static str> {
+/// pin's `_compute_predicted_bigram_candidates` loads only the resolved
+/// prefixes' own grams (`pinyin.cpp:2322-2330`), so only a fault under one
+/// of `prefixes` aborts it; a short row under any other token is never
+/// reached and prediction completes. A corrupt container cannot exist at
+/// the pin, so short values are reported before empty grams.
+fn predicted_bigram_fault(user: Option<&UserStore>, prefixes: &[u32]) -> Option<&'static str> {
     let store = user?;
-    if store.has_short_bigram_value() {
+    if prefixes
+        .iter()
+        .any(|&token| store.has_short_bigram_value_for(token))
+    {
         return Some(
             "pinyin_guess_predicted_candidates: a user bigram value is shorter than a guint32 \
              total_freq (upstream aborts, memory_chunk.h:390)",
         );
     }
-    if store.has_empty_bigram_gram() {
+    if prefixes
+        .iter()
+        .any(|&token| store.has_empty_bigram_gram_for(token))
+    {
         return Some("pinyin_guess_predicted_candidates: assertion '0 == total_freq' failed");
     }
     None
@@ -74,13 +83,15 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
 
     // `_compute_predicted_bigram_candidates` (`pinyin.cpp:2310-2341`) loads
     // each prefix's user gram and merges it before reading its length. A
-    // `user_bigram.db` row the pin aborts on there (short value at
-    // `memory_chunk.h:390`, item-less gram with a residual total at
+    // `user_bigram.db` row the pin aborts on under a resolved prefix (short
+    // value at `memory_chunk.h:390`, item-less gram with a residual total at
     // `ngram.cpp:70`) is refused here: one warning and `false`, with the
-    // candidate list left empty in both APIs. (A corrupt container cannot
-    // exist at the pin, so the pin's per-prefix abort order has no
-    // observable answer; short values are reported before empty grams.)
-    if let Some(message) = predicted_bigram_fault(inst.core.user.as_ref()) {
+    // candidate list left empty in both APIs. A faulty row under any other
+    // token is never loaded, so it does not block the prediction. (A corrupt
+    // container cannot exist at the pin, so the pin's per-prefix abort order
+    // has no observable answer; short values are reported before empty
+    // grams.)
+    if let Some(message) = predicted_bigram_fault(inst.core.user.as_ref(), &prefixes) {
         crate::ffi::log_warning(message);
         return Err(());
     }
