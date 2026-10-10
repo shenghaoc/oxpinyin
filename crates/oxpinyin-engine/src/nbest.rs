@@ -409,6 +409,8 @@ impl Trellis {
 
     /// 074a2219 phonetic_lookup.h:329-339: only the fixed final step,
     /// heap selection, then GLib's stable merge with gint comparison.
+    /// Fewer final-step values yield fewer tails; an empty final step
+    /// never falls back to an earlier populated step (#594).
     fn tails(&mut self) -> Vec<Value> {
         let position = self.nodes.len() - 1;
         let mut values: Vec<_> = heap_top(
@@ -1023,7 +1025,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{LONG_SENTENCE_PENALTY, NbestRow, NbestShape, Value, nbest_sentences};
+    use super::{LONG_SENTENCE_PENALTY, NbestRow, NbestShape, Trellis, Value, nbest_sentences};
     use crate::session::ScanKey;
     use oxpinyin_core::graph::SegmentGraph;
     use oxpinyin_core::{Cost, LanguageModel, NbestStepCosts, OptionBits, PhraseToken};
@@ -1110,6 +1112,50 @@ mod tests {
                 assert_eq!(sorted(&poss, false), sorted(&poss, true), "{poss:?}");
             }
         }
+    }
+
+    #[test]
+    fn tails_do_not_fall_back_from_an_empty_final_step() {
+        for shape in [NbestShape::PINYIN, NbestShape::ZHUYIN] {
+            let mut trellis = Trellis::with_seeds(2, &[0], shape);
+            for token in 1..=3 {
+                trellis.insert(
+                    1,
+                    Value {
+                        token,
+                        ..value(1_000, 1, 0)
+                    },
+                );
+            }
+            assert_eq!(trellis.candidates(1).len(), 3);
+            assert!(trellis.tails().is_empty());
+        }
+    }
+
+    #[test]
+    fn tails_keep_only_the_underfilled_final_step() {
+        let mut trellis = Trellis::with_seeds(2, &[0], NbestShape::PINYIN);
+        for token in 1..=3 {
+            trellis.insert(
+                1,
+                Value {
+                    token,
+                    ..value(1_000, 1, 0)
+                },
+            );
+        }
+        for token in 4..=5 {
+            trellis.insert(
+                2,
+                Value {
+                    token,
+                    ..value(2_000, 2, 0)
+                },
+            );
+        }
+        let mut tokens: Vec<_> = trellis.tails().iter().map(|tail| tail.token).collect();
+        tokens.sort_unstable();
+        assert_eq!(tokens, [4, 5]);
     }
 
     #[test]
