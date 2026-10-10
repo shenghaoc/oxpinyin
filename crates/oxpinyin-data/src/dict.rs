@@ -431,6 +431,23 @@ impl SystemDictionary {
         Ok(tokens)
     }
 
+    /// The system table's half of the pin's `search_suggestion` gate
+    /// (`chewing_large_table2_bdb.cpp:282`): `true` when the query's own
+    /// index key exists (the pin's `DB_SET` probe) and a row extending it
+    /// is past 16 words, which drives the pin's `switch` into
+    /// `default: abort()`. The stock `pinyin_index.bin` has none, so this
+    /// answers `false` for every shipped model; it reads keys only, ahead
+    /// of the extension walk that would decode the rows. A failed read
+    /// answers `false` and leaves the error to that walk.
+    #[must_use]
+    pub fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return false;
+        };
+        self.pinyin.key_exists(&keys).unwrap_or(false)
+            && self.pinyin.has_overlong_extension(&keys).unwrap_or(false)
+    }
+
     /// [`Dictionary::lookup_into_flagged`]'s body.
     fn fill_lookup(
         &self,
@@ -549,6 +566,10 @@ impl Dictionary for SystemDictionary {
     /// `_token_get_phrase`'s system half: the loaded library item's text.
     fn phrase_text_for_token(&self, token: u32) -> Option<String> {
         self.libraries.phrase_text(token)
+    }
+
+    fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
+        SystemDictionary::overlong_extension_gate(self, syllables)
     }
 
     /// The DBM double-indexes each row under both incomplete and complete

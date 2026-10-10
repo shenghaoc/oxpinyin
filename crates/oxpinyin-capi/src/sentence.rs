@@ -355,8 +355,8 @@ fn character_walk_ran(inst: &crate::state::CapiInstance, text: &str) -> bool {
 /// [`pinyin_guess_candidates`] answer: the eager sort-word refresh's
 /// LONGER-row build and the re-anchored lookup both reach the same pin
 /// abort (`chewing_large_table2_bdb.cpp:282`).
-const OVERLONG_INDEX_WARNING: &str = "pinyin_guess_candidates: a user pinyin index key is longer than \
-     MAX_PHRASE_LENGTH syllables (upstream aborts, chewing_large_table2_bdb.cpp:282)";
+const OVERLONG_INDEX_WARNING: &str = "pinyin_guess_candidates: a pinyin index key (user or system) is \
+     longer than MAX_PHRASE_LENGTH syllables (upstream aborts, chewing_large_table2_bdb.cpp:282)";
 
 /// Guess candidates at the given offset with sort option.
 ///

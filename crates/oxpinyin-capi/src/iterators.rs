@@ -174,6 +174,44 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     if !is_user_file_library(handle.index) && !(1..=4).contains(&handle.index) {
         return false;
     }
+    // 074a2219 pinyin.cpp:533-571: the pin then walks the phrase table's
+    // tokens for the phrase. Two tokens in the same sub-index library trip
+    // `assert(PHRASE_INDEX_LIBRARY_INDEX(token) != index)` (`:554`); a lone
+    // one whose phrase-index item has another length trips
+    // `assert(phrase_length == item.get_phrase_length())` (`:568`), and one
+    // of the same length with other text the `memcmp` assert (`:571`). The
+    // phrase table is the `user_phrase_index` membership plus the system
+    // phrase index; the item text is the token introspection. Each refusal
+    // is one `libpinyin` warning; a lookup that fails outright refuses before
+    // either add call rather than reading an empty token list.
+    let same_library =
+        match same_library_phrase_table_tokens(user, handle.dict.as_ref(), &phrase, handle.index) {
+            Ok(tokens) => tokens,
+            Err(()) => {
+                crate::ffi::log_warning("pinyin_iterator_add_phrase: phrase-table lookup failed");
+                return false;
+            }
+        };
+    if same_library.len() > 1 {
+        crate::ffi::log_warning(
+            "pinyin_iterator_add_phrase: assertion \
+             'PHRASE_INDEX_LIBRARY_INDEX(token) != index' failed",
+        );
+        return false;
+    }
+    if let (Some(&token), Some(dict)) = (same_library.first(), handle.dict.as_ref())
+        && let Some(introspection) = dict.token_introspection(token)
+        && introspection.text != phrase
+    {
+        crate::ffi::log_warning(if introspection.text.chars().count() == length {
+            "pinyin_iterator_add_phrase: assertion \
+             '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"
+        } else {
+            "pinyin_iterator_add_phrase: assertion \
+             'phrase_length == item.get_phrase_length()' failed"
+        });
+        return false;
+    }
     if (1..=4).contains(&handle.index) {
         let Some(dict) = handle.dict.as_ref() else {
             return false;
@@ -195,6 +233,38 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         user.add_phrase_in(handle.index, &phrase, &keys, count)
             .is_ok()
     }
+}
+
+/// The phrase-table tokens for `phrase` in `index`, in the pin's
+/// `phrase_table->search` shape (`pinyin.cpp:533`): the `user_phrase_index`
+/// membership ([`UserStore::phrase_table_tokens_for_text`]) plus the system
+/// phrase index, filtered to the visible libraries. Sorted but **not**
+/// deduped: the pin's `reduce_tokens` (`phrase_large_table3.h:77-95`)
+/// concatenates the per-library arrays unchanged, so a token that is both in
+/// the membership and in the system index appears twice and the caller's
+/// `:554` check forbids the second one. The zhuyin facade keeps its own
+/// copy (`zhuyin_iterator_add_phrase`), as the facades duplicate by design.
+///
+/// # Errors
+///
+/// `Err(())` when either lookup fails, so the caller answers `false` without
+/// letting an empty token list pass the same-library refusal.
+fn same_library_phrase_table_tokens(
+    user: &UserStore,
+    dict: Option<&oxpinyin_runtime::RuntimeDict>,
+    phrase: &str,
+    index: u8,
+) -> Result<Vec<u32>, ()> {
+    let mut tokens = user.phrase_table_tokens_for_text(phrase).map_err(|_| ())?;
+    if let Some(dict) = dict {
+        tokens.extend(dict.system().tokens_for_text(phrase).map_err(|_| ())?);
+        tokens.retain(|token| dict.library_visible_token(*token));
+    }
+    tokens.sort_unstable();
+    Ok(tokens
+        .into_iter()
+        .filter(|token| token >> 24 == u32::from(index))
+        .collect())
 }
 
 /// `FullPinyinParser2::parse` under `PINYIN_CORRECT_ALL | USE_TONE`

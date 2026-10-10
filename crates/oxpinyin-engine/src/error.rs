@@ -134,9 +134,10 @@ pub enum EngineError {
         /// Which precondition the span violates.
         fault: TrainingSpanFault,
     },
-    /// The longer-candidate walk met a user pinyin index key past
-    /// `MAX_PHRASE_LENGTH` syllables that extends the current prefix — the
-    /// pin's user `ChewingLargeTable2::search_suggestion` reaches the key
+    /// The longer-candidate walk met a pinyin index key (the user's or the
+    /// system's) past `MAX_PHRASE_LENGTH` syllables that extends the
+    /// current prefix — the pin's `ChewingLargeTable2::search_suggestion`,
+    /// over either table, reaches the key
     /// through its `DB_SET`/`DB_NEXT` walk and its `switch`'s
     /// `default: abort()` dies (`storage/chewing_large_table2_bdb.cpp:282`
     /// at the pin); the engine answers an error instead (the no-abort
@@ -220,7 +221,7 @@ impl fmt::Display for EngineError {
             Self::OverlongUserIndexKey { syllables } => {
                 write!(
                     formatter,
-                    "a user pinyin index key past MAX_PHRASE_LENGTH syllables extends the \
+                    "a pinyin index key past MAX_PHRASE_LENGTH syllables extends the \
                      {syllables}-syllable prefix"
                 )
             }
