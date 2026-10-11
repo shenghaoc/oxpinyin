@@ -174,6 +174,15 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
             );
             false
         }
+        oxpinyin_facade::MaskOutOutcome::SystemLogSurvivingAdd => {
+            // Class (c), row 97: _mask_out_records supplies &oldchunk for
+            // ADD, whose writer requires NULL == oldone (074a2219 :245).
+            crate::ffi::log_warning(
+                "zhuyin_mask_out: assertion 'NULL == oldone' failed \
+                 (upstream asserts, phrase_index_logger.h:245)",
+            );
+            false
+        }
         oxpinyin_facade::MaskOutOutcome::SystemLogMultipleHeaders => {
             // Class (c), `phrase_index.cpp:745`: a system library's user
             // .dbin carries more than one MODIFY_HEADER and the pin's

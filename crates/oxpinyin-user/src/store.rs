@@ -240,6 +240,10 @@ pub enum UserStoreError {
     /// `mask_out`'s `merge_with_mask` (init's `merge` never peeks). The
     /// class-(c) answer: the mask fails.
     SystemLogMultipleHeaders,
+    /// A surviving ADD record in a masked system log is re-appended with
+    /// a non-null oldchunk pointer, violating `NULL == oldone`
+    /// (074a2219 phrase_index_logger.h:245, phrase_index.cpp:839).
+    SystemLogSurvivingAdd,
 }
 
 impl fmt::Display for UserStoreError {
@@ -305,6 +309,11 @@ impl fmt::Display for UserStoreError {
                 "a system library's user .dbin carries more than one MODIFY_HEADER \
                  (upstream asserts, phrase_index.cpp:745)"
             ),
+            Self::SystemLogSurvivingAdd => write!(
+                f,
+                "a surviving system log ADD violates NULL == oldone \
+                 (upstream asserts, phrase_index_logger.h:245)"
+            ),
         }
     }
 }
@@ -328,7 +337,8 @@ impl std::error::Error for UserStoreError {
             | Self::EmptyUserBigramGram
             | Self::ResidualUserBigramGram
             | Self::SystemLogHeaderToken
-            | Self::SystemLogMultipleHeaders => None,
+            | Self::SystemLogMultipleHeaders
+            | Self::SystemLogSurvivingAdd => None,
         }
     }
 }
@@ -1345,12 +1355,12 @@ impl<S: WriteStore> GenericUserStore<S> {
         seed: u64,
     ) -> Result<(), UserStoreError> {
         use crate::store_libpinyin::{pinyin_keys_to_packed, pronunciation_matches};
-        let original = self
-            .inner
-            .libpinyin
-            .as_ref()
-            .and_then(|target| target.originals.get(&phrase_index_library_index(token)))
-            .and_then(|library| library.item(token & phrase::PHRASE_MASK));
+        let original = self.inner.libpinyin.as_ref().and_then(|target| {
+            target
+                .originals()
+                .get(&phrase_index_library_index(token))
+                .and_then(|library| library.item(token & phrase::PHRASE_MASK))
+        });
         let db = self.database();
         db.write(|txn| {
             // (row key, packed reading, running count, stored row value).
@@ -1531,7 +1541,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.inner
             .libpinyin
             .as_ref()
-            .is_none_or(|target| target.originals.layout().has_user_library(library))
+            .is_none_or(|target| target.originals().layout().has_user_library(library))
     }
 
     /// Add a phrase under `library` (`USER_DICTIONARY` or `NETWORK_DICTIONARY`).
@@ -2034,7 +2044,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             // Arc clone: the originals hold every system item (~138k
             // ChunkItems) and a dirty save must not copy them — both
             // halves take the Arc by reference.
-            let state = crate::store_libpinyin::export_state(self, &target.originals)?;
+            let originals = target.originals();
+            let state = crate::store_libpinyin::export_state(self, &originals)?;
             let bigram_db = self
                 .inner
                 .bigram_db
@@ -2043,7 +2054,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             crate::persistence::save_with_bigram(
                 dir,
                 &state,
-                &target.originals,
+                &originals,
                 &target.versions,
                 target.open_counter,
                 bigram_db.as_deref(),
@@ -2082,7 +2093,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             let Some(dir) = target.dir.as_deref() else {
                 return Ok(report);
             };
-            let state = crate::store_libpinyin::export_state(self, &target.originals)?;
+            let originals = target.originals();
+            let state = crate::store_libpinyin::export_state(self, &originals)?;
             let bigram_db = self
                 .inner
                 .bigram_db
@@ -2091,7 +2103,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             report = crate::persistence::save_with_bigram_reporting(
                 dir,
                 &state,
-                &target.originals,
+                &originals,
                 &target.versions,
                 target.open_counter,
                 bigram_db.as_deref(),
@@ -2212,8 +2224,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// holds: the pin's `mask_out` walks `index` 1..`PHRASE_INDEX_LIBRARY_
     /// COUNT` and `continue`s when `get_range` answers
     /// `ERROR_NO_SUB_PHRASE_INDEX` (`pinyin.cpp:1235-1241`,
-    /// `zhuyin.cpp:792-798`), so an unloaded library's `.dbin` is never
+    /// `zhuyin.cpp:770-776`), so an unloaded library's `.dbin` is never
     /// merged and must not refuse the mask.
+    /// A library that fails `merge_with_mask`'s library-bit check
+    /// (`phrase_index.cpp:309-313`) also never reads its log.
     ///
     /// The pin's `merge_with_mask` (`pinyin.cpp:1273-1285`,
     /// `zhuyin.cpp:808-820`) `_peek_header`s each merged log, whose
@@ -2226,18 +2240,29 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// [`UserStoreError::SystemLogHeaderToken`] for a non-null-token
     /// `MODIFY_HEADER` and [`UserStoreError::SystemLogMultipleHeaders`] for
-    /// more than one `MODIFY_HEADER` record. A missing, unreadable, or
+    /// more than one `MODIFY_HEADER` record, or
+    /// [`UserStoreError::SystemLogSurvivingAdd`] for an ADD record that
+    /// survives a header-bearing masked log (`NULL == oldone`,
+    /// `phrase_index_logger.h:245`). A missing, unreadable, or
     /// otherwise malformed `.dbin` is the pin's graceful empty-log path and
     /// is not an error.
-    pub fn validate_system_logs(&self, visible: impl Fn(u8) -> bool) -> Result<(), UserStoreError> {
+    pub fn validate_system_logs(
+        &self,
+        visible: impl Fn(u8) -> bool,
+        mask: Token,
+        value: Token,
+    ) -> Result<(), UserStoreError> {
         let Some(target) = self.inner.libpinyin.as_ref() else {
             return Ok(());
         };
         let Some(dir) = target.dir.as_deref() else {
             return Ok(());
         };
-        for (nibble, file) in target.originals.layout().system_logs() {
-            if !visible(*nibble) {
+        let originals = target.originals();
+        for (nibble, file) in originals.layout().system_logs() {
+            if !visible(*nibble)
+                || (*nibble & phrase_index_library_index(mask)) != phrase_index_library_index(value)
+            {
                 continue;
             }
             let path = file.under(dir);
@@ -2265,7 +2290,117 @@ impl<S: WriteStore> GenericUserStore<S> {
             if headers > 1 {
                 return Err(UserStoreError::SystemLogMultipleHeaders);
             }
+            // Without a header, _peek_header returns an empty logger.
+            // Otherwise _mask_out_records passes &oldchunk even for ADD,
+            // whose writer asserts NULL == oldone (074a2219 :245).
+            if headers == 1
+                && records.iter().any(|record| {
+                    matches!(record, LogRecord::Add { token, .. }
+                    if (token & (mask & PHRASE_MASK)) != (value & PHRASE_MASK))
+                })
+            {
+                return Err(UserStoreError::SystemLogSurvivingAdd);
+            }
         }
+        Ok(())
+    }
+
+    /// Replaces the loaded system sub-index overlays with the logs read
+    /// from disk over the freshly mapped originals. The phrase and pinyin
+    /// table rows remain in place: they are separate from the sub-index
+    /// (`pinyin.cpp:1253-1285`, `zhuyin.cpp:788-820` at 074a2219).
+    ///
+    /// # Errors
+    /// Returns [`UserStoreError`] when the session values cannot be written.
+    pub fn reload_system_libraries(
+        &mut self,
+        originals: crate::persistence::SystemOriginals,
+        mask: Token,
+        value: Token,
+    ) -> Result<(), UserStoreError> {
+        let Some(target) = self.inner.libpinyin.clone() else {
+            return Ok(());
+        };
+        let reloaded = |token| originals.contains_key(&phrase_index_library_index(token));
+        let state = target
+            .dir
+            .as_deref()
+            .map_or_else(crate::persistence::UserState::default, |dir| {
+                crate::persistence::load_masked_logs(dir, &originals, mask, value)
+            });
+        let mut target_originals = target
+            .originals
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let db = self.database();
+        let has_user_data = db.write(|txn| {
+            let mut unigrams = Vec::new();
+            txn.for_each(UNIGRAM, &mut |key, _| {
+                let token = codec::decode_token(key)
+                    .map_err(|_| StoreError::Backend("corrupt unigram key".into()))?;
+                if reloaded(token) {
+                    unigrams.push(key.to_vec());
+                }
+                Ok(())
+            })?;
+            for key in unigrams {
+                txn.remove(UNIGRAM, &key)?;
+            }
+            let mut deltas = Vec::new();
+            txn.for_each(PRONUNCIATION, &mut |key, _| {
+                let (token, _) = codec::decode_token_bytes(key)
+                    .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
+                // Appended phrase rows carry the separate pinyin table's
+                // membership; preserve those even when their item vanished.
+                if reloaded(token) && txn.get(PHRASE, &codec::encode_token(token))?.is_none() {
+                    deltas.push(key.to_vec());
+                }
+                Ok(())
+            })?;
+            for key in deltas {
+                txn.remove(PRONUNCIATION, &key)?;
+            }
+            crate::store_libpinyin::seed_txn(txn, &state, &Default::default(), &originals)?;
+            let mut total = 0_u64;
+            txn.for_each(UNIGRAM, &mut |_, value| {
+                total = total.saturating_add(
+                    codec::decode_u64(value)
+                        .map_err(|_| StoreError::Backend("corrupt unigram value".into()))?,
+                );
+                Ok(())
+            })?;
+            txn.put(
+                UNIGRAM_TOTAL,
+                &codec::encode_u8(UNIGRAM_TOTAL_KEY),
+                &codec::encode_u64(total),
+            )?;
+            has_user_data_in_write_txn(txn)
+        })?;
+        {
+            let mut items = self
+                .inner
+                .system_items
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            items.retain(|&token, _| !reloaded(token));
+            for (&nibble, overrides) in &state.system_overrides {
+                for (&slot, item) in overrides {
+                    if let Some(item) = item {
+                        items.insert((u32::from(nibble) << 24) | slot, item.clone());
+                    }
+                }
+            }
+            self.inner
+                .has_system_items
+                .store(!items.is_empty(), Ordering::Relaxed);
+        }
+        target_originals.extend(
+            originals
+                .iter()
+                .map(|(&nibble, library)| (nibble, library.clone())),
+        );
+        drop(target_originals);
+        self.mark_committed_phrase_write(db, has_user_data);
         Ok(())
     }
 
@@ -2734,7 +2869,6 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !self.has_system_items() || !(1..=4).contains(&(token >> 24)) {
             return Ok(None);
         }
-        let db = self.database();
         let Some(mut item) = self
             .inner
             .system_items
@@ -2749,9 +2883,14 @@ impl<S: WriteStore> GenericUserStore<S> {
             .inner
             .libpinyin
             .as_ref()
-            .and_then(|target| target.originals.get(&phrase_index_library_index(token)))
-            .and_then(|library| library.unigram(token & PHRASE_MASK))
+            .and_then(|target| {
+                target
+                    .originals()
+                    .get(&phrase_index_library_index(token))
+                    .and_then(|library| library.unigram(token & PHRASE_MASK))
+            })
             .unwrap_or(0);
+        let db = self.database();
         item.unigram =
             base.wrapping_add(get_u64_or(&*db, UNIGRAM, &codec::encode_token(token), 0)? as u32);
         Ok(Some(item))
@@ -2829,8 +2968,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             .libpinyin
             .as_ref()
             .ok_or(UserStoreError::InvalidPhrase)?;
-        let original = target
-            .originals
+        let originals = target.originals();
+        let original = originals
             .get(&library)
             .ok_or(UserStoreError::InvalidPhrase)?;
         let packed = crate::store_libpinyin::pinyin_keys_to_packed(keys)

@@ -13,7 +13,7 @@
 //! on demand by `pinyin_load_addon_phrase_library`).
 
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use oxpinyin_core::ChewingKey;
 
@@ -64,7 +64,7 @@ impl Loaded {
 /// `ERROR_NO_SUB_PHRASE_INDEX`.
 pub struct PhraseLibraries {
     /// nibble → library, `None` = not loaded.
-    by_nibble: [Option<Loaded>; 16],
+    by_nibble: [RwLock<Option<Loaded>>; 16],
     /// Files `open` found absent.
     unmapped: Vec<PathBuf>,
 }
@@ -159,13 +159,16 @@ impl PhraseLibraries {
         (0u8..)
             .zip(&self.by_nibble)
             .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && visible(nibble))
-            .filter_map(|(_, slot)| slot.as_ref())
-            .filter(|loaded| {
+            .filter_map(|(_, slot)| {
+                let slot = slot
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let loaded = slot.as_ref()?;
                 verify_chunk(&loaded.path)
                     .err()
                     .is_some_and(|error| error.unmappable_path().is_some())
+                    .then(|| loaded.path.clone())
             })
-            .map(|loaded| loaded.path.clone())
             .collect()
     }
 
@@ -176,11 +179,16 @@ impl PhraseLibraries {
     pub fn check_now(&self, selected: impl Fn(u8) -> bool, only: Option<u8>) -> LibraryCheck {
         let mut checked = LibraryCheck::default();
         let mut first_fault = false;
-        for loaded in (0u8..)
+        for (_, slot) in (0u8..)
             .zip(&self.by_nibble)
             .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && selected(nibble))
-            .filter_map(|(_, slot)| slot.as_ref())
         {
+            let slot = slot
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let Some(loaded) = slot.as_ref() else {
+                continue;
+            };
             if let Err(error) = verify_chunk(&loaded.path) {
                 if !first_fault {
                     checked.chunk_header_fault =
@@ -210,12 +218,39 @@ impl PhraseLibraries {
                 "library nibble {nibble} out of range"
             )));
         }
-        if self.by_nibble[slot].is_some() {
+        let slot = self.by_nibble[slot]
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_some() {
             return Ok(false);
         }
         let library = PhraseLibrary::open(path)?;
-        self.by_nibble[slot] = Some(Loaded {
+        *slot = Some(Loaded {
             library,
+            path: path.to_path_buf(),
+            item_count: OnceLock::new(),
+        });
+        Ok(true)
+    }
+
+    /// Replaces a loaded sub-index with a fresh mapping of its system
+    /// chunk, as `mask_out` does at 074a2219 (`pinyin.cpp:1253-1273`,
+    /// `zhuyin.cpp:788-808`). An unloaded library stays unloaded.
+    ///
+    /// # Errors
+    /// Returns [`LibraryError`] when the chunk cannot be mapped or decoded.
+    pub fn reload(&self, nibble: u8, path: &Path) -> Result<bool, LibraryError> {
+        let Some(slot) = self.by_nibble.get(usize::from(nibble)) else {
+            return Ok(false);
+        };
+        let mut slot = slot
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_none() {
+            return Ok(false);
+        }
+        *slot = Some(Loaded {
+            library: PhraseLibrary::open(path)?,
             path: path.to_path_buf(),
             item_count: OnceLock::new(),
         });
@@ -227,32 +262,45 @@ impl PhraseLibraries {
     pub fn unload(&mut self, nibble: u8) -> bool {
         self.by_nibble
             .get_mut(usize::from(nibble))
-            .is_some_and(|slot| slot.take().is_some())
+            .is_some_and(|slot| {
+                slot.get_mut()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take()
+                    .is_some()
+            })
     }
 
     /// Whether library `nibble` is loaded.
     #[must_use]
     pub fn is_loaded(&self, nibble: u8) -> bool {
-        self.by_nibble
-            .get(usize::from(nibble))
-            .is_some_and(Option::is_some)
+        self.by_nibble.get(usize::from(nibble)).is_some_and(|slot| {
+            slot.read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_some()
+        })
     }
 
     /// Whether any library is loaded.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.by_nibble.iter().all(Option::is_none)
+        self.by_nibble.iter().all(|slot| {
+            slot.read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_none()
+        })
     }
 
     /// The library owning `token`'s nibble, when loaded. Nibbles at or
     /// beyond the 16-library count answer `None`, matching upstream's
     /// `PHRASE_INDEX_LIBRARY_INDEX` bound.
     #[must_use]
-    pub fn library(&self, token: u32) -> Option<&PhraseLibrary> {
+    pub fn library(&self, token: u32) -> Option<PhraseLibrary> {
         self.by_nibble
             .get((token >> 24) as usize)?
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
-            .map(|loaded| &loaded.library)
+            .map(|loaded| loaded.library.clone())
     }
 
     /// `FacadePhraseIndex::get_phrase_item`'s text half: the phrase
@@ -280,9 +328,7 @@ impl PhraseLibraries {
     /// [`Self::unigram_total`] over the loaded libraries `visible`
     /// accepts — the facade total after `unload` freed a sub-index.
     pub fn unigram_total_where(&self, visible: impl Fn(u8) -> bool) -> u64 {
-        self.loaded_where(visible)
-            .map(|loaded| u64::from(loaded.library.total_freq()))
-            .fold(0_u64, u64::saturating_add)
+        self.sum_loaded(visible, |loaded| u64::from(loaded.library.total_freq()))
     }
 
     /// The item count across the loaded libraries — the parity surface
@@ -295,19 +341,24 @@ impl PhraseLibraries {
 
     /// [`Self::item_count`] over the loaded libraries `visible` accepts.
     pub fn item_count_where(&self, visible: impl Fn(u8) -> bool) -> u64 {
-        self.loaded_where(visible)
-            .map(Loaded::item_count)
-            .fold(0_u64, u64::saturating_add)
+        self.sum_loaded(visible, Loaded::item_count)
     }
 
-    fn loaded_where(&self, visible: impl Fn(u8) -> bool) -> impl Iterator<Item = &Loaded> {
+    fn sum_loaded(&self, visible: impl Fn(u8) -> bool, count: impl Fn(&Loaded) -> u64) -> u64 {
         self.by_nibble
             .iter()
             .enumerate()
-            .filter_map(move |(nibble, slot)| {
+            .filter_map(|(nibble, slot)| {
+                if !visible(u8::try_from(nibble).unwrap_or(u8::MAX)) {
+                    return None;
+                }
+                let slot = slot
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let loaded = slot.as_ref()?;
-                visible(u8::try_from(nibble).unwrap_or(u8::MAX)).then_some(loaded)
+                Some(count(loaded))
             })
+            .fold(0_u64, u64::saturating_add)
     }
 
     /// `PhraseItem::get_pronunciation_possibility(keys)`
@@ -323,7 +374,8 @@ impl PhraseLibraries {
         token: u32,
         query: &[ChewingKey],
     ) -> Option<(u64, u64)> {
-        let item = self.library(token)?.item(token)?;
+        let library = self.library(token)?;
+        let item = library.item(token)?;
         let mut matched: u64 = 0;
         let mut total: u64 = 0;
         for view in item.pronunciations() {
@@ -348,7 +400,8 @@ impl PhraseLibraries {
     /// tables (syllables `'`-joined, no tone digits).
     #[must_use]
     pub fn pronunciations(&self, token: u32) -> Option<Vec<LibraryPronunciation>> {
-        let item = self.library(token)?.item(token)?;
+        let library = self.library(token)?;
+        let item = library.item(token)?;
         let mut out = Vec::new();
         for view in item.pronunciations() {
             let mut syllables = Vec::new();

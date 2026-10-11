@@ -3375,3 +3375,48 @@ cell and against the parent. The `.dbin` is a backend-independent
 `MemoryChunk`, so those cases run in every cell. No interface, ABI or
 dependency change.
 
+### A surviving ADD in a masked system log aborts mask_out (#728; row 97, class (c), 2026-10-11 UTC)
+
+Read the libpinyin tree at `074a2219c90feaf962d0d24f034514033ece5f99`;
+the cited pinyin and zhuyin source blobs match that commit. Both facades
+replace each loaded system sub-index from disk before merging its user log
+(`src/pinyin.cpp:1253-1285`, `src/zhuyin.cpp:788-820`). The phrase table is
+separate and is not rebuilt. This reload is ordinary compatibility.
+
+`merge_with_mask` returns before reading the log when its library-bit check
+fails (`src/storage/phrase_index.cpp:309-313`). With matching library bits,
+`mask_out_phrase_index_logger` requires a header (`:855-856`) and filters out
+slot records selected by the mask. `_mask_out_records` re-appends each
+surviving non-header record with both `&oldchunk` and `&newchunk` (`:839`).
+For `LOG_ADD_RECORD`, `PhraseIndexLogger::append_record` asserts
+`NULL == oldone` (`src/storage/phrase_index_logger.h:245`): the pointer is
+non-null even though the old chunk's size is zero. This is an **assert**, not
+undefined behaviour or an `abort()` call.
+
+Reproduced on both facades: import 龘龘 into library 1, save, then call
+`mask_out(0x00FFFFFF, 0)`; the pin dies of SIGABRT at `:245`. oxpinyin
+preflights the current disk log with the existing #729 validation, before
+masking any table, replacing any mapping or changing an overlay. For a loaded
+matching library, exactly one decoded header and a surviving ADD cause
+`SystemLogSurvivingAdd`; each C facade returns `false` and emits exactly one
+warning in its own domain (`libpinyin` or `libzhuyin`), naming
+`NULL == oldone` and `phrase_index_logger.h:245`.
+
+Held by `abort-mask-out-surviving-add-{pinyin,zhuyin}` in the existing
+`tools/bisection/contract-diff.py`. The cases check that the saved item, an
+unsaved item in a second system library, the unigram overlay, phrase-table
+lookup and user-directory bytes remain unchanged. Adjacent cases hold the
+predicate boundaries: a selected ADD and an ADD without a header do not
+abort, an unloaded library's log is skipped, and `0xFFFFFFFF/0` rejects
+library 1's log and discards both saved and unsaved index additions while
+preserving phrase-table lookup.
+
+The successful merge case contains only `MODIFY_HEADER` and `MODIFY`: both
+pointers are permitted for MODIFY (`phrase_index_logger.h:267-268`). Its
+same-size item replacement changes token 0x01001225 from 你 to 龘 under
+`0x00FFFFFF/0`, with unchanged unigram and total values; token introspection
+observes the change while lookup of 你 keeps its phrase-table token. A
+separate case replaces a scratch system chunk after init to hold the actual
+disk reload, without modifying the oracle. All fixtures are ordinary
+backend-independent MemoryChunk inputs. No supported API, ABI or dependency
+change. Execution observations are transient; no captures are retained.

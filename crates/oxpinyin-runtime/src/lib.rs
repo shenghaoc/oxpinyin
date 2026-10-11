@@ -1854,6 +1854,73 @@ impl Runtime {
         )
     }
 
+    /// Maps every loaded SYSTEM_FILE/DICTIONARY default library again for
+    /// mask_out, replacing the shared sub-index, never the phrase DBM.
+    /// Read from the 074a2219 tree: pinyin.cpp:1253-1273,
+    /// zhuyin.cpp:788-808. Unloaded libraries and rows without a user file
+    /// are skipped. Failed mappings keep the existing safe fallback;
+    /// the facade reports their mmap diagnostic before calling this.
+    pub fn reload_system_libraries(&self) -> oxpinyin_user::SystemOriginals {
+        let layout = UserFileLayout::from_conf(&self.conf);
+        let mut originals = oxpinyin_user::SystemOriginals::new(Default::default(), layout);
+        let Some(dir) = self.paths.system_data_dirs().first() else {
+            return originals;
+        };
+        let libraries = self.dict.system.libraries();
+        for index in 1..16 {
+            let Some(row) = self.conf.default_row(index) else {
+                continue;
+            };
+            if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
+                || row.user.is_none()
+                || !self.dict.library_visible(u32::from(index))
+            {
+                continue;
+            }
+            let Some(name) = row.system.as_ref() else {
+                continue;
+            };
+            let path = oxpinyin_data::table_info::pin_join(dir, name.as_ref());
+            if !libraries.reload(index, &path).unwrap_or(false) {
+                continue;
+            }
+            if let Some(library) = libraries.library(u32::from(index) << 24) {
+                originals.insert(
+                    index,
+                    oxpinyin_user::SystemLibrary {
+                        total: library.total_freq(),
+                        range_end: library.token_range().end,
+                        items: Default::default(),
+                        mapped: Some(library),
+                    },
+                );
+            }
+        }
+        // add_unigram_frequency's accepted deltas belong to the replaced
+        // sub-index too. Keep overlays for every library we did not reload.
+        let mut overlay = self
+            .dict
+            .unigram_overlay
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        overlay
+            .tokens
+            .retain(|token, _| !originals.contains_key(&((token >> 24) as u8)));
+        let mut removed = 0_u32;
+        overlay.libraries.retain(|nibble, delta| {
+            if originals.contains_key(&(*nibble as u8)) {
+                removed = removed.wrapping_add(*delta);
+                false
+            } else {
+                true
+            }
+        });
+        self.dict
+            .unigram_total_delta
+            .fetch_sub(removed, Ordering::SeqCst);
+        originals
+    }
+
     /// Unloads addon library `index` from this runtime's dictionary.
     ///
     /// The bound the pin asserts on `index` is the caller's to apply; see

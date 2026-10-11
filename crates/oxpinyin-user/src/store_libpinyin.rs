@@ -64,12 +64,12 @@ use crate::store::{
 /// original system chunks (the `.dbin` diff base), the conformance
 /// triple, and the `user.conf` law and open counter the session's saves
 /// and its fini write.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Target {
     /// The user directory holding the profile.
     pub(crate) dir: Option<PathBuf>,
-    /// The system libraries by nibble, as loaded at open.
-    pub(crate) originals: SystemOriginals,
+    /// The system libraries by nibble, refreshed when mask_out reloads them.
+    pub(crate) originals: std::sync::RwLock<SystemOriginals>,
     /// This build's identity triple.
     pub(crate) versions: SystemVersions,
     /// Whose `user.conf` lifecycle the profile follows.
@@ -110,6 +110,14 @@ pub struct Target {
     pub(crate) bigram_residual_grams: Vec<(Token, Vec<Token>)>,
 }
 
+impl Target {
+    pub(crate) fn originals(&self) -> std::sync::RwLockReadGuard<'_, SystemOriginals> {
+        self.originals
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 /// The facade fini's `user.conf` write ([`persistence::fini`]): libpinyin
 /// lowers the open counter its init raised and writes the marker, saved
 /// or not (`pinyin_fini`, `pinyin.cpp:1194-1200`); libzhuyin writes
@@ -118,6 +126,7 @@ pub struct Target {
 /// open runs its own `check_format` — when that handle drops: the
 /// context's fini. A process that dies before then leaves the raised
 /// counter on disk, as upstream's does.
+
 #[derive(Debug)]
 pub(crate) struct FiniGuard(Option<Arc<Target>>);
 
@@ -304,7 +313,7 @@ impl GenericUserStore<DefaultStore> {
         // failed open reads as a finished session, not a crash.
         let target = Arc::new(Target {
             dir: user_dir.map(Path::to_path_buf),
-            originals,
+            originals: std::sync::RwLock::new(originals),
             versions,
             law,
             open_counter: loaded.open_counter,
@@ -317,7 +326,7 @@ impl GenericUserStore<DefaultStore> {
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let has_user_data = db.write(|txn| {
-            seed_txn(txn, &loaded.state, &phrase_table, &target.originals)?;
+            seed_txn(txn, &loaded.state, &phrase_table, &target.originals())?;
             let total_rows = count_tables(txn)?;
             Ok(total_rows)
         })?;
@@ -370,7 +379,7 @@ fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
 /// disagrees with `user.bin` keeps the disagreement and
 /// `pinyin_remove_user_candidate` reproduces the pin's `:3750` assert
 /// against it. Nothing else reads the rows.
-fn seed_txn(
+pub(crate) fn seed_txn(
     txn: &mut dyn WriteTxn,
     state: &UserState,
     phrase_table: &BTreeSet<(Token, String)>,
