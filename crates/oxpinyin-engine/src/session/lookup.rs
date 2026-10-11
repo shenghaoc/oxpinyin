@@ -385,20 +385,20 @@ where
             // prepend. So answer an error on an explicit guess, and skip
             // the path rather than building a LONGER row from a corrupt
             // index on any other refresh.
-            if self.dictionary.overlong_extension_gate(keys.as_slice()) {
+            let tokens = self
+                .dictionary
+                .checked_extension_tokens(keys.as_slice())
+                .map_err(|error| {
+                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+                })?;
+            let Some(tokens) = tokens else {
                 if gate_overlong {
                     return Err(EngineError::OverlongUserIndexKey {
                         syllables: keys.len(),
                     });
                 }
                 continue;
-            }
-            let tokens = self
-                .dictionary
-                .suggest_extension_tokens(keys.as_slice())
-                .map_err(|error| {
-                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                })?;
+            };
             for token in tokens {
                 // `get_phrase_item` + the char-length cap: a phrase longer
                 // than `prefix_len * 2 + 1` characters is skipped

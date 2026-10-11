@@ -199,18 +199,32 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         );
         return false;
     }
-    if let (Some(&token), Some(dict)) = (same_library.first(), handle.dict.as_ref())
-        && let Some(introspection) = dict.token_introspection(token)
-        && introspection.text != phrase
-    {
-        crate::ffi::log_warning(if introspection.text.chars().count() == length {
-            "pinyin_iterator_add_phrase: assertion \
-             '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"
+    if let Some(&token) = same_library.first() {
+        let item_text = if let Some(dict) = handle.dict.as_ref() {
+            dict.token_introspection(token).map(|item| item.text)
         } else {
-            "pinyin_iterator_add_phrase: assertion \
+            user.phrase(token)
+                .ok()
+                .flatten()
+                .map(|item| item.text().to_owned())
+        };
+        // A missing item leaves the pin's PhraseItem at length zero;
+        // :568 then asserts before any import mutation.
+        if item_text.as_deref() != Some(phrase.as_str()) {
+            crate::ffi::log_warning(
+                if item_text
+                    .as_ref()
+                    .is_some_and(|text| text.chars().count() == length)
+                {
+                    "pinyin_iterator_add_phrase: assertion \
+             '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"
+                } else {
+                    "pinyin_iterator_add_phrase: assertion \
              'phrase_length == item.get_phrase_length()' failed"
-        });
-        return false;
+                },
+            );
+            return false;
+        }
     }
     if (1..=4).contains(&handle.index) {
         let Some(dict) = handle.dict.as_ref() else {

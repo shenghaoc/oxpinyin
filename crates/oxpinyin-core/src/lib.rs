@@ -338,6 +338,25 @@ pub trait Dictionary {
         Ok(Vec::new())
     }
 
+    /// Suggestions with the overlong-index gate checked in the same walk.
+    /// `None` names the pin's `search_suggestion` abort; `Some` holds the
+    /// tokens, including an empty list when the query has no extensions.
+    /// The default preserves existing dictionary implementations.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the backend cannot serve the walk.
+    fn checked_extension_tokens(
+        &self,
+        syllables: &[Self::Syllable],
+    ) -> Result<Option<Vec<PhraseToken>>, Self::Error> {
+        if self.overlong_extension_gate(syllables) {
+            Ok(None)
+        } else {
+            self.suggest_extension_tokens(syllables).map(Some)
+        }
+    }
+
     /// The phrase text a token owns, for rows the candidate surface must
     /// render from the token alone — `_token_get_phrase`
     /// (`pinyin.cpp:1994-2050` at the pin), which fills a LONGER
@@ -438,6 +457,13 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         syllables: &[Self::Syllable],
     ) -> Result<Vec<PhraseToken>, Self::Error> {
         (**self).suggest_extension_tokens(syllables)
+    }
+
+    fn checked_extension_tokens(
+        &self,
+        syllables: &[Self::Syllable],
+    ) -> Result<Option<Vec<PhraseToken>>, Self::Error> {
+        (**self).checked_extension_tokens(syllables)
     }
 
     fn phrase_text_for_token(&self, token: u32) -> Option<String> {

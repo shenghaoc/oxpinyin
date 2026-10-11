@@ -279,6 +279,36 @@ impl ChewingTable {
             })?;
         Ok(found)
     }
+
+    /// The suggestion lookup and range walk, checking raw key lengths
+    /// before empty/odd rows are skipped or their values decoded. Returns
+    /// `true` at the pin's overlong-key abort, stopping the store scan.
+    pub(crate) fn walk_suggestions(
+        &self,
+        keys: &[ChewingKey],
+        visit: &mut ExtensionVisitor<'_>,
+    ) -> Result<bool, DictError> {
+        if !self.key_exists(keys)? {
+            return Ok(false);
+        }
+        let encoded = index_key(keys);
+        let upper = prefix_upper_bound(&encoded);
+        let mut overlong = false;
+        self.dbm
+            .walk(&encoded, upper.as_deref(), &mut |key, value| {
+                overlong = key.len() / 2 > MAX_INDEX_KEY_WORDS;
+                if overlong {
+                    return Ok(true);
+                }
+                if value.is_empty() || !key.len().is_multiple_of(2) {
+                    return Ok(false);
+                }
+                let length = key.len() / 2;
+                let items = decode_items(value, length)?;
+                visit(length, &items)
+            })?;
+        Ok(overlong)
+    }
 }
 
 /// The most words a `ChewingLargeTable2` index key can hold: the pin
@@ -668,6 +698,59 @@ mod tests {
                 .has_overlong_extension(&[])
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn suggestion_checks_lengths_with_one_lookup_and_one_walk() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        struct Counted {
+            inner: MemoryDbm,
+            gets: Arc<AtomicUsize>,
+            walks: Arc<AtomicUsize>,
+        }
+        impl ChewingDbm for Counted {
+            fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
+                self.gets.fetch_add(1, Ordering::Relaxed);
+                self.inner.get(key)
+            }
+            fn walk(
+                &self,
+                lo: &[u8],
+                hi: Option<&[u8]>,
+                visit: &mut RowVisitor<'_>,
+            ) -> Result<(), DictError> {
+                self.walks.fetch_add(1, Ordering::Relaxed);
+                self.inner.walk(lo, hi, visit)
+            }
+        }
+        let ni = ChewingKey::from_pinyin("ni").unwrap();
+        for malformed in [false, true] {
+            let dbm = MemoryDbm::new();
+            dbm.put(encode_complete_key(&[ni]), Vec::new());
+            if malformed {
+                let mut odd = encode_complete_key(&[ni; 17]);
+                odd.push(7);
+                dbm.put(odd, Vec::new());
+            }
+            let gets = Arc::new(AtomicUsize::new(0));
+            let walks = Arc::new(AtomicUsize::new(0));
+            let table = ChewingTable::new(Box::new(Counted {
+                inner: dbm,
+                gets: gets.clone(),
+                walks: walks.clone(),
+            }));
+            assert_eq!(
+                table
+                    .walk_suggestions(&[ni], &mut |_, _| Ok(false))
+                    .unwrap(),
+                malformed
+            );
+            assert_eq!(gets.load(Ordering::Relaxed), 1);
+            assert_eq!(walks.load(Ordering::Relaxed), 1);
+        }
     }
 
     #[test]
