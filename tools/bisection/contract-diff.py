@@ -5231,19 +5231,33 @@ for _count in (715827882, 715827883, 1431655765, 1431655766):
     case(f'd18-remember-multiply-{_count}', control=True)(d18_remember((_count,)))
 
 
-def d18_unigram(boundary):
+def d18_unigram(boundary, text='你'):
     def probe(k):
-        token = tokens_of(k, '你')[0]
+        token = tokens_of(k, text)[0]
+        if text == '丠':
+            assert token >> 24 == 2, 'the alternate-sub-index control must use library 2'
         out = {'token': token, 'before': unigram_of(k, token)}
         if boundary:
+            # Select the token's actual sub-index, not an assumed GB token.
+            libraries = {'RESERVED': 0, 'GB_DICTIONARY': 1, 'GBK_DICTIONARY': 2,
+                         'OPENGRAM_DICTIONARY': 3, 'MERGED_DICTIONARY': 4,
+                         'ADDON_DICTIONARY': 5, 'NETWORK_DICTIONARY': 6, 'USER_DICTIONARY': 7}
+            library = token >> 24
+            entries = [line.split() for line in Path(k.data, 'table.conf').read_text().splitlines()
+                       if line.startswith('default ')]
+            entry = next(row for row in entries if libraries[row[1]] == library)
+            assert entry[3] != 'NULL', 'boundary fixture needs a system sub-index'
             # MemoryChunk's 8-byte header, then SubPhraseIndex::m_total_freq.
-            total = int.from_bytes(Path(k.data, 'gb_char.bin').read_bytes()[8:12], 'little')
+            total = int.from_bytes(Path(k.data, entry[3]).read_bytes()[8:12], 'little')
             deltas = (0xffffffff - total - 1, 1, 1, 0xffffffff)
-            out['library-total'] = total
+            out.update(library=library, subindex=entry[3], **{'library-total': total})
         else:
             deltas = (0xffffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, 0xffffffff)
         add = k.fn('token_add_unigram_frequency', B, P, U, U)
         out['steps'] = [[delta, add(k.inst, token, delta), unigram_of(k, token)] for delta in deltas]
+        if boundary:
+            assert [row[1] for row in out['steps']] == [True, True, False, False]
+            assert out['steps'][1][2] == out['steps'][2][2] == out['steps'][3][2]
         return out
     return probe
 
@@ -5347,48 +5361,59 @@ def d18_gram(total, token, count):
     return b''.join(n.to_bytes(4, 'little') for n in (total, token, count))
 
 
-def d18_bigram_fixture(k, system, user, current='号'):
+def d18_bigram_fixture(k, system, user, current='号', empty_system=False, extra_successor=False):
     prev, cur, other = (tokens_of(k, text)[0] for text in ('你', current, '我'))
     k.fn('free_instance', None, P)(k._inst)
     k._inst = None
     k.fn('fini', None, P)(k._ctx)
     k._ctx = None
-    if system is not None:
+    if system is not None or empty_system:
         copied = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
         shutil.copytree(k.data, copied, dirs_exist_ok=True)
         k.data = copied
-        d18_bigram_db(k, Path(copied, 'bigram.db'),
-                      [(prev.to_bytes(4, 'little'), d18_gram(system[0], cur, system[1]))])
+        system_rows = [] if empty_system else [
+            (prev.to_bytes(4, 'little'), d18_gram(system[0], cur, system[1]))]
+        d18_bigram_db(k, Path(copied, 'bigram.db'), system_rows)
     # More than one predecessor: the export's do/while leaves its last
     # loaded gram for the next has_next call (row 36, already fixed).
-    rows = [(p.to_bytes(4, 'little'), d18_gram(user[0], cur, user[1])) for p in (prev, other)]
+    records = [(cur, user[1])] + ([(other, 1)] if extra_successor else [])
+    gram = user[0].to_bytes(4, 'little') + b''.join(
+        t.to_bytes(4, 'little') + count.to_bytes(4, 'little') for t, count in sorted(records))
+    rows = [(p.to_bytes(4, 'little'), gram) for p in (prev, other)]
     rows.append((b'\x01\x00\x00\x00', b'\0' * 4))
     d18_bigram_db(k, Path(k.user, 'user_bigram.db'), rows)
     _write_user_conf(k)
     return prev, cur
 
 
-def d18_merge(system, user, current='号'):
+def d18_merge_observation(k):
+    assert k.fn('set_options', B, P, U)(k.ctx, (1 << 5) | (1 << 9))
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'nihao')
+    guessed = k.fn('guess_sentence', B, P)(k.inst)
+    sentences = final_step_sentences(k, k.inst)
+    first = guess_rows(k, k.inst, 0, 0x1e) if k.mode == 'pinyin' else zhuyin_guess_rows(k, k.inst, 0)
+    candidate = row_with_text(k, k.inst, 2, '你')
+    assert first['ret'] and candidate, 'missing normal predecessor candidate'
+    chosen = k.fn('choose_candidate', I, P, Z, P)(k.inst, 0, candidate)
+    constrained = k.fn('guess_sentence', B, P)(k.inst)
+    chosen_sentences = final_step_sentences(k, k.inst)
+    rows = guess_rows(k, k.inst, 2, 0x1e) if k.mode == 'pinyin' else zhuyin_guess_rows(k, k.inst, 2)
+    normal = [row for row in rows['rows'] if row[0] == 2]
+    assert normal, 'merged-row fixture must reach normal candidates'
+    return dict(parsed=parsed, guessed=guessed, chosen=chosen, constrained=constrained,
+                sentences=sentences, chosen_sentences=chosen_sentences,
+                ret=rows['ret'], candidates=normal)
+
+
+def d18_merge(system, user, current='号', empty_system=False, extra_successor=False, lam=None):
     def probe(k):
-        d18_bigram_fixture(k, system, user, current=current)
-        assert k.fn('set_options', B, P, U)(k.ctx, (1 << 5) | (1 << 9))
-        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'nihao')
-        guessed = k.fn('guess_sentence', B, P)(k.inst)
-        sentences = final_step_sentences(k, k.inst)
-        first = guess_rows(k, k.inst, 0, 0x1e) if k.mode == 'pinyin' else zhuyin_guess_rows(k, k.inst, 0)
-        candidate = row_with_text(k, k.inst, 2, '你')
-        assert first['ret'] and candidate, 'missing normal predecessor candidate'
-        chosen = k.fn('choose_candidate', I, P, Z, P)(k.inst, 0, candidate)
-        constrained = k.fn('guess_sentence', B, P)(k.inst)
-        chosen_sentences = final_step_sentences(k, k.inst)
-        rows = guess_rows(k, k.inst, 2, 0x1e) if k.mode == 'pinyin' else zhuyin_guess_rows(k, k.inst, 2)
-        # Only normal candidates use this merged row directly. N-best
-        # sentence candidates have an additional decoder scoring contract.
-        normal = [row for row in rows['rows'] if row[0] == 2]
-        assert normal, 'merged-row fixture must reach normal candidates'
-        return dict(parsed=parsed, guessed=guessed, chosen=chosen, constrained=constrained,
-                    sentences=sentences, chosen_sentences=chosen_sentences,
-                    ret=rows['ret'], candidates=normal)
+        d18_bigram_fixture(k, system, user, current=current, empty_system=empty_system,
+                          extra_successor=extra_successor)
+        if lam is not None:
+            conf = Path(k.data, 'table.conf')
+            conf.write_text(re.sub(r'(?m)^lambda parameter:.*$', 'lambda parameter:' + lam,
+                                   conf.read_text()))
+        return d18_merge_observation(k)
     return probe
 
 
@@ -5406,14 +5431,16 @@ def d18_bigram_export(count):
     return probe
 
 
-def d18_bigram_update(count, predicted=False):
+def d18_bigram_update(count, predicted=False, user_only=False):
     def probe(k):
-        prev, cur = d18_bigram_fixture(k, None, (count, count), current='好')
+        current = '嚎' if user_only else '好'
+        prev, cur = d18_bigram_fixture(k, None, (count + int(user_only), count), current=current,
+                                     empty_system=user_only, extra_successor=user_only)
         assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
         out = {'before': unigram_of(k, cur)}
         if predicted:
             out['predicted'] = k.fn('guess_predicted_candidates', B, P, S)(k.inst, '你'.encode())
-            candidate = row_with_text(k, k.inst, 4, '好')
+            candidate = row_with_text(k, k.inst, 4, current)
             assert candidate, 'missing predicted bigram candidate'
             out['choose'] = k.fn('choose_predicted_candidate', B, P, P)(k.inst, candidate)
             # A guessed, unconstrained sentence makes train set m_modified
@@ -5448,6 +5475,8 @@ def d18_bigram_update(count, predicted=False):
                    for i in range(4, len(raw), 8)]
         out['stored'] = [total, records]
         out['reopened-unigram'] = unigram_of(k, cur)
+        if user_only:
+            out['reopened-guess'] = d18_merge_observation(k)
         return out
     return probe
 
@@ -5475,6 +5504,21 @@ for _label, _count, _control in (('max', 0xffffffff - 69, True),
     case('d18-predicted-total-' + _label, control=_control)(d18_bigram_update(_count, predicted=True))
 for _count in (0x3fffffff, 0x40000000, 0x7fffffff, 0x80000000, 0x80000001, 0xffffffff):
     case(f'd18-bigram-export-{_count:x}', control=True)(d18_bigram_export(_count))
+
+# Review regressions: row/record presence survives a wrapped zero total/count
+# (074a2219 ngram.cpp:135-175,277-358; phonetic_lookup.h:600-640).
+for _mode in ('pinyin', 'zhuyin'):
+    case('d18-review-user-only-zero-total-' + _mode, mode=_mode)(
+        d18_merge(None, (0, 0xffffffff), current='嚎', empty_system=True, extra_successor=True))
+    for _label, _lam in (('default', None), ('half', '0.5'), ('zero-lambda', '0')):
+        case(f'd18-review-zero-count-zero-total-{_label}-{_mode}', mode=_mode,
+             control=_label != 'default' or _mode == 'pinyin')(
+            d18_merge((1, 1), (0xffffffff, 0xffffffff),
+                      current='好' if _label == 'default' else '嚎', lam=_lam))
+    case('d18-review-unigram-library-two-' + _mode, mode=_mode, control=True)(
+        d18_unigram(True, text='丠'))
+case('d18-review-predicted-user-only-zero-total')(
+    d18_bigram_update(0xffffffff - 69, predicted=True, user_only=True))
 
 
 def main():

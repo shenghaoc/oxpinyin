@@ -157,7 +157,7 @@ const fn merge_bigram_counts(system: u64, user: u64) -> u64 {
 /// Merged `(count, total)` for one bigram, or `None` when neither side has
 /// a gram (`merge_single_gram` returns false when both loads miss).
 ///
-/// A system miss with a non-zero user total is the user gram alone. A
+/// A system miss with a non-zero user count or total is the user gram alone. A
 /// system hit with a zero user overlay is the system gram alone. Both
 /// sides present: wrapping `guint32` addition of each stored field.
 #[must_use]
@@ -172,7 +172,7 @@ pub fn merge_bigram(
             let merged_total = merge_bigram_counts(u64::from(total), user_total);
             Some((merged_count, merged_total))
         }
-        None if user_total > 0 => {
+        None if user_count > 0 || user_total > 0 => {
             Some((u64::from(user_count as u32), u64::from(user_total as u32)))
         }
         None => None,
@@ -478,9 +478,10 @@ impl BigramLanguageModel {
         Ok(self.bigram.load_successors(prev)?)
     }
 
-    /// Returns `(count, total)` for the `prev → next` transition, or `None`
-    /// when `prev` has no bigram entry.
-    fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32)>, LmError> {
+    /// Returns `(count, total, successor_present)` for `prev → next`, or
+    /// `None` when `prev` has no bigram entry. A stored zero-count record is
+    /// still a `get_freq` hit (`074a2219 ngram.cpp:231-252`).
+    fn transition(&self, prev: u32, next: u32) -> Result<Option<(u32, u32, bool)>, LmError> {
         let Some(row) = self.load_successors(prev)? else {
             return Ok(None);
         };
@@ -488,8 +489,8 @@ impl BigramLanguageModel {
             .records
             .iter()
             .find(|(next_token, _)| *next_token == next)
-            .map_or(0, |(_, count)| *count);
-        Ok(Some((count, row.total)))
+            .map(|(_, count)| *count);
+        Ok(Some((count.unwrap_or(0), row.total, count.is_some())))
     }
 
     /// System `prev → next` counts with the §5 overlay already merged.
@@ -501,12 +502,15 @@ impl BigramLanguageModel {
         prev: u32,
         next: u32,
         user: UserCountDelta,
-    ) -> Result<Option<(u64, u64)>, LmError> {
+    ) -> Result<Option<(u64, u64, bool)>, LmError> {
+        let system = self.transition(prev, next)?;
+        let present = system.is_some_and(|(_, _, present)| present) || user.bigram_count > 0;
         Ok(merge_bigram(
-            self.transition(prev, next)?,
+            system.map(|(count, total, _)| (count, total)),
             user.bigram_count,
             user.bigram_total,
-        ))
+        )
+        .map(|(count, total)| (count, total, present)))
     }
 
     /// Interpolated model cost of `token` after `history`, without `edge_cost`.
@@ -552,17 +556,18 @@ impl BigramLanguageModel {
         };
 
         match self.merged_transition(prev.value(), token.value(), user)? {
-            Some((bigram_count, bigram_total)) if self.lambda_raw.is_some() => {
+            Some((bigram_count, bigram_total, _)) if self.lambda_raw.is_some() => {
                 let lambda = self.lambda_raw.unwrap_or_default();
                 Ok(
                     raw_blend_cost(lambda, bigram_count, bigram_total, unigram, unigram_total)
                         .unwrap_or(UNKNOWN_COST),
                 )
             }
-            Some((bigram_count, 0)) if bigram_count > 0 => {
+            Some((0, 0, true)) => Ok(oxpinyin_core::cost::NAN_COST),
+            Some((bigram_count, 0, _)) if bigram_count > 0 => {
                 Ok(zero_total_bigram_cost(self.lambda.numerator()))
             }
-            Some((bigram_count, bigram_total)) => {
+            Some((bigram_count, bigram_total, _)) => {
                 // λ·b/bt + (1 − λ)·u/ut over a common denominator, with λ =
                 // lambda_num / lambda_den from the model config. Checked
                 // arithmetic: a pathological λ denominator floors at
@@ -603,7 +608,7 @@ impl BigramLanguageModel {
             return Ok(0);
         };
         match self.merged_transition(prev.value(), token.value(), user)? {
-            Some((count, total)) => Ok(surprisal(count, total)),
+            Some((count, total, _)) => Ok(surprisal(count, total)),
             None => Ok(UNKNOWN_COST),
         }
     }
@@ -622,7 +627,11 @@ impl BigramLanguageModel {
         edge_cost: Cost,
         user: UserCountDelta,
     ) -> Result<Cost, LmError> {
-        Ok(edge_cost.saturating_add(self.model_cost(history, token, user)?))
+        let model = self.model_cost(history, token, user)?;
+        if model == oxpinyin_core::cost::NAN_COST {
+            return Ok(model);
+        }
+        Ok(edge_cost.saturating_add(model))
     }
 
     /// The item unigram of `token` plus a user delta. `Some(0)` is a token
@@ -706,7 +715,7 @@ impl BigramLanguageModel {
 
         if let Some(lambda) = self.lambda_raw {
             let blended = match self.merged_transition(prev.value(), token.value(), user)? {
-                Some((bigram_count, bigram_total)) if bigram_count > 0 => {
+                Some((bigram_count, bigram_total, true)) => {
                     raw_blend_cost(lambda, bigram_count, bigram_total, count, unigram_total)
                 }
                 _ => None,
@@ -733,11 +742,12 @@ impl BigramLanguageModel {
 
         // The blended branch, only when the merged bigram row actually
         // carries this successor: upstream's bigram expansion walks
-        // merged-gram successors (`search_bigram2`), so a count-0 next token
-        // is not a successor and takes the unigram branch instead.
+        // merged-gram successors (`search_bigram2`). Stored records survive
+        // a wrapped count of zero; absence, rather than count, gates the walk.
         let blended = match self.merged_transition(prev.value(), token.value(), user)? {
-            Some((bigram_count, 0)) if bigram_count > 0 => Some(zero_total_bigram_cost(lambda_num)),
-            Some((bigram_count, bigram_total)) if bigram_count > 0 => interpolate_ratio(
+            Some((0, 0, true)) => Some(oxpinyin_core::cost::NAN_COST),
+            Some((_, 0, true)) => Some(zero_total_bigram_cost(lambda_num)),
+            Some((bigram_count, bigram_total, true)) => interpolate_ratio(
                 lambda_num,
                 lambda_den,
                 u128::from(bigram_count),
