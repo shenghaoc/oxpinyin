@@ -6,12 +6,15 @@
  * lifecycle: init, set the parity options, allocate/free an instance, fini.
  * This mode performs no import, save or intermediate Callgrind dump. */
 #include <dlfcn.h>
+#include <dirent.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 #include <valgrind/callgrind.h>
 
 static void *symbol(void *so, const char *name) {
@@ -21,6 +24,26 @@ static void *symbol(void *so, const char *name) {
 }
 int main(int argc, char **argv) {
     if (argc < 4 || argc > 5) return 2;
+    if (mkdir(argv[3], 0700) != 0 && errno != EEXIST) {
+        perror("create user directory");
+        return 1;
+    }
+    DIR *user = opendir(argv[3]);
+    if (!user) { perror("open user directory"); return 1; }
+    errno = 0;
+    struct dirent *entry;
+    while ((entry = readdir(user))) {
+        if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, "..")) {
+            fprintf(stderr, "user directory must be fresh and empty\n");
+            closedir(user);
+            return 1;
+        }
+    }
+    int read_error = errno;
+    if (closedir(user) != 0 || read_error || access(argv[3], W_OK | X_OK) != 0) {
+        fprintf(stderr, "user directory must be readable and writable\n");
+        return 1;
+    }
     void *so = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     if (!so) { fprintf(stderr, "%s\n", dlerror()); return 1; }
     void *(*init)(const char *, const char *) = symbol(so, "pinyin_init");
@@ -44,7 +67,6 @@ int main(int argc, char **argv) {
     void (*end)(void *) = symbol(so, "pinyin_end_add_phrases");
     bool (*save)(void *) = symbol(so, "pinyin_save");
     unsigned iterations = argc == 5 ? (unsigned)strtoul(argv[4], NULL, 10) : 1000;
-    mkdir(argv[3], 0700);
     void *ctx = init(argv[2], argv[3]);
     if (!ctx) return 1;
     CALLGRIND_DUMP_STATS_AT("opened");
