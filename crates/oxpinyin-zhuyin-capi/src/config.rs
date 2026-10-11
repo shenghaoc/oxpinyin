@@ -184,6 +184,15 @@ pub extern "C" fn zhuyin_mask_out(context: *mut ZhuyinContext, mask: u32, value:
             );
             false
         }
+        oxpinyin_facade::MaskOutOutcome::ChunkHeaderRead => {
+            // Class (c), `memory_chunk.h:493`: the mask maps every loaded
+            // system library again and one is a directory.
+            crate::ffi::log_warning(
+                "zhuyin_mask_out: assertion 'ret_len == sizeof(length)' failed \
+                 (memory_chunk.h:493)",
+            );
+            false
+        }
     }
 }
 
@@ -208,6 +217,15 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
     // context's `table.conf`.
     match ctx.load_phrase_library(u32::from(index)) {
         Ok(loaded) => loaded,
+        // Class (c), `memory_chunk.h:493`: the library being loaded again is
+        // a directory the pin maps and asserts on.
+        Err(oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead) => {
+            crate::ffi::log_warning(
+                "zhuyin_load_phrase_library: assertion 'ret_len == sizeof(length)' failed \
+                 (memory_chunk.h:493)",
+            );
+            false
+        }
         Err(_) => {
             crate::ffi::log_warning(
                 "zhuyin_load_phrase_library: assertion 'SYSTEM_FILE == table_info->m_file_type \

@@ -168,6 +168,19 @@ impl OpenError {
             _ => None,
         }
     }
+
+    /// Whether the open failed on a system library that is a directory the
+    /// pin's `MemoryChunk::mmap` asserts on (`memory_chunk.h:493`): class
+    /// (c), answered with NULL and one warning.
+    #[must_use]
+    pub fn chunk_header_read(&self) -> bool {
+        matches!(
+            self,
+            Self::Dict(DictError::Library(LibraryError::Row(
+                RowFault::ChunkHeaderRead
+            )))
+        )
+    }
 }
 
 impl core::fmt::Display for OpenError {
@@ -497,6 +510,19 @@ impl RuntimeDict {
         self.system
             .libraries()
             .unmappable_now(|nibble| self.library_visible(u32::from(nibble)), only)
+    }
+
+    /// Whether the first loaded, visible system library (in library order;
+    /// with `only`, that one, visible or not: a reload targets an unloaded
+    /// library) the pin would map again and cannot is a
+    /// directory it asserts on (`memory_chunk.h:493`), not one it merely
+    /// cannot map.
+    #[must_use]
+    pub fn system_chunk_header_fault(&self, only: Option<u8>) -> bool {
+        self.system.libraries().chunk_header_fault_now(
+            |nibble| only.is_some() || self.library_visible(u32::from(nibble)),
+            only,
+        )
     }
 
     /// Unloads addon library `index`.
@@ -1813,6 +1839,12 @@ impl Runtime {
     #[must_use]
     pub fn unmappable_system_libraries(&self, only: Option<u8>) -> Vec<PathBuf> {
         self.dict.unmappable_system_libraries(only)
+    }
+
+    /// See [`RuntimeDict::system_chunk_header_fault`].
+    #[must_use]
+    pub fn system_chunk_header_fault(&self, only: Option<u8>) -> bool {
+        self.dict.system_chunk_header_fault(only)
     }
 
     /// Unloads addon library `index` from this runtime's dictionary.

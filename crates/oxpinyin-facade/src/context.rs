@@ -31,6 +31,12 @@ pub enum SaveOutcome {
     /// `assert`s and dies of SIGABRT. The C ABI answers `false` and the
     /// facade logs exactly one warning in its own domain.
     ChunkWriteFailed(ChunkHeaderField),
+    /// A loaded system library's file is a directory the pin maps again and
+    /// asserts on (`memory_chunk.h:493`, `_write_files`' diff of each system
+    /// library, `pinyin.cpp:956`, `zhuyin.cpp:589`); the pin dies of SIGABRT
+    /// before it writes anything. The C ABI answers `false` and the facade
+    /// logs exactly one warning in its own domain.
+    ChunkHeaderRead,
 }
 
 impl SaveOutcome {
@@ -86,6 +92,10 @@ pub enum MaskOutOutcome {
     /// `1 >= header_count` (`phrase_index.cpp:745`). The C ABI answers
     /// `false` and logs one warning.
     SystemLogMultipleHeaders,
+    /// A loaded system library's file is a directory the pin reloads and
+    /// asserts on (`memory_chunk.h:493`, `pinyin.cpp:1265`,
+    /// `zhuyin.cpp:800`). The C ABI answers `false` and logs one warning.
+    ChunkHeaderRead,
 }
 
 impl MaskOutOutcome {
@@ -154,6 +164,14 @@ impl OpenFailure {
         )
     }
 
+    /// Whether a system library is a directory the pin's
+    /// `MemoryChunk::mmap` asserts on while it loads at init
+    /// (`memory_chunk.h:493`). The C facades answer NULL with one warning.
+    #[must_use]
+    pub fn chunk_header_read(&self) -> bool {
+        matches!(self, Self::Runtime(error) if error.chunk_header_read())
+    }
+
     /// The system `table.conf` failure behind this open, if that is why it
     /// failed: [`TableConfError::Header`] is the pin's ordinary `false`
     /// return (the facade writes `load %s failed!`, no warning); every
@@ -192,6 +210,9 @@ pub enum LibraryRowAssert {
     NotDictionary,
     /// `ret_len == sizeof(length)` failed in `MemoryChunk::mmap`.
     NullChunkName,
+    /// The same assert, for a library file that is a directory the pin maps
+    /// again at this call (`memory_chunk.h:493`).
+    ChunkHeaderRead,
 }
 
 /// Bit 30 of [`LiveOptions::double_scheme`]: when set, the live
@@ -442,7 +463,15 @@ impl ContextCore {
         }
         // `_write_files` maps every loaded system library again to diff it
         // against the live one (`pinyin.cpp:956`, `zhuyin.cpp:589`), before
-        // it writes anything.
+        // it writes anything. A library that is a directory the pin asserts
+        // on kills it there (`memory_chunk.h:493`).
+        if self
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.system_chunk_header_fault(None))
+        {
+            return SaveOutcome::ChunkHeaderRead;
+        }
         self.report_unmappable_libraries(None);
         let Some(store) = self.user.as_mut() else {
             return SaveOutcome::NotSaved;
@@ -501,6 +530,13 @@ impl ContextCore {
     /// (`phrase_index.cpp:745`). A refused mask leaves the store untouched,
     /// where the pin's partial reloads die with its abort.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
+        if self
+            .runtime
+            .as_ref()
+            .is_some_and(|runtime| runtime.system_chunk_header_fault(None))
+        {
+            return MaskOutOutcome::ChunkHeaderRead;
+        }
         self.report_unmappable_libraries(None);
         // The pin's mask loop walks `index` 1..`PHRASE_INDEX_LIBRARY_COUNT`
         // and skips a sub-index `get_range` reports missing
@@ -556,7 +592,9 @@ impl ContextCore {
     ///
     /// [`LibraryRowAssert::NotLoadable`] where the pin `assert`s: the
     /// index is in range and its default row is neither `SYSTEM_FILE` nor
-    /// `USER_FILE` (`pinyin.cpp:457`, `zhuyin.cpp:372`).
+    /// `USER_FILE` (`pinyin.cpp:457`, `zhuyin.cpp:372`); or
+    /// [`LibraryRowAssert::ChunkHeaderRead`] when the library being loaded
+    /// again is a directory (`memory_chunk.h:493`).
     pub fn load_phrase_library(&self, index: u32) -> Result<bool, LibraryRowAssert> {
         let Some(runtime) = self.runtime.as_ref() else {
             return Ok(false);
@@ -570,6 +608,15 @@ impl ContextCore {
         };
         if !matches!(row.file_type, FileType::SystemFile | FileType::UserFile) {
             return Err(LibraryRowAssert::NotLoadable);
+        }
+        // A reload maps the file again (`pinyin.cpp:256`); a library that is
+        // a directory the pin asserts on kills it there
+        // (`memory_chunk.h:493`), before anything changes. A library that is
+        // still loaded is not mapped again.
+        if !runtime.dict().library_visible(index)
+            && runtime.system_chunk_header_fault(Some(row_index))
+        {
+            return Err(LibraryRowAssert::ChunkHeaderRead);
         }
         let loaded = runtime.load_library(index);
         if loaded && let Ok(index) = u8::try_from(index) {
@@ -599,6 +646,7 @@ impl ContextCore {
             Err(oxpinyin_runtime::LibraryError::Row(fault)) => Err(match fault {
                 RowFault::NotDictionary => LibraryRowAssert::NotDictionary,
                 RowFault::NullChunkName => LibraryRowAssert::NullChunkName,
+                RowFault::ChunkHeaderRead => LibraryRowAssert::ChunkHeaderRead,
             }),
             Err(error) => {
                 if let Some(path) = error.unmappable_path() {

@@ -44,6 +44,14 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             // failure keeps the descriptive one.
             if error.unknown_database_format() {
                 crate::ffi::log_warning(oxpinyin_facade::UNKNOWN_DATABASE_FORMAT_WARNING);
+            } else if error.chunk_header_read() {
+                // Class (c), `memory_chunk.h:493`: a system library is a
+                // directory whose reported size passes the header check and
+                // the pin's `MemoryChunk::mmap` asserts on reading it.
+                crate::ffi::log_warning(
+                    "pinyin_init: a system library is a directory the chunk header cannot be \
+                     read from (upstream asserts, memory_chunk.h:493)",
+                );
             } else if error.corrupt_log_header() {
                 // Class (c), `phrase_index_logger.h:202`: a system
                 // library's user .dbin carries a non-null-token
@@ -229,6 +237,14 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
                 "pinyin_save: assertion '{}' failed",
                 field.assert_expression()
             ));
+            false
+        }
+        // Class (c), `memory_chunk.h:493`: the save maps every loaded system
+        // library again and one is a directory.
+        oxpinyin_facade::SaveOutcome::ChunkHeaderRead => {
+            crate::ffi::log_warning(
+                "pinyin_save: assertion 'ret_len == sizeof(length)' failed (memory_chunk.h:493)",
+            );
             false
         }
         outcome => outcome.is_saved(),

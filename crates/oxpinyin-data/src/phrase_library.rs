@@ -93,6 +93,13 @@ pub enum RowFault {
     /// directory itself and `MemoryChunk::mmap` asserts on reading it
     /// (`memory_chunk.h:493`).
     NullChunkName,
+    /// The path is a directory whose `lseek(SEEK_END)` size is a header or
+    /// more: the header check passes, `read` fails with `EISDIR`, and
+    /// `MemoryChunk::mmap` asserts on the length word
+    /// (`memory_chunk.h:493`). Which pin site a directory reaches follows
+    /// the size the file system reports for it; a smaller one is the
+    /// ordinary [`LibraryError::Unmappable`].
+    ChunkHeaderRead,
 }
 
 impl LibraryError {
@@ -117,6 +124,9 @@ impl fmt::Display for LibraryError {
                 f.write_str("addon table.conf row is not a DICTIONARY")
             }
             Self::Row(RowFault::NullChunkName) => f.write_str("table.conf row names no chunk file"),
+            Self::Row(RowFault::ChunkHeaderRead) => {
+                f.write_str("chunk path is a directory the header cannot be read from")
+            }
         }
     }
 }
@@ -434,6 +444,9 @@ fn map_chunk(path: &Path) -> Result<map::MappedFile, LibraryError> {
         cause: Box::new(cause),
     };
     let bad = |message: &str| unmappable(LibraryError::Format(message.to_owned()));
+    if path.is_dir() {
+        return Err(directory_chunk_fault(path));
+    }
     let file = map::MappedFile::open(path).map_err(unmappable)?;
     let bytes = file.as_slice();
     let declared_len = u32_at(bytes, 0).ok_or_else(|| bad("chunk shorter than its header"))?;
@@ -445,6 +458,34 @@ fn map_chunk(path: &Path) -> Result<map::MappedFile, LibraryError> {
         return Err(bad("chunk checksum mismatch"));
     }
     Ok(file)
+}
+
+/// What `MemoryChunk::mmap` does with a directory (`memory_chunk.h:479-493`):
+/// it opens it, takes `file_size = lseek(fd, 0, SEEK_END)` and refuses a size
+/// under the 8-byte header (an ordinary `false`, [`LibraryError::Unmappable`]);
+/// from 8 up the `read` of the length word fails with `EISDIR` and the
+/// `assert` at `:493` kills the pin ([`RowFault::ChunkHeaderRead`]). The size
+/// is the file system's: ext4 reports the htree end of file for any
+/// directory, btrfs twice the summed length of the entry names. A directory
+/// that cannot be opened or sought is the same `false`.
+fn directory_chunk_fault(path: &Path) -> LibraryError {
+    use std::io::{Seek, SeekFrom};
+    let sought = std::fs::File::open(path).and_then(|mut dir| dir.seek(SeekFrom::End(0)));
+    match sought {
+        Ok(size) if size >= CHUNK_HEADER_SIZE as u64 => {
+            LibraryError::Row(RowFault::ChunkHeaderRead)
+        }
+        Ok(_) => LibraryError::Unmappable {
+            path: path.to_path_buf(),
+            cause: Box::new(LibraryError::Format(
+                "directory shorter than the chunk header".to_owned(),
+            )),
+        },
+        Err(error) => LibraryError::Unmappable {
+            path: path.to_path_buf(),
+            cause: Box::new(LibraryError::Io(error)),
+        },
+    }
 }
 
 /// Whether `MemoryChunk::mmap` accepts the file at `path` now, keeping

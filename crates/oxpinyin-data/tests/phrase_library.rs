@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use oxpinyin_data::chunk_format::{
     CHUNK_HEADER_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR, chunk_checksum,
 };
-use oxpinyin_data::phrase_library::{PhraseLibrary, verify_chunk};
+use oxpinyin_data::phrase_library::{LibraryError, PhraseLibrary, RowFault, verify_chunk};
 use oxpinyin_data::{AddonDictionary, PhraseLibraries};
 
 /// Builds one phrase-library chunk file from slot → item entries.
@@ -381,6 +381,42 @@ fn temp_dir(name: &str) -> PathBuf {
     std::fs::remove_file(&path).expect("remove the placeholder");
     std::fs::create_dir(&path).expect("create temp dir");
     path
+}
+
+/// `MemoryChunk::mmap` on a directory (`memory_chunk.h:479-493`): the size
+/// `lseek(SEEK_END)` reports decides between the ordinary refusal (under the
+/// 8-byte header) and the `read` failure the pin asserts on. The size is the
+/// file system's, so the test reads it the way the pin does and expects the
+/// matching outcome, whatever the temporary directory's file system is.
+#[test]
+fn a_directory_chunk_follows_the_size_the_file_system_reports() {
+    use std::io::{Seek, SeekFrom};
+    for (name, entry) in [("long", "e".repeat(25)), ("short", "x".to_owned())] {
+        let path = temp_dir(&format!("directory-chunk-{name}"));
+        std::fs::write(path.join(&entry), b"x").expect("fill the directory");
+        let size = std::fs::File::open(&path)
+            .and_then(|mut dir| dir.seek(SeekFrom::End(0)))
+            .expect("seek the directory");
+        for error in [
+            PhraseLibrary::open(&path).expect_err(name),
+            verify_chunk(&path).expect_err(name),
+        ] {
+            if size >= 8 {
+                assert!(
+                    matches!(error, LibraryError::Row(RowFault::ChunkHeaderRead)),
+                    "{name}: size {size}: {error}"
+                );
+                assert!(error.unmappable_path().is_none(), "{name}");
+            } else {
+                assert_eq!(
+                    error.unmappable_path(),
+                    Some(path.as_path()),
+                    "{name}: {size}"
+                );
+            }
+        }
+        let _ = std::fs::remove_dir_all(&path);
+    }
 }
 
 #[test]
