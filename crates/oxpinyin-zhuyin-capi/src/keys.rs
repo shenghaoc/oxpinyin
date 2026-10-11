@@ -105,18 +105,18 @@ pub extern "C" fn zhuyin_parse_chewing(
 /// bool zhuyin_get_zhuyin_string(zhuyin_instance_t * instance,
 ///                               ChewingKey * key, gchar ** utf8_str);
 /// ```
+///
+/// The pin's body never reads the instance (`zhuyin.cpp:1732-1741`): a NULL
+/// instance is a defined call there, so only the key and the out-param are
+/// touched and the instance parameter is unused (register row 41's class (b)
+/// guard does not apply to a parameter the pin never dereferences).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_zhuyin_string(
-    instance: *mut ZhuyinInstance,
+    _instance: *mut ZhuyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
-    display_string_getter(
-        instance,
-        key,
-        utf8_str,
-        oxpinyin_core::ChewingKey::zhuyin_string,
-    )
+    display_string_getter(key, utf8_str, oxpinyin_core::ChewingKey::zhuyin_string)
 }
 
 /// `zhuyin_get_pinyin_string` — render the key's pinyin spelling, dispatching
@@ -127,15 +127,22 @@ pub extern "C" fn zhuyin_get_zhuyin_string(
 /// bool zhuyin_get_pinyin_string(zhuyin_instance_t * instance,
 ///                               ChewingKey * key, gchar ** utf8_str);
 /// ```
+///
+/// Unlike the zhuyin getter this one reads the instance's scheme, so the pin
+/// dereferences it and a NULL one is register row 41's class (b) site; the
+/// guard answers `false`.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_pinyin_string(
     instance: *mut ZhuyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
 ) -> bool {
+    if instance.is_null() {
+        return false;
+    }
     // The scheme lives on the shared context atomic, read through the
     // instance; pass it into the closure so the shared getter can dispatch.
-    display_string_getter(instance, key, utf8_str, |core| {
+    display_string_getter(key, utf8_str, |core| {
         // SAFETY: `instance` is non-null and was produced by
         // `zhuyin_alloc_instance`.
         let scheme = unsafe { instance_ref(instance) }
@@ -153,15 +160,15 @@ pub extern "C" fn zhuyin_get_pinyin_string(
     })
 }
 
-/// The shared body of `zhuyin_get_zhuyin_string`: NULL the out-param, refuse
-/// the zero key on `get_table_index() == 0`, render.
+/// The shared body of the two string getters: NULL the out-param, refuse the
+/// zero key on `get_table_index() == 0`, render. The instance is not read
+/// here; `zhuyin_get_pinyin_string` guards it before the call.
 fn display_string_getter(
-    instance: *mut ZhuyinInstance,
     key: *mut ChewingKey,
     utf8_str: *mut *mut GChar,
     render: impl FnOnce(oxpinyin_core::ChewingKey) -> String,
 ) -> bool {
-    if instance.is_null() || key.is_null() || utf8_str.is_null() {
+    if key.is_null() || utf8_str.is_null() {
         return false;
     }
 

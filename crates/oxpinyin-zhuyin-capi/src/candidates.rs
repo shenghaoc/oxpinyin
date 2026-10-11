@@ -92,13 +92,18 @@ pub extern "C" fn zhuyin_get_candidate(
 /// Reads the zhuyin 4-value enum. This is one of the four symbols that must
 /// NOT reuse the pinyin 8-value enum: the zhuyin discriminants differ at 3
 /// and 4.
+///
+/// The pin's body never reads the instance (`zhuyin.cpp:1858-1863`): a NULL
+/// instance is a defined call there, so it is unused here. A NULL `candidate`
+/// is read unconditionally by the pin, so it is register row 41's class (b)
+/// site and the guard answers `false`.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_candidate_type(
-    instance: *mut ZhuyinInstance,
+    _instance: *mut ZhuyinInstance,
     candidate: *mut LookupCandidate,
     candidate_type: *mut lookup_candidate_type_t,
 ) -> bool {
-    if instance.is_null() || candidate.is_null() {
+    if candidate.is_null() {
         return false;
     }
 
@@ -125,13 +130,18 @@ pub extern "C" fn zhuyin_get_candidate_type(
 /// ```
 ///
 /// Out-param `utf8_str` is instance-borrowed (never freed by caller).
+///
+/// The pin's body never reads the instance (`zhuyin.cpp:1865-1870`): a NULL
+/// instance is a defined call there, so it is unused here. A NULL `candidate`
+/// is read unconditionally by the pin, so it is register row 41's class (b)
+/// site and the guard answers `false`.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_candidate_string(
-    instance: *mut ZhuyinInstance,
+    _instance: *mut ZhuyinInstance,
     candidate: *mut LookupCandidate,
     utf8_str: *mut *const GChar,
 ) -> bool {
-    if instance.is_null() || candidate.is_null() {
+    if candidate.is_null() {
         return false;
     }
 
