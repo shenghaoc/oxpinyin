@@ -1525,9 +1525,16 @@ impl<S: WriteStore> GenericUserStore<S> {
         let db = self.database();
         let seed = db.write(|txn| {
             let pair_key = codec::encode_token_pair(last, cur);
-            let prev = txn_get_u64_or(txn, BIGRAM, &pair_key, 0)?;
+            let recorded = txn
+                .get(BIGRAM, &pair_key)?
+                .map(|bytes| {
+                    codec::decode_u64(&bytes)
+                        .map_err(|_| StoreError::Backend("corrupt bigram count".into()))
+                })
+                .transpose()?;
+            let prev = recorded.unwrap_or(0) as u32;
             let seed = match policy {
-                SeedPolicy::Training => seed::training_seed((prev != 0).then_some(prev)),
+                SeedPolicy::Training => seed::training_seed(recorded),
                 SeedPolicy::Predicted => seed::predicted_seed(),
             };
             // `seed * unigram_factor` in `guint32`; the seeds are small.
@@ -1541,19 +1548,25 @@ impl<S: WriteStore> GenericUserStore<S> {
                 // the facade total has already taken the delta.
                 return Ok(None);
             }
-            txn.put(
-                BIGRAM,
-                &pair_key,
-                &codec::encode_u64(prev.saturating_add(seed)),
-            )?;
-
             let total_key = codec::encode_token(last);
-            let prev_total = txn_get_u64_or(txn, BIGRAM_TOTAL, &total_key, 0)?;
-            txn.put(
-                BIGRAM_TOTAL,
-                &total_key,
-                &codec::encode_u64(prev_total.saturating_add(seed)),
-            )?;
+            let prev_total = txn_get_u64_or(txn, BIGRAM_TOTAL, &total_key, 0)? as u32;
+            let next_total = prev_total.wrapping_add(seed as u32);
+            // Training's overflow guard skips only the bigram writes;
+            // pronunciation/unigram training below still takes the seed
+            // (074a2219 phonetic_lookup.h:897-929). Predicted selection
+            // has no guard (`pinyin.cpp:2634-2646`), so both fields wrap.
+            if matches!(policy, SeedPolicy::Predicted) || seed == 0 || prev_total <= next_total {
+                txn.put(
+                    BIGRAM,
+                    &pair_key,
+                    &codec::encode_u64(u64::from(prev.wrapping_add(seed as u32))),
+                )?;
+                txn.put(
+                    BIGRAM_TOTAL,
+                    &total_key,
+                    &codec::encode_u64(u64::from(next_total)),
+                )?;
+            }
 
             if matches!(policy, SeedPolicy::Training) {
                 // `train_result3` ignores the sub-index's refusal

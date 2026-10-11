@@ -1616,7 +1616,7 @@ def _craft_tkrzw(path, rows, kind):
     assert tk.tkrzw_dbm_close(db)
 
 
-def _craft_bdb(path, rows, dbtype, keep=False):
+def _craft_bdb(path, rows, dbtype, keep=False, read_keys=()):
     """A Berkeley DB `dbtype` container; `keep=True` adds to existing rows."""
     import ctypes.util
 
@@ -1644,23 +1644,34 @@ def _craft_bdb(path, rows, dbtype, keep=False):
     db.__db_put_pp.restype = C.c_int
     db.__db_close_pp.argtypes = [C.c_void_p, C.c_uint]
     db.__db_close_pp.restype = C.c_int
-    if os.path.exists(path) and not keep:
+    db.__db_get_pp.argtypes = [P, P, C.POINTER(DBT), C.POINTER(DBT), U]
+    db.__db_get_pp.restype = I
+    if rows is not None and os.path.exists(path) and not keep:
         os.unlink(path)
     handle = C.c_void_p()
     assert db.db_create(C.byref(handle), None, 0) == 0
     # DB_CREATE == 0x1; the pin opens its tables the same way
     # (`chewing_large_table2_bdb.cpp:90`, `ngram_bdb.cpp:56`).
-    assert db.__db_open_pp(handle, None, path.encode(), None, dbtype, 0x1, 0o600) == 0
+    flags = 0x1 if rows is not None else 0x400  # DB_CREATE / DB_RDONLY
+    assert db.__db_open_pp(handle, None, path.encode(), None, dbtype, flags, 0o600) == 0
     live = []
-    for key, value in rows:
+    for key, value in rows or ():
         kbuf = C.create_string_buffer(key)
         vbuf = C.create_string_buffer(value)
         live += [kbuf, vbuf]
         kd = DBT(C.cast(kbuf, C.c_void_p), len(key), 0, 0, 0, None, 0)
         vd = DBT(C.cast(vbuf, C.c_void_p), len(value), 0, 0, 0, None, 0)
         assert db.__db_put_pp(handle, None, C.byref(kd), C.byref(vd), 0) == 0
+    values = []
+    for key in read_keys:
+        kbuf = C.create_string_buffer(key)
+        kd = DBT(C.cast(kbuf, P), len(key), 0, 0, 0, None, 0)
+        vd = DBT()
+        assert db.__db_get_pp(handle, None, C.byref(kd), C.byref(vd), 0) == 0
+        values.append(C.string_at(vd.data, vd.size))
     assert db.__db_close_pp(handle, 0) == 0
     del live
+    return values
 
 
 def _craft_btree(path, keys):
@@ -5183,6 +5194,287 @@ def _(k):
 def _(k):
     token = _persist_pinyin_phrase(k, '你們', "ni'men")
     return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
+
+
+# #540 / D-18. Small boundary fixtures, never a repeated-training workload.
+# Read at libpinyin 074a2219: phrase_index.cpp:56-91, 150-179;
+# pinyin_parser2.cpp:274-360; ngram.cpp:277-358; pinyin.cpp:520-605,
+# 896-911, 2597-2650; phonetic_lookup.h:880-929.
+def d18_export_phrases(k):
+    it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
+    rows = []
+    while k.fn('iterator_has_next_phrase', B, P)(it):
+        phrase, reading, count = P(), P(), I(UNTOUCHED)
+        ret = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
+            it, C.byref(phrase), C.byref(reading), C.byref(count))
+        rows.append([ret, k.text(phrase.value), k.text(reading.value), count.value])
+    k.fn('end_get_phrases', None, P)(it)
+    return rows
+
+
+def d18_remember(deltas):
+    def probe(k):
+        out = {'parsed': consumed(k, 'parse_more_full_pinyins', b'nihaoshijie', fresh=False)}
+        rows = []
+        for delta in deltas:
+            ret = k.fn('remember_user_input', B, P, S, I)(k.inst, '你好世界'.encode(), delta)
+            token = next(t for t in tokens_of(k, '你好世界') if t >> 24 == 7)
+            rows.append([delta, ret, d18_export_phrases(k), unigram_of(k, token)])
+        out['steps'] = rows
+        return out
+    return probe
+
+
+case('d18-remember-reported', control=True)(d18_remember((-1, 0, 0x7fffffff)))
+case('d18-remember-signed-boundary', control=True)(d18_remember((0x7ffffffe, 1, 1, 0x7fffffff, 1)))
+for _count in (715827882, 715827883, 1431655765, 1431655766):
+    case(f'd18-remember-multiply-{_count}', control=True)(d18_remember((_count,)))
+
+
+def d18_unigram(boundary):
+    def probe(k):
+        token = tokens_of(k, '你')[0]
+        out = {'token': token, 'before': unigram_of(k, token)}
+        if boundary:
+            # MemoryChunk's 8-byte header, then SubPhraseIndex::m_total_freq.
+            total = int.from_bytes(Path(k.data, 'gb_char.bin').read_bytes()[8:12], 'little')
+            deltas = (0xffffffff - total - 1, 1, 1, 0xffffffff)
+            out['library-total'] = total
+        else:
+            deltas = (0xffffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, 0x7fffffff, 0xffffffff)
+        add = k.fn('token_add_unigram_frequency', B, P, U, U)
+        out['steps'] = [[delta, add(k.inst, token, delta), unigram_of(k, token)] for delta in deltas]
+        return out
+    return probe
+
+
+def d18_input(k):
+    assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+    out = {}
+    parse = k.fn('parse_more_full_pinyins', Z, P, S)
+    for length in (4096, 4097, 32766, 32767, 32768, 65535, 65536, 65537):
+        inst = k.alloc()
+        text = (b'ni' * ((length + 1) // 2))[:length]
+        ret = parse(inst, text)
+        stored = k.fn('get_parsed_input_length', Z, P)(inst)
+        # A later short parse must replace the retained long matrix/length.
+        short = parse(inst, b'hao')
+        out[str(length)] = [ret, stored, short, k.fn('get_parsed_input_length', Z, P)(inst)]
+        k.fn('free_instance', None, P)(inst)
+    for label, text in (('whole-tail', b'ni' * 16382 + b'hao'),
+                        ('split-tail', b'ni' * 16383 + b'hao'),
+                        ('separator-tail', b'ni' * 16383 + b"'hao"),
+                        ('invalid-tail', b'ni' * 16383 + b'!ni')):
+        inst = k.alloc()
+        out[label] = [parse(inst, text), k.fn('get_parsed_input_length', Z, P)(inst)]
+        k.fn('free_instance', None, P)(inst)
+    return out
+
+
+def d18_bigram_db(k, path, rows=None, read_keys=()):
+    """Independent raw SingleGram fixtures through each installed C DBM API.
+
+    `rows=None` reads an existing fixture; all returned buffers are copied
+    before closing the DBM. No installed system/user data is ever written.
+    """
+    import ctypes.util
+    conf = Path(k.data, 'table.conf').read_text()
+    if 'database format:BerkeleyDB' in conf or 'database format: BerkeleyDB' in conf:
+        return _craft_bdb(str(path), rows, 2, read_keys=read_keys)
+    writable = rows is not None
+    if writable and Path(path).exists():
+        Path(path).unlink()
+    if 'KyotoCabinet' in conf:
+        db = C.CDLL(ctypes.util.find_library('kyotocabinet'))
+        db.kcdbnew.restype = P
+        db.kcdbopen.argtypes, db.kcdbopen.restype = [P, S, U], I
+        db.kcdbset.argtypes, db.kcdbset.restype = [P, S, Z, S, Z], I
+        db.kcdbget.argtypes, db.kcdbget.restype = [P, S, Z, C.POINTER(Z)], P
+        db.kcdbloadsnap.argtypes, db.kcdbloadsnap.restype = [P, S], I
+        db.kcdbdumpsnap.argtypes, db.kcdbdumpsnap.restype = [P, S], I
+        db.kcdbclose.argtypes, db.kcdbclose.restype = [P], I
+        db.kcdbdel.argtypes, db.kcfree.argtypes = [P], [P]
+        handle = db.kcdbnew()
+        # The KC system gram is a HashDB; the user gram is a StashDB
+        # snapshot (`074a2219 ngram_kyotodb.cpp:54-90`), not a HashDB file.
+        snapshot = Path(path).name == 'user_bigram.db'
+        spec = b'-' if snapshot else (str(path) + '#type=kch').encode()
+        assert db.kcdbopen(handle, spec, 6 if writable or snapshot else 1)
+        try:
+            if snapshot and not writable:
+                assert db.kcdbloadsnap(handle, str(path).encode())
+            for key, value in rows or ():
+                assert db.kcdbset(handle, key, len(key), value, len(value))
+            if snapshot and writable:
+                assert db.kcdbdumpsnap(handle, str(path).encode())
+            values = []
+            for key in read_keys:
+                size = Z()
+                value = db.kcdbget(handle, key, len(key), C.byref(size))
+                assert value
+                values.append(C.string_at(value, size.value))
+                db.kcfree(value)
+            return values
+        finally:
+            assert db.kcdbclose(handle)
+            db.kcdbdel(handle)
+    assert 'Tkrzw' in conf, 'unknown fixture backend'
+    db = C.CDLL(ctypes.util.find_library('tkrzw'))
+    db.tkrzw_dbm_open.argtypes, db.tkrzw_dbm_open.restype = [S, B, S], P
+    db.tkrzw_dbm_set.argtypes, db.tkrzw_dbm_set.restype = [P, S, I, S, I, B], B
+    db.tkrzw_dbm_get.argtypes, db.tkrzw_dbm_get.restype = [P, S, I, C.POINTER(I)], P
+    db.tkrzw_dbm_close.argtypes, db.tkrzw_dbm_close.restype = [P], B
+    libc = C.CDLL(None)
+    libc.free.argtypes = [P]
+    handle = db.tkrzw_dbm_open(str(path).encode(), writable, b'dbm=HashDBM')
+    assert handle
+    try:
+        for key, value in rows or ():
+            assert db.tkrzw_dbm_set(handle, key, len(key), value, len(value), True)
+        values = []
+        for key in read_keys:
+            size = I()
+            value = db.tkrzw_dbm_get(handle, key, len(key), C.byref(size))
+            assert value
+            values.append(C.string_at(value, size.value))
+            libc.free(value)
+        return values
+    finally:
+        assert db.tkrzw_dbm_close(handle)
+
+
+def d18_gram(total, token, count):
+    return b''.join(n.to_bytes(4, 'little') for n in (total, token, count))
+
+
+def d18_bigram_fixture(k, system, user, current='号'):
+    prev, cur, other = (tokens_of(k, text)[0] for text in ('你', current, '我'))
+    k.fn('free_instance', None, P)(k._inst)
+    k._inst = None
+    k.fn('fini', None, P)(k._ctx)
+    k._ctx = None
+    if system is not None:
+        copied = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
+        shutil.copytree(k.data, copied, dirs_exist_ok=True)
+        k.data = copied
+        d18_bigram_db(k, Path(copied, 'bigram.db'),
+                      [(prev.to_bytes(4, 'little'), d18_gram(system[0], cur, system[1]))])
+    # More than one predecessor: the export's do/while leaves its last
+    # loaded gram for the next has_next call (row 36, already fixed).
+    rows = [(p.to_bytes(4, 'little'), d18_gram(user[0], cur, user[1])) for p in (prev, other)]
+    rows.append((b'\x01\x00\x00\x00', b'\0' * 4))
+    d18_bigram_db(k, Path(k.user, 'user_bigram.db'), rows)
+    _write_user_conf(k)
+    return prev, cur
+
+
+def d18_merge(system, user, current='号'):
+    def probe(k):
+        d18_bigram_fixture(k, system, user, current=current)
+        assert k.fn('set_options', B, P, U)(k.ctx, (1 << 5) | (1 << 9))
+        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'nihao')
+        guessed = k.fn('guess_sentence', B, P)(k.inst)
+        sentences = final_step_sentences(k, k.inst)
+        first = guess_rows(k, k.inst, 0, 0x1e) if k.mode == 'pinyin' else zhuyin_guess_rows(k, k.inst, 0)
+        candidate = row_with_text(k, k.inst, 2, '你')
+        assert first['ret'] and candidate, 'missing normal predecessor candidate'
+        chosen = k.fn('choose_candidate', I, P, Z, P)(k.inst, 0, candidate)
+        constrained = k.fn('guess_sentence', B, P)(k.inst)
+        chosen_sentences = final_step_sentences(k, k.inst)
+        rows = guess_rows(k, k.inst, 2, 0x1e) if k.mode == 'pinyin' else zhuyin_guess_rows(k, k.inst, 2)
+        # Only normal candidates use this merged row directly. N-best
+        # sentence candidates have an additional decoder scoring contract.
+        normal = [row for row in rows['rows'] if row[0] == 2]
+        assert normal, 'merged-row fixture must reach normal candidates'
+        return dict(parsed=parsed, guessed=guessed, chosen=chosen, constrained=constrained,
+                    sentences=sentences, chosen_sentences=chosen_sentences,
+                    ret=rows['ret'], candidates=normal)
+    return probe
+
+
+def d18_bigram_export(count):
+    def probe(k):
+        d18_bigram_fixture(k, None, (count, count), current='好')
+        it = k.fn('begin_get_bigram_phrases', P, P)(k.ctx)
+        out = {'has': k.fn('bigram_iterator_has_next_phrase', B, P)(it)}
+        phrase, reading, value = P(), P(), I(UNTOUCHED)
+        ret = k.fn('bigram_iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
+            it, C.byref(phrase), C.byref(reading), C.byref(value))
+        out['row'] = [ret, k.text(phrase.value), k.text(reading.value), value.value]
+        k.fn('end_get_bigram_phrases', None, P)(it)
+        return out
+    return probe
+
+
+def d18_bigram_update(count, predicted=False):
+    def probe(k):
+        prev, cur = d18_bigram_fixture(k, None, (count, count), current='好')
+        assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+        out = {'before': unigram_of(k, cur)}
+        if predicted:
+            out['predicted'] = k.fn('guess_predicted_candidates', B, P, S)(k.inst, '你'.encode())
+            candidate = row_with_text(k, k.inst, 4, '好')
+            assert candidate, 'missing predicted bigram candidate'
+            out['choose'] = k.fn('choose_predicted_candidate', B, P, P)(k.inst, candidate)
+            # A guessed, unconstrained sentence makes train set m_modified
+            # without changing counts, so save exposes the predicted update.
+            out['parse'] = consumed(k, 'parse_more_full_pinyins', b'wo', fresh=False)
+        else:
+            out['parse'] = consumed(k, 'parse_more_full_pinyins', b'nihao', fresh=False)
+        out['guess'] = k.fn('guess_sentence', B, P)(k.inst)
+        if not predicted:
+            choices = []
+            for offset, text in ((0, '你'), (2, '好')):
+                if k.mode == 'pinyin':
+                    assert k.fn('guess_candidates', B, P, Z, U)(k.inst, offset, 0x1e)
+                else:
+                    assert k.fn('guess_candidates_after_cursor', B, P, Z)(k.inst, offset)
+                candidate = row_with_text(k, k.inst, 2, text)
+                assert candidate, 'missing normal candidate: ' + text
+                choices.append(k.fn('choose_candidate', I, P, Z, P)(k.inst, offset, candidate))
+            out['choices'] = choices
+            out['chosen-guess'] = k.fn('guess_sentence', B, P)(k.inst)
+        out['train'] = (k.fn('train', B, P, C.c_ubyte)(k.inst, 0) if k.mode == 'pinyin'
+                        else k.fn('train', B, P)(k.inst))
+        out['after'] = unigram_of(k, cur)
+        out['save'] = k.fn('save', B, P)(k.ctx)
+        k.fn('free_instance', None, P)(k._inst)
+        k._inst = None
+        k.fn('fini', None, P)(k._ctx)
+        k._ctx = None
+        raw = d18_bigram_db(k, Path(k.user, 'user_bigram.db'), read_keys=(prev.to_bytes(4, 'little'),))[0]
+        total = int.from_bytes(raw[:4], 'little')
+        records = [[int.from_bytes(raw[i:i+4], 'little'), int.from_bytes(raw[i+4:i+8], 'little')]
+                   for i in range(4, len(raw), 8)]
+        out['stored'] = [total, records]
+        out['reopened-unigram'] = unigram_of(k, cur)
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('d18-unigram-max-' + _mode, mode=_mode, control=True)(d18_unigram(False))
+    case('d18-unigram-total-boundary-' + _mode, mode=_mode, control=True)(d18_unigram(True))
+    case('d18-input-boundaries-' + _mode, mode=_mode, control=True)(d18_input)
+    for _label, _system, _user, _control in (
+            ('total-before', (1, 1), (0xfffffffe, 1), True),
+            ('total-zero', (1, 1), (0xffffffff, 1), False),
+            ('total-after', (2, 1), (0xffffffff, 1), False),
+            ('count-before', (0x80000000, 1), (0xffffffff, 0xfffffffe), True),
+            ('count-zero', (0x80000000, 1), (0xffffffff, 0xffffffff), False),
+            ('count-after', (0x80000000, 2), (0xffffffff, 0xffffffff), False)):
+        case(f'd18-merge-{_label}-{_mode}', mode=_mode, control=_control)(
+            d18_merge(_system, _user, current='嚎' if _label.startswith('count-') else '号'))
+    for _label, _count, _control in (
+            ('stored-zero', 0, False), ('seed-before', 0x7fffffff, True), ('seed-zero', 0x80000000, False),
+            ('seed-after', 0x80000001, False), ('total-max', 0xffffffff - 22080, True),
+            ('total-overflow', 0xffffffff - 22080 + 1, False)):
+        case(f'd18-train-{_label}-{_mode}', mode=_mode, control=_control)(d18_bigram_update(_count))
+for _label, _count, _control in (('max', 0xffffffff - 69, True),
+                                ('zero', 0xffffffff - 68, False), ('after', 0xffffffff - 67, False)):
+    case('d18-predicted-total-' + _label, control=_control)(d18_bigram_update(_count, predicted=True))
+for _count in (0x3fffffff, 0x40000000, 0x7fffffff, 0x80000000, 0x80000001, 0xffffffff):
+    case(f'd18-bigram-export-{_count:x}', control=True)(d18_bigram_export(_count))
 
 
 def main():

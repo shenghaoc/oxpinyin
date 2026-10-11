@@ -147,12 +147,19 @@ pub const fn merge_counts(system: u64, user: u64) -> u64 {
     system.saturating_add(user)
 }
 
+/// Stored `SingleGram` fields, unlike scoring costs, are `guint32`s.
+/// Both sums in 074a2219 `storage/ngram.cpp:305,332` wrap before the
+/// merged row is read. Keep this separate from wider unigram overlays.
+const fn merge_bigram_counts(system: u64, user: u64) -> u64 {
+    (system as u32).wrapping_add(user as u32) as u64
+}
+
 /// Merged `(count, total)` for one bigram, or `None` when neither side has
 /// a gram (`merge_single_gram` returns false when both loads miss).
 ///
 /// A system miss with a non-zero user total is the user gram alone. A
 /// system hit with a zero user overlay is the system gram alone. Both
-/// sides present: saturating addition of each field.
+/// sides present: wrapping `guint32` addition of each stored field.
 #[must_use]
 pub fn merge_bigram(
     system: Option<(u32, u32)>,
@@ -161,15 +168,13 @@ pub fn merge_bigram(
 ) -> Option<(u64, u64)> {
     match system {
         Some((count, total)) => {
-            let merged_count = merge_counts(u64::from(count), user_count);
-            let merged_total = merge_counts(u64::from(total), user_total);
-            if merged_total == 0 {
-                None
-            } else {
-                Some((merged_count, merged_total))
-            }
+            let merged_count = merge_bigram_counts(u64::from(count), user_count);
+            let merged_total = merge_bigram_counts(u64::from(total), user_total);
+            Some((merged_count, merged_total))
         }
-        None if user_total > 0 => Some((user_count, user_total)),
+        None if user_total > 0 => {
+            Some((u64::from(user_count as u32), u64::from(user_total as u32)))
+        }
         None => None,
     }
 }
@@ -182,13 +187,13 @@ pub fn merge_bigram(
 /// than once per pair.
 ///
 /// `None` is the both-loads-miss of [`merge_bigram`]: no system row and a
-/// user side contributing nothing (no rows, zero total). Unlike the
-/// per-pair form, a present system row with a zero total still merges —
+/// user side contributing nothing (no rows, zero total). A present
+/// system row with a zero total still merges —
 /// the pin's `merge_single_gram` builds the merged gram whenever either
 /// load answers, and a row-level miss would drop the row's records.
 ///
 /// Records are the union of both sides' tokens, each count a
-/// [`merge_counts`] saturating add, ascending by token.
+/// wrapping `guint32` add, ascending by token (`ngram.cpp:277-358`).
 #[must_use]
 pub fn merge_bigram_row(
     system: Option<&BigramRow>,
@@ -201,17 +206,17 @@ pub fn merge_bigram_row(
     let mut counts: BTreeMap<u32, u64> = BTreeMap::new();
     let mut total: u64 = 0;
     if let Some(row) = system {
-        total = merge_counts(total, u64::from(row.total));
+        total = merge_bigram_counts(total, u64::from(row.total));
         for (token, count) in &row.records {
             let slot = counts.entry(*token).or_default();
-            *slot = merge_counts(*slot, u64::from(*count));
+            *slot = merge_bigram_counts(*slot, u64::from(*count));
         }
     }
     if !user_rows.is_empty() || user_total > 0 {
-        total = merge_counts(total, user_total);
+        total = merge_bigram_counts(total, user_total);
         for (token, count) in user_rows {
             let slot = counts.entry(*token).or_default();
-            *slot = merge_counts(*slot, *count);
+            *slot = merge_bigram_counts(*slot, *count);
         }
     }
     Some((counts.into_iter().collect(), total))
@@ -311,14 +316,28 @@ fn raw_blend_cost(
     unigram: u64,
     unigram_total: u64,
 ) -> Option<Cost> {
-    if bigram_total == 0 || unigram_total == 0 {
+    if unigram_total == 0 {
         return None;
     }
+    // A wrapped SingleGram total remains present. The pin divides in
+    // gfloat even at zero (`phonetic_lookup.h:608`), yielding infinity
+    // for a positive count; probability_cost preserves its special cost.
     let bigram_poss = bigram_count as f32 / bigram_total as f32;
     let unigram_poss = unigram as f64 / unigram_total as f64;
     probability_cost(
         f64::from(lambda * bigram_poss) + f64::from(unigram_lambda(lambda)) * unigram_poss,
     )
+}
+
+/// The integer-ratio path's equivalent of the pin's positive count / 0.
+/// `lambda * inf` is NaN at zero lambda, infinity otherwise. Preserve
+/// those existing special costs without a transcendental or wider sum.
+fn zero_total_bigram_cost(lambda_num: u128) -> Cost {
+    if lambda_num == 0 {
+        oxpinyin_core::cost::NAN_COST
+    } else {
+        oxpinyin_core::cost::NEG_INF_COST
+    }
 }
 
 impl BigramLanguageModel {
@@ -505,7 +524,7 @@ impl BigramLanguageModel {
     ///
     /// `user` is the §5 additive overlay. Zero is identity: the frozen
     /// λ-blend (`docs/findings/scoring-spec.md`) runs over the same counts
-    /// as before. Non-zero values are saturating-added to the system counts
+    /// as before. Bigram fields wrap at their stored `guint32` width
     /// *before* the probability is taken; λ is not touched.
     fn model_cost(
         &self,
@@ -540,6 +559,9 @@ impl BigramLanguageModel {
                         .unwrap_or(UNKNOWN_COST),
                 )
             }
+            Some((bigram_count, 0)) if bigram_count > 0 => {
+                Ok(zero_total_bigram_cost(self.lambda.numerator()))
+            }
             Some((bigram_count, bigram_total)) => {
                 // λ·b/bt + (1 − λ)·u/ut over a common denominator, with λ =
                 // lambda_num / lambda_den from the model config. Checked
@@ -562,7 +584,7 @@ impl BigramLanguageModel {
                 }
             }
             // Previous token absent from both grams (no evidence of this
-            // transition at all), or a degenerate zero-total entry: floor at
+            // transition at all): floor at
             // UNKNOWN_COST — the same floor a count-0 next-token gets — so an
             // unseen transition never scores cheaper than a rare observed one.
             None => Ok(UNKNOWN_COST),
@@ -714,6 +736,7 @@ impl BigramLanguageModel {
         // merged-gram successors (`search_bigram2`), so a count-0 next token
         // is not a successor and takes the unigram branch instead.
         let blended = match self.merged_transition(prev.value(), token.value(), user)? {
+            Some((bigram_count, 0)) if bigram_count > 0 => Some(zero_total_bigram_cost(lambda_num)),
             Some((bigram_count, bigram_total)) if bigram_count > 0 => interpolate_ratio(
                 lambda_num,
                 lambda_den,
@@ -813,7 +836,7 @@ mod merge_tests {
     }
 
     #[test]
-    fn row_merge_unions_tokens_with_saturating_counts() {
+    fn row_merge_unions_tokens() {
         let system = row(10, &[(1, 3), (2, 4)]);
         let (records, total) =
             merge_bigram_row(Some(&system), &[(2, 5), (3, 6)], 11).expect("both sides merge");
@@ -823,8 +846,7 @@ mod merge_tests {
 
     #[test]
     fn row_merge_keeps_a_zero_total_system_row() {
-        // The per-pair `merge_bigram` drops a zero-total pair; the row
-        // form must not — the pin's `merge_single_gram` answers true as
+        // Both forms retain a zero-total pair: `merge_single_gram` answers true as
         // soon as one load answers, and dropping the row would lose its
         // records.
         let system = row(0, &[(5, 2)]);
@@ -832,19 +854,42 @@ mod merge_tests {
             merge_bigram_row(Some(&system), &[], 0).expect("system row alone merges");
         assert_eq!(records, [(5, 2)]);
         assert_eq!(total, 0);
-        assert_eq!(merge_bigram(Some((2, 0)), 0, 0), None);
+        assert_eq!(merge_bigram(Some((2, 0)), 0, 0), Some((2, 0)));
     }
 
     #[test]
-    fn row_merge_saturates_instead_of_wrapping() {
-        let system = row(u32::MAX, &[(1, u32::MAX)]);
-        let (records, total) = merge_bigram_row(
-            Some(&system),
-            &[(1, u64::MAX - u64::from(u32::MAX) + 1)],
-            u64::MAX - u64::from(u32::MAX) + 1,
-        )
-        .expect("saturated merge");
-        assert_eq!(records, [(1, u64::MAX)]);
-        assert_eq!(total, u64::MAX);
+    fn bigram_merge_wraps_each_field_at_the_stored_width() {
+        let system = row(1, &[(1, 1)]);
+        for (user, expected) in [(u32::MAX - 1, u32::MAX), (u32::MAX, 0)] {
+            let (records, total) =
+                merge_bigram_row(Some(&system), &[(1, u64::from(user))], u64::from(user))
+                    .expect("a wrapped total still has a row");
+            assert_eq!(records, [(1, u64::from(expected))]);
+            assert_eq!(total, u64::from(expected));
+            assert_eq!(
+                merge_bigram(Some((1, 1)), u64::from(user), u64::from(user)),
+                Some((u64::from(expected), u64::from(expected)))
+            );
+        }
+        assert_eq!(
+            merge_bigram(Some((2, 2)), u64::from(u32::MAX), u64::from(u32::MAX)),
+            Some((1, 1))
+        );
+    }
+
+    #[test]
+    fn wrapped_zero_total_keeps_the_pins_infinite_probability() {
+        assert_eq!(
+            super::raw_blend_cost(0.312699, 2, 0, 1, 10),
+            Some(oxpinyin_core::cost::NEG_INF_COST)
+        );
+        assert_eq!(
+            super::zero_total_bigram_cost(1),
+            oxpinyin_core::cost::NEG_INF_COST
+        );
+        assert_eq!(
+            super::zero_total_bigram_cost(0),
+            oxpinyin_core::cost::NAN_COST
+        );
     }
 }
