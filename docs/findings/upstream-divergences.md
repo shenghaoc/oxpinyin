@@ -2353,9 +2353,12 @@ removal checks.
   `PHRASE_INDEX_LIBRARY_COUNT` = 16 entries).
 - **Mechanism:** index 16 reads one element past the array and calls
   through the value found there — an out-of-bounds read.
-- **What oxpinyin does instead:** refuses every library that is not a
-  user file (`crates/oxpinyin-zhuyin-capi/src/iterators.rs:81`) and
-  answers `false`.
+- **What oxpinyin does instead:** `zhuyin_begin_add_phrases` stores any index
+  as the pin does (`crates/oxpinyin-zhuyin-capi/src/iterators.rs:33`); the
+  following `zhuyin_iterator_add_phrase` takes the `USER_FILE` libraries and
+  the loaded system libraries 1..=4, and refuses every other index — library
+  16 included — with `false`
+  (`crates/oxpinyin-zhuyin-capi/src/iterators.rs:132`).
 - **Externally observable:** yes — the audit's libzhuyin battery
   (#526, comment of 2026-09-25): SIGSEGV on the pin on all three cells,
   `false` on oxpinyin. Class (b). The pinyin facade's `_add_phrase`

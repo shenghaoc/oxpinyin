@@ -168,8 +168,9 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest_positions(
 /// The pin's body never reads the instance (`zhuyin.cpp:1942-1946`): a NULL
 /// instance is a defined call there, so it is unused here. The key-rest
 /// pointer is read and `length` is written unconditionally by the pin, so a
-/// NULL `length` is register row 41's class (b) site and the guard answers
-/// `false`.
+/// NULL `length` is register row 41's class (b) site; the optional write is
+/// skipped and the call still answers `true`, as the pinyin twin does
+/// (`crates/oxpinyin-capi/src/cursor.rs:189-201`).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_zhuyin_key_rest_length(
     _instance: *mut ZhuyinInstance,
