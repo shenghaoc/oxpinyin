@@ -888,6 +888,79 @@ mod tests {
     }
 
     #[test]
+    fn mask_out_replays_only_the_validated_system_log_snapshot() {
+        use oxpinyin_data::chunk_format::build_memory_chunk;
+        use oxpinyin_data::chunk_write::encode_phrase_item;
+        use oxpinyin_data::user_files::{LogRecord, encode_log_records};
+
+        let dir = tempdir("mask-snapshot");
+        let original = originals();
+        let old = original[&1].item(1).expect("original item");
+        let mut new = old.clone();
+        new.phrase = vec![0x9f98];
+        let header = LogRecord::ModifyHeader {
+            old_total: 100,
+            new_total: 100,
+        };
+        let payload = encode_log_records(&[
+            header.clone(),
+            LogRecord::Modify {
+                token: 1,
+                old_item: encode_phrase_item(&old).expect("old item"),
+                new_item: encode_phrase_item(&new).expect("new item"),
+            },
+        ])
+        .expect("valid log");
+        let valid = build_memory_chunk(&payload).expect("valid frame");
+        let mut non_null_header =
+            encode_log_records(std::slice::from_ref(&header)).expect("header");
+        non_null_header[4..8].copy_from_slice(&1_u32.to_le_bytes());
+        let duplicate_headers =
+            encode_log_records(&[header.clone(), header.clone()]).expect("duplicate headers");
+        let surviving_add = encode_log_records(&[
+            header,
+            LogRecord::Add {
+                token: 2,
+                new_item: encode_phrase_item(&new).expect("added item"),
+            },
+        ])
+        .expect("surviving ADD");
+        let mut store =
+            UserStore::open_libpinyin(&dir, original.clone(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        let path = dir.join("gb_char.dbin");
+        for replacement in [non_null_header, duplicate_headers, surviving_add] {
+            std::fs::write(&path, &valid).expect("validated log");
+            let logs = store
+                .validate_system_logs(|_| true, 0x00ff_ffff, 0)
+                .expect("preflight");
+            // A concurrent atomic save changes the path after preflight.
+            // Replay must consume the snapshot, never this abort-shaped log.
+            let tmp = dir.join("gb_char.dbin.tmp");
+            std::fs::write(
+                &tmp,
+                build_memory_chunk(&replacement).expect("replacement frame"),
+            )
+            .expect("replacement");
+            std::fs::rename(tmp, &path).expect("atomic replacement");
+            store.mask_out(0x00ff_ffff, 0).expect("mask tables");
+            store
+                .reload_system_libraries(original.clone(), 0x00ff_ffff, 0, logs)
+                .expect("snapshot replay");
+            assert_eq!(
+                store
+                    .system_item_override(0x0100_0001)
+                    .expect("item")
+                    .expect("override"),
+                new,
+            );
+            assert!(store.phrase(0x0100_0002).expect("absent ADD").is_none());
+        }
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
     fn trained_pronunciations_reopen_with_tones_and_path_multiplicity() {
         use oxpinyin_core::{PhraseToken, UserModel};
         let dir = tempdir("trained-prons");

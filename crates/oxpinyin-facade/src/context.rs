@@ -541,7 +541,7 @@ impl ContextCore {
         }
         // The pin's mask loop walks `index` 1..`PHRASE_INDEX_LIBRARY_COUNT`
         // and skips a sub-index `get_range` reports missing
-        // (`pinyin.cpp:1235-1241`, `zhuyin.cpp:792-798`); the runtime's
+        // (`pinyin.cpp:1235-1241`, `zhuyin.cpp:770-776`); the runtime's
         // visibility mask is that unloaded set.
         let visible = |nibble: u8| {
             self.runtime
@@ -551,8 +551,8 @@ impl ContextCore {
         let Some(store) = self.user.as_mut() else {
             return MaskOutOutcome::Done(false);
         };
-        match store.validate_system_logs(visible, mask, value) {
-            Ok(()) => {}
+        let logs = match store.validate_system_logs(visible, mask, value) {
+            Ok(logs) => logs,
             Err(UserStoreError::SystemLogHeaderToken) => {
                 return MaskOutOutcome::SystemLogHeaderToken;
             }
@@ -563,7 +563,7 @@ impl ContextCore {
                 return MaskOutOutcome::SystemLogSurvivingAdd;
             }
             Err(_) => return MaskOutOutcome::Done(false),
-        }
+        };
         match store.mask_out(mask, value) {
             Ok(()) => {
                 // Replace each loaded system sub-index before replaying its
@@ -572,7 +572,7 @@ impl ContextCore {
                 if let Some(runtime) = self.runtime.as_ref() {
                     let originals = runtime.reload_system_libraries();
                     if store
-                        .reload_system_libraries(originals, mask, value)
+                        .reload_system_libraries(originals, mask, value, logs)
                         .is_err()
                     {
                         return MaskOutOutcome::Done(false);

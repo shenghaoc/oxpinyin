@@ -4802,7 +4802,8 @@ def token_phrase_of(k, token):
     return [ret, length.value, k.text(text.value)]
 
 
-def mask_out_system_reload(k, saved, mask=0xFFFFFFFF, selected=False, atomic=False, headerless=False):
+def mask_out_system_reload(k, saved, mask=0xFFFFFFFF, selected=False, atomic=False,
+                           headerless=False, dropped=False):
     phrase = '龘龘'
     assert not tokens_of(k, phrase), 'the setup phrase already exists'
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 1)
@@ -4842,6 +4843,21 @@ def mask_out_system_reload(k, saved, mask=0xFFFFFFFF, selected=False, atomic=Fal
     out['after'] = token_phrase_of(k, tokens[0])
     out['phrase-table-before'] = tokens
     out['phrase-table-after'] = tokens_of(k, phrase)
+    if dropped:
+        # A phrase-table token is not a live sub-index item. The pin refuses
+        # the item update and skips it when pricing a pronunciation hit
+        # (phrase_index.cpp:150-174; phonetic_lookup.h:646-647 at 074a2219).
+        out['add-unigram'] = k.fn('token_add_unigram_frequency', B, P, U, U)(
+            k.inst, tokens[0], 7)
+        out['unigram'] = unigram_of(k, tokens[0])
+        out['parsed'] = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b"da2'da2")
+        out['guessed'] = k.fn('guess_sentence', B, P)(k.inst)
+        # Sentence lookup prices pronunciation hits only after checking
+        # get_phrase_item. Candidate-list formatting dereferences the pin's
+        # dangling table token, so use this defined lookup path instead.
+        ret, sentence = (sentence_out(k, k.inst, 0) if k.mode == 'pinyin' else
+                         zhuyin_sentence_out(k, k.inst))
+        out['lookup'] = [ret, phrase in (sentence or '')]
     if atomic:
         out.update({'untouched-item': out['before'] == out['after'],
                     'untouched-other-library': token_phrase_of(k, other_token) == other_item,
@@ -4862,6 +4878,10 @@ for _mode in ('pinyin', 'zhuyin'):
         lambda k: mask_out_system_reload(k, True, 0x00FFFFFF, selected=True))
     case('mask-out-system-headerless-add-' + _mode, mode=_mode)(
         lambda k: mask_out_system_reload(k, True, 0x00FFFFFF, headerless=True))
+    case('mask-out-dropped-add-full-' + _mode, mode=_mode)(
+        lambda k: mask_out_system_reload(k, True, dropped=True))
+    case('mask-out-dropped-add-headerless-' + _mode, mode=_mode)(
+        lambda k: mask_out_system_reload(k, True, 0x00FFFFFF, headerless=True, dropped=True))
 
 
 def mask_out_system_modify(k, header=True, disk=False):
