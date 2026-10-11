@@ -555,12 +555,43 @@ impl Db {
     }
 }
 
-// SAFETY: ownership may move between threads, but the standalone handle
-// has exclusive one-thread-at-a-time use. There are no transactions or
-// thread-affine lockers in this configuration. SharedDb's Mutex covers
-// all database and cursor calls, and Cursor is not Send. Output DBTs use
-// caller-owned memory, so moving the owner exposes no native read buffer.
-// Db has no Sync implementation: unprotected concurrent use is refused.
+// SAFETY: ownership may move between threads, but native use is exclusive.
+// SharedDb's Mutex covers every DB/DBC call; its release/acquire establishes
+// happens-before for the handle and its implicit private environment. Db is
+// not Sync. The following audit is of Berkeley DB 5.3.28 at libdb commit
+// e66a5e66d5a8db89d13532012f28d17d375e8564 (paths relative to that tree):
+//
+// - src/db/db.c:472-498 opens only DB_INIT_MPOOL | DB_PRIVATE (plus CREATE),
+//   not locking/transactions; src/env/env_open.c:1182-1191 gates their opens.
+//   Thus src/db/db_am.c:106-125,237-282 cannot create thread-affine lockers.
+//   db_create's zero flags also exclude XA (src/db/db_method.c:94-134).
+// - Without thread tracking, src/env/env_failchk.c:214-222 leaves thr_hashtab
+//   null and src/dbinc/db_int.in:615-639 makes ENV_ENTER/GET_THREAD_INFO yield
+//   null, so no caller entry is created or retained by a cursor. The cached
+//   PID is process-wide on these platforms, not a thread ID
+//   (src/os/os_pid.c:29-55); the DB/ENV have no current-caller pointer
+//   (src/dbinc/db.in:1433-1517; src/dbinc/db_int.in:772-886).
+// - DB_CONFIG can enable tracking, as in the pin. Every ENV_ENTER starts
+//   with a null local and looks up the current caller afresh: the callback,
+//   PID/TID comparison and returned entry are in src/env/env_failchk.c:
+//   404-440,458-511. Neither DB nor ENV retains that local for another call;
+//   environment close also resolves the current caller
+//   (src/env/env_open.c:858-860).
+// - Only DBC retains a caller pointer on these paths. Cursor checkout,
+//   including reuse from the free queue, resets it before use
+//   (src/db/db_am.c:87-103,395-409). Rust Cursor's raw pointer makes it
+//   neither Send nor Sync; get and Drop stay on its creating thread, and its
+//   owner borrow prevents database close while it is live. Native internal
+//   get/put/del cursors close in their current call (src/db/db_iface.c:
+//   783-813; src/db/db_am.c:465,585-589,622,781-785). Duplicates inherit that
+//   same pointer (src/db/db_cam.c:613-616,720-722). DB close destroys closed
+//   cached cursors without using their old thread_info (src/db/db.c:897-901;
+//   src/db/db_cam.c:180-216; src/btree/bt_cursor.c:662-688;
+//   src/hash/hash.c:255-265).
+// - Output DBTs always use DB_DBT_USERMEM: src/db/db_ret.c:141-158 copies
+//   into caller-owned buffers, so no native return buffer escapes the lock
+//   or becomes invalid after an intervening call. Cursor rows borrow those
+//   buffers, rather than BDB pages. Close/cleanup is serialized as well.
 unsafe impl Send for Db {}
 
 impl Drop for Db {
