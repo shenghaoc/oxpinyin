@@ -70,18 +70,17 @@
 //!
 //! # Threading
 //!
-//! [`BdbStore`] is `Send` and `Sync`. The handle is opened with
-//! `DB_THREAD` and every read lands in caller-owned
-//! (`DB_DBT_USERMEM`) memory — libdb's documented contract for a
-//! handle used from multiple threads, and what makes both claims sound
-//! (`src/bdb/ffi.rs` carries the audit). Concurrent reads share the
-//! handle the contract's way; the user store's writes go through its
-//! own `Mutex` on top.
+//! [`BdbStore`] is `Send` and `Sync` through a Rust `Mutex` around the
+//! standalone handle, opened with the pin's flags. Every database and
+//! cursor call has exclusive access. Reads land in caller-owned
+//! (`DB_DBT_USERMEM`) buffers, so the lock can be released before a
+//! visitor reads a row or calls the store again. The user store also
+//! retains its own `Mutex` for whole write batches.
 //!
 //! # Unsafe waiver
 //!
 //! This module carries none. Every `unsafe` in the backend — the `DB`
-//! and `DBC` member calls, the `unsafe impl Send`/`Sync` on the handle,
+//! and `DBC` member calls, the `unsafe impl Send` on the handle,
 //! the generated declarations — is confined to `ffi`, whose
 //! `expect(unsafe_code)` is scoped to that module, so the safe wrapper
 //! here stays under the workspace `deny`.
@@ -97,7 +96,7 @@ use crate::{
     RawReadStore, ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name,
 };
 
-use ffi::{Db, Seek};
+use ffi::{Seek, SharedDb as Db};
 
 /// A Berkeley DB store: a `DB_BTREE` container when opened by
 /// [`ReadStore::open_read_only`] / [`WriteStore::create`], a `DB_HASH`

@@ -24,22 +24,14 @@
 //! [`Db`] and [`Cursor`] `Drop` impls close their handles on an unwind
 //! just as on a normal return.
 //!
-//! **`Send`/`Sync`.** [`Db`] holds a raw pointer, so the compiler
-//! derives neither; both are implemented, because the store's consumers
-//! need them — `oxpinyin-user`'s registry keeps `DefaultStore` behind a
-//! `Mutex` in a `static` (`Send`), and `oxpinyin-data`'s readers share
-//! one store across threads (`Sync`). Both are sound under the
-//! configuration this module enforces: every handle is opened with
-//! `DB_THREAD` and every `DBT` libdb writes into carries
-//! `DB_DBT_USERMEM` over caller-owned memory. That pair is libdb's own
-//! documented contract for a handle used from multiple threads — with
-//! it, no operation returns memory owned by the library, and
-//! concurrent calls are serialized by the handle's own locking.
-//! Cursors never escape a single call on `&self`, so the "one cursor,
-//! one thread at a time" rule holds by construction. Opening without
-//! `DB_THREAD`, as libpinyin does, would permit zero-copy borrowed
-//! reads — and cost a copy of every record, which the `ReadStore`
-//! trait (`Vec<u8>` returns) charges anyway.
+//! **`Send`/`Sync`.** [`Db`] is `Send`, but not `Sync`: its standalone
+//! handle is used by one thread at a time. [`SharedDb`] owns it behind
+//! a Rust `Mutex`, including every cursor operation and cursor close.
+//! Shared readers therefore get `Sync` without native threaded opens.
+//! Cursors borrow that owner and never cross threads. The lock is
+//! released before a row reaches a visitor, so visitors can read the
+//! same store. `DB_DBT_USERMEM` keeps point-read and cursor output in
+//! caller-owned buffers that remain valid across those intervening reads.
 //!
 //! **Cursor lifetimes.** [`Cursor::get`] takes `&mut self` and returns
 //! a [`Row`] borrowing `&self` (the cursor's own buffers), so a second
@@ -60,9 +52,9 @@
 )]
 
 use std::ffi::{CStr, CString, c_int};
-use std::marker::PhantomData;
 use std::path::Path;
 use std::ptr;
+use std::sync::{Mutex, MutexGuard};
 
 use crate::StoreError;
 
@@ -218,12 +210,88 @@ fn c_path(path: &Path) -> Result<CString, StoreError> {
         .map_err(|_| StoreError::InvalidInput("path contains NUL"))
 }
 
-/// An owned `DB` handle, closed on drop.
-///
-/// Opened with `DB_THREAD`, every output `DBT` under `DB_DBT_USERMEM`:
-/// the documented configuration for a handle used from more than one
-/// thread, and the reason both `unsafe impl Send` and `unsafe impl
-/// Sync` below are sound — see the module notes.
+/// A shareable owner that serializes all use of its standalone handle.
+pub(crate) struct SharedDb {
+    inner: Mutex<Db>,
+    read_only: bool,
+    hash: bool,
+}
+
+impl SharedDb {
+    fn new(db: Db) -> Self {
+        Self {
+            read_only: db.is_read_only(),
+            hash: db.is_hash(),
+            inner: Mutex::new(db),
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, Db> {
+        // No user callback runs under this lock. A Rust unwind cannot
+        // leave a native call in flight, so poisoning does not prevent
+        // the next exclusive use or cursor cleanup.
+        self.inner.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    /// Opens a whole-file database with the pin's flags and file mode.
+    pub(crate) fn open(
+        path: &Path,
+        db_type: DBTYPE,
+        read_only: bool,
+        create: bool,
+        mode: c_int,
+    ) -> Result<Self, StoreError> {
+        Db::open(path, db_type, read_only, create, mode).map(Self::new)
+    }
+
+    /// Opens the user bigram's unnamed hash database.
+    pub(crate) fn open_in_memory_hash() -> Result<Self, StoreError> {
+        Db::open_in_memory_hash().map(Self::new)
+    }
+
+    /// Opens the session's unnamed ordered database.
+    pub(crate) fn open_in_memory_tree() -> Result<Self, StoreError> {
+        Db::open_in_memory_tree().map(Self::new)
+    }
+
+    pub(crate) const fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    pub(crate) const fn is_hash(&self) -> bool {
+        self.hash
+    }
+
+    pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        self.lock().get(key)
+    }
+
+    pub(crate) fn put(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+        self.lock().put(key, value)
+    }
+
+    pub(crate) fn del(&self, key: &[u8]) -> Result<(), StoreError> {
+        self.lock().del(key)
+    }
+
+    pub(crate) fn sync(&self) -> Result<(), StoreError> {
+        self.lock().sync()
+    }
+
+    /// The cursor borrows the owner, rather than holding its lock across
+    /// visitor callbacks. Each native cursor call acquires the same lock.
+    pub(crate) fn cursor(&self) -> Result<Cursor<'_>, StoreError> {
+        let handle = self.lock().cursor_handle()?;
+        Ok(Cursor {
+            handle,
+            key_buf: vec![0_u8; INITIAL_BUFFER],
+            value_buf: vec![0_u8; INITIAL_BUFFER],
+            db: self,
+        })
+    }
+}
+
+/// An owned, exclusively used `DB` handle, closed on drop.
 pub(crate) struct Db {
     handle: *mut sys::DB,
     read_only: bool,
@@ -249,8 +317,8 @@ pub(crate) const USER_FILE_MODE: c_int = 0o600;
 
 impl Db {
     /// Opens `path` as `db_type`, as libpinyin opens its own files — no
-    /// environment, no transaction, no comparator — plus the `DB_THREAD`
-    /// flag this module's threading contract needs.
+    /// explicit environment, no transaction, no comparator, and only
+    /// `DB_RDONLY` or `DB_CREATE` as applicable.
     ///
     /// `mode` is what `DB->open` creates a missing file with, before the
     /// process umask applies: [`SYSTEM_FILE_MODE`] where libpinyin
@@ -320,7 +388,7 @@ impl Db {
             opened: false,
         };
 
-        let mut flags = sys::DB_THREAD;
+        let mut flags = 0;
         if read_only {
             flags |= sys::DB_RDONLY;
         } else if create {
@@ -365,9 +433,8 @@ impl Db {
     /// Point read. `None` when the key is absent.
     ///
     /// The value lands in a caller-owned buffer (`DB_DBT_USERMEM`),
-    /// grown once on `DB_BUFFER_SMALL` and returned as an owned `Vec` —
-    /// the `DB_THREAD` contract, and the trait's copy-owning shape,
-    /// both satisfied by one allocation.
+    /// grown once on `DB_BUFFER_SMALL` and returned as an owned `Vec`.
+    /// This buffer remains valid after another operation uses the handle.
     pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let get = method!(self.handle, get, "DB->get")?;
         let mut key_dbt = dbt_from(key)?;
@@ -469,18 +536,13 @@ impl Db {
         check(unsafe { sync(self.handle, 0) }, "DB->sync")
     }
 
-    /// Opens a cursor over this database.
-    ///
-    /// The returned cursor borrows `self`, so the database cannot be
-    /// dropped while a cursor is open on it.
-    pub(crate) fn cursor(&self) -> Result<Cursor<'_>, StoreError> {
+    /// Opens a native cursor while the shareable owner's lock is held.
+    fn cursor_handle(&self) -> Result<*mut sys::DBC, StoreError> {
         let cursor = method!(self.handle, cursor, "DB->cursor")?;
         let mut handle: *mut sys::DBC = ptr::null_mut();
         // SAFETY: the database handle is live; the transaction is null;
-        // the out-parameter is a live local. `DB_THREAD` on the database
-        // makes a cursor from one thread usable in these single-threaded
-        // patterns; the cursor itself never crosses threads (it is not
-        // `Send`, and only lives inside one call on this `&self`).
+        // the out-parameter is a live local, and the owner serializes
+        // this call with every other use of the database and its cursors.
         let code = unsafe { cursor(self.handle, ptr::null_mut(), &raw mut handle, 0) };
         check(code, "DB->cursor")?;
         // Hazard (d) again: a null out-parameter on success.
@@ -489,37 +551,17 @@ impl Db {
                 "DB->cursor returned success with a null cursor (allocation failure)".into(),
             ));
         }
-        Ok(Cursor {
-            handle,
-            key_buf: vec![0_u8; INITIAL_BUFFER],
-            value_buf: vec![0_u8; INITIAL_BUFFER],
-            _db: PhantomData,
-        })
+        Ok(handle)
     }
 }
 
-// SAFETY: `Db` moves between threads (`oxpinyin-user`'s registry holds a
-// `DefaultStore` behind a `Mutex` in a `static`, which requires `Send`)
-// and is shared across them (`oxpinyin-data`'s chewing reader holds one
-// behind `Box<dyn ChewingDbm + Send + Sync>`, which requires `Sync`).
-// Both claims are sound under exactly the configuration `Db::open`
-// builds, and that configuration is libdb's own documented contract for
-// multi-threaded handles: the handle carries `DB_THREAD` — the flag
-// whose entire meaning is "this handle may be used by multiple threads
-// simultaneously" — and every `DBT` libdb writes into (the value of a
-// `get`, the key and value of a cursor read) is `DB_DBT_USERMEM` over
-// memory this side owns, so no operation hands back library-owned
-// memory tied to the calling thread. Cursors are created, walked and
-// closed inside a single call on `&self`, so the "one cursor, one
-// thread at a time" rule holds by construction even when two threads
-// run concurrent reads. libpinyin opens the same files without
-// `DB_THREAD` because it is single-threaded per handle; the cost of the
-// flag here is one caller-buffer copy per record read, which the
-// `ReadStore` trait (`Vec<u8>` returns) charges anyway.
+// SAFETY: ownership may move between threads, but the standalone handle
+// has exclusive one-thread-at-a-time use. There are no transactions or
+// thread-affine lockers in this configuration. SharedDb's Mutex covers
+// all database and cursor calls, and Cursor is not Send. Output DBTs use
+// caller-owned memory, so moving the owner exposes no native read buffer.
+// Db has no Sync implementation: unprotected concurrent use is refused.
 unsafe impl Send for Db {}
-// SAFETY: same argument as Send — DB_THREAD makes the handle safe for
-// concurrent use, and every DBT is caller-owned (DB_DBT_USERMEM).
-unsafe impl Sync for Db {}
 
 impl Drop for Db {
     fn drop(&mut self) {
@@ -550,8 +592,8 @@ impl Drop for Db {
 /// A cursor over one database, closed on drop.
 ///
 /// The `'db` lifetime ties the cursor to its database. Key and value
-/// land in buffers the cursor owns (`DB_DBT_USERMEM`, the `DB_THREAD`
-/// contract), and [`Cursor::get`] hands them out as a [`Row`] borrowing
+/// land in buffers the cursor owns (`DB_DBT_USERMEM`), and
+/// [`Cursor::get`] hands them out as a [`Row`] borrowing
 /// the cursor — hazard (c) below.
 pub(crate) struct Cursor<'db> {
     handle: *mut sys::DBC,
@@ -559,7 +601,7 @@ pub(crate) struct Cursor<'db> {
     key_buf: Vec<u8>,
     /// Reusable value buffer: same policy.
     value_buf: Vec<u8>,
-    _db: PhantomData<&'db Db>,
+    db: &'db SharedDb,
 }
 
 /// Where to move the cursor before reading.
@@ -593,6 +635,7 @@ impl Cursor<'_> {
     /// Moves as `seek` says and reads the row there; `None` at the end
     /// of the database.
     pub(crate) fn get(&mut self, seek: Seek<'_>) -> Result<Option<Row<'_>>, StoreError> {
+        let _guard = self.db.lock();
         let get = method!(self.handle, get, "DBC->get")?;
         let flags = match seek {
             Seek::First => sys::DB_FIRST,
@@ -623,7 +666,8 @@ impl Cursor<'_> {
             // SAFETY: the cursor handle is live; both `DBT`s point at
             // this cursor's own buffers, which outlive the call, and any
             // seek slice `AtOrAfter` carries was re-copied into
-            // `key_buf` at the top of this iteration.
+            // `key_buf` at the top of this iteration. The owner lock
+            // excludes every other database or cursor call until return.
             let code = unsafe { get(self.handle, &raw mut key_dbt, &raw mut value_dbt, flags) };
             if code == sys::DB_NOTFOUND {
                 return Ok(None);
@@ -665,9 +709,11 @@ impl Cursor<'_> {
 
 impl Drop for Cursor<'_> {
     fn drop(&mut self) {
+        let _guard = self.db.lock();
         if let Ok(close) = method!(self.handle, close, "DBC->close") {
             // SAFETY: the cursor handle is live and owned, its database
             // outlives it by the `'db` bound, and this is its last use.
+            // The owner lock also serializes close with all other calls.
             unsafe {
                 close(self.handle);
             }
@@ -726,4 +772,60 @@ fn empty_dbt() -> sys::DBT {
     // niche and no invalid bit pattern; all-zero is the initialisation
     // libdb's own documentation prescribes (`memset(&dbt, 0, sizeof dbt)`).
     unsafe { std::mem::zeroed() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
+    #[test]
+    fn unnamed_opens_use_the_pins_unthreaded_create_flags() {
+        for db in [
+            SharedDb::open_in_memory_tree().unwrap(),
+            SharedDb::open_in_memory_hash().unwrap(),
+        ] {
+            let guard = db.lock();
+            let get_flags = method!(guard.handle, get_open_flags, "DB->get_open_flags").unwrap();
+            let mut flags = 0;
+            // SAFETY: the handle and output local are live, and the
+            // guard excludes every other use of this database.
+            check(
+                unsafe { get_flags(guard.handle, &raw mut flags) },
+                "get flags",
+            )
+            .unwrap();
+            assert_eq!(flags, sys::DB_CREATE);
+        }
+    }
+
+    #[test]
+    fn shared_point_reads_wait_for_exclusive_native_access() {
+        let db = Arc::new(SharedDb::open_in_memory_tree().unwrap());
+        db.put(b"key", b"value").unwrap();
+        let guard = db.lock();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (finished_tx, finished_rx) = mpsc::channel();
+        let reader = Arc::clone(&db);
+        let thread = std::thread::spawn(move || {
+            assert!(matches!(
+                reader.inner.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            started_tx.send(()).unwrap();
+            finished_tx.send(reader.get(b"key").unwrap()).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(
+            finished_rx.try_recv(),
+            Err(mpsc::TryRecvError::Empty)
+        ));
+        drop(guard);
+        assert_eq!(
+            finished_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            Some(b"value".to_vec())
+        );
+        thread.join().unwrap();
+    }
 }

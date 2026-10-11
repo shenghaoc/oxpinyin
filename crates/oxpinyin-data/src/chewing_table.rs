@@ -771,6 +771,77 @@ mod tests {
         assert_eq!(seen, vec![2], "the stop ends the scan at the first row");
     }
 
+    // BDB's unthreaded native handles require the shared owner to
+    // serialize both ordered-tree and unordered-hash readers.
+    #[cfg(feature = "bdb")]
+    #[test]
+    fn shared_raw_readers_keep_rows_valid_during_concurrent_and_reentrant_reads() {
+        use oxpinyin_store::{DefaultStore, RawReadStore as _, ReadStore as _, WriteStore as _};
+        use std::sync::{Arc, Barrier};
+
+        let dir = std::env::temp_dir().join(format!(
+            "oxpinyin-shared-raw-readers-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for hash in [false, true] {
+            let path = dir.join(oxpinyin_store::default_store_file(if hash {
+                "hash"
+            } else {
+                "tree"
+            }));
+            let store = if hash {
+                DefaultStore::create_hash(&path).unwrap()
+            } else {
+                DefaultStore::create(&path).unwrap()
+            };
+            store
+                .write(|txn| {
+                    for key in 0_u8..8 {
+                        txn.put_raw(&[key], &vec![key; if key == 3 { 9000 } else { 20 }])?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            drop(store);
+            let store = if hash {
+                DefaultStore::open_hash_read_only(&path).unwrap()
+            } else {
+                DefaultStore::open_read_only(&path).unwrap()
+            };
+            // This is the shared adapter used by chewing/phrase indexes,
+            // system bigrams, addon indexes and punctuation readers.
+            let dbm: Arc<dyn ChewingDbm + Send + Sync> = Arc::new(RawChewingDbm::new(store));
+            let barrier = Arc::new(Barrier::new(4));
+            std::thread::scope(|scope| {
+                for _ in 0..4 {
+                    let dbm = Arc::clone(&dbm);
+                    let barrier = Arc::clone(&barrier);
+                    scope.spawn(move || {
+                        barrier.wait();
+                        for _ in 0..20 {
+                            assert_eq!(dbm.get(&[3]).unwrap(), Some(vec![3; 9000]));
+                            let mut keys = Vec::new();
+                            dbm.walk(&[2], Some(&[6]), &mut |key, value| {
+                                assert_eq!(dbm.get(key).unwrap().as_deref(), Some(value));
+                                assert!(value.iter().all(|byte| *byte == key[0]));
+                                keys.push(key[0]);
+                                Ok(false)
+                            })
+                            .unwrap();
+                            assert_eq!(keys, [2, 3, 4, 5]);
+                        }
+                    });
+                }
+            });
+            drop(dbm);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
         use oxpinyin_store::{DefaultStore, ReadStore as _, WriteStore as _};
