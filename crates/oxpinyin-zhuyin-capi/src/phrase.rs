@@ -30,6 +30,17 @@ pub extern "C" fn zhuyin_phrase_segment(
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
     let Some(text) = cstr_to_strict(sentence) else {
+        // 074a2219 zhuyin.cpp:973: same default-domain GLib critical as the
+        // pinyin twin, with this facade's C++ G_STRFUNC spelling.
+        // SAFETY: the function and expression are NUL-terminated constants;
+        // GLib accepts NULL for its default log domain.
+        unsafe {
+            glib_sys::g_return_if_fail_warning(
+                std::ptr::null(),
+                c"bool zhuyin_phrase_segment(zhuyin_instance_t*, const char*)".as_ptr(),
+                c"num_of_chars == ucs4_len".as_ptr(),
+            );
+        }
         return false;
     };
     match inst.core.session.phrase_segment(&text) {

@@ -1453,6 +1453,26 @@ struct Staged {
 }
 
 impl Staged {
+    /// libzhuyin attempts the rename even after a soft write failure
+    /// (074a2219 zhuyin.cpp:612-617, :645-650, :669-691). A header failure
+    /// aborts before the rename; the reporting caller refuses it instead.
+    fn finish(
+        &mut self,
+        paths: (PathBuf, PathBuf),
+        written: Result<(), PersistenceError>,
+    ) -> Result<(), PersistenceError> {
+        if written.is_ok()
+            || (self.immediate
+                && matches!(
+                    &written,
+                    Err(PersistenceError::Io(_) | PersistenceError::Store(_))
+                ))
+        {
+            self.push(paths);
+        }
+        written
+    }
+
     fn push(&mut self, (tmp, final_path): (PathBuf, PathBuf)) {
         if !self.immediate {
             self.pending.push((tmp, final_path));
@@ -1481,10 +1501,10 @@ fn stage_all(
         let tmp = dir.join(format!("{}.tmp", UserDbm::Bigram.file_name()));
         remove_dbm_sidecars(dir, &tmp);
         let written = db.save_db(&tmp).map_err(PersistenceError::from);
-        if tolerate(lenient, written)? {
+        if written.is_ok() {
             remove_dbm_sidecars(dir, &tmp);
-            staged.push((tmp, final_path));
         }
+        tolerate(lenient, staged.finish((tmp, final_path), written))?;
         return Ok(());
     }
     let bigram_rows: Vec<(Vec<u8>, Vec<u8>)> = state
@@ -1761,22 +1781,21 @@ fn stage_dbm(
     // A crashed save can leave this `.tmp` behind with rows the coming
     // write would not overwrite — `create` opens-or-creates, so stale
     // index rows would survive into the renamed file.
-    match std::fs::remove_file(&tmp) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-        Err(e) => return Err(e.into()),
-    }
-    remove_dbm_sidecars(dir, &tmp);
-    // A user table, created with the mode the backend's own `save_db`
-    // uses for one (Berkeley DB's 0600, not `attach`'s 0644).
-    DefaultStore::write_user_index(&tmp, rows)?;
-    // Some backends keep a lock sidecar beside the database (tkrzw writes
-    // `<path>-lock`). It is stale once the handle drops, and the rename
-    // below moves only the data file — without this the user dir would
-    // accumulate one orphan per save, which no libpinyin install leaves.
-    remove_dbm_sidecars(dir, &tmp);
-    staged.push((tmp, final_path));
-    Ok(())
+    let written = (|| {
+        match std::fs::remove_file(&tmp) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
+        }
+        remove_dbm_sidecars(dir, &tmp);
+        // A user table, created with the mode the backend's own `save_db`
+        // uses for one (Berkeley DB's 0600, not `attach`'s 0644).
+        DefaultStore::write_user_index(&tmp, rows)?;
+        // Remove a backend's stale lock sidecar before the data-file rename.
+        remove_dbm_sidecars(dir, &tmp);
+        Ok(())
+    })();
+    staged.finish((tmp, final_path), written)
 }
 
 /// The sidecar suffixes a DBM backend may keep beside a data file.
@@ -1810,9 +1829,8 @@ fn stage_chunk(
 ) -> Result<(), PersistenceError> {
     let final_path = name.under(dir);
     let tmp = name.with_suffix(".tmp").under(dir);
-    write_chunk_file(&tmp, bytes)?;
-    staged.push((tmp, final_path));
-    Ok(())
+    let written = write_chunk_file(&tmp, bytes);
+    staged.finish((tmp, final_path), written)
 }
 
 /// `MemoryChunk::save` (`memory_chunk.h:536-537`): `open(O_CREAT |
