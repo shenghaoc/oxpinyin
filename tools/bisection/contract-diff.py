@@ -1562,19 +1562,21 @@ def _craft_db(path, rows, dbtype, keep=False):
     `phrase_large_table3_tkrzwdb.cpp:83`); the bigram is a `HashDBM` there
     (`ngram_tkrzwdb.cpp:50`). `dbtype` picks the container kind (1 btree/tree,
     2 hash); the rows are the same records in every cell. `keep=True` is
-    the bdb-only fixture that adds rows to an existing container."""
+    the fixture that adds rows to the copied system index: a native attached
+    TreeDB on kc (`chewing_large_table2_kyotodb.cpp:87-89`), a TreeDBM on
+    tkrzw (`chewing_large_table2_tkrzwdb.cpp:87-88`), and a btree on bdb."""
     if CELL == 'kc':
-        assert not keep, 'retained-row fixtures are bdb-only'
-        return _craft_kc(path, rows)
+        assert not keep or dbtype == 1, 'retained KC fixtures are system btrees'
+        return _craft_kc(path, rows, keep=keep)
     if CELL == 'tkrzw':
-        assert not keep, 'retained-row fixtures are bdb-only'
-        return _craft_tkrzw(path, rows, 'HashDBM' if dbtype == 2 else 'TreeDBM')
+        return _craft_tkrzw(path, rows, 'HashDBM' if dbtype == 2 else 'TreeDBM', keep=keep)
     return _craft_bdb(path, rows, dbtype, keep=keep)
 
 
-def _craft_kc(path, rows):
+def _craft_kc(path, rows, keep=False):
     """A Kyoto Cabinet snapshot of the records (`BasicDB::dump_snapshot`),
-    written through the C API from an in-memory database."""
+    written through the C API from an in-memory database. `keep=True`
+    instead adds to the native TreeDB the pin attaches as a system index."""
     kc = C.CDLL('libkyotocabinet.so.16')
     kc.kcdbnew.restype = C.c_void_p
     kc.kcdbdel.argtypes = [C.c_void_p]
@@ -1582,24 +1584,28 @@ def _craft_kc(path, rows):
     kc.kcdbset.argtypes = [C.c_void_p, C.c_char_p, C.c_size_t, C.c_char_p, C.c_size_t]
     kc.kcdbdumpsnap.argtypes = [C.c_void_p, C.c_char_p]
     kc.kcdbclose.argtypes = [C.c_void_p]
-    if os.path.exists(path):
+    if os.path.exists(path) and not keep:
         os.unlink(path)
     db = kc.kcdbnew()
     assert db
-    # KCOWRITER | KCOCREATE on the in-memory database "-".
-    assert kc.kcdbopen(db, b'-', (1 << 1) | (1 << 2))
+    # Existing system TreeDB: KCOWRITER, explicit type because its suffix
+    # is .bin. User snapshot: KCOWRITER | KCOCREATE on the memory database.
+    target = (path + '#type=kct').encode() if keep else b'-'
+    mode = (1 << 1) if keep else (1 << 1) | (1 << 2)
+    assert kc.kcdbopen(db, target, mode)
     for key, value in rows:
         assert kc.kcdbset(db, key, len(key), value, len(value))
-    assert kc.kcdbdumpsnap(db, path.encode())
+    if not keep:
+        assert kc.kcdbdumpsnap(db, path.encode())
     assert kc.kcdbclose(db)
     kc.kcdbdel(db)
 
 
-def _craft_tkrzw(path, rows, kind):
+def _craft_tkrzw(path, rows, kind, keep=False):
     """A tkrzw `kind` file (`TreeDBM` for the chewing and phrase tables,
     `HashDBM` for the bigram, as each pin `load_db` opens it) of the records,
     written through the C API with the default tuning the pin's `save_db`
-    uses."""
+    uses. `keep=True` adds to an existing system index without unlinking it."""
     tk = C.CDLL('libtkrzw.so.1')
     tk.tkrzw_dbm_open.restype = C.c_void_p
     tk.tkrzw_dbm_open.argtypes = [C.c_char_p, C.c_bool, C.c_char_p]
@@ -1607,7 +1613,7 @@ def _craft_tkrzw(path, rows, kind):
     tk.tkrzw_dbm_set.argtypes = [C.c_void_p, C.c_char_p, C.c_int32, C.c_char_p, C.c_int32, C.c_bool]
     tk.tkrzw_dbm_close.restype = C.c_bool
     tk.tkrzw_dbm_close.argtypes = [C.c_void_p]
-    if os.path.exists(path):
+    if os.path.exists(path) and not keep:
         os.unlink(path)
     db = tk.tkrzw_dbm_open(path.encode(), True, ('dbm=' + kind).encode())
     assert db
@@ -1791,20 +1797,20 @@ def _(k):
 
 # A key of no whole word (empty, or one byte) reads as `size / 2 == 0` words
 # and `mask_out`'s `switch` has no such case: `default: abort()`
-# (`chewing_large_table2_bdb.cpp:529`).
-@case('abort-mask-out-empty-index-key', abort=False, userdir=True, cells=('bdb',))
+# (`chewing_large_table2_bdb.cpp:529`, the KC twin :499, tkrzw :466).
+@case('abort-mask-out-empty-index-key', abort=False, userdir=True)
 def _(k):
     ctx = overlong_index_context(k, rows=lambda first: [b'', first])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-mask-out-one-byte-index-key', abort=False, userdir=True, cells=('bdb',))
+@case('abort-mask-out-one-byte-index-key', abort=False, userdir=True)
 def _(k):
     ctx = overlong_index_context(k, rows=lambda first: [first, b'\x07'])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-zhuyin-mask-out-empty-index-key', mode='zhuyin', abort=False, userdir=True, cells=('bdb',))
+@case('abort-zhuyin-mask-out-empty-index-key', mode='zhuyin', abort=False, userdir=True)
 def _(k):
     ctx = overlong_index_context(k, rows=lambda first: [b'', first])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
@@ -1814,7 +1820,8 @@ def _(k):
 # `FacadeChewingTable2::search_suggestion` walks it too
 # (`chewing_large_table2_bdb.cpp:282`): a key past 16 words that extends the
 # query dies at the same `default: abort()`. The stock index has none, so the
-# fixture is a private copy (never a link into the oracle) with one row added.
+# fixture is a private copy (never a link into the oracle) with one row added
+# in its native attached format (KC aborts at :269, tkrzw at :252).
 def system_overlong_index_context(k, trailing=b''):
     ctx = k.init()
     assert ctx, 'the first init failed'
@@ -1835,7 +1842,7 @@ def system_overlong_index_context(k, trailing=b''):
     return ctx
 
 
-@case('abort-guess-candidates-overlong-system-index-key', abort=False, userdir=True, cells=('bdb',))
+@case('abort-guess-candidates-overlong-system-index-key', abort=False, userdir=True)
 def _(k):
     ctx = system_overlong_index_context(k)
     inst = k.fn('alloc_instance', P, P)(ctx)
@@ -1843,7 +1850,7 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('abort-guess-candidates-overlong-odd-system-index-key', abort=False, userdir=True, cells=('bdb',))
+@case('abort-guess-candidates-overlong-odd-system-index-key', abort=False, userdir=True)
 def _(k):
     ctx = system_overlong_index_context(k, trailing=b'\x07')
     inst = k.fn('alloc_instance', P, P)(ctx)
