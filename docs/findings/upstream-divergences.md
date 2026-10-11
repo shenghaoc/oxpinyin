@@ -124,7 +124,7 @@ is complete, these notes are collected to report back to libpinyin.
 
 ### Scheme setters abort or half-mutate on the no-op slots
 
-- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — for the abort slots: double 30 `storage/pinyin_parser2.cpp:611`, zhuyin 7 `storage/zhuyin_parser2.cpp:295`, zhuyin out-of-enum `pinyin.cpp:1189` (not `:1188`) with libzhuyin's `zhuyin.cpp:736`, full-pinyin out-of-enum `storage/pinyin_parser2.cpp:398` — all **`abort()`**, so they abort in an `-DNDEBUG` build too. oxpinyin's `false` holds; the log line is owed (rows 5a, 5c, 5d; 5b stays closed).
+- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** for rows 5a, 5c and 5d. At `074a2219`, double 30 reaches `storage/pinyin_parser2.cpp:611`, zhuyin 7 `storage/zhuyin_parser2.cpp:295`, zhuyin out-of-enum `pinyin.cpp:1189` or `zhuyin.cpp:736`, and full-pinyin out-of-enum `storage/pinyin_parser2.cpp:398`; all are **`abort()`**. `645bf591` adds the pinyin warnings, and `8b455a44` the zhuyin warnings: each refuses with `false`, preserves the scheme and emits exactly one GLib warning in its facade's domain. The `abort-set-*-scheme-*` and `abort-zhuyin-*-scheme-*` cases of `contract-diff.py` hold these obligations. Row 5b's defined half-mutation stays closed by reproduction.
 
 The #109 contract-lock (all rows verified at `0c5e80e1`; row 5b
 reverted 2026-09-15; remaining rows pinned by
@@ -153,7 +153,7 @@ reverted 2026-09-15; remaining rows pinned by
   parser before the switch (`pinyin.cpp:1163-1164`), so the context
   would be broken even if the abort were caught.
 - **zhuyin out-of-enum** — aborts at the API layer's `default:`
-  (`pinyin.cpp:1188`); **full-pinyin out-of-enum** aborts inside
+  (`pinyin.cpp:1189` at `074a2219`); **full-pinyin out-of-enum** aborts inside
   `FullPinyinParser2::set_scheme` (`pinyin_parser2.cpp:398`) while the
   wrapper (`pinyin.cpp:1148-1153`) answers `true` unconditionally.
 
@@ -178,7 +178,7 @@ line.)
 
 ### Constraint-aware train without the consistency assert
 
-- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — and **needs guard, not just a log**: `lookup/phonetic_lookup.h:868` is an **`assert`**; oxpinyin trains and answers the gate result, so neither half holds (row 6).
+- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** (row 6). `lookup/phonetic_lookup.h:868` at `074a2219` is **`assert(token == constraint->m_token)`**. `74012938` adds the stale-forcing check before observations; both facades return `false` with exactly one warning (`libpinyin` or `libzhuyin`). `abort-train-stale-forcing` and `abort-zhuyin-train-stale-forcing` hold the refusal; `train-forcing-after-lookup` is the successful control.
 
 - **Upstream source cite:** `src/lookup/phonetic_lookup.h:841-935`
   (`train_result3`), `src/pinyin.cpp:2669-2689` (`pinyin_train`).
@@ -186,18 +186,19 @@ line.)
   `CONSTRAINT_ONESTEP` position equals the forced token — a stale result
   walked against a fresh store aborts. With an empty store it trains
   nothing at all, results or not.
-- **What oxpinyin does instead:** no assert (the no-abort policy): the
-  last lookup's 1-best result is walked as it is. When the result carries
-  no forcings — a row-0 choose constrains nothing, exactly upstream — the
-  engine falls back to the selection-history walk, because its row chooses
-  record tokens where upstream keeps the `MatchResult` on the instance;
-  without the fallback the union driver's row-0-intercepted choose would
-  train nothing where the oracle's normal-choose flow trains both
-  phrases (`run-union-diff.sh`, kept green).
-- **Externally observable:** yes — a choose-then-train without an
-  intermediate re-guess trains the recorded selection on oxpinyin and
-  aborts upstream; the frontend contract (re-guess between choose and
-  train) makes the two agree on every driven surface.
+- **What oxpinyin does instead:** `Session::train_nbest` checks the
+  requested decoded row's forced tokens before observing user data
+  (`crates/oxpinyin-engine/src/session/selection.rs`, `train_spans`).
+  A mismatch returns `EngineError::StaleTrainingConstraint`;
+  `InstanceCore::train` leaves the context unmodified and both C facades
+  return `false` with one warning. A constraint-free decoded row trains
+  nothing, matching the pin's OneStep/train-next gate (row 33); the old
+  selection-history fallback no longer describes this case.
+- **Externally observable:** yes — forcing a different NORMAL token
+  after decoding, without re-guessing, aborts the pin at `:868` and now
+  returns `false` with one warning on oxpinyin. Re-guessing before the
+  train is the successful control. Before `74012938`, the subject
+  trained the stale row and met neither class-(c) obligation.
 
 ### validate_constraint's drop test is the span-search shape — CLOSED (academic: equivalent on model20)
 
@@ -365,7 +366,7 @@ line.)
 
 ### pinyin_get_sentence asserts a non-empty past-the-rows index
 
-- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — `pinyin.cpp:1474` is an **`assert`**; oxpinyin's `false` holds (`crates/oxpinyin-capi/src/sentence.rs:132-154`); the log line is owed (row 10).
+- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** (row 10). `pinyin.cpp:1474` at `074a2219` is **`assert(index < results.size())`**. Since `ac701202`, `pinyin_get_sentence` in `crates/oxpinyin-capi/src/sentence.rs` refuses a past-the-rows index over nonempty results with `false`, an untouched out-parameter and exactly one `libpinyin` warning; `abort-get-sentence-past-rows` holds it. Empty results retain the pin's quiet `false` (`:1470-1471`).
 
 - **Upstream source cite:** `src/pinyin.cpp:1463-1482`
   (`pinyin_get_sentence`).
@@ -660,7 +661,7 @@ Text, candidate type and counts cannot.
 
 ### The cursor helpers' `_check_offset` aborts answer `false` — not the pin's abort, not post-`95e3af7` upstream's discarded-`false` true
 
-- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — at `074a2219` the aborts are the **`assert`**-wrapped calls `pinyin.cpp:3035`, `:3057`, `:3067`, `:3092` (`_check_offset` itself, `:2163-2182`, returns `false`); the `:2175` cited below is the `0c5e80e1` pin's line. oxpinyin's `false` holds; the log line is owed (row 14).
+- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** (row 14). At `074a2219` the aborts are the **`assert`**-wrapped calls `pinyin.cpp:3035`, `:3057`, `:3067`, `:3092`; `_check_offset` itself (`:2163-2182`) returns `false`. Since `ac701202`, both word-move helpers in `crates/oxpinyin-capi/src/cursor.rs` refuse those errors with `false` and exactly one `libpinyin` warning. The separator and `nihao` offset-5 cases in `contract-diff.py` hold the logging path. `60bc0d3e` corrected the runner comments to the current pin's call sites. The historical narrative below uses the older `0c5e80e1` pin and is superseded by this status and the dated pin-bump amendment.
 
 - **Upstream source cite:** `src/pinyin.cpp:2163-2180` (`_check_offset`,
   the assert at `:2175`) called on the COMPUTED result of the word moves
@@ -786,7 +787,7 @@ seen in the same probe is a separate parity defect: issue #356.
 
 ### The single-key surface aborts the pin where oxpinyin answers `false`
 
-- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — `storage/pinyin_parser2.cpp:170`, `pinyin.cpp:499` and `:466` are **`assert`**; the empty-input reads (`pinyin_parser2.cpp:178`, `zhuyin_parser2.cpp:171`) are over-reads, not aborts. oxpinyin's `false` holds; the log line is owed (row 21).
+- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** for the asserts in row 21: `storage/pinyin_parser2.cpp:170` (apostrophe), `pinyin.cpp:499` and `:466` (unload index bound), all at `074a2219`. `645bf591` adds the unload warnings, `ac701202` the pinyin apostrophe warning, and `8b455a44` the shared parser's zhuyin warning. Each returns `false` and emits exactly one warning in the facade's domain, held by the unload-index-16 and full-pinyin-apostrophe `abort-*` cases of `contract-diff.py`. The empty-input reads (`pinyin_parser2.cpp:178`, `zhuyin_parser2.cpp:171`) remain memory over-reads, not class-(c) abort sites.
 
 - **Upstream source cite:** `FullPinyinParser2::parse_one_key`
   (`src/storage/pinyin_parser2.cpp:168-170`, the
@@ -794,7 +795,7 @@ seen in the same probe is a separate parity defect: issue #356.
   `pinyin_unload_addon_phrase_library` (`src/pinyin.cpp:497-499`, the
   `assert(index < PHRASE_INDEX_LIBRARY_COUNT)`); the empty-input reads
   under `USE_TONE` (`input[parsed_len - 1]` at
-  `pinyin_parser2.cpp:180` on a zero-length string;
+  `pinyin_parser2.cpp:178` at `074a2219` on a zero-length string;
   `ZhuyinSimpleParser2::parse_one_key`'s `str[len - 1]` at
   `zhuyin_parser2.cpp:171`).
 - **Mechanism:** the Tier-A single-key ABI surface (`pinyin_parse_full_pinyin`,
@@ -817,20 +818,20 @@ seen in the same probe is a separate parity defect: issue #356.
 
 ### `pinyin_get_character_offset`'s recursion asserts answer `false`
 
-- **Status (2026-09-27 UTC, #549):** class (c), **pending logging (lane C, #525)** — the sites are `pinyin.cpp:3147`, `:3161`, `:3203`, `:3204` and `zhuyin.cpp:2110`, `:2158`, all **`assert`** (the `:3152`/`:3166` below are five lines stale; `:3172` is now `:3168`). oxpinyin's `false` holds; the log line is owed (row 19).
+- **Status (reconciled 2026-10-11 UTC, #549):** class (c), **both halves met** for row 19's asserts at `074a2219`: `pinyin.cpp:3147`, `:3161`, `:3203`, `:3204` and `zhuyin.cpp:2110`, `:2158`. `ac701202` adds the pinyin warning path and `8b455a44` the zhuyin path; `get_character_offset` returns `false` with exactly one warning in its facade's domain on a recursion or entry error. The past-matrix and separator cases in `contract-diff.py` hold these paths; the original `:3161` predicate has no separately executed trigger in this reconciliation. The unbounded cached-token read (`pinyin.cpp:3168`) remains the distinct memory-safety sub-shape.
 
 - **Upstream source cite:** `pinyin_get_character_offset`
-  (`src/pinyin.cpp:3193-3241` at 074a221; `zhuyin.cpp:2148-2196` for the
+  (`src/pinyin.cpp:3193-3241` at `074a2219`; `zhuyin.cpp:2148-2196` for the
   zhuyin twin), `_pre_compute_tokens` (`pinyin.cpp:3098-3136`) and
   `_get_char_offset_recur` (`pinyin.cpp:3138-3191`).
 - **Mechanism:** the function asserts `offset < matrix.size()` and
   `_check_offset` (the register's #14 family — the offset 3/4 rows of
   issue #356's matrix), then the recursion asserts a non-empty column at
-  every stepped-to position (`assert(size > 0)`, `:3152` — an input with
+  every stepped-to position (`assert(size > 0)`, `:3147` — an input with
   a leading apostrophe run has an empty column 0) and a lone zero key
-  where one appears (`assert(1 == size)`, `:3166`). Separately, the
+  where one appears (`assert(1 == size)`, `:3161`). Separately, the
   recursion indexes `cached_tokens` by the characters consumed so far
-  with no bound (`g_array_index`, `:3172`): a phrase shorter than the
+  with no bound (`g_array_index`, `:3168`): a phrase shorter than the
   key path measured against it reads the array's zero terminator
   (`null_token`, whose `get_phrase_item` fails and leaves the previous
   item) and beyond it the heap — the aux-text over-read's class.
@@ -2215,16 +2216,22 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
 
 - **Source:** the 87-row per-site table in #525's body (the round-2
   audit's D-03 code-basis pass, pin `074a2219`, subject `34a66bc9`),
-  re-grouped here by what oxpinyin owes. Every site is live at the
+  re-grouped here by what that audited subject owed. Every site is live at the
   reference build: no `-DNDEBUG`, and `check_result`
   (`include/pinyin_utils.h:27-31`) is an `assert` there. Kind is the
-  pin's construct — **`assert`** or **`abort()`**. No site's answering
-  line logs (#525: `subject_site_log = False` for all 87); the only
-  `g_warning` calls in the shipped crates are the init-failure lines
+  pin's construct — **`assert`** or **`abort()`**. At that audited revision no site's answering
+  line logged (#525: `subject_site_log = False` for all 87); the only
+  `g_warning` calls then were the init-failure lines
   (`crates/oxpinyin-capi/src/context.rs:25-29`,
   `crates/oxpinyin-zhuyin-capi/src/context.rs:48-50`).
-- **Status:** every row below is **pending logging (lane C, #525)**;
-  group B additionally **needs a guard, not just a log**.
+- **Inventory scope:** the groups below retain the audit's original
+  refusal/guard classifications with later partial annotations. They are
+  not a current-main closure mapping. The original subject at `34a66bc9`
+  lacked logging; later commits listed here and in the policy replace
+  those answers. Rows 4, 5a, 5c, 5d, 6, 10, 14, 19 and 21 now record
+  both halves met, while row 22 is withdrawn and owes no log. The wider
+  #525 source-site closure check remains separate; promoting a policy
+  row does not prove every source predicate has an executed fixture.
 - **Logged since (lane C, 2026-10-04; each answers `false`/`0` and emits
   exactly one `libpinyin` warning, held by an `abort-*` case of
   `contract-diff.py` that shows the pin dying of SIGABRT):**
