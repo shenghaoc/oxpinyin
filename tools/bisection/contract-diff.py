@@ -62,7 +62,7 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
 def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
-         cells=('bdb', 'kc', 'tkrzw')):
+         cells=('bdb', 'kc', 'tkrzw'), either=False):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -77,10 +77,14 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     `user.conf` text, the size of each library chunk) to the pin's, for an
     abort that comes after the pin has written some of its profile. `cells`
     names the DBM cells whose storage format the case's fixture reproduces;
-    a case skipped on the others prints `SKIP` instead of a verdict."""
+    a case skipped on the others prints `SKIP` instead of a verdict.
+    `either=True` (with both `abort=` and `crash=`) is for a fixture whose
+    pin site depends on the file system: the pin's own signal picks the
+    matcher, SIGABRT the class (c) one and anything else the class (b) one."""
     def register(fn):
+        assert not either or (abort is not NO_ABORT and crash is not None), name
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
-                           crash=crash, userdir=userdir, cells=cells)
+                           crash=crash, userdir=userdir, cells=cells, either=either)
         return fn
     return register
 
@@ -2885,6 +2889,15 @@ def break_library(k, system, name, how):
         data = bytearray(Path(k.data, name).read_bytes())
         data[-1] ^= 0xff
         Path(path).write_bytes(bytes(data))
+    elif how in ('dir-long', 'dir-short'):
+        # A non-empty directory in the library's place. The size the pin
+        # reads from `lseek(SEEK_END)` is the file system's: ext4 answers
+        # the htree end of file (huge) for any directory, btrfs the summed
+        # length of the entry names twice over (2 for `x`, 50 for 25
+        # characters), so which `MemoryChunk::mmap` site is reached follows
+        # the size (`memory_chunk.h:479-483` against `:493`).
+        os.makedirs(path)
+        Path(path, 'e' * 25 if how == 'dir-long' else 'x').write_bytes(b'x')
     else:
         assert how == 'missing'
 
@@ -2977,6 +2990,36 @@ for _mode in ('pinyin', 'zhuyin'):
         for _site, _label in (('init-fresh', 'fresh-user-dir'), ('init-nonconform', 'nonconforming-user-dir')):
             case(f'stderr-library-init-{_label}-{_how}' + _suffix, mode=_mode,
                  crash=library_expected(_site, _how, _mode))(library_probe(_site, _how))
+
+
+# A directory where a system library should be (register row 96). A size of
+# 8 or more reads as a header-sized file, `read` then fails with EISDIR and
+# `assert(ret_len == sizeof(length))` kills the pin (`memory_chunk.h:493`,
+# class (c)); a smaller size is `MemoryChunk::mmap`'s ordinary `false` and
+# the empty chunk the pin dies on later (row 76, class (b)). The long entry
+# name reaches `:493` on ext4 and on btrfs; the one-character entry reaches
+# it on ext4 and row 76 on btrfs, so that case matches whichever site the
+# pin's own signal names.
+LIBRARY_FINAL = {'init': 'ctx', 'load': 'load', 'save': 'save', 'mask-out': 'mask_out'}
+
+
+def library_directory_probe(site, how):
+    inner = library_probe(site, how)
+
+    def probe(k):
+        out = inner(k)
+        out['ret'] = out[LIBRARY_FINAL[site]]
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    for _site in LIBRARY_FINAL:
+        case(f'abort-library-directory-long-entry-{_site}' + _suffix, mode=_mode,
+             abort=False)(library_directory_probe(_site, 'dir-long'))
+        case(f'library-directory-one-entry-{_site}' + _suffix, mode=_mode, abort=False,
+             crash=library_expected(_site, 'short', _mode), either=True)(library_directory_probe(_site, 'dir-short'))
 
 
 # The guards that keep the pin silent with the same broken library: the
@@ -5020,12 +5063,13 @@ def main():
             if args.observations:
                 with args.observations.open('a') as capture:
                     capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
-            if spec['crash'] is not None:
+            as_abort = spec['abort'] is not NO_ABORT and (not spec['either'] or pin['exit'] == -6)
+            if spec['crash'] is not None and not as_abort:
                 shown = subject['result'] or {}
                 same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
                     pin['stderr'] == subject['stderr'] and \
                     all(shown.get(key) == value for key, value in spec['crash'].items())
-            elif spec['abort'] is not NO_ABORT:
+            elif as_abort:
                 shown = subject['result'] or {}
                 same = pin['exit'] == -6 and subject['exit'] == 0 and \
                     shown.get('ret') == spec['abort'] and shown.get('logs') == [[WARNING_DOMAIN[spec['mode']], 16]] and \

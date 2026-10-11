@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 use oxpinyin_core::ChewingKey;
 
 use crate::chewing_table::keys_match;
-use crate::phrase_library::{LibraryError, PhraseLibrary, verify_chunk};
+use crate::phrase_library::{LibraryError, PhraseLibrary, RowFault, verify_chunk};
 
 pub use crate::system_files::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 
@@ -110,7 +110,11 @@ impl PhraseLibraries {
             // `g_build_filename`: a name never leaves the directory.
             let path = crate::table_info::pin_join(dir, file.as_ref());
             match std::fs::metadata(&path) {
-                // Not a regular file: skipped without a word, as before.
+                // A directory is `MemoryChunk::mmap`'s to judge by its
+                // reported size (`phrase_library::directory_chunk_fault`);
+                // any other file that is not a regular one is skipped
+                // without a word, as before.
+                Ok(meta) if meta.is_dir() => {}
                 Ok(meta) if !meta.is_file() => continue,
                 Ok(_) => {}
                 // The pin's `open` fails and `MemoryChunk::mmap` answers
@@ -152,6 +156,22 @@ impl PhraseLibraries {
             })
             .map(|loaded| loaded.path.clone())
             .collect()
+    }
+
+    /// Whether the first loaded library (in nibble order, among those
+    /// `visible` accepts; with `only`, that one) that `MemoryChunk::mmap`
+    /// would refuse now is a directory the pin asserts on
+    /// ([`RowFault::ChunkHeaderRead`], `memory_chunk.h:493`) rather than one
+    /// it merely cannot map. The pin dies on the first such library, so a
+    /// refusal of the other kind earlier in the order is not this fault.
+    #[must_use]
+    pub fn chunk_header_fault_now(&self, visible: impl Fn(u8) -> bool, only: Option<u8>) -> bool {
+        (0u8..)
+            .zip(&self.by_nibble)
+            .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && visible(nibble))
+            .filter_map(|(_, slot)| slot.as_ref())
+            .find_map(|loaded| verify_chunk(&loaded.path).err())
+            .is_some_and(|error| matches!(error, LibraryError::Row(RowFault::ChunkHeaderRead)))
     }
 
     /// Loads `path` as library `nibble` — `FacadePhraseIndex::load`.
