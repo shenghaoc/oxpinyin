@@ -4,12 +4,12 @@
  * Guess predicted candidates for system prefixes that exist in both the
  * W3 mini phrase index and the pin's full tables, and print only
  * PREDICTED_PUNCTUATION (8) texts. Phrase texts stay off stdout.
- * Count parity requires matched
- * system tables, as supplied by run-same-data-dir-diff.sh.
- * The total candidate count is printed separately: a missing phrase row
- * from this API must be visible even when all punctuation rows survive.
+ * In matched-tables mode, also print the total candidate count: a missing
+ * phrase row must be visible even when all punctuation rows survive.
+ * punctuation-only mode compares the mini index against the full tables,
+ * whose phrase counts differ by design. Both modes print punctuation rows.
  *
- * Usage: ./punct-diff <path-to-so> <systemdir>
+ * Usage: ./punct-diff <path-to-so> <systemdir> <punctuation-only|matched-tables>
  */
 
 #define _POSIX_C_SOURCE 200809L
@@ -47,12 +47,14 @@ static void *must(void *handle, const char *name) {
 
 static void dump_puncts(fn_predict predict, fn_n_cand n_cand, fn_get_cand get_cand,
                         fn_get_type get_type, fn_get_str get_str,
-                        pinyin_instance_t *inst, const char *prefix, const char *tag) {
+                        pinyin_instance_t *inst, const char *prefix, const char *tag,
+                        bool matched_tables) {
     bool ok = predict(inst, prefix);
     printf("%s-predict: %s\n", tag, ok ? "true" : "false");
     guint n = 0;
     n_cand(inst, &n);
-    printf("%s-candidates: %u\n", tag, n);
+    if (matched_tables)
+        printf("%s-candidates: %u\n", tag, n);
     unsigned seen = 0;
     for (guint i = 0; i < n; i++) {
         lookup_candidate_t *c = NULL;
@@ -70,10 +72,12 @@ static void dump_puncts(fn_predict predict, fn_n_cand n_cand, fn_get_cand get_ca
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        fprintf(stderr, "Usage: %s <so> <systemdir>\n", argv[0]);
+    if (argc != 4 || (strcmp(argv[3], "punctuation-only") != 0 &&
+                      strcmp(argv[3], "matched-tables") != 0)) {
+        fprintf(stderr, "Usage: %s <so> <systemdir> <punctuation-only|matched-tables>\n", argv[0]);
         return 1;
     }
+    bool matched_tables = strcmp(argv[3], "matched-tables") == 0;
     void *h = dlopen(argv[1], RTLD_NOW);
     if (!h) {
         fprintf(stderr, "dlopen: %s\n", dlerror());
@@ -109,11 +113,11 @@ int main(int argc, char **argv) {
     }
 
     /* Mini-table phrases that also exist in the pin's punct.table. */
-    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "好", "hao");
-    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "中", "zhong");
-    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "国", "guo");
-    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "中国", "zhongguo");
-    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "你", "ni");
+    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "好", "hao", matched_tables);
+    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "中", "zhong", matched_tables);
+    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "国", "guo", matched_tables);
+    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "中国", "zhongguo", matched_tables);
+    dump_puncts(predict, n_cand, get_cand, get_type, get_str, inst, "你", "ni", matched_tables);
 
     free_inst(inst);
     fini(ctx);
