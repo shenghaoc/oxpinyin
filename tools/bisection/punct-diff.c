@@ -3,8 +3,11 @@
  *
  * Guess predicted candidates for system prefixes that exist in both the
  * W3 mini phrase index and the pin's full tables, and print only
- * PREDICTED_PUNCTUATION (8) texts. Phrase suggestions stay off the log
- * so mini vs full prefix-suggestion lists cannot fail the comparison.
+ * PREDICTED_PUNCTUATION (8) texts. Phrase texts stay off stdout.
+ * Count parity requires matched
+ * system tables, as supplied by run-same-data-dir-diff.sh.
+ * The total candidate count is printed separately: a missing phrase row
+ * from this API must be visible even when all punctuation rows survive.
  *
  * Usage: ./punct-diff <path-to-so> <systemdir>
  */
@@ -49,6 +52,7 @@ static void dump_puncts(fn_predict predict, fn_n_cand n_cand, fn_get_cand get_ca
     printf("%s-predict: %s\n", tag, ok ? "true" : "false");
     guint n = 0;
     n_cand(inst, &n);
+    printf("%s-candidates: %u\n", tag, n);
     unsigned seen = 0;
     for (guint i = 0; i < n; i++) {
         lookup_candidate_t *c = NULL;

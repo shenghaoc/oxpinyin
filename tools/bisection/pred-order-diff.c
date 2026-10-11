@@ -20,6 +20,10 @@
  * to be emitted at all; on a < 2.11 library the fallback call produces
  * none and the punct sections are simply empty on both sides.
  *
+ * The plain entry is also called for the same eight prefixes, under
+ * pred-plain-<tag> labels, so its ordering is observed independently
+ * of the punctuation wrapper. The original sections stay unchanged.
+ *
  * The runner diffs the two dumps and reports per-prefix position
  * mismatches — a number that moves (baseline, 2026-08-25: 好 174/178;
  * the others recorded in the findings doc) rather than a binary
@@ -140,15 +144,14 @@ int main(int argc, char **argv) {
     fn_fini fini = (fn_fini)must(handle, "pinyin_fini");
     fn_alloc alloc = (fn_alloc)must(handle, "pinyin_alloc_instance");
     fn_free free_i = (fn_free)must(handle, "pinyin_free_instance");
-    /* libpinyin < 2.11 (RHEL/Fedora ship 2.8.1) has no
-     * _with_punctuations variant; the plain call emits the same
-     * PREDICTED_PREFIX rows (the punctuations variant only prepends
-     * punctuation rows of a different type, which the type filter below
-     * drops), so falling back keeps the compared row set identical. */
+    fn_predict predict_plain =
+        (fn_predict)must(handle, "pinyin_guess_predicted_candidates");
+    /* Older libraries have no punctuation variant; keep the original
+     * fallback and separately exercise the plain export on every library. */
     fn_predict predict = (fn_predict)dlsym(
         handle, "pinyin_guess_predicted_candidates_with_punctuations");
     if (!predict)
-        predict = (fn_predict)must(handle, "pinyin_guess_predicted_candidates");
+        predict = predict_plain;
     fn_n n_cand = (fn_n)must(handle, "pinyin_get_n_candidate");
     fn_getc get_cand = (fn_getc)must(handle, "pinyin_get_candidate");
     fn_gettype get_type = (fn_gettype)must(handle, "pinyin_get_candidate_type");
@@ -196,6 +199,18 @@ int main(int argc, char **argv) {
                         prefixes[i].prefix, prefixes[i].tag)) {
             failed = 1;
             break;
+        }
+    }
+
+    if (!failed) {
+        for (size_t i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
+            char tag[32];
+            snprintf(tag, sizeof(tag), "plain-%s", prefixes[i].tag);
+            if (dump_prefix(predict_plain, n_cand, get_cand, get_type, get_str,
+                            inst, prefixes[i].prefix, tag)) {
+                failed = 1;
+                break;
+            }
         }
     }
 
