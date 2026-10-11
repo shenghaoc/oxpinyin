@@ -1064,13 +1064,31 @@ impl Dictionary for RuntimeDict {
         &self,
         syllables: &[Self::Syllable],
     ) -> Result<Vec<PhraseToken>, Self::Error> {
-        let mut tokens: Vec<u32> = self.system.suggest_extension_tokens(syllables)?;
+        Ok(self
+            .checked_extension_tokens(syllables)?
+            .unwrap_or_default())
+    }
+
+    fn checked_extension_tokens(
+        &self,
+        syllables: &[Self::Syllable],
+    ) -> Result<Option<Vec<PhraseToken>>, Self::Error> {
+        let Some(mut tokens) = self.system.checked_extension_tokens(syllables)? else {
+            return Ok(None);
+        };
+        if self
+            .user
+            .as_ref()
+            .is_some_and(|store| store.overlong_extension_gate(syllables))
+        {
+            return Ok(None);
+        }
         tokens.extend(self.user_lookup()?.suggest_extensions(syllables));
         if self.library_mask.load(Ordering::SeqCst) != 0 {
             tokens.retain(|token| self.library_visible_token(*token));
         }
         tokens.sort_by_key(|token| token >> 24);
-        Ok(tokens.into_iter().map(PhraseToken::new).collect())
+        Ok(Some(tokens.into_iter().map(PhraseToken::new).collect()))
     }
 
     /// The pin's `search_suggestion` gate (`chewing_large_table2_bdb.cpp:282`):

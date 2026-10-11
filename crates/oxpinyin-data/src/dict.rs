@@ -402,17 +402,29 @@ impl SystemDictionary {
         &self,
         syllables: &[SyllableKey],
     ) -> Result<Vec<u32>, DictError> {
+        Ok(self
+            .checked_extension_tokens(syllables)?
+            .unwrap_or_default())
+    }
+
+    /// The suggestion tokens and overlong-key classification from one
+    /// system-index lookup and range walk. `None` is the pin's abort.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM walk or a value decode fails.
+    pub fn checked_extension_tokens(
+        &self,
+        syllables: &[SyllableKey],
+    ) -> Result<Option<Vec<u32>>, DictError> {
         if syllables.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Some(Vec::new()));
         }
         let Some(keys) = syllables_to_chewing_keys(syllables) else {
-            return Ok(Vec::new());
+            return Ok(Some(Vec::new()));
         };
-        if !self.pinyin.key_exists(&keys)? {
-            return Ok(Vec::new());
-        }
         let mut tokens: Vec<u32> = Vec::new();
-        self.pinyin.walk_extensions(&keys, &mut |length, items| {
+        let overlong = self.pinyin.walk_suggestions(&keys, &mut |length, items| {
             // The query-length row is the phrase itself — the pin's cursor
             // starts one past it (`Jump` + `Next`).
             if length > keys.len() {
@@ -425,10 +437,13 @@ impl SystemDictionary {
             }
             Ok(false)
         })?;
+        if overlong {
+            return Ok(None);
+        }
         // `reduce_tokens`'s library grouping: tokens filed by nibble
         // ascending, cursor order within a library.
         tokens.sort_by_key(|token| token >> 24);
-        Ok(tokens)
+        Ok(Some(tokens))
     }
 
     /// The system table's half of the pin's `search_suggestion` gate
@@ -561,6 +576,14 @@ impl Dictionary for SystemDictionary {
             .into_iter()
             .map(PhraseToken::new)
             .collect())
+    }
+
+    fn checked_extension_tokens(
+        &self,
+        syllables: &[SyllableKey],
+    ) -> Result<Option<Vec<PhraseToken>>, DictError> {
+        Ok(SystemDictionary::checked_extension_tokens(self, syllables)?
+            .map(|tokens| tokens.into_iter().map(PhraseToken::new).collect()))
     }
 
     /// `_token_get_phrase`'s system half: the loaded library item's text.

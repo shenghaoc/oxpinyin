@@ -4881,6 +4881,16 @@ def _(k):
     return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
 
 
+@case('abort-add-phrase-index-item-missing', abort=False, userdir=True, cells=('bdb',))
+def _(k):
+    # The phrase table names library 7's token, but user.bin has no item:
+    # get_phrase_item leaves a zero-length PhraseItem, so :568 asserts.
+    ctx = k.init()
+    assert ctx, 'the first init failed'
+    k.fn('fini', None, P)(ctx)
+    return _add_pinyin_phrase_after_index(k, (0x07000001).to_bytes(4, 'little'))
+
+
 @case('abort-add-phrase-index-text-mismatch', abort=False, userdir=True, cells=('bdb',))
 def _(k):
     token = _persist_pinyin_phrase(k, '你們', "ni'men")
