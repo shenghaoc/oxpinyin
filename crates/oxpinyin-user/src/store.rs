@@ -789,6 +789,63 @@ fn collect_pronunciation_keys_from_txn(
     Ok(out)
 }
 
+/// `SingleGram::mask_out` subtracts removed frequencies from the stored
+/// `guint32` total with wrap (074a2219 `ngram.cpp:76-102`). A surviving
+/// zero-frequency item still keeps its gram; an untouched total is never
+/// rebuilt from its items. `Bigram::mask_out` removes selected predecessors
+/// wholesale and changed grams only once empty (`ngram_bdb.cpp:215-254`).
+fn mask_bigram_rows(txn: &mut dyn WriteTxn, mask: Token, value: Token) -> Result<(), StoreError> {
+    let mut rows = Vec::new();
+    txn.for_each(BIGRAM, &mut |key, value| {
+        let pair = codec::decode_token_pair(key)
+            .map_err(|_| StoreError::Backend("corrupt bigram key".into()))?;
+        let count = codec::decode_u64(value)
+            .map_err(|_| StoreError::Backend("corrupt bigram count".into()))?;
+        rows.push((pair, count));
+        Ok(())
+    })?;
+
+    let mut removed = std::collections::BTreeMap::<Token, u32>::new();
+    let mut survivors = std::collections::BTreeSet::new();
+    for ((prev, cur), count) in rows {
+        if prev & mask == value || cur & mask == value {
+            txn.remove(BIGRAM, &codec::encode_token_pair(prev, cur))?;
+            let frequency = removed.entry(prev).or_default();
+            *frequency = frequency.wrapping_add(count as u32);
+        } else {
+            survivors.insert(prev);
+        }
+    }
+
+    // Include selected predecessors whose gram already has no items.
+    let mut selected_totals = Vec::new();
+    txn.for_each(BIGRAM_TOTAL, &mut |key, _| {
+        let prev = codec::decode_token(key)
+            .map_err(|_| StoreError::Backend("corrupt bigram_total key".into()))?;
+        if prev & mask == value {
+            selected_totals.push(prev);
+        }
+        Ok(())
+    })?;
+    for prev in selected_totals {
+        txn.remove(BIGRAM_TOTAL, &codec::encode_token(prev))?;
+    }
+    for (prev, frequency) in removed {
+        let key = codec::encode_token(prev);
+        if survivors.contains(&prev) {
+            let total = txn_get_u64_or(txn, BIGRAM_TOTAL, &key, 0)? as u32;
+            txn.put(
+                BIGRAM_TOTAL,
+                &key,
+                &codec::encode_u64(u64::from(total.wrapping_sub(frequency))),
+            )?;
+        } else {
+            txn.remove(BIGRAM_TOTAL, &key)?;
+        }
+    }
+    Ok(())
+}
+
 fn mask_phrase_rows(txn: &mut dyn WriteTxn, mask: Token, value: Token) -> Result<(), StoreError> {
     // User phrases: text, reverse lookup, and pronunciations.
     let mut matched: Vec<(Token, String)> = Vec::new();
@@ -2537,47 +2594,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
         let db = self.database();
         let has_user_data = db.write(|txn| {
-            // Bigram: collect all rows, then remove matching and rewrite totals.
-            let mut bigram_rows: Vec<((Token, Token), u64)> = Vec::new();
-            txn.for_each(BIGRAM, &mut |k, v| {
-                let (prev, cur) = codec::decode_token_pair(k)
-                    .map_err(|_| StoreError::Backend("corrupt bigram key".into()))?;
-                let count = codec::decode_u64(v)
-                    .map_err(|_| StoreError::Backend("corrupt bigram count".into()))?;
-                bigram_rows.push(((prev, cur), count));
-                Ok(())
-            })?;
-
-            let mut survivors: std::collections::BTreeMap<Token, u64> =
-                std::collections::BTreeMap::new();
-            for ((prev, cur), count) in &bigram_rows {
-                if (prev & mask) == value || (cur & mask) == value {
-                    txn.remove(BIGRAM, &codec::encode_token_pair(*prev, *cur))?;
-                } else {
-                    let slot = survivors.entry(*prev).or_default();
-                    *slot = slot.saturating_add(*count);
-                }
-            }
-
-            let mut old_totals: Vec<Token> = Vec::new();
-            txn.for_each(BIGRAM_TOTAL, &mut |k, _v| {
-                let prev = codec::decode_token(k)
-                    .map_err(|_| StoreError::Backend("corrupt bigram_total key".into()))?;
-                old_totals.push(prev);
-                Ok(())
-            })?;
-            for prev in old_totals {
-                txn.remove(BIGRAM_TOTAL, &codec::encode_token(prev))?;
-            }
-            for (prev, total) in survivors {
-                if total > 0 {
-                    txn.put(
-                        BIGRAM_TOTAL,
-                        &codec::encode_token(prev),
-                        &codec::encode_u64(total),
-                    )?;
-                }
-            }
+            mask_bigram_rows(txn, mask, value)?;
 
             // Unigram deltas and their running total.
             let mut unigram_rows: Vec<(Token, u64)> = Vec::new();
@@ -2678,47 +2695,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 )?;
                 remove_pronunciations(txn, token)?;
 
-                // Bigram: collect, remove matching, rewrite totals.
-                let mut bigram_rows: Vec<((Token, Token), u64)> = Vec::new();
-                txn.for_each(BIGRAM, &mut |k, v| {
-                    let (prev, cur) = codec::decode_token_pair(k)
-                        .map_err(|_| StoreError::Backend("corrupt bigram key".into()))?;
-                    let count = codec::decode_u64(v)
-                        .map_err(|_| StoreError::Backend("corrupt bigram count".into()))?;
-                    bigram_rows.push(((prev, cur), count));
-                    Ok(())
-                })?;
-
-                let mut survivors: std::collections::BTreeMap<Token, u64> =
-                    std::collections::BTreeMap::new();
-                for ((prev, cur), count) in &bigram_rows {
-                    if *prev == token || *cur == token {
-                        txn.remove(BIGRAM, &codec::encode_token_pair(*prev, *cur))?;
-                    } else {
-                        let slot = survivors.entry(*prev).or_default();
-                        *slot = slot.saturating_add(*count);
-                    }
-                }
-
-                let mut old_totals: Vec<Token> = Vec::new();
-                txn.for_each(BIGRAM_TOTAL, &mut |k, _v| {
-                    let prev = codec::decode_token(k)
-                        .map_err(|_| StoreError::Backend("corrupt bigram_total key".into()))?;
-                    old_totals.push(prev);
-                    Ok(())
-                })?;
-                for prev in old_totals {
-                    txn.remove(BIGRAM_TOTAL, &codec::encode_token(prev))?;
-                }
-                for (prev, total) in survivors {
-                    if total > 0 {
-                        txn.put(
-                            BIGRAM_TOTAL,
-                            &codec::encode_token(prev),
-                            &codec::encode_u64(total),
-                        )?;
-                    }
-                }
+                mask_bigram_rows(txn, PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)?;
 
                 // Unigram: recompute total excluding the removed token.
                 let mut kept_sum = 0_u64;
@@ -4028,6 +4005,107 @@ mod tests {
                     assert!(!store.remove_user_phrase(user_a).unwrap());
                     assert!(!store.remove_user_phrase(0x0100_0001).unwrap());
                     cleanup(&path);
+                }
+
+                #[test]
+                fn bigram_removals_subtract_stored_totals_with_u32_wrap() {
+                    for remove_phrase in [false, true] {
+                        for (total, counts, removed, expected) in [
+                            (1_u32, [u32::MAX, 1], 1_u32, 0_u32),
+                            (0, [2, 3], 1, u32::MAX),
+                            (17, [2, 3], 4, 13),
+                            (17, [2, 3], 0, 17),
+                            (1, [0, 0], 1, 0),
+                            (1, [2, 3], u32::MAX, 2),
+                            (9, [2, 3], 4, 5),
+                        ] {
+                            let path = temp_path("remove-bigram-total");
+                            let mut store = Store::create_standalone(&path).unwrap();
+                            let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                            let prev = 0x0100_0001;
+                            let kept = [0x0100_0002, 0x0100_0003];
+                            store
+                                .database()
+                                .write(|txn| {
+                                    for (cur, count) in
+                                        kept.into_iter().zip(counts).chain([(token, removed)])
+                                    {
+                                        txn.put(
+                                            BIGRAM,
+                                            &codec::encode_token_pair(prev, cur),
+                                            &codec::encode_u64(u64::from(count)),
+                                        )?;
+                                    }
+                                    txn.put(
+                                        BIGRAM_TOTAL,
+                                        &codec::encode_token(prev),
+                                        &codec::encode_u64(u64::from(total)),
+                                    )?;
+                                    // An independent untouched total, plus a selected
+                                    // predecessor (also with reserved token bits) and
+                                    // a gram whose last zero-frequency item is removed.
+                                    for (p, cur, count, total) in [
+                                        (2, kept[0], 2, 17),
+                                        (token, kept[0], 4, 4),
+                                        (token | 0x8000_0000, kept[0], 4, 4),
+                                        (3, token, 0, 0),
+                                    ] {
+                                        txn.put(
+                                            BIGRAM,
+                                            &codec::encode_token_pair(p, cur),
+                                            &codec::encode_u64(count),
+                                        )?;
+                                        txn.put(
+                                            BIGRAM_TOTAL,
+                                            &codec::encode_token(p),
+                                            &codec::encode_u64(total),
+                                        )?;
+                                    }
+                                    Ok(())
+                                })
+                                .unwrap();
+                            if remove_phrase {
+                                assert!(store.remove_user_phrase(token).unwrap());
+                            } else {
+                                store
+                                    .mask_out(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)
+                                    .unwrap();
+                            }
+                            assert_eq!(store.bigram_total(prev).unwrap(), u64::from(expected));
+                            assert_eq!(
+                                store.bigram_successors(prev).unwrap(),
+                                kept.into_iter()
+                                    .zip(counts.map(u64::from))
+                                    .collect::<Vec<_>>()
+                            );
+                            assert_eq!(store.bigram_total(2).unwrap(), 17);
+                            for removed_prev in [token, token | 0x8000_0000, 3] {
+                                assert!(store.bigram_successors(removed_prev).unwrap().is_empty());
+                                assert!(
+                                    store
+                                        .database()
+                                        .get(BIGRAM_TOTAL, &codec::encode_token(removed_prev))
+                                        .unwrap()
+                                        .is_none()
+                                );
+                            }
+                            // Exercise 4906c01b's export clamp directly: removal
+                            // must hand it an already-wrapped guint32 total.
+                            let state = crate::store_libpinyin::export_state(
+                                &store,
+                                &std::collections::BTreeMap::new().into(),
+                            )
+                            .unwrap();
+                            assert_eq!(state.bigram[&prev].total, expected);
+                            assert_eq!(state.bigram[&2].total, 17);
+                            drop(store);
+                            let reopened = Store::create_standalone(&path).unwrap();
+                            assert_eq!(reopened.bigram_total(prev).unwrap(), u64::from(expected));
+                            assert_eq!(reopened.bigram_total(2).unwrap(), 17);
+                            drop(reopened);
+                            cleanup(&path);
+                        }
+                    }
                 }
 
                 #[test]
