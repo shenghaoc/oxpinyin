@@ -124,14 +124,18 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest(
 ///                                           ChewingKeyRest * key_rest,
 ///                                           guint16 * begin, guint16 * end);
 /// ```
+///
+/// The pin's body never reads the instance (`zhuyin.cpp:1930-1941`): a NULL
+/// instance is a defined call there, so it is unused here. Only the
+/// key-rest pointer is read, and both out-params are optional.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_zhuyin_key_rest_positions(
-    instance: *mut ZhuyinInstance,
+    _instance: *mut ZhuyinInstance,
     key_rest: *mut ChewingKeyRest,
     begin: *mut u16,
     end: *mut u16,
 ) -> bool {
-    if instance.is_null() || key_rest.is_null() {
+    if key_rest.is_null() {
         return false;
     }
 
@@ -160,13 +164,19 @@ pub extern "C" fn zhuyin_get_zhuyin_key_rest_positions(
 ///                                        ChewingKeyRest * key_rest,
 ///                                        guint16 * length);
 /// ```
+///
+/// The pin's body never reads the instance (`zhuyin.cpp:1942-1946`): a NULL
+/// instance is a defined call there, so it is unused here. The key-rest
+/// pointer is read and `length` is written unconditionally by the pin, so a
+/// NULL `length` is register row 41's class (b) site and the guard answers
+/// `false`.
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_get_zhuyin_key_rest_length(
-    instance: *mut ZhuyinInstance,
+    _instance: *mut ZhuyinInstance,
     key_rest: *mut ChewingKeyRest,
     length: *mut u16,
 ) -> bool {
-    if instance.is_null() || key_rest.is_null() {
+    if key_rest.is_null() {
         return false;
     }
 
