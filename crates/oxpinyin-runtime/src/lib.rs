@@ -512,19 +512,6 @@ impl RuntimeDict {
             .unmappable_now(|nibble| self.library_visible(u32::from(nibble)), only)
     }
 
-    /// Whether the first loaded, visible system library (in library order;
-    /// with `only`, that one, visible or not: a reload targets an unloaded
-    /// library) the pin would map again and cannot is a
-    /// directory it asserts on (`memory_chunk.h:493`), not one it merely
-    /// cannot map.
-    #[must_use]
-    pub fn system_chunk_header_fault(&self, only: Option<u8>) -> bool {
-        self.system.libraries().chunk_header_fault_now(
-            |nibble| only.is_some() || self.library_visible(u32::from(nibble)),
-            only,
-        )
-    }
-
     /// Unloads addon library `index`.
     ///
     /// Answers `true` whether or not the library was loaded, mirroring the
@@ -1841,10 +1828,30 @@ impl Runtime {
         self.dict.unmappable_system_libraries(only)
     }
 
-    /// See [`RuntimeDict::system_chunk_header_fault`].
+    /// One validation pass over the system files this operation remaps.
+    /// Save and mask skip slot zero, absent sub-indices, unused rows and
+    /// rows without a user filename (`pinyin.cpp:927-943`, `:1235-1251`).
+    /// An explicit reload still checks its target, including slot zero.
     #[must_use]
-    pub fn system_chunk_header_fault(&self, only: Option<u8>) -> bool {
-        self.dict.system_chunk_header_fault(only)
+    pub fn check_system_libraries(
+        &self,
+        only: Option<u8>,
+    ) -> oxpinyin_data::phrase_libraries::LibraryCheck {
+        self.dict.system.libraries().check_now(
+            |nibble| {
+                only.is_some()
+                    || (nibble != 0
+                        && self.dict.library_visible(u32::from(nibble))
+                        && self.conf.default_row(nibble).is_some_and(|row| {
+                            row.user.is_some()
+                                && matches!(
+                                    row.file_type,
+                                    FileType::SystemFile | FileType::Dictionary
+                                )
+                        }))
+            },
+            only,
+        )
     }
 
     /// Unloads addon library `index` from this runtime's dictionary.

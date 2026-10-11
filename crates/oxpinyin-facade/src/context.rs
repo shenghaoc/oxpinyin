@@ -465,14 +465,9 @@ impl ContextCore {
         // against the live one (`pinyin.cpp:956`, `zhuyin.cpp:589`), before
         // it writes anything. A library that is a directory the pin asserts
         // on kills it there (`memory_chunk.h:493`).
-        if self
-            .runtime
-            .as_ref()
-            .is_some_and(|runtime| runtime.system_chunk_header_fault(None))
-        {
+        if self.check_system_libraries(None) {
             return SaveOutcome::ChunkHeaderRead;
         }
-        self.report_unmappable_libraries(None);
         let Some(store) = self.user.as_mut() else {
             return SaveOutcome::NotSaved;
         };
@@ -502,13 +497,18 @@ impl ContextCore {
     /// map again at this call and cannot: one `mmap %s failed!` each, in
     /// library order. The pin dies on the first; nothing here does, and the
     /// call answers what it answered before.
-    fn report_unmappable_libraries(&self, only: Option<u8>) {
+    fn check_system_libraries(&self, only: Option<u8>) -> bool {
         let Some(runtime) = &self.runtime else {
-            return;
+            return false;
         };
-        for path in runtime.unmappable_system_libraries(only) {
+        let checked = runtime.check_system_libraries(only);
+        if checked.chunk_header_fault {
+            return true;
+        }
+        for path in checked.unmappable {
             pin_stderr::mmap_failed(&path);
         }
+        false
     }
 
     /// `mask_out`'s body: the store-level deletion, or
@@ -530,14 +530,9 @@ impl ContextCore {
     /// (`phrase_index.cpp:745`). A refused mask leaves the store untouched,
     /// where the pin's partial reloads die with its abort.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
-        if self
-            .runtime
-            .as_ref()
-            .is_some_and(|runtime| runtime.system_chunk_header_fault(None))
-        {
+        if self.check_system_libraries(None) {
             return MaskOutOutcome::ChunkHeaderRead;
         }
-        self.report_unmappable_libraries(None);
         // The pin's mask loop walks `index` 1..`PHRASE_INDEX_LIBRARY_COUNT`
         // and skips a sub-index `get_range` reports missing
         // (`pinyin.cpp:1235-1241`, `zhuyin.cpp:792-798`); the runtime's
@@ -613,18 +608,13 @@ impl ContextCore {
         // a directory the pin asserts on kills it there
         // (`memory_chunk.h:493`), before anything changes. A library that is
         // still loaded is not mapped again.
-        if !runtime.dict().library_visible(index)
-            && runtime.system_chunk_header_fault(Some(row_index))
-        {
+        if runtime.dict().library_visible(index) {
+            return Ok(false);
+        }
+        if self.check_system_libraries(Some(row_index)) {
             return Err(LibraryRowAssert::ChunkHeaderRead);
         }
         let loaded = runtime.load_library(index);
-        if loaded && let Ok(index) = u8::try_from(index) {
-            // The pin maps the file again for a library it had unloaded
-            // (`pinyin.cpp:256`, `zhuyin.cpp:200`); this reload only lifts
-            // the mask, and answers as before.
-            self.report_unmappable_libraries(Some(index));
-        }
         Ok(loaded)
     }
 

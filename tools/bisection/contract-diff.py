@@ -2998,7 +2998,7 @@ for _mode in ('pinyin', 'zhuyin'):
 # class (c)); a smaller size is `MemoryChunk::mmap`'s ordinary `false` and
 # the empty chunk the pin dies on later (row 76, class (b)). The long entry
 # name reaches `:493` on ext4 and on btrfs; the one-character entry reaches
-# it on ext4 and row 76 on btrfs, so that case matches whichever site the
+# it on ext4 and row 76 on btrfs, so both shapes match whichever site the
 # pin's own signal names.
 LIBRARY_FINAL = {'init': 'ctx', 'load': 'load', 'save': 'save', 'mask-out': 'mask_out', 'addon': 'load'}
 
@@ -3018,9 +3018,44 @@ for _mode in ('pinyin', 'zhuyin'):
     # The zhuyin facade has no addon entry point.
     for _site in (s for s in LIBRARY_FINAL if s != 'addon' or _mode == 'pinyin'):
         case(f'abort-library-directory-long-entry-{_site}' + _suffix, mode=_mode,
-             abort=False)(library_directory_probe(_site, 'dir-long'))
+             abort=False, crash=library_expected(_site, 'short', _mode), either=True)(library_directory_probe(_site, 'dir-long'))
         case(f'library-directory-one-entry-{_site}' + _suffix, mode=_mode, abort=False,
              crash=library_expected(_site, 'short', _mode), either=True)(library_directory_probe(_site, 'dir-short'))
+
+
+def library_directory_guard(site, guard):
+    def probe(k):
+        system = private_system(k)
+        conf = Path(system, 'table.conf')
+        text = conf.read_text()
+        name = 'gbk_char.bin' if guard == 'unloaded' else 'gb_char.bin'
+        if guard == 'reserved':
+            text = text.replace('default RESERVED NULL NULL NULL NOT_USED',
+                                'default RESERVED gb_char.table reserved.bin reserved.dbin SYSTEM_FILE')
+            name = 'reserved.bin'
+            os.symlink(os.path.join(k.data, 'gb_char.bin'), os.path.join(system, name))
+        conf.unlink()
+        conf.write_text(text)
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        _, _, parse, phrase, train_args = LIBRARY_FACADES[k.mode]
+        assert train_once(k, ctx, parse, phrase, train_args), 'train failed'
+        if guard == 'unloaded':
+            assert k.fn('unload_phrase_library', B, P, C.c_ubyte)(ctx, 2), 'unload failed'
+        break_library(k, system, name, 'dir-long')
+        if site == 'save':
+            ret = k.fn('save', B, P)(ctx)
+        else:
+            ret = k.fn('mask_out', B, P, U, U)(ctx, 0xff000000, 0x04000000)
+        return {'ret': ret}
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _guard in ('reserved', 'unloaded'):
+        for _site in ('save', 'mask-out'):
+            case(f'library-directory-guard-{_guard}-{_site}' + ('-zhuyin' if _mode == 'zhuyin' else ''),
+                 mode=_mode, control=True)(library_directory_guard(_site, _guard))
 
 
 # The guards that keep the pin silent with the same broken library: the

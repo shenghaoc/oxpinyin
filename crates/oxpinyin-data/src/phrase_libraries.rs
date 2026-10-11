@@ -69,6 +69,16 @@ pub struct PhraseLibraries {
     unmapped: Vec<PathBuf>,
 }
 
+/// The fault and diagnostic paths from one validation of each selected
+/// library. The first fault determines the pin's stopping site.
+#[derive(Default)]
+pub struct LibraryCheck {
+    /// The first failed validation reaches `memory_chunk.h:493`.
+    pub chunk_header_fault: bool,
+    /// Files that produce the pin's ordinary `mmap failed` diagnostic.
+    pub unmappable: Vec<PathBuf>,
+}
+
 impl PhraseLibraries {
     /// A facade with no library loaded.
     #[must_use]
@@ -159,20 +169,30 @@ impl PhraseLibraries {
             .collect()
     }
 
-    /// Whether the first loaded library (in nibble order, among those
-    /// `visible` accepts; with `only`, that one) that `MemoryChunk::mmap`
-    /// would refuse now is a directory the pin asserts on
-    /// ([`RowFault::ChunkHeaderRead`], `memory_chunk.h:493`) rather than one
-    /// it merely cannot map. The pin dies on the first such library, so a
-    /// refusal of the other kind earlier in the order is not this fault.
+    /// Validate each selected loaded library once, retaining both the
+    /// first fault's classification and the reportable paths. The caller
+    /// applies its operation's table-row and visibility guards.
     #[must_use]
-    pub fn chunk_header_fault_now(&self, visible: impl Fn(u8) -> bool, only: Option<u8>) -> bool {
-        (0u8..)
+    pub fn check_now(&self, selected: impl Fn(u8) -> bool, only: Option<u8>) -> LibraryCheck {
+        let mut checked = LibraryCheck::default();
+        let mut first_fault = false;
+        for loaded in (0u8..)
             .zip(&self.by_nibble)
-            .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && visible(nibble))
+            .filter(|&(nibble, _)| only.is_none_or(|wanted| wanted == nibble) && selected(nibble))
             .filter_map(|(_, slot)| slot.as_ref())
-            .find_map(|loaded| verify_chunk(&loaded.path).err())
-            .is_some_and(|error| matches!(error, LibraryError::Row(RowFault::ChunkHeaderRead)))
+        {
+            if let Err(error) = verify_chunk(&loaded.path) {
+                if !first_fault {
+                    checked.chunk_header_fault =
+                        matches!(error, LibraryError::Row(RowFault::ChunkHeaderRead));
+                    first_fault = true;
+                }
+                if error.unmappable_path().is_some() {
+                    checked.unmappable.push(loaded.path.clone());
+                }
+            }
+        }
+        checked
     }
 
     /// Loads `path` as library `nibble` — `FacadePhraseIndex::load`.
