@@ -624,40 +624,32 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
     let use_tone = options.contains(USE_TONE);
     let force_tone = use_tone && options.contains(crate::FORCE_TONE);
     let max_span = MAX_SYLLABLE_LEN + usize::from(use_tone);
-    let mut longest_complete = None;
+    // Resolve each bounded span once. Classification needs the longest
+    // complete key before emission, but a second lookup would repeat UTF-8
+    // validation, PHF hashing and option-alias work for the same spelling.
+    // The fixed-size stack array keeps graph construction O(n * max_span)
+    // in time and O(n * max_span) in space, with unchanged edge order.
+    let parsed_spans: [Option<(SyllableKey, u8)>; MAX_SYLLABLE_LEN + 1] =
+        core::array::from_fn(|index| {
+            let length = index + 1;
+            if length > max_span.min(available) {
+                return None;
+            }
+            let text = &input[syllable_start..syllable_start + length];
+            let (core, tone) = tone_split(text, use_tone, force_tone)?;
+            key_for_spelling(core, options).map(|key| (key, tone))
+        });
+    let longest_complete = parsed_spans
+        .iter()
+        .rposition(|span| span.is_some_and(|(key, _)| key.completeness() == Completeness::Complete))
+        .map(|index| index + 1);
 
-    // Each `lookup` below is a linear scan of the 405-entry inventory, so
-    // building the graph is O(n × MAX_SYLLABLE_LEN × 405) — acceptable for W4;
-    // trie lookup is Stage 2 if this becomes hot. It has not been: the whole
-    // 10,459-input corpus differential builds a graph per input in about ten
-    // seconds, and a session's inputs are a few dozen bytes.
-    //
-    // Two passes so `Exact` can mean "the longest complete syllable here"
-    // without the caller having to look at its neighbours.
-    for length in (1..=max_span.min(available)).rev() {
-        let text = &input[syllable_start..syllable_start + length];
-        let Some((core, _)) = tone_split(text, use_tone, force_tone) else {
+    for (index, span) in parsed_spans.into_iter().enumerate().rev() {
+        let Some((key, tone)) = span else {
             continue;
         };
-        if longest_complete.is_none()
-            && key_for_spelling(core, options)
-                .is_some_and(|key| key.completeness() == Completeness::Complete)
-        {
-            longest_complete = Some(length);
-            break;
-        }
-    }
-
-    for length in (1..=max_span.min(available)).rev() {
+        let length = index + 1;
         let end = syllable_start + length;
-        let text = &input[syllable_start..end];
-        let Some((core, tone)) = tone_split(text, use_tone, force_tone) else {
-            continue;
-        };
-
-        let Some(key) = key_for_spelling(core, options) else {
-            continue;
-        };
         let kind = match key.completeness() {
             Completeness::Complete => {
                 if longest_complete == Some(length) {
