@@ -156,6 +156,68 @@ fn scoring_blends_bigram_and_unigram_over_the_corpus_counts() {
     assert!(step.unigram.is_some());
 }
 
+#[test]
+fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
+    use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST};
+
+    let fix = Fixture::new();
+    let (lm, _) = fix.open();
+    let ni = PhraseToken::new(NI);
+    let hao = PhraseToken::new(HAO);
+    // Both stored system fields are 7: adding MAX - 6 wraps both to zero.
+    let delta = UserCountDelta {
+        bigram_count: u64::from(u32::MAX - 6),
+        bigram_total: u64::from(u32::MAX - 6),
+        ..UserCountDelta::ZERO
+    };
+    for edge in [0, 17] {
+        assert_eq!(
+            lm.score_with_user_delta(&[ni], &hao, edge, delta).unwrap(),
+            NAN_COST
+        );
+    }
+    assert_eq!(
+        lm.nbest_step_costs_with_user_delta(&ni, &hao, delta)
+            .unwrap()
+            .blended,
+        Some(NAN_COST)
+    );
+    // A user-only positive successor survives a wrapped total of zero.
+    let delta = UserCountDelta {
+        bigram_count: u64::from(u32::MAX),
+        bigram_total: 0,
+        ..UserCountDelta::ZERO
+    };
+    assert_eq!(
+        lm.score_with_user_delta(&[hao], &ni, 0, delta).unwrap(),
+        NEG_INF_COST
+    );
+    assert_eq!(
+        lm.nbest_step_costs_with_user_delta(&hao, &ni, delta)
+            .unwrap()
+            .blended,
+        Some(NEG_INF_COST)
+    );
+    // The same predecessor total does not invent a missing successor.
+    let absent = UserCountDelta {
+        bigram_count: 0,
+        ..delta
+    };
+    assert_eq!(
+        lm.nbest_step_costs_with_user_delta(
+            &ni,
+            &PhraseToken::new(NIHAO),
+            UserCountDelta {
+                bigram_total: u64::from(u32::MAX - 6),
+                ..absent
+            }
+        )
+        .unwrap()
+        .blended,
+        None
+    );
+}
+
 /// The §12 presence gate (revert-plan.md §12, register #35): the pin's
 /// `unigram_gen_next_step` prices any *loaded* sub-index's item
 /// (`get_phrase_item`), and the three `USER_FILE` sub-indexes (nibbles
