@@ -409,6 +409,7 @@ where
             return Ok(());
         }
         self.settings.options = options;
+        self.input.graph.take();
         self.input.matrix = None;
         self.input.ending_matrix = None;
         if self.input.is_empty() {

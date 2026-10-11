@@ -3766,3 +3766,163 @@ fn the_candidate_comparator_wraps_large_frequency_gaps() {
     );
     assert!(key(u64::from(u32::MAX)).pin_compare(&key(1)) > 0);
 }
+
+#[test]
+fn parse_consumers_share_the_whole_input_graph() {
+    use std::sync::Arc;
+
+    let mut session = session();
+    session.replace_raw("ni'hao'").expect("parse");
+    let original = session.input.graph.get().expect("retained graph").clone();
+    session.ensure_matrix().expect("matrix");
+    let mut candidates = Vec::new();
+    let window = session
+        .scan_window(0, &mut candidates, false)
+        .expect("window");
+    assert_eq!(window, session.full_parsed_len());
+    assert_eq!(window, 7);
+    assert!(Arc::ptr_eq(
+        &original,
+        session.input.graph.get().expect("shared graph")
+    ));
+
+    let uncached = session
+        .build_uncached_graph_at(0, session.input.as_bytes())
+        .expect("fresh graph");
+    assert_eq!(*original, uncached);
+    let nonzero = session
+        .build_graph_at(2, &session.input.as_bytes()[2..])
+        .expect("suffix");
+    let expected = session
+        .build_uncached_graph_at(2, &session.input.as_bytes()[2..])
+        .expect("fresh suffix");
+    assert_eq!(*nonzero, expected);
+    assert!(!Arc::ptr_eq(&original, &nonzero));
+}
+
+#[test]
+fn parser_graph_is_invalidated_by_input_exact_chain_and_options() {
+    use oxpinyin_core::graph::ExactSegment;
+    use std::sync::Arc;
+
+    let mut session = session();
+    session.replace_raw("sh").expect("parse");
+    let first = session.input.graph.get().expect("graph").clone();
+    let options = session
+        .settings
+        .options
+        .with(oxpinyin_core::PINYIN_INCOMPLETE, false);
+    session.set_options(options).expect("options");
+    let changed = session.input.graph.get().expect("new graph").clone();
+    assert!(!Arc::ptr_eq(&first, &changed));
+    assert_eq!(session.full_parsed_len(), 0);
+    session.set_options(options).expect("same options");
+    assert!(Arc::ptr_eq(
+        &changed,
+        session.input.graph.get().expect("same graph")
+    ));
+
+    let sh = SyllableKey::from_text("sh").expect("initial");
+    session
+        .replace_raw_exact("sh", &[ExactSegment::new(0, 2, sh, 0)])
+        .expect("exact parse");
+    assert_eq!(session.full_parsed_len(), 2);
+    assert!(!Arc::ptr_eq(
+        &changed,
+        session.input.graph.get().expect("exact graph")
+    ));
+    session.replace_raw("ni").expect("raw replacement");
+    assert_eq!(session.full_parsed_len(), 2);
+    assert!(session.input.try_push('h'));
+    assert!(session.input.graph.get().is_none());
+    session.refresh().expect("push refresh");
+    session.input.pop();
+    assert!(session.input.graph.get().is_none());
+    session.refresh().expect("pop refresh");
+    session.reset();
+    assert!(session.input.graph.get().is_none());
+    assert_eq!(session.full_parsed_len(), 0);
+}
+
+#[test]
+fn shared_graph_window_lengths_match_independent_suffix_parses() {
+    use oxpinyin_core::graph::ExactSegment;
+    use oxpinyin_core::{FORCE_TONE, OptionBits, PINYIN_INCOMPLETE, USE_TONE};
+
+    let mut session = session();
+    let check = |session: &Session<Silent, Silent>| {
+        let graph = session.input.graph.get().expect("whole graph");
+        for anchor in 0..=session.input.len() {
+            if !session.input.is_char_boundary(anchor) {
+                continue;
+            }
+            let remaining = &session.input.as_bytes()[anchor..];
+            let independent = session
+                .build_uncached_graph_at(anchor, remaining)
+                .expect("suffix");
+            let expected = super::apostrophe_extended(
+                remaining,
+                independent
+                    .fewest_keys(session.settings.incomplete())
+                    .last()
+                    .map_or(0, oxpinyin_core::graph::Edge::to),
+            );
+            assert_eq!(
+                session.window_parsed_len(graph, anchor),
+                expected,
+                "{} at {anchor}",
+                session.input.as_str()
+            );
+        }
+    };
+    for options in [
+        USE_TONE,
+        USE_TONE | PINYIN_INCOMPLETE,
+        USE_TONE | FORCE_TONE,
+    ] {
+        session
+            .set_options(OptionBits::from_bits(options))
+            .expect("options");
+        for input in [
+            "ni'hao'",
+            "xianhao",
+            "n",
+            "ni!hao",
+            "ni'hao1",
+            "'ni''hao'",
+            "'，hao",
+        ] {
+            session.replace_raw(input).expect("parse");
+            check(&session);
+        }
+    }
+    let ni = SyllableKey::from_text("ni").expect("ni");
+    let hao = SyllableKey::from_text("hao").expect("hao");
+    let sh = SyllableKey::from_text("sh").expect("sh");
+    for (input, segments) in [
+        (
+            "ni'hao'",
+            vec![
+                ExactSegment::new(0, 2, ni, 0),
+                ExactSegment::new(3, 6, hao, 0),
+            ],
+        ),
+        (
+            "''ni''hao'",
+            vec![
+                ExactSegment::new(2, 4, ni, 0),
+                ExactSegment::new(6, 9, hao, 0),
+            ],
+        ),
+        (
+            "ni'sh",
+            vec![
+                ExactSegment::new(0, 2, ni, 0),
+                ExactSegment::new(3, 5, sh, 0),
+            ],
+        ),
+    ] {
+        session.replace_raw_exact(input, &segments).expect("exact");
+        check(&session);
+    }
+}

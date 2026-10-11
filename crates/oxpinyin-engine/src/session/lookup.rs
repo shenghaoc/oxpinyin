@@ -6,6 +6,8 @@
 //! citations. Shared state, constants and free functions stay in the
 //! parent module.
 
+use std::sync::Arc;
+
 use super::*;
 
 impl<D, L> Session<D, L>
@@ -68,6 +70,26 @@ where
     /// anchor is the caller's boundary question, and exact keys do not
     /// re-syllabify around it.
     pub(super) fn build_graph_at(
+        &self,
+        anchor: usize,
+        remaining: &[u8],
+    ) -> Result<Arc<SegmentGraph>, EngineError> {
+        // A suffix has its own origin and reachability. Only byte-zero
+        // callers share the whole-input graph; nonzero windows keep their
+        // existing independent parse law.
+        if anchor == 0 {
+            if let Some(graph) = self.input.graph.get() {
+                return Ok(Arc::clone(graph));
+            }
+            let graph = Arc::new(self.build_uncached_graph_at(anchor, remaining)?);
+            let _ = self.input.graph.set(Arc::clone(&graph));
+            return Ok(graph);
+        }
+        self.build_uncached_graph_at(anchor, remaining)
+            .map(Arc::new)
+    }
+
+    pub(super) fn build_uncached_graph_at(
         &self,
         anchor: usize,
         remaining: &[u8],
@@ -144,16 +166,27 @@ where
         collected.clear();
 
         let remaining = &self.input.as_str()[anchor..];
-        let graph = self.build_graph_at(anchor, remaining.as_bytes())?;
-        // The trailing-run extension of `full_parsed_len`, applied to the
-        // remaining slice (the pin's propagation runs on every parse).
-        let parsed_prefix = apostrophe_extended(
-            remaining.as_bytes(),
-            graph
-                .fewest_keys(self.settings.incomplete())
-                .last()
-                .map_or(0, Edge::to),
-        );
+        let real_unigrams = self.model.has_real_unigrams();
+        let graph = if real_unigrams {
+            self.build_graph_at(0, self.input.as_bytes())?
+        } else {
+            self.build_graph_at(anchor, remaining.as_bytes())?
+        };
+        // Production windows scan the retained matrix. Their parse-length
+        // query can start at the anchor on the shared graph too, without
+        // reparsing spellings or rebasing/copying edges. The fallback scorer
+        // still needs its independent graph's relative edge coordinates.
+        let parsed_prefix = if real_unigrams && anchor != 0 {
+            self.window_parsed_len(&graph, anchor)
+        } else {
+            apostrophe_extended(
+                remaining.as_bytes(),
+                graph
+                    .fewest_keys(self.settings.incomplete())
+                    .last()
+                    .map_or(0, Edge::to),
+            )
+        };
 
         // When the model carries the phrase index's real unigram
         // frequencies, the pinned construction runs — the expanding-window
@@ -270,6 +303,51 @@ where
             window_addon,
         };
         Ok(parsed_prefix)
+    }
+
+    /// Filtered reachability from a nonzero window origin. Fewest-key ties
+    /// change the chosen path, never its furthest end; this query needs only
+    /// that end and the same trailing-apostrophe extension.
+    pub(super) fn window_parsed_len(&self, graph: &SegmentGraph, anchor: usize) -> usize {
+        let remaining = &self.input.as_bytes()[anchor..];
+        if self
+            .input
+            .exact()
+            .iter()
+            .any(|segment| segment.start() < anchor && anchor < segment.end())
+        {
+            return apostrophe_extended(remaining, 0);
+        }
+        let mut reached = vec![false; remaining.len() + 1];
+        reached[0] = true;
+        let mut end = anchor;
+        // An exact chain carries a separator on the preceding key's end
+        // column. A fresh suffix instead attaches its first retained key
+        // to byte zero, even when the anchor is inside that separator gap
+        // or at the next key's start. Seed precisely that first edge.
+        if let Some(first) = self
+            .input
+            .exact()
+            .iter()
+            .find(|segment| segment.start() >= anchor)
+        {
+            reached[first.end() - anchor] = true;
+            end = first.end();
+        }
+        for node in anchor..self.input.len() {
+            if !reached[node - anchor] {
+                continue;
+            }
+            for edge in graph
+                .outgoing(node)
+                .iter()
+                .filter(|edge| self.settings.incomplete() || edge.kind() != EdgeKind::Incomplete)
+            {
+                reached[edge.to() - anchor] = true;
+                end = end.max(edge.to());
+            }
+        }
+        apostrophe_extended(remaining, end - anchor)
     }
 
     /// Prepends the LONGER candidate row when the sort word leaves

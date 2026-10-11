@@ -129,6 +129,13 @@ pub fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
 /// Matrix-level fuzzy substitutions live on [`crate::SyllableKey`] instead.
 #[must_use]
 pub fn option_alias_canonical(text: &str, options: OptionBits) -> Option<&'static str> {
+    // Most parser option words enable neither spelling corrections nor
+    // the two parser-table ambiguity aliases. Avoid their suffix scans;
+    // matrix-only fuzzy bits do not admit a spelling alias here.
+    let alias_bits = crate::PINYIN_CORRECT_ALL | PINYIN_AMB_S_SH | PINYIN_AMB_Z_ZH;
+    if options.bits() & alias_bits == 0 {
+        return None;
+    }
     correction_canonical(text, options).or_else(|| ambiguity_canonical(text, options))
 }
 
