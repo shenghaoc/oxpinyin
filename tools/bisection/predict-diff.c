@@ -5,6 +5,8 @@
  * print type|text. Punctuation (type 8) is omitted: the capi side uses
  * mini tables, so a system suffix such as 测 can emit puncts on the
  * oracle only. Phrase bigrams stay comparable. See run-punct-diff.sh.
+ * A second plain call adds two imported suffixes to the trained prefix,
+ * ensuring that list-order changes have more than one row to affect.
  *
  * Usage: ./predict-diff <path-to-so> <systemdir>
  */
@@ -201,6 +203,40 @@ int main(int argc, char **argv) {
             continue;
         printf("bigram: %s\n", text ? text : "(null)");
     }
+    /* Keep the original trained-bigram case above intact. Add suffixes
+     * only afterwards: the plain export must now return multiple rows,
+     * so reversing its list cannot be vacuous on this case. */
+    it = begin_add(ctx, 7);
+    if (!it) {
+        fprintf(stderr, "begin order-case import failed\n");
+        return 1;
+    }
+    bool added = add(it, "测测测", "cecece", 5);
+    added = add(it, "测测测测", "cececece", 5) && added;
+    end_add(it);
+    if (!added || !predict_plain(inst, "测测")) {
+        fprintf(stderr, "plain order-case setup failed\n");
+        return 1;
+    }
+    guint n_order = 0;
+    if (!n_cand(inst, &n_order) || n_order < 2) {
+        fprintf(stderr, "plain order-case needs at least two rows\n");
+        return 1;
+    }
+    printf("order-plain: n=%u\n", n_order);
+    for (guint i = 0; i < n_order; i++) {
+        lookup_candidate_t *c = NULL;
+        int type = 0;
+        const char *text = NULL;
+        if (!get_cand(inst, i, &c) || !c ||
+            !get_type(inst, c, &type) || !get_str(inst, c, &text)) {
+            fprintf(stderr, "plain order-case accessor failed at %u\n", i);
+            return 1;
+        }
+        printf("order-plain: [%u] type=%d %s\n", i, type,
+               text ? text : "(null)");
+    }
+
     free_inst(inst);
     fini(ctx);
     return 0;
