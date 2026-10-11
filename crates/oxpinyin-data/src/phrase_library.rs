@@ -444,6 +444,9 @@ fn map_chunk(path: &Path) -> Result<map::MappedFile, LibraryError> {
         cause: Box::new(cause),
     };
     let bad = |message: &str| unmappable(LibraryError::Format(message.to_owned()));
+    // The size probe is POSIX `lseek` behaviour; elsewhere a directory keeps
+    // failing in `MappedFile::open` as before.
+    #[cfg(unix)]
     if path.is_dir() {
         return Err(directory_chunk_fault(path));
     }
@@ -467,7 +470,9 @@ fn map_chunk(path: &Path) -> Result<map::MappedFile, LibraryError> {
 /// `assert` at `:493` kills the pin ([`RowFault::ChunkHeaderRead`]). The size
 /// is the file system's: ext4 reports the htree end of file for any
 /// directory, btrfs twice the summed length of the entry names. A directory
-/// that cannot be opened or sought is the same `false`.
+/// that cannot be opened or sought is the same `false`. Unix only: opening
+/// and seeking a directory is POSIX behaviour, and the pin is Linux-first.
+#[cfg(unix)]
 fn directory_chunk_fault(path: &Path) -> LibraryError {
     use std::io::{Seek, SeekFrom};
     let sought = std::fs::File::open(path).and_then(|mut dir| dir.seek(SeekFrom::End(0)));

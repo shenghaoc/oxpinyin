@@ -146,6 +146,13 @@ impl CapiContext {
                     oxpinyin_facade::LibraryRowAssert::NullChunkName => {
                         oxpinyin_data::table_info::TableConfSite::NullSystemFile.warning()
                     }
+                    // `pinyin.cpp:290` maps the addon through the same
+                    // `MemoryChunk::mmap`: a directory of header size or
+                    // more fails the read at `memory_chunk.h:493`.
+                    oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead => {
+                        "pinyin_load_addon_phrase_library: assertion \
+                         'ret_len == sizeof(length)' failed (memory_chunk.h:493)"
+                    }
                     _ => {
                         "pinyin_load_addon_phrase_library: assertion \
                          'DICTIONARY == table_info->m_file_type' failed"

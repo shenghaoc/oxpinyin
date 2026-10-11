@@ -3000,7 +3000,7 @@ for _mode in ('pinyin', 'zhuyin'):
 # name reaches `:493` on ext4 and on btrfs; the one-character entry reaches
 # it on ext4 and row 76 on btrfs, so that case matches whichever site the
 # pin's own signal names.
-LIBRARY_FINAL = {'init': 'ctx', 'load': 'load', 'save': 'save', 'mask-out': 'mask_out'}
+LIBRARY_FINAL = {'init': 'ctx', 'load': 'load', 'save': 'save', 'mask-out': 'mask_out', 'addon': 'load'}
 
 
 def library_directory_probe(site, how):
@@ -3015,7 +3015,8 @@ def library_directory_probe(site, how):
 
 for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
-    for _site in LIBRARY_FINAL:
+    # The zhuyin facade has no addon entry point.
+    for _site in (s for s in LIBRARY_FINAL if s != 'addon' or _mode == 'pinyin'):
         case(f'abort-library-directory-long-entry-{_site}' + _suffix, mode=_mode,
              abort=False)(library_directory_probe(_site, 'dir-long'))
         case(f'library-directory-one-entry-{_site}' + _suffix, mode=_mode, abort=False,
