@@ -1014,14 +1014,19 @@ impl Dictionary for RuntimeDict {
             .map(PhraseToken::new)
             .filter(|token| self.library_visible_token(token.value()))
             .collect();
+        let mut user_tokens = Vec::new();
         if let Ok(lookup) = self.user_lookup() {
-            tokens.extend(
-                lookup
-                    .tokens_for_text(text)
-                    .iter()
-                    .map(|&token| PhraseToken::new(token)),
-            );
+            user_tokens.extend_from_slice(lookup.tokens_for_text(text));
         }
+        if let Some(store) = self.user.as_ref() {
+            user_tokens.extend(store.phrase_table_tokens_for_text(text).unwrap_or_default());
+        }
+        // Live rows and retained membership can name the same user-table
+        // pair. Deduplicate that representation, preserving multiplicity
+        // between the independent system and user tables.
+        user_tokens.sort_unstable();
+        user_tokens.dedup();
+        tokens.extend(user_tokens.into_iter().map(PhraseToken::new));
         tokens.retain(|token| self.library_visible_token(token.value()));
         // reduce_tokens groups the system and user table results by library.
         tokens.sort_by_key(|token| token.value() >> 24);

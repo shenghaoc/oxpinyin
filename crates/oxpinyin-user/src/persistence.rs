@@ -14,7 +14,7 @@
 //!   items and is rebuilt at save; the load reads it only for the pin's
 //!   phrase-table membership (the crate-private `LoadedProfile`, which
 //!   `pinyin_remove_user_candidate` asserts against at `pinyin.cpp:3750`)
-//!   and never for text, which stays derived from the `USER_FILE` items;
+//!   and for exact-text membership independently from live phrase items;
 //!   `user_pinyin_index.bin` is
 //!   not a derivative — a reading merged into an existing phrase is
 //!   never indexed
@@ -52,8 +52,7 @@ use oxpinyin_data::table_entries::{phrase_index_entries, pinyin_index_entries};
 use oxpinyin_data::table_info::FileName;
 use oxpinyin_data::user_files::{
     LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout, UserTableInfo,
-    decode_log_records, decode_log_records_partial, encode_log_records, get_open_counter,
-    read_chunk_payload,
+    decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
 };
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
@@ -1051,7 +1050,16 @@ fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded) {
 /// `merge` returns false mid-log and `_load_phrase_library` keeps the
 /// partially-merged index).
 fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
-    load_logs_with_mask(dir, originals, loaded, None);
+    load_logs_with_mask(SystemLogSource::Directory(dir), originals, loaded, None);
+}
+
+/// Decoded system logs read and validated before mask_out mutates state.
+/// Replay consumes these same records without reopening any .dbin, matching
+/// the pin's single MemoryChunk read (074a2219 pinyin.cpp:1278-1285,
+/// zhuyin.cpp:813-820).
+#[derive(Debug, Default)]
+pub struct SystemLogSnapshot {
+    pub(crate) records: BTreeMap<u8, Vec<LogRecord>>,
 }
 
 /// The pin's masked logger: check the library bits, require a header,
@@ -1059,18 +1067,28 @@ fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
 /// the freshly mapped system original (074a2219 phrase_index.cpp:301-330,
 /// :850-875). The caller has already validated the log's abort sites.
 pub(crate) fn load_masked_logs(
-    dir: &Path,
     originals: &SystemOriginals,
     mask: u32,
     value: u32,
+    snapshot: SystemLogSnapshot,
 ) -> UserState {
     let mut loaded = Loaded::default();
-    load_logs_with_mask(dir, originals, &mut loaded, Some((mask, value)));
+    load_logs_with_mask(
+        SystemLogSource::Snapshot(snapshot),
+        originals,
+        &mut loaded,
+        Some((mask, value)),
+    );
     loaded.state
 }
 
+enum SystemLogSource<'a> {
+    Directory(&'a Path),
+    Snapshot(SystemLogSnapshot),
+}
+
 fn load_logs_with_mask(
-    dir: &Path,
+    mut source: SystemLogSource<'_>,
     originals: &SystemOriginals,
     loaded: &mut Loaded,
     mask: Option<(u32, u32)>,
@@ -1085,40 +1103,46 @@ fn load_logs_with_mask(
             continue;
         }
         let name = file.display();
-        let path = file.under(dir);
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => {
-                loaded.skipped.push(format!("{name}: {e}"));
-                continue;
+        let mut records = match &mut source {
+            SystemLogSource::Snapshot(snapshot) => {
+                let Some(records) = snapshot.records.remove(&nibble) else {
+                    continue;
+                };
+                records
             }
-        };
-        let payload = match read_chunk_payload(&bytes) {
-            Ok(payload) => payload,
-            Err(error) => {
-                loaded.skipped.push(format!("{name}: {error}"));
-                continue;
-            }
-        };
-        let mut records = match if mask.is_some() {
-            Ok(decode_log_records_partial(payload).0)
-        } else {
-            decode_log_records(payload)
-        } {
-            Ok(records) => records,
-            Err(error) => {
-                // A non-null-`MODIFY_HEADER` token is the pin's
-                // `assert(token == null_token)` (`phrase_index_logger.h:202`):
-                // a class (c) abort site, recorded for the session open to
-                // fail on. Every other malformed stream is the pin's
-                // graceful `next_record` false and stays a skip.
-                if let Some(token) = error.non_null_header_token() {
-                    loaded.strict_log_fault = Some((name.to_string(), token));
-                } else {
-                    loaded.skipped.push(format!("{name}: {error}"));
+            SystemLogSource::Directory(dir) => {
+                let path = file.under(dir);
+                let bytes = match std::fs::read(&path) {
+                    Ok(bytes) => bytes,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(e) => {
+                        loaded.skipped.push(format!("{name}: {e}"));
+                        continue;
+                    }
+                };
+                let payload = match read_chunk_payload(&bytes) {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        loaded.skipped.push(format!("{name}: {error}"));
+                        continue;
+                    }
+                };
+                match decode_log_records(payload) {
+                    Ok(records) => records,
+                    Err(error) => {
+                        // A non-null-`MODIFY_HEADER` token is the pin's
+                        // `assert(token == null_token)` (`phrase_index_logger.h:202`):
+                        // a class (c) abort site, recorded for the session open to
+                        // fail on. Every other malformed stream is the pin's
+                        // graceful `next_record` false and stays a skip.
+                        if let Some(token) = error.non_null_header_token() {
+                            loaded.strict_log_fault = Some((name.to_string(), token));
+                        } else {
+                            loaded.skipped.push(format!("{name}: {error}"));
+                        }
+                        continue;
+                    }
                 }
-                continue;
             }
         };
         if let Some((mask, value)) = mask {

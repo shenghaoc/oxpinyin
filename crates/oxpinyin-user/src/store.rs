@@ -91,9 +91,9 @@ pub const PHRASE_BY_LIB_TEXT: &str = "user_phrase_by_lib_text";
 /// The pin's `m_phrase_table` membership loaded from
 /// `user_phrase_index.bin` — `phrase_table->remove_index`'s table
 /// (`pinyin.cpp:3750`), as exact `(token, phrase text)` pairs. The
-/// subject's text lookups use [`PHRASE_BY_LIB_TEXT`], derived from the
-/// `USER_FILE` items; this row set exists only so `remove_user_phrase`
-/// can reproduce the pin's phrase-table miss. A token may sit under more
+/// subject's exact-text lookups read this membership independently from
+/// the live `PHRASE` items, and `remove_user_phrase` uses it to reproduce
+/// the pin's phrase-table miss. A token may sit under more
 /// than one text, so the row key is the whole pair (see
 /// [`phrase_table_key`]), not the token alone.
 pub const PHRASE_TABLE: &str = "user_phrase_table";
@@ -787,6 +787,62 @@ fn collect_pronunciation_keys_from_txn(
         Ok(())
     })?;
     Ok(out)
+}
+
+fn mask_phrase_rows(txn: &mut dyn WriteTxn, mask: Token, value: Token) -> Result<(), StoreError> {
+    // User phrases: text, reverse lookup, and pronunciations.
+    let mut matched: Vec<(Token, String)> = Vec::new();
+    txn.for_each(PHRASE, &mut |k, v| {
+        let token = codec::decode_token(k)
+            .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
+        if (token & mask) == value {
+            let text = codec::decode_str(v)
+                .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?
+                .to_owned();
+            matched.push((token, text));
+        }
+        Ok(())
+    })?;
+    // One ordered walk collects every matched token's
+    // pronunciation keys, instead of a per-token range scan
+    // (and cursor) inside the remove loop below.
+    let matched_tokens: std::collections::HashSet<Token> =
+        matched.iter().map(|(token, _)| *token).collect();
+    let pron_keys = collect_pronunciation_keys_from_txn(txn, &matched_tokens)?;
+    for (token, text) in matched {
+        txn.remove(PHRASE, &codec::encode_token(token))?;
+        txn.remove(PHRASE_TABLE, &phrase_table_key(token, &text))?;
+        txn.remove(PHRASE_TABLE_BY_TEXT, &phrase_table_text_key(&text, token))?;
+        if phrase_index_library_index(token) == USER_DICTIONARY {
+            txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+        }
+        txn.remove(
+            PHRASE_BY_LIB_TEXT,
+            &codec::encode_u8_str(phrase_index_library_index(token), &text),
+        )?;
+    }
+    for (token, key_bytes) in pron_keys {
+        txn.remove(PRONUNCIATION, &codec::encode_token_bytes(token, &key_bytes))?;
+    }
+    // Membership can outlive a system item after a disk reload.
+    // Apply the table mask independently, as m_phrase_table does
+    // before the pin's reload loop (pinyin.cpp:1229 at 074a2219).
+    let mut memberships = Vec::new();
+    txn.for_each(PHRASE_TABLE, &mut |key, _| {
+        let (token, text) = codec::decode_token_bytes(key)
+            .map_err(|_| StoreError::Backend("corrupt phrase-table key".into()))?;
+        if (token & mask) == value {
+            let text = codec::decode_str(text)
+                .map_err(|_| StoreError::Backend("corrupt phrase-table text".into()))?;
+            memberships.push((token, text.to_owned()));
+        }
+        Ok(())
+    })?;
+    for (token, text) in memberships {
+        txn.remove(PHRASE_TABLE, &phrase_table_key(token, &text))?;
+        txn.remove(PHRASE_TABLE_BY_TEXT, &phrase_table_text_key(&text, token))?;
+    }
+    Ok(())
 }
 
 /// Whether the store holds any user data, evaluated inside `txn`.
@@ -1817,8 +1873,8 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// The tokens the pin's `m_phrase_table` maps `text` to — the
     /// `user_phrase_index.bin` membership seeded into [`PHRASE_TABLE`]
-    /// ([`crate::store_libpinyin::seed_txn`]), which the subject's text
-    /// lookups otherwise never read.
+    /// ([`crate::store_libpinyin::seed_txn`]), also retaining a dropped system
+    /// item's text membership independently from its live phrase row.
     ///
     /// The zhuyin import guard uses it to reproduce `phrase_table->search`'s
     /// two assert conditions (`zhuyin.cpp:440`, `:457`); it reads the
@@ -2220,7 +2276,8 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// Reads and validates every loaded `SYSTEM_FILE`/`DICTIONARY`
     /// library's user `.dbin` from the user directory, before a mask
-    /// touches any state. `visible` names the libraries the runtime still
+    /// touches any state. Returns the decoded snapshot replay consumes,
+    /// without a second file read. `visible` names the libraries the runtime still
     /// holds: the pin's `mask_out` walks `index` 1..`PHRASE_INDEX_LIBRARY_
     /// COUNT` and `continue`s when `get_range` answers
     /// `ERROR_NO_SUB_PHRASE_INDEX` (`pinyin.cpp:1235-1241`,
@@ -2251,12 +2308,13 @@ impl<S: WriteStore> GenericUserStore<S> {
         visible: impl Fn(u8) -> bool,
         mask: Token,
         value: Token,
-    ) -> Result<(), UserStoreError> {
+    ) -> Result<crate::persistence::SystemLogSnapshot, UserStoreError> {
+        let mut snapshot = crate::persistence::SystemLogSnapshot::default();
         let Some(target) = self.inner.libpinyin.as_ref() else {
-            return Ok(());
+            return Ok(snapshot);
         };
         let Some(dir) = target.dir.as_deref() else {
-            return Ok(());
+            return Ok(snapshot);
         };
         let originals = target.originals();
         for (nibble, file) in originals.layout().system_logs() {
@@ -2301,13 +2359,15 @@ impl<S: WriteStore> GenericUserStore<S> {
             {
                 return Err(UserStoreError::SystemLogSurvivingAdd);
             }
+            snapshot.records.insert(*nibble, records);
         }
-        Ok(())
+        Ok(snapshot)
     }
 
-    /// Replaces the loaded system sub-index overlays with the logs read
-    /// from disk over the freshly mapped originals. The phrase and pinyin
-    /// table rows remain in place: they are separate from the sub-index
+    /// Replaces the loaded system sub-index overlays with the validated
+    /// disk-log snapshot over the freshly mapped originals. Live item and
+    /// pronunciation rows are rebuilt; independent phrase-table membership
+    /// remains in place, separate from the sub-index
     /// (`pinyin.cpp:1253-1285`, `zhuyin.cpp:788-820` at 074a2219).
     ///
     /// # Errors
@@ -2317,17 +2377,13 @@ impl<S: WriteStore> GenericUserStore<S> {
         originals: crate::persistence::SystemOriginals,
         mask: Token,
         value: Token,
+        logs: crate::persistence::SystemLogSnapshot,
     ) -> Result<(), UserStoreError> {
         let Some(target) = self.inner.libpinyin.clone() else {
             return Ok(());
         };
         let reloaded = |token| originals.contains_key(&phrase_index_library_index(token));
-        let state = target
-            .dir
-            .as_deref()
-            .map_or_else(crate::persistence::UserState::default, |dir| {
-                crate::persistence::load_masked_logs(dir, &originals, mask, value)
-            });
+        let state = crate::persistence::load_masked_logs(&originals, mask, value, logs);
         let mut target_originals = target
             .originals
             .write()
@@ -2346,13 +2402,44 @@ impl<S: WriteStore> GenericUserStore<S> {
             for key in unigrams {
                 txn.remove(UNIGRAM, &key)?;
             }
+            // PHRASE represents a live sub-index item, unlike PHRASE_TABLE.
+            // Discard the old library's items before seeding the filtered log.
+            let mut phrases = Vec::new();
+            txn.for_each(PHRASE, &mut |key, value| {
+                let token = codec::decode_token(key)
+                    .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
+                if reloaded(token) {
+                    let text = codec::decode_str(value)
+                        .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
+                    phrases.push((token, text.to_owned()));
+                }
+                Ok(())
+            })?;
+            for (token, text) in phrases {
+                // Imported system items previously carried this independent
+                // text membership in PHRASE. Preserve it while discarding
+                // the item; mask_out already removed any selected pairs.
+                txn.put(PHRASE_TABLE, &phrase_table_key(token, &text), &[])?;
+                txn.put(
+                    PHRASE_TABLE_BY_TEXT,
+                    &phrase_table_text_key(&text, token),
+                    &[],
+                )?;
+                txn.remove(PHRASE, &codec::encode_token(token))?;
+                txn.remove(
+                    PHRASE_BY_LIB_TEXT,
+                    &codec::encode_u8_str(phrase_index_library_index(token), &text),
+                )?;
+                if phrase_index_library_index(token) == USER_DICTIONARY {
+                    txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+                }
+            }
             let mut deltas = Vec::new();
             txn.for_each(PRONUNCIATION, &mut |key, _| {
                 let (token, _) = codec::decode_token_bytes(key)
                     .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-                // Appended phrase rows carry the separate pinyin table's
-                // membership; preserve those even when their item vanished.
-                if reloaded(token) && txn.get(PHRASE, &codec::encode_token(token))?.is_none() {
+                // These are item readings/deltas, not phrase-table membership.
+                if reloaded(token) {
                     deltas.push(key.to_vec());
                 }
                 Ok(())
@@ -2402,6 +2489,18 @@ impl<S: WriteStore> GenericUserStore<S> {
         drop(target_originals);
         self.mark_committed_phrase_write(db, has_user_data);
         Ok(())
+    }
+
+    fn clear_masked_system_items(&self, mask: Token, value: Token) {
+        let mut items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        items.retain(|&token, _| (token & mask) != value);
+        self.inner
+            .has_system_items
+            .store(!items.is_empty(), Ordering::Relaxed);
     }
 
     /// `pinyin_mask_out`'s store side.
@@ -2491,56 +2590,13 @@ impl<S: WriteStore> GenericUserStore<S> {
                 &codec::encode_u64(kept_sum),
             )?;
 
-            // User phrases: text, reverse lookup, and pronunciations.
-            let mut matched: Vec<(Token, String)> = Vec::new();
-            txn.for_each(PHRASE, &mut |k, v| {
-                let token = codec::decode_token(k)
-                    .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-                if (token & mask) == value {
-                    let text = codec::decode_str(v)
-                        .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?
-                        .to_owned();
-                    matched.push((token, text));
-                }
-                Ok(())
-            })?;
-            // One ordered walk collects every matched token's
-            // pronunciation keys, instead of a per-token range scan
-            // (and cursor) inside the remove loop below.
-            let matched_tokens: std::collections::HashSet<Token> =
-                matched.iter().map(|(token, _)| *token).collect();
-            let pron_keys = collect_pronunciation_keys_from_txn(txn, &matched_tokens)?;
-            for (token, text) in matched {
-                txn.remove(PHRASE, &codec::encode_token(token))?;
-                txn.remove(PHRASE_TABLE, &phrase_table_key(token, &text))?;
-                txn.remove(PHRASE_TABLE_BY_TEXT, &phrase_table_text_key(&text, token))?;
-                if phrase_index_library_index(token) == USER_DICTIONARY {
-                    txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
-                }
-                txn.remove(
-                    PHRASE_BY_LIB_TEXT,
-                    &codec::encode_u8_str(phrase_index_library_index(token), &text),
-                )?;
-            }
-            for (token, key_bytes) in pron_keys {
-                txn.remove(PRONUNCIATION, &codec::encode_token_bytes(token, &key_bytes))?;
-            }
+            mask_phrase_rows(txn, mask, value)?;
             has_user_data_in_write_txn(txn)
         })?;
         // Commit succeeded: discard matched in-memory system payloads too.
         // Dropping an original's override restores it; dropping an appended
         // item removes its only payload. Do this before publishing the epoch.
-        {
-            let mut items = self
-                .inner
-                .system_items
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            items.retain(|&token, _| (token & mask) != value);
-            self.inner
-                .has_system_items
-                .store(!items.is_empty(), Ordering::Relaxed);
-        }
+        self.clear_masked_system_items(mask, value);
         self.mark_committed_phrase_write(db, has_user_data);
         // `m_user_bigram->mask_out(mask, value)` (`pinyin.cpp:1230`).
         self.mirror_mask_out(mask, value)?;
