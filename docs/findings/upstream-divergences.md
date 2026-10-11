@@ -2362,6 +2362,12 @@ removal checks.
   carries the same unchecked index (`src/pinyin.cpp:589`), but the
   audit recorded library 255 *accepted* there (D-12), so that side is
   not a stable crash and is not part of this entry.
+- **Held by:** `zhuyin-add-phrase-library-16` of `contract-diff.py`
+  (added 2026-10-11 UTC, #563): on bdb the pin exits -11 (SIGSEGV) at
+  library 16 after writing the same stderr bytes the subject writes, and
+  the subject answers `false` with no warning. The case builds no fixture,
+  so a sweep runs it in kc and tkrzw as well; measured on bdb here (this
+  lane is bdb-only; #562 and #564 cover the other cells).
 
 ### `pinyin_token_get_nth_pronunciation` past the last reading (policy row 51)
 
