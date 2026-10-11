@@ -2233,7 +2233,8 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
   #525 source-site closure check remains separate; promoting a policy
   row does not prove every source predicate has an executed fixture.
 - **Logged since (lane C, 2026-10-04; each answers `false`/`0` and emits
-  exactly one `libpinyin` warning, held by an `abort-*` case of
+  exactly one warning in its facade's domain (`libpinyin` for pinyin,
+  `libzhuyin` for zhuyin), held by an `abort-*` case of
   `contract-diff.py` that shows the pin dying of SIGABRT):**
   - PR 12a: `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1189`;
     `storage/pinyin_parser2.cpp:398`, `:611`; `storage/zhuyin_parser2.cpp:295`
