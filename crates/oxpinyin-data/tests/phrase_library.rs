@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use oxpinyin_data::chunk_format::{
     CHUNK_HEADER_SIZE, FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR, chunk_checksum,
 };
-use oxpinyin_data::phrase_library::{LibraryError, PhraseLibrary, RowFault, verify_chunk};
+use oxpinyin_data::phrase_library::{PhraseLibrary, verify_chunk};
 use oxpinyin_data::{AddonDictionary, PhraseLibraries};
 
 /// Builds one phrase-library chunk file from slot → item entries.
@@ -391,6 +391,7 @@ fn temp_dir(name: &str) -> PathBuf {
 #[cfg(unix)]
 #[test]
 fn a_directory_chunk_follows_the_size_the_file_system_reports() {
+    use oxpinyin_data::phrase_library::{LibraryError, RowFault};
     use std::io::{Seek, SeekFrom};
     for (name, entry) in [("long", "e".repeat(25)), ("short", "x".to_owned())] {
         let path = temp_dir(&format!("directory-chunk-{name}"));
