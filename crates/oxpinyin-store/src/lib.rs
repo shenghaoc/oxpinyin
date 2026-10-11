@@ -1637,8 +1637,8 @@ mod tests {
 
     /// `--no-default-features --features bdb` resolves `DefaultStore`
     /// to `BdbStore` — the Berkeley DB peer, libpinyin's original DBM.
-    /// The type is `Send` and `Sync` under the `DB_THREAD` +
-    /// `DB_DBT_USERMEM` configuration `src/bdb/ffi.rs` documents.
+    /// The type is `Send` and `Sync` through the Rust handle mutex
+    /// and caller-owned buffers `src/bdb/ffi.rs` documents.
     #[cfg(feature = "bdb")]
     #[test]
     fn default_store_is_bdb_when_only_bdb_is_on() {
