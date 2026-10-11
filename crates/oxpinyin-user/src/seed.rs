@@ -2,9 +2,8 @@
 //!
 //! These are the exact update constants and formulae pinned in
 //! `docs/findings/user-store.md` §2 (derived there from libpinyin's
-//! `train_result3`, `phonetic_lookup.h:844-936`). Everything is `u64`
-//! integer maths — no floats appear anywhere in the count path, matching the
-//! W9 counter discipline.
+//! `train_result3`, `phonetic_lookup.h:844-936`). Stored fields and seed
+//! expansion use the pin's `guint32` arithmetic, widened at the Rust seam.
 //!
 //! The reproduction target is *values*, so the constants are written in the
 //! same factored form as the source (`23 * 3`, `23 * 15 * 64`) to keep the
@@ -30,7 +29,8 @@ pub const UNIGRAM_FACTOR: u64 = 7;
 /// pair has never been recorded:
 ///
 /// - unseen pair -> [`INITIAL_SEED`] (69);
-/// - seen pair -> `min(max(prev_count, INITIAL_SEED) * EXPAND_FACTOR, CEILING_SEED)`.
+/// - seen pair -> `min(max(prev_count, INITIAL_SEED).wrapping_mul(2), CEILING_SEED)`
+///   in `guint32` (`074a2219 phonetic_lookup.h:892-894`).
 ///
 /// Note the growth is not a literal doubling of the *count*: because the store
 /// adds this seed to `prev_count`, the stored count roughly triples per
@@ -40,9 +40,12 @@ pub const UNIGRAM_FACTOR: u64 = 7;
 #[must_use]
 pub fn training_seed(prev_count: Option<u64>) -> u64 {
     prev_count.map_or(INITIAL_SEED, |freq| {
-        freq.max(INITIAL_SEED)
-            .saturating_mul(EXPAND_FACTOR)
-            .min(CEILING_SEED)
+        u64::from(
+            (freq as u32)
+                .max(INITIAL_SEED as u32)
+                .wrapping_mul(EXPAND_FACTOR as u32)
+                .min(CEILING_SEED as u32),
+        )
     })
 }
 
@@ -110,6 +113,15 @@ mod tests {
         assert_eq!(training_seed(Some(11040)), 22080); // exactly at the cap
         assert_eq!(training_seed(Some(11041)), 22080); // clamped
         assert_eq!(training_seed(Some(1_000_000)), 22080);
+    }
+
+    #[test]
+    fn seed_expansion_wraps_before_the_ceiling() {
+        assert_eq!(training_seed(Some(0)), 138);
+        assert_eq!(training_seed(Some(0x7fff_ffff)), 22080);
+        assert_eq!(training_seed(Some(0x8000_0000)), 0);
+        assert_eq!(training_seed(Some(0x8000_0001)), 2);
+        assert_eq!(training_seed(Some(u64::from(u32::MAX))), 22080);
     }
 
     #[test]
