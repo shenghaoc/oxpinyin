@@ -114,6 +114,7 @@ impl PhraseLibraries {
                 // reported size (`phrase_library::directory_chunk_fault`);
                 // any other file that is not a regular one is skipped
                 // without a word, as before.
+                #[cfg(unix)]
                 Ok(meta) if meta.is_dir() => {}
                 Ok(meta) if !meta.is_file() => continue,
                 Ok(_) => {}

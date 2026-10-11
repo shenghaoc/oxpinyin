@@ -388,6 +388,7 @@ fn temp_dir(name: &str) -> PathBuf {
 /// 8-byte header) and the `read` failure the pin asserts on. The size is the
 /// file system's, so the test reads it the way the pin does and expects the
 /// matching outcome, whatever the temporary directory's file system is.
+#[cfg(unix)]
 #[test]
 fn a_directory_chunk_follows_the_size_the_file_system_reports() {
     use std::io::{Seek, SeekFrom};

@@ -703,8 +703,10 @@ impl AddonDictionary {
     /// addon library or one already loaded (the pin's guard, silent), and
     /// an error otherwise — [`LibraryError::Unmappable`] when the chunk
     /// does not map, where the pin writes `mmap %s failed!`
-    /// (`pinyin.cpp:290`). A file that is not a regular file is not an
-    /// error: it answers `Ok(false)` as before.
+    /// (`pinyin.cpp:290`). A directory is judged as `MemoryChunk::mmap`
+    /// does (Unix: [`LibraryError::Row`] from its reported size, else the
+    /// unmappable refusal); any other file that is not a regular file is not
+    /// an error: it answers `Ok(false)` as before.
     ///
     /// # Errors
     ///
@@ -732,6 +734,10 @@ impl AddonDictionary {
         };
         let path = file.under(dir);
         match std::fs::metadata(&path) {
+            // A directory is `MemoryChunk::mmap`'s to judge by its reported
+            // size (`phrase_library::directory_chunk_fault`, Unix only).
+            #[cfg(unix)]
+            Ok(meta) if meta.is_dir() => {}
             Ok(meta) if !meta.is_file() => return Ok(false),
             Ok(_) => {}
             Err(error) => {
