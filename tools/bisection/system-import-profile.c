@@ -1,12 +1,16 @@
 /* #599 reproducible callgrind/massif workload. No wall-clock timing.
  * Usage: <libpinyin.so> <system-data-dir> <fresh-user-dir> [iterations]
  * Every iteration merges one original item and one appended item in each
- * SYSTEM_FILE library; save writes all four .dbin streams. */
+ * SYSTEM_FILE library; save writes all four .dbin streams.
+ * Use --cold-open instead of iterations for #588's documented empty-input
+ * lifecycle: init, set the parity options, allocate/free an instance, fini.
+ * This mode performs no import, save or intermediate Callgrind dump. */
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <valgrind/callgrind.h>
 
@@ -21,6 +25,20 @@ int main(int argc, char **argv) {
     if (!so) { fprintf(stderr, "%s\n", dlerror()); return 1; }
     void *(*init)(const char *, const char *) = symbol(so, "pinyin_init");
     void (*fini)(void *) = symbol(so, "pinyin_fini");
+    if (argc == 5 && strcmp(argv[4], "--cold-open") == 0) {
+        bool (*options)(void *, uint32_t) = symbol(so, "pinyin_set_options");
+        void *(*alloc)(void *) = symbol(so, "pinyin_alloc_instance");
+        void (*free_instance)(void *) = symbol(so, "pinyin_free_instance");
+        void *ctx = init(argv[2], argv[3]);
+        if (!ctx) return 1;
+        if (!options(ctx, 0x18a)) { fini(ctx); return 1; }
+        void *instance = alloc(ctx);
+        if (!instance) { fini(ctx); return 1; }
+        free_instance(instance);
+        fini(ctx);
+        dlclose(so);
+        return 0;
+    }
     void *(*begin)(void *, uint8_t) = symbol(so, "pinyin_begin_add_phrases");
     bool (*add)(void *, const char *, const char *, int32_t) = symbol(so, "pinyin_iterator_add_phrase");
     void (*end)(void *) = symbol(so, "pinyin_end_add_phrases");

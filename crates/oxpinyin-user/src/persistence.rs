@@ -220,6 +220,9 @@ impl From<BTreeMap<u8, SystemLibrary>> for SystemOriginals {
 ///
 /// Items whose UCS-4 text does not
 /// decode are skipped (a malformed entry, never a panic).
+/// Only library metadata and shared mappings are retained here: decoding
+/// phrases and pronunciations is deferred to a touched slot's [`SystemLibrary`].
+/// A fresh profile therefore pays no full-item pass (#588).
 #[must_use]
 pub fn system_originals(libraries: &PhraseLibraries, layout: UserFileLayout) -> SystemOriginals {
     let mut out = BTreeMap::new();
@@ -2053,6 +2056,80 @@ mod tests {
                 LogRecord::Remove { token: 1, .. }
             ]
         ));
+    }
+
+    #[test]
+    fn mapped_originals_save_and_replay_exact_logs_without_expanding_items() {
+        let dir = tempdir("mapped-originals");
+        let mut inline = originals();
+        let base = inline.get_mut(&1).expect("fixture library");
+        let mut last = base.items.remove(&2).expect("fixture item");
+        // A hole, multiple ordered readings and a removed last slot exercise
+        // the mapped diff base beyond the single-reading inline fixtures.
+        last.prons.push((last.prons[0].0.clone(), 0));
+        base.items.insert(3, last);
+        base.range_end = 4;
+        let pairs: Vec<_> = base
+            .items
+            .iter()
+            .map(|(&slot, item)| (slot, item.clone()))
+            .collect();
+        let chunk = dir.join("system.bin");
+        std::fs::write(&chunk, build_chunk(&pairs).expect("fixture chunk")).expect("write fixture");
+        let mut libraries = PhraseLibraries::empty();
+        assert!(libraries.load(1, &chunk).expect("map fixture"));
+        let mapped = system_originals(&libraries, inline.layout().clone());
+        drop(libraries); // Originals must keep their own shared mapping alive.
+
+        assert_eq!(mapped[&1].total, inline[&1].total);
+        assert_eq!(mapped[&1].range_end, inline[&1].range_end);
+        assert!(mapped[&1].mapped.is_some());
+        assert!(mapped[&1].items.is_empty(), "open eagerly decoded items");
+        for slot in 0..=4 {
+            assert_eq!(
+                mapped[&1].contains_item(slot),
+                inline[&1].contains_item(slot)
+            );
+            assert_eq!(mapped[&1].unigram(slot), inline[&1].unigram(slot));
+            assert_eq!(mapped[&1].item(slot), inline[&1].item(slot));
+        }
+
+        let mut changed = inline[&1].item(1).expect("original item");
+        changed.unigram += 69;
+        changed.prons[0].1 += 69;
+        let mut edited = UserState::default();
+        edited.system_overrides.insert(
+            1,
+            BTreeMap::from([(1, Some(changed.clone())), (2, Some(changed)), (3, None)]),
+        );
+        for (name, state) in [("empty", UserState::default()), ("edited", edited)] {
+            let inline_dir = dir.join(format!("{name}-inline"));
+            let mapped_dir = dir.join(format!("{name}-mapped"));
+            for profile in [&inline_dir, &mapped_dir] {
+                std::fs::create_dir(profile).expect("profile dir");
+            }
+            save(&inline_dir, &state, &inline, &versions(), 1).expect("inline save");
+            save(&mapped_dir, &state, &mapped, &versions(), 1).expect("mapped save");
+            for (_, file) in inline.layout().system_logs() {
+                assert_eq!(
+                    std::fs::read(file.under(&mapped_dir)).expect("mapped log"),
+                    std::fs::read(file.under(&inline_dir)).expect("inline log"),
+                    "{name}: {}",
+                    file.display()
+                );
+            }
+            for profile in [&inline_dir, &mapped_dir] {
+                let loaded = load(profile, &mapped, &versions(), UserConfLaw::Pinyin)
+                    .expect("mapped replay");
+                assert!(loaded.skipped.is_empty(), "{:?}", loaded.skipped);
+                assert_eq!(loaded.state, state);
+            }
+            assert!(
+                mapped[&1].items.is_empty(),
+                "save/replay expanded originals"
+            );
+        }
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]
