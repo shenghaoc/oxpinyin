@@ -52,7 +52,8 @@ use oxpinyin_data::table_entries::{phrase_index_entries, pinyin_index_entries};
 use oxpinyin_data::table_info::FileName;
 use oxpinyin_data::user_files::{
     LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout, UserTableInfo,
-    decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
+    decode_log_records, decode_log_records_partial, encode_log_records, get_open_counter,
+    read_chunk_payload,
 };
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
@@ -1050,8 +1051,39 @@ fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded) {
 /// `merge` returns false mid-log and `_load_phrase_library` keeps the
 /// partially-merged index).
 fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
+    load_logs_with_mask(dir, originals, loaded, None);
+}
+
+/// The pin's masked logger: check the library bits, require a header,
+/// keep only unselected slot records, then replay the new logger over
+/// the freshly mapped system original (074a2219 phrase_index.cpp:301-330,
+/// :850-875). The caller has already validated the log's abort sites.
+pub(crate) fn load_masked_logs(
+    dir: &Path,
+    originals: &SystemOriginals,
+    mask: u32,
+    value: u32,
+) -> UserState {
+    let mut loaded = Loaded::default();
+    load_logs_with_mask(dir, originals, &mut loaded, Some((mask, value)));
+    loaded.state
+}
+
+fn load_logs_with_mask(
+    dir: &Path,
+    originals: &SystemOriginals,
+    loaded: &mut Loaded,
+    mask: Option<(u32, u32)>,
+) {
     for (nibble, file) in originals.layout().system_logs() {
         let nibble = *nibble;
+        if mask.is_some_and(|(mask, value)| {
+            !originals.contains_key(&nibble)
+                || (nibble & crate::phrase::phrase_index_library_index(mask))
+                    != crate::phrase::phrase_index_library_index(value)
+        }) {
+            continue;
+        }
         let name = file.display();
         let path = file.under(dir);
         let bytes = match std::fs::read(&path) {
@@ -1069,7 +1101,11 @@ fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
                 continue;
             }
         };
-        let records = match decode_log_records(payload) {
+        let mut records = match if mask.is_some() {
+            Ok(decode_log_records_partial(payload).0)
+        } else {
+            decode_log_records(payload)
+        } {
             Ok(records) => records,
             Err(error) => {
                 // A non-null-`MODIFY_HEADER` token is the pin's
@@ -1085,6 +1121,31 @@ fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
                 continue;
             }
         };
+        if let Some((mask, value)) = mask {
+            let Some(old_total) = records.iter().find_map(|record| match record {
+                LogRecord::ModifyHeader { old_total, .. } => Some(*old_total),
+                _ => None,
+            }) else {
+                continue; // _peek_header's false: the new logger is empty
+            };
+            records.retain(|record| match record {
+                LogRecord::Add { token, .. }
+                | LogRecord::Remove { token, .. }
+                | LogRecord::Modify { token, .. } => {
+                    (token & (mask & PHRASE_MASK)) != (value & PHRASE_MASK)
+                }
+                LogRecord::ModifyHeader { .. } => false,
+            });
+            // The generated logger writes its header first, regardless of
+            // where the old logger held it. Replay computes the item deltas.
+            records.insert(
+                0,
+                LogRecord::ModifyHeader {
+                    old_total,
+                    new_total: old_total,
+                },
+            );
+        }
 
         let original = originals.get(&nibble);
         let mut overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::new();

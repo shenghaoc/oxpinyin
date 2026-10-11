@@ -96,6 +96,9 @@ pub enum MaskOutOutcome {
     /// asserts on (`memory_chunk.h:493`, `pinyin.cpp:1265`,
     /// `zhuyin.cpp:800`). The C ABI answers `false` and logs one warning.
     ChunkHeaderRead,
+    /// A surviving ADD record violates `NULL == oldone` while the pin
+    /// writes the masked log (`phrase_index_logger.h:245`, row 97).
+    SystemLogSurvivingAdd,
 }
 
 impl MaskOutOutcome {
@@ -513,8 +516,9 @@ impl ContextCore {
 
     /// `mask_out`'s body: the store-level deletion, or
     /// [`MaskOutOutcome::Done(false)`](MaskOutOutcome::Done) without a user
-    /// store. The pin maps every loaded system library again first
-    /// (`pinyin.cpp:1265`, `zhuyin.cpp:800`).
+    /// store. The pin masks its tables, maps every loaded system library
+    /// again and merges the filtered disk log (`pinyin.cpp:1253-1285`,
+    /// `zhuyin.cpp:788-820` at 074a2219).
     ///
     /// A user pinyin index key past `MAX_PHRASE_LENGTH` syllables sends the
     /// pin's user `ChewingLargeTable2::mask_out` into `switch`'s
@@ -527,7 +531,9 @@ impl ContextCore {
     /// ([`UserStore::validate_system_logs`]): the pin's `merge_with_mask`
     /// asserts on a non-null-token `MODIFY_HEADER`
     /// (`phrase_index_logger.h:202`) and on more than one `MODIFY_HEADER`
-    /// (`phrase_index.cpp:745`). A refused mask leaves the store untouched,
+    /// (`phrase_index.cpp:745`), and a surviving ADD violates
+    /// `NULL == oldone` (`phrase_index_logger.h:245`, row 97). Only logs
+    /// whose library bits match are merged. A refused mask leaves the store untouched,
     /// where the pin's partial reloads die with its abort.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
         if self.check_system_libraries(None) {
@@ -545,7 +551,7 @@ impl ContextCore {
         let Some(store) = self.user.as_mut() else {
             return MaskOutOutcome::Done(false);
         };
-        match store.validate_system_logs(visible) {
+        match store.validate_system_logs(visible, mask, value) {
             Ok(()) => {}
             Err(UserStoreError::SystemLogHeaderToken) => {
                 return MaskOutOutcome::SystemLogHeaderToken;
@@ -553,10 +559,27 @@ impl ContextCore {
             Err(UserStoreError::SystemLogMultipleHeaders) => {
                 return MaskOutOutcome::SystemLogMultipleHeaders;
             }
+            Err(UserStoreError::SystemLogSurvivingAdd) => {
+                return MaskOutOutcome::SystemLogSurvivingAdd;
+            }
             Err(_) => return MaskOutOutcome::Done(false),
         }
         match store.mask_out(mask, value) {
-            Ok(()) => MaskOutOutcome::Done(true),
+            Ok(()) => {
+                // Replace each loaded system sub-index before replaying its
+                // disk log with the mask (074a2219 pinyin.cpp:1253-1285,
+                // zhuyin.cpp:788-820). The separate phrase table is retained.
+                if let Some(runtime) = self.runtime.as_ref() {
+                    let originals = runtime.reload_system_libraries();
+                    if store
+                        .reload_system_libraries(originals, mask, value)
+                        .is_err()
+                    {
+                        return MaskOutOutcome::Done(false);
+                    }
+                }
+                MaskOutOutcome::Done(true)
+            }
             Err(UserStoreError::OverlongIndexKey) => MaskOutOutcome::OverlongIndexKey,
             Err(UserStoreError::NonTokenUserBigramKey) => MaskOutOutcome::NonTokenUserBigramKey,
             Err(UserStoreError::ShortUserBigramValue) => MaskOutOutcome::ShortUserBigramValue,
@@ -565,6 +588,7 @@ impl ContextCore {
             Err(UserStoreError::SystemLogMultipleHeaders) => {
                 MaskOutOutcome::SystemLogMultipleHeaders
             }
+            Err(UserStoreError::SystemLogSurvivingAdd) => MaskOutOutcome::SystemLogSurvivingAdd,
             Err(_) => MaskOutOutcome::Done(false),
         }
     }
