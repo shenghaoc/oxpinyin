@@ -99,10 +99,12 @@ class Kit:
         self.glib.g_free.argtypes = [P]
         self.glib.g_free.restype = None
         self.logs = []
+        self.log_messages = []
         cb_type = C.CFUNCTYPE(None, S, U, S, P)
 
         def handler(domain, level, message, _unused):
             self.logs.append([domain.decode() if domain else None, level])
+            self.log_messages.append(message.decode() if message else None)
         self._handler = cb_type(handler)
         self.glib.g_log_set_handler.argtypes = [S, U, cb_type, P]
         self.glib.g_log_set_handler.restype = U
@@ -5526,6 +5528,111 @@ for _mode in ('pinyin', 'zhuyin'):
         d18_unigram(True, text='丠'))
 case('d18-review-predicted-user-only-zero-total')(
     d18_bigram_update(0xffffffff - 69, predicted=True, user_only=True))
+
+
+# #739 review: BDB save_db refuses unlinking a directory, but zhuyin_save
+# still renames the untouched temporary directory (074a2219
+# chewing_large_table2_bdb.cpp:138-140, phrase_large_table3_bdb.cpp:153-155;
+# zhuyin.cpp:650-679). A regular live index prevents that rename.
+def stale_index_tmp(k, index):
+    out = {}
+    for destination in ('absent', 'empty-directory', 'live-file'):
+        k.user = tempfile.mkdtemp(prefix='user-', dir=k.scratch)
+        inst = k.inst
+        parse, text = ('parse_more_full_pinyins', b'nihao') if k.mode == 'pinyin' else ('parse_more_chewings', b'su3cl3')
+        def train():
+            assert k.fn(parse, Z, P, S)(inst, text)
+            assert k.fn('guess_sentence', B, P)(inst)
+            return (k.fn('train', B, P, C.c_ubyte)(inst, 0) if k.mode == 'pinyin'
+                    else k.fn('train', B, P)(inst))
+        assert train()
+        live = Path(k.user, index)
+        if destination == 'live-file':
+            assert k.fn('save', B, P)(k.ctx)
+            before = live.read_bytes()
+            assert train()
+        elif destination == 'empty-directory':
+            live.mkdir()
+        tmp = Path(k.user, index + '.tmp')
+        tmp.mkdir()
+        (tmp / 'stale-marker').write_bytes(b'unchanged temporary directory')
+        ret = k.fn('save', B, P)(k.ctx)
+        out[destination] = {
+            'save': ret,
+            'tmp-present': tmp.exists(),
+            'stale-moved': (live / 'stale-marker').is_file() and
+                (live / 'stale-marker').read_bytes() == b'unchanged temporary directory',
+            'live-preserved': destination == 'live-file' and live.read_bytes() == before,
+            'messages': list(k.log_messages),
+        }
+        k.fn('free_instance', None, P)(k._inst)
+        k._inst = None
+        k.fn('fini', None, P)(k._ctx)
+        k._ctx = None
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _index in ('user_pinyin_index.bin', 'user_phrase_index.bin'):
+        case(f'issue542-stale-{_index}-{_mode}', mode=_mode, stderr=True,
+             control=_mode == 'pinyin', cells=('bdb',))(
+            lambda k, index=_index: stale_index_tmp(k, index))
+
+
+# #542's remaining named audit inputs, kept in the existing isolated worker.
+def phrase_segment_invalid_utf8(k):
+    ret = k.fn('phrase_segment', B, P, S)(k.inst, b'\xff\xfe')
+    return {'ret': ret, 'messages': k.log_messages}
+
+
+def train_no_choose_save(k):
+    inst = k.inst
+    parse, text = ('parse_more_full_pinyins', b'nihao') if k.mode == 'pinyin' else ('parse_more_chewings', b'su3cl3')
+    out = {'parse': k.fn(parse, Z, P, S)(inst, text),
+           'guess': k.fn('guess_sentence', B, P)(inst)}
+    if k.mode == 'pinyin':
+        out['train'] = k.fn('train', B, P, C.c_ubyte)(inst, 0)
+    else:
+        out['train'] = k.fn('train', B, P)(inst)
+    out['save'] = k.fn('save', B, P)(k.ctx)
+    out['files'] = sorted(os.listdir(k.user))
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('issue542-phrase-segment-invalid-utf8-' + _mode, mode=_mode)(phrase_segment_invalid_utf8)
+    case('issue542-train-no-choose-save-' + _mode, mode=_mode, control=True)(train_no_choose_save)
+    case('issue542-parse-full-one-values-' + _mode, mode=_mode, control=True)(
+        lambda k: {t.decode(): key_out(k, t) for t in (b'n', b'ni3')})
+
+
+@case('issue542-alias-prefix-borrowed')
+def _(k):
+    out = {}
+    for predicted_call in (False, True):
+        inst = full_inst(k, b'nihao')
+        k.fn('guess_sentence', B, P)(inst)
+        k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1E)
+        cand, text = P(UNTOUCHED), P(UNTOUCHED)
+        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, 0, C.byref(cand))
+        assert k.fn('get_candidate_string', B, P, P, C.POINTER(P))(inst, cand, C.byref(text))
+        label = 'predicted' if predicted_call else 'with-prefix'
+        out[label + ' borrowed text'] = C.string_at(text.value).decode()
+        name = 'guess_predicted_candidates' if predicted_call else 'guess_sentence_with_prefix'
+        out[label] = k.fn(name, B, P, P)(inst, text)
+        if not predicted_call:
+            out['sentences'] = [sentence_out(k, inst, i) for i in range(3)]
+        else:
+            count = U(UNTOUCHED)
+            assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+            out['predicted candidate count'] = count.value
+            out['predicted sentences'] = [sentence_out(k, inst, i) for i in range(3)]
+            # The same text at caller-owned storage must still predict.
+            out['owned prefix recovery'] = k.fn('guess_predicted_candidates', B, P, S)(
+                inst, '你好'.encode())
+            assert k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+            out['owned prefix candidate count'] = count.value
+    return out
 
 
 def main():

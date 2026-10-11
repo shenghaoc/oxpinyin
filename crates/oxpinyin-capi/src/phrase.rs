@@ -47,6 +47,17 @@ pub extern "C" fn pinyin_phrase_segment(
     // `cstr_to_strict` reads the bytes without an unsafe block; the
     // safety obligation lives in its own doc comment.
     let Some(text) = cstr_to_strict(sentence) else {
+        // 074a2219 pinyin.cpp:1454: the GLib precondition uses the default
+        // domain, critical level and C++ G_STRFUNC spelling, exactly once.
+        // SAFETY: the function and expression are NUL-terminated constants;
+        // GLib accepts NULL for its default log domain.
+        unsafe {
+            glib_sys::g_return_if_fail_warning(
+                std::ptr::null(),
+                c"bool pinyin_phrase_segment(pinyin_instance_t*, const char*)".as_ptr(),
+                c"num_of_chars == ucs4_len".as_ptr(),
+            );
+        }
         return false;
     };
     match inst.core.session.phrase_segment(&text) {

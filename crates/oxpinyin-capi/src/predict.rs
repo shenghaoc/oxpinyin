@@ -245,6 +245,19 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // At 074a2219, `_free_candidates` frees this borrowed string before
+    // `_compute_prefixes` reads it (pinyin.cpp:1340, :2420-2427). #542's
+    // ruling preserves its stable false by identity, without reading freed
+    // storage. The pin still empties the candidates and prediction prefixes.
+    if inst
+        .candidates
+        .iter()
+        .any(|candidate| std::ptr::eq(candidate.text.as_ptr(), prefix))
+    {
+        inst.candidates.clear();
+        inst.prefixes.clear();
+        return false;
+    }
     // Reject invalid UTF-8 without touching `inst.candidates` —
     // mirrors upstream's `g_return_val_if_fail(prefix, FALSE)` at
     // `pinyin.cpp:1450-1452` (see `ffi::cstr_to_strict`).
