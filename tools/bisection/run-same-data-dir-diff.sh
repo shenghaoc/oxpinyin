@@ -8,7 +8,7 @@
 # directory into the pin-built libpinyin and into oxpinyin's C ABI, both
 # opened on ONE unchanged data directory (a libpinyin install's own
 # `data/`, or an `oxpinyin-datagen compile` output — the file set is the
-# same), and diffs the full logs. No conversion, no import, no fixture
+# same), and compares full stdout in memory. No conversion, no import, no fixture
 # image: the directory is the test input to both implementations.
 #
 # Runs inside the perf-matrix container (tools/bisection/Dockerfile.perf-matrix):
@@ -83,6 +83,15 @@ done
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# Keep stdout in memory without stripping its trailing newlines. Stderr
+# remains a diagnostic stream; no run, build, or diff capture is written.
+capture_output() {
+    local output_name=$1 captured result=0
+    shift
+    captured=$("$@"; result=$?; printf '.'; exit "$result") || result=$?
+    printf -v "$output_name" '%s' "${captured%.}"
+    return "$result"
+}
 status=0
 echo "data dir: $data"
 echo "oracle:   $oracle_so"
@@ -94,48 +103,54 @@ for driver in "${drivers[@]}"; do
   # knows it, otherwise build without.
   glib_flags=$(pkg-config --cflags --libs glib-2.0 2>/dev/null || true)
   # shellcheck disable=SC2086
-  if ! gcc -std=gnu11 -Wall -Wextra -O2 -o "$work/$driver" "$driver.c" -ldl $glib_flags 2>"$work/$driver.build"; then
-    echo "  build failed:"; sed 's/^/    /' "$work/$driver.build"; status=1; continue
+  if ! gcc -std=gnu11 -Wall -Wextra -O2 -o "$work/$driver" "$driver.c" -ldl $glib_flags; then
+    echo "  build failed"; status=1; continue
   fi
+  driver_args=()
+  [[ $driver != punct-diff ]] || driver_args=(matched-tables)
   run() {
     # Each side gets a fresh working directory: several drivers create
     # user state relative to the cwd, and both sides must start equal.
-    local side=$1 so=$2 log=$3
+    local side=$1 so=$2
     rm -rf "${work:?}/$side"; mkdir -p "$work/$side"
-    ( cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")" "$work/$driver" "$so" "$data" ) >"$log" 2>"$log.err"
+    ( cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")" "$work/$driver" "$so" "$data" "${driver_args[@]}" )
   }
   if [[ $driver == dynamic-adjust-diff ]]; then
     # This driver also needs a bit state and a fresh user profile. Preserve
     # its standalone runner's non-vacuity requirement before comparing.
     failed=0
+    declare -A logs=() choices=()
     for engine in oracle oxpinyin; do
       if [[ $engine == oracle ]]; then so=$oracle_so; else so=$capi_so; fi
       for mode in on off; do
         dest="$work/$engine-$mode"
         rm -rf "$dest"
         mkdir -p "$dest/user"
-        if ! ( cd "$dest" && LD_LIBRARY_PATH="$(dirname "$so")" \
-            "$work/$driver" "$so" "$data" "$mode" "$dest/user" ) \
-            >"$dest.log" 2>"$dest.err"; then
+        run_dynamic() {
+          ( cd "$dest" && LD_LIBRARY_PATH="$(dirname "$so")" \
+              "$work/$driver" "$so" "$data" "$mode" "$dest/user" )
+        }
+        if ! capture_output output run_dynamic; then
           echo "  $driver crashed against $engine ($mode)"
-          tail -5 "$dest.err"; status=1; failed=1
+          status=1; failed=1
         fi
+        logs[$engine-$mode]=$output
       done
     done
     [[ $failed == 0 ]] || continue
     for side in oracle-on oracle-off oxpinyin-on oxpinyin-off; do
-      if ! grep '^CHOICE|' "$work/$side.log" > "$work/$side.choices" ||
-          [[ $(wc -l < "$work/$side.choices") -ne 7 ]]; then
+      choices[$side]=$(printf '%s' "${logs[$side]}" | grep '^CHOICE|' || true)
+      if [[ $(printf '%s\n' "${choices[$side]}" | wc -l) -ne 7 ]]; then
         echo "  FAIL: $side did not report all fixed choices"
         status=1; failed=1
-      elif ! cmp -s "$work/oracle-on.choices" "$work/$side.choices"; then
+      elif [[ ${choices[oracle-on]} != "${choices[$side]}" ]]; then
         echo "  FAIL: chosen identity or advanced cursor differs for $side"
         status=1; failed=1
       fi
     done
     [[ $failed == 0 ]] || continue
     for engine in oracle oxpinyin; do
-      if cmp -s "$work/$engine-on.log" "$work/$engine-off.log"; then
+      if [[ ${logs[$engine-on]} == "${logs[$engine-off]}" ]]; then
         echo "  VACUOUS: $engine produced identical output with the bit set and clear."
         status=1; failed=1
       fi
@@ -143,28 +158,30 @@ for driver in "${drivers[@]}"; do
     [[ $failed == 0 ]] || continue
     echo "  non-vacuity: both engines' output changes with the bit"
     for mode in on off; do
-      if diff -u "$work/oracle-$mode.log" "$work/oxpinyin-$mode.log" >"$work/$mode.diff"; then
-        echo "  DYNAMIC_ADJUST=$mode: IDENTICAL ($(wc -l <"$work/oracle-$mode.log") log lines)"
+      if capture_output diff_output diff -u --label "oracle-$mode" --label "oxpinyin-$mode" \
+          <(printf '%s' "${logs[oracle-$mode]}") <(printf '%s' "${logs[oxpinyin-$mode]}"); then
+        echo "  DYNAMIC_ADJUST=$mode: IDENTICAL ($(printf '%s' "${logs[oracle-$mode]}" | wc -l) log lines)"
       else
         echo "  DYNAMIC_ADJUST=$mode: DIVERGENCE"
-        head -60 "$work/$mode.diff" | sed 's/^/    /'
+        printf '%s' "$diff_output" | sed -n '1,60p' | sed 's/^/    /'
         [[ $status == 0 ]] && status=2
       fi
     done
     continue
   fi
-  if ! run oracle "$oracle_so" "$work/$driver.oracle"; then
-    echo "  $driver crashed against the oracle:"; tail -5 "$work/$driver.oracle.err" | sed 's/^/    /'; status=1; continue
+  if ! capture_output oracle_output run oracle "$oracle_so"; then
+    echo "  $driver crashed against the oracle"; status=1; continue
   fi
-  if ! run oxpinyin "$capi_so" "$work/$driver.capi"; then
-    echo "  $driver crashed against oxpinyin:"; tail -5 "$work/$driver.capi.err" | sed 's/^/    /'; status=1; continue
+  if ! capture_output capi_output run oxpinyin "$capi_so"; then
+    echo "  $driver crashed against oxpinyin"; status=1; continue
   fi
-  if diff -u "$work/$driver.oracle" "$work/$driver.capi" >"$work/$driver.diff"; then
-    echo "  IDENTICAL ($(wc -l <"$work/$driver.oracle") log lines)"
+  if capture_output diff_output diff -u --label oracle --label oxpinyin \
+      <(printf '%s' "$oracle_output") <(printf '%s' "$capi_output"); then
+    echo "  IDENTICAL ($(printf '%s' "$oracle_output" | wc -l) log lines)"
   else
-    differing=$(grep -c '^[-+][^-+]' "$work/$driver.diff" || true)
+    differing=$(printf '%s' "$diff_output" | grep -c '^[-+][^-+]' || true)
     echo "  DIVERGENCE ($differing differing lines):"
-    head -60 "$work/$driver.diff" | sed 's/^/    /'
+    printf '%s' "$diff_output" | sed -n '1,60p' | sed 's/^/    /'
     [[ $status == 0 ]] && status=2
   fi
 done

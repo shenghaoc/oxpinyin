@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run-w11-diff.sh — shared pin-gated runner for W11 unique differentials.
 #
-# Usage: run-w11-diff.sh <driver-stem> [prebuilt-library]
+# Usage: run-w11-diff.sh <driver-stem> [prebuilt-library] [driver-arg ...]
 #   driver-stem is user-candidate-diff | addon-candidate-diff | predict-diff
 # Env: PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle)
 #      CAPI_W11_SYSTEM_DIR, or OXPINYIN_SYSTEM_DIR -- the oxpinyin system
@@ -15,6 +15,7 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
 STEM="${1:?driver stem}"
 OXPINYIN_CAPI_SO=${2:-${OXPINYIN_CAPI_SO:-}}
+DRIVER_ARGS=("${@:3}")
 # shellcheck source=oracle-cell.sh
 source ./oracle-cell.sh
 case $STEM in
@@ -55,32 +56,35 @@ fi
 # shellcheck source=tools/bisection/system-dir.sh
 . ./system-dir.sh
 CAPI_SYS="$(resolve_system_dir CAPI_W11_SYSTEM_DIR "w11-diff/${STEM}")"
-CAPI_LOG="$WORK/capi.log"
-ORACLE_LOG="$WORK/oracle.log"
-if ! "$DRIVER" "$CAPI_SO" "$CAPI_SYS" > "$CAPI_LOG" 2> /dev/null; then
+# Keep stdout in memory without stripping its trailing newlines. Stderr
+# remains a diagnostic stream; no run, build, or diff capture is written.
+capture_output() {
+    local output_name=$1 captured result=0
+    shift
+    captured=$("$@"; result=$?; printf '.'; exit "$result") || result=$?
+    printf -v "$output_name" '%s' "${captured%.}"
+    return "$result"
+}
+if ! capture_output CAPI_LOG "$DRIVER" "$CAPI_SO" "$CAPI_SYS" "${DRIVER_ARGS[@]}" 2> /dev/null; then
     echo "FAIL: $STEM crashed against oxpinyin-capi"
-    cat "$CAPI_LOG"
-    rm -f "$CAPI_LOG" "$ORACLE_LOG"
+    printf '%s' "$CAPI_LOG"
     exit 1
 fi
-if ! "$DRIVER" "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> /dev/null; then
+if ! capture_output ORACLE_LOG "$DRIVER" "$ORACLE_SO" "$ORACLE_DATA" "${DRIVER_ARGS[@]}" 2> /dev/null; then
     echo "FAIL: $STEM crashed against the oracle"
-    cat "$ORACLE_LOG"
-    rm -f "$CAPI_LOG" "$ORACLE_LOG"
+    printf '%s' "$ORACLE_LOG"
     exit 1
 fi
 
 echo "--- capi ---"
-cat "$CAPI_LOG"
+printf '%s' "$CAPI_LOG"
 echo "--- oracle ---"
-cat "$ORACLE_LOG"
+printf '%s' "$ORACLE_LOG"
 
-if ! diff -u "$ORACLE_LOG" "$CAPI_LOG" > /dev/null; then
+if ! diff -u <(printf '%s' "$ORACLE_LOG") <(printf '%s' "$CAPI_LOG") > /dev/null; then
     echo "DIVERGENCE: $STEM logs differ"
-    diff -u "$ORACLE_LOG" "$CAPI_LOG" || true
-    rm -f "$CAPI_LOG" "$ORACLE_LOG"
+    diff -u <(printf '%s' "$ORACLE_LOG") <(printf '%s' "$CAPI_LOG") || true
     exit 2
 fi
-rm -f "$CAPI_LOG" "$ORACLE_LOG"
 echo "${STEM}: IDENTICAL"
 exit 0

@@ -6,4 +6,4 @@
 # prediction scripts (those still skip type 8: mini vs full prefix tokens).
 set -euo pipefail
 cd "$(dirname "$0")"
-exec ./run-w11-diff.sh punct-diff "$@"
+exec ./run-w11-diff.sh punct-diff "${1:-${OXPINYIN_CAPI_SO:-}}" punctuation-only
