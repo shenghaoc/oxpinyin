@@ -6504,12 +6504,21 @@ for _mode, _operation in AXIS_C_DEFINITION['encoding_operations']:
         _name = f"axis-c-encoding-{_mode}-{_operation}-{_input['name']}"
         case(_name, mode=_mode, stderr=True)(axis_c_encoding(_operation, bytes.fromhex(_input['hex'])))
         AXIS_C_GROUPS['encoding'].append(_name)
+# The invalid scheme numbers whose abort the pin takes and the register already
+# classifies (rows 5c/5d). These layout cases are matched with the classic
+# class (c) `abort=` expectation at the nested-observation level and counted as
+# covered, not DIFFER, exactly as `abort-zhuyin-chewing-scheme-*` is.
+AXIS_C_LAYOUT_COVERED = {}
+_covered_rows = {scheme: entry['row'] for entry in AXIS_C_DEFINITION['layout_covered']
+                 for scheme in entry['schemes']}
 for _mode in ('pinyin', 'zhuyin'):
     for _scheme in AXIS_C_DEFINITION['layout_schemes']:
         for _word in AXIS_C_DEFINITION['layout_words']:
             _name = f'axis-c-layout-{_mode}-{_scheme}-{int(_word, 16):08x}'
             case(_name, mode=_mode, stderr=True)(axis_c_layout(_scheme, int(_word, 16), AXIS_C_DEFINITION))
             AXIS_C_GROUPS['layouts'].append(_name)
+            if _scheme in _covered_rows:
+                AXIS_C_LAYOUT_COVERED[_name] = _covered_rows[_scheme]
 
 
 def axis_c_canonical(value):
@@ -6545,6 +6554,23 @@ def check_axis_c_snapshots(args):
     assert abs(delta) < 0.01, 'discard suspend-overlapping snapshot validation'
     print(f'instance snapshot: 6 word/library comparisons, 96 input observations; identical; suspend delta {delta:.6f}', flush=True)
     return 0
+
+
+def axis_c_covered_abort(pin_row, subject_row, mode):
+    """Register-covered class (c) site at the nested-observation level.
+
+    Mirrors the classic ``abort=`` expectation: the pin child dies of SIGABRT
+    before returning, and the subject returns normally with the scheme setter
+    refused (``set_scheme`` false, no observation) and exactly one warning in
+    the facade's GLib domain at level 16. Rows 5c/5d of the register.
+    """
+    if not isinstance(pin_row, dict) or not isinstance(subject_row, dict):
+        return False
+    result = subject_row.get('result')
+    return (pin_row.get('exit') == -signal.SIGABRT and pin_row.get('result') is None
+            and subject_row.get('exit') == 0 and isinstance(result, dict)
+            and result.get('set_scheme') is False and result.get('observation') is None
+            and result.get('logs') == [[WARNING_DOMAIN[mode], 16]])
 
 
 def axis_c_first_difference(left, right, path=''):
@@ -6613,28 +6639,51 @@ def run_axis_c(args, names):
                 fingerprints[side].update(axis_c_canonical([name, observation]))
             totals['cases'] += 1
             totals['diagnostics_match' if pin['stderr'] == subject['stderr'] else 'diagnostics_differ'] += 1
-            if pin == subject:
-                totals['case_match'] += 1
-            else:
-                totals['case_differ'] += 1
+            covered_row = AXIS_C_LAYOUT_COVERED.get(name)
+            covered_rows = 0
             pin_rows = (pin['result'] or {}).get('observations')
             subject_rows = (subject['result'] or {}).get('observations')
             if pin_rows is not None and subject_rows is not None:
                 for key in pin_rows:
-                    same = pin_rows[key] == subject_rows.get(key)
+                    left, right = pin_rows[key], subject_rows.get(key)
                     totals['observations'] += 1
-                    totals['payload_match' if same else 'payload_differ'] += 1
-                    if not same:
-                        record_difference(name, key, pin_rows[key], subject_rows.get(key))
+                    if left == right:
+                        totals['payload_match'] += 1
+                    elif covered_row and axis_c_covered_abort(left, right, mode):
+                        totals['payload_covered'] += 1
+                        covered_rows += 1
+                    else:
+                        totals['payload_differ'] += 1
+                        record_difference(name, key, left, right)
                 # First differing row only; all rows were compared in full.
+                if pin == subject:
+                    totals['case_match'] += 1
+                    verdict = 'MATCH'
+                elif covered_row and covered_rows == len(pin_rows):
+                    totals['covered'] += 1
+                    covered_by_row = totals.setdefault('covered_by_row', {})
+                    covered_by_row[covered_row] = covered_by_row.get(covered_row, 0) + 1
+                    verdict = 'COVERED'
+                else:
+                    totals['case_differ'] += 1
+                    verdict = 'DIFFER'
             else:
                 totals['observations'] += 1
-                totals['payload_match' if pin == subject else 'payload_differ'] += 1
-                if pin != subject:
+                if pin == subject:
+                    totals['payload_match'] += 1
+                    totals['case_match'] += 1
+                    verdict = 'MATCH'
+                else:
+                    totals['payload_differ'] += 1
+                    totals['case_differ'] += 1
                     record_difference(name, 'case', pin, subject)
-            if pin != subject:
+                    verdict = 'DIFFER'
+            if verdict == 'DIFFER':
                 print(json.dumps(dict(case=name, verdict='DIFFER',
                                       first=axis_c_first_difference(pin, subject)), ensure_ascii=True), flush=True)
+            elif verdict == 'COVERED':
+                print(json.dumps(dict(case=name, verdict='COVERED', row=covered_row,
+                                      covered_observations=covered_rows), ensure_ascii=True), flush=True)
             if ordinal % 25 == 0:
                 print(f'axis C progress: {ordinal}/{len(names)} cases', flush=True)
     elapsed_suspend = (time.clock_gettime(time.CLOCK_BOOTTIME) -

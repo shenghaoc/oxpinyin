@@ -924,6 +924,27 @@
     125,
     126
   ],
+  "layout_covered": [
+    {
+      "row": "5c",
+      "schemes": [
+        7
+      ],
+      "note": "zhuyin STANDARD_DVORAK (7), both facades: the pin aborts, the subject refuses"
+    },
+    {
+      "row": "5d",
+      "schemes": [
+        0,
+        10,
+        11,
+        -1,
+        -2147483648,
+        2147483647
+      ],
+      "note": "out-of-enum zhuyin scheme, both facades: the pin aborts, the subject refuses"
+    }
+  ],
   "mutations": {
     "C-m1-r": {
       "path": "crates/oxpinyin-facade/src/context.rs",
