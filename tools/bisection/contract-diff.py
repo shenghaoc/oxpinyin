@@ -6458,7 +6458,21 @@ def axis_c_encoding(operation, text):
             ret = k.fn('phrase_segment', B, P, S)(k.inst, text)
             count = U(UNTOUCHED)
             got = k.fn('get_n_phrase', B, P, C.POINTER(U))(k.inst, C.byref(count))
-            return dict(ret=ret, get_n_phrase=got, count=count.value)
+            out = dict(ret=ret, get_n_phrase=got, count=count.value)
+            # #751 reuses the six preregistered surrogate cases. The pin
+            # returns false with six null slots and no GLib record (the
+            # worker already compares domain, level and exact message).
+            # Only read out the result; keep the battery's input, options
+            # and state-changing operation exactly as preregistered.
+            if b'\xed\xa0\x80' in text:
+                token = k.fn('get_phrase_token', B, P, U, C.POINTER(U))
+                def read(index):
+                    slot = U(UNTOUCHED)
+                    return [token(k.inst, index, C.byref(slot)), slot.value]
+                out['tokens'] = ([read(index) for index in range(count.value)]
+                                 if got and count.value <= len(text) else None)
+                out['past'] = [read(count.value), read(0xFFFFFFFF)]
+            return out
         if operation == 'remember_user_input':
             parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'nihao')
             return dict(parsed=parsed, ret=k.fn('remember_user_input', B, P, S, I)(k.inst, text, 1),

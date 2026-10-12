@@ -55,10 +55,8 @@ pub fn cstr_to_parsed_prefix(ptr: *const c_char) -> String {
 }
 
 /// Converts a nullable C string to an owned [`String`], `None` unless the
-/// bytes are valid UTF-8 — the shape `pinyin_phrase_segment` needs,
-/// because the pin's `g_return_val_if_fail(num_of_chars == ucs4_len,
-/// FALSE)` gate (`pinyin.cpp:1450-1452`) rejects exactly the inputs a
-/// lossy conversion would paper over.
+/// bytes are valid UTF-8. Phrase segmentation uses its own GLib UCS4 gate,
+/// which also accepts non-scalar values that cannot enter a Rust string.
 pub fn cstr_to_strict(ptr: *const c_char) -> Option<String> {
     if ptr.is_null() {
         return None;
