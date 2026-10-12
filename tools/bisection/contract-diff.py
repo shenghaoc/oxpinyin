@@ -6351,9 +6351,9 @@ def axis_c_isolated(k, fn):
                 stderr=b''.join(chunks['errors']).decode('utf-8', 'surrogateescape'))
 
 
-def axis_c_surface(k, parser, text):
+def axis_c_surface(k, parser, text, instance=None):
     """Parse -> lengths -> sentence rank zero -> complete candidate list."""
-    inst = k.alloc()
+    inst = k.alloc() if instance is None else instance
     parsed = k.fn(parser, Z, P, S)(inst, text)
     out = dict(consumed=parsed, parsed=k.fn('get_parsed_input_length', Z, P)(inst))
     guessed = k.fn('guess_sentence', B, P)(inst)
@@ -6376,9 +6376,13 @@ def axis_c_surface(k, parser, text):
 def axis_c_options(word, texts):
     def probe(k):
         set_ok = k.fn('set_options', B, P, U)(k.ctx, word)
+        # Every fork gets an independent, never-parsed instance snapshot.
+        # The parent never parses it; constructor work is independent of input.
+        # Retain the original allocation path for a bytewise equivalence check.
+        snapshot = None if os.environ.get('AXIS_C_ALLOCATE_EACH') == '1' else k.alloc()
         return dict(set_options=set_ok, observations={
             str(index): axis_c_isolated(k, lambda text=text: axis_c_surface(
-                k, 'parse_more_full_pinyins', text.encode()))
+                k, 'parse_more_full_pinyins', text.encode(), snapshot))
             for index, text in enumerate(texts)})
     return probe
 
@@ -6502,6 +6506,26 @@ for _mode in ('pinyin', 'zhuyin'):
 
 def axis_c_canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(',', ':')).encode()
+
+
+def check_axis_c_snapshots(args):
+    names = ['axis-c-options-single-00000008', 'axis-c-options-pair-00000060',
+             'axis-c-options-boundary-ffffffff']
+    offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
+    with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch:
+        for side in (args.prefix / 'lib/libpinyin.so', args.pinyin_so):
+            for name in names:
+                os.environ['AXIS_C_ALLOCATE_EACH'] = '1'
+                original = run_worker('pinyin', side.resolve(), args.prefix / 'lib/libpinyin/data', name, scratch)
+                os.environ.pop('AXIS_C_ALLOCATE_EACH')
+                snapshot = run_worker('pinyin', side.resolve(), args.prefix / 'lib/libpinyin/data', name, scratch)
+                # Ignore only incidental directory inventory, as in the battery.
+                assert all(original[key] == snapshot[key] for key in ('exit', 'result', 'stderr')), name
+                print(f'instance snapshot: {side.name} {name} identical', flush=True)
+    delta = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC) - offset
+    assert abs(delta) < 0.01, 'discard suspend-overlapping snapshot validation'
+    print(f'instance snapshot: 6 word/library comparisons, 96 input observations; identical; suspend delta {delta:.6f}', flush=True)
+    return 0
 
 
 def axis_c_first_difference(left, right, path=''):
@@ -6628,6 +6652,7 @@ def main():
     parser.add_argument('--axis-c-mutation', choices=['C-m1-r', 'C-m3-r'])
     parser.add_argument('--axis-c-mutant-pinyin-so', type=Path)
     parser.add_argument('--axis-c-mutant-zhuyin-so', type=Path)
+    parser.add_argument('--axis-c-snapshot-check', action='store_true')
     args = parser.parse_args()
     os.environ['CONTRACT_DIFF_CELL'] = args.cell
     lib = args.prefix / 'lib'
@@ -6638,9 +6663,11 @@ def main():
     manifest = (args.prefix / 'oracle-pin.txt').read_text()
     assert 'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' in manifest
     assert '+dbm-' + args.cell + '\n' in manifest
-    if args.axis_c_replacement or args.axis_c_mutation:
+    if args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
         assert not (args.observations or args.cases or args.expect_parent or args.regenerate_sentence_ties), \
             'axis C replacement cannot be combined with capture, regeneration or parent modes'
+        if args.axis_c_snapshot_check:
+            return check_axis_c_snapshots(args)
         names = (AXIS_C_DEFINITION['mutations'][args.axis_c_mutation]['controls']
                  if args.axis_c_mutation else
                  sum(AXIS_C_GROUPS.values(), []) if args.axis_c_replacement == 'all' else
