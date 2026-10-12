@@ -6520,6 +6520,22 @@ def run_axis_c(args, names):
     from collections import Counter
     offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
     totals, fingerprints = Counter(), {side: hashlib.sha256() for side in ('pin', 'subject')}
+    differences, examples = Counter(), {}
+    def record_difference(name, key, left, right):
+        first = axis_c_first_difference(left, right)
+        pin_exit = left.get('exit') if isinstance(left, dict) else None
+        subject_exit = right.get('exit') if isinstance(right, dict) else None
+        if pin_exit:
+            diagnostic = left.get('stderr', '')
+            result = (right.get('result') or {}) if isinstance(right, dict) else {}
+            signature = json.dumps(dict(pin_exit=pin_exit, subject_exit=subject_exit,
+                                        pin_diagnostic=diagnostic,
+                                        subject_logs=result.get('log_messages', result.get('logs'))),
+                                   sort_keys=True, ensure_ascii=True)
+        else:
+            signature = json.dumps(first, sort_keys=True, ensure_ascii=True)
+        differences[signature] += 1
+        examples.setdefault(signature, dict(case=name, row=key, first=first))
     def observe(name, subject, companion):
         spec = CASES[name]
         previous = os.environ.get('AXIS_C_COMPANION_PINYIN')
@@ -6554,6 +6570,7 @@ def run_axis_c(args, names):
             for side, observation in (('pin', pin), ('subject', subject)):
                 fingerprints[side].update(axis_c_canonical([name, observation]))
             totals['cases'] += 1
+            totals['diagnostics_match' if pin['stderr'] == subject['stderr'] else 'diagnostics_differ'] += 1
             if pin == subject:
                 totals['case_match'] += 1
             else:
@@ -6565,10 +6582,14 @@ def run_axis_c(args, names):
                     same = pin_rows[key] == subject_rows.get(key)
                     totals['observations'] += 1
                     totals['payload_match' if same else 'payload_differ'] += 1
+                    if not same:
+                        record_difference(name, key, pin_rows[key], subject_rows.get(key))
                 # First differing row only; all rows were compared in full.
             else:
                 totals['observations'] += 1
                 totals['payload_match' if pin == subject else 'payload_differ'] += 1
+                if pin != subject:
+                    record_difference(name, 'case', pin, subject)
             if pin != subject:
                 print(json.dumps(dict(case=name, verdict='DIFFER',
                                       first=axis_c_first_difference(pin, subject)), ensure_ascii=True), flush=True)
@@ -6577,6 +6598,9 @@ def run_axis_c(args, names):
     elapsed_suspend = (time.clock_gettime(time.CLOCK_BOOTTIME) -
                        time.clock_gettime(time.CLOCK_MONOTONIC) - offset)
     assert abs(elapsed_suspend) < 0.01, 'NOT-ESTABLISHED: discard suspend-overlapping run'
+    for signature in sorted(differences):
+        print(json.dumps(dict(difference_signature=json.loads(signature), count=differences[signature],
+                              example=examples[signature]), ensure_ascii=True), flush=True)
     print(json.dumps(dict(battery=args.axis_c_replacement, mutation=args.axis_c_mutation,
                           counts=dict(totals), repeats='identical', suspend_delta=elapsed_suspend,
                           hashes={side: h.hexdigest() for side, h in fingerprints.items()}), sort_keys=True), flush=True)
