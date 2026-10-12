@@ -3,6 +3,8 @@
 
 Usage: contract-diff.py CELL PREFIX PINYIN_SO [--zhuyin-so PATH]
                         [--cases a,b,...] [--expect-parent]
+       contract-diff.py bdb PREFIX PREFIX/lib/libpinyin.so
+                        --regenerate-sentence-ties FIXTURE
 
 Each case is a short function that drives one facade through the C ABI and
 returns the observations: return values, out-params (an untouched out-param
@@ -35,6 +37,7 @@ removed even on failure.
 """
 import argparse
 import ctypes as C
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -45,6 +48,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 P, U, I, S, B, Z = C.c_void_p, C.c_uint, C.c_int, C.c_char_p, C.c_bool, C.c_size_t
 UNTOUCHED = 0xABCDEF  # out-param sentinel
@@ -6156,6 +6160,131 @@ for _zyname, _zycall, _zyanswer in (
         null_argument_case(_zycall))
 
 
+def declared_sentence_residuals():
+    """Read membership from the frozen gate's §12 declaration, not a copy."""
+    root = Path(__file__).resolve().parents[2]
+    doc = (root / 'docs/findings/sentence-surface.md').read_text()
+    section = doc.split('\n## 12. ', 1)[1].split('\n## 13.', 1)[0]
+    declaration = section.split(
+        'Only the following six shared-comparison rows are class (a), as ruled.', 1)[1]
+    table = declaration.split('| Input | Pin deciding f32 bits | Subject native costs |\n', 1)[1]
+    names = set()
+    for line in table.splitlines()[1:]:
+        if not line.startswith('|'):
+            break
+        name = line.split('|')[1].strip().strip('`')
+        assert name not in names, 'duplicate declared residual'
+        names.add(name)
+    assert len(names) == 6, 'frozen declared residual count moved'
+    return names
+
+
+def encode_sentence_tie(row, guessed, sentences, nbest, residual_sentences, residual_nbest):
+    """Pool each text once per input; all displayed rows have NBEST type 1."""
+    texts = list(dict.fromkeys(sentences + residual_sentences))
+    ids = {text: index for index, text in enumerate(texts)}
+    def indexed(items):
+        return ','.join(str(ids[text]) for text in items)
+    def displayed(items):
+        return ','.join(f'{index}:{ids[text]}' for index, text in items)
+    return '\t'.join(row[:3] + [str(int(guessed)), '\x01'.join(texts),
+                                indexed(sentences), displayed(nbest),
+                                indexed(residual_sentences), displayed(residual_nbest)])
+
+
+def regenerate_sentence_ties(prefix, fixture):
+    """Refresh pin expectations; preserve the six approved exact subject rows.
+
+    The first three columns are historical native-tail selection metadata.
+    Text pooling keeps indexed duplicates and complete NBEST rows compact.
+    Membership comes only from the frozen §12 table; ordinary cases cannot
+    carry subject expectations. No observations or other outputs are saved.
+    """
+    suspend_offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
+
+    def fields(path):
+        return dict(line.split('=', 1) for line in path.read_text().splitlines()
+                    if line and not line.startswith('#') and '=' in line)
+
+    manifest = fields(prefix / 'oracle-pin.txt')
+    source_pin = fields(Path(__file__).resolve().parents[2] / 'tools/oracle/oracle-pin.txt')
+    expected = (f"libpinyin-{source_pin['libpinyin_tag']}-{source_pin['libpinyin_commit']}"
+                f"+model20-{source_pin['model_archive_sha256']}+dbm-bdb")
+    assert manifest['pin_ref'] == expected and manifest['dbm'] == 'BerkeleyDB', 'off-pin bdb prefix'
+    so = prefix / 'lib/libpinyin.so'
+    assert hashlib.sha256(so.read_bytes()).hexdigest() == manifest['shared_object_sha256'], \
+        'pin library checksum differs'
+    verified_files = 0
+    for name, field in (('oracle-data.sha256', 'data_manifest_sha256'),
+                        ('oracle-data-unstable.sha256', 'data_unstable_manifest_sha256')):
+        raw = (prefix / name).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == manifest[field], 'pin data manifest checksum differs'
+        for line in raw.decode().splitlines():
+            digest, relative = line.split('  ', 1)
+            assert hashlib.sha256((prefix / relative).read_bytes()).hexdigest() == digest, \
+                'pin data checksum differs: ' + relative
+            verified_files += 1
+    print(f'pin verified: library and {verified_files} data files', flush=True)
+
+    raw = fixture.read_text()
+    headers = [line for line in raw.splitlines() if line.startswith('#')]
+    assert '# format=sentence-tie-order-v1' in headers, 'unsupported tie fixture format'
+    cases = [line.split('\t') for line in raw.splitlines() if not line.startswith('#')]
+    assert cases and all(len(row) == 9 and int(row[1]) > 0 for row in cases), 'bad tie fixture'
+    assert len({row[0] for row in cases}) == len(cases), 'duplicate selected input'
+    declared = declared_sentence_residuals()
+    recorded = {row[0] for row in cases if row[7] or row[8]}
+    assert recorded == declared, 'subject expectations must match the frozen declared membership exactly'
+    out = []
+    row_count = 0
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    with tempfile.TemporaryDirectory(prefix='sentence-ties-') as scratch:
+        k = Kit('pinyin', str(so.resolve()), str(prefix / 'lib/libpinyin/data'), scratch)
+        assert k.fn('set_options', B, P, U)(k.ctx, 0x18a)
+        try:
+            for ordinal, row in enumerate(cases, 1):
+                text = row[0]
+                pool = row[4].split('\x01')
+                residual_sentences = [pool[int(index)] for index in row[7].split(',')] if row[7] else []
+                residual_nbest = [(int(index), pool[int(text_id)])
+                                  for index, text_id in (item.split(':') for item in row[8].split(','))] if row[8] else []
+                assert k.fn('reset', B, P)(k.inst)
+                k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, text.encode())
+                guessed = k.fn('guess_sentence', B, P)(k.inst)
+                assert k.fn('guess_candidates', B, P, Z, U)(k.inst, 0, 0x1e)
+                nbest = []
+                for index, candidate in enumerate(candidate_rows(k, k.inst)):
+                    assert candidate is not None, 'unreadable candidate for ' + repr(text)
+                    if candidate[0] == 1:
+                        pointer, rank = P(), C.c_ubyte(0xff)
+                        assert k.fn('get_candidate', B, P, U, C.POINTER(P))(
+                            k.inst, index, C.byref(pointer))
+                        assert k.fn('get_candidate_nbest_index', B, P, P, C.POINTER(C.c_ubyte))(
+                            k.inst, pointer, C.byref(rank))
+                        nbest.append((rank.value, candidate[1]))
+                sentences = final_step_sentences(k, k.inst)
+                out.append(encode_sentence_tie(row, guessed, sentences, nbest,
+                                              residual_sentences, residual_nbest))
+                row_count += len(nbest)
+                if ordinal % 1000 == 0:
+                    print(f'pin expectations: {ordinal}/{len(cases)}', flush=True)
+        finally:
+            if k._inst:
+                k.fn('free_instance', None, P)(k._inst)
+            if k._ctx:
+                k.fn('fini', None, P)(k._ctx)
+    headers = [line for line in headers if not line.startswith('# pin_ref=')]
+    headers.insert(1, '# pin_ref=' + manifest['pin_ref'])
+    elapsed_suspend = (time.clock_gettime(time.CLOCK_BOOTTIME) -
+                       time.clock_gettime(time.CLOCK_MONOTONIC) - suspend_offset)
+    assert abs(elapsed_suspend) < 0.01, 'discard: suspend overlapped pin regeneration'
+    fixture.write_text('\n'.join(headers + out) + '\n')
+    print(f'regenerated {fixture}: {len(cases)} distinct inputs, '
+          f'{sum(int(row[1]) for row in cases)} corpus entries, {row_count} ordered NBEST rows; '
+          f'pin-equal expectations {len(cases) - len(declared)}, exact residual expectations {len(declared)}', flush=True)
+    print(f'suspend overlap: none (clock delta {elapsed_suspend:.6f} seconds)', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('cell', choices=['bdb', 'kc', 'tkrzw'])
@@ -6164,6 +6293,8 @@ def main():
     parser.add_argument('--zhuyin-so', type=Path)
     parser.add_argument('--cases', default='')
     parser.add_argument('--expect-parent', action='store_true')
+    parser.add_argument('--regenerate-sentence-ties', type=Path,
+                        help='regenerate pin expectations in the supplementary #747 source fixture')
     parser.add_argument('--observations', type=Path, default=os.environ.get('CONTRACT_DIFF_OBSERVATIONS'),
                         help='retain both complete observations as JSONL (also CONTRACT_DIFF_OBSERVATIONS)')
     args = parser.parse_args()
@@ -6176,6 +6307,14 @@ def main():
     manifest = (args.prefix / 'oracle-pin.txt').read_text()
     assert 'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' in manifest
     assert '+dbm-' + args.cell + '\n' in manifest
+    if args.regenerate_sentence_ties:
+        assert args.cell == 'bdb', '#747 fixture regeneration is bdb only'
+        assert args.pinyin_so.resolve() == (lib / 'libpinyin.so').resolve(), \
+            'fixture expectations must come from the pin, never the subject'
+        assert not (args.cases or args.expect_parent or args.zhuyin_so or args.observations), \
+            'fixture regeneration cannot be combined with differential or capture modes'
+        regenerate_sentence_ties(args.prefix, args.regenerate_sentence_ties)
+        return 0
     # The whole set only when --cases is omitted: an explicit list that
     # names nothing (`--cases ,`) is an error, not a request for everything.
     names = [n for n in args.cases.split(',') if n] if args.cases else sorted(CASES)
