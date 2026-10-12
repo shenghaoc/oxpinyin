@@ -38,7 +38,7 @@
 //! through the shared library mask: its items answer no unigram and its
 //! total leaves the denominator, as freeing the sub-index does upstream.
 
-use std::collections::BTreeMap;
+use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -203,23 +203,46 @@ pub fn merge_bigram_row(
     if system.is_none() && user_rows.is_empty() && user_total == 0 {
         return None;
     }
-    let mut counts: BTreeMap<u32, u64> = BTreeMap::new();
-    let mut total: u64 = 0;
-    if let Some(row) = system {
-        total = merge_bigram_counts(total, u64::from(row.total));
-        for (token, count) in &row.records {
-            let slot = counts.entry(*token).or_default();
-            *slot = merge_bigram_counts(*slot, u64::from(*count));
+    // The pin merges two sorted arrays linearly (074a2219 ngram.cpp:308-348).
+    // Installed rows are sorted already. Preserve the existing helper's
+    // acceptance of arbitrary stored order and duplicate tokens as well.
+    fn ordered<T: Copy>(rows: &[(u32, T)]) -> Cow<'_, [(u32, T)]> {
+        if rows.windows(2).all(|pair| pair[0].0 <= pair[1].0) {
+            Cow::Borrowed(rows)
+        } else {
+            let mut rows = rows.to_vec();
+            rows.sort_by_key(|(token, _)| *token);
+            Cow::Owned(rows)
         }
     }
-    if !user_rows.is_empty() || user_total > 0 {
-        total = merge_bigram_counts(total, user_total);
-        for (token, count) in user_rows {
-            let slot = counts.entry(*token).or_default();
-            *slot = merge_bigram_counts(*slot, *count);
+    let system_rows = ordered(system.map_or(&[][..], |row| row.records.as_slice()));
+    let user_rows = ordered(user_rows);
+    let mut counts: Vec<(u32, u64)> =
+        Vec::with_capacity(system_rows.len().saturating_add(user_rows.len()));
+    let total = merge_bigram_counts(system.map_or(0, |row| u64::from(row.total)), user_total);
+    let mut system = system_rows
+        .iter()
+        .map(|&(token, count)| (token, u64::from(count)))
+        .peekable();
+    let mut user = user_rows.iter().copied().peekable();
+    loop {
+        let next = match (system.peek(), user.peek()) {
+            (Some(&(left, _)), Some(&(right, _))) if left <= right => system.next(),
+            (Some(_), Some(_)) | (None, Some(_)) => user.next(),
+            (Some(_), None) => system.next(),
+            (None, None) => break,
+        };
+        if let Some((token, count)) = next {
+            if let Some((last, slot)) = counts.last_mut()
+                && *last == token
+            {
+                *slot = merge_bigram_counts(*slot, count);
+            } else {
+                counts.push((token, merge_bigram_counts(0, count)));
+            }
         }
     }
-    Some((counts.into_iter().collect(), total))
+    Some((counts, total))
 }
 
 /// One previous-token row of the system bigram — re-exported from
@@ -513,6 +536,36 @@ impl BigramLanguageModel {
         .map(|(count, total)| (count, total, present)))
     }
 
+    /// Loads and merges one n-best predecessor row. Reuses the whole-row
+    /// arithmetic, retaining the pair path's first system record and its
+    /// positive-user-count presence gate. A stored system zero stays present.
+    /// At 074a2219, phonetic_lookup.h:588-599 loads/merges before the
+    /// successor walk; ngram.cpp:231-252 binary-searches the resulting row.
+    ///
+    /// # Errors
+    /// Propagates table and parse errors, including a present empty value.
+    pub fn load_nbest_row(
+        &self,
+        prev: u32,
+        user_rows: &[(u32, u64)],
+        user_total: u64,
+    ) -> Result<Option<oxpinyin_core::MergedGram>, LmError> {
+        let mut system = self.load_successors(prev)?;
+        if let Some(row) = system.as_mut() {
+            // Parsing accepts stored order and duplicates. The old point
+            // lookup used the first record; stable sorting keeps that law.
+            row.records.sort_by_key(|(token, _)| *token);
+            row.records.dedup_by_key(|(token, _)| *token);
+        }
+        let user_rows: Vec<_> = user_rows
+            .iter()
+            .copied()
+            .filter(|(_, count)| *count > 0)
+            .collect();
+        Ok(merge_bigram_row(system.as_ref(), &user_rows, user_total)
+            .map(|(records, total)| oxpinyin_core::MergedGram::new(total, records)))
+    }
+
     /// Interpolated model cost of `token` after `history`, without `edge_cost`.
     ///
     /// Empty-history ranking: a *scaled-down* unigram surprisal acts as a
@@ -690,6 +743,40 @@ impl BigramLanguageModel {
         user: UserCountDelta,
         imported_item: bool,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+        self.nbest_step_costs_using(token, user, imported_item, || {
+            self.merged_transition(prev.value(), token.value(), user)
+        })
+    }
+
+    /// The unchanged n-best cost law over a lazily supplied merged row.
+    /// Unigram and item visibility remain live; only the predecessor row
+    /// belongs to the caller's current step.
+    ///
+    /// # Errors
+    /// Propagates the row loader's error after the existing item gates.
+    pub fn nbest_step_costs_from_row(
+        &self,
+        token: &PhraseToken,
+        user: UserCountDelta,
+        imported_item: bool,
+        row: &mut oxpinyin_core::NbestStepRow,
+        load: impl FnOnce() -> Result<Option<oxpinyin_core::MergedGram>, LmError>,
+    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+        self.nbest_step_costs_using(token, user, imported_item, || {
+            Ok(row.get_or_try_init(load)?.map(|gram| {
+                let count = gram.count_if_present(token.value());
+                (count.unwrap_or(0), gram.total(), count.is_some())
+            }))
+        })
+    }
+
+    fn nbest_step_costs_using(
+        &self,
+        token: &PhraseToken,
+        user: UserCountDelta,
+        imported_item: bool,
+        transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
+    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
         // The pin's presence gate is `get_phrase_item` over the token's
         // loaded sub-index; `unigram_count` reads the system chunk
         // libraries only, so its `None` folds three cases the gate must
@@ -714,7 +801,7 @@ impl BigramLanguageModel {
         }
 
         if let Some(lambda) = self.lambda_raw {
-            let blended = match self.merged_transition(prev.value(), token.value(), user)? {
+            let blended = match transition()? {
                 Some((bigram_count, bigram_total, true)) => {
                     raw_blend_cost(lambda, bigram_count, bigram_total, count, unigram_total)
                 }
@@ -744,7 +831,7 @@ impl BigramLanguageModel {
         // carries this successor: upstream's bigram expansion walks
         // merged-gram successors (`search_bigram2`). Stored records survive
         // a wrapped count of zero; absence, rather than count, gates the walk.
-        let blended = match self.merged_transition(prev.value(), token.value(), user)? {
+        let blended = match transition()? {
             Some((0, 0, true)) => Some(oxpinyin_core::cost::NAN_COST),
             Some((_, 0, true)) => Some(zero_total_bigram_cost(lambda_num)),
             Some((bigram_count, bigram_total, true)) => interpolate_ratio(
@@ -803,6 +890,17 @@ impl LanguageModel for BigramLanguageModel {
         // System-only: the empty-user identity of the merged path.
         self.nbest_step_costs_with_user_delta(prev, token, UserCountDelta::ZERO)
     }
+
+    fn nbest_step_costs_in_row(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+        row: &mut oxpinyin_core::NbestStepRow,
+    ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
+        self.nbest_step_costs_from_row(token, UserCountDelta::ZERO, false, row, || {
+            self.load_nbest_row(prev.value(), &[], 0)
+        })
+    }
 }
 
 /// Surprisal of one ratio, `None` when the reduced parts do not fit `u64`
@@ -819,6 +917,48 @@ fn ratio_cost((numerator, denominator): (u128, u128)) -> Option<Cost> {
 #[cfg(test)]
 mod merge_tests {
     use super::{BigramRow, merge_bigram, merge_bigram_row};
+
+    #[test]
+    fn linear_row_merge_retains_the_wrapped_union_for_arbitrary_rows() {
+        use std::collections::BTreeMap;
+        for seed in 0..128_u32 {
+            let system = row(
+                seed.wrapping_mul(0x8000_0001),
+                &[(seed % 7, u32::MAX), (3, seed), (seed % 5, 0), (3, 1)],
+            );
+            let user = [
+                (seed % 6, u64::MAX),
+                (3, u64::from(seed)),
+                (seed % 7, 0),
+                (3, 1),
+            ];
+            let total = u64::from(seed).wrapping_mul(0x1_8000_0001);
+            for system in [None, Some(&system)] {
+                let mut expected: BTreeMap<u32, u32> = BTreeMap::new();
+                if let Some(row) = system {
+                    for &(token, count) in &row.records {
+                        let slot = expected.entry(token).or_default();
+                        *slot = slot.wrapping_add(count);
+                    }
+                }
+                for &(token, count) in &user {
+                    let slot = expected.entry(token).or_default();
+                    *slot = slot.wrapping_add(count as u32);
+                }
+                let total = system.map_or(0, |row| row.total).wrapping_add(total as u32);
+                assert_eq!(
+                    merge_bigram_row(system, &user, u64::from(seed).wrapping_mul(0x1_8000_0001)),
+                    Some((
+                        expected
+                            .into_iter()
+                            .map(|(t, c)| (t, u64::from(c)))
+                            .collect(),
+                        u64::from(total)
+                    ))
+                );
+            }
+        }
+    }
 
     fn row(total: u32, records: &[(u32, u32)]) -> BigramRow {
         BigramRow {

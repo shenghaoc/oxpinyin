@@ -418,3 +418,49 @@ fn the_facade_total_delta_wraps_like_a_guint32() {
     let _ = dict.add_unigram_delta(token, 3);
     assert_eq!(dict.unigram_total_delta(), 2);
 }
+
+#[test]
+fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
+    use oxpinyin_core::NbestStepRow;
+    let dir = std::env::temp_dir().join(format!("oxpinyin-nbest-step-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
+    let mut store = runtime.user_store().unwrap();
+    let keys: Vec<_> = ["ni", "hao"]
+        .into_iter()
+        .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
+        .collect();
+    let token = PhraseToken::new(store.add_phrase("你鎄", &keys, Some(5)).unwrap());
+    // A second successor keeps count/total from remaining exactly 1 when
+    // the tested count changes, so a stale row cannot pass by normalization.
+    let other = store.add_phrase("你鎬", &keys, Some(5)).unwrap();
+    store.set_bigram_count(SENTENCE_START, other, 1000).unwrap();
+    let prev = PhraseToken::new(SENTENCE_START);
+    let lm = runtime.lm();
+    let fresh = || {
+        let actual = lm
+            .nbest_step_costs_in_row(&prev, &token, &mut NbestStepRow::default())
+            .unwrap();
+        assert_eq!(actual, lm.nbest_step_costs(&prev, &token).unwrap());
+        actual
+    };
+    let before = fresh();
+    store
+        .observe_selection(SENTENCE_START, token.value())
+        .unwrap();
+    let trained = fresh();
+    assert_ne!(trained, before);
+    store
+        .set_bigram_count(SENTENCE_START, token.value(), 1000)
+        .unwrap();
+    let written = fresh();
+    assert_ne!(written, trained);
+    store.mask_out(u32::MAX, token.value()).unwrap();
+    let masked = fresh();
+    assert_ne!(masked, written);
+    drop(lm);
+    drop(store);
+    drop(runtime);
+    std::fs::remove_dir_all(dir).unwrap();
+}
