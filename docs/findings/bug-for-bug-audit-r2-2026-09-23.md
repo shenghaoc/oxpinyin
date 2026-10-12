@@ -1460,6 +1460,8 @@ only execution can establish that for these cases. Successful-call residual
 `errno` is excluded under the maintainer's existing 2026-10-08 scope ruling.
 Every stable DIFFER, including covered abort/logging differences, is kept and
 attributed after pin reproduction; uncovered cases become issues, not fixes.
+The sole exception is §20.4: the invalid-scheme layout cells whose abort the
+register already classifies are encoded as covered and reported as such.
 
 Two **replacement**, ungated, scratch-only mutations are fixed now:
 
@@ -1522,3 +1524,35 @@ Option-run optimization 2026-10-12T05:14:50Z: the restarted partial option run w
 Fingerprint path correction 2026-10-12T05:20:04Z: normalize the generated outer scratch directory to `SCRATCH` in diagnostic fields as well as random `user-`/`sys-` names. This is the pre-registration §2 absolute-path normalization, applied only to stderr/log-message fields, never to candidate or input payloads. The initial complete encoding run (315 equal, 7 different, stable repeats, all raw stderr streams equal) retains its per-case results, but its hashes include the outer random path and are discarded. Baseline fingerprints are regenerated after this correction; partial option runs remain discarded. No cases or mutation definitions change.
 
 Capture prevention / scheduling correction 2026-10-12T05:29:42Z: Fedora uses a pipe core_pattern targeting systemd-coredump. Replacement workers now set Linux PR_SET_DUMPABLE=0 before loading either library; descendants inherit it, preventing host capture routing for deliberate pin faults. The existing RLIMIT_CORE=0 remains. Earlier partial option/layout launches are discarded and restarted under this guard; no host core policy is changed. Two simultaneous observations use separate worker directories and explicit per-subprocess companion-library environments, preserving fresh-profile isolation. Each case still has two runs per side, the same call sequence, fields and definition; only scheduling changes. The lane remains capped at two CPUs and two build jobs.
+
+### 20.4 Register-covered layout cells
+
+Added 2026-10-12T10:25:29Z, after the layout baseline showed the 42
+scheme-setter differences. Those cells are not new findings: the pin's
+`abort()` on an invalid zhuyin scheme and the subject's `false` plus one
+warning are already classified by register rows **5c** (zhuyin
+`STANDARD_DVORAK`, scheme 7) and **5d** (out-of-enum on both facades), and the
+classic suite already holds the same sites as covered `abort=` cases
+(`abort-zhuyin-chewing-scheme-*`, `abort-set-zhuyin-scheme-*`).
+
+`axis-c-replacement.json` therefore gains a `layout_covered` map — scheme 7 →
+row 5c, and `0`, `10`, `11`, `-1`, `INT_MIN`, `INT_MAX` → row 5d — and
+`contract-diff.py` matches each such case with the classic class (c)
+expectation at the nested-observation level: the pin child must die of
+SIGABRT, and the subject must return normally with `set_scheme` false, no
+observation, and exactly one warning in the facade's domain at level 16. A
+case that satisfies this on every row is reported `COVERED` and cited by its
+register row; it is no longer counted as a difference. This changes
+classification only: no byte case, corpus, option word, scheme, word,
+operation, row or mutation definition changes, and the scheme-1 mutation
+controls stay unmatched so C-m3-r is still detected. The 42 covered cells are
+6 for row 5c and 36 for row 5d, so the layout battery is 90/90 accounted
+(48 exact + 42 covered).
+
+Restoration reality note 2026-10-12T10:25:29Z: §20.2's "unchanged
+pristine-library hashes" is unattainable with this debug toolchain — two clean
+builds from identical pristine source produce different library bytes (the
+build is not bit-reproducible). Restoration is therefore verified at source
+level (mutation edits reverted to byte-identical blobs) and behaviourally (the
+rebuilt pristine build reproduces the pristine canonical battery hashes, and
+both fixed mutation detectors no longer fire against it).
