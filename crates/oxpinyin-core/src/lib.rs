@@ -565,9 +565,16 @@ impl MergedGram {
     /// out-param stays 0 on a miss.
     #[must_use]
     pub fn count(&self, token: u32) -> u64 {
+        self.count_if_present(token).unwrap_or(0)
+    }
+
+    /// A stored successor's count, retaining presence when its count is zero.
+    #[must_use]
+    pub fn count_if_present(&self, token: u32) -> Option<u64> {
         self.records
             .binary_search_by_key(&token, |(stored, _)| *stored)
-            .map_or(0, |index| self.records[index].1)
+            .ok()
+            .map(|index| self.records[index].1)
     }
 
     /// `bigram_freq / total` as the pin computes it — `gfloat` division,
@@ -590,6 +597,31 @@ impl MergedGram {
     #[must_use]
     pub const fn len(&self) -> usize {
         self.records.len()
+    }
+}
+
+/// One predecessor's lazily loaded row, owned by a single n-best step.
+/// Drop it before advancing the step; training and mask changes must be
+/// observed by the next step or guess. A loaded miss is reused too.
+#[derive(Default)]
+pub struct NbestStepRow {
+    loaded: Option<Option<MergedGram>>,
+}
+
+impl NbestStepRow {
+    /// Loads once on success, including a missing row. Errors are propagated
+    /// without turning corruption into a cached miss.
+    ///
+    /// # Errors
+    /// Returns the loader's error unchanged.
+    pub fn get_or_try_init<E>(
+        &mut self,
+        load: impl FnOnce() -> Result<Option<MergedGram>, E>,
+    ) -> Result<Option<&MergedGram>, E> {
+        if self.loaded.is_none() {
+            self.loaded = Some(load()?);
+        }
+        Ok(self.loaded.as_ref().and_then(Option::as_ref))
     }
 }
 
@@ -732,6 +764,21 @@ pub trait LanguageModel {
         Ok(NbestStepCosts::default())
     }
 
+    /// Step costs with caller-owned reuse of this predecessor's row.
+    /// The default preserves existing models' pair-wise implementation.
+    /// Callers must use a fresh row for every predecessor and n-best step.
+    ///
+    /// # Errors
+    /// Returns the same backend errors as [`Self::nbest_step_costs`].
+    fn nbest_step_costs_in_row(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+        _row: &mut NbestStepRow,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        self.nbest_step_costs(prev, token)
+    }
+
     /// The `gfloat` λ of the install's `table.conf` — the weight the pin's
     /// candidate frequency (`(λ·bigram + (1−λ)·unigram)·2²⁴`,
     /// `pinyin.cpp:1862-1866`, `zhuyin.cpp:1236-1280`) is computed with.
@@ -807,6 +854,15 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         token: &Self::Token,
     ) -> Result<NbestStepCosts, Self::Error> {
         (**self).nbest_step_costs(prev, token)
+    }
+
+    fn nbest_step_costs_in_row(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+        row: &mut NbestStepRow,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        (**self).nbest_step_costs_in_row(prev, token, row)
     }
 
     fn amplification_lambda(&self) -> f32 {

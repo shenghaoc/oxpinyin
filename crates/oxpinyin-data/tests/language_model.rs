@@ -316,3 +316,111 @@ fn user_file_tokens_are_priced_from_their_user_delta_alone() {
         );
     }
 }
+
+#[test]
+fn reusable_rows_match_pair_costs_at_wrap_presence_and_lambda_edges() {
+    use oxpinyin_core::NbestStepRow;
+    let fix = Fixture::new();
+    let (mut lm, _) = fix.open();
+    let user_rows = [
+        (NI, u64::from(u32::MAX)),
+        (HAO, u64::from(u32::MAX - 6)),
+        (NIHAO, 0),
+    ];
+    for lambda in ["0.312699", "0.5", "0", "1e-1", "nan", "inf", "-1"] {
+        let conf = oxpinyin_data::table_info::TableConf::parse(format!(
+            "binary format version:7\nmodel data version:12\nlambda parameter:{lambda}\nsource table format:pinyin\ndatabase format:BerkeleyDB\n").as_bytes()).unwrap();
+        lm.set_lambda_from_conf(&conf);
+        for prev in [NI, HAO] {
+            for total in [0, u64::from(u32::MAX - 6), u64::from(u32::MAX), 17] {
+                let mut row = NbestStepRow::default();
+                let mut loads = 0;
+                for (token, bigram_count) in user_rows.into_iter().chain([(GBK, 0)]) {
+                    let user = UserCountDelta {
+                        bigram_count,
+                        bigram_total: total,
+                        unigram_delta: 3,
+                        unigram_total_delta: 9,
+                    };
+                    let expected = lm
+                        .nbest_step_costs_with_user_delta(
+                            &PhraseToken::new(prev),
+                            &PhraseToken::new(token),
+                            user,
+                        )
+                        .unwrap();
+                    let actual = lm
+                        .nbest_step_costs_from_row(
+                            &PhraseToken::new(token),
+                            user,
+                            false,
+                            &mut row,
+                            || {
+                                loads += 1;
+                                lm.load_nbest_row(prev, &user_rows, total)
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(actual, expected, "prev={prev} token={token} total={total}");
+                }
+                assert_eq!(loads, 1, "one load/merge for all successors");
+            }
+        }
+    }
+}
+
+#[test]
+fn reusable_row_keeps_visibility_live_and_propagates_empty_value() {
+    use oxpinyin_core::NbestStepRow;
+    let fix = Fixture::new();
+    let store = DefaultStore::create_hash(&fix.dir.join(SystemDbm::Bigram.file_name())).unwrap();
+    store
+        .write(|txn| txn.put_raw(&NI.to_le_bytes(), &[]))
+        .unwrap();
+    drop(store);
+    let (lm, mask) = fix.open();
+    let mut row = NbestStepRow::default();
+    let prev = PhraseToken::new(NI);
+    mask.store(1 << 2, Ordering::SeqCst);
+    assert_eq!(
+        lm.nbest_step_costs_in_row(&prev, &PhraseToken::new(GBK), &mut row)
+            .unwrap(),
+        oxpinyin_core::NbestStepCosts::default()
+    );
+    let error = lm
+        .nbest_step_costs_in_row(&prev, &PhraseToken::new(HAO), &mut row)
+        .unwrap_err();
+    assert!(
+        matches!(error, oxpinyin_data::lm::LmError::Parse(ref text) if text.contains("empty value"))
+    );
+    assert_eq!(
+        error.to_string(),
+        lm.nbest_step_costs(&prev, &PhraseToken::new(HAO))
+            .unwrap_err()
+            .to_string()
+    );
+}
+
+#[test]
+fn reusable_row_retains_first_system_record_in_stored_order() {
+    let fix = Fixture::new();
+    let store = DefaultStore::create_hash(&fix.dir.join(SystemDbm::Bigram.file_name())).unwrap();
+    let value = oxpinyin_data::row_format::bigram::encode_value(&oxpinyin_data::BigramRow {
+        total: 11,
+        records: vec![(NIHAO, 0), (HAO, 7), (NI, 4), (HAO, 99)],
+    });
+    store
+        .write(|txn| txn.put_raw(&NI.to_le_bytes(), &value))
+        .unwrap();
+    drop(store);
+    let (lm, _) = fix.open();
+    let mut row = oxpinyin_core::NbestStepRow::default();
+    for token in [HAO, NIHAO, NI, GBK] {
+        let prev = PhraseToken::new(NI);
+        let token = PhraseToken::new(token);
+        assert_eq!(
+            lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap(),
+            lm.nbest_step_costs(&prev, &token).unwrap()
+        );
+    }
+}

@@ -218,3 +218,33 @@ fn a_failing_backend_is_reported_not_swallowed() {
         ScoringError::Dictionary("closed".to_owned())
     );
 }
+
+#[test]
+fn step_row_reuses_hits_and_misses_but_retries_errors() {
+    use oxpinyin_core::{MergedGram, NbestStepRow};
+    let mut row = NbestStepRow::default();
+    assert_eq!(
+        row.get_or_try_init::<&str>(|| Err("empty value")).err(),
+        Some("empty value")
+    );
+    let gram = row
+        .get_or_try_init::<&str>(|| Ok(Some(MergedGram::new(0, vec![(9, 0), (3, 7)]))))
+        .unwrap()
+        .unwrap();
+    assert_eq!(gram.count_if_present(9), Some(0));
+    assert_eq!(gram.count_if_present(4), None);
+    assert_eq!(
+        row.get_or_try_init::<&str>(|| panic!("hit reloaded"))
+            .unwrap()
+            .unwrap()
+            .count_if_present(3),
+        Some(7)
+    );
+    let mut miss = NbestStepRow::default();
+    assert!(miss.get_or_try_init::<&str>(|| Ok(None)).unwrap().is_none());
+    assert!(
+        miss.get_or_try_init::<&str>(|| panic!("miss reloaded"))
+            .unwrap()
+            .is_none()
+    );
+}

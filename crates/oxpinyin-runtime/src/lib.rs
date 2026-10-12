@@ -1298,6 +1298,39 @@ impl LanguageModel for RuntimeLm {
         self.inner
             .nbest_step_costs_with_imported_item(prev, token, extra, imported)
     }
+
+    fn nbest_step_costs_in_row(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+        row: &mut oxpinyin_core::NbestStepRow,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        let extra = self.delta(None, token.value())?;
+        let imported = if let Some(store) = self.user.as_ref() {
+            store
+                .system_item_override(token.value())
+                .map_err(|error| LmError::User(error.to_string()))?
+                .is_some()
+        } else {
+            false
+        };
+        self.inner
+            .nbest_step_costs_from_row(token, extra, imported, row, || {
+                let (user_rows, user_total) = match self.user.as_ref() {
+                    None => (Vec::new(), 0),
+                    Some(store) => (
+                        store
+                            .bigram_successors(prev.value())
+                            .map_err(|error| LmError::User(error.to_string()))?,
+                        store
+                            .bigram_total(prev.value())
+                            .map_err(|error| LmError::User(error.to_string()))?,
+                    ),
+                };
+                self.inner
+                    .load_nbest_row(prev.value(), &user_rows, user_total)
+            })
+    }
 }
 
 // ── Runtime ─────────────────────────────────────────────────────────────

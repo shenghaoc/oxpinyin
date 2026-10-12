@@ -586,8 +586,6 @@ where
     };
     let seed_values: Vec<u32> = seeds.iter().map(|token| token.value()).collect();
     let mut trellis = Trellis::with_seeds(bound, &seed_values, shape);
-    // Memoised step costs: the beam revisits (prev, token) pairs.
-    let mut costs: HashMap<(u32, u32), NbestStepCosts> = HashMap::new();
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
 
     let mut position = 0_usize;
@@ -603,6 +601,9 @@ where
             continue;
         }
 
+        // Own rows and pair costs only for this step's span walk. A later
+        // step or guess reloads after training, store writes or mask_out.
+        let mut costs = StepCosts::default();
         if let Some(Cell::OneStep { token, end, .. }) = cell_at(position).cloned() {
             // One span search to the fixed end, the forced token only —
             // `search_bigram2`/`search_unigram2`'s ONESTEP branches —
@@ -815,7 +816,7 @@ fn widen_free_span<D, L>(
     constraints: Option<&ConstraintStore>,
     position: usize,
     beam: &[BeamEntry],
-    costs: &mut HashMap<(u32, u32), NbestStepCosts>,
+    costs: &mut StepCosts,
     trellis: &mut Trellis,
 ) -> Result<(), EngineError>
 where
@@ -876,6 +877,12 @@ where
         .any(|entry| entry.token == token.value() && !matches!(entry.pronunciation, Some((0, _)))))
 }
 
+#[derive(Default)]
+struct StepCosts {
+    pairs: HashMap<(u32, u32), NbestStepCosts>,
+    rows: HashMap<u32, oxpinyin_core::NbestStepRow>,
+}
+
 /// 074a2219 phonetic_lookup.h:542-642, 787-788: all bigram
 /// predecessors first, each over library/range/item order, then head unigram.
 fn expand_entries<L>(
@@ -884,7 +891,7 @@ fn expand_entries<L>(
     start: usize,
     end: usize,
     model: &L,
-    costs: &mut HashMap<(u32, u32), NbestStepCosts>,
+    costs: &mut StepCosts,
     trellis: &mut Trellis,
 ) -> Result<(), EngineError>
 where
@@ -902,15 +909,19 @@ where
                     _ => None,
                 };
                 let key = (predecessor.value.token, entry.token);
-                let step = if let Some(step) = costs.get(&key) {
+                let step = if let Some(step) = costs.pairs.get(&key) {
                     *step
                 } else {
                     let step = model
-                        .nbest_step_costs(&PhraseToken::new(key.0), &PhraseToken::new(key.1))
+                        .nbest_step_costs_in_row(
+                            &PhraseToken::new(key.0),
+                            &PhraseToken::new(key.1),
+                            costs.rows.entry(key.0).or_default(),
+                        )
                         .map_err(|error| {
                             EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                         })?;
-                    costs.insert(key, step);
+                    costs.pairs.insert(key, step);
                     step
                 };
                 let Some(mut cost) = (if unigram { step.unigram } else { step.blended }) else {
@@ -1267,6 +1278,63 @@ mod tests {
         let rows = nbest_sentences(&matrix, bound, &dict, &model, &[], None, NbestShape::PINYIN)
             .expect("the trellis cannot fail here");
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn predecessor_rows_are_reused_only_inside_each_step_and_guess() {
+        use oxpinyin_core::{MergedGram, NbestStepRow};
+        use std::cell::RefCell;
+        struct Counting(RefCell<Vec<u32>>);
+        impl LanguageModel for Counting {
+            type Token = PhraseToken;
+            type Error = EngineError;
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                cost: Cost,
+            ) -> Result<Cost, EngineError> {
+                Ok(cost)
+            }
+            fn nbest_step_costs_in_row(
+                &self,
+                prev: &PhraseToken,
+                _: &PhraseToken,
+                row: &mut NbestStepRow,
+            ) -> Result<NbestStepCosts, EngineError> {
+                row.get_or_try_init::<EngineError>(|| {
+                    self.0.borrow_mut().push(prev.value());
+                    Ok(Some(MergedGram::new(2, vec![(1, 1), (2, 1)])))
+                })?;
+                Ok(NbestStepCosts {
+                    blended: Some(1000),
+                    unigram: Some(2000),
+                })
+            }
+        }
+        let dict = FixtureDictionary::parse(
+            "token=1\tkeys=ni\ttext=你\tunigram=1000\ntoken=2\tkeys=ni\ttext=尼\tunigram=900\n",
+        )
+        .expect("authored fixture");
+        let (matrix, bound) = one_column_matrix("nini");
+        let model = Counting(RefCell::new(Vec::new()));
+        // Passing &model exercises the blanket &L forwarding too.
+        for run in 1..=2 {
+            let rows = nbest_sentences(
+                &matrix,
+                bound,
+                &dict,
+                &&model,
+                &[PhraseToken::new(1)],
+                None,
+                NbestShape::PINYIN,
+            )
+            .unwrap();
+            assert!(!rows.is_empty());
+            let loads = model.0.borrow();
+            assert_eq!(loads.iter().filter(|prev| **prev == 1).count(), 2 * run);
+            assert_eq!(loads.iter().filter(|prev| **prev == 2).count(), run);
+        }
     }
 
     /// The mini vocabulary's `ni`+`hao` chain with equal step costs decodes
