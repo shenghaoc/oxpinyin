@@ -6296,13 +6296,21 @@ def regenerate_sentence_ties(prefix, fixture):
     print(f'suspend overlap: none (clock delta {elapsed_suspend:.6f} seconds)', flush=True)
 
 
-def axis_c_definition():
-    """The committed replacement definition, never inferred from results."""
+def axis_c_definition(*, verify_sources=False):
+    """The committed replacement definition, never inferred from results.
+
+    Loading happens at import for every run (ordinary case selection builds
+    the Axis C groups too). Source-fixture hashing is deferred to
+    `verify_sources=True`, asked for once in the Axis C branch, so an
+    ordinary run is not failed by a changed fixture and an Axis C worker,
+    which imports this module after the parent validated, does not repeat it.
+    """
     root = Path(__file__).resolve().parents[2]
     definition = json.loads((root / 'tools/bisection/axis-c-replacement.json').read_text())
     assert definition['format'] == 'axis-c-replacement-v1'
-    for name, digest in definition['sources'].items():
-        assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest, name
+    if verify_sources:
+        for name, digest in definition['sources'].items():
+            assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest, name
     return definition
 
 
@@ -6817,6 +6825,9 @@ def main():
     if args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
         assert not (args.observations or args.cases or args.expect_parent or args.regenerate_sentence_ties), \
             'axis C replacement cannot be combined with capture, regeneration or parent modes'
+        # Hash the committed source fixtures once, here, before any Axis C
+        # worker is launched; the loader no longer does it at import.
+        axis_c_definition(verify_sources=True)
         if args.axis_c_snapshot_check:
             return check_axis_c_snapshots(args)
         # The fork-snapshot protocol is preregistered; a caller-provided
