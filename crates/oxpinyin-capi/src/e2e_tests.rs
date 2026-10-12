@@ -224,6 +224,121 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
     );
 }
 
+/// #752: the pin's `_pre_compute_tokens` refuses a phrase if any character
+/// has no dictionary token (074a2219 pinyin.cpp:3098-3130, 3685-3695).
+/// NUL termination is covered differentially in contract-diff.py.
+#[test]
+fn remember_user_input_requires_known_characters_in_every_parse_mode() {
+    use crate::config::{pinyin_set_double_pinyin_scheme, pinyin_set_zhuyin_scheme};
+    use crate::parse::{pinyin_parse_more_chewings, pinyin_parse_more_double_pinyins};
+
+    type Parse = extern "C" fn(*mut PinyinInstance, *const std::ffi::c_char) -> usize;
+    let modes: [(&str, Parse, &str); 3] = [
+        ("full", pinyin_parse_more_full_pinyins, "nihao"),
+        ("double", pinyin_parse_more_double_pinyins, "nihk"),
+        ("chewing", pinyin_parse_more_chewings, "su3cl3"),
+    ];
+    for (mode, parse, input) in modes {
+        let user_dir = TempUserDir::new(&format!("remember-known-{mode}"));
+        let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+        assert!(pinyin_set_options(context, 0x28));
+        assert!(pinyin_set_double_pinyin_scheme(context, 2));
+        assert!(pinyin_set_zhuyin_scheme(context, 1));
+        assert_eq!(parse(instance, cstr(input).as_ptr()), input.len());
+
+        for phrase in [b"ni\0".as_slice(), "你i\0".as_bytes(), "😀好\0".as_bytes()] {
+            assert!(!pinyin_remember_user_input(
+                instance,
+                phrase.as_ptr().cast(),
+                1
+            ));
+            assert_eq!(
+                store_of(instance).next_user_token().unwrap(),
+                FIRST_USER_TOKEN
+            );
+            let export = pinyin_begin_get_phrases(context, 7);
+            assert!(!export.is_null());
+            assert!(!pinyin_iterator_has_next_phrase(export));
+            pinyin_end_get_phrases(export);
+        }
+
+        // Known characters remain eligible in every parse mode.
+        assert!(pinyin_remember_user_input(
+            instance,
+            cstr("你好").as_ptr(),
+            1
+        ));
+        assert_eq!(
+            store_of(instance).token_for_phrase("你好").unwrap(),
+            Some(FIRST_USER_TOKEN)
+        );
+
+        // Eligibility comes from the phrase table, including user tokens:
+        // importing the previously unknown characters makes `ni` eligible.
+        let import = pinyin_begin_add_phrases(context, 7);
+        assert!(!import.is_null());
+        for (character, reading) in [("n", "ni3"), ("i", "hao3")] {
+            assert!(pinyin_iterator_add_phrase(
+                import,
+                cstr(character).as_ptr(),
+                cstr(reading).as_ptr(),
+                1
+            ));
+        }
+        pinyin_end_add_phrases(import);
+        assert!(pinyin_remember_user_input(instance, cstr("ni").as_ptr(), 1));
+        crate::instance::pinyin_free_instance(instance);
+        crate::context::pinyin_fini(context);
+    }
+}
+
+/// The pin refuses an empty or oversized phrase before token lookup
+/// (074a2219 pinyin.cpp:3677-3681). Invalid UTF-8 also has length zero.
+#[test]
+fn remember_user_input_rejects_empty_and_oversized_known_phrases() {
+    let user_dir = TempUserDir::new("remember-length-gate");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    assert!(pinyin_set_options(context, 0x28));
+    assert_eq!(
+        pinyin_parse_more_full_pinyins(instance, cstr("ni").as_ptr()),
+        2
+    );
+
+    for length in [0, oxpinyin_user::MAX_PHRASE_LENGTH, 65_536] {
+        assert!(!pinyin_remember_user_input(
+            instance,
+            cstr("你".repeat(length)).as_ptr(),
+            1
+        ));
+    }
+    for invalid in [
+        b"\xff\0".as_slice(),
+        b"\xe4\xbd\xa0\xff\0".as_slice(),
+        b"\xe4\xbd\0".as_slice(),
+        b"\xc0\x80\0".as_slice(),
+    ] {
+        assert!(!pinyin_remember_user_input(
+            instance,
+            invalid.as_ptr().cast(),
+            1
+        ));
+    }
+    assert_eq!(
+        store_of(instance).next_user_token().unwrap(),
+        FIRST_USER_TOKEN
+    );
+    let export = pinyin_begin_get_phrases(context, 7);
+    assert!(!export.is_null());
+    assert!(!pinyin_iterator_has_next_phrase(export));
+    pinyin_end_get_phrases(export);
+
+    // The repeated character is eligible; the oversized probes above do
+    // not depend on an unknown-character rejection.
+    assert!(pinyin_remember_user_input(instance, cstr("你").as_ptr(), 1));
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 /// §9: the LONGER-candidate choose surface. At a word leaving
 /// `SORT_WITHOUT_LONGER_CANDIDATE` clear (ibus preset 0x1c), the guess
 /// surfaces a type-7 row; choosing it answers cursor 1 (the pin's LONGER
@@ -619,13 +734,15 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
         cstr("你好").as_ptr(),
         -1
     ));
+    // The mini fixture has single-character tokens for 好 and 你;
+    // remember requires them, unlike the explicit import API (#752).
     assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("shijie").as_ptr()),
-        6
+        pinyin_parse_more_full_pinyins(instance, cstr("haoni").as_ptr()),
+        5
     );
     assert!(pinyin_remember_user_input(
         instance,
-        cstr("世界").as_ptr(),
+        cstr("好你").as_ptr(),
         -1
     ));
     assert!(pinyin_mask_out(context, 0x0F00_0000, 0x0700_0000));
@@ -640,7 +757,7 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
     {
         let store = store_of(instance);
         assert!(store.token_for_phrase("你好").unwrap().is_none());
-        assert!(store.token_for_phrase("世界").unwrap().is_none());
+        assert!(store.token_for_phrase("好你").unwrap().is_none());
         assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 2);
         assert!(!store.is_modified());
     }
@@ -1159,7 +1276,7 @@ fn exported_phrase_rows_are_token_ordered(context: *mut crate::types::PinyinCont
         drain_phrases(iter),
         vec![
             ("你好".to_owned(), "ni'hao".to_owned(), 12),
-            ("世界".to_owned(), "shi'jie".to_owned(), 3),
+            ("好你".to_owned(), "hao'ni".to_owned(), 3),
         ]
     );
     // Exhaustion: has_next false, get_next false.
@@ -1277,13 +1394,14 @@ fn export_iterators_walk_the_stored_triples() {
         cstr("你好").as_ptr(),
         7
     ));
+    // Both characters have tokens in the mini fixture (#752).
     assert_eq!(
-        pinyin_parse_more_full_pinyins(instance, cstr("shijie").as_ptr()),
-        6
+        pinyin_parse_more_full_pinyins(instance, cstr("haoni").as_ptr()),
+        5
     );
     assert!(pinyin_remember_user_input(
         instance,
-        cstr("世界").as_ptr(),
+        cstr("好你").as_ptr(),
         3
     ));
 
