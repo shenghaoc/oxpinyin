@@ -6285,6 +6285,307 @@ def regenerate_sentence_ties(prefix, fixture):
     print(f'suspend overlap: none (clock delta {elapsed_suspend:.6f} seconds)', flush=True)
 
 
+def axis_c_definition():
+    """The committed replacement definition, never inferred from results."""
+    root = Path(__file__).resolve().parents[2]
+    definition = json.loads((root / 'tools/bisection/axis-c-replacement.json').read_text())
+    assert definition['format'] == 'axis-c-replacement-v1'
+    for name, digest in definition['sources'].items():
+        assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest, name
+    return definition
+
+
+def axis_c_isolated(k, fn):
+    """Fork one read-only observation; both pipes stay in memory.
+
+    The context is opened before forking. Children allocate fresh instances,
+    never save/train, and exit without teardown, so one abort cannot truncate
+    the remaining corpus. Import cases instead use the existing fresh worker.
+    """
+    k.ctx
+    output_read, output_write = os.pipe()
+    error_read, error_write = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(output_read)
+        os.close(error_read)
+        os.dup2(error_write, 2)
+        os.close(error_write)
+        k.logs.clear()
+        k.log_messages.clear()
+        try:
+            result = fn()
+            result['logs'] = k.logs
+            result['log_messages'] = k.log_messages
+            payload = json.dumps(result, sort_keys=True, ensure_ascii=True).encode()
+            with os.fdopen(output_write, 'wb') as destination:
+                destination.write(payload)
+            os._exit(0)
+        except BaseException as error:
+            os.write(2, repr(error).encode())
+            os._exit(1)
+    os.close(output_write)
+    os.close(error_write)
+    # Each child emits at most short diagnostics. Drain both concurrently,
+    # including a large complete candidate vector, without capture files.
+    import selectors
+    selector = selectors.DefaultSelector()
+    selector.register(output_read, selectors.EVENT_READ, 'output')
+    selector.register(error_read, selectors.EVENT_READ, 'errors')
+    chunks = {'output': [], 'errors': []}
+    while selector.get_map():
+        for key, _ in selector.select():
+            chunk = os.read(key.fd, 65536)
+            if chunk:
+                chunks[key.data].append(chunk)
+            else:
+                selector.unregister(key.fd)
+                os.close(key.fd)
+    selector.close()
+    _, status = os.waitpid(pid, 0)
+    payload = b''.join(chunks['output'])
+    return dict(exit=os.waitstatus_to_exitcode(status),
+                result=json.loads(payload) if payload else None,
+                stderr=b''.join(chunks['errors']).decode('utf-8', 'surrogateescape'))
+
+
+def axis_c_surface(k, parser, text):
+    """Parse -> lengths -> sentence rank zero -> complete candidate list."""
+    inst = k.alloc()
+    parsed = k.fn(parser, Z, P, S)(inst, text)
+    out = dict(consumed=parsed, parsed=k.fn('get_parsed_input_length', Z, P)(inst))
+    guessed = k.fn('guess_sentence', B, P)(inst)
+    out['guess_sentence'] = guessed
+    if guessed:
+        out['sentence'] = (sentence_out(k, inst, 0) if k.mode == 'pinyin'
+                           else zhuyin_sentence_out(k, inst))
+    out['guess_candidates'] = (k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1e)
+                               if k.mode == 'pinyin' else
+                               k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0))
+    count = U(UNTOUCHED)
+    out['get_n_candidate'] = k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    out['n'] = count.value
+    assert count.value != UNTOUCHED, 'candidate count untouched'
+    out['candidates'] = candidate_rows(k, inst)
+    out['candidate_multiset'] = sorted(out['candidates'], key=lambda row: json.dumps(row))
+    return out
+
+
+def axis_c_options(word, texts):
+    def probe(k):
+        set_ok = k.fn('set_options', B, P, U)(k.ctx, word)
+        return dict(set_options=set_ok, observations={
+            str(index): axis_c_isolated(k, lambda text=text: axis_c_surface(
+                k, 'parse_more_full_pinyins', text.encode()))
+            for index, text in enumerate(texts)})
+    return probe
+
+
+def axis_c_lookup(k, text):
+    new = k.glib.g_array_new
+    new.argtypes, new.restype = [I, I, U], P
+    arr = new(0, 0, 4)
+    try:
+        ret = k.fn('lookup_tokens', B, P, S, P)(k.inst, text, arr)
+        view = C.cast(arr, C.POINTER(Arr)).contents
+        return dict(ret=ret, tokens=list(C.cast(view.data, C.POINTER(U))[:view.len]))
+    finally:
+        k.glib.g_array_free.argtypes, k.glib.g_array_free.restype = [P, B], P
+        k.glib.g_array_free(arr, True)
+
+
+def axis_c_import(k, operation, text):
+    phrase = text if operation == 'import-phrase' else '你好'.encode()
+    reading = text if operation == 'import-reading' else (
+        b"ni'hao" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode())
+    it = k.fn('begin_add_phrases', P, P, C.c_ubyte)(k.ctx, 7)
+    assert it, 'missing import iterator'
+    added = k.fn('iterator_add_phrase', B, P, S, S, I)(it, phrase, reading, 1)
+    k.fn('end_add_phrases', None, P)(it)
+    out = dict(added=added, lookup=axis_c_lookup(k, phrase),
+               saved=k.fn('save', B, P)(k.ctx))
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx, k._inst = None, None
+    # libzhuyin has no export iterator. Reopen either facade's saved profile
+    # through the same side's libpinyin export API in a fresh worker process.
+    env = dict(os.environ, AXIS_C_REOPEN_USER=k.user)
+    side = os.environ['AXIS_C_COMPANION_PINYIN']
+    proc = subprocess.run([sys.executable, __file__, '--worker', 'pinyin', side,
+                           k.data, 'axis-c-export-user'], capture_output=True, env=env)
+    out['reopen_exit'] = proc.returncode
+    out['reopen_stderr'] = proc.stderr.decode('utf-8', 'surrogateescape').replace(k.user, 'USER')
+    out['export'] = json.loads(proc.stdout) if proc.stdout else None
+    return out
+
+
+@case('axis-c-export-user')
+def axis_c_export_user(k):
+    k.user = os.environ['AXIS_C_REOPEN_USER']
+    return dict(rows=d18_export_phrases(k))
+
+
+def axis_c_encoding(operation, text):
+    def probe(k):
+        k.fn('set_options', B, P, U)(k.ctx, 0x28)
+        if operation.startswith('parse_more_'):
+            return axis_c_surface(k, operation, text)
+        if operation == 'lookup_tokens':
+            return axis_c_lookup(k, text)
+        if operation == 'phrase_segment':
+            ret = k.fn('phrase_segment', B, P, S)(k.inst, text)
+            count = U(UNTOUCHED)
+            got = k.fn('get_n_phrase', B, P, C.POINTER(U))(k.inst, C.byref(count))
+            return dict(ret=ret, get_n_phrase=got, count=count.value)
+        if operation == 'remember_user_input':
+            parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'nihao')
+            return dict(parsed=parsed, ret=k.fn('remember_user_input', B, P, S, I)(k.inst, text, 1),
+                        rows=d18_export_phrases(k))
+        return axis_c_import(k, operation, text)
+    return probe
+
+
+def axis_c_keyboard(k, byte):
+    out = P(UNTOUCHED)
+    ret = k.fn('in_chewing_keyboard', B, P, C.c_char, C.POINTER(P))(
+        k.inst, bytes([byte]), C.byref(out))
+    if out.value == UNTOUCHED:
+        return dict(ret=ret, symbols='untouched')
+    if not out.value:
+        return dict(ret=ret, symbols=None)
+    strings = C.cast(out, C.POINTER(S))
+    symbols, index = [], 0
+    while strings[index] is not None:
+        symbols.append(strings[index].decode())
+        index += 1
+    k.glib.g_strfreev.argtypes, k.glib.g_strfreev.restype = [P], None
+    k.glib.g_strfreev(out)
+    return dict(ret=ret, symbols=symbols)
+
+
+def axis_c_layout(scheme, word, definition):
+    def probe(k):
+        k.fn('set_options', B, P, U)(k.ctx, word)
+        def configured(fn):
+            setter = 'set_zhuyin_scheme' if k.mode == 'pinyin' else 'set_chewing_scheme'
+            ret = k.fn(setter, B, P, I)(k.ctx, scheme)
+            return dict(set_scheme=ret, observation=fn() if ret else None)
+        rows = {f'ascii-{byte}': axis_c_isolated(k, lambda byte=byte: configured(
+            lambda: axis_c_keyboard(k, byte))) for byte in definition['layout_ascii']}
+        for index, text in enumerate(definition['layout_inputs']):
+            rows[f'input-{index}'] = axis_c_isolated(k, lambda text=text: configured(
+                lambda: axis_c_surface(k, 'parse_more_chewings', text.encode())))
+        return dict(observations=rows)
+    return probe
+
+
+AXIS_C_GROUPS = {name: [] for name in ('options', 'encoding', 'layouts')}
+AXIS_C_DEFINITION = axis_c_definition()
+for _kind, _words in AXIS_C_DEFINITION['words'].items():
+    for _word in _words:
+        _name = f'axis-c-options-{_kind}-{int(_word, 16):08x}'
+        case(_name, stderr=True)(axis_c_options(int(_word, 16), AXIS_C_DEFINITION['option_inputs']))
+        AXIS_C_GROUPS['options'].append(_name)
+for _mode, _operation in AXIS_C_DEFINITION['encoding_operations']:
+    for _input in AXIS_C_DEFINITION['encoding_inputs']:
+        _name = f"axis-c-encoding-{_mode}-{_operation}-{_input['name']}"
+        case(_name, mode=_mode, stderr=True)(axis_c_encoding(_operation, bytes.fromhex(_input['hex'])))
+        AXIS_C_GROUPS['encoding'].append(_name)
+for _mode in ('pinyin', 'zhuyin'):
+    for _scheme in AXIS_C_DEFINITION['layout_schemes']:
+        for _word in AXIS_C_DEFINITION['layout_words']:
+            _name = f'axis-c-layout-{_mode}-{_scheme}-{int(_word, 16):08x}'
+            case(_name, mode=_mode, stderr=True)(axis_c_layout(_scheme, int(_word, 16), AXIS_C_DEFINITION))
+            AXIS_C_GROUPS['layouts'].append(_name)
+
+
+def axis_c_canonical(value):
+    return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(',', ':')).encode()
+
+
+def axis_c_first_difference(left, right, path=''):
+    if type(left) is type(right) and isinstance(left, dict):
+        for key in sorted(set(left) | set(right)):
+            if left.get(key) != right.get(key):
+                return axis_c_first_difference(left.get(key), right.get(key), path + '.' + key)
+    if type(left) is type(right) and isinstance(left, list):
+        for index, (a, b) in enumerate(zip(left, right)):
+            if a != b:
+                return axis_c_first_difference(a, b, path + f'[{index}]')
+    return dict(field=path, pin=left if len(repr(left)) < 300 else repr(left)[:300],
+                subject=right if len(repr(right)) < 300 else repr(right)[:300])
+
+
+def run_axis_c(args, names):
+    """Repeat and compare existing worker observations, with no saved output."""
+    from collections import Counter
+    offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
+    totals, fingerprints = Counter(), {side: hashlib.sha256() for side in ('pin', 'subject')}
+    def observe(name, subject, companion):
+        spec = CASES[name]
+        previous = os.environ.get('AXIS_C_COMPANION_PINYIN')
+        os.environ['AXIS_C_COMPANION_PINYIN'] = str(companion)
+        try:
+            value = run_worker(spec['mode'], subject, args.prefix / 'lib/libpinyin/data', name, scratch)
+        finally:
+            if previous is None:
+                os.environ.pop('AXIS_C_COMPANION_PINYIN', None)
+            else:
+                os.environ['AXIS_C_COMPANION_PINYIN'] = previous
+        # run_worker also reports incidental profile listings and line counts.
+        # Compare full observed results, process exit and normalized stderr.
+        return {key: value[key] for key in ('exit', 'result', 'stderr')}
+    with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch:
+        for ordinal, name in enumerate(names, 1):
+            mode = CASES[name]['mode']
+            if args.axis_c_mutation:
+                pin_so = args.pinyin_so if mode == 'pinyin' else args.zhuyin_so
+                subject_so = args.axis_c_mutant_pinyin_so if mode == 'pinyin' else args.axis_c_mutant_zhuyin_so
+                pin_companion, subject_companion = args.pinyin_so, args.axis_c_mutant_pinyin_so
+            else:
+                pin_so = args.prefix / ('lib/libpinyin.so' if mode == 'pinyin' else 'lib/libzhuyin.so')
+                subject_so = args.pinyin_so if mode == 'pinyin' else args.zhuyin_so
+                pin_companion, subject_companion = args.prefix / 'lib/libpinyin.so', args.pinyin_so
+            assert pin_so and subject_so and pin_so.is_file() and subject_so.is_file(), name
+            pin = observe(name, pin_so.resolve(), pin_companion.resolve())
+            subject = observe(name, subject_so.resolve(), subject_companion.resolve())
+            stable = pin == observe(name, pin_so.resolve(), pin_companion.resolve()) and \
+                subject == observe(name, subject_so.resolve(), subject_companion.resolve())
+            assert stable, 'NOT-ESTABLISHED: unstable case ' + name
+            for side, observation in (('pin', pin), ('subject', subject)):
+                fingerprints[side].update(axis_c_canonical([name, observation]))
+            totals['cases'] += 1
+            if pin == subject:
+                totals['case_match'] += 1
+            else:
+                totals['case_differ'] += 1
+            pin_rows = (pin['result'] or {}).get('observations')
+            subject_rows = (subject['result'] or {}).get('observations')
+            if pin_rows is not None and subject_rows is not None:
+                for key in pin_rows:
+                    same = pin_rows[key] == subject_rows.get(key)
+                    totals['observations'] += 1
+                    totals['payload_match' if same else 'payload_differ'] += 1
+                # First differing row only; all rows were compared in full.
+            else:
+                totals['observations'] += 1
+                totals['payload_match' if pin == subject else 'payload_differ'] += 1
+            if pin != subject:
+                print(json.dumps(dict(case=name, verdict='DIFFER',
+                                      first=axis_c_first_difference(pin, subject)), ensure_ascii=True), flush=True)
+            if ordinal % 25 == 0:
+                print(f'axis C progress: {ordinal}/{len(names)} cases', flush=True)
+    elapsed_suspend = (time.clock_gettime(time.CLOCK_BOOTTIME) -
+                       time.clock_gettime(time.CLOCK_MONOTONIC) - offset)
+    assert abs(elapsed_suspend) < 0.01, 'NOT-ESTABLISHED: discard suspend-overlapping run'
+    print(json.dumps(dict(battery=args.axis_c_replacement, mutation=args.axis_c_mutation,
+                          counts=dict(totals), repeats='identical', suspend_delta=elapsed_suspend,
+                          hashes={side: h.hexdigest() for side, h in fingerprints.items()}), sort_keys=True), flush=True)
+    if args.axis_c_mutation:
+        assert totals['case_differ'] > 0, 'NOT-ESTABLISHED: mutation undetected'
+        return 0
+    return 1 if totals['case_differ'] else 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('cell', choices=['bdb', 'kc', 'tkrzw'])
@@ -6297,6 +6598,10 @@ def main():
                         help='regenerate pin expectations in the supplementary #747 source fixture')
     parser.add_argument('--observations', type=Path, default=os.environ.get('CONTRACT_DIFF_OBSERVATIONS'),
                         help='retain both complete observations as JSONL (also CONTRACT_DIFF_OBSERVATIONS)')
+    parser.add_argument('--axis-c-replacement', choices=['options', 'encoding', 'layouts', 'all'])
+    parser.add_argument('--axis-c-mutation', choices=['C-m1-r', 'C-m3-r'])
+    parser.add_argument('--axis-c-mutant-pinyin-so', type=Path)
+    parser.add_argument('--axis-c-mutant-zhuyin-so', type=Path)
     args = parser.parse_args()
     os.environ['CONTRACT_DIFF_CELL'] = args.cell
     lib = args.prefix / 'lib'
@@ -6307,6 +6612,14 @@ def main():
     manifest = (args.prefix / 'oracle-pin.txt').read_text()
     assert 'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' in manifest
     assert '+dbm-' + args.cell + '\n' in manifest
+    if args.axis_c_replacement or args.axis_c_mutation:
+        assert not (args.observations or args.cases or args.expect_parent or args.regenerate_sentence_ties), \
+            'axis C replacement cannot be combined with capture, regeneration or parent modes'
+        names = (AXIS_C_DEFINITION['mutations'][args.axis_c_mutation]['controls']
+                 if args.axis_c_mutation else
+                 sum(AXIS_C_GROUPS.values(), []) if args.axis_c_replacement == 'all' else
+                 AXIS_C_GROUPS[args.axis_c_replacement])
+        return run_axis_c(args, names)
     if args.regenerate_sentence_ties:
         assert args.cell == 'bdb', '#747 fixture regeneration is bdb only'
         assert args.pinyin_so.resolve() == (lib / 'libpinyin.so').resolve(), \
@@ -6317,7 +6630,7 @@ def main():
         return 0
     # The whole set only when --cases is omitted: an explicit list that
     # names nothing (`--cases ,`) is an error, not a request for everything.
-    names = [n for n in args.cases.split(',') if n] if args.cases else sorted(CASES)
+    names = [n for n in args.cases.split(',') if n] if args.cases else sorted(n for n in CASES if not n.startswith('axis-c-'))
     assert names, 'no cases selected'
     for n in names:
         assert n in CASES, 'unknown case: %s' % n

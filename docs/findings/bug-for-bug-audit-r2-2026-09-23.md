@@ -1370,3 +1370,147 @@ open fix PRs, not a claim that a fix has landed.
 | [#586](https://github.com/shenghaoc/oxpinyin/issues/586) | C | fix verified; pending merge | 2 | `codex/lane-j-transformed-fuzzy-matrix` |
 | [#587](https://github.com/shenghaoc/oxpinyin/issues/587) | C | unregistered | 3 | — |
 | [#588](https://github.com/shenghaoc/oxpinyin/issues/588) | L | unregistered | 2 | — |
+
+
+## 20. Axis C replacement preregistration (#560)
+
+Specified 2026-10-12T05:00:10Z, before any replacement measurement, on subject base
+`0338cd129dd376be7290f4017c20b6c1bf033be3`. The maintainer explicitly ruled
+to replace the unrecoverable §15 battery. This section and
+`tools/bisection/axis-c-replacement.json` define the replacement; the cases
+extend the existing `contract-diff.py`, its isolated workers, facade Kit,
+candidate reader and phrase export helpers. No separate driver is added.
+The battery is opt-in (`--axis-c-replacement`) and leaves the normal case
+selection unchanged. Frozen source fixtures are read and checksum-checked,
+never regenerated or edited.
+
+### 20.1 Fixed coverage and operation sequence
+
+- **Options:** 30 defined single bits (1–19, 21–31), 435 unordered pairs,
+  and 10 explicit boundary/preset entries: `0`, `1`, `0x00100000`,
+  `0x00100001`, `0xffffffff`, `0x7fffffff`, `0xfffffffe`, `0x0000018a`,
+  `0x00000060`, `0xe0000070`. These are 475 entries / 474 distinct words;
+  the `0x60` pair deliberately repeats as a preset. Reserved bits are 0
+  and 20; `pinyin_option_t` is uint32, so invalid words mean reserved-bit
+  combinations, not a wider-than-ABI value truncated silently.
+- **Option corpus:** select the input column of data rows
+  `floor(j * (N - 1) / 7)`, j=0..7, in the 507-row frozen
+  `fixtures/w4/oracle-sentence-surface.txt`; select line 1 from each of
+  the nine filename-sorted `tests/parity/corpus/inputs/*.txt` strata of
+  the 10,465-input corpus used for the C-ABI n-best surface (§13.1).
+  Metadata lines beginning `#` are omitted only from the sentence fixture;
+  a parity-corpus `#` is an input byte, and empty inputs are preserved.
+  Deduplicate in selection order: 17 selections, 16 distinct inputs.
+  Source hashes, source-row provenance and every selected text are in JSON.
+  Total: 7,600 word/input observations (480 single, 6,960 pair, 160 boundary).
+- **Options protocol:** one worker/profile per word/side/repeat, explicit
+  options, Hanyu full-pinyin parser; one forked observation and fresh instance
+  per input. Parse → consumed/parsed lengths → guess sentence → rank-zero
+  sentence only after successful guess → guess candidates at offset zero,
+  sort `0x1e` → count and complete ordered `[type, text]` vector, plus its
+  sorted multiset. Forks record exit status and diagnostics, so an abort
+  cannot discard later inputs. No training, selection, prediction or saving.
+- **Encoding:** 23 exact named byte strings in JSON: eight valid/empty
+  controls (ASCII pinyin, tone digits, NFC/NFD, Hanzi, bopomofo and fullwidth)
+  plus start/middle/end variants of `ff`, overlong `c080`, surrogate
+  `eda080`, truncated `e4bd`, and NUL. NUL tests the C-string boundary;
+  the entire supplied byte buffer is listed even when the ABI stops earlier.
+  Each runs independently at `0x28` across 14 operations: five multi-key
+  parses (full/double/chewing pinyin and full/chewing zhuyin), both
+  `lookup_tokens`, both `phrase_segment`, pinyin `remember_user_input`,
+  and four iterator import probes (phrase vs reading on both facades).
+  Total: 322 cases, including 92 import cases. Import always gets a fresh
+  process and user dir per case/side/repeat; library 7, count 1. Fixed other
+  argument: phrase 你好, reading `ni'hao` (pinyin) or `ㄋㄧˇ ㄏㄠˇ` (zhuyin).
+  Begin → add once → end → lookup imported phrase → save → fini → reopen
+  through the same side's pinyin export API and export all user phrase rows.
+  This also measures the libzhuyin saved profile, which has no export API.
+  Remember parses `nihao`, remembers the byte string at count 1 and exports;
+  lookup compares return and complete token array; segmentation compares
+  return and phrase count. Parser cases use the options surface sequence.
+- **Layouts:** both C facades, schemes 0–10 and four extra invalid numbers
+  `-1`, `11`, `INT_MIN`, `INT_MAX`; words `0`, `0x60`, `0xe0000070`.
+  90 facade/scheme/word cases. For each: all 95 printable ASCII keys 32–126
+  through `in_chewing_keyboard`, and the 16 fixed keystroke inputs in JSON
+  through `parse_more_chewings` and the full surface sequence above.
+  Each observation forks and sets the scheme itself, recording even a
+  setter abort/refusal. Total: 9,990 observations (8,550 keyboard table,
+  1,440 corpus). The same literal byte corpus runs on every layout; it is
+  not translated into layout-specific spellings. It includes Standard `1`
+  and `18` to reach the remap mutation, plus the existing zhuyin driver's
+  single/multiple-syllable, tone and incomplete-key probes.
+
+### 20.2 Comparison, repeats and controls
+
+Each side runs twice in fresh workers. Unstable output or any suspend-clock
+change greater than 0.01 s invalidates the run. The runner hashes complete
+canonical observations in memory and prints only summaries and each differing
+case's first field. Ordered and multiset candidate vectors are both compared;
+no order is masked. Ordinary observations include exit, return/out-fields,
+GLib domain/level/message and raw stderr. Only existing random user-directory
+names are path-normalized by `run_worker`; no output files are retained.
+
+D-23 is treated as §15.1 did: a payload equality obtained separately from the
+fresh-profile diagnostic is conditional, never an unconditional MATCH. The
+runner retains each worker's diagnostic stream in the complete comparison;
+its per-input payload counts are reported separately from complete case
+MATCH/DIFFER counts. It does not delete a new diagnostic or add a register
+exception. Current policy row 68 / #545 records the old diagnostic fixed;
+only execution can establish that for these cases. Successful-call residual
+`errno` is excluded under the maintainer's existing 2026-10-08 scope ruling.
+Every stable DIFFER, including covered abort/logging differences, is kept and
+attributed after pin reproduction; uncovered cases become issues, not fixes.
+
+Two **replacement**, ungated, scratch-only mutations are fixed now:
+
+- **C-m1-r:** at the start of `ContextCore::set_options`
+  (`crates/oxpinyin-facade/src/context.rs`), shadow the word with
+  `options & !(1 << 5)` before all bool/word stores. Thus every call ignores
+  USE_TONE. Fixed detectors: the option pair `0x60` over the entire 16-input
+  corpus and encoding pinyin full-parse `tone` (`ni3hao3`).
+- **C-m3-r:** only in `STANDARD_SYMBOLS`
+  (`crates/oxpinyin-core/src/scheme.rs`), change `(b'1', "ㄅ")` to
+  `(b'1', "ㄆ")`. Leave the Dvorak table and all other entries alone.
+  Fixed detectors: each facade's Standard layout at `0x60`, all 111 rows.
+
+Each mutant is built separately with default bdb + `shipped`, debug,
+relinked under the committed version script. Both detectors repeat each
+pristine/mutant observation twice and require a difference. Restore exact
+original source bytes after each build; require empty production diff and
+unchanged pristine-library hashes. Rebuild the restored source and rerun the
+entire pristine battery; its canonical hashes must equal the first run.
+These ungated replacements have no environment-unset control. No mutation
+is committed, retuned, or substituted after results.
+
+Commands (matching pin prefix and both relinked subject libraries required):
+
+```sh
+python3 tools/bisection/contract-diff.py bdb /oracle/bdb /lane/stage/pinyin.so \
+  --zhuyin-so /lane/stage/zhuyin.so --axis-c-replacement all
+python3 tools/bisection/contract-diff.py bdb /oracle/bdb /lane/stage/pinyin.so \
+  --zhuyin-so /lane/stage/zhuyin.so --axis-c-mutation C-m1-r \
+  --axis-c-mutant-pinyin-so /lane/mut-c1/pinyin.so \
+  --axis-c-mutant-zhuyin-so /lane/mut-c1/zhuyin.so
+# Same command with C-m3-r and mut-c3 paths for the second mutation.
+```
+
+### 20.3 Differences from §15 and execution status
+
+This is a new bounded definition, not recovery of §15's historical harness.
+The option inputs/words and Hanyu-only parse sweep replace its 104×496 and
+435×149 mixed-scheme corpora. Encoding replaces 1,043 cases / 58 named inputs
+with 322 cases / 23 byte inputs, removes shared-directory import entirely,
+and adds saved-profile reopen/export comparison. It has no historic maximum-
+length battery, single-key-parser sweep, aux/key-offset surface or candidate
+FNV hashes. Layouts use 16 fixed literal keystroke strings on both facades,
+not 1,236 lines at each of three words; the 95-key table is explicit. Both
+mutations are replacements defined above, not the lost historical patches.
+Coverage and mutation counts cannot be compared numerically to §15.
+
+Preregistration only: no baseline, mutation or restoration result is yet
+claimed. Runs will use only this lane's capped container, a read-only bdb
+oracle mount, no other lane's processes/targets, and no archives, logs,
+captures, profiles, evidence files or uploads. Necessary source, runtime
+profiles and build artifacts are allowed; observations stay in memory/stdout.
+#560 stays open until the draft tooling PR merges with no uncovered DIFFER.
+#559/#561 are reserved for the subsequent cross-cell sweep.
