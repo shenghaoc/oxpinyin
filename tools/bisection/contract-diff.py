@@ -5255,6 +5255,34 @@ for _count in (715827882, 715827883, 1431655765, 1431655766):
     case(f'd18-remember-multiply-{_count}', control=True)(d18_remember((_count,)))
 
 
+# #752: reuse the preregistered full-pinyin NUL-middle case below,
+# axis-c-encoding-pinyin-remember_user_input-nul-middle. These are its
+# transformed-parser twins and a known-character NUL-termination control.
+# 074a2219 pinyin.cpp:3115-3121, 3688-3694 refuses a character with no token;
+# bytes after the first NUL cannot change the visible phrase.
+def remember_nul(parse_name, input_text, phrase):
+    def probe(k):
+        k.fn('set_options', B, P, U)(k.ctx, 0x28)
+        if parse_name == 'parse_more_double_pinyins':
+            assert k.fn('set_double_pinyin_scheme', B, P, I)(k.ctx, 2)
+        elif parse_name == 'parse_more_chewings':
+            assert k.fn('set_zhuyin_scheme', B, P, I)(k.ctx, 1)
+        parsed = k.fn(parse_name, Z, P, S)(k.inst, input_text)
+        assert parsed == len(input_text), 'the complete two-syllable input must parse'
+        return dict(parsed=parsed,
+                    ret=k.fn('remember_user_input', B, P, S, I)(k.inst, phrase, 1),
+                    rows=d18_export_phrases(k))
+    return probe
+
+
+case('remember-nul-double-pinyin', stderr=True)(
+    remember_nul('parse_more_double_pinyins', b'nihk', b'ni\0hao'))
+case('remember-nul-chewing-pinyin', stderr=True)(
+    remember_nul('parse_more_chewings', b'su3cl3', b'ni\0hao'))
+case('remember-known-nul-suffix-pinyin', control=True, stderr=True)(
+    remember_nul('parse_more_full_pinyins', b'nihao', '你好'.encode() + b'\0ignored'))
+
+
 def d18_unigram(boundary, text='你'):
     def probe(k):
         token = tokens_of(k, text)[0]

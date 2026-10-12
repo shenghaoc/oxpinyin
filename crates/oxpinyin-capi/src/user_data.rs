@@ -2,7 +2,7 @@
 
 use std::os::raw::{c_char, c_int};
 
-use oxpinyin_core::SyllableKey;
+use oxpinyin_core::{Dictionary, SyllableKey};
 use oxpinyin_engine::MatrixKey;
 use oxpinyin_user::{PinyinKey, toned_key};
 
@@ -30,9 +30,9 @@ use crate::types::PinyinInstance;
 /// points). The §3.2 allocation runs once (unigram seeded `count × 3`);
 /// re-remembering the same phrase merges a reading onto the existing token.
 ///
-/// Returns `false` for a null instance, an empty/oversized phrase, a phrase
+/// Returns `false` for a null instance, an empty/oversized or invalid UTF-8 phrase, a phrase
 /// whose character count does not match the current composition's key count,
-/// an instance without a user store,
+/// a character with no dictionary token, an instance without a user store,
 /// or a store failure ([`UserStoreError::InvalidPhrase`] included).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_remember_user_input(
@@ -44,9 +44,20 @@ pub extern "C" fn pinyin_remember_user_input(
         return false;
     }
 
-    // SAFETY: `phrase` is a C string from the caller (null OK; a null
-    // pointer reads as empty, which validation rejects).
+    // SAFETY: `phrase` is a C string from the caller (null OK; null and
+    // invalid UTF-8 read as empty, which the length gate below rejects).
     let phrase = unsafe { cstr_to_string(phrase) };
+    // 074a2219 pinyin.cpp:3677-3681 checks the character count before
+    // _pre_compute_tokens. A failed g_utf8_to_ucs4 leaves that count zero.
+    // Stop counting at the refusal boundary: oversized known-character
+    // strings must not reach the per-character dictionary lookups.
+    let phrase_length = phrase
+        .chars()
+        .take(oxpinyin_user::MAX_PHRASE_LENGTH)
+        .count();
+    if phrase_length == 0 || phrase_length >= oxpinyin_user::MAX_PHRASE_LENGTH {
+        return false;
+    }
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
@@ -54,6 +65,18 @@ pub extern "C" fn pinyin_remember_user_input(
         return false;
     };
     if syllables.is_empty() || syllables.len() >= oxpinyin_user::MAX_PHRASE_LENGTH {
+        return false;
+    }
+    // 074a2219 pinyin.cpp:3098-3130, 3685-3695: _pre_compute_tokens
+    // refuses before remembering when any single-character search has no
+    // token. Search the loaded system and user tables, as lookup_tokens does.
+    if phrase.chars().any(|character| {
+        let mut buffer = [0_u8; 4];
+        inst.core
+            .dict
+            .tokens_for_text(character.encode_utf8(&mut buffer))
+            .is_empty()
+    }) {
         return false;
     }
     // Keep the existing selected syllable sequence, adding its parsed tones.
