@@ -1556,3 +1556,37 @@ build is not bit-reproducible). Restoration is therefore verified at source
 level (mutation edits reverted to byte-identical blobs) and behaviourally (the
 rebuilt pristine build reproduces the pristine canonical battery hashes, and
 both fixed mutation detectors no longer fire against it).
+
+### 20.5 Review fixes to classification and runner guards
+
+Added 2026-10-12T13:14:38Z, in response to five review threads on the tooling
+PR. Fixes 1–3 can change a verdict, so all three batteries, both mutations and
+the restoration check are re-run; 4 and 5 are guards that change no verdict.
+
+1. **A covered verdict licenses only the registered fields.** The class (c)
+   predicate now requires the exact registered key set — the pin row carries
+   only `exit`/`result`/`stderr`, and the subject refusal's result carries
+   exactly `set_scheme`, `observation`, `logs`, `log_messages` — so an
+   unregistered extra field can never be licensed. A `COVERED` verdict then
+   removes only those licensed fields from the covered rows and requires the
+   remainder of both envelopes to agree: root `logs`/`log_messages`,
+   `stderr`, the parent-side `set_options` result, and every non-covered
+   observation in full. Any residual difference makes the case `DIFFER`
+   (recorded as `covered-residual`).
+2. **Every named mutation control must itself be detected.** The mutation gate
+   now requires a `DIFFER` verdict on each registered control and prints one
+   row per control, instead of accepting any difference in the group.
+3. **A dead or result-less worker never contributes to a match.** A row that
+   died, was signalled or returned no result is excluded from every equality
+   branch (nested and root), mirroring the normal runner's rejection of
+   identical failures. A pin abort counts only through the explicit class (c)
+   expectation.
+4. **The axis-C modes are mutually exclusive.** `--axis-c-replacement`,
+   `--axis-c-mutation` and `--axis-c-snapshot-check` now share one argparse
+   mutually-exclusive group, and the mutant-library arguments are rejected
+   unless mutation mode is selected.
+5. **The snapshot override cannot leak in from the caller.** Replacement and
+   mutation runs clear `AXIS_C_ALLOCATE_EACH`; only the allocation half of
+   `--axis-c-snapshot-check` sets it, and it restores any caller value on the
+   way out.
+
