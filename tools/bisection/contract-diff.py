@@ -6508,6 +6508,17 @@ def axis_c_canonical(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(',', ':')).encode()
 
 
+def axis_c_normalize_diagnostics(value, scratch, field=''):
+    """Only generated paths in diagnostics, never candidate/input payloads."""
+    if isinstance(value, dict):
+        return {key: axis_c_normalize_diagnostics(item, scratch, key) for key, item in value.items()}
+    if isinstance(value, list):
+        return [axis_c_normalize_diagnostics(item, scratch, field) for item in value]
+    if isinstance(value, str) and field in ('stderr', 'reopen_stderr', 'log_messages'):
+        return re.sub(r'(user|sys)-(\udcff)?[A-Za-z0-9_]+', r'\1-\2X', value.replace(scratch, 'SCRATCH'))
+    return value
+
+
 def check_axis_c_snapshots(args):
     names = ['axis-c-options-single-00000008', 'axis-c-options-pair-00000060',
              'axis-c-options-boundary-ffffffff']
@@ -6575,7 +6586,8 @@ def run_axis_c(args, names):
                 os.environ['AXIS_C_COMPANION_PINYIN'] = previous
         # run_worker also reports incidental profile listings and line counts.
         # Compare full observed results, process exit and normalized stderr.
-        return {key: value[key] for key in ('exit', 'result', 'stderr')}
+        return axis_c_normalize_diagnostics(
+            {key: value[key] for key in ('exit', 'result', 'stderr')}, scratch)
     with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch:
         for ordinal, name in enumerate(names, 1):
             mode = CASES[name]['mode']
