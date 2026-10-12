@@ -160,6 +160,13 @@ class Kit:
 
 def worker(mode, so, data, name):
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    if name.startswith('axis-c-'):
+        # Fedora's pipe core_pattern can invoke systemd-coredump even when
+        # RLIMIT_CORE is zero. This guard prevents routing these deliberate
+        # pin faults into a host capture service; descendants inherit it.
+        libc = C.CDLL(None, use_errno=True)
+        libc.prctl.argtypes, libc.prctl.restype = [I, C.c_ulong, C.c_ulong, C.c_ulong, C.c_ulong], I
+        assert libc.prctl(4, 0, 0, 0, 0) == 0, ('PR_SET_DUMPABLE failed', C.get_errno())
     scratch = os.environ['TMPDIR']
     kit = Kit(mode, so, data, scratch)
     result = CASES[name]['fn'](kit)
@@ -3419,8 +3426,9 @@ def user_dir_listing(scratch, before):
     return listing
 
 
-def run_worker(mode, so, data, name, scratch):
+def run_worker(mode, so, data, name, scratch, extra_env=None):
     env = dict(os.environ, TMPDIR=str(scratch))
+    env.update(extra_env or {})
     before = set(os.listdir(scratch))
     proc = subprocess.run([sys.executable, __file__, '--worker', mode, str(so), str(data), name],
                           capture_output=True, env=env)
@@ -6555,6 +6563,7 @@ def axis_c_first_difference(left, right, path=''):
 def run_axis_c(args, names):
     """Repeat and compare existing worker observations, with no saved output."""
     from collections import Counter
+    from concurrent.futures import ThreadPoolExecutor
     offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
     totals, fingerprints = Counter(), {side: hashlib.sha256() for side in ('pin', 'subject')}
     differences, examples = Counter(), {}
@@ -6575,20 +6584,14 @@ def run_axis_c(args, names):
         examples.setdefault(signature, dict(case=name, row=key, first=first))
     def observe(name, subject, companion):
         spec = CASES[name]
-        previous = os.environ.get('AXIS_C_COMPANION_PINYIN')
-        os.environ['AXIS_C_COMPANION_PINYIN'] = str(companion)
-        try:
-            value = run_worker(spec['mode'], subject, args.prefix / 'lib/libpinyin/data', name, scratch)
-        finally:
-            if previous is None:
-                os.environ.pop('AXIS_C_COMPANION_PINYIN', None)
-            else:
-                os.environ['AXIS_C_COMPANION_PINYIN'] = previous
-        # run_worker also reports incidental profile listings and line counts.
-        # Compare full observed results, process exit and normalized stderr.
-        return axis_c_normalize_diagnostics(
-            {key: value[key] for key in ('exit', 'result', 'stderr')}, scratch)
-    with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch:
+        # Each simultaneous observation owns its scratch/profile inventory.
+        # The existing cleanup helper must never see another worker's files.
+        with tempfile.TemporaryDirectory(prefix='worker-', dir=scratch) as isolated:
+            value = run_worker(spec['mode'], subject, args.prefix / 'lib/libpinyin/data', name, isolated,
+                               {'AXIS_C_COMPANION_PINYIN': str(companion)})
+            return axis_c_normalize_diagnostics(
+                {key: value[key] for key in ('exit', 'result', 'stderr')}, isolated)
+    with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch, ThreadPoolExecutor(max_workers=2) as pool:
         for ordinal, name in enumerate(names, 1):
             mode = CASES[name]['mode']
             if args.axis_c_mutation:
@@ -6600,10 +6603,11 @@ def run_axis_c(args, names):
                 subject_so = args.pinyin_so if mode == 'pinyin' else args.zhuyin_so
                 pin_companion, subject_companion = args.prefix / 'lib/libpinyin.so', args.pinyin_so
             assert pin_so and subject_so and pin_so.is_file() and subject_so.is_file(), name
-            pin = observe(name, pin_so.resolve(), pin_companion.resolve())
-            subject = observe(name, subject_so.resolve(), subject_companion.resolve())
-            stable = pin == observe(name, pin_so.resolve(), pin_companion.resolve()) and \
-                subject == observe(name, subject_so.resolve(), subject_companion.resolve())
+            futures = [pool.submit(observe, name, so.resolve(), companion.resolve())
+                       for so, companion in ((pin_so, pin_companion), (subject_so, subject_companion),
+                                             (pin_so, pin_companion), (subject_so, subject_companion))]
+            pin, subject, pin_repeat, subject_repeat = [future.result() for future in futures]
+            stable = pin == pin_repeat and subject == subject_repeat
             assert stable, 'NOT-ESTABLISHED: unstable case ' + name
             for side, observation in (('pin', pin), ('subject', subject)):
                 fingerprints[side].update(axis_c_canonical([name, observation]))
