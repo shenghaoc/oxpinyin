@@ -36,6 +36,7 @@ Missing inputs and an empty case list fail. Scratch lives under TMPDIR and is
 removed even on failure.
 """
 import argparse
+import copy
 import ctypes as C
 import hashlib
 import json
@@ -6540,16 +6541,26 @@ def check_axis_c_snapshots(args):
     names = ['axis-c-options-single-00000008', 'axis-c-options-pair-00000060',
              'axis-c-options-boundary-ffffffff']
     offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
-    with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch:
-        for side in (args.prefix / 'lib/libpinyin.so', args.pinyin_so):
-            for name in names:
-                os.environ['AXIS_C_ALLOCATE_EACH'] = '1'
-                original = run_worker('pinyin', side.resolve(), args.prefix / 'lib/libpinyin/data', name, scratch)
-                os.environ.pop('AXIS_C_ALLOCATE_EACH')
-                snapshot = run_worker('pinyin', side.resolve(), args.prefix / 'lib/libpinyin/data', name, scratch)
-                # Ignore only incidental directory inventory, as in the battery.
-                assert all(original[key] == snapshot[key] for key in ('exit', 'result', 'stderr')), name
-                print(f'instance snapshot: {side.name} {name} identical', flush=True)
+    # The private switch belongs to the allocation half only; clear any caller
+    # value while validating the fork-snapshot half and restore it on the way
+    # out so an invoking shell is left as found.
+    caller_allocate_each = os.environ.pop('AXIS_C_ALLOCATE_EACH', None)
+    try:
+        with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch:
+            for side in (args.prefix / 'lib/libpinyin.so', args.pinyin_so):
+                for name in names:
+                    os.environ['AXIS_C_ALLOCATE_EACH'] = '1'
+                    original = run_worker('pinyin', side.resolve(), args.prefix / 'lib/libpinyin/data', name, scratch)
+                    os.environ.pop('AXIS_C_ALLOCATE_EACH', None)
+                    snapshot = run_worker('pinyin', side.resolve(), args.prefix / 'lib/libpinyin/data', name, scratch)
+                    # Ignore only incidental directory inventory, as in the battery.
+                    assert all(original[key] == snapshot[key] for key in ('exit', 'result', 'stderr')), name
+                    print(f'instance snapshot: {side.name} {name} identical', flush=True)
+    finally:
+        if caller_allocate_each is None:
+            os.environ.pop('AXIS_C_ALLOCATE_EACH', None)
+        else:
+            os.environ['AXIS_C_ALLOCATE_EACH'] = caller_allocate_each
     delta = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC) - offset
     assert abs(delta) < 0.01, 'discard suspend-overlapping snapshot validation'
     print(f'instance snapshot: 6 word/library comparisons, 96 input observations; identical; suspend delta {delta:.6f}', flush=True)
@@ -6568,9 +6579,56 @@ def axis_c_covered_abort(pin_row, subject_row, mode):
         return False
     result = subject_row.get('result')
     return (pin_row.get('exit') == -signal.SIGABRT and pin_row.get('result') is None
+            and set(pin_row) == set(AXIS_C_ABORT_ROW_FIELDS)
             and subject_row.get('exit') == 0 and isinstance(result, dict)
+            and set(result) == set(AXIS_C_REFUSAL_RESULT_FIELDS)
             and result.get('set_scheme') is False and result.get('observation') is None
             and result.get('logs') == [[WARNING_DOMAIN[mode], 16]])
+
+
+# The exact registered shape of a scheme-setter observation. The abort row
+# carries only the worker envelope; the refusal row's result carries exactly
+# these four keys, so an extra unregistered field is never licensed.
+AXIS_C_ABORT_ROW_FIELDS = ('exit', 'result', 'stderr')
+AXIS_C_REFUSAL_RESULT_FIELDS = ('set_scheme', 'observation', 'logs', 'log_messages')
+
+
+def axis_c_live(row):
+    """A worker row that exited cleanly and returned a result.
+
+    A row that died, was signalled, or printed no result observed nothing, so
+    two identical failures must never read as an exact match. This mirrors the
+    normal runner's rejection (`run_worker` verdicts); a pin abort is an
+    explicit class (c) expectation and is matched by `axis_c_covered_abort`,
+    never by equality.
+    """
+    return isinstance(row, dict) and row.get('exit') == 0 and row.get('result') is not None
+
+
+def axis_c_licensed_remnant(row):
+    """A covered row with only its licensed abort/refusal fields removed.
+
+    Anything the row carries beyond those three fields stays and is compared,
+    so an unregistered extra field still fails the case.
+    """
+    return {key: value for key, value in row.items() if key not in AXIS_C_ABORT_ROW_FIELDS}
+
+
+def axis_c_covered_residual(pin, subject, covered_keys):
+    """Both envelopes with only the licensed fields of the covered rows removed.
+
+    Root exit/result/stderr, root `log_messages` and the parent-side call
+    results, plus every non-covered observation in full, are retained and
+    compared; a covered verdict therefore never hides an unrelated difference.
+    """
+    pin_residual = copy.deepcopy(pin)
+    subject_residual = copy.deepcopy(subject)
+    pin_rows = (pin_residual.get('result') or {}).get('observations')
+    subject_rows = (subject_residual.get('result') or {}).get('observations')
+    for key in covered_keys:
+        pin_rows[key] = axis_c_licensed_remnant(pin_rows[key])
+        subject_rows[key] = axis_c_licensed_remnant(subject_rows[key])
+    return pin_residual, subject_residual
 
 
 def axis_c_first_difference(left, right, path=''):
@@ -6593,6 +6651,7 @@ def run_axis_c(args, names):
     offset = time.clock_gettime(time.CLOCK_BOOTTIME) - time.clock_gettime(time.CLOCK_MONOTONIC)
     totals, fingerprints = Counter(), {side: hashlib.sha256() for side in ('pin', 'subject')}
     differences, examples = Counter(), {}
+    case_verdicts = {}
     def record_difference(name, key, left, right):
         first = axis_c_first_difference(left, right)
         pin_exit = left.get('exit') if isinstance(left, dict) else None
@@ -6640,36 +6699,52 @@ def run_axis_c(args, names):
             totals['cases'] += 1
             totals['diagnostics_match' if pin['stderr'] == subject['stderr'] else 'diagnostics_differ'] += 1
             covered_row = AXIS_C_LAYOUT_COVERED.get(name)
-            covered_rows = 0
+            covered_rows, differ_rows = [], 0
+            residual_first = None
             pin_rows = (pin['result'] or {}).get('observations')
             subject_rows = (subject['result'] or {}).get('observations')
             if pin_rows is not None and subject_rows is not None:
                 for key in pin_rows:
                     left, right = pin_rows[key], subject_rows.get(key)
                     totals['observations'] += 1
-                    if left == right:
+                    if axis_c_live(left) and axis_c_live(right) and left == right:
                         totals['payload_match'] += 1
                     elif covered_row and axis_c_covered_abort(left, right, mode):
                         totals['payload_covered'] += 1
-                        covered_rows += 1
+                        covered_rows.append(key)
                     else:
                         totals['payload_differ'] += 1
+                        differ_rows += 1
                         record_difference(name, key, left, right)
                 # First differing row only; all rows were compared in full.
-                if pin == subject:
+                if differ_rows == 0 and axis_c_live(pin) and axis_c_live(subject) and pin == subject:
                     totals['case_match'] += 1
                     verdict = 'MATCH'
-                elif covered_row and covered_rows == len(pin_rows):
-                    totals['covered'] += 1
-                    covered_by_row = totals.setdefault('covered_by_row', {})
-                    covered_by_row[covered_row] = covered_by_row.get(covered_row, 0) + 1
-                    verdict = 'COVERED'
+                elif (covered_row and differ_rows == 0 and covered_rows
+                      and axis_c_live(pin) and axis_c_live(subject)):
+                    # Don't just trust the covered rows: remove only their
+                    # licensed fields and require the rest of the envelope to
+                    # agree, so a new parent-side warning, root log message or
+                    # outer stderr still makes the case DIFFER.
+                    residual_pin, residual_subject = axis_c_covered_residual(pin, subject, covered_rows)
+                    if residual_pin == residual_subject:
+                        totals['covered'] += 1
+                        covered_by_row = totals.setdefault('covered_by_row', {})
+                        covered_by_row[covered_row] = covered_by_row.get(covered_row, 0) + 1
+                        verdict = 'COVERED'
+                    else:
+                        totals['case_differ'] += 1
+                        record_difference(name, 'covered-residual', residual_pin, residual_subject)
+                        residual_first = axis_c_first_difference(residual_pin, residual_subject)
+                        verdict = 'DIFFER'
                 else:
                     totals['case_differ'] += 1
+                    if differ_rows == 0:
+                        record_difference(name, 'case', pin, subject)
                     verdict = 'DIFFER'
             else:
                 totals['observations'] += 1
-                if pin == subject:
+                if axis_c_live(pin) and axis_c_live(subject) and pin == subject:
                     totals['payload_match'] += 1
                     totals['case_match'] += 1
                     verdict = 'MATCH'
@@ -6678,12 +6753,14 @@ def run_axis_c(args, names):
                     totals['case_differ'] += 1
                     record_difference(name, 'case', pin, subject)
                     verdict = 'DIFFER'
+            case_verdicts[name] = verdict
             if verdict == 'DIFFER':
                 print(json.dumps(dict(case=name, verdict='DIFFER',
-                                      first=axis_c_first_difference(pin, subject)), ensure_ascii=True), flush=True)
+                                      first=residual_first or axis_c_first_difference(pin, subject)),
+                                 ensure_ascii=True), flush=True)
             elif verdict == 'COVERED':
                 print(json.dumps(dict(case=name, verdict='COVERED', row=covered_row,
-                                      covered_observations=covered_rows), ensure_ascii=True), flush=True)
+                                      covered_observations=len(covered_rows)), ensure_ascii=True), flush=True)
             if ordinal % 25 == 0:
                 print(f'axis C progress: {ordinal}/{len(names)} cases', flush=True)
     elapsed_suspend = (time.clock_gettime(time.CLOCK_BOOTTIME) -
@@ -6696,7 +6773,13 @@ def run_axis_c(args, names):
                           counts=dict(totals), repeats='identical', suspend_delta=elapsed_suspend,
                           hashes={side: h.hexdigest() for side, h in fingerprints.items()}), sort_keys=True), flush=True)
     if args.axis_c_mutation:
-        assert totals['case_differ'] > 0, 'NOT-ESTABLISHED: mutation undetected'
+        controls = AXIS_C_DEFINITION['mutations'][args.axis_c_mutation]['controls']
+        for control in controls:
+            print(json.dumps(dict(mutation=args.axis_c_mutation, control=control,
+                                  verdict=case_verdicts.get(control)), ensure_ascii=True), flush=True)
+        undetected = [control for control in controls if case_verdicts.get(control) != 'DIFFER']
+        assert not undetected, ('NOT-ESTABLISHED: %s control(s) not detected: %s'
+                                % (args.axis_c_mutation, ', '.join(undetected)))
         return 0
     return 1 if totals['case_differ'] else 0
 
@@ -6713,12 +6796,15 @@ def main():
                         help='regenerate pin expectations in the supplementary #747 source fixture')
     parser.add_argument('--observations', type=Path, default=os.environ.get('CONTRACT_DIFF_OBSERVATIONS'),
                         help='retain both complete observations as JSONL (also CONTRACT_DIFF_OBSERVATIONS)')
-    parser.add_argument('--axis-c-replacement', choices=['options', 'encoding', 'layouts', 'all'])
-    parser.add_argument('--axis-c-mutation', choices=['C-m1-r', 'C-m3-r'])
+    axis_c_mode = parser.add_mutually_exclusive_group()
+    axis_c_mode.add_argument('--axis-c-replacement', choices=['options', 'encoding', 'layouts', 'all'])
+    axis_c_mode.add_argument('--axis-c-mutation', choices=['C-m1-r', 'C-m3-r'])
+    axis_c_mode.add_argument('--axis-c-snapshot-check', action='store_true')
     parser.add_argument('--axis-c-mutant-pinyin-so', type=Path)
     parser.add_argument('--axis-c-mutant-zhuyin-so', type=Path)
-    parser.add_argument('--axis-c-snapshot-check', action='store_true')
     args = parser.parse_args()
+    if (args.axis_c_mutant_pinyin_so or args.axis_c_mutant_zhuyin_so) and not args.axis_c_mutation:
+        parser.error('--axis-c-mutant-pinyin-so/--axis-c-mutant-zhuyin-so require --axis-c-mutation')
     os.environ['CONTRACT_DIFF_CELL'] = args.cell
     lib = args.prefix / 'lib'
     data = lib / 'libpinyin/data'
@@ -6733,6 +6819,10 @@ def main():
             'axis C replacement cannot be combined with capture, regeneration or parent modes'
         if args.axis_c_snapshot_check:
             return check_axis_c_snapshots(args)
+        # The fork-snapshot protocol is preregistered; a caller-provided
+        # AXIS_C_ALLOCATE_EACH must never silently switch the battery over to
+        # per-child allocation (that is the snapshot check's private half).
+        os.environ.pop('AXIS_C_ALLOCATE_EACH', None)
         names = (AXIS_C_DEFINITION['mutations'][args.axis_c_mutation]['controls']
                  if args.axis_c_mutation else
                  sum(AXIS_C_GROUPS.values(), []) if args.axis_c_replacement == 'all' else
