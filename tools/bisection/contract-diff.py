@@ -164,6 +164,8 @@ def worker(mode, so, data, name):
     kit = Kit(mode, so, data, scratch)
     result = CASES[name]['fn'](kit)
     result['logs'] = kit.logs
+    if name.startswith('axis-c-'):
+        result['log_messages'] = kit.log_messages
     print(json.dumps(result, sort_keys=True, ensure_ascii=False), flush=True)
     os._exit(0)  # no atexit: a case never shares teardown with the next
 

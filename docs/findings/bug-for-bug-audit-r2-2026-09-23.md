@@ -1514,3 +1514,5 @@ captures, profiles, evidence files or uploads. Necessary source, runtime
 profiles and build artifacts are allowed; observations stay in memory/stdout.
 #560 stays open until the draft tooling PR merges with no uncovered DIFFER.
 #559/#561 are reserved for the subsequent cross-cell sweep.
+
+Instrumentation correction 2026-10-12T05:06:01Z: the initial partial encoding/options launches were interrupted and discarded after source review found that the existing root worker recorded GLib domain/level but omitted message text. Replacement workers now add the message list already collected by Kit, as §20.2 requires. Nested observations already did so. This strengthens the committed comparison rule; no byte case, corpus selection, option word, scheme, operation or mutation definition changes. Baselines restart from case 1 after this correction is committed.
