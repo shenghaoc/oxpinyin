@@ -334,7 +334,9 @@ fn reusable_rows_match_pair_costs_at_wrap_presence_and_lambda_edges() {
         for prev in [NI, HAO] {
             for total in [0, u64::from(u32::MAX - 6), u64::from(u32::MAX), 17] {
                 let mut row = NbestStepRow::default();
+                let mut raw_row = NbestStepRow::default();
                 let mut loads = 0;
+                let mut raw_loads = 0;
                 for (token, bigram_count) in user_rows.into_iter().chain([(GBK, 0)]) {
                     let user = UserCountDelta {
                         bigram_count,
@@ -362,8 +364,22 @@ fn reusable_rows_match_pair_costs_at_wrap_presence_and_lambda_edges() {
                         )
                         .unwrap();
                     assert_eq!(actual, expected, "prev={prev} token={token} total={total}");
+                    let raw = lm
+                        .nbest_step_costs_from_raw_row(
+                            &PhraseToken::new(token),
+                            user,
+                            false,
+                            &mut raw_row,
+                            || {
+                                raw_loads += 1;
+                                lm.load_nbest_raw_row(prev, user_rows.to_vec(), total)
+                            },
+                        )
+                        .unwrap();
+                    assert_eq!(raw, expected, "raw prev={prev} token={token} total={total}");
                 }
                 assert_eq!(loads, 1, "one load/merge for all successors");
+                assert_eq!(raw_loads, 1, "one encoded row load for all successors");
             }
         }
     }

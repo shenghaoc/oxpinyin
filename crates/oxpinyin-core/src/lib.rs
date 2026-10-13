@@ -615,6 +615,8 @@ pub struct NbestStepRow {
     // The generation tag adds one word per cached row. None means unloaded;
     // a loaded missing gram still has a nonzero generation tag.
     user_generation: Option<core::num::NonZeroU64>,
+    raw: Option<NbestRawGram>,
+    raw_generation: Option<core::num::NonZeroU64>,
 }
 
 impl NbestStepRow {
@@ -656,11 +658,203 @@ impl NbestStepRow {
     pub fn cached_merged(&self) -> Option<&MergedGram> {
         self.loaded.as_ref()
     }
+
+    /// Retains an encoded system row and its user overlay for this step only.
+    /// A loaded miss is reused; a failed load is retried and never cached.
+    ///
+    /// # Errors
+    /// Returns the loader's error unchanged.
+    pub fn get_or_try_init_raw<E>(
+        &mut self,
+        load: impl FnOnce() -> Result<Option<NbestRawGram>, E>,
+    ) -> Result<Option<&NbestRawGram>, E> {
+        self.get_or_try_init_raw_in_generation(0, load)
+    }
+
+    /// Loads the encoded row once per user-store generation. A loaded miss
+    /// has a generation tag too, while a failed load is never cached.
+    ///
+    /// # Errors
+    /// Returns the loader's error unchanged.
+    pub fn get_or_try_init_raw_in_generation<E>(
+        &mut self,
+        generation: u64,
+        load: impl FnOnce() -> Result<Option<NbestRawGram>, E>,
+    ) -> Result<Option<&NbestRawGram>, E> {
+        let tag = core::num::NonZeroU64::new(generation.wrapping_add(1));
+        if tag.is_none() || self.raw_generation != tag {
+            self.raw = load()?;
+            self.raw_generation = tag;
+        }
+        Ok(self.raw.as_ref())
+    }
+
+    /// The encoded row just loaded and validated by the caller.
+    #[must_use]
+    pub fn cached_raw(&self) -> Option<&NbestRawGram> {
+        self.raw.as_ref()
+    }
 }
 
-/// A sorted n-best successor slice. `None` means a model lacks sparse row
-/// traversal; `Some(&[])` means it supports traversal but this row is empty.
-pub type NbestSuccessors<'a> = Option<&'a [(u32, u64)]>;
+/// A step-owned raw predecessor row. Normal installed rows remain encoded;
+/// only out-of-order records are stably reordered in those same bytes. The
+/// user overlay is kept separately, avoiding a decoded system row and a
+/// second merged-row copy for each predecessor.
+#[derive(Debug)]
+pub struct NbestRawGram {
+    system: Option<Vec<u8>>,
+    user: Vec<(u32, u64)>,
+    total: u64,
+}
+
+impl NbestRawGram {
+    /// Builds a sorted view over one encoded `total:u32, (token:u32,count:u32)*`
+    /// system value and the positive-count user overlay. A present empty
+    /// system value is a parse error, including when the user side is present.
+    ///
+    /// # Errors
+    /// Returns the frozen schema's length error for malformed system bytes.
+    pub fn try_new(
+        mut system: Option<Vec<u8>>,
+        mut user: Vec<(u32, u64)>,
+        user_total: u64,
+    ) -> Result<Option<Self>, String> {
+        let system_total = if let Some(bytes) = system.as_mut() {
+            if bytes.len() < 4 || !(bytes.len() - 4).is_multiple_of(8) {
+                return Err(format!("bigram value length {} is not 4 + 8n", bytes.len()));
+            }
+            let total = u32::from_le_bytes(bytes[..4].try_into().unwrap_or([0; 4]));
+            let (records, _) = bytes[4..].as_chunks_mut::<8>();
+            if records
+                .windows(2)
+                .any(|pair| Self::record_token(&pair[0]) > Self::record_token(&pair[1]))
+            {
+                // The prior decoded-row path accepted arbitrary stored order
+                // and kept the first duplicate. Stable sorting of raw records
+                // retains that behavior without a decoded copy.
+                records.sort_by_key(Self::record_token);
+            }
+            total
+        } else {
+            0
+        };
+        user.retain(|(_, count)| *count > 0);
+        if system.is_none() && user.is_empty() && user_total == 0 {
+            return Ok(None);
+        }
+        user.sort_by_key(|(token, _)| *token);
+        let mut write = 0;
+        for read in 0..user.len() {
+            let (token, count) = user[read];
+            if write > 0 && user[write - 1].0 == token {
+                user[write - 1].1 = Self::wrap_count(user[write - 1].1, count);
+            } else {
+                user[write] = (token, Self::wrap_count(0, count));
+                write += 1;
+            }
+        }
+        user.truncate(write);
+        Ok(Some(Self {
+            system,
+            user,
+            total: Self::wrap_count(u64::from(system_total), user_total),
+        }))
+    }
+
+    fn wrap_count(left: u64, right: u64) -> u64 {
+        u64::from((left as u32).wrapping_add(right as u32))
+    }
+
+    fn record_token(record: &[u8; 8]) -> u32 {
+        u32::from_le_bytes(record[..4].try_into().unwrap_or([0; 4]))
+    }
+
+    fn record_count(record: &[u8; 8]) -> u32 {
+        u32::from_le_bytes(record[4..].try_into().unwrap_or([0; 4]))
+    }
+
+    fn system_records(&self) -> &[[u8; 8]] {
+        self.system
+            .as_ref()
+            .map_or(&[], |bytes| bytes[4..].as_chunks::<8>().0)
+    }
+
+    /// The wrapped merged total, even when it is zero for a present row.
+    #[must_use]
+    pub const fn total(&self) -> u64 {
+        self.total
+    }
+
+    /// A successor's wrapped count, preserving stored zero-count presence.
+    #[must_use]
+    pub fn count_if_present(&self, token: u32) -> Option<u64> {
+        let records = self.system_records();
+        let position = records.partition_point(|record| Self::record_token(record) < token);
+        let system = records
+            .get(position)
+            .filter(|record| Self::record_token(record) == token)
+            .map(|record| u64::from(Self::record_count(record)));
+        let user = self
+            .user
+            .binary_search_by_key(&token, |(stored, _)| *stored)
+            .ok()
+            .map(|index| self.user[index].1);
+        match (system, user) {
+            (None, None) => None,
+            (left, right) => Some(Self::wrap_count(left.unwrap_or(0), right.unwrap_or(0))),
+        }
+    }
+
+    fn visit_range(&self, lo: u32, hi: u32, mut visit: impl FnMut(u32)) {
+        let records = self.system_records();
+        let mut position = records.partition_point(|record| Self::record_token(record) < lo);
+        while let Some(record) = records.get(position) {
+            let token = Self::record_token(record);
+            if token > hi {
+                break;
+            }
+            visit(token);
+            position += 1;
+        }
+        let mut position = self.user.partition_point(|(token, _)| *token < lo);
+        while let Some(&(token, _)) = self.user.get(position) {
+            if token > hi {
+                break;
+            }
+            visit(token);
+            position += 1;
+        }
+    }
+}
+
+/// Successors owned by one n-best step, represented as a decoded slice or an
+/// encoded system row plus user overlay. `None` at the trait boundary means
+/// the model lacks sparse traversal; an empty variant is a loaded row miss.
+pub enum NbestSuccessors<'a> {
+    /// An already merged sorted row.
+    Merged(&'a [(u32, u64)]),
+    /// An encoded system row and its separate overlay.
+    Raw(&'a NbestRawGram),
+}
+
+impl NbestSuccessors<'_> {
+    /// Visits successor tokens within an inclusive candidate token range.
+    pub fn visit_range(&self, lo: u32, hi: u32, mut visit: impl FnMut(u32)) {
+        match self {
+            Self::Merged(records) => {
+                let mut position = records.partition_point(|(token, _)| *token < lo);
+                while let Some(&(token, _)) = records.get(position) {
+                    if token > hi {
+                        break;
+                    }
+                    visit(token);
+                    position += 1;
+                }
+            }
+            Self::Raw(gram) => gram.visit_range(lo, hi, visit),
+        }
+    }
+}
 
 /// Deterministic language-model scoring seam.
 ///
@@ -826,7 +1020,7 @@ pub trait LanguageModel {
         &self,
         _prev: &Self::Token,
         _row: &'a mut NbestStepRow,
-    ) -> Result<NbestSuccessors<'a>, Self::Error> {
+    ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
         Ok(None)
     }
 
@@ -920,7 +1114,7 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         &self,
         prev: &Self::Token,
         row: &'a mut NbestStepRow,
-    ) -> Result<NbestSuccessors<'a>, Self::Error> {
+    ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
         (**self).nbest_successors_in_row(prev, row)
     }
 

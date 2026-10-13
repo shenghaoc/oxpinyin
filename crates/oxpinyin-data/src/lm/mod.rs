@@ -566,6 +566,22 @@ impl BigramLanguageModel {
             .map(|(records, total)| oxpinyin_core::MergedGram::new(total, records)))
     }
 
+    /// Loads the same predecessor row as [`Self::load_nbest_row`] into one
+    /// step-owned encoded value. Sorted system records stay in their fetched
+    /// bytes and the user overlay stays separate until a candidate lookup.
+    ///
+    /// # Errors
+    /// Propagates DBM read and schema errors, including a present empty value.
+    pub fn load_nbest_raw_row(
+        &self,
+        prev: u32,
+        user_rows: Vec<(u32, u64)>,
+        user_total: u64,
+    ) -> Result<Option<oxpinyin_core::NbestRawGram>, LmError> {
+        let system = self.bigram.load_raw_successors(prev)?;
+        oxpinyin_core::NbestRawGram::try_new(system, user_rows, user_total).map_err(LmError::Parse)
+    }
+
     /// Interpolated model cost of `token` after `history`, without `edge_cost`.
     ///
     /// Empty-history ranking: a *scaled-down* unigram surprisal acts as a
@@ -789,6 +805,45 @@ impl BigramLanguageModel {
         })
     }
 
+    /// The unchanged n-best cost law over a step-owned encoded row.
+    ///
+    /// # Errors
+    /// Propagates the row loader's error after the existing item gates.
+    pub fn nbest_step_costs_from_raw_row(
+        &self,
+        token: &PhraseToken,
+        user: UserCountDelta,
+        imported_item: bool,
+        row: &mut oxpinyin_core::NbestStepRow,
+        load: impl FnOnce() -> Result<Option<oxpinyin_core::NbestRawGram>, LmError>,
+    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+        self.nbest_step_costs_from_raw_row_in_generation(token, user, imported_item, row, 0, load)
+    }
+
+    /// The encoded-row cost law with row reuse bound to one user-store
+    /// generation. The caller validates the generation after scoring.
+    ///
+    /// # Errors
+    /// Propagates the row loader's error after the existing item gates.
+    pub fn nbest_step_costs_from_raw_row_in_generation(
+        &self,
+        token: &PhraseToken,
+        user: UserCountDelta,
+        imported_item: bool,
+        row: &mut oxpinyin_core::NbestStepRow,
+        generation: u64,
+        load: impl FnOnce() -> Result<Option<oxpinyin_core::NbestRawGram>, LmError>,
+    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+        self.nbest_step_costs_using(token, user, imported_item, || {
+            Ok(row
+                .get_or_try_init_raw_in_generation(generation, load)?
+                .map(|gram| {
+                    let count = gram.count_if_present(token.value());
+                    (count.unwrap_or(0), gram.total(), count.is_some())
+                }))
+        })
+    }
+
     fn nbest_step_costs_using(
         &self,
         token: &PhraseToken,
@@ -916,8 +971,8 @@ impl LanguageModel for BigramLanguageModel {
         token: &Self::Token,
         row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
-        self.nbest_step_costs_from_row(token, UserCountDelta::ZERO, false, row, || {
-            self.load_nbest_row(prev.value(), &[], 0)
+        self.nbest_step_costs_from_raw_row(token, UserCountDelta::ZERO, false, row, || {
+            self.load_nbest_raw_row(prev.value(), Vec::new(), 0)
         })
     }
 
@@ -925,11 +980,11 @@ impl LanguageModel for BigramLanguageModel {
         &self,
         prev: &Self::Token,
         row: &'a mut oxpinyin_core::NbestStepRow,
-    ) -> Result<oxpinyin_core::NbestSuccessors<'a>, Self::Error> {
-        Ok(Some(
-            row.get_or_try_init(|| self.load_nbest_row(prev.value(), &[], 0))?
-                .map_or(&[], oxpinyin_core::MergedGram::records),
-        ))
+    ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, Self::Error> {
+        Ok(row
+            .get_or_try_init_raw(|| self.load_nbest_raw_row(prev.value(), Vec::new(), 0))?
+            .map(oxpinyin_core::NbestSuccessors::Raw)
+            .or(Some(oxpinyin_core::NbestSuccessors::Merged(&[]))))
     }
 }
 

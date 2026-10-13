@@ -1306,13 +1306,8 @@ impl LanguageModel for RuntimeLm {
         row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
         loop {
-            // Commits advance this generation while holding the same database
-            // guard used by every read below. Equal generations bracket one
-            // consistent snapshot, including a row cached by an earlier
-            // candidate. A changed generation discards that row and retries
-            // the unigram deltas, successor counts and total together.
-            // The pin loads the SingleGrams before walking candidates
-            // (074a2219 phonetic_lookup.h:595-629; ngram.cpp get_freq).
+            // A committed write moves the generation under the same database
+            // guard used by the unigram, successor, and total reads below.
             let generation = self.user.as_ref().map_or(0, UserStore::generation);
             let result = (|| {
                 let extra = self.delta(None, token.value())?;
@@ -1324,7 +1319,7 @@ impl LanguageModel for RuntimeLm {
                 } else {
                     false
                 };
-                self.inner.nbest_step_costs_from_row_in_generation(
+                self.inner.nbest_step_costs_from_raw_row_in_generation(
                     token,
                     extra,
                     imported,
@@ -1343,7 +1338,7 @@ impl LanguageModel for RuntimeLm {
                             ),
                         };
                         self.inner
-                            .load_nbest_row(prev.value(), &user_rows, user_total)
+                            .load_nbest_raw_row(prev.value(), user_rows, user_total)
                     },
                 )
             })();
@@ -1361,11 +1356,11 @@ impl LanguageModel for RuntimeLm {
         &self,
         prev: &Self::Token,
         row: &'a mut oxpinyin_core::NbestStepRow,
-    ) -> Result<oxpinyin_core::NbestSuccessors<'a>, Self::Error> {
+    ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, Self::Error> {
         loop {
             let generation = self.user.as_ref().map_or(0, UserStore::generation);
             let result = row
-                .get_or_try_init_in_generation(generation, || {
+                .get_or_try_init_raw_in_generation(generation, || {
                     let (user_rows, user_total) = match self.user.as_ref() {
                         None => (Vec::new(), 0),
                         Some(store) => (
@@ -1378,7 +1373,7 @@ impl LanguageModel for RuntimeLm {
                         ),
                     };
                     self.inner
-                        .load_nbest_row(prev.value(), &user_rows, user_total)
+                        .load_nbest_raw_row(prev.value(), user_rows, user_total)
                 })
                 .map(|_| ());
             if self
@@ -1387,10 +1382,10 @@ impl LanguageModel for RuntimeLm {
                 .is_none_or(|store| store.generation() == generation)
             {
                 result?;
-                return Ok(Some(
-                    row.cached_merged()
-                        .map_or(&[], oxpinyin_core::MergedGram::records),
-                ));
+                return Ok(Some(match row.cached_raw() {
+                    Some(gram) => oxpinyin_core::NbestSuccessors::Raw(gram),
+                    None => oxpinyin_core::NbestSuccessors::Merged(&[]),
+                }));
             }
         }
     }
