@@ -920,6 +920,17 @@ impl LanguageModel for BigramLanguageModel {
             self.load_nbest_row(prev.value(), &[], 0)
         })
     }
+
+    fn nbest_successors_in_row<'a>(
+        &self,
+        prev: &Self::Token,
+        row: &'a mut oxpinyin_core::NbestStepRow,
+    ) -> Result<oxpinyin_core::NbestSuccessors<'a>, Self::Error> {
+        Ok(Some(
+            row.get_or_try_init(|| self.load_nbest_row(prev.value(), &[], 0))?
+                .map_or(&[], oxpinyin_core::MergedGram::records),
+        ))
+    }
 }
 
 /// Surprisal of one ratio, `None` when the reduced parts do not fit `u64`

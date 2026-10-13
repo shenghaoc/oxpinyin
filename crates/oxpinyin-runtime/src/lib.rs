@@ -1356,6 +1356,44 @@ impl LanguageModel for RuntimeLm {
             }
         }
     }
+
+    fn nbest_successors_in_row<'a>(
+        &self,
+        prev: &Self::Token,
+        row: &'a mut oxpinyin_core::NbestStepRow,
+    ) -> Result<oxpinyin_core::NbestSuccessors<'a>, Self::Error> {
+        loop {
+            let generation = self.user.as_ref().map_or(0, UserStore::generation);
+            let result = row
+                .get_or_try_init_in_generation(generation, || {
+                    let (user_rows, user_total) = match self.user.as_ref() {
+                        None => (Vec::new(), 0),
+                        Some(store) => (
+                            store
+                                .bigram_successors(prev.value())
+                                .map_err(|error| LmError::User(error.to_string()))?,
+                            store
+                                .bigram_total(prev.value())
+                                .map_err(|error| LmError::User(error.to_string()))?,
+                        ),
+                    };
+                    self.inner
+                        .load_nbest_row(prev.value(), &user_rows, user_total)
+                })
+                .map(|_| ());
+            if self
+                .user
+                .as_ref()
+                .is_none_or(|store| store.generation() == generation)
+            {
+                result?;
+                return Ok(Some(
+                    row.cached_merged()
+                        .map_or(&[], oxpinyin_core::MergedGram::records),
+                ));
+            }
+        }
+    }
 }
 
 // ── Runtime ─────────────────────────────────────────────────────────────
