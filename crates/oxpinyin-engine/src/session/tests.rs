@@ -700,6 +700,10 @@ fn train_nbest_observes_partial_selection_for_fallback_model() {
             .expect("training cannot fail")
     );
     assert_eq!(recorder.observed, vec![(Vec::new(), PhraseToken::new(1))]);
+    // The predecessor preview agrees with what the walk observed: the
+    // sentence start for the first token.
+    assert_eq!(session.training_predecessors(0), vec![None]);
+    assert!(session.training_predecessors(9).is_empty());
 }
 
 #[test]

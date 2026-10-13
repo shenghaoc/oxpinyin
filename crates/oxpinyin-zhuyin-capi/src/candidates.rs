@@ -306,6 +306,16 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
             crate::ffi::log_warning(&format!("zhuyin_train: assertion '{assertion}' failed"));
             false
         }
+        // Class (b), `ngram.cpp:190`, `:241`, `:261`: training would
+        // load a predecessor whose value has a partial item tail, which the
+        // pin's `insert_freq`/`set_freq` walks read past. Nothing changed.
+        Err(oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }) => {
+            crate::ffi::log_warning(
+                "zhuyin_train: a user bigram value has a partial item tail \
+                 (upstream reads past it, ngram.cpp:190)",
+            );
+            false
+        }
         Err(_) => false,
     }
 }

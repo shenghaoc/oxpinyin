@@ -72,9 +72,10 @@ pub enum MaskOutOutcome {
     /// warning.
     NonTokenUserBigramKey,
     /// The user bigram carried a value shorter than a `guint32`
-    /// `total_freq`; the pin's `get_total_freq` asserts
-    /// (`memory_chunk.h:390`). The C ABI answers `false` and logs one
-    /// warning.
+    /// `total_freq`, or a partial eight-byte item tail. The pin's
+    /// `get_total_freq` asserts on the former (`memory_chunk.h:390`);
+    /// `SingleGram::mask_out` reads past the latter (`ngram.cpp:76-86`).
+    /// The C ABI answers `false` and logs one warning.
     ShortUserBigramValue,
     /// Masking the user bigram removed every item of a gram whose total
     /// its items did not cover, leaving a residual `total_freq`; the pin's

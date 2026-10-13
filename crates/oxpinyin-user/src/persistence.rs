@@ -459,14 +459,6 @@ pub(crate) struct LoadedProfile {
     /// does. A sibling of [`UserState`] rather than a field of it, so the
     /// load's state equality is unchanged.
     pub(crate) phrase_table: BTreeSet<(Token, String)>,
-    /// `user_bigram.db` keys whose value is shorter than a `guint32`
-    /// `total_freq`, by `prev` token. `SingleGram::get_total_freq` reads
-    /// four bytes through `MemoryChunk::get_content<guint32>`, whose
-    /// `assert(get_content(...))` dies of SIGABRT (`memory_chunk.h:390`);
-    /// the value model cannot hold such a gram, so the `prev` keys ride
-    /// here as siblings of [`UserState`] for the call sites that reach
-    /// `get_total_freq` directly (`ngram.cpp:49-82`).
-    pub(crate) bigram_short_values: Vec<Token>,
     /// `user_bigram.db` keys that are not four bytes, verbatim.
     /// `Bigram::get_all_items` asserts `key.size == sizeof(phrase_token_t)`
     /// (`ngram_bdb.cpp:199`); the pin's `mask_out` and
@@ -474,13 +466,6 @@ pub(crate) struct LoadedProfile {
     /// non-token key is never inserted into [`UserState`], so the raw keys
     /// ride here. Membership alone is read, not the bytes.
     pub(crate) bigram_non_token_keys: Vec<Vec<u8>>,
-    /// `user_bigram.db` rows that decode to a gram with no items and a
-    /// nonzero `total_freq`, by `prev` token. `SingleGram::get_length`
-    /// asserts `0 == total_freq` when the item walk leaves the chunk at
-    /// the bare total (`ngram.cpp:70`); `pinyin_guess_predicted_candidates`
-    /// reaches it through `_compute_predicted_bigram_candidates`
-    /// (`pinyin.cpp:2332`/`:2336`).
-    pub(crate) bigram_empty_with_total: Vec<Token>,
     /// `user_bigram.db` rows whose `total_freq` is not the sum of their
     /// items' frequencies, paired with their item tokens. `Bigram::mask_out`
     /// removes the items a mask selects and then asks `SingleGram::get_length`
@@ -625,18 +610,14 @@ pub(crate) fn load_checked(
         phrase_table: BTreeSet::new(),
         overlong_index_keys: Vec::new(),
         index_keys: BTreeSet::new(),
-        bigram_short_values: Vec::new(),
         bigram_non_token_keys: Vec::new(),
-        bigram_empty_with_total: Vec::new(),
         bigram_residual_grams: Vec::new(),
     };
     if check.conform {
         load_bigram(
             dir,
             &mut profile.loaded,
-            &mut profile.bigram_short_values,
             &mut profile.bigram_non_token_keys,
-            &mut profile.bigram_empty_with_total,
             &mut profile.bigram_residual_grams,
         );
         load_libraries(dir, originals.layout(), &mut profile.loaded);
@@ -728,19 +709,14 @@ fn clean_user_files(dir: &Path, layout: &UserFileLayout) {
 /// (`RawReadStore::open_user_bigram`); the system `bigram.db` is a
 /// different container on Kyoto Cabinet and must not share an open path.
 ///
-/// A row the pin would abort on (`memory_chunk.h:390` short value,
-/// `ngram_bdb.cpp:199` non-token key, `ngram.cpp:70` empty gram with a
-/// residual total, or an inconsistent total a mask leaves residual) is
-/// recorded in the `short`, `non_token`, `empty` and `residual`
-/// collectors; the row itself keeps the load's existing degrade (dropped,
-/// or inserted as a gram for `empty`), and the affected operation refuses
-/// later.
+/// A short value is skipped in the value model and remains in the raw
+/// container for live call-site guards (`memory_chunk.h:390`). A non-token
+/// key is recorded for `get_all_items`'s assertion, and an inconsistent
+/// total is recorded for the mask's residual assertion (`ngram.cpp:70`).
 fn load_bigram(
     dir: &Path,
     loaded: &mut Loaded,
-    short: &mut Vec<Token>,
     non_token: &mut Vec<Vec<u8>>,
-    empty: &mut Vec<Token>,
     residual: &mut Vec<(Token, Vec<Token>)>,
 ) {
     let path = dir.join(UserDbm::Bigram.file_name());
@@ -773,18 +749,19 @@ fn load_bigram(
             return Ok(());
         }
         let prev = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
-        match decode_single_gram(value) {
+        // `SingleGram::get_length` computes (end - begin) in eight-byte
+        // items, truncating a partial tail. Its indexed reads and scorer
+        // can use the complete items and the four-byte total. Keep the
+        // original value in the raw DBM for save; unsafe walks inspect
+        // that live value at their call sites.
+        let complete_len = if value.len() < 4 {
+            value.len()
+        } else {
+            4 + ((value.len() - 4) / 8) * 8
+        };
+        match decode_single_gram(&value[..complete_len]) {
             Ok((total, records)) => {
-                if records.is_empty() {
-                    if total != 0 {
-                        // An item-less gram with a residual total:
-                        // `SingleGram::get_length` asserts `0 == total_freq`
-                        // (`ngram.cpp:70`), reached by the predicted-bigram
-                        // merge (`pinyin.cpp:2332`). `Bigram::mask_out` skips
-                        // it (its item walk removes nothing).
-                        empty.push(prev);
-                    }
-                } else {
+                if !records.is_empty() {
                     // A total that does not cover the items: when a mask
                     // removes every item, `get_length` finds a residual total
                     // and asserts (`ngram.cpp:70`, from `Bigram::mask_out`,
@@ -806,9 +783,6 @@ fn load_bigram(
                 // `SingleGram::get_total_freq` reads four bytes through
                 // `MemoryChunk::get_content<guint32>`, whose assert kills
                 // the pin when the value is shorter (`memory_chunk.h:390`).
-                if value.len() < 4 {
-                    short.push(prev);
-                }
                 loaded.skipped.push(format!(
                     "{}: gram {prev:#010x} does not parse",
                     UserDbm::Bigram.file_name()
@@ -3005,6 +2979,42 @@ mod tests {
             .expect("walk");
         assert_eq!(seen, vec![1], "the profile holds one gram");
 
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn partial_user_bigram_items_keep_defined_reads_and_raw_bytes() {
+        let dir = tempdir("partial-bigram-items");
+        let path = dir.join(UserDbm::Bigram.file_name());
+        let key = 0x0700_0001_u32.to_le_bytes();
+        let record = [9_u32.to_le_bytes(), 7_u32.to_le_bytes()].concat();
+        for tail_len in 1..8 {
+            for complete_items in 0..=1 {
+                let mut value = 7_u32.to_le_bytes().to_vec();
+                if complete_items == 1 {
+                    value.extend_from_slice(&record);
+                }
+                value.extend(std::iter::repeat_n(0xa5, tail_len));
+                DefaultStore::write_user_bigram(&path, &[(key.to_vec(), value.clone())])
+                    .expect("write user bigram");
+
+                let mut loaded = Loaded::default();
+                let (mut non_token, mut residual) = (Vec::new(), Vec::new());
+                load_bigram(&dir, &mut loaded, &mut non_token, &mut residual);
+                assert!(loaded.skipped.is_empty());
+                assert!(non_token.is_empty());
+                let gram = loaded.state.bigram.get(&0x0700_0001).expect("gram");
+                assert_eq!(gram.total, 7);
+                assert_eq!(
+                    gram.items.get(&9).copied(),
+                    (complete_items == 1).then_some(7)
+                );
+                assert!(residual.is_empty());
+
+                let raw = DefaultStore::open_user_bigram(&path).expect("open raw");
+                assert_eq!(raw.get_raw(&key).expect("raw get"), Some(value));
+            }
+        }
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 

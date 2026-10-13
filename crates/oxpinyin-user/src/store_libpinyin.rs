@@ -89,19 +89,10 @@ pub struct Target {
     /// `DB_SET` probe tests before it walks extensions
     /// ([`persistence::LoadedProfile::index_keys`]).
     pub(crate) index_keys: BTreeSet<Vec<u16>>,
-    /// `user_bigram.db` keys whose value is shorter than a `guint32`
-    /// `total_freq` ([`persistence::LoadedProfile::bigram_short_values`]):
-    /// the pin's `MemoryChunk::get_content<guint32>` asserts on them
-    /// (`memory_chunk.h:390`).
-    pub(crate) bigram_short_values: Vec<Token>,
     /// `user_bigram.db` keys that are not four bytes
     /// ([`persistence::LoadedProfile::bigram_non_token_keys`]): the pin's
     /// `Bigram::get_all_items` asserts on them (`ngram_bdb.cpp:199`).
     pub(crate) bigram_non_token_keys: Vec<Vec<u8>>,
-    /// `user_bigram.db` rows with no items and a residual total
-    /// ([`persistence::LoadedProfile::bigram_empty_with_total`]): the pin's
-    /// `SingleGram::get_length` asserts on them (`ngram.cpp:70`).
-    pub(crate) bigram_empty_with_total: Vec<Token>,
     /// `user_bigram.db` rows whose total is not covered by their items,
     /// with their item tokens
     /// ([`persistence::LoadedProfile::bigram_residual_grams`]): the pin's
@@ -303,9 +294,7 @@ impl GenericUserStore<DefaultStore> {
             phrase_table,
             overlong_index_keys,
             index_keys,
-            bigram_short_values,
             bigram_non_token_keys,
-            bigram_empty_with_total,
             bigram_residual_grams,
         } = profile;
         // Armed as soon as the load has raised the counter: an open that
@@ -319,9 +308,7 @@ impl GenericUserStore<DefaultStore> {
             open_counter: loaded.open_counter,
             overlong_index_keys,
             index_keys,
-            bigram_short_values,
             bigram_non_token_keys,
-            bigram_empty_with_total,
             bigram_residual_grams,
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
@@ -885,6 +872,274 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tmpdir");
         dir
+    }
+
+    #[test]
+    fn partial_bigram_reads_complete_items_and_refuses_unsafe_mask() {
+        let dir = tempdir("partial-gram-mask");
+        let key = 1_u32.to_le_bytes();
+        let mut value = 7_u32.to_le_bytes().to_vec();
+        value.extend_from_slice(&9_u32.to_le_bytes());
+        value.extend_from_slice(&7_u32.to_le_bytes());
+        value.extend_from_slice(&[0xa5, 0x5a, 0x01]);
+        DefaultStore::write_user_bigram(
+            &dir.join("user_bigram.db"),
+            &[(key.to_vec(), value.clone())],
+        )
+        .expect("write gram");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        assert_eq!(store.bigram_total(1).expect("total"), 7);
+        assert_eq!(store.bigram_count(1, 9).expect("complete item"), 7);
+        assert_eq!(store.bigram_count(1, 10).expect("absent item"), 0);
+        assert!(store.has_oob_bigram_value_for(1));
+        assert!(!store.has_empty_bigram_gram_for(1));
+        assert!(matches!(
+            store.mask_out(u32::MAX, 0),
+            Err(UserStoreError::ShortUserBigramValue)
+        ));
+        assert_eq!(store.bigram_total(1).expect("unchanged total"), 7);
+        assert_eq!(store.bigram_count(1, 9).expect("unchanged item"), 7);
+        let raw = persistence::load_user_bigram_db(&dir).expect("raw container");
+        assert_eq!(raw.get(&key).expect("raw get"), Some(value));
+
+        drop(raw);
+        // Deleting the predecessor wholesale never loads its value.
+        store.mask_out(u32::MAX, 1).expect("whole-key mask");
+        assert_eq!(store.bigram_total(1).expect("masked total"), 0);
+        assert_eq!(store.bigram_count(1, 9).expect("masked item"), 0);
+        // Raw Remove may have different backend results. The helper must
+        // immediately reflect whichever value the in-memory DBM kept.
+        let live_after_mask = store.has_oob_bigram_value_for(1);
+        let report = store.save_reporting().expect("save masked gram");
+        assert!(report.renames_failed.is_empty());
+        assert!(report.user_conf_write_failed.is_none());
+        let raw = persistence::load_user_bigram_db(&dir).expect("raw masked container");
+        let persisted_after_mask = raw.get(&key).expect("raw masked get");
+        assert_eq!(
+            live_after_mask,
+            persisted_after_mask
+                .as_ref()
+                .is_some_and(|bytes| bytes.len() >= 4 && !(bytes.len() - 4).is_multiple_of(8))
+        );
+        drop(raw);
+        drop(store);
+        let itemless = [7_u32.to_le_bytes().as_slice(), &[0xa5, 0x5a]].concat();
+        DefaultStore::write_user_bigram(
+            &dir.join("user_bigram.db"),
+            &[(key.to_vec(), itemless.clone())],
+        )
+        .expect("replace gram");
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("reopen");
+        assert_eq!(store.bigram_total(1).expect("itemless total"), 7);
+        assert_eq!(store.bigram_count(1, 9).expect("itemless count"), 0);
+        assert!(store.has_empty_bigram_gram_for(1));
+        assert!(store.has_oob_bigram_value_for(1));
+        let raw = persistence::load_user_bigram_db(&dir).expect("raw itemless container");
+        assert_eq!(raw.get(&key).expect("raw itemless get"), Some(itemless));
+        drop(raw);
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn training_over_a_partial_tail_refuses_and_keeps_the_raw_value() {
+        let dir = tempdir("partial-gram-train");
+        let key = 1_u32.to_le_bytes();
+        let mut value = 7_u32.to_le_bytes().to_vec();
+        value.extend_from_slice(&9_u32.to_le_bytes());
+        value.extend_from_slice(&7_u32.to_le_bytes());
+        value.extend_from_slice(&[0xa5, 0x5a, 0x01]);
+        DefaultStore::write_user_bigram(
+            &dir.join("user_bigram.db"),
+            &[(key.to_vec(), value.clone())],
+        )
+        .expect("write gram");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        assert!(store.has_oob_bigram_value_for(1));
+        for refused in [
+            store.observe_selection(1, 0x0100_0001),
+            store.observe_predicted(1, 0x0100_0001),
+        ] {
+            assert!(matches!(refused, Err(UserStoreError::ShortUserBigramValue)));
+        }
+        // Nothing moved: the decoded counts are as loaded.
+        assert_eq!(store.bigram_total(1).expect("total"), 7);
+        assert_eq!(store.bigram_count(1, 9).expect("item"), 7);
+        assert_eq!(store.bigram_count(1, 0x0100_0001).expect("cur"), 0);
+        // A predecessor without a partial tail still trains, both ways.
+        store
+            .observe_selection(2, 0x0100_0001)
+            .expect("clean predecessor trains");
+        store
+            .observe_predicted(2, 0x0100_0001)
+            .expect("clean predecessor accepts a predicted candidate");
+        store.save_reporting().expect("save");
+        drop(store);
+
+        let raw = persistence::load_user_bigram_db(&dir).expect("raw container");
+        assert_eq!(raw.get(&key).expect("raw get"), Some(value.clone()));
+        drop(raw);
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("reopen");
+        assert!(store.has_oob_bigram_value_for(1));
+        assert_eq!(store.bigram_total(1).expect("reopened total"), 7);
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_partial_tail_created_in_session_refuses_training() {
+        let dir = tempdir("partial-gram-in-session");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        // Nothing loaded: the predecessor is clean and trains.
+        assert!(!store.has_oob_bigram_value_for(1));
+        store
+            .observe_selection(1, 0x0100_0001)
+            .expect("clean predecessor trains");
+        let total = store.bigram_total(1).expect("total");
+        // A partial-tail value appears after the open (a retained removal
+        // record on a backend that keeps them has this shape).
+        let mut value = (total as u32).to_le_bytes().to_vec();
+        value.extend_from_slice(&0x0100_0001_u32.to_le_bytes());
+        value.extend_from_slice(&(total as u32).to_le_bytes());
+        value.push(0x01);
+        store.plant_raw_bigram(1, &value);
+        assert!(store.has_oob_bigram_value_for(1));
+        assert!(matches!(
+            store.observe_selection(1, 0x0100_0002),
+            Err(UserStoreError::ShortUserBigramValue)
+        ));
+        assert!(matches!(
+            store.observe_predicted(1, 0x0100_0002),
+            Err(UserStoreError::ShortUserBigramValue)
+        ));
+        assert_eq!(store.bigram_total(1).expect("unchanged"), total);
+        assert_eq!(store.bigram_count(1, 0x0100_0002).expect("cur"), 0);
+        // Overwriting the value with a whole gram clears the refusal.
+        store.plant_raw_bigram(1, &value[..value.len() - 1]);
+        assert!(!store.has_oob_bigram_value_for(1));
+        store
+            .observe_selection(1, 0x0100_0002)
+            .expect("trains again");
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn partial_tail_guard_tracks_an_in_session_mask_result() {
+        let dir = tempdir("partial-gram-live-mask");
+        let key = 1_u32.to_le_bytes();
+        let value = [
+            7_u32.to_le_bytes().as_slice(),
+            9_u32.to_le_bytes().as_slice(),
+            7_u32.to_le_bytes().as_slice(),
+        ]
+        .concat();
+        DefaultStore::write_user_bigram(&dir.join("user_bigram.db"), &[(key.to_vec(), value)])
+            .expect("write valid gram");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        assert!(!store.has_oob_bigram_value_for(1));
+        assert_eq!(store.bigram_count(1, 9).expect("initial item"), 7);
+        store.mask_out(u32::MAX, 1).expect("whole-key mask");
+        let live_after_mask = store.has_oob_bigram_value_for(1);
+        assert_eq!(store.bigram_count(1, 9).expect("masked item"), 0);
+        let report = store.save_reporting().expect("save masked gram");
+        assert!(report.renames_failed.is_empty());
+        assert!(report.user_conf_write_failed.is_none());
+        let raw = persistence::load_user_bigram_db(&dir).expect("raw masked container");
+        let persisted_after_mask = raw.get(&key).expect("raw masked get");
+        match persisted_after_mask {
+            Some(bytes) => {
+                assert!(bytes.len() >= 4 && !(bytes.len() - 4).is_multiple_of(8));
+                assert!(
+                    live_after_mask,
+                    "retained partial value was missed immediately"
+                );
+            }
+            None => assert!(!live_after_mask, "removed value stayed marked"),
+        }
+        drop(raw);
+
+        store.set_bigram_count(1, 10, 5).expect("overwrite gram");
+        assert!(!store.has_oob_bigram_value_for(1));
+        assert_eq!(store.bigram_total(1).expect("new total"), 5);
+        assert_eq!(store.bigram_count(1, 10).expect("new item"), 5);
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    #[test]
+    fn short_bigram_guard_reads_the_live_raw_value() {
+        let dir = tempdir("short-gram-live-guard");
+        let key = 1_u32.to_le_bytes();
+        DefaultStore::write_user_bigram(
+            &dir.join("user_bigram.db"),
+            &[(key.to_vec(), vec![0xa5, 0x5a, 0x01])],
+        )
+        .expect("write short gram");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        assert!(store.has_short_bigram_value_for(1));
+        assert_eq!(store.bigram_total(1).expect("skipped total"), 0);
+        assert!(matches!(
+            store.mask_out(u32::MAX, 0),
+            Err(UserStoreError::ShortUserBigramValue)
+        ));
+        let raw = persistence::load_user_bigram_db(&dir).expect("raw container");
+        assert_eq!(
+            raw.get(&key).expect("raw get"),
+            Some(vec![0xa5, 0x5a, 0x01])
+        );
+        drop(raw);
+
+        // An ordinary write replaces the malformed row. The guard must
+        // follow that live container, not a load-time fault snapshot.
+        store.set_bigram_count(1, 9, 7).expect("replace gram");
+        assert!(!store.has_short_bigram_value_for(1));
+        assert_eq!(store.bigram_total(1).expect("new total"), 7);
+        assert_eq!(store.bigram_count(1, 9).expect("new item"), 7);
+        store.mask_out(u32::MAX, 0).expect("safe mask");
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
     #[test]
