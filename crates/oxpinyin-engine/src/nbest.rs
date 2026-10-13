@@ -928,12 +928,11 @@ where
     for predecessor in beam {
         selected.clear();
         let prev = predecessor.value.token;
-        let successors = model
-            .nbest_successors_in_row(&PhraseToken::new(prev), costs.rows.entry(prev).or_default())
-            .map_err(|error| {
-                EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-            })?;
-        if let Some(successors) = successors {
+        let row = costs.rows.entry(prev).or_default();
+        let has_successors = if let Some(successors) = model
+            .nbest_successors_in_row(&PhraseToken::new(prev), row)
+            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
+        {
             for &(lo, hi) in &ranges {
                 successors.visit_range(lo, hi, |token| {
                     let mut candidate = candidates.partition_point(|(item, _)| *item < token);
@@ -948,13 +947,18 @@ where
             }
             selected.sort_unstable();
             selected.dedup();
+            true
+        } else {
+            false
+        };
+        if has_successors {
             for &index in &selected {
                 expand_one(
                     &entries[index],
                     predecessor,
                     start..end,
                     model,
-                    costs,
+                    row,
                     trellis,
                     false,
                 )?;
@@ -963,16 +967,17 @@ where
             // Models without sorted rows retain their existing scalar path.
             for entry in entries {
                 if !matches!(entry.pronunciation, Some((0, _))) {
-                    expand_one(entry, predecessor, start..end, model, costs, trellis, false)?;
+                    expand_one(entry, predecessor, start..end, model, row, trellis, false)?;
                 }
             }
         }
     }
     // The pin's independent unigram pass uses only the best predecessor.
     if let Some(predecessor) = beam.first() {
+        let row = costs.rows.entry(predecessor.value.token).or_default();
         for entry in entries {
             if !matches!(entry.pronunciation, Some((0, _))) {
-                expand_one(entry, predecessor, start..end, model, costs, trellis, true)?;
+                expand_one(entry, predecessor, start..end, model, row, trellis, true)?;
             }
         }
     }
@@ -984,7 +989,7 @@ fn expand_one<L: LanguageModel<Token = PhraseToken>>(
     predecessor: &BeamEntry,
     span: std::ops::Range<usize>,
     model: &L,
-    costs: &mut StepCosts,
+    row: &mut oxpinyin_core::NbestStepRow,
     trellis: &mut Trellis,
     unigram: bool,
 ) -> Result<(), EngineError>
@@ -993,11 +998,7 @@ where
 {
     let prev = predecessor.value.token;
     let step = model
-        .nbest_step_costs_in_row(
-            &PhraseToken::new(prev),
-            &PhraseToken::new(entry.token),
-            costs.rows.entry(prev).or_default(),
-        )
+        .nbest_step_costs_in_row(&PhraseToken::new(prev), &PhraseToken::new(entry.token), row)
         .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?;
     let Some(mut cost) = (if unigram { step.unigram } else { step.blended }) else {
         return Ok(());
