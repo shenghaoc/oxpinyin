@@ -1638,7 +1638,7 @@ def _craft_tkrzw(path, rows, kind, keep=False):
     assert tk.tkrzw_dbm_close(db)
 
 
-def _craft_bdb(path, rows, dbtype, keep=False, read_keys=()):
+def _craft_bdb(path, rows, dbtype, keep=False, read_keys=(), allow_missing=False):
     """A Berkeley DB `dbtype` container; `keep=True` adds to existing rows."""
     import ctypes.util
 
@@ -1689,7 +1689,11 @@ def _craft_bdb(path, rows, dbtype, keep=False, read_keys=()):
         kbuf = C.create_string_buffer(key)
         kd = DBT(C.cast(kbuf, P), len(key), 0, 0, 0, None, 0)
         vd = DBT()
-        assert db.__db_get_pp(handle, None, C.byref(kd), C.byref(vd), 0) == 0
+        status = db.__db_get_pp(handle, None, C.byref(kd), C.byref(vd), 0)
+        if status != 0 and allow_missing:
+            values.append(None)
+            continue
+        assert status == 0
         values.append(C.string_at(vd.data, vd.size))
     assert db.__db_close_pp(handle, 0) == 0
     del live
@@ -2074,6 +2078,53 @@ def _(k):
     # `ngram_bdb.cpp:199` before any row is exported.
     ctx = crafted_bigram_context(k, [(b'\x00\x01', b'\x07\x00\x00\x00')])
     return {'ret': bool(k.fn('begin_get_bigram_phrases', P, P)(ctx))}
+
+
+def issue677_sequence(k):
+    """The #677 sequence over a valid bigram row that the mask removes."""
+    ctx = crafted_bigram_context(
+        k, [(b'\x01\x00\x00\x07', d18_gram(100, 0x01000001, 100))])
+
+    def add(text, reading):
+        it = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+        assert it, 'the import iterator'
+        assert k.fn('iterator_add_phrase', B, P, S, S, I)(
+            it, text.encode(), reading.encode(), 100)
+        k.fn('end_add_phrases', None, P)(it)
+
+    def save():
+        return bool(k.fn('save', B, P)(ctx))
+
+    reading = (lambda text: text) if k.mode == 'pinyin' else (lambda text: text)
+    add('达达', "da2'da2" if k.mode == 'pinyin' else 'ㄉㄚˊ ㄉㄚˊ')
+    ret1 = save()
+    mask = bool(k.fn('mask_out', B, P, U, U)(ctx, 0x0f000000, 0x07000000))
+    ret2 = save()
+    path = Path(k.user, 'user_bigram.db')
+    key = b'\x01\x00\x00\x07'
+    after_mask = d18_bigram_db(k, path, read_keys=[key], allow_missing=True)[0]
+    add('你你', "ni3'ni3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄋㄧˇ')
+    ret3 = save()
+    ret4 = save()
+    add('好好', "hao3'hao3" if k.mode == 'pinyin' else 'ㄏㄠˇ ㄏㄠˇ')
+    ret5 = save()
+    result = {
+        'ret1': ret1, 'mask': mask, 'ret2': ret2, 'ret3': ret3,
+        'ret4': ret4, 'ret5': ret5,
+        'files': sorted(os.listdir(k.user)),
+        'removed_key_after_mask': after_mask.hex() if after_mask is not None else None,
+    }
+    # The raw DBM contract is the backend's own `Get` result. On a
+    # library that retains a removed row, its value remains observable;
+    # on a library that deletes it, the result is absent. Compare that
+    # value, the return sequence and the user-file inventory in every cell.
+    final = d18_bigram_db(k, path, read_keys=[key], allow_missing=True)[0]
+    result['removed_key_final'] = final.hex() if final is not None else None
+    return result
+
+
+for _issue677_mode in ('pinyin', 'zhuyin'):
+    case('issue677-mask-save-sequence-' + _issue677_mode, mode=_issue677_mode)(issue677_sequence)
 
 
 @case('abort-guess-predicted-short-bigram-value', abort=False)
@@ -5374,7 +5425,7 @@ def d18_input(k):
     return out
 
 
-def d18_bigram_db(k, path, rows=None, read_keys=()):
+def d18_bigram_db(k, path, rows=None, read_keys=(), allow_missing=False):
     """Independent raw SingleGram fixtures through each installed C DBM API.
 
     `rows=None` reads an existing fixture; all returned buffers are copied
@@ -5383,7 +5434,7 @@ def d18_bigram_db(k, path, rows=None, read_keys=()):
     import ctypes.util
     conf = Path(k.data, 'table.conf').read_text()
     if 'database format:BerkeleyDB' in conf or 'database format: BerkeleyDB' in conf:
-        return _craft_bdb(str(path), rows, 2, read_keys=read_keys)
+        return _craft_bdb(str(path), rows, 2, read_keys=read_keys, allow_missing=allow_missing)
     writable = rows is not None
     if writable and Path(path).exists():
         Path(path).unlink()
@@ -5414,6 +5465,9 @@ def d18_bigram_db(k, path, rows=None, read_keys=()):
             for key in read_keys:
                 size = Z()
                 value = db.kcdbget(handle, key, len(key), C.byref(size))
+                if not value and allow_missing:
+                    values.append(None)
+                    continue
                 assert value
                 values.append(C.string_at(value, size.value))
                 db.kcfree(value)
@@ -5438,6 +5492,9 @@ def d18_bigram_db(k, path, rows=None, read_keys=()):
         for key in read_keys:
             size = I()
             value = db.tkrzw_dbm_get(handle, key, len(key), C.byref(size))
+            if not value and allow_missing:
+                values.append(None)
+                continue
             assert value
             values.append(C.string_at(value, size.value))
             libc.free(value)

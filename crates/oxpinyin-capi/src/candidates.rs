@@ -274,6 +274,14 @@ pub extern "C" fn pinyin_remove_user_candidate(
     };
     match user.remove_user_phrase(token.value()) {
         Ok(true) => true,
+        Err(oxpinyin_user::UserStoreError::ShortUserBigramValue) => {
+            crate::ffi::log_warning(
+                "pinyin_remove_user_candidate: malformed user bigram value \
+                 (upstream asserts on a missing total or reads past a partial item; \
+                 memory_chunk.h:390, ngram.cpp:76-86)",
+            );
+            false
+        }
         // Class (c). Either the phrase item, its phrase-table row
         // (`user_phrase_index.bin`) or one of its indexed readings
         // (`user_pinyin_index.bin`) is missing — the pin aborts on the
@@ -652,7 +660,20 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     {
         user.observe_predicted_prefix(token.value()).is_ok()
     } else {
-        user.observe_predicted(last, token.value()).is_ok()
+        match user.observe_predicted(last, token.value()) {
+            Ok(_) => true,
+            // Class (b), `pinyin.cpp:2630-2633`: the predecessor's gram has
+            // a partial item tail that `get_freq`/`insert_freq`
+            // (`ngram.cpp:241`, `:190`) read past. Nothing changed.
+            Err(oxpinyin_user::UserStoreError::ShortUserBigramValue) => {
+                crate::ffi::log_warning(
+                    "pinyin_choose_predicted_candidate: a user bigram value has a partial \
+                     item tail (upstream reads past it, ngram.cpp:190)",
+                );
+                false
+            }
+            Err(_) => false,
+        }
     }
 }
 
@@ -735,6 +756,16 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
                 _ => "matrix->get_column_size(start) > 0",
             };
             crate::ffi::log_warning(&format!("pinyin_train: assertion '{assertion}' failed"));
+            false
+        }
+        // Class (b), `ngram.cpp:190`, `:241`, `:261`: training would
+        // load a predecessor whose value has a partial item tail, which the
+        // pin's `insert_freq`/`set_freq` walks read past. Nothing changed.
+        Err(oxpinyin_engine::EngineError::UnsafeTrainingPredecessor { .. }) => {
+            crate::ffi::log_warning(
+                "pinyin_train: a user bigram value has a partial item tail \
+                 (upstream reads past it, ngram.cpp:190)",
+            );
             false
         }
         Err(_) => false,

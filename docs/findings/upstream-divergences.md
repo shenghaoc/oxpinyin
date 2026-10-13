@@ -3025,7 +3025,7 @@ dependency change.
 ### A sub-`guint32` user-bigram value aborts `mask_out`, the removal and the predicted-candidate walk (#525; row 85, class (c), 2026-10-10 UTC)
 
 Read libpinyin at `074a2219c90feaf962d0d24f034514033ece5f99`.
-`SingleGram::get_total_freq` (`src/storage/ngram.cpp:49-52`) reads the
+`SingleGram::get_total_freq` (`src/storage/ngram.cpp:48-51`) reads the
 four-byte `total_freq` at the front of a gram's value through
 `MemoryChunk::get_content<guint32>`, whose body is
 `assert(get_content(offset, &value, sizeof(T)))`
@@ -3044,8 +3044,14 @@ four bytes therefore aborts the read. Two public call paths read the total:
   in `merge_single_gram`.
 
 `pinyin_init` merely copies the row during load and does not read the total,
-so it does not abort. No public call can write such a value: the writer's
-`SingleGram::set_total_freq` always stores four bytes.
+so it does not abort. `pinyin_bigram_iterator_has_next_phrase` also loads each predecessor
+and calls `SingleGram::retrieve_all` (`pinyin.cpp:889`), which reads
+`get_total_freq` before its item walk (`ngram.cpp:133-143`). The export
+preflight therefore refuses a short value with a NULL iterator and one
+`libpinyin` warning. This extension follows the pinned source; no crash
+probe was run in the bounded source-maintenance phase. No public call can
+write such a value: the writer's `SingleGram::set_total_freq` always stores
+four bytes.
 
 Reproduced on bdb with a ctypes driver that writes a Berkeley DB **hash**
 container holding one four-byte key whose value is three bytes:
@@ -3061,9 +3067,11 @@ container holding one four-byte key whose value is three bytes:
   `pinyin_guess_predicted_candidates(inst, "ni")`: SIGABRT in
   `get_total_freq`.
 
-oxpinyin's `load_bigram` records every four-byte key whose value does not
-parse because it is shorter than four bytes
-(`crates/oxpinyin-user/src/persistence.rs`, `bigram_short_values`).
+oxpinyin's `load_bigram` skips values shorter than four bytes in the
+decoded count model while preserving the raw row.
+`has_short_bigram_value_for` reads the live raw container, so a later
+valid write clears the guard (`crates/oxpinyin-user/src/persistence.rs`,
+`store.rs`).
 `GenericUserStore::mask_out` refuses the whole call with
 `UserStoreError::ShortUserBigramValue` when the mask leaves a short-valued
 key's gram to be loaded; a key the mask erases wholesale
@@ -3237,9 +3245,9 @@ is `7` and whose item count is `0`:
 - `pinyin_mask_out(ctx, 0xFFFFFFFF, 0)`: completes (no abort), the mask
   answering 0 and leaving the state.
 
-oxpinyin's `load_bigram` records every row that decodes to zero items and a
-nonzero total, keeping the gram in the value model
-(`crates/oxpinyin-user/src/persistence.rs`, `bigram_empty_with_total`).
+oxpinyin's `load_bigram` decodes each four-byte total and its complete items into the
+value model. The predicted-candidate guard reads the current raw gram at
+call time (`crates/oxpinyin-user/src/persistence.rs`, `store.rs`).
 `pinyin_guess_predicted_candidates` refuses the call only when a resolved
 prefix's own gram is item-less with a residual total — the pin loads no other
 row (`src/pinyin.cpp:2322-2336`) — checking `has_empty_bigram_gram_for` after
@@ -3437,3 +3445,69 @@ separate case replaces a scratch system chunk after init to hold the actual
 disk reload, without modifying the oracle. All fixtures are ordinary
 backend-independent MemoryChunk inputs. No supported API, ABI or dependency
 change. Execution observations are transient; no captures are retained.
+
+### Bigram export iterator reads past a partial user-gram item (#677; policy row 98, class (b), 2026-10-13 UTC)
+
+- **Upstream source cite:** `src/storage/ngram.cpp:133-143`
+  (`SingleGram::retrieve_all`) at
+  `074a2219c90feaf962d0d24f034514033ece5f99`, read from the pinned
+  libpinyin source; `src/pinyin.cpp:789-889` reaches the walk.
+- **Mechanism:** a value with a four-byte total, `k` complete eight-byte
+  items and 1–7 trailing bytes has a partial `SingleGramItem` at its end.
+  `retrieve_all` walks with `cur != end`, then reads an entire item. This
+  can over-read the value on any backend. The partial tail is distinct
+  from the complete-item count that `get_length` and indexed reads use.
+- **What oxpinyin does instead:** the user loader decodes the total and
+  complete items for defined reads, and the raw DBM keeps the original
+  value for save. The export iterator refuses a predecessor with a
+  partial item tail, returning NULL and emitting one `libpinyin` warning.
+  A mask or candidate removal refuses with `false` and one warning in the
+  facade domain when a surviving predecessor has such a tail; a mask
+  deleting that predecessor wholesale never reads its value.
+  The raw tkrzw store returns libtkrzw's actual results, including a
+  retained removal record if the linked library returns one.
+- **Externally observable:** a caller sees NULL and one warning where
+  upstream can read outside the value. The source guard and ordinary
+  backend-independent valid-row differential are prepared; no malformed
+  crash probe was executed in this source-maintenance phase.
+
+### A partial user-gram tail with no complete items and a residual total reaches the existing `get_length` assertion (#677; policy row 88, class (c), 2026-10-13 UTC)
+
+`SingleGram::get_length` (`src/storage/ngram.cpp:58-70` at the same pin)
+computes the count in complete eight-byte items. A four-byte total followed
+by 1–7 bytes has zero complete items, so a nonzero total reaches its
+`assert(0 == total_freq)`. This is the same assertion and predicted-candidate
+API shape already registered in row 88 for a bare four-byte total. The user
+loader now decodes the partial value as an item-less gram with its total;
+the existing prefix-scoped predicted-candidate check reads the live raw
+value and refuses with `false`,
+an empty candidate list and exactly one `libpinyin` warning. No separate
+row 99 or five-byte-specific branch is needed.
+
+### Training on a malformed user-gram value reads past a partial item (#677; policy row 100, class (b), 2026-10-14 UTC)
+
+`SingleGram::insert_freq` (`src/storage/ngram.cpp:178`, loop `:190` at
+`074a2219c90feaf962d0d24f034514033ece5f99`), `get_freq` (`:231`, loop
+`:241`) and `set_freq` (`:252`, loop `:261`) walk the existing items with
+`cur_item != end`. `pinyin_train`/`zhuyin_train` reach them through
+`train_result3` (`pinyin_lookup2.cpp:611`, `phonetic_lookup.h:889`). A value
+of length `4 + 8k + r`, `1 <= r <= 7`, leaves a partial eight-byte item at
+its end that these loops read past: the same out-of-bounds read as row 98,
+on the training path. The maintainer accepted this source-based class (b)
+classification; no crash probe was run.
+
+`pinyin_choose_predicted_candidate` reaches the same walks
+(`pinyin.cpp:2630-2633`: `get_total_freq`, `get_freq`, `insert_freq` on the
+previous token's gram).
+
+- **What oxpinyin does instead:** `pinyin_train`/`zhuyin_train` return
+  `false` with exactly one facade-domain warning, and observe nothing,
+  whenever the training step would load a predecessor for which
+  `has_oob_bigram_value_for` is true; `pinyin_choose_predicted_candidate`
+  answers `false` with one warning under the same condition. The check
+  reads the live raw value at each call. The raw value is untouched and
+  survives save and reopen byte for byte. The previous five-byte
+  sentinel-specific attribution and guard are withdrawn.
+- **Held by:** `training_over_a_partial_tail_refuses_and_keeps_the_raw_value`
+  and `a_partial_tail_created_in_session_refuses_training`
+  (`crates/oxpinyin-user/src/store_libpinyin.rs`), at store level.

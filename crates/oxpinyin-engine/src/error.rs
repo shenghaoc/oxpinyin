@@ -120,6 +120,16 @@ pub enum EngineError {
         /// The matrix position of the forced phrase.
         position: usize,
     },
+    /// A training step would load a predecessor whose stored user-bigram
+    /// value has a partial item tail. The pin's `insert_freq`
+    /// (`ngram.cpp:178`, loop `:190`), `get_freq` (`:231`, loop `:241`) and `set_freq`
+    /// (`:252`, loop `:261`) walk
+    /// with `cur_item != end` and read past it (register row 100); the
+    /// engine answers an error, before observing anything.
+    UnsafeTrainingPredecessor {
+        /// The predecessor token whose gram has the partial tail.
+        token: u32,
+    },
     /// A training span met a matrix position the pin's
     /// `increase_pronunciation_possibility` asserts on: the decoded
     /// result no longer fits the current matrix because a re-parse
@@ -206,6 +216,12 @@ impl fmt::Display for EngineError {
                     "the forced phrase at {position} differs from the decoded result's"
                 )
             }
+            Self::UnsafeTrainingPredecessor { token } => {
+                write!(
+                    formatter,
+                    "the predecessor {token:#010x} has a partial user-bigram item"
+                )
+            }
             Self::MatrixColumnAssert { offset } => {
                 write!(
                     formatter,
@@ -248,6 +264,7 @@ impl std::error::Error for EngineError {
             | Self::MatrixColumnAssert { .. }
             | Self::StaleTrainingConstraint { .. }
             | Self::StaleTrainingSpan { .. }
+            | Self::UnsafeTrainingPredecessor { .. }
             | Self::OverlongUserIndexKey { .. }
             | Self::UserModel(_) => None,
         }

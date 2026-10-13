@@ -499,6 +499,38 @@ pub extern "C" fn pinyin_begin_get_bigram_phrases(
         );
         return ptr::null_mut();
     }
+    // Class (c), `memory_chunk.h:390`: `retrieve_all` reads the four-byte
+    // total before its item walk. A short row under any predecessor makes
+    // the pin assert when the iterator advances; refuse the export here.
+    if ctx.core.user.as_ref().is_some_and(|store| {
+        store.bigram_predecessors().is_ok_and(|predecessors| {
+            predecessors
+                .iter()
+                .any(|&token| store.has_short_bigram_value_for(token))
+        })
+    }) {
+        crate::ffi::log_warning(
+            "pinyin_begin_get_bigram_phrases: a user bigram value is shorter than a guint32 \
+             total_freq (upstream aborts, memory_chunk.h:390)",
+        );
+        return ptr::null_mut();
+    }
+    // Class (b), `ngram.cpp:133-143`: `retrieve_all` walks with
+    // `cur != end`, so a partial item tail is read past its end. The
+    // export iterator loads every predecessor; refuse it with one warning.
+    if ctx.core.user.as_ref().is_some_and(|store| {
+        store.bigram_predecessors().is_ok_and(|predecessors| {
+            predecessors
+                .iter()
+                .any(|&token| store.has_oob_bigram_value_for(token))
+        })
+    }) {
+        crate::ffi::log_warning(
+            "pinyin_begin_get_bigram_phrases: a user bigram value has a partial item tail \
+             (upstream reads past it, ngram.cpp:133-143)",
+        );
+        return ptr::null_mut();
+    }
     let walk = ctx.bigram_export_walk().unwrap_or_default();
     Box::into_raw(Box::new(BigramHandle { walk })).cast()
 }

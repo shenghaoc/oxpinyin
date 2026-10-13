@@ -208,11 +208,11 @@ pub enum UserStoreError {
     /// `pinyin_begin_get_bigram_phrases` both drive that walk. The
     /// class-(c) answer: the walk fails.
     NonTokenUserBigramKey,
-    /// A `user_bigram.db` value is shorter than a `guint32`:
-    /// `SingleGram::get_total_freq` reads four bytes through
-    /// `MemoryChunk::get_content<guint32>`, whose assert dies
-    /// (`memory_chunk.h:390`). `mask_out` (`ngram.cpp:80`) and
-    /// `pinyin_guess_predicted_candidates` (`ngram.cpp:69`) both read it.
+    /// A `user_bigram.db` value is shorter than a `guint32`, or has an
+    /// incomplete eight-byte item after that total. The pin asserts on
+    /// the missing total (`memory_chunk.h:390`) and reads past a partial
+    /// item in `mask_out` (`ngram.cpp:76-86`). The mask and removal
+    /// facades report either cause through one malformed-value warning.
     ShortUserBigramValue,
     /// A `user_bigram.db` row decodes to a gram with no items and a
     /// nonzero `total_freq`: `SingleGram::get_length` asserts
@@ -287,8 +287,8 @@ impl fmt::Display for UserStoreError {
             ),
             Self::ShortUserBigramValue => write!(
                 f,
-                "user bigram value is shorter than a guint32 total_freq (upstream aborts, \
-                 memory_chunk.h:390)"
+                "malformed user bigram value (upstream asserts on a missing total or reads \
+                 past a partial item; memory_chunk.h:390, ngram.cpp:76-86)"
             ),
             Self::EmptyUserBigramGram => write!(
                 f,
@@ -1016,24 +1016,42 @@ impl<S: WriteStore> GenericUserStore<S> {
         !self.overlong_index_readings().is_empty()
     }
 
-    /// The `user_bigram.db` keys whose value is shorter than a `guint32`
-    /// `total_freq` — the pin's `MemoryChunk::get_content<guint32>` assert
-    /// (`memory_chunk.h:390`). Empty for a store with no bigram rows.
-    fn short_bigram_values(&self) -> &[Token] {
+    /// The raw value currently stored under a predecessor, independent
+    /// of the session's decoded count rows. Backend removals and later
+    /// stores can change it after the profile was loaded.
+    fn raw_bigram_value(&self, token: Token) -> Option<Vec<u8>> {
+        let mirror = self.inner.bigram_db.as_ref()?;
+        mirror
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&token.to_le_bytes())
+            .ok()
+            .flatten()
+    }
+
+    /// Store `value` raw under `token`, as a backend result the writer
+    /// never produces (a retained removal record), for the tests.
+    #[cfg(test)]
+    pub(crate) fn plant_raw_bigram(&self, token: Token, value: &[u8]) {
         self.inner
-            .libpinyin
+            .bigram_db
             .as_ref()
-            .map_or(&[][..], |target| target.bigram_short_values.as_slice())
+            .expect("libpinyin mirror")
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .store(&token.to_le_bytes(), value)
+            .expect("plant raw value");
     }
 
     /// Whether the gram stored under `token` is shorter than a `guint32`
     /// `total_freq`. The predicted-candidate walk loads only the resolved
-    /// prefixes' own grams (`pinyin.cpp:2322-2330`), so a short row under
-    /// any other token never reaches `get_total_freq` and does not abort
-    /// the prediction.
+    /// prefixes' own grams (`pinyin.cpp:2322-2330`), while the export walk
+    /// loads every predecessor (`pinyin.cpp:889`). Callers scope this
+    /// live raw check to the grams their pinned operation reaches.
     #[must_use]
     pub fn has_short_bigram_value_for(&self, token: Token) -> bool {
-        self.short_bigram_values().contains(&token)
+        self.raw_bigram_value(token)
+            .is_some_and(|value| value.len() < 4)
     }
 
     /// The `user_bigram.db` keys that are not four bytes — the pin's
@@ -1055,24 +1073,32 @@ impl<S: WriteStore> GenericUserStore<S> {
         !self.non_token_bigram_keys().is_empty()
     }
 
-    /// The `user_bigram.db` rows with no items and a residual
-    /// `total_freq` — the pin's `SingleGram::get_length` assert
-    /// (`ngram.cpp:70`). Empty for a store with no bigram rows.
-    fn empty_bigram_grams(&self) -> &[Token] {
-        self.inner
-            .libpinyin
-            .as_ref()
-            .map_or(&[][..], |target| target.bigram_empty_with_total.as_slice())
-    }
-
     /// Whether the gram stored under `token` has no items and a nonzero
     /// `total_freq` — the pin's `SingleGram::get_length` assert
     /// (`ngram.cpp:70`). `_compute_predicted_bigram_candidates` merges only
     /// the resolved prefixes' own grams (`pinyin.cpp:2322-2336`), so an
     /// item-less row under any other token never reaches `get_length`.
+    /// The raw container is consulted at call time: a backend removal
+    /// may leave a partial item behind after the profile was loaded.
     #[must_use]
     pub fn has_empty_bigram_gram_for(&self, token: Token) -> bool {
-        self.empty_bigram_grams().contains(&token)
+        self.raw_bigram_value(token).is_some_and(|bytes| {
+            bytes.len() >= 4
+                && bytes.len() < 12
+                && u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) != 0
+        })
+    }
+
+    /// Whether `token`'s stored user-bigram value has a partial item
+    /// tail (register row 98, class (b)). The pin's `retrieve_all`
+    /// (`ngram.cpp:133-143`) and `SingleGram::mask_out` (`ngram.cpp:86`)
+    /// both walk with `cur != end` and read past that tail. Read the live
+    /// raw container so an in-session store or backend removal is visible
+    /// immediately, and an actual deletion or overwrite clears the flag.
+    #[must_use]
+    pub fn has_oob_bigram_value_for(&self, token: Token) -> bool {
+        self.raw_bigram_value(token)
+            .is_some_and(|bytes| bytes.len() >= 4 && !(bytes.len() - 4).is_multiple_of(8))
     }
 
     /// The `user_bigram.db` rows whose `total_freq` is not covered by their
@@ -1113,17 +1139,25 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// loads it and calls `SingleGram::mask_out`, whose `get_total_freq`
     /// aborts on a short value (`memory_chunk.h:390`), and asks
     /// `get_length` for the remainder, which aborts on a residual
-    /// (`ngram.cpp:70`, `ngram_bdb.cpp:243`). A gram the mask removes
+    /// (`ngram.cpp:70`, `ngram_bdb.cpp:243`). A partial tail is read by
+    /// `mask_out`'s `cur != end` walk even when no complete item matches.
+    /// A gram the mask removes
     /// wholesale (`(key & mask) == value`) is never loaded, so the two
     /// value faults are checked only for keys the mask leaves alone.
     fn bigram_mask_fault(&self, mask: Token, value: Token) -> Option<UserStoreError> {
         if self.has_non_token_bigram_key() {
             return Some(UserStoreError::NonTokenUserBigramKey);
         }
-        if self
-            .short_bigram_values()
+        let predecessors = self.bigram_predecessors().unwrap_or_default();
+        if predecessors
             .iter()
-            .any(|key| (key & mask) != value)
+            .any(|&key| (key & mask) != value && self.has_short_bigram_value_for(key))
+        {
+            return Some(UserStoreError::ShortUserBigramValue);
+        }
+        if predecessors
+            .iter()
+            .any(|&key| (key & mask) != value && self.has_oob_bigram_value_for(key))
         {
             return Some(UserStoreError::ShortUserBigramValue);
         }
@@ -1453,7 +1487,9 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError`] when the observation cannot be committed.
+    /// Returns [`UserStoreError`] when the observation cannot be committed,
+    /// or [`UserStoreError::ShortUserBigramValue`] when `last`'s stored
+    /// value has a partial item tail (register row 100).
     pub fn observe_selection(&mut self, last: Token, cur: Token) -> Result<u64, UserStoreError> {
         let seed = self.update(last, cur, SeedPolicy::Training)?;
         self.inner.dirty.store(true, Ordering::Relaxed);
@@ -1579,6 +1615,13 @@ impl<S: WriteStore> GenericUserStore<S> {
         cur: Token,
         policy: SeedPolicy,
     ) -> Result<u64, UserStoreError> {
+        // 074a2219 `insert_freq`/`get_freq`/`set_freq` walk the predecessor's
+        // gram with `cur_item != end` (`ngram.cpp:190`, `:241`, `:261`):
+        // a partial item tail is read past, so refuse before any change.
+        // Live raw value, so a tail created or removed in-session counts.
+        if self.has_oob_bigram_value_for(last) {
+            return Err(UserStoreError::ShortUserBigramValue);
+        }
         let db = self.database();
         let seed = db.write(|txn| {
             let pair_key = codec::encode_token_pair(last, cur);

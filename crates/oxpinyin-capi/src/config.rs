@@ -374,12 +374,13 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
             false
         }
         oxpinyin_facade::MaskOutOutcome::ShortUserBigramValue => {
-            // Class (c), `memory_chunk.h:390`: the user bigram carries a
-            // value shorter than a guint32 total_freq and the pin's
-            // `get_total_freq` read asserts.
+            // A missing total asserts (class c, `memory_chunk.h:390`);
+            // a partial item tail makes `mask_out` over-read (class b,
+            // `ngram.cpp:76-86`). Both refuse with one warning.
             crate::ffi::log_warning(
-                "pinyin_mask_out: a user bigram value is shorter than a guint32 total_freq \
-                 (upstream aborts, memory_chunk.h:390)",
+                "pinyin_mask_out: malformed user bigram value \
+                 (upstream asserts on a missing total or reads past a partial item; \
+                 memory_chunk.h:390, ngram.cpp:76-86)",
             );
             false
         }

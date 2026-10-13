@@ -11,7 +11,7 @@ use oxpinyin_engine::{
     CandidateList, EngineError, check_lookup_offset_range, normalize_lookup_offset,
 };
 use oxpinyin_runtime::{RuntimeDict, RuntimeLm, RuntimeSession};
-use oxpinyin_user::UserStore;
+use oxpinyin_user::{SENTENCE_START, UserStore};
 
 use crate::context::LiveOptions;
 
@@ -220,9 +220,11 @@ impl InstanceCore {
     ///
     /// # Errors
     ///
-    /// Returns the engine's invalid-index, stale-constraint, stale-span or
-    /// user-model error. The C facade maps the first three to the pin's
-    /// class (c) warning and false.
+    /// Returns the engine's invalid-index, stale-constraint, stale-span,
+    /// unsafe-predecessor or user-model error. The C facade maps the first
+    /// three to the pin's class (c) warning and false, and the unsafe
+    /// predecessor (a partial item tail, register row 100) to a class (b)
+    /// warning and false, with nothing observed.
     pub fn train(&mut self, index: u8) -> Result<bool, EngineError> {
         let Some(user) = self.user.as_mut() else {
             return Ok(false);
@@ -232,13 +234,27 @@ impl InstanceCore {
         if !user.has_user_directory() {
             return Ok(false);
         }
+        // 074a2219 `insert_freq`/`get_freq`/`set_freq` walk a predecessor's
+        // gram with `cur_item != end` (`ngram.cpp:190`, `:241`, `:261`):
+        // refuse before any observation when the step would load a gram
+        // with a partial item tail. Checked against the live raw values.
+        if let Some(token) = self
+            .session
+            .training_predecessors(index)
+            .into_iter()
+            .map(|prev| prev.map_or(SENTENCE_START, PhraseToken::value))
+            .find(|&token| user.has_oob_bigram_value_for(token))
+        {
+            return Err(EngineError::UnsafeTrainingPredecessor { token });
+        }
         let result = self.session.train_nbest(index, user);
         if !matches!(
             &result,
             Ok(false)
                 | Err(EngineError::CandidateIndexOutOfRange { .. }
                     | EngineError::StaleTrainingConstraint { .. }
-                    | EngineError::StaleTrainingSpan { .. })
+                    | EngineError::StaleTrainingSpan { .. }
+                    | EngineError::UnsafeTrainingPredecessor { .. })
         ) {
             // A valid call still marks the context modified, including a
             // constraint-free result or a subsequent user-model failure
