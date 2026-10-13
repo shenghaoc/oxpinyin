@@ -605,7 +605,10 @@ impl MergedGram {
 /// observed by the next step or guess. A loaded miss is reused too.
 #[derive(Default)]
 pub struct NbestStepRow {
-    loaded: Option<Option<MergedGram>>,
+    loaded: Option<MergedGram>,
+    // The generation tag adds one word per cached row. None means unloaded;
+    // a loaded missing gram still has a nonzero generation tag.
+    user_generation: Option<core::num::NonZeroU64>,
 }
 
 impl NbestStepRow {
@@ -618,10 +621,28 @@ impl NbestStepRow {
         &mut self,
         load: impl FnOnce() -> Result<Option<MergedGram>, E>,
     ) -> Result<Option<&MergedGram>, E> {
-        if self.loaded.is_none() {
-            self.loaded = Some(load()?);
+        self.get_or_try_init_in_generation(0, load)
+    }
+
+    /// Loads once per user-store generation, including a missing row.
+    /// The caller must validate the generation after reading the candidate's
+    /// unigram deltas and retry if a committed write changed it.
+    ///
+    /// # Errors
+    /// Returns the loader's error unchanged, without caching it.
+    pub fn get_or_try_init_in_generation<E>(
+        &mut self,
+        generation: u64,
+        load: impl FnOnce() -> Result<Option<MergedGram>, E>,
+    ) -> Result<Option<&MergedGram>, E> {
+        let tag = core::num::NonZeroU64::new(generation.wrapping_add(1));
+        // At u64::MAX, do not cache: zero remains the unloaded tag and
+        // cannot be confused with a loaded miss even when the counter wraps.
+        if tag.is_none() || self.user_generation != tag {
+            self.loaded = load()?;
+            self.user_generation = tag;
         }
-        Ok(self.loaded.as_ref().and_then(Option::as_ref))
+        Ok(self.loaded.as_ref())
     }
 }
 

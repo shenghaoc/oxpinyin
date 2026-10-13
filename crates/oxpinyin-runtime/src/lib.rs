@@ -1305,31 +1305,56 @@ impl LanguageModel for RuntimeLm {
         token: &Self::Token,
         row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
-        let extra = self.delta(None, token.value())?;
-        let imported = if let Some(store) = self.user.as_ref() {
-            store
-                .system_item_override(token.value())
-                .map_err(|error| LmError::User(error.to_string()))?
-                .is_some()
-        } else {
-            false
-        };
-        self.inner
-            .nbest_step_costs_from_row(token, extra, imported, row, || {
-                let (user_rows, user_total) = match self.user.as_ref() {
-                    None => (Vec::new(), 0),
-                    Some(store) => (
-                        store
-                            .bigram_successors(prev.value())
-                            .map_err(|error| LmError::User(error.to_string()))?,
-                        store
-                            .bigram_total(prev.value())
-                            .map_err(|error| LmError::User(error.to_string()))?,
-                    ),
+        loop {
+            // Commits advance this generation while holding the same database
+            // guard used by every read below. Equal generations bracket one
+            // consistent snapshot, including a row cached by an earlier
+            // candidate. A changed generation discards that row and retries
+            // the unigram deltas, successor counts and total together.
+            // The pin loads the SingleGrams before walking candidates
+            // (074a2219 phonetic_lookup.h:595-629; ngram.cpp get_freq).
+            let generation = self.user.as_ref().map_or(0, UserStore::generation);
+            let result = (|| {
+                let extra = self.delta(None, token.value())?;
+                let imported = if let Some(store) = self.user.as_ref() {
+                    store
+                        .system_item_override(token.value())
+                        .map_err(|error| LmError::User(error.to_string()))?
+                        .is_some()
+                } else {
+                    false
                 };
-                self.inner
-                    .load_nbest_row(prev.value(), &user_rows, user_total)
-            })
+                self.inner.nbest_step_costs_from_row_in_generation(
+                    token,
+                    extra,
+                    imported,
+                    row,
+                    generation,
+                    || {
+                        let (user_rows, user_total) = match self.user.as_ref() {
+                            None => (Vec::new(), 0),
+                            Some(store) => (
+                                store
+                                    .bigram_successors(prev.value())
+                                    .map_err(|error| LmError::User(error.to_string()))?,
+                                store
+                                    .bigram_total(prev.value())
+                                    .map_err(|error| LmError::User(error.to_string()))?,
+                            ),
+                        };
+                        self.inner
+                            .load_nbest_row(prev.value(), &user_rows, user_total)
+                    },
+                )
+            })();
+            if self
+                .user
+                .as_ref()
+                .is_none_or(|store| store.generation() == generation)
+            {
+                return result;
+            }
+        }
     }
 }
 
