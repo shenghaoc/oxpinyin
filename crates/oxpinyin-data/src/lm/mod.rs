@@ -762,11 +762,30 @@ impl BigramLanguageModel {
         row: &mut oxpinyin_core::NbestStepRow,
         load: impl FnOnce() -> Result<Option<oxpinyin_core::MergedGram>, LmError>,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+        self.nbest_step_costs_from_row_in_generation(token, user, imported_item, row, 0, load)
+    }
+
+    /// The same cost law with row reuse bound to one user-store generation.
+    /// The caller validates that generation after the score is assembled.
+    ///
+    /// # Errors
+    /// Propagates the row loader's error after the existing item gates.
+    pub fn nbest_step_costs_from_row_in_generation(
+        &self,
+        token: &PhraseToken,
+        user: UserCountDelta,
+        imported_item: bool,
+        row: &mut oxpinyin_core::NbestStepRow,
+        generation: u64,
+        load: impl FnOnce() -> Result<Option<oxpinyin_core::MergedGram>, LmError>,
+    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
         self.nbest_step_costs_using(token, user, imported_item, || {
-            Ok(row.get_or_try_init(load)?.map(|gram| {
-                let count = gram.count_if_present(token.value());
-                (count.unwrap_or(0), gram.total(), count.is_some())
-            }))
+            Ok(row
+                .get_or_try_init_in_generation(generation, load)?
+                .map(|gram| {
+                    let count = gram.count_if_present(token.value());
+                    (count.unwrap_or(0), gram.total(), count.is_some())
+                }))
         })
     }
 

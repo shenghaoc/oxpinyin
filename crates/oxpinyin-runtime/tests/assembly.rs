@@ -464,3 +464,58 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
     drop(runtime);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
+    use oxpinyin_core::NbestStepRow;
+    let dir = std::env::temp_dir().join(format!("oxpinyin-nbest-snapshot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
+    let mut store = runtime.user_store().unwrap();
+    let keys: Vec<_> = ["ni", "hao"]
+        .into_iter()
+        .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
+        .collect();
+    let token = PhraseToken::new(store.add_phrase("你鎄", &keys, Some(5)).unwrap());
+    let other = store.add_phrase("你鎬", &keys, Some(5)).unwrap();
+    store.set_bigram_count(SENTENCE_START, other, 1000).unwrap();
+    let prev = PhraseToken::new(SENTENCE_START);
+    let lm = runtime.lm();
+    let mut row = NbestStepRow::default();
+    let before = lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap();
+    assert_eq!(before, lm.nbest_step_costs(&prev, &token).unwrap());
+    // This is a deterministic concurrent interleaving: a different thread
+    // commits after the first candidate populated this step's row, before
+    // the next candidate reads its unigram deltas. The row must not retain
+    // the old counts while scoring with the new phrase-index total.
+    let mut writer = store.clone();
+    std::thread::spawn(move || {
+        writer
+            .observe_selection(SENTENCE_START, token.value())
+            .unwrap();
+        writer
+    })
+    .join()
+    .unwrap();
+    let trained = lm.nbest_step_costs(&prev, &token).unwrap();
+    assert_ne!(trained, before);
+    assert_eq!(
+        lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap(),
+        trained
+    );
+    let mut writer = store.clone();
+    std::thread::spawn(move || writer.mask_out(u32::MAX, other).unwrap())
+        .join()
+        .unwrap();
+    let forgotten = lm.nbest_step_costs(&prev, &token).unwrap();
+    assert_ne!(forgotten, trained);
+    assert_eq!(
+        lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap(),
+        forgotten
+    );
+    drop(lm);
+    drop(store);
+    drop(runtime);
+    std::fs::remove_dir_all(dir).unwrap();
+}
