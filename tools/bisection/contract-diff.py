@@ -3427,12 +3427,46 @@ def user_dir_listing(scratch, before):
     return listing
 
 
-def run_worker(mode, so, data, name, scratch, extra_env=None):
+# Axis J targeted reachability controls, at libpinyin 074a2219:
+# pinyin.cpp:2515-2520 calls ForwardPhoneticConstraints::diff_result when
+# choosing a displayed NBEST row. No forged candidate or context is needed.
+@case('j-choose-nbest-diff-result', control=True)
+def _(k):
+    inst = guessed(k)
+    candidate = row_of(k, inst, 1)
+    assert candidate, 'no displayed NBEST candidate'
+    rank = C.c_ubyte(0xff)
+    ranked = k.fn('get_candidate_nbest_index', B, P, P, C.POINTER(C.c_ubyte))(
+        inst, candidate, C.byref(rank))
+    chosen = k.fn('choose_candidate', I, P, Z, P)(inst, 0, candidate)
+    return {'ranked': ranked, 'rank': rank.value, 'chosen': chosen}
+
+
+# Scheme HSU (2) constructs ZhuyinDiscreteParser2; Dachen CP26 (9)
+# constructs ZhuyinDaChenCP26Parser2. Batch parse goes through their parse
+# virtuals (pinyin.cpp:1595 / zhuyin.cpp:1068), rather than one-key parsing.
+def j_multi_chewing(scheme):
+    def probe(k):
+        setter = 'set_zhuyin_scheme' if k.mode == 'pinyin' else 'set_chewing_scheme'
+        selected = k.fn(setter, B, P, I)(k.ctx, scheme)
+        parsed = k.fn('parse_more_chewings', Z, P, S)(k.inst, b'abc')
+        length = k.fn('get_parsed_input_length', Z, P)(k.inst)
+        return {'scheme': scheme, 'selected': selected, 'parsed': parsed, 'length': length}
+    return probe
+
+
+for _j_mode in ('pinyin', 'zhuyin'):
+    for _j_scheme in (2, 9):
+        case(f'j-chewing-multi-key-{_j_mode}-{_j_scheme}', mode=_j_mode,
+             control=True)(j_multi_chewing(_j_scheme))
+
+
+def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
     env = dict(os.environ, TMPDIR=str(scratch))
     env.update(extra_env or {})
     before = set(os.listdir(scratch))
     proc = subprocess.run([sys.executable, __file__, '--worker', mode, str(so), str(data), name],
-                          capture_output=True, env=env)
+                          capture_output=True, env=env, timeout=timeout)
     stdout = proc.stdout.decode('utf-8', 'replace')
     # stderr keeps invalid UTF-8 apart from a real U+FFFD (`surrogateescape`),
     # since the pin writes paths as their bytes.
@@ -3440,6 +3474,9 @@ def run_worker(mode, so, data, name, scratch, extra_env=None):
     lines = [json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
     return dict(exit=proc.returncode, result=lines[-1] if lines else None,
                 userfiles=user_dir_listing(scratch, before),
+                measurement_roots=[line.removeprefix('J-ROOT ') for line in stdout.splitlines() if line.startswith('J-ROOT ')],
+                measurement_abort_flush=('J-GCOV-ABORT-BEGIN' in stdout.splitlines()
+                                         and 'J-GCOV-ABORT-END' in stdout.splitlines()),
                 stderr_lines=len(stderr.splitlines()),
                 stderr=re.sub(r'(user|sys)-(\udcff)?[A-Za-z0-9_]+', r'\1-\2X', stderr))
 
@@ -6833,6 +6870,30 @@ def run_axis_c(args, names):
         return 0
     return 1 if totals['case_differ'] else 0
 
+def matches(spec, pin, subject):
+    """The verdict predicate shared by the driver and gcov measurement tier."""
+    as_abort = spec['abort'] is not NO_ABORT and (not spec['either'] or pin['exit'] == -6)
+    if spec['crash'] is not None and not as_abort:
+        shown = subject['result'] or {}
+        same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
+            pin['stderr'] == subject['stderr'] and \
+            all(shown.get(key) == value for key, value in spec['crash'].items())
+    elif as_abort:
+        shown = subject['result'] or {}
+        same = pin['exit'] == -6 and subject['exit'] == 0 and \
+            shown.get('ret') == spec['abort'] and shown.get('logs') == [[WARNING_DOMAIN[spec['mode']], 16]] and \
+            all(v for key, v in shown.items() if key.startswith('untouched')) and \
+            (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
+    else:
+        # A side that died or printed nothing observed nothing: two
+        # identical failures must not read as a match (nor satisfy
+        # --expect-parent as a difference).
+        same = all(r['exit'] == 0 and r['result'] is not None for r in (pin, subject)) and \
+            observed(pin['result']) == observed(subject['result'])
+        if spec['stderr']:
+            same = same and pin['stderr'] == subject['stderr']
+    return same
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -6920,26 +6981,7 @@ def main():
             if args.observations:
                 with args.observations.open('a') as capture:
                     capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
-            as_abort = spec['abort'] is not NO_ABORT and (not spec['either'] or pin['exit'] == -6)
-            if spec['crash'] is not None and not as_abort:
-                shown = subject['result'] or {}
-                same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
-                    pin['stderr'] == subject['stderr'] and \
-                    all(shown.get(key) == value for key, value in spec['crash'].items())
-            elif as_abort:
-                shown = subject['result'] or {}
-                same = pin['exit'] == -6 and subject['exit'] == 0 and \
-                    shown.get('ret') == spec['abort'] and shown.get('logs') == [[WARNING_DOMAIN[spec['mode']], 16]] and \
-                    all(v for key, v in shown.items() if key.startswith('untouched')) and \
-                    (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
-            else:
-                # A side that died or printed nothing observed nothing: two
-                # identical failures must not read as a match (nor satisfy
-                # --expect-parent as a difference).
-                same = all(r['exit'] == 0 and r['result'] is not None for r in (pin, subject)) and \
-                    observed(pin['result']) == observed(subject['result'])
-                if spec['stderr']:
-                    same = same and pin['stderr'] == subject['stderr']
+            same = matches(spec, pin, subject)
             expected = same if (not args.expect_parent or spec['control']) else not same
             verdict = 'MATCH' if same else 'DIFFER'
             print(json.dumps(dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,
