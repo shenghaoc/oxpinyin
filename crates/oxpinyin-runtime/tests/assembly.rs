@@ -485,13 +485,12 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
     let mut row = NbestStepRow::default();
     let before = lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap();
     assert_eq!(before, lm.nbest_step_costs(&prev, &token).unwrap());
-    assert!(
-        lm.nbest_successors_in_row(&prev, &mut row)
-            .unwrap()
-            .unwrap()
-            .iter()
-            .any(|(successor, _)| *successor == other)
-    );
+    let mut saw_other = false;
+    lm.nbest_successors_in_row(&prev, &mut row)
+        .unwrap()
+        .unwrap()
+        .visit_range(other, other, |_| saw_other = true);
+    assert!(saw_other);
     // This is a deterministic concurrent interleaving: a different thread
     // commits after the first candidate populated this step's row, before
     // the next candidate reads its unigram deltas. The row must not retain
@@ -507,13 +506,12 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
     .unwrap();
     let trained = lm.nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(trained, before);
-    assert!(
-        lm.nbest_successors_in_row(&prev, &mut row)
-            .unwrap()
-            .unwrap()
-            .iter()
-            .any(|(successor, _)| *successor == token.value())
-    );
+    let mut saw_trained = false;
+    lm.nbest_successors_in_row(&prev, &mut row)
+        .unwrap()
+        .unwrap()
+        .visit_range(token.value(), token.value(), |_| saw_trained = true);
+    assert!(saw_trained);
     assert_eq!(
         lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap(),
         trained
@@ -524,13 +522,12 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
         .unwrap();
     let forgotten = lm.nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(forgotten, trained);
-    assert!(
-        lm.nbest_successors_in_row(&prev, &mut row)
-            .unwrap()
-            .unwrap()
-            .iter()
-            .all(|(successor, _)| *successor != other)
-    );
+    let mut saw_forgotten = false;
+    lm.nbest_successors_in_row(&prev, &mut row)
+        .unwrap()
+        .unwrap()
+        .visit_range(other, other, |_| saw_forgotten = true);
+    assert!(!saw_forgotten);
     assert_eq!(
         lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap(),
         forgotten

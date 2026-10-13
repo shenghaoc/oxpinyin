@@ -248,3 +248,54 @@ fn step_row_reuses_hits_and_misses_but_retries_errors() {
             .is_none()
     );
 }
+
+#[test]
+fn raw_step_row_reuses_hits_and_misses_but_retries_errors() {
+    use oxpinyin_core::{NbestRawGram, NbestStepRow, NbestSuccessors};
+    let mut row = NbestStepRow::default();
+    assert_eq!(
+        row.get_or_try_init_raw::<&str>(|| Err("empty value")).err(),
+        Some("empty value")
+    );
+    let mut value = 0_u32.to_le_bytes().to_vec();
+    for (token, count) in [(3_u32, 0_u32), (1, 4), (3, 9)] {
+        value.extend_from_slice(&token.to_le_bytes());
+        value.extend_from_slice(&count.to_le_bytes());
+    }
+    let gram = row
+        .get_or_try_init_raw::<&str>(|| {
+            Ok(
+                NbestRawGram::try_new(Some(value), vec![(2, 7), (3, u64::from(u32::MAX))], 0)
+                    .unwrap(),
+            )
+        })
+        .unwrap()
+        .unwrap();
+    assert_eq!(gram.total(), 0);
+    assert_eq!(gram.count_if_present(1), Some(4));
+    assert_eq!(gram.count_if_present(2), Some(7));
+    assert_eq!(gram.count_if_present(3), Some(u64::from(u32::MAX)));
+    assert_eq!(gram.count_if_present(4), None);
+    let mut visited = Vec::new();
+    NbestSuccessors::Raw(gram).visit_range(1, 3, |token| visited.push(token));
+    visited.sort_unstable();
+    visited.dedup();
+    assert_eq!(visited, [1, 2, 3]);
+    assert!(
+        row.get_or_try_init_raw::<&str>(|| panic!("hit reloaded"))
+            .unwrap()
+            .is_some()
+    );
+    let mut miss = NbestStepRow::default();
+    assert!(
+        miss.get_or_try_init_raw::<&str>(|| Ok(None))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        miss.get_or_try_init_raw::<&str>(|| panic!("miss reloaded"))
+            .unwrap()
+            .is_none()
+    );
+    assert!(NbestRawGram::try_new(Some(vec![]), vec![(4, 1)], 1).is_err());
+}

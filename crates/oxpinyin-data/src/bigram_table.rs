@@ -67,6 +67,18 @@ impl BigramTable {
     /// stored value is malformed (an empty value is corruption, reported
     /// rather than masked as a clean miss).
     pub fn load_successors(&self, prev_token: u32) -> Result<Option<BigramRow>, DictError> {
+        self.load_raw_successors(prev_token)?
+            .map(|value| parse_bigram_value(&value))
+            .transpose()
+    }
+
+    /// Loads one encoded successor value without building a decoded record
+    /// array. N-best retains these bytes for only its current step.
+    ///
+    /// # Errors
+    /// Returns the same read and schema errors as [`Self::load_successors`],
+    /// including a present empty value.
+    pub fn load_raw_successors(&self, prev_token: u32) -> Result<Option<Vec<u8>>, DictError> {
         let key = encode_token_key(prev_token);
         match self.dbm.get(&key)? {
             None => Ok(None),
@@ -76,7 +88,10 @@ impl BigramTable {
             Some(value) if value.is_empty() => Err(DictError::Parse(format!(
                 "bigram entry for token {prev_token:#010x} has an empty value"
             ))),
-            Some(value) => Ok(Some(parse_bigram_value(&value)?)),
+            Some(value) if value.len() < 4 || !(value.len() - 4).is_multiple_of(8) => Err(
+                DictError::Parse(format!("bigram value length {} is not 4 + 8n", value.len())),
+            ),
+            Some(value) => Ok(Some(value)),
         }
     }
 
@@ -200,6 +215,7 @@ mod tests {
         dbm.put(0x0100_0010_u32.to_le_bytes().to_vec(), vec![0xFF; 5]);
         let table = BigramTable::new(Box::new(dbm));
         assert!(table.load_successors(0x0100_0010).is_err());
+        assert!(table.load_raw_successors(0x0100_0010).is_err());
     }
 
     #[test]
@@ -210,5 +226,9 @@ mod tests {
         dbm.put(0x0100_0010_u32.to_le_bytes().to_vec(), Vec::new());
         let table = BigramTable::new(Box::new(dbm));
         assert!(table.load_successors(0x0100_0010).is_err());
+        assert!(matches!(
+            table.load_raw_successors(0x0100_0010),
+            Err(DictError::Parse(message)) if message.contains("empty value")
+        ));
     }
 }

@@ -600,7 +600,7 @@ where
             continue;
         }
 
-        // Own rows and pair costs only for this step's span walk. A later
+        // Own rows only for this step's span walk. A later
         // step or guess reloads after training, store writes or mask_out.
         let mut costs = StepCosts::default();
         if let Some(Cell::OneStep { token, end, .. }) = cell_at(position).cloned() {
@@ -935,11 +935,7 @@ where
             })?;
         if let Some(successors) = successors {
             for &(lo, hi) in &ranges {
-                let mut row = successors.partition_point(|(token, _)| *token < lo);
-                while let Some(&(token, _)) = successors.get(row) {
-                    if token > hi {
-                        break;
-                    }
+                successors.visit_range(lo, hi, |token| {
                     let mut candidate = candidates.partition_point(|(item, _)| *item < token);
                     while let Some(&(item, index)) = candidates.get(candidate) {
                         if item != token {
@@ -948,8 +944,7 @@ where
                         selected.push(index);
                         candidate += 1;
                     }
-                    row += 1;
-                }
+                });
             }
             selected.sort_unstable();
             selected.dedup();
@@ -1440,12 +1435,14 @@ mod tests {
                 &self,
                 _: &PhraseToken,
                 row: &'a mut NbestStepRow,
-            ) -> Result<oxpinyin_core::NbestSuccessors<'a>, EngineError> {
+            ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, EngineError> {
                 Ok(Some(
                     row.get_or_try_init::<EngineError>(|| {
                         Ok(Some(MergedGram::new(2, vec![(1, 2), (3, 0)])))
                     })?
-                    .map_or(&[], MergedGram::records),
+                    .map_or(oxpinyin_core::NbestSuccessors::Merged(&[]), |gram| {
+                        oxpinyin_core::NbestSuccessors::Merged(gram.records())
+                    }),
                 ))
             }
 
