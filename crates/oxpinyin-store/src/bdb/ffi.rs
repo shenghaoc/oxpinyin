@@ -438,9 +438,15 @@ impl Db {
     pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let get = method!(self.handle, get, "DB->get")?;
         let mut key_dbt = dbt_from(key)?;
-        let mut buf = vec![0_u8; INITIAL_BUFFER];
+        // DB_DBT_USERMEM is pure output here: unlike a cursor seek key,
+        // none of these bytes is read by libdb before it writes the value.
+        // 074a2219 ngram_bdb.cpp:127-151 likewise has no zeroed value buffer.
+        let mut buf = Vec::<u8>::with_capacity(INITIAL_BUFFER);
         loop {
-            let mut value_dbt = usermem_dbt(&mut buf);
+            let mut value_dbt = empty_dbt();
+            value_dbt.flags = sys::DB_DBT_USERMEM;
+            value_dbt.data = buf.spare_capacity_mut().as_mut_ptr().cast();
+            value_dbt.ulen = u32::try_from(buf.capacity()).unwrap_or(u32::MAX);
             // SAFETY: both `DBT`s are live locals; `key` and `buf`
             // outlive the call; the transaction is null, as in every
             // libpinyin call.
@@ -461,23 +467,26 @@ impl Db {
                 // libdb reports the size it needed, so the buffer grows and
                 // the retry fits. A `DB_BUFFER_SMALL` whose reported size
                 // the buffer already covers would otherwise spin forever.
-                let was = buf.len();
-                grow(&mut buf, value_dbt.size);
-                if buf.len() == was {
+                let needed = value_dbt.size as usize;
+                if needed <= value_dbt.ulen as usize {
                     return Err(StoreError::Backend(
                         "DB->get keeps returning DB_BUFFER_SMALL with a buffer it says fits".into(),
                     ));
                 }
+                buf.reserve_exact(needed);
                 continue;
             }
             check(code, "DB->get")?;
             let size = value_dbt.size as usize;
-            if size > buf.len() {
+            if size > value_dbt.ulen as usize {
                 return Err(StoreError::Backend(
                     "DB->get reported more bytes than the buffer it filled".into(),
                 ));
             }
-            buf.truncate(size);
+            // SAFETY: successful DB->get initialized exactly `size` output
+            // bytes; the check above bounds them by the advertised capacity.
+            // No error or DB_BUFFER_SMALL path exposes uninitialized bytes.
+            unsafe { buf.set_len(size) };
             return Ok(Some(buf));
         }
     }
@@ -810,6 +819,32 @@ mod tests {
     use super::*;
     use std::sync::{Arc, mpsc};
     use std::time::Duration;
+
+    #[test]
+    fn point_reads_own_exact_values_across_buffer_growth_and_misses() {
+        struct TempPath(std::path::PathBuf);
+        impl Drop for TempPath {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        // Keep large records file-backed: an unnamed BDB's tiny cache can
+        // spill into its compiled-in /var/tmp instead of the test's temp dir.
+        let path = TempPath(
+            std::env::temp_dir().join(format!("oxpinyin-point-read-{}.db", std::process::id())),
+        );
+        let db = SharedDb::open(&path.0, DB_BTREE, false, true, USER_FILE_MODE).unwrap();
+        for len in [0, 1, INITIAL_BUFFER, INITIAL_BUFFER + 1, 397_899] {
+            let expected: Vec<u8> = (0..len).map(|index| (index % 251) as u8).collect();
+            db.put(b"key", &expected).unwrap();
+            let retained = db.get(b"key").unwrap().unwrap();
+            assert_eq!(retained, expected);
+            assert!(db.get(b"absent").unwrap().is_none());
+            db.put(b"key", b"replacement").unwrap();
+            assert_eq!(db.get(b"key").unwrap().unwrap(), b"replacement");
+            assert_eq!(retained, expected);
+        }
+    }
 
     #[test]
     fn unnamed_opens_use_the_pins_unthreaded_create_flags() {
