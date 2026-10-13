@@ -30,8 +30,7 @@ use compact_str::CompactString;
 use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken,
-    SyllableKey,
+    Completeness, Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey,
 };
 use smallvec::SmallVec;
 
@@ -879,7 +878,6 @@ where
 
 #[derive(Default)]
 struct StepCosts {
-    pairs: HashMap<(u32, u32), NbestStepCosts>,
     rows: HashMap<u32, oxpinyin_core::NbestStepRow>,
 }
 
@@ -898,58 +896,140 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    for unigram in [false, true] {
-        for predecessor in beam.iter().take(if unigram { 1 } else { beam.len() }) {
-            for entry in entries {
-                let pronunciation = match entry.pronunciation {
-                    Some((matched, total)) if matched > 0 && total > 0 => {
-                        Some(oxpinyin_core::cost::surprisal(matched, total))
+    // The scan view's index order is library, range, item order. Index the
+    // eligible items once by token; row intersections collect original indices
+    // and restore that order before touching the trellis. No absent successor
+    // enters a pair map or the model's bigram cost law.
+    let mut candidates: Vec<(u32, usize)> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| !matches!(entry.pronunciation, Some((0, _))))
+        .map(|(index, entry)| (entry.token, index))
+        .collect();
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    candidates.sort_unstable();
+    // A maximal consecutive-token run plays the pin's PhraseIndexRange role.
+    // Separating gaps lets the row binary-search past unrelated successors.
+    let mut ranges = Vec::new();
+    let mut first = candidates[0].0;
+    let mut last = first;
+    for &(token, _) in candidates.iter().skip(1) {
+        if token > last.saturating_add(1) {
+            ranges.push((first, last));
+            first = token;
+        }
+        last = token;
+    }
+    ranges.push((first, last));
+
+    let mut selected = Vec::new();
+    for predecessor in beam {
+        selected.clear();
+        let prev = predecessor.value.token;
+        let successors = model
+            .nbest_successors_in_row(&PhraseToken::new(prev), costs.rows.entry(prev).or_default())
+            .map_err(|error| {
+                EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+            })?;
+        if let Some(successors) = successors {
+            for &(lo, hi) in &ranges {
+                let mut row = successors.partition_point(|(token, _)| *token < lo);
+                while let Some(&(token, _)) = successors.get(row) {
+                    if token > hi {
+                        break;
                     }
-                    Some((0, _)) => continue,
-                    _ => None,
-                };
-                let key = (predecessor.value.token, entry.token);
-                let step = if let Some(step) = costs.pairs.get(&key) {
-                    *step
-                } else {
-                    let step = model
-                        .nbest_step_costs_in_row(
-                            &PhraseToken::new(key.0),
-                            &PhraseToken::new(key.1),
-                            costs.rows.entry(key.0).or_default(),
-                        )
-                        .map_err(|error| {
-                            EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                        })?;
-                    costs.pairs.insert(key, step);
-                    step
-                };
-                let Some(mut cost) = (if unigram { step.unigram } else { step.blended }) else {
-                    continue;
-                };
-                if let Some(pronunciation) = pronunciation {
-                    cost = cost_add(cost, pronunciation);
+                    let mut candidate = candidates.partition_point(|(item, _)| *item < token);
+                    while let Some(&(item, index)) = candidates.get(candidate) {
+                        if item != token {
+                            break;
+                        }
+                        selected.push(index);
+                        candidate += 1;
+                    }
+                    row += 1;
                 }
-                trellis
-                    .texts
-                    .entry(entry.token)
-                    .or_insert_with(|| entry.text.clone());
-                let chars = entry.text.chars().count().try_into().unwrap_or(u32::MAX);
-                trellis.insert(
-                    end,
-                    Value {
-                        token: entry.token,
-                        prev_token: predecessor.value.token,
-                        from: start,
-                        sub: predecessor.slot,
-                        length: predecessor.value.length.saturating_add(chars),
-                        keys: predecessor.value.keys.saturating_add(entry.keys),
-                        cost: cost_add(predecessor.value.cost, cost),
-                    },
-                );
+            }
+            selected.sort_unstable();
+            selected.dedup();
+            for &index in &selected {
+                expand_one(
+                    &entries[index],
+                    predecessor,
+                    start..end,
+                    model,
+                    costs,
+                    trellis,
+                    false,
+                )?;
+            }
+        } else {
+            // Models without sorted rows retain their existing scalar path.
+            for entry in entries {
+                if !matches!(entry.pronunciation, Some((0, _))) {
+                    expand_one(entry, predecessor, start..end, model, costs, trellis, false)?;
+                }
             }
         }
     }
+    // The pin's independent unigram pass uses only the best predecessor.
+    if let Some(predecessor) = beam.first() {
+        for entry in entries {
+            if !matches!(entry.pronunciation, Some((0, _))) {
+                expand_one(entry, predecessor, start..end, model, costs, trellis, true)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn expand_one<L: LanguageModel<Token = PhraseToken>>(
+    entry: &SpanEntry,
+    predecessor: &BeamEntry,
+    span: std::ops::Range<usize>,
+    model: &L,
+    costs: &mut StepCosts,
+    trellis: &mut Trellis,
+    unigram: bool,
+) -> Result<(), EngineError>
+where
+    L::Error: core::fmt::Display,
+{
+    let prev = predecessor.value.token;
+    let step = model
+        .nbest_step_costs_in_row(
+            &PhraseToken::new(prev),
+            &PhraseToken::new(entry.token),
+            costs.rows.entry(prev).or_default(),
+        )
+        .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?;
+    let Some(mut cost) = (if unigram { step.unigram } else { step.blended }) else {
+        return Ok(());
+    };
+    if let Some((matched, total)) = entry.pronunciation
+        && matched > 0
+        && total > 0
+    {
+        cost = cost_add(cost, oxpinyin_core::cost::surprisal(matched, total));
+    }
+    trellis
+        .texts
+        .entry(entry.token)
+        .or_insert_with(|| entry.text.clone());
+    let chars = entry.text.chars().count().try_into().unwrap_or(u32::MAX);
+    trellis.insert(
+        span.end,
+        Value {
+            token: entry.token,
+            prev_token: prev,
+            from: span.start,
+            sub: predecessor.slot,
+            length: predecessor.value.length.saturating_add(chars),
+            keys: predecessor.value.keys.saturating_add(entry.keys),
+            cost: cost_add(predecessor.value.cost, cost),
+        },
+    );
     Ok(())
 }
 
@@ -1335,6 +1415,77 @@ mod tests {
             assert_eq!(loads.iter().filter(|prev| **prev == 1).count(), 2 * run);
             assert_eq!(loads.iter().filter(|prev| **prev == 2).count(), run);
         }
+    }
+
+    #[test]
+    fn sparse_bigram_walk_skips_absent_tokens_and_keeps_span_order() {
+        use oxpinyin_core::{MergedGram, NbestStepRow};
+        use std::cell::RefCell;
+
+        struct Sparse(RefCell<Vec<u32>>);
+        impl LanguageModel for Sparse {
+            type Token = PhraseToken;
+            type Error = EngineError;
+
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                cost: Cost,
+            ) -> Result<Cost, EngineError> {
+                Ok(cost)
+            }
+
+            fn nbest_successors_in_row<'a>(
+                &self,
+                _: &PhraseToken,
+                row: &'a mut NbestStepRow,
+            ) -> Result<oxpinyin_core::NbestSuccessors<'a>, EngineError> {
+                Ok(Some(
+                    row.get_or_try_init::<EngineError>(|| {
+                        Ok(Some(MergedGram::new(2, vec![(1, 2), (3, 0)])))
+                    })?
+                    .map_or(&[], MergedGram::records),
+                ))
+            }
+
+            fn nbest_step_costs_in_row(
+                &self,
+                _: &PhraseToken,
+                token: &PhraseToken,
+                _: &mut NbestStepRow,
+            ) -> Result<NbestStepCosts, EngineError> {
+                self.0.borrow_mut().push(token.value());
+                Ok(NbestStepCosts {
+                    blended: Some(1000),
+                    unigram: Some(2000),
+                })
+            }
+        }
+
+        let entries = [3, 2, 1, 3].map(|token| super::SpanEntry {
+            token,
+            text: "一".into(),
+            keys: 1,
+            pronunciation: None,
+        });
+        let model = Sparse(RefCell::new(Vec::new()));
+        let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
+        let beam = trellis.beam(0);
+        super::expand_entries(
+            &entries,
+            &beam,
+            0,
+            1,
+            &model,
+            &mut super::StepCosts::default(),
+            &mut trellis,
+        )
+        .unwrap();
+        // Bigram visits present 3,1,3 in the original range/item order;
+        // the zero-count record 3 still participates. The independent head
+        // unigram pass then visits every candidate, including absent 2.
+        assert_eq!(*model.0.borrow(), [3, 1, 3, 3, 2, 1, 3]);
     }
 
     /// The mini vocabulary's `ni`+`hao` chain with equal step costs decodes

@@ -598,6 +598,12 @@ impl MergedGram {
     pub const fn len(&self) -> usize {
         self.records.len()
     }
+
+    /// Sorted successor records, including stored zero-count successors.
+    #[must_use]
+    pub fn records(&self) -> &[(u32, u64)] {
+        &self.records
+    }
 }
 
 /// One predecessor's lazily loaded row, owned by a single n-best step.
@@ -644,7 +650,17 @@ impl NbestStepRow {
         }
         Ok(self.loaded.as_ref())
     }
+
+    /// The merged row just loaded and validated by the caller.
+    #[must_use]
+    pub fn cached_merged(&self) -> Option<&MergedGram> {
+        self.loaded.as_ref()
+    }
 }
+
+/// A sorted n-best successor slice. `None` means a model lacks sparse row
+/// traversal; `Some(&[])` means it supports traversal but this row is empty.
+pub type NbestSuccessors<'a> = Option<&'a [(u32, u64)]>;
 
 /// Deterministic language-model scoring seam.
 ///
@@ -800,6 +816,20 @@ pub trait LanguageModel {
         self.nbest_step_costs(prev, token)
     }
 
+    /// Sorted successors of one n-best predecessor, owned by this step.
+    /// `Some(&[])` is a loaded row miss; `None` asks callers to retain the
+    /// ordinary per-candidate scoring path for models without row traversal.
+    ///
+    /// # Errors
+    /// Propagates row-load and parse errors without caching a failed load.
+    fn nbest_successors_in_row<'a>(
+        &self,
+        _prev: &Self::Token,
+        _row: &'a mut NbestStepRow,
+    ) -> Result<NbestSuccessors<'a>, Self::Error> {
+        Ok(None)
+    }
+
     /// The `gfloat` λ of the install's `table.conf` — the weight the pin's
     /// candidate frequency (`(λ·bigram + (1−λ)·unigram)·2²⁴`,
     /// `pinyin.cpp:1862-1866`, `zhuyin.cpp:1236-1280`) is computed with.
@@ -884,6 +914,14 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         row: &mut NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
         (**self).nbest_step_costs_in_row(prev, token, row)
+    }
+
+    fn nbest_successors_in_row<'a>(
+        &self,
+        prev: &Self::Token,
+        row: &'a mut NbestStepRow,
+    ) -> Result<NbestSuccessors<'a>, Self::Error> {
+        (**self).nbest_successors_in_row(prev, row)
     }
 
     fn amplification_lambda(&self) -> f32 {
