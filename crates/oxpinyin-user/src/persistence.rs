@@ -477,6 +477,61 @@ pub(crate) struct LoadedProfile {
     /// the masks and values that reach `mask_out` differ, so the removal is
     /// recomputed per call rather than stored.
     pub(crate) bigram_residual_grams: Vec<(Token, Vec<Token>)>,
+    /// The keys the two user index files carry ([`IndexKeys`]), so a save
+    /// keeps the ones no remaining row writes.
+    pub(crate) index_file_keys: IndexKeys,
+}
+
+/// Every key the pin's two user index tables hold. The pin never deletes
+/// a key from either table: `mask_out` rewrites each record in place
+/// (`phrase_large_table3_bdb.cpp:391-405` and
+/// `chewing_large_table2_bdb.cpp:488-537` put with `DB_CURRENT`; the kc
+/// visitors return the masked value, `phrase_large_table3_kyotodb.cpp:361-370`
+/// and `chewing_large_table2_kyotodb.cpp:459-506`; the tkrzw processors
+/// return it, `phrase_large_table3_tkrzwdb.cpp:288-296` and
+/// `chewing_large_table2_tkrzwdb.cpp:429-473`), and `remove_index` stores
+/// the emptied entry back (`phrase_large_table3_bdb.cpp:353-368`,
+/// `chewing_large_table2_bdb.cpp:417-432`, with kc/tkrzw twins). A key
+/// whose last record left therefore stays with an empty value, and
+/// `load_db`/`save_db` copy it from file to file. The save writes the rows
+/// the items make plus these keys, empty where no row writes them. The
+/// keys are the files' raw bytes; only well-formed keys are kept (a whole
+/// number of UCS-4 scalars, or 1..=`MAX_PHRASE_LENGTH` `ChewingKey`
+/// words).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct IndexKeys {
+    /// `user_pinyin_index.bin` keys.
+    pub(crate) pinyin: BTreeSet<Vec<u8>>,
+    /// `user_phrase_index.bin` keys.
+    pub(crate) phrase: BTreeSet<Vec<u8>>,
+}
+
+impl IndexKeys {
+    /// Keeps every key `add_index` wrote for these rows — each row's key
+    /// and its prefix markers, in both pinyin key spaces — before the rows
+    /// leave the store.
+    pub(crate) fn keep_rows(&mut self, pinyin: &[PinyinIndexItem], phrase: &[(Vec<u32>, u32)]) {
+        self.pinyin
+            .extend(pinyin_index_entries(pinyin).into_iter().map(|(key, _)| key));
+        self.phrase
+            .extend(phrase_index_entries(phrase).into_iter().map(|(key, _)| key));
+    }
+}
+
+/// `rows` with every kept key that no row writes added as an empty value,
+/// in ascending key order.
+fn with_kept_keys(
+    rows: Vec<(Vec<u8>, Vec<u8>)>,
+    kept: &BTreeSet<Vec<u8>>,
+) -> Vec<(Vec<u8>, Vec<u8>)> {
+    if kept.is_empty() {
+        return rows;
+    }
+    let mut merged: BTreeMap<Vec<u8>, Vec<u8>> = rows.into_iter().collect();
+    for key in kept {
+        merged.entry(key.clone()).or_default();
+    }
+    merged.into_iter().collect()
 }
 
 /// The full token of a system-library item.
@@ -612,6 +667,7 @@ pub(crate) fn load_checked(
         index_keys: BTreeSet::new(),
         bigram_non_token_keys: Vec::new(),
         bigram_residual_grams: Vec::new(),
+        index_file_keys: IndexKeys::default(),
     };
     if check.conform {
         load_bigram(
@@ -626,8 +682,14 @@ pub(crate) fn load_checked(
             &mut profile.loaded,
             &mut profile.overlong_index_keys,
             &mut profile.index_keys,
+            &mut profile.index_file_keys.pinyin,
         );
-        load_user_phrase_index(dir, &mut profile.loaded.skipped, &mut profile.phrase_table);
+        load_user_phrase_index(
+            dir,
+            &mut profile.loaded.skipped,
+            &mut profile.phrase_table,
+            &mut profile.index_file_keys.phrase,
+        );
         load_logs(dir, originals, &mut profile.loaded);
     }
     profile
@@ -805,15 +867,16 @@ fn load_bigram(
 }
 
 /// The user pinyin index's `(token, keys)` records — which `USER_FILE`
-/// readings lookup finds — plus the raw key set and the over-long
-/// readings. Both keyspaces carry every record, so the set absorbs the
-/// duplicate. An absent or unreadable file indexes nothing, as an empty
-/// `ChewingLargeTable2` does.
+/// readings lookup finds — plus the raw key set, the over-long readings
+/// and the keys a save writes back ([`IndexKeys::pinyin`]). Both keyspaces
+/// carry every record, so the set absorbs the duplicate. An absent or
+/// unreadable file indexes nothing, as an empty `ChewingLargeTable2` does.
 fn load_user_pinyin_index(
     dir: &Path,
     loaded: &mut Loaded,
     overlong: &mut Vec<Vec<u16>>,
     index_keys: &mut BTreeSet<Vec<u16>>,
+    file_keys: &mut BTreeSet<Vec<u8>>,
 ) {
     let path = dir.join(UserDbm::PinyinIndex.file_name());
     if !path.exists() {
@@ -877,6 +940,9 @@ fn load_user_pinyin_index(
         if !key.len().is_multiple_of(2) {
             return Ok(()); // not a key upstream writes
         }
+        if key.len() / 2 <= crate::phrase::MAX_PHRASE_LENGTH {
+            file_keys.insert(key.to_vec());
+        }
         if value.is_empty() {
             return Ok(()); // a prefix marker names no reading
         }
@@ -919,11 +985,13 @@ fn load_user_pinyin_index(
 /// succeeds whenever the exact `(token, text)` pair is present, as the
 /// pin's `remove_index` does. Prefix markers carry an empty value and
 /// name no token. An absent or unreadable file leaves the table empty,
-/// exactly as an empty `PhraseLargeTable3` does.
+/// exactly as an empty `PhraseLargeTable3` does. Every non-empty UCS-4 key
+/// also lands in `file_keys` ([`IndexKeys::phrase`]).
 fn load_user_phrase_index(
     dir: &Path,
     skipped: &mut Vec<String>,
     table: &mut BTreeSet<(Token, String)>,
+    file_keys: &mut BTreeSet<Vec<u8>>,
 ) {
     let path = dir.join(UserDbm::PhraseIndex.file_name());
     if !path.exists() {
@@ -941,6 +1009,9 @@ fn load_user_phrase_index(
         let Some(text) = decode_ucs4_key(key) else {
             return Ok(()); // not a UCS-4 key upstream writes
         };
+        if !key.is_empty() {
+            file_keys.insert(key.to_vec());
+        }
         let Ok(tokens) = decode_tokens(value) else {
             return Ok(()); // a corrupt value names no token
         };
@@ -1312,8 +1383,42 @@ pub fn save_with_bigram(
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
 ) -> Result<(), PersistenceError> {
+    let kept = IndexKeys::default();
+    save_session(
+        dir,
+        SaveSource { state, kept: &kept },
+        originals,
+        versions,
+        open_counter,
+        bigram_db,
+    )
+}
+
+/// What a save writes: the session's values, and the keys its user index
+/// tables hold ([`IndexKeys`]), written empty where no row of `state`
+/// writes them.
+#[derive(Clone, Copy)]
+pub(crate) struct SaveSource<'a> {
+    pub(crate) state: &'a UserState,
+    pub(crate) kept: &'a IndexKeys,
+}
+
+/// [`save_with_bigram`] for a session, whose `source` carries the index
+/// keys its tables hold.
+///
+/// # Errors
+///
+/// As [`save`].
+pub(crate) fn save_session(
+    dir: &Path,
+    source: SaveSource<'_>,
+    originals: &SystemOriginals,
+    versions: &SystemVersions,
+    open_counter: i32,
+    bigram_db: Option<&DefaultUserBigramDb>,
+) -> Result<(), PersistenceError> {
     let mut staged = Staged::default();
-    let result = stage_all(dir, state, originals, bigram_db, false, &mut staged);
+    let result = stage_all(dir, source, originals, bigram_db, false, &mut staged);
     finish_save(dir, versions, open_counter, &staged.pending, result)
 }
 
@@ -1377,7 +1482,7 @@ fn libraries_in_pin_order(layout: &UserFileLayout) -> Vec<(u8, &FileName, Librar
 /// follow it, and the caller logs the point.
 pub(crate) fn save_with_bigram_reporting(
     dir: &Path,
-    state: &UserState,
+    source: SaveSource<'_>,
     originals: &SystemOriginals,
     versions: &SystemVersions,
     open_counter: i32,
@@ -1391,7 +1496,7 @@ pub(crate) fn save_with_bigram_reporting(
         immediate: interleaved,
         ..Staged::default()
     };
-    stage_all(dir, state, originals, bigram_db, true, &mut staged)?;
+    stage_all(dir, source, originals, bigram_db, true, &mut staged)?;
     // `_rename_files` then renames every file of the set in its own order and
     // prints the ones that fail (`:1025-1130`), a file whose write failed
     // among them: the unaffected files are updated and the profile can mix
@@ -1462,7 +1567,7 @@ impl Staged {
 /// [`save_with_bigram`]'s staging half, shared with the reporting save.
 fn stage_all(
     dir: &Path,
-    state: &UserState,
+    source: SaveSource<'_>,
     originals: &SystemOriginals,
     bigram_db: Option<&DefaultUserBigramDb>,
     lenient: bool,
@@ -1472,7 +1577,8 @@ fn stage_all(
     // index, the user phrase index and the bigram (`pinyin.cpp:933-1020`):
     // where a `table.conf` gives two roles one name, the last writer's
     // contents are what the first rename moves into place.
-    stage_rest(dir, state, originals, lenient, staged)?;
+    stage_rest(dir, source, originals, lenient, staged)?;
+    let state = source.state;
     if let Some(db) = bigram_db {
         let final_path = dir.join(UserDbm::Bigram.file_name());
         let tmp = dir.join(format!("{}.tmp", UserDbm::Bigram.file_name()));
@@ -1521,11 +1627,12 @@ fn tolerate<T>(
 /// Every file of the set but the user bigram, staged as `.tmp` siblings.
 fn stage_rest(
     dir: &Path,
-    state: &UserState,
+    source: SaveSource<'_>,
     originals: &SystemOriginals,
     lenient: bool,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
+    let SaveSource { state, kept } = source;
     {
         // ---- the library files, by sub-index -----------------------------
         let empty_library = SystemLibrary::default();
@@ -1613,7 +1720,7 @@ fn stage_rest(
             stage_dbm(
                 dir,
                 UserDbm::PinyinIndex,
-                &pinyin_index_entries(&chewing_rows),
+                &with_kept_keys(pinyin_index_entries(&chewing_rows), &kept.pinyin),
                 staged,
             ),
         )?;
@@ -1622,7 +1729,7 @@ fn stage_rest(
             stage_dbm(
                 dir,
                 UserDbm::PhraseIndex,
-                &phrase_index_entries(&phrase_rows),
+                &with_kept_keys(phrase_index_entries(&phrase_rows), &kept.phrase),
                 staged,
             ),
         )?;
@@ -1958,6 +2065,59 @@ mod tests {
 
     fn versions() -> SystemVersions {
         SystemVersions::for_this_build(7, 14)
+    }
+
+    /// A key no remaining row writes is saved with an empty value, as the
+    /// pin's tables keep it (#784), and the next load keeps it again.
+    #[test]
+    fn a_kept_index_key_is_saved_empty_and_loaded_back() {
+        let dir = tempdir("kept-index-keys");
+        let originals = originals();
+        let gone: Vec<u8> = [0x9f96_u32, 0x9f96]
+            .iter()
+            .flat_map(|c| c.to_le_bytes())
+            .collect();
+        let gone_reading = vec![0x12, 0x00, 0x12, 0x00];
+        let mut kept = IndexKeys::default();
+        kept.phrase.insert(gone.clone());
+        kept.pinyin.insert(gone_reading.clone());
+        let saved = state();
+        let source = SaveSource {
+            state: &saved,
+            kept: &kept,
+        };
+        save_session(&dir, source, &originals, &versions(), 1, None).expect("save");
+
+        let rows = |dbm: UserDbm| {
+            let store = DefaultStore::open_user_index(&dir.join(dbm.file_name())).expect("opens");
+            let mut rows = BTreeMap::new();
+            store
+                .range_raw(
+                    std::ops::Bound::Unbounded,
+                    std::ops::Bound::Unbounded,
+                    &mut |k, v| {
+                        rows.insert(k.to_vec(), v.to_vec());
+                        Ok(())
+                    },
+                )
+                .expect("walk");
+            rows
+        };
+        let phrase = rows(UserDbm::PhraseIndex);
+        assert_eq!(phrase.get(&gone), Some(&Vec::new()));
+        // The item's own rows are written as before.
+        assert_eq!(phrase.len(), 3, "你, 你好 and the kept key");
+        assert_eq!(
+            rows(UserDbm::PinyinIndex).get(&gone_reading),
+            Some(&Vec::new())
+        );
+
+        let loaded =
+            load_profile(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+        assert!(loaded.index_file_keys.phrase.contains(&gone));
+        assert!(loaded.index_file_keys.pinyin.contains(&gone_reading));
+        assert_eq!(loaded.loaded.state, saved, "an empty key names no row");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -2709,8 +2869,13 @@ mod tests {
         let dir = tempdir("chunk-header");
         let originals = originals();
         std::os::unix::fs::symlink("/dev/full", dir.join("user.bin.tmp")).expect("symlink");
+        let state = state();
+        let source = SaveSource {
+            state: &state,
+            kept: &IndexKeys::default(),
+        };
         let error =
-            save_with_bigram_reporting(&dir, &state(), &originals, &versions(), 0, None, false)
+            save_with_bigram_reporting(&dir, source, &originals, &versions(), 0, None, false)
                 .expect_err("the header write must fail");
         match error {
             PersistenceError::ChunkHeaderWrite {
