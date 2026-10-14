@@ -2127,6 +2127,129 @@ for _issue677_mode in ('pinyin', 'zhuyin'):
     case('issue677-mask-save-sequence-' + _issue677_mode, mode=_issue677_mode)(issue677_sequence)
 
 
+# #762: the pin hands a new user phrase `range.m_range_end` of the user
+# sub-index (`pinyin.cpp:589-592`), and `SubPhraseIndex::get_range` trims
+# trailing zero offsets (`phrase_index.cpp:624-650`), so a mask that empties
+# the top of the range frees those tokens for the next import.
+TOKEN_REUSE_PHRASES = (
+    ('龘龘', "da2'da2", 'ㄉㄚˊ ㄉㄚˊ'), ('龖龖', "ta4'ta4", 'ㄊㄚˋ ㄊㄚˋ'),
+    ('靐靐', "bing3'bing3", 'ㄅㄧㄥˇ ㄅㄧㄥˇ'), ('鱻鱻', "xian1'xian1", 'ㄒㄧㄢ ㄒㄧㄢ'),
+    ('麤麤', "cu1'cu1", 'ㄘㄨ ㄘㄨ'), ('厵厵', "yuan2'yuan2", 'ㄩㄢˊ ㄩㄢˊ'),
+)
+
+
+def token_reuse_sequence(k, steps, bigram_rows=None):
+    """Runs `steps` over the user library and reports what a caller can see:
+    each step's return, the user token of every phrase imported so far, and
+    the user files left behind. `('add', n)` imports phrase n, `('save',)`,
+    `('mask', mask, value)` and `('reopen',)` are the facade calls.
+    `bigram_rows` seeds `user_bigram.db` first, with rows that name the token
+    the first import will take."""
+    ctx = crafted_bigram_context(k, bigram_rows) if bigram_rows else k.ctx
+    column = 1 if k.mode == 'pinyin' else 2
+    out, seen = [], []
+
+    def tokens():
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        new = k.glib.g_array_new
+        new.restype, new.argtypes = P, [I, I, U]
+        found = {}
+        for n in seen:
+            arr = new(0, 0, 4)
+            k.fn('lookup_tokens', B, P, S, P)(inst, TOKEN_REUSE_PHRASES[n][0].encode(), arr)
+            view = C.cast(arr, C.POINTER(Arr)).contents
+            found[TOKEN_REUSE_PHRASES[n][0]] = [hex(t) for t in C.cast(view.data, C.POINTER(U))[:view.len]]
+        k.fn('free_instance', None, P)(inst)
+        return found
+
+    for step in steps:
+        if step[0] == 'add':
+            it = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+            assert it, 'the import iterator'
+            text, reading = TOKEN_REUSE_PHRASES[step[1]][0], TOKEN_REUSE_PHRASES[step[1]][column]
+            out.append(['add', bool(k.fn('iterator_add_phrase', B, P, S, S, I)(it, text.encode(), reading.encode(), 100))])
+            k.fn('end_add_phrases', None, P)(it)
+            seen.append(step[1])
+        elif step[0] == 'save':
+            out.append(['save', bool(k.fn('save', B, P)(ctx))])
+        elif step[0] == 'mask':
+            out.append(['mask', bool(k.fn('mask_out', B, P, U, U)(ctx, step[1], step[2]))])
+        elif step[0] == 'reopen':
+            k.fn('fini', None, P)(ctx)
+            ctx = k.init()
+            assert ctx, 'the reopen failed'
+        out.append(tokens())
+    return {'steps': out, 'files': token_reuse_files(k)}
+
+
+def token_reuse_files(k):
+    """The user files a save leaves, by content. A Berkeley DB container is
+    read back through `db_dump` (its page headers carry a random file id and
+    an LSN) and only its non-empty rows are compared (on the other backends
+    only that the container exists), `user.bin` is compared
+    whole except for the 4 timestamp bytes of its header, and every other file
+    is compared as written."""
+    files = {}
+    for name in sorted(os.listdir(k.user)):
+        path = Path(k.user, name)
+        if not path.is_file() or name.endswith('.tmp'):
+            continue
+        raw = path.read_bytes()
+        if CELL != 'bdb' and name in ('user_phrase_index.bin', 'user_pinyin_index.bin', 'user_bigram.db'):
+            files[name] = len(raw) > 0  # another backend's container: only its presence is compared
+        elif raw[12:16] in (b'\x62\x31\x05\x00', b'\x61\x15\x06\x00'):
+            dump = subprocess.run(['db5.3_dump', str(path)], check=True, capture_output=True).stdout.decode()
+            body = dump.split('DATA=END')[0].split('HEADER=END\n')[1].split('\n')[:-1]
+            # Only the rows that name a token. The pin's BDB `mask_out` rewrites a
+            # masked row in place (`phrase_large_table3_bdb.cpp:399`) and leaves its
+            # key behind with an empty value; that is a different difference from
+            # the token reuse these cases pin down, and its own case would own it.
+            files[name] = [[body[i].strip(), body[i + 1].strip()] for i in range(0, len(body), 2) if body[i + 1].strip()]
+        elif name == 'user.bin':
+            files[name] = (raw[:4] + b'\0\0\0\0' + raw[8:]).hex()
+        else:
+            files[name] = raw.hex()
+    return files
+
+
+USER_ALL = (0x0f000000, 0x07000000)
+TOKEN_REUSE_SEQUENCES = {
+    # name: (control, steps). A control holds on the parent too: it has no
+    # mask, masks below the top of the range, or reopens first (the load seeds
+    # the cursor from the saved items, which already reproduced the pin).
+    'no-mask': (True, [('add', 0), ('add', 1), ('save',), ('add', 2), ('save',)]),
+    'mask-all': (False, [('add', 0), ('save',), ('mask',) + USER_ALL, ('save',), ('add', 1), ('save',)]),
+    'mask-highest': (False, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x07000003),
+                             ('save',), ('add', 3), ('save',)]),
+    'mask-middle': (True, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x07000002),
+                           ('save',), ('add', 3), ('save',)]),
+    'mask-twice': (False, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x07000003),
+                           ('mask', 0xffffffff, 0x07000002), ('add', 3), ('add', 4), ('save',)]),
+    'mask-import-mask': (False, [('add', 0), ('add', 1), ('save',), ('mask', 0xffffffff, 0x07000002), ('add', 2),
+                                 ('mask', 0xffffffff, 0x07000002), ('add', 3), ('save',)]),
+    'mask-reopen': (True, [('add', 0), ('add', 1), ('save',), ('mask', 0xffffffff, 0x07000002), ('save',),
+                            ('reopen',), ('add', 2), ('save',)]),
+    'mask-unsaved-reopen': (True, [('add', 0), ('add', 1), ('save',), ('mask', 0xffffffff, 0x07000002),
+                                    ('reopen',), ('add', 2), ('save',)]),
+    'mask-reopen-middle': (True, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x07000002),
+                                  ('save',), ('reopen',), ('add', 3), ('save',)]),
+}
+# A user bigram row under the token and another that lists it as a successor:
+# the pin's `mask_out` drops both, so the reused token starts clean.
+TOKEN_REUSE_BIGRAM_ROWS = [
+    (b'\x01\x00\x00\x07', b''.join(n.to_bytes(4, 'little') for n in (100, 0x01000001, 100))),
+    (b'\x01\x00\x00\x01', b''.join(n.to_bytes(4, 'little') for n in (100, 0x07000001, 100))),
+]
+for _mode in ('pinyin', 'zhuyin'):
+    for _name, (_control, _steps) in TOKEN_REUSE_SEQUENCES.items():
+        case('issue762-token-reuse-%s-%s' % (_name, _mode), mode=_mode, control=_control)(
+            lambda k, steps=_steps: token_reuse_sequence(k, steps))
+    case('issue762-token-reuse-stale-bigram-%s' % _mode, mode=_mode, cells=('bdb',))(
+        lambda k: token_reuse_sequence(k, TOKEN_REUSE_SEQUENCES['mask-all'][1], TOKEN_REUSE_BIGRAM_ROWS))
+    case('issue762-token-reuse-stale-bigram-no-mask-%s' % _mode, mode=_mode, control=True, cells=('bdb',))(
+        lambda k: token_reuse_sequence(k, TOKEN_REUSE_SEQUENCES['no-mask'][1], TOKEN_REUSE_BIGRAM_ROWS))
+
+
 @case('abort-guess-predicted-short-bigram-value', abort=False)
 def _(k):
     # `_compute_predicted_bigram_candidates` merges the three-byte gram and
