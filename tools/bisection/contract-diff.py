@@ -2179,14 +2179,101 @@ def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
             ctx = k.init()
             assert ctx, 'the reopen failed'
         out.append(tokens())
-    return {'steps': out, 'files': token_reuse_files(k)}
+    # #785: a partial mask compares the index key set only on kc and tkrzw.
+    return {'steps': out, 'files': token_reuse_files(k, leaks_785(steps))}
 
 
-def token_reuse_files(k):
-    """The user files a save leaves, by content. A Berkeley DB container is
-    read back through `db_dump` (its page headers carry a random file id and
-    an LSN) and only its non-empty rows are compared (on the other backends
-    only that the container exists), `user.bin` is compared
+USER_INDEX_FILES = ('user_phrase_index.bin', 'user_pinyin_index.bin')
+
+
+def index_file_rows(path):
+    """Every record of a user index container, key by key, in the running
+    cell's own format: `[key hex, value hex]` in ascending key order, so a
+    key whose value is empty is a row of its own. A Berkeley DB btree is read
+    through `db_dump` (its page headers carry a random file id and an LSN),
+    a Kyoto Cabinet snapshot (`chewing_large_table2_kyotodb.cpp:106`,
+    `phrase_large_table3_kyotodb.cpp:109`) is loaded into an on-memory tree
+    and walked with a cursor, and a tkrzw `TreeDBM`
+    (`chewing_large_table2_tkrzwdb.cpp:83`, `phrase_large_table3_tkrzwdb.cpp:83`)
+    is opened read-only and walked with an iterator."""
+    rows = []
+    if CELL == 'kc':
+        kc = C.CDLL('libkyotocabinet.so.16')
+        kc.kcdbnew.restype = P
+        kc.kcdbdel.argtypes = [P]
+        kc.kcdbopen.argtypes = [P, S, C.c_uint32]
+        kc.kcdbloadsnap.argtypes = [P, S]
+        kc.kcdbcursor.restype, kc.kcdbcursor.argtypes = P, [P]
+        kc.kccurjump.argtypes = [P]
+        kc.kccurget.restype = P
+        kc.kccurget.argtypes = [P, C.POINTER(Z), C.POINTER(P), C.POINTER(Z), I]
+        kc.kccurdel.argtypes = [P]
+        kc.kcfree.argtypes = [P]
+        kc.kcdbclose.argtypes = [P]
+        db = kc.kcdbnew()
+        assert db and kc.kcdbopen(db, b'+', (1 << 1) | (1 << 2))  # KCOWRITER | KCOCREATE
+        assert kc.kcdbloadsnap(db, str(path).encode())
+        cur = kc.kcdbcursor(db)
+        if kc.kccurjump(cur):
+            while True:
+                ksiz, vbuf, vsiz = Z(), P(), Z()
+                kbuf = kc.kccurget(cur, C.byref(ksiz), C.byref(vbuf), C.byref(vsiz), 1)
+                if not kbuf:
+                    break
+                rows.append([C.string_at(kbuf, ksiz.value).hex(), C.string_at(vbuf, vsiz.value).hex()])
+                kc.kcfree(kbuf)
+        kc.kccurdel(cur)
+        assert kc.kcdbclose(db)
+        kc.kcdbdel(db)
+    elif CELL == 'tkrzw':
+        tk = C.CDLL('libtkrzw.so.1')
+        libc = C.CDLL(None)
+        libc.free.argtypes = [P]
+        tk.tkrzw_dbm_open.restype, tk.tkrzw_dbm_open.argtypes = P, [S, B, S]
+        tk.tkrzw_dbm_make_iterator.restype, tk.tkrzw_dbm_make_iterator.argtypes = P, [P]
+        tk.tkrzw_dbm_iter_first.restype, tk.tkrzw_dbm_iter_first.argtypes = B, [P]
+        tk.tkrzw_dbm_iter_get.restype = B
+        tk.tkrzw_dbm_iter_get.argtypes = [P, C.POINTER(P), C.POINTER(C.c_int32), C.POINTER(P), C.POINTER(C.c_int32)]
+        tk.tkrzw_dbm_iter_next.restype, tk.tkrzw_dbm_iter_next.argtypes = B, [P]
+        tk.tkrzw_dbm_iter_free.argtypes = [P]
+        tk.tkrzw_dbm_close.restype, tk.tkrzw_dbm_close.argtypes = B, [P]
+        db = tk.tkrzw_dbm_open(str(path).encode(), False, b'dbm=TreeDBM')
+        assert db
+        it = tk.tkrzw_dbm_make_iterator(db)
+        assert tk.tkrzw_dbm_iter_first(it)
+        while True:
+            kptr, ksiz, vptr, vsiz = P(), C.c_int32(), P(), C.c_int32()
+            if not tk.tkrzw_dbm_iter_get(it, C.byref(kptr), C.byref(ksiz), C.byref(vptr), C.byref(vsiz)):
+                break
+            rows.append([C.string_at(kptr, ksiz.value).hex(), C.string_at(vptr, vsiz.value).hex()])
+            libc.free(kptr)
+            libc.free(vptr)
+            tk.tkrzw_dbm_iter_next(it)
+        tk.tkrzw_dbm_iter_free(it)
+        assert tk.tkrzw_dbm_close(db)
+    else:
+        dump = subprocess.run(['db5.3_dump', str(path)], check=True, capture_output=True).stdout.decode()
+        body = dump.split('DATA=END')[0].split('HEADER=END\n')[1].split('\n')[:-1]
+        rows = [[body[i].strip(), body[i + 1].strip()] for i in range(0, len(body), 2)]
+    return sorted(rows)
+
+
+def leaks_785(steps):
+    """Whether `steps` mask anything short of the whole user library. #785:
+    the pin's kc and tkrzw `mask_out` reuse one table entry across the records
+    they visit, and `MemoryChunk::set_content` never shrinks it, so a record
+    shorter than the one before it keeps that record's tail. The key set is
+    the pin's either way; the values are not, until #785 lands."""
+    return any(step[0] == 'mask' and tuple(step[1:]) != USER_ALL for step in steps)
+
+
+def token_reuse_files(k, keys_only=False):
+    """The user files a save leaves, by content. The two user index
+    containers are compared record by record, a key whose value is empty
+    included ([`index_file_rows`]) — by key alone on kc and tkrzw when
+    `keys_only` (#785, [`leaks_785`]); a Berkeley DB user bigram is read back
+    through `db_dump` and only its non-empty rows are compared (on the other
+    backends only that the bigram container exists), `user.bin` is compared
     whole except for the 4 timestamp bytes of its header, and every other file
     is compared as written."""
     files = {}
@@ -2195,15 +2282,15 @@ def token_reuse_files(k):
         if not path.is_file() or name.endswith('.tmp'):
             continue
         raw = path.read_bytes()
-        if CELL != 'bdb' and name in ('user_phrase_index.bin', 'user_pinyin_index.bin', 'user_bigram.db'):
+        if name in USER_INDEX_FILES:
+            rows = index_file_rows(path)
+            # #785: key set only on kc and tkrzw; widen to whole rows with it.
+            files[name] = [key for key, _ in rows] if keys_only and CELL != 'bdb' else rows
+        elif CELL != 'bdb' and name == 'user_bigram.db':
             files[name] = len(raw) > 0  # another backend's container: only its presence is compared
         elif raw[12:16] in (b'\x62\x31\x05\x00', b'\x61\x15\x06\x00'):
             dump = subprocess.run(['db5.3_dump', str(path)], check=True, capture_output=True).stdout.decode()
             body = dump.split('DATA=END')[0].split('HEADER=END\n')[1].split('\n')[:-1]
-            # Only the rows that name a token. The pin's BDB `mask_out` rewrites a
-            # masked row in place (`phrase_large_table3_bdb.cpp:399`) and leaves its
-            # key behind with an empty value; that is a different difference from
-            # the token reuse these cases pin down, and its own case would own it.
             files[name] = [[body[i].strip(), body[i + 1].strip()] for i in range(0, len(body), 2) if body[i + 1].strip()]
         elif name in ('user.bin', 'addon.bin', 'network.bin'):
             files[name] = (raw[:4] + b'\0\0\0\0' + raw[8:]).hex()
@@ -2215,14 +2302,16 @@ def token_reuse_files(k):
 USER_ALL = (0x0f000000, 0x07000000)
 TOKEN_REUSE_SEQUENCES = {
     # name: (control, steps). A control holds on the parent too: it has no
-    # mask, masks below the top of the range, or reopens first (the load seeds
-    # the cursor from the saved items, which already reproduced the pin).
+    # mask, or reopens first (the load seeds the cursor from the saved items,
+    # which already reproduced the pin). A mask below the top of the range
+    # hands out the token the parent did, but the save after it writes the
+    # masked phrase's index keys back empty (#784).
     'no-mask': (True, [('add', 0), ('add', 1), ('save',), ('add', 2), ('save',)]),
     'mask-all': (False, [('add', 0), ('save',), ('mask',) + USER_ALL, ('save',), ('add', 1), ('save',)]),
     'mask-highest': (False, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x07000003),
                              ('save',), ('add', 3), ('save',)]),
-    'mask-middle': (True, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x07000002),
-                           ('save',), ('add', 3), ('save',)]),
+    'mask-middle': (False, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x07000002),
+                            ('save',), ('add', 3), ('save',)]),
     'mask-twice': (False, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x07000003),
                            ('mask', 0xffffffff, 0x07000002), ('add', 3), ('add', 4), ('save',)]),
     'mask-import-mask': (False, [('add', 0), ('add', 1), ('save',), ('mask', 0xffffffff, 0x07000002), ('add', 2),
@@ -2259,8 +2348,8 @@ ADDON_IMPORT_SEQUENCES = {
     'no-mask': (True, [('add', 0), ('add', 1), ('add', 2), ('save',), ('add', 3), ('save',)]),
     'mask-highest': (False, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x05000003),
                              ('add', 3), ('save',)]),
-    'mask-middle': (True, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x05000002),
-                           ('add', 3), ('save',)]),
+    'mask-middle': (False, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x05000002),
+                            ('add', 3), ('save',)]),
 }
 for _mode in ('pinyin', 'zhuyin'):
     for _name, (_control, _steps) in ADDON_IMPORT_SEQUENCES.items():
@@ -2313,12 +2402,158 @@ def addon_promote_sequence(k, mask_value):
     texts.append(ADDON_PROMOTE_INPUTS[3][1])
     out.append(tokens())
     out.append(['save', bool(k.fn('save', B, P)(ctx))])
-    return {'steps': out, 'files': token_reuse_files(k)}
+    # #785: a mask compares the index key set only on kc and tkrzw.
+    return {'steps': out, 'files': token_reuse_files(k, mask_value is not None)}
 
 
 case('issue762-addon-promote-no-mask', control=True)(lambda k: addon_promote_sequence(k, None))
 case('issue762-addon-promote-mask-highest')(lambda k: addon_promote_sequence(k, 0x05000003))
 case('issue762-addon-promote-mask-middle', control=True)(lambda k: addon_promote_sequence(k, 0x05000002))
+
+
+# #784: the pin never deletes a key from its user index tables. `mask_out`
+# rewrites every record in place (`phrase_large_table3_bdb.cpp:391-405` and
+# `chewing_large_table2_bdb.cpp:488-537` put with `DB_CURRENT`; the kc visitors
+# return the masked value, `phrase_large_table3_kyotodb.cpp:361-370` and
+# `chewing_large_table2_kyotodb.cpp:459-506`; the tkrzw processors return it,
+# `phrase_large_table3_tkrzwdb.cpp:288-296` and
+# `chewing_large_table2_tkrzwdb.cpp:429-473`), and `pinyin_remove_user_candidate`'s
+# `remove_index` calls store the emptied entry back
+# (`phrase_large_table3_bdb.cpp:353-368`, `chewing_large_table2_bdb.cpp:417-432`,
+# `phrase_large_table3_kyotodb.cpp:334-345`, `phrase_large_table3_tkrzwdb.cpp:265-274`).
+# A key whose last record left stays with an empty value, and every later save
+# copies it. Each step that saves records both index files key by key.
+INDEX_KEY_READINGS = {
+    # The facade's own parse input for each TOKEN_REUSE_PHRASES reading.
+    'pinyin': ('dada', 'tata', 'bingbing', 'xianxian', 'cucu', 'yuanyuan'),
+    'zhuyin': ('286286', 'w84w84', '1u/31u/3', 'vu0 vu0 ', 'hj hj ', 'm06m06'),
+}
+
+
+def index_key_sequence(k, steps):
+    """Runs `steps` over the user library and records each save's index files.
+    `('add', n)`, `('save',)`, `('mask', mask, value)`, `('reopen',)` as in
+    `token_reuse_sequence`; `('remove', n)` removes phrase n through its user
+    candidate (`pinyin_remove_user_candidate`); `('lookup', n)` records what a
+    fresh instance shows for phrase n: the candidates of its reading, the
+    tokens of its text and of its first character, and (pinyin) the predicted
+    rows after its first character."""
+    ctx = k.ctx
+    column = 1 if k.mode == 'pinyin' else 2
+    parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+    out = []
+
+    def tokens(inst, text):
+        arr = k.glib.g_array_new(0, 0, 4)
+        ret = k.fn('lookup_tokens', B, P, S, P)(inst, text.encode(), arr)
+        view = C.cast(arr, C.POINTER(Arr)).contents
+        return [ret, [hex(t) for t in C.cast(view.data, C.POINTER(U))[:view.len]]]
+
+    def candidates(inst, limit=12):
+        count = U()
+        k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+        rows = []
+        for i in range(min(count.value, limit)):
+            cand, kind, text = P(), I(), S()
+            k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+            k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+            k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+            rows.append([kind.value, text.value.decode()])
+        return [count.value, rows]
+
+    def guess(inst, n):
+        reading = INDEX_KEY_READINGS[k.mode][n].encode()
+        k.fn(parse, Z, P, S)(inst, reading)
+        if k.mode == 'pinyin':
+            k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+        else:
+            k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+
+    k.glib.g_array_new.restype, k.glib.g_array_new.argtypes = P, [I, I, U]
+    for step in steps:
+        if step[0] == 'add':
+            it = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+            assert it, 'the import iterator'
+            text, reading = TOKEN_REUSE_PHRASES[step[1]][0], TOKEN_REUSE_PHRASES[step[1]][column]
+            out.append(['add', bool(k.fn('iterator_add_phrase', B, P, S, S, I)(it, text.encode(), reading.encode(), 100))])
+            k.fn('end_add_phrases', None, P)(it)
+        elif step[0] == 'save':
+            # #785: a partial mask compares the index key set only on kc and tkrzw.
+            out.append(['save', bool(k.fn('save', B, P)(ctx)), token_reuse_files(k, leaks_785(steps))])
+        elif step[0] == 'mask':
+            out.append(['mask', bool(k.fn('mask_out', B, P, U, U)(ctx, step[1], step[2]))])
+        elif step[0] == 'reopen':
+            k.fn('fini', None, P)(ctx)
+            ctx = k.init()
+            assert ctx, 'the reopen failed'
+        elif step[0] == 'remove':
+            inst = k.fn('alloc_instance', P, P)(ctx)
+            guess(inst, step[1])
+            rows = _user_candidate_rows(k, inst)
+            assert rows, 'no user candidate to remove'
+            out.append(['remove', bool(k.fn('remove_user_candidate', B, P, P)(inst, rows[0]))])
+            k.fn('free_instance', None, P)(inst)
+        elif step[0] == 'lookup':
+            text = TOKEN_REUSE_PHRASES[step[1]][0]
+            inst = k.fn('alloc_instance', P, P)(ctx)
+            guess(inst, step[1])
+            seen = {'candidates': candidates(inst), 'tokens': tokens(inst, text)}
+            # #785: on kc and tkrzw a partial mask leaks the previous record's
+            # tail into the first character's prefix key, which this lookup
+            # reads; leave it out there until #785 lands.
+            if CELL == 'bdb' or not leaks_785(steps):
+                seen['prefix tokens'] = tokens(inst, text[0])
+            if k.mode == 'pinyin':
+                seen['predicted'] = predicted_rows(k, inst, text[0])
+            out.append(['lookup', text, seen])
+            k.fn('free_instance', None, P)(inst)
+    return {'steps': out}
+
+
+MIDDLE, HIGHEST = (0xffffffff, 0x07000002), (0xffffffff, 0x07000003)
+SAVED = [('add', 0), ('add', 1), ('add', 2), ('save',)]
+INDEX_KEY_SEQUENCES = {
+    # name: (control, steps). A control holds on the parent too: no key is
+    # emptied, or no save writes the files after one is. Neither `mask_out`
+    # nor `remove_user_candidate` marks the context modified, so a save right
+    # after one answers false and writes nothing, at the pin and here alike;
+    # the import after it is what makes the next save write the tables.
+    'no-mask': (True, SAVED + [('add', 3), ('save',)]),
+    'mask-save': (True, SAVED + [('mask',) + MIDDLE, ('save',)]),
+    'mask-middle': (False, SAVED + [('mask',) + MIDDLE, ('add', 3), ('save',)]),
+    # The highest token is handed out again (#762), under another text.
+    'mask-highest': (False, SAVED + [('mask',) + HIGHEST, ('add', 3), ('save',)]),
+    'mask-middle-highest': (False, SAVED + [('mask',) + MIDDLE, ('mask',) + HIGHEST, ('add', 3), ('save',)]),
+    'mask-unsaved': (False, [('add', 0), ('add', 1), ('add', 2), ('mask',) + MIDDLE, ('save',)]),
+    'mask-all': (False, [('add', 0), ('add', 1), ('save',), ('mask',) + USER_ALL, ('add', 2), ('save',)]),
+    # The emptied keys come back from the file: the next session's save keeps
+    # them, and the masked phrase imported again fills its own keys.
+    'mask-reopen': (False, SAVED + [('mask',) + MIDDLE, ('add', 3), ('save',), ('reopen',), ('add', 4),
+                                    ('save',), ('reopen',), ('add', 1), ('save',)]),
+    # What a fresh instance shows after the mask: in the masking session, and
+    # after a reopen that loaded the emptied keys from the file.
+    'mask-lookup': (True, SAVED + [('mask',) + MIDDLE, ('lookup', 1), ('lookup', 0)]),
+    'mask-reopen-lookup': (False, SAVED + [('mask',) + MIDDLE, ('add', 3), ('save',), ('reopen',),
+                                           ('lookup', 1), ('lookup', 0)]),
+}
+for _mode in ('pinyin', 'zhuyin'):
+    for _name, (_control, _steps) in INDEX_KEY_SEQUENCES.items():
+        case('issue784-index-keys-%s-%s' % (_name, _mode), mode=_mode, control=_control)(
+            lambda k, steps=_steps: index_key_sequence(k, steps))
+# `pinyin_remove_user_candidate` (the zhuyin facade has none).
+REMOVE_SEQUENCES = {
+    'remove-save': (True, SAVED + [('remove', 1), ('save',)]),
+    'remove-middle': (False, SAVED + [('remove', 1), ('add', 3), ('save',)]),
+    'remove-unsaved': (False, [('add', 0), ('add', 1), ('add', 2), ('remove', 2), ('save',)]),
+    'remove-reopen': (False, [('add', 0), ('add', 1), ('save',), ('remove', 0), ('add', 2), ('save',),
+                              ('reopen',), ('add', 3), ('save',)]),
+    'remove-lookup': (True, [('add', 0), ('add', 1), ('save',), ('remove', 1), ('lookup', 1), ('lookup', 0)]),
+    'remove-reopen-lookup': (False, [('add', 0), ('add', 1), ('save',), ('remove', 1), ('add', 2), ('save',),
+                                     ('reopen',), ('lookup', 1), ('lookup', 0)]),
+}
+for _name, (_control, _steps) in REMOVE_SEQUENCES.items():
+    case('issue784-index-keys-%s' % _name, control=_control)(
+        lambda k, steps=_steps: index_key_sequence(k, steps))
 
 
 @case('abort-guess-predicted-short-bigram-value', abort=False)

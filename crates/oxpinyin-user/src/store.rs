@@ -35,7 +35,7 @@ use crate::phrase::{
 };
 use crate::registry::{self, CountCache, RegistryLease, StandaloneLease, StoreInner};
 use crate::seed;
-use crate::store_libpinyin::FiniGuard;
+use crate::store_libpinyin::{FiniGuard, IndexRows};
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
 pub type Token = u32;
@@ -1313,6 +1313,16 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.mark_committed_write(db, has_user_data);
     }
 
+    /// Keeps the keys of index rows a committed mask or removal took out
+    /// of the store, so the session's saves write them back empty, as the
+    /// pin's tables keep them ([`crate::persistence::IndexKeys`]). A store
+    /// with no libpinyin session writes no index file and keeps nothing.
+    fn keep_index_rows(&self, rows: &IndexRows) {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            rows.keep_in(&mut target.index_file_keys());
+        }
+    }
+
     fn init_and_wrap(db: S) -> Result<Arc<StoreInner<S>>, UserStoreError> {
         let has_user_data = db.write(|txn| {
             let total_key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
@@ -2273,9 +2283,13 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .bigram_db
                 .as_ref()
                 .map(|db| db.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
-            crate::persistence::save_with_bigram(
+            let kept = target.index_file_keys();
+            crate::persistence::save_session(
                 dir,
-                &state,
+                crate::persistence::SaveSource {
+                    state: &state,
+                    kept: &kept,
+                },
                 &originals,
                 &target.versions,
                 target.open_counter,
@@ -2322,9 +2336,13 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .bigram_db
                 .as_ref()
                 .map(|db| db.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+            let kept = target.index_file_keys();
             report = crate::persistence::save_with_bigram_reporting(
                 dir,
-                &state,
+                crate::persistence::SaveSource {
+                    state: &state,
+                    kept: &kept,
+                },
                 &originals,
                 &target.versions,
                 target.open_counter,
@@ -2689,7 +2707,17 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Err(error);
         }
         let db = self.database();
-        let has_user_data = db.write(|txn| {
+        let session = self.inner.libpinyin.is_some();
+        let (has_user_data, index_rows) = db.write(|txn| {
+            // The pin's user index tables keep every key the mask empties
+            // (`IndexKeys`). Every row the store holds now is one the
+            // tables hold, and the mask and the system reload after it
+            // only take rows away, so keep the keys of all of them.
+            let index_rows = if session {
+                IndexRows::read(txn, &|_| true)?
+            } else {
+                IndexRows::default()
+            };
             mask_bigram_rows(txn, mask, value)?;
 
             // Unigram deltas and their running total.
@@ -2718,8 +2746,9 @@ impl<S: WriteStore> GenericUserStore<S> {
 
             mask_phrase_rows(txn, mask, value)?;
             rederive_alloc_cursors(txn)?;
-            has_user_data_in_write_txn(txn)
+            Ok((has_user_data_in_write_txn(txn)?, index_rows))
         })?;
+        self.keep_index_rows(&index_rows);
         // Commit succeeded: discard matched in-memory system payloads too.
         // Dropping an original's override restores it; dropping an appended
         // item removes its only payload. Do this before publishing the epoch.
@@ -2746,7 +2775,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Err(error);
         }
         let db = self.database();
-        let result: Result<Option<bool>, UserStoreError> = db
+        let result: Result<Option<(bool, IndexRows)>, UserStoreError> = db
             .write(|txn| {
                 let token_key = codec::encode_token(token);
                 // `phrase_index->remove_phrase_item` (`pinyin.cpp:3743`):
@@ -2779,6 +2808,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                 if readings.iter().any(|row| !row.value.indexed) {
                     return Ok(None);
                 }
+                // Both `remove_index` calls store the emptied entry back
+                // (`IndexKeys`): the phrase's keys stay in the tables.
+                let index_rows = IndexRows::of_phrase(token, &text, &readings);
 
                 txn.remove(PHRASE, &token_key)?;
                 txn.remove(PHRASE_TABLE, &table_key)?;
@@ -2815,12 +2847,13 @@ impl<S: WriteStore> GenericUserStore<S> {
 
                 rederive_alloc_cursors(txn)?;
                 let has = has_user_data_in_write_txn(txn)?;
-                Ok(Some(has))
+                Ok(Some((has, index_rows)))
             })
             .map_err(UserStoreError::from);
         result?.map_or_else(
             || Ok(false),
-            |has_user_data| {
+            |(has_user_data, index_rows)| {
+                self.keep_index_rows(&index_rows);
                 self.mark_committed_phrase_write(db, has_user_data);
                 // `user_bigram->mask_out(PHRASE_INDEX_LIBRARY_MASK |
                 // PHRASE_MASK, token)` (`pinyin.cpp:3764-3766`).

@@ -51,7 +51,11 @@ use oxpinyin_store::{
 };
 
 use crate::codec;
-use crate::persistence::{self, PersistenceError, SystemOriginals, UserConfLaw, UserState};
+use oxpinyin_data::row_format::pinyin_index::PinyinIndexItem;
+
+use crate::persistence::{
+    self, IndexKeys, PersistenceError, SystemOriginals, UserConfLaw, UserState,
+};
 use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
@@ -99,6 +103,11 @@ pub struct Target {
     /// `Bigram::mask_out` reaches `SingleGram::get_length` on them and
     /// asserts (`ngram.cpp:70`, `ngram_bdb.cpp:243`).
     pub(crate) bigram_residual_grams: Vec<(Token, Vec<Token>)>,
+    /// Every key the session's two user index tables hold
+    /// ([`persistence::IndexKeys`]): the loaded files' keys, plus the keys
+    /// of every row a mask or a removal took out of the store since. The
+    /// save writes back the ones no remaining row writes, empty.
+    pub(crate) index_file_keys: std::sync::Mutex<IndexKeys>,
 }
 
 impl Target {
@@ -106,6 +115,90 @@ impl Target {
         self.originals
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn index_file_keys(&self) -> std::sync::MutexGuard<'_, IndexKeys> {
+        self.index_file_keys
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// The index rows the save would write for some of the store's phrases —
+/// the phrase-table rows and the indexed readings — read before a mask or
+/// a removal drops them, so their keys stay in the session's tables
+/// ([`Target::index_file_keys`]).
+#[derive(Debug, Default)]
+pub(crate) struct IndexRows {
+    pinyin: Vec<PinyinIndexItem>,
+    phrase: Vec<(Vec<u32>, u32)>,
+}
+
+impl IndexRows {
+    /// The rows of every phrase `select` picks, as [`export_state`] turns
+    /// them into the save's rows: the `PHRASE` text, and each reading
+    /// whose `indexed` flag is set, in packed `ChewingKey` words.
+    pub(crate) fn read(
+        txn: &dyn WriteTxn,
+        select: &dyn Fn(Token) -> bool,
+    ) -> Result<Self, StoreError> {
+        let mut rows = Self::default();
+        let mut phrases: BTreeSet<Token> = BTreeSet::new();
+        txn.for_each(PHRASE, &mut |key, value| {
+            let token = codec::decode_token(key)
+                .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
+            if select(token) {
+                let text = codec::decode_str(value)
+                    .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
+                rows.phrase
+                    .push((text.chars().map(u32::from).collect(), token));
+                phrases.insert(token);
+            }
+            Ok(())
+        })?;
+        if phrases.is_empty() {
+            return Ok(rows);
+        }
+        txn.for_each(PRONUNCIATION, &mut |key, value| {
+            let (token, key_bytes) = codec::decode_token_bytes(key)
+                .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
+            if phrases.contains(&token) && PronValue::decode(value)?.indexed {
+                rows.push_reading(token, key_bytes);
+            }
+            Ok(())
+        })?;
+        Ok(rows)
+    }
+
+    /// The rows of the one phrase `token`, given its text and readings.
+    pub(crate) fn of_phrase(token: Token, text: &str, readings: &[crate::store::PronRow]) -> Self {
+        let mut rows = Self {
+            pinyin: Vec::new(),
+            phrase: vec![(text.chars().map(u32::from).collect(), token)],
+        };
+        for reading in readings.iter().filter(|reading| reading.value.indexed) {
+            rows.push_reading(token, &reading.key_bytes);
+        }
+        rows
+    }
+
+    /// A stored reading's dense syllable ids as the save's packed row; a
+    /// reading [`export_state`] cannot convert writes no row and is skipped.
+    fn push_reading(&mut self, token: Token, key_bytes: &[u8]) {
+        if let Some(packed) = pinyin_keys_to_packed(&phrase::decode_keys(key_bytes)) {
+            self.pinyin.push(PinyinIndexItem {
+                token,
+                keys: packed
+                    .iter()
+                    .map(|&bits| oxpinyin_core::ChewingKey::from_packed(bits))
+                    .collect(),
+            });
+        }
+    }
+
+    /// Adds the rows' keys to `keys`.
+    pub(crate) fn keep_in(&self, keys: &mut IndexKeys) {
+        keys.keep_rows(&self.pinyin, &self.phrase);
     }
 }
 
@@ -296,6 +389,7 @@ impl GenericUserStore<DefaultStore> {
             index_keys,
             bigram_non_token_keys,
             bigram_residual_grams,
+            index_file_keys,
         } = profile;
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
@@ -310,6 +404,7 @@ impl GenericUserStore<DefaultStore> {
             index_keys,
             bigram_non_token_keys,
             bigram_residual_grams,
+            index_file_keys: std::sync::Mutex::new(index_file_keys),
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let has_user_data = db.write(|txn| {
@@ -1435,6 +1530,89 @@ mod tests {
             assert_eq!(modified.unigram, 100 + 69 * 7);
         }
 
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// #784: a mask and a removal leave the phrase's index keys behind with
+    /// empty values, as the pin's `mask_out` and `remove_index` do, and the
+    /// keys outlive a reopen.
+    #[test]
+    fn masked_and_removed_phrases_leave_their_index_keys_empty() {
+        use oxpinyin_store::RawReadStore;
+
+        let dir = tempdir("index-keys");
+        let id = |text: &str| {
+            u16::try_from(
+                oxpinyin_core::SyllableKey::from_text(text)
+                    .expect("frozen syllable")
+                    .index(),
+            )
+            .expect("id fits u16")
+        };
+        let ucs4 = |text: &str| -> Vec<u8> {
+            text.chars()
+                .flat_map(|c| u32::from(c).to_le_bytes())
+                .collect()
+        };
+        let phrase_rows = || {
+            let store = DefaultStore::open_user_index(
+                &dir.join(oxpinyin_data::user_files::UserDbm::PhraseIndex.file_name()),
+            )
+            .expect("opens");
+            let mut rows = BTreeMap::new();
+            store
+                .range_raw(
+                    std::ops::Bound::Unbounded,
+                    std::ops::Bound::Unbounded,
+                    &mut |k, v| {
+                        rows.insert(k.to_vec(), v.to_vec());
+                        Ok(())
+                    },
+                )
+                .expect("walk");
+            rows
+        };
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            let masked = store
+                .add_phrase("你好", &[id("ni"), id("hao")][..], None)
+                .expect("add");
+            let removed = store
+                .add_phrase("我们", &[id("wo"), id("men")][..], None)
+                .expect("add");
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+            store.mask_out(0xffff_ffff, masked).expect("mask");
+            assert!(store.remove_user_phrase(removed).expect("remove"));
+            store.add_phrase("他", &[id("ta")][..], None).expect("add");
+            store.mark_modified();
+            assert!(store.save().expect("save after"));
+        }
+        let rows = phrase_rows();
+        for text in ["你", "你好", "我", "我们"] {
+            assert_eq!(rows.get(&ucs4(text)), Some(&Vec::new()), "{text}");
+        }
+        assert!(rows.get(&ucs4("他")).is_some_and(|value| value.len() == 4));
+        let pinyin_keys =
+            persistence::load_profile(&dir, &originals(), &versions(), UserConfLaw::Pinyin)
+                .expect("load")
+                .index_file_keys
+                .pinyin;
+        // Both key spaces of both two-syllable readings and their prefixes,
+        // and 他's one-syllable reading in each space.
+        assert_eq!(pinyin_keys.len(), 2 * 2 * 2 + 2, "{pinyin_keys:?}");
+
+        // A later session keeps them through its own save.
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("reopen");
+            store.mark_modified();
+            assert!(store.save().expect("save again"));
+        }
+        assert_eq!(phrase_rows(), rows);
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
