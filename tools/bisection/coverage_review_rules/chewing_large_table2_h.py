@@ -20,11 +20,11 @@ review("src/storage/chewing_large_table2.h", [136], [(C, "pub(crate) fn search("
 review("src/storage/chewing_large_table2.h", [155, 182], [(C, "pub(crate) fn walk_suggestions("), (D, "pub fn checked_extension_tokens(")],
        "The pin finds longer-key groups by the encoded prefix and retains matching records whose library is loaded. Rust walks the same key prefix, decodes the row length, and checked_extension_tokens filters the query prefix and visible token libraries. Template-specific record pointers are replaced by decoded records.")
 
-review("src/storage/chewing_large_table2.h", [208], [(U, "pub fn add_phrase_in("), (E, "pub fn pinyin_index_entries("), (P, "&pinyin_index_entries(&chewing_rows),")],
+review("src/storage/chewing_large_table2.h", [208], [(U, "pub fn add_phrase_in("), (E, "pub fn pinyin_index_entries("), (P, "&with_kept_keys(pinyin_index_entries(&chewing_rows), &kept.pinyin),")],
        "Insertion's meaningful state is the indexed (token, pronunciation) membership. add_phrase_in creates indexed readings only on the new-item path; persistence materializes those memberships in both complete/incomplete keyspaces, sorts records by exact keys then token, and creates proper-prefix markers. The old mutable byte-array insertion step is folded into this state/materialization pair.")
 
-review("src/storage/chewing_large_table2.h", [233], [(U, "pub fn remove_user_phrase("), (P, "&pinyin_index_entries(&chewing_rows),")],
+review("src/storage/chewing_large_table2.h", [233], [(U, "pub fn remove_user_phrase("), (P, "&with_kept_keys(pinyin_index_entries(&chewing_rows), &kept.pinyin),")],
        "Removal validates that every reading was indexed, then removes pronunciation memberships. Persistence rebuilds the raw pinyin index from surviving indexed readings. The source's per-entry token lookup/removal is part of this operation rather than a new independent Rust method.")
 
-review("src/storage/chewing_large_table2.h", [268], [(U, "pub fn mask_out("), (P, "&pinyin_index_entries(&chewing_rows),")],
+review("src/storage/chewing_large_table2.h", [268], [(U, "pub fn mask_out("), (P, "&with_kept_keys(pinyin_index_entries(&chewing_rows), &kept.pinyin),")],
        "Both remove tokens satisfying (token & mask)==value. Rust's user-store mask removes matching phrase/pronunciation state and persistence emits index records for survivors. This cites the actual mutation and runtime writer, rather than matching a datagen-only function name.")

@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Generate the axis-J bdb source coverage ledger without saving captures.
+"""Generate the axis-J source coverage ledgers without saving captures.
+
+The bdb cell is the full ledger. The kc and tkrzw cells are delta ledgers
+(--cell kc|tkrzw --delta-from <bdb ledger>): only the functions defined in
+the cell's DBM-conditional sources and the shared functions whose export
+reachability differs from bdb are measured; every other row is inherited
+from the bdb ledger by reference.
 
 Only compiler bitcode intermediates and the requested Markdown ledger are written.
 LLVM text, opt output and libclang identities stay in memory. The independent
@@ -19,6 +25,7 @@ import sys
 
 from clang_identity import Clang
 from coverage_tiers import cited_items, facility, sample_rows, FACILITIES
+import gcov_measure
 
 PIN = "074a2219c90feaf962d0d24f034514033ece5f99"
 REPO = Path(__file__).resolve().parents[2]
@@ -94,12 +101,9 @@ def exported(prefix, library):
     return {s.split("@", 1)[0] for s in re.findall(r"\b[TwW]\s+(\S+)", text) if s.startswith(library + "_")}
 
 
-def sources(pin):
-    """Read the autoconf source list, selecting only the bdb conditional."""
-    s = (pin / "src/Makefile.am").read_text()
-    base = s.split("pinyin_SOURCES =", 1)[1].split("if BERKELEYDB", 1)[0]
-    bdb = s.split("if BERKELEYDB", 1)[1].split("endif", 1)[0]
-    return sorted(set(re.findall(r"\b[\w/]+\.cpp", base + bdb)))
+def sources(pin, cell="bdb"):
+    """Read the autoconf source list, selecting only one cell's DBM conditional."""
+    return gcov_measure.cell_sources(pin, cell)
 
 
 def symbol_base(symbol):
@@ -349,7 +353,9 @@ def pin_link(node):
 def main(contract_results=None, gate_receipt=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pin", type=Path, required=True)
-    parser.add_argument("--config", type=Path, required=True, help="existing autoconf bdb config.h (read-only)")
+    parser.add_argument("--cell", choices=sorted(gcov_measure.CELLS), default="bdb", help="the pin's DBM cell: its Makefile.am conditional and config.h")
+    parser.add_argument("--delta-from", type=Path, help="bdb ledger to inherit from; emits only the cell's conditional-source rows and the shared rows whose reachability differs (kc/tkrzw only)")
+    parser.add_argument("--config", type=Path, required=True, help="existing autoconf config.h of the selected cell (read-only)")
     parser.add_argument("--oracle", type=Path, required=True)
     parser.add_argument("--build", type=Path, required=True, help="lane-owned bitcode directory")
     parser.add_argument("--output", type=Path, required=True)
@@ -370,6 +376,10 @@ def main(contract_results=None, gate_receipt=None):
     parser.add_argument("--export", type=Path)
     parser.add_argument("--model", type=Path)
     args = parser.parse_args()
+    if (args.cell != "bdb") != (args.delta_from is not None):
+        raise RuntimeError("--delta-from <bdb ledger> is required for the kc and tkrzw cells and is not accepted for bdb")
+    if args.cell != "bdb" and (args.tier_preview or args.inventory_check or args.refresh_unknowns or args.compare_ref):
+        raise RuntimeError("--tier-preview, --inventory-check, --refresh-unknowns and --compare-ref belong to the bdb ledger only")
     if contract_results is not None and gate_receipt is None:
         # Private API continuation: the orchestrator transfers its completed
         # unchanged gate observation through stdin, never a capture file.
@@ -379,11 +389,16 @@ def main(contract_results=None, gate_receipt=None):
         raise RuntimeError("pin commit mismatch")
     if run(["git", "-C", args.pin, "status", "--porcelain", "--untracked-files=no"]).strip():
         raise RuntimeError("tracked pin source is modified")
-    import gcov_measure
-    gcov_measure.verify_prefix(args.oracle)
+    provenance = None
+    if args.cell != "bdb":
+        from delta_ledger import prefix_provenance
+        provenance = prefix_provenance(args)
+    gcov_measure.verify_prefix(args.oracle, provenance, args.cell)
     config = args.config.read_text()
-    if not re.search(r"^#define HAVE_BERKELEY_DB\b", config, re.M) or re.search(r"^#define HAVE_(?:KYOTO_CABINET|TKRZW)\b", config, re.M):
-        raise RuntimeError("config is not the autoconf bdb cell")
+    macro = gcov_measure.CELLS[args.cell]["macro"]
+    others = "|".join(sorted(c["macro"] for c in gcov_measure.CELLS.values() if c["macro"] != macro))
+    if not re.search(r"^#define " + macro + r"\b", config, re.M) or re.search(r"^#define (?:" + others + r")\b", config, re.M):
+        raise RuntimeError(f"config is not the autoconf {args.cell} cell")
     if not args.config.name == "config.h":
         raise RuntimeError("--config must name config.h")
     flags = ["-std=c++17", "-DHAVE_CONFIG_H", f"-I{args.config.parent}"] + [f"-I{args.pin / 'src' / s}" for s in ("", "include", "storage", "lookup")]
@@ -397,7 +412,7 @@ def main(contract_results=None, gate_receipt=None):
     clang = Clang()
     ast, astedges, concrete, overrides, fields = {}, set(), set(), set(), []
     bases, abstract_classes, receiver_sites = set(), set(), defaultdict(set)
-    tus = sources(args.pin) + ["pinyin.cpp", "zhuyin.cpp"]
+    tus = sources(args.pin, args.cell) + ["pinyin.cpp", "zhuyin.cpp"]
     objects = {}
     for tu in tus:
         source = args.pin / "src" / tu
@@ -431,7 +446,7 @@ def main(contract_results=None, gate_receipt=None):
             raise RuntimeError(f"{library}: oracle/pin/subject version-script root sets differ")
         expected_exports.update(names)
         linked = args.build / f"{library}.bc"
-        run(["llvm-link", *[objects[x] for x in sources(args.pin)], objects[library + ".cpp"], "-o", linked])
+        run(["llvm-link", *[objects[x] for x in sources(args.pin, args.cell)], objects[library + ".cpp"], "-o", linked])
         n, symbols, e, ext, ind = llvm(args.pin, linked, ast)
         for key, node in n.items():
             node["llvm_bindings"] = node.get("llvm_bindings", set()) | nodes.get(key, {}).get("llvm_bindings", set())
@@ -569,6 +584,9 @@ def main(contract_results=None, gate_receipt=None):
     ambiguous = sorted(set((a, b, choices) for a, b, choices in ambiguities if a in paths))
     if args.static_preview:
         return locals()
+    if args.cell != "bdb":
+        from delta_ledger import render_delta
+        return render_delta(args, locals(), provenance)
     if args.refresh_unknowns:
         from finish_ledger import refresh
         return refresh(args, locals())
