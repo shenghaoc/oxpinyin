@@ -82,6 +82,11 @@
 # `false-untouched`, but its terminal row answers `false` having written
 # both strings, so they are `false-allocates`. <verified> was added the
 # same day.
+#
+# Corrected 2026-10-14 (#681): the eight key-string getter slots (six
+# here, two in libzhuyin.alloc) said `false-unreachable`. The relabel to
+# `false-nulls` / `false-untouched` landed 2026-10-09 (#708), and a pin
+# probe on bdb confirms each line's <notes>.
 
 # ── Handles: allocated by Box::into_raw, released by their destructor ──
 pinyin_init                              return      handle:pinyin_fini            n/a                n/a
@@ -111,10 +116,12 @@ pinyin_get_zhuyin_string                 utf8_str    g_free                     
 pinyin_get_luoma_pinyin_string           utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_luoma_pinyin-zero-key
 pinyin_get_secondary_zhuyin_string       utf8_str    g_free                        false-nulls        pin-probe:alloc-register-pinyin_get_secondary_zhuyin-zero-key
 # The refusal is `0 == key->get_table_index()` (pinyin.cpp:2711, :2722,
-# :2733, :2744, :2755), reached by passing the zero key that
-# `pinyin_get_pinyin_key` answers at a separator column (`xi'` at offset
-# 2). The four single-string getters NULL their out-param before the test;
-# `pinyin_get_pinyin_strings` returns before it writes either.
+# :2733, :2744, :2755). `pinyin_get_pinyin_key` skips separator columns
+# forward (:2903-2919) but stops at the end column, which fill_matrix
+# fills with a zero key (storage/phonetic_key_matrix.cpp:58-63), so only a
+# trailing separator answers it (`xi'` at offset 2; `ni'hao` at 2 skips to
+# `hao`). The four single-string getters NULL their out-param before the
+# test; `pinyin_get_pinyin_strings` returns before it writes either.
 pinyin_get_pinyin_strings                shengmu     g_free                        false-untouched    pin-probe:alloc-register-pinyin_get_strings-zero-key
 pinyin_get_pinyin_strings                yunmu       g_free                        false-untouched    pin-probe:alloc-register-pinyin_get_strings-zero-key
 pinyin_token_get_phrase                  utf8_str    g_free                        false-untouched    pin-probe:token-get-phrase-out
