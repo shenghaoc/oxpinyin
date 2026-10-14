@@ -123,6 +123,112 @@ not in this repo's shipping open path.
 figure; run output belongs on the issue or in the upstream-report
 draft, not in-tree.
 
+## BDB guess, training, and import profiles (#757–#759)
+
+`tools/bisection/system-import-profile.c` extends the existing import
+driver with three full-process workloads. The source used for the registered
+measurements has SHA-256
+`eb2cbdf2b573ccbcbf39b90b549b6d618fe7a4c3de7ee417051e510b108bfa0b`;
+the executable built for those measurements has SHA-256
+`c4b09cb0b15a25deb7e418a66d8fc63256cce4fe40caf3a27700a2fd2a05fd51`.
+Build the driver in the measurement environment with:
+
+```sh
+cc -std=gnu11 -Wall -Wextra -Werror -O2 tools/bisection/system-import-profile.c -o "$HARNESS" -ldl
+```
+
+Use the same BDB system data, fresh empty user directory, CPU, pin SO, and
+subject SO throughout a comparison. The registered measurements in
+[#757](https://github.com/shenghaoc/oxpinyin/issues/757),
+[#758](https://github.com/shenghaoc/oxpinyin/issues/758), and
+[#759](https://github.com/shenghaoc/oxpinyin/issues/759) used a Fedora 44
+container on a Fedora 45 host, Valgrind 3.27.1, and CPU 0. The pin SO there
+has SHA-256 `d535d077eb55736f742a270a4128763ca4f9b0471819778b06b5708b47b4badc`.
+The subject SO for those registered findings has SHA-256
+`8d74995f5f4cab5013da28ef083259e588821b2cf28249548dba705db643436b`.
+Later PR comparisons must identify their own subject build and use matched
+pin/main/subject conditions; these registered figures are not a substitute.
+
+The frozen sentence fixture is `fixtures/w4/oracle-sentence-surface.txt`
+(SHA-256 `d119f3a7f665333ef5717b1925171799c29e710d4ad1575748e0a9d3ae2c9e21`).
+`--sentence-fixture` replays its 500 rows with a nonempty sentence field,
+guessing a sentence and candidates for each. `--train-fixture` takes the
+first 200 such rows, checks full parse and a successful guessed train at
+index 0 for each, then saves once. Both set options `0x18a`; candidate
+sorting in the guess workload uses `0x1e`.
+
+For `--phrase-file`, generate the input from the same BDB pin SO and data
+with the driver's **unmeasured** `--export-system`. It walks libraries
+1–4 in token/pronunciation order. Select the first 10,000 distinct phrase
+texts, keep the first pronunciation of each, and set every import count to 5.
+This exact byte recipe writes tab-separated
+`library<TAB>phrase<TAB>pinyin<TAB>5<LF>` rows; the first is
+`1<TAB>锕<TAB>a<TAB>5` and the last is
+`1<TAB>爱河<TAB>ai'he<TAB>5`. The input is 121,316 bytes with SHA-256
+`22637aee560c86761bb6d9d187d9af8b9fea970a6690bc21e21e5b6fc1cbb117`.
+It is a disposable workload input, not a committed fixture or profile
+capture:
+
+```sh
+python3 - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
+import hashlib
+import subprocess
+import sys
+import tempfile
+
+with tempfile.TemporaryDirectory() as user_dir:
+    exported = subprocess.run(
+        [sys.argv[1], sys.argv[2], sys.argv[3], user_dir, "--export-system"],
+        check=True, stdout=subprocess.PIPE,
+    ).stdout
+seen = set()
+selected = []
+for line in exported.splitlines():
+    library, phrase, pinyin, _frequency = line.split(b"\t")
+    if phrase in seen:
+        continue
+    seen.add(phrase)
+    selected.append(b"\t".join((library, phrase, pinyin, b"5")) + b"\n")
+    if len(selected) == 10_000:
+        break
+payload = b"".join(selected)
+assert len(selected) == 10_000 and len(payload) == 121_316
+assert hashlib.sha256(payload).hexdigest() == (
+    "22637aee560c86761bb6d9d187d9af8b9fea970a6690bc21e21e5b6fc1cbb117"
+)
+with open(sys.argv[4], "wb") as output:
+    output.write(payload)
+PY
+```
+
+The phrase workload imports all 10,000 rows, saves once, then exports the
+touched library (library 1: 95,698 rows). Use a fresh empty `USER_DIR` for
+**every** command and repeat each pin/subject command three times. Take the
+median of whole-process Callgrind `Ir` and of Massif's maximum
+`mem_heap_B`; report spread as `(max − min) / median`. The Massif value
+excludes stacks, allocator overhead, and file mappings. Check output
+equivalence and operation counts before comparing costs. Keep profiler
+output in streams or memory, not in archives, logs, captures, or profile
+files. The commands below write Valgrind output to stderr:
+
+```sh
+taskset -c 0 valgrind --tool=callgrind --cache-sim=no --branch-sim=no --callgrind-out-file=/dev/stderr "$HARNESS" "$SO" "$DATA" "$USER_DIR" --sentence-fixture fixtures/w4/oracle-sentence-surface.txt
+taskset -c 0 valgrind --tool=massif --time-unit=i --heap=yes --stacks=no --peak-inaccuracy=0.0 --detailed-freq=1 --max-snapshots=1000 --massif-out-file=/dev/stderr "$HARNESS" "$SO" "$DATA" "$USER_DIR" --sentence-fixture fixtures/w4/oracle-sentence-surface.txt
+
+taskset -c 0 valgrind --tool=callgrind --cache-sim=no --branch-sim=no --callgrind-out-file=/dev/stderr "$HARNESS" "$SO" "$DATA" "$USER_DIR" --train-fixture fixtures/w4/oracle-sentence-surface.txt
+taskset -c 0 valgrind --tool=massif --time-unit=i --heap=yes --stacks=no --peak-inaccuracy=0.0 --detailed-freq=1 --max-snapshots=1000 --massif-out-file=/dev/stderr "$HARNESS" "$SO" "$DATA" "$USER_DIR" --train-fixture fixtures/w4/oracle-sentence-surface.txt
+
+taskset -c 0 valgrind --tool=callgrind --cache-sim=no --branch-sim=no --callgrind-out-file=/dev/stderr "$HARNESS" "$SO" "$DATA" "$USER_DIR" --phrase-file "$PHRASE_FILE"
+taskset -c 0 valgrind --tool=massif --time-unit=i --heap=yes --stacks=no --peak-inaccuracy=0.0 --detailed-freq=1 --max-snapshots=1000 --massif-out-file=/dev/stderr "$HARNESS" "$SO" "$DATA" "$USER_DIR" --phrase-file "$PHRASE_FILE"
+```
+
+Remove the disposable phrase input after the runs. The registered stdout
+SHA-256 values were `50dfc9c87e8eb2ce9121ac4f138584ab226a69308a9becc727cfca1c68c3100d`
+for 500 guesses, `e5855249fc5c7cc2c4de81aa1e792c2f41152a84c8a3e10f04c52a824bda698d`
+for 200 successful guessed training steps, and
+`34e98cd8bf5a191b27e0b8fc50ffdefca9e76a2dab7dd01106cf6b6d3c9eec1d`
+for 10,000 imports and 95,698 exported rows.
+
 ## The perf baseline (oracle vs installed oxpinyin)
 
 `tools/bisection/run-perf-baseline.sh` measures speed, installed size
