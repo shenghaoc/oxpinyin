@@ -30,7 +30,8 @@ use compact_str::CompactString;
 use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey,
+    Completeness, Cost, Dictionary, LanguageModel, PhraseEntry, PhraseIndexRanges, PhraseToken,
+    SyllableKey,
 };
 use smallvec::SmallVec;
 
@@ -453,6 +454,7 @@ impl Trellis {
 /// One `(token, text)` pair a span search found, with the key count of the
 /// path that spelled it (captured during enumeration, before the path is
 /// unwound) and the entry's pronunciation possibility.
+#[derive(Clone)]
 struct SpanEntry {
     token: u32,
     text: CompactString,
@@ -608,11 +610,13 @@ where
             // `search_bigram2`/`search_unigram2`'s ONESTEP branches —
             // then move on: no widening, no other token starts there.
             if end > position && end <= bound {
-                let mut entries: Vec<SpanEntry> = Vec::new();
+                let mut entries = PhraseIndexRanges::new();
                 generation.search(position, end, dictionary, &mut entries)?;
-                if let Some(entry) = entries.iter().find(|entry| entry.token == token.value()) {
+                if let Some(entry) = entries.walk().find(|entry| entry.token == token.value()) {
+                    let mut forced = PhraseIndexRanges::new();
+                    forced.convert([(entry.token, Some(entry.clone()))]);
                     expand_entries(
-                        core::slice::from_ref(entry),
+                        &forced,
                         &beam,
                         position,
                         end,
@@ -678,6 +682,8 @@ pub(super) struct GenerationInput<'a> {
 struct GenerationPath {
     keys: SmallVec<[SyllableKey; 16]>,
     tones: SmallVec<[u8; 16]>,
+    /// One table search's ranges, drained into the span's arrays.
+    ranges: PhraseIndexRanges<PhraseEntry>,
 }
 
 /// Additional trellis-only view of the unchanged ordinary scan matrix.
@@ -695,7 +701,7 @@ impl GenerationView<'_> {
         start: usize,
         end: usize,
         dictionary: &D,
-        into: &mut Vec<SpanEntry>,
+        into: &mut PhraseIndexRanges<SpanEntry>,
     ) -> Result<bool, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -713,10 +719,9 @@ impl GenerationView<'_> {
         }
         let mut path = GenerationPath::default();
         let mut continued = false;
+        // search_matrix appends every path's ranges, system table then user
+        // table, to the per-library arrays in walk order.
         self.walk(start, end, dictionary, &mut path, into, &mut continued)?;
-        // search_matrix files each path's ranges into per-library arrays.
-        // This sort takes only integer library ids, never the trellis comparator.
-        into.sort_by_key(|entry| entry.token >> 24);
         Ok(continued)
     }
 
@@ -726,7 +731,7 @@ impl GenerationView<'_> {
         end: usize,
         dictionary: &D,
         path: &mut GenerationPath,
-        into: &mut Vec<SpanEntry>,
+        into: &mut PhraseIndexRanges<SpanEntry>,
         continued: &mut bool,
     ) -> Result<(), EngineError>
     where
@@ -744,8 +749,8 @@ impl GenerationView<'_> {
                 *continued = true;
                 return Ok(());
             }
-            let entries = dictionary
-                .trellis_records(&path.keys, &path.tones)
+            dictionary
+                .trellis_ranges(&path.keys, &path.tones, &mut path.ranges)
                 .map_err(|error| {
                     EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
                 })?;
@@ -754,15 +759,17 @@ impl GenerationView<'_> {
                 .map_err(|error| {
                     EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
                 })?;
-            for entry in entries {
+            let keys = path.keys.len().try_into().unwrap_or(u32::MAX);
+            // Drains the scratch, keeping its capacity for the next path.
+            into.append_from(&mut path.ranges, |entry| {
                 let pronunciation = entry.pronunciation_possibility();
-                into.push(SpanEntry {
+                SpanEntry {
                     token: entry.token().value(),
                     text: entry.into_text(),
-                    keys: path.keys.len().try_into().unwrap_or(u32::MAX),
+                    keys,
                     pronunciation,
-                });
-            }
+                }
+            });
             return Ok(());
         }
         if self.zeros.get(start).copied().unwrap_or(false) {
@@ -827,12 +834,13 @@ where
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
     let mut end = position + 1;
     let mut widening = true;
+    let mut entries = PhraseIndexRanges::new();
     while end <= env.bound && widening {
         if matches!(cell_at(end), Some(Cell::NoSearch { .. })) {
             // A span may not end inside a forced run.
             break;
         }
-        let mut entries = Vec::new();
+        entries.clear();
         widening = env
             .generation
             .search(position, end, env.dictionary, &mut entries)?;
@@ -884,7 +892,7 @@ struct StepCosts {
 /// 074a2219 phonetic_lookup.h:542-642, 787-788: all bigram
 /// predecessors first, each over library/range/item order, then head unigram.
 fn expand_entries<L>(
-    entries: &[SpanEntry],
+    entries: &PhraseIndexRanges<SpanEntry>,
     beam: &[BeamEntry],
     start: usize,
     end: usize,
@@ -896,35 +904,16 @@ where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
-    // The scan view's index order is library, range, item order. Index the
-    // eligible items once by token; row intersections collect original indices
-    // and restore that order before touching the trellis. No absent successor
-    // enters a pair map or the model's bigram cost law.
-    let mut candidates: Vec<(u32, usize)> = entries
-        .iter()
-        .enumerate()
-        .filter(|(_, entry)| !matches!(entry.pronunciation, Some((0, _))))
-        .map(|(index, entry)| (entry.token, index))
-        .collect();
-    if candidates.is_empty() {
+    let eligible = |entry: &SpanEntry| !matches!(entry.pronunciation, Some((0, _)));
+    if !entries.walk().any(eligible) {
         return Ok(());
     }
-    candidates.sort_unstable();
-    // A maximal consecutive-token run plays the pin's PhraseIndexRange role.
-    // Separating gaps lets the row binary-search past unrelated successors.
-    let mut ranges = Vec::new();
-    let mut first = candidates[0].0;
-    let mut last = first;
-    for &(token, _) in candidates.iter().skip(1) {
-        if token > last.saturating_add(1) {
-            ranges.push((first, last));
-            first = token;
-        }
-        last = token;
-    }
-    ranges.push((first, last));
-
-    let mut selected = Vec::new();
+    // search_bigram2 (phonetic_lookup.h:615-632): libraries 0..16, each
+    // library's ranges in append order, and within a range the merged
+    // row's tokens ascending (SingleGram::search, ngram.cpp:153-175). No
+    // absent successor enters a pair map or the model's bigram cost law.
+    let mut visited = Vec::new();
+    let mut selected: Vec<&SpanEntry> = Vec::new();
     for predecessor in beam {
         selected.clear();
         let prev = predecessor.value.token;
@@ -933,52 +922,43 @@ where
             .nbest_successors_in_row(&PhraseToken::new(prev), row)
             .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
         {
-            for &(lo, hi) in &ranges {
-                successors.visit_range(lo, hi, |token| {
-                    let mut candidate = candidates.partition_point(|(item, _)| *item < token);
-                    while let Some(&(item, index)) = candidates.get(candidate) {
-                        if item != token {
-                            break;
-                        }
-                        selected.push(index);
-                        candidate += 1;
-                    }
-                });
+            for range in entries.iter() {
+                visited.clear();
+                successors.visit_range(range.first(), range.last(), |token| visited.push(token));
+                // A raw row visits its overlay after the system records:
+                // restore the merged row's single ascending pass.
+                if !visited.windows(2).all(|pair| pair[0] < pair[1]) {
+                    visited.sort_unstable();
+                    visited.dedup();
+                }
+                selected.extend(
+                    visited
+                        .iter()
+                        .filter_map(|&token| entries.entry(range, token))
+                        .filter(|entry| eligible(entry)),
+                );
             }
-            selected.sort_unstable();
-            selected.dedup();
             true
         } else {
             false
         };
         if has_successors {
-            for &index in &selected {
-                expand_one(
-                    &entries[index],
-                    predecessor,
-                    start..end,
-                    model,
-                    row,
-                    trellis,
-                    false,
-                )?;
+            for entry in &selected {
+                expand_one(entry, predecessor, start..end, model, row, trellis, false)?;
             }
         } else {
             // Models without sorted rows retain their existing scalar path.
-            for entry in entries {
-                if !matches!(entry.pronunciation, Some((0, _))) {
-                    expand_one(entry, predecessor, start..end, model, row, trellis, false)?;
-                }
+            for entry in entries.walk().filter(|entry| eligible(entry)) {
+                expand_one(entry, predecessor, start..end, model, row, trellis, false)?;
             }
         }
     }
-    // The pin's independent unigram pass uses only the best predecessor.
+    // The pin's independent unigram pass uses only the best predecessor
+    // (search_unigram2, phonetic_lookup.h:560-572).
     if let Some(predecessor) = beam.first() {
         let row = costs.rows.entry(predecessor.value.token).or_default();
-        for entry in entries {
-            if !matches!(entry.pronunciation, Some((0, _))) {
-                expand_one(entry, predecessor, start..end, model, row, trellis, true)?;
-            }
+        for entry in entries.walk().filter(|entry| eligible(entry)) {
+            expand_one(entry, predecessor, start..end, model, row, trellis, true)?;
         }
     }
     Ok(())
@@ -1461,12 +1441,18 @@ mod tests {
             }
         }
 
-        let entries = [3, 2, 1, 3].map(|token| super::SpanEntry {
-            token,
-            text: "一".into(),
-            keys: 1,
-            pronunciation: None,
-        });
+        let mut entries = oxpinyin_core::PhraseIndexRanges::new();
+        entries.convert([3, 2, 1, 3].map(|token| {
+            (
+                token,
+                Some(super::SpanEntry {
+                    token,
+                    text: "一".into(),
+                    keys: 1,
+                    pronunciation: None,
+                }),
+            )
+        }));
         let model = Sparse(RefCell::new(Vec::new()));
         let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
         let beam = trellis.beam(0);

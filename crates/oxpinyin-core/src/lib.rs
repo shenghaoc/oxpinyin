@@ -129,6 +129,38 @@ pub trait Dictionary {
         self.lookup(syllables)
     }
 
+    /// One `FacadeChewingTable2::search` call of the sentence trellis:
+    /// appends this lookup's `PhraseIndexRange`s to `ranges`
+    /// (`chewing_large_table2.h:91-133` at the pin `074a2219`), the system
+    /// table's call before the user table's
+    /// (`facade_chewing_table2.h:109-129`). `tones` is as for
+    /// [`Self::trellis_records`].
+    ///
+    /// The default applies [`PhraseIndexRanges::convert`] to
+    /// [`Self::trellis_records`]' entries as one call, so dictionaries
+    /// without a stored index need no change.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
+    fn trellis_ranges(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<Self::Entry>,
+    ) -> Result<(), Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        let entries = self.trellis_records(syllables, tones)?;
+        ranges.convert(
+            entries
+                .into_iter()
+                .map(|entry| (entry.phrase_index_token(), Some(entry))),
+        );
+        Ok(())
+    }
+
     /// [`Self::lookup`] into a caller-owned buffer, which keeps capacity
     /// across keystrokes on the window-scan path.
     ///
@@ -401,6 +433,18 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         (**self).trellis_records(syllables, tones)
     }
 
+    fn trellis_ranges(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<Self::Entry>,
+    ) -> Result<(), Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        (**self).trellis_ranges(syllables, tones, ranges)
+    }
+
     fn lookup_into(
         &self,
         syllables: &[Self::Syllable],
@@ -472,6 +516,201 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
 
     fn overlong_extension_gate(&self, syllables: &[Self::Syllable]) -> bool {
         (**self).overlong_extension_gate(syllables)
+    }
+}
+
+/// `PHRASE_INDEX_LIBRARY_COUNT` (`novel_types.h` at the pin `074a2219`):
+/// one range array per library nibble.
+pub const PHRASE_INDEX_LIBRARY_COUNT: usize = 16;
+
+/// `PHRASE_INDEX_LIBRARY_INDEX`: the library nibble of a phrase token.
+#[must_use]
+pub const fn phrase_index_library(token: u32) -> usize {
+    ((token >> 24) & 0x0f) as usize
+}
+
+/// The phrase token a trellis entry stands for, so
+/// [`Dictionary::trellis_ranges`]' default can file it into a range.
+pub trait PhraseIndexToken {
+    /// The entry's raw phrase token.
+    fn phrase_index_token(&self) -> u32;
+}
+
+impl PhraseIndexToken for PhraseEntry {
+    fn phrase_index_token(&self) -> u32 {
+        self.token().value()
+    }
+}
+
+/// One `PhraseIndexRange`: the consecutive tokens `first..=last` of one
+/// library that one table search met back to back.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhraseIndexRange {
+    first: u32,
+    last: u32,
+    /// Index of `first`'s slot; token `t` sits at `slot + (t - first)`.
+    /// `u32` keeps the range at 12 bytes; a span never holds 2^32 items.
+    slot: u32,
+}
+
+impl PhraseIndexRange {
+    /// The first token of the range.
+    #[must_use]
+    pub const fn first(&self) -> u32 {
+        self.first
+    }
+
+    /// The last token of the range (the pin's `m_range_end - 1`).
+    #[must_use]
+    pub const fn last(&self) -> u32 {
+        self.last
+    }
+}
+
+/// The pin's `PhraseIndexRanges`: one array of [`PhraseIndexRange`]s per
+/// library, each in append order, plus the entry every ranged token
+/// resolved to. A token whose library is loaded but whose entry could not
+/// be resolved keeps its place in its range with no entry, as the pin's
+/// range keeps it until `get_phrase_item` fails for it.
+#[derive(Clone, Debug)]
+pub struct PhraseIndexRanges<E> {
+    libraries: [Vec<PhraseIndexRange>; PHRASE_INDEX_LIBRARY_COUNT],
+    /// One entry slot per converted item, in item order; a range's tokens
+    /// map to consecutive slots from its `slot`.
+    slots: Vec<Option<E>>,
+}
+
+impl<E> Default for PhraseIndexRanges<E> {
+    fn default() -> Self {
+        Self {
+            libraries: Default::default(),
+            slots: Vec::new(),
+        }
+    }
+}
+
+impl<E> PhraseIndexRanges<E> {
+    /// Empty ranges.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Empties every array, keeping capacity.
+    pub fn clear(&mut self) {
+        for ranges in &mut self.libraries {
+            ranges.clear();
+        }
+        self.slots.clear();
+    }
+
+    /// `ChewingTableEntry::convert` (`chewing_large_table2.h:91-133` at the
+    /// pin `074a2219`) over one search call's matched items, in table-item
+    /// order: a token one past the open range's end in the same library
+    /// extends it; any other token closes it into its library's array and
+    /// opens a new one. The last range is appended when the call ends, so
+    /// no range spans two calls.
+    ///
+    /// The pin skips an item whose library is not loaded without closing
+    /// the open range; callers drop those items before this call.
+    pub fn convert(&mut self, items: impl IntoIterator<Item = (u32, Option<E>)>) {
+        let mut cursor: Option<PhraseIndexRange> = None;
+        for (token, entry) in items {
+            let slot = u32::try_from(self.slots.len()).unwrap_or(u32::MAX);
+            self.slots.push(entry);
+            match cursor.as_mut() {
+                Some(open)
+                    if open.last.checked_add(1) == Some(token)
+                        && phrase_index_library(open.first) == phrase_index_library(token) =>
+                {
+                    open.last = token;
+                }
+                _ => {
+                    if let Some(closed) = cursor.take() {
+                        self.push(closed);
+                    }
+                    cursor = Some(PhraseIndexRange {
+                        first: token,
+                        last: token,
+                        slot,
+                    });
+                }
+            }
+        }
+        if let Some(closed) = cursor {
+            self.push(closed);
+        }
+    }
+
+    fn push(&mut self, range: PhraseIndexRange) {
+        if let Some(ranges) = self.libraries.get_mut(phrase_index_library(range.first)) {
+            ranges.push(range);
+        }
+    }
+
+    /// Library `library`'s ranges in append order; empty past the last library.
+    #[must_use]
+    pub fn ranges(&self, library: usize) -> &[PhraseIndexRange] {
+        self.libraries.get(library).map_or(&[], Vec::as_slice)
+    }
+
+    /// Every range, libraries `0..16` then append order — the n-best
+    /// walk's order (`phonetic_lookup.h:560-572`, `:615-632`).
+    pub fn iter(&self) -> impl Iterator<Item = &PhraseIndexRange> {
+        self.libraries.iter().flatten()
+    }
+
+    /// The entry `token` resolved to inside `range`.
+    #[must_use]
+    pub fn entry(&self, range: &PhraseIndexRange, token: u32) -> Option<&E> {
+        if token < range.first || token > range.last {
+            return None;
+        }
+        let offset = usize::try_from(token - range.first).ok()?;
+        let first = usize::try_from(range.slot).ok()?;
+        self.slots.get(first.checked_add(offset)?)?.as_ref()
+    }
+
+    /// `range`'s resolved entries, ascending by token.
+    pub fn entries<'a>(&'a self, range: &PhraseIndexRange) -> impl Iterator<Item = &'a E> + 'a {
+        let count =
+            usize::try_from(range.last - range.first).map_or(0, |span| span.saturating_add(1));
+        self.slots
+            .iter()
+            .skip(usize::try_from(range.slot).unwrap_or(usize::MAX))
+            .take(count)
+            .filter_map(Option::as_ref)
+    }
+
+    /// Every resolved entry, in the walk order of [`Self::iter`].
+    pub fn walk(&self) -> impl Iterator<Item = &E> {
+        self.iter().flat_map(|range| self.entries(range))
+    }
+
+    /// The resolved entries in item order — a flat
+    /// [`Dictionary::trellis_records`] answer.
+    #[must_use]
+    pub fn into_entries(self) -> Vec<E> {
+        self.slots.into_iter().flatten().collect()
+    }
+
+    /// Appends `other`'s ranges after this one's, library by library, with
+    /// its entries mapped through `map`; `other` is left empty. Per-library
+    /// append order is kept, which is all the walk observes.
+    pub fn append_from<F>(
+        &mut self,
+        other: &mut PhraseIndexRanges<F>,
+        mut map: impl FnMut(F) -> E,
+    ) {
+        let base = u32::try_from(self.slots.len()).unwrap_or(u32::MAX);
+        self.slots
+            .extend(other.slots.drain(..).map(|entry| entry.map(&mut map)));
+        for (ours, theirs) in self.libraries.iter_mut().zip(other.libraries.iter_mut()) {
+            ours.extend(theirs.drain(..).map(|range| PhraseIndexRange {
+                slot: range.slot.saturating_add(base),
+                ..range
+            }));
+        }
     }
 }
 
@@ -1143,4 +1382,84 @@ pub trait InputParser {
     ///
     /// Returns [`Self::Error`] when the input cannot be parsed under the scheme.
     fn parse(&self, input: &[u8]) -> Result<Vec<Self::Parse>, Self::Error>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PhraseIndexRanges, phrase_index_library};
+
+    fn spans(ranges: &PhraseIndexRanges<u32>, library: usize) -> Vec<(u32, u32)> {
+        ranges
+            .ranges(library)
+            .iter()
+            .map(|range| (range.first(), range.last()))
+            .collect()
+    }
+
+    fn call(tokens: &[u32]) -> Vec<(u32, Option<u32>)> {
+        tokens.iter().map(|&token| (token, Some(token))).collect()
+    }
+
+    /// `convert` merges a token one past the open range and opens a new
+    /// range otherwise — including for a repeated or descending token.
+    #[test]
+    fn convert_merges_consecutive_runs_in_item_order() {
+        let mut ranges = PhraseIndexRanges::new();
+        ranges.convert(call(&[5, 6, 7, 9, 8, 8]));
+        assert_eq!(spans(&ranges, 0), [(5, 7), (9, 9), (8, 8), (8, 8)]);
+        let walked: Vec<u32> = ranges.walk().copied().collect();
+        assert_eq!(walked, [5, 6, 7, 9, 8, 8]);
+    }
+
+    /// A run never crosses a library nibble, and each range lands in its
+    /// own library's array; the walk visits libraries in ascending order.
+    #[test]
+    fn convert_splits_runs_at_library_boundaries() {
+        let top = 0x00ff_ffff;
+        let mut ranges = PhraseIndexRanges::new();
+        ranges.convert(call(&[0x0200_0001, top, top + 1, 0x0200_0002]));
+        assert_eq!(phrase_index_library(top + 1), 1);
+        assert_eq!(spans(&ranges, 0), [(top, top)]);
+        assert_eq!(spans(&ranges, 1), [(top + 1, top + 1)]);
+        assert_eq!(
+            spans(&ranges, 2),
+            [(0x0200_0001, 0x0200_0001), (0x0200_0002, 0x0200_0002)]
+        );
+        let walked: Vec<u32> = ranges.walk().copied().collect();
+        assert_eq!(walked, [top, top + 1, 0x0200_0001, 0x0200_0002]);
+    }
+
+    /// Each call closes its last range: `[5,6]` and `[7]` from two calls
+    /// stay two ranges, in append order.
+    #[test]
+    fn convert_builds_no_run_across_calls() {
+        let mut ranges = PhraseIndexRanges::new();
+        ranges.convert(call(&[5, 6]));
+        ranges.convert(call(&[7, 4]));
+        assert_eq!(spans(&ranges, 0), [(5, 6), (7, 7), (4, 4)]);
+        let mut merged = PhraseIndexRanges::new();
+        merged.convert(call(&[1]));
+        merged.append_from(&mut ranges, |token| token * 10);
+        assert_eq!(spans(&merged, 0), [(1, 1), (5, 6), (7, 7), (4, 4)]);
+        let walked: Vec<u32> = merged.walk().copied().collect();
+        assert_eq!(walked, [1, 50, 60, 70, 40]);
+        assert!(ranges.iter().next().is_none());
+    }
+
+    /// An unresolved item keeps its token in the range, so `entry` finds
+    /// its neighbours at the right offsets.
+    #[test]
+    fn unresolved_items_keep_their_place_in_the_range() {
+        let mut ranges = PhraseIndexRanges::new();
+        ranges.convert([(3, Some(30)), (4, None), (5, Some(50))]);
+        let [range] = ranges.ranges(0) else {
+            panic!("one range: {:?}", ranges.ranges(0));
+        };
+        assert_eq!((range.first(), range.last()), (3, 5));
+        assert_eq!(ranges.entry(range, 3), Some(&30));
+        assert_eq!(ranges.entry(range, 4), None);
+        assert_eq!(ranges.entry(range, 5), Some(&50));
+        assert_eq!(ranges.entry(range, 6), None);
+        assert_eq!(ranges.into_entries(), [30, 50]);
+    }
 }
