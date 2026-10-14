@@ -27,27 +27,17 @@ capi = []
 # the released Rust API surface is unchanged for every consumer that does
 # not opt in (the supported surfaces remain the C ABI and the engine).
 fuzz-api = []
-# Backend selection, forwarded down the chain (one backend per binary; see
-# oxpinyin-store's [features] for the model and precedence).
+# Backend selection (one backend per binary; see oxpinyin-store's
+# [features] for the model and precedence). Each peer feature forwards to
+# oxpinyin-facade, which carries it down facade -> runtime -> user -> data ->
+# store. The peer features stay on this crate because build.rs reads
+# `CARGO_FEATURE_<PEER>` of this crate to bake `database_format` into the
+# generated libpinyin.pc, and because `cargo cinstall --features <peer>`
+# names them.
 default = ["bdb"]
-kyotocabinet = [
-    "oxpinyin-runtime/kyotocabinet",
-    "oxpinyin-data/kyotocabinet",
-    "oxpinyin-user/kyotocabinet",
-    "oxpinyin-facade/kyotocabinet",
-]
-bdb = [
-    "oxpinyin-runtime/bdb",
-    "oxpinyin-data/bdb",
-    "oxpinyin-user/bdb",
-    "oxpinyin-facade/bdb",
-]
-tkrzw = [
-    "oxpinyin-runtime/tkrzw",
-    "oxpinyin-data/tkrzw",
-    "oxpinyin-user/tkrzw",
-    "oxpinyin-facade/tkrzw",
-]
+kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
+bdb = ["oxpinyin-facade/bdb"]
+tkrzw = ["oxpinyin-facade/tkrzw"]
 # Compiles out the two fixture hooks (`oxpinyin_init_for_fixtures`,
 # `oxpinyin_test_set_user_bigram`) that are not in pinyin.h and exist for
 # the ABI tests and the tools/bisection drivers. Enabled only when building

@@ -22,11 +22,11 @@ oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
 oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 
 [features]
-# Backend selection, forwarded down the facade→runtime/user chain (one
-# backend per binary; see oxpinyin-store's [features] for the model and
-# precedence). Dictool no longer depends on the C ABI crate, so it is
+# Backend selection, forwarded to oxpinyin-facade, which carries it down
+# facade -> runtime -> user -> data -> store (one backend per binary; see
+# oxpinyin-store's [features] for the model and precedence). Dictool no longer depends on the C ABI crate, so it is
 # pure Rust under any backend and portable to macOS and Windows.
 default = ["bdb"]
-kyotocabinet = ["oxpinyin-facade/kyotocabinet", "oxpinyin-user/kyotocabinet"]
-bdb = ["oxpinyin-facade/bdb", "oxpinyin-user/bdb"]
-tkrzw = ["oxpinyin-facade/tkrzw", "oxpinyin-user/tkrzw"]
+kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
+bdb = ["oxpinyin-facade/bdb"]
+tkrzw = ["oxpinyin-facade/tkrzw"]

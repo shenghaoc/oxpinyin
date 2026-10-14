@@ -24,27 +24,17 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 # Declared so cargo-c identifies this crate as the workspace's zhuyin C-API
 # export target (the same mechanism oxpinyin-capi uses).
 capi = []
-# Backend selection, forwarded down the chain (one backend per binary; see
-# oxpinyin-store's [features] for the model and precedence).
+# Backend selection (one backend per binary; see oxpinyin-store's
+# [features] for the model and precedence). Each peer feature forwards to
+# oxpinyin-facade, which carries it down facade -> runtime -> user -> data ->
+# store. The peer features stay on this crate because build.rs reads
+# `CARGO_FEATURE_<PEER>` of this crate to bake `database_format` into the
+# generated libzhuyin.pc, and because `cargo cinstall --features <peer>`
+# names them.
 default = ["bdb"]
-kyotocabinet = [
-    "oxpinyin-runtime/kyotocabinet",
-    "oxpinyin-data/kyotocabinet",
-    "oxpinyin-user/kyotocabinet",
-    "oxpinyin-facade/kyotocabinet",
-]
-bdb = [
-    "oxpinyin-runtime/bdb",
-    "oxpinyin-data/bdb",
-    "oxpinyin-user/bdb",
-    "oxpinyin-facade/bdb",
-]
-tkrzw = [
-    "oxpinyin-runtime/tkrzw",
-    "oxpinyin-data/tkrzw",
-    "oxpinyin-user/tkrzw",
-    "oxpinyin-facade/tkrzw",
-]
+kyotocabinet = ["oxpinyin-facade/kyotocabinet"]
+bdb = ["oxpinyin-facade/bdb"]
+tkrzw = ["oxpinyin-facade/tkrzw"]
 
 [lints.rust]
 unsafe_code = "allow" # FFI + glib marshalling only; // SAFETY: on every block
