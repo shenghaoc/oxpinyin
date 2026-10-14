@@ -48,24 +48,10 @@ pub use oxpinyin_data::table_info::{TableConf, TableConfError};
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
-    SystemDictionary, default_store_file,
+    SystemDictionary,
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{PinyinKey, UserConfLaw, UserLookup, UserStore, UserStoreError};
-
-/// File name of a *standalone* user store — `user_store.<ext>`, the
-/// extension naming the compiled-in backend (`kct` Kyoto Cabinet, `tkt`
-/// tkrzw, `db` Berkeley DB).
-///
-/// The **runtime's** user store no longer lives in such a file: it
-/// persists in libpinyin's own user-dir file set
-/// (`oxpinyin_user::persistence`), so a same-backend libpinyin reads and
-/// writes the same profile. The helper is kept as a public name for
-/// standalone stores; no in-tree caller remains.
-#[must_use]
-pub fn user_store_file() -> String {
-    default_store_file("user_store")
-}
 
 /// Orders the system and user `suggest_after` rows the way
 /// `_compute_predicted_prefix_candidates` receives them

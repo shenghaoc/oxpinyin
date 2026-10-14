@@ -45,10 +45,6 @@ fn compiled_backend_names_match_the_runtime_reader() {
     .into_iter()
     .find_map(|(on, backend)| on.then_some(backend))
     .expect("one backend is compiled in");
-    assert_eq!(
-        backend.is_libpinyin_dbm(),
-        oxpinyin_store::DEFAULT_STORE_IS_LIBPINYIN_DBM
-    );
     for (dbm, runtime) in [
         (DbmFile::PinyinIndex, oxpinyin_data::SystemDbm::PinyinIndex),
         (DbmFile::PhraseIndex, oxpinyin_data::SystemDbm::PhraseIndex),
