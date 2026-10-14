@@ -90,7 +90,10 @@ Maintainer ruling 2026-10-14 UTC.
 Before this ruling "Stage 2" meant performance. Every such reference in
 the tree — findings, code comments, the `stage3` bench, the perf
 harness — now says Stage 3. Git history, issue titles and PR titles
-still say "Stage 2" for that work; read them as Stage 3.
+still say "Stage 2" for that work; read them as Stage 3. A record dated
+before the ruling that cites the `stage3` bench ran it under its earlier
+name, `stage2` (`benches/stage2.rs`); at that record's commit, use the
+old name.
 
 ### Stage 2 — bug-for-bug
 
@@ -107,9 +110,13 @@ Derive the pin's behaviour by reading its code, never by running it:
 2. When the source does not settle it — a macro or template you cannot
    expand by eye, an inlined library helper, implementation-defined or
    undefined behaviour, evaluation order the compiler chose — read the
-   disassembly of the pin-built object on the reference cell (the
-   Berkeley DB oracle from `tools/oracle/build-oracle.sh`). Its
-   autoconf default `-g -O2` keeps line tables, so
+   disassembly of the pin-built object that holds the code in question,
+   from `tools/oracle/build-oracle.sh`: the Berkeley DB reference-cell
+   build by default; the Kyoto Cabinet or tkrzw build (`--dbm kc|tkrzw`)
+   when the behaviour is backend-specific, because that code is compiled
+   only into that build; `libzhuyin.so.15` from an `--enable-libzhuyin`
+   build for the zhuyin facade. The autoconf default `-g -O2` keeps line
+   tables, so
    `objdump -dlS -C --no-show-raw-insn` or
    `gdb -batch -ex 'disassemble /s <symbol>'` interleaves source. Read
    the object's tables (`readelf`, `.rodata`, relocations) when the
@@ -304,7 +311,10 @@ always".
 3. Every differential runs on all three cells once at the start of each
    sweep and once before a release. That run, not the per-change gate,
    is what covers kc and tkrzw.
-4. Revert-and-check runs on the reference cell only.
+4. Revert-and-check runs on the reference cell only. Where there is no
+   fix to revert — the differential covers behaviour oxpinyin already
+   reproduces — a deliberate, named mutation of oxpinyin's side stands
+   in for the revert, as in the round-2 audit; the pin is never mutated.
 5. The local test gate is `cargo test -p <crate>` for each crate the
    diff touches, plus fmt and clippy on those crates. The workspace
    sweep is CI's job; do not run it locally as a gate.

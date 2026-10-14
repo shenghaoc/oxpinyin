@@ -28,12 +28,13 @@ task 10, the Berkeley DB backend, landed 2026-09-12
 
 - [x] 5. Measure the drop-in (Kyoto Cabinet) on Fedora rawhide
   (kyotocabinet 1.2.80): 1,571/1,571 rows, sorted sets byte-identical,
-  order-only.
-  _Requirements: 2, 3_
+  order-only — sets only; the order residual was R1's (task 8).
+  _Requirements: 2_
 
 - [x] 6. Measure the drop-in (tkrzw) on Debian testing: the same shape —
-  1,571/1,571 rows, sets identical, order-only.
-  _Requirements: 2, 3_
+  1,571/1,571 rows, sets identical, order-only — sets only; the order
+  residual was R1's (task 8).
+  _Requirements: 2_
 
 - [x] 7. Measure the drop-in (Kyoto Cabinet) on NixOS
   (nixpkgs-unstable): identical to Fedora; punct rows identical, order
@@ -41,7 +42,11 @@ task 10, the Berkeley DB backend, landed 2026-09-12
   _Requirements: 2_
 
 - [x] 8. Attribute the drop-in divergence to R1's defined-order rule
-  (`docs/findings/upstream-divergences.md`, 2026-08-30).
+  (`docs/findings/upstream-divergences.md`, 2026-08-30). **Superseded
+  2026-09-02 by P6:** the runtime walks the backend's native phrase DBM
+  and the predicted order is the pin's — policy row 12, `pred-order-diff`
+  IDENTICAL on Kyoto Cabinet and tkrzw (1,588 lines, 0 mismatches). That
+  differential, not tasks 5–6, is the evidence for Requirement 3.3.
   _Requirements: 3_
 
 - [x] 9. The user dir as the backend's native user files (Kyoto Cabinet,

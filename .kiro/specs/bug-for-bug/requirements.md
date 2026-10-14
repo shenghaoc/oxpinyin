@@ -18,7 +18,9 @@ Stage 3 (`.kiro/specs/stage3-performance/`).
 - **Pin defect** — an observable behaviour of the pin that upstream
   would call a bug.
 - **Derivation** — the pin's source lines, or the symbol and
-  instruction offsets in the reference-cell object, that a reproduced
+  instruction offsets in the pin-built object holding the code (the
+  reference cell's by default, the backend's own for backend-specific
+  code, `libzhuyin.so.15` for the zhuyin facade), that a reproduced
   behaviour was read from.
 
 ## Requirements
@@ -53,7 +55,7 @@ derived from the pin's code, so that no agent time goes on experiments.
 #### Acceptance Criteria
 
 1. EACH behaviour change SHALL cite its derivation: `path:line` at the
-   pin, or symbol and instruction offsets in the reference-cell object.
+   pin, or symbol and instruction offsets in the pin-built object.
 2. THE source SHALL be read first; THE disassembly SHALL be read when the
    source does not settle the behaviour.
 3. THE pin SHALL NOT be run to discover its behaviour — no exploratory
@@ -73,7 +75,10 @@ place by a test, so that it cannot silently regress.
 
 1. EACH derived behaviour SHALL be gated by a differential on the
    reference cell, under `/AGENTS.md` "Verification cells".
-2. THE differential SHALL be shown non-vacuous by revert-and-check.
+2. THE differential SHALL be shown non-vacuous: by reverting the fix
+   (revert-and-check), or, WHEN oxpinyin already reproduced the behaviour
+   and there is no fix to revert, by a deliberate named mutation of
+   oxpinyin's side. The pin SHALL NOT be mutated.
 3. New cases SHALL go into an existing driver where one can take them.
 
 ### Requirement 4: No performance work

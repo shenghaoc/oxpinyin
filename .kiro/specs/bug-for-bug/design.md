@@ -15,10 +15,18 @@ Stop at the first rung that settles the behaviour.
 2. **The functions it calls**, where the behaviour turns on them: glib
    (`g_*`), libc, the DBM's C or C++ API — at the versions the reference
    container ships.
-3. **The disassembly of the reference-cell object** — the Berkeley DB
-   oracle `tools/oracle/build-oracle.sh` installs. The pin's build uses
-   autoconf's default `-g -O2` with no `-DNDEBUG`, so line tables are
-   present and every `assert` is compiled in:
+3. **The disassembly of the pin-built object that holds the code** —
+   from `tools/oracle/build-oracle.sh`:
+   - the Berkeley DB reference-cell build by default;
+   - the Kyoto Cabinet or tkrzw build (`--dbm kc|tkrzw`) when the
+     behaviour is backend-specific — that code (for example
+     `chewing_large_table2_kyotodb.cpp`) is compiled only into its own
+     build;
+   - `libzhuyin.so.15` from an `--enable-libzhuyin` build for the zhuyin
+     facade.
+
+   The pin's build uses autoconf's default `-g -O2` with no `-DNDEBUG`,
+   so line tables are present and every `assert` is compiled in:
    - `objdump -dlS -C --no-show-raw-insn <prefix>/lib/libpinyin.so.15`
    - `gdb -batch -ex 'disassemble /s <symbol>' <prefix>/lib/libpinyin.so.15`
 
@@ -43,7 +51,10 @@ If the ladder runs out, STOP (Requirement 2.4).
 ## Gating
 
 The differential is written after the derivation, to hold it: reference
-cell, revert-and-check once, cases added to an existing driver
+cell (all three when the backend path check fires), shown non-vacuous
+once — by reverting the fix, or, where oxpinyin already reproduced the
+behaviour and there is no fix, by a deliberate named mutation of
+oxpinyin's side — and cases added to an existing driver
 (`/AGENTS.md` "Verification cells"). A differential that disagrees with
 the derivation sends the agent back to the reading ladder — the source
 is re-read, not the implementation tuned.

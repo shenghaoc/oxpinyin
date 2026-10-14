@@ -2,6 +2,9 @@
 
 Performance measurement snapshots for Stage 3, dated in the file name (the
 stage was called Stage 2 until the 2026-10-14 UTC relabel; `../../ROADMAP.md`).
+Records here cite the `oxpinyin-capi` bench as `stage3`; every one predates
+the relabel and ran it under its earlier name, `stage2` — use that name at a
+record's own commit.
 `perf-stage3-harness-2026-08.md` describes the harness; the container
 recipe and the runbook are in `../runbooks/benches.md`. Snapshots that
 belong to a finding (the backend matrix, store optimisations, the
