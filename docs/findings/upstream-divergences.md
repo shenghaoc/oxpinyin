@@ -2548,7 +2548,7 @@ call measured here, not every independent caller of reduce_tokens.
   dies of SIGSEGV. Undefined behaviour.
 - **What oxpinyin does instead:** answers `false` with `phrase`, `pinyin`
   and `count` untouched and logs nothing
-  (`crates/oxpinyin-capi/src/iterators.rs:443-444`; the walk names the state
+  (`crates/oxpinyin-capi/src/iterators.rs:599`; the walk names the state
   `BigramStep::Undefined`, `crates/oxpinyin-facade/src/export_rows.rs:369-371`).
 - **Externally observable:** yes: the pin's process dies, and oxpinyin
   answers `false`. Class (b). Not a `contract-diff.py` case, because which
