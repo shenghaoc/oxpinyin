@@ -29,8 +29,9 @@ use crate::codec;
 use crate::persistence::ChunkHeaderField;
 use crate::phrase::{
     self, ADD_PHRASE_UNIGRAM_FACTOR, ADDON_DICTIONARY, DEFAULT_PHRASE_COUNT, FIRST_USER_TOKEN,
-    PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY, UserPhrase,
-    UserPronunciation, first_library_token, is_user_file_library, phrase_index_library_index,
+    NETWORK_DICTIONARY, PHRASE_INDEX_LIBRARY_MASK, PHRASE_MASK, PinyinKey, USER_DICTIONARY,
+    UserPhrase, UserPronunciation, first_library_token, is_user_file_library,
+    phrase_index_library_index,
 };
 use crate::registry::{self, CountCache, RegistryLease, StandaloneLease, StoreInner};
 use crate::seed;
@@ -898,6 +899,56 @@ fn mask_phrase_rows(txn: &mut dyn WriteTxn, mask: Token, value: Token) -> Result
     for (token, text) in memberships {
         txn.remove(PHRASE_TABLE, &phrase_table_key(token, &text))?;
         txn.remove(PHRASE_TABLE_BY_TEXT, &phrase_table_text_key(&text, token))?;
+    }
+    Ok(())
+}
+
+/// Re-derive the `USER_DICTIONARY` and `NETWORK_DICTIONARY` allocation
+/// cursors after items left those sub-indexes.
+///
+/// The pin gives a new phrase `range.m_range_end` (`pinyin.cpp:587-595`), and
+/// `SubPhraseIndex::get_range` drops trailing zero offsets
+/// (`phrase_index.cpp:624-650`): the next token is one past the highest
+/// token still holding an item, so a mask or removal that empties the top of
+/// the range hands those tokens out again. `add_phrase_in` keeps the cursor
+/// at that value on every add; this restores it after a removal, in the same
+/// walk-the-table cost the removal already paid.
+fn rederive_alloc_cursors(txn: &mut dyn WriteTxn) -> Result<(), StoreError> {
+    let mut highest: [Option<Token>; 2] = [None, None];
+    txn.for_each(PHRASE, &mut |key, _| {
+        let token = codec::decode_token(key)
+            .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
+        let slot = match phrase_index_library_index(token) {
+            NETWORK_DICTIONARY => 0,
+            USER_DICTIONARY => 1,
+            _ => return Ok(()),
+        };
+        highest[slot] = highest[slot].max(Some(token));
+        Ok(())
+    })?;
+    for (library, top) in [NETWORK_DICTIONARY, USER_DICTIONARY]
+        .into_iter()
+        .zip(highest)
+    {
+        let next = match top {
+            Some(top) => phrase::next_library_token_after(library, top),
+            None => Some(phrase::first_library_token(library)),
+        };
+        // A full sub-index has no cursor to move: `add_phrase_in` reports
+        // the exhaustion from the row it already holds.
+        let Some(next) = next else { continue };
+        txn.put(
+            ALLOC,
+            &codec::encode_u8(library),
+            &codec::encode_token(next),
+        )?;
+        if library == USER_DICTIONARY {
+            txn.put(
+                ALLOC,
+                &codec::encode_u8(ALLOC_CURSOR),
+                &codec::encode_token(next),
+            )?;
+        }
     }
     Ok(())
 }
@@ -2664,6 +2715,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             )?;
 
             mask_phrase_rows(txn, mask, value)?;
+            rederive_alloc_cursors(txn)?;
             has_user_data_in_write_txn(txn)
         })?;
         // Commit succeeded: discard matched in-memory system payloads too.
@@ -2759,6 +2811,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     &codec::encode_u64(kept_sum),
                 )?;
 
+                rederive_alloc_cursors(txn)?;
                 let has = has_user_data_in_write_txn(txn)?;
                 Ok(Some(has))
             })
@@ -4015,7 +4068,9 @@ mod tests {
                     assert_eq!(store.unigram_delta(0x0200_0001).unwrap(), 966);
                     assert_eq!(store.unigram_delta(user_a).unwrap(), 0);
                     assert_eq!(store.unigram_total().unwrap(), 966);
-                    assert_eq!(store.next_user_token().unwrap(), user_a + 2);
+                    // The user sub-index is empty again, so `get_range` ends at 1
+                    // (`phrase_index.cpp:640-650`) and the next import reuses it.
+                    assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
                     assert!(!store.is_modified());
                     assert!(!store.save().unwrap());
 
@@ -4024,6 +4079,34 @@ mod tests {
                     assert_eq!(store.bigram_total(0x0100_0001).unwrap(), 0);
                     assert_eq!(store.unigram_total().unwrap(), 0);
                     assert!(!store.is_modified());
+                    cleanup(&path);
+                }
+
+                /// `_add_phrase` takes `range.m_range_end` (`pinyin.cpp:587-595`) and
+                /// `get_range` drops trailing zero offsets (`phrase_index.cpp:624-650`):
+                /// the next token is one past the highest live token.
+                #[test]
+                fn next_user_token_follows_the_highest_live_token() {
+                    let path = temp_path("next-token");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    let a = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    let b = store.add_phrase("世界", &[30, 40], None).unwrap();
+                    let c = store.add_phrase("再见", &[50, 60], None).unwrap();
+                    assert_eq!((b, c), (a + 1, a + 2));
+
+                    // A hole below the top is not reused.
+                    store.mask_out(0xFFFF_FFFF, b).unwrap();
+                    assert_eq!(store.next_user_token().unwrap(), c + 1);
+
+                    // Masking the top frees it and every empty slot beneath it.
+                    store.mask_out(0xFFFF_FFFF, c).unwrap();
+                    assert_eq!(store.next_user_token().unwrap(), a + 1);
+                    assert_eq!(store.add_phrase("好的", &[70, 80], None).unwrap(), a + 1);
+
+                    // A single removal frees the top the same way.
+                    assert!(store.remove_user_phrase(a + 1).unwrap());
+                    assert_eq!(store.next_user_token().unwrap(), a + 1);
+                    assert_eq!(store.add_phrase("再来", &[90, 100], None).unwrap(), a + 1);
                     cleanup(&path);
                 }
 
