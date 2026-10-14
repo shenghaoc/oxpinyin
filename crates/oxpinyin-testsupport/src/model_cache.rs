@@ -238,27 +238,22 @@ pub fn export_dir() -> PathBuf {
     dir
 }
 
-/// The three required DBM file names for the compiled-in backend.
+/// The three DBM file names a system data directory must hold.
 ///
-/// libpinyin's own on Kyoto Cabinet, tkrzw and Berkeley DB
-/// (`pinyin_index.bin`, `phrase_index.bin`, `bigram.db`),
-/// (`oxpinyin_data::SystemDbm` is the
-/// authority; this crate sits below it).
+/// libpinyin's own names, identical on Kyoto Cabinet, tkrzw and Berkeley
+/// DB (`pinyin_index.bin`, `phrase_index.bin`, `bigram.db`;
+/// `SYSTEM_PINYIN_INDEX`, `SYSTEM_PHRASE_INDEX` and `SYSTEM_BIGRAM` in
+/// libpinyin's `src/pinyin_internal.h`). They do not vary with the
+/// storage backend, so the answer does not depend on which backend is
+/// compiled in. (`oxpinyin_data::SystemDbm` is the authority; this crate
+/// sits below it.)
 #[must_use]
 pub fn system_dbm_names() -> [String; 3] {
-    if oxpinyin_store::DEFAULT_STORE_IS_LIBPINYIN_DBM {
-        [
-            "pinyin_index.bin".to_owned(),
-            "phrase_index.bin".to_owned(),
-            "bigram.db".to_owned(),
-        ]
-    } else {
-        [
-            oxpinyin_store::default_store_file("pinyin_index"),
-            oxpinyin_store::default_store_file("phrase_index"),
-            oxpinyin_store::default_store_file("bigram"),
-        ]
-    }
+    [
+        "pinyin_index.bin".to_owned(),
+        "phrase_index.bin".to_owned(),
+        "bigram.db".to_owned(),
+    ]
 }
 
 /// Workspace root that contains the training crates and the provenance finding.

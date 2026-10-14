@@ -12,16 +12,3 @@ workspace = true
 
 [dependencies]
 oxpinyin-core.workspace = true
-# Backend-aware table naming for the fixture export dir; never a
-# dependency of shipping code.
-oxpinyin-store = { workspace = true }
-
-# Forwards the backend selection, matching oxpinyin-data's block. No
-# default backend: this crate is always built inside a workspace-level
-# selection whose other members supply one, and a hard default would
-# re-enable kyotocabinet through the path dev-dependencies on macOS.
-[features]
-default = []
-kyotocabinet = ["oxpinyin-store/kyotocabinet"]
-bdb = ["oxpinyin-store/bdb"]
-tkrzw = ["oxpinyin-store/tkrzw"]

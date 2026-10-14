@@ -22,11 +22,11 @@ description = "model20 → oxpinyin runtime tables compiler for every storage ba
 default = ["bdb"]
 # Enable the Kyoto Cabinet producer (`--backend kyotocabinet`); mirrors
 # oxpinyin-store.
-kyotocabinet = ["oxpinyin-store/kyotocabinet", "oxpinyin-testsupport/kyotocabinet"]
+kyotocabinet = ["oxpinyin-store/kyotocabinet"]
 # Enable the Berkeley DB producer (`--backend bdb`); mirrors oxpinyin-store.
-bdb = ["oxpinyin-store/bdb", "oxpinyin-testsupport/bdb"]
+bdb = ["oxpinyin-store/bdb"]
 # Enable the Tkrzw producer (`--backend tkrzw`); mirrors oxpinyin-store.
-tkrzw = ["oxpinyin-store/tkrzw", "oxpinyin-testsupport/tkrzw"]
+tkrzw = ["oxpinyin-store/tkrzw"]
 
 [lints]
 workspace = true
