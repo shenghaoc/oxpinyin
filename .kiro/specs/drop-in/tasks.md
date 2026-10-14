@@ -33,7 +33,7 @@ task 10, the Berkeley DB backend, landed 2026-09-12
 
 - [x] 6. Measure the drop-in (tkrzw) on Debian testing: the same shape —
   1,571/1,571 rows, sets identical, order-only.
-  _Requirements: 2, 4_
+  _Requirements: 2, 3_
 
 - [x] 7. Measure the drop-in (Kyoto Cabinet) on NixOS
   (nixpkgs-unstable): identical to Fedora; punct rows identical, order
@@ -42,7 +42,7 @@ task 10, the Berkeley DB backend, landed 2026-09-12
 
 - [x] 8. Attribute the drop-in divergence to R1's defined-order rule
   (`docs/findings/upstream-divergences.md`, 2026-08-30).
-  _Requirements: 4_
+  _Requirements: 3_
 
 - [x] 9. The user dir as the backend's native user files (Kyoto Cabinet,
   tkrzw; Berkeley DB with task 10) — the same files a libpinyin build on

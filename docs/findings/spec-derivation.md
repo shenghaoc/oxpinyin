@@ -41,7 +41,7 @@ present from the first capture.
 | F-C | Flag matrix | each option bit singly against baseline | parser/scoring SPECs |
 | F-D | Session | guess → choose → re-guess remainder | engine API; capi templates |
 | F-E | Robustness | the 14 memory/access-safety rows below | scoped demonstrations and regression gates |
-| F-F | Shuangpin/Bopomofo | parse behaviour captured while the harness exists | Stage 3 |
+| F-F | Shuangpin/Bopomofo | parse behaviour captured while the harness exists | Stage 2 — the pin's own schemes are pinned behaviour (W13) |
 
 ### F-E robustness tracker
 

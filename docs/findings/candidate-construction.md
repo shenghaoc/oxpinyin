@@ -847,7 +847,8 @@ down and GLib's stable merge sort keeps.
   decomposition is unreachable from the public API; the scan reproduces the
   emitted text without claiming the token split.
 - **Fuzzy/correction spellings** (the pin's fuzzy step under ambiguity
-  options not set by `0x18a`) are Stage 3, outside this contract.
+  options not set by `0x18a`) are pinned behaviour — Stage 2 scope, the
+  option bits of W10 — outside this contract.
 - **The sentence stage** re-opens only on a future capture that actually
   produces `NBEST_MATCH` candidates (a different profile), per the
   2026-08-13 §8.3 condition (a).

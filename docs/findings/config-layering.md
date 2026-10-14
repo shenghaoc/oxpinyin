@@ -32,7 +32,7 @@ the 69 keys of `com.github.libpinyin.ibus-libpinyin.libpinyin`.
 
 The sibling `com.github.libpinyin.ibus-libpinyin.libbopomofo` schema is
 Zhuyin. `parser-spec.md` excludes Zhuyin from Foundation and
-`spec-derivation.md` puts Bopomofo in F-F for Stage 3. Carrying its keys now
+`spec-derivation.md` puts Bopomofo in F-F for Stage 2. Carrying its keys now
 would mean carrying settings nothing reads.
 
 Many of the 69 are frontend concerns — shortcut strings, lookup-table

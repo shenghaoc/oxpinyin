@@ -239,8 +239,8 @@ the records — D1 is dated 2026-08-20, D2 and D3 2026-08-21.
 `af642b91` was read rather than assumed. In the script it adds model-cache
 verification and a `PINYIN_MODEL_CACHE` fallback for `MODEL_DIR`. The same
 commit also touches the measurement code — `benches/support/mod.rs` (+127) is
-that verification mirrored in, and `benches/stage3.rs` is a bench-identifier
-rename with a byte-identical body. **No measurement behaviour changed**, so
+that verification mirrored in, and `benches/stage2.rs` (named `stage3.rs`
+since 2026-10-14) is a bench-identifier rename with a byte-identical body. **No measurement behaviour changed**, so
 the three records' "same W8 protocol" claim holds. `b7a35f1f` removed a
 dangling `oxpinyin-migrate` line and is cosmetic.
 
