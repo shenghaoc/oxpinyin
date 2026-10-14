@@ -87,14 +87,20 @@ static int sentence_fixture(void *so, void *ctx, const char *path, bool training
         if (!reset(inst)) return 1;
         size_t parse_return = parse(inst, input);
         size_t length = parsed(inst);
-        if (length == 0) return 1;
+        /* Session::train_top checks full consumption before guessing. */
+        if (training && length != strlen(input)) {
+            fprintf(stderr, "train_top parse precondition failed row=%u input=%s parsed=%zu expected=%zu\n",
+                    count + 1, input, length, strlen(input));
+            return 1;
+        }
+        if (!training && length == 0) return 1;
         bool guessed = sentence(inst);
-        /* Session::train_top's exact reset/parse/full-consumption/guess/train(0)
-         * preconditions; no candidate selection or unguessed training. */
+        /* Session::train_top's reset/parse/full-consumption/guess/train(0)
+         * sequence; no candidate selection or unguessed training. */
         if (training) {
-            if (length != strlen(input) || !guessed || !train(inst, 0)) {
-                fprintf(stderr, "train_top precondition/call failed row=%u input=%s parsed=%zu expected=%zu guess=%d\n",
-                        count + 1, input, length, strlen(input), guessed);
+            if (!guessed || !train(inst, 0)) {
+                fprintf(stderr, "train_top guess/train failed row=%u input=%s guess=%d\n",
+                        count + 1, input, guessed);
                 return 1;
             }
             char *top = NULL;
@@ -153,19 +159,33 @@ static int phrase_file(void *so, void *ctx, const char *path) {
     char *line = NULL; size_t capacity = 0; unsigned imported = 0, active = 0;
     void *it = NULL; bool touched[5] = {false};
     bool (*load)(void *, uint8_t) = symbol(so, "pinyin_load_phrase_library");
-    while (getline(&line, &capacity, f) >= 0) {
+    ssize_t line_length;
+    while ((line_length = getline(&line, &capacity, f)) >= 0) {
+        if (strnlen(line, (size_t)line_length) != (size_t)line_length) return 1;
         char *cursor = line;
         char *lib_s = strsep(&cursor, "\t"), *phrase = strsep(&cursor, "\t"), *pinyin = strsep(&cursor, "\t");
         if (!lib_s || !phrase || !pinyin || !cursor) return 1;
-        unsigned lib = (unsigned)strtoul(lib_s, NULL, 10);
-        if (lib < 1 || lib > 4) return 1;
+        if (lib_s[0] < '0' || lib_s[0] > '9') return 1;
+        char *lib_end = NULL;
+        errno = 0;
+        unsigned long parsed_lib = strtoul(lib_s, &lib_end, 10);
+        if (errno == ERANGE || *lib_end || parsed_lib < 1 || parsed_lib > 4) return 1;
+        unsigned lib = (unsigned)parsed_lib;
+        char *count_end = NULL;
+        errno = 0;
+        long parsed_count = strtol(cursor, &count_end, 10);
+        if (cursor == count_end || errno == ERANGE ||
+            parsed_count < INT32_MIN || parsed_count > INT32_MAX ||
+            !(*count_end == '\0' ||
+              (*count_end == '\n' && count_end[1] == '\0') ||
+              (*count_end == '\r' && count_end[1] == '\n' && count_end[2] == '\0'))) return 1;
         if (active != lib) {
             if (it) end(it);
             (void)load(ctx, (uint8_t)lib);
             it = begin(ctx, (uint8_t)lib); active = lib; touched[lib] = true;
             if (!it) return 1;
         }
-        if (!add(it, phrase, pinyin, (int32_t)strtol(cursor, NULL, 10))) return 1;
+        if (!add(it, phrase, pinyin, (int32_t)parsed_count)) return 1;
         ++imported;
     }
     if (it) end(it);

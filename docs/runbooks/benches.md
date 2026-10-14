@@ -126,11 +126,14 @@ draft, not in-tree.
 ## BDB guess, training, and import profiles (#757–#759)
 
 `tools/bisection/system-import-profile.c` extends the existing import
-driver with three full-process workloads. The source used for the registered
-measurements has SHA-256
+driver with three full-process workloads. The historical #757–#760
+measurement driver source has SHA-256
 `eb2cbdf2b573ccbcbf39b90b549b6d618fe7a4c3de7ee417051e510b108bfa0b`;
-the executable built for those measurements has SHA-256
+its measured executable has SHA-256
 `c4b09cb0b15a25deb7e418a66d8fc63256cce4fe40caf3a27700a2fd2a05fd51`.
+The reviewed source, with strict phrase-number parsing and the full-consumption
+check before training's guess, has SHA-256
+`565be2c8bfb07682c1d342ffcd0d7e91795aae5f6115dd3dd004d9267070b5ea`.
 Build the driver in the measurement environment with:
 
 ```sh
@@ -146,6 +149,20 @@ container on a Fedora 45 host, Valgrind 3.27.1, and CPU 0. The pin SO there
 has SHA-256 `d535d077eb55736f742a270a4128763ca4f9b0471819778b06b5708b47b4badc`.
 The subject SO for those registered findings has SHA-256
 `8d74995f5f4cab5013da28ef083259e588821b2cf28249548dba705db643436b`.
+Its recorded build invoked
+`tools/packaging/install.sh libpinyin --prefix=/lane/stage-main -- --locked --release --jobs 1 --no-default-features --features bdb,shipped`
+with `CARGO_BUILD_JOBS=1` and `CARGO_TARGET_DIR=/lane/target-bdb`.
+From `crates/oxpinyin-capi`, that wrapper ran this exact Cargo command,
+then relinked the installed SO under the version script:
+
+```sh
+cargo cinstall --prefix=/lane/stage-main --libdir=/lane/stage-main/lib --includedir=/lane/stage-main/include --target-dir=/lane/target-bdb --locked --release --jobs 1 --no-default-features --features bdb,shipped
+```
+
+The timed, relinked `libpinyin.so.15.0.0` is 5,177,408 bytes.
+`readelf -d` reports `NEEDED`: `libgobject-2.0.so.0`,
+`libglib-2.0.so.0`, `libdb-5.3.so`, `libm.so.6`,
+`libgcc_s.so.1`, `libc.so.6`, and `ld-linux-x86-64.so.2`.
 Later PR comparisons must identify their own subject build and use matched
 pin/main/subject conditions; these registered figures are not a substitute.
 
@@ -228,6 +245,63 @@ for 500 guesses, `e5855249fc5c7cc2c4de81aa1e792c2f41152a84c8a3e10f04c52a824bda69
 for 200 successful guessed training steps, and
 `34e98cd8bf5a191b27e0b8fc50ffdefca9e76a2dab7dd01106cf6b6d3c9eec1d`
 for 10,000 imports and 95,698 exported rows.
+
+### Native Fedora baseline refresh (2026-10-14 UTC)
+
+This refresh uses Fedora 45 on Linux `7.2.9-300.fc45.x86_64`, an
+Intel Core i7-9750H, CPU 0, GCC 16.2.1, Valgrind 3.27.1, cargo/rustc
+1.97.1, and cargo-c 0.10.24. GitHub `main` was still
+`d2a5d20776612b438aff183632ef4de6fa33857f` when checked for this
+run. Its BDB subject was built from that exact commit with:
+
+```sh
+CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/home/sheng/Documents/Codex/2026-10-14/task-4/target-main-bdb \
+  tools/packaging/install.sh libpinyin \
+    --prefix=/home/sheng/Documents/Codex/2026-10-14/task-4/stage-main-shipped \
+    --libdir=/home/sheng/Documents/Codex/2026-10-14/task-4/stage-main-shipped/lib \
+    -- --locked --release --jobs 1 --no-default-features --features bdb,shipped
+```
+
+The resulting relinked `libpinyin.so.15.0.0` is 5,226,232 bytes, SHA-256
+`bbd860357e17af1797a72e9dabb8cc0bbea05851122e68a26e59e6c1a70bef75`.
+Its `readelf -d` `NEEDED` list is `libgobject-2.0.so.0`,
+`libglib-2.0.so.0`, `libdb-5.3.so`, `libm.so.6`,
+`libgcc_s.so.1`, `libc.so.6`, and `ld-linux-x86-64.so.2`.
+The pinned oracle remains `074a2219c90feaf962d0d24f034514033ece5f99`,
+with SO SHA-256 `d535d077eb55736f742a270a4128763ca4f9b0471819778b06b5708b47b4badc`.
+
+For the six commands above, `HARNESS=/tmp/pr767-system-import-profile-final`
+was the final strict-compiled C driver (executable SHA-256
+`d1eef411aacc080690d3295c4b7058c5d01c3ca08a762a8b8819d94799e838a9`),
+`DATA=/home/sheng/work/oracle/bdb/lib/libpinyin/data`, and `PHRASE_FILE`
+was the verified 121,316-byte input with SHA-256
+`22637aee560c86761bb6d9d187d9af8b9fea970a6690bc21e21e5b6fc1cbb117`.
+Set `SO` to `/home/sheng/work/oracle/bdb/lib/libpinyin.so.15.0.0` for the
+pin rows, or to the staged main library above for the main rows. Each command
+used a fresh empty `USER_DIR` under `/tmp` and ran three accepted times,
+serialized with `taskset -c 0`. Output was read from pipes; no profiler
+capture was retained. A run overlapping suspend is discarded by checking
+the change in `CLOCK_BOOTTIME - CLOCK_MONOTONIC` and is retried.
+
+| Workload | Library | Median Callgrind `Ir` | Ir spread | Median Massif peak `mem_heap_B` | Heap spread |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 500 sentence guesses | pin | 2,245,511,454 | 0% | 2,147,301 | 0% |
+| 500 sentence guesses | `d2a5d207` main | 6,641,501,950 | 0.025904% | 2,620,088 | 0% |
+| 200 training steps and save | pin | 454,876,602 | 0% | 7,124,656 | 0% |
+| 200 training steps and save | `d2a5d207` main | 1,186,203,677 | 0.001216% | 1,546,948 | 0% |
+| 10,000 imports, save, and export | pin | 758,108,369 | 0% | 9,354,935 | 0% |
+| 10,000 imports, save, and export | `d2a5d207` main | 1,725,238,006 | 0% | 7,423,931 | 0% |
+
+All 36 accepted profile runs produced the corresponding stdout hashes above;
+none overlapped a suspend. The final driver and historical executable also
+produced byte-identical stdout on the pin and refreshed main SO for all three
+workloads. The initial measurement attempts stopped before this campaign were
+discarded after the driver changed and after a typo in the in-memory training
+hash check; neither contributes to these medians.
+The final driver rejected 16 malformed 10,000-row inputs covering missing
+digits, suffixes, library and count range errors, bad line endings, and an
+embedded NUL. Valid `+5`, `-5`, CRLF, and an EOF-terminated final row retained
+byte-identical stdout against the historical executable.
 
 ## The perf baseline (oracle vs installed oxpinyin)
 
