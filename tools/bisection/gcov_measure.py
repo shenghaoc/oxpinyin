@@ -29,6 +29,20 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 PIN = "074a2219c90feaf962d0d24f034514033ece5f99"
 WORKER_TIMEOUT = 60
+# The pin's three DBM cells (configure.ac:93-132 at the pin): the Makefile.am
+# conditional naming the cell's translation units, the config.h macro its
+# configure output defines, the configure/manifest spellings, the library
+# AC_SEARCH_LIBS adds to LIBS, the subject's cargo feature and the suffix of
+# the cell-specific headers the shared headers include under the macro.
+CELLS = {
+    'bdb': dict(conditional='BERKELEYDB', macro='HAVE_BERKELEY_DB', dbm='BerkeleyDB',
+                configure='--with-dbm=BerkeleyDB', library='db', feature='bdb', suffix='bdb'),
+    'kc': dict(conditional='KYOTOCABINET', macro='HAVE_KYOTO_CABINET', dbm='KyotoCabinet',
+               configure='--with-dbm=KyotoCabinet', library='kyotocabinet', feature='kyotocabinet', suffix='kyotodb'),
+    'tkrzw': dict(conditional='TKRZW', macro='HAVE_TKRZW', dbm='Tkrzw',
+                  configure='--with-dbm=Tkrzw', library='tkrzw', feature='tkrzw', suffix='tkrzwdb'),
+}
+LEDGERS = {cell: f'docs/findings/axis-j-{cell}-ledger.md' for cell in CELLS}
 GATE_TESTS = (
     'sentence_surface_matches_the_declared_residual',
     'sentence_surface_detects_per_step_cost_shift',
@@ -68,24 +82,58 @@ def command(argv, **kwargs):
     return result.stdout.decode()
 
 
-def contract_module():
-    # The driver snapshots CELL at import and uses it in fixture registration.
-    os.environ['CONTRACT_DIFF_CELL'] = 'bdb'
+def contract_module(cell='bdb'):
+    # The driver snapshots CELL at import and uses it in fixture registration:
+    # the requested cell is set explicitly here, never inherited from the
+    # environment, so a stray CONTRACT_DIFF_CELL cannot select another cell.
+    if cell not in CELLS:
+        raise RuntimeError('unknown DBM cell: ' + repr(cell))
+    os.environ['CONTRACT_DIFF_CELL'] = cell
     spec = importlib.util.spec_from_file_location("contract", HERE / "contract-diff.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if module.CELL != 'bdb':
-        raise RuntimeError('contract driver did not select the bdb cell')
+    if module.CELL != cell:
+        raise RuntimeError(f'contract driver did not select the {cell} cell')
     return module
 
 
-def recorded_prefix_hashes():
+def cell_sources(pin, cell='bdb'):
+    """Read the autoconf source list, selecting only one cell's DBM conditional.
+
+    The shared list precedes the first conditional; each cell's block is the
+    text between its `if <CONDITIONAL>` and the next `endif` (src/Makefile.am
+    at the pin). Another cell's translation units are absent by this recipe.
+    """
+    text = (pin / "src/Makefile.am").read_text()
+    shared = text.split("pinyin_SOURCES =", 1)[1].split("if BERKELEYDB", 1)[0]
+    conditional = text.split("if " + CELLS[cell]['conditional'], 1)[1].split("endif", 1)[0]
+    return sorted(set(re.findall(r"\b[\w/]+\.cpp", shared + conditional)))
+
+
+def configured_libraries(config_status, cell='bdb'):
+    """The DBM library AC_SEARCH_LIBS appended to LIBS, read from config.status.
+
+    The pin links each cell's shared object with the configured LIBS value
+    (libpinyin_la_LIBADD carries only GLib); the measurement build repeats
+    that exact link input instead of spelling a library name per cell.
+    """
+    match = re.search(r'^S\["LIBS"\]="([^"]*)"', config_status.read_text(), re.M)
+    if not match:
+        raise RuntimeError('config.status does not record the configured LIBS')
+    libraries = shlex.split(match.group(1))
+    if '-l' + CELLS[cell]['library'] not in libraries:
+        raise RuntimeError(f'configured LIBS {libraries!r} do not name the {cell} DBM library')
+    return libraries
+
+
+def recorded_prefix_hashes(cell='bdb'):
     """Legacy read-only manifests use the authorized ledger for the Z digest.
 
     This is a recorded input, not a digest accepted from the current library.
     A newly provisioned prefix may instead carry zhuyin_shared_object_sha256.
+    Each cell's ledger records its own oracle digests in the same sentence.
     """
-    text = (REPO / 'docs/findings/axis-j-bdb-ledger.md').read_text()
+    text = (REPO / LEDGERS[cell]).read_text()
     pattern = r'Oracle shared-object SHA-256: libpinyin=`([0-9a-f]{64})`; libzhuyin=`([0-9a-f]{64})`'
     matches = re.findall(pattern, text)
     if len(matches) != 1 or f'Pin `{PIN}`' not in text:
@@ -93,10 +141,10 @@ def recorded_prefix_hashes():
     return dict(zip(('libpinyin', 'libzhuyin'), matches[0], strict=True))
 
 
-def oracle_hashes(prefix, provenance=None):
+def oracle_hashes(prefix, provenance=None, cell='bdb'):
     fields = dict(line.split('=', 1) for line in (prefix / 'oracle-pin.txt').read_text().splitlines()
                   if '=' in line and not line.startswith('#'))
-    recorded = provenance if provenance is not None else recorded_prefix_hashes()
+    recorded = provenance if provenance is not None else recorded_prefix_hashes(cell)
     expected = {'libpinyin': fields['shared_object_sha256'],
                 'libzhuyin': fields.get('zhuyin_shared_object_sha256', recorded['libzhuyin'])}
     if recorded != expected:
@@ -109,14 +157,14 @@ def oracle_hashes(prefix, provenance=None):
     return actual
 
 
-def verify_prefix(prefix, provenance=None):
+def verify_prefix(prefix, provenance=None, cell='bdb'):
     """Read-only pin, cell, library and full data-manifest hash cross-check."""
     fields = lambda path: dict(line.split('=', 1) for line in path.read_text().splitlines() if '=' in line and not line.startswith('#'))
     actual = fields(prefix / 'oracle-pin.txt')
     expected = fields(REPO / 'tools/oracle/oracle-pin.txt')
-    ref = f"libpinyin-{expected['libpinyin_tag']}-{PIN}+model20-{expected['model_archive_sha256']}+dbm-bdb"
-    assert actual['pin_ref'] == ref and actual['dbm'] == 'BerkeleyDB'
-    oracle_hashes(prefix, provenance)
+    ref = f"libpinyin-{expected['libpinyin_tag']}-{PIN}+model20-{expected['model_archive_sha256']}+dbm-{cell}"
+    assert actual['pin_ref'] == ref and actual['dbm'] == CELLS[cell]['dbm']
+    oracle_hashes(prefix, provenance, cell)
     count = 0
     for name, field in [('oracle-data.sha256', 'data_manifest_sha256'), ('oracle-data-unstable.sha256', 'data_unstable_manifest_sha256')]:
         raw = (prefix / name).read_bytes()
@@ -128,28 +176,29 @@ def verify_prefix(prefix, provenance=None):
     return count
 
 
-def build(pin, config, out, oracle):
+def build(pin, config, out, oracle, cell='bdb', provenance=None):
     """Reproduce the configured autoconf shared-library recipe without log files.
 
-    config.h is the unchanged bdb configure output. Only CXXFLAGS is replaced
-    by -g -O0 --coverage. Makefile.am supplies the conditional TU lists; the
-    installed config.status guards the other original configure flags.
+    config.h is the unchanged configure output of the selected cell. Only
+    CXXFLAGS is replaced by -g -O0 --coverage. Makefile.am supplies the
+    conditional TU lists; the installed config.status guards the other
+    original configure flags and supplies the configured DBM link input.
     """
     assert command(["git", "-C", pin, "rev-parse", "HEAD"]).strip() == PIN
     assert not command(["git", "-C", pin, "status", "--porcelain", "--untracked-files=no"]).strip()
-    verify_prefix(oracle)
+    verify_prefix(oracle, provenance, cell)
     configuration = command([config.parent / "config.status", "--config"]).strip()
-    required = ["--disable-static", "--with-dbm=BerkeleyDB", "--enable-libzhuyin"]
+    required = ["--disable-static", CELLS[cell]['configure'], "--enable-libzhuyin"]
     assert all(flag in shlex.split(configuration) for flag in required), configuration
-    assert "#define HAVE_BERKELEY_DB" in config.read_text()
-    assert "#define HAVE_KYOTO_CABINET" not in config.read_text()
+    assert "#define " + CELLS[cell]['macro'] in config.read_text()
+    for other in CELLS.values():
+        assert other['macro'] == CELLS[cell]['macro'] or "#define " + other['macro'] not in config.read_text()
+    libraries = configured_libraries(config.parent / "config.status", cell)
     out.mkdir(parents=True, exist_ok=True)
     assert not out.is_relative_to(oracle) and not out.is_relative_to(pin), 'measurement output must be lane-owned outside the pin/oracle'
     clear(out)  # old stamps must not pollute a newly compiled measurement
     (out / "config.h").write_bytes(config.read_bytes())
-    source_list = (pin / "src/Makefile.am").read_text()
-    import re
-    common = sorted(set(re.findall(r"\b[\w/]+\.cpp", source_list.split("pinyin_SOURCES =", 1)[1].split("if BERKELEYDB", 1)[0] + source_list.split("if BERKELEYDB", 1)[1].split("endif", 1)[0])))
+    common = cell_sources(pin, cell)
     cflags = shlex.split(command(["pkg-config", "--cflags", "glib-2.0"]))
     flags = ["-g", "-O0", "--coverage", "-fPIC", "-DPIC", "-DHAVE_CONFIG_H", "-I" + str(out)]
     flags += ["-I" + str(pin / "src" / part) for part in ["", "include", "storage", "lookup"]] + cflags
@@ -168,7 +217,7 @@ def build(pin, config, out, oracle):
     for library in ["pinyin", "zhuyin"]:
         version = out / f"lib{library}.ver"
         version.write_text((pin / f"src/lib{library}.ver").read_text().replace("local:", "oxpinyin_j_gcov_dump;\nlocal:"))
-        command(["g++", "--coverage", "-shared", *[objects[x] for x in common], objects[library + ".cpp"], out / "gcov-flush.o", "-ldb", *shlex.split(command(["pkg-config", "--libs", "glib-2.0"])), "-Wl,--version-script=" + str(version), "-Wl,-soname,lib" + library + ".so.15", "-o", out / f"lib{library}.so"])
+        command(["g++", "--coverage", "-shared", *[objects[x] for x in common], objects[library + ".cpp"], out / "gcov-flush.o", *libraries, *shlex.split(command(["pkg-config", "--libs", "glib-2.0"])), "-Wl,--version-script=" + str(version), "-Wl,-soname,lib" + library + ".so.15", "-o", out / f"lib{library}.so"])
         original = command(["nm", "-D", "--defined-only", oracle / f"lib/lib{library}.so"])
         measured = command(["nm", "-D", "--defined-only", out / f"lib{library}.so"])
         symbols = lambda text: {line.split()[-1].split("@", 1)[0] for line in text.splitlines() if len(line.split()) >= 3 and line.split()[1] in ["T", "W"]}
@@ -210,26 +259,28 @@ def counters(out, pin):
     return counts
 
 
-def measured_worker(module, mode, so, data, name, scratch):
+def measured_worker(module, mode, so, data, name, scratch, cell='bdb'):
     """Keep the existing observation parser and isolated-worker semantics."""
     original_file = module.__file__
     try:
         module.__file__ = str(Path(__file__).resolve())
-        return bounded_worker(module, mode, so, data, name, scratch)
+        # The measurement worker selects its fixture cell from this explicit
+        # variable, not from an inherited default.
+        return bounded_worker(module, mode, so, data, name, scratch, extra_env={'J_MEASUREMENT_CELL': cell})
     finally:
         module.__file__ = original_file
 
 
-def bounded_worker(module, mode, so, data, name, scratch):
+def bounded_worker(module, mode, so, data, name, scratch, extra_env=None):
     try:
-        return module.run_worker(mode, so, data, name, scratch, timeout=WORKER_TIMEOUT)
+        return module.run_worker(mode, so, data, name, scratch, extra_env=extra_env, timeout=WORKER_TIMEOUT)
     except subprocess.TimeoutExpired:
         return dict(exit='TIMEOUT', result=None, userfiles=[], measurement_roots=[],
                     measurement_abort_flush=False, stderr='', stderr_lines=0)
 
 
 def worker(mode, so, data, name):
-    module = contract_module()
+    module = contract_module(os.environ['J_MEASUREMENT_CELL'])
     library = ctypes.CDLL(so)
     original_fn = module.Kit.fn
     def traced_fn(kit, function, result, *args):
@@ -265,10 +316,10 @@ def same_reference(module, spec, pin, measurement):
     return pin['exit'] == measurement['exit'] and (pin['result'] is None and measurement['result'] is None or pin['result'] is not None and measurement['result'] is not None and module.observed(pin['result']) == module.observed(measurement['result'])) and (not compare_stderr or pin['stderr'] == measurement['stderr']) and (not spec['userdir'] or pin['userfiles'] == measurement['userfiles'])
 
 
-def contracts(prefix, pinyin, zhuyin, out, pin, progress=None, names=None):
-    verify_prefix(prefix)
-    module = contract_module()
-    assert module.CELL == 'bdb'
+def contracts(prefix, pinyin, zhuyin, out, pin, progress=None, names=None, cell='bdb', provenance=None):
+    verify_prefix(prefix, provenance, cell)
+    module = contract_module(cell)
+    assert module.CELL == cell
     attributed, nonmatch, incomplete, results = defaultdict(set), set(), set(), []
     data = prefix / 'lib/libpinyin/data'
     with tempfile.TemporaryDirectory(prefix='j-contract-') as scratch:
@@ -277,14 +328,14 @@ def contracts(prefix, pinyin, zhuyin, out, pin, progress=None, names=None):
         selected = sorted(name for name in module.CASES if not name.startswith('axis-c-')) if names is None else sorted(names)
         for index, name in enumerate(selected, 1):
             spec = module.CASES[name]
-            if 'bdb' not in spec['cells']:
+            if cell not in spec['cells']:
                 results.append((name, 'SKIP'))
                 continue
             mode = spec['mode']
             reference = bounded_worker(module, mode, (prefix / f'lib/lib{mode}.so').resolve(), data, name, scratch)
             subject = bounded_worker(module, mode, pinyin if mode == 'pinyin' else zhuyin, data, name, scratch)
             clear(out)
-            measurement = measured_worker(module, mode, out / f'lib{mode}.so', data, name, scratch)
+            measurement = measured_worker(module, mode, out / f'lib{mode}.so', data, name, scratch, cell)
             timed_out = any(record['exit'] == 'TIMEOUT' for record in (reference, subject, measurement))
             differential_match = not timed_out and matches(module, spec, reference, subject)
             measurement_match = same_reference(module, spec, reference, measurement)
@@ -338,7 +389,7 @@ def checksum_limit(out, name, measurement, incomplete):
     return {}
 
 
-def reconcile_interrupted(results, names, prefix, pinyin, zhuyin, out, pin):
+def reconcile_interrupted(results, names, prefix, pinyin, zhuyin, out, pin, cell='bdb', provenance=None):
     """Resume only named interrupted cases; all completed MATCH inputs survive.
 
     The private orchestrator supplies identities read from its paused process
@@ -357,7 +408,7 @@ def reconcile_interrupted(results, names, prefix, pinyin, zhuyin, out, pin):
         behavior[identity].difference_update(labels)
         if not behavior[identity]: del behavior[identity]
     incomplete.difference_update(labels)
-    fresh, failed, limited, observations = contracts(prefix, pinyin, zhuyin, out, pin, names=replay)
+    fresh, failed, limited, observations = contracts(prefix, pinyin, zhuyin, out, pin, names=replay, cell=cell, provenance=provenance)
     for identity, credited in fresh.items(): behavior[identity].update(credited)
     incomplete.update(limited)
     replacements = dict(observations)
@@ -366,7 +417,7 @@ def reconcile_interrupted(results, names, prefix, pinyin, zhuyin, out, pin):
     return behavior, failed, incomplete, verdicts
 
 
-def limit_roots(prefix, out, incomplete, verdicts, pin):
+def limit_roots(prefix, out, incomplete, verdicts, pin, cell='bdb'):
     """Trace only root calls for fatal/discrepant cases, through stdout pipes.
 
     The trace wraps existing ctypes calls without changing their arguments,
@@ -375,7 +426,7 @@ def limit_roots(prefix, out, incomplete, verdicts, pin):
     The conservative static descendants of these roots remain unknown when
     they lack other evidence, rather than being declared unexecuted.
     """
-    module = contract_module()
+    module = contract_module(cell)
     data = prefix / 'lib/libpinyin/data'
     names = {name for name, verdict in verdicts if verdict != 'MATCH' and verdict != 'SKIP'}
     names.update(label.removeprefix('contract/') for label in incomplete if label.startswith('contract/'))
@@ -388,7 +439,7 @@ def limit_roots(prefix, out, incomplete, verdicts, pin):
             measurements = []
             for so in [(prefix / f'lib/lib{spec["mode"]}.so').resolve(), out / f'lib{spec["mode"]}.so']:
                 if so.parent == out: clear(out)
-                record = measured_worker(module, spec['mode'], so, data, name, scratch)
+                record = measured_worker(module, spec['mode'], so, data, name, scratch, cell)
                 observed.update(record['measurement_roots'])
                 measurements.append(record)
             if previous[name] == 'MEASUREMENT-DIFFER' and same_reference(module, spec, *measurements):
@@ -403,9 +454,9 @@ def limit_roots(prefix, out, incomplete, verdicts, pin):
     return roots, cases, corrections, recovered
 
 
-def same_data(prefix, pinyin, out, pin):
+def same_data(prefix, pinyin, out, pin, cell='bdb', provenance=None):
     """The exact seven preregistered drivers; fresh writable state per side."""
-    verify_prefix(prefix)
+    verify_prefix(prefix, provenance, cell)
     names = ['key-surface-diff', 'dict-surface-diff', 'phrase-surface-diff',
              'pred-order-diff', 'predict-diff', 'punct-diff', 'import-diff']
     attributed, nonmatch, incomplete, results = defaultdict(set), set(), set(), []
@@ -436,9 +487,37 @@ def same_data(prefix, pinyin, out, pin):
     return attributed, nonmatch, incomplete, results
 
 
-def surface_worker(so, data, group):
+def declared_residuals(root=REPO):
+    """The six §12 shared-comparison residual inputs, read from the same
+    membership source and with the same anchors as the Rust gate
+    (`declared_sentence_residuals` in
+    crates/pinyin-oracle/tests/sentence_surface_parity.rs); no second list."""
+    doc = (root / 'docs/findings/sentence-surface.md').read_text()
+    anchors = ('\n## 12. ', 'Only the following six shared-comparison rows are class (a), as ruled.',
+               '| Input | Pin deciding f32 bits | Subject native costs |\n')
+    if any(anchor not in doc for anchor in anchors):
+        raise RuntimeError('the frozen §12 shared-comparison residual declaration moved')
+    section = doc.split(anchors[0], 1)[1].split('\n## 13.', 1)[0]
+    table = section.split(anchors[1], 1)[1].split(anchors[2], 1)[1].splitlines()
+    if not table or not table[0].startswith('|---'):
+        raise RuntimeError('the declared residual table lost its separator')
+    names = set()
+    for line in table[1:]:
+        if not line.startswith('|'):
+            break
+        columns = line.strip('|').split('|')
+        name = columns[0].strip().strip('`')
+        if len(columns) != 3 or not name or name in names:
+            raise RuntimeError('residual declaration format changed: ' + line)
+        names.add(name)
+    if len(names) != 6:
+        raise RuntimeError('declared residual membership count moved')
+    return frozenset(names)
+
+
+def surface_worker(so, data, group, cell='bdb'):
     """Replay the existing C-ABI sentence call order, output through stdout only."""
-    module = contract_module()
+    module = contract_module(cell)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     library = ctypes.CDLL(so)
     dump = getattr(library, 'oxpinyin_j_gcov_dump', None)
@@ -519,7 +598,7 @@ def surface_records(stdout):
     return rows, aborts
 
 
-def surfaces(prefix, pinyin, out, pin):
+def surfaces(prefix, pinyin, out, pin, cell='bdb', provenance=None, excused=None):
     """Credit only replays of exactly matching inputs; aggregate per gate.
 
     Nonmatching inputs are exercised once but their combined footprint is
@@ -527,15 +606,19 @@ def surfaces(prefix, pinyin, out, pin):
     It must again match every reference observation before receiving credit.
     The six approved supplementary residuals are checked by the Rust gate;
     they are deliberately not relabelled as exact C-ABI MATCH here.
+
+    With `excused` (the peer-cell delta ledgers), any other nonmatching
+    input, a pin/Rust difference or a measurement difference, fails the run,
+    and each result also lists the excused inputs left uncredited.
     """
-    verify_prefix(prefix)
+    verify_prefix(prefix, provenance, cell)
     attributed, nonmatch, incomplete, results = defaultdict(set), set(), set(), []
     data = prefix / 'lib/libpinyin/data'
     for group in ['sentence', 'ties', 'corpus']:
         observations = []
         clear(out)
         for side, so in [('reference', prefix / 'lib/libpinyin.so'), ('subject', pinyin), ('measurement', out / 'libpinyin.so')]:
-            result = subprocess.run([sys.executable, '-B', __file__, '--surface-worker', str(so), str(data), group], capture_output=True)
+            result = subprocess.run([sys.executable, '-B', __file__, '--surface-worker', str(so), str(data), group, cell], capture_output=True)
             if result.returncode:
                 raise RuntimeError(f'{group}/{side} failed ({result.returncode}): ' + result.stderr.decode(errors='replace')[-1200:])
             records, aborts = surface_records(result.stdout)
@@ -548,15 +631,24 @@ def surfaces(prefix, pinyin, out, pin):
         assert len(reference) == len(subject) == len(measured)
         assert [row[0] for row in reference] == [row[0] for row in subject] == [row[0] for row in measured]
         matched = [r[0] for r, s, m in zip(reference, subject, measured, strict=True) if r == s == m]
+        uncredited = sorted({r[0] for r, s, m in zip(reference, subject, measured, strict=True) if not r == s == m})
+        if excused is not None:
+            unexpected = [(r[0], 'pin/Rust' if r != s else 'measurement') for r, s, m in zip(reference, subject, measured, strict=True)
+                          if not r == s == m and r[0] not in excused]
+            if unexpected:
+                raise RuntimeError(f'{group}: undeclared {cell} surface difference (only the six declared residuals are excused): '
+                                   + '; '.join(f'{text!r} ({kind})' for text, kind in unexpected[:20])
+                                   + (f'; {len(unexpected) - 20} more' if len(unexpected) > 20 else ''))
+        extra = (uncredited,) if excused is not None else ()
         all_counts = counters(out, pin)
         nonmatch.update(identity for identity, count in all_counts.items() if count)
         clear(out)
         if not matched:
-            results.append((group, len(reference), 0, len(reference)))
+            results.append((group, len(reference), 0, len(reference)) + extra)
             print(f'{group}: no matching input; no execution credited', file=sys.stderr, flush=True)
             continue
         env = dict(os.environ, J_MATCH_INPUTS='stdin')
-        replay = subprocess.run([sys.executable, '-B', __file__, '--surface-worker', str(out / 'libpinyin.so'), str(data), group], env=env, input=json.dumps(matched).encode(), capture_output=True)
+        replay = subprocess.run([sys.executable, '-B', __file__, '--surface-worker', str(out / 'libpinyin.so'), str(data), group, cell], env=env, input=json.dumps(matched).encode(), capture_output=True)
         if replay.returncode:
             raise RuntimeError(f'{group} matched replay failed ({replay.returncode})')
         selected = set(matched)
@@ -566,7 +658,7 @@ def surfaces(prefix, pinyin, out, pin):
         assert replayed == expected, f'{group}: matched replay changed observation'
         for identity, count in counters(out, pin).items():
             if count: attributed[identity].add('surface/' + group + '/exact-MATCH-subset')
-        results.append((group, len(reference), len(matched), len(reference) - len(matched)))
+        results.append((group, len(reference), len(matched), len(reference) - len(matched)) + extra)
         print(f'{group}: exact MATCH {len(matched)}/{len(reference)}; other-input execution discarded before MATCH replay', file=sys.stderr, flush=True)
     return attributed, nonmatch, incomplete, results
 
@@ -622,9 +714,9 @@ def preserved_gate(receipt, target):
     return 'sentence_surface_parity: four tests PASS (frozen surface, supplementary ties, native costs, fixture membership)'
 
 
-def user_store(prefix, target, out, pin):
+def user_store(prefix, target, out, pin, cell='bdb', provenance=None, libraries=('-ldb',)):
     """Existing four-phase user-dir differential, with dump/expected data in pipes."""
-    verify_prefix(prefix)
+    verify_prefix(prefix, provenance, cell)
     tests = target / 'j-tests' if (target / 'j-tests').exists() else target
     binaries = [path for path in (tests / 'debug/deps').glob('user_dir_round_trip-*') if path.is_file() and os.access(path, os.X_OK)]
     assert len(binaries) == 1
@@ -642,7 +734,7 @@ def user_store(prefix, target, out, pin):
             # drivers, defer shared-library dependency resolution to ld.so;
             # direct driver references are still required at link time, and
             # an unsatisfied runtime dependency fails the actual test.
-            command(['gcc', '-O2', '-o', exe, REPO / 'tools/oracle/user_driver.c', '-I' + str(headers), *shlex.split(command(['pkg-config', '--cflags', 'glib-2.0'])), '-L' + str(so_dir), '-lpinyin', '-ldb', *shlex.split(command(['pkg-config', '--libs', 'glib-2.0'])), '-Wl,--allow-shlib-undefined', '-Wl,-rpath,' + str(so_dir)])
+            command(['gcc', '-O2', '-o', exe, REPO / 'tools/oracle/user_driver.c', '-I' + str(headers), *shlex.split(command(['pkg-config', '--cflags', 'glib-2.0'])), '-L' + str(so_dir), '-lpinyin', *libraries, *shlex.split(command(['pkg-config', '--libs', 'glib-2.0'])), '-Wl,--allow-shlib-undefined', '-Wl,-rpath,' + str(so_dir)])
             # SONAME lookup must select the measurement object too.
             if side == 'measurement':
                 alias = out / 'libpinyin.so.15'
@@ -743,5 +835,6 @@ if __name__ == '__main__':
         parser.add_argument('--config', type=Path, required=True)
         parser.add_argument('--oracle', type=Path, required=True)
         parser.add_argument('--build', type=Path, required=True)
+        parser.add_argument('--cell', choices=sorted(CELLS), default='bdb')
         args = parser.parse_args()
-        print(build(args.pin.resolve(), args.config.resolve(), args.build.resolve(), args.oracle.resolve()))
+        print(build(args.pin.resolve(), args.config.resolve(), args.build.resolve(), args.oracle.resolve(), args.cell))

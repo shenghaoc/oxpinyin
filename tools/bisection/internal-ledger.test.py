@@ -2,6 +2,7 @@
 """Compiler-backed regression checks for J identity and ledger sensitivity."""
 
 import importlib.util
+import json
 import hashlib
 import os
 import signal
@@ -455,6 +456,425 @@ class ReviewGuardTests(unittest.TestCase):
         self.assertNotIn('identity previously:', text)
         with self.assertRaisesRegex(RuntimeError, 'removed rows'):
             annotate_comparison('', old, '2da3f089')
+
+
+class CellTests(unittest.TestCase):
+    MAKEFILE = """pinyin_SOURCES = \\
+               storage/shared_a.cpp \\
+               lookup/shared_b.cpp \\
+               $(NULL)
+
+if BERKELEYDB
+pinyin_SOURCES += storage/only_bdb.cpp
+endif
+
+if KYOTOCABINET
+pinyin_SOURCES += storage/only_kyotodb.cpp \\
+                  storage/also_kyotodb.cpp
+endif
+
+if TKRZW
+pinyin_SOURCES += storage/only_tkrzwdb.cpp
+endif
+
+libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
+"""
+
+    def write_pin(self, root):
+        (root / 'src/storage').mkdir(parents=True)
+        (root / 'src/Makefile.am').write_text(self.MAKEFILE)
+        for name in ('ngram_kyotodb.h', 'ngram_tkrzwdb.h', 'ngram_bdb.h', 'ngram.h', 'kyotodb_utils.h', 'shared_utils.h'):
+            (root / 'src/storage' / name).write_text('')
+        (root / 'src/storage/only_kyotodb.cpp').write_text('#include "kyotodb_utils.h"\n#include "shared_utils.h"\n')
+        (root / 'src/storage/also_kyotodb.cpp').write_text('  # include "kyotodb_utils.h"\n')
+        (root / 'src/storage/shared_a.cpp').write_text('#include "shared_utils.h"\n#include "ngram.h"\n')
+        (root / 'src/storage/ngram.h').write_text('#ifdef HAVE_KYOTO_CABINET\n#include "ngram_kyotodb.h"\n#endif\n')
+
+    def test_cell_sources_select_exactly_one_conditional(self):
+        with tempfile.TemporaryDirectory() as temp:
+            pin = Path(temp); self.write_pin(pin)
+            shared = ['lookup/shared_b.cpp', 'storage/shared_a.cpp']
+            self.assertEqual(gcov_measure.cell_sources(pin, 'bdb'), sorted(shared + ['storage/only_bdb.cpp']))
+            self.assertEqual(gcov_measure.cell_sources(pin), gcov_measure.cell_sources(pin, 'bdb'))
+            self.assertEqual(ledger.sources(pin), gcov_measure.cell_sources(pin, 'bdb'))
+            self.assertEqual(gcov_measure.cell_sources(pin, 'kc'), sorted(shared + ['storage/also_kyotodb.cpp', 'storage/only_kyotodb.cpp']))
+            self.assertEqual(gcov_measure.cell_sources(pin, 'tkrzw'), sorted(shared + ['storage/only_tkrzwdb.cpp']))
+            import delta_ledger
+            self.assertEqual(delta_ledger.conditional_files(pin, 'kc'),
+                             {'src/storage/also_kyotodb.cpp', 'src/storage/only_kyotodb.cpp', 'src/storage/ngram_kyotodb.h', 'src/storage/kyotodb_utils.h'})
+            self.assertEqual(delta_ledger.conditional_files(pin, 'bdb'), {'src/storage/only_bdb.cpp', 'src/storage/ngram_bdb.h'})
+            self.assertEqual(delta_ledger.conditional_files(pin, 'tkrzw'), {'src/storage/only_tkrzwdb.cpp', 'src/storage/ngram_tkrzwdb.h'})
+
+    def test_configured_libraries_come_from_config_status(self):
+        with tempfile.TemporaryDirectory() as temp:
+            status = Path(temp) / 'config.status'
+            status.write_text('S["LIBS"]="-lkyotocabinet "\nS["CXXFLAGS"]="-g -O2"\n')
+            self.assertEqual(gcov_measure.configured_libraries(status, 'kc'), ['-lkyotocabinet'])
+            with self.assertRaisesRegex(RuntimeError, 'do not name the bdb'):
+                gcov_measure.configured_libraries(status, 'bdb')
+            status.write_text('S["CXXFLAGS"]="-g -O2"\n')
+            with self.assertRaisesRegex(RuntimeError, 'configured LIBS'):
+                gcov_measure.configured_libraries(status, 'kc')
+
+    def test_contract_module_selects_the_requested_cell_explicitly(self):
+        with patch.dict(os.environ, CONTRACT_DIFF_CELL='bdb'):
+            module = gcov_measure.contract_module('kc')
+            self.assertEqual(module.CELL, 'kc')
+            self.assertEqual(os.environ['CONTRACT_DIFF_CELL'], 'kc')
+            with patch.object(module, '_craft_bdb') as bdb, patch.object(module, '_craft_kc') as kc, \
+                 patch.object(module, '_craft_tkrzw') as tkrzw:
+                module._craft_db('probe', [('key', 'value')], 1)
+                kc.assert_called_once_with('probe', [('key', 'value')], keep=False)
+                bdb.assert_not_called(); tkrzw.assert_not_called()
+        with self.assertRaisesRegex(RuntimeError, 'unknown DBM cell'):
+            gcov_measure.contract_module('lmdb')
+
+    def test_verify_prefix_checks_the_cell_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            prefix = Path(temp); (prefix / 'lib').mkdir()
+            expected = dict(line.split('=', 1) for line in (gcov_measure.REPO / 'tools/oracle/oracle-pin.txt').read_text().splitlines() if '=' in line and not line.startswith('#'))
+            provenance = {}
+            for name in ('libpinyin', 'libzhuyin'):
+                body = (name + ' kc').encode(); (prefix / f'lib/{name}.so').write_bytes(body)
+                provenance[name] = hashlib.sha256(body).hexdigest()
+            ref = f"libpinyin-{expected['libpinyin_tag']}-{gcov_measure.PIN}+model20-{expected['model_archive_sha256']}+dbm-kc"
+            manifests = {}
+            for name, field in [('oracle-data.sha256', 'data_manifest_sha256'), ('oracle-data-unstable.sha256', 'data_unstable_manifest_sha256')]:
+                (prefix / name).write_bytes(b''); manifests[field] = hashlib.sha256(b'').hexdigest()
+            (prefix / 'oracle-pin.txt').write_text(f"pin_ref={ref}\ndbm=KyotoCabinet\nshared_object_sha256={provenance['libpinyin']}\n" + ''.join(f'{k}={v}\n' for k, v in manifests.items()))
+            self.assertEqual(gcov_measure.verify_prefix(prefix, provenance, 'kc'), 0)
+            with self.assertRaises(AssertionError):
+                gcov_measure.verify_prefix(prefix, provenance, 'bdb')
+            with self.assertRaises(AssertionError):
+                gcov_measure.verify_prefix(prefix, provenance, 'tkrzw')
+
+    def test_measurement_worker_requires_an_explicit_cell(self):
+        environment = {k: v for k, v in os.environ.items() if k != 'J_MEASUREMENT_CELL'}
+        with patch.dict(os.environ, environment, clear=True), patch.object(gcov_measure, 'contract_module') as module:
+            with self.assertRaises(KeyError):
+                gcov_measure.worker('pinyin', '/so', '/data', 'probe')
+            module.assert_not_called()
+        with patch.dict(os.environ, J_MEASUREMENT_CELL='tkrzw'), \
+             patch.object(gcov_measure, 'contract_module', side_effect=RuntimeError('selected')) as module:
+            with self.assertRaisesRegex(RuntimeError, 'selected'):
+                gcov_measure.worker('pinyin', '/so', '/data', 'probe')
+            module.assert_called_once_with('tkrzw')
+
+    def test_measured_worker_passes_the_cell_to_its_subprocess(self):
+        module = gcov_measure.contract_module('kc')
+        with tempfile.TemporaryDirectory() as scratch:
+            result = SimpleNamespace(returncode=0, stdout=b'{"ret": true}\n', stderr=b'')
+            with patch.object(module.subprocess, 'run', return_value=result) as run:
+                gcov_measure.measured_worker(module, 'pinyin', Path('/p'), Path('/data'), 'probe', scratch, 'kc')
+            self.assertEqual(run.call_args.kwargs['env']['J_MEASUREMENT_CELL'], 'kc')
+            self.assertEqual(run.call_args.kwargs['env']['CONTRACT_DIFF_CELL'], 'kc')
+            self.assertEqual(run.call_args.args[0][1], str(Path(gcov_measure.__file__).resolve()))
+
+    def test_contracts_skip_other_cells_fixtures_and_select_the_cell(self):
+        good = dict(exit=0, result={}, stderr='', userfiles=[], measurement_abort_flush=False)
+        cases = {'shared': dict(cells=('bdb', 'kc', 'tkrzw'), mode='pinyin'), 'bdb-only': dict(cells=('bdb',), mode='pinyin')}
+        module = SimpleNamespace(CELL='kc', CASES=cases, __file__='driver', run_worker=lambda *a, **kw: dict(good), matches=lambda *a: True)
+        with patch.object(gcov_measure, 'verify_prefix') as verify, patch.object(gcov_measure, 'contract_module', return_value=module) as select, \
+             patch.object(gcov_measure, 'clear'), patch.object(gcov_measure, 'counters', return_value={}), \
+             patch.object(gcov_measure, 'same_reference', return_value=True):
+            result = gcov_measure.contracts(Path('/unused'), Path('/p'), Path('/z'), Path('/out'), Path('/pin'), cell='kc', provenance={'x': 'y'})
+        self.assertEqual(result[3], [('bdb-only', 'SKIP'), ('shared', 'MATCH')])
+        select.assert_called_once_with('kc')
+        verify.assert_called_once_with(Path('/unused'), {'x': 'y'}, 'kc')
+
+    def test_surface_workers_receive_the_cell(self):
+        row = b'["input", 1, true, true, [], []]\n'
+        calls = []
+        def run(argv, **kwargs):
+            calls.append(argv); return SimpleNamespace(returncode=0, stdout=row, stderr=b'')
+        with patch.object(gcov_measure, 'verify_prefix'), patch.object(gcov_measure, 'clear'), \
+             patch.object(gcov_measure, 'counters', return_value={('f',): 1}), patch.object(gcov_measure.subprocess, 'run', side_effect=run):
+            attributed, nonmatch, incomplete, results = gcov_measure.surfaces(Path('/prefix'), Path('/p'), Path('/out'), Path('/pin'), 'tkrzw', {'x': 'y'})
+        self.assertEqual(len(calls), 12)
+        self.assertTrue(all(argv[-1] == 'tkrzw' and argv[-5] == '--surface-worker' for argv in calls))
+        self.assertEqual(results, [('sentence', 1, 1, 0), ('ties', 1, 1, 0), ('corpus', 1, 1, 0)])
+
+    def test_delta_partition_and_break_point(self):
+        import delta_ledger
+        nodes = {
+            'root': dict(file='src/pinyin.cpp', line=1, signature='pinyin_init()', usr='c:@F@pinyin_init', name='pinyin_init', pin=True, definition=True),
+            'shared': dict(file='src/storage/ngram.cpp', line=5, signature='shared()', usr='c:@F@shared', name='shared', pin=True, definition=True),
+            'only-here': dict(file='src/lookup/lookup.cpp', line=9, signature='only_here()', usr='c:@F@only_here', name='only_here', pin=True, definition=True),
+            'cell': dict(file='src/storage/ngram_kyotodb.cpp', line=3, signature='cell()', usr='c:@F@cell', name='cell', pin=True, definition=True),
+            'cell-dead': dict(file='src/storage/ngram_kyotodb.cpp', line=40, signature='dead()', usr='c:@F@dead', name='dead', pin=True, definition=True),
+            'cell-indirect': dict(file='src/storage/ngram_kyotodb.h', line=12, signature='indirect()', usr='c:@F@indirect', name='indirect', pin=True, definition=True),
+            'unreached': dict(file='src/storage/ngram.cpp', line=20, signature='unreached()', usr='c:@F@unreached', name='unreached', pin=True, definition=True),
+            'header': dict(file='external-header/stl.h', line=1, signature='std::sort()', usr='', name='sort', pin=False, definition=True),
+            'signature:src/storage/chewing_key.h:81:operator==(_ChewingKey, _ChewingKey) (.4245)': dict(file='src/storage/chewing_key.h', line=81, signature='operator==(_ChewingKey, _ChewingKey) (.4245)', usr='', name='operator==(_ChewingKey, _ChewingKey) (.4245)', pin=True, definition=True, llvm_bindings={('_Zeq11_ChewingKeyS_', 'pinyin.cpp')}),
+        }
+        reachable = {key: nodes[key] for key in ('root', 'shared', 'only-here', 'cell', 'signature:src/storage/chewing_key.h:81:operator==(_ChewingKey, _ChewingKey) (.4245)')}
+        bdb = {
+            'c:@F@pinyin_init': dict(file='src/pinyin.cpp', line=1, path='pinyin_init() @ src/pinyin.cpp:1 (root)'),
+            'signature:src/storage/chewing_key.h:81:operator==(_ChewingKey, _ChewingKey) (.4027)': dict(file='src/storage/chewing_key.h', line=81, path='pinyin_init() @ src/pinyin.cpp:1 (root) → operator==(_ChewingKey, _ChewingKey) (.4027) @ src/storage/chewing_key.h:81 (LLVM-direct)'),
+            'c:@F@shared': dict(file='src/storage/ngram.cpp', line=5, path='pinyin_init() @ src/pinyin.cpp:1 (root) → shared() @ src/storage/ngram.cpp:5 (AST-direct)'),
+            'c:@F@unreached': dict(file='src/storage/ngram.cpp', line=20, path='pinyin_init() @ src/pinyin.cpp:1 (root) → bdb_only() @ src/storage/ngram_bdb.cpp:7 (AST-direct) → unreached() @ src/storage/ngram.cpp:20 (AST-direct)'),
+            'c:@F@bdb_only': dict(file='src/storage/ngram_bdb.cpp', line=7, path='pinyin_init() @ src/pinyin.cpp:1 (root) → bdb_only() @ src/storage/ngram_bdb.cpp:7 (AST-direct)'),
+        }
+        for ident, row in bdb.items():
+            row['identity'] = ident
+        state = dict(nodes=nodes)
+        cell_files = {'src/storage/ngram_kyotodb.cpp', 'src/storage/ngram_kyotodb.h'}
+        bdb_files = {'src/storage/ngram_bdb.cpp', 'src/storage/ngram_bdb.h'}
+        rows, missing = delta_ledger.partition(state, bdb, cell_files, bdb_files, reachable, executed={'cell-indirect': {'contract/x'}})
+        self.assertEqual(rows, {'cell': 'a', 'cell-indirect': 'a', 'only-here': 'b+'})
+        self.assertEqual(set(missing), {'c:@F@unreached'})
+        clone = 'signature:src/storage/chewing_key.h:81:operator==(_ChewingKey, _ChewingKey) (.4027)'
+        self.assertEqual(delta_ledger.carrier(state, bdb, bdb_files, clone), 'signature:src/storage/chewing_key.h:81:operator==(_ChewingKey, _ChewingKey) (.4245)')
+        self.assertEqual(delta_ledger.carrier(state, bdb, bdb_files, 'c:@F@unreached'), 'unreached')
+        self.assertIsNone(delta_ledger.carrier(state, bdb, bdb_files, 'c:@F@bdb_only'))
+        self.assertIn('step 2 `bdb_only()` @ src/storage/ngram_bdb.cpp:7 is not defined', delta_ledger.break_point(state, reachable, bdb['c:@F@unreached']))
+        mutant = {key: node for key, node in reachable.items() if key != 'root'}
+        rows, missing = delta_ledger.partition(state, bdb, cell_files, bdb_files, mutant, executed={})
+        self.assertEqual(set(missing), {'c:@F@unreached', 'c:@F@pinyin_init'})
+        self.assertIn('has no export witness in this cell', delta_ledger.break_point(state, mutant, bdb['c:@F@pinyin_init']))
+        self.assertIn('call edge itself is absent', delta_ledger.break_point(state, reachable, dict(path='pinyin_init() @ src/pinyin.cpp:1 (root) → shared() @ src/storage/ngram.cpp:5 (AST-direct)')))
+
+    def clone_fixture(self, units):
+        """bdb's three operator== clones (as at the pin) and a cell with one clone per given unit."""
+        sig = 'operator==(_ChewingKey, _ChewingKey)'
+        base = f'signature:src/storage/chewing_key.h:81:{sig}'
+        nodes = {
+            'pkm': dict(file='src/storage/phonetic_key_matrix.cpp', line=169, signature='pinyin::inner_split_step()', usr='c:@F@inner_split_step', name='inner_split_step', pin=True, definition=True),
+            'zr': dict(file='src/zhuyin.cpp', line=2026, signature='zhuyin_get_right_zhuyin_offset()', usr='c:@F@zhuyin_get_right_zhuyin_offset', name='zhuyin_get_right_zhuyin_offset', pin=True, definition=True),
+            'pr': dict(file='src/pinyin.cpp', line=3063, signature='pinyin_get_right_pinyin_offset()', usr='c:@F@pinyin_get_right_pinyin_offset', name='pinyin_get_right_pinyin_offset', pin=True, definition=True),
+        }
+        for index, unit in enumerate(units):
+            suffix = '' if index == 0 else f' (.{4200 + index})'
+            nodes[base + suffix] = dict(file='src/storage/chewing_key.h', line=81, signature=sig + suffix, usr='', name=sig + suffix,
+                                        pin=True, definition=True, llvm_bindings={('_Zeq11_ChewingKeyS_', unit)})
+        bdb = {}
+        for suffix, caller in (('', 'pinyin::inner_split_step() @ src/storage/phonetic_key_matrix.cpp:169 (AST-direct)'),
+                               (' (.4027)', 'zhuyin_get_right_zhuyin_offset() @ src/zhuyin.cpp:2026 (root)'),
+                               (' (.4037)', 'pinyin_get_right_pinyin_offset() @ src/pinyin.cpp:3063 (root)')):
+            bdb[base + suffix] = dict(identity=base + suffix, file='src/storage/chewing_key.h', line=81, signature=sig + suffix,
+                                      path=f'{caller} → {sig}{suffix} @ src/storage/chewing_key.h:81 (LLVM-direct)')
+        for key in ('pkm', 'zr', 'pr'):
+            bdb[nodes[key]['usr']] = dict(identity=nodes[key]['usr'], file=nodes[key]['file'], line=nodes[key]['line'],
+                                          signature=nodes[key]['signature'], path=f"{nodes[key]['signature']} @ {nodes[key]['file']}:{nodes[key]['line']} (root)")
+        return base, dict(nodes=nodes), bdb
+
+    def test_clone_families_match_one_to_one_by_translation_unit(self):
+        import delta_ledger
+        base, state, bdb = self.clone_fixture(['phonetic_key_matrix.cpp', 'zhuyin.cpp', 'pinyin.cpp'])
+        nodes = state['nodes']
+        families = delta_ledger.clone_families(state, bdb, set())
+        self.assertEqual(families, {base})
+        rows, missing = delta_ledger.partition(state, bdb, set(), set(), dict(nodes), executed={})
+        self.assertEqual((rows, missing), ({}, {}))
+        pairs, _ = delta_ledger.match_bdb(state, bdb, set(), list(nodes), families)
+        self.assertEqual(pairs[base + ' (.4027)'], base + ' (.4201)')
+        self.assertEqual(pairs[base + ' (.4037)'], base + ' (.4202)')
+        self.assertEqual(pairs[base], base)
+        # One cell clone left: the two other bdb clones are delta-b- rows, not inherited through it.
+        reachable = {key: node for key, node in nodes.items() if key not in (base + ' (.4201)', base + ' (.4202)')}
+        rows, missing = delta_ledger.partition(state, bdb, set(), set(), reachable, executed={})
+        self.assertEqual(rows, {})
+        self.assertEqual(set(missing), {base + ' (.4027)', base + ' (.4037)'})
+        self.assertEqual(delta_ledger.carrier(state, bdb, set(), base + ' (.4027)'), base + ' (.4201)')
+        self.assertIn('has no export witness', delta_ledger.break_point(state, reachable, missing[base + ' (.4027)'], families))
+        # A clone compiled into another unit is a different row on both sides.
+        base, state, bdb = self.clone_fixture(['phonetic_key_matrix.cpp', 'chewing_large_table2_kyotodb.cpp', 'pinyin.cpp'])
+        rows, missing = delta_ledger.partition(state, bdb, set(), set(), dict(state['nodes']), executed={})
+        self.assertEqual(rows, {base + ' (.4201)': 'b+'})
+        self.assertEqual(set(missing), {base + ' (.4027)'})
+        self.assertIsNone(delta_ledger.carrier(state, bdb, set(), base + ' (.4027)'))
+        self.assertIn('has no clone in translation unit zhuyin.cpp', delta_ledger.break_point(state, state['nodes'], missing[base + ' (.4027)'], families))
+        # Two cell clones in one unit cannot be paired one to one.
+        base, state, bdb = self.clone_fixture(['phonetic_key_matrix.cpp', 'zhuyin.cpp', 'zhuyin.cpp'])
+        with self.assertRaisesRegex(RuntimeError, 'ambiguous in translation unit'):
+            delta_ledger.partition(state, bdb, set(), set(), dict(state['nodes']), executed={})
+        # A clone whose caller is header-defined has no derivable unit.
+        base, state, bdb = self.clone_fixture(['phonetic_key_matrix.cpp', 'zhuyin.cpp', 'pinyin.cpp'])
+        bdb[base + ' (.4027)']['path'] = 'pinyin::PhoneticKeyMatrix::size() @ src/storage/phonetic_key_matrix.h:40 (root) → operator==(_ChewingKey, _ChewingKey) (.4027) @ src/storage/chewing_key.h:81 (LLVM-direct)'
+        with self.assertRaisesRegex(RuntimeError, 'not derivable'):
+            delta_ledger.partition(state, bdb, set(), set(), dict(state['nodes']), executed={})
+
+    def test_declared_residuals_follow_the_rust_gate_source(self):
+        names = gcov_measure.declared_residuals()
+        self.assertEqual(len(names), 6)
+        text = (gcov_measure.REPO / 'docs/findings/sentence-surface.md').read_text()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); (root / 'docs/findings').mkdir(parents=True)
+            doc = root / 'docs/findings/sentence-surface.md'
+            doc.write_text(text)
+            self.assertEqual(gcov_measure.declared_residuals(root), names)
+            first = sorted(names)[0]
+            row = next(line for line in text.splitlines() if line.startswith('| `' + first + '`') or line.startswith('| ' + first + ' '))
+            doc.write_text(text.replace(row + '\n', row + '\n' + row.replace(first, first + 'x', 1) + '\n', 1))
+            with self.assertRaisesRegex(RuntimeError, 'count moved'):
+                gcov_measure.declared_residuals(root)
+            doc.write_text(text.replace('Only the following six shared-comparison rows are class (a), as ruled.', 'moved'))
+            with self.assertRaisesRegex(RuntimeError, 'declaration moved'):
+                gcov_measure.declared_residuals(root)
+
+    def test_surfaces_reject_differences_outside_the_declared_residuals(self):
+        def rows(texts, changed=()):
+            return b''.join(json.dumps([text, 1, True, True, ['other' if text in changed else 'same'], []]).encode() + b'\n' for text in texts)
+        texts = ['residual', 'plain', 'other']
+        def run_with(subject_changed=(), measured_changed=()):
+            def run(argv, **kwargs):
+                so = argv[4]
+                if kwargs.get('input') is not None:
+                    return SimpleNamespace(returncode=0, stdout=rows([t for t in texts if t in json.loads(kwargs['input'])]), stderr=b'')
+                changed = subject_changed if so == '/p' else measured_changed if so.startswith('/out') else ()
+                return SimpleNamespace(returncode=0, stdout=rows(texts, changed), stderr=b'')
+            return run
+        def surfaces(run, excused):
+            with patch.object(gcov_measure, 'verify_prefix'), patch.object(gcov_measure, 'clear'), \
+                 patch.object(gcov_measure, 'counters', return_value={('f',): 1}), patch.object(gcov_measure.subprocess, 'run', side_effect=run):
+                return gcov_measure.surfaces(Path('/prefix'), Path('/p'), Path('/out'), Path('/pin'), 'kc', None, excused=excused)
+        excused = frozenset({'residual'})
+        result = surfaces(run_with(subject_changed=('residual',)), excused)[3]
+        self.assertEqual(result, [(group, 3, 2, 1, ['residual']) for group in ('sentence', 'ties', 'corpus')])
+        with self.assertRaisesRegex(RuntimeError, r"sentence: undeclared kc surface difference .*'plain' \(pin/Rust\)"):
+            surfaces(run_with(subject_changed=('plain',)), excused)
+        with self.assertRaisesRegex(RuntimeError, r"'other' \(measurement\)"):
+            surfaces(run_with(measured_changed=('other',)), excused)
+        # Without `excused` (the bdb ledger) the original four-field result is unchanged.
+        result = surfaces(run_with(subject_changed=('plain',)), None)[3]
+        self.assertEqual(result, [(group, 3, 2, 1) for group in ('sentence', 'ties', 'corpus')])
+
+    def test_delta_measurement_excuses_only_the_declared_residuals(self):
+        import delta_ledger
+        captured = {}
+        def surfaces(*args, **kwargs):
+            captured.update(kwargs)
+            return defaultdict(set), set(), set(), []
+        stage = lambda *a, **k: (defaultdict(set), set(), set(), [])
+        args = SimpleNamespace(cell='kc', measurement_build=Path('/m'), measurement_config=Path('/c/config.h'), pinyin_so=Path('/p'),
+                               zhuyin_so=Path('/z'), surface_pinyin_so=None, rust_target=Path('/t'), export=Path('/e'), model=Path('/mo'),
+                               pin=Path('/pin'), oracle=Path('/o'))
+        ledger_stub = SimpleNamespace(run=lambda *a: '', REPO=Path('.'), symbol_base=ledger.symbol_base, witness=lambda *a: {})
+        with patch.object(gcov_measure, 'build'), patch.object(gcov_measure, 'configured_libraries', return_value=['-lkyotocabinet']), \
+             patch.object(gcov_measure, 'contracts', side_effect=stage), patch.object(gcov_measure, 'gates', return_value='gate'), \
+             patch.object(gcov_measure, 'same_data', side_effect=stage), patch.object(gcov_measure, 'user_store', side_effect=stage), \
+             patch.object(gcov_measure, 'surfaces', side_effect=surfaces), patch.object(delta_ledger, 'emitted_inventory', return_value=set()), \
+             patch.object(gcov_measure, 'limit_roots', return_value=(set(), {}, {}, {})):
+            delta_ledger.measure_cell(args, ledger_stub, dict(nodes={}, roots={}, edges=set()), None)
+        self.assertEqual(captured['excused'], gcov_measure.declared_residuals())
+
+    def test_registered_measurement_limits_are_never_credited(self):
+        import coverage_reviews, delta_ledger
+        self.assertEqual(set(coverage_reviews.MEASUREMENT_LIMITS), {'user-gram-duplicate-export', 'user-gram-unsorted-export'})
+        behavior = defaultdict(set, {('f',): {'contract/user-gram-unsorted-export', 'contract/plain'},
+                                     ('g',): {'contract/user-gram-duplicate-export'}})
+        contracts = (behavior, set(), set(), [('user-gram-unsorted-export', 'MATCH'), ('user-gram-duplicate-export', 'MEASUREMENT-DIFFER'),
+                                             ('plain', 'MATCH'), ('broken', 'DIFFER')])
+        stage = lambda *a, **k: (defaultdict(set), set(), set(), [])
+        seen = []
+        def align(nodes, evidence, symbol_base):
+            seen.append({key: set(value) for key, value in evidence.items()})
+            return {}, set()
+        args = SimpleNamespace(cell='tkrzw', measurement_build=Path('/m'), measurement_config=Path('/c/config.h'), pinyin_so=Path('/p'),
+                               zhuyin_so=Path('/z'), surface_pinyin_so=None, rust_target=Path('/t'), export=Path('/e'), model=Path('/mo'),
+                               pin=Path('/pin'), oracle=Path('/o'))
+        ledger_stub = SimpleNamespace(run=lambda *a: '', REPO=Path('.'), symbol_base=ledger.symbol_base, witness=lambda *a: {})
+        with patch.object(gcov_measure, 'build'), patch.object(gcov_measure, 'configured_libraries', return_value=['-ltkrzw']), \
+             patch.object(gcov_measure, 'contracts', return_value=contracts), patch.object(gcov_measure, 'gates', return_value='gate'), \
+             patch.object(gcov_measure, 'same_data', side_effect=stage), patch.object(gcov_measure, 'user_store', side_effect=stage), \
+             patch.object(gcov_measure, 'surfaces', side_effect=stage), patch.object(delta_ledger, 'emitted_inventory', return_value=set()), \
+             patch.object(delta_ledger, 'align', side_effect=align), \
+             patch.object(gcov_measure, 'limit_roots', return_value=(set(), {}, {'user-gram-unsorted-export': 'MATCH', 'broken': 'MATCH'},
+                                                                      {('h',): {'contract/user-gram-unsorted-export'}, ('k',): {'contract/broken'}})):
+            measured = delta_ledger.measure_cell(args, ledger_stub, dict(nodes={}, roots={}, edges=set()), None)
+        self.assertEqual(dict(measured['records']['contract']), {'user-gram-unsorted-export': 'MEASUREMENT-DIFFER',
+                                                                 'user-gram-duplicate-export': 'MEASUREMENT-DIFFER', 'plain': 'MATCH', 'broken': 'MATCH'})
+        self.assertTrue({'contract/user-gram-unsorted-export', 'contract/user-gram-duplicate-export'} <= measured['incomplete'])
+        executed_evidence = seen[1]
+        self.assertEqual(executed_evidence, {('f',): {'contract/plain'}, ('k',): {'contract/broken'}})
+
+    def test_measurement_limits_are_not_parity_findings(self):
+        import delta_ledger
+        records = {'contract': [('a', 'MATCH'), ('b', 'DIFFER'), ('c', 'MEASUREMENT-DIFFER'), ('d', 'TIMEOUT'), ('e', 'SKIP')],
+                   'same-data': [('x', 'DIFFER'), ('y', 'MATCH')], 'user-store': [('rt', 'MEASUREMENT-DIFFER')],
+                   'surface': [('ties', 3, 2, 1, ['residual'])]}
+        differ, limited = delta_ledger.split_verdicts(records)
+        self.assertEqual(differ, ['contract/b', 'same-data/x'])
+        self.assertEqual(limited, ['contract/c (MEASUREMENT-DIFFER)', 'contract/d (TIMEOUT)', 'user-store/rt (MEASUREMENT-DIFFER)'])
+        self.assertEqual(delta_ledger.split_verdicts({'contract': [('a', 'MATCH')], 'surface': []}), ([], []))
+
+    def test_delta_rows_parse_escaped_ledger_identities(self):
+        import delta_ledger
+        line = ('| function/direct | [src/storage/ngram.cpp:5](https://example/ngram.cpp#L5) | pinyin::f(a&#124;b) | c:@F@f#&#124;# | pinyin_init | '
+                'pinyin_init() @ src/pinyin.cpp:1 (root) | BEHAVIOR-COVERED | contract/x | baseline-962; reason |\n'
+                '| external boundary | [src/pinyin.cpp:1](https://example) | malloc | LLVM-symbol:malloc | pinyin_init | path | BOUNDARY |  | reason |\n')
+        rows = delta_ledger.parse_rows('# Axis J: Berkeley DB internal coverage ledger\n\n' + line)
+        self.assertEqual(list(rows), ['c:@F@f#|#'])
+        self.assertEqual(rows['c:@F@f#|#']['signature'], 'pinyin::f(a|b)')
+        self.assertEqual((rows['c:@F@f#|#']['file'], rows['c:@F@f#|#']['line']), ('src/storage/ngram.cpp', 5))
+        with self.assertRaisesRegex(RuntimeError, 'duplicate'):
+            delta_ledger.parse_rows(line + line)
+
+    def test_prefix_provenance_records_on_generation_and_compares_on_check(self):
+        import delta_ledger
+        with tempfile.TemporaryDirectory() as temp:
+            prefix = Path(temp) / 'prefix'; (prefix / 'lib').mkdir(parents=True)
+            (prefix / 'lib/libzhuyin.so').write_bytes(b'zhuyin kc')
+            (prefix / 'oracle-pin.txt').write_text('shared_object_sha256=' + 'a' * 64 + '\n')
+            output = Path(temp) / 'ledger.md'
+            args = SimpleNamespace(cell='kc', check=False, oracle=prefix, output=output)
+            computed = hashlib.sha256(b'zhuyin kc').hexdigest()
+            self.assertEqual(delta_ledger.prefix_provenance(args), {'libpinyin': 'a' * 64, 'libzhuyin': computed})
+            output.write_text(f'Pin `{gcov_measure.PIN}`\nOracle shared-object SHA-256: libpinyin=`{"b" * 64}`; libzhuyin=`{computed}`\n')
+            args.check = True
+            self.assertEqual(delta_ledger.prefix_provenance(args), {'libpinyin': 'b' * 64, 'libzhuyin': computed})
+            output.write_text('no provenance here\n')
+            with self.assertRaisesRegex(RuntimeError, 'does not record'):
+                delta_ledger.prefix_provenance(args)
+
+    def test_review_rules_reload_in_place_and_cell_scoped_identities_stay_apart(self):
+        import coverage_reviews
+        before = dict(coverage_reviews.REVIEWS)
+        identities = dict(coverage_reviews.IDENTITY_REVIEWS)
+        registry = coverage_reviews.REVIEWS
+        coverage_reviews.reload_rules()
+        self.assertIs(coverage_reviews.REVIEWS, registry)
+        self.assertEqual(coverage_reviews.REVIEWS, before)
+        self.assertEqual(coverage_reviews.IDENTITY_REVIEWS, identities)
+        self.assertEqual(sum(status == 'ABSENT_INLINE' for status, _, _ in coverage_reviews.IDENTITY_REVIEWS.values()), 15)
+        # A batch first seen at reload time (written during a measurement) is
+        # executed exactly once, never imported and then reloaded.
+        import sys
+        fresh = 'coverage_review_rules.dbm_callback_lifetimes'
+        del sys.modules[fresh]
+        coverage_reviews.reload_rules()
+        self.assertEqual(coverage_reviews.REVIEWS, before)
+        self.assertIn(fresh, sys.modules)
+        coverage_reviews.identity_review('signature:probe', [], 'probe', 'ABSENT_INLINE', cell='kc')
+        try:
+            self.assertNotIn('signature:probe', coverage_reviews.IDENTITY_REVIEWS)
+            self.assertIn('signature:probe', coverage_reviews.CELL_IDENTITY_REVIEWS['kc'])
+            with self.assertRaises(ValueError):
+                coverage_reviews.identity_review('signature:probe', [], 'probe', 'ABSENT_INLINE', cell='kc')
+        finally:
+            coverage_reviews.reload_rules()
+        self.assertNotIn('signature:probe', coverage_reviews.CELL_IDENTITY_REVIEWS['kc'])
+
+    def test_known_defect_rows_are_never_credited_and_drop_narrowed_evidence(self):
+        import coverage_reviews, delta_ledger
+        site = ('src/storage/chewing_large_table2_kyotodb.cpp', 459)
+        self.assertEqual(coverage_reviews.KNOWN_DEFECTS[site]['issue'], '#785')
+        self.assertEqual(coverage_reviews.KNOWN_DEFECTS[site]['excluded'], ('contract/issue784-', 'contract/issue762-'))
+        self.assertEqual(len(coverage_reviews.KNOWN_DEFECTS), 4)
+        node = dict(file=site[0], line=site[1], signature='visit_full()', usr='c:probe', name='visit_full')
+        executed = {'defect': {'contract/issue784-index-keys-mask-lookup-pinyin', 'contract/issue762-token-reuse-x', 'contract/abort-mask-out-empty-index-key', 'user-store/four-phase-round-trip'}}
+        measured = dict(executed=executed, unknown_paths={}, compiled={'defect'}, failed_nodes={})
+        category, mapping = delta_ledger.classify(SimpleNamespace(MAPPINGS={}, REPO=Path('.')), 'kc', 'defect', node, measured)
+        self.assertEqual(category, 'KNOWN-DEFECT')
+        self.assertIn('#785', mapping)
+        self.assertIn('2 narrowed matching case(s)', mapping)
+        self.assertEqual(delta_ledger.evidence('defect', node, executed), {'contract/abort-mask-out-empty-index-key', 'user-store/four-phase-round-trip'})
+        other = dict(node, line=460)
+        self.assertEqual(delta_ledger.evidence('defect', other, executed), executed['defect'])
+        with self.assertRaises(ValueError):
+            coverage_reviews.known_defect(site[0], [site[1]], '#785', (), 'again')
+        coverage_reviews.reload_rules()
+        self.assertEqual(len(coverage_reviews.KNOWN_DEFECTS), 4)
 
 
 if __name__ == "__main__":

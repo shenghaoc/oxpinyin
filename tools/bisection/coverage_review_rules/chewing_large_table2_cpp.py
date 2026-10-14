@@ -11,5 +11,5 @@ review("src/storage/chewing_large_table2.cpp", [161], [(C, "pub(crate) fn search
 review("src/storage/chewing_large_table2.cpp", [179], [(U, "pub fn add_phrase_in("), (E, "pub fn pinyin_index_entries(")],
        "Both add the same reading/token to initial-only and complete keyspaces. Runtime indexed-membership state is serialized through pinyin_index_entries into both spaces; the field-level mutation is in add_phrase_in.")
 
-review("src/storage/chewing_large_table2.cpp", [200], [(U, "pub fn remove_user_phrase("), (P, "&pinyin_index_entries(&chewing_rows),")],
+review("src/storage/chewing_large_table2.cpp", [200], [(U, "pub fn remove_user_phrase("), (P, "&with_kept_keys(pinyin_index_entries(&chewing_rows), &kept.pinyin),")],
        "Both remove each indexed reading from the user pinyin index; Rust validates indexed memberships and removes the reading rows before the runtime index writer emits survivors.")
