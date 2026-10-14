@@ -3886,6 +3886,45 @@ for _mode in ('pinyin', 'zhuyin'):
     case('combined-library-unused-index-' + _mode, mode=_mode, abort=False)(import_review)
 
 
+# #757 PR 0: two user phrases with equal counts whose user-table order
+# differs from token order. add_index keeps the user table ordered by
+# pinyin_exact_compare2 keys, then token (074a2219 chewing_large_table2.h:
+# 208-231, pinyin_phrase3.h:33-63), so 靐靐 (da2'da2, added second) comes
+# before 龘龘 (da3'da3, added first). A toneless parse matches both with
+# equal unigram and pronunciation possibility: the n-best tie goes to the
+# phrase the trellis walk meets first (phonetic_lookup.h:560-572).
+def nbest_user_table_order(k):
+    phrases = (('龘龘', "da3'da3", 'ㄉㄚˇ ㄉㄚˇ'), ('靐靐', "da2'da2", 'ㄉㄚˊ ㄉㄚˊ'))
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    assert it
+    add = k.fn('iterator_add_phrase', B, P, S, S, I)
+    added = [add(it, text.encode(), (pinyin if k.mode == 'pinyin' else zhuyin).encode(), 100000)
+             for text, pinyin, zhuyin in phrases]
+    k.fn('end_add_phrases', None, P)(it)
+    assert all(added), added
+    tokens = [[token for token in tokens_of(k, text) if token >> 24 == 7] for text, _, _ in phrases]
+    assert all(len(found) == 1 for found in tokens), tokens
+    assert tokens[0][0] < tokens[1][0], 'the first phrase added holds the lower token'
+    out = {'tokens': [hex(found[0]) for found in tokens]}
+    if k.mode == 'zhuyin':
+        # USE_TONE without FORCE_TONE, so the zhuyin facade takes a toneless key.
+        assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+    inst = k.alloc()
+    out['parsed'] = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'dada')
+    out['guess'] = k.fn('guess_sentence', B, P)(inst)
+    if k.mode == 'pinyin':
+        out['sentences'] = [sentence_out(k, inst, index) for index in range(3)]
+    else:
+        out['sentence'] = zhuyin_sentence_out(k, inst)
+    return out
+
+
+# Controls: the parent build already met the user items in this order, so
+# PR 0 preserves the output here.
+for _mode in ('pinyin', 'zhuyin'):
+    case('nbest-user-table-order-' + _mode, mode=_mode, control=True)(nbest_user_table_order)
+
+
 def user_dir_listing(scratch, before):
     """What the run left in the user directories it created under `scratch`:
     every file by name, `user.conf` by text, library chunks by size. The

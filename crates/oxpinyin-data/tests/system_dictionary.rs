@@ -9,7 +9,10 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use oxpinyin_core::{ChewingKey, Completeness, Dictionary, SyllableKey};
+use oxpinyin_core::{
+    ChewingKey, Completeness, Dictionary, PHRASE_INDEX_LIBRARY_COUNT, PhraseIndexRanges,
+    SyllableKey,
+};
 // The fixtures are written with the crate's own row schema, not a copy of
 // it: a layout change has to break the reader's behaviour here, never pass
 // because the test harness drifted along with it.
@@ -367,4 +370,104 @@ fn a_missing_dbm_fails_open() {
     let fix = Fixture::new();
     std::fs::remove_file(fix.dir.join(SystemDbm::PhraseIndex.file_name())).unwrap();
     assert!(SystemDictionary::open(&fix.dir).is_err());
+}
+
+/// A data dir whose only pinyin row is `ni`, holding (in stored order)
+/// 0x0100_0010 ni3, 0x0200_0001 ni3 (library 2: no chunk, unloaded),
+/// 0x0100_0011 ni3, 0x0100_0014 ni2, 0x0100_0012 ni3 and 0x0100_0013 ni3
+/// (library 1, but no chunk item: unreadable).
+fn convert_fixture() -> Fixture {
+    let n = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "oxpinyin-system-dict-convert-{}-{}",
+        std::process::id(),
+        n,
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let ni = key("ni");
+    let ni3 = ni.with_tone(3);
+    let ni2 = ni.with_tone(2);
+    let items = encode_items(&[
+        (0x0100_0010, &[ni3][..]),
+        (0x0200_0001, &[ni3][..]),
+        (0x0100_0011, &[ni3][..]),
+        (0x0100_0014, &[ni2][..]),
+        (0x0100_0012, &[ni3][..]),
+        (0x0100_0013, &[ni3][..]),
+    ]);
+    let n_key = ChewingKey::new(ni.initial, 0, 0, 0);
+    write_raw_rows::<DefaultStore>(
+        &dir.join(SystemDbm::PinyinIndex.file_name()),
+        &[
+            (encode_complete(&[ni]), items.clone()),
+            (encode_incomplete(&[n_key]), items),
+        ],
+    );
+    write_raw_rows::<DefaultStore>(&dir.join(SystemDbm::PhraseIndex.file_name()), &[]);
+    let pron = |key: ChewingKey| vec![(key.to_packed().to_le_bytes().to_vec(), 5_u32)];
+    let mut builder = ChunkBuilder::new(20);
+    builder.add(0x10, 5, "你", pron(ni3));
+    builder.add(0x11, 5, "拟", pron(ni3));
+    builder.add(0x12, 5, "逆", pron(ni3));
+    builder.add(0x14, 5, "泥", pron(ni2));
+    std::fs::write(dir.join("gb_char.bin"), builder.build()).unwrap();
+    Fixture { dir }
+}
+
+type Spans = Vec<Vec<(u32, u32)>>;
+
+fn convert_ranges(dict: &SystemDictionary, tones: &[u8]) -> (Spans, Vec<String>) {
+    let mut ranges = PhraseIndexRanges::new();
+    dict.trellis_ranges(&syls("ni"), tones, &mut ranges)
+        .unwrap();
+    let spans = (0..PHRASE_INDEX_LIBRARY_COUNT)
+        .map(|library| {
+            ranges
+                .ranges(library)
+                .iter()
+                .map(|range| (range.first(), range.last()))
+                .collect()
+        })
+        .collect();
+    let texts = ranges.walk().map(|entry| entry.text().to_owned()).collect();
+    (spans, texts)
+}
+
+/// `convert` over the stored items with a toned query: the ni2 item is
+/// filtered by the search, so 0x10..=0x13 form one run — the unloaded
+/// library-2 item between 0x10 and 0x11 is skipped without closing it,
+/// and the unreadable 0x13 keeps its place with no entry.
+#[test]
+fn trellis_ranges_merge_runs_past_unloaded_items_under_the_tone_filter() {
+    let fix = convert_fixture();
+    let dict = fix.dict();
+    let (spans, texts) = convert_ranges(&dict, &[3]);
+    assert_eq!(spans[1], [(0x0100_0010, 0x0100_0013)]);
+    assert!(spans[2].is_empty(), "library 2 is unloaded: {spans:?}");
+    assert_eq!(texts, ["你", "拟", "逆"]);
+    let records: Vec<u32> = dict
+        .trellis_records(&syls("ni"), &[3])
+        .unwrap()
+        .iter()
+        .map(|entry| entry.token().value())
+        .collect();
+    assert_eq!(records, [0x0100_0010, 0x0100_0011, 0x0100_0012]);
+}
+
+/// A tone-less query keeps the ni2 item, which splits the run in stored
+/// order; the walk is range order, not token order.
+#[test]
+fn trellis_ranges_split_runs_in_stored_order_without_a_tone() {
+    let fix = convert_fixture();
+    let dict = fix.dict();
+    let (spans, texts) = convert_ranges(&dict, &[]);
+    assert_eq!(
+        spans[1],
+        [
+            (0x0100_0010, 0x0100_0011),
+            (0x0100_0014, 0x0100_0014),
+            (0x0100_0012, 0x0100_0013),
+        ]
+    );
+    assert_eq!(texts, ["你", "拟", "泥", "逆"]);
 }

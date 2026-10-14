@@ -39,8 +39,8 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use oxpinyin_core::scoring::key_cost_table;
 use oxpinyin_core::{
-    Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseToken,
-    SyllableKey, UserCountDelta,
+    Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
+    PhraseToken, SyllableKey, UserCountDelta,
 };
 pub use oxpinyin_data::phrase_library::{LibraryError, RowFault};
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
@@ -438,10 +438,12 @@ impl RuntimeDict {
                 index.entry(initial).or_default().push((keys, entry));
             }
         }
+        // 074a2219 chewing_large_table2.h:208-231: add_index keeps each
+        // entry ordered by pinyin_exact_compare2 (pinyin_phrase3.h:33-63:
+        // initials, then middles and finals, then tones), then token.
         for bucket in index.values_mut() {
             bucket.sort_by_cached_key(|(keys, entry)| {
                 (
-                    entry.token().value() >> 24,
                     keys.iter().map(|key| key.initial).collect::<Vec<_>>(),
                     keys.iter()
                         .map(|key| (key.middle, key.final_))
@@ -863,6 +865,20 @@ impl Dictionary for RuntimeDict {
         syllables: &[Self::Syllable],
         tones: &[u8],
     ) -> Result<Vec<Self::Entry>, Self::Error> {
+        let mut ranges = PhraseIndexRanges::new();
+        self.trellis_ranges(syllables, tones, &mut ranges)?;
+        Ok(ranges.into_entries())
+    }
+
+    /// `FacadeChewingTable2::search` (`facade_chewing_table2.h:109-129` at
+    /// the pin `074a2219`): the system table's ranges, then the user
+    /// table's, each its own `convert` call.
+    fn trellis_ranges(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<Self::Entry>,
+    ) -> Result<(), Self::Error> {
         let Some(query) = syllables
             .iter()
             .enumerate()
@@ -872,15 +888,29 @@ impl Dictionary for RuntimeDict {
             })
             .collect::<Option<Vec<_>>>()
         else {
-            return Ok(Vec::new());
+            return Ok(());
         };
-        let mut records = self.system.trellis_records(syllables, tones)?;
+        // Pricing and visibility remain the ordinary runtime's laws: a
+        // ranged token the ordinary lookup does not list has no entry.
+        let priced: HashMap<_, _> = self
+            .lookup(syllables)?
+            .into_iter()
+            .map(|entry| (entry.token().value(), entry))
+            .collect();
+        let loaded =
+            |token: u32| self.system.library_loaded(token) && self.library_visible_token(token);
+        // A system token the ordinary lookup lists was resolved there; the
+        // user seam owns no system-index token.
+        self.system
+            .trellis_ranges_with(syllables, tones, ranges, loaded, |_, token| {
+                priced.get(&token).cloned()
+            })?;
         let initial: Vec<_> = query.iter().map(|key| key.initial).collect();
         if let Some(bucket) = self.user_trellis_index()?.get(&initial) {
-            records.extend(
+            ranges.convert(
                 bucket
                     .iter()
-                    .filter(|(keys, _)| {
+                    .filter(|(keys, entry)| {
                         query.len() == keys.len()
                             && query.iter().zip(keys).all(|(query, stored)| {
                                 query.initial == stored.initial
@@ -892,27 +922,15 @@ impl Dictionary for RuntimeDict {
                                         || query.tone == 0
                                         || stored.tone == 0)
                             })
+                            && loaded(entry.token().value())
                     })
-                    .map(|(_, entry)| entry.clone()),
+                    .map(|(_, entry)| {
+                        let token = entry.token().value();
+                        (token, priced.get(&token).cloned())
+                    }),
             );
         }
-        // Pricing and visibility remain the ordinary runtime's laws. Only
-        // record multiplicity/order is different on this additional path.
-        let priced: HashMap<_, _> = self
-            .lookup(syllables)?
-            .into_iter()
-            .map(|entry| (entry.token().value(), entry))
-            .collect();
-        records.retain_mut(|entry| {
-            if let Some(priced) = priced.get(&entry.token().value()) {
-                *entry = priced.clone();
-                true
-            } else {
-                false
-            }
-        });
-        records.sort_by_key(|entry| entry.token().value() >> 24);
-        Ok(records)
+        Ok(())
     }
 
     fn lookup_into(
