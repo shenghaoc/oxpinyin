@@ -69,5 +69,5 @@ pub use system_files::{
     ADDON_LIBRARY_FILES, ADDON_LIBRARY_NAMES, SYSTEM_LIBRARY_FILES, SYSTEM_LIBRARY_NAMES,
     SystemDbm, addon_library_file,
 };
-pub use table::{GenericLookupTable, LookupTable, TableError};
+pub use table::TableError;
 pub use table_conf::{Lambda, PINNED_LAMBDA, parse_table_conf_lambda, read_table_conf_lambda};
