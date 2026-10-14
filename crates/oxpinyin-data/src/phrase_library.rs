@@ -1,11 +1,11 @@
-//! Reader for libpinyin's per-library phrase-index files (the
-//! `MemoryChunk` + `SubPhraseIndex` pair).
+//! Reader for the per-library phrase-index files (the `MemoryChunk` +
+//! `SubPhraseIndex` pair).
 //!
-//! P1 of the direct-replacement rework
-//! (`docs/findings/libpinyin-system-data-formats-2026-09-01.md`): this
-//! consumes **the files a libpinyin installation already ships**
-//! (`gb_char.bin`, `gbk_char.bin`, `opengram.bin`, `merged.bin`, and the
-//! addon `*.bin` libraries) — no conversion, no oxpinyin-side format.
+//! P1 of the data-layer rework
+//! (`docs/findings/libpinyin-system-data-formats-2026-09-01.md`): these
+//! are the native library files on every backend (`gb_char.bin`,
+//! `gbk_char.bin`, `opengram.bin`, `merged.bin`, and the addon `*.bin`
+//! libraries), the same ones a libpinyin build ships — no conversion.
 //! It is the Rust equivalent of the pinned upstream reader:
 //!
 //! - `src/include/memory_chunk.h` — `MemoryChunk::mmap`: an 8-byte

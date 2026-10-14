@@ -1,12 +1,11 @@
-# Implementation Plan — Drop-in replacement
+# Implementation Plan — Drop-in: the libpinyin binary
 
 ## Overview
 
-Status snapshot. The binary identity, the direct data path (P6) and
-task 9 — same-backend user files read and written seamlessly (maintainer
-ruling 2026-09-09, `docs/findings/compatibility-policy.md` goal
-amendment; landed 2026-09-09) — are merged and measured on three distro
-backends; task 10, the BerkeleyDB backend, landed 2026-09-12
+Status snapshot. The binary identity, native storage of the system data
+directory (P6) and of the user dir (task 9, landed 2026-09-09; maintainer
+ruling 2026-09-09) are merged and measured on three distro backends;
+task 10, the Berkeley DB backend, landed 2026-09-12
 (`docs/findings/berkeleydb-backend.md`).
 
 ## Tasks
@@ -19,8 +18,8 @@ backends; task 10, the BerkeleyDB backend, landed 2026-09-12
   `2.11.92` from #592 per the version ruling 2026-09-26 UTC).
   _Requirements: 1_
 
-- [x] 3. Open installed libpinyin data (#228, as a compatibility layer;
-  superseded 2026-09-02 by P6's direct readers —
+- [x] 3. Open the backend's system data directory (#228's first reader;
+  replaced 2026-09-02 by P6's native readers —
   `docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`).
   _Requirements: 2_
 
@@ -30,7 +29,7 @@ backends; task 10, the BerkeleyDB backend, landed 2026-09-12
 - [x] 5. Measure the drop-in (Kyoto Cabinet) on Fedora rawhide
   (kyotocabinet 1.2.80): 1,571/1,571 rows, sorted sets byte-identical,
   order-only.
-  _Requirements: 2, 4_
+  _Requirements: 2, 3_
 
 - [x] 6. Measure the drop-in (tkrzw) on Debian testing: the same shape —
   1,571/1,571 rows, sets identical, order-only.
@@ -45,19 +44,15 @@ backends; task 10, the BerkeleyDB backend, landed 2026-09-12
   (`docs/findings/upstream-divergences.md`, 2026-08-30).
   _Requirements: 4_
 
-- [x] 9. User files read and written in libpinyin's own formats, drop-in
-  set only (Kyoto Cabinet, tkrzw) — seamless in both directions with a
-  same-backend libpinyin (maintainer ruling 2026-09-09): read the user
-  state it left (`user_bigram.db`, `user_pinyin_index.bin`,
-  `user_phrase_index.bin`, `user.bin`, the `*.dbin` diff logs,
-  `user.conf`), save back what it picks up; answers the 2026-09-08
-  design review's finding that a swap starts blank. Fresh-start
-  applies only when the KV database backend actually changes (BDB
-  distros, redb/LMDB builds). Done for the same-backend read/write and
-  the reverse-direction oracle; the system-token REMOVE log record is
-  disclosed as a skip, not lossless replay
-  (`docs/findings/user-store.md` §11).
-  _Requirements: 2, 3, 4_
+- [x] 9. The user dir as the backend's native user files (Kyoto Cabinet,
+  tkrzw; Berkeley DB with task 10) — the same files a libpinyin build on
+  that backend keeps (maintainer ruling 2026-09-09): `user_bigram.db`,
+  `user_pinyin_index.bin`, `user_phrase_index.bin`, `user.bin`, the
+  `*.dbin` diff logs, `user.conf`, loaded and saved as the pin does. A
+  user dir from another backend starts fresh, as with libpinyin. The
+  system-token REMOVE log record is disclosed as a skip, not lossless
+  replay (`docs/findings/user-store.md` §11).
+  _Requirements: 2, 3_
 
 - [x] 10. BerkeleyDB backend — the fifth store peer (`--features bdb`),
   un-shelved 2026-09-12 on the consumer ask; the system `bigram.db` is

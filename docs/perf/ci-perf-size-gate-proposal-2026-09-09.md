@@ -35,7 +35,7 @@ maintainer's reasons, in their terms:
    `debian:testing # deliberately unpinned` convention the other lanes
    carry. That convention stands.
 
-What was **not** rejected is the underlying want: knowing when the Stage 2
+What was **not** rejected is the underlying want: knowing when the Stage 3
 numbers move, without a person having to remember to look.
 
 ## The direction: nightly snapshots, compared to the previous night
@@ -109,7 +109,7 @@ that fails a build has to be defensible every single night.
 | allocations per steady cycle | yes | yes | a pure function of the code path |
 | callgrind Ir (oxpinyin object) | yes | yes | simulated, exact |
 | RSS after the first and last cycle | yes | no | environment-sensitive; a trend to read, not a trigger |
-| **wall clock** | **no** | **no** | the evidence against it is unchanged — see reason 3 above and `perf-stage2-harness-2026-08.md`'s instruction not to make its benches a required check |
+| **wall clock** | **no** | **no** | the evidence against it is unchanged — see reason 3 above and `perf-stage3-harness-2026-08.md`'s instruction not to make its benches a required check |
 
 "Flag" means draw a human's attention — an issue, a summary line — never
 fail a merge.

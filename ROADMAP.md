@@ -14,14 +14,21 @@ rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
 | Stage | Goal |
 |---|---|
 | **0** | Scaffold, pin, SPECs/fixtures (complete) |
-| **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`); full exported ABI and user-store surfaces still carry open residues (`docs/findings/probe-coverage-abi.md` B/C/A/F/E as rows 33–37; register row 32 closed with the §9 port, PR #496); the sentence-trellis float band stays the frozen exception (row 11) |
-| **2** | Measured upgrades — smaller binary, faster execution, lower RAM first (in progress, `docs/perf/`); model upgrades (trigram/KN, typo edges, own data) remain candidates — every divergence vs the Stage 1 baseline |
+| **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — complete: candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`); the sentence-trellis float band stays the frozen exception (row 11) |
+| **2** | **Current.** Bug-for-bug compatibility with the pin across the whole exported ABI and the user-store surfaces, defects included (ruling 2026-10-14 UTC). Behaviour is derived by reading the pin's source, then its disassembly — never by running experiments (`AGENTS.md`, "Stage 2 — bug-for-bug"); no performance work. Spec: `.kiro/specs/bug-for-bug/` |
+| **3** | Performance — smaller binary, faster execution, much lower RAM than libpinyin. The default build stays the bug-for-bug binary; anything that is not bug-for-bug sits behind an opt-in compile flag, off by default. After Stage 2; some work landed early under the old "Stage 2" label (below). Spec: `.kiro/specs/stage3-performance/`. Model upgrades (trigram/KN, typo edges, own data) remain candidates, behind that flag |
 
-Stage 1 uses installed/libpinyin-format tables (no redistribution required:
+Stage 1 uses the backend's native tables (no redistribution required:
 `docs/findings/model-provenance.md` — build-time fetch of the pinned model20
-archive, compiled by `oxpinyin-datagen`; on Kyoto Cabinet, tkrzw and
-Berkeley DB an unmodified libpinyin install's `data/` opens as is).
-Stage 2 is optional and measurement-gated.
+archive, compiled by `oxpinyin-datagen`; on each backend, oxpinyin
+handles the same data directory a libpinyin build on that backend uses,
+natively).
+Stage 3 is measurement-gated.
+
+**Relabel (2026-10-14 UTC).** Until this date "Stage 2" meant performance.
+Every such reference in the tree now says Stage 3 (the bench is `stage3`,
+the harness record `docs/perf/perf-stage3-harness-2026-08.md`); git history,
+issue titles and PR titles still say "Stage 2" for that work.
 
 ## Reference pin
 
@@ -40,6 +47,10 @@ carries a prebuilt oracle at `/opt/libpinyin-tkrzw` for the perf work.
 3. **Prove** with fixture tests everywhere; live oracle diff on Linux is the
    verification tier for Stage 1 gates.
 
+In Stage 2, step 1 is done by reading: the pin's source at the pin, then the
+pin-built object's disassembly. Differentials gate a behaviour once it is
+derived; they are not how it is found (`AGENTS.md`).
+
 Detailed task cards live under `.kiro/specs/` as they are derived. Until a
 SPEC is frozen, do not implement that slice.
 
@@ -50,10 +61,9 @@ Phase 0 item, the consolidated F-E cross-lane evidence register
 (foundation task 4), is `docs/findings/robustness-evidence.md`: all 14
 cases (F-E-01..13 from the spec, F-E-14 registered 2026-09-05), each
 with its lane and evidence entry, on main since 2026-08-30. Closed
-2026-09-08. The W8 drop-in user-file read/write path, the last Stage 1
-item listed below, remains open — rescoped 2026-09-09 to the seamless
-same-backend requirement (maintainer ruling;
-`docs/findings/compatibility-policy.md`, goal amendment).
+2026-09-08. The W8 drop-in user dir, the last Stage 1 item listed below,
+landed 2026-09-09 as the backend's native user files (maintainer ruling
+2026-09-09; `docs/findings/compatibility-policy.md`).
 
 | Need | Output |
 |---|---|
@@ -61,7 +71,7 @@ same-backend requirement (maintainer ruling;
 | ABI surface | `docs/findings/abi-reference.md` (living reference: the full 79/79 export set) |
 | Upstream schema | `docs/findings/upstream-schema.md` (recorded) |
 | Parser / path-set / scoring SPECs | frozen 2026-08-09: `docs/findings/parser-spec.md`, `parser-path-set.md`, `scoring-spec.md` |
-| Data load route (D3) | decided: oxpinyin-data loads libpinyin-format tables (`.kiro/steering/structure.md`); native production of those tables is W15 |
+| Data load route (D3) | decided: oxpinyin-data loads the backend's native tables (`.kiro/steering/structure.md`); native production of those tables is W15 |
 | Capture harness + F-A fixtures | built: `tools/capture/`, `docs/testing/capture-fixtures.md`, `fixtures/foundation/f-a.txt`, `f-c.txt`; F-E register: `docs/findings/robustness-evidence.md` (14 cases) |
 
 ## Stage 1 workstreams (names only)
@@ -82,7 +92,7 @@ same-backend requirement (maintainer ruling;
 | W12 | Corpus tail (parity gaps; candidate residual closed 2026-08-22) | oxpinyin-core, oxpinyin-engine, oxpinyin-capi |
 | W13 | Double-pinyin and bopomofo input schemes (feature implementation) | oxpinyin-core, oxpinyin-engine |
 | W14 | Sentence surface (n-best emission, NBEST_MATCH typing, get_sentence) | oxpinyin-capi, oxpinyin-engine |
-| W15 | model20-native runtime-data production, every backend — since P5/P6 in libpinyin's own file formats, read directly by the runtime | oxpinyin-datagen, oxpinyin-store, oxpinyin-data, oxpinyin-runtime |
+| W15 | model20-native runtime-data production, every backend — since P5/P6 in each backend's native file formats, opened directly by the runtime | oxpinyin-datagen, oxpinyin-store, oxpinyin-data, oxpinyin-runtime |
 
 Crates outside the Stage 1 table (roles in `.kiro/steering/structure.md`):
 `oxpinyin-facade` and `oxpinyin-runtime` (the shared orchestration and
@@ -95,10 +105,9 @@ symbols), and `oxpinyin-testsupport` (dev-only).
 **Stage 1 status (2026-09-12).** *Implementation:* complete — every
 workstream above has landed or closed (W9, W10, W11, W13, W14 and W15
 carry LANDED notes below, W12 closed 2026-08-22), and W8 drop-in task 9
-landed 2026-09-09: user files are read and written in libpinyin's own
-formats, seamless in both directions with a same-backend libpinyin per
-the 2026-09-09 maintainer ruling (`docs/findings/compatibility-policy.md`,
-goal amendment), measured by `tools/oracle/user-dir-round-trip.sh`
+landed 2026-09-09: the user dir is the backend's native user file set,
+the same files a libpinyin build on that backend keeps (2026-09-09
+maintainer ruling, `docs/findings/compatibility-policy.md`), measured by `tools/oracle/user-dir-round-trip.sh`
 against tkrzw, Kyoto Cabinet and Berkeley DB oracles, re-measured
 2026-09-13 after the harness's own driver was fixed
 (`docs/findings/user-store.md` §11). *Verification:* one gap open — the
@@ -138,21 +147,17 @@ parked.
   are peer implementations behind one `ReadStore`/`WriteStore` trait
   surface, and any single build compiles in exactly one of them
   (`DefaultStore`; `oxpinyin-store` refuses a build with zero or more
-  than one backend feature at compile time). tkrzw is the feature in the
-  workspace's default set; the others are selected explicitly with
-  `--no-default-features --features {kyotocabinet|bdb}`.
-  KC/tkrzw/BDB are C dependencies. System data files carry libpinyin's
-  own names on Kyoto
-  Cabinet, tkrzw and Berkeley DB (the drop-in set); the user dir is
-  libpinyin's own file set under the same
-  naming rule (`user.conf` names the backend family, and a non-conforming
-  profile is wiped on open as upstream's `check_format` does). Switching
-  backends is a storage-format transition — the runtime does not
-  transparently open one backend's files with another, and old
-  backend-specific user data is not carried across the switch. (This
-  matches the model distributions use for libpinyin's own backend
-  transitions, and is policy since 2026-09-09:
-  `docs/findings/compatibility-policy.md`, goal amendment.)
+  than one backend feature at compile time), as libpinyin selects one
+  with `--with-dbm`. Berkeley DB is the feature in the workspace's
+  default set (since 2026-09-20, as a bare `./configure`); the others are
+  selected explicitly with
+  `--no-default-features --features {kyotocabinet|tkrzw}`.
+  KC/tkrzw/BDB are C dependencies. On each backend the system and user
+  files are that backend's native set — the names and formats a
+  libpinyin build on it uses (`user.conf` names the backend family, and a
+  non-conforming profile is wiped on open as upstream's `check_format`
+  does). Switching backend starts fresh, for oxpinyin exactly as for
+  libpinyin (ruling 2026-09-09, `docs/findings/compatibility-policy.md`).
 
 - **W15 LANDED.** The data pipeline inversion is complete: runtime tables
   are compiled natively from the canonical pinned `model20` archive for every
@@ -235,15 +240,14 @@ parked.
   precedent (library-only rewrite, frontends left alone) still applies —
   more strongly, since no frontend change is needed at all.
 
-  Landed: binary identity and cargo-c metadata (#206, #192); the compat
-  read path over installed libpinyin data (#228); measured drop-in on
+  Landed: binary identity and cargo-c metadata (#206, #192); the first
+  data reader (#228); measured drop-in on
   Fedora rawhide (Kyoto Cabinet), Debian testing (tkrzw) and NixOS —
   1,571/1,571 corpus rows, sorted sets byte-identical, the only
   divergence the R1 defined-order rule (`docs/findings/upstream-divergences.md`,
-  2026-08-30). Since P6 (2026-09-02) there is no compat layer at all:
-  the runtime reads an unmodified install's `data/` through the same
-  readers it uses for its own output (W15 note). Task 9, learned user
-  data read and written in libpinyin's own user-file format, landed
+  2026-08-30). Since P6 (2026-09-02) the runtime opens each backend's
+  data directory natively, with one reader set (W15 note). Task 9, the
+  user dir as the backend's native user file set, landed
   2026-09-09 (`docs/findings/user-store.md` §11); task 10, the
   BerkeleyDB backend, landed 2026-09-12 on the consumer ask as the fifth
   store peer — non-default, libdb 5.3 only, verified against a
@@ -255,7 +259,7 @@ parked.
   spec's design and requirements were brought to the P6 architecture and
   the 79-symbol surface on 2026-09-12.
 
-  Stage-2 baselines were measured while Stage-1 parity work continued —
+  Stage-3 baselines were measured while Stage-1 parity work continued —
   those numbers are prerequisites for improving against them. Parity
   work was never W8 — it was W10–W14 below, all now landed.
 
@@ -388,17 +392,30 @@ parked.
   (`docs/findings/sentence-surface.md`) and is not an open implementation task.
   Nothing in W14 remains open.
 
-## Stage 2 (in progress; measurement-gated)
+## Stage 2 — bug-for-bug compatibility (current)
 
-Entry point: `docs/perf/README.md` (dated snapshots;
-`perf-stage2-harness-2026-08.md` is the harness). What has landed so far
+Maintainer ruling 2026-10-14 UTC. The target is what the pin does,
+defects included: an observable pin defect is reproduced and recorded
+as an upstream defect, not fixed; a departure needs a class in
+`docs/findings/compatibility-policy.md`. Pinned behaviour and oxpinyin's
+own improvements are kept apart (`.kiro/steering/pinned-behaviour.md`,
+`.kiro/steering/oxpinyin-improvements.md`). Work, in order
+(`.kiro/specs/bug-for-bug/tasks.md`; the issues are the tracker): the
+round-2 audit issues (`docs/findings/bug-for-bug-audit-r2-2026-09-23.md`),
+then a third bug-for-bug sweep on all three cells.
+
+## Stage 3 — performance (after Stage 2; early work recorded)
+
+Everything in this section was recorded as "Stage 2" before the
+2026-10-14 relabel. Entry point: `docs/perf/README.md` (dated snapshots;
+`perf-stage3-harness-2026-08.md` is the harness). What has landed so far
 is the size/speed/RAM work the constitution puts first, each change
 measured against the pin in the same container:
 
 - **Measurement harness** (2026-08-19): Criterion groups on the C-ABI
   surface, the `profiling` cargo profile, `tools/profile/run-w8-cycle.sh`.
 - **P1–P6 data-layer inversion** (2026-09-01 → 2026-09-02): the runtime
-  reads libpinyin's own file formats directly (W15 note above). Same data
+  opens each backend's native files directly (W15 note above). Same data
   directory as the pin: init within ~1.1× (KC) / ~1.3× (tkrzw)
   of the pin, from ~100× before
   (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md` — a
@@ -433,7 +450,10 @@ at parity on amd64, ~1.16× on arm64, and below 1 on the current tree
 `docs/findings/perf-cycle-ir-differential-2026-09-08.md`); P6's own figure
 additionally reads high because its artifact was a `cargo build` fixture rather
 than the shipping `cargo cinstall` library
-(`docs/findings/perf-build-recipe-audit-2026-09-10.md`). The current Stage-2
-target is allocation churn on the steady cycle, per the IR differential. Model
+(`docs/findings/perf-build-recipe-audit-2026-09-10.md`). When Stage 3 opens,
+its first measured target is allocation churn on the steady cycle, per the IR
+differential; the direction decided in 2026-09 is in
+`.kiro/specs/stage3-performance/design.md`. Model
 upgrades (trigram/KN, typo edges, own data) have no landed work and remain
-candidates behind the same gate.
+candidates, behind an opt-in compile flag like every change that is not
+bug-for-bug.

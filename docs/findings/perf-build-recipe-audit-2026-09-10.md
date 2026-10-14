@@ -202,7 +202,7 @@ reading it, and a record in the second cannot.
 | `perf-mmap-system-indexes-2026-08-31.md` | not affected | `cinstall` | delegated; chains to the matrix image. Status is REJECTED regardless |
 | `perf-init-text-slurp-2026-08.md` | not affected | `cinstall (profiling)` | `run-w8-cycle.sh`, named in the record |
 | `perf-init-typed-map-2026-08.md` | not affected | `cinstall (profiling)` | same |
-| `perf-stage2-harness-2026-08.md` | not affected | `cinstall (profiling)` | same |
+| `perf-stage3-harness-2026-08.md` | not affected | `cinstall (profiling)` | same |
 | `perf-fill-lookup-2026-08.md` | not affected | `cinstall (profiling)` + criterion | **states it** — "`--profile profiling` cargo-c install" |
 | `perf-so-size-2026-09.md` | not affected | criterion; quotes `cinstall` figures | states its own bench; quoted `.so` figures chain to the KC baseline series |
 | `perf-store-opt-2026-09.md` | N/A | criterion, no `.so` | states it |

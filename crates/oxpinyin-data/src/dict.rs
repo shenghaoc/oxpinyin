@@ -1,4 +1,4 @@
-//! The system and addon dictionaries over libpinyin's own data files.
+//! The system and addon dictionaries over the backend's native data files.
 //!
 //! Upstream's `pinyin_init` opens three things per facade: a
 //! `ChewingLargeTable2` (pinyin keys → `PinyinIndexItem2` records), a
@@ -221,9 +221,9 @@ pub struct SystemDictionary {
 }
 
 impl SystemDictionary {
-    /// Opens the default facade from a system data directory — a
-    /// libpinyin install's `data/` on Kyoto Cabinet, tkrzw and Berkeley
-    /// DB, an `oxpinyin-datagen` output directory on every backend
+    /// Opens the default facade from the backend's native system data
+    /// directory — whether a libpinyin build or `oxpinyin-datagen`
+    /// wrote it
     /// ([`SystemDbm::file_name`] names the DBMs, [`SYSTEM_LIBRARY_FILES`]
     /// the chunk files).
     ///

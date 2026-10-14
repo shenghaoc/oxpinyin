@@ -1,4 +1,4 @@
-# Stage-2 leftover: init typed-map insert (2026-08-21)
+# Stage-3 leftover: init typed-map insert (2026-08-21)
 
 Status: **measured init-path change.** Continues
 `docs/perf/perf-fill-lookup-2026-08.md` (which left the typed-map

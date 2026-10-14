@@ -38,7 +38,8 @@ provenance so that releases contain only redistributable artefacts.
 
 1. WHEN licence inspection completes THEN a written finding SHALL state
    redistribution status of tables and model. 2. Stage 1 reads pinned-archive
-   data, so this gates standalone shipping and Stage 2 only. 3. WHEN
+   data, so this gates standalone shipping and Stage 3 only (called
+   Stage 2 before 2026-10-14). 3. WHEN
    inconclusive after two weeks THEN proceed as if not redistributable.
 
 ### Requirement R2: Upstream GSettings schema captured verbatim
@@ -109,20 +110,21 @@ libpinyin's names so that unmodified consumers link against it and run.
    `exec_prefix`. 4. The exported surface SHALL be the full live upstream ABI — 79
    `pinyin_*` symbols (`docs/findings/abi-reference.md`).
 
-### Requirement R8: Direct read of installed libpinyin data
+### Requirement R8: Native storage on libpinyin's backends
 
-**User Story:** As a packager, I want oxpinyin to consume the installed
-libpinyin data so that no data conversion ships.
+**User Story:** As a packager, I want an oxpinyin build to use the same
+backend and data files as the libpinyin build it replaces so that no
+data conversion ships.
 
-1. WHEN `pinyin_init` is pointed at a libpinyin data directory THEN the
-   runtime SHALL open it in place through its own readers (P6; no layout
-   detection, no conversion). 2. The reader SHALL parse libpinyin's `MemoryChunk`
+1. WHEN `pinyin_init` is pointed at its backend's data directory THEN the
+   runtime SHALL open it natively (P6; no layout detection, no
+   conversion). 2. The reader SHALL parse libpinyin's `MemoryChunk`
    container (8-byte header: u32 LE length, u32 XOR checksum) and verify
-   the checksum before use. 3. The path SHALL cover Kyoto Cabinet installs
-   (Fedora, NixOS) and tkrzw installs (Debian). 4. On every measured
+   the checksum before use. 3. The measured backends SHALL include Kyoto
+   Cabinet (Fedora, NixOS) and tkrzw (Debian). 4. On every measured
    backend the prediction surface SHALL read 1,571/1,571 rows with sorted
-   row sets byte-identical; the residual order-only divergence is R1's and
-   is governed by R9.
+   row sets byte-identical; the order-only residual measured then was
+   R1's, closed by P6 (policy row 12).
 
 ### Requirement R9: Output compatibility rule and its exceptions
 
@@ -137,12 +139,10 @@ replacing the library changes nothing observable.
    `docs/findings/compatibility-policy.md`: (a) MATH — platform-dependent
    floating-point accumulation; (b) MEMORY SAFETY — upstream is UB and
    Rust structurally prevents reproduction; (c) AVAILABILITY — upstream
-   aborts on caller input, so oxpinyin returns `false`/`Err`; 3. One further,
-   explicitly bounded exception is recorded: the predicted-candidate list
-   order follows oxpinyin's defined text-ascending order (register R1,
-   maintainer decision 2026-08-25) — predicted rows' content and their
-   sorted sets SHALL be byte-identical to the pin, and only the list
-   positions are exempt from the pin-order comparison, which the register
-   records as a constant, never a target. 4. A symbol that
+   aborts on caller input, so oxpinyin returns `false`/`Err`; 3. The
+   predicted-candidate list order SHALL be the pin's: the text-ascending
+   defined order once recorded as R1 (maintainer decision 2026-08-25)
+   applied only to the removed redb/LMDB containers, and P6 closed R1
+   (policy row 12). 4. A symbol that
    returns a wrong value SHALL be treated as worse than not exporting it:
    a stub returning `false` is a defect, not compliance.

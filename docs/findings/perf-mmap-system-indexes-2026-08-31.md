@@ -70,7 +70,7 @@ whole dictionary on the heap at every open.
 | oxpinyin | KC | 86.188 ms | 8.473 ms | 72,910 KiB |
 | oxpinyin | Tkrzw | 106.383 ms | 8.932 ms | 69,256 KiB |
 
-That iteration prototyped a first Stage-2 optimization on that
+That iteration prototyped a first Stage-3 optimization on that
 finding: the system pinyin/phrase index path stopped reconstructing,
 using mapped compact files at startup and offset views for lookup.
 **That mapped-file implementation was subsequently withdrawn** (it

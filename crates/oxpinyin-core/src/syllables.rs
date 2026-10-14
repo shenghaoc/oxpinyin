@@ -55,11 +55,11 @@ pub static FULL_PINYIN_SYLLABLES: [&str; FULL_PINYIN_SYLLABLE_COUNT] = [
 /// graph bound their match length by it.
 ///
 /// **Not constant across stages.** Six is the Stage 1 inventory's answer
-/// (`chuang`, `shuang`, `zhuang`). A Stage 2 inventory — fuzzy spellings,
+/// (`chuang`, `shuang`, `zhuang`). A Stage 3 inventory — fuzzy spellings,
 /// correction aliases, a second input scheme — may raise it, and the graph's
 /// edge count is `O(n × MAX_SYLLABLE_LEN × kinds)`, so raising it costs
 /// linearly. Read it; do not hard-code 6. The same warning applies to
-/// [`crate::SYLLABLE_KEY_COUNT`], whose ids Stage 2 extends rather than
+/// [`crate::SYLLABLE_KEY_COUNT`], whose ids Stage 3 extends rather than
 /// renumbers.
 pub const MAX_SYLLABLE_LEN: usize = 6;
 

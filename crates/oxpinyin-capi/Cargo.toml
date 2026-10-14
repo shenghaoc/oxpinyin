@@ -118,16 +118,16 @@ oxpinyin-user.workspace = true
 glib-sys.workspace = true
 
 [dev-dependencies]
-# Criterion 0.5+ (workspace lock is 0.8). Stage-2 benches only; not a
+# Criterion 0.5+ (workspace lock is 0.8). Stage-3 benches only; not a
 # runtime dependency of the C ABI.
 criterion = "0.8"
-# Dev-only edge: the Stage-2 benches consume the canonical model20-cache
+# Dev-only edge: the Stage-3 benches consume the canonical model20-cache
 # locator and export-dir resolution (oxpinyin_testsupport::model_cache).
 # Never a dependency of the C ABI itself.
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 
 [[bench]]
-name = "stage2"
+name = "stage3"
 harness = false
 
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the

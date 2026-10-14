@@ -187,7 +187,7 @@ see the count, which the surface supports only as a lower bound.
 | `perf/perf-fill-lookup-2026-08.md` | 2026-08-20 | before `337d8d5` (origin/main) | before | → D1 | `run-w8-cycle.sh` (`PERF_CYCLES=8`, `--profile profiling`, Callgrind) | none found |
 | `findings/data-load-audit-2026-08.md` | 2026-08-19 | not stated | before | i7-9750H, 12 logical CPUs, Linux 6.12, rustc 1.97.1 | `run-perf-baseline.sh` | none found |
 | `perf/perf-alloc-2026-08.md` | 2026-08-19 | not stated | before | → D4 | criterion + dhat | none found |
-| `perf/perf-stage2-harness-2026-08.md` | 2026-08-19 | not stated | before | not stated | criterion 0.8 + `run-w8-cycle.sh` | none found |
+| `perf/perf-stage3-harness-2026-08.md` | 2026-08-19 | not stated | before | not stated | criterion 0.8 + `run-w8-cycle.sh` | none found |
 | `perf/perf-baseline-2026-08.md` | 2026-08-16 | not stated | before | i7-9750H @ 2.60 GHz, 12 logical CPUs, pinned to CPU 3, Linux 6.12, rustc 1.97.1, cargo-c 0.10.24 | `bisect --perf` | none found |
 | `perf/perf-candidate-cap-2026-08.md` | 2026-08-16 (see below) | `f8e2c11d` | before | → D7 | criterion (`scan_perf`) | none found |
 | `perf/perf-exploration.md` | 2026-08-14 | `017a610` (PR #46) | before | 12 logical cores, one measurement thread unless noted, rustc 1.97.1; Callgrind `Ir` + dhat 0.3 | criterion + Callgrind + dhat | none found |
@@ -239,7 +239,7 @@ the records — D1 is dated 2026-08-20, D2 and D3 2026-08-21.
 `af642b91` was read rather than assumed. In the script it adds model-cache
 verification and a `PINYIN_MODEL_CACHE` fallback for `MODEL_DIR`. The same
 commit also touches the measurement code — `benches/support/mod.rs` (+127) is
-that verification mirrored in, and `benches/stage2.rs` is a bench-identifier
+that verification mirrored in, and `benches/stage3.rs` is a bench-identifier
 rename with a byte-identical body. **No measurement behaviour changed**, so
 the three records' "same W8 protocol" claim holds. `b7a35f1f` removed a
 dangling `oxpinyin-migrate` line and is cosmetic.

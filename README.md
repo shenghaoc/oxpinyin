@@ -1,20 +1,17 @@
 # oxpinyin
 
 A portable Rust re-expression of
-[libpinyin](https://github.com/libpinyin/libpinyin): Stage 1 is exact-output
-parity with a checksum-pinned, source-built libpinyin oracle; Stage 2 is
-measured algorithm upgrades.
+[libpinyin](https://github.com/libpinyin/libpinyin), built as bug-for-bug
+`libpinyin.so.15` binaries. Stage 1 was exact-output parity with a checksum-pinned,
+source-built libpinyin oracle; Stage 2 is bug-for-bug compatibility with that
+pin across the whole exported ABI, defects included; Stage 3 is performance.
 
-**Status:** Stage 1 implementation complete — 1,571/1,571 corpus rows
-(ORDER-ONLY divergence class); 79/79 exported symbols; drop-in as
-`libpinyin.so.15` verified on Fedora rawhide, Debian testing, and NixOS.
-One verification gap open — the differential suite does not yet drive the
-full 79-symbol exported ABI; the one defect the policy carried (row 30, the
-pinyin facade's chewing batch `FORCE_TONE` seam) closed in code 2026-09-14
-and verified live 2026-09-16 — all eight implemented keyboards IDENTICAL
-(`docs/findings/compatibility-policy.md`
-row 30; `ROADMAP.md`, Stage 1 status). Stage 2 (binary model compilation,
-init/RAM reduction) in progress.
+**Status:** Stage 1 complete — 1,571/1,571 corpus rows; 79/79 exported
+symbols; drop-in as `libpinyin.so.15` verified on Fedora rawhide, Debian
+testing, and NixOS. Stage 2 (bug-for-bug) is current: the round-2 audit
+findings, then a third bug-for-bug sweep (`ROADMAP.md`). Stage 3 (binary
+model compilation, init/RAM reduction) follows; some of it landed early
+(`docs/perf/`).
 
 ## Quickstart
 
@@ -41,12 +38,12 @@ cargo test --locked --workspace
 | `AGENTS.md` | Agent/collaborator contract |
 | `docs/runbooks/` | How to: backends, the oracle and differentials, benches, goldens and pins, releases |
 | `docs/findings/` | Decisions, divergence records, audit trail — indexed with a status per file |
-| `docs/perf/` | Performance measurement snapshots (Stage 2 baseline) |
+| `docs/perf/` | Performance measurement snapshots (Stage 3) |
 | `docs/testing/` | Corpus pipeline, oracle environment, fixture formats |
 | `docs/safety/` | MISRA-Rust mapping, audit, safety profile |
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
 | `tools/oracle/` | Pin build recipe (`docs/runbooks/oracle.md`) |
-| `.kiro/` | Steering and specs (foundation/drop-in) in Kiro's documented layout (<https://kiro.dev/docs/>); the format is used, the Kiro IDE and CLI are not |
+| `.kiro/` | Steering and specs in Kiro's documented layout (<https://kiro.dev/docs/>), split into pinned libpinyin behaviour (`steering/pinned-behaviour.md`; specs `drop-in`, `bug-for-bug`) and oxpinyin's improvements (`steering/oxpinyin-improvements.md`; spec `stage3-performance`); the format is used, the Kiro IDE and CLI are not |
 
 | Group | Crates |
 |---|---|

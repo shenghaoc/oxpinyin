@@ -81,7 +81,7 @@ record, enforced present-but-not-verified by Clippy, verified by review.
   `#[allow]` with justification (the deviation record). Narrowing at ABI
   edges uses `try_from(...).unwrap_or(clamp)` (existing capi pattern).
 - `overflow-checks` + `debug-assertions` ON in a scheduled release-test
-  lane; OFF in shipped profiles (Stage-2 budget).
+  lane; OFF in shipped profiles (Stage-3 budget).
 - The three arithmetic defects found by this study (F-1, F-2, F-3) are
   fixes to file, not policy.
 
@@ -115,7 +115,7 @@ record, enforced present-but-not-verified by Clippy, verified by review.
   libfuzzer-sys via `[[licenses.exceptions]]`); **sources = crates.io
   registry only — git sources disallowed** (`unknown-git = "deny"`,
   empty `allow-git`); multiple-versions = warn (informational for the
-  Stage-2 size budget). The release tarball that CI executes is
+  Stage-3 size budget). The release tarball that CI executes is
   checksum-verified before install.
 - No new runtime dependency without ask (constitution) — `deny.toml`
   `bans.deny = [{ name = "..." }]` only if a concrete ban ever becomes

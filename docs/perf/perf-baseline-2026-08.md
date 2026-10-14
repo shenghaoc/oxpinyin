@@ -2,7 +2,7 @@
 
 Date: 2026-08-16 · Status: **measurement only — no decode, capi, or core
 behavior changed.** This is the last input the W8 report needs and the first
-entry on the Stage-2 scoreboard.
+entry on the Stage-3 scoreboard.
 
 Host: Intel(R) Core(TM) i7-9750H @ 2.60 GHz, 12 logical CPUs, one
 measurement CPU per run (pinned to CPU 3), Linux 6.12. Rust 1.97.1,
@@ -138,7 +138,7 @@ anonymous heap. The peak number above is the monotonic per-process HWM; the
 init-only runs show that oxpinyin reaches essentially its final working set
 at init, whereas oracle grows from 11.7 MiB to 15.0 MiB during the cycle.
 
-## Stage-2 verdict
+## Stage-3 verdict
 
 - **Smaller binary on disk: mixed.** The shared object is 0.40x (smaller),
   but the runtime footprint is 3.07x and total install is 2.59x. Data, not
@@ -151,7 +151,7 @@ at init, whereas oracle grows from 11.7 MiB to 15.0 MiB during the cycle.
   oracle; oxpinyin sits at 96.4 MiB (98,708 KiB) before the first keystroke
   and stays there.
 
-## Candidate Stage-2 targets, ranked by these numbers
+## Candidate Stage-3 targets, ranked by these numbers
 
 Observations only — no optimization work in this PR.
 
@@ -211,8 +211,8 @@ Observations only — no optimization work in this PR.
   PERF_CPU=3 PERF_RUNS=20 PERF_CYCLES=8 PERF_RAM_RUNS=10 \
   tools/bisection/run-perf-baseline.sh`
 
-Continued by the Stage-2 measurement harness in
-`docs/perf/perf-stage2-harness-2026-08.md` (Criterion groups over the
+Continued by the Stage-3 measurement harness in
+`docs/perf/perf-stage3-harness-2026-08.md` (Criterion groups over the
 C ABI, `[profile.profiling]`, `tools/profile/run-w8-cycle.sh`).
 
 > **Pin note (2026-09-06 UTC):** the recorded cells above are frozen

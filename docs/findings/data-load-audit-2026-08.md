@@ -13,7 +13,7 @@ rustc 1.97.1. Release `opt-level=3`. Tables: `/tmp/oxpinyin-export`
 `PINYIN_MODEL_DIR` = fetched model20 `interpolation2.text` 83,457,181 B
 (SHA-256 `59c68e89…`). Punct: W3 `punct.redb` (the W8 staged
 `share/oxpinyin` tree did not ship punct). The W8 dlopen harness was **not**
-re-run; those pin numbers stay the Stage-2 scoreboard.
+re-run; those pin numbers stay the Stage-3 scoreboard.
 
 Harness: `crates/oxpinyin-data/examples/load_profile.rs`. Isolated steps
 are medians of 3 in one process; RSS rows are **fresh processes** so the
@@ -176,7 +176,7 @@ introduces a POD sidecar or stops copying values, add `zerocopy` then
 rkyv is for a **new** archived format plus a migrator. Do not rkyv the
 live redb schema. Replacing `interpolation2.text` with an archive is
 exactly the "do not replace interpolation2 as a first move" ban. Disk
-size of the 81 MB `\2-gram` section is a Stage-2 format project, not
+size of the 81 MB `\2-gram` section is a Stage-3 format project, not
 this one.
 
 ### Cheaper win — **chosen**

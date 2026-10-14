@@ -2,7 +2,7 @@
 """Print the hottest stacks from a samply / Firefox-profiler JSON dump.
 
 Reads `target/profile/w8-cycle.profile.json.gz` (or a path argument) and
-prints the top frames by sample self-count. Used to fill the Stage-2
+prints the top frames by sample self-count. Used to fill the Stage-3
 findings note; not a CI gate.
 """
 

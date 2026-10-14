@@ -11,9 +11,9 @@ comparable within one container on one host; every published snapshot
 
 | crate | bench | needs |
 | --- | --- | --- |
-| oxpinyin-capi | `stage2` | the export (`PINYIN_EXPORT_DIR`), the C-ABI surface |
+| oxpinyin-capi | `stage3` | the export (`PINYIN_EXPORT_DIR`), the C-ABI surface |
 | oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,bdb}` | `--features <backend>` (each is `required-features`-gated) |
-| oxpinyin-store | `kyotocabinet_bnum` | `--features kyotocabinet,bench-internal`; **an installed libpinyin `data/` via `OXPINYIN_BNUM_DATA_DIR`** for meaningful numbers (see below) |
+| oxpinyin-store | `kyotocabinet_bnum` | `--features kyotocabinet,bench-internal`; **a distro-installed Kyoto Cabinet data directory via `OXPINYIN_BNUM_DATA_DIR`** for meaningful numbers (see below) |
 | oxpinyin-user | `export_phrases`, `phrase_read` | the export |
 | pinyin-oracle | `scan_perf`, `dbm_bench`, `alloc_profile` | the export, model20 (`dbm_bench` also the bench oracles) |
 
@@ -22,7 +22,7 @@ under libtest, which rejects criterion flags:
 
 ```sh
 cargo bench -p oxpinyin-store --no-default-features --features tkrzw --bench backend_matrix_tkrzw
-cargo bench -p oxpinyin-capi --bench stage2 -- --profile-time 10
+cargo bench -p oxpinyin-capi --bench stage3 -- --profile-time 10
 ```
 
 A backend-specific criterion bench — one that needs a peer's own
@@ -421,7 +421,7 @@ keystroke cycle with `samply`, falling back to `cargo flamegraph` or
 ## Writing it up
 
 A snapshot records the container image, the host, the pin, the exact
-commands, and the controls (`docs/perf/perf-stage2-harness-2026-08.md`
+commands, and the controls (`docs/perf/perf-stage3-harness-2026-08.md`
 is the template; `docs/findings/perf-keycost-first-alloc-2026-09-07.md`
 a recent full example with confidence intervals and an acceptance
 gate). A change that trades time for space or the reverse must say so

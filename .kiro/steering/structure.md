@@ -7,7 +7,7 @@ inclusion: always
 |---|---|---|---|---|
 | oxpinyin-core | parser, SegmentGraph, k-best, scoring traits | forbid | yes | via engine |
 | oxpinyin-chewing | chewing/zhuyin layer: the packed chewing key, its renderers, and the frozen content tables — a dependency-free leaf *under* core, not a module over it (core depends on chewing) | forbid | yes | via capi, engine |
-| oxpinyin-data | load libpinyin-format tables (D3 route); drop-in readers for installed libpinyin data | deny (+mmap) | yes | via engine |
+| oxpinyin-data | native readers for the backend's data files — the formats a libpinyin build on that backend uses (D3 route) | deny (+mmap) | yes | via engine |
 | oxpinyin-user | ACID store over DefaultStore; no format-version row, matching libpinyin's unversioned user files (ruling 2026-09-08, `docs/findings/user-store.md` §4) | forbid | yes | via engine |
 | oxpinyin-engine | session API — the supported Rust surface | forbid | yes | yes |
 | oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws, the §9 user-data export materialization) consumed by both C-ABI facades; depends on core, engine, runtime and user — it holds the runtime's concrete dict/lm/user handles by value, so it forwards the whole backend feature matrix rather than staying generic over the engine traits | forbid | yes | via capi |
@@ -18,7 +18,7 @@ inclusion: always
 | pinyin-oracle | differential harness vs pinned libpinyin | allow | Linux | never |
 | oxpinyin-dictool | conversions; standalone vocab exporter over the facade's §9 import/export machinery — pure Rust, no C-ABI dependency (portable for real since that edge was cut) | forbid | yes | yes |
 | oxpinyin-store | ordered byte-KV seam; Berkeley DB (default since 2026-09-20), Kyoto Cabinet, Tkrzw backends — one per binary, compile-time selected; all are system C-library deps, Linux-verified and macOS-buildable via Homebrew (the CI portable lanes install each OS's backend; the peer matrix stays on Linux) | deny | yes | via engine |
-| oxpinyin-datagen | model20 → runtime data compiler for every backend, writing libpinyin's own file formats (libpinyin's names on KC/tkrzw/BDB); takes the on-disk layouts from `oxpinyin-data` — the `MemoryChunk`/`SubPhraseIndex` constants and checksum from `chunk_format`, the four DBM row schemas and the library name tables from `row_format`/`system_files`, so reader and writer share one definition | forbid | yes | never |
+| oxpinyin-datagen | model20 → runtime data compiler for every backend, writing each backend's native files (the names and formats a libpinyin build on that backend uses); takes the on-disk layouts from `oxpinyin-data` — the `MemoryChunk`/`SubPhraseIndex` constants and checksum from `chunk_format`, the four DBM row schemas and the library name tables from `row_format`/`system_files`, so reader and writer share one definition | forbid | yes | never |
 | oxpinyin-corpus | training corpus front-end (zhwiki dump → ngseg raw text) | forbid | yes | never |
 | oxpinyin-training | backend-sensitive training package; named modules `segment`, `counter`, `lambda`, `emitter`, `eval`, `train`; existing stage binary names remain; one backend feature selection for all | forbid | yes | never |
 | oxpinyin-testsupport | shared test doubles (fixture Dictionary/LanguageModel) plus the model20 cache locator; dev-lane only — its one non-dev consumer is datagen, which itself never ships | forbid | yes | never |
@@ -40,8 +40,8 @@ suggestion-merge row order (`merge_suggestion_rows`, the ordering the
 C-ABI facades consume through `oxpinyin-facade::merged_suggestions`) —
 all cited against the pin in its source.
 
-**Drop-in data path (P6, 2026-09-02):** there is no compatibility layer.
-`oxpinyin-data` reads libpinyin's own files through lazy readers — the
+**Data path (P6, 2026-09-02):** one native reader set per backend.
+`oxpinyin-data` reads the backend's files through lazy readers — the
 pinyin and phrase DBMs, the per-library `MemoryChunk` files (mmap,
 checksummed), `bigram.db`, `punct.bin`, the addon DBM pair — a handle plus
 a point read each, nothing scanned at open. `table.conf` is read once
@@ -49,10 +49,10 @@ a point read each, nothing scanned at open. `table.conf` is read once
 its rows decide which libraries exist, what their files are called and
 which calls accept them; its header gives λ and the versions the user
 profile conforms against.
-`oxpinyin-runtime` opens a system directory the way `pinyin_init` does;
-on Kyoto Cabinet, tkrzw and Berkeley DB that directory can be an
-unmodified libpinyin install's `data/`, and on every backend it is what
-`oxpinyin-datagen compile` writes. The caller supplies the directory
+`oxpinyin-runtime` opens a system directory the way `pinyin_init` does:
+on each backend it is the same directory a libpinyin build on that
+backend uses, whether libpinyin's tools or `oxpinyin-datagen compile`
+wrote it. The caller supplies the directory
 (`StoragePaths`); no distro layout is auto-detected.
 
 **Portability seam:** `oxpinyin-engine`'s session API is framework-neutral —
@@ -81,8 +81,8 @@ Customisation is data overlays (rules, maps, schemes) and live
 preferences; engine weights and LM order are never user configuration.
 
 **Decoder:** a weighted SegmentGraph from day one (index-based arenas, not
-references). EdgeKind: Exact + Segmentation now; Fuzzy/Typo/Abbrev at
-Stage 2. **The scorer API accepts edge costs from the first
+references). EdgeKind: Exact + Segmentation now; Fuzzy/Typo/Abbrev are
+Stage 3 model-upgrade candidates, behind an opt-in compile flag. **The scorer API accepts edge costs from the first
 implementation — hard freeze.** Parity mode mirrors upstream's
 path-enumeration policy per the path-set SPEC — neither more paths nor
 fewer.

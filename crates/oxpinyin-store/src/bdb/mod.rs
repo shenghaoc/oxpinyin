@@ -121,7 +121,7 @@ impl BdbStore {
     /// (`create_hash` / `open_hash_read_only` / `open_user_bigram`) uses
     /// the raw tier alone. Nothing in the type system enforces it — the
     /// hash constructors return the same `Self` the tree ones do. See the
-    /// Stage 2 section of `docs/findings/store-key-ordering.md`.
+    /// Stage 3 section of `docs/findings/store-key-ordering.md`.
     fn walk(
         &self,
         table: &str,

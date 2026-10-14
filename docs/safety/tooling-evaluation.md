@@ -196,7 +196,7 @@ documented internal-bug trips (a legitimate MISRA-style deviation, recorded).
 |---|---|---|---|
 | `all` (today: deny) | 0 | — | keep |
 | `pedantic` | 606 | doc_markdown 98, missing_errors_doc 82, cast_possible_truncation 58, cast_precision_loss 35, borrow_as_ptr 35, redundant_closure_for_method_calls 29, unreadable_literal 24, map_unwrap_or 24, single_match_else 20, must_use_candidate 18, unnecessary_debug_formatting 15, cast_sign_loss 14, too_many_lines 10, format_push_string 10 | curated subset only |
-| `nursery` | 201 | redundant_pub_crate 63, missing_const_for_fn 53, option_if_let_else 22, significant_drop_tightening 11, too_long_first_doc_paragraph 9 | none now; `significant_drop_tightening` worth a look in Stage-2 profiling, `redundant_pub_crate` as an informational R.8.7 signal |
+| `nursery` | 201 | redundant_pub_crate 63, missing_const_for_fn 53, option_if_let_else 22, significant_drop_tightening 11, too_long_first_doc_paragraph 9 | none now; `significant_drop_tightening` worth a look in Stage-3 profiling, `redundant_pub_crate` as an informational R.8.7 signal |
 | `restriction` | (not measured wholesale — by design) | — | never group-enable; individual members justified individually (`unwrap_used` etc. per §4) |
 
 Notable single members:
@@ -289,7 +289,7 @@ via C strings; `parse.rs:320` c_char→u8 wrap, benign) — audit F-4.
 
 **`overflow-checks = true` in release (profile question)**: for the shipped
 IME — REJECT as default-on (costs real decode bandwidth for a class the
-design already avoids; contrary to Stage-2 RAM/speed goals). ADOPT as a
+design already avoids; contrary to Stage-3 RAM/speed goals). ADOPT as a
 **CI lane**: one scheduled `RUSTFLAGS="-C overflow-checks -C debug-assertions"
 cargo test --workspace --release` run to surface latent overflow under
 optimized codegen (different inlining exposes different bugs). This is the
@@ -362,7 +362,7 @@ four >20 CCN functions live — also the natural coverage/mutation priority);
 `parse`/`decode_tokens`/`from_decimal` are legitimate table-driven parser
 complexity (data-format ports); `nbest_sentences`/`build_scan_matrix` are
 the parity-critical decoder (refactoring risks divergence from upstream —
-explicitly *not* worth it pre-Stage-2); oracle/dictool are tooling.
+explicitly *not* worth it pre-Stage-3); oracle/dictool are tooling.
 
 **Thresholds**: informational now; the ratchet runs `lizard crates/ -l rust -C 40` (no function exceeds
 CCN 40) as a *scheduled-report* gate with ratchet, never a PR blocker.

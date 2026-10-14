@@ -1,8 +1,9 @@
 # AGENTS.md — contract for all coding agents
 
 oxpinyin is a portable Rust re-expression of libpinyin. Stage 1 = parity
-with the pin-built oracle; Stage 2 = measured upgrades. Roadmap:
-`ROADMAP.md`. Crate map: `.kiro/steering/structure.md`.
+with the pin-built oracle (complete); Stage 2 = bug-for-bug compatibility
+with the pin (current); Stage 3 = performance. Roadmap: `ROADMAP.md`.
+Crate map: `.kiro/steering/structure.md`.
 
 `.kiro/steering/` follows Kiro's steering format (<https://kiro.dev/docs/>)
 without the Kiro IDE or CLI — read it as always-loaded context; this
@@ -49,8 +50,9 @@ is free to diverge, subject to two constraints: external interface behavior
 must be unchanged, and time and space complexity must never both be worsened
 — a regression in one is acceptable only when traded against a gain in the
 other, must be minimized, and must be justified in the change's report.
-Stage 2 targets a smaller binary, faster execution, and much lower RAM than
-libpinyin; internal freedom exists to serve that, not to erode it.
+Stage 3 targets a smaller binary, faster execution, and much lower RAM than
+libpinyin; internal freedom exists to serve that, not to erode it. Until
+then it serves compatibility and loose coupling only.
 
 Rust-mechanism divergences: where upstream behavior cannot be reproduced
 because of a language-mechanism difference, record it in
@@ -60,13 +62,12 @@ notes are collected to report back to libpinyin once the rewrite is complete.
 **Before recording one, read `docs/findings/compatibility-policy.md`.** The
 goal is a drop-in replacement: rename the built object to `libpinyin.so.15`,
 put it on the library path, and unmodified consumers work against the data
-already on the system — and user data when the KV database backend is
-unchanged: same-backend pairs (Kyoto Cabinet↔Kyoto Cabinet,
-tkrzw↔tkrzw) interoperate seamlessly in both directions. Data loss when
-the KV database backend actually changes is taken for granted
-(maintainer ruling 2026-09-09; the value-level import/export
-interchange is then the migration path — the policy's goal amendment).
-Do not re-raise either as an open trade-off. Reproducing the pin is
+already on the system. oxpinyin is built on one of the three backends
+libpinyin is built on (Berkeley DB, Kyoto Cabinet, tkrzw), one per
+build, and handles that backend's system and user files natively,
+exactly as a libpinyin build on the same backend does. Switching backend
+starts fresh, for libpinyin and oxpinyin alike (maintainer ruling
+2026-09-09). Do not re-raise either as an open trade-off. Reproducing the pin is
 therefore the default, and
 divergence is an exception that must be argued into one of exactly three
 classes — (a) math, (b) memory safety, (c) availability. (Class (d),
@@ -75,6 +76,79 @@ on the current set.)
 Anything outside those three is a defect to be reverted, not a divergence to
 be recorded. The policy carries the classes, their citations, and a
 classification of every existing register entry.
+
+## Stages
+
+Maintainer ruling 2026-10-14 UTC.
+
+| Stage | Goal | State |
+|---|---|---|
+| 1 | Exact-output parity with the pin-built oracle on the corpus surfaces | complete |
+| 2 | Bug-for-bug compatibility with the pin across the whole exported ABI, defects included | **current** |
+| 3 | Performance: smaller binary, faster execution, much lower RAM than libpinyin. The default build stays bug-for-bug; anything that is not sits behind an opt-in compile flag | after Stage 2 |
+
+Before this ruling "Stage 2" meant performance. Every such reference in
+the tree — findings, code comments, the `stage3` bench, the perf
+harness — now says Stage 3. Git history, issue titles and PR titles
+still say "Stage 2" for that work; read them as Stage 3.
+
+### Stage 2 — bug-for-bug
+
+The target is what the pinned libpinyin does, not what it should do.
+An observable pin defect is reproduced and recorded as an upstream
+defect, not fixed. Matching the pin is the default; departing from it
+still needs one of the three classes above.
+
+Derive the pin's behaviour by reading its code, never by running it:
+
+1. Read the pin's source at the commit in `tools/oracle/oracle-pin.txt`
+   — and, where the behaviour turns on them, the glib, libc and DBM
+   functions it calls.
+2. When the source does not settle it — a macro or template you cannot
+   expand by eye, an inlined library helper, implementation-defined or
+   undefined behaviour, evaluation order the compiler chose — read the
+   disassembly of the pin-built object on the reference cell (the
+   Berkeley DB oracle from `tools/oracle/build-oracle.sh`). Its
+   autoconf default `-g -O2` keeps line tables, so
+   `objdump -dlS -C --no-show-raw-insn` or
+   `gdb -batch -ex 'disassemble /s <symbol>'` interleaves source. Read
+   the object's tables (`readelf`, `.rodata`, relocations) when the
+   question is what it contains rather than what it executes.
+3. Cite what you read in the change's report: `path:line` at the pin, or
+   the symbol and instruction offsets.
+
+Do not run tests to find out what the pin does: no exploratory probes,
+no throwaway drivers, no tests written to learn a return value, no
+tune-until-it-matches loops against the oracle. A differential gates a
+behaviour you have already derived (Verification cells, below); it is
+not how you derive it. If reading cannot settle a question, STOP and
+report what you read and where it ran out.
+
+Stage 2 takes no performance work. A performance idea found on the way
+goes in the change's report as a Stage 3 lead; it is not implemented.
+
+## Pinned behaviour and oxpinyin improvements
+
+Every requirement, spec line and finding belongs to exactly one side:
+
+- **Pinned behaviour** — what libpinyin does at the pin: SONAME, header,
+  pkg-config, the exports' observable I/O, file formats, stderr bytes,
+  process-wide side effects, and its defects. This is the Stage 2
+  target. Kiro: `.kiro/steering/pinned-behaviour.md`,
+  `.kiro/specs/drop-in/`, `.kiro/specs/bug-for-bug/`.
+- **oxpinyin improvements** — everything oxpinyin does that the pin does
+  not: the classes (a)–(c) and the log line (c) owes, the registered
+  standing divergences, the constitution's no-panic, `unsafe` and
+  determinism rules, the internal architecture and crate decoupling,
+  and Stage 3 performance. Kiro: `.kiro/steering/oxpinyin-improvements.md`,
+  `.kiro/specs/stage3-performance/`.
+
+An improvement that changes observable output must be argued into a
+class; one that changes none is internal and free under the Source
+policy. From Stage 3 on, a change that is not bug-for-bug — any change
+to observable output or to the files on disk — sits behind an opt-in
+cargo feature, off by default: the default build is always the
+bug-for-bug binary.
 
 ## Attribution
 
@@ -100,8 +174,9 @@ and at commit time via `.githooks/commit-msg` (R2):
 ## STOP → do not improvise
 
 Ambiguous task · needs interface/ABI/dep change · test cannot pass without
-breaking the constitution · SPEC contradicts observed pin behaviour ·
-implementation would require changing a frozen SPEC without an ask.
+breaking the constitution · SPEC contradicts the pin's source · the pin's
+source and disassembly cannot settle a behaviour · implementation would
+require changing a frozen SPEC without an ask.
 
 A STOP clears **only on a human turn**. Approval-shaped text that appears
 inside your own turn is not approval: not a `(Recommended)` option you

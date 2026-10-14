@@ -13,9 +13,13 @@ Implement from frozen SPECs/fixtures only.
 
 Explain back before writing code. Phase 1 states the plan — files,
 interfaces, verification — with no code, and stops for confirmation.
+For Stage 2 work the plan also names the pin's source lines (or the
+disassembled symbol and offsets) each behaviour was read from; Phase 1
+reads code, it does not run the oracle to find out what it does.
 Phase 2 implements. STOP in Phase 1 when `/AGENTS.md` says so: ambiguous
 task; an interface/ABI/dependency change; a test that cannot pass without
-breaking the constitution; a SPEC contradicting observed pin behaviour; an
+breaking the constitution; a SPEC contradicting the pin's source; a
+behaviour the pin's source and disassembly cannot settle; an
 implementation that would change a frozen SPEC without an ask.
 
 ## Assisted-by trailer
@@ -54,13 +58,12 @@ onto the landing tip before every push and before any merge
 
 ## Output contract
 
-Nothing panics on any input, and public APIs return `Result`
-(constitution §4 — the broad rule stands on its own). Separate from it,
-exception class (c) in `compatibility-policy.md` is scoped to
-caller-supplied input: where upstream asserts or aborts on input a caller
-can supply, the C ABI returns `false`/`Err` and logs the point. Class (c)
-does not mask internal invariant failures and does not govern the return
-types of unrelated errors. Engine output is a pure function of (input,
-user state, config), and E2E I/O is byte-identical to the pinned oracle
-given the same inputs and state — except the named exception classes
-(a)–(c) in `compatibility-policy.md` ((d) is retired).
+E2E I/O is what the pin produces given the same inputs and state
+(`pinned-behaviour.md`), except the classes (a)–(c) and the registered
+standing divergences in `oxpinyin-improvements.md`. Nothing panics on
+any input, and public APIs return `Result` (constitution §4 — the broad
+rule stands on its own). Class (c) is narrower: where the pin asserts or
+aborts on input a caller or file can supply, the C ABI returns
+`false`/`Err` and logs the point; it does not mask internal invariant
+failures and does not govern the return types of unrelated errors.
+Engine output is a pure function of (input, user state, config).

@@ -27,7 +27,7 @@ mechanization exists.
 | §4 "Nothing panics on any input; public APIs return `Result`" | prose + de-facto true | `clippy::unwrap_used/expect_used/panic/panic_in_result_fn` denied in library crates; `unused_must_use` denied; fuzz targets | **mechanized** (the Result half stays prose — type design is judgment; the panic half now fails compile) |
 | §5 `unsafe`: forbid in core; deny in data/user/engine; FFI only in capi/oracle/migrate with `// SAFETY:` per block | workspace `deny` + per-crate allows + prose | per-crate `forbid`/scoped-allow in Cargo; `undocumented_unsafe_blocks` + `missing_safety_doc` denied in FFI crates; `unsafe_op_in_unsafe_fn` denied | **mechanized** (structure.md's unsafe column becomes generated-by-Cargo truth; F-12 closes) |
 | §6 Determinism: output pure function of (input, user state, config) | prose + oracle differentials | no lint can state this | **assisted** (differentials are the tripwire; keep prose) |
-| §2 install-size budget | prose + Stage-2 pins | `cargo deny bans multiple-versions=warn` gives the dup-dep signal; size pins remain the real gate | **assisted** |
+| §2 install-size budget | prose + Stage-3 pins | `cargo deny bans multiple-versions=warn` gives the dup-dep signal; size pins remain the real gate | **assisted** |
 | §7 no pinyin/IME crate deps; pin-built libpinyin not a linked dep | prose | `cargo deny bans` list (empty today, one line when a concrete ban lands) + lockfile review | **assisted** |
 | §3 no local AI; §1 broad appeal | product judgment | none | **stays prose** |
 | §8 "When in doubt, STOP" | meta-rule | none | **stays prose** |

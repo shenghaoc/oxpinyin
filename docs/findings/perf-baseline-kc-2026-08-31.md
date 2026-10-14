@@ -1,6 +1,6 @@
-# Stage-2 Performance Baseline — KC Backend (2026-08-31)
+# Stage-3 Performance Baseline — KC Backend (2026-08-31)
 
-> **Superseded** by the Stage-2 re-baseline
+> **Superseded** by the Stage-3 re-baseline
 > (`../perf/perf-baseline-kc-2026-09.md`, re-measured after the P1–P6
 > data-layer inversion) — and before that **in part** by the validation
 > pass (`perf-baseline-kc-validation-2026-08-31.md`). Two corrections:
@@ -236,7 +236,7 @@ validation document for the corrected analysis.
 | Date | Commit | Metric | Before | After | Note |
 |---|---|---|---:|---:|---|
 | 2026-09-03 | 17ae4bf | runtime data (interpolation2.text) | 80.0 MiB | 1.97 MiB (2,065,403 bytes) | \2-gram section omitted; already compiled into KC tables; byte-level verified; runtime parser yields identical UnigramTable (63,907 records, total 50,913,735). |
-| 2026-09-03 | cd0d0206 | alloc | 6.223 ms | 0.003 ms | `key_cost_table` moved from per-`new_session` to once at `Runtime::open`; 440 dictionary lookups eliminated per alloc. Criterion bench added (`alloc_instance` group in `stage2.rs`). Before/after pair re-measured on the second host described below; the original M-series before-value (2.667 ms) is not comparable across hosts. |
+| 2026-09-03 | cd0d0206 | alloc | 6.223 ms | 0.003 ms | `key_cost_table` moved from per-`new_session` to once at `Runtime::open`; 440 dictionary lookups eliminated per alloc. Criterion bench added (`alloc_instance` group in `stage3.rs`). Before/after pair re-measured on the second host described below; the original M-series before-value (2.667 ms) is not comparable across hosts. |
 | 2026-09-03 | 49a5dc0 | shared object (stripped), x86_64/redb host | 2,914,304 B (x86_64/redb, no release profile) | 2,694,568 B (−219,736, −7.54%; x86_64/redb) | `lto = "fat"`, `codegen-units = 1` added to `[profile.release]`; measured on x86_64/redb because that host lacks KC headers — not a change against the ARM64/KC baseline below. See `docs/perf/perf-so-size-2026-09.md`. |
 | 2026-09-04 | 49a5dc0 | shared object (stripped), ARM64/KC host | 1,643,232 B (ARM64/KC at the rebase tip) | 1,446,528 B (−196,704, −11.97%) | ARM64/KC re-measurement of the same change; the ARM64/KC baseline at Correction 2 was 1,708,768 B stripped, but 30 commits (the P1–P8 data rewrite) landed between measurements, so this before/after pair was measured back-to-back at one tip instead of against Correction 2. `.text` −12.9%, unwind tables −42.3%, `.rodata` −30.0%; `guess_candidates/offset_0` 11.27 → 8.67 ns (−23.1%), no regression. |
 | 2026-09-04 | 4141f5c | init (`pinyin_init`) | ~33–45 ms | ~1.7–3.6 ms | `key_cost_table` deferred a second time — from once at `Runtime::open` (cd0d0206) to the first `Runtime::new_session`, memoised behind a cache stamped with the library-visibility mask so a `load`/`unload_library` rebuilds it. `pinyin_init` no longer walks the dictionary; the ~32–44 ms walk now lands on the first session build, leaving init+alloc constant. **Supersedes the "reappears at open" placement recorded for cd0d0206 in the 2026-09-03 alloc environment below** — those lines are now historical for cd0d0206. Measured x86_64 release, `bisect --perf` median of n=15 across all four backends (KC 37.9→3.6, tkrzw 45.5→1.7, lmdb 33.3→1.9, redb 35.9→2.9 ms); RSS and steady-state decode unchanged. The ARM64/KC re-measurement belongs to the consolidated Phase-3 baseline. |
@@ -265,10 +265,10 @@ oracle control ran alternating in one session.
   cost. (Historical for cd0d0206: superseded 2026-09-04 by `4141f5c`, which
   moves this work off `Runtime::open` to the first `new_session`; see the
   amendment row above.)
-- Criterion `alloc_instance` (`stage2.rs`, first run on this host):
+- Criterion `alloc_instance` (`stage3.rs`, first run on this host):
   1.082 µs [1.080, 1.085] per alloc+free iteration in a warm loop.
 - Running that bench needed a companion fix, landed with the change: the
-  stage2 support module still staged `.redb` table names from the pre-KC
+  stage3 support module still staged `.redb` table names from the pre-KC
   era, so `pinyin_init` failed on the staged directory under the KC
   default; the names now derive from
   `oxpinyin_store::default_store_file` (the compiled-in backend).
@@ -298,7 +298,7 @@ pinned model20 by the after tree's datagen and shared by both sides.
   Sections: `.text` −96,064 (−12.9%), `.rodata` −18,488 (−30.0%),
   unwind (`.eh_frame` + `.eh_frame_hdr`) −53,256 (−42.3%),
   `.data.rel.ro` −5,656 (−2.1%), `.rela.dyn` −7,488 (−2.2%).
-- `guess_candidates/offset_0` (stage2 criterion, `taskset -c 0`, 4
+- `guess_candidates/offset_0` (stage3 criterion, `taskset -c 0`, 4
   alternating rounds × 20 samples): before median 11.27 ns
   [11.209, 11.269], after median 8.67 ns [8.5754, 8.6970] — −23.1%,
   faster on every round. The absolute scale (ns, not the µs the x86_64
@@ -311,6 +311,6 @@ pinned model20 by the after tree's datagen and shared by both sides.
   change deterministic output); `real_tables` fixture-freshness 2/2
   PASS; clippy `-D warnings` and `cargo fmt --check` clean.
 - Measuring needed one companion fix, carried on this branch: the
-  stage2 benches staged the pre-P1–P5 `.kct` table names, so
+  stage3 benches staged the pre-P1–P5 `.kct` table names, so
   `pinyin_init` failed under the KC default; they now stage the names
   `system_dbm_names` returns.

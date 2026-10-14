@@ -37,5 +37,5 @@ Conclusion: the regression versus the capped preview is legitimate — the C++
 oracle also constructs the full table, so the old 64-candidate benchmark was
 measuring a cheaper, wrong behaviour.  However oxpinyin is currently about
 **2.0–2.2×** the oracle on the same keystroke cycle.  That is the first
-concrete Stage-2 optimisation target, recorded here and not optimised in the
+concrete Stage-3 optimisation target, recorded here and not optimised in the
 cap-removal change.

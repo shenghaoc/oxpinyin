@@ -24,7 +24,7 @@ members = [
 ]
 
 [workspace.package]
-# Lockstep 0.x while pre-1.0; milestones: 0.3=S1b, 0.4=S1c, 0.5=S1d, 0.6+=Stage 2.
+# Lockstep 0.x while pre-1.0; milestones: 0.3=S1b, 0.4=S1c, 0.5=S1d, 0.6+=Stage 3.
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
@@ -94,7 +94,7 @@ glib-sys = "0.22"
 lto = "fat"
 codegen-units = 1
 
-# Stage-2 CPU profiles: release speed with enough debug to resolve stacks.
+# Stage-3 CPU profiles: release speed with enough debug to resolve stacks.
 # `debug = "line-tables-only"` keeps the image small; samply/perf still map
 # samples to functions and source lines. `lto = "thin"` is closer to a
 # realistic cargo-c install than fat LTO. `panic = "unwind"` is explicit

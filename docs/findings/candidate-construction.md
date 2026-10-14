@@ -590,7 +590,7 @@ explicitly.
 Out of scope for this SPEC and any construction change it gates:
 
 - Trigram / Kneser-Ney or any LM order change; new smoothing.
-- Fuzzy / typo / abbreviation edges (`EdgeKind` Stage-2 variants stay
+- Fuzzy / typo / abbreviation edges (`EdgeKind` Stage-3 variants stay
   undeclared, `segment-graph.md`).
 - User-model learning, per-user adaptation, prediction candidates.
 - C-ABI (`oxpinyin-capi`) or session-API (`session-api.md`) signature changes.
@@ -847,7 +847,7 @@ down and GLib's stable merge sort keeps.
   decomposition is unreachable from the public API; the scan reproduces the
   emitted text without claiming the token split.
 - **Fuzzy/correction spellings** (the pin's fuzzy step under ambiguity
-  options not set by `0x18a`) are Stage 2, outside this contract.
+  options not set by `0x18a`) are Stage 3, outside this contract.
 - **The sentence stage** re-opens only on a future capture that actually
   produces `NBEST_MATCH` candidates (a different profile), per the
   2026-08-13 §8.3 condition (a).

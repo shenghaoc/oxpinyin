@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# run-perf-baseline.sh — W8 Stage-2 scoreboard: oracle vs installed oxpinyin.
+# run-perf-baseline.sh — W8 Stage-3 scoreboard: oracle vs installed oxpinyin.
 #
 # Measures three axes with one dlopen harness (`bisect --perf`):
 #   1. execution speed, C-ABI to C-ABI, alternating oracle/oxpinyin runs;

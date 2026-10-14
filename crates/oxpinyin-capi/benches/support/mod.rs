@@ -1,4 +1,4 @@
-//! Shared loaders for the Stage-2 C-ABI benches.
+//! Shared loaders for the Stage-3 C-ABI benches.
 //!
 //! Benches refuse to start without the exported tables and the fetched
 //! model20 cache: fixture-scale numbers would not describe the pinned
@@ -186,7 +186,7 @@ pub fn staged_system_dir() -> &'static Path {
             let export = export_dir();
             let model = model_dir();
             let staged =
-                std::env::temp_dir().join(format!("oxpinyin-stage2-system-{}", std::process::id()));
+                std::env::temp_dir().join(format!("oxpinyin-stage3-system-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&staged);
             std::fs::create_dir_all(&staged).expect("stage system dir");
             // Name the staged tables exactly as the export dir carries them
@@ -223,7 +223,7 @@ impl CapiBench {
     pub fn open() -> Self {
         let system = cstring(staged_system_dir());
         let user_dir = std::env::temp_dir().join(format!(
-            "oxpinyin-stage2-user-{}-{}",
+            "oxpinyin-stage3-user-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -276,7 +276,7 @@ impl Drop for CapiBench {
 /// tree as the pinned model20.
 pub fn print_pin_header() {
     let dir = model_dir();
-    eprintln!("oxpinyin Stage-2 benches");
+    eprintln!("oxpinyin Stage-3 benches");
     eprintln!("  pin: {PIN_REF}");
     eprintln!("  model20 SHA-256: {MODEL20_SHA256}");
     eprintln!("  model dir: {}", dir.display());

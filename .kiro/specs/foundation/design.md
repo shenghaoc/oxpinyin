@@ -26,16 +26,13 @@ backtracking; returns alternatives (`xian` → [xian] and [xi,an]);
 Traits defined signatures-only: Dictionary, UserModel, LanguageModel,
 InputParser — unsealed, defaulted growth.
 
-**Drop-in data path (P6, `crates/oxpinyin-data`, `crates/oxpinyin-runtime`):**
-`Runtime::open` opens a libpinyin data directory in place the way
-`pinyin_init` does — the DBMs (libpinyin's own file names on Kyoto
-Cabinet, tkrzw and Berkeley DB, `<stem>.<ext>` on redb before its
-removal), the
-`MemoryChunk` files mmapped and checksummed, `table.conf` for λ — through
-the same readers it uses for oxpinyin's own output. There is no
-compatibility layer and no layout detection; the caller supplies the
-directory. The #228 `CompatLayout` reader this replaced is recorded in
-`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`.
+**Data path (P6, `crates/oxpinyin-data`, `crates/oxpinyin-runtime`):**
+`Runtime::open` opens its backend's system data directory the way
+`pinyin_init` does — the backend's native DBMs (the names and layouts a
+libpinyin build on that backend uses), the `MemoryChunk` files mmapped
+and checksummed, `table.conf` for λ. No layout detection; the caller
+supplies the directory. P6 replaced the earlier #228 reader
+(`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`).
 
 **Storage model:** the backends, compile-time selected through the
 `DefaultStore` `#[cfg]` chain (bdb, kyotocabinet, tkrzw; Berkeley DB

@@ -581,7 +581,7 @@ So the remaining cost is paid in memory and instructions, not time, and
 **allocation churn is the plausible common cause of both**: the +35% instruction
 count is dominated by the allocator and copy family (26.6% of Ir), and the
 1.23× RSS tracks how much is allocated. That is a *weaker* motivation than
-"catch up to libpinyin" — it is a Stage-2 efficiency argument, not a parity
+"catch up to libpinyin" — it is a Stage-3 efficiency argument, not a parity
 one — and whether it justifies a change is the maintainer's call. It is
 recorded here as the reason Phase 3 has a head item at all, and the head item
 is `resolve_items` (`phrase_libraries.rs:249` and `:172`), not `hash_one`.
@@ -892,7 +892,7 @@ and `cg/` (the full differential output tree).
 The merged trigger fired — all three windows' ratio CI lower bounds above
 1.0 — so the differential ran, T first having already been captured above.
 
-**Instrument incident, recorded.** The driver's first run aborted in stage 2:
+**Instrument incident, recorded.** The driver's first run aborted in driver stage 2:
 the debug-info neutrality check classified the arm64 artifact pair as case
 (c) "different code" because both of its link-order normalizations were
 x86-only spellings — branch targets matched `j*`/`loop`/`call` (arm64 uses
@@ -932,7 +932,7 @@ unavailable on this host, permanently.
 | T in the same session (driver stage 7, debug artifact) | 1.1059 [1.0984, 1.1156] | fourth consistent timing point; `I` and `T` from one binary |
 
 **Malloc interception is NOT in effect on this arm64 valgrind** — the
-opposite of the amd64 session. Stage 3's probe credits allocation Ir to real
+opposite of the amd64 session. Driver stage 3's probe credits allocation Ir to real
 glibc symbols in `libc.so.6` (`calloc`, `__libc_calloc2`, `_int_realloc`,
 `realloc`, `alloc_perturb`); no vgpreload object appears among the profile's
 objects. Consequence: the allocator-replacement understatement that helped

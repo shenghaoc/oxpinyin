@@ -26,7 +26,7 @@ sub-note about scope or provenance, not a new status; the legend word in
 front is the status.
 
 Perf snapshots dated 2026-08-31 and later live here when they belong to
-a finding (backend matrix, store optimisations); the Stage-2 baseline
+a finding (backend matrix, store optimisations); the Stage-3 baseline
 series lives in `../perf/`.
 
 | Document | Subject | Status |
@@ -84,7 +84,7 @@ series lives in `../perf/`.
 | [`perf-backend-matrix-2026-08-31`](perf-backend-matrix-2026-08-31.md) | Performance Backend Matrix — 2026-08-31 | perf snapshot (superseded by `perf-backend-matrix-2026-09.md`) |
 | [`perf-backend-matrix-2026-09`](perf-backend-matrix-2026-09.md) | Performance Backend Matrix — 2026-09-05 | perf snapshot |
 | [`perf-backend-matrix-bdb-store-2026-09`](perf-backend-matrix-bdb-store-2026-09.md) | Performance Backend Matrix — BDB and the Store Tier — 2026-09-06 | perf snapshot |
-| [`perf-baseline-kc-2026-08-31`](perf-baseline-kc-2026-08-31.md) | Stage-2 Performance Baseline — KC Backend (2026-08-31) | perf snapshot (superseded by `../perf/perf-baseline-kc-2026-09.md`) |
+| [`perf-baseline-kc-2026-08-31`](perf-baseline-kc-2026-08-31.md) | Stage-3 Performance Baseline — KC Backend (2026-08-31) | perf snapshot (superseded by `../perf/perf-baseline-kc-2026-09.md`) |
 | [`perf-baseline-kc-validation-2026-08-31`](perf-baseline-kc-validation-2026-08-31.md) | KC Baseline Validation — 2026-08-31 | perf snapshot (superseded by `../perf/perf-baseline-kc-2026-09.md`) |
 | [`perf-build-recipe-audit-2026-09-10`](perf-build-recipe-audit-2026-09-10.md) | Build-recipe provenance — which perf records timed the shipping `cinstall` artifact and which a `cargo build` fixture (#401) | audit |
 | [`perf-cycle-ir-differential-2026-09-08`](perf-cycle-ir-differential-2026-09-08.md) | Steady-cycle differential and arch spread — amd64 + arm64; the tree/recipe controls | perf snapshot |

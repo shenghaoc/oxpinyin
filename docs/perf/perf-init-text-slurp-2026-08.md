@@ -1,4 +1,4 @@
-# Stage-2 init cut: interpolation2.text parse + redb slurp (2026-08-21)
+# Stage-3 init cut: interpolation2.text parse + redb slurp (2026-08-21)
 
 Status: **measured init-path change.** The task card named the two
 leftovers #132 left behind — `interpolation2.text` parsing and redb table

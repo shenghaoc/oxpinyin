@@ -597,14 +597,14 @@ marshalling — and does not pass through Rust's `GlobalAlloc` at all.
    the working set the engine actually holds while typing, not high-water
    residue.
 
-5. **Nothing here points at Stage 2's binary text-model work.** The brief
+5. **Nothing here points at Stage 3's binary text-model work.** The brief
    asked this to be said plainly rather than rediscovered under a new
-   name. The standing Stage 2 goal — compiling the text model to a binary
+   name. The standing Stage 3 goal — compiling the text model to a binary
    format at data-prep time — targets a representation oxpinyin loads onto
    the heap. That is not what these measurements found. Every phrase
    library chunk file and the phrase index are resident to the byte in
    both engines; the largest gap term is C-side backend allocation. This
-   diagnosis neither supports nor advances that Stage 2 item, and the two
+   diagnosis neither supports nor advances that Stage 3 item, and the two
    should not be conflated.
 
 6. **Timing was not measured and is not claimed.** The cycle timings the
