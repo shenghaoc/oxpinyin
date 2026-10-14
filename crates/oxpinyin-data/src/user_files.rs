@@ -24,7 +24,7 @@
 
 use crate::chunk_format::{CHUNK_HEADER_SIZE, chunk_checksum};
 use crate::table_info::FileName;
-use oxpinyin_store::{DEFAULT_STORE_DB_FORMAT, DEFAULT_STORE_EXT, DEFAULT_STORE_IS_LIBPINYIN_DBM};
+use oxpinyin_store::DEFAULT_STORE_DB_FORMAT;
 
 /// A `MemoryChunk` file that does not frame a valid payload.
 #[derive(Debug)]
@@ -114,15 +114,11 @@ impl UserDbm {
         }
     }
 
-    /// The file name for the compiled-in backend: libpinyin's own on
-    /// Kyoto Cabinet, tkrzw and Berkeley DB.
+    /// The file name: libpinyin's own, the same on Kyoto Cabinet, tkrzw and
+    /// Berkeley DB (`pinyin_internal.h:58,61-63` does not vary with the DBM).
     #[must_use]
     pub fn file_name(self) -> String {
-        if DEFAULT_STORE_IS_LIBPINYIN_DBM {
-            self.libpinyin_name().to_owned()
-        } else {
-            format!("{}.{DEFAULT_STORE_EXT}", self.stem())
-        }
+        self.libpinyin_name().to_owned()
     }
 
     /// Whether the file is a hash container (`user_bigram.db` is a KC
@@ -949,17 +945,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn user_dbm_names_follow_the_backend() {
-        if DEFAULT_STORE_IS_LIBPINYIN_DBM {
-            assert_eq!(UserDbm::Bigram.file_name(), "user_bigram.db");
-            assert_eq!(UserDbm::PinyinIndex.file_name(), "user_pinyin_index.bin");
-            assert_eq!(UserDbm::PhraseIndex.file_name(), "user_phrase_index.bin");
-        } else {
-            assert_eq!(
-                UserDbm::Bigram.file_name(),
-                format!("user_bigram.{DEFAULT_STORE_EXT}")
-            );
-        }
+    fn user_dbm_names_are_libpinyins_own() {
+        assert_eq!(UserDbm::Bigram.file_name(), "user_bigram.db");
+        assert_eq!(UserDbm::PinyinIndex.file_name(), "user_pinyin_index.bin");
+        assert_eq!(UserDbm::PhraseIndex.file_name(), "user_phrase_index.bin");
         assert!(UserDbm::Bigram.is_hash());
         assert!(!UserDbm::PinyinIndex.is_hash());
         let layout = UserFileLayout::stock();

@@ -26,7 +26,7 @@ pub use error::SegmentError;
 // compiled-in backend's format without a direct oxpinyin-data edge.
 pub use lexicon::{MAX_PHRASE_LENGTH, PhraseLexicon};
 pub use model::{NULL_TOKEN, PINNED_LAMBDA, SENTENCE_START, SegmentModel, parse_table_conf_lambda};
-pub use oxpinyin_data::{SystemDbm, default_store_file};
+pub use oxpinyin_data::SystemDbm;
 pub use paths::{
     DEFAULT_EXPORT_DIR, EXPORT_DBMS, EXPORT_DIR_ENV, MODEL_CACHE_ENV, MODEL_DIR_ENV, MODEL_FILES,
     SegmenterPaths, load_lambda, locate_export_dir, locate_model_dir,

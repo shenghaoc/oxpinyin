@@ -824,21 +824,6 @@ pub fn default_store_file(stem: &str) -> String {
     format!("{stem}.{DEFAULT_STORE_EXT}")
 }
 
-/// Whether [`DefaultStore`] is one of the DBM libraries libpinyin
-/// itself builds against (`--with-dbm=BerkeleyDB`,
-/// `--with-dbm=KyotoCabinet` / `--with-dbm=Tkrzw`).
-///
-/// For every one of them, a libpinyin install's data directory *is*
-/// this backend's file set — same container library, same records,
-/// same file names (`pinyin_index.bin`, `bigram.db`, …) — so the
-/// runtime opens it unchanged, and `oxpinyin-datagen` writes the same
-/// names. Always `true` since the redb removal (2026-09-20 UTC,
-/// `refactor/drop-redb-backend`): redb, the one non-libpinyin-DBM
-/// peer this const's `false` arm existed for, held the same records
-/// in its own container under its own extension, and no libpinyin
-/// build could open it.
-pub const DEFAULT_STORE_IS_LIBPINYIN_DBM: bool = true;
-
 /// The backend's `database format:` token — the string `user.conf`'s
 /// conformance check compares (`table_info.cpp`'s
 /// `to/from_table_database_format_type`: exactly `BerkeleyDB`,

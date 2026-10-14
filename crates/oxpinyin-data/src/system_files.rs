@@ -11,8 +11,6 @@
 //! The chunk files are backend-independent (`MemoryChunk` on every build
 //! of libpinyin) and keep their names everywhere.
 
-use oxpinyin_store::{DEFAULT_STORE_EXT, DEFAULT_STORE_IS_LIBPINYIN_DBM};
-
 /// One of the six DBM files of a system data directory.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SystemDbm {
@@ -59,15 +57,11 @@ impl SystemDbm {
         }
     }
 
-    /// The file name for the compiled-in backend: libpinyin's own on
-    /// Kyoto Cabinet, tkrzw and Berkeley DB.
+    /// The file name: libpinyin's own, the same on Kyoto Cabinet, tkrzw and
+    /// Berkeley DB (`pinyin_internal.h:57-66` does not vary with the DBM).
     #[must_use]
     pub fn file_name(self) -> String {
-        if DEFAULT_STORE_IS_LIBPINYIN_DBM {
-            self.libpinyin_name().to_owned()
-        } else {
-            format!("{}.{DEFAULT_STORE_EXT}", self.stem())
-        }
+        self.libpinyin_name().to_owned()
     }
 
     /// Whether the file is a hash container (`bigram.db` is a KC `HashDB` /
@@ -160,14 +154,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_follow_the_backend() {
-        let name = SystemDbm::Bigram.file_name();
-        if DEFAULT_STORE_IS_LIBPINYIN_DBM {
-            assert_eq!(name, "bigram.db");
-            assert_eq!(SystemDbm::PinyinIndex.file_name(), "pinyin_index.bin");
-        } else {
-            assert_eq!(name, format!("bigram.{DEFAULT_STORE_EXT}"));
-        }
+    fn names_are_libpinyins_own() {
+        assert_eq!(SystemDbm::Bigram.file_name(), "bigram.db");
+        assert_eq!(SystemDbm::PinyinIndex.file_name(), "pinyin_index.bin");
         assert!(SystemDbm::Bigram.is_hash());
         assert!(!SystemDbm::Punct.is_hash());
         assert_eq!(addon_library_file(4), Some("art.bin"));
