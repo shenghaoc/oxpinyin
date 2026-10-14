@@ -26,6 +26,11 @@
 # macro-stamped from `oxpinyin-capi-marshal` since 2026-09-10; the
 # allocator boundary these registers describe is not.) The two registers
 # are therefore checked separately rather than shared.
+#
+# Corrected 2026-10-14 (#681): the eight key-string getter slots (two
+# here, six in libpinyin.alloc) said `false-unreachable`. The relabel to
+# `false-nulls` / `false-untouched` (both here are `false-nulls`) landed
+# 2026-10-09 (#708), and a pin probe on bdb confirms each line's <notes>.
 
 # ── Handles: allocated by Box::into_raw, released by their destructor ──
 zhuyin_init                              return      handle:zhuyin_fini            n/a                n/a
@@ -35,7 +40,9 @@ zhuyin_begin_add_phrases                 return      handle:zhuyin_end_add_phras
 # ── Borrowed pointers: never freed by the caller ──────────────────────
 # The key getters NULL their out-param on the reachable refusal (no key at
 # the offset). The string getters (below) refuse on the zero key a
-# separator column holds (`xi1'` at offset 3), so they are reachable too.
+# separator column holds (`xi1'` at offset 3), so they are reachable too
+# (zhuyin.cpp:1736, :1750; the key getter does not skip separators,
+# :1886-1906).
 zhuyin_get_candidate                     candidate   borrowed                      false-nulls        unverified
 # The candidate string has no `false` at the pin: it stores the pointer and
 # answers `true` (zhuyin.cpp:1865-1870).
