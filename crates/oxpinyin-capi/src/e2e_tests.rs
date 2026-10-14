@@ -747,8 +747,9 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
     ));
     assert!(pinyin_mask_out(context, 0x0F00_0000, 0x0700_0000));
 
-    // The phrase export is empty; the store lost the phrases but keeps its
-    // monotonic allocation cursor; nothing armed m_modified (remember and
+    // The phrase export is empty; the user sub-index is empty again, so the
+    // next token is the first one (`get_range` ends an empty range at 1,
+    // `phrase_index.cpp:640-650`); nothing armed m_modified (remember and
     // mask both stay off upstream's set-sites).
     let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);
     assert!(!iter.is_null());
@@ -758,7 +759,7 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
         let store = store_of(instance);
         assert!(store.token_for_phrase("你好").unwrap().is_none());
         assert!(store.token_for_phrase("好你").unwrap().is_none());
-        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN + 2);
+        assert_eq!(store.next_user_token().unwrap(), FIRST_USER_TOKEN);
         assert!(!store.is_modified());
     }
     assert!(!pinyin_save(context), "masking does not arm the save gate");

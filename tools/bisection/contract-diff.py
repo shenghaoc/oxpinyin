@@ -2138,7 +2138,7 @@ TOKEN_REUSE_PHRASES = (
 )
 
 
-def token_reuse_sequence(k, steps, bigram_rows=None):
+def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
     """Runs `steps` over the user library and reports what a caller can see:
     each step's return, the user token of every phrase imported so far, and
     the user files left behind. `('add', n)` imports phrase n, `('save',)`,
@@ -2164,7 +2164,7 @@ def token_reuse_sequence(k, steps, bigram_rows=None):
 
     for step in steps:
         if step[0] == 'add':
-            it = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+            it = k.fn('begin_add_phrases', P, P, U)(ctx, library)
             assert it, 'the import iterator'
             text, reading = TOKEN_REUSE_PHRASES[step[1]][0], TOKEN_REUSE_PHRASES[step[1]][column]
             out.append(['add', bool(k.fn('iterator_add_phrase', B, P, S, S, I)(it, text.encode(), reading.encode(), 100))])
@@ -2205,7 +2205,7 @@ def token_reuse_files(k):
             # key behind with an empty value; that is a different difference from
             # the token reuse these cases pin down, and its own case would own it.
             files[name] = [[body[i].strip(), body[i + 1].strip()] for i in range(0, len(body), 2) if body[i + 1].strip()]
-        elif name == 'user.bin':
+        elif name in ('user.bin', 'addon.bin', 'network.bin'):
             files[name] = (raw[:4] + b'\0\0\0\0' + raw[8:]).hex()
         else:
             files[name] = raw.hex()
@@ -2248,6 +2248,77 @@ for _mode in ('pinyin', 'zhuyin'):
         lambda k: token_reuse_sequence(k, TOKEN_REUSE_SEQUENCES['mask-all'][1], TOKEN_REUSE_BIGRAM_ROWS))
     case('issue762-token-reuse-stale-bigram-no-mask-%s' % _mode, mode=_mode, control=True, cells=('bdb',))(
         lambda k: token_reuse_sequence(k, TOKEN_REUSE_SEQUENCES['no-mask'][1], TOKEN_REUSE_BIGRAM_ROWS))
+
+
+# The pin takes the next token from the trimmed range end for every index
+# (`_add_phrase`, `pinyin.cpp:586-592`) and for addon promotion
+# (`pinyin.cpp:2541-2544`, which has no `token++` over a zero low word), so the
+# ADDON_DICTIONARY sub-index (5) frees its top the same way the user one does.
+ADDON_ALL = (0x0f000000, 0x05000000)
+ADDON_IMPORT_SEQUENCES = {
+    'no-mask': (True, [('add', 0), ('add', 1), ('add', 2), ('save',), ('add', 3), ('save',)]),
+    'mask-highest': (False, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x05000003),
+                             ('add', 3), ('save',)]),
+    'mask-middle': (True, [('add', 0), ('add', 1), ('add', 2), ('save',), ('mask', 0xffffffff, 0x05000002),
+                           ('add', 3), ('save',)]),
+}
+for _mode in ('pinyin', 'zhuyin'):
+    for _name, (_control, _steps) in ADDON_IMPORT_SEQUENCES.items():
+        case('issue762-addon-import-%s-%s' % (_name, _mode), mode=_mode, control=_control)(
+            lambda k, steps=_steps: token_reuse_sequence(k, steps, library=5))
+
+ADDON_PROMOTE_INPUTS = (('shuxue', '书学'), ('wuji', '武技'), ('wusheng', '武生'), ('wuxi', '武戏'))
+
+
+def addon_promote_sequence(k, mask_value):
+    """Promotes the addon candidates in turn (`pinyin_choose_candidate`); with
+    `mask_value`, masks that token after the third and before the fourth, with
+    no reopen between."""
+    ctx = k.ctx
+    for index in (4, 5):
+        assert k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, index)
+    out, texts = [], []
+
+    def promote(pinyin):
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, pinyin.encode())
+        k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+        row = row_of(k, inst, 6)
+        assert row, 'no addon candidate for ' + pinyin
+        out.append(['promote', pinyin, k.fn('choose_candidate', I, P, Z, P)(inst, 0, row)])
+        k.fn('free_instance', None, P)(inst)
+
+    def tokens():
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        new = k.glib.g_array_new
+        new.restype, new.argtypes = P, [I, I, U]
+        found = {}
+        for text in texts:
+            arr = new(0, 0, 4)
+            k.fn('lookup_tokens', B, P, S, P)(inst, text.encode(), arr)
+            view = C.cast(arr, C.POINTER(Arr)).contents
+            found[text] = [hex(t) for t in C.cast(view.data, C.POINTER(U))[:view.len]]
+        k.fn('free_instance', None, P)(inst)
+        return found
+
+    for pinyin, text in ADDON_PROMOTE_INPUTS[:3]:
+        promote(pinyin)
+        texts.append(text)
+        out.append(tokens())
+    out.append(['save', bool(k.fn('save', B, P)(ctx))])
+    if mask_value is not None:
+        out.append(['mask', bool(k.fn('mask_out', B, P, U, U)(ctx, 0xffffffff, mask_value))])
+        out.append(tokens())
+    promote(ADDON_PROMOTE_INPUTS[3][0])
+    texts.append(ADDON_PROMOTE_INPUTS[3][1])
+    out.append(tokens())
+    out.append(['save', bool(k.fn('save', B, P)(ctx))])
+    return {'steps': out, 'files': token_reuse_files(k)}
+
+
+case('issue762-addon-promote-no-mask', control=True)(lambda k: addon_promote_sequence(k, None))
+case('issue762-addon-promote-mask-highest')(lambda k: addon_promote_sequence(k, 0x05000003))
+case('issue762-addon-promote-mask-middle', control=True)(lambda k: addon_promote_sequence(k, 0x05000002))
 
 
 @case('abort-guess-predicted-short-bigram-value', abort=False)

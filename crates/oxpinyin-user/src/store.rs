@@ -903,39 +903,37 @@ fn mask_phrase_rows(txn: &mut dyn WriteTxn, mask: Token, value: Token) -> Result
     Ok(())
 }
 
-/// Re-derive the `USER_DICTIONARY` and `NETWORK_DICTIONARY` allocation
-/// cursors after items left those sub-indexes.
+/// Re-derive the `ADDON_DICTIONARY`, `NETWORK_DICTIONARY` and
+/// `USER_DICTIONARY` allocation cursors after items left those sub-indexes.
 ///
-/// The pin gives a new phrase `range.m_range_end` (`pinyin.cpp:587-595`), and
-/// `SubPhraseIndex::get_range` drops trailing zero offsets
-/// (`phrase_index.cpp:624-650`): the next token is one past the highest
-/// token still holding an item, so a mask or removal that empties the top of
-/// the range hands those tokens out again. `add_phrase_in` keeps the cursor
-/// at that value on every add; this restores it after a removal, in the same
-/// walk-the-table cost the removal already paid.
+/// The pin gives a new phrase `range.m_range_end` for any index
+/// (`_add_phrase`, `pinyin.cpp:586-592`; addon promotion, `pinyin.cpp:2541-2544`),
+/// and `SubPhraseIndex::get_range` drops trailing zero offsets
+/// (`phrase_index.cpp:624-650`): the next token is one past the highest token
+/// still holding an item, so a mask or removal that empties the top of the
+/// range hands those tokens out again. `add_phrase_in` and
+/// `promote_addon_phrase` keep the cursor at that value on every add; this
+/// restores it after a removal, in the same walk-the-table cost the removal
+/// already paid.
 fn rederive_alloc_cursors(txn: &mut dyn WriteTxn) -> Result<(), StoreError> {
-    let mut highest: [Option<Token>; 2] = [None, None];
+    const LIBRARIES: [u8; 3] = [ADDON_DICTIONARY, NETWORK_DICTIONARY, USER_DICTIONARY];
+    let mut highest: [Option<Token>; 3] = [None; 3];
     txn.for_each(PHRASE, &mut |key, _| {
         let token = codec::decode_token(key)
             .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-        let slot = match phrase_index_library_index(token) {
-            NETWORK_DICTIONARY => 0,
-            USER_DICTIONARY => 1,
-            _ => return Ok(()),
-        };
-        highest[slot] = highest[slot].max(Some(token));
+        let library = phrase_index_library_index(token);
+        if let Some(slot) = LIBRARIES.iter().position(|&candidate| candidate == library) {
+            highest[slot] = highest[slot].max(Some(token));
+        }
         Ok(())
     })?;
-    for (library, top) in [NETWORK_DICTIONARY, USER_DICTIONARY]
-        .into_iter()
-        .zip(highest)
-    {
+    for (library, top) in LIBRARIES.into_iter().zip(highest) {
         let next = match top {
             Some(top) => phrase::next_library_token_after(library, top),
             None => Some(phrase::first_library_token(library)),
         };
-        // A full sub-index has no cursor to move: `add_phrase_in` reports
-        // the exhaustion from the row it already holds.
+        // A full sub-index has no cursor to move: the add path reports the
+        // exhaustion from the row it already holds.
         let Some(next) = next else { continue };
         txn.put(
             ALLOC,
@@ -1931,9 +1929,13 @@ impl<S: WriteStore> GenericUserStore<S> {
                         .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
                     None => first_library_token(ADDON_DICTIONARY),
                 };
-                let Some(token) = phrase::canonicalize_library_token(ADDON_DICTIONARY, raw) else {
+                // `pinyin.cpp:2541-2544` takes `range.m_range_end` as is: unlike
+                // `_add_phrase` (`:590-591`) there is no `token++` over a zero
+                // low word, so the token is only checked to stay in the library.
+                let token = raw;
+                if phrase_index_library_index(token) != ADDON_DICTIONARY {
                     return Ok(Err(UserStoreError::TokenSpaceExhausted));
-                };
+                }
                 let Some(next) = phrase::next_library_token_after(ADDON_DICTIONARY, token) else {
                     return Ok(Err(UserStoreError::TokenSpaceExhausted));
                 };
