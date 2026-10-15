@@ -486,12 +486,180 @@ fn sort_by_insertion<T>(rows: &mut [T], seq: impl Fn(&T) -> u32) {
 const ADD_PHRASE_UNIGRAM_FACTOR_U32: u32 = 3;
 const _: () = assert!(ADD_PHRASE_UNIGRAM_FACTOR_U32 as u64 == ADD_PHRASE_UNIGRAM_FACTOR);
 
+/// One imported reading: its dense keys, the same as packed `ChewingKey`
+/// words, and the count it adds.
+struct SystemReading<'a> {
+    keys: &'a [PinyinKey],
+    packed: &'a [u16],
+    delta: u32,
+}
+
+/// The token `_add_phrase` allocates for a phrase new to a system library
+/// (`get_range`'s end, pinyin.cpp:587-595; seeded from the shipped range and
+/// replayed ADD records, never from another library), with its text rows, its
+/// first reading and its unigram.
+fn append_system_token<S: WriteStore>(
+    db: &S,
+    library: u8,
+    range_end: u32,
+    text: &str,
+    reading: &SystemReading<'_>,
+) -> Result<Token, StoreError> {
+    let lib_key = codec::encode_u8_str(library, text);
+    db.write(|txn| {
+        let token = match txn.get(ALLOC, &codec::encode_u8(library))? {
+            Some(bytes) => codec::decode_token(&bytes)
+                .map_err(|_| StoreError::Backend("corrupt system cursor".into()))?,
+            None => (u32::from(library) << 24) | range_end.max(1),
+        };
+        let next = phrase::next_library_token_after(library, token)
+            .ok_or_else(|| StoreError::Backend("system token space exhausted".into()))?;
+        txn.put(
+            ALLOC,
+            &codec::encode_u8(library),
+            &codec::encode_token(next),
+        )?;
+        txn.put(PHRASE, &codec::encode_token(token), codec::encode_str(text))?;
+        txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
+        phrase_table::add_index(txn, text, token)?;
+        add_pronunciation(
+            txn,
+            token,
+            &phrase::encode_keys(reading.keys),
+            reading.delta,
+            true,
+        )?;
+        // The two facade add_index calls write the user tables. Only
+        // this first reading gets an index row (pinyin.cpp:598-607).
+        add_unigram_frequency(
+            txn,
+            library,
+            token,
+            reading.delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32),
+        )?;
+        Ok(token)
+    })
+}
+
+/// `PhraseItem::add_pronunciation` (phrase_index.cpp:56-91) on a live system
+/// item: the overflow test uses the prefix total through the matching row, and
+/// `_add_phrase` ignores a refused increment and still returns true. An
+/// unmatched reading on an item holding 255 wraps the pin's `guint8` count to
+/// 0 (`:88`); the item keeps no readings at all (see `add_pronunciation`),
+/// and the next add starts it afresh. Returns whether the count wrapped.
+fn merge_system_reading(
+    item: &mut oxpinyin_data::chunk_write::ChunkItem,
+    reading: &SystemReading<'_>,
+) -> bool {
+    let mut total = 0_u32;
+    for (stored, frequency) in &mut item.prons {
+        total = total.wrapping_add(*frequency);
+        if stored.as_slice() == reading.packed {
+            if reading.delta == 0 || total <= total.wrapping_add(reading.delta) {
+                *frequency = frequency.wrapping_add(reading.delta);
+            }
+            return false;
+        }
+    }
+    if item.prons.len() == usize::from(u8::MAX) {
+        item.prons.clear();
+        return true;
+    }
+    item.prons.push((reading.packed.to_vec(), reading.delta));
+    false
+}
+
+/// Keeps a system token's persistence rows in step with its live `item`. An
+/// original with no delta row still uses its imported payload; an existing
+/// row must include this import or the next train/save would erase it. A
+/// wrapped item drops every row.
+fn sync_system_rows<S: WriteStore>(
+    db: &S,
+    original: &crate::persistence::SystemLibrary,
+    token: Token,
+    item: &oxpinyin_data::chunk_write::ChunkItem,
+    reading: &SystemReading<'_>,
+    (untouched, wrapped): (bool, bool),
+) -> Result<(), StoreError> {
+    if wrapped {
+        return db.write(|txn| {
+            let rows = collect_pronunciations_from_txn(txn, token)?;
+            clear_pronunciations(txn, &rows, token)
+        });
+    }
+    if untouched {
+        return Ok(());
+    }
+    let has_original = original.contains_item(token & PHRASE_MASK);
+    let row_keys = if has_original {
+        reading.packed
+    } else {
+        reading.keys
+    };
+    let row_key = codec::encode_token_bytes(token, &phrase::encode_keys(row_keys));
+    if let Some(bytes) = db.get(PRONUNCIATION, &row_key)? {
+        let mut value = PronValue::decode(&bytes)?;
+        let current = item
+            .prons
+            .iter()
+            .find(|(stored, _)| stored.as_slice() == reading.packed)
+            .map_or(0, |(_, count)| *count);
+        let base = original
+            .item(token & PHRASE_MASK)
+            .and_then(|item| {
+                item.prons
+                    .into_iter()
+                    .find(|(stored, _)| stored.as_slice() == reading.packed)
+            })
+            .map_or(0, |(_, count)| count);
+        let count = u64::from(current.wrapping_sub(base));
+        if value.count != count {
+            value.count = count;
+            db.write(|txn| txn.put(PRONUNCIATION, &row_key, &value.encode()))?;
+        }
+    } else if !has_original {
+        db.write(|txn| {
+            add_pronunciation(
+                txn,
+                token,
+                &phrase::encode_keys(reading.keys),
+                reading.delta,
+                false,
+            )
+        })?;
+    }
+    Ok(())
+}
+
+/// Drops every stored reading of `token`: the item a wrapped count leaves.
+fn clear_pronunciations(
+    txn: &mut dyn WriteTxn,
+    rows: &[PronRow],
+    token: Token,
+) -> Result<(), StoreError> {
+    for row in rows {
+        txn.remove(
+            PRONUNCIATION,
+            &codec::encode_token_bytes(token, &row.key_bytes),
+        )?;
+    }
+    Ok(())
+}
+
 /// `PhraseItem::add_pronunciation(keys, delta)` (`phrase_index.cpp:56-91`)
 /// on `token`'s stored readings: an exact-key match (tone included,
 /// `pinyin_exact_compare2`) gains `delta` unless the running `guint32`
 /// total of the readings up to and including it would overflow — then
 /// nothing changes (the pin's `return false`, which `_add_phrase`
 /// discards); any other key is appended with `delta` as its count.
+///
+/// The pin's count is a `guint8` (`set_n_pronunciation`, `:28`), so an
+/// unmatched key on an item that already holds 255 readings stores a count
+/// of 0 (`:88`) and the call still succeeds. Every read goes through
+/// `SubPhraseIndex::get_phrase_item`, which sizes the item from that count
+/// (`:203-204`), and `remove_phrase_item` copies only that view (`:228`):
+/// the appended bytes are unreachable, so the item is one with no readings.
+/// The unigram, the phrase rows and the next add are untouched by the wrap.
 fn add_pronunciation(
     txn: &mut dyn WriteTxn,
     token: Token,
@@ -520,6 +688,9 @@ fn add_pronunciation(
             )?;
             return Ok(());
         }
+    }
+    if rows.len() == usize::from(u8::MAX) {
+        return clear_pronunciations(txn, &rows, token);
     }
     let value = PronValue {
         count: u64::from(delta),
@@ -3424,7 +3595,11 @@ impl<S: WriteStore> GenericUserStore<S> {
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let lib_key = codec::encode_u8_str(library, text);
+        let reading = SystemReading {
+            keys,
+            packed: &packed,
+            delta,
+        };
         // The facade already selected this token from both raw phrase
         // tables; a live reverse-index row is not phrase-table membership.
         let existing = original_token;
@@ -3440,35 +3615,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .ok_or(UserStoreError::InvalidPhrase)?;
             (token, item)
         } else {
-            let token = db.write(|txn| {
-                // get_range's end, pinyin.cpp:587-595; seeded from the shipped
-                // range and replayed ADD records, never from another library.
-                let token = match txn.get(ALLOC, &codec::encode_u8(library))? {
-                    Some(bytes) => codec::decode_token(&bytes)
-                        .map_err(|_| StoreError::Backend("corrupt system cursor".into()))?,
-                    None => (u32::from(library) << 24) | original.range_end.max(1),
-                };
-                let next = phrase::next_library_token_after(library, token)
-                    .ok_or_else(|| StoreError::Backend("system token space exhausted".into()))?;
-                txn.put(
-                    ALLOC,
-                    &codec::encode_u8(library),
-                    &codec::encode_token(next),
-                )?;
-                txn.put(PHRASE, &codec::encode_token(token), codec::encode_str(text))?;
-                txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
-                phrase_table::add_index(txn, text, token)?;
-                add_pronunciation(txn, token, &phrase::encode_keys(keys), delta, true)?;
-                // The two facade add_index calls write the user tables. Only
-                // this first reading gets an index row (pinyin.cpp:598-607).
-                add_unigram_frequency(
-                    txn,
-                    library,
-                    token,
-                    delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32),
-                )?;
-                Ok(token)
-            })?;
+            let token = append_system_token(&*db, library, original.range_end, text, &reading)?;
             (
                 token,
                 ChunkItem {
@@ -3478,65 +3625,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                 },
             )
         };
-        // PhraseItem::add_pronunciation, phrase_index.cpp:56-91: the
-        // overflow test uses the prefix total through the matching row.
-        // _add_phrase ignores a refused increment and still returns true.
-        let mut total = 0_u32;
-        let mut matched = false;
-        for (reading, frequency) in &mut item.prons {
-            total = total.wrapping_add(*frequency);
-            if *reading == packed {
-                if delta == 0 || total <= total.wrapping_add(delta) {
-                    *frequency = frequency.wrapping_add(delta);
-                }
-                matched = true;
-                break;
-            }
-        }
-        if !matched {
-            item.prons.push((packed.clone(), delta));
-        }
+        let wrapped = merge_system_reading(&mut item, &reading);
         // Validate the eventual packed payload before any row is written, so
-        // an unencodable item (more than 255 readings) leaves no partial state.
+        // an unencodable item leaves no partial state.
         encode_phrase_item(&item).map_err(|error| StoreError::Backend(error.to_string().into()))?;
-        // Keep the persistence rows in step with the live item. An original
-        // with no delta row still uses its imported payload; an existing row
-        // must include this import or the next train/save would erase it.
         let untouched = !was_live && existing.is_some();
-        let has_original = untouched || original.contains_item(token & PHRASE_MASK);
-        let row = if untouched {
-            None
-        } else {
-            let row_keys = if has_original { &packed } else { keys };
-            let row_key = codec::encode_token_bytes(token, &phrase::encode_keys(row_keys));
-            db.get(PRONUNCIATION, &row_key)?
-                .map(|bytes| (row_key, bytes))
-        };
-        if let Some((row_key, bytes)) = row {
-            let mut value = PronValue::decode(&bytes)?;
-            let current = item
-                .prons
-                .iter()
-                .find(|(reading, _)| reading == &packed)
-                .map_or(0, |(_, count)| *count);
-            let base = original
-                .item(token & PHRASE_MASK)
-                .and_then(|item| {
-                    item.prons
-                        .into_iter()
-                        .find(|(reading, _)| reading == &packed)
-                })
-                .map_or(0, |(_, count)| count);
-            let count = u64::from(current.wrapping_sub(base));
-            if value.count != count {
-                value.count = count;
-                db.write(|txn| txn.put(PRONUNCIATION, &row_key, &value.encode()))?;
-            }
-        } else if !has_original {
-            db.write(|txn| {
-                add_pronunciation(txn, token, &phrase::encode_keys(keys), delta, false)
-            })?;
-        }
+        sync_system_rows(&*db, original, token, &item, &reading, (untouched, wrapped))?;
         system_items.insert(token, item);
         drop(system_items);
         self.inner.has_system_items.store(true, Ordering::Relaxed);
