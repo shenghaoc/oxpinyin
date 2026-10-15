@@ -125,9 +125,10 @@ def rust_items(path, root):
 CITATION = re.compile(r"(?P<file>[\w./-]+\.(?:cpp|h)):(?P<start>\d+)(?:\s*[-–]\s*(?P<end>\d+))?")
 
 # Reviewed at immutable 074a2219, phrase_index.cpp:150-178, against the
-# shipping store.rs:552-618 helper. Its comment describes a USER_FILE update
-# combining facade-total accounting with the sub-index overflow guard; it
-# does not supply the pin body's out-of-range/no-item/corruption branches.
+# shipping crates/oxpinyin-user/src/store.rs add_unigram_frequency and
+# library_total_overflows helpers. Their comments describe a USER_FILE update
+# combining facade-total accounting with the sub-index overflow guard; they
+# do not supply the pin body's out-of-range/no-item/corruption branches.
 # Keep that useful scoped citation, but do not promote it to a complete T1
 # function counterpart. Execution evidence is classified independently.
 CITATION_LIMITS = {

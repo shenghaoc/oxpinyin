@@ -41,6 +41,7 @@ Cite upstream by pin: read from a checkout at the pinned commit (the
 Linux host keeps one at `~/Documents/repos/libpinyin`; that is a host
 convention, not a repo guarantee) or from a clone at the pin whose cited
 blobs you have hashed against it, and say which tree you read.
+Cite oxpinyin code by file and item name, never by line number; cite the pin by file:line at 074a2219. Dated records keep the line numbers of the tree they name.
 
 Method: copy as much as possible from upstream, rewrite it in Rust with a
 loosely coupled project structure, then oxidize further. Internal structure
