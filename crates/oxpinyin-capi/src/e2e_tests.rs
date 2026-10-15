@@ -1443,6 +1443,112 @@ fn export_iterators_walk_the_stored_triples() {
     crate::context::pinyin_fini(context);
 }
 
+/// `pinyin.cpp:748-767`: every `get_next_phrase` re-reads the item it is
+/// at and re-probes the range, so a phrase appended after the begin and a
+/// reading merged into the item under the cursor are both exported.
+#[test]
+fn export_iterator_reads_imports_that_land_while_it_is_open() {
+    let user_dir = TempUserDir::new("export-open");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    let import = |rows: &[(&str, &str, i32)]| {
+        let iter = pinyin_begin_add_phrases(context, 7);
+        assert!(!iter.is_null());
+        for (phrase, reading, count) in rows {
+            assert!(pinyin_iterator_add_phrase(
+                iter,
+                cstr(phrase).as_ptr(),
+                cstr(reading).as_ptr(),
+                *count,
+            ));
+        }
+        pinyin_end_add_phrases(iter);
+    };
+    import(&[("你好", "ni'hao", 5)]);
+    let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);
+    assert!(!iter.is_null());
+    assert!(crate::iterators::pinyin_iterator_has_next_phrase(iter));
+    // A new token past the probed one, and a second reading of the probed one.
+    import(&[("好你", "hao'ni", 7), ("你好", "ni2'hao2", 3)]);
+    assert_eq!(
+        drain_phrases(iter),
+        vec![
+            ("你好".to_owned(), "ni'hao".to_owned(), 5),
+            ("你好".to_owned(), "ni2'hao2".to_owned(), 3),
+            ("好你".to_owned(), "hao'ni".to_owned(), 7),
+        ]
+    );
+    crate::iterators::pinyin_end_get_phrases(iter);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
+/// Class (c), compatibility-policy row 62: a `USER_FILE` reading the probe
+/// counts (`pinyin.cpp:682`) but `get_pinyin_string` cannot spell
+/// (`:728` → `chewing_key.cpp:48`) is read, not skipped. `get_next` answers
+/// `false` with the out-params untouched and, the cursor unmoved, answers
+/// the same on the next call; the parent build skipped the reading.
+#[test]
+fn export_iterator_refuses_a_reading_it_cannot_spell() {
+    let user_dir = TempUserDir::new("export-unspellable");
+    let (context, instance) = open(user_dir.path.to_str().expect("UTF-8 path"));
+    {
+        // SAFETY: `context` is a live `pinyin_init` handle, borrowed
+        // uniquely for this block.
+        let ctx = unsafe { crate::state::context_mut(context) };
+        let store = ctx.core.user.as_mut().expect("the context owns a store");
+        let syllable = |text: &str| {
+            oxpinyin_core::SyllableKey::from_text(text)
+                .expect("syllable")
+                .index()
+        };
+        let ni = oxpinyin_user::toned_key(syllable("ni"), 0).expect("key");
+        store
+            .add_phrase_in(USER_DICTIONARY, "你", &[ni], Some(5))
+            .expect("a reading the engine spells");
+        // One past `MAX_KEY_TONE`: the add checks lengths only.
+        let past_the_tones = oxpinyin_user::toned_key(syllable("hao"), oxpinyin_user::MAX_KEY_TONE)
+            .expect("key")
+            + (1 << oxpinyin_user::KEY_TONE_SHIFT);
+        store
+            .add_phrase_in(USER_DICTIONARY, "好", &[past_the_tones], Some(3))
+            .expect("stored unchecked");
+    }
+    let iter = crate::iterators::pinyin_begin_get_phrases(context, 7);
+    assert!(!iter.is_null());
+    let mut phrase: *mut crate::types::GChar = ptr::null_mut();
+    let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
+    let mut count: std::os::raw::c_int = 0;
+    assert!(crate::iterators::pinyin_iterator_get_next_phrase(
+        iter,
+        &raw mut phrase,
+        &raw mut pinyin,
+        &raw mut count,
+    ));
+    assert_eq!(
+        (take_exported(phrase), take_exported(pinyin), count),
+        ("你".to_owned(), "ni".to_owned(), 5)
+    );
+    // The probe selected the second item: it has a pronunciation.
+    assert!(crate::iterators::pinyin_iterator_has_next_phrase(iter));
+    for _ in 0..2 {
+        let mut phrase: *mut crate::types::GChar = ptr::null_mut();
+        let mut pinyin: *mut crate::types::GChar = ptr::null_mut();
+        let mut count: std::os::raw::c_int = -7;
+        assert!(!crate::iterators::pinyin_iterator_get_next_phrase(
+            iter,
+            &raw mut phrase,
+            &raw mut pinyin,
+            &raw mut count,
+        ));
+        assert!(phrase.is_null() && pinyin.is_null());
+        assert_eq!(count, -7);
+        assert!(crate::iterators::pinyin_iterator_has_next_phrase(iter));
+    }
+    crate::iterators::pinyin_end_get_phrases(iter);
+    crate::instance::pinyin_free_instance(instance);
+    crate::context::pinyin_fini(context);
+}
+
 #[test]
 fn user_only_bigram_export_fails_when_rows_need_system_tables() {
     let user_dir = TempUserDir::new("user-only-bigram");

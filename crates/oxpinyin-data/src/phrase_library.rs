@@ -378,7 +378,11 @@ impl PhraseItemView<'_> {
     }
 
     /// The phrase's UCS-4 scalars as an iterator.
-    fn phrase_chars(&self) -> impl Iterator<Item = Option<char>> + '_ {
+    /// The phrase's code points in order, each `None` where the stored
+    /// `ucs4_t` is not a Unicode scalar value: what `phrase_text` collects,
+    /// for a reader that writes the characters itself instead of
+    /// collecting a `String` first (the §9 export iterator).
+    pub fn phrase_chars(&self) -> impl Iterator<Item = Option<char>> + '_ {
         let length = self.phrase_length();
         (0..length).map(move |index| {
             let offset = ITEM_HEADER_SIZE.checked_add(4 * index)?;

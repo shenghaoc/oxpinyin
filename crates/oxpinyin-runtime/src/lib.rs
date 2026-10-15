@@ -42,7 +42,7 @@ use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
     PhraseToken, SyllableKey, UserCountDelta,
 };
-pub use oxpinyin_data::phrase_library::{LibraryError, RowFault};
+pub use oxpinyin_data::phrase_library::{LibraryError, PhraseItemView, RowFault};
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
 pub use oxpinyin_data::table_info::{TableConf, TableConfError};
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
