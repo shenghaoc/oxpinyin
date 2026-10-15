@@ -19,7 +19,10 @@
 //! saves — the pin's own shape. W6-T7 adds
 //! the §9 export surface ([`UserStore::export_phrases`] /
 //! [`UserStore::export_bigrams`]) that backs the C ABI's export iterators and
-//! the W6 differential.
+//! the W6 differential. The user bigram is held once, as the pin's own
+//! `SingleGram` values, and every bigram operation runs the pin's
+//! `SingleGram` code over them (`oxpinyin_core::single_gram`; the `store`
+//! module documentation).
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4, mechanically: library builds may not unwrap, expect,

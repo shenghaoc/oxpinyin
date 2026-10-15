@@ -316,6 +316,16 @@ pub extern "C" fn zhuyin_train(instance: *mut ZhuyinInstance) -> bool {
             );
             false
         }
+        // Class (c), `phonetic_lookup.h:884` through `memory_chunk.h:390`
+        // (register row 85): training would read the total of a
+        // predecessor's gram too short to hold one. Nothing changed.
+        Err(oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }) => {
+            crate::ffi::log_warning(
+                "zhuyin_train: a user bigram value is shorter than a guint32 total_freq \
+                 (upstream aborts, memory_chunk.h:390)",
+            );
+            false
+        }
         Err(_) => false,
     }
 }

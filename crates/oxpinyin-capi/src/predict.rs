@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::ffi::CString;
 use std::os::raw::c_char;
 
+use oxpinyin_core::single_gram;
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
@@ -23,7 +24,7 @@ use crate::types::{PinyinInstance, lookup_candidate_type_t};
 /// `if (phrase_item->m_count < filter) continue` (`pinyin.cpp:2349-2350`).
 /// Not a design choice — public `pinyin_train` first-seeds 69, so the
 /// 9-vs-10 edge is planted in `run-union-diff.sh`, not trained.
-const BIGRAM_FILTER: u64 = 10;
+const BIGRAM_FILTER: u32 = 10;
 
 /// One predicted item before sort/dedup.
 struct Predicted {
@@ -41,31 +42,58 @@ pub fn guess_predicted(inst: &mut CapiInstance, prefix: &str) -> bool {
     guess_predicted_result(inst, prefix).unwrap_or(false)
 }
 
-/// The `user_bigram.db` fault a predicted-candidate call refuses, with the
-/// one warning to log. `None` for a clean container or no user store. The
-/// pin's `_compute_predicted_bigram_candidates` loads only the resolved
-/// prefixes' own grams (`pinyin.cpp:2322-2330`), so only a fault under one
-/// of `prefixes` aborts it; a short row under any other token is never
-/// reached and prediction completes. A corrupt container cannot exist at
-/// the pin, so short values are reported before empty grams.
-fn predicted_bigram_fault(user: Option<&UserStore>, prefixes: &[u32]) -> Option<&'static str> {
-    let store = user?;
-    if prefixes
-        .iter()
-        .any(|&token| store.has_short_bigram_value_for(token))
-    {
-        return Some(
-            "pinyin_guess_predicted_candidates: a user bigram value is shorter than a guint32 \
-             total_freq (upstream aborts, memory_chunk.h:390)",
+/// `_compute_predicted_bigram_candidates`'s gram walk (`pinyin.cpp:2321-2341`
+/// at the pin `074a2219`): for the prefixes from last to first, `load` the
+/// prefix's user gram and `merge_single_gram(merged, NULL, user)` — a copy
+/// of it, or, when the prefix has no gram, the previous copy kept — and
+/// stop at the first whose `get_length` is not zero; then `retrieve_all`.
+/// Answers the items in stored order, duplicates included, or the one
+/// warning a call refuses with where the pin dies: a value too short for
+/// its total (`get_length` reads it, `memory_chunk.h:390`, register row
+/// 85), a gram with no whole item and a total left over (`ngram.cpp:70`,
+/// row 88), or a partial item tail after a whole item, which `retrieve_all`
+/// reads past (`ngram.cpp:143`, row 98). Only the prefixes the walk loads
+/// are read; a fault under any other token is never reached.
+fn predicted_bigram_items(
+    user: Option<&UserStore>,
+    prefixes: &[u32],
+) -> Result<Vec<(u32, u32)>, &'static str> {
+    let Some(store) = user else {
+        return Ok(Vec::new());
+    };
+    let mut merged = single_gram::new_gram();
+    for &prev in prefixes.iter().rev() {
+        if let Ok(Some(row)) = store.bigram_row(prev) {
+            single_gram::merge_single_gram(&mut merged, None, Some(&row));
+        }
+        if single_gram::get_length(&merged) != 0 {
+            break;
+        }
+        match single_gram::get_total_freq(&merged) {
+            None => {
+                return Err(
+                    "pinyin_guess_predicted_candidates: a user bigram value is shorter than a \
+                     guint32 total_freq (upstream aborts, memory_chunk.h:390)",
+                );
+            }
+            Some(0) => {}
+            Some(_) => {
+                return Err(
+                    "pinyin_guess_predicted_candidates: assertion '0 == total_freq' failed",
+                );
+            }
+        }
+    }
+    if single_gram::get_length(&merged) == 0 {
+        return Ok(Vec::new());
+    }
+    if !(merged.len() - single_gram::TOTAL_LEN).is_multiple_of(single_gram::ITEM_LEN) {
+        return Err(
+            "pinyin_guess_predicted_candidates: a user bigram value has a partial item tail \
+             (upstream reads past it, ngram.cpp:143)",
         );
     }
-    if prefixes
-        .iter()
-        .any(|&token| store.has_empty_bigram_gram_for(token))
-    {
-        return Some("pinyin_guess_predicted_candidates: assertion '0 == total_freq' failed");
-    }
-    None
+    Ok(single_gram::retrieve_all(&merged).collect())
 }
 
 // Err marks the scorer's assert site, distinct from a missing prefix. The
@@ -81,20 +109,16 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
         return Ok(false);
     }
 
-    // `_compute_predicted_bigram_candidates` (`pinyin.cpp:2310-2341`) loads
-    // each prefix's user gram and merges it before reading its length. A
-    // `user_bigram.db` row the pin aborts on under a resolved prefix (short
-    // value at `memory_chunk.h:390`, item-less gram with a residual total at
-    // `ngram.cpp:70`) is refused here: one warning and `false`, with the
-    // candidate list left empty in both APIs. A faulty row under any other
-    // token is never loaded, so it does not block the prediction. (A corrupt
-    // container cannot exist at the pin, so the pin's per-prefix abort order
-    // has no observable answer; short values are reported before empty
-    // grams.)
-    if let Some(message) = predicted_bigram_fault(inst.core.user.as_ref(), &prefixes) {
-        crate::ffi::log_warning(message);
-        return Err(());
-    }
+    // `_compute_predicted_bigram_candidates` (`pinyin.cpp:2310-2341`). A
+    // gram the pin dies on in its walk is refused here: one warning and
+    // `false`, with the candidate list left empty in both APIs.
+    let successors = match predicted_bigram_items(inst.core.user.as_ref(), &prefixes) {
+        Ok(successors) => successors,
+        Err(message) => {
+            crate::ffi::log_warning(message);
+            return Err(());
+        }
+    };
 
     let mut items = Vec::new();
     append_predicted_bigrams(
@@ -102,7 +126,7 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
         &inst.core.lm,
         inst.predicted_lambda,
         inst.core.user.as_ref(),
-        &prefixes,
+        &successors,
         &mut items,
     );
     // pinyin.cpp:1859 asserts only for the general scorer branch, so
@@ -317,26 +341,15 @@ fn append_predicted_bigrams(
     lm: &SharedLm,
     lambda: f32,
     user: Option<&UserStore>,
-    prefixes: &[u32],
+    successors: &[(u32, u32)],
     into: &mut Vec<Predicted>,
 ) {
     let Some(store) = user else {
         return;
     };
     let total = predicted_total(dict, lm);
-    let mut successors = Vec::new();
-    for prev in prefixes.iter().rev().copied() {
-        let Ok(rows) = store.bigram_successors(prev) else {
-            continue;
-        };
-        if rows.is_empty() {
-            continue;
-        }
-        successors = rows;
-        break;
-    }
     for length in [2_usize, 1] {
-        for (token, count) in &successors {
+        for (token, count) in successors {
             // pinyin.cpp:2349-2350: skip when `m_count < filter` (10).
             if *count < BIGRAM_FILTER {
                 continue;

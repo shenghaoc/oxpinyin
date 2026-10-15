@@ -202,8 +202,26 @@ fn a_pin_profile_loads_and_saves_back_in_place() {
         UserConfLaw::Pinyin,
     )
     .expect("the second rewrite loads");
+    // The user bigram's rows are the raw grams, byte for byte; a hash
+    // container walks the rewritten file in its own order, so the rows
+    // are compared as a set and the rest of the state as it is.
+    let rows = |state: &persistence::UserState| {
+        let mut rows = state.bigram.clone();
+        rows.sort();
+        rows
+    };
     assert_eq!(
-        second.state, first.state,
+        rows(&second.state),
+        rows(&first.state),
+        "load→save changed a raw user bigram row on a pin profile"
+    );
+    let without_bigram = |state: persistence::UserState| persistence::UserState {
+        bigram: Vec::new(),
+        ..state
+    };
+    assert_eq!(
+        without_bigram(second.state),
+        without_bigram(first.state),
         "load→save is not a value fixed point on a pin profile"
     );
 }

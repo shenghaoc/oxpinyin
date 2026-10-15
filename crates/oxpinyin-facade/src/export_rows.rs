@@ -223,42 +223,23 @@ impl ContextCore {
     }
 
     /// The pin's bigram export iterator over this context
-    /// (`pinyin_begin_get_bigram_phrases`, `pinyin.cpp:776-787`): the
+    /// (`pinyin_begin_get_bigram_phrases`, `pinyin.cpp:775-787`): the
     /// predecessors in the user bigram container's walk order
-    /// (`get_all_items`), each predecessor's gram, and the rendering of
-    /// every token they name. `None` without a user store.
+    /// (`get_all_items`), taken at begin. Each predecessor's gram is
+    /// loaded, and each token rendered, only when the walk reaches it
+    /// (`pinyin.cpp:885-890`), from the live store. `None` without a user
+    /// store.
     #[must_use]
     pub fn bigram_export_walk(&self) -> Option<BigramExportWalk> {
         let store = self.user.as_ref()?;
         let items = store.bigram_predecessors().ok()?;
-        let mut grams: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
-        let mut rendered: HashMap<u32, Option<(String, Vec<String>)>> = HashMap::new();
-        for &prev in &items {
-            let gram: Vec<(u32, u32)> = store
-                .bigram_successors(prev)
-                .ok()?
-                .into_iter()
-                .map(|(cur, count)| (cur, u32::try_from(count).unwrap_or(u32::MAX)))
-                .collect();
-            for &token in std::iter::once(&prev).chain(gram.iter().map(|(cur, _)| cur)) {
-                // Memoized: a token recurs across many grams and
-                // `render_token` is an O(pinyin-index) scan.
-                rendered
-                    .entry(token)
-                    .or_insert_with(|| self.render_token(token));
-            }
-            grams.insert(prev, gram);
-        }
         Some(BigramExportWalk {
             items: items.into(),
-            index_token: NULL_TOKEN,
-            phrase_tokens: VecDeque::new(),
-            phrase: None,
-            pinyins: Vec::new(),
-            pinyin_index: 0,
-            count: 0,
-            grams,
-            rendered,
+            source: Some(ExportSource {
+                user: store.clone(),
+                dict: self.runtime.as_ref().map(oxpinyin_runtime::Runtime::dict),
+            }),
+            ..BigramExportWalk::default()
         })
     }
 
@@ -277,14 +258,34 @@ impl ContextCore {
         }
         Some(rows)
     }
+}
+
+/// What a [`BigramExportWalk`] loads grams and renders tokens from: the
+/// context's user store, and its system dictionary when it has one.
+#[derive(Clone)]
+struct ExportSource {
+    user: oxpinyin_user::UserStore,
+    dict: Option<oxpinyin_runtime::RuntimeDict>,
+}
+
+impl ExportSource {
+    /// `load(token, gram, true)` then `retrieve_all` (`pinyin.cpp:889-890`):
+    /// the gram's whole items in stored order, duplicates included.
+    fn gram(&self, token: u32) -> Vec<(u32, u32)> {
+        self.user
+            .bigram_successors(token)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(cur, count)| (cur, u32::try_from(count).unwrap_or(u32::MAX)))
+            .collect()
+    }
 
     /// `(text, pinyin spellings)` for a token: user tokens render from the
     /// user store's phrase/pronunciation tables, system tokens from the
     /// system phrase index and the pinyin index (reverse-scanned).
-    fn render_token(&self, token: u32) -> Option<(String, Vec<String>)> {
+    fn render(&self, token: u32) -> Option<(String, Vec<String>)> {
         if is_user_file_token(token) {
-            let store = self.user.as_ref()?;
-            let phrase = store.phrase(token).ok().flatten()?;
+            let phrase = self.user.phrase(token).ok().flatten()?;
             // Render each reading through the shared `render_pinyin` helper,
             // skipping any unrenderable one — the same rule `export_phrases`
             // applies, so the phrase and bigram exports stay consistent.
@@ -298,7 +299,7 @@ impl ContextCore {
             }
             Some((phrase.text().to_owned(), pinyins))
         } else {
-            let dict = self.runtime.as_ref()?.dict();
+            let dict = self.dict.as_ref()?;
             let text = dict.system().phrase_text(token)?;
             let pinyins: Vec<String> = dict
                 .system()
@@ -313,7 +314,6 @@ impl ContextCore {
         }
     }
 }
-
 /// One rendered §9 bigram-export row: concatenated phrase text, the
 /// `'`-joined pronunciation of the pair, and the scaled count.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -334,16 +334,17 @@ const NULL_TOKEN: u32 = 0;
 const EXPORT_THRESHOLD: u32 = 23 * 3 - 1;
 
 /// `_bigram_export_iterator_t` (`pinyin.cpp:132-146`) and its two
-/// operations, ported state for state over a snapshot of the store
+/// operations, ported state for state over the live store
 /// ([`ContextCore::bigram_export_walk`]). Nothing here reorders, filters
-/// or repairs what the pin does: `m_items` is the container's walk
-/// order and is consumed from the front; the gram of each predecessor
-/// is *appended* to `m_phrase_tokens` (`SingleGram::retrieve_all`), so a
-/// `sentence_start` gram, which is never scanned, is scanned under the
-/// predecessor loaded after it; and the loop ends as soon as loading has
-/// emptied `m_items`, so the last predecessor's gram is scanned only by
-/// a further `has_next` after one that answered `false`.
-#[derive(Clone, Debug, Default)]
+/// or repairs what the pin does: `m_items` is the container's walk order
+/// taken at begin and consumed from the front; each predecessor's gram is
+/// loaded when the walk reaches it and *appended* to `m_phrase_tokens`
+/// (`SingleGram::retrieve_all`), so a `sentence_start` gram, which is never
+/// scanned, is scanned under the predecessor loaded after it; and the loop
+/// ends as soon as loading has emptied `m_items`, so the last
+/// predecessor's gram is scanned only by a further `has_next` after one
+/// that answered `false`.
+#[derive(Clone, Default)]
 pub struct BigramExportWalk {
     items: VecDeque<u32>,
     index_token: u32,
@@ -352,8 +353,25 @@ pub struct BigramExportWalk {
     pinyins: Vec<String>,
     pinyin_index: usize,
     count: u32,
+    /// The live store the grams load from and the tokens render from;
+    /// `None` for a walk the tests plant through `grams` and `rendered`.
+    source: Option<ExportSource>,
+    /// Planted grams, read when there is no `source`.
     grams: HashMap<u32, Vec<(u32, u32)>>,
+    /// Every token rendered so far: `render` is an O(pinyin-index) scan
+    /// and a token recurs across many grams.
     rendered: HashMap<u32, Option<(String, Vec<String>)>>,
+}
+
+impl std::fmt::Debug for BigramExportWalk {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BigramExportWalk")
+            .field("items", &self.items)
+            .field("index_token", &self.index_token)
+            .field("phrase_tokens", &self.phrase_tokens)
+            .field("pinyin_index", &self.pinyin_index)
+            .finish_non_exhaustive()
+    }
 }
 
 /// What one [`BigramExportWalk::get_next`] produced.
@@ -402,9 +420,11 @@ impl BigramExportWalk {
             };
             self.index_token = index_token;
             // `load(…, user_gram, true)` then `retrieve_all`, which appends.
-            if let Some(gram) = self.grams.get(&index_token) {
-                self.phrase_tokens.extend(gram.iter().copied());
-            }
+            let gram = match &self.source {
+                Some(source) => source.gram(index_token),
+                None => self.grams.get(&index_token).cloned().unwrap_or_default(),
+            };
+            self.phrase_tokens.extend(gram);
             // `} while (iter->m_items->len);`
             if self.items.is_empty() {
                 break;
@@ -435,12 +455,22 @@ impl BigramExportWalk {
         BigramStep::Row(row, more)
     }
 
+    /// `token`'s rendering, memoised.
+    fn render(&mut self, token: u32) {
+        if !self.rendered.contains_key(&token) {
+            let rendering = self.source.as_ref().and_then(|source| source.render(token));
+            self.rendered.insert(token, rendering);
+        }
+    }
+
     /// The row `has_next` builds for `(m_index_token, token)`
     /// (`pinyin.cpp:810-870`): the two texts concatenated, and every
     /// first-pronunciation × second-pronunciation pair joined by `'`. A
     /// token the phrase index does not resolve reads as the pin's empty
     /// `PhraseItem` — no text, no pronunciation.
     fn load_row(&mut self, token: u32, count: u32) {
+        self.render(self.index_token);
+        self.render(token);
         let empty = (String::new(), Vec::new());
         let (first_text, first_pinyins) = self
             .rendered

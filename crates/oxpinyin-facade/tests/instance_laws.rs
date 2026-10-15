@@ -9,11 +9,12 @@
 
 use std::path::PathBuf;
 
+use oxpinyin_engine::EngineError;
 use oxpinyin_facade::{
     ContextCore, InstanceCore, PINYIN_DEFAULT_OPTION_WORD, ToneForwarding,
     ZHUYIN_DEFAULT_OPTION_WORD,
 };
-use oxpinyin_user::UserConfLaw;
+use oxpinyin_user::{SENTENCE_START, SystemVersions, UserConfLaw, persistence};
 
 fn fixture_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -187,4 +188,99 @@ fn one_key_probes_follow_the_live_schemes() {
     assert!(!zhuyin.in_keyboard(b's').is_empty());
     assert!(zhuyin.parse_one_chewing("su3").is_some());
     assert!(zhuyin.parse_one_chewing("").is_none());
+}
+
+/// The committed fixture directory the compiled backend opens.
+fn fixture_dir() -> PathBuf {
+    let root = fixture_root();
+    ["tkt", "kct", "db"]
+        .into_iter()
+        .map(|ext| root.join(ext))
+        .find(|dir| {
+            dir.is_dir()
+                && ContextCore::open(dir, None, PINYIN_DEFAULT_OPTION_WORD, UserConfLaw::Pinyin)
+                    .is_some()
+        })
+        .expect("a fixtures/w3/<backend> set opens under the compiled backend")
+}
+
+/// A user dir holding one user-bigram row, `(key, value)` verbatim, under a
+/// conform marker for `system`.
+fn user_dir_with_bigram_row(
+    system: &std::path::Path,
+    name: &str,
+    row: (Vec<u8>, Vec<u8>),
+) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("oxpinyin-facade-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("user dir");
+    let conf = oxpinyin_runtime::TableConf::read(&system.join("table.conf"))
+        .and_then(Result::ok)
+        .unwrap_or_else(oxpinyin_runtime::TableConf::stock);
+    let state = persistence::UserState {
+        bigram: vec![row],
+        ..persistence::UserState::default()
+    };
+    persistence::save(
+        &dir,
+        &state,
+        &std::collections::BTreeMap::new().into(),
+        &SystemVersions::from_conf(&conf),
+        1,
+    )
+    .expect("write the profile");
+    dir
+}
+
+/// N2: a training step reads its predecessor's total first
+/// (`phonetic_lookup.h:884` at the pin `074a2219`), and a value too short
+/// for one is the pin's assert (`memory_chunk.h:390`). The pin's guess dies
+/// on the same gram before a train can be reached
+/// (`phonetic_lookup.h:594-598`), so no contract case holds this; the
+/// facade refuses the train with the short-predecessor error and observes
+/// nothing.
+#[test]
+fn training_over_a_short_predecessor_value_refuses_and_observes_nothing() {
+    let system = fixture_dir();
+    let short = vec![0xa5, 0x5a, 0x01];
+    let user = user_dir_with_bigram_row(
+        &system,
+        "short-train",
+        (SENTENCE_START.to_le_bytes().to_vec(), short.clone()),
+    );
+    let context = ContextCore::open(
+        &system,
+        Some(&user),
+        PINYIN_DEFAULT_OPTION_WORD,
+        UserConfLaw::Pinyin,
+    )
+    .expect("context");
+    let store = context.user_store().expect("user store");
+    assert!(store.has_short_bigram_value_for(SENTENCE_START));
+    let mut inst = context.alloc_instance().expect("instance");
+    assert_eq!(inst.parse_full_more("nihao"), 5);
+    // A forced first phrase: the step that trains it loads the sentence
+    // start's gram (`phonetic_lookup.h:866-884`).
+    let list = inst.session.candidates_at(0).expect("candidates");
+    let index = list
+        .iter()
+        .position(|candidate| candidate.text() == "你")
+        .expect("你 is a candidate");
+    inst.session.select(index).expect("choose 你");
+    assert!(inst.session.guess_sentence().expect("guess"));
+    // The sentence start comes first: its gram is the first one loaded.
+    assert_eq!(inst.session.training_predecessors(0).first(), Some(&None));
+    let generation = store.generation();
+    assert_eq!(
+        inst.train(0),
+        Err(EngineError::ShortTrainingPredecessor {
+            token: SENTENCE_START
+        })
+    );
+    assert_eq!(store.generation(), generation, "nothing was observed");
+    assert!(!store.is_modified());
+    assert_eq!(store.bigram_row(SENTENCE_START).expect("row"), Some(short));
+    drop(inst);
+    drop(context);
+    let _ = std::fs::remove_dir_all(&user);
 }
