@@ -783,6 +783,15 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
             );
             false
         }
+        // Class (c), `phonetic_lookup.h:903` (register row 85): on an
+        // unsorted user gram the step's `set_freq` misses the item its
+        // `insert_freq` added. Nothing changed.
+        Err(oxpinyin_engine::EngineError::TrainingSetFreqMiss { .. }) => {
+            crate::ffi::log_warning(
+                "pinyin_train: assertion 'user->set_freq(token, freq + seed)' failed",
+            );
+            false
+        }
         Err(_) => false,
     }
 }

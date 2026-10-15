@@ -349,44 +349,17 @@ where
         U::Error: Display,
     {
         let history = self.record.history();
+        // Every step is checked before the first is observed, as the
+        // pin's abort leaves nothing behind.
+        for (index, token) in history.iter().enumerate() {
+            user.check_step(&history[..index], token)
+                .map_err(|error| EngineError::UserModel(error.to_string()))?;
+        }
         for (index, token) in history.iter().enumerate() {
             user.observe(&history[..index], token)
                 .map_err(|error| EngineError::UserModel(error.to_string()))?;
         }
         Ok(())
-    }
-
-    /// The predecessor of every observation [`Self::train_nbest`] would
-    /// make for row `index`, in order; `None` is the sentence start.
-    ///
-    /// Empty when the call would observe nothing (no such row, or no
-    /// forced phrase). It mirrors the walk's selection rule only
-    /// (`phonetic_lookup.h:854-866`: a forced phrase, or the phrase after
-    /// one, is observed after the preceding phrase), without the matrix
-    /// checks, so a caller can inspect the stores it will load first.
-    #[must_use]
-    pub fn training_predecessors(&self, index: u8) -> Vec<Option<PhraseToken>> {
-        let Some(row) = self.sentence.rows.get(usize::from(index)) else {
-            return Vec::new();
-        };
-        if row.spans.is_empty() {
-            let history = self.record.history();
-            return (0..history.len())
-                .map(|at| at.checked_sub(1).map(|prev| history[prev]))
-                .collect();
-        }
-        let mut predecessors = Vec::new();
-        let mut train_next = false;
-        let mut any_forced = false;
-        for (at, span) in row.spans.iter().enumerate() {
-            let forced = self.constraints.is_one_step_at(span.start);
-            any_forced |= forced;
-            if train_next || forced {
-                predecessors.push(at.checked_sub(1).map(|prev| row.spans[prev].token));
-            }
-            train_next = forced;
-        }
-        if any_forced { predecessors } else { Vec::new() }
     }
 
     /// Train decoded n-best row `index` using the current constraints.
@@ -477,6 +450,7 @@ where
         let tail = constraint_len.saturating_sub(1);
         let mut train_next = false;
         let mut ends: Vec<Option<usize>> = vec![None; spans.len()];
+        let tokens: Vec<PhraseToken> = spans.iter().map(|span| span.token).collect();
         for (index, span) in spans.iter().enumerate() {
             let forced = self.constraints.is_one_step_at(span.start);
             if !(train_next || forced) {
@@ -499,6 +473,11 @@ where
                     position: span.start,
                 });
             }
+            // The step's bigram half comes next (`phonetic_lookup.h:876-909`:
+            // `get_total_freq` :884, the `get_freq` walk :888, `set_freq`
+            // :903), before its pronunciation update's span asserts (:925).
+            user.check_step(&tokens[..index], &span.token)
+                .map_err(|error| EngineError::UserModel(error.to_string()))?;
             train_next = forced;
             // 074a2219 phonetic_lookup.h:911-920 scans to the next
             // non-null result token, not the forced constraint end.

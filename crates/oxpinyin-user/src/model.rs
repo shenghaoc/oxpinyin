@@ -33,6 +33,18 @@ impl UserModel for UserStore {
         Ok(0)
     }
 
+    /// One training step's store checks before any step is observed
+    /// ([`UserStore::check_training_step`]): the predecessor is the last
+    /// token of `history`, or [`SENTENCE_START`] when `history` is empty.
+    fn check_step(
+        &mut self,
+        history: &[Self::Token],
+        token: &Self::Token,
+    ) -> Result<(), Self::Error> {
+        let last = history.last().map_or(SENTENCE_START, |t| t.value());
+        self.check_training_step(last, token.value())
+    }
+
     /// Record an accepted `token` after `history` via the training-selection
     /// path (§2). The predecessor is the last token of `history`, or
     /// [`SENTENCE_START`] when `history` is empty.

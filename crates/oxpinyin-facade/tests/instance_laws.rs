@@ -268,8 +268,6 @@ fn training_over_a_short_predecessor_value_refuses_and_observes_nothing() {
         .expect("你 is a candidate");
     inst.session.select(index).expect("choose 你");
     assert!(inst.session.guess_sentence().expect("guess"));
-    // The sentence start comes first: its gram is the first one loaded.
-    assert_eq!(inst.session.training_predecessors(0).first(), Some(&None));
     let generation = store.generation();
     assert_eq!(
         inst.train(0),
@@ -283,4 +281,237 @@ fn training_over_a_short_predecessor_value_refuses_and_observes_nothing() {
     drop(inst);
     drop(context);
     let _ = std::fs::remove_dir_all(&user);
+}
+
+/// Q1's abort at the pin: the sentence start's gram holds the forced 你's
+/// neighbours in the order `[1, 2, 3, 6, 4]` around it (你 = 5), so the
+/// training step's `get_freq` misses, `insert_freq` appends, and `set_freq`
+/// lands on the larger token and misses — `check_result` dies
+/// (`phonetic_lookup.h:903` at the pin `074a2219`). The facade refuses the
+/// train with the set-freq error and observes nothing.
+#[test]
+fn training_that_would_miss_its_inserted_item_refuses_and_observes_nothing() {
+    let system = fixture_dir();
+    let ni = {
+        let context = ContextCore::open(
+            &system,
+            None,
+            PINYIN_DEFAULT_OPTION_WORD,
+            UserConfLaw::Pinyin,
+        )
+        .expect("context");
+        let mut inst = context.alloc_instance().expect("instance");
+        assert_eq!(inst.parse_full_more("nihao"), 5);
+        let list = inst.session.candidates_at(0).expect("candidates");
+        list.iter()
+            .find(|candidate| candidate.text() == "你")
+            .and_then(oxpinyin_engine::Candidate::token)
+            .expect("你 has a token")
+            .value()
+    };
+    let mut gram = 5_u32.to_le_bytes().to_vec();
+    for token in [ni - 4, ni - 3, ni - 2, ni + 1, ni - 1] {
+        gram.extend_from_slice(&token.to_le_bytes());
+        gram.extend_from_slice(&1_u32.to_le_bytes());
+    }
+    let user = user_dir_with_bigram_row(
+        &system,
+        "set-freq-miss",
+        (SENTENCE_START.to_le_bytes().to_vec(), gram.clone()),
+    );
+    let context = ContextCore::open(
+        &system,
+        Some(&user),
+        PINYIN_DEFAULT_OPTION_WORD,
+        UserConfLaw::Pinyin,
+    )
+    .expect("context");
+    let store = context.user_store().expect("user store");
+    let mut inst = context.alloc_instance().expect("instance");
+    assert_eq!(inst.parse_full_more("nihao"), 5);
+    let list = inst.session.candidates_at(0).expect("candidates");
+    let index = list
+        .iter()
+        .position(|candidate| candidate.text() == "你")
+        .expect("你 is a candidate");
+    inst.session.select(index).expect("choose 你");
+    assert!(inst.session.guess_sentence().expect("guess"));
+    let generation = store.generation();
+    assert_eq!(
+        inst.train(0),
+        Err(EngineError::TrainingSetFreqMiss {
+            token: SENTENCE_START
+        })
+    );
+    assert_eq!(store.generation(), generation, "nothing was observed");
+    assert!(!store.is_modified());
+    assert_eq!(store.bigram_row(SENTENCE_START).expect("row"), Some(gram));
+    drop(inst);
+    drop(context);
+    let _ = std::fs::remove_dir_all(&user);
+}
+
+/// The tokens of 你 and 好 in the committed fixture, from a context without
+/// a user dir.
+fn ni_and_hao(system: &std::path::Path) -> (u32, u32) {
+    let context = ContextCore::open(
+        system,
+        None,
+        PINYIN_DEFAULT_OPTION_WORD,
+        UserConfLaw::Pinyin,
+    )
+    .expect("context");
+    let mut inst = context.alloc_instance().expect("instance");
+    assert_eq!(inst.parse_full_more("nihao"), 5);
+    let token = |inst: &mut InstanceCore, offset: usize, text: &str| {
+        let list = inst.session.candidates_at(offset).expect("candidates");
+        list.iter()
+            .find(|candidate| candidate.text() == text)
+            .and_then(oxpinyin_engine::Candidate::token)
+            .expect("the fixture phrase has a token")
+            .value()
+    };
+    (token(&mut inst, 0, "你"), token(&mut inst, 2, "好"))
+}
+
+/// The pin's `[1, 2, 3, 6, 4]` order around `token` (= 5): training it
+/// misses, appends, and `set_freq` misses the appended item
+/// (`phonetic_lookup.h:903`).
+fn set_freq_miss_gram(token: u32) -> Vec<u8> {
+    let mut gram = 5_u32.to_le_bytes().to_vec();
+    for item in [token - 4, token - 3, token - 2, token + 1, token - 1] {
+        gram.extend_from_slice(&item.to_le_bytes());
+        gram.extend_from_slice(&1_u32.to_le_bytes());
+    }
+    gram
+}
+
+/// Plants `row`, forces 你 on `nihao` and guesses; the row trains two
+/// steps — the sentence start → 你, then 你 → 好. `reparse`, when given,
+/// replaces the input without a fresh guess, leaving the stale result the
+/// pin still trains (`phonetic_lookup.h:921`). Answers the train's result
+/// and whether the store stayed untouched.
+fn train_two_steps(
+    name: &str,
+    row: (u32, Vec<u8>),
+    reparse: Option<&str>,
+) -> (Result<bool, EngineError>, bool) {
+    let system = fixture_dir();
+    let user = user_dir_with_bigram_row(&system, name, (row.0.to_le_bytes().to_vec(), row.1));
+    let context = ContextCore::open(
+        &system,
+        Some(&user),
+        PINYIN_DEFAULT_OPTION_WORD,
+        UserConfLaw::Pinyin,
+    )
+    .expect("context");
+    let store = context.user_store().expect("user store");
+    let mut inst = context.alloc_instance().expect("instance");
+    assert_eq!(inst.parse_full_more("nihao"), 5);
+    let list = inst.session.candidates_at(0).expect("candidates");
+    let index = list
+        .iter()
+        .position(|candidate| candidate.text() == "你")
+        .expect("你 is a candidate");
+    inst.session.select(index).expect("choose 你");
+    assert!(inst.session.guess_sentence().expect("guess"));
+    if let Some(text) = reparse {
+        inst.session.replace_raw(text).expect("re-parse");
+    }
+    let generation = store.generation();
+    let result = inst.train(0);
+    let untouched = store.generation() == generation && !store.is_modified();
+    drop(inst);
+    drop(context);
+    let _ = std::fs::remove_dir_all(&user);
+    (result, untouched)
+}
+
+/// `train_result3` runs each step's checks in order — the constraint
+/// (`phonetic_lookup.h:868`), the bigram half (`get_total_freq` :884, the
+/// `get_freq` walk :888, `set_freq` :903), then the span asserts through
+/// `increase_pronunciation_possibility` (:925, `phonetic_key_matrix.cpp:661-664`)
+/// — so the first failing check in step order wins. A stale span at step
+/// one (`'ni` empties the start column) comes before a short gram at step
+/// two (你's own gram).
+#[test]
+fn a_stale_span_at_step_one_wins_over_a_short_gram_at_step_two() {
+    let (ni, _) = ni_and_hao(&fixture_dir());
+    let short = vec![0xa5, 0x5a, 0x01];
+    let (control, _) = train_two_steps("order-short-2-control", (ni, short.clone()), None);
+    assert_eq!(
+        control,
+        Err(EngineError::ShortTrainingPredecessor { token: ni })
+    );
+    let (result, untouched) = train_two_steps("order-short-2", (ni, short), Some("'ni"));
+    assert!(
+        matches!(
+            result,
+            Err(EngineError::StaleTrainingSpan { position: 0, .. })
+        ),
+        "{result:?}"
+    );
+    assert!(untouched);
+}
+
+/// The reverse: a short gram at step one (the sentence start's) comes
+/// before the stale span at step two (`ni` leaves 好's span past the
+/// matrix).
+#[test]
+fn a_short_gram_at_step_one_wins_over_a_stale_span_at_step_two() {
+    let short = vec![0xa5, 0x5a, 0x01];
+    let (stale, _) = train_two_steps("order-stale-2-control", (2, vec![0; 4]), Some("ni"));
+    assert!(
+        matches!(
+            stale,
+            Err(EngineError::StaleTrainingSpan { position: 2, .. })
+        ),
+        "{stale:?}"
+    );
+    let (result, untouched) = train_two_steps("order-short-1", (SENTENCE_START, short), Some("ni"));
+    assert_eq!(
+        result,
+        Err(EngineError::ShortTrainingPredecessor {
+            token: SENTENCE_START
+        })
+    );
+    assert!(untouched);
+}
+
+/// The same pair for the `set_freq` miss: a stale span at step one comes
+/// before a miss at step two (你 → 好 on 你's unsorted gram).
+#[test]
+fn a_stale_span_at_step_one_wins_over_a_set_freq_miss_at_step_two() {
+    let (ni, hao) = ni_and_hao(&fixture_dir());
+    let gram = set_freq_miss_gram(hao);
+    let (control, _) = train_two_steps("order-miss-2-control", (ni, gram.clone()), None);
+    assert_eq!(control, Err(EngineError::TrainingSetFreqMiss { token: ni }));
+    let (result, untouched) = train_two_steps("order-miss-2", (ni, gram), Some("'ni"));
+    assert!(
+        matches!(
+            result,
+            Err(EngineError::StaleTrainingSpan { position: 0, .. })
+        ),
+        "{result:?}"
+    );
+    assert!(untouched);
+}
+
+/// And a miss at step one (the sentence start → 你) comes before the stale
+/// span at step two.
+#[test]
+fn a_set_freq_miss_at_step_one_wins_over_a_stale_span_at_step_two() {
+    let (ni, _) = ni_and_hao(&fixture_dir());
+    let (result, untouched) = train_two_steps(
+        "order-miss-1",
+        (SENTENCE_START, set_freq_miss_gram(ni)),
+        Some("ni"),
+    );
+    assert_eq!(
+        result,
+        Err(EngineError::TrainingSetFreqMiss {
+            token: SENTENCE_START
+        })
+    );
+    assert!(untouched);
 }

@@ -1125,6 +1125,66 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
+    /// Q1's abort: on `[1, 2, 3, 6, 4]` training 5 misses, appends, and
+    /// `set_freq` misses the appended item, where the pin's
+    /// `check_result(user->set_freq(token, freq + seed))` dies
+    /// (`phonetic_lookup.h:903`). The store refuses before anything is
+    /// written, and the step check names the predecessor.
+    #[test]
+    fn a_set_freq_miss_refuses_training_and_observes_nothing() {
+        let dir = tempdir("set-freq-miss");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        let token = |n: u32| 0x0100_0000 | n;
+        let gram = oxpinyin_data::single_gram::encode_single_gram(
+            5,
+            &[
+                (token(1), 1),
+                (token(2), 1),
+                (token(3), 1),
+                (token(6), 1),
+                (token(4), 1),
+            ],
+        );
+        store.plant_raw_bigram(2, &gram);
+        // The step checks replay the call's steps on copies and name the
+        // predecessor whose step misses.
+        store.begin_training_steps();
+        store
+            .check_training_step(3, token(1))
+            .expect("a clean step");
+        assert!(matches!(
+            store.check_training_step(2, token(5)),
+            Err(UserStoreError::TrainingSetFreqMiss)
+        ));
+        assert_eq!(
+            store.take_training_fault(),
+            Some(crate::TrainingFault::SetFreqMiss(2))
+        );
+        store.begin_training_steps();
+        store
+            .check_training_step(2, token(6))
+            .expect("a hit trains");
+        assert_eq!(store.take_training_fault(), None);
+        let generation = store.generation();
+        assert!(matches!(
+            store.observe_selection(2, token(5)),
+            Err(UserStoreError::TrainingSetFreqMiss)
+        ));
+        assert_eq!(store.generation(), generation, "nothing was written");
+        assert_eq!(store.unigram_delta(token(5)).expect("delta"), 0);
+        assert_eq!(store.bigram_row(2).expect("row"), Some(gram));
+        assert!(!store.is_modified());
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
     /// Q1: training searches the stored items as the pin does. On
     /// `[high, low]` `get_freq(low)` misses from the libstdc++ lower bound
     /// and `insert_freq(low, 0)` lands at the same place, so the gram

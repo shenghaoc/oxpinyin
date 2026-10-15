@@ -255,6 +255,12 @@ pub enum UserStoreError {
     /// a non-null oldchunk pointer, violating `NULL == oldone`
     /// (074a2219 phrase_index_logger.h:245, phrase_index.cpp:839).
     SystemLogSurvivingAdd,
+    /// A training step's `set_freq` misses the item its `insert_freq` just
+    /// added: on an unsorted gram the second `lower_bound` can land past
+    /// it, and the pin's `check_result(user->set_freq(token, freq + seed))`
+    /// dies (`phonetic_lookup.h:903`, `ngram.cpp:252-271`). The class-(c)
+    /// answer: the training refuses before anything is stored.
+    TrainingSetFreqMiss,
 }
 
 impl fmt::Display for UserStoreError {
@@ -325,6 +331,11 @@ impl fmt::Display for UserStoreError {
                 "a surviving system log ADD violates NULL == oldone \
                  (upstream asserts, phrase_index_logger.h:245)"
             ),
+            Self::TrainingSetFreqMiss => write!(
+                f,
+                "a training step's set_freq misses the item insert_freq added \
+                 (upstream asserts, phonetic_lookup.h:903)"
+            ),
         }
     }
 }
@@ -349,7 +360,8 @@ impl std::error::Error for UserStoreError {
             | Self::ResidualUserBigramGram
             | Self::SystemLogHeaderToken
             | Self::SystemLogMultipleHeaders
-            | Self::SystemLogSurvivingAdd => None,
+            | Self::SystemLogSurvivingAdd
+            | Self::TrainingSetFreqMiss => None,
         }
     }
 }
@@ -1020,8 +1032,10 @@ fn trained_gram(
     }
     single_gram::set_total_freq(&mut gram, total.wrapping_add(seed32));
     if !single_gram::set_freq(&mut gram, cur, freq.wrapping_add(seed32)) {
-        // The pin's `check_result` dies here; refuse rather than store.
-        return Err(UserStoreError::Decode);
+        // On an unsorted gram the second `lower_bound` can land past the
+        // item `insert_freq` just added; the pin's `check_result` dies
+        // (`phonetic_lookup.h:903`).
+        return Err(UserStoreError::TrainingSetFreqMiss);
     }
     Ok((seed, Some(gram)))
 }
@@ -1179,8 +1193,30 @@ pub struct GenericUserStore<S: WriteStore> {
     inner: Arc<StoreInner<S>>,
     /// Keeps a standalone path reservation alive until its last clone drops.
     _standalone_lease: Option<Arc<StandaloneLease>>,
+    /// This handle's current training call's step checks.
+    training: TrainingCheck,
     /// Last field so [`RegistryLease`] drains after this handle's `Arc` dies.
     _lease: RegistryLease,
+}
+
+/// Which pin abort or read-past a training step's store check met, with
+/// the predecessor whose gram the step loads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TrainingFault {
+    /// The gram is too short for its total (`memory_chunk.h:390`).
+    ShortValue(Token),
+    /// The gram has a partial item tail (register row 100).
+    PartialTail(Token),
+    /// `set_freq` misses the item `insert_freq` added (`phonetic_lookup.h:903`).
+    SetFreqMiss(Token),
+}
+
+/// One training call's replay: the grams its checked steps left, and the
+/// fault a failing check met.
+#[derive(Debug, Default)]
+struct TrainingCheck {
+    grams: HashMap<Token, Option<Vec<u8>>>,
+    fault: Option<TrainingFault>,
 }
 
 /// Default user store backed by [`DefaultStore`] — whichever peer
@@ -1196,7 +1232,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Crate-visible handle assembly for the libpinyin constructor
     /// ([`crate::store_libpinyin`]), which runs in memory and arms
     /// the fini guard of the open that raised the counter.
-    pub(crate) const fn from_parts(
+    pub(crate) fn from_parts(
         inner: Arc<StoreInner<S>>,
         lease: Option<Arc<StandaloneLease>>,
         fini: FiniGuard,
@@ -1205,6 +1241,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             _fini: fini,
             inner,
             _standalone_lease: lease,
+            training: TrainingCheck::default(),
             _lease: RegistryLease,
         }
     }
@@ -1218,6 +1255,7 @@ impl<S: WriteStore> Clone for GenericUserStore<S> {
             _fini: FiniGuard::disarmed(),
             inner: Arc::clone(&self.inner),
             _standalone_lease: self._standalone_lease.clone(),
+            training: TrainingCheck::default(),
             _lease: RegistryLease,
         }
     }
@@ -1327,6 +1365,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             .expect("libpinyin container")
             .store(&token.to_le_bytes(), value)
             .expect("plant raw value");
+        // A stored gram is user data, as after any gram write.
+        self.inner.has_user_data.store(true, Ordering::Release);
     }
 
     /// Whether the gram stored under `token` is shorter than a `guint32`
@@ -1412,6 +1452,59 @@ impl<S: WriteStore> GenericUserStore<S> {
             gram_mask_fault(&mut ReadGrams(keys), mask, value)
         };
         fault.unwrap_or(None)
+    }
+
+    /// Starts one training call's step checks ([`Self::check_training_step`]):
+    /// forgets the grams replayed and the fault recorded by the last one.
+    pub fn begin_training_steps(&mut self) {
+        self.training = TrainingCheck::default();
+    }
+
+    /// The fault the last failing [`Self::check_training_step`] met, once.
+    pub fn take_training_fault(&mut self) -> Option<TrainingFault> {
+        self.training.fault.take()
+    }
+
+    /// One training step's store checks, in the pin's order inside the
+    /// step (`phonetic_lookup.h:876-909` at 074a2219): a gram too short for
+    /// its total (`get_total_freq`, :884; `memory_chunk.h:390`), a partial
+    /// item tail the `get_freq` walk reads past (:888, register row 100),
+    /// and a `set_freq` that misses the item `insert_freq` just added
+    /// (:903). The step runs on the gram the earlier steps of this call
+    /// left, replayed on copies: nothing is stored. The fault is recorded
+    /// for [`Self::take_training_fault`].
+    ///
+    /// # Errors
+    ///
+    /// [`UserStoreError::ShortUserBigramValue`] for a short value or a
+    /// partial tail, [`UserStoreError::TrainingSetFreqMiss`] for the miss,
+    /// or the store's read error.
+    pub fn check_training_step(&mut self, prev: Token, cur: Token) -> Result<(), UserStoreError> {
+        let row = match self.training.grams.get(&prev) {
+            Some(row) => row.clone(),
+            None => self.bigram_row(prev)?,
+        };
+        if let Some(gram) = row.as_deref() {
+            if gram.len() < single_gram::TOTAL_LEN {
+                self.training.fault = Some(TrainingFault::ShortValue(prev));
+                return Err(UserStoreError::ShortUserBigramValue);
+            }
+            if has_partial_tail(gram) {
+                self.training.fault = Some(TrainingFault::PartialTail(prev));
+                return Err(UserStoreError::ShortUserBigramValue);
+            }
+        }
+        match trained_gram(row.clone(), cur) {
+            Ok((_, gram)) => {
+                self.training.grams.insert(prev, gram.or(row));
+                Ok(())
+            }
+            Err(UserStoreError::TrainingSetFreqMiss) => {
+                self.training.fault = Some(TrainingFault::SetFreqMiss(prev));
+                Err(UserStoreError::TrainingSetFreqMiss)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// The pin's user-table `search_suggestion` gate
@@ -1622,6 +1715,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             _fini: FiniGuard::disarmed(),
             inner,
             _standalone_lease: Some(standalone_lease),
+            training: TrainingCheck::default(),
             _lease: RegistryLease,
         })
     }
@@ -3035,6 +3129,7 @@ impl GenericUserStore<DefaultStore> {
                 _fini: FiniGuard::disarmed(),
                 inner,
                 _standalone_lease: None,
+                training: TrainingCheck::default(),
                 _lease: RegistryLease,
             });
         }
@@ -3046,6 +3141,7 @@ impl GenericUserStore<DefaultStore> {
             _fini: FiniGuard::disarmed(),
             inner,
             _standalone_lease: None,
+            training: TrainingCheck::default(),
             _lease: RegistryLease,
         })
     }
