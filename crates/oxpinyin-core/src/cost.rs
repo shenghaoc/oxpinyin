@@ -136,6 +136,10 @@ pub fn surprisal(count: u64, total: u64) -> Cost {
         return UNKNOWN_COST;
     }
     let count = count.min(total);
+    if count == total {
+        // Equal logarithms: `(0 + HALF) >> FRAC_BITS` is zero.
+        return 0;
+    }
     let bits = log2_fixed(total) - log2_fixed(count);
     let scaled = (bits.saturating_mul(COST_PER_BIT.unsigned_abs()) + HALF) >> FRAC_BITS;
     Cost::try_from(scaled)
@@ -148,20 +152,24 @@ pub fn surprisal(count: u64, total: u64) -> Cost {
 ///
 /// Integer part from `ilog2`; fractional bits by repeated squaring of the
 /// mantissa, which is the standard bit-at-a-time algorithm and uses nothing
-/// but `u128` multiplication and shifts.
+/// but integer multiplication and shifts.
+///
+/// The mantissa stays below `2^63` between rounds, so its square is one
+/// widening `u64 × u64` multiply, not a full `u128 × u128` one.
 fn log2_fixed(value: u64) -> u64 {
     debug_assert!(value > 0, "log2_fixed requires a positive value");
     let integer = value.ilog2();
 
-    // Mantissa in [1, 2), scaled by 2^MANTISSA_SHIFT.
-    let mut mantissa = (u128::from(value) << MANTISSA_SHIFT) >> integer;
+    // Mantissa in [1, 2), scaled by 2^MANTISSA_SHIFT: in [2^62, 2^63).
+    let mut mantissa = ((u128::from(value) << MANTISSA_SHIFT) >> integer) as u64;
     let mut fraction = 0_u64;
-    for bit in 0..FRAC_BITS {
-        mantissa = (mantissa * mantissa) >> MANTISSA_SHIFT;
-        if mantissa >= 2_u128 << MANTISSA_SHIFT {
-            fraction |= 1 << (FRAC_BITS - 1 - bit);
-            mantissa >>= 1;
-        }
+    for _ in 0..FRAC_BITS {
+        // The square is below 2^126, so the shifted value is below 2^64.
+        let squared = ((u128::from(mantissa) * u128::from(mantissa)) >> MANTISSA_SHIFT) as u64;
+        // Bit 63 is the next fractional bit; when set the mantissa halves.
+        let carry = squared >> 63;
+        fraction = (fraction << 1) | carry;
+        mantissa = squared >> carry;
     }
 
     (u64::from(integer) << FRAC_BITS) | fraction
@@ -175,14 +183,11 @@ fn log2_fixed(value: u64) -> u64 {
 /// keeps the ratio and stays deterministic.
 #[must_use]
 pub fn reduce_ratio(numerator: u128, denominator: u128) -> (u64, u64) {
-    const LIMIT: u128 = 1 << 63;
-
-    let mut numerator = numerator;
-    let mut denominator = denominator;
-    while numerator >= LIMIT || denominator >= LIMIT {
-        numerator >>= 1;
-        denominator >>= 1;
-    }
+    // One shift by the excess bit length of the larger half: the same result
+    // as halving both until each is below the limit.
+    let excess = (128 - (numerator | denominator).leading_zeros()).saturating_sub(63);
+    let numerator = numerator >> excess;
+    let denominator = denominator >> excess;
     // Both halves are below 2^63 here, so neither conversion can fail.
     (
         u64::try_from(numerator).unwrap_or(u64::MAX),
@@ -232,6 +237,122 @@ mod tests {
                 u64::from(exponent) << FRAC_BITS,
                 "2^{exponent}"
             );
+        }
+    }
+
+    /// The logarithm as it was written with a `u128` mantissa throughout.
+    fn log2_fixed_u128(value: u64) -> u64 {
+        let integer = value.ilog2();
+        let mut mantissa = (u128::from(value) << super::MANTISSA_SHIFT) >> integer;
+        let mut fraction = 0_u64;
+        for bit in 0..FRAC_BITS {
+            mantissa = (mantissa * mantissa) >> super::MANTISSA_SHIFT;
+            if mantissa >= 2_u128 << super::MANTISSA_SHIFT {
+                fraction |= 1 << (FRAC_BITS - 1 - bit);
+                mantissa >>= 1;
+            }
+        }
+        (u64::from(integer) << FRAC_BITS) | fraction
+    }
+
+    #[test]
+    fn the_u64_mantissa_matches_the_u128_one_bit_for_bit() {
+        for value in 1..=1_000_000_u64 {
+            assert_eq!(log2_fixed(value), log2_fixed_u128(value), "{value}");
+        }
+        // Every bit width at its edges, then a fixed xorshift stream.
+        for width in 0..64_u32 {
+            for value in [
+                1_u64 << width,
+                (1_u64 << width) | 1,
+                u64::MAX >> (63 - width),
+            ] {
+                assert_eq!(log2_fixed(value), log2_fixed_u128(value), "{value}");
+            }
+        }
+        let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+        for _ in 0..2_000_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let value = state >> (state & 63);
+            if value > 0 {
+                assert_eq!(log2_fixed(value), log2_fixed_u128(value), "{value}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_single_shift_reduction_matches_the_halving_loop() {
+        fn looped(mut n: u128, mut d: u128) -> (u64, u64) {
+            while n >= 1 << 63 || d >= 1 << 63 {
+                n >>= 1;
+                d >>= 1;
+            }
+            (n as u64, d as u64)
+        }
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..1_000_000 {
+            let n = (u128::from(next()) << 64 | u128::from(next())) >> (next() % 128);
+            let d = (u128::from(next()) << 64 | u128::from(next())) >> (next() % 128);
+            assert_eq!(reduce_ratio(n, d), looped(n, d), "{n} {d}");
+        }
+        for width in 0..128_u32 {
+            let edge = 1_u128 << width;
+            for (n, d) in [
+                (edge, 1),
+                (1, edge),
+                (edge - 1 + 1, edge | 1),
+                (u128::MAX >> (127 - width), 7),
+            ] {
+                assert_eq!(reduce_ratio(n, d), looped(n, d), "{n} {d}");
+            }
+        }
+    }
+
+    #[test]
+    fn surprisal_matches_the_u128_logarithm_reference() {
+        fn reference(count: u64, total: u64) -> i64 {
+            if count == 0 || total == 0 {
+                return UNKNOWN_COST;
+            }
+            let count = count.min(total);
+            let bits = log2_fixed_u128(total) - log2_fixed_u128(count);
+            let scaled = (bits.saturating_mul(COST_PER_BIT.unsigned_abs()) + (1 << 31)) >> 32;
+            i64::try_from(scaled)
+                .unwrap_or(UNKNOWN_COST)
+                .min(UNKNOWN_COST)
+        }
+        for total in 0..300_u64 {
+            for count in 0..320_u64 {
+                assert_eq!(
+                    surprisal(count, total),
+                    reference(count, total),
+                    "{count}/{total}"
+                );
+            }
+        }
+        let mut state = 0x1357_9bdf_2468_ace1_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state >> (state & 63)
+        };
+        for _ in 0..1_000_000 {
+            let (count, total) = (next(), next());
+            assert_eq!(
+                surprisal(count, total),
+                reference(count, total),
+                "{count}/{total}"
+            );
+            assert_eq!(surprisal(total, total), reference(total, total), "{total}");
         }
     }
 
