@@ -3831,6 +3831,83 @@ for _mode in ('pinyin', 'zhuyin'):
                 lambda k, library=_library, null=_null: transient_library(k, library, null))
 
 
+# #759: the export iterator is the pin's cursor (pinyin.cpp:662-768 at
+# 074a2219). Every get_next re-reads the item it is at and re-probes the
+# range (:748-767), so an import that lands between two calls is exported:
+# a reading merged into the item under the cursor, and a token appended
+# past it. The parent buffered each probed item's rows at the probe.
+def export_rows(k, it, limit=None):
+    rows = []
+    while k.fn('iterator_has_next_phrase', B, P)(it) and (limit is None or len(rows) < limit):
+        ph, py, n = P(), P(), I(UNTOUCHED)
+        ret = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
+            it, C.byref(ph), C.byref(py), C.byref(n))
+        rows.append([ret, k.text(ph.value), k.text(py.value), n.value])
+    return rows
+
+
+def import_rows(k, library, rows):
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
+    added = [k.fn('iterator_add_phrase', B, P, S, S, I)(it, phrase.encode(), reading.encode(), count)
+             for phrase, reading, count in rows]
+    k.fn('end_add_phrases', None, P)(it)
+    return added
+
+
+def export_open_across_import_system(k):
+    # Library 1's first two tokens: their reading counts, and the second's
+    # text and first reading through the token getters.
+    new = k.glib.g_array_new
+    new.restype, new.argtypes = P, [I, I, U]
+    counts = []
+    for token in (0x01000001, 0x01000002):
+        count = U(UNTOUCHED)
+        assert k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(k.inst, token, C.byref(count))
+        counts.append(count.value)
+    length, text = U(UNTOUCHED), P(UNTOUCHED)
+    assert k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
+        k.inst, 0x01000002, C.byref(length), C.byref(text))
+    phrase = k.text(text.value)
+    keys = new(0, 0, 2)
+    assert k.fn('token_get_nth_pronunciation', B, P, U, U, P)(k.inst, 0x01000002, 0, keys)
+    view = C.cast(keys, C.POINTER(Arr)).contents
+    syllables = []
+    for i in range(view.len):
+        key = C.c_ushort(C.cast(view.data, C.POINTER(C.c_ushort))[i])
+        rendered = P(UNTOUCHED)
+        assert k.fn('get_pinyin_string', B, P, C.POINTER(C.c_ushort), C.POINTER(P))(
+            k.inst, C.byref(key), C.byref(rendered))
+        syllables.append(k.text(rendered.value))
+    # The same syllables with tone 1: a reading the item does not hold.
+    reading = "'".join(syllable + '1' for syllable in syllables)
+    it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 1)
+    out = {'counts': counts, 'phrase': phrase, 'reading': reading}
+    # Every row of the first token: the cursor has probed the second.
+    out['first'] = export_rows(k, it, counts[0])
+    out['added'] = import_rows(k, 1, [(phrase, reading, 5)])
+    out['second'] = export_rows(k, it, counts[1] + 1)
+    k.fn('end_get_phrases', None, P)(it)
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    return out
+
+
+def export_open_across_import_user(k):
+    out = {'seed': import_rows(k, 7, [('你好', "ni'hao", 5)])}
+    it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
+    out['has_next'] = k.fn('iterator_has_next_phrase', B, P)(it)
+    out['added'] = import_rows(k, 7, [('好你', "hao'ni", 7), ('你好', "ni2'hao2", 3)])
+    out['rows'] = export_rows(k, it)
+    out['has_next_after'] = k.fn('iterator_has_next_phrase', B, P)(it)
+    k.fn('end_get_phrases', None, P)(it)
+    k.fn('fini', None, P)(k.ctx)
+    return out
+
+
+case('issue759-export-open-across-import-system')(export_open_across_import_system)
+case('issue759-export-open-across-import-user')(export_open_across_import_user)
+
+
 # #525: reduce_tokens asserts on the sixth add, with five existing tokens.
 def combined_import_bound(k, guard=True):
     phrase = '你好'

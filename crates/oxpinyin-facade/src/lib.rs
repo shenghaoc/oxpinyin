@@ -45,7 +45,10 @@ pub use context::{
     SaveOutcome, UNKNOWN_DATABASE_FORMAT_WARNING,
 };
 pub use cursor::{KeyAt, SpanSource};
-pub use export_rows::{BigramExportWalk, BigramStep, ExportedBigramRow, PhraseExportCursor};
+pub use export_rows::{
+    BigramExportWalk, BigramStep, ExportAssert, ExportRow, ExportStep, ExportedBigramRow,
+    PhraseExportCursor,
+};
 pub use instance::{BEFORE_CURSOR_ANCHOR, InstanceCore};
 pub use offsets::{
     double_offset_is_mid_key, double_original_offset, double_session_offset,

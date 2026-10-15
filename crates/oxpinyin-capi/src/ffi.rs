@@ -165,6 +165,41 @@ pub fn owned_cstr(s: &str) -> *mut c_char {
     dst.cast::<c_char>()
 }
 
+/// Hands C one `malloc`-allocated, NUL-terminated string of `len` bytes
+/// that `fill` writes into the buffer it is given, returning how many it
+/// wrote: one allocation per string, the shape of the pin's
+/// `g_ucs4_to_utf8` and `g_strjoinv` results that `pinyin_iterator_get_next_phrase`
+/// hands out (`pinyin.cpp:716`, `:733`). NULL when the allocation fails,
+/// when `fill` wrote another length, or when the bytes carry a NUL, which
+/// [`owned_cstr`] refuses the same way. The buffer is zeroed before `fill`
+/// sees it, so the slice it writes through is initialized memory.
+pub fn malloc_cstr_with(len: usize, fill: impl FnOnce(&mut [u8]) -> usize) -> *mut c_char {
+    let Some(size) = len.checked_add(1) else {
+        return ptr::null_mut();
+    };
+    // SAFETY: `malloc` returns `size` writable bytes or null.
+    let dst = unsafe { malloc(size) }.cast::<u8>();
+    if dst.is_null() {
+        return ptr::null_mut();
+    }
+    // SAFETY: `dst` points to `size` writable bytes that nothing else
+    // references; zeroing them makes every byte an initialized `u8`.
+    unsafe {
+        ptr::write_bytes(dst, 0, size);
+    }
+    // SAFETY: `dst` points to `size` initialized bytes this function alone
+    // owns until it returns, so the exclusive slice is valid for its scope.
+    let buffer = unsafe { std::slice::from_raw_parts_mut(dst, size) };
+    let written = fill(&mut buffer[..len]);
+    if written != len || buffer[..len].contains(&0) {
+        // SAFETY: `dst` came from `malloc` above and was handed out nowhere.
+        unsafe { free(dst.cast()) };
+        return ptr::null_mut();
+    }
+    buffer[len] = 0;
+    dst.cast::<c_char>()
+}
+
 /// NULL-terminated array of [`owned_cstr`] pointers for `g_strfreev`.
 ///
 /// The array and every string are libc `malloc`. Returns null if any

@@ -9,16 +9,17 @@ use std::ptr;
 
 use oxpinyin_core::graph::SegmentGraph;
 use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
-use oxpinyin_facade::{BigramExportWalk, BigramStep};
+use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, is_user_file_library, toned_key};
 
-use crate::ffi::{cstr_to_owned_lossy, cstr_to_parsed_prefix, owned_cstr};
+use crate::ffi::{cstr_to_owned_lossy, cstr_to_parsed_prefix, malloc_cstr_with, owned_cstr};
 use crate::state::context_ref;
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
 };
 
-/// The phrase cursor retains one system item, rather than its whole library.
+/// State behind `export_iterator_t *`: the pin's iterator state, which
+/// reads each item when a call needs it and buffers no row.
 struct ExportHandle {
     cursor: oxpinyin_facade::PhraseExportCursor,
 }
@@ -353,7 +354,14 @@ pub extern "C" fn pinyin_begin_get_phrases(
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
-    let cursor = ctx.core.phrase_export_cursor(index).unwrap_or_default();
+    // The pin's begin cannot fail: its sub-index is in memory. A store the
+    // probe cannot read answers the export's own failure shape, one
+    // `libpinyin` warning and a NULL iterator, rather than an empty walk a
+    // consumer would write out as its snapshot.
+    let Ok(cursor) = ctx.core.phrase_export_cursor(index) else {
+        crate::ffi::log_warning("pinyin_begin_get_phrases: user store read failed");
+        return ptr::null_mut();
+    };
     Box::into_raw(Box::new(ExportHandle { cursor })).cast()
 }
 
@@ -385,8 +393,16 @@ pub extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> 
 ///                                     gint * count);
 /// ```
 ///
-/// Out-params `phrase` and `pinyin` are caller-owned (`g_free` each).
-/// Returns `false` once the iterator is exhausted.
+/// The pin's `:698-768`: the probed item is read, its current pronunciation
+/// rendered, and the next token probed through a fresh `get_range` before
+/// the call returns, so an import that reached the next item in between is
+/// exported. Out-params `phrase` and `pinyin` are caller-owned (`g_free`
+/// each), one allocation apiece as the pin's `g_ucs4_to_utf8` and
+/// `g_strjoinv` results are; `phrase` is NULL where the pin's
+/// `g_ucs4_to_utf8` hands one out (`:715-716`, a stored code point that is
+/// no scalar value). Returns `false` once the iterator is exhausted, at
+/// one of the pin's assert sites (one warning naming the expression), or
+/// when the store cannot be read (one warning, no pin counterpart).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_iterator_get_next_phrase(
     iter: *mut ExportIterator,
@@ -401,31 +417,57 @@ pub extern "C" fn pinyin_iterator_get_next_phrase(
     // SAFETY: `iter` is non-null and was produced by
     // `pinyin_begin_get_phrases`; the unique borrow lasts for this call.
     let handle = unsafe { &mut *(iter.cast::<ExportHandle>()) };
-    let Some(row) = handle.cursor.next() else {
-        // Class (c), `pinyin.cpp:709`: the pin **`assert`**s that the token
-        // a previous call (or the begin) probed is valid; an exhausted or
-        // empty iterator has none.
-        crate::ffi::log_warning(
-            "pinyin_iterator_get_next_phrase: assertion 'ERROR_OK == retval' failed",
-        );
-        return false;
+    let step = handle.cursor.get_next_with(|row| {
+        let text = (!phrase.is_null()).then(|| {
+            row.text_len().map_or(ptr::null_mut(), |len| {
+                malloc_cstr_with(len, |out| row.write_text(out))
+            })
+        });
+        let reading = (!pinyin.is_null())
+            .then(|| malloc_cstr_with(row.pinyin_len(), |out| row.write_pinyin(out)));
+        (text, reading, export_count(row.count()))
+    });
+    let step = match step {
+        Ok(step) => step,
+        // No pin counterpart (its sub-index is in memory): one warning,
+        // `false`, the out-params untouched — the shape of the add
+        // iterator's lookup that fails outright.
+        Err(_) => {
+            crate::ffi::log_warning("pinyin_iterator_get_next_phrase: user store read failed");
+            return false;
+        }
     };
-    if !phrase.is_null() {
-        // SAFETY: Null-checked above.
+    let (text, reading, frequency) = match step {
+        ExportStep::Row(row) => row,
+        // Class (c), compatibility-policy row 62: the pin **`assert`**s at
+        // the site (`pinyin.cpp:709`, `:714`, `:721`, `:724`, or
+        // `chewing_key.cpp:48`/`:50` from `:728`). One warning naming the
+        // asserted expression, `false`, the out-params untouched; the
+        // cursor is unmoved, so a repeated call repeats the line.
+        ExportStep::Assert(site) => {
+            crate::ffi::log_warning(&format!(
+                "pinyin_iterator_get_next_phrase: assertion '{}' failed",
+                site.expression()
+            ));
+            return false;
+        }
+    };
+    if let Some(text) = text {
+        // SAFETY: `phrase` was null-checked when `text` was produced.
         unsafe {
-            *phrase = owned_cstr(&row.text);
+            *phrase = text;
         }
     }
-    if !pinyin.is_null() {
-        // SAFETY: Null-checked above.
+    if let Some(reading) = reading {
+        // SAFETY: `pinyin` was null-checked when `reading` was produced.
         unsafe {
-            *pinyin = owned_cstr(&row.pinyin);
+            *pinyin = reading;
         }
     }
     if !count.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *count = export_count(row.count);
+            *count = frequency;
         }
     }
     true
