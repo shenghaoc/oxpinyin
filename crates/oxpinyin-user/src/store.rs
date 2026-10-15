@@ -180,6 +180,10 @@ pub enum UserStoreError {
     Store(StoreError),
     /// A stored value could not be decoded (corrupt or incompatible).
     Decode,
+    /// A present phrase's stored pronunciation row could not be decoded
+    /// (corrupt or incompatible): the item exists, one of its readings does
+    /// not read back.
+    DecodePronunciation,
     /// A standalone store at this path is already live in this process.
     AlreadyOpen,
     /// Phrase text is empty, too long, or its key count does not match its
@@ -269,6 +273,9 @@ impl fmt::Display for UserStoreError {
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Store(e) => write!(f, "store error: {e}"),
             Self::Decode => write!(f, "stored value could not be decoded"),
+            Self::DecodePronunciation => {
+                write!(f, "stored pronunciation could not be decoded")
+            }
             Self::AlreadyOpen => write!(f, "standalone user store is already open"),
             Self::InvalidPhrase => {
                 write!(f, "invalid phrase (empty, too long, or key count mismatch)")
@@ -346,6 +353,7 @@ impl std::error::Error for UserStoreError {
             Self::Io(e) => Some(e),
             Self::Store(e) => Some(e),
             Self::Decode
+            | Self::DecodePronunciation
             | Self::AlreadyOpen
             | Self::InvalidPhrase
             | Self::TokenSpaceExhausted
@@ -652,20 +660,27 @@ fn pronunciation_range(token: Token) -> (Bound<[u8; 4]>, Bound<[u8; 4]>) {
     (lo, hi)
 }
 
+/// `token`'s readings in insertion order. A row that does not decode is
+/// [`UserStoreError::DecodePronunciation`], told apart from the backend's
+/// own failure so a reader can treat the item as present but malformed.
 fn collect_pronunciations_from_store(
     store: &impl ReadStore,
     token: Token,
 ) -> Result<Vec<UserPronunciation>, UserStoreError> {
     let (lo, hi) = pronunciation_range(token);
     let mut out = Vec::new();
+    let mut undecodable = false;
     store.range(
         PRONUNCIATION,
         lo.as_ref().map(<[u8; 4]>::as_slice),
         hi.as_ref().map(<[u8; 4]>::as_slice),
         &mut |key, value| {
-            let (_, key_bytes) = codec::decode_token_bytes(key)
-                .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
-            let value = PronValue::decode(value)?;
+            let (Ok((_, key_bytes)), Ok(value)) =
+                (codec::decode_token_bytes(key), PronValue::decode(value))
+            else {
+                undecodable = true;
+                return Ok(());
+            };
             out.push((
                 value.seq,
                 UserPronunciation::new(phrase::decode_keys(key_bytes), value.count, value.indexed),
@@ -673,6 +688,9 @@ fn collect_pronunciations_from_store(
             Ok(())
         },
     )?;
+    if undecodable {
+        return Err(UserStoreError::DecodePronunciation);
+    }
     sort_by_insertion(&mut out, |row| row.0);
     Ok(out
         .into_iter()
@@ -2305,7 +2323,11 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// # Errors
     ///
-    /// Returns [`UserStoreError`] when the store cannot be read.
+    /// [`UserStoreError::Decode`] when the stored text is not UTF-8,
+    /// [`UserStoreError::DecodePronunciation`] when one of its pronunciation
+    /// rows does not decode, otherwise the backend's own error: the two
+    /// decode failures name a present item that is malformed, the rest a
+    /// store that cannot be read.
     pub fn phrase(&self, token: Token) -> Result<Option<UserPhrase>, UserStoreError> {
         let db = self.database();
         let token_key = codec::encode_token(token);
@@ -3320,6 +3342,61 @@ impl<S: WriteStore> GenericUserStore<S> {
             .range((u32::from(library) << 24)..(u32::from(library + 1) << 24))
             .next_back()
             .and_then(|(&token, _)| token.checked_add(1))
+    }
+
+    /// Reads the imported or replayed system item under `token` in place:
+    /// the pin's `get_phrase_item` on a sub-index item (`phrase_index.cpp:180-206`
+    /// at 074a2219), which points at the stored bytes and copies nothing. The
+    /// payload is borrowed under the map's lock for the call; no count is
+    /// read, so the item's unigram field is the stale one the map holds, not
+    /// the live value [`Self::system_item_override`] computes. `None` for a
+    /// token this session has not touched (the original item stands) or
+    /// outside the system libraries.
+    pub fn with_system_item<R>(
+        &self,
+        token: Token,
+        read: impl FnOnce(&oxpinyin_data::chunk_write::ChunkItem) -> R,
+    ) -> Option<R> {
+        if !self.has_system_items() || !(1..=4).contains(&(token >> 24)) {
+            return None;
+        }
+        let items = self
+            .inner
+            .system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        items.get(&token).map(read)
+    }
+
+    /// One past the highest token a `USER_FILE` library holds: the pin's
+    /// `SubPhraseIndex::get_range` end (`phrase_index.cpp:624-646` at
+    /// 074a2219, the offset array less its trailing zeros). It is the
+    /// library's allocation cursor, which every add moves past the token it
+    /// took and every mask or removal re-derives from the surviving items;
+    /// an empty library ends at its first token, the pin's `1..1`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when the cursor cannot be read, or
+    /// `InvalidPhrase` for a library that is not a `USER_FILE` one.
+    pub fn user_library_token_end(&self, library: u8) -> Result<Token, UserStoreError> {
+        if !is_user_file_library(library) {
+            return Err(UserStoreError::InvalidPhrase);
+        }
+        let db = self.database();
+        let keys = if library == USER_DICTIONARY {
+            // `add_phrase_in`'s order: the library's own cursor, then the
+            // legacy one a standalone store seeds for the user dictionary.
+            vec![codec::encode_u8(library), codec::encode_u8(ALLOC_CURSOR)]
+        } else {
+            vec![codec::encode_u8(library)]
+        };
+        for key in keys {
+            if let Some(bytes) = db.get(ALLOC, &key)? {
+                return codec::decode_token(&bytes).map_err(|_| UserStoreError::Decode);
+            }
+        }
+        Ok(first_library_token(library))
     }
 
     /// System overrides in token order for a bulk export; original items stay lazy.
@@ -4617,6 +4694,41 @@ mod tests {
                         .unwrap_err();
                     assert!(matches!(err, UserStoreError::InvalidPhrase));
                     assert!(!store.has_user_data());
+                    cleanup(&path);
+                }
+
+                /// A present item that is malformed reads back as the decode
+                /// failure that names the malformed part, never as a backend
+                /// failure: the export cursor refuses the item at the pin's
+                /// assert site for the one and propagates the other.
+                #[test]
+                fn phrase_tells_an_undecodable_text_and_pronunciation_apart() {
+                    let path = temp_path("decode-apart");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    let token = store.add_phrase("甲", &[key("jia")], Some(3)).unwrap();
+                    let text_key = codec::encode_token(token);
+                    // Text bytes that are not UTF-8.
+                    store
+                        .database()
+                        .write(|txn| txn.put(PHRASE, &text_key, &[0xff, 0xfe]))
+                        .unwrap();
+                    assert!(matches!(store.phrase(token), Err(UserStoreError::Decode)));
+                    // The text restored; a pronunciation value of a length the
+                    // codec does not know.
+                    store
+                        .database()
+                        .write(|txn| txn.put(PHRASE, &text_key, codec::encode_str("甲")))
+                        .unwrap();
+                    let pron_key =
+                        codec::encode_token_bytes(token, &phrase::encode_keys(&[key("jia")]));
+                    store
+                        .database()
+                        .write(|txn| txn.put(PRONUNCIATION, &pron_key, &[1, 2, 3]))
+                        .unwrap();
+                    assert!(matches!(
+                        store.phrase(token),
+                        Err(UserStoreError::DecodePronunciation)
+                    ));
                     cleanup(&path);
                 }
             }
