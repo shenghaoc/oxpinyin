@@ -38,7 +38,7 @@ is complete, these notes are collected to report back to libpinyin.
   pronunciation takes the path.
 - **What oxpinyin does instead:** `CapiContext::export_bigram_rows`
   renders every row into owned Rust strings when the iterator is created
-  (`crates/oxpinyin-capi/src/iterators.rs:336`), so no join over a C
+  (`crates/oxpinyin-capi/src/iterators.rs:576`), so no join over a C
   array exists to over-read, on the first cycle or any later one.
 - **Externally observable:** yes — the audit's execution
   (`bigram-before-save.c`): after one train, the first export cycle
@@ -2319,7 +2319,7 @@ removal checks.
 - **What oxpinyin does instead:** every export (or the helper it
   delegates to) opens with an `is_null()` guard and answers
   `false`/`0`/NULL/void; #526 lists the guard line per export (e.g.
-  `crates/oxpinyin-capi/src/instance.rs:19`, `iterators.rs:63`,
+  `crates/oxpinyin-capi/src/instance.rs:19`, `iterators.rs:64`,
   `candidates.rs:309`, `cursor.rs:241`, `keys.rs:219`).
 - **Externally observable:** yes — audit D-04: of 83 NULL-class probes,
   70 crash the pin (68 distinct exports, all `signal=11`) and all 83
@@ -2548,8 +2548,8 @@ call measured here, not every independent caller of reduce_tokens.
   dies of SIGSEGV. Undefined behaviour.
 - **What oxpinyin does instead:** answers `false` with `phrase`, `pinyin`
   and `count` untouched and logs nothing
-  (`crates/oxpinyin-capi/src/iterators.rs:599`; the walk names the state
-  `BigramStep::Undefined`, `crates/oxpinyin-facade/src/export_rows.rs:369-371`).
+  (`crates/oxpinyin-capi/src/iterators.rs:641`; the walk names the state
+  `BigramStep::Undefined`, `crates/oxpinyin-facade/src/export_rows.rs:1036-1038`).
 - **Externally observable:** yes: the pin's process dies, and oxpinyin
   answers `false`. Class (b). Not a `contract-diff.py` case, because which
   predecessor a walk loads last depends on the backend's hash order.
