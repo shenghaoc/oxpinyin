@@ -6700,6 +6700,301 @@ case('itemless-user-total-guess', control=True)(itemless_user_total('guess'))
 
 
 # --------------------------------------------------------------------------
+# #757 PR 3, the lookup side. The system and user grams merge as the pin's
+# merge_single_gram builds them (074a2219 ngram.cpp:277-352: both absent,
+# no row; one absent, its bytes; both present, the two-pointer interleave),
+# and the lookups read the merged chunk as the pin does: the n-best step
+# with SingleGram::search per range, one step per yielded item
+# (phonetic_lookup.h:594-632, ngram.cpp:153-176); DYNAMIC_ADJUST and the
+# phrase segmenter with get_freq from lower_bound (pinyin.cpp:1845-1852,
+# phrase_lookup.cpp:268-290, ngram.cpp:231-250). Nothing is sorted,
+# deduplicated or filtered on a count. The grams sit under the sentence
+# start, the predecessor of the first phrase in all three lookups.
+# --------------------------------------------------------------------------
+_PAST_RANGES = 0x0fffffff
+_BOOST = 1 << 31
+
+
+def _start_gram(kind, token):
+    """The sentence start's planted gram. 'unsorted': [past-every-range,
+    token], so lower_bound from any range start lands on the first item and
+    the walk stops there; the boosted `token` is never met. 'duplicate':
+    `token` twice, whose counts wrap to 1 when summed, so only a reader that
+    keeps both items sees the boost."""
+    if kind == 'unsorted':
+        return _gram_bytes(_BOOST + 1, [(_PAST_RANGES, 1), (token, _BOOST)])
+    return _gram_bytes(_BOOST, [(token, _BOOST), (token, (1 << 32) - _BOOST + 1)])
+
+
+def _replace_user_bigram(k, rows):
+    """Close the context and replace user_bigram.db with `rows`, a list of
+    (predecessor, raw value), in this cell's own format."""
+    if k._inst is not None:
+        k.fn('free_instance', None, P)(k._inst)
+        k._inst = None
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = None
+    d18_bigram_db(k, Path(k.user, 'user_bigram.db'),
+                  [(p.to_bytes(4, 'little'), value) for p, value in rows])
+    _write_user_conf(k)
+
+
+def _replace_system_start_row(k, value):
+    """A copy of the system tables whose bigram.db holds `value` under the
+    sentence start."""
+    if k._inst is not None:
+        k.fn('free_instance', None, P)(k._inst)
+        k._inst = None
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = None
+    copied = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
+    shutil.copytree(k.data, copied, dirs_exist_ok=True)
+    k.data = copied
+    d18_bigram_db(k, Path(copied, 'bigram.db'), [(b'\x01\x00\x00\x00', value)])
+    _write_user_conf(k)
+
+
+def _guess_out(k, text=b'nihao'):
+    if k.mode == 'zhuyin':
+        # The zhuyin facade parses full pinyin under this option word, as
+        # the d18 merge cases do.
+        assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+    inst = k.inst
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+    guessed = k.fn('guess_sentence', B, P)(inst)
+    return dict(parsed=parsed, guessed=guessed, sentences=final_step_sentences(k, inst))
+
+
+def _dynamic_adjust_out(k, text=b'nihao'):
+    assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | (1 << 9))
+    inst = k.inst
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+    rows = guess_rows(k, inst, 0, 0x1e) if k.mode == 'pinyin' else zhuyin_guess_rows(k, inst, 0)
+    return dict(parsed=parsed, **rows)
+
+
+def _segment_out(k, texts):
+    segment = k.fn('phrase_segment', B, P, S)
+    n_phrase = k.fn('get_n_phrase', B, P, C.POINTER(U))
+    token = k.fn('get_phrase_token', B, P, U, C.POINTER(U))
+    out = {}
+    for text in texts:
+        ret = segment(k.inst, text.encode())
+        count = U(UNTOUCHED)
+        n_phrase(k.inst, C.byref(count))
+        tokens = []
+        for index in range(count.value if count.value != UNTOUCHED else 0):
+            slot = U(UNTOUCHED)
+            token(k.inst, index, C.byref(slot))
+            tokens.append(slot.value)
+        out[text] = [ret, tokens]
+    return out
+
+
+def _system_start_tokens(k):
+    raw = d18_bigram_db(k, Path(k.data, 'bigram.db'), read_keys=(b'\x01\x00\x00\x00',))[0]
+    return [token for token, _ in _gram_items(raw)[1]]
+
+
+def _pin_lower_bound(at, length, token):
+    # libstdc++'s __lower_bound, as SingleGram's std_lite::lower_bound runs.
+    first = 0
+    while length > 0:
+        half = length >> 1
+        if at(first + half) < token:
+            first, length = first + half + 1, length - half - 1
+        else:
+            length = half
+    return first
+
+
+def _interleave_miss_layout(system, token):
+    """A user gram [token, z, a] (a < token < z) that get_freq finds on its
+    own but misses once merged with the sorted system gram `system`: the
+    merge keeps the user order and places `a` after `z`, out of order, and
+    `z` is picked so that the merged lower_bound probes `a`, steps past it
+    and lands beyond `token` (ngram.cpp:308-349, :231-250)."""
+    assert system == sorted(system), 'the installed start gram is sorted'
+    present, below = set(system), sum(1 for item in system if item < token)
+    tied = int(token in present)
+    a = next(t for t in range(token - 1, 0, -1) if t not in present)
+    gaps = [item + 1 for item in system[below:] if item + 1 not in present and item + 1 > token]
+    if token + 1 not in present:
+        gaps.insert(0, token + 1)
+    for z in gaps:
+        before_z = sum(1 for item in system if item < z)
+        merged = (system[:below] + [token] + system[below + tied:before_z] + [z, a]
+                  + system[before_z:])
+        start = _pin_lower_bound(lambda i: merged[i], len(merged), token)
+        walk = next((t for t in merged[start:] if t >= token), None)
+        if walk != token:
+            return [(token, _BOOST), (z, 1), (a, 1)]
+    raise AssertionError('no interleave misses the token')
+
+
+# 尼 is a ni reading the n-best and the candidate list rank below 你; the
+# boost would put it first for a reader that met it. A boosted 今天 splits
+# 今天天气 off the start of 今天天气很好.
+def user_gram_lookup(kind, operation):
+    def probe(k):
+        boosted = tokens_of(k, '今天' if operation == 'phrase-segment' else '尼')[0]
+        if operation == 'phrase-segment' and kind == 'unsorted':
+            # The phrase segmenter reads each pair, so a gram get_freq
+            # misses on its own reads the same merged or not; only the
+            # merge's interleave tells the two apart.
+            items = _interleave_miss_layout(_system_start_tokens(k), boosted)
+            value = _gram_bytes(_BOOST + 2, items)
+        else:
+            value = _start_gram(kind, boosted)
+        _replace_user_bigram(k, [(1, value)])
+        if operation == 'guess':
+            return _guess_out(k)
+        if operation == 'dynamic-adjust':
+            return _dynamic_adjust_out(k)
+        return _segment_out(k, ('今天天气很好',))
+    return probe
+
+
+for _kind in ('unsorted', 'duplicate'):
+    for _operation in ('guess', 'dynamic-adjust', 'phrase-segment'):
+        # A duplicated user gram reads the same per pair as merged: the
+        # merge sums the first duplicate with the system item and appends
+        # the second after it, so get_freq meets the same first match.
+        control = (_kind, _operation) == ('duplicate', 'phrase-segment')
+        case(f'user-gram-{_kind}-{_operation}', control=control)(
+            user_gram_lookup(_kind, _operation))
+
+
+# PR 0's ranges and SingleGram::search's one-sided bound (ngram.cpp:161-173):
+# the walk stops at the first token at or past the range end, and nothing
+# checks the range start. The user gram [你, T, T] for a ni reading T below
+# 你 merges to [..., 你, T, T, ...] (ngram.cpp:308-349), so the walk over
+# 你's range yields both T items, below that range, and the pin steps T
+# with each (phonetic_lookup.h:625-629). The two T counts wrap to 1 when
+# summed, so a reader that sorts and sums the gram does not boost T.
+@case('user-gram-unsorted-range-boundary')
+def _(k):
+    ni = tokens_of(k, '你')[0]
+    below = next(token for token in (tokens_of(k, text)[0] for text in '泥拟逆腻妮倪匿溺尼')
+                 if token + 1 < ni)
+    items = [(ni, 1), (below, _BOOST), (below, (1 << 32) - _BOOST + 1)]
+    _replace_user_bigram(k, [(1, _gram_bytes(_BOOST, items))])
+    return _guess_out(k)
+
+
+# The system gram enters the merge as stored, with no user gram beside it.
+# 'duplicate' holds 尼 at 1 and then at the boost: search yields both items,
+# so the boosted one steps; a reader that keeps the first match does not.
+def system_gram_lookup(kind):
+    def probe(k):
+        ni2 = tokens_of(k, '尼')[0]
+        value = (_start_gram(kind, ni2) if kind == 'unsorted'
+                 else _gram_bytes(_BOOST + 1, [(ni2, 1), (ni2, _BOOST)]))
+        _replace_system_start_row(k, value)
+        return _guess_out(k)
+    return probe
+
+
+for _kind in ('unsorted', 'duplicate'):
+    case(f'system-gram-{_kind}-guess')(system_gram_lookup(_kind))
+
+
+# A stored zero count is an item. The n-best step takes a bigram step for
+# each item `search` yields (phonetic_lookup.h:625-629) beside the unigram
+# pass's step from the best predecessor, so a one-syllable best sentence
+# the start's merged gram holds is answered twice and one it lacks once.
+# The start's system gram is replaced by one item past every range, and
+# its user gram holds the best sentence's phrase at count 0: the pin's
+# merged row holds that item, so the sentence comes twice. A reader that
+# drops zero counts answers it once.
+@case('user-gram-zero-count-guess')
+def _(k):
+    _replace_system_start_row(k, _gram_bytes(1, [(_PAST_RANGES, 1)]))
+    best = _guess_out(k, b'a')['sentences'][0]
+    _replace_user_bigram(k, [(1, _gram_bytes(0, [(tokens_of(k, best)[0], 0)]))])
+    return _guess_out(k, b'a')
+
+
+# N2, register row 85: a user gram shorter than its guint32 total. Beside a
+# system gram the merge reads it (ngram.cpp:304, through phonetic_lookup.h:598,
+# pinyin.cpp:2214, zhuyin.cpp:1487, phrase_lookup.cpp:272) and the pin dies
+# at memory_chunk.h:390; alone, SingleGram::search reads it
+# (ngram.cpp:165, through phonetic_lookup.h:625). The sentence start has a
+# system gram; a user phrase used as a sentence prefix has none.
+_SHORT = b'\x07\x00\x00'
+
+
+def short_start_guess(k):
+    _replace_user_bigram(k, [(1, _SHORT)])
+    return {'ret': _guess_out(k)['guessed']}
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'abort-guess-sentence-short-user-gram-system-row-{_mode}', mode=_mode, abort=False)(
+        short_start_guess)
+
+
+@case('abort-guess-sentence-short-user-gram-no-system-row', abort=False)
+def _(k):
+    def grams(system, users):
+        return [(users[0], _SHORT)]
+    _plant_user_grams(k, [_DALONG], grams)
+    inst = k.inst
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao') == 5
+    return {'ret': k.fn('guess_sentence_with_prefix', B, P, S)(inst, _DALONG[0].encode())}
+
+
+def short_start_dynamic_adjust(k):
+    _replace_user_bigram(k, [(1, _SHORT)])
+    return {'ret': _dynamic_adjust_out(k)['ret']}
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'abort-guess-candidates-dynamic-adjust-short-user-gram-{_mode}', mode=_mode,
+         abort=False)(short_start_dynamic_adjust)
+
+
+# The same gram under DYNAMIC_ADJUST, parsed and never guessed: the pin's
+# parse merges no gram (pinyin.cpp:1497-1520, zhuyin.cpp:1017-1043), so the
+# parse answers its full length.
+def short_start_dynamic_adjust_parse(k):
+    _replace_user_bigram(k, [(1, _SHORT)])
+    assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | (1 << 9))
+    inst = k.inst
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    return dict(parsed=parsed, length=k.fn('get_parsed_input_length', Z, P)(inst))
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'parse-dynamic-adjust-short-user-gram-{_mode}', mode=_mode)(
+        short_start_dynamic_adjust_parse)
+
+
+@case('abort-phrase-segment-short-user-gram', abort=False)
+def _(k):
+    _replace_user_bigram(k, [(1, _SHORT)])
+    return {'ret': k.fn('phrase_segment', B, P, S)(k.inst, '今天天气很好'.encode())}
+
+
+# Controls: a short gram the lookup never loads. 我 never precedes a phrase
+# of `nihao`; with DYNAMIC_ADJUST clear the candidate list merges nothing
+# (pinyin.cpp:2207-2216).
+@case('guess-unrelated-short-user-gram', control=True)
+def _(k):
+    _replace_user_bigram(k, [(tokens_of(k, '我')[0], _SHORT)])
+    return _guess_out(k)
+
+
+@case('guess-candidates-short-user-gram-dynamic-adjust-off', control=True)
+def _(k):
+    _replace_user_bigram(k, [(1, _SHORT)])
+    assert k.fn('set_options', B, P, U)(k.ctx, 0x18a)
+    inst = k.inst
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
+    return dict(parsed=parsed, **guess_rows(k, inst, 0, 0x1e))
+
+
+# --------------------------------------------------------------------------
 # #563 axis B (bdb) — the libzhuyin per-entry-point contract. Four exports
 # no other case reached (`zhuyin_parse_chewing`,
 # `zhuyin_in_chewing_keyboard`, `zhuyin_get_n_phrase`,
