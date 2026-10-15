@@ -479,6 +479,7 @@ mod tests {
         std::fs::write(&path, &file).expect("write");
         let lib = crate::phrase_library::PhraseLibrary::open(&path).expect("open");
         assert_eq!(lib.total_freq(), 9);
+        assert!(lib.has_items());
         let item = lib.item(0x0000_0001).expect("item");
         assert_eq!(item.phrase_text().as_deref(), Some("你好"));
         assert_eq!(item.unigram(), 9);
@@ -516,6 +517,7 @@ mod tests {
         assert_eq!(lib.total_freq(), 0);
         assert!(lib.item(0x0000_0001).is_none());
         assert_eq!(lib.items().count(), 0);
+        assert!(!lib.has_items());
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 

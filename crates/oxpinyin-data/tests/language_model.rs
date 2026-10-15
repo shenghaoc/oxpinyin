@@ -294,21 +294,23 @@ fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
     let (lm, _) = fix.open();
     let ni = PhraseToken::new(NI);
     let hao = PhraseToken::new(HAO);
-    // Final counts: b=2134351507, bt=602365351, u=3736239466,
-    // ut=731049969362, with the default lambda. Subtract the fixture's
-    // system counts (7, 7, 5, 19) so the merged fields equal those values.
+    // Final counts: b=2134351507, bt=602365351, u=21950320,
+    // ut=4294967295, with the default lambda. The unigram total is the
+    // facade's guint32, so it stays at or under u32::MAX. Subtract the
+    // fixture's system counts (7, 7, 5, 19) so the merged fields equal those
+    // values.
     let delta = UserCountDelta {
         bigram_count: 2_134_351_507 - 7,
         bigram_total: 602_365_351 - 7,
-        unigram_delta: 3_736_239_466 - 5,
-        unigram_total_delta: 731_049_969_362 - 19,
+        unigram_delta: 21_950_320 - 5,
+        unigram_total_delta: 4_294_967_295 - 19,
     };
     // Independently evaluated with Python struct.pack/unpack for each f32
     // operation, following 074a2219 phonetic_lookup.h:605-608, :692-693:
     // bigram_poss = 3.543283700942993; λ * poss = 1.1079812049865723;
-    // the f64 unigram term is 0.0035126480776343167, giving the f64 sum
-    // 1.1114938530642067 and -152.49996979692492 millibits, rounded to -152.
-    // Logging the exact rational instead gives -153.
+    // the f64 unigram term is 0.0035125943276022526, giving the f64 sum
+    // 1.1114937993141745 and -152.49990003054108 millibits, rounded to -152.
+    // Logging the exact rational instead gives -153 (-152.50010327593435).
     let pair = lm
         .nbest_step_costs_with_user_delta(&ni, &hao, delta)
         .unwrap();
@@ -323,6 +325,51 @@ fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
     );
     assert_eq!(raw.blended, Some(-152));
     assert_eq!(raw.unigram, pair.unigram);
+}
+
+/// #798: the n-best denominator is the facade's `guint32` total
+/// (074a2219 `phrase_index.h:440`), which the pin adds to with no overflow
+/// check, so an extra of exactly 2^32 prices every step as no extra does.
+#[test]
+fn the_nbest_denominator_wraps_as_the_facade_total() {
+    let fix = Fixture::new();
+    let (lm, _) = fix.open();
+    let ni = PhraseToken::new(NI);
+    let hao = PhraseToken::new(HAO);
+    assert_eq!(lm.facade_total(0), 19);
+    assert_eq!(lm.facade_total(u64::from(u32::MAX)), 18);
+    let wrapped = UserCountDelta {
+        unigram_total_delta: 1 << 32,
+        ..UserCountDelta::ZERO
+    };
+    assert_eq!(
+        lm.nbest_step_costs_with_user_delta(&ni, &hao, wrapped)
+            .unwrap(),
+        lm.nbest_step_costs_with_user_delta(&ni, &hao, UserCountDelta::ZERO)
+            .unwrap()
+    );
+}
+
+/// #801 review: whether there is a unigram table to price with is decided
+/// by the loaded libraries' items, not by their stored totals, which can
+/// wrap to zero as a `guint32` while every item stands.
+#[test]
+fn unigram_availability_survives_a_total_that_wraps_to_zero() {
+    let fix = Fixture::new();
+    let mut gb = ChunkBuilder::new(u32::MAX - 2);
+    gb.add(0x10, 10, "你", vec![(vec![0, 0], 1)]);
+    gb.add(0x11, 5, "好", vec![(vec![0, 0], 1)]);
+    gb.add(0x99, 1, "你好", vec![(vec![0, 0, 0, 0], 1)]);
+    std::fs::write(fix.dir.join("gb_char.bin"), gb.build()).unwrap();
+    let (lm, mask) = fix.open();
+    assert_eq!(
+        lm.unigram_total(),
+        0,
+        "gb_char's total plus gbk_char's 3 wraps"
+    );
+    assert!(lm.has_unigrams());
+    mask.store((1 << 1) | (1 << 2), Ordering::SeqCst);
+    assert!(!lm.has_unigrams(), "no visible library holds an item");
 }
 
 /// The §12 presence gate (revert-plan.md §12, register #35): the pin's

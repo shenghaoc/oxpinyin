@@ -355,7 +355,14 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
     let Some(base) = base else {
         return false;
     };
-    let count = base + inst.core.dict.unigram_delta(token).unwrap_or(0);
+    // A system item's frequency comes from the language model, which
+    // already prices the overlay into it; the other libraries take it here.
+    let overlay = if (1..=4).contains(&nibble) {
+        0
+    } else {
+        inst.core.dict.unigram_delta(token).unwrap_or(0)
+    };
+    let count = base + overlay;
     if !freq.is_null() {
         // SAFETY: Null-checked above.
         unsafe {

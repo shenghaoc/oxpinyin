@@ -77,14 +77,7 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
 /// `pinyin_token_add_unigram_frequency` deltas, wrapped. A model without real
 /// unigrams has no total to divide by.
 fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
-    inst.core.lm.has_real_unigrams()
-        && inst
-            .core
-            .lm
-            .amplified_total()
-            .wrapping_add(u64::from(inst.core.dict.unigram_total_delta()))
-            & u64::from(u32::MAX)
-            == 0
+    inst.core.lm.has_real_unigrams() && inst.core.lm.amplified_total() == 0
 }
 
 /// Class (c), `pinyin_phrase3.h:152`: the pin's phrase-table search asserts

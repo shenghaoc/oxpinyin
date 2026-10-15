@@ -212,6 +212,9 @@ pub extern "C" fn zhuyin_end_add_phrases(iter: *mut ImportIterator) {
     // `Box::into_raw`; the caller transfers ownership back here.
     let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
     if let Some(user) = handle.user.as_mut() {
+        // The compact (`zhuyin.cpp:542`) rebuilds each library's total from
+        // its items.
+        user.compact_libraries();
         user.mark_modified();
     };
 }

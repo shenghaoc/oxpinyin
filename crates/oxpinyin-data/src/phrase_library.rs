@@ -617,6 +617,15 @@ impl PhraseLibrary {
         1..u32::try_from(end.max(1)).unwrap_or(u32::MAX)
     }
 
+    /// Whether the library stores any item content, without walking its
+    /// slots. Every chunk the pin writes is compacted first, so its
+    /// content holds only items its index points at (074a2219
+    /// `phrase_index.cpp:648-675`, `pinyin.cpp:1139`).
+    #[must_use]
+    pub const fn has_items(&self) -> bool {
+        self.content.start < self.content.end
+    }
+
     /// The offset-array entry of a slot, or `None` outside the array.
     /// Checked arithmetic throughout: a caller-supplied slot of any
     /// `usize` value answers `None`, never an overflow.

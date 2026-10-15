@@ -328,7 +328,7 @@ impl SystemDictionary {
     /// libraries.
     #[must_use]
     pub fn unigram_total(&self) -> u64 {
-        self.libraries.unigram_total()
+        u64::from(self.libraries.unigram_total())
     }
 
     /// The facade's item count.
@@ -866,7 +866,7 @@ impl AddonDictionary {
         if self.libraries.is_empty() {
             return None;
         }
-        Some(self.libraries.unigram_total())
+        Some(u64::from(self.libraries.unigram_total()))
     }
 
     /// Phrase text for `token`, if its addon library is loaded.

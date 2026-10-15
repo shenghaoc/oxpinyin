@@ -132,7 +132,7 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
     // pinyin.cpp:1859 asserts only for the general scorer branch, so
     // prefix-only rows do not reach it. Class (c), policy row 61: refuse
     // with one warning and leave the candidate list empty in both APIs.
-    if !items.is_empty() && predicted_total(&inst.core.dict, &inst.core.lm) == 0 {
+    if !items.is_empty() && predicted_total(&inst.core.lm) == 0 {
         crate::ffi::log_warning(
             "pinyin_guess_predicted_candidates: assertion '0 < total_freq' failed",
         );
@@ -347,7 +347,7 @@ fn append_predicted_bigrams(
     let Some(store) = user else {
         return;
     };
-    let total = predicted_total(dict, lm);
+    let total = predicted_total(lm);
     for length in [2_usize, 1] {
         for (token, count) in successors {
             // pinyin.cpp:2349-2350: skip when `m_count < filter` (10).
@@ -395,7 +395,7 @@ fn append_predicted_prefix(
     // then each DBM's UCS-4 byte cursor order. The stable length/score sort
     // preserves this collection order on ties, including user/system ties.
     let suggestions = oxpinyin_facade::merged_suggestions(dict, user, prefix);
-    let total = predicted_total(dict, lm);
+    let total = predicted_total(lm);
     for (token, text) in suggestions {
         // The length gate stays on the FULL phrase: the pin checks
         // `get_phrase_length()` against `prefix_len * 2 + 1` before any
@@ -425,10 +425,8 @@ fn append_predicted_prefix(
 
 /// The live facade total is guint32 and wraps, including both training
 /// deltas and ABI add overlays (`phrase_index.h:633`, `pinyin.cpp:1814-1815`).
-fn predicted_total(dict: &SharedDict, lm: &SharedLm) -> u64 {
+fn predicted_total(lm: &SharedLm) -> u64 {
     lm.amplified_total()
-        .wrapping_add(u64::from(dict.unigram_total_delta()))
-        & u64::from(u32::MAX)
 }
 
 /// Both predicted row kinds read the live item counter. User dictionary

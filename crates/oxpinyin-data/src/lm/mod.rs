@@ -390,10 +390,12 @@ impl BigramLanguageModel {
     }
 
     /// Whether unigram counts are available for interpolation: some
-    /// visible library carries corpus counts.
+    /// visible library holds items. Decided by the tables, not by the
+    /// facade total, which a `guint32` can wrap to zero while they stand.
     #[must_use]
     pub fn has_unigrams(&self) -> bool {
-        self.unigram_total() > 0
+        self.libraries
+            .has_items_unloaded(self.library_mask.load(Ordering::SeqCst))
     }
 
     /// `PhraseItem::get_unigram_frequency` for `token`: the stored item
@@ -411,12 +413,22 @@ impl BigramLanguageModel {
     }
 
     /// `FacadePhraseIndex::get_phrase_index_total_freq` over the visible
-    /// libraries: the sum of every item's stored unigram.
+    /// libraries: their stored totals, a wrapping `guint32`
+    /// (074a2219 `phrase_index.h:440`, `phrase_index.cpp:237-248`).
     #[must_use]
-    pub fn unigram_total(&self) -> u64 {
-        let mask = self.library_mask.load(Ordering::SeqCst);
+    pub fn unigram_total(&self) -> u32 {
         self.libraries
-            .unigram_total_where(|nibble| library_visible(mask, nibble))
+            .unigram_total_unloaded(self.library_mask.load(Ordering::SeqCst))
+    }
+
+    /// The facade total the n-best step and the score divide by
+    /// (074a2219 `phonetic_lookup.h:651`, `:679`; `phrase_lookup.cpp:315`,
+    /// `:334`): the visible libraries' total plus `extra`, everything the
+    /// user side and `add_unigram_frequency` added to it. The pin keeps one
+    /// `guint32` and adds to it with no overflow check, so the sum wraps.
+    #[must_use]
+    pub fn facade_total(&self, extra: u64) -> u64 {
+        u64::from(self.unigram_total().wrapping_add(extra as u32))
     }
 
     /// Loads the system-bigram row for `prev` — one point read.
@@ -519,7 +531,7 @@ impl BigramLanguageModel {
             self.unigram_count(token.value()).unwrap_or(0),
             user.unigram_delta,
         );
-        let unigram_total = merge_counts(self.unigram_total(), user.unigram_total_delta);
+        let unigram_total = self.facade_total(user.unigram_total_delta);
         if unigram == 0 || unigram_total == 0 {
             return Ok(UNKNOWN_COST);
         }
@@ -755,7 +767,7 @@ impl BigramLanguageModel {
             None => return Ok(oxpinyin_core::NbestStepCosts::default()),
         };
         let count = merge_counts(count, user.unigram_delta);
-        let unigram_total = merge_counts(self.unigram_total(), user.unigram_total_delta);
+        let unigram_total = self.facade_total(user.unigram_total_delta);
         if unigram_total == 0 {
             return Ok(oxpinyin_core::NbestStepCosts::default());
         }
@@ -857,7 +869,7 @@ impl LanguageModel for BigramLanguageModel {
     }
 
     fn unigram_total(&self) -> Result<Option<u64>, Self::Error> {
-        Ok(Some(self.unigram_total()))
+        Ok(Some(u64::from(self.unigram_total())))
     }
 
     fn nbest_step_costs(

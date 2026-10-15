@@ -579,6 +579,9 @@ impl ContextCore {
                         return MaskOutOutcome::Done(false);
                     }
                 }
+                // The mask ends with a compact (`pinyin.cpp:1294`,
+                // `zhuyin.cpp:829`).
+                store.compact_libraries();
                 MaskOutOutcome::Done(true)
             }
             Err(UserStoreError::OverlongIndexKey) => MaskOutOutcome::OverlongIndexKey,

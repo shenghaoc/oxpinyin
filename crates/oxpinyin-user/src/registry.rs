@@ -81,6 +81,17 @@ pub struct StoreInner<S: WriteStore> {
     /// opening no store transaction. Recomputed at `open` and maintained only
     /// by `UserStore::mark_committed_write`.
     pub(crate) has_user_data: AtomicBool,
+    /// How far the facade total the loaded libraries' stored totals make
+    /// lies from the one the seeded rows make (`store_libpinyin::seed_txn`),
+    /// a wrapping `guint32`. `compact` never rebuilds the facade's total
+    /// (074a2219 `phrase_index.cpp:648-675`); only a library loaded again
+    /// moves it, by the old sub-index's total out and the new one's in.
+    pub(crate) facade_offset: std::sync::atomic::AtomicU32,
+    /// Whether any library still carries its own share of that difference
+    /// in [`crate::store::LIBRARY_OFFSET`]: from the load until the next
+    /// `compact` (a save, the end of an import, a mask_out), which
+    /// rebuilds each library's total from its items.
+    pub(crate) has_library_offsets: AtomicBool,
     /// The libpinyin session metadata (optional directory, system originals).
     /// Transient sessions retain originals without a directory; others use the
     /// pin's own file shapes (`open_libpinyin`): `save()` exports the

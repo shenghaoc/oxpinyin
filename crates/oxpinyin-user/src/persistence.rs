@@ -416,6 +416,15 @@ pub struct Loaded {
     /// fails and the facade logs one warning in its own domain. Recorded
     /// as `(file name, token)`.
     pub strict_log_fault: Option<(String, u32)>,
+    /// The total each library the profile filled holds once loaded, as the
+    /// pin keeps it: a `USER_FILE` library's is the total stored in its
+    /// file (074a2219 `phrase_index.cpp:345`), not a sum of its items; a
+    /// system library's is its original's after the `.dbin` replay, which
+    /// sets it from each `MODIFY_HEADER` and moves it with every item added
+    /// or removed (`phrase_index.cpp:439-520`). The facade adds each to its
+    /// own total (`phrase_index.cpp:237-248`), so the session prices with
+    /// these and not with the items' sum.
+    pub(crate) library_totals: BTreeMap<u8, u32>,
 }
 
 /// The private result of a profile parse: the public [`Loaded`] plus
@@ -946,7 +955,8 @@ fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded) {
             }
         };
         match decode_sub_phrase_index(payload) {
-            Ok((_total, items)) => {
+            Ok((total, items)) => {
+                loaded.library_totals.insert(nibble, total);
                 // An absent library and an empty one are the same state;
                 // keep the map absent so save/load are byte- and
                 // value-stable round trips.
@@ -989,7 +999,7 @@ pub(crate) fn load_masked_logs(
     mask: u32,
     value: u32,
     snapshot: SystemLogSnapshot,
-) -> UserState {
+) -> (UserState, BTreeMap<u8, u32>) {
     let mut loaded = Loaded::default();
     load_logs_with_mask(
         SystemLogSource::Snapshot(snapshot),
@@ -997,7 +1007,7 @@ pub(crate) fn load_masked_logs(
         &mut loaded,
         Some((mask, value)),
     );
-    loaded.state
+    (loaded.state, loaded.library_totals)
 }
 
 enum SystemLogSource<'a> {
@@ -1079,18 +1089,40 @@ fn load_logs_with_mask(
                 LogRecord::ModifyHeader { .. } => false,
             });
             // The generated logger writes its header first, regardless of
-            // where the old logger held it. Replay computes the item deltas.
+            // where the old logger held it. Its new total is the old one
+            // moved by every record kept, read from the records' own
+            // payloads (`_compute_new_header`, 074a2219
+            // `phrase_index.cpp:750-804`).
+            let new_total = records
+                .iter()
+                .fold(old_total, |total, record| match record {
+                    LogRecord::Add { new_item, .. } => total.wrapping_add(raw_unigram(new_item)),
+                    LogRecord::Remove { old_item, .. } => total.wrapping_sub(raw_unigram(old_item)),
+                    LogRecord::Modify {
+                        old_item, new_item, ..
+                    } => total
+                        .wrapping_sub(raw_unigram(old_item))
+                        .wrapping_add(raw_unigram(new_item)),
+                    LogRecord::ModifyHeader { .. } => total,
+                });
             records.insert(
                 0,
                 LogRecord::ModifyHeader {
                     old_total,
-                    new_total: old_total,
+                    new_total,
                 },
             );
         }
 
         let original = originals.get(&nibble);
         let mut overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::new();
+        // `SubPhraseIndex::m_total_freq` through `merge`, a wrapping
+        // `guint32`: a header sets it, an added item adds its unigram, a
+        // removed one takes the current item's away, and a modified one
+        // moves it only when the new item is longer and is removed and
+        // added back; an in-place modify leaves it (074a2219
+        // `phrase_index.cpp:439-520`, `:208-235`).
+        let mut total = original.map(|library| library.total);
         let current =
             |overrides: &BTreeMap<u32, Option<ChunkItem>>, slot: u32| -> Option<ChunkItem> {
                 overrides
@@ -1105,6 +1137,7 @@ fn load_logs_with_mask(
             match record {
                 LogRecord::Add { token, new_item } => match decode_phrase_item(&new_item) {
                     Ok(item) => {
+                        total = total.map(|total| total.wrapping_add(item.unigram));
                         overrides.insert(token & PHRASE_MASK, Some(item));
                     }
                     Err(error) => {
@@ -1116,6 +1149,7 @@ fn load_logs_with_mask(
                     let slot = token & PHRASE_MASK;
                     match (decode_phrase_item(&old_item), current(&overrides, slot)) {
                         (Ok(old), Some(cur)) if old == cur => {
+                            total = total.map(|total| total.wrapping_sub(cur.unigram));
                             overrides.insert(slot, None);
                         }
                         (Ok(_), None) => {
@@ -1144,6 +1178,13 @@ fn load_logs_with_mask(
                         current(&overrides, slot),
                     ) {
                         (Ok(old), Ok(new), Some(cur)) if old == cur => {
+                            let grows = encode_phrase_item(&cur)
+                                .is_ok_and(|stored| new_item.len() > stored.len());
+                            if grows {
+                                total = total.map(|total| {
+                                    total.wrapping_sub(cur.unigram).wrapping_add(new.unigram)
+                                });
+                            }
                             overrides.insert(slot, Some(new));
                         }
                         _ => {
@@ -1158,26 +1199,44 @@ fn load_logs_with_mask(
                 }
                 LogRecord::ModifyHeader {
                     old_total,
-                    new_total: _,
+                    new_total,
                 } => {
-                    // The header must land on the current total; a
-                    // mismatch is merge's failure return.
+                    // The header must land on the current total, as the
+                    // merge has moved it so far; a mismatch is merge's
+                    // failure return. A header that lands sets the total,
+                    // which is the old one moved by `new_total - old_total`
+                    // (`phrase_index.cpp:503-514`).
                     let fallback = SystemLibrary::default();
-                    let now = system_new_total(original.unwrap_or(&fallback), &overrides);
+                    let now = total.unwrap_or_else(|| {
+                        system_new_total(original.unwrap_or(&fallback), &overrides)
+                    });
                     if now != old_total {
                         loaded
                             .skipped
                             .push(format!("{name}: replay stopped at a mismatched header"));
                         break;
                     }
+                    total = total.map(|_| new_total);
                 }
             }
+        }
+        if let Some(total) = total {
+            loaded.library_totals.insert(nibble, total);
         }
         // An empty override set and an absent one are the same state.
         if !overrides.is_empty() {
             loaded.state.system_overrides.insert(nibble, overrides);
         }
     }
+}
+
+/// `PhraseItem::get_unigram_frequency` read from a record's raw item: the
+/// `guint32` after the two length bytes (074a2219 `phrase_index.h:124-126`),
+/// `0` when the payload is too short to hold one.
+fn raw_unigram(item: &[u8]) -> u32 {
+    item.get(2..6)
+        .and_then(|bytes| bytes.try_into().ok())
+        .map_or(0, u32::from_le_bytes)
 }
 
 /// The library's new `total_freq` — the original plus the overrides'
