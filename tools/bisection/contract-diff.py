@@ -6653,8 +6653,9 @@ for _name, _operation, _mode in (('pinyin', 'mask-out', 'pinyin'),
 # gram carries a total that wraps the merged total to 1, so every bigram from
 # the sentence start dominates the first phrase. The phrase segmenter merges
 # per step (phrase_lookup.cpp:269-293); the n-best guess merges per row and is
-# the control.
-def itemless_user_total(operation):
+# the control. `texts` replaces the guess inputs; `plant=False` leaves the user
+# bigram out and keeps the close-and-reopen around it.
+def itemless_user_total(operation, texts=(b'nihaoshijie', b'womenshizhongguoren'), plant=True):
     def probe(k):
         system_total = int.from_bytes(
             d18_bigram_db(k, Path(k.data, 'bigram.db'), read_keys=(b'\x01\x00\x00\x00',))[0][:4],
@@ -6663,8 +6664,9 @@ def itemless_user_total(operation):
         k.fn('fini', None, P)(k.ctx)
         k._ctx = None
         k._inst = None
-        d18_bigram_db(k, Path(k.user, 'user_bigram.db'),
-                      [(b'\x01\x00\x00\x00', user_total.to_bytes(4, 'little'))])
+        if plant:
+            d18_bigram_db(k, Path(k.user, 'user_bigram.db'),
+                          [(b'\x01\x00\x00\x00', user_total.to_bytes(4, 'little'))])
         _write_user_conf(k)
         out = {}
         if operation == 'phrase-segment':
@@ -6684,7 +6686,7 @@ def itemless_user_total(operation):
                     tokens.append(slot.value)
                 out[text] = [ret, tokens]
         else:
-            for text in (b'nihaoshijie', b'womenshizhongguoren'):
+            for text in texts:
                 inst = k.alloc()
                 k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
                 out[text.decode()] = [k.fn('guess_sentence', B, P)(inst),
@@ -6697,6 +6699,23 @@ def itemless_user_total(operation):
 case('itemless-user-total-phrase-segment')(itemless_user_total('phrase-segment'))
 
 case('itemless-user-total-guess', control=True)(itemless_user_total('guess'))
+
+
+# #791: with the sentence start's merged total wrapped to 1, bigram_poss is
+# count / 1, the first phrase's blend is above one, and the pin takes its log
+# uncapped (074a2219 phonetic_lookup.h:692-693; bigram_poss = freq / (gfloat)
+# total, ngram.cpp:171): a positive score. For 研究生命起源 that makes 研究 the
+# beam head, so the unigram pass (topresults[0] only, phonetic_lookup.h:546-547)
+# stores a second copy of the 生命 -> 起源 chain beside the bigram pass's
+# (eval_item has no identity check, phonetic_lookup_heap.h:56-66): the pin's
+# rows are 研究生命起源 twice, then 研究生名气元. A blend clamped at certainty
+# moved the head, so that copy was never stored. The control is the same input
+# with no planted record, where both sides already store both copies.
+case('itemless-user-total-guess-above-one')(
+    itemless_user_total('guess', texts=(b'yanjiushengmingqiyuan',)))
+
+case('itemless-user-total-guess-above-one-control', control=True)(
+    itemless_user_total('guess', texts=(b'yanjiushengmingqiyuan',), plant=False))
 
 
 # --------------------------------------------------------------------------
