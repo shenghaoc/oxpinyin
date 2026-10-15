@@ -13,6 +13,7 @@
 //! on demand by `pinyin_load_addon_phrase_library`).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{OnceLock, RwLock};
 
 use oxpinyin_core::ChewingKey;
@@ -67,6 +68,16 @@ pub struct PhraseLibraries {
     by_nibble: [RwLock<Option<Loaded>>; 16],
     /// Files `open` found absent.
     unmapped: Vec<PathBuf>,
+    /// `FacadePhraseIndex::m_total_freq` (074a2219 `phrase_index.h:440`)
+    /// over every loaded library: each library's stored `total_freq` is
+    /// added when it loads and subtracted when it unloads or is replaced,
+    /// with no overflow check (`phrase_index.cpp:237-248`, `:261-269`).
+    /// A `guint32`, so it wraps.
+    total: AtomicU32,
+    /// Bit `n` set when library `n` is loaded and holds at least one
+    /// item: whether a frequency table is there to price with, which the
+    /// wrapping [`Self::total`] cannot tell when it lands on zero.
+    stocked: AtomicU32,
 }
 
 /// The fault and diagnostic paths from one validation of each selected
@@ -86,6 +97,8 @@ impl PhraseLibraries {
         Self {
             by_nibble: Default::default(),
             unmapped: Vec::new(),
+            total: AtomicU32::new(0),
+            stocked: AtomicU32::new(0),
         }
     }
 
@@ -225,6 +238,11 @@ impl PhraseLibraries {
             return Ok(false);
         }
         let library = PhraseLibrary::open(path)?;
+        let total = self.total.get_mut();
+        *total = total.wrapping_add(library.total_freq());
+        if library.has_items() {
+            *self.stocked.get_mut() |= 1 << nibble;
+        }
         *slot = Some(Loaded {
             library,
             path: path.to_path_buf(),
@@ -246,11 +264,21 @@ impl PhraseLibraries {
         let mut slot = slot
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if slot.is_none() {
+        let Some(old) = slot.as_ref().map(|loaded| loaded.library.total_freq()) else {
             return Ok(false);
+        };
+        let library = PhraseLibrary::open(path)?;
+        // The old sub-index's total leaves and the new one's enters, as
+        // `FacadePhraseIndex::load` does over a loaded slot.
+        self.total
+            .fetch_add(library.total_freq().wrapping_sub(old), Ordering::SeqCst);
+        if library.has_items() {
+            self.stocked.fetch_or(1 << nibble, Ordering::SeqCst);
+        } else {
+            self.stocked.fetch_and(!(1 << nibble), Ordering::SeqCst);
         }
         *slot = Some(Loaded {
-            library: PhraseLibrary::open(path)?,
+            library,
             path: path.to_path_buf(),
             item_count: OnceLock::new(),
         });
@@ -260,14 +288,21 @@ impl PhraseLibraries {
     /// Drops library `nibble` — `FacadePhraseIndex::unload`. `true` when
     /// a library was loaded there.
     pub fn unload(&mut self, nibble: u8) -> bool {
-        self.by_nibble
+        let Some(loaded) = self
+            .by_nibble
             .get_mut(usize::from(nibble))
-            .is_some_and(|slot| {
+            .and_then(|slot| {
                 slot.get_mut()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .take()
-                    .is_some()
             })
+        else {
+            return false;
+        };
+        let total = self.total.get_mut();
+        *total = total.wrapping_sub(loaded.library.total_freq());
+        *self.stocked.get_mut() &= !(1 << nibble);
+        true
     }
 
     /// Whether library `nibble` is loaded.
@@ -317,18 +352,42 @@ impl PhraseLibraries {
         Some(u64::from(self.library(token)?.item(token)?.unigram()))
     }
 
-    /// `SubPhraseIndex::get_phrase_index_total_freq` summed over the
-    /// loaded libraries — the facade total upstream's amplified-law
-    /// denominator divides by.
+    /// `FacadePhraseIndex::get_phrase_index_total_freq` (074a2219
+    /// `phrase_index.h:615-617`): the loaded libraries' stored totals as
+    /// the facade keeps them, a wrapping `guint32`. Kept as the libraries
+    /// load and unload, so a read is one load.
     #[must_use]
-    pub fn unigram_total(&self) -> u64 {
-        self.unigram_total_where(|_| true)
+    pub fn unigram_total(&self) -> u32 {
+        self.total.load(Ordering::SeqCst)
     }
 
-    /// [`Self::unigram_total`] over the loaded libraries `visible`
-    /// accepts — the facade total after `unload` freed a sub-index.
-    pub fn unigram_total_where(&self, visible: impl Fn(u8) -> bool) -> u64 {
-        self.sum_loaded(visible, |loaded| u64::from(loaded.library.total_freq()))
+    /// Whether a loaded library outside the `unloaded` bits holds an
+    /// item: there is a unigram table to price with, whatever the
+    /// wrapping total adds up to.
+    #[must_use]
+    pub fn has_items_unloaded(&self, unloaded: u32) -> bool {
+        self.stocked.load(Ordering::SeqCst) & !unloaded != 0
+    }
+
+    /// [`Self::unigram_total`] with the libraries whose bit `unloaded`
+    /// sets taken out — the facade total after `unload` freed those
+    /// sub-indexes (`phrase_index.cpp:261-269`). Only the set bits are
+    /// visited, so the common all-loaded mask costs nothing more.
+    #[must_use]
+    pub fn unigram_total_unloaded(&self, unloaded: u32) -> u32 {
+        let mut total = self.unigram_total();
+        let mut bits = unloaded & 0xFFFF;
+        while bits != 0 {
+            let nibble = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let slot = self.by_nibble[nibble]
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(loaded) = slot.as_ref() {
+                total = total.wrapping_sub(loaded.library.total_freq());
+            }
+        }
+        total
     }
 
     /// The item count across the loaded libraries — the parity surface

@@ -95,6 +95,12 @@ pub const SENTENCE_START: Token = 1;
 /// keyed and walked the pin's way, and never writes this table.
 pub const BIGRAM_GRAM: &str = "user_bigram_gram";
 pub(crate) const SYSTEM_BASE: &str = "system_base";
+/// Per library, how far the total the pin's sub-index holds lies from the
+/// one the seeded rows make, a wrapping `guint32` keyed by nibble: the
+/// difference a stored header or a `.dbin` replay left, until the next
+/// `compact` rebuilds the library's total from its items. A row exists
+/// only for a non-zero difference.
+pub(crate) const LIBRARY_OFFSET: &str = "library_offset";
 pub const UNIGRAM: &str = "user_unigram";
 pub const UNIGRAM_TOTAL: &str = "user_unigram_total";
 pub const PHRASE: &str = "user_phrase";
@@ -1591,6 +1597,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             write_generation: AtomicU64::new(0),
             phrase_generation: AtomicU64::new(0),
             has_user_data: AtomicBool::new(has_user_data),
+            facade_offset: std::sync::atomic::AtomicU32::new(0),
+            has_library_offsets: AtomicBool::new(false),
             libpinyin: None,
             bigram_db: None,
         }))
@@ -1708,14 +1716,18 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.with_count_cache(|cached, db| cached.unigram_delta(db, token))
     }
 
-    /// Sum of every stored unigram delta; `0` if the store is empty.
+    /// What the user side adds to the facade's unigram total: the sum of
+    /// every stored unigram delta, plus the session's facade offset (what
+    /// the loaded libraries' stored totals hold beyond their items).
+    /// `0` for an empty store.
     ///
     /// # Errors
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
         let db = self.database();
-        get_u64_or(&*db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)
+        let total = get_u64_or(&*db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)?;
+        Ok(total.wrapping_add(u64::from(self.facade_offset())))
     }
 
     /// The pinned sub-index's wrapping u32 total of stored deltas in one library.
@@ -1745,6 +1757,38 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(total)
     }
 
+    fn facade_offset(&self) -> u32 {
+        self.inner.facade_offset.load(Ordering::SeqCst)
+    }
+
+    /// `FacadePhraseIndex::compact` (074a2219 `phrase_index.cpp:648-675`):
+    /// every library's total is rebuilt from its items, so none carries a
+    /// stored total's difference any more. The facade's total keeps it.
+    /// The pin compacts in `pinyin_save` once it has something to write,
+    /// at the end of an import and at the end of a mask_out
+    /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
+    /// `:829`).
+    pub fn compact_libraries(&self) {
+        if !self.inner.has_library_offsets.swap(false, Ordering::SeqCst) {
+            return;
+        }
+        let db = self.database();
+        let cleared = db.write(|txn| {
+            let mut keys = Vec::new();
+            txn.for_each(LIBRARY_OFFSET, &mut |key, _| {
+                keys.push(key.to_vec());
+                Ok(())
+            })?;
+            for key in keys {
+                txn.remove(LIBRARY_OFFSET, &key)?;
+            }
+            Ok(())
+        });
+        if cleared.is_err() {
+            self.inner.has_library_offsets.store(true, Ordering::SeqCst);
+        }
+    }
+
     /// One-transaction §5 overlay for scoring `token` after `prev`.
     ///
     /// # Errors
@@ -1755,13 +1799,19 @@ impl<S: WriteStore> GenericUserStore<S> {
         prev: Option<Token>,
         token: Token,
     ) -> Result<UserCountDelta, UserStoreError> {
+        let offset = u64::from(self.facade_offset());
         if !self.has_user_data() {
-            return Ok(UserCountDelta::ZERO);
+            return Ok(UserCountDelta {
+                unigram_total_delta: offset,
+                ..UserCountDelta::ZERO
+            });
         }
-        self.with_count_cache(|cached, db| {
+        let mut delta = self.with_count_cache(|cached, db| {
             let prev = prev.map(|prev| (prev, move || self.gram_in(db, prev)));
             cached.count_delta(db, prev, token)
-        })
+        })?;
+        delta.unigram_total_delta = delta.unigram_total_delta.wrapping_add(offset);
+        Ok(delta)
     }
 
     /// Record a training selection of `cur` after `last` (the `pinyin_train`
@@ -2483,6 +2533,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             let Some(dir) = target.dir.as_deref() else {
                 return Ok(false);
             };
+            self.compact_libraries();
             // Arc clone: the originals hold every system item (~138k
             // ChunkItems) and a dirty save must not copy them — both
             // halves take the Arc by reference.
@@ -2704,13 +2755,26 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(());
         };
         let reloaded = |token| originals.contains_key(&phrase_index_library_index(token));
-        let state = crate::persistence::load_masked_logs(&originals, mask, value, logs);
+        let (state, library_totals) =
+            crate::persistence::load_masked_logs(&originals, mask, value, logs);
         let mut target_originals = target
             .originals
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let db = self.database();
-        let has_user_data = db.write(|txn| {
+        let (has_user_data, moved, offsets_left) = db.write(|txn| {
+            // `FacadePhraseIndex::load` and `merge_with_mask` take the old
+            // sub-index's total out of the facade and put the new one's in
+            // (`phrase_index.cpp:237-248`, `:301-332`): each reloaded
+            // library's difference leaves with it, and the one its masked
+            // replay leaves comes in.
+            let mut moved = 0_u32;
+            for nibble in originals.keys() {
+                let key = codec::encode_u8(*nibble);
+                let old = txn_get_u64_or(txn, LIBRARY_OFFSET, &key, 0)?;
+                moved = moved.wrapping_sub(old as u32);
+                txn.remove(LIBRARY_OFFSET, &key)?;
+            }
             let mut unigrams = Vec::new();
             txn.for_each(UNIGRAM, &mut |key, _| {
                 let token = codec::decode_token(key)
@@ -2759,7 +2823,12 @@ impl<S: WriteStore> GenericUserStore<S> {
             for key in deltas {
                 txn.remove(PRONUNCIATION, &key)?;
             }
-            crate::store_libpinyin::seed_txn(txn, &state, &originals)?;
+            let reseeded =
+                crate::store_libpinyin::seed_txn(txn, &state, &originals, &library_totals)?;
+            moved = reseeded
+                .values()
+                .fold(moved, |moved, &offset| moved.wrapping_add(offset));
+            let offsets_left = !txn.is_empty(LIBRARY_OFFSET)?;
             let mut total = 0_u64;
             txn.for_each(UNIGRAM, &mut |_, value| {
                 total = total.saturating_add(
@@ -2773,8 +2842,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                 &codec::encode_u8(UNIGRAM_TOTAL_KEY),
                 &codec::encode_u64(total),
             )?;
-            has_user_data_in_write_txn(txn)
+            Ok((has_user_data_in_write_txn(txn)?, moved, offsets_left))
         })?;
+        self.inner.facade_offset.fetch_add(moved, Ordering::SeqCst);
+        self.inner
+            .has_library_offsets
+            .store(offsets_left, Ordering::SeqCst);
         {
             let mut items = self
                 .inner

@@ -313,14 +313,7 @@ fn validated_lookup_offset(inst: &crate::state::CapiInstance, offset: usize) -> 
 fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
     use oxpinyin_core::LanguageModel as _;
 
-    inst.core.lm.has_real_unigrams()
-        && inst
-            .core
-            .lm
-            .amplified_total()
-            .wrapping_add(u64::from(inst.core.dict.unigram_total_delta()))
-            & u64::from(u32::MAX)
-            == 0
+    inst.core.lm.has_real_unigrams() && inst.core.lm.amplified_total() == 0
 }
 
 /// The shared candidate-build shell over the engine's `candidates_at` /

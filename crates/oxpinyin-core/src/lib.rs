@@ -76,8 +76,9 @@ pub struct UserCountDelta {
     pub bigram_total: u64,
     /// User phrase-index unigram delta for `token`.
     pub unigram_delta: u64,
-    /// Sum of every user unigram delta (the user contribution to the
-    /// unigram total).
+    /// What the user side and `add_unigram_frequency` added to the
+    /// facade's unigram total. The facade total is a `guint32`, so the
+    /// model adds this to it wrapping.
     pub unigram_total_delta: u64,
 }
 

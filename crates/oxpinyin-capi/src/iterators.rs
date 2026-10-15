@@ -284,9 +284,11 @@ fn parse_import_pinyin(pinyin: &str) -> Option<Vec<PinyinKey>> {
 ///
 /// Upstream compacts the phrase index here and sets `m_modified = true`
 /// (`pinyin.cpp:657-658`) whether or not any add succeeded. oxpinyin has no
-/// in-memory phrase chunk to compact; the adds are already durable. The
-/// dirty-flag arm is the whole persistence-side effect, so the next
-/// `pinyin_save` compacts and clears (`docs/findings/user-store.md` §4).
+/// in-memory phrase chunk to compact; the adds are already durable. What the
+/// compact changes is each library's total, rebuilt from its items, which
+/// the store's `compact_libraries` applies. The dirty-flag arm is the rest
+/// of the persistence-side effect, so the next `pinyin_save` compacts and
+/// clears (`docs/findings/user-store.md` §4).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     if iter.is_null() {
@@ -298,6 +300,9 @@ pub extern "C" fn pinyin_end_add_phrases(iter: *mut ImportIterator) {
     // only here.
     let mut handle = unsafe { Box::from_raw(iter.cast::<ImportHandle>()) };
     if let Some(user) = handle.user.as_mut() {
+        // The compact (`pinyin.cpp:657`) rebuilds each library's total from
+        // its items.
+        user.compact_libraries();
         user.mark_modified();
     };
 }

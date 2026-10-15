@@ -63,9 +63,9 @@ use crate::persistence::{
 use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
-    ALLOC, ALLOC_CURSOR, GenericUserStore, PHRASE, PHRASE_BY_LIB_TEXT, PHRASE_BY_TEXT,
-    PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM, UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY,
-    UserStoreError,
+    ALLOC, ALLOC_CURSOR, GenericUserStore, LIBRARY_OFFSET, PHRASE, PHRASE_BY_LIB_TEXT,
+    PHRASE_BY_TEXT, PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM, UNIGRAM_TOTAL,
+    UNIGRAM_TOTAL_KEY, UserStoreError,
 };
 
 /// The persistence target a session store carries: the user dir, the
@@ -388,10 +388,14 @@ impl GenericUserStore<DefaultStore> {
             index_file_keys: std::sync::Mutex::new(index_file_keys),
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
-        let has_user_data = db.write(|txn| {
-            seed_txn(txn, &loaded.state, &target.originals())?;
-            let total_rows = count_tables(txn)?;
-            Ok(total_rows)
+        let (has_user_data, library_offsets) = db.write(|txn| {
+            let offset = seed_txn(
+                txn,
+                &loaded.state,
+                &target.originals(),
+                &loaded.library_totals,
+            )?;
+            Ok((count_tables(txn)?, offset))
         })?;
         // `m_user_bigram->load_db(user_bigram.db)` (`pinyin.cpp:399-401`):
         // the user bigram's one read, after the profile check, so a wiped
@@ -432,6 +436,12 @@ impl GenericUserStore<DefaultStore> {
             write_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_generation: std::sync::atomic::AtomicU64::new(0),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
+            facade_offset: std::sync::atomic::AtomicU32::new(
+                library_offsets
+                    .values()
+                    .fold(0_u32, |sum, &offset| sum.wrapping_add(offset)),
+            ),
+            has_library_offsets: std::sync::atomic::AtomicBool::new(!library_offsets.is_empty()),
             bigram_db: Some(std::sync::Mutex::new(bigram_db)),
             libpinyin: Some(target),
         });
@@ -454,12 +464,23 @@ fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
 /// disagrees with `user.bin` keeps the disagreement and
 /// `pinyin_remove_user_candidate` reproduces the pin's `:3750` assert
 /// against it. Nothing else reads the rows.
+///
+/// `library_totals` is the total each loaded library holds in the pin
+/// ([`persistence::Loaded`]'s `library_totals`). Answers, per library, how
+/// far that total lies from the one the seeded rows make — the library's
+/// original total plus its seeded unigrams — as a wrapping `guint32`: the
+/// facade keeps that difference until the library is loaded again, since
+/// `compact` rebuilds the libraries' totals and never the facade's
+/// (074a2219 `phrase_index.cpp:648-675`).
 pub(crate) fn seed_txn(
     txn: &mut dyn WriteTxn,
     state: &UserState,
     originals: &SystemOriginals,
-) -> Result<(), StoreError> {
+    library_totals: &BTreeMap<u8, u32>,
+) -> Result<BTreeMap<u8, u32>, StoreError> {
     let mut unigram_total = 0_u64;
+    // The unigrams seeded per library, as the facade would sum them.
+    let mut seeded: BTreeMap<u8, u32> = BTreeMap::new();
     let mut alloc_cursor: BTreeMap<u8, Token> = BTreeMap::new();
 
     // ADD records own text/index rows just like USER_FILE items. MODIFY
@@ -546,6 +567,8 @@ pub(crate) fn seed_txn(
                 &codec::encode_u64(u64::from(item.unigram)),
             )?;
             unigram_total = unigram_total.saturating_add(u64::from(item.unigram));
+            let sum = seeded.entry(nibble).or_insert(0);
+            *sum = sum.wrapping_add(item.unigram);
             let cursor = alloc_cursor.entry(nibble).or_insert(0);
             if token > *cursor {
                 *cursor = token;
@@ -607,6 +630,8 @@ pub(crate) fn seed_txn(
                 &codec::encode_u64(prev.saturating_add(delta)),
             )?;
             unigram_total = unigram_total.saturating_add(delta);
+            let sum = seeded.entry(nibble).or_insert(0);
+            *sum = sum.wrapping_add(delta as u32);
         }
     }
 
@@ -628,7 +653,23 @@ pub(crate) fn seed_txn(
         &codec::encode_u8(UNIGRAM_TOTAL_KEY),
         &codec::encode_u64(unigram_total),
     )?;
-    Ok(())
+    let offsets: BTreeMap<u8, u32> = library_totals
+        .iter()
+        .map(|(&nibble, &total)| {
+            let base = originals.get(&nibble).map_or(0, |original| original.total);
+            let modelled = base.wrapping_add(seeded.get(&nibble).copied().unwrap_or(0));
+            (nibble, total.wrapping_sub(modelled))
+        })
+        .filter(|&(_, offset)| offset != 0)
+        .collect();
+    for (&nibble, &offset) in &offsets {
+        txn.put(
+            LIBRARY_OFFSET,
+            &codec::encode_u8(nibble),
+            &codec::encode_u64(u64::from(offset)),
+        )?;
+    }
+    Ok(offsets)
 }
 
 /// Reads the session values back into the persistence shape — the
