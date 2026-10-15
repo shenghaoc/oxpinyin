@@ -35,6 +35,7 @@
 
 pub mod codec;
 pub mod phrase;
+pub mod phrase_table;
 pub mod seed;
 
 mod lookup;
