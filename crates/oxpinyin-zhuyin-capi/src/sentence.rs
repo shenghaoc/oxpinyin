@@ -29,7 +29,32 @@ pub extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
     if refuse_zero_consumption(inst) {
         return false;
     }
-    inst.core.session.guess_sentence().unwrap_or(false)
+    match inst.core.session.guess_sentence() {
+        Ok(found) => found,
+        Err(error) => {
+            refuse_lookup_gram("zhuyin_guess_sentence", &error);
+            false
+        }
+    }
+}
+
+/// The lookup refusals of register rows 85 and 98: a predecessor's user
+/// bigram that the pin's merge or read asserts on (`memory_chunk.h:390`)
+/// or reads past (`ngram.cpp:241`, `:167`, `:318-349`). Logs the one
+/// warning and answers `true` when `error` is one of them.
+pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineError) -> bool {
+    let message = match error {
+        oxpinyin_engine::EngineError::ShortLookupPredecessor { .. } => {
+            "a user bigram value is shorter than a guint32 total_freq \
+             (upstream aborts, memory_chunk.h:390)"
+        }
+        oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. } => {
+            "a user bigram value would be read past its end (upstream reads past it)"
+        }
+        _ => return false,
+    };
+    crate::ffi::log_warning(&format!("{name}: {message}"));
+    true
 }
 
 // fill_matrix leaves an empty matrix after any zero-consumption parse.
@@ -75,10 +100,13 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
         .iter()
         .map(|&token| oxpinyin_core::PhraseToken::new(token))
         .collect();
-    inst.core
-        .session
-        .guess_sentence_with_prefix(&prefix_tokens)
-        .unwrap_or(false)
+    match inst.core.session.guess_sentence_with_prefix(&prefix_tokens) {
+        Ok(found) => found,
+        Err(error) => {
+            refuse_lookup_gram("zhuyin_guess_sentence_with_prefix", &error);
+            false
+        }
+    }
 }
 
 /// Get a sentence string from the instance.
@@ -350,10 +378,14 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
             .as_ref()
             .is_some_and(|parse| oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized));
     let window_owned: oxpinyin_engine::CandidateList = if before_cursor {
-        let Ok(window) = inst.core.session.candidates_ending_at(session_offset) else {
-            inst.core.anchored_window = None;
-            inst.candidates.clear();
-            return false;
+        let window = match inst.core.session.candidates_ending_at(session_offset) {
+            Ok(window) => window,
+            Err(error) => {
+                refuse_lookup_gram("zhuyin_guess_candidates", &error);
+                inst.core.anchored_window = None;
+                inst.candidates.clear();
+                return false;
+            }
         };
         // The before-cursor window is re-anchored just like the
         // after-cursor one: `snapshot_candidates` records each row's index
@@ -366,10 +398,14 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         inst.core.anchored_window = Some((oxpinyin_facade::BEFORE_CURSOR_ANCHOR, window.clone()));
         window
     } else {
-        let Ok(window) = inst.core.session.candidates_at(session_offset) else {
-            inst.core.anchored_window = None;
-            inst.candidates.clear();
-            return false;
+        let window = match inst.core.session.candidates_at(session_offset) {
+            Ok(window) => window,
+            Err(error) => {
+                refuse_lookup_gram("zhuyin_guess_candidates", &error);
+                inst.core.anchored_window = None;
+                inst.candidates.clear();
+                return false;
+            }
         };
         inst.core.anchored_window = Some((session_offset, window.clone()));
         window

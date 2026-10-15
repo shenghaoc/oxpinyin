@@ -1179,27 +1179,60 @@ fn dynamic_adjust_folds_the_bigram_term_only_with_the_bit_and_a_gram() {
     let clear = OptionBits::default();
     let set = OptionBits::default().with(DYNAMIC_ADJUST, true);
     // 500 of a 1000-count row: the pin's bigram_freq / total.
-    let gram = MergedGram::new(1_000, vec![(42, 500), (7, 100)]);
+    let gram = MergedGram::new(1_000, vec![(7, 100), (42, 500)]);
 
     assert_eq!(
         super::dynamic_adjust_bigram_possibility(clear, Some(&gram), 42),
-        0.0,
+        Ok(0.0),
         "bit clear omits the term however populated the row is"
     );
     assert_eq!(
         super::dynamic_adjust_bigram_possibility(set, None, 42),
-        0.0,
+        Ok(0.0),
         "no previous token means no gram was merged, so no term"
     );
     assert_eq!(
         super::dynamic_adjust_bigram_possibility(set, Some(&gram), 43),
-        0.0,
+        Ok(0.0),
         "a token the row misses contributes nothing"
     );
     assert_eq!(
         super::dynamic_adjust_bigram_possibility(set, Some(&gram), 42),
-        0.5,
+        Ok(0.5),
         "bit set with a merged row is bigram_freq / total"
+    );
+    // The row is read as stored: on `[42, 7]` `lower_bound(42)` lands past
+    // the end, so the pin's `get_freq` misses 42 and the term is zero.
+    let unsorted = MergedGram::new(1_000, vec![(42, 500), (7, 100)]);
+    assert_eq!(
+        super::dynamic_adjust_bigram_possibility(set, Some(&unsorted), 42),
+        Ok(0.0),
+        "the pin's lower_bound misses 42 on this order"
+    );
+    // N2 refusals 3 and 6 (`pinyin.cpp:1848-1849`, `zhuyin.cpp:1250-1251`):
+    // with no system gram the row is the user value as stored, so the
+    // total read asserts on a short one and `get_freq` reads past a partial
+    // tail when its walk runs past the last whole item.
+    let short = MergedGram::merge(None, Some(vec![0, 0])).expect("a user gram");
+    assert_eq!(
+        super::dynamic_adjust_bigram_possibility(set, Some(&short), 42),
+        Err(oxpinyin_core::GramFault::Short)
+    );
+    let mut tailed_value = MergedGram::new(4, vec![(7, 4)]).as_bytes().to_vec();
+    tailed_value.push(1);
+    let tailed = MergedGram::merge(None, Some(tailed_value)).expect("a user gram");
+    assert_eq!(
+        super::dynamic_adjust_bigram_possibility(set, Some(&tailed), 7),
+        Ok(1.0)
+    );
+    assert_eq!(
+        super::dynamic_adjust_bigram_possibility(set, Some(&tailed), 42),
+        Err(oxpinyin_core::GramFault::OverRead)
+    );
+    assert_eq!(
+        super::dynamic_adjust_bigram_possibility(clear, Some(&short), 42),
+        Ok(0.0),
+        "bit clear reads nothing"
     );
 
     // The term must actually move the frequency, not merely exist. This
@@ -1792,7 +1825,7 @@ fn addon_candidates_rank_on_their_own_amplified_scale() {
         ),
     ];
     let frequencies = session
-        .candidate_frequencies(&collected, None)
+        .candidate_frequencies(&collected, None, true)
         .expect("frequency reads cannot fail here");
     assert_eq!(
         frequencies,

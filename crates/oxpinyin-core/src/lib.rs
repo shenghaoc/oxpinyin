@@ -805,81 +805,146 @@ pub trait UserModel {
     }
 }
 
-/// One `prev → *` bigram row with the user overlay already merged — the
-/// result of upstream's `merge_single_gram` (`pinyin.cpp:2209`).
+/// One `prev → *` bigram row with the user overlay already merged: the
+/// pin's `m_merged_single_gram`, the chunk `merge_single_gram` builds
+/// (`ngram.cpp:277-352` at `074a2219`).
 ///
-/// Loaded **once** per candidate guess and indexed per candidate, which is
-/// the pin's structure: `pinyin_guess_candidates` merges one gram outside
-/// its candidate loop and `_compute_frequency_of_items` then calls
-/// `merged_gram->get_freq(token, ...)` inside it. Merging per candidate
-/// would turn one row load into one per candidate and worsen time without
-/// buying space, which the source policy forbids.
+/// The row is the merged chunk itself, read with the ported
+/// [`single_gram`] operations: `get_total_freq`, `get_freq` and `search`
+/// walk it from `lower_bound` exactly as the pin does, so an unsorted or
+/// duplicated input row answers as it does there. Nothing is sorted,
+/// deduplicated or filtered. A side that is absent leaves the other
+/// side's own buffer in place, which is the pin's byte copy without the
+/// copy.
+///
+/// Loaded once per predecessor and read per candidate, which is the pin's
+/// structure: `pinyin_guess_candidates` merges one gram outside its
+/// candidate loop and `_compute_frequency_of_items` calls
+/// `merged_gram->get_freq(token, ...)` inside it.
+///
+/// A merge whose input the pin cannot read keeps no chunk and answers
+/// every read with its [`GramFault`]; the caller refuses the call.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MergedGram {
-    total: u64,
-    records: Vec<(u32, u64)>,
+    chunk: Vec<u8>,
+    fault: Option<GramFault>,
 }
 
+pub use single_gram::GramFault;
+
 impl MergedGram {
-    /// Builds a row from its total and `(token, count)` records.
-    ///
-    /// Records are sorted by token so [`Self::count`] is a binary search;
-    /// upstream's `SingleGram` keeps its item array sorted by token for the
-    /// same reason (`ngram.cpp:178-196`).
+    /// A row from its total and `(token, count)` items, kept in the order
+    /// given; each field is stored as the pin's `guint32`.
     #[must_use]
-    pub fn new(total: u64, mut records: Vec<(u32, u64)>) -> Self {
-        records.sort_unstable_by_key(|(token, _)| *token);
-        Self { total, records }
-    }
-
-    /// The row total — upstream's `get_total_freq`.
-    #[must_use]
-    pub const fn total(&self) -> u64 {
-        self.total
-    }
-
-    /// The count stored for `token`, or 0 — upstream's `get_freq`, whose
-    /// out-param stays 0 on a miss.
-    #[must_use]
-    pub fn count(&self, token: u32) -> u64 {
-        self.count_if_present(token).unwrap_or(0)
-    }
-
-    /// A stored successor's count, retaining presence when its count is zero.
-    #[must_use]
-    pub fn count_if_present(&self, token: u32) -> Option<u64> {
-        self.records
-            .binary_search_by_key(&token, |(stored, _)| *stored)
-            .ok()
-            .map(|index| self.records[index].1)
-    }
-
-    /// `bigram_freq / total` as the pin computes it — `gfloat` division,
-    /// and 0 when the total is 0 (`pinyin.cpp:1855-1857` guards on it).
-    #[must_use]
-    pub fn possibility(&self, token: u32) -> f32 {
-        if self.total == 0 {
-            return 0.0;
+    pub fn new(total: u64, records: Vec<(u32, u64)>) -> Self {
+        let mut chunk = Vec::with_capacity(
+            single_gram::TOTAL_LEN + records.len().saturating_mul(single_gram::ITEM_LEN),
+        );
+        chunk.extend_from_slice(&(total as u32).to_le_bytes());
+        for (token, count) in records {
+            chunk.extend_from_slice(&token.to_le_bytes());
+            chunk.extend_from_slice(&(count as u32).to_le_bytes());
         }
-        self.count(token) as f32 / self.total as f32
+        Self { chunk, fault: None }
     }
 
-    /// Whether the row carries no records.
+    /// `merge_single_gram(merged, system, user)`: `None` when both grams
+    /// are absent (the pin answers `false`), the present side's own bytes
+    /// when the other is absent, and otherwise the two-pointer merge.
+    ///
+    /// Both present, the pin reads both totals first (`ngram.cpp:303-304`)
+    /// and asserts on a value shorter than one ([`GramFault::Short`],
+    /// register row 85); it then consumes every item of both values, so a
+    /// partial tail on either is read past ([`GramFault::OverRead`], row
+    /// 98).
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.records.is_empty()
+    pub fn merge(system: Option<Vec<u8>>, user: Option<Vec<u8>>) -> Option<Self> {
+        match (system, user) {
+            (None, None) => None,
+            (Some(chunk), None) | (None, Some(chunk)) => Some(Self { chunk, fault: None }),
+            (Some(system), Some(user)) => {
+                let short = |gram: &[u8]| single_gram::get_total_freq(gram).is_none();
+                let fault = if short(&system) || short(&user) {
+                    Some(GramFault::Short)
+                } else if single_gram::has_partial_tail(&system)
+                    || single_gram::has_partial_tail(&user)
+                {
+                    Some(GramFault::OverRead)
+                } else {
+                    None
+                };
+                if fault.is_some() {
+                    return Some(Self {
+                        chunk: Vec::new(),
+                        fault,
+                    });
+                }
+                let mut chunk = Vec::with_capacity(
+                    system.len().saturating_add(user.len()) - single_gram::TOTAL_LEN,
+                );
+                single_gram::merge_single_gram(&mut chunk, Some(&system), Some(&user));
+                Some(Self { chunk, fault: None })
+            }
+        }
     }
 
-    /// Number of records in the row.
+    /// The fault the merge met, if any.
     #[must_use]
-    pub const fn len(&self) -> usize {
-        self.records.len()
+    pub const fn fault(&self) -> Option<GramFault> {
+        self.fault
     }
 
-    /// Sorted successor records, including stored zero-count successors.
+    /// `get_total_freq`; [`GramFault::Short`] where the pin asserts.
+    ///
+    /// # Errors
+    /// The merge's fault, or [`GramFault::Short`] for a value shorter than
+    /// its total.
+    pub fn total(&self) -> Result<u32, GramFault> {
+        if let Some(fault) = self.fault {
+            return Err(fault);
+        }
+        single_gram::get_total_freq(&self.chunk).ok_or(GramFault::Short)
+    }
+
+    /// `get_freq(token)`: the first match walking from `lower_bound`, or
+    /// `None` on a miss.
+    ///
+    /// # Errors
+    /// The merge's fault, or [`GramFault::OverRead`] where the pin's walk
+    /// leaves the value (see [`single_gram::checked_get_freq`]).
+    pub fn get_freq(&self, token: u32) -> Result<Option<u32>, GramFault> {
+        if let Some(fault) = self.fault {
+            return Err(fault);
+        }
+        single_gram::checked_get_freq(&self.chunk, token)
+    }
+
+    /// `search(range)` over `first..=last` into `out`: every item from
+    /// `lower_bound(first)` until the first at or past `last + 1`,
+    /// duplicates included. `last + 1` wraps as the pin's `guint32`
+    /// `m_range_end = token + 1` does (`chewing_large_table2.h:115`, `:120`
+    /// at the pin `074a2219`), so a range ending at `u32::MAX` stops at
+    /// its first item and yields nothing, as `m_token >= m_range_end`
+    /// (`ngram.cpp:168`) does over an end of zero.
+    ///
+    /// # Errors
+    /// The merge's fault, else what [`single_gram::checked_search`] meets.
+    pub fn search_into(
+        &self,
+        first: u32,
+        last: u32,
+        out: &mut Vec<(u32, u32)>,
+    ) -> Result<(), GramFault> {
+        if let Some(fault) = self.fault {
+            return Err(fault);
+        }
+        single_gram::checked_search(&self.chunk, first, last.wrapping_add(1), out)
+    }
+
+    /// The merged chunk's bytes.
     #[must_use]
-    pub fn records(&self) -> &[(u32, u64)] {
-        &self.records
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.chunk
     }
 }
 
@@ -891,9 +956,7 @@ pub struct NbestStepRow {
     loaded: Option<MergedGram>,
     // The generation tag adds one word per cached row. None means unloaded;
     // a loaded missing gram still has a nonzero generation tag.
-    user_generation: Option<core::num::NonZeroU64>,
-    raw: Option<NbestRawGram>,
-    raw_generation: Option<core::num::NonZeroU64>,
+    generation: Option<core::num::NonZeroU64>,
 }
 
 impl NbestStepRow {
@@ -923,9 +986,9 @@ impl NbestStepRow {
         let tag = core::num::NonZeroU64::new(generation.wrapping_add(1));
         // At u64::MAX, do not cache: zero remains the unloaded tag and
         // cannot be confused with a loaded miss even when the counter wraps.
-        if tag.is_none() || self.user_generation != tag {
+        if tag.is_none() || self.generation != tag {
             self.loaded = load()?;
-            self.user_generation = tag;
+            self.generation = tag;
         }
         Ok(self.loaded.as_ref())
     }
@@ -935,202 +998,16 @@ impl NbestStepRow {
     pub fn cached_merged(&self) -> Option<&MergedGram> {
         self.loaded.as_ref()
     }
-
-    /// Retains an encoded system row and its user overlay for this step only.
-    /// A loaded miss is reused; a failed load is retried and never cached.
-    ///
-    /// # Errors
-    /// Returns the loader's error unchanged.
-    pub fn get_or_try_init_raw<E>(
-        &mut self,
-        load: impl FnOnce() -> Result<Option<NbestRawGram>, E>,
-    ) -> Result<Option<&NbestRawGram>, E> {
-        self.get_or_try_init_raw_in_generation(0, load)
-    }
-
-    /// Loads the encoded row once per user-store generation. A loaded miss
-    /// has a generation tag too, while a failed load is never cached.
-    ///
-    /// # Errors
-    /// Returns the loader's error unchanged.
-    pub fn get_or_try_init_raw_in_generation<E>(
-        &mut self,
-        generation: u64,
-        load: impl FnOnce() -> Result<Option<NbestRawGram>, E>,
-    ) -> Result<Option<&NbestRawGram>, E> {
-        let tag = core::num::NonZeroU64::new(generation.wrapping_add(1));
-        if tag.is_none() || self.raw_generation != tag {
-            self.raw = load()?;
-            self.raw_generation = tag;
-        }
-        Ok(self.raw.as_ref())
-    }
-
-    /// The encoded row just loaded and validated by the caller.
-    #[must_use]
-    pub fn cached_raw(&self) -> Option<&NbestRawGram> {
-        self.raw.as_ref()
-    }
 }
 
-/// A step-owned raw predecessor row. Normal installed rows remain encoded;
-/// only out-of-order records are stably reordered in those same bytes. The
-/// user overlay is kept separately, avoiding a decoded system row and a
-/// second merged-row copy for each predecessor.
-#[derive(Debug)]
-pub struct NbestRawGram {
-    system: Option<Vec<u8>>,
-    user: Vec<(u32, u64)>,
-    total: u64,
-}
-
-impl NbestRawGram {
-    /// Builds a sorted view over one encoded `total:u32, (token:u32,count:u32)*`
-    /// system value and the positive-count user overlay. A present empty
-    /// system value is a parse error, including when the user side is present.
-    ///
-    /// # Errors
-    /// Returns the frozen schema's length error for malformed system bytes.
-    pub fn try_new(
-        mut system: Option<Vec<u8>>,
-        mut user: Vec<(u32, u64)>,
-        user_total: u64,
-    ) -> Result<Option<Self>, String> {
-        let system_total = if let Some(bytes) = system.as_mut() {
-            if bytes.len() < 4 || !(bytes.len() - 4).is_multiple_of(8) {
-                return Err(format!("bigram value length {} is not 4 + 8n", bytes.len()));
-            }
-            let total = u32::from_le_bytes(bytes[..4].try_into().unwrap_or([0; 4]));
-            let (records, _) = bytes[4..].as_chunks_mut::<8>();
-            if records
-                .windows(2)
-                .any(|pair| Self::record_token(&pair[0]) > Self::record_token(&pair[1]))
-            {
-                // The prior decoded-row path accepted arbitrary stored order
-                // and kept the first duplicate. Stable sorting of raw records
-                // retains that behavior without a decoded copy.
-                records.sort_by_key(Self::record_token);
-            }
-            total
-        } else {
-            0
-        };
-        user.retain(|(_, count)| *count > 0);
-        if system.is_none() && user.is_empty() && user_total == 0 {
-            return Ok(None);
-        }
-        user.sort_by_key(|(token, _)| *token);
-        let mut write = 0;
-        for read in 0..user.len() {
-            let (token, count) = user[read];
-            if write > 0 && user[write - 1].0 == token {
-                user[write - 1].1 = Self::wrap_count(user[write - 1].1, count);
-            } else {
-                user[write] = (token, Self::wrap_count(0, count));
-                write += 1;
-            }
-        }
-        user.truncate(write);
-        Ok(Some(Self {
-            system,
-            user,
-            total: Self::wrap_count(u64::from(system_total), user_total),
-        }))
-    }
-
-    fn wrap_count(left: u64, right: u64) -> u64 {
-        u64::from((left as u32).wrapping_add(right as u32))
-    }
-
-    fn record_token(record: &[u8; 8]) -> u32 {
-        u32::from_le_bytes(record[..4].try_into().unwrap_or([0; 4]))
-    }
-
-    fn record_count(record: &[u8; 8]) -> u32 {
-        u32::from_le_bytes(record[4..].try_into().unwrap_or([0; 4]))
-    }
-
-    fn system_records(&self) -> &[[u8; 8]] {
-        self.system
-            .as_ref()
-            .map_or(&[], |bytes| bytes[4..].as_chunks::<8>().0)
-    }
-
-    /// The wrapped merged total, even when it is zero for a present row.
-    #[must_use]
-    pub const fn total(&self) -> u64 {
-        self.total
-    }
-
-    /// A successor's wrapped count, preserving stored zero-count presence.
-    #[must_use]
-    pub fn count_if_present(&self, token: u32) -> Option<u64> {
-        let records = self.system_records();
-        let position = records.partition_point(|record| Self::record_token(record) < token);
-        let system = records
-            .get(position)
-            .filter(|record| Self::record_token(record) == token)
-            .map(|record| u64::from(Self::record_count(record)));
-        let user = self
-            .user
-            .binary_search_by_key(&token, |(stored, _)| *stored)
-            .ok()
-            .map(|index| self.user[index].1);
-        match (system, user) {
-            (None, None) => None,
-            (left, right) => Some(Self::wrap_count(left.unwrap_or(0), right.unwrap_or(0))),
-        }
-    }
-
-    fn visit_range(&self, lo: u32, hi: u32, mut visit: impl FnMut(u32)) {
-        let records = self.system_records();
-        let mut position = records.partition_point(|record| Self::record_token(record) < lo);
-        while let Some(record) = records.get(position) {
-            let token = Self::record_token(record);
-            if token > hi {
-                break;
-            }
-            visit(token);
-            position += 1;
-        }
-        let mut position = self.user.partition_point(|(token, _)| *token < lo);
-        while let Some(&(token, _)) = self.user.get(position) {
-            if token > hi {
-                break;
-            }
-            visit(token);
-            position += 1;
-        }
-    }
-}
-
-/// Successors owned by one n-best step, represented as a decoded slice or an
-/// encoded system row plus user overlay. `None` at the trait boundary means
-/// the model lacks sparse traversal; an empty variant is a loaded row miss.
+/// One n-best predecessor's successors, owned by its step. `None` at the
+/// trait boundary means the model lacks row traversal.
 pub enum NbestSuccessors<'a> {
-    /// An already merged sorted row.
-    Merged(&'a [(u32, u64)]),
-    /// An encoded system row and its separate overlay.
-    Raw(&'a NbestRawGram),
-}
-
-impl NbestSuccessors<'_> {
-    /// Visits successor tokens within an inclusive candidate token range.
-    pub fn visit_range(&self, lo: u32, hi: u32, mut visit: impl FnMut(u32)) {
-        match self {
-            Self::Merged(records) => {
-                let mut position = records.partition_point(|(token, _)| *token < lo);
-                while let Some(&(token, _)) = records.get(position) {
-                    if token > hi {
-                        break;
-                    }
-                    visit(token);
-                    position += 1;
-                }
-            }
-            Self::Raw(gram) => gram.visit_range(lo, hi, visit),
-        }
-    }
+    /// The merged row.
+    Row(&'a MergedGram),
+    /// Neither gram is present: `merge_single_gram` answered `false` and
+    /// the predecessor takes no bigram step.
+    Miss,
 }
 
 /// Deterministic language-model scoring seam.
@@ -1287,9 +1164,30 @@ pub trait LanguageModel {
         self.nbest_step_costs(prev, token)
     }
 
-    /// Sorted successors of one n-best predecessor, owned by this step.
-    /// `Some(&[])` is a loaded row miss; `None` asks callers to retain the
-    /// ordinary per-candidate scoring path for models without row traversal.
+    /// Step costs for one item the caller read from this predecessor's
+    /// merged row: `item` is the item's `(freq, total)`, the pin's
+    /// `bigram_poss = freq / total` (`phonetic_lookup.h:606-608`, `:629`;
+    /// `phrase_lookup.cpp:288-292`), and `None` asks for the unigram
+    /// branch alone. Duplicated items each come here with their own
+    /// frequency. The default preserves existing models' pair-wise
+    /// implementation and ignores `item`.
+    ///
+    /// # Errors
+    /// Returns the same backend errors as [`Self::nbest_step_costs`].
+    fn nbest_item_costs_in_row(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+        _item: Option<(u32, u32)>,
+        row: &mut NbestStepRow,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        self.nbest_step_costs_in_row(prev, token, row)
+    }
+
+    /// The merged row of one n-best predecessor, owned by this step.
+    /// [`NbestSuccessors::Miss`] is a loaded miss of both grams; `None`
+    /// asks callers to retain the ordinary per-candidate scoring path for
+    /// models without row traversal.
     ///
     /// # Errors
     /// Propagates row-load and parse errors without caching a failed load.
@@ -1385,6 +1283,16 @@ impl<L: LanguageModel + ?Sized> LanguageModel for &L {
         row: &mut NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
         (**self).nbest_step_costs_in_row(prev, token, row)
+    }
+
+    fn nbest_item_costs_in_row(
+        &self,
+        prev: &Self::Token,
+        token: &Self::Token,
+        item: Option<(u32, u32)>,
+        row: &mut NbestStepRow,
+    ) -> Result<NbestStepCosts, Self::Error> {
+        (**self).nbest_item_costs_in_row(prev, token, item, row)
     }
 
     fn nbest_successors_in_row<'a>(

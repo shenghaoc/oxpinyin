@@ -317,9 +317,15 @@ fn user_file_tokens_are_priced_from_their_user_delta_alone() {
     }
 }
 
+/// The merged row prices each item as the per-pair overlay does wherever
+/// that overlay can express the row: one load and merge per predecessor,
+/// `get_freq` per successor. A stored zero-count user item is the one
+/// thing the pair overlay cannot express (its presence gate is a positive
+/// count); the merged row keeps it, as the pin's merge does, and it takes
+/// the blended branch.
 #[test]
-fn reusable_rows_match_pair_costs_at_wrap_presence_and_lambda_edges() {
-    use oxpinyin_core::NbestStepRow;
+fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges() {
+    use oxpinyin_core::{MergedGram, NbestStepRow};
     let fix = Fixture::new();
     let (mut lm, _) = fix.open();
     let user_rows = [
@@ -333,10 +339,11 @@ fn reusable_rows_match_pair_costs_at_wrap_presence_and_lambda_edges() {
         lm.set_lambda_from_conf(&conf);
         for prev in [NI, HAO] {
             for total in [0, u64::from(u32::MAX - 6), u64::from(u32::MAX), 17] {
+                let user_gram = MergedGram::new(total, user_rows.to_vec())
+                    .as_bytes()
+                    .to_vec();
                 let mut row = NbestStepRow::default();
-                let mut raw_row = NbestStepRow::default();
                 let mut loads = 0;
-                let mut raw_loads = 0;
                 for (token, bigram_count) in user_rows.into_iter().chain([(GBK, 0)]) {
                     let user = UserCountDelta {
                         bigram_count,
@@ -351,35 +358,29 @@ fn reusable_rows_match_pair_costs_at_wrap_presence_and_lambda_edges() {
                             user,
                         )
                         .unwrap();
+                    let gram = row
+                        .get_or_try_init(|| {
+                            loads += 1;
+                            lm.load_merged_row(prev, Some(user_gram.clone()))
+                        })
+                        .unwrap()
+                        .expect("the user gram is present");
+                    let item = gram
+                        .get_freq(token)
+                        .unwrap()
+                        .map(|freq| (freq, gram.total().unwrap()));
                     let actual = lm
-                        .nbest_step_costs_from_row(
-                            &PhraseToken::new(token),
-                            user,
-                            false,
-                            &mut row,
-                            || {
-                                loads += 1;
-                                lm.load_nbest_row(prev, &user_rows, total)
-                            },
-                        )
+                        .nbest_item_costs(&PhraseToken::new(token), user, false, item)
                         .unwrap();
-                    assert_eq!(actual, expected, "prev={prev} token={token} total={total}");
-                    let raw = lm
-                        .nbest_step_costs_from_raw_row(
-                            &PhraseToken::new(token),
-                            user,
-                            false,
-                            &mut raw_row,
-                            || {
-                                raw_loads += 1;
-                                lm.load_nbest_raw_row(prev, user_rows.to_vec(), total)
-                            },
-                        )
-                        .unwrap();
-                    assert_eq!(raw, expected, "raw prev={prev} token={token} total={total}");
+                    if token == NIHAO {
+                        assert_eq!(item.map(|(freq, _)| freq), Some(0), "the stored zero stays");
+                        assert_eq!(actual.unigram, expected.unigram);
+                        assert!(actual.blended.is_some(), "prev={prev} total={total}");
+                    } else {
+                        assert_eq!(actual, expected, "prev={prev} token={token} total={total}");
+                    }
                 }
                 assert_eq!(loads, 1, "one load/merge for all successors");
-                assert_eq!(raw_loads, 1, "one encoded row load for all successors");
             }
         }
     }
@@ -399,13 +400,13 @@ fn reusable_row_keeps_visibility_live_and_propagates_empty_value() {
     let prev = PhraseToken::new(NI);
     mask.store(1 << 2, Ordering::SeqCst);
     assert_eq!(
-        lm.nbest_step_costs_in_row(&prev, &PhraseToken::new(GBK), &mut row)
+        lm.nbest_item_costs_in_row(&prev, &PhraseToken::new(GBK), Some((1, 1)), &mut row)
             .unwrap(),
         oxpinyin_core::NbestStepCosts::default()
     );
-    let error = lm
-        .nbest_step_costs_in_row(&prev, &PhraseToken::new(HAO), &mut row)
-        .unwrap_err();
+    let Err(error) = lm.nbest_successors_in_row(&prev, &mut row) else {
+        panic!("a present empty value is corruption");
+    };
     assert!(
         matches!(error, oxpinyin_data::lm::LmError::Parse(ref text) if text.contains("empty value"))
     );
@@ -417,8 +418,14 @@ fn reusable_row_keeps_visibility_live_and_propagates_empty_value() {
     );
 }
 
+/// A stored system row enters the merge as stored, and both the merged
+/// row and the pair path read it with the pin's `get_freq`: `lower_bound`
+/// over the unsorted items, then the first match walking on. On
+/// `[(NIHAO, 0), (HAO, 7), (NI, 4), (HAO, 99)]` `lower_bound(HAO)` lands
+/// on index 3, so `HAO` answers 99, not the first record's 7.
 #[test]
-fn reusable_row_retains_first_system_record_in_stored_order() {
+fn row_and_pair_read_a_stored_unsorted_row_through_the_pins_lower_bound() {
+    use oxpinyin_core::NbestSuccessors;
     let fix = Fixture::new();
     let store = DefaultStore::create_hash(&fix.dir.join(SystemDbm::Bigram.file_name())).unwrap();
     let value = oxpinyin_data::row_format::bigram::encode_value(&oxpinyin_data::BigramRow {
@@ -431,11 +438,22 @@ fn reusable_row_retains_first_system_record_in_stored_order() {
     drop(store);
     let (lm, _) = fix.open();
     let mut row = oxpinyin_core::NbestStepRow::default();
-    for token in [HAO, NIHAO, NI, GBK] {
-        let prev = PhraseToken::new(NI);
+    let prev = PhraseToken::new(NI);
+    for (token, freq) in [(HAO, Some(99)), (NIHAO, None), (NI, None), (GBK, None)] {
+        let item = match lm.nbest_successors_in_row(&prev, &mut row).unwrap() {
+            Some(NbestSuccessors::Row(gram)) => {
+                assert_eq!(gram.as_bytes(), value.as_slice(), "stored, not sorted");
+                assert_eq!(gram.get_freq(token).unwrap(), freq, "token {token:#x}");
+                gram.get_freq(token)
+                    .unwrap()
+                    .map(|freq| (freq, gram.total().unwrap()))
+            }
+            _ => panic!("the system row is present"),
+        };
         let token = PhraseToken::new(token);
         assert_eq!(
-            lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap(),
+            lm.nbest_item_costs_in_row(&prev, &token, item, &mut row)
+                .unwrap(),
             lm.nbest_step_costs(&prev, &token).unwrap()
         );
     }

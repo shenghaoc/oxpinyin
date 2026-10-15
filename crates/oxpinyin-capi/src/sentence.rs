@@ -44,7 +44,32 @@ pub extern "C" fn pinyin_guess_sentence(instance: *mut PinyinInstance) -> bool {
     if refuse_toned_initial(inst, "pinyin_guess_sentence") {
         return false;
     }
-    inst.core.session.guess_sentence().unwrap_or(false)
+    match inst.core.session.guess_sentence() {
+        Ok(found) => found,
+        Err(error) => {
+            refuse_lookup_gram("pinyin_guess_sentence", &error);
+            false
+        }
+    }
+}
+
+/// The lookup refusals of register rows 85 and 98: a predecessor's user
+/// bigram that the pin's merge or read asserts on (`memory_chunk.h:390`)
+/// or reads past (`ngram.cpp:241`, `:167`, `:318-349`). Logs the one
+/// warning and answers `true` when `error` is one of them.
+pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineError) -> bool {
+    let message = match error {
+        oxpinyin_engine::EngineError::ShortLookupPredecessor { .. } => {
+            "a user bigram value is shorter than a guint32 total_freq \
+             (upstream aborts, memory_chunk.h:390)"
+        }
+        oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. } => {
+            "a user bigram value would be read past its end (upstream reads past it)"
+        }
+        _ => return false,
+    };
+    crate::ffi::log_warning(&format!("{name}: {message}"));
+    true
 }
 
 /// Whether the facade's `guint32` unigram total is zero: the loaded
@@ -166,10 +191,13 @@ pub extern "C" fn pinyin_guess_sentence_with_prefix(
         .iter()
         .map(|&token| oxpinyin_core::PhraseToken::new(token))
         .collect();
-    inst.core
-        .session
-        .guess_sentence_with_prefix(&prefix_tokens)
-        .unwrap_or(false)
+    match inst.core.session.guess_sentence_with_prefix(&prefix_tokens) {
+        Ok(found) => found,
+        Err(error) => {
+            refuse_lookup_gram("pinyin_guess_sentence_with_prefix", &error);
+            false
+        }
+    }
 }
 
 /// Guess predicted candidates with punctuations after a prefix.
@@ -481,6 +509,18 @@ pub extern "C" fn pinyin_guess_candidates(
             // that extends this path and the pin's `search_suggestion` switch
             // falls to `default: abort()`.
             crate::ffi::log_warning(OVERLONG_INDEX_WARNING);
+            inst.candidates.clear();
+            return false;
+        }
+        // Class (c) or (b), register rows 85 and 98: the DYNAMIC_ADJUST
+        // merge or read of the previous token's grams asserts on a short
+        // user value or reads past a partial one (`pinyin.cpp:2214`,
+        // `:1848-1849`).
+        Err(
+            error @ (oxpinyin_engine::EngineError::ShortLookupPredecessor { .. }
+            | oxpinyin_engine::EngineError::UnsafeLookupPredecessor { .. }),
+        ) => {
+            refuse_lookup_gram("pinyin_guess_candidates", &error);
             inst.candidates.clear();
             return false;
         }

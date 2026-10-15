@@ -34,7 +34,10 @@ use oxpinyin_core::scoring::ScoringError;
 
 use crate::error::EngineError;
 use crate::nbest::SENTENCE_START;
-use oxpinyin_core::{Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use oxpinyin_core::{
+    Dictionary, LanguageModel, NbestStepCosts, NbestStepRow, NbestSuccessors, PhraseEntry,
+    PhraseToken, SyllableKey,
+};
 
 /// The span cap: upstream `MAX_PHRASE_LENGTH` (16, `oxpinyin-user`'s
 /// ported value).
@@ -97,6 +100,45 @@ impl Step {
 
 /// Segments `sentence` into its best dictionary phrase path.
 ///
+/// One candidate's two step costs after `prev`: the bigram branch from
+/// `prev`'s merged row read as the pin reads it — `get_freq`, then
+/// `get_total_freq` on a hit (`phrase_lookup.cpp:288-292`) — and the
+/// unigram branch. A model without row traversal keeps its pair costs.
+///
+/// # Errors
+///
+/// The model's failures, and a lookup refusal where the pin's merge or
+/// read of the row asserts or leaves the value.
+fn step_costs<L>(
+    model: &L,
+    prev: PhraseToken,
+    token: PhraseToken,
+    row: &mut NbestStepRow,
+) -> Result<NbestStepCosts, EngineError>
+where
+    L: LanguageModel<Token = PhraseToken>,
+    L::Error: core::fmt::Display,
+{
+    let lm = |error: L::Error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string()));
+    let item = match model.nbest_successors_in_row(&prev, row).map_err(lm)? {
+        None => return model.nbest_step_costs(&prev, &token).map_err(lm),
+        Some(NbestSuccessors::Miss) => None,
+        Some(NbestSuccessors::Row(gram)) => {
+            let refuse = |fault| EngineError::lookup_gram(prev.value(), fault);
+            if let Some(fault) = gram.fault() {
+                return Err(refuse(fault));
+            }
+            match gram.get_freq(token.value()).map_err(refuse)? {
+                Some(freq) => Some((freq, gram.total().map_err(refuse)?)),
+                None => None,
+            }
+        }
+    };
+    model
+        .nbest_item_costs_in_row(&prev, &token, item, row)
+        .map_err(lm)
+}
+
 /// Returns `(matched, result)` where `result` is the character-length
 /// array with each phrase's token at its span's start position and
 /// `null_token` between phrases — `m_phrase_result`'s exact shape,
@@ -143,13 +185,16 @@ where
             .map(|node| (node.token, node.clone()))
             .collect::<Vec<_>>()
         {
+            // The predecessor's merged row, loaded at its first phrase:
+            // `search_bigram2` loads and merges it on every `SEARCH_OK`
+            // (`phrase_lookup.cpp:268-276`), and nothing writes the grams
+            // within the call, so one load serves the step.
+            let mut row = NbestStepRow::default();
             let upper = n.min(i + MAX_PHRASE_LENGTH);
             for end in (i + 1)..=upper {
                 let text: String = chars[i..end].iter().collect();
                 for token in dictionary.tokens_for_text(&text) {
-                    let costs = model.nbest_step_costs(&prev, &token).map_err(|error| {
-                        EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
-                    })?;
+                    let costs = step_costs(model, prev, token, &mut row)?;
                     // Bigram branch: every node of the from-step.
                     if let Some(blended) = costs.blended {
                         steps[end].relax(Node {
@@ -358,5 +403,89 @@ mod tests {
         assert_eq!(result[1].value(), 0);
         assert_eq!(result[2].value(), 4);
         assert_eq!(result[3].value(), 0);
+    }
+
+    /// A model whose every predecessor's merged row is `row`, pricing the
+    /// bigram branch only for an item read from it.
+    struct Rows {
+        row: oxpinyin_core::MergedGram,
+    }
+
+    impl LanguageModel for Rows {
+        type Token = PhraseToken;
+        type Error = core::convert::Infallible;
+
+        fn score(&self, _: &[Self::Token], _: &Self::Token, _: i64) -> Result<i64, Self::Error> {
+            Ok(0)
+        }
+
+        fn nbest_successors_in_row<'a>(
+            &self,
+            _: &Self::Token,
+            row: &'a mut oxpinyin_core::NbestStepRow,
+        ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, Self::Error> {
+            Ok(Some(
+                row.get_or_try_init::<Self::Error>(|| Ok(Some(self.row.clone())))?
+                    .map_or(
+                        oxpinyin_core::NbestSuccessors::Miss,
+                        oxpinyin_core::NbestSuccessors::Row,
+                    ),
+            ))
+        }
+
+        fn nbest_item_costs_in_row(
+            &self,
+            _: &Self::Token,
+            _: &Self::Token,
+            item: Option<(u32, u32)>,
+            _: &mut oxpinyin_core::NbestStepRow,
+        ) -> Result<NbestStepCosts, Self::Error> {
+            Ok(NbestStepCosts {
+                blended: item.map(|(freq, _)| i64::from(freq)),
+                unigram: None,
+            })
+        }
+    }
+
+    /// N2 refusals 1 and 4 on `phrase_segment`'s merge and `get_freq`
+    /// (`phrase_lookup.cpp:272-290`): the sentence-start predecessor's row
+    /// refuses where the pin asserts or reads past it, and a whole row
+    /// segments.
+    #[test]
+    fn a_predecessor_row_the_pin_cannot_read_refuses_the_segment() {
+        use crate::error::EngineError;
+        use crate::nbest::SENTENCE_START;
+        use oxpinyin_core::MergedGram;
+        let dictionary = Dict::parse(&[("你", 3)]);
+        let system = || {
+            let mut value = 1_u32.to_le_bytes().to_vec();
+            value.extend_from_slice(&3_u32.to_le_bytes());
+            value.extend_from_slice(&1_u32.to_le_bytes());
+            value
+        };
+        let short_merge = Rows {
+            row: MergedGram::merge(Some(system()), Some(vec![0, 0])).unwrap(),
+        };
+        assert_eq!(
+            phrase_segment(&dictionary, &short_merge, "你").unwrap_err(),
+            EngineError::ShortLookupPredecessor {
+                token: SENTENCE_START
+            }
+        );
+        let short_alone = Rows {
+            row: MergedGram::merge(None, Some(vec![0, 0])).unwrap(),
+        };
+        assert_eq!(
+            phrase_segment(&dictionary, &short_alone, "你").unwrap_err(),
+            EngineError::UnsafeLookupPredecessor {
+                token: SENTENCE_START
+            }
+        );
+        let whole = Rows {
+            row: MergedGram::merge(Some(system()), None).unwrap(),
+        };
+        let (matched, result) = phrase_segment(&dictionary, &whole, "你").unwrap();
+        assert!(matched);
+        assert_eq!(result[0].value(), 3);
     }
 }

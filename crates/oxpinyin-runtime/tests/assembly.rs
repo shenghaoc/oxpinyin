@@ -467,7 +467,7 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
 
 #[test]
 fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
-    use oxpinyin_core::NbestStepRow;
+    use oxpinyin_core::{NbestStepRow, NbestSuccessors};
     let dir = std::env::temp_dir().join(format!("oxpinyin-nbest-snapshot-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -483,14 +483,34 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
     let prev = PhraseToken::new(SENTENCE_START);
     let lm = runtime.lm();
     let mut row = NbestStepRow::default();
-    let before = lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap();
+    // The step's merged row: whether it carries `successor`, and the item
+    // costs of `token` read from it.
+    let carries = |row: &mut NbestStepRow, successor: u32| match lm
+        .nbest_successors_in_row(&prev, row)
+        .unwrap()
+        .unwrap()
+    {
+        NbestSuccessors::Row(gram) => {
+            let mut items = Vec::new();
+            gram.search_into(successor, successor, &mut items).unwrap();
+            !items.is_empty()
+        }
+        NbestSuccessors::Miss => false,
+    };
+    let costs = |row: &mut NbestStepRow| {
+        let item = match lm.nbest_successors_in_row(&prev, row).unwrap().unwrap() {
+            NbestSuccessors::Row(gram) => gram
+                .get_freq(token.value())
+                .unwrap()
+                .map(|freq| (freq, gram.total().unwrap())),
+            NbestSuccessors::Miss => None,
+        };
+        lm.nbest_item_costs_in_row(&prev, &token, item, row)
+            .unwrap()
+    };
+    let before = costs(&mut row);
     assert_eq!(before, lm.nbest_step_costs(&prev, &token).unwrap());
-    let mut saw_other = false;
-    lm.nbest_successors_in_row(&prev, &mut row)
-        .unwrap()
-        .unwrap()
-        .visit_range(other, other, |_| saw_other = true);
-    assert!(saw_other);
+    assert!(carries(&mut row, other));
     // This is a deterministic concurrent interleaving: a different thread
     // commits after the first candidate populated this step's row, before
     // the next candidate reads its unigram deltas. The row must not retain
@@ -506,32 +526,16 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
     .unwrap();
     let trained = lm.nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(trained, before);
-    let mut saw_trained = false;
-    lm.nbest_successors_in_row(&prev, &mut row)
-        .unwrap()
-        .unwrap()
-        .visit_range(token.value(), token.value(), |_| saw_trained = true);
-    assert!(saw_trained);
-    assert_eq!(
-        lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap(),
-        trained
-    );
+    assert!(carries(&mut row, token.value()));
+    assert_eq!(costs(&mut row), trained);
     let mut writer = store.clone();
     std::thread::spawn(move || writer.mask_out(u32::MAX, other).unwrap())
         .join()
         .unwrap();
     let forgotten = lm.nbest_step_costs(&prev, &token).unwrap();
     assert_ne!(forgotten, trained);
-    let mut saw_forgotten = false;
-    lm.nbest_successors_in_row(&prev, &mut row)
-        .unwrap()
-        .unwrap()
-        .visit_range(other, other, |_| saw_forgotten = true);
-    assert!(!saw_forgotten);
-    assert_eq!(
-        lm.nbest_step_costs_in_row(&prev, &token, &mut row).unwrap(),
-        forgotten
-    );
+    assert!(!carries(&mut row, other));
+    assert_eq!(costs(&mut row), forgotten);
     drop(lm);
     drop(store);
     drop(runtime);

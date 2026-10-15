@@ -35,7 +35,7 @@ C-ABI paths cannot silently diverge. It is wiring over `oxpinyin-data`/`-user`/`
 what algorithm it does hold is deliberate and pinned — the user-count
 overlay feed (the arithmetic itself lives in `oxpinyin-data`'s
 `*_with_user_delta` methods, and the whole-row Gate 2 merge in its
-`merge_bigram_row`), the key-cost cache's seqlock, and the
+`load_merged_row` over `oxpinyin-core`'s `MergedGram`), the key-cost cache's seqlock, and the
 suggestion-merge row order (`merge_suggestion_rows`, the ordering the
 C-ABI facades consume through `oxpinyin-facade::merged_suggestions`) —
 all cited against the pin in its source.
