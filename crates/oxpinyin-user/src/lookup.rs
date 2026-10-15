@@ -37,7 +37,7 @@ pub struct UserLookup {
     by_initial: BTreeMap<String, Vec<(String, PhraseEntry)>>,
     pinyin_keys: Box<[String]>,
     initial_keys: Box<[String]>,
-    text_tokens: BTreeMap<String, Vec<u32>>,
+    text_tokens: BTreeMap<Vec<u8>, Vec<u32>>,
     token_text: BTreeMap<u32, String>,
 }
 
@@ -57,7 +57,7 @@ impl UserLookup {
         let generation = store.phrase_generation();
         let mut exact: BTreeMap<String, Vec<PhraseEntry>> = BTreeMap::new();
         let mut by_initial: BTreeMap<String, Vec<(String, PhraseEntry)>> = BTreeMap::new();
-        let mut text_tokens: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+        let mut text_tokens: BTreeMap<Vec<u8>, Vec<u32>> = BTreeMap::new();
         let mut token_text: BTreeMap<u32, String> = BTreeMap::new();
         let mut pinyin_keys: Vec<String> = Vec::new();
         let mut initial_keys: Vec<String> = Vec::new();
@@ -65,10 +65,6 @@ impl UserLookup {
         for phrase in store.phrases()? {
             let token = phrase.token();
             token_text.insert(token, phrase.text().to_owned());
-            text_tokens
-                .entry(phrase.text().to_owned())
-                .or_default()
-                .push(token);
             for pronunciation in phrase.pronunciations() {
                 // Only readings the user pinyin index carries are found
                 // (`_add_phrase` never indexes a reading merged into an
@@ -120,9 +116,16 @@ impl UserLookup {
                 left.0 == right.0 && left.1.token().value() == right.1.token().value()
             });
         }
-        for tokens in text_tokens.values_mut() {
-            tokens.sort_unstable();
+        for (key, value) in store.phrase_table_records()? {
+            // A malformed record must not disable unrelated phrase/reading
+            // lookups. Retain its prefix key but expose no unsafe token tail.
+            let entry =
+                crate::phrase_table::PhraseTableEntry::from_bytes(value).unwrap_or_default();
+            let mut tokens = Vec::new();
+            entry.search(&mut tokens, |_| true);
+            text_tokens.insert(key, tokens);
         }
+
         pinyin_keys.sort_unstable();
         pinyin_keys.dedup();
         initial_keys.sort_unstable();
@@ -229,7 +232,9 @@ impl UserLookup {
     /// Tokens whose phrase text is exactly `text`.
     #[must_use]
     pub fn tokens_for_text(&self, text: &str) -> &[u32] {
-        self.text_tokens.get(text).map_or(&[], Vec::as_slice)
+        self.text_tokens
+            .get(&crate::phrase_table::key(text))
+            .map_or(&[], Vec::as_slice)
     }
 
     /// `ChewingLargeTable2::search_suggestion` over the user seam — the
@@ -300,27 +305,31 @@ impl UserLookup {
         tokens
     }
 
-    /// Tokens whose phrase text starts with `prefix` and is longer.
+    /// Tokens and raw UCS-4 keys extending the stored `prefix` key.
     ///
     /// Import creates an empty phrase-index key for every proper prefix
     /// (`074a2219 phrase_large_table3_bdb.cpp:297-315`, with KC/tkrzw twins).
     /// A prefix need not have a phrase token of its own. Rows are merged into
     /// the DBM walk order by the runtime before the stable prediction sort.
     #[must_use]
-    pub fn suggest_after(&self, prefix: &str) -> Vec<(u32, String)> {
-        if prefix.is_empty() {
+    pub fn suggest_after(&self, prefix: &str) -> Vec<(u32, Vec<u8>)> {
+        let prefix = crate::phrase_table::key(prefix);
+        if !self.text_tokens.contains_key(&prefix) {
             return Vec::new();
         }
         let mut out = Vec::new();
-        for (text, tokens) in self.text_tokens.range(prefix.to_owned()..) {
-            if !text.starts_with(prefix) {
+        for (key, tokens) in self.text_tokens.range(prefix.clone()..) {
+            if !key.starts_with(&prefix) {
                 break;
             }
-            if text == prefix {
+            if key == &prefix {
                 continue;
             }
+            // The pin compares raw UCS-4 bytes without Unicode validation
+            // (074a2219 phrase_large_table3_bdb.cpp:249-252). Resolve display
+            // text through the token's live item after ordering these rows.
             for token in tokens {
-                out.push((*token, text.clone()));
+                out.push((*token, key.clone()));
             }
         }
         out

@@ -48,7 +48,7 @@ pub use oxpinyin_data::table_info::{TableConf, TableConfError};
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
-    SystemDictionary, default_store_file, ucs4_walk_key,
+    SystemDictionary, default_store_file,
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{PinyinKey, UserConfLaw, UserLookup, UserStore, UserStoreError};
@@ -75,32 +75,39 @@ pub fn user_store_file() -> String {
 /// UCS-4 keys), and `reduce_tokens` concatenates the arrays library by
 /// library. So: grouped by library nibble ascending — the system
 /// libraries 1–4, then the user library 7 — and inside a group the UCS-4
-/// walk order, token ascending within one text. The system rows arrive
+/// walk order, stored token order within one text. The system rows arrive
 /// in that order already (`SystemDictionary::suggest_after`); the user
-/// rows are re-keyed here because the user store walks its own map in
-/// UTF-8 order, which differs from the little-endian UCS-4 bytes upstream
-/// sorts by.
+/// rows are ordered by little-endian UCS-4 keys, preserving the stored
+/// token order within each record.
 ///
 /// Lives beside the other pinned data+user compositions this crate holds
 /// (the [`RuntimeLm`] overlay feed), so the C-ABI facades share one
 /// suggestion ordering instead of each assembling an equivalent against
-/// [`ucs4_walk_key`].
+/// raw UCS-4 keys.
 #[must_use]
 pub fn merge_suggestion_rows(
     system: &[(u32, String)],
-    user_rows: &[(u32, String)],
-) -> Vec<(u32, String)> {
-    let mut user: Vec<(u32, String)> = user_rows.to_vec();
-    user.sort_by(|a, b| {
-        ucs4_walk_key(&a.1)
-            .cmp(&ucs4_walk_key(&b.1))
-            .then(a.0.cmp(&b.0))
-    });
+    user_rows: &[(u32, Vec<u8>)],
+) -> Vec<(u32, Option<String>)> {
+    let mut user = user_rows.to_vec();
+    user.sort_by(|a, b| a.1.cmp(&b.1));
     let mut merged = Vec::with_capacity(system.len() + user.len());
-    merged.extend(system.iter().cloned());
+    merged.extend(
+        system
+            .iter()
+            .map(|(token, text)| (*token, oxpinyin_data::ucs4_walk_key(text))),
+    );
     merged.extend(user);
     merged.sort_by_key(|(token, _)| token >> 24);
     merged
+        .into_iter()
+        .map(|(token, key)| {
+            (
+                token,
+                oxpinyin_data::row_format::phrase_index::decode_ucs4_key(&key),
+            )
+        })
+        .collect()
 }
 
 // ── Open errors ─────────────────────────────────────────────────────────
@@ -750,6 +757,21 @@ impl RuntimeDict {
         self.library_visible(token >> 24)
     }
 
+    /// Whether phrase-table search has an enabled token array for this library.
+    /// Unlike visibility alone, this excludes libraries never loaded into the
+    /// facade (074a2219 phrase_index.h:762-772; phrase_large_table3.cpp:40-42).
+    #[must_use]
+    pub fn phrase_table_token_enabled(&self, token: u32) -> bool {
+        let nibble = token >> 24;
+        self.library_visible_token(token)
+            && (self.system.library_loaded(token)
+                || ((5..=7).contains(&nibble)
+                    && self
+                        .user
+                        .as_ref()
+                        .is_some_and(|store| store.has_user_library(token.to_be_bytes()[0]))))
+    }
+
     /// `FacadePhraseIndex::get_phrase_item`'s dispatch by library
     /// nibble, for the token-introspection surface. `None` when the
     /// library is missing/unloaded (`ERROR_NO_SUB_PHRASE_INDEX`) or the
@@ -1030,22 +1052,17 @@ impl Dictionary for RuntimeDict {
             .unwrap_or_default()
             .into_iter()
             .map(PhraseToken::new)
-            .filter(|token| self.library_visible_token(token.value()))
             .collect();
-        let mut user_tokens = Vec::new();
         if let Ok(lookup) = self.user_lookup() {
-            user_tokens.extend_from_slice(lookup.tokens_for_text(text));
+            tokens.extend(
+                lookup
+                    .tokens_for_text(text)
+                    .iter()
+                    .copied()
+                    .map(PhraseToken::new),
+            );
         }
-        if let Some(store) = self.user.as_ref() {
-            user_tokens.extend(store.phrase_table_tokens_for_text(text).unwrap_or_default());
-        }
-        // Live rows and retained membership can name the same user-table
-        // pair. Deduplicate that representation, preserving multiplicity
-        // between the independent system and user tables.
-        user_tokens.sort_unstable();
-        user_tokens.dedup();
-        tokens.extend(user_tokens.into_iter().map(PhraseToken::new));
-        tokens.retain(|token| self.library_visible_token(token.value()));
+        tokens.retain(|token| self.phrase_table_token_enabled(token.value()));
         // reduce_tokens groups the system and user table results by library.
         tokens.sort_by_key(|token| token.value() >> 24);
         tokens
@@ -2197,11 +2214,11 @@ mod tests {
             (0x0100_0010, "中华".to_owned()),
         ];
         let user_rows = vec![
-            (0x0700_0001, "中乐".to_owned()), // U+4E50
-            (0x0700_0002, "中伭".to_owned()), // U+4F2D
+            (0x0700_0001, oxpinyin_data::ucs4_walk_key("中乐")), // U+4E50
+            (0x0700_0002, oxpinyin_data::ucs4_walk_key("中伭")), // U+4F2D
         ];
         let merged = merge_suggestion_rows(&system, &user_rows);
-        let texts: Vec<&str> = merged.iter().map(|(_, text)| text.as_str()).collect();
-        assert_eq!(texts, ["中华", "中年", "中伭", "中乐"]);
+        let tokens: Vec<u32> = merged.iter().map(|(token, _)| *token).collect();
+        assert_eq!(tokens, [0x0100_0010, 0x0200_0001, 0x0700_0002, 0x0700_0001]);
     }
 }

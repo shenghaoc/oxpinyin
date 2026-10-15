@@ -13,7 +13,7 @@ use oxpinyin_user::{UserLookup, UserStore};
 /// not contribute prefix tokens (upstream's `_get_phrase_item_from_token`
 /// refuses them at the item lookup; filtering here is the closest we get
 /// to that gate on the prefix path). User tokens come from the user
-/// store's own phrase inventory.
+/// store's raw phrase table.
 #[must_use]
 pub fn compute_prefixes(dict: &RuntimeDict, user: Option<&UserStore>, prefix: &str) -> Vec<u32> {
     let chars: Vec<char> = prefix.chars().collect();
@@ -25,16 +25,14 @@ pub fn compute_prefixes(dict: &RuntimeDict, user: Option<&UserStore>, prefix: &s
     let mut tokens = Vec::new();
     for length in 1..=max {
         let suffix: String = chars[chars.len() - length..].iter().collect();
-        tokens.extend(
-            dict.system()
-                .tokens_for_text(&suffix)
-                .unwrap_or_default()
-                .into_iter()
-                .filter(|token| dict.library_visible_token(*token)),
-        );
+        let mut matches = dict.system().tokens_for_text(&suffix).unwrap_or_default();
         if let Some(lookup) = user_lookup.as_ref() {
-            tokens.extend(lookup.tokens_for_text(&suffix).iter().copied());
+            matches.extend(lookup.tokens_for_text(&suffix).iter().copied());
         }
+        matches.retain(|token| dict.phrase_table_token_enabled(*token));
+        // 074a2219 pinyin.cpp:1414-1420 reduces each suffix separately.
+        matches.sort_by_key(|token| token >> 24);
+        tokens.extend(matches);
     }
     tokens
 }
@@ -44,7 +42,7 @@ pub fn compute_prefixes(dict: &RuntimeDict, user: Option<&UserStore>, prefix: &s
 ///
 /// System rows come from the loaded phrase table filtered by the
 /// loaded-library mask — the same gate [`compute_prefixes`] applies on
-/// the prefix path; user rows from the user store's phrase inventory.
+/// the prefix path; user rows from its raw phrase table.
 /// The ordering law itself is
 /// [`oxpinyin_runtime::merge_suggestion_rows`], held with this crate's
 /// other shared orchestration so the C-ABI facades rank one suggestion
@@ -60,14 +58,30 @@ pub fn merged_suggestions(
         .suggest_after(prefix)
         .unwrap_or_default()
         .into_iter()
-        .filter(|(token, _)| dict.library_visible_token(*token))
+        .filter(|(token, _)| dict.phrase_table_token_enabled(*token))
         .collect();
-    let user_rows = if let Some(store) = user
+    let mut user_rows = if let Some(store) = user
         && let Ok(lookup) = UserLookup::from_store(store)
     {
         lookup.suggest_after(prefix)
     } else {
         Vec::new()
     };
+    // PhraseTableEntry::search skips disabled library arrays
+    // (074a2219 phrase_large_table3.cpp:40-42) in both tables.
+    user_rows.retain(|(token, _)| dict.phrase_table_token_enabled(*token));
+    // Search visits raw keys; the candidate's text comes from its live item
+    // (074a2219 pinyin.cpp:2391-2395, 2018-2022), including keys containing
+    // UCS-4 values that cannot be represented by a Rust String.
     oxpinyin_runtime::merge_suggestion_rows(&system, &user_rows)
+        .into_iter()
+        .filter_map(|(token, fallback)| {
+            dict.token_introspection(token)
+                .map(|item| item.text)
+                // Preserve the established valid-key fallback when the live
+                // item is absent; raw-key traversal adds no new missing-item policy.
+                .or(fallback)
+                .map(|text| (token, text))
+        })
+        .collect()
 }

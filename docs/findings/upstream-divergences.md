@@ -3515,3 +3515,34 @@ previous token's gram).
 - **Held by:** `training_over_a_partial_tail_refuses_and_keeps_the_raw_value`
   and `a_partial_tail_created_in_session_refuses_training`
   (`crates/oxpinyin-user/src/store_libpinyin.rs`), at store level.
+
+### A partial phrase-table token tail cannot terminate the entry walk (#799; policy row 101, class (b), 2026-10-15 UTC)
+
+- **Upstream source cite:** `src/storage/phrase_large_table3.cpp:32-39`
+  (`PhraseTableEntry::search`), `:57-65` (`add_index`), `:74-81`
+  (`remove_index`) and `:103-117` (`mask_out`) at
+  `074a2219c90feaf962d0d24f034514033ece5f99`, read with `git show`
+  from the libpinyin clone.
+- **Mechanism:** the entry casts its raw byte end to a token pointer and
+  walks four-byte tokens with `iter != end`. For a value of length
+  `4k + r`, `1 <= r <= 3`, the walk cannot reach that end by token
+  increments and can read beyond the record. This is an out-of-bounds
+  read, not a defined instruction to ignore the trailing bytes. Early
+  exits in add/remove may avoid the tail on a particular call; search
+  walks it. The source-based class (b) safe answer is user-authorized;
+  this entry does not claim a measured crash or a stable pin output.
+- **What oxpinyin does instead:** `phrase_table.rs`, `validate` and
+  `PhraseTableEntry::from_bytes`, reject the whole incomplete record with
+  `StoreError::InvalidInput`; entry operations do not process its complete
+  tokens while discarding its tail. `lookup.rs`, `UserLookup::from_store`,
+  substitutes an empty entry in the lookup cache, retaining the key and
+  exposing no tokens from that record while unrelated lookups remain
+  available. `persistence.rs`, `load_user_phrase_index` and `stage_rest`,
+  retain and save the raw key/value bytes without normalization. The
+  refusal/cache policy does not repair or truncate the stored value.
+- **Externally observable:** direct entry consumers receive an error;
+  cached lookup exposes no tokens from the malformed record. This records
+  those existing behaviors, not a uniform C ABI return or new warning
+  guarantee. No malformed pin crash probe was executed. Rows 98 and 100
+  concern `SingleGram` tails and do not cover this distinct phrase-table
+  record layout.

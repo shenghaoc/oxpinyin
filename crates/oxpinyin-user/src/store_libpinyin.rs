@@ -63,8 +63,8 @@ use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
     ALLOC, ALLOC_CURSOR, GenericUserStore, PHRASE, PHRASE_BY_LIB_TEXT, PHRASE_BY_TEXT,
-    PHRASE_TABLE, PHRASE_TABLE_BY_TEXT, PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM,
-    UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY, UserStoreError,
+    PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM, UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY,
+    UserStoreError,
 };
 
 /// The persistence target a session store carries: the user dir, the
@@ -96,7 +96,7 @@ pub struct Target {
     /// `DB_SET` probe tests before it walks extensions
     /// ([`persistence::LoadedProfile::index_keys`]).
     pub(crate) index_keys: BTreeSet<Vec<u16>>,
-    /// Every key the session's two user index tables hold
+    /// Every retained key the session's user pinyin index holds
     /// ([`persistence::IndexKeys`]): the loaded files' keys, plus the keys
     /// of every row a mask or a removal took out of the store since. The
     /// save writes back the ones no remaining row writes, empty.
@@ -117,19 +117,18 @@ impl Target {
     }
 }
 
-/// The index rows the save would write for some of the store's phrases —
-/// the phrase-table rows and the indexed readings — read before a mask or
+/// The pinyin index rows the save would write for some stored phrases,
+/// read before a mask or
 /// a removal drops them, so their keys stay in the session's tables
 /// ([`Target::index_file_keys`]).
 #[derive(Debug, Default)]
 pub(crate) struct IndexRows {
     pinyin: Vec<PinyinIndexItem>,
-    phrase: Vec<(Vec<u32>, u32)>,
 }
 
 impl IndexRows {
     /// The rows of every phrase `select` picks, as [`export_state`] turns
-    /// them into the save's rows: the `PHRASE` text, and each reading
+    /// them into the save's rows: each reading
     /// whose `indexed` flag is set, in packed `ChewingKey` words.
     pub(crate) fn read(
         txn: &dyn WriteTxn,
@@ -137,14 +136,10 @@ impl IndexRows {
     ) -> Result<Self, StoreError> {
         let mut rows = Self::default();
         let mut phrases: BTreeSet<Token> = BTreeSet::new();
-        txn.for_each(PHRASE, &mut |key, value| {
+        txn.for_each(PHRASE, &mut |key, _value| {
             let token = codec::decode_token(key)
                 .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
             if select(token) {
-                let text = codec::decode_str(value)
-                    .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
-                rows.phrase
-                    .push((text.chars().map(u32::from).collect(), token));
                 phrases.insert(token);
             }
             Ok(())
@@ -164,11 +159,8 @@ impl IndexRows {
     }
 
     /// The rows of the one phrase `token`, given its text and readings.
-    pub(crate) fn of_phrase(token: Token, text: &str, readings: &[crate::store::PronRow]) -> Self {
-        let mut rows = Self {
-            pinyin: Vec::new(),
-            phrase: vec![(text.chars().map(u32::from).collect(), token)],
-        };
+    pub(crate) fn of_phrase(token: Token, readings: &[crate::store::PronRow]) -> Self {
+        let mut rows = Self::default();
         for reading in readings.iter().filter(|reading| reading.value.indexed) {
             rows.push_reading(token, &reading.key_bytes);
         }
@@ -191,7 +183,7 @@ impl IndexRows {
 
     /// Adds the rows' keys to `keys`.
     pub(crate) fn keep_in(&self, keys: &mut IndexKeys) {
-        keys.keep_rows(&self.pinyin, &self.phrase);
+        keys.keep_rows(&self.pinyin);
     }
 }
 
@@ -377,7 +369,6 @@ impl GenericUserStore<DefaultStore> {
         }
         let persistence::LoadedProfile {
             loaded,
-            phrase_table,
             overlong_index_keys,
             index_keys,
             index_file_keys,
@@ -397,7 +388,7 @@ impl GenericUserStore<DefaultStore> {
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let has_user_data = db.write(|txn| {
-            seed_txn(txn, &loaded.state, &phrase_table, &target.originals())?;
+            seed_txn(txn, &loaded.state, &target.originals())?;
             let total_rows = count_tables(txn)?;
             Ok(total_rows)
         })?;
@@ -456,9 +447,8 @@ fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
 /// Writes the loaded profile's values into a fresh session store — the
 /// seed half of the value mapping.
 ///
-/// `phrase_table` is the pin's `m_phrase_table` membership read from
-/// `user_phrase_index.bin` (the crate-private
-/// [`persistence::LoadedProfile::phrase_table`]). It is seeded verbatim,
+/// `state.phrase_table` is the pin's raw `m_phrase_table` read from
+/// `user_phrase_index.bin` ([`UserState::phrase_table`]). It is seeded verbatim,
 /// not derived from `state.libraries`, so a profile whose phrase index
 /// disagrees with `user.bin` keeps the disagreement and
 /// `pinyin_remove_user_candidate` reproduces the pin's `:3750` assert
@@ -466,7 +456,6 @@ fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
 pub(crate) fn seed_txn(
     txn: &mut dyn WriteTxn,
     state: &UserState,
-    phrase_table: &BTreeSet<(Token, String)>,
     originals: &SystemOriginals,
 ) -> Result<(), StoreError> {
     let mut unigram_total = 0_u64;
@@ -563,21 +552,9 @@ pub(crate) fn seed_txn(
         }
     }
 
-    // The pin's phrase-table membership, verbatim. A row here is what
-    // `phrase_table->remove_index` can find (`pinyin.cpp:3750`); it is
-    // deliberately not derived from the `USER_FILE` items above, so a
-    // phrase index that disagrees with `user.bin` stays disagreeing.
-    for (token, text) in phrase_table {
-        txn.put(
-            PHRASE_TABLE,
-            &crate::store::phrase_table_key(*token, text),
-            &[],
-        )?;
-        txn.put(
-            PHRASE_TABLE_BY_TEXT,
-            &crate::store::phrase_table_text_key(text, *token),
-            &[],
-        )?;
+    // load_db copies records without normalizing tokens or recreating prefixes.
+    for (key, value) in &state.phrase_table {
+        txn.put(crate::phrase_table::TABLE, key, value)?;
     }
 
     // System-token deltas: the training mass on top of the originals.
@@ -719,9 +696,12 @@ pub fn export_state<S: WriteStore>(
     })?;
 
     let system_items = store.stored_system_items();
-    drop(db);
-
     let mut state = UserState::default();
+    db.for_each(crate::phrase_table::TABLE, &mut |key, value| {
+        state.phrase_table.insert(key.to_vec(), value.to_vec());
+        Ok(())
+    })?;
+    drop(db);
     for (token, text) in &phrase_text {
         // An item whose unigram add the sub-index refused keeps 0
         // (`SubPhraseIndex::add_unigram_frequency`'s overflow guard).
@@ -1683,11 +1663,10 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
-    /// #784: a mask and a removal leave the phrase's index keys behind with
-    /// empty values, as the pin's `mask_out` and `remove_index` do, and the
-    /// keys outlive a reopen.
+    /// #784/#785: masks/removals retain keys, including KC/tkrzw mask tails,
+    /// and raw records outlive a reopen.
     #[test]
-    fn masked_and_removed_phrases_leave_their_index_keys_empty() {
+    fn masked_and_removed_phrases_preserve_raw_index_records() {
         use oxpinyin_store::RawReadStore;
 
         let dir = tempdir("index-keys");
@@ -1722,7 +1701,7 @@ mod tests {
                 .expect("walk");
             rows
         };
-        {
+        let removed = {
             let mut store =
                 UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                     .expect("open");
@@ -1739,10 +1718,19 @@ mod tests {
             store.add_phrase("他", &[id("ta")][..], None).expect("add");
             store.mark_modified();
             assert!(store.save().expect("save after"));
-        }
+            removed
+        };
         let rows = phrase_rows();
         for text in ["你", "你好", "我", "我们"] {
-            assert_eq!(rows.get(&ucs4(text)), Some(&Vec::new()), "{text}");
+            // Raw UCS-4 walk: 我, 我们, 你, 你好. KC/tkrzw carry
+            // 我们's post-mask token through the empty 你 prefix marker.
+            // Removing 我们 later edits that record alone.
+            let expected = if !cfg!(feature = "bdb") && text == "你" {
+                removed.to_le_bytes().to_vec()
+            } else {
+                Vec::new()
+            };
+            assert_eq!(rows.get(&ucs4(text)), Some(&expected), "{text}");
         }
         assert!(rows.get(&ucs4("他")).is_some_and(|value| value.len() == 4));
         let pinyin_keys =
@@ -1796,6 +1784,7 @@ mod tests {
                     },
                 )]),
             )]),
+            phrase_table: BTreeMap::new(),
             system_overrides: BTreeMap::new(),
             indexed: std::collections::BTreeSet::new(),
         }
