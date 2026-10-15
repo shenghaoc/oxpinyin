@@ -867,7 +867,7 @@ impl Dictionary for RuntimeDict {
     ) -> Result<Vec<Self::Entry>, Self::Error> {
         let mut ranges = PhraseIndexRanges::new();
         self.trellis_ranges(syllables, tones, &mut ranges)?;
-        Ok(ranges.into_entries())
+        Ok(ranges.into_walk_entries())
     }
 
     /// `FacadeChewingTable2::search` (`facade_chewing_table2.h:109-129` at

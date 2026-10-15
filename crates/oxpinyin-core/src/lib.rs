@@ -687,11 +687,29 @@ impl<E> PhraseIndexRanges<E> {
         self.iter().flat_map(|range| self.entries(range))
     }
 
-    /// The resolved entries in item order — a flat
-    /// [`Dictionary::trellis_records`] answer.
+    /// The resolved entries in the walk order of [`Self::iter`] —
+    /// libraries, then ranges in append order, then tokens — moved out: a
+    /// flat [`Dictionary::trellis_records`] answer.
     #[must_use]
-    pub fn into_entries(self) -> Vec<E> {
-        self.slots.into_iter().flatten().collect()
+    pub fn into_walk_entries(self) -> Vec<E> {
+        let Self {
+            libraries,
+            mut slots,
+        } = self;
+        let mut out = Vec::with_capacity(slots.len());
+        for range in libraries.iter().flatten() {
+            let first = usize::try_from(range.slot).unwrap_or(usize::MAX);
+            let count =
+                usize::try_from(range.last - range.first).map_or(0, |span| span.saturating_add(1));
+            out.extend(
+                slots
+                    .iter_mut()
+                    .skip(first)
+                    .take(count)
+                    .filter_map(Option::take),
+            );
+        }
+        out
     }
 
     /// Appends `other`'s ranges after this one's, library by library, with
@@ -1446,6 +1464,27 @@ mod tests {
         assert!(ranges.iter().next().is_none());
     }
 
+    /// `trellis_records`' contract is the walk order, not item order: a
+    /// row that interleaves libraries comes back library by library, each
+    /// library's ranges in append order.
+    #[test]
+    fn walk_entries_follow_libraries_then_ranges_on_an_interleaved_row() {
+        let mut ranges = PhraseIndexRanges::new();
+        ranges.convert(call(&[0x0200_0005, 0x0100_0007, 0x0200_0006, 0x0100_0003]));
+        ranges.convert(call(&[0x0200_0001, 0x0100_0008]));
+        assert_eq!(
+            ranges.into_walk_entries(),
+            [
+                0x0100_0007,
+                0x0100_0003,
+                0x0100_0008,
+                0x0200_0005,
+                0x0200_0006,
+                0x0200_0001,
+            ]
+        );
+    }
+
     /// An unresolved item keeps its token in the range, so `entry` finds
     /// its neighbours at the right offsets.
     #[test]
@@ -1460,6 +1499,6 @@ mod tests {
         assert_eq!(ranges.entry(range, 4), None);
         assert_eq!(ranges.entry(range, 5), Some(&50));
         assert_eq!(ranges.entry(range, 6), None);
-        assert_eq!(ranges.into_entries(), [30, 50]);
+        assert_eq!(ranges.into_walk_entries(), [30, 50]);
     }
 }
