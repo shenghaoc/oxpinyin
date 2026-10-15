@@ -210,8 +210,10 @@ same rule.
 **Both halves, exactly (ruling recorded 2026-09-27
 UTC).** A site is class (c) only when oxpinyin answers `false`/`Err`
 **and** emits exactly one GLib `g_warning`-level log line for that
-site per occurrence — the channel `crates/oxpinyin-capi/src/ffi.rs:158-173`
-(`log_warning`, domain `libpinyin`) and its zhuyin twin already use.
+site per occurrence — the channel `crates/oxpinyin-capi/src/ffi.rs`
+`log_warning` (domain `libpinyin`) and its zhuyin twin
+`crates/oxpinyin-zhuyin-capi/src/ffi.rs` `log_warning` (domain
+`libzhuyin`) already use.
 A site that answers `true`, data or a store write where the pin
 aborts meets neither half and needs a guard, not just a log. The
 bug-for-bug target is the **asserts-live** pin build: the reference
