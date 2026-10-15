@@ -2506,11 +2506,10 @@ def index_key_sequence(k, steps):
             inst = k.fn('alloc_instance', P, P)(ctx)
             guess(inst, step[1])
             seen = {'candidates': candidates(inst), 'tokens': tokens(inst, text)}
-            # #785: on kc and tkrzw a partial mask leaks the previous record's
-            # tail into the first character's prefix key, which this lookup
-            # reads; leave it out there until #785 lands.
-            if CELL == 'bdb' or not leaks_785(steps):
-                seen['prefix tokens'] = tokens(inst, text[0])
+            # #785: on kc and tkrzw a partial mask leaves the previous record's
+            # post-mask tail in the first character's phrase-table key, and this
+            # lookup returns it; bdb is the control that carries nothing.
+            seen['prefix tokens'] = tokens(inst, text[0])
             if k.mode == 'pinyin':
                 seen['predicted'] = predicted_rows(k, inst, text[0])
             out.append(['lookup', text, seen])
