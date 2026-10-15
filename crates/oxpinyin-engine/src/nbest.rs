@@ -25,6 +25,8 @@
 //! (polyphone discounting, float accumulation).
 
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use compact_str::CompactString;
 use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
@@ -326,6 +328,36 @@ fn tail_merge(values: &mut [Value]) {
     glib_merge_sort(values, &tail_compare);
 }
 
+/// A multiplicative hasher for the trellis's `u32` token keys.
+///
+/// These maps are only probed (`get`, `entry`), never iterated: the order of
+/// a position's nodes is `node_order`, so the hash function cannot reach the
+/// output. SipHash's per-lookup cost dominated the step expansion.
+#[derive(Default, Clone, Copy)]
+struct TokenHasher(u64);
+
+impl Hasher for TokenHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+type TokenMap<V> = HashMap<u32, V, BuildHasherDefault<TokenHasher>>;
+
 /// The trellis state over the remaining input's byte positions.
 type NodeValues = SmallVec<[Value; NSTORE]>;
 
@@ -333,10 +365,10 @@ struct Trellis {
     /// The surface's `<nstore, nbest>`.
     shape: NbestShape,
     /// `nodes[position][token]` = the physical pinned heap slots.
-    nodes: Vec<HashMap<u32, NodeValues>>,
+    nodes: Vec<TokenMap<NodeValues>>,
     node_order: Vec<Vec<u32>>,
     /// Token → phrase text, gathered from the span searches.
-    texts: HashMap<u32, CompactString>,
+    texts: TokenMap<CompactString>,
 }
 
 impl Trellis {
@@ -346,7 +378,7 @@ impl Trellis {
     /// `pinyin_guess_sentence_with_prefix` drives this with the prefix
     /// token list; the single-seed `new` stays the sentence path's law.
     fn with_seeds(bound: usize, seeds: &[u32], shape: NbestShape) -> Self {
-        let mut nodes = vec![HashMap::new(); bound + 1];
+        let mut nodes = vec![TokenMap::default(); bound + 1];
         let mut node_order = vec![Vec::new(); bound + 1];
         for &seed_token in seeds {
             let mut seed_values = NodeValues::new();
@@ -360,7 +392,7 @@ impl Trellis {
             shape,
             nodes,
             node_order,
-            texts: HashMap::new(),
+            texts: TokenMap::default(),
         }
     }
 
@@ -369,10 +401,13 @@ impl Trellis {
     /// so reproducing the pin deliberately evicts the best stored value.
     fn insert(&mut self, position: usize, value: Value) {
         let nstore = self.shape.nstore();
-        if !self.nodes[position].contains_key(&value.token) {
-            self.node_order[position].push(value.token);
-        }
-        let node = self.nodes[position].entry(value.token).or_default();
+        let node = match self.nodes[position].entry(value.token) {
+            Entry::Occupied(node) => node.into_mut(),
+            Entry::Vacant(slot) => {
+                self.node_order[position].push(value.token);
+                slot.insert(NodeValues::new())
+            }
+        };
         let less = |left: &Value, right: &Value| loses_to(left, right, nstore);
         if node.len() < nstore {
             node.push(value.clone());
@@ -900,7 +935,7 @@ where
 
 #[derive(Default)]
 struct StepCosts {
-    rows: HashMap<u32, oxpinyin_core::NbestStepRow>,
+    rows: TokenMap<oxpinyin_core::NbestStepRow>,
 }
 
 /// 074a2219 phonetic_lookup.h:542-642, 787-788: all bigram
