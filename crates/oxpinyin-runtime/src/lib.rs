@@ -980,31 +980,28 @@ impl Dictionary for RuntimeDict {
                 .collect::<Option<Vec<_>>>();
             if let Some(query) = query {
                 for entry in out.iter_mut() {
-                    if let Some(item) = store
-                        .system_item_override(entry.token().value())
-                        .ok()
-                        .flatten()
-                    {
-                        let mut total = 0_u32;
-                        let mut matched = 0_u32;
-                        for (keys, frequency) in item.prons {
-                            let keys = keys
-                                .into_iter()
-                                .map(oxpinyin_core::ChewingKey::from_packed)
-                                .collect::<Vec<_>>();
-                            total = total.wrapping_add(frequency);
-                            if query.len() == keys.len()
-                                && query.iter().zip(&keys).all(|(q, s)| {
-                                    q.initial == s.initial
-                                        && ((q.middle == s.middle && q.final_ == s.final_)
-                                            || (q.middle == 0 && q.final_ == 0)
-                                            || (s.middle == 0 && s.final_ == 0))
-                                        && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
-                                })
-                            {
-                                matched = matched.wrapping_add(frequency);
+                    if let Some((matched, total)) =
+                        store.with_effective_system_item(entry.token().value(), |item| {
+                            let mut total = 0_u32;
+                            let mut matched = 0_u32;
+                            for (keys, frequency) in &item.prons {
+                                total = total.wrapping_add(*frequency);
+                                if query.len() == keys.len()
+                                    && query.iter().zip(keys).all(|(q, bits)| {
+                                        let s = oxpinyin_core::ChewingKey::from_packed(*bits);
+                                        q.initial == s.initial
+                                            && ((q.middle == s.middle && q.final_ == s.final_)
+                                                || (q.middle == 0 && q.final_ == 0)
+                                                || (s.middle == 0 && s.final_ == 0))
+                                            && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
+                                    })
+                                {
+                                    matched = matched.wrapping_add(*frequency);
+                                }
                             }
-                        }
+                            (matched, total)
+                        })
+                    {
                         *entry = entry
                             .clone()
                             .with_pronunciation_possibility(u64::from(matched), u64::from(total));

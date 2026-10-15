@@ -697,7 +697,7 @@ def token_unigram_user(k):
     return out
 
 
-def train_selected_top(k, wanted, token):
+def train_selected_top(k, wanted, token, guess_before_choose=False):
     """Choose a normal phrase, guess n-best, then train result 0 without reset.
 
     This test-only sequence preserves the runbook's train_top precondition:
@@ -725,6 +725,13 @@ def train_selected_top(k, wanted, token):
         # The zhuyin BEST_MATCH row installs no constraint (074a2219
         # zhuyin.cpp:1643-1654), so selecting it would make this a no-op.
         if kind.value == 2 and text.value == wanted.encode():
+            before = {}
+            if guess_before_choose:
+                # Retain this NORMAL row before guessing promotes matching
+                # text to NBEST in a newly generated candidate list. Guess
+                # leaves m_candidates intact (074a2219 pinyin.cpp:1372-1386).
+                assert k.fn('guess_sentence', B, P)(inst)
+                before['before-choose'] = final_step_sentences(k, inst)
             cursor = k.fn('choose_candidate', I, P, Z, P)(inst, 0, candidate)
             assert cursor > 0, 'normal phrase selection failed'
             after_choose = unigram_of(k, token)
@@ -736,7 +743,7 @@ def train_selected_top(k, wanted, token):
                 trained = k.fn('train', B, P)(inst)
             assert trained, 'training n-best result 0 failed'
             return {'chosen': wanted, 'kind': kind.value, 'cursor': cursor,
-                    'after-choose': after_choose, 'guess': guessed, 'train': trained}
+                    'after-choose': after_choose, 'guess': guessed, 'train': trained, **before}
     raise AssertionError('missing normal candidate: ' + wanted)
 
 
@@ -3902,6 +3909,141 @@ def export_open_across_import_user(k):
     out['has_next_after'] = k.fn('iterator_has_next_phrase', B, P)(it)
     k.fn('end_get_phrases', None, P)(it)
     k.fn('fini', None, P)(k.ctx)
+    return out
+
+
+# #790: train_result3 changes the live PhraseItem (074a2219
+# phonetic_lookup.h:925-929; phrase_index.cpp:114-143). Export reads it on
+# each call (pinyin.cpp:707-739), before save or a library reload.
+def issue790_export(k, action='train'):
+    phrase, token = '你', tokens_of(k, '你')[0]
+    out = {'before': remember_export(k, 1, phrase)}
+    iterator = (k.fn('begin_get_phrases', P, P, U)(k.ctx, 1)
+                if action == 'open-before' else None)
+    inst = k.inst
+    out['parsed'] = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
+    if action in ('unconstrained', 'no-train'):
+        out['guessed'] = k.fn('guess_sentence', B, P)(inst)
+        if action == 'unconstrained':
+            out['train'] = k.fn('train', B, P, C.c_ubyte)(inst, 0)
+    else:
+        out['training'] = train_selected_top(k, phrase, token, guess_before_choose=True)
+    if action in ('save-reopen', 'replayed-train'):
+        out['save'] = k.fn('save', B, P)(k.ctx)
+        k.fn('free_instance', None, P)(inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        if action == 'replayed-train':
+            out['replayed'] = remember_export(k, 1, phrase)
+            assert k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'ni')
+            out['retraining'] = train_selected_top(k, phrase, token, guess_before_choose=True)
+    if iterator:
+        out['after'] = [row for row in export_rows(k, iterator) if row[1] == phrase]
+        k.fn('end_get_phrases', None, P)(iterator)
+    else:
+        out['after'] = remember_export(k, 1, phrase)
+    return out
+
+
+case('issue790-export-after-train-system')(issue790_export)
+for _action in ('no-train', 'unconstrained', 'open-before', 'save-reopen', 'replayed-train'):
+    case('issue790-export-' + _action + '-system',
+         control=_action in ('no-train', 'unconstrained', 'save-reopen'))(
+             lambda k, action=_action: issue790_export(k, action))
+
+
+def issue790_readings(k, phrase, readings, unigram=None):
+    """Replay a system-item MODIFY using the existing logger fixture
+    helpers; only the named item's readings and optional unigram change."""
+    token = tokens_of(k, phrase)[0]
+    assert token >> 24 == 1
+    packed = [(key_out(k, text.encode())[1], count) for text, count in readings]
+    payload = Path(k.data, 'gb_char.bin').read_bytes()[8:]
+    word = lambda offset: int.from_bytes(payload[offset:offset + 4], 'little')
+    total, index, content = word(0), word(4), word(8)
+    offset = content + word(index + (token & 0x00FFFFFF) * 4)
+    length, nprons = payload[offset:offset + 2]
+    assert length == 1
+    old = payload[offset:offset + 10 + nprons * 6]
+    previous = int.from_bytes(old[2:6], 'little')
+    unigram = previous if unigram is None else unigram
+    new = (bytes((1, len(packed))) + unigram.to_bytes(4, 'little') + old[6:10] +
+           b''.join(key.to_bytes(2, 'little') + count.to_bytes(4, 'little')
+                    for key, count in packed))
+    record = ((3).to_bytes(4, 'little') + (token & 0x00FFFFFF).to_bytes(4, 'little') +
+              len(old).to_bytes(2, 'little') + len(new).to_bytes(2, 'little') + old + new)
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = k._inst = None
+    _write_user_conf(k)
+    _write_log(k, _modify_header(0, total, (total + unigram - previous) & 0xFFFFFFFF) + record)
+    return token
+
+
+def issue790_bounded_counts(k, count):
+    token = issue790_readings(k, '你', [('ni3', count), ('ni2', 0), ('na4', 0)])
+    out = {'before': remember_export(k, 1, '你')}
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'ni')
+    out['training'] = train_selected_top(k, '你', token, guess_before_choose=True)
+    out['after'] = remember_export(k, 1, '你')
+    return out
+
+
+case('issue790-export-zero-and-signed-system')(
+    lambda k: issue790_bounded_counts(k, (1 << 31) - 69))
+case('issue790-export-prefix-overflow-system')(
+    lambda k: issue790_bounded_counts(k, (1 << 32) - 76))
+
+
+def issue790_imported(k, appended=False):
+    phrase, reading = ('你你你你', "ni'ni'ni'ni") if appended else ('你', 'ni2')
+    out = {'imported': import_rows(k, 1, [(phrase, reading, 5)]),
+           'before': remember_export(k, 1, phrase)}
+    token = tokens_of(k, phrase)[0]
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, reading.encode())
+    out['training'] = train_selected_top(k, phrase, token, guess_before_choose=True)
+    out['after'] = remember_export(k, 1, phrase)
+    return out
+
+
+case('issue790-export-override-only-system')(issue790_imported)
+case('issue790-export-appended-system')(lambda k: issue790_imported(k, appended=True))
+
+
+@case('issue790-guess-after-train-system')
+def _(k):
+    # The first ni reading has 1/100 of 尼's pronunciation mass. A large
+    # unrelated start-row total makes the new bigram too small to explain
+    # the ranking change: only reading the trained pronunciation can do it.
+    token = issue790_readings(k, '尼', [('ni2', 1), ('na2', 99)], 200000)
+    _replace_system_start_row(k, _gram_bytes(1, [(_PAST_RANGES, 1)]))
+    _replace_user_bigram(k, [(1, _gram_bytes(1 << 28, [(_PAST_RANGES, 1 << 28)]))])
+    out = {'parsed': k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'ni')}
+    out['training'] = train_selected_top(k, '尼', token, guess_before_choose=True)
+    out['before'] = out['training'].pop('before-choose')
+    out['clear'] = k.fn('clear_constraint', B, P, Z)(k.inst, 0)
+    out['after'] = _guess_out(k, b'ni')
+    return out
+
+
+@case('issue790-character-offset-after-train-system')
+def _(k):
+    # Both readings have shipped index entries. An incomplete n path
+    # trains na (initially zero) and nei; the public offset call then tests
+    # na without saving/reopening. An unindexed positive reading would
+    # instead exercise incomplete-key expansion's membership semantics.
+    token = issue790_readings(k, '哪', [('na3', 0), ('nei3', 100)])
+    assert k.fn('set_options', B, P, U)(k.ctx, 0x18a)
+    get = k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))
+    def offset():
+        assert k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'na')
+        value = Z(UNTOUCHED)
+        return [get(k.inst, '哪'.encode(), 1, C.byref(value)), value.value]
+    out = {'before': offset()}
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, b'n')
+    out['training'] = train_selected_top(k, '哪', token, guess_before_choose=True)
+    out['clear'] = k.fn('clear_constraint', B, P, Z)(k.inst, 0)
+    out['after'] = offset()
     return out
 
 

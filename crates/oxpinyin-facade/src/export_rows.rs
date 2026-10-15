@@ -632,7 +632,7 @@ impl PhraseExportCursor {
         let mut token = start;
         while token < end {
             let replaced = self.user.as_ref().and_then(|user| {
-                user.with_system_item(token, |item| {
+                user.with_effective_system_item(token, |item| {
                     ItemRef::Override {
                         phrase: &item.phrase,
                         prons: &item.prons,
@@ -706,7 +706,7 @@ impl PhraseExportCursor {
                 if self.memo.plain_token != token
                     && let Some(user) = self.user.as_ref()
                     && let Some(out) = user
-                        .with_system_item(token, |item| {
+                        .with_effective_system_item(token, |item| {
                             read.take().map(|read| {
                                 read(ItemRef::Override {
                                     phrase: &item.phrase,

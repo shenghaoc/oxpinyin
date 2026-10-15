@@ -39,8 +39,9 @@
 //! * system tokens — a `.dbin` MODIFY record is the original item with
 //!   `unigram + UNIGRAM[token]`; the value model tracks no per-token
 //!   removal (a replayed REMOVE degrades to a skip, noted at load), and
-//!   no per-pronunciation delta for system tokens — the pre-existing
-//!   engine-model gap, unchanged by this persistence.
+//!   exact-reading pronunciation deltas in `PRONUNCIATION`. The live
+//!   system-item view folds those deltas when training commits, so lookup
+//!   and export observe them before save.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -818,7 +819,7 @@ fn ucs4_to_string(codes: &[u32]) -> Option<String> {
 /// inventory. This is the boundary conversion the two key models need —
 /// `SyllableKey::index()` is a dense id, `ChewingKey::to_packed()` the
 /// 16-bit bit-field the pin's files carry.
-fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase::PinyinKey>> {
+pub(crate) fn packed_to_pinyin_keys(packed: &[u16]) -> Option<Vec<crate::phrase::PinyinKey>> {
     packed
         .iter()
         .map(|&bits| {
@@ -1471,6 +1472,14 @@ mod tests {
                     .collect::<Vec<_>>(),
                 [169, 200, 300]
             );
+            assert_eq!(
+                store.with_effective_system_item(token.value(), |item| item
+                    .prons
+                    .iter()
+                    .map(|(_, count)| *count)
+                    .collect::<Vec<_>>()),
+                Some([169, 200, 300].to_vec())
+            );
             assert!(store.save().expect("save"));
         }
         {
@@ -1490,8 +1499,226 @@ mod tests {
                     .collect::<Vec<_>>(),
                 [445, 476, 300]
             );
+            assert_eq!(
+                store.with_effective_system_item(token.value(), |item| item
+                    .prons
+                    .iter()
+                    .map(|(_, count)| *count)
+                    .collect::<Vec<_>>()),
+                Some([445, 476, 300].to_vec())
+            );
             assert!(store.save().expect("save"));
         }
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn live_system_readings_train_import_and_replay_without_double_counting() {
+        use oxpinyin_core::{PhraseToken, UserModel};
+        let dir = tempdir("live-system-readings");
+        let mut base = originals();
+        let ni = ChewingKey::from_pinyin("ni").expect("ni");
+        base.get_mut(&1)
+            .expect("library")
+            .items
+            .get_mut(&1)
+            .expect("item")
+            .prons = vec![(vec![ni.with_tone(3).to_packed()], 100)];
+        let token = PhraseToken::new(0x0100_0001);
+        let dense = |tone| packed_to_pinyin_keys(&[ni.with_tone(tone).to_packed()]).expect("dense");
+        let counts = |store: &UserStore| {
+            store
+                .with_effective_system_item(token.value(), |item| {
+                    item.prons
+                        .iter()
+                        .map(|(_, count)| *count)
+                        .collect::<Vec<_>>()
+                })
+                .expect("live")
+        };
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            store
+                .add_system_phrase_in(1, Some(token.value()), "你", &dense(2), Some(20))
+                .expect("extra reading");
+            UserModel::observe_with_keys(
+                &mut store,
+                &[],
+                &token,
+                &mut [vec![ni.with_tone(2)]].into_iter(),
+            )
+            .expect("train extra");
+            assert_eq!(counts(&store), [100, 89]);
+            store
+                .add_system_phrase_in(1, Some(token.value()), "你", &dense(2), Some(7))
+                .expect("import after training");
+            assert_eq!(counts(&store), [100, 96]);
+            assert!(store.save().expect("save"));
+        }
+        {
+            let mut store = UserStore::open_libpinyin(&dir, base, versions(), UserConfLaw::Pinyin)
+                .expect("reopen");
+            assert_eq!(counts(&store), [100, 96]);
+            UserModel::observe_with_keys(
+                &mut store,
+                &[],
+                &token,
+                &mut [vec![ni.with_tone(2)]].into_iter(),
+            )
+            .expect("train replay");
+            assert_eq!(counts(&store), [100, 234]);
+            assert!(store.save().expect("save again"));
+        }
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn importing_a_256th_reading_fails_before_any_row_is_written() {
+        let dir = tempdir("import-256th-reading");
+        let mut readings: Vec<u16> = Vec::new();
+        for initial in [
+            "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x", "zh", "ch", "sh",
+            "r", "z", "c", "s", "y", "w", "",
+        ] {
+            for final_ in [
+                "a", "o", "e", "ai", "ei", "ao", "ou", "an", "en", "ang", "eng", "i", "u", "ia",
+                "ie", "iao", "iu", "ian", "in", "iang", "ing", "ua", "uo", "uai", "ui", "uan",
+                "un", "uang", "ong",
+            ] {
+                let Some(key) = ChewingKey::from_pinyin(&format!("{initial}{final_}")) else {
+                    continue;
+                };
+                for tone in 1..=4 {
+                    let packed = key.with_tone(tone).to_packed();
+                    if packed_to_pinyin_keys(&[packed]).is_some() && !readings.contains(&packed) {
+                        readings.push(packed);
+                    }
+                }
+            }
+        }
+        assert!(readings.len() >= 256, "need 256 distinct readings");
+        let rows = |store: &UserStore| {
+            let mut rows = 0_usize;
+            let db = store.database();
+            let db: &dyn oxpinyin_store::ReadStore = &*db;
+            db.for_each(PRONUNCIATION, &mut |_, _| {
+                rows += 1;
+                Ok(())
+            })
+            .expect("rows");
+            rows
+        };
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
+        let token = store
+            .add_system_phrase_in(1, None, "拟", &dense(readings[0]), Some(5))
+            .expect("append");
+        for &packed in &readings[1..255] {
+            store
+                .add_system_phrase_in(1, Some(token), "拟", &dense(packed), Some(5))
+                .expect("reading within the 255 limit");
+        }
+        let before = rows(&store);
+        assert_eq!(before, 255);
+        let result =
+            store.add_system_phrase_in(1, Some(token), "拟", &dense(readings[255]), Some(5));
+        assert!(result.is_err(), "a 256th reading cannot be encoded");
+        assert_eq!(rows(&store), before, "the failed import wrote no row");
+        assert_eq!(
+            store.with_effective_system_item(token, |item| item.prons.len()),
+            Some(255)
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn appended_system_readings_keep_absolute_training_counts() {
+        use oxpinyin_core::{PhraseToken, UserModel};
+        let dir = tempdir("live-appended-readings");
+        let ni = ChewingKey::from_pinyin("ni").expect("ni");
+        let keys = packed_to_pinyin_keys(&[ni.to_packed()]).expect("dense");
+        let base = originals();
+        let token;
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            token = store
+                .add_system_phrase_in(1, None, "拟", &keys, Some(5))
+                .expect("append");
+            UserModel::observe_with_keys(
+                &mut store,
+                &[],
+                &PhraseToken::new(token),
+                &mut [vec![ni]].into_iter(),
+            )
+            .expect("train appended");
+            assert_eq!(
+                store.with_effective_system_item(token, |item| item.prons[0].1),
+                Some(74)
+            );
+            store
+                .add_system_phrase_in(1, Some(token), "拟", &keys, Some(7))
+                .expect("reimport");
+            assert_eq!(
+                store.with_effective_system_item(token, |item| item.prons[0].1),
+                Some(81)
+            );
+            assert_eq!(
+                store
+                    .phrase(token)
+                    .expect("phrase")
+                    .expect("present")
+                    .pronunciations()[0]
+                    .count(),
+                81
+            );
+            assert!(store.save().expect("save"));
+        }
+        let store =
+            UserStore::open_libpinyin(&dir, base, versions(), UserConfLaw::Pinyin).expect("reopen");
+        assert_eq!(
+            store.with_effective_system_item(token, |item| item.prons[0].1),
+            Some(81)
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn live_pronunciation_overflow_keeps_earlier_updates_and_stops_at_guard() {
+        use oxpinyin_core::{PhraseToken, UserModel};
+        let dir = tempdir("live-pronunciation-overflow");
+        let mut base = originals();
+        let ni = ChewingKey::from_pinyin("ni").expect("ni");
+        base.get_mut(&1)
+            .expect("library")
+            .items
+            .get_mut(&1)
+            .expect("item")
+            .prons = vec![
+            (vec![ni.with_tone(2).to_packed()], u32::MAX - 75),
+            (vec![ni.with_tone(3).to_packed()], 0),
+        ];
+        let mut store =
+            UserStore::open_libpinyin(&dir, base, versions(), UserConfLaw::Pinyin).expect("open");
+        let token = PhraseToken::new(0x0100_0001);
+        UserModel::observe_with_keys(&mut store, &[], &token, &mut [vec![ni]].into_iter())
+            .expect("train guarded rows");
+        assert_eq!(
+            store.with_effective_system_item(token.value(), |item| item
+                .prons
+                .iter()
+                .map(|(_, count)| *count)
+                .collect::<Vec<_>>()),
+            Some(vec![u32::MAX - 6, 0])
+        );
+        drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
