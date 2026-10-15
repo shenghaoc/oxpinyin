@@ -36,8 +36,12 @@ where
     /// other non-guess operation runs, so it does **not** apply the
     /// over-long user-index gate: the pin's parse never calls
     /// `_prepend_longer_candidates` (`pinyin.cpp:2292-2293`) and cannot
-    /// reach its abort. Only an explicit guess ([`Session::candidates_at`])
-    /// gates.
+    /// reach its abort. Nor does it refuse a `DYNAMIC_ADJUST` gram the pin
+    /// cannot read: the pin's parse merges no gram
+    /// (`pinyin_parse_more_full_pinyins`, `pinyin.cpp:1497-1520`), so the
+    /// eager list leaves that gram's bigram term out and keeps the unigram
+    /// term. Only an explicit guess ([`Session::candidates_at`],
+    /// [`Session::candidates_ending_at`]) gates.
     pub(super) fn refresh(&mut self) -> Result<(), EngineError> {
         // The cached list is anchored at the composition offset the session
         // owns. Reuse its buffer so the scan keeps its capacity across
@@ -133,7 +137,7 @@ where
         &mut self,
         anchor: usize,
         out: &mut Vec<Candidate>,
-        gate_overlong: bool,
+        gate: bool,
     ) -> Result<usize, EngineError> {
         out.clear();
         self.ensure_matrix()?;
@@ -145,7 +149,7 @@ where
             // pin prepends at every valid offset (`pinyin.cpp:2292-2293`;
             // row 65: the reserved slot's column holds no key, so the span
             // loop finds nothing but the prepends still run).
-            self.prepend_longer_row(out, gate_overlong)?;
+            self.prepend_longer_row(out, gate)?;
             self.prepend_nbest_rows(out);
             return Ok(0);
         }
@@ -196,6 +200,13 @@ where
         // pre-frequency behaviour exactly: k-best prefixes, sentence
         // candidates, cost order, adjacent dedup.
         if self.model.has_real_unigrams() {
+            // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2216`,
+            // `zhuyin.cpp:1474-1489`), before the search exactly as the pin
+            // orders them and hoisted out of the candidate loop as it hoists
+            // them: the previous token is resolved once, and the system and
+            // user grams are merged once, for the whole guess. Indexing that
+            // row per candidate is Gate 3.
+            let gram = self.dynamic_adjust_gram(anchor, gate)?;
             {
                 let mut unreadable = false;
                 let mut scratch = ScanScratch {
@@ -209,16 +220,14 @@ where
                 self.scan_unreadable = unreadable;
             }
 
-            // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2214`), hoisted
-            // out of the candidate loop exactly as the pin hoists them: the
-            // previous token is resolved once, and the system and user grams
-            // are merged once, for the whole guess. Indexing that row per
-            // candidate is Gate 3.
-            let gram = self.dynamic_adjust_gram(anchor)?;
             // The scan's result stands even when it found nothing. Tokens the
             // table lacks rank as zero rather than falling back.
             let frequencies = self
-                .candidate_frequencies(&collected, gram.as_ref())?
+                .candidate_frequencies(
+                    &collected,
+                    gram.as_ref().map(|(prev, row)| (*prev, row)),
+                    gate,
+                )?
                 .unwrap_or_else(|| vec![0; collected.len()]);
             ranked.clear();
             ranked.extend(
@@ -283,7 +292,7 @@ where
         // zero span: upstream never sets `m_begin`/`m_end` for it
         // (`_prepend_longer_candidates` leaves both zero), which is also
         // the marker the C ABI reads back as `LONGER_CANDIDATE`.
-        self.prepend_longer_row(&mut collected, gate_overlong)?;
+        self.prepend_longer_row(&mut collected, gate)?;
 
         // W14: prepend the stored n-best rows, head first, then drop every
         // later candidate with the same text — upstream prepends after the
@@ -737,6 +746,10 @@ where
         let mut unreadable = false;
 
         for start in 0..bound {
+            // The pin ranks each `len` slice on its own, with the previous
+            // token resolved and its grams merged at that slice's start,
+            // before the search (`zhuyin.cpp:1566-1582`).
+            let gram = self.dynamic_adjust_gram(start, true)?;
             // An empty column — no key starts here — is the pin's
             // `SEARCH_NONE` start (`search_matrix`,
             // `phonetic_key_matrix.cpp:416-418`): the span contributes
@@ -777,11 +790,8 @@ where
             for candidate in &mut group {
                 candidate.set_span_start(start);
             }
-            // The pin ranks each `len` slice on its own, with the previous
-            // token resolved at that slice's start.
-            let gram = self.dynamic_adjust_gram(start)?;
             let frequencies = self
-                .candidate_frequencies(&group, gram.as_ref())?
+                .candidate_frequencies(&group, gram.as_ref().map(|(prev, row)| (*prev, row)), true)?
                 .unwrap_or_else(|| vec![0; group.len()]);
             ranked.clear();
             ranked.extend(
@@ -957,20 +967,39 @@ where
     ///
     /// `None` whenever upstream would skip the merge — the bit is clear, no
     /// previous token, or the model carries no row for it — and the caller
-    /// then contributes no bigram term.
+    /// then contributes no bigram term. Otherwise the previous token's
+    /// value and its merged row.
+    ///
+    /// With `gate` clear — the eager refresh, which the pin has no
+    /// counterpart for — a row the pin's merge cannot build answers `None`
+    /// instead.
+    ///
+    /// # Errors
+    ///
+    /// The model's load failure, or, with `gate` set, a lookup refusal
+    /// where the pin's `merge_single_gram` asserts or reads past the user
+    /// gram (`ngram.cpp:304`, `:318-349`).
     pub(super) fn dynamic_adjust_gram(
         &self,
         offset: usize,
-    ) -> Result<Option<MergedGram>, EngineError> {
+        gate: bool,
+    ) -> Result<Option<(u32, MergedGram)>, EngineError> {
         if !self.settings.options.has_dynamic_adjust() {
             return Ok(None);
         }
         let Some(prev) = self.previous_token(offset) else {
             return Ok(None);
         };
-        self.model
-            .merged_successors(&prev)
-            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))
+        let gram = self.model.merged_successors(&prev).map_err(|error| {
+            EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
+        })?;
+        if let Some(fault) = gram.as_ref().and_then(MergedGram::fault) {
+            if !gate {
+                return Ok(None);
+            }
+            return Err(EngineError::lookup_gram(prev.value(), fault));
+        }
+        Ok(gram.map(|gram| (prev.value(), gram)))
     }
 
     /// Per-candidate sort frequencies on the pin's amplified scale, or
@@ -995,10 +1024,15 @@ where
     /// Only the first `Some` switches the construction on, so a model that
     /// mixes per-token answers degrades deterministically (missing tokens
     /// rank as zero).
+    ///
+    /// With `gate` clear (the eager refresh; see
+    /// [`Session::dynamic_adjust_gram`]) a read of `gram` the pin cannot
+    /// make contributes a bigram term of `0.0` instead of refusing.
     pub(super) fn candidate_frequencies(
         &self,
         collected: &[Candidate],
-        gram: Option<&MergedGram>,
+        gram: Option<(u32, &MergedGram)>,
+        gate: bool,
     ) -> Result<Option<Vec<u64>>, EngineError> {
         let mut frequencies: Option<Vec<u64>> = None;
         // The facade total, `get_phrase_index_total_freq()`: the sum of
@@ -1031,22 +1065,30 @@ where
                     .unwrap_or(0);
                 Some(amplified_frequency(raw, addon_total, lambda))
             } else {
+                // Upstream's Gate 3: the bigram possibility joins the unigram
+                // term INSIDE the pin's expression, before its single
+                // truncation. The addon and predicted branches above return
+                // early in the pin too — they carry no bigram term at all.
+                let bigram = match dynamic_adjust_bigram_possibility(
+                    self.settings.options,
+                    gram.map(|(_, row)| row),
+                    token.value(),
+                ) {
+                    Ok(bigram) => bigram,
+                    Err(_) if !gate => 0.0,
+                    Err(fault) => {
+                        return Err(EngineError::lookup_gram(
+                            gram.map_or(0, |(prev, _)| prev),
+                            fault,
+                        ));
+                    }
+                };
                 self.model
                     .unigram_freq(&token)
                     .map_err(|error| {
                         EngineError::Scoring(ScoringError::LanguageModel(error.to_string()))
                     })?
                     .map(|count| {
-                        // Upstream's Gate 3: the bigram possibility joins the
-                        // unigram term INSIDE the pin's expression, before
-                        // its single truncation. The addon and predicted
-                        // branches above return early in the pin too — they
-                        // carry no bigram term at all.
-                        let bigram = dynamic_adjust_bigram_possibility(
-                            self.settings.options,
-                            gram,
-                            token.value(),
-                        );
                         amplified_frequency_with_bigram(count, default_total, bigram, lambda)
                     })
             };

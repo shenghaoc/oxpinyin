@@ -232,15 +232,17 @@ fn user_dir_with_bigram_row(
     dir
 }
 
-/// N2: a training step reads its predecessor's total first
-/// (`phonetic_lookup.h:884` at the pin `074a2219`), and a value too short
-/// for one is the pin's assert (`memory_chunk.h:390`). The pin's guess dies
-/// on the same gram before a train can be reached
-/// (`phonetic_lookup.h:594-598`), so no contract case holds this; the
-/// facade refuses the train with the short-predecessor error and observes
-/// nothing.
+/// The sentence start's user gram is three bytes and the fixture has no
+/// system gram for it, so the merged row is that value as stored
+/// (`ngram.cpp:286-290` at the pin `074a2219`). Forcing 你 makes the
+/// guess's first step a one-step constraint, whose `get_freq` starts four
+/// bytes in, past the value's end, and walks on (`ngram.cpp:239-248`,
+/// through `phonetic_lookup.h:605`; register row 98). The guess refuses
+/// before any training could load the gram, so the train-side refusal is
+/// unreachable here; `a_short_predecessor_value_refuses_both_training_paths`
+/// (`store_libpinyin.rs`) holds it on the store.
 #[test]
-fn training_over_a_short_predecessor_value_refuses_and_observes_nothing() {
+fn a_short_start_gram_refuses_the_guess_before_any_training() {
     let system = fixture_dir();
     let short = vec![0xa5, 0x5a, 0x01];
     let user = user_dir_with_bigram_row(
@@ -259,19 +261,16 @@ fn training_over_a_short_predecessor_value_refuses_and_observes_nothing() {
     assert!(store.has_short_bigram_value_for(SENTENCE_START));
     let mut inst = context.alloc_instance().expect("instance");
     assert_eq!(inst.parse_full_more("nihao"), 5);
-    // A forced first phrase: the step that trains it loads the sentence
-    // start's gram (`phonetic_lookup.h:866-884`).
     let list = inst.session.candidates_at(0).expect("candidates");
     let index = list
         .iter()
         .position(|candidate| candidate.text() == "你")
         .expect("你 is a candidate");
     inst.session.select(index).expect("choose 你");
-    assert!(inst.session.guess_sentence().expect("guess"));
     let generation = store.generation();
     assert_eq!(
-        inst.train(0),
-        Err(EngineError::ShortTrainingPredecessor {
+        inst.session.guess_sentence(),
+        Err(EngineError::UnsafeLookupPredecessor {
             token: SENTENCE_START
         })
     );
@@ -390,7 +389,8 @@ fn set_freq_miss_gram(token: u32) -> Vec<u8> {
 /// steps — the sentence start → 你, then 你 → 好. `reparse`, when given,
 /// replaces the input without a fresh guess, leaving the stale result the
 /// pin still trains (`phonetic_lookup.h:921`). Answers the train's result
-/// and whether the store stayed untouched.
+/// — or the guess's, when the guess refuses and nothing is trained — and
+/// whether the store stayed untouched.
 fn train_two_steps(
     name: &str,
     row: (u32, Vec<u8>),
@@ -414,12 +414,17 @@ fn train_two_steps(
         .position(|candidate| candidate.text() == "你")
         .expect("你 is a candidate");
     inst.session.select(index).expect("choose 你");
-    assert!(inst.session.guess_sentence().expect("guess"));
-    if let Some(text) = reparse {
-        inst.session.replace_raw(text).expect("re-parse");
-    }
     let generation = store.generation();
-    let result = inst.train(0);
+    let result = match inst.session.guess_sentence() {
+        Ok(guessed) => {
+            assert!(guessed, "guess");
+            if let Some(text) = reparse {
+                inst.session.replace_raw(text).expect("re-parse");
+            }
+            inst.train(0)
+        }
+        Err(error) => Err(error),
+    };
     let untouched = store.generation() == generation && !store.is_modified();
     drop(inst);
     drop(context);
@@ -427,38 +432,84 @@ fn train_two_steps(
     (result, untouched)
 }
 
+/// With `DYNAMIC_ADJUST` (`1 << 9`) set, the pin's parse merges no gram
+/// (`pinyin_parse_more_full_pinyins`, `pinyin.cpp:1497-1520` at the pin
+/// `074a2219`), so a sentence-start gram it cannot read leaves the parse
+/// whole. Only the candidate guess merges it, before its search
+/// (`pinyin.cpp:2200-2216`), and reads its total per candidate
+/// (`:1848`), where the pin asserts (`ngram.cpp:49`, `memory_chunk.h:390`;
+/// register row 85). The eager refresh every parse runs must not refuse it.
+#[test]
+fn a_short_start_gram_leaves_the_parse_and_refuses_the_candidate_guess() {
+    let system = fixture_dir();
+    let short = vec![0xa5, 0x5a, 0x01];
+    let user = user_dir_with_bigram_row(
+        &system,
+        "short-dynamic-adjust",
+        (SENTENCE_START.to_le_bytes().to_vec(), short.clone()),
+    );
+    let context = ContextCore::open(
+        &system,
+        Some(&user),
+        PINYIN_DEFAULT_OPTION_WORD | (1 << 9),
+        UserConfLaw::Pinyin,
+    )
+    .expect("context");
+    let store = context.user_store().expect("user store");
+    let mut inst = context.alloc_instance().expect("instance");
+    assert_eq!(inst.parse_full_more("nihao"), 5);
+    let refusal = Err(EngineError::ShortLookupPredecessor {
+        token: SENTENCE_START,
+    });
+    assert_eq!(
+        inst.session.candidates_at(0).map(|list| list.len()),
+        refusal
+    );
+    assert_eq!(
+        inst.session.candidates_ending_at(5).map(|list| list.len()),
+        refusal
+    );
+    assert_eq!(store.bigram_row(SENTENCE_START).expect("row"), Some(short));
+    drop(inst);
+    drop(context);
+    let _ = std::fs::remove_dir_all(&user);
+}
+
 /// `train_result3` runs each step's checks in order — the constraint
 /// (`phonetic_lookup.h:868`), the bigram half (`get_total_freq` :884, the
 /// `get_freq` walk :888, `set_freq` :903), then the span asserts through
 /// `increase_pronunciation_possibility` (:925, `phonetic_key_matrix.cpp:661-664`)
-/// — so the first failing check in step order wins. A stale span at step
-/// one (`'ni` empties the start column) comes before a short gram at step
-/// two (你's own gram).
+/// — so the first failing check in step order wins; the `set_freq` pair
+/// below holds that order. A short gram never reaches it: the guess that
+/// precedes the train merges and reads the same grams first. 你's short
+/// gram, with no system gram beside it, is the merged row as stored, and
+/// `search` asserts on its total at the step after 你 (`ngram.cpp:165`,
+/// through `phonetic_lookup.h:625`; register row 85), with or without a
+/// later stale span.
 #[test]
-fn a_stale_span_at_step_one_wins_over_a_short_gram_at_step_two() {
+fn a_short_gram_at_step_two_refuses_the_guess_first() {
     let (ni, _) = ni_and_hao(&fixture_dir());
     let short = vec![0xa5, 0x5a, 0x01];
-    let (control, _) = train_two_steps("order-short-2-control", (ni, short.clone()), None);
-    assert_eq!(
-        control,
-        Err(EngineError::ShortTrainingPredecessor { token: ni })
-    );
-    let (result, untouched) = train_two_steps("order-short-2", (ni, short), Some("'ni"));
-    assert!(
-        matches!(
+    for (name, reparse) in [
+        ("order-short-2-control", None),
+        ("order-short-2", Some("'ni")),
+    ] {
+        let (result, untouched) = train_two_steps(name, (ni, short.clone()), reparse);
+        assert_eq!(
             result,
-            Err(EngineError::StaleTrainingSpan { position: 0, .. })
-        ),
-        "{result:?}"
-    );
-    assert!(untouched);
+            Err(EngineError::ShortLookupPredecessor { token: ni })
+        );
+        assert!(untouched);
+    }
 }
 
-/// The reverse: a short gram at step one (the sentence start's) comes
-/// before the stale span at step two (`ni` leaves 好's span past the
-/// matrix).
+/// The sentence start's short gram at step one: the forced 你 makes the
+/// guess's first step a one-step `get_freq` on it, which reads past the
+/// value (`ngram.cpp:239-248`, through `phonetic_lookup.h:605`; register
+/// row 98), so the guess refuses before the stale span at step two is
+/// trained. The stale span alone still refuses the train.
 #[test]
-fn a_short_gram_at_step_one_wins_over_a_stale_span_at_step_two() {
+fn a_short_gram_at_step_one_refuses_the_guess_first() {
     let short = vec![0xa5, 0x5a, 0x01];
     let (stale, _) = train_two_steps("order-stale-2-control", (2, vec![0; 4]), Some("ni"));
     assert!(
@@ -471,7 +522,7 @@ fn a_short_gram_at_step_one_wins_over_a_stale_span_at_step_two() {
     let (result, untouched) = train_two_steps("order-short-1", (SENTENCE_START, short), Some("ni"));
     assert_eq!(
         result,
-        Err(EngineError::ShortTrainingPredecessor {
+        Err(EngineError::UnsafeLookupPredecessor {
             token: SENTENCE_START
         })
     );

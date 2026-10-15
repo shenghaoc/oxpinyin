@@ -98,7 +98,10 @@ pub extern "C" fn zhuyin_phrase_segment(
             inst.core.phrase_result = tokens;
             matched
         }
-        Err(_) => false,
+        Err(error) => {
+            crate::sentence::refuse_lookup_gram("zhuyin_phrase_segment", &error);
+            false
+        }
     }
 }
 

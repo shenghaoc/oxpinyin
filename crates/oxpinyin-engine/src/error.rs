@@ -139,6 +139,25 @@ pub enum EngineError {
         /// The predecessor token whose gram is too short for a total.
         token: u32,
     },
+    /// A lookup merged or read a predecessor's bigram where the pin
+    /// asserts: a stored user-bigram value shorter than its `guint32`
+    /// total, whose total `merge_single_gram` (`ngram.cpp:304`),
+    /// `SingleGram::search` (`:165`) or the `DYNAMIC_ADJUST` term
+    /// (`pinyin.cpp:1848`, `zhuyin.cpp:1250`) reads through
+    /// `memory_chunk.h:390` (register row 85). The engine answers an error
+    /// instead of the abort.
+    ShortLookupPredecessor {
+        /// The predecessor token whose gram is too short for a total.
+        token: u32,
+    },
+    /// A lookup would read past a predecessor's bigram value: a partial
+    /// item the merge consumes (`ngram.cpp:318-349`), or a `get_freq` or
+    /// `search` walk (`:241-248`, `:167-173`) that leaves the value
+    /// (register row 98). The engine answers an error instead.
+    UnsafeLookupPredecessor {
+        /// The predecessor token whose gram the read leaves.
+        token: u32,
+    },
     /// A training step's `set_freq` would miss the item its `insert_freq`
     /// just added to the predecessor's unsorted gram: the pin's
     /// `check_result(user->set_freq(token, freq + seed))` asserts
@@ -246,6 +265,18 @@ impl fmt::Display for EngineError {
                     "the predecessor {token:#010x} has a user-bigram value shorter than its total"
                 )
             }
+            Self::ShortLookupPredecessor { token } => {
+                write!(
+                    formatter,
+                    "the predecessor {token:#010x} has a user-bigram value shorter than its total"
+                )
+            }
+            Self::UnsafeLookupPredecessor { token } => {
+                write!(
+                    formatter,
+                    "reading the predecessor {token:#010x}'s bigram leaves its value"
+                )
+            }
             Self::TrainingSetFreqMiss { token } => {
                 write!(
                     formatter,
@@ -297,6 +328,8 @@ impl std::error::Error for EngineError {
             | Self::UnsafeTrainingPredecessor { .. }
             | Self::ShortTrainingPredecessor { .. }
             | Self::TrainingSetFreqMiss { .. }
+            | Self::ShortLookupPredecessor { .. }
+            | Self::UnsafeLookupPredecessor { .. }
             | Self::OverlongUserIndexKey { .. }
             | Self::UserModel(_) => None,
         }
@@ -318,6 +351,18 @@ impl From<DecodeError> for EngineError {
 impl From<ScoringError> for EngineError {
     fn from(error: ScoringError) -> Self {
         Self::Scoring(error)
+    }
+}
+
+impl EngineError {
+    /// The lookup refusal for a [`oxpinyin_core::GramFault`] met on
+    /// `token`'s merged row.
+    #[must_use]
+    pub const fn lookup_gram(token: u32, fault: oxpinyin_core::GramFault) -> Self {
+        match fault {
+            oxpinyin_core::GramFault::Short => Self::ShortLookupPredecessor { token },
+            oxpinyin_core::GramFault::OverRead => Self::UnsafeLookupPredecessor { token },
+        }
     }
 }
 

@@ -123,6 +123,88 @@ pub fn get_freq(gram: &[u8], token: u32) -> Option<u32> {
     find(gram, token).and_then(|index| item_freq(gram, index))
 }
 
+/// Where the pin's own read of a malformed value stops being defined.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GramFault {
+    /// `get_total_freq` on a value shorter than its total: the pin asserts
+    /// (`memory_chunk.h:390`; register row 85, class (c)).
+    Short,
+    /// A walk that leaves the value: a partial item after the last whole
+    /// one, or a value shorter than its total, where `cur_item != end`
+    /// never meets `end` (register row 98, class (b)).
+    OverRead,
+}
+
+/// Whether a value with a whole total ends in a partial item.
+#[must_use]
+pub const fn has_partial_tail(gram: &[u8]) -> bool {
+    gram.len() >= TOTAL_LEN && !(gram.len() - TOTAL_LEN).is_multiple_of(ITEM_LEN)
+}
+
+/// [`get_freq`] where the pin's walk can leave the value
+/// (`ngram.cpp:231-250`): `lower_bound` over the whole items, then
+/// `cur_item != end`, which an `end` off the item grid never meets. A
+/// walk that returns before the last whole item is the pin's answer; one
+/// that runs past it, or starts past a value shorter than its total
+/// (`begin` four bytes in, beyond `end`), is [`GramFault::OverRead`].
+///
+/// # Errors
+/// [`GramFault::OverRead`] where the pin reads past the value.
+pub fn checked_get_freq(gram: &[u8], token: u32) -> Result<Option<u32>, GramFault> {
+    if gram.len() < TOTAL_LEN {
+        return Err(GramFault::OverRead);
+    }
+    for index in lower_bound(gram, token)..get_length(gram) {
+        let (Some(item), Some(freq)) = (item_token(gram, index), item_freq(gram, index)) else {
+            return Err(GramFault::OverRead);
+        };
+        if item > token {
+            return Ok(None);
+        }
+        if item == token {
+            return Ok(Some(freq));
+        }
+    }
+    if has_partial_tail(gram) {
+        return Err(GramFault::OverRead);
+    }
+    Ok(None)
+}
+
+/// [`search`] into `out` where the pin's walk can leave the value
+/// (`ngram.cpp:153-176`): `lower_bound(begin)` (`:163`, which reads
+/// nothing on a value shorter than its total), then `get_total_freq`
+/// (`:165`), then every item until the first at or past `end`
+/// (`:167-173`), duplicates included.
+///
+/// # Errors
+/// [`GramFault::Short`] where the total read asserts;
+/// [`GramFault::OverRead`] where the walk runs past the last whole item
+/// of a value with a partial tail.
+pub fn checked_search(
+    gram: &[u8],
+    begin: u32,
+    end: u32,
+    out: &mut Vec<(u32, u32)>,
+) -> Result<(), GramFault> {
+    if gram.len() < TOTAL_LEN {
+        return Err(GramFault::Short);
+    }
+    for index in lower_bound(gram, begin)..get_length(gram) {
+        let (Some(item), Some(freq)) = (item_token(gram, index), item_freq(gram, index)) else {
+            return Err(GramFault::OverRead);
+        };
+        if item >= end {
+            return Ok(());
+        }
+        out.push((item, freq));
+    }
+    if has_partial_tail(gram) {
+        return Err(GramFault::OverRead);
+    }
+    Ok(())
+}
+
 /// `SingleGram::set_freq` (`ngram.cpp:252-271`): sets the first match
 /// walking from [`lower_bound`]; `false` on a miss.
 pub fn set_freq(gram: &mut [u8], token: u32, freq: u32) -> bool {
@@ -285,9 +367,9 @@ pub fn new_gram() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::{
-        get_freq, get_length, get_total_freq, insert_freq, item_freq, item_offset, item_token,
-        lower_bound, mask_out, merge_single_gram, new_gram, remove_freq, retrieve_all, search,
-        set_freq,
+        GramFault, checked_get_freq, checked_search, get_freq, get_length, get_total_freq,
+        insert_freq, item_freq, item_offset, item_token, lower_bound, mask_out, merge_single_gram,
+        new_gram, remove_freq, retrieve_all, search, set_freq,
     };
 
     fn gram(total: u32, items: &[(u32, u32)]) -> Vec<u8> {
@@ -301,6 +383,61 @@ mod tests {
 
     fn items(bytes: &[u8]) -> Vec<(u32, u32)> {
         retrieve_all(bytes).collect()
+    }
+
+    /// N2 refusals 4 and 6 (register row 98): the pin's `get_freq` walk
+    /// (`ngram.cpp:241-248`) answers before the last whole item, or reads
+    /// past a partial tail, or past a value shorter than its total.
+    #[test]
+    fn checked_get_freq_faults_only_where_the_pins_walk_leaves_the_value() {
+        let mut tailed = gram(9, &[(2, 4), (5, 5)]);
+        tailed.extend_from_slice(&[1, 2, 3]);
+        // A hit or a larger item stops the walk inside the whole items.
+        assert_eq!(checked_get_freq(&tailed, 2), Ok(Some(4)));
+        assert_eq!(checked_get_freq(&tailed, 3), Ok(None));
+        // Past the last whole item the walk meets the tail.
+        assert_eq!(checked_get_freq(&tailed, 6), Err(GramFault::OverRead));
+        // An item-less value with a tail: `lower_bound` is the begin.
+        let mut itemless = gram(0, &[]);
+        itemless.push(7);
+        assert_eq!(checked_get_freq(&itemless, 1), Err(GramFault::OverRead));
+        // Shorter than the total: `begin` already lies past `end`.
+        assert_eq!(checked_get_freq(&[1, 0], 1), Err(GramFault::OverRead));
+        assert_eq!(checked_get_freq(&[], 1), Err(GramFault::OverRead));
+        // A whole value walks off its end as `get_freq` does.
+        assert_eq!(checked_get_freq(&gram(9, &[(2, 4)]), 6), Ok(None));
+    }
+
+    /// N2 refusals 2 and 6: `search` reads the total (`ngram.cpp:165`),
+    /// which asserts on a short value, and then walks until an item at or
+    /// past the range end (`:167-173`), reading past a partial tail.
+    #[test]
+    fn checked_search_asserts_short_and_faults_past_a_partial_tail() {
+        let mut out = Vec::new();
+        assert_eq!(
+            checked_search(&[1, 0, 0], 1, 2, &mut out),
+            Err(GramFault::Short)
+        );
+        let mut tailed = gram(9, &[(2, 4), (5, 5)]);
+        tailed.extend_from_slice(&[1]);
+        out.clear();
+        assert_eq!(checked_search(&tailed, 2, 5, &mut out), Ok(()));
+        assert_eq!(out, [(2, 4)]);
+        out.clear();
+        assert_eq!(
+            checked_search(&tailed, 2, 6, &mut out),
+            Err(GramFault::OverRead)
+        );
+        out.clear();
+        assert_eq!(
+            checked_search(&gram(1, &[(3, 1), (3, 2), (1, 7)]), 3, 4, &mut out),
+            Ok(())
+        );
+        assert_eq!(
+            out,
+            [(3, 1), (3, 2), (1, 7)],
+            "duplicates and later smaller items"
+        );
     }
 
     /// The reference `__lower_bound` on a sorted array is the usual first

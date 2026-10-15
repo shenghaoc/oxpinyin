@@ -12,7 +12,7 @@
 //! belong — decoding/composition in `oxpinyin-engine`, tables and model math
 //! in `oxpinyin-data`, user state in `oxpinyin-user` — and the user-count
 //! overlay arithmetic lives in `oxpinyin-data`'s `*_with_user_delta` methods
-//! and `merge_bigram_row`, which [`RuntimeLm`] merely feeds. The one
+//! and `load_merged_row`, which [`RuntimeLm`] merely feeds. The one
 //! ordering law held here is [`merge_suggestion_rows`], the pinned
 //! suggestion row order the facades rank predicted candidates in.
 //! Centralizing the assembly here is what keeps every C-ABI consumer
@@ -48,7 +48,7 @@ pub use oxpinyin_data::table_info::{TableConf, TableConfError};
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
 use oxpinyin_data::{
     AddonDictionary, BigramLanguageModel, DictError, LmError, PunctTable, SystemDbm,
-    SystemDictionary, default_store_file, merge_bigram_row, ucs4_walk_key,
+    SystemDictionary, default_store_file, ucs4_walk_key,
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
 use oxpinyin_user::{PinyinKey, UserConfLaw, UserLookup, UserStore, UserStoreError};
@@ -1188,6 +1188,20 @@ impl RuntimeLm {
             .map_err(|error| LmError::User(error.to_string()))
     }
 
+    /// `prev`'s merged row: the system gram and the user gram, one point
+    /// read each, merged as the pin's lookups merge them
+    /// ([`BigramLanguageModel::load_merged_row`]). The user side is the
+    /// stored value itself (`bigram_row`), `None` without a key.
+    fn merged_row(&self, prev: u32) -> Result<Option<MergedGram>, LmError> {
+        let user = match self.user.as_ref() {
+            None => None,
+            Some(store) => store
+                .bigram_row(prev)
+                .map_err(|error| LmError::User(error.to_string()))?,
+        };
+        self.inner.load_merged_row(prev, user)
+    }
+
     /// The phrase-index total the pin's amplified law divides by
     /// (`pinyin.cpp:1813-1814`, `get_phrase_index_total_freq`, live per
     /// call): the facade's Σ item unigram over the visible libraries, plus
@@ -1216,33 +1230,20 @@ impl LanguageModel for RuntimeLm {
         token: &Self::Token,
         edge_cost: Cost,
     ) -> Result<Cost, Self::Error> {
-        let extra = self.delta(history.last().map(|token| token.value()), token.value())?;
+        // The bigram comes from the previous token's merged row; the
+        // overlay supplies the unigram fields alone.
+        let extra = self.delta(None, token.value())?;
         self.inner
-            .score_with_user_delta(history, token, edge_cost, extra)
+            .score_with_merged_row(history, token, edge_cost, extra, |prev| {
+                self.merged_row(prev)
+            })
     }
 
-    /// Upstream's Gate 2 (`pinyin.cpp:2209-2213`): the system gram and the
+    /// Upstream's Gate 2 (`pinyin.cpp:2210-2215`): the system gram and the
     /// user gram loaded once each and merged, as ONE row the caller indexes
-    /// per candidate. The merge arithmetic is
-    /// [`oxpinyin_data::merge_bigram_row`] — the row-shaped form of the §5
-    /// additive law `merge_bigram` encodes per pair — so the guess path and
-    /// the n-best scoring path share one definition; this method only
-    /// loads the two rows and maps the errors.
+    /// per candidate. The n-best and phrase paths load the same row.
     fn merged_successors(&self, prev: &Self::Token) -> Result<Option<MergedGram>, Self::Error> {
-        let system = self.inner.load_successors(prev.value())?;
-        let (user_rows, user_total) = match self.user.as_ref() {
-            None => (Vec::new(), 0),
-            Some(store) => (
-                store
-                    .bigram_successors(prev.value())
-                    .map_err(|error| LmError::User(error.to_string()))?,
-                store
-                    .bigram_total(prev.value())
-                    .map_err(|error| LmError::User(error.to_string()))?,
-            ),
-        };
-        Ok(merge_bigram_row(system.as_ref(), &user_rows, user_total)
-            .map(|(records, total)| MergedGram::new(total, records)))
+        self.merged_row(prev.value())
     }
 
     fn unigram_freq(&self, token: &Self::Token) -> Result<Option<u64>, Self::Error> {
@@ -1317,15 +1318,16 @@ impl LanguageModel for RuntimeLm {
             .nbest_step_costs_with_imported_item(prev, token, extra, imported)
     }
 
-    fn nbest_step_costs_in_row(
+    fn nbest_item_costs_in_row(
         &self,
-        prev: &Self::Token,
+        _prev: &Self::Token,
         token: &Self::Token,
-        row: &mut oxpinyin_core::NbestStepRow,
+        item: Option<(u32, u32)>,
+        _row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
         loop {
             // A committed write moves the generation under the same database
-            // guard used by the unigram, successor, and total reads below.
+            // guard used by the unigram and override reads below.
             let generation = self.user.as_ref().map_or(0, UserStore::generation);
             let result = (|| {
                 let extra = self.delta(None, token.value())?;
@@ -1337,28 +1339,7 @@ impl LanguageModel for RuntimeLm {
                 } else {
                     false
                 };
-                self.inner.nbest_step_costs_from_raw_row_in_generation(
-                    token,
-                    extra,
-                    imported,
-                    row,
-                    generation,
-                    || {
-                        let (user_rows, user_total) = match self.user.as_ref() {
-                            None => (Vec::new(), 0),
-                            Some(store) => (
-                                store
-                                    .bigram_successors(prev.value())
-                                    .map_err(|error| LmError::User(error.to_string()))?,
-                                store
-                                    .bigram_total(prev.value())
-                                    .map_err(|error| LmError::User(error.to_string()))?,
-                            ),
-                        };
-                        self.inner
-                            .load_nbest_raw_row(prev.value(), user_rows, user_total)
-                    },
-                )
+                self.inner.nbest_item_costs(token, extra, imported, item)
             })();
             if self
                 .user
@@ -1378,21 +1359,7 @@ impl LanguageModel for RuntimeLm {
         loop {
             let generation = self.user.as_ref().map_or(0, UserStore::generation);
             let result = row
-                .get_or_try_init_raw_in_generation(generation, || {
-                    let (user_rows, user_total) = match self.user.as_ref() {
-                        None => (Vec::new(), 0),
-                        Some(store) => (
-                            store
-                                .bigram_successors(prev.value())
-                                .map_err(|error| LmError::User(error.to_string()))?,
-                            store
-                                .bigram_total(prev.value())
-                                .map_err(|error| LmError::User(error.to_string()))?,
-                        ),
-                    };
-                    self.inner
-                        .load_nbest_raw_row(prev.value(), user_rows, user_total)
-                })
+                .get_or_try_init_in_generation(generation, || self.merged_row(prev.value()))
                 .map(|_| ());
             if self
                 .user
@@ -1400,9 +1367,9 @@ impl LanguageModel for RuntimeLm {
                 .is_none_or(|store| store.generation() == generation)
             {
                 result?;
-                return Ok(Some(match row.cached_raw() {
-                    Some(gram) => oxpinyin_core::NbestSuccessors::Raw(gram),
-                    None => oxpinyin_core::NbestSuccessors::Merged(&[]),
+                return Ok(Some(match row.cached_merged() {
+                    Some(gram) => oxpinyin_core::NbestSuccessors::Row(gram),
+                    None => oxpinyin_core::NbestSuccessors::Miss,
                 }));
             }
         }

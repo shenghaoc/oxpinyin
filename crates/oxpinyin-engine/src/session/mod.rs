@@ -874,16 +874,31 @@ pub const fn check_lookup_offset_range(len: usize, offset: usize) -> Result<usiz
 /// Zero on any of the three ways upstream skips the term: the bit is clear,
 /// there is no previous token (so no gram was merged), or the merged row's
 /// total is zero. Otherwise `bigram_freq / total` from the row merged once
-/// at guess time.
+/// at guess time, read in the pin's order (`pinyin.cpp:1848-1851`,
+/// `zhuyin.cpp:1250-1253`): `get_total_freq`, then `get_freq`, then the
+/// term only when the total is not zero.
+///
+/// # Errors
+///
+/// The [`GramFault`](oxpinyin_core::GramFault) where either read asserts or
+/// leaves the merged row.
 fn dynamic_adjust_bigram_possibility(
     options: OptionBits,
     gram: Option<&MergedGram>,
     token: u32,
-) -> f32 {
+) -> Result<f32, oxpinyin_core::GramFault> {
     if !options.has_dynamic_adjust() {
-        return 0.0;
+        return Ok(0.0);
     }
-    gram.map_or(0.0, |row| row.possibility(token))
+    let Some(row) = gram else {
+        return Ok(0.0);
+    };
+    let total = row.total()?;
+    let freq = row.get_freq(token)?.unwrap_or(0);
+    if total == 0 {
+        return Ok(0.0);
+    }
+    Ok(freq as f32 / total as f32)
 }
 
 /// The three sort keys of the pinned candidate construction.

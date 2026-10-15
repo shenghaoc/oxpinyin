@@ -30,8 +30,8 @@ use compact_str::CompactString;
 use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, PhraseEntry, PhraseIndexRanges, PhraseToken,
-    SyllableKey,
+    Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry, PhraseIndexRanges,
+    PhraseToken, SyllableKey,
 };
 use smallvec::SmallVec;
 
@@ -607,22 +607,28 @@ where
         let mut costs = StepCosts::default();
         if let Some(Cell::OneStep { token, end, .. }) = cell_at(position).cloned() {
             // One span search to the fixed end, the forced token only —
-            // `search_bigram2`/`search_unigram2`'s ONESTEP branches —
+            // `search_bigram2`/`search_unigram2`'s ONESTEP branches,
+            // entered on any `SEARCH_OK` (`phonetic_lookup.h:775-788`) —
             // then move on: no widening, no other token starts there.
             if end > position && end <= bound {
                 let mut entries = PhraseIndexRanges::new();
                 generation.search(position, end, dictionary, &mut entries)?;
-                if let Some(entry) = entries.walk().find(|entry| entry.token == token.value()) {
-                    let mut forced = PhraseIndexRanges::new();
-                    forced.convert([(entry.token, Some(entry.clone()))]);
+                let mut forced = PhraseIndexRanges::new();
+                forced.convert(
+                    entries
+                        .walk()
+                        .find(|entry| entry.token == token.value())
+                        .map(|entry| (entry.token, Some(entry.clone()))),
+                );
+                if entries.iter().next().is_some() {
                     expand_entries(
                         &forced,
                         &beam,
-                        position,
-                        end,
+                        position..end,
                         model,
                         &mut costs,
                         &mut trellis,
+                        Some(token.value()),
                     )?;
                 }
             }
@@ -844,7 +850,15 @@ where
         widening = env
             .generation
             .search(position, end, env.dictionary, &mut entries)?;
-        expand_entries(&entries, beam, position, end, env.model, costs, trellis)?;
+        expand_entries(
+            &entries,
+            beam,
+            position..end,
+            env.model,
+            costs,
+            trellis,
+            None,
+        )?;
         end += 1;
     }
     Ok(())
@@ -891,65 +905,118 @@ struct StepCosts {
 
 /// 074a2219 phonetic_lookup.h:542-642, 787-788: all bigram
 /// predecessors first, each over library/range/item order, then head unigram.
+///
+/// `one_step` is a `CONSTRAINT_ONESTEP` cell's forced token: the bigram
+/// half then reads it with `get_freq` alone (`:600-611`), never `search`.
+///
+/// # Errors
+///
+/// The model's load failures, and a lookup refusal where the pin's read
+/// of a predecessor's merged row asserts or leaves the value.
 fn expand_entries<L>(
     entries: &PhraseIndexRanges<SpanEntry>,
     beam: &[BeamEntry],
-    start: usize,
-    end: usize,
+    span: std::ops::Range<usize>,
     model: &L,
     costs: &mut StepCosts,
     trellis: &mut Trellis,
+    one_step: Option<u32>,
 ) -> Result<(), EngineError>
 where
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
     let eligible = |entry: &SpanEntry| !matches!(entry.pronunciation, Some((0, _)));
-    if !entries.walk().any(eligible) {
+    // Entered on `SEARCH_OK` only; the predecessors' rows are loaded and
+    // merged then even when no ranged item can step.
+    if one_step.is_none() && entries.iter().next().is_none() {
         return Ok(());
     }
-    // search_bigram2 (phonetic_lookup.h:615-632): libraries 0..16, each
-    // library's ranges in append order, and within a range the merged
-    // row's tokens ascending (SingleGram::search, ngram.cpp:153-175). No
-    // absent successor enters a pair map or the model's bigram cost law.
-    let mut visited = Vec::new();
-    let mut selected: Vec<&SpanEntry> = Vec::new();
+    // search_bigram2 (phonetic_lookup.h:582-641): per predecessor, load
+    // and merge its grams (both absent: no bigram step), then per library
+    // and range in append order `SingleGram::search` (ngram.cpp:153-176):
+    // from `lower_bound(range_begin)`, one step per yielded item with that
+    // item's own frequency, duplicates included.
+    let mut items: Vec<(u32, u32)> = Vec::new();
+    let mut selected: Vec<(&SpanEntry, (u32, u32))> = Vec::new();
     for predecessor in beam {
         selected.clear();
         let prev = predecessor.value.token;
         let row = costs.rows.entry(prev).or_default();
-        let has_successors = if let Some(successors) = model
+        let traversal = match model
             .nbest_successors_in_row(&PhraseToken::new(prev), row)
             .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
         {
-            for range in entries.iter() {
-                visited.clear();
-                successors.visit_range(range.first(), range.last(), |token| visited.push(token));
-                // A raw row visits its overlay after the system records:
-                // restore the merged row's single ascending pass.
-                if !visited.windows(2).all(|pair| pair[0] < pair[1]) {
-                    visited.sort_unstable();
-                    visited.dedup();
+            None => false,
+            Some(NbestSuccessors::Miss) => true,
+            Some(NbestSuccessors::Row(gram)) => {
+                let refuse = |fault| EngineError::lookup_gram(prev, fault);
+                if let Some(fault) = gram.fault() {
+                    return Err(refuse(fault));
                 }
-                selected.extend(
-                    visited
-                        .iter()
-                        .filter_map(|&token| entries.entry(range, token))
-                        .filter(|entry| eligible(entry)),
-                );
+                if let Some(token) = one_step {
+                    if let Some(freq) = gram.get_freq(token).map_err(refuse)? {
+                        let total = gram.total().map_err(refuse)?;
+                        selected.extend(
+                            entries
+                                .walk()
+                                .filter(|entry| entry.token == token && eligible(entry))
+                                .map(|entry| (entry, (freq, total))),
+                        );
+                    }
+                } else {
+                    for range in entries.iter() {
+                        items.clear();
+                        gram.search_into(range.first(), range.last(), &mut items)
+                            .map_err(refuse)?;
+                        if items.is_empty() {
+                            continue;
+                        }
+                        let total = gram.total().map_err(refuse)?;
+                        // The walk checks the range end only (ngram.cpp:167-
+                        // 173): out of order, it can yield a token below the
+                        // range's first. The pin steps any yielded token whose
+                        // phrase spells this span (`bigram_gen_next_step`'s
+                        // `get_phrase_item` and pronunciation check), so such
+                        // a token takes this span's entry for it, if any.
+                        selected.extend(items.iter().filter_map(|&(token, freq)| {
+                            entries
+                                .entry(range, token)
+                                .or_else(|| entries.walk().find(|entry| entry.token == token))
+                                .filter(|entry| eligible(entry))
+                                .map(|entry| (entry, (freq, total)))
+                        }));
+                    }
+                }
+                true
             }
-            true
-        } else {
-            false
         };
-        if has_successors {
-            for entry in &selected {
-                expand_one(entry, predecessor, start..end, model, row, trellis, false)?;
+        if traversal {
+            for &(entry, item) in &selected {
+                let branch = Branch::Bigram(Some(item));
+                expand_one(
+                    entry,
+                    predecessor,
+                    span.clone(),
+                    model,
+                    row,
+                    trellis,
+                    branch,
+                )?;
             }
         } else {
-            // Models without sorted rows retain their existing scalar path.
+            // Models without row traversal retain their existing scalar path.
             for entry in entries.walk().filter(|entry| eligible(entry)) {
-                expand_one(entry, predecessor, start..end, model, row, trellis, false)?;
+                let branch = Branch::Bigram(None);
+                expand_one(
+                    entry,
+                    predecessor,
+                    span.clone(),
+                    model,
+                    row,
+                    trellis,
+                    branch,
+                )?;
             }
         }
     }
@@ -958,12 +1025,32 @@ where
     if let Some(predecessor) = beam.first() {
         let row = costs.rows.entry(predecessor.value.token).or_default();
         for entry in entries.walk().filter(|entry| eligible(entry)) {
-            expand_one(entry, predecessor, start..end, model, row, trellis, true)?;
+            let branch = Branch::Unigram;
+            expand_one(
+                entry,
+                predecessor,
+                span.clone(),
+                model,
+                row,
+                trellis,
+                branch,
+            )?;
         }
     }
     Ok(())
 }
 
+/// Which of the pin's two step costs one trellis step takes.
+#[derive(Clone, Copy)]
+enum Branch {
+    /// `bigram_gen_next_step` for one merged-row item, its `(freq, total)`;
+    /// `None` on the scalar path of a model without row traversal.
+    Bigram(Option<(u32, u32)>),
+    /// `unigram_gen_next_step`.
+    Unigram,
+}
+
+/// One trellis step on `branch`.
 fn expand_one<L: LanguageModel<Token = PhraseToken>>(
     entry: &SpanEntry,
     predecessor: &BeamEntry,
@@ -971,16 +1058,28 @@ fn expand_one<L: LanguageModel<Token = PhraseToken>>(
     model: &L,
     row: &mut oxpinyin_core::NbestStepRow,
     trellis: &mut Trellis,
-    unigram: bool,
+    branch: Branch,
 ) -> Result<(), EngineError>
 where
     L::Error: core::fmt::Display,
 {
     let prev = predecessor.value.token;
     let step = model
-        .nbest_step_costs_in_row(&PhraseToken::new(prev), &PhraseToken::new(entry.token), row)
+        .nbest_item_costs_in_row(
+            &PhraseToken::new(prev),
+            &PhraseToken::new(entry.token),
+            match branch {
+                Branch::Bigram(item) => item,
+                Branch::Unigram => None,
+            },
+            row,
+        )
         .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?;
-    let Some(mut cost) = (if unigram { step.unigram } else { step.blended }) else {
+    let cost = match branch {
+        Branch::Bigram(_) => step.blended,
+        Branch::Unigram => step.unigram,
+    };
+    let Some(mut cost) = cost else {
         return Ok(());
     };
     if let Some((matched, total)) = entry.pronunciation
@@ -1421,9 +1520,10 @@ mod tests {
                     row.get_or_try_init::<EngineError>(|| {
                         Ok(Some(MergedGram::new(2, vec![(1, 2), (3, 0)])))
                     })?
-                    .map_or(oxpinyin_core::NbestSuccessors::Merged(&[]), |gram| {
-                        oxpinyin_core::NbestSuccessors::Merged(gram.records())
-                    }),
+                    .map_or(
+                        oxpinyin_core::NbestSuccessors::Miss,
+                        oxpinyin_core::NbestSuccessors::Row,
+                    ),
                 ))
             }
 
@@ -1459,17 +1559,203 @@ mod tests {
         super::expand_entries(
             &entries,
             &beam,
-            0,
-            1,
+            0..1,
             &model,
             &mut super::StepCosts::default(),
             &mut trellis,
+            None,
         )
         .unwrap();
         // Bigram visits present 3,1,3 in the original range/item order;
         // the zero-count record 3 still participates. The independent head
         // unigram pass then visits every candidate, including absent 2.
         assert_eq!(*model.0.borrow(), [3, 1, 3, 3, 2, 1, 3]);
+    }
+
+    /// N2 refusals 1, 2, 4 and 6 in the n-best step
+    /// (`phonetic_lookup.h:594-632`): the predecessor's merge asserts on a
+    /// short user value beside a system gram; with no system gram,
+    /// `search` asserts on its total, a one-step constraint's `get_freq`
+    /// reads past it, and a walk past the last whole item reads past a
+    /// partial tail. A walk that stops before the tail steps normally.
+    #[test]
+    fn a_predecessor_row_the_pin_cannot_read_refuses_the_step() {
+        use oxpinyin_core::{MergedGram, NbestStepRow, NbestSuccessors};
+
+        struct Rows(Option<MergedGram>);
+        impl LanguageModel for Rows {
+            type Token = PhraseToken;
+            type Error = EngineError;
+
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                cost: Cost,
+            ) -> Result<Cost, EngineError> {
+                Ok(cost)
+            }
+
+            fn nbest_successors_in_row<'a>(
+                &self,
+                _: &PhraseToken,
+                row: &'a mut NbestStepRow,
+            ) -> Result<Option<NbestSuccessors<'a>>, EngineError> {
+                Ok(Some(
+                    row.get_or_try_init::<EngineError>(|| Ok(self.0.clone()))?
+                        .map_or(NbestSuccessors::Miss, NbestSuccessors::Row),
+                ))
+            }
+
+            fn nbest_item_costs_in_row(
+                &self,
+                _: &PhraseToken,
+                _: &PhraseToken,
+                item: Option<(u32, u32)>,
+                _: &mut NbestStepRow,
+            ) -> Result<NbestStepCosts, EngineError> {
+                Ok(NbestStepCosts {
+                    blended: item.map(|(freq, _)| Cost::from(freq)),
+                    unigram: Some(2000),
+                })
+            }
+        }
+
+        let gram = |total: u32, items: &[(u32, u32)], tail: &[u8]| {
+            let mut value = total.to_le_bytes().to_vec();
+            for (token, freq) in items {
+                value.extend_from_slice(&token.to_le_bytes());
+                value.extend_from_slice(&freq.to_le_bytes());
+            }
+            value.extend_from_slice(tail);
+            value
+        };
+        let mut entries = oxpinyin_core::PhraseIndexRanges::new();
+        entries.convert([1, 2].map(|token| {
+            (
+                token,
+                Some(super::SpanEntry {
+                    token,
+                    text: "一".into(),
+                    keys: 1,
+                    pronunciation: None,
+                }),
+            )
+        }));
+        let run = |row: Option<MergedGram>, one_step: Option<u32>| {
+            let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
+            let beam = trellis.beam(0);
+            super::expand_entries(
+                &entries,
+                &beam,
+                0..1,
+                &Rows(row),
+                &mut super::StepCosts::default(),
+                &mut trellis,
+                one_step,
+            )
+        };
+        let short = EngineError::ShortLookupPredecessor { token: 11 };
+        let unsafe_read = EngineError::UnsafeLookupPredecessor { token: 11 };
+        let merged = MergedGram::merge(Some(gram(1, &[(1, 1)], &[])), Some(vec![0, 0]));
+        assert_eq!(run(merged, None), Err(short.clone()));
+        let alone = || MergedGram::merge(None, Some(vec![0, 0]));
+        assert_eq!(run(alone(), None), Err(short));
+        assert_eq!(run(alone(), Some(1)), Err(unsafe_read.clone()));
+        let tailed = || MergedGram::merge(None, Some(gram(3, &[(1, 3)], &[9])));
+        assert_eq!(run(tailed(), None), Err(unsafe_read));
+        // `get_freq(1)` returns at the whole item before the tail.
+        assert_eq!(run(tailed(), Some(1)), Ok(()));
+        assert_eq!(run(None, None), Ok(()), "both grams absent: no bigram step");
+    }
+
+    /// `SingleGram::search` bounds its walk by the range end only
+    /// (`ngram.cpp:167-173`). On the row `[1, 3, 2]` the walk over range
+    /// `[3]` starts at 3 and yields 2 too, below that range; the pin steps
+    /// every yielded token whose phrase spells the span, with that item's
+    /// own count, so 2 steps there with 7.
+    #[test]
+    fn a_token_the_walk_yields_below_its_range_still_steps() {
+        use oxpinyin_core::{MergedGram, NbestStepRow, NbestSuccessors};
+        use std::cell::RefCell;
+
+        /// Each bigram step's token and the item it was priced from.
+        type Steps = Vec<(u32, Option<(u32, u32)>)>;
+        struct Walked(RefCell<Steps>);
+        impl LanguageModel for Walked {
+            type Token = PhraseToken;
+            type Error = EngineError;
+
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                cost: Cost,
+            ) -> Result<Cost, EngineError> {
+                Ok(cost)
+            }
+
+            fn nbest_successors_in_row<'a>(
+                &self,
+                _: &PhraseToken,
+                row: &'a mut NbestStepRow,
+            ) -> Result<Option<NbestSuccessors<'a>>, EngineError> {
+                Ok(Some(
+                    row.get_or_try_init::<EngineError>(|| {
+                        Ok(Some(MergedGram::new(15, vec![(1, 1), (3, 5), (2, 7)])))
+                    })?
+                    .map_or(NbestSuccessors::Miss, NbestSuccessors::Row),
+                ))
+            }
+
+            fn nbest_item_costs_in_row(
+                &self,
+                _: &PhraseToken,
+                token: &PhraseToken,
+                item: Option<(u32, u32)>,
+                _: &mut NbestStepRow,
+            ) -> Result<NbestStepCosts, EngineError> {
+                if item.is_some() {
+                    self.0.borrow_mut().push((token.value(), item));
+                }
+                Ok(NbestStepCosts {
+                    blended: Some(1000),
+                    unigram: Some(2000),
+                })
+            }
+        }
+
+        let mut entries = oxpinyin_core::PhraseIndexRanges::new();
+        entries.convert([1, 3, 2].map(|token| {
+            (
+                token,
+                Some(super::SpanEntry {
+                    token,
+                    text: "一".into(),
+                    keys: 1,
+                    pronunciation: None,
+                }),
+            )
+        }));
+        let model = Walked(RefCell::new(Vec::new()));
+        let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
+        let beam = trellis.beam(0);
+        super::expand_entries(
+            &entries,
+            &beam,
+            0..1,
+            &model,
+            &mut super::StepCosts::default(),
+            &mut trellis,
+            None,
+        )
+        .unwrap();
+        // Range [1] yields 1; range [3] yields 3 and then 2; range [2]
+        // starts past 2 and yields nothing.
+        assert_eq!(
+            *model.0.borrow(),
+            [(1, Some((1, 15))), (3, Some((5, 15))), (2, Some((7, 15)))]
+        );
     }
 
     /// The mini vocabulary's `ni`+`hao` chain with equal step costs decodes

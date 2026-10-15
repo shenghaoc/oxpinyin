@@ -174,7 +174,7 @@ wrong for both consumers.
 |---|---|---|---|
 | 1 — previous token | `_get_previous_token` (`pinyin.cpp:1711-1767`) | `Session::previous_token` (`session.rs`) | once per guess |
 | 2 — merge the gram | `m_system_bigram->load` + `m_user_bigram->load` + `merge_single_gram` (`pinyin.cpp:2200-2214`) | `LanguageModel::merged_successors` → `MergedGram`, called by `Session::dynamic_adjust_gram` | once per guess |
-| 3 — index it | `merged_gram->get_freq(token, …)` inside `_compute_frequency_of_items` (`pinyin.cpp:1855-1866`) | `MergedGram::possibility` via `dynamic_adjust_bigram_possibility` | once per candidate |
+| 3 — index it | `merged_gram->get_total_freq` and `get_freq(token, …)` inside `_compute_frequency_of_items` (`pinyin.cpp:1845-1852`) | `MergedGram::total` and `MergedGram::get_freq` via `dynamic_adjust_bigram_possibility` | once per candidate |
 
 The placement is the whole point of Phase 2, not the arithmetic. Merging
 per candidate would turn one row load into `O(candidates)` loads and
@@ -198,13 +198,18 @@ no phrase starts at contributes no bigram term at all.
 
 `merged_successors` is a **defaulted** trait method returning `None`, so
 every existing implementor compiles unchanged and contributes no bigram
-term — which is exactly the DYNAMIC_ADJUST-clear behaviour. Only
-`SharedLm` (capi) implements it: one `load_successors`, one
-`bigram_successors`, one `bigram_total`, merged into one `MergedGram`.
+term — which is exactly the DYNAMIC_ADJUST-clear behaviour. `RuntimeLm`
+implements it: one system point read and the user gram's raw value
+(`bigram_row`), merged by `MergedGram::merge` as `merge_single_gram`
+merges them (`ngram.cpp:277-352`, #757 PR 3).
 
-`MergedGram` keeps its records sorted by token so `count` is a binary
-search, mirroring `SingleGram`'s sorted item array
-(`ngram.cpp:178-196`).
+`MergedGram` is the merged chunk itself. It is read with the ported
+`SingleGram` walks, from `lower_bound` (`ngram.cpp:231-250`), so an
+unsorted or duplicated row answers as it does in the pin; nothing is
+sorted or deduplicated. A user value the pin cannot read refuses the
+guess (register rows 85 and 98). The eager refresh a parse or an option
+change runs does not refuse it, because the pin's parse merges no gram
+(`pinyin.cpp:1497-1520`); that list leaves the bigram term out instead.
 
 ### Gate 3
 

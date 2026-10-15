@@ -110,7 +110,10 @@ pub extern "C" fn pinyin_phrase_segment(
             inst.core.phrase_result = tokens;
             matched
         }
-        Err(_) => false,
+        Err(error) => {
+            crate::sentence::refuse_lookup_gram("pinyin_phrase_segment", &error);
+            false
+        }
     }
 }
 
