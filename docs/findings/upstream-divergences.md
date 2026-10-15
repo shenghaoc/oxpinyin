@@ -2270,34 +2270,38 @@ tkrzw oracles (linux/amd64) against `main` @ `8cd06566`.
     (`pinyin_remove_user_candidate`'s three removal asserts; policy row
     81). `:3750` leaves group C, which had called it not applicable to
     the value store; `:3743` and `:3759` leave groups A and B.
+  - #731 (#525 closure check, PR 2; 2026-10-11 UTC): `pinyin.cpp:554`,
+    `:568`, `:571` (`pinyin_iterator_add_phrase`'s phrase-table asserts;
+    policy row 93); `storage/chewing_large_table2_bdb.cpp:529`,
+    `_kyotodb.cpp:499`, `_tkrzwdb.cpp:466` (`pinyin_mask_out` and
+    `zhuyin_mask_out` on a `user_pinyin_index.bin` key with no whole word;
+    row 94); `storage/chewing_large_table2_bdb.cpp:282`, `_kyotodb.cpp:269`,
+    `_tkrzwdb.cpp:252` (`pinyin_guess_candidates` over a system
+    `pinyin_index.bin` key past 16 words; row 95). The three `pinyin.cpp`
+    sites leave group C, which had called them not applicable to the user
+    store; the six `chewing_large_table2` sites leave group B.
 
 | group | sites at `074a2219` (kind) | what oxpinyin answers | owed |
 |---|---|---|---|
 | A — refuses silently (33) | `include/memory_chunk.h:390` (`assert`, via `check_result`), `:493`, `:543`, `:547` (`assert`); `pinyin.cpp:457`, `:466`, `:499`, `:709`, `:1474`, `:3035`, `:3067`, `:3092`, `:3147`, `:3203`, `:3204`, `:3738` (`assert`), `:1189`, `:3488` (`abort()`); `storage/ngram_bdb.cpp:199`, `ngram_kyotodb.cpp:173`, `ngram_tkrzwdb.cpp:150` (`assert`); `storage/phonetic_key_matrix.h:103` (`assert`); `storage/pinyin_parser2.cpp:170` (`assert`), `:398`, `:611` (`abort()`); `storage/zhuyin_parser2.cpp:295` (`abort()`); `zhuyin.cpp:372`, `:381`, `:440` (trigger not established), `:457`, `:2110`, `:2158` (`assert`), `:736` (`abort()`) | `false`, `Err`, NULL, a skipped library or a dropped row — the false/`Err` half holds | one `g_warning` line per site |
-| B — no check at all (32) | `lookup/phonetic_lookup.h:868` (`assert`, row 6); `pinyin.cpp:388`, `:491`, `:902`, `:2507`, `:2566`, `:2593`, `:2684`, `:2769`, `:2883`, `:3311`, `:3734` (`assert`); `storage/chewing_large_table2_bdb.cpp:282`, `:529`, `_kyotodb.cpp:269`, `:499`, `_tkrzwdb.cpp:252`, `:466` (`abort()`); `storage/phonetic_key_matrix.cpp:661`, `:663` (`assert`); `storage/phrase_large_table3.h:95` (`assert`); `storage/pinyin_phrase3.h:152` (`assert`, row 4); `storage/ngram.cpp:70` (`assert`); `zhuyin.cpp:330`, `:1261`, `:1453` (arm (c) of #525's trigger; arms (a)/(b) refuse) (`assert`); `storage/table_info.cpp:119`, `:142`, `:156`, `:175` (`abort()`), `:276` (`assert`), and `:132`'s `table.conf` half (`abort()`; its `user.conf` half is policy row 44, both halves met) | `true`, data, a store write, or an ignored `table.conf` column — e.g. `pinyin_choose_candidate` has no candidate-type check for a predicted row (`:2507`, `crates/oxpinyin-capi/src/candidates.rs:304-409`) and `pinyin_remove_user_candidate` none for a non-`NORMAL` row (`:3734`, `candidates.rs:225-253`) | a guard answering `false`/`Err`, then the log line |
-| C — not applicable (3) | `pinyin.cpp:554`, `:568`, `:571` (`assert`) | no counterpart check can exist — see the note below | nothing |
+| B — no check at all (26) | `lookup/phonetic_lookup.h:868` (`assert`, row 6); `pinyin.cpp:388`, `:491`, `:902`, `:2507`, `:2566`, `:2593`, `:2684`, `:2769`, `:2883`, `:3311`, `:3734` (`assert`); `storage/phonetic_key_matrix.cpp:661`, `:663` (`assert`); `storage/phrase_large_table3.h:95` (`assert`); `storage/pinyin_phrase3.h:152` (`assert`, row 4); `storage/ngram.cpp:70` (`assert`); `zhuyin.cpp:330`, `:1261`, `:1453` (arm (c) of #525's trigger; arms (a)/(b) refuse) (`assert`); `storage/table_info.cpp:119`, `:142`, `:156`, `:175` (`abort()`), `:276` (`assert`), and `:132`'s `table.conf` half (`abort()`; its `user.conf` half is policy row 44, both halves met) | `true`, data, a store write, or an ignored `table.conf` column — e.g. `pinyin_choose_candidate` has no candidate-type check for a predicted row (`:2507`, `crates/oxpinyin-capi/src/candidates.rs:304-409`) and `pinyin_remove_user_candidate` none for a non-`NORMAL` row (`:3734`, `candidates.rs:225-253`) | a guard answering `false`/`Err`, then the log line |
+| C — not applicable (0) | none (see the note below) | — | nothing |
 | refuted (8) | `include/memory_chunk.h:434`; `storage/bdb_utils.h:61`, `:67`; `storage/phrase_index_logger.h:245`; `storage/tkrzwdb_utils.h:65`, `:72`; `zhuyin.cpp:454`; `pinyin.cpp:2517` (`check_result`) — all `assert` | the executed trigger did not abort the pin | nothing |
 | not executed (5) | `include/memory_chunk.h:438`, `:497` (`assert`); `storage/chewing_large_table2_bdb.cpp:388`, `_kyotodb.cpp:367`, `_tkrzwdb.cpp:342` (`abort()`) | no trigger reached the site | a trigger |
 | unverified (3) | `storage/phrase_index.cpp:745`, `storage/phrase_index_logger.h:202`, `pinyin.cpp:1859` (`assert`) | the subject side was not traced (#525) | a trace |
 
-Totals 33 + 32 + 3 + 8 + 5 + 3 = 84; kinds 64 `assert` + 20 `abort()`
-(three `assert`s moved to the logged list, above), out of #525's original
-87-site table.
+Totals 33 + 26 + 0 + 8 + 5 + 3 = 75; kinds 61 `assert` + 14 `abort()`
+(six `assert`s and six `abort()`s moved to the logged list, above), out
+of #525's original 87-site table.
 
-**Note — the not-applicable sites (different storage model).** Each of
-the three asserts an invariant of upstream's text-searched phrase index
-that oxpinyin's user store makes structural, so no check has anything to
-test:
-
-- `pinyin.cpp:554` (`PHRASE_INDEX_LIBRARY_INDEX(token) != index`) — the
-  pin searches every library by text and asserts at most one hit per
-  sub-index. oxpinyin keys a user phrase by (library, text) in
-  `PHRASE_BY_LIB_TEXT` (`crates/oxpinyin-user/src/store.rs:744-745`), so
-  a second token for one (library, text) pair cannot be stored.
-- `pinyin.cpp:568`, `:571` (the found item's length and text equal the
-  input) — the pin reads the hit back and compares; oxpinyin looks the
-  token up *by* that text (`store.rs:744-757`) and adds a pronunciation
-  to it (`:760-768`), never reading an item back to compare.
+**Note — the not-applicable sites (different storage model).** Group C
+is empty. `pinyin.cpp:554`, `:568` and `:571` were listed here as asserts
+of invariants of upstream's text-searched phrase index that oxpinyin's
+user store makes structural; they were reproduced and are now logged
+(#731, policy row 93). `pinyin_iterator_add_phrase`
+(`crates/oxpinyin-capi/src/iterators.rs`) checks the phrase table's
+same-library tokens (the `user_phrase_index.bin` membership plus the
+system phrase index) and the found item's text before any mutation.
 
 `pinyin.cpp:3750` was listed here as a fourth not-applicable site; it was
 reproduced and is now logged (PR 12g, policy row 81), with the phrase
