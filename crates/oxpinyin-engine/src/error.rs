@@ -139,6 +139,15 @@ pub enum EngineError {
         /// The predecessor token whose gram is too short for a total.
         token: u32,
     },
+    /// A training step's `set_freq` would miss the item its `insert_freq`
+    /// just added to the predecessor's unsorted gram: the pin's
+    /// `check_result(user->set_freq(token, freq + seed))` asserts
+    /// (`phonetic_lookup.h:903`). The engine answers an error, before
+    /// observing anything.
+    TrainingSetFreqMiss {
+        /// The predecessor token whose gram the step trains.
+        token: u32,
+    },
     /// A training span met a matrix position the pin's
     /// `increase_pronunciation_possibility` asserts on: the decoded
     /// result no longer fits the current matrix because a re-parse
@@ -237,6 +246,12 @@ impl fmt::Display for EngineError {
                     "the predecessor {token:#010x} has a user-bigram value shorter than its total"
                 )
             }
+            Self::TrainingSetFreqMiss { token } => {
+                write!(
+                    formatter,
+                    "training the predecessor {token:#010x}'s gram misses its inserted item"
+                )
+            }
             Self::MatrixColumnAssert { offset } => {
                 write!(
                     formatter,
@@ -281,6 +296,7 @@ impl std::error::Error for EngineError {
             | Self::StaleTrainingSpan { .. }
             | Self::UnsafeTrainingPredecessor { .. }
             | Self::ShortTrainingPredecessor { .. }
+            | Self::TrainingSetFreqMiss { .. }
             | Self::OverlongUserIndexKey { .. }
             | Self::UserModel(_) => None,
         }

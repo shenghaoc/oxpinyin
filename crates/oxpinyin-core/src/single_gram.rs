@@ -330,6 +330,25 @@ mod tests {
         assert_eq!(get_total_freq(&bytes), Some(10));
     }
 
+    /// Training's `get_freq` miss, `insert_freq`, then `set_freq`
+    /// (`phonetic_lookup.h:888-903`): on `[1, 2, 3, 6, 4]` the insert of 5
+    /// appends, and the second `lower_bound` lands on 6 > 5, so `set_freq`
+    /// misses the item it was meant to set — the pin's `check_result`
+    /// abort.
+    #[test]
+    fn set_freq_can_miss_the_item_insert_freq_added() {
+        let mut bytes = gram(0, &[(1, 1), (2, 1), (3, 1), (6, 1), (4, 1)]);
+        assert_eq!(get_freq(&bytes, 5), None);
+        assert!(insert_freq(&mut bytes, 5, 0));
+        assert_eq!(
+            items(&bytes),
+            [(1, 1), (2, 1), (3, 1), (6, 1), (4, 1), (5, 0)]
+        );
+        assert_eq!(lower_bound(&bytes, 5), 3);
+        assert!(!set_freq(&mut bytes, 5, 69));
+        assert_eq!(get_freq(&bytes, 5), None);
+    }
+
     /// Q2: get/set act on the first match; mask removes every match and
     /// subtracts each frequency; retrieve_all keeps stored order.
     #[test]

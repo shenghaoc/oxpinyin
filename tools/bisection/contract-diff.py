@@ -6499,6 +6499,40 @@ for _kind in ('unsorted', 'duplicate'):
     case(f'user-gram-{_kind}-predicted')(user_gram_predicted(_kind))
 
 
+# Q1's abort (register row 85): training 你 after the sentence start finds
+# the start's gram ordered [1, 2, 3, 6, 4] around it (你 = 5). get_freq
+# misses, insert_freq appends, and set_freq's second lower_bound lands on the
+# larger token, so check_result(user->set_freq(token, freq + seed)) dies
+# (074a2219 phonetic_lookup.h:888-903; ngram.cpp:178-205, 252-271).
+def train_unsorted_set_freq_miss(k):
+    def grams(system, users):
+        ni = system['你']
+        items = [(ni - 4, 1), (ni - 3, 1), (ni - 2, 1), (ni + 1, 1), (ni - 1, 1)]
+        return [(1, _gram_bytes(5, items))]
+
+    _plant_user_grams(k, [], grams)
+    assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+    assert consumed(k, 'parse_more_full_pinyins', b'nihao', fresh=False) == 5
+    assert k.fn('guess_sentence', B, P)(k.inst)
+    for offset, text in ((0, '你'), (2, '好')):
+        if k.mode == 'pinyin':
+            assert k.fn('guess_candidates', B, P, Z, U)(k.inst, offset, 0x1e)
+        else:
+            assert k.fn('guess_candidates_after_cursor', B, P, Z)(k.inst, offset)
+        candidate = row_with_text(k, k.inst, 2, text)
+        assert candidate, 'missing normal candidate: ' + text
+        assert k.fn('choose_candidate', I, P, Z, P)(k.inst, offset, candidate) > 0
+    assert k.fn('guess_sentence', B, P)(k.inst)
+    ret = (k.fn('train', B, P, C.c_ubyte)(k.inst, 0) if k.mode == 'pinyin'
+           else k.fn('train', B, P)(k.inst))
+    return {'ret': ret}
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case(f'abort-train-unsorted-set-freq-miss-{_mode}', mode=_mode, abort=False)(
+        train_unsorted_set_freq_miss)
+
+
 # Q3: an item-less gram under a key the mask leaves alone is loaded,
 # `SingleGram::mask_out` removes nothing, and `Bigram::mask_out` skips it
 # untouched — `if (0 == num) { delete gram; continue; }` (074a2219

@@ -11,7 +11,7 @@ use oxpinyin_engine::{
     CandidateList, EngineError, check_lookup_offset_range, normalize_lookup_offset,
 };
 use oxpinyin_runtime::{RuntimeDict, RuntimeLm, RuntimeSession};
-use oxpinyin_user::{SENTENCE_START, UserStore};
+use oxpinyin_user::{TrainingFault, UserStore};
 
 use crate::context::LiveOptions;
 
@@ -235,27 +235,29 @@ impl InstanceCore {
         if !user.has_user_directory() {
             return Ok(false);
         }
-        // Each training step loads its predecessor's gram, reads the total
-        // (`phonetic_lookup.h:884`) and walks the items with
-        // `cur_item != end` (`ngram.cpp:190`, `:241`, `:261`, 074a2219).
-        // The first predecessor in training order whose gram is too short
-        // for the total (an assert, `memory_chunk.h:390`) or has a partial
-        // item tail (a read past it) refuses the call before any
-        // observation. Checked against the live raw values.
-        for token in self
-            .session
-            .training_predecessors(index)
-            .into_iter()
-            .map(|prev| prev.map_or(SENTENCE_START, PhraseToken::value))
-        {
-            if user.has_short_bigram_value_for(token) {
-                return Err(EngineError::ShortTrainingPredecessor { token });
-            }
-            if user.has_oob_bigram_value_for(token) {
-                return Err(EngineError::UnsafeTrainingPredecessor { token });
-            }
-        }
-        let result = self.session.train_nbest(index, user);
+        // The training walk checks each step in step order before it observes
+        // any (`Session::train_nbest`, `UserModel::check_step`): a gram too
+        // short for its total (`phonetic_lookup.h:884`), a partial item tail
+        // (`ngram.cpp:190`, `:241`, `:261`) or a `set_freq` that misses its
+        // inserted item (`phonetic_lookup.h:903`) refuses the call where the
+        // pin dies, after an earlier step's stale constraint or span and
+        // before this step's. The store records which one it met.
+        user.begin_training_steps();
+        let result = match self.session.train_nbest(index, user) {
+            Err(EngineError::UserModel(error)) => match user.take_training_fault() {
+                Some(TrainingFault::ShortValue(token)) => {
+                    Err(EngineError::ShortTrainingPredecessor { token })
+                }
+                Some(TrainingFault::PartialTail(token)) => {
+                    Err(EngineError::UnsafeTrainingPredecessor { token })
+                }
+                Some(TrainingFault::SetFreqMiss(token)) => {
+                    Err(EngineError::TrainingSetFreqMiss { token })
+                }
+                None => Err(EngineError::UserModel(error)),
+            },
+            other => other,
+        };
         if !matches!(
             &result,
             Ok(false)
@@ -263,7 +265,8 @@ impl InstanceCore {
                     | EngineError::StaleTrainingConstraint { .. }
                     | EngineError::StaleTrainingSpan { .. }
                     | EngineError::UnsafeTrainingPredecessor { .. }
-                    | EngineError::ShortTrainingPredecessor { .. })
+                    | EngineError::ShortTrainingPredecessor { .. }
+                    | EngineError::TrainingSetFreqMiss { .. })
         ) {
             // A valid call still marks the context modified, including a
             // constraint-free result or a subsequent user-model failure
