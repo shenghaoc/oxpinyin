@@ -791,6 +791,12 @@ impl BigramLanguageModel {
         // carries this successor: upstream's bigram expansion walks
         // merged-gram successors (`search_bigram2`). Stored records survive
         // a wrapped count of zero; absence, rather than count, gates the walk.
+        // A wrapped total below the stored count puts the blend above one, and
+        // the pin takes `log` of it uncapped (`phonetic_lookup.h:692-693`), so
+        // that is priced as a negative cost, not clamped. Above one, preserve
+        // the pin's gfloat bigram division/multiplication and gdouble sum
+        // (074a2219 `phonetic_lookup.h:605-608`, `:692-693`). Ratios up to
+        // one keep the registered fixed-point divergence's exact path.
         let blended = match transition()? {
             Some((0, 0, true)) => Some(oxpinyin_core::cost::NAN_COST),
             Some((_, 0, true)) => Some(zero_total_bigram_cost(lambda_num)),
@@ -802,7 +808,19 @@ impl BigramLanguageModel {
                 u128::from(count),
                 u128::from(unigram_total),
             )
-            .and_then(ratio_cost),
+            .and_then(|ratio @ (numerator, denominator)| {
+                if numerator > denominator {
+                    raw_blend_cost(
+                        self.lambda_f32,
+                        bigram_count,
+                        bigram_total,
+                        count,
+                        unigram_total,
+                    )
+                } else {
+                    ratio_cost(ratio)
+                }
+            }),
             _ => None,
         };
 

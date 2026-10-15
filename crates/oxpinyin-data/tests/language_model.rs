@@ -218,6 +218,113 @@ fn wrapped_bigram_fields_keep_record_presence_and_nan_costs() {
     );
 }
 
+/// The n-best walk's form of one step: the predecessor's user gram merged
+/// with its system gram, read with `get_freq` and `get_total_freq`, then
+/// priced from that item.
+fn merged_row_costs(
+    lm: &BigramLanguageModel,
+    prev: u32,
+    token: u32,
+    user: UserCountDelta,
+    user_gram: (u64, Vec<(u32, u64)>),
+) -> oxpinyin_core::NbestStepCosts {
+    use oxpinyin_core::{MergedGram, NbestStepRow};
+    let bytes = MergedGram::new(user_gram.0, user_gram.1)
+        .as_bytes()
+        .to_vec();
+    let mut row = NbestStepRow::default();
+    let gram = row
+        .get_or_try_init(|| lm.load_merged_row(prev, Some(bytes)))
+        .unwrap()
+        .expect("the user gram is present");
+    let item = gram
+        .get_freq(token)
+        .unwrap()
+        .map(|freq| (freq, gram.total().unwrap()));
+    lm.nbest_item_costs(&PhraseToken::new(token), user, false, item)
+        .unwrap()
+}
+
+/// #791: the pin takes `log` of the blend with no cap
+/// (`phonetic_lookup.h:692-693`), and a merged `SingleGram` total that wrapped
+/// below a stored count (`ngram.cpp:305`) puts it above one, so the cost is
+/// negative — not the zero a clamp would give.
+#[test]
+fn a_blend_above_one_from_a_wrapped_total_is_a_negative_cost() {
+    let fix = Fixture::new();
+    let (lm, _) = fix.open();
+    let ni = PhraseToken::new(NI);
+    let hao = PhraseToken::new(HAO);
+    // System 你 → 好 is (7, 7). A user total of 2^32 - 6 wraps the merged
+    // total to exactly 1 while the merged count is 7 + 3 = 10: the planted
+    // sentence-start state of #791 in miniature.
+    let user_total = u64::from(u32::MAX) - 5;
+    let delta = UserCountDelta {
+        bigram_count: 3,
+        bigram_total: user_total,
+        ..UserCountDelta::ZERO
+    };
+    // Independently evaluated with IEEE f32 rounding (Python struct.pack/unpack):
+    // f32(λ * f32(10 / 1)) = 3.1269898414611816;
+    // f32(1 - f64(λ)) * (5 / 19) = 0.1808686946567736 in f64.
+    // The f64 sum is 3.3078585361179553: -1725.89753753063 millibits.
+    let expected = Some(-1726);
+    let pair = lm
+        .nbest_step_costs_with_user_delta(&ni, &hao, delta)
+        .unwrap();
+    assert_eq!(pair.blended, expected);
+    // The merged-row form the n-best walk takes agrees, as does the unigram
+    // branch, which no wrap touches.
+    let raw = merged_row_costs(
+        &lm,
+        NI,
+        HAO,
+        UserCountDelta::ZERO,
+        (user_total, vec![(HAO, 3)]),
+    );
+    assert_eq!(raw.blended, expected);
+    assert_eq!(raw.unigram, pair.unigram);
+    assert!(pair.unigram.unwrap() > 0, "the unigram branch is a cost");
+}
+
+/// Codex P2 on #796: an above-one blend at a millibit rounding boundary.
+#[test]
+fn an_above_one_blend_keeps_the_pins_mixed_precision_rounding() {
+    let fix = Fixture::new();
+    let (lm, _) = fix.open();
+    let ni = PhraseToken::new(NI);
+    let hao = PhraseToken::new(HAO);
+    // Final counts: b=2134351507, bt=602365351, u=3736239466,
+    // ut=731049969362, with the default lambda. Subtract the fixture's
+    // system counts (7, 7, 5, 19) so the merged fields equal those values.
+    let delta = UserCountDelta {
+        bigram_count: 2_134_351_507 - 7,
+        bigram_total: 602_365_351 - 7,
+        unigram_delta: 3_736_239_466 - 5,
+        unigram_total_delta: 731_049_969_362 - 19,
+    };
+    // Independently evaluated with Python struct.pack/unpack for each f32
+    // operation, following 074a2219 phonetic_lookup.h:605-608, :692-693:
+    // bigram_poss = 3.543283700942993; λ * poss = 1.1079812049865723;
+    // the f64 unigram term is 0.0035126480776343167, giving the f64 sum
+    // 1.1114938530642067 and -152.49996979692492 millibits, rounded to -152.
+    // Logging the exact rational instead gives -153.
+    let pair = lm
+        .nbest_step_costs_with_user_delta(&ni, &hao, delta)
+        .unwrap();
+    assert_eq!(pair.blended, Some(-152));
+
+    let raw = merged_row_costs(
+        &lm,
+        NI,
+        HAO,
+        delta,
+        (delta.bigram_total, vec![(HAO, delta.bigram_count)]),
+    );
+    assert_eq!(raw.blended, Some(-152));
+    assert_eq!(raw.unigram, pair.unigram);
+}
+
 /// The §12 presence gate (revert-plan.md §12, register #35): the pin's
 /// `unigram_gen_next_step` prices any *loaded* sub-index's item
 /// (`get_phrase_item`), and the three `USER_FILE` sub-indexes (nibbles
