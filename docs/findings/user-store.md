@@ -395,6 +395,21 @@ bigram against the unigram. A user selection therefore raises the merged
 that continuation's decode score. The magnitude of the nudge is exactly the
 `seed` arithmetic of §2 flowing through this additive merge.
 
+**Storage (amended 2026-10-14 UTC, #757 PR 2).** The user half of the
+merge is the pin's own `SingleGram` value, held once: a libpinyin
+session keeps it in the pin's container (§11) and a plain or standalone
+store in the ordered `user_bigram_gram` table (raw values keyed by the
+big-endian predecessor token — a test-only layout with no pin
+counterpart). Every read takes the bytes apart the pin's way
+(`oxpinyin_core::single_gram`, a port of `ngram.cpp`): a count is
+`get_freq`'s first match walking from libstdc++'s `__lower_bound`, which
+answers deterministically on an unsorted array, and duplicated items are
+kept. An item-less user gram is still a gram: `merge_single_gram` adds
+its total whatever its length (`ngram.cpp:298-306`), so the overlay is
+non-zero whenever the container holds any key. The earlier normalized
+copy — `BIGRAM[(prev, cur)]` and `BIGRAM_TOTAL[prev]` rows decoded at
+load and rewritten on train and mask — is gone.
+
 **Seam note (W6-T4).** The merge sits in oxpinyin's language model
 (`BigramLanguageModel::score`, count addition before the λ blend), **not** in
 `UserModel::score`, which stays `Ok(0)`: a `Cost` added after the λ blend
@@ -709,7 +724,8 @@ Architecture — a session scratch behind the value engine:
   record codec (add/remove/modify/header; MODIFY_HEADER carries the
   payload length once, then two runs).
 * `oxpinyin_user::persistence` — load (`check_format` first: wipe on
-  non-conform; then the user bigram wholesale, the USER_FILE chunk
+  non-conform; then — for `persistence::load`'s callers only — the user
+  bigram's raw rows verbatim (amendment 2026-10-14 below), the USER_FILE chunk
   stores, and the `.dbin` logs replayed onto the original system
   chunks with merge's stop-at-first-mismatch), save (the pin's
   `_write_files`+`_rename_files`: every file whole to a `.tmp` sibling,
@@ -742,7 +758,24 @@ Architecture — a session scratch behind the value engine:
   `Bigram::mask_out`'s walk for a mask or a user-phrase removal. Its walk
   order is therefore the pin's; the bigram export iterates it, and
   `pinyin_save` writes `user_bigram.db` from it by the pin's `save_db`.
-  The scratch tables stay the source of every count.
+  The scratch tables stay the source of every count. **Amendment
+  (2026-10-14 UTC, #757 PR 2): the container is the only copy.** The
+  `BIGRAM`/`BIGRAM_TOTAL` scratch tables, their decode at load (with its
+  load-time fault snapshots) and their normalized rewrites are removed.
+  The session reads `user_bigram.db` once, by `load_db`, after the
+  profile check, and every bigram operation runs the pin's own sequence
+  on the raw grams: training (`phonetic_lookup.h:876-909`), predicted
+  training (`pinyin.cpp:2622-2638`), prediction (`pinyin.cpp:2321-2341`),
+  the export's lazy per-key load (`pinyin.cpp:775-787`, `:885-890`), and
+  `Bigram::mask_out` for a mask or a removal (`ngram_bdb.cpp:217-254`
+  and its twins), which leaves a gram it removed nothing from untouched.
+  The fault checks read the live container: non-token keys from its
+  keys, short and partial values from the bytes, and a mask's residual
+  total by running the ported mask on a copy. A writer takes the
+  database guard, then the container, and moves the write generation
+  before releasing the database guard. `UserState.bigram` is now the
+  raw `(key, value)` rows in file order, filled by `persistence::load`
+  and written by a `persistence::save` that has no container.
 * **The user bigram's container is backend-specific, and is not the
   system bigram's container** — the fact that produced this section's
   one real defect. On Kyoto Cabinet the *system* `bigram.db` is a
@@ -773,8 +806,8 @@ Architecture — a session scratch behind the value engine:
   `pinyin_save` truncated it under the parent, whose Kyoto Cabinet handle
   then failed its next write (current main) or spun (the audited
   `18d78208`, #531). Memory is private to the process, so neither can
-  happen. The value mapping is one-for-one: bigram rows are the
-  `SingleGram` grams; a user item is the `PHRASE` text + the
+  happen. The value mapping is one-for-one: the bigram is the pin's
+  own container (amendment above); a user item is the `PHRASE` text + the
   `PRONUNCIATION` rows (packed keys — one wire form) + the token's full
   `UNIGRAM` accumulation (`count·3` base, `seed·7` training). System
   imports retain full packed item payloads in a sparse session-memory map;

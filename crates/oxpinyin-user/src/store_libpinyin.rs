@@ -26,8 +26,11 @@
 //!
 //! The value mapping, both directions:
 //!
-//! * bigram — `BIGRAM[(prev,cur)]` + `BIGRAM_TOTAL[prev]` rows are the
-//!   `SingleGram` grams of `user_bigram.db`, one-for-one.
+//! * bigram — not a value of the session store at all: the session keeps
+//!   the pin's own in-memory container, filled from `user_bigram.db` once
+//!   by `load_db` and written back by `save_db`, and every bigram
+//!   operation runs the pin's `SingleGram` code over its raw grams
+//!   ([`crate::store::BIGRAM_GRAM`] is the plain stores' equivalent).
 //! * user phrases — a `user.bin`/`addon.bin` item is the `PHRASE` text,
 //!   the `PRONUNCIATION` rows (packed keys — one wire form in both
 //!   schemas) and the `UNIGRAM` row: upstream's item `unigram` field is
@@ -59,9 +62,9 @@ use crate::persistence::{
 use crate::phrase::{self, phrase_index_library_index};
 use crate::registry::StoreInner;
 use crate::store::{
-    ALLOC, ALLOC_CURSOR, BIGRAM, BIGRAM_TOTAL, GenericUserStore, PHRASE, PHRASE_BY_LIB_TEXT,
-    PHRASE_BY_TEXT, PHRASE_TABLE, PHRASE_TABLE_BY_TEXT, PRONUNCIATION, PronValue, SYSTEM_BASE,
-    Token, UNIGRAM, UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY, UserStoreError,
+    ALLOC, ALLOC_CURSOR, GenericUserStore, PHRASE, PHRASE_BY_LIB_TEXT, PHRASE_BY_TEXT,
+    PHRASE_TABLE, PHRASE_TABLE_BY_TEXT, PRONUNCIATION, PronValue, SYSTEM_BASE, Token, UNIGRAM,
+    UNIGRAM_TOTAL, UNIGRAM_TOTAL_KEY, UserStoreError,
 };
 
 /// The persistence target a session store carries: the user dir, the
@@ -93,16 +96,6 @@ pub struct Target {
     /// `DB_SET` probe tests before it walks extensions
     /// ([`persistence::LoadedProfile::index_keys`]).
     pub(crate) index_keys: BTreeSet<Vec<u16>>,
-    /// `user_bigram.db` keys that are not four bytes
-    /// ([`persistence::LoadedProfile::bigram_non_token_keys`]): the pin's
-    /// `Bigram::get_all_items` asserts on them (`ngram_bdb.cpp:199`).
-    pub(crate) bigram_non_token_keys: Vec<Vec<u8>>,
-    /// `user_bigram.db` rows whose total is not covered by their items,
-    /// with their item tokens
-    /// ([`persistence::LoadedProfile::bigram_residual_grams`]): the pin's
-    /// `Bigram::mask_out` reaches `SingleGram::get_length` on them and
-    /// asserts (`ngram.cpp:70`, `ngram_bdb.cpp:243`).
-    pub(crate) bigram_residual_grams: Vec<(Token, Vec<Token>)>,
     /// Every key the session's two user index tables hold
     /// ([`persistence::IndexKeys`]): the loaded files' keys, plus the keys
     /// of every row a mask or a removal took out of the store since. The
@@ -387,8 +380,6 @@ impl GenericUserStore<DefaultStore> {
             phrase_table,
             overlong_index_keys,
             index_keys,
-            bigram_non_token_keys,
-            bigram_residual_grams,
             index_file_keys,
         } = profile;
         // Armed as soon as the load has raised the counter: an open that
@@ -402,8 +393,6 @@ impl GenericUserStore<DefaultStore> {
             open_counter: loaded.open_counter,
             overlong_index_keys,
             index_keys,
-            bigram_non_token_keys,
-            bigram_residual_grams,
             index_file_keys: std::sync::Mutex::new(index_file_keys),
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
@@ -412,6 +401,21 @@ impl GenericUserStore<DefaultStore> {
             let total_rows = count_tables(txn)?;
             Ok(total_rows)
         })?;
+        // `m_user_bigram->load_db(user_bigram.db)` (`pinyin.cpp:399-401`):
+        // the user bigram's one read, after the profile check, so a wiped
+        // profile loads empty. Any key counts as user data, an item-less
+        // gram included: the pin merges its total (`ngram.cpp:298-306`).
+        // The flag only gates a fast path, so a profile that has the file
+        // takes the full read without a walk of the container here.
+        let (bigram_db, has_bigram_file) = match target.dir.as_deref() {
+            Some(dir) => (
+                persistence::load_user_bigram_db(dir)?,
+                dir.join(oxpinyin_data::user_files::UserDbm::Bigram.file_name())
+                    .exists(),
+            ),
+            None => (DefaultUserBigramDb::empty()?, false),
+        };
+        let has_user_data = has_user_data || has_bigram_file;
 
         let inner = Arc::new(StoreInner {
             has_system_items: std::sync::atomic::AtomicBool::new(
@@ -436,19 +440,17 @@ impl GenericUserStore<DefaultStore> {
             write_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_generation: std::sync::atomic::AtomicU64::new(0),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
-            bigram_db: Some(std::sync::Mutex::new(match target.dir.as_deref() {
-                Some(dir) => persistence::load_user_bigram_db(dir)?,
-                None => DefaultUserBigramDb::empty()?,
-            })),
+            bigram_db: Some(std::sync::Mutex::new(bigram_db)),
             libpinyin: Some(target),
         });
         Ok(Self::from_parts(inner, None, fini))
     }
 }
 
-/// `init_and_wrap`'s `has_user_data` probe, against a seeded session store.
+/// `init_and_wrap`'s `has_user_data` probe, against a seeded session
+/// store; the user bigram lives in the container, which the caller asks.
 fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
-    Ok(!txn.is_empty(BIGRAM)? || !txn.is_empty(UNIGRAM)? || !txn.is_empty(PHRASE)?)
+    Ok(!txn.is_empty(UNIGRAM)? || !txn.is_empty(PHRASE)?)
 }
 
 /// Writes the loaded profile's values into a fresh session store — the
@@ -630,22 +632,6 @@ pub(crate) fn seed_txn(
         }
     }
 
-    // The bigram grams, rows wholesale.
-    for (&prev, gram) in &state.bigram {
-        for (&cur, &count) in &gram.items {
-            txn.put(
-                BIGRAM,
-                &codec::encode_token_pair(prev, cur),
-                &codec::encode_u64(u64::from(count)),
-            )?;
-        }
-        txn.put(
-            BIGRAM_TOTAL,
-            &codec::encode_token(prev),
-            &codec::encode_u64(u64::from(gram.total)),
-        )?;
-    }
-
     // The alloc cursors: one past the highest loaded token per library.
     for (nibble, max_token) in alloc_cursor {
         let next = phrase::next_library_token_after(nibble, max_token)
@@ -732,25 +718,6 @@ pub fn export_state<S: WriteStore>(
         Ok(())
     })?;
 
-    let mut bigram_pairs: BTreeMap<(Token, Token), u64> = BTreeMap::new();
-    db.for_each(BIGRAM, &mut |key, value| {
-        let (prev, cur) = codec::decode_token_pair(key)
-            .map_err(|_| StoreError::Backend("corrupt bigram key".into()))?;
-        let count = codec::decode_u64(value)
-            .map_err(|_| StoreError::Backend("corrupt bigram count".into()))?;
-        bigram_pairs.insert((prev, cur), count);
-        Ok(())
-    })?;
-    let mut bigram_totals: BTreeMap<Token, u64> = BTreeMap::new();
-    db.for_each(BIGRAM_TOTAL, &mut |key, value| {
-        let prev = codec::decode_token(key)
-            .map_err(|_| StoreError::Backend("corrupt bigram total key".into()))?;
-        let total = codec::decode_u64(value)
-            .map_err(|_| StoreError::Backend("corrupt bigram total".into()))?;
-        bigram_totals.insert(prev, total);
-        Ok(())
-    })?;
-
     let system_items = store.stored_system_items();
     drop(db);
 
@@ -812,23 +779,6 @@ pub fn export_state<S: WriteStore>(
             .insert(slot, Some(new_item));
     }
 
-    let mut by_prev: BTreeMap<Token, BTreeMap<Token, u64>> = BTreeMap::new();
-    for ((prev, cur), count) in bigram_pairs {
-        by_prev.entry(prev).or_default().insert(cur, count);
-    }
-    for (prev, items) in by_prev {
-        let total = bigram_totals.get(&prev).copied().unwrap_or(0);
-        state.bigram.insert(
-            prev,
-            crate::persistence::Gram {
-                total: u32::try_from(total).unwrap_or(u32::MAX),
-                items: items
-                    .into_iter()
-                    .map(|(cur, count)| (cur, u32::try_from(count).unwrap_or(u32::MAX)))
-                    .collect(),
-            },
-        );
-    }
     for (token, mut item) in system_items {
         let nibble = phrase_index_library_index(token);
         let slot = token & crate::phrase::PHRASE_MASK;
@@ -928,7 +878,6 @@ pub(crate) fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::persistence::Gram;
     use crate::persistence::SystemLibrary;
     use crate::store::UserStore;
     use oxpinyin_core::ChewingKey;
@@ -1099,6 +1048,117 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 
+    /// N2: both training paths read the predecessor's total first
+    /// (`phonetic_lookup.h:884`, `pinyin.cpp:2630` at the pin `074a2219`),
+    /// and a value too short for one is the pin's assert
+    /// (`memory_chunk.h:390`). Both refuse before anything changes: the
+    /// predicted path's unigram add, which the pin makes first
+    /// (`pinyin.cpp:2609`), dies with the process there, so it is not
+    /// made either.
+    #[test]
+    fn a_short_predecessor_value_refuses_both_training_paths() {
+        let dir = tempdir("short-gram-train");
+        let short = vec![0xa5, 0x5a, 0x01];
+        DefaultStore::write_user_bigram(
+            &dir.join("user_bigram.db"),
+            &[(1_u32.to_le_bytes().to_vec(), short.clone())],
+        )
+        .expect("write gram");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        let generation = store.generation();
+        let total = store.unigram_total().expect("unigram total");
+        for refused in [
+            store.observe_selection(1, 0x0100_0001),
+            store.observe_predicted(1, 0x0100_0001),
+        ] {
+            assert!(matches!(refused, Err(UserStoreError::ShortUserBigramValue)));
+        }
+        assert_eq!(store.generation(), generation, "nothing was written");
+        assert_eq!(store.unigram_total().expect("unigram total"), total);
+        assert_eq!(store.unigram_delta(0x0100_0001).expect("delta"), 0);
+        assert_eq!(store.bigram_row(1).expect("row"), Some(short));
+        assert!(!store.is_modified());
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// The system-library reload after a mask rebuilds the session tables,
+    /// but the session's grams live in the container: a gram left there is
+    /// still user data, so it stays readable even when no table row is.
+    #[test]
+    fn grams_stay_readable_after_a_system_reload_empties_the_tables() {
+        let dir = tempdir("reload-keeps-grams");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        store
+            .observe_selection(1, 0x0100_0001)
+            .expect("train a system token");
+        let gram = store.bigram_row(1).expect("row");
+        assert!(gram.is_some());
+        // The reload drops library 1's rows: the trained unigram was the
+        // only table row.
+        store
+            .reload_system_libraries(
+                originals(),
+                0xffff_ffff,
+                0x0100_0002,
+                persistence::SystemLogSnapshot::default(),
+            )
+            .expect("reload");
+        assert_eq!(store.unigram_delta(0x0100_0001).expect("delta"), 0);
+        assert_eq!(store.bigram_row(1).expect("row"), gram);
+        assert_eq!(store.bigram_count(1, 0x0100_0001).expect("count"), 69);
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// Q1: training searches the stored items as the pin does. On
+    /// `[high, low]` `get_freq(low)` misses from the libstdc++ lower bound
+    /// and `insert_freq(low, 0)` lands at the same place, so the gram
+    /// gains a duplicate seeded with 69 (`phonetic_lookup.h:888-903`).
+    #[test]
+    fn training_over_an_unsorted_gram_inserts_where_the_pin_does() {
+        let dir = tempdir("unsorted-gram-train");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        let (high, low) = (0x0100_0009_u32, 0x0100_0001_u32);
+        let gram = oxpinyin_data::single_gram::encode_single_gram;
+        store.plant_raw_bigram(2, &gram(10, &[(high, 4), (low, 6)]));
+        assert_eq!(store.bigram_count(2, low).expect("miss"), 0);
+        assert_eq!(store.observe_selection(2, low).expect("train"), 69);
+        assert_eq!(
+            store.bigram_row(2).expect("row"),
+            Some(gram(79, &[(low, 69), (high, 4), (low, 6)]))
+        );
+        // The repeat finds the first match and doubles from it.
+        assert_eq!(store.observe_selection(2, low).expect("train"), 138);
+        assert_eq!(
+            store.bigram_row(2).expect("row"),
+            Some(gram(217, &[(low, 207), (high, 4), (low, 6)]))
+        );
+        drop(store);
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
     #[test]
     fn a_partial_tail_created_in_session_refuses_training() {
         let dir = tempdir("partial-gram-in-session");
@@ -1168,8 +1228,18 @@ mod tests {
         assert!(!store.has_oob_bigram_value_for(1));
         assert_eq!(store.bigram_count(1, 9).expect("initial item"), 7);
         store.mask_out(u32::MAX, 1).expect("whole-key mask");
+        // There is one copy: every read answers from the value the
+        // backend's container kept after its `remove`.
+        let live = store.bigram_row(1).expect("live row");
         let live_after_mask = store.has_oob_bigram_value_for(1);
-        assert_eq!(store.bigram_count(1, 9).expect("masked item"), 0);
+        let partial = |gram: &[u8]| gram.len() >= 4 && !(gram.len() - 4).is_multiple_of(8);
+        assert_eq!(live_after_mask, live.as_deref().is_some_and(partial));
+        assert_eq!(
+            store.bigram_count(1, 9).expect("masked item"),
+            live.as_deref()
+                .and_then(|gram| oxpinyin_core::single_gram::get_freq(gram, 9))
+                .map_or(0, u64::from)
+        );
         let report = store.save_reporting().expect("save masked gram");
         assert!(report.renames_failed.is_empty());
         assert!(report.user_conf_write_failed.is_none());
@@ -1187,9 +1257,19 @@ mod tests {
         }
         drop(raw);
 
+        // The hook updates that value in place (Q5): the item is inserted,
+        // the total moves by the difference, and a partial tail the
+        // backend kept stays.
+        let total = live
+            .as_deref()
+            .and_then(oxpinyin_core::single_gram::get_total_freq)
+            .unwrap_or(0);
         store.set_bigram_count(1, 10, 5).expect("overwrite gram");
-        assert!(!store.has_oob_bigram_value_for(1));
-        assert_eq!(store.bigram_total(1).expect("new total"), 5);
+        assert_eq!(store.has_oob_bigram_value_for(1), live_after_mask);
+        assert_eq!(
+            store.bigram_total(1).expect("new total"),
+            (u64::from(total) + 5).min(u64::from(u32::MAX))
+        );
         assert_eq!(store.bigram_count(1, 10).expect("new item"), 5);
         drop(store);
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -1213,8 +1293,13 @@ mod tests {
         let mut store =
             UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
                 .expect("open");
+        // The one copy is the raw value: no total can be read from it.
         assert!(store.has_short_bigram_value_for(1));
-        assert_eq!(store.bigram_total(1).expect("skipped total"), 0);
+        assert_eq!(
+            store.bigram_row(1).expect("raw row"),
+            Some(vec![0xa5, 0x5a, 0x01])
+        );
+        assert_eq!(store.bigram_total(1).expect("no total"), 0);
         assert!(matches!(
             store.mask_out(u32::MAX, 0),
             Err(UserStoreError::ShortUserBigramValue)
@@ -1226,8 +1311,8 @@ mod tests {
         );
         drop(raw);
 
-        // An ordinary write replaces the malformed row. The guard must
-        // follow that live container, not a load-time fault snapshot.
+        // The test hook replaces a value too short for a total with a fresh
+        // gram (Q5). The guard follows the live container.
         store.set_bigram_count(1, 9, 7).expect("replace gram");
         assert!(!store.has_short_bigram_value_for(1));
         assert_eq!(store.bigram_total(1).expect("new total"), 7);
@@ -1508,11 +1593,16 @@ mod tests {
             );
 
             // The .dbin carries the system token's MODIFY; the user.bin
-            // the phrase; the bigram the gram.
+            // the phrase; the container the raw gram the pin's training
+            // wrote.
+            assert_eq!(
+                store.bigram_row(1).expect("row"),
+                Some(oxpinyin_data::single_gram::encode_single_gram(
+                    69,
+                    &[(0x0100_0001, 69)]
+                ))
+            );
             let state = export_state(&store, &originals()).expect("export");
-            let gram = state.bigram.get(&1).expect("gram");
-            assert_eq!(gram.total, 69);
-            assert_eq!(gram.items.get(&0x0100_0001), Some(&69));
             let user_items = state.libraries.get(&7).expect("user lib");
             let item = user_items
                 .get(&(token & crate::phrase::PHRASE_MASK))
@@ -1621,19 +1711,14 @@ mod tests {
         let dir = tempdir("seed");
         // Write a profile directly through the persistence layer: a gram
         // and a user phrase, as a same-backend libpinyin would have.
-        let mut gram = Gram {
-            total: 138,
-            items: BTreeMap::from([(0x0100_0001_u32, 138)]),
-        };
-        gram.items.insert(0x0700_0001, 69);
         let state = UserState {
-            bigram: BTreeMap::from([(
-                1_u32,
-                Gram {
-                    total: 207,
-                    items: gram.items.clone(),
-                },
-            )]),
+            bigram: vec![(
+                1_u32.to_le_bytes().to_vec(),
+                oxpinyin_data::single_gram::encode_single_gram(
+                    207,
+                    &[(0x0100_0001, 138), (0x0700_0001, 69)],
+                ),
+            )],
             libraries: BTreeMap::from([(
                 7_u8,
                 BTreeMap::from([(

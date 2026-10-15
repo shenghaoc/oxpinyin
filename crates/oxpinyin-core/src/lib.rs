@@ -19,6 +19,7 @@ pub mod options;
 mod parser;
 mod scheme;
 pub mod scoring;
+pub mod single_gram;
 mod syllables;
 mod vocab;
 mod zhuyin_map;

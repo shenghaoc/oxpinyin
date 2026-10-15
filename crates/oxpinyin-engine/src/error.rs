@@ -130,6 +130,15 @@ pub enum EngineError {
         /// The predecessor token whose gram has the partial tail.
         token: u32,
     },
+    /// A training step would load a predecessor whose stored user-bigram
+    /// value is shorter than its `guint32` total: the pin's
+    /// `get_total_freq` asserts on it (`phonetic_lookup.h:884` through
+    /// `ngram.cpp:49`, `memory_chunk.h:390`; register row 85). The engine
+    /// answers an error, before observing anything.
+    ShortTrainingPredecessor {
+        /// The predecessor token whose gram is too short for a total.
+        token: u32,
+    },
     /// A training span met a matrix position the pin's
     /// `increase_pronunciation_possibility` asserts on: the decoded
     /// result no longer fits the current matrix because a re-parse
@@ -222,6 +231,12 @@ impl fmt::Display for EngineError {
                     "the predecessor {token:#010x} has a partial user-bigram item"
                 )
             }
+            Self::ShortTrainingPredecessor { token } => {
+                write!(
+                    formatter,
+                    "the predecessor {token:#010x} has a user-bigram value shorter than its total"
+                )
+            }
             Self::MatrixColumnAssert { offset } => {
                 write!(
                     formatter,
@@ -265,6 +280,7 @@ impl std::error::Error for EngineError {
             | Self::StaleTrainingConstraint { .. }
             | Self::StaleTrainingSpan { .. }
             | Self::UnsafeTrainingPredecessor { .. }
+            | Self::ShortTrainingPredecessor { .. }
             | Self::OverlongUserIndexKey { .. }
             | Self::UserModel(_) => None,
         }

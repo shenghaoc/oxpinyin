@@ -17,8 +17,8 @@ use oxpinyin_store::{DefaultStore, WriteStore};
 
 use crate::store::Token;
 
-/// Decode-time memo of the four count tables, valid for one write
-/// generation.
+/// Decode-time memo of the unigram count tables and the user bigram's raw
+/// grams, valid for one write generation.
 ///
 /// The store used to answer these reads through an MVCC read snapshot
 /// held open across calls. Nothing in this deployment shares a store
@@ -46,10 +46,10 @@ pub struct CountCache {
     pub(crate) unigram: HashMap<Token, u64>,
     /// `UNIGRAM_TOTAL`'s single row.
     pub(crate) unigram_total: Option<u64>,
-    /// `BIGRAM[(prev, cur)]`.
-    pub(crate) bigram: HashMap<(Token, Token), u64>,
-    /// `BIGRAM_TOTAL[prev]`.
-    pub(crate) bigram_total: HashMap<Token, u64>,
+    /// The raw gram under each predecessor scored since the last write
+    /// that has one. Counts and totals are read from the bytes as the pin
+    /// reads them (`get_freq`, `get_total_freq`).
+    pub(crate) bigram_rows: HashMap<Token, Vec<u8>>,
 }
 
 pub struct StoreInner<S: WriteStore> {
@@ -88,11 +88,14 @@ pub struct StoreInner<S: WriteStore> {
     /// `open`/`create_standalone` stores.
     pub(crate) libpinyin: Option<std::sync::Arc<crate::store_libpinyin::Target>>,
     /// The pin's own in-memory user bigram container (`Bigram::m_db`
-    /// after `load_db`), kept in step with every bigram write so its
-    /// walk order — the export's order and the saved file's layout — is
-    /// the pin's. Only a libpinyin session carries one; a plain or
-    /// standalone store has no user dir and walks its predecessors in
-    /// ascending order.
+    /// after `load_db`): the session's only copy of the user bigram, the
+    /// raw `SingleGram` values every bigram operation reads and writes, so
+    /// its walk order — the export's order and the saved file's layout —
+    /// is the pin's. Only a libpinyin session carries one; a plain or
+    /// standalone store keeps its grams in the ordered
+    /// [`crate::store::BIGRAM_GRAM`] table and walks them in ascending
+    /// order. A writer takes the database guard first, then this one, and
+    /// bumps `write_generation` before releasing the database guard.
     pub(crate) bigram_db: Option<Mutex<oxpinyin_store::DefaultUserBigramDb>>,
 }
 

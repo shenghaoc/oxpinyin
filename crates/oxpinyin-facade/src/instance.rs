@@ -221,10 +221,11 @@ impl InstanceCore {
     /// # Errors
     ///
     /// Returns the engine's invalid-index, stale-constraint, stale-span,
-    /// unsafe-predecessor or user-model error. The C facade maps the first
-    /// three to the pin's class (c) warning and false, and the unsafe
-    /// predecessor (a partial item tail, register row 100) to a class (b)
-    /// warning and false, with nothing observed.
+    /// short- or unsafe-predecessor or user-model error. The C facade maps
+    /// the first three and the short predecessor (a value too short for its
+    /// total, register row 85) to the pin's class (c) warning and false,
+    /// and the unsafe predecessor (a partial item tail, register row 100)
+    /// to a class (b) warning and false, each with nothing observed.
     pub fn train(&mut self, index: u8) -> Result<bool, EngineError> {
         let Some(user) = self.user.as_mut() else {
             return Ok(false);
@@ -234,18 +235,25 @@ impl InstanceCore {
         if !user.has_user_directory() {
             return Ok(false);
         }
-        // 074a2219 `insert_freq`/`get_freq`/`set_freq` walk a predecessor's
-        // gram with `cur_item != end` (`ngram.cpp:190`, `:241`, `:261`):
-        // refuse before any observation when the step would load a gram
-        // with a partial item tail. Checked against the live raw values.
-        if let Some(token) = self
+        // Each training step loads its predecessor's gram, reads the total
+        // (`phonetic_lookup.h:884`) and walks the items with
+        // `cur_item != end` (`ngram.cpp:190`, `:241`, `:261`, 074a2219).
+        // The first predecessor in training order whose gram is too short
+        // for the total (an assert, `memory_chunk.h:390`) or has a partial
+        // item tail (a read past it) refuses the call before any
+        // observation. Checked against the live raw values.
+        for token in self
             .session
             .training_predecessors(index)
             .into_iter()
             .map(|prev| prev.map_or(SENTENCE_START, PhraseToken::value))
-            .find(|&token| user.has_oob_bigram_value_for(token))
         {
-            return Err(EngineError::UnsafeTrainingPredecessor { token });
+            if user.has_short_bigram_value_for(token) {
+                return Err(EngineError::ShortTrainingPredecessor { token });
+            }
+            if user.has_oob_bigram_value_for(token) {
+                return Err(EngineError::UnsafeTrainingPredecessor { token });
+            }
         }
         let result = self.session.train_nbest(index, user);
         if !matches!(
@@ -254,7 +262,8 @@ impl InstanceCore {
                 | Err(EngineError::CandidateIndexOutOfRange { .. }
                     | EngineError::StaleTrainingConstraint { .. }
                     | EngineError::StaleTrainingSpan { .. }
-                    | EngineError::UnsafeTrainingPredecessor { .. })
+                    | EngineError::UnsafeTrainingPredecessor { .. }
+                    | EngineError::ShortTrainingPredecessor { .. })
         ) {
             // A valid call still marks the context modified, including a
             // constraint-free result or a subsequent user-model failure

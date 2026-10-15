@@ -662,14 +662,19 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     } else {
         match user.observe_predicted(last, token.value()) {
             Ok(_) => true,
-            // Class (b), `pinyin.cpp:2630-2633`: the predecessor's gram has
-            // a partial item tail that `get_freq`/`insert_freq`
-            // (`ngram.cpp:241`, `:190`) read past. Nothing changed.
+            // `pinyin.cpp:2630-2633` loads the predecessor's gram. One too
+            // short for its total is the pin's assert in `get_total_freq`
+            // (`memory_chunk.h:390`, class (c), register row 85); a partial
+            // item tail is read past by `get_freq`/`insert_freq`
+            // (`ngram.cpp:241`, `:190`, class (b), row 100). Nothing changed.
             Err(oxpinyin_user::UserStoreError::ShortUserBigramValue) => {
-                crate::ffi::log_warning(
+                crate::ffi::log_warning(if user.has_short_bigram_value_for(last) {
+                    "pinyin_choose_predicted_candidate: a user bigram value is shorter than \
+                     a guint32 total_freq (upstream aborts, memory_chunk.h:390)"
+                } else {
                     "pinyin_choose_predicted_candidate: a user bigram value has a partial \
-                     item tail (upstream reads past it, ngram.cpp:190)",
-                );
+                     item tail (upstream reads past it, ngram.cpp:190)"
+                });
                 false
             }
             Err(_) => false,
@@ -765,6 +770,16 @@ pub extern "C" fn pinyin_train(instance: *mut PinyinInstance, index: u8) -> bool
             crate::ffi::log_warning(
                 "pinyin_train: a user bigram value has a partial item tail \
                  (upstream reads past it, ngram.cpp:190)",
+            );
+            false
+        }
+        // Class (c), `phonetic_lookup.h:884` through `memory_chunk.h:390`
+        // (register row 85): training would read the total of a
+        // predecessor's gram too short to hold one. Nothing changed.
+        Err(oxpinyin_engine::EngineError::ShortTrainingPredecessor { .. }) => {
+            crate::ffi::log_warning(
+                "pinyin_train: a user bigram value is shorter than a guint32 total_freq \
+                 (upstream aborts, memory_chunk.h:390)",
             );
             false
         }
