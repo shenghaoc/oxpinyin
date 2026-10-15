@@ -1615,9 +1615,8 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
-    #[test]
-    fn importing_a_256th_reading_fails_before_any_row_is_written() {
-        let dir = tempdir("import-256th-reading");
+    /// 256 or more distinct toned one-syllable readings, as packed words.
+    fn distinct_readings() -> Vec<u16> {
         let mut readings: Vec<u16> = Vec::new();
         for initial in [
             "b", "p", "m", "f", "d", "t", "n", "l", "g", "k", "h", "j", "q", "x", "zh", "ch", "sh",
@@ -1639,40 +1638,220 @@ mod tests {
                 }
             }
         }
-        assert!(readings.len() >= 256, "need 256 distinct readings");
-        let rows = |store: &UserStore| {
-            let mut rows = 0_usize;
-            let db = store.database();
-            let db: &dyn oxpinyin_store::ReadStore = &*db;
-            db.for_each(PRONUNCIATION, &mut |_, _| {
-                rows += 1;
-                Ok(())
-            })
-            .expect("rows");
-            rows
-        };
-        let mut store =
-            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
-                .expect("open");
+        assert!(readings.len() >= 258, "need 258 distinct readings");
+        readings
+    }
+
+    fn pronunciation_rows(store: &UserStore) -> usize {
+        let mut rows = 0_usize;
+        let db = store.database();
+        let db: &dyn oxpinyin_store::ReadStore = &*db;
+        db.for_each(PRONUNCIATION, &mut |_, _| {
+            rows += 1;
+            Ok(())
+        })
+        .expect("rows");
+        rows
+    }
+
+    /// The pin stores `npron + 1` in a `guint8` (`phrase_index.cpp:28`,
+    /// `:88`), so the 256th reading leaves a count of 0 and the call still
+    /// succeeds. Reads size the item from that count (`:203-204`) and the
+    /// next add copies only that view (`:228`): the item has no readings,
+    /// keeps its unigram, survives save and reload, and the 257th add
+    /// leaves exactly one reading, the new one.
+    #[test]
+    fn a_256th_system_reading_wraps_the_count_to_an_item_without_readings() {
+        let dir = tempdir("import-256th-system-reading");
+        let readings = distinct_readings();
         let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
-        let token = store
-            .add_system_phrase_in(1, None, "拟", &dense(readings[0]), Some(5))
-            .expect("append");
-        for &packed in &readings[1..255] {
+        let readings_of = |store: &UserStore, token| {
             store
-                .add_system_phrase_in(1, Some(token), "拟", &dense(packed), Some(5))
-                .expect("reading within the 255 limit");
+                .phrase(token)
+                .expect("phrase")
+                .expect("present")
+                .pronunciations()
+                .iter()
+                .map(|pronunciation| pronunciation.count())
+                .collect::<Vec<_>>()
+        };
+        let token;
+        let unigram;
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            token = store
+                .add_system_phrase_in(1, None, "拟", &dense(readings[0]), Some(5))
+                .expect("append");
+            for &packed in &readings[1..255] {
+                store
+                    .add_system_phrase_in(1, Some(token), "拟", &dense(packed), Some(5))
+                    .expect("reading within the 255 limit");
+            }
+            assert_eq!(pronunciation_rows(&store), 255);
+            unigram = store.unigram_delta(token).expect("unigram");
+            assert_eq!(unigram, 15);
+            store
+                .add_system_phrase_in(1, Some(token), "拟", &dense(readings[255]), Some(5))
+                .expect("the 256th reading is accepted");
+            assert_eq!(pronunciation_rows(&store), 0);
+            assert_eq!(
+                store.with_effective_system_item(token, |item| item.prons.len()),
+                Some(0)
+            );
+            assert!(readings_of(&store, token).is_empty());
+            assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
+            store.mark_modified();
+            assert!(store.save().expect("save"));
         }
-        let before = rows(&store);
-        assert_eq!(before, 255);
-        let result =
-            store.add_system_phrase_in(1, Some(token), "拟", &dense(readings[255]), Some(5));
-        assert!(result.is_err(), "a 256th reading cannot be encoded");
-        assert_eq!(rows(&store), before, "the failed import wrote no row");
-        assert_eq!(
-            store.with_effective_system_item(token, |item| item.prons.len()),
-            Some(255)
-        );
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("reopen");
+            assert!(readings_of(&store, token).is_empty());
+            assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
+            store
+                .add_system_phrase_in(1, Some(token), "拟", &dense(readings[256]), Some(9))
+                .expect("the 257th reading");
+            assert_eq!(readings_of(&store, token), [9]);
+            assert_eq!(
+                store.with_effective_system_item(token, |item| item.prons.clone()),
+                Some(vec![(vec![readings[256]], 9)])
+            );
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+        }
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("reopen");
+        assert_eq!(readings_of(&store, token), [9]);
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    /// The same wrap on an item the system library ships (token 0x0100_0001,
+    /// one reading), which persists as a modified original: the empty item
+    /// must survive save and reopen, and the 257th reading must then leave
+    /// exactly one reading.
+    #[test]
+    fn a_256th_reading_wraps_an_original_system_item_through_save_and_reopen() {
+        let dir = tempdir("import-256th-original-reading");
+        let token = 0x0100_0001;
+        let original = ChewingKey::new(23, 0, 1, 0).to_packed();
+        let readings: Vec<u16> = distinct_readings()
+            .into_iter()
+            .filter(|&packed| packed != original)
+            .collect();
+        let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
+        let prons_of = |store: &UserStore| {
+            store
+                .with_effective_system_item(token, |item| item.prons.clone())
+                .expect("live item")
+        };
+        let unigram_of = |store: &UserStore| {
+            store
+                .system_item_override(token)
+                .expect("override")
+                .expect("present")
+                .unigram
+        };
+        let unigram;
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            for &packed in &readings[..254] {
+                store
+                    .add_system_phrase_in(1, Some(token), "你", &dense(packed), Some(5))
+                    .expect("reading within the 255 limit");
+            }
+            assert_eq!(prons_of(&store).len(), 255);
+            unigram = unigram_of(&store);
+            store
+                .add_system_phrase_in(1, Some(token), "你", &dense(readings[254]), Some(5))
+                .expect("the 256th reading is accepted");
+            assert!(prons_of(&store).is_empty());
+            assert_eq!(unigram_of(&store), unigram);
+            store.mark_modified();
+            assert!(store.save().expect("a wrapped original saves"));
+        }
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("reopen");
+            assert!(prons_of(&store).is_empty());
+            assert_eq!(unigram_of(&store), unigram);
+            store
+                .add_system_phrase_in(1, Some(token), "你", &dense(readings[255]), Some(9))
+                .expect("the 257th reading");
+            assert_eq!(prons_of(&store), [(vec![readings[255]], 9)]);
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+        }
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("reopen");
+        assert_eq!(prons_of(&store), [(vec![readings[255]], 9)]);
+        assert_eq!(unigram_of(&store), unigram);
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    /// The same wrap on a `USER_FILE` library, where the item is its rows.
+    #[test]
+    fn a_256th_user_reading_wraps_the_count_to_an_item_without_readings() {
+        let dir = tempdir("import-256th-user-reading");
+        let readings = distinct_readings();
+        let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
+        let readings_of = |store: &UserStore, token| {
+            store
+                .phrase(token)
+                .expect("phrase")
+                .expect("present")
+                .pronunciations()
+                .iter()
+                .map(|pronunciation| pronunciation.count())
+                .collect::<Vec<_>>()
+        };
+        let token;
+        let unigram;
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            token = store
+                .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(readings[0]), Some(5))
+                .expect("append");
+            for &packed in &readings[1..255] {
+                store
+                    .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(packed), Some(5))
+                    .expect("reading within the 255 limit");
+            }
+            assert_eq!(readings_of(&store, token).len(), 255);
+            unigram = store.unigram_delta(token).expect("unigram");
+            store
+                .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(readings[255]), Some(5))
+                .expect("the 256th reading is accepted");
+            assert!(readings_of(&store, token).is_empty());
+            assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
+            store.mark_modified();
+            assert!(store.save().expect("a wrapped item saves"));
+        }
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("reopen");
+            assert!(readings_of(&store, token).is_empty());
+            assert_eq!(store.unigram_delta(token).expect("unigram"), unigram);
+            store
+                .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(readings[256]), Some(9))
+                .expect("the 257th reading");
+            assert_eq!(readings_of(&store, token), [9]);
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+        }
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("reopen");
+        assert_eq!(readings_of(&store, token), [9]);
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
