@@ -571,7 +571,7 @@ impl Dictionary for SystemDictionary {
     ) -> Result<Vec<PhraseEntry>, DictError> {
         let mut ranges = PhraseIndexRanges::new();
         self.trellis_ranges(syllables, tones, &mut ranges)?;
-        Ok(ranges.into_entries())
+        Ok(ranges.into_walk_entries())
     }
 
     /// `ChewingTableEntry::search` then `convert` over the system table:
