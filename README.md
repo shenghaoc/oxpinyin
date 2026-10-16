@@ -45,6 +45,7 @@ cargo test --locked --workspace
 | `docs/testing/` | Corpus pipeline, oracle environment, fixture formats |
 | `docs/safety/` | MISRA-Rust mapping, audit, safety profile |
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
+| `docs/oxidation-journey.md` | How libpinyin has been turned into Rust so far, and the method that follows from it |
 | `tools/oracle/` | Pin build recipe (`docs/runbooks/oracle.md`) |
 | `.kiro/` | Steering and specs (foundation/drop-in) in Kiro's documented layout (<https://kiro.dev/docs/>); the format is used, the Kiro IDE and CLI are not |
 
