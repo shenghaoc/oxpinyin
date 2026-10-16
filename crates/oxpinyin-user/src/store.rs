@@ -646,6 +646,13 @@ fn clear_pronunciations(
     Ok(())
 }
 
+/// A reading's keys as the `ChewingKey`s the pin's tables address.
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+fn chewing_keys(keys: &[PinyinKey]) -> Option<Vec<ChewingKey>> {
+    let packed = crate::store_libpinyin::pinyin_keys_to_packed(keys)?;
+    Some(packed.into_iter().map(ChewingKey::from_packed).collect())
+}
+
 /// `PhraseItem::add_pronunciation(keys, delta)` (`phrase_index.cpp:56-91`)
 /// on `token`'s stored readings: an exact-key match (tone included,
 /// `pinyin_exact_compare2`) gains `delta` unless the running `guint32`
@@ -1742,6 +1749,103 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
     }
 
+    /// A search of the user pinyin table for the query `keys` makes
+    /// (`ChewingLargeTable2::search`): a hit on a non-empty record loads it
+    /// into the length's table entry, which the next `mask_out` walk starts
+    /// from (#785). `natural` answers whether the readings put an item
+    /// under the probed key; neither closure runs while the table is empty.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    pub fn note_pinyin_search(
+        &self,
+        keys: impl FnOnce() -> Option<Vec<ChewingKey>>,
+        natural: impl FnOnce() -> bool,
+    ) {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            let mut chain = target.index_file_keys();
+            if !chain.is_idle()
+                && let Some(keys) = keys()
+            {
+                chain.note_search(&keys, natural);
+            }
+        }
+    }
+
+    /// A `search_suggestion` of the user pinyin table for the prefix `keys`
+    /// makes (#785): every longer key it visits empties its length's entry.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    pub fn note_pinyin_suggestion(&self, keys: impl FnOnce() -> Option<Vec<ChewingKey>>) {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            let mut chain = target.index_file_keys();
+            if !chain.is_idle()
+                && let Some(keys) = keys()
+            {
+                chain.note_suggestion(&keys);
+            }
+        }
+    }
+
+    /// The user pinyin table's records as the mask walk finds them and as
+    /// the mask leaves the readings (#785): the walk's input and the
+    /// records the held readings derive afterwards. Every key the table
+    /// holds now stays in it.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    fn pinyin_mask_records(
+        &self,
+        mask: Token,
+        value: Token,
+    ) -> Result<
+        Option<(
+            oxpinyin_data::table_entries::Entries,
+            oxpinyin_data::table_entries::Entries,
+        )>,
+        UserStoreError,
+    > {
+        use oxpinyin_data::table_entries::pinyin_index_entries;
+        let Some(target) = self.inner.libpinyin.as_ref() else {
+            return Ok(None);
+        };
+        let rows = {
+            let originals = target.originals();
+            let state = crate::store_libpinyin::export_state(self, &originals)?;
+            crate::persistence::chewing_rows(&state, &originals)
+        };
+        let mut kept = target.index_file_keys();
+        let before = kept.with_tails(crate::persistence::with_kept_keys(
+            pinyin_index_entries(&rows),
+            &kept.pinyin,
+        ));
+        kept.pinyin
+            .extend(before.iter().map(|(key, _)| key.clone()));
+        let survivors: Vec<_> = rows
+            .into_iter()
+            .filter(|row| (row.token & mask) != value)
+            .collect();
+        let after =
+            crate::persistence::with_kept_keys(pinyin_index_entries(&survivors), &kept.pinyin);
+        Ok(Some((before, after)))
+    }
+
+    /// `ChewingLargeTable2::add_index` on the session's user pinyin table:
+    /// leaves the entry state the Kyoto Cabinet and tkrzw mask walk starts
+    /// from (#785). `exists` is whether the table already carried the item.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    fn note_index_add(&self, keys: &[PinyinKey], token: Token, exists: bool) {
+        if let Some(target) = self.inner.libpinyin.as_ref()
+            && let Some(keys) = chewing_keys(keys)
+        {
+            target.index_file_keys().note_add(&keys, token, exists);
+        }
+    }
+
+    /// `ChewingLargeTable2::remove_index` on the session's user pinyin
+    /// table (#785).
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    fn note_index_remove(&self, keys: &[ChewingKey], token: Token) {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            target.index_file_keys().note_remove(keys, token);
+        }
+    }
+
     fn init_and_wrap(db: S) -> Result<Arc<StoreInner<S>>, UserStoreError> {
         let has_user_data = db.write(|txn| {
             let total_key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
@@ -2288,6 +2392,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         let key_bytes = phrase::encode_keys(keys);
 
         let db = self.database();
+        let indexed_new = std::cell::Cell::new(false);
         let token = db.write(|txn| {
             let lib_key = codec::encode_u8_str(library, phrase);
             // _add_phrase selects existing items from the phrase table,
@@ -2373,12 +2478,17 @@ impl<S: WriteStore> GenericUserStore<S> {
                     indexed: true,
                 };
                 txn.put(PRONUNCIATION, &pron_key, &value.encode())?;
+                indexed_new.set(true);
 
                 let unigram = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
                 add_unigram_frequency(txn, library, token, unigram)?;
                 Ok(Ok(token))
             }
         })??;
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        if indexed_new.get() {
+            self.note_index_add(keys, token, false);
+        }
         self.mark_committed_phrase_write(db, true);
         Ok(token)
     }
@@ -2404,6 +2514,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
 
         let db = self.database();
+        let indexed = std::cell::RefCell::new(Vec::new());
         let token = db.write(|txn| {
             let lib_key = codec::encode_u8_str(ADDON_DICTIONARY, phrase);
             let existing = match txn.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
@@ -2457,6 +2568,11 @@ impl<S: WriteStore> GenericUserStore<S> {
                 let key_bytes = phrase::encode_keys(keys);
                 let pron_key = codec::encode_token_bytes(token, &key_bytes);
                 let rows = collect_pronunciations_from_txn(txn, token)?;
+                indexed.borrow_mut().push((
+                    keys.as_slice(),
+                    rows.iter()
+                        .any(|row| row.key_bytes == key_bytes && row.value.indexed),
+                ));
                 let value = match rows.iter().find(|row| row.key_bytes == key_bytes) {
                     Some(row) => PronValue {
                         count: row.value.count.saturating_add(*count),
@@ -2472,6 +2588,10 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
             Ok(Ok(token))
         })??;
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        for (keys, exists) in indexed.into_inner() {
+            self.note_index_add(keys, token, exists);
+        }
         self.mark_committed_phrase_write(db, true);
         Ok(token)
     }
@@ -3172,6 +3292,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         if let Some(error) = self.bigram_mask_fault(mask, value) {
             return Err(error);
         }
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        let walk = self.pinyin_mask_records(mask, value)?;
         let db = self.database();
         let session = self.inner.libpinyin.is_some();
         let container = self.inner.bigram_db.is_some();
@@ -3220,6 +3342,12 @@ impl<S: WriteStore> GenericUserStore<S> {
             Ok((has_user_data_in_write_txn(txn)?, index_rows))
         })?;
         self.keep_index_rows(&index_rows);
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        if let (Some((before, after)), Some(target)) = (walk, self.inner.libpinyin.as_ref()) {
+            target
+                .index_file_keys()
+                .mask_walk(&before, &after, mask, value);
+        }
         // Commit succeeded: discard matched in-memory system payloads too.
         // Dropping an original's override restores it; dropping an appended
         // item removes its only payload. Do this before publishing the epoch.
@@ -3327,6 +3455,10 @@ impl<S: WriteStore> GenericUserStore<S> {
             || Ok(false),
             |(has_user_data, index_rows)| {
                 self.keep_index_rows(&index_rows);
+                #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+                for keys in index_rows.readings() {
+                    self.note_index_remove(keys, token);
+                }
                 let grams_left =
                     self.mask_container(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)?;
                 self.mark_committed_phrase_write(db, has_user_data || grams_left);
@@ -3705,6 +3837,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             (token, item)
         } else {
             let token = append_system_token(&*db, library, original.range_end, text, &reading)?;
+            #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+            self.note_index_add(keys, token, false);
             (
                 token,
                 ChunkItem {

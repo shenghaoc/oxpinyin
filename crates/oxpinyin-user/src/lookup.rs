@@ -207,6 +207,24 @@ impl UserLookup {
             .collect()
     }
 
+    /// Whether the user pinyin table holds a non-empty record under the key
+    /// a search for `syllables` probes: the complete key, or the initials'
+    /// when any syllable is incomplete.
+    #[must_use]
+    pub fn has_record(&self, syllables: &[SyllableKey]) -> bool {
+        if syllables.is_empty() {
+            return false;
+        }
+        if syllables
+            .iter()
+            .any(|key| key.completeness() == Completeness::Partial)
+        {
+            self.by_initial.contains_key(&initial_key(syllables))
+        } else {
+            self.exact.contains_key(&index_key(syllables))
+        }
+    }
+
     /// `SEARCH_CONTINUED` probe over user-file pinyin keys.
     #[must_use]
     pub fn phrase_prefix_exists(&self, syllables: &[SyllableKey]) -> bool {

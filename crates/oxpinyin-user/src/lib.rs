@@ -41,6 +41,8 @@ pub mod seed;
 mod lookup;
 mod model;
 pub mod persistence;
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+mod pinyin_chain;
 mod registry;
 mod store;
 pub(crate) mod store_libpinyin;

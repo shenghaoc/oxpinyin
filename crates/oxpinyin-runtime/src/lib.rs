@@ -326,6 +326,15 @@ pub struct TokenIntrospection {
     pub pronunciations: Vec<(Vec<PinyinKey>, u64)>,
 }
 
+/// The pin's query keys for `syllables`.
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+fn chewing_query(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
+    syllables
+        .iter()
+        .map(|key| oxpinyin_core::ChewingKey::from_pinyin(key.text()))
+        .collect()
+}
+
 // ── Merged backends ─────────────────────────────────────────────────────
 
 /// The generation-stamped user-phrase lookup cache shared by clones.
@@ -439,6 +448,16 @@ pub struct RuntimeDict {
 }
 
 impl RuntimeDict {
+    /// The user pinyin table's search for `syllables`, as the pin's
+    /// `ChewingLargeTable2::search` runs it: the table entry it leaves
+    /// behind is what a later `mask_out` walk starts from (#785).
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    fn note_user_search(&self, syllables: &[SyllableKey], lookup: &UserLookup) {
+        if let Some(store) = self.user.as_ref() {
+            store.note_pinyin_search(|| chewing_query(syllables), || lookup.has_record(syllables));
+        }
+    }
+
     fn user_lookup(&self) -> Result<Arc<UserLookup>, DictError> {
         let Some(store) = self.user.as_ref() else {
             return Ok(Arc::new(UserLookup::empty()));
@@ -1039,7 +1058,10 @@ impl Dictionary for RuntimeDict {
         out: &mut Vec<Self::Entry>,
     ) -> Result<bool, Self::Error> {
         let unreadable = self.system.lookup_into_flagged(syllables, out)?;
-        out.extend(self.user_lookup()?.lookup(syllables));
+        let user = self.user_lookup()?;
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        self.note_user_search(syllables, &user);
+        out.extend(user.lookup(syllables));
         // 074a2219 phrase_index.h:136-163 uses wrapping guint32 sums;
         // pinyin_lookup2.cpp:437-466 reads pronunciation possibility from
         // the current item even when the match came from the shipped index.
@@ -1103,10 +1125,22 @@ impl Dictionary for RuntimeDict {
                     self.library_visible_token(token)
                 })?
         };
-        if system_extends {
-            return Ok(true);
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        {
+            let user = self.user_lookup()?;
+            self.note_user_search(syllables, &user);
+            if system_extends {
+                return Ok(true);
+            }
+            Ok(user.phrase_prefix_exists(syllables))
         }
-        Ok(self.user_lookup()?.phrase_prefix_exists(syllables))
+        #[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
+        {
+            if system_extends {
+                return Ok(true);
+            }
+            Ok(self.user_lookup()?.phrase_prefix_exists(syllables))
+        }
     }
 
     /// Exact-text token lookup across the system and user seams, in that
@@ -1203,7 +1237,12 @@ impl Dictionary for RuntimeDict {
         {
             return Ok(None);
         }
-        tokens.extend(self.user_lookup()?.suggest_extensions(syllables));
+        let user = self.user_lookup()?;
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        if let Some(store) = self.user.as_ref() {
+            store.note_pinyin_suggestion(|| chewing_query(syllables));
+        }
+        tokens.extend(user.suggest_extensions(syllables));
         if self.library_mask.load(Ordering::SeqCst) != 0 {
             tokens.retain(|token| self.library_visible_token(*token));
         }

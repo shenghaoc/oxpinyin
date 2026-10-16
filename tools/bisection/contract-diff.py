@@ -2272,8 +2272,7 @@ def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
             ctx = k.init()
             assert ctx, 'the reopen failed'
         out.append(tokens())
-    # #785: a partial mask compares only chewing keys on kc and tkrzw.
-    return {'steps': out, 'files': token_reuse_files(k, leaks_785(steps))}
+    return {'steps': out, 'files': token_reuse_files(k)}
 
 
 USER_INDEX_FILES = ('user_phrase_index.bin', 'user_pinyin_index.bin')
@@ -2351,20 +2350,26 @@ def index_file_rows(path):
     return sorted(rows)
 
 
-def leaks_785(steps):
-    """Whether `steps` mask anything short of the whole user library. #785:
-    the pin's kc and tkrzw `mask_out` reuse one table entry across the records
-    they visit, and `MemoryChunk::set_content` never shrinks it, so a record
-    shorter than the one before it keeps that record's tail. Only chewing
-    values remain excluded: phrase records are compared in full below."""
-    return any(step[0] == 'mask' and tuple(step[1:]) != USER_ALL for step in steps)
+def zero_item_padding(key_hex, value_hex):
+    """A pinyin index value with the padding of every item zeroed. An odd key
+    length leaves two uninitialised bytes after the keys of each `4 + 2L` byte
+    item, which upstream copies off the stack (upstream-divergences.md, "The
+    pinyin index DBMs carry uninitialized struct padding", class (b)); the
+    tails a mask walk carries between records copy them along."""
+    length = len(key_hex) // 4
+    if length % 2 == 0 or not value_hex:
+        return value_hex
+    stride = 4 + 2 * length + 2
+    raw = bytearray(bytes.fromhex(value_hex))
+    for start in range(0, len(raw) - stride + 1, stride):
+        raw[start + stride - 2:start + stride] = b'\0\0'
+    return raw.hex()
 
 
-def token_reuse_files(k, keys_only=False):
+def token_reuse_files(k):
     """The user files a save leaves, by content. The two user index
     containers are compared record by record, a key whose value is empty
-    included ([`index_file_rows`]) — chewing only by key on kc and tkrzw
-    when `keys_only` (#785, [`leaks_785`]); a Berkeley DB user bigram is read back
+    included ([`index_file_rows`]); a Berkeley DB user bigram is read back
     through `db_dump` and only its non-empty rows are compared (on the other
     backends only that the bigram container exists), `user.bin` is compared
     whole except for the 4 timestamp bytes of its header, and every other file
@@ -2377,9 +2382,9 @@ def token_reuse_files(k, keys_only=False):
         raw = path.read_bytes()
         if name in USER_INDEX_FILES:
             rows = index_file_rows(path)
-            # #785 PR4: only chewing still needs key-only comparison.
-            chewing_keys_only = keys_only and CELL != 'bdb' and name == 'user_pinyin_index.bin'
-            files[name] = [key for key, _ in rows] if chewing_keys_only else rows
+            if name == 'user_pinyin_index.bin':
+                rows = [[key, zero_item_padding(key, value)] for key, value in rows]
+            files[name] = rows
         elif CELL != 'bdb' and name == 'user_bigram.db':
             files[name] = len(raw) > 0  # another backend's container: only its presence is compared
         elif raw[12:16] in (b'\x62\x31\x05\x00', b'\x61\x15\x06\x00'):
@@ -2496,8 +2501,7 @@ def addon_promote_sequence(k, mask_value):
     texts.append(ADDON_PROMOTE_INPUTS[3][1])
     out.append(tokens())
     out.append(['save', bool(k.fn('save', B, P)(ctx))])
-    # #785: a mask compares the index key set only on kc and tkrzw.
-    return {'steps': out, 'files': token_reuse_files(k, mask_value is not None)}
+    return {'steps': out, 'files': token_reuse_files(k)}
 
 
 case('issue762-addon-promote-no-mask', control=True)(lambda k: addon_promote_sequence(k, None))
@@ -2524,15 +2528,19 @@ INDEX_KEY_READINGS = {
 }
 
 
-def index_key_sequence(k, steps):
+def index_key_sequence(k, steps, phrases=None, readings=None):
     """Runs `steps` over the user library and records each save's index files.
     `('add', n)`, `('save',)`, `('mask', mask, value)`, `('reopen',)` as in
     `token_reuse_sequence`; `('remove', n)` removes phrase n through its user
     candidate (`pinyin_remove_user_candidate`); `('lookup', n)` records what a
     fresh instance shows for phrase n: the candidates of its reading, the
     tokens of its text and of its first character, and (pinyin) the predicted
-    rows after its first character."""
+    rows after its first character. `('guess', pinyin, zhuyin)` parses and
+    guesses that input. `phrases` and `readings` default to
+    `TOKEN_REUSE_PHRASES` and `INDEX_KEY_READINGS`."""
     ctx = k.ctx
+    phrases = TOKEN_REUSE_PHRASES if phrases is None else phrases
+    readings = INDEX_KEY_READINGS if readings is None else readings
     column = 1 if k.mode == 'pinyin' else 2
     parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
     out = []
@@ -2556,7 +2564,7 @@ def index_key_sequence(k, steps):
         return [count.value, rows]
 
     def guess(inst, n):
-        reading = INDEX_KEY_READINGS[k.mode][n].encode()
+        reading = (n if isinstance(n, str) else readings[k.mode][n]).encode()
         k.fn(parse, Z, P, S)(inst, reading)
         if k.mode == 'pinyin':
             k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
@@ -2568,12 +2576,11 @@ def index_key_sequence(k, steps):
         if step[0] == 'add':
             it = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
             assert it, 'the import iterator'
-            text, reading = TOKEN_REUSE_PHRASES[step[1]][0], TOKEN_REUSE_PHRASES[step[1]][column]
+            text, reading = phrases[step[1]][0], phrases[step[1]][column]
             out.append(['add', bool(k.fn('iterator_add_phrase', B, P, S, S, I)(it, text.encode(), reading.encode(), 100))])
             k.fn('end_add_phrases', None, P)(it)
         elif step[0] == 'save':
-            # #785: a partial mask compares only chewing keys on kc and tkrzw.
-            out.append(['save', bool(k.fn('save', B, P)(ctx)), token_reuse_files(k, leaks_785(steps))])
+            out.append(['save', bool(k.fn('save', B, P)(ctx)), token_reuse_files(k)])
         elif step[0] == 'mask':
             out.append(['mask', bool(k.fn('mask_out', B, P, U, U)(ctx, step[1], step[2]))])
         elif step[0] == 'reopen':
@@ -2587,8 +2594,13 @@ def index_key_sequence(k, steps):
             assert rows, 'no user candidate to remove'
             out.append(['remove', bool(k.fn('remove_user_candidate', B, P, P)(inst, rows[0]))])
             k.fn('free_instance', None, P)(inst)
+        elif step[0] == 'guess':
+            inst = k.fn('alloc_instance', P, P)(ctx)
+            guess(inst, step[1] if k.mode == 'pinyin' else step[2])
+            out.append(['guess', step[1], candidates(inst)])
+            k.fn('free_instance', None, P)(inst)
         elif step[0] == 'lookup':
-            text = TOKEN_REUSE_PHRASES[step[1]][0]
+            text = phrases[step[1]][0]
             inst = k.fn('alloc_instance', P, P)(ctx)
             guess(inst, step[1])
             seen = {'candidates': candidates(inst), 'tokens': tokens(inst, text)}
@@ -2647,6 +2659,70 @@ REMOVE_SEQUENCES = {
 for _name, (_control, _steps) in REMOVE_SEQUENCES.items():
     case('issue784-index-keys-%s' % _name, control=_control)(
         lambda k, steps=_steps: index_key_sequence(k, steps))
+
+
+# #785: on kc and tkrzw the user pinyin table's mask walk starts every key
+# length from the table entry the last operation of that length left. Two
+# phrases share the initials `d d`, so that record holds two items where the
+# others hold one; a search hit or an `add_index` on it leaves both in the
+# entry, and the first record the walk meets in that length picks up the
+# second as its tail. The single-syllable phrase gives length 1 a record
+# that the empty prefix markers after it inherit whole.
+TAIL_PHRASES = (
+    ('龘龘', "da2'da2", 'ㄉㄚˊ ㄉㄚˊ'), ('龖龖', "ta4'ta4", 'ㄊㄚˋ ㄊㄚˋ'),
+    ('靐靐', "bing3'bing3", 'ㄅㄧㄥˇ ㄅㄧㄥˇ'), ('鬥鬥', "dou4'dou4", 'ㄉㄡˋ ㄉㄡˋ'),
+    ('龘', 'da2', 'ㄉㄚˊ'), ('鱻鱻', "xian1'xian1", 'ㄒㄧㄢ ㄒㄧㄢ'),
+    ('龗龗', "da2'da2", 'ㄉㄚˊ ㄉㄚˊ'),
+)
+TAIL_READINGS = {
+    'pinyin': ('dada', 'tata', 'bingbing', 'doudou', 'da', 'xianxian', 'dada'),
+    'zhuyin': ('286286', 'w84w84', '1u/31u/3', '2.42.4', '286', 'vu0 vu0 ', '286286'),
+}
+DD, D = ('guess', 'dada', '286286'), ('guess', 'da', '286')
+SHARED = [('add', 0), ('add', 6), ('add', 3), ('add', 1), ('add', 2)]
+# A mask that leaves no item behind, and a lookup that reads no tail, hold on
+# the parent as well.
+TAIL_CONTROLS = ('mask-all', 'lookup')
+MASK_TA, MASK_DA2 = ('mask', 0xffffffff, 0x07000004), ('mask', 0xffffffff, 0x07000002)
+TAIL_SEQUENCES = {
+    # The add of the second `da da` item leaves that record in the length-2 entry.
+    'add': SHARED + [MASK_TA, ('save',)],
+    # A search hit on the record does the same.
+    'hit': SHARED + [('save',), DD, MASK_TA, ('add', 5), ('save',)],
+    'hit-shrink': SHARED + [('save',), DD, MASK_DA2, ('add', 5), ('save',)],
+    # A suggestion walk empties the entries of the longer lengths.
+    'suggestion': SHARED + [DD, D, MASK_TA, ('save',)],
+    # The entry the first walk leaves is where the second starts.
+    'mask-twice': SHARED + [DD, MASK_TA, MASK_DA2, ('save',)],
+    # A hit on a record that carries a tail.
+    'hit-tailed': SHARED + [DD, MASK_DA2, DD, MASK_TA, ('save',)],
+    # One guess hits two different length-2 records, so the last hit the
+    # engine makes is the one the walk starts from.
+    'hit-order': SHARED + [('save',), ('guess', 'dadatata', '286286w84w84'), MASK_TA, ('add', 5),
+                           ('save',)],
+    'hit-order-reverse': SHARED + [('save',), ('guess', 'tatadada', 'w84w84286286'), MASK_TA, ('add', 5),
+                                   ('save',)],
+    # A removal leaves the edited record in the entry.
+    'remove': SHARED + [('remove', 3), MASK_TA, ('save',)],
+    # Length 1: the prefix markers after the non-empty record.
+    'markers': [('add', 4), ('add', 0), ('add', 1), ('add', 2), MASK_TA, ('save',)],
+    'markers-hit': [('add', 4), ('add', 0), ('add', 1), ('add', 2), ('save',),
+                    ('guess', 'da', '286'), MASK_TA, ('add', 5), ('save',)],
+    # The tails come back from the file.
+    'reopen': SHARED + [DD, MASK_TA, ('save',), ('reopen',), ('add', 5), ('save',)],
+    'reopen-mask': SHARED + [DD, MASK_TA, ('save',), ('reopen',), MASK_DA2, ('add', 5), ('save',)],
+    # What a fresh instance shows over the tailed records.
+    'lookup': SHARED + [DD, MASK_DA2, ('lookup', 0), ('lookup', 3)],
+    # A mask that removes nothing still rewrites every record.
+    'mask-none': SHARED + [DD, ('mask', 0xffffffff, 0x07000009), ('save',)],
+    'mask-all': SHARED + [DD, ('mask',) + USER_ALL, ('add', 5), ('save',)],
+}
+for _mode in ('pinyin', 'zhuyin'):
+    for _name, _steps in TAIL_SEQUENCES.items():
+        if _mode == 'zhuyin' and _name.startswith('remove'):
+            continue  # the zhuyin facade has no `remove_user_candidate`
+        case('issue785-pinyin-tails-%s-%s' % (_name, _mode), mode=_mode, control=_name in TAIL_CONTROLS)(
+            lambda k, steps=_steps: index_key_sequence(k, steps, TAIL_PHRASES, TAIL_READINGS))
 
 
 @case('abort-guess-predicted-short-bigram-value', abort=False)
