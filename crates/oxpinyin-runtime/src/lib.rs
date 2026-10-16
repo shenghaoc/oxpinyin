@@ -300,7 +300,9 @@ pub struct AddonPhraseItem {
 }
 
 /// Splits a `'`-joined pinyin spelling into [`SyllableKey`] ids, or `None`
-/// when any syllable is not a frozen key.
+/// when any syllable is not a frozen key. The canonical lookup is used, so the
+/// zhuyin-only syllables a stored reading can carry (`fe`, `den`, ...) resolve
+/// as the pin's `content_table` does.
 fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
     pinyin
         .split('\'')
@@ -309,7 +311,7 @@ fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
                 Some(digit @ b'1'..=b'5') => (&syllable[..syllable.len() - 1], digit - b'0'),
                 _ => (syllable, 0),
             };
-            SyllableKey::from_text(spelling)
+            SyllableKey::from_canonical_text(spelling)
                 .and_then(|key| oxpinyin_user::toned_key(key.index(), tone))
         })
         .collect()
