@@ -62,7 +62,7 @@ impl UserLookup {
         let mut pinyin_keys: Vec<String> = Vec::new();
         let mut initial_keys: Vec<String> = Vec::new();
 
-        for phrase in store.phrases()? {
+        for phrase in store.index_phrases()? {
             let token = phrase.token();
             token_text.insert(token, phrase.text().to_owned());
             for pronunciation in phrase.pronunciations() {

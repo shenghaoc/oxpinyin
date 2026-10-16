@@ -288,6 +288,21 @@ pub struct UserPhrase {
 }
 
 impl UserPhrase {
+    /// The user pinyin index carries `keys` for this token: the reading
+    /// already stored becomes indexed, any other is added with no count.
+    pub(crate) fn index_reading(&mut self, keys: Vec<PinyinKey>) {
+        if let Some(reading) = self
+            .pronunciations
+            .iter_mut()
+            .find(|reading| reading.keys == keys)
+        {
+            reading.indexed = true;
+        } else {
+            self.pronunciations
+                .push(UserPronunciation::new(keys, 0, true));
+        }
+    }
+
     /// Allocated user token (library nibble [`USER_DICTIONARY`]).
     #[must_use]
     pub const fn token(&self) -> Token {

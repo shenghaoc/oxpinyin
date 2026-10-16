@@ -680,10 +680,17 @@ impl ContextCore {
         // after it did, so no reader sees the freed state again and a store
         // that refuses leaves the library unloaded. The system chunk mapped
         // below sits behind the mask and is mapped again by the next load.
+        //
+        // A `USER_FILE` library comes back from its saved chunk, or empty
+        // when there is none (`pinyin.cpp:303-321`, `zhuyin.cpp:247-265`);
+        // a token the dropped session had allocated dangles as in policy
+        // row 102, and a refused store write is row 103.
+        let user_file = matches!(row.file_type, FileType::UserFile);
         let originals = runtime.reload_system_library(row_index);
         let mut store = self.user.clone();
         store_first(
             || match store.as_mut() {
+                Some(store) if user_file => store.load_user_library(row_index),
                 Some(store) if !originals.is_empty() => store.load_system_libraries(originals),
                 _ => Ok(()),
             },
@@ -735,10 +742,18 @@ impl ContextCore {
         // facade (`phrase_index.cpp:261-268`): the session's changes to the
         // library and its saved log's share go now, not at the next load.
         // The store is written first; the mask flips only after it took.
+        // A `USER_FILE` library is dropped whole, saved chunk included, and
+        // comes back from the saved chunk (`pinyin.cpp:303-321`).
+        let user_file = runtime
+            .table_conf()
+            .default_row(index)
+            .is_some_and(|row| matches!(row.file_type, FileType::UserFile))
+            && runtime.dict().library_visible(u32::from(index));
         let originals = runtime.current_system_library(index);
         let mut store = self.user.clone();
         store_first(
             || match store.as_mut() {
+                Some(store) if user_file => store.unload_user_library(index),
                 Some(store) if !originals.is_empty() => store.unload_system_libraries(originals),
                 _ => Ok(()),
             },

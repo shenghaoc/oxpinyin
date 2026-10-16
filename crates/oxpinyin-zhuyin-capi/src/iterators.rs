@@ -125,13 +125,14 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     }
     // 074a2219 zhuyin.cpp:431-458: the pin then walks the phrase table's
     // tokens for the phrase. Two tokens in the same sub-index library trip
-    // `assert(PHRASE_INDEX_LIBRARY_INDEX(token) != index)` (`:440`); one
-    // whose phrase-index item text differs from the phrase trips the
-    // `memcmp` assert (`:457`). The phrase table is the `user_phrase_index`
-    // membership plus the system phrase index; the item text is the token
-    // introspection. Each refusal is one `libzhuyin` warning; a lookup that
-    // fails outright refuses before either add call rather than reading an
-    // empty token list.
+    // `assert(PHRASE_INDEX_LIBRARY_INDEX(token) != index)` (`:440`); a lone
+    // one whose phrase-index item has another length trips
+    // `assert(phrase_length == item.get_phrase_length())` (`:454`), and one
+    // of the same length with other text the `memcmp` assert (`:457`). The
+    // phrase table is the `user_phrase_index` membership plus the system
+    // phrase index; the item text is the token introspection. Each refusal is
+    // one `libzhuyin` warning; a lookup that fails outright refuses before
+    // either add call rather than reading an empty token list.
     let same_library: Vec<u32> = tokens
         .into_iter()
         .filter(|token| token >> 24 == u32::from(handle.index))
@@ -143,15 +144,28 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
         );
         return false;
     }
-    if let (Some(&token), Some(dict)) = (same_library.first(), handle.dict.as_ref())
-        && let Some(introspection) = dict.token_introspection(token)
-        && introspection.text != phrase
-    {
-        crate::ffi::log_warning(
-            "zhuyin_iterator_add_phrase: assertion \
-             '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed",
-        );
-        return false;
+    if let (Some(&token), Some(dict)) = (same_library.first(), handle.dict.as_ref()) {
+        // A missing item (a token a library reload left in the phrase
+        // table) leaves the pin's `PhraseItem` at length zero: `:454` asserts
+        // before any import mutation.
+        let item_text = dict
+            .token_introspection(token)
+            .map(|introspection| introspection.text);
+        if item_text.as_deref() != Some(phrase.as_str()) {
+            crate::ffi::log_warning(
+                if item_text
+                    .as_ref()
+                    .is_some_and(|text| text.chars().count() == length)
+                {
+                    "zhuyin_iterator_add_phrase: assertion \
+                     '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"
+                } else {
+                    "zhuyin_iterator_add_phrase: assertion \
+                     'phrase_length == item.get_phrase_length()' failed"
+                },
+            );
+            return false;
+        }
     }
     if (1..=4).contains(&handle.index) {
         let Some(dict) = handle.dict.as_ref() else {
