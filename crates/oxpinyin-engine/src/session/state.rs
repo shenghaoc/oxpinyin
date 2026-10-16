@@ -113,6 +113,7 @@ where
             key_costs,
             collapse_sentence_rows_to_best: false,
             nbest_shape: crate::nbest::NbestShape::default(),
+            defer_list_builds: false,
             input: InputBuffer::default(),
             record: SelectionRecord::default(),
             constraints: crate::constraint::ConstraintStore::default(),
@@ -252,7 +253,7 @@ where
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
-        self.refresh()
+        self.refresh_after_parse()
     }
 
     /// Replaces the raw input with `text` parsed into exactly
@@ -284,7 +285,7 @@ where
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
-        self.refresh()
+        self.refresh_after_parse()
     }
 
     /// Replaces input with parsed full-pinyin keys, without reparsing their
@@ -306,7 +307,7 @@ where
         if !continuous {
             self.reconcile_replaced_selection()?;
         }
-        self.refresh()
+        self.refresh_after_parse()
     }
 
     /// Whether `text` extends the bytes the selection record was built
@@ -381,6 +382,9 @@ where
     /// This is the last byte of [`SegmentGraph::fewest_keys`] under the
     /// session's `incomplete-pinyin` setting — not the unfiltered
     /// [`SegmentGraph::consumed`].
+    ///
+    /// Under [`Session::set_defer_list_builds`], call
+    /// [`Session::refresh_candidates`] first.
     #[must_use]
     pub const fn parsed_prefix_len(&self) -> usize {
         self.lookup.parsed_prefix
@@ -440,6 +444,11 @@ where
     ///
     /// Refreshes a composing session, exactly `set_options`'s contract:
     /// the cached list's order and LONGER row are functions of the word.
+    /// Under [`Session::set_defer_list_builds`] a change leaves the list
+    /// stale instead, for [`Session::refresh_candidates`]: the pin takes the
+    /// word as a `pinyin_guess_candidates` argument and builds once under it
+    /// (`pinyin.cpp:2184-2198` at 074a2219), as [`Session::candidates_at`]
+    /// does.
     ///
     /// # Errors
     ///
@@ -451,6 +460,10 @@ where
         }
         self.lookup.sort_word = sort_word;
         if self.input.is_empty() {
+            return Ok(());
+        }
+        if self.defer_list_builds {
+            self.lookup.stale = true;
             return Ok(());
         }
         self.refresh()
@@ -483,6 +496,26 @@ where
     /// display the 1-best string), so it must not be absorbed here either.
     pub const fn set_collapse_sentence_rows_to_best(&mut self, collapse: bool) {
         self.collapse_sentence_rows_to_best = collapse;
+    }
+
+    /// Selects whether the parse seams ([`Session::replace_raw`] and its
+    /// variants), the sentence guesses ([`Session::guess_sentence`],
+    /// [`Session::guess_sentence_with_prefix`]) and a sort-word change
+    /// ([`Session::set_sort_options`]) build the candidate list.
+    ///
+    /// Off by default: each builds it, as the session API always has. On,
+    /// the parse seams and the guesses still build the scan matrix, so its
+    /// errors surface where they did, and all three leave the list stale.
+    /// [`Session::select`], [`Session::select_promoted`] and the `Space` key
+    /// rebuild a stale list before indexing it; a reader of
+    /// [`Session::candidates`] or [`Session::parsed_prefix_len`] calls
+    /// [`Session::refresh_candidates`] first. A failure of the deferred build then surfaces from that call
+    /// rather than from the parse or the guess. This is the C facades'
+    /// mode: upstream builds candidates only in `pinyin_guess_candidates`
+    /// (`pinyin.cpp:2184-2308` at 074a2219), which the C ABI answers from
+    /// its own re-anchored window ([`Session::candidates_at`]).
+    pub const fn set_defer_list_builds(&mut self, defer: bool) {
+        self.defer_list_builds = defer;
     }
 
     /// Selects the n-best trellis's `<nstore, nbest>` for this surface —
@@ -529,6 +562,9 @@ where
     /// upstream's candidate list prepends its n-best rows exactly when
     /// `m_nbest_results` is non-empty (`pinyin.cpp:2292-2293`), and the
     /// corpus pins were captured without a sentence guess.
+    ///
+    /// Under [`Session::set_defer_list_builds`], call
+    /// [`Session::refresh_candidates`] first.
     #[must_use]
     pub const fn candidates(&self) -> &CandidateList {
         &self.lookup.candidates

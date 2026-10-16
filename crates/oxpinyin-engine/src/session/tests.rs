@@ -106,7 +106,9 @@ use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
     UserModel,
 };
-use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel, FrequencyFixtureModel};
+use oxpinyin_testsupport::{
+    FixtureDictionary, FixtureError, FixtureLanguageModel, FrequencyFixtureModel,
+};
 
 use super::{KeyOutcome, MAX_INPUT_BYTES, Selection, Session};
 use crate::config::EmptyConfigSource;
@@ -550,6 +552,150 @@ fn a_longer_row_surfaces_when_bit_2_clear_and_vanishes_when_set() {
             .all(|candidate| !(candidate.token().is_some() && candidate.consumed_bytes() == 0)),
         "no LONGER row at the parity word"
     );
+}
+
+/// A session over the §9 vocabulary that builds its candidate list
+/// eagerly or, as the C facades do, defers it to the first reader.
+fn longer_session(defer: bool) -> Session<FixtureDictionary, FrequencyFixtureModel> {
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
+        FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
+    )
+    .expect("the fixtures open");
+    session.set_defer_list_builds(defer);
+    session
+}
+
+#[test]
+fn a_deferred_list_is_the_eager_list_at_every_read() {
+    let mut eager = longer_session(false);
+    let mut deferred = longer_session(true);
+    eager.replace_raw("fangmian").expect("parse");
+    deferred.replace_raw("fangmian").expect("parse");
+    // The parse leaves the deferred list unbuilt; the explicit refresh
+    // builds the list, and the parse length, the parse would have.
+    assert!(deferred.candidates().is_empty());
+    assert!(!eager.candidates().is_empty());
+    deferred.refresh_candidates().expect("deferred build");
+    assert_eq!(deferred.candidates(), eager.candidates());
+    assert_eq!(deferred.parsed_prefix_len(), eager.parsed_prefix_len());
+
+    // A sentence guess leaves its rows to the next reader, which
+    // `select` is: it indexes the list the guess would have built.
+    assert!(eager.guess_sentence().expect("guess"));
+    assert!(deferred.guess_sentence().expect("guess"));
+    assert_eq!(
+        deferred.select(0).expect("the row is live"),
+        eager.select(0).expect("the row is live")
+    );
+    assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
+    assert_eq!(deferred.candidates(), eager.candidates());
+
+    // `Space` reads the deferred list too.
+    eager.reset();
+    deferred.reset();
+    eager.replace_raw("fang").expect("parse");
+    deferred.replace_raw("fang").expect("parse");
+    let space = KeyInput::plain(LogicalKey::Space);
+    assert_eq!(
+        deferred.process_key(&space).expect("space"),
+        eager.process_key(&space).expect("space")
+    );
+    assert_eq!(deferred.selected_tokens(), eager.selected_tokens());
+}
+
+#[test]
+fn a_deferred_sort_change_is_the_eager_list_once_read() {
+    let mut eager = longer_session(false);
+    let mut deferred = longer_session(true);
+    eager.replace_raw("fang").expect("parse");
+    deferred.replace_raw("fang").expect("parse");
+    deferred.refresh_candidates().expect("deferred build");
+    assert_eq!(deferred.candidates(), eager.candidates());
+
+    // The ibus word surfaces the LONGER row, so the list changes; the
+    // deferred session leaves it to the next reader.
+    eager.set_sort_options(SORT_IBUS_DEFAULT).expect("sort");
+    deferred.set_sort_options(SORT_IBUS_DEFAULT).expect("sort");
+    assert_eq!(deferred.sort_options(), eager.sort_options());
+    assert_ne!(deferred.candidates(), eager.candidates());
+    deferred.refresh_candidates().expect("deferred build");
+    assert_eq!(deferred.candidates(), eager.candidates());
+}
+
+/// A [`FixtureDictionary`] whose next `failures` lookups fail and whose
+/// later ones serve the fixture: a backend that recovers.
+struct Flaky {
+    inner: FixtureDictionary,
+    failures: core::cell::Cell<u32>,
+}
+
+impl Dictionary for Flaky {
+    type Entry = PhraseEntry;
+    type Error = FixtureError;
+    type Syllable = SyllableKey;
+
+    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
+        let failures = self.failures.get();
+        if failures > 0 {
+            self.failures.set(failures - 1);
+            return Err(FixtureError::MissingField {
+                line: 0,
+                field: "flaky",
+            });
+        }
+        self.inner.lookup(syllables)
+    }
+
+    fn suggest_extension_tokens(
+        &self,
+        syllables: &[SyllableKey],
+    ) -> Result<Vec<PhraseToken>, Self::Error> {
+        self.inner.suggest_extension_tokens(syllables)
+    }
+
+    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+        self.inner.phrase_text_for_token(token)
+    }
+}
+
+#[test]
+fn a_failed_deferred_build_stays_stale_and_is_retried() {
+    let open = |defer: bool| {
+        let mut session = Session::new(
+            &EmptyConfigSource,
+            StoragePaths::new("user"),
+            Flaky {
+                inner: FixtureDictionary::parse(LONGER_VOCAB).expect("authored fixture"),
+                failures: core::cell::Cell::new(0),
+            },
+            FrequencyFixtureModel::parse(LONGER_VOCAB, "").expect("authored fixture"),
+        )
+        .expect("the fixtures open");
+        session.set_defer_list_builds(defer);
+        session
+    };
+    let mut eager = open(false);
+    let mut deferred = open(true);
+    eager.replace_raw("fangmian").expect("parse");
+    deferred.replace_raw("fangmian").expect("parse");
+
+    // The deferred scan meets a failing backend: the error surfaces and
+    // the list stays owed rather than current-and-empty.
+    deferred.dictionary().failures.set(1);
+    deferred
+        .refresh_candidates()
+        .expect_err("the first scan fails");
+    assert_eq!(deferred.dictionary().failures.get(), 0);
+
+    // The backend recovered: the next reader retries and gets the list
+    // the parse would have built.
+    deferred.refresh_candidates().expect("the retry succeeds");
+    assert!(!eager.candidates().is_empty());
+    assert_eq!(deferred.candidates(), eager.candidates());
+    assert_eq!(deferred.parsed_prefix_len(), eager.parsed_prefix_len());
 }
 
 #[test]

@@ -786,7 +786,12 @@ fn mask_out_clears_user_entries_and_leaves_the_flag_alone() {
 /// Snapshot of phrase candidates as `(token, text, cost)`.
 fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
     // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
-    let inst = unsafe { instance_ref(instance) };
+    let inst = unsafe { instance_mut(instance) };
+    // The facade defers the parse's list build to its first reader.
+    inst.core
+        .session
+        .refresh_candidates()
+        .expect("deferred candidate build");
     inst.core
         .session
         .candidates()

@@ -25,6 +25,7 @@ where
     /// current list does not hold — including a stale index left over from an
     /// earlier list — and leaves the session usable.
     pub fn select(&mut self, index: usize) -> Result<Selection, EngineError> {
+        self.refresh_candidates()?;
         // Clone the candidate out of the cached list first: `select_inner`
         // borrows `self` mutably, so it cannot also borrow `self.candidates`.
         let candidate = self.lookup.candidates.get(index).cloned().ok_or(
@@ -53,6 +54,7 @@ where
         index: usize,
         promoted_token: PhraseToken,
     ) -> Result<Selection, EngineError> {
+        self.refresh_candidates()?;
         let candidate = self.lookup.candidates.get(index).cloned().ok_or(
             EngineError::CandidateIndexOutOfRange {
                 index,

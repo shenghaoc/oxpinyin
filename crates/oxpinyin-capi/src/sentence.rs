@@ -562,9 +562,9 @@ pub extern "C" fn pinyin_guess_candidates(
     } else {
         false
     };
-    let candidates: &oxpinyin_engine::CandidateList = match inst.core.anchored_window.as_ref() {
-        Some((_, window)) => window,
-        None => inst.core.session.candidates(),
+    let Ok(candidates) = inst.core.lookup_window() else {
+        inst.candidates.clear();
+        return false;
     };
     for (window_index, cand) in candidates.iter().enumerate() {
         // The engine's remaining-raw-input `Fallback` row is the
