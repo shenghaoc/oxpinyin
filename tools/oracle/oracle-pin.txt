@@ -1,4 +1,4 @@
-schema=oracle-provisioning-pin-v3
+schema=oracle-provisioning-pin-v4
 # Composite pin identity for the locally built oracle. Every field mirrors
 # a constant in tools/oracle/build-oracle.sh; tools/bisection runners and
 # developers verify the two sides agree before trusting a prefix. When a
@@ -34,3 +34,33 @@ model_archive_sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defc
 # cells stay selectable; the frozen capture goldens remain the tkrzw
 # cell.
 dbm=BerkeleyDB
+#
+# v4 (2026-10-16 UTC, issue #818): the library build is reproducible, so the
+# digests below are the output of the RECIPE, not of one host's build. The
+# recipe is tools/oracle/build-oracle.sh --libs-only run in the image that
+# tools/oracle/Dockerfile.oracle pins (base_image, apt_snapshot): fixed
+# SOURCE_DATE_EPOCH, source path remapped by -ffile-prefix-map and
+# -fdebug-prefix-map, no ELF build ID. tools/oracle/check-reproducible.sh
+# rebuilds each cell twice from different directories and fails unless both
+# builds match each other and these values. A pin component, the base image,
+# the apt snapshot or the recipe changing changes them: update them in the
+# same commit.
+# The hashes below are for linux/amd64 only: native shared objects differ
+# across architectures, so the image, the Dockerfile and the checks pin
+# --platform=linux/amd64. Another architecture would need its own hashes.
+platform=linux/amd64
+base_image=debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9
+apt_snapshot=20260831T000000Z
+source_date_epoch=1788427579
+libpinyin_sha256_bdb=754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30
+libzhuyin_sha256_bdb=cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b
+libpinyin_sha256_kc=ddbb3ce4b625bf3b6ab0f32b2e28e49144595a953490a2221bee6a5642c55ef6
+libzhuyin_sha256_kc=e538c36cc0d9e6c43c595c296db539cd2b768bce427252358e6f825387e13dc4
+libpinyin_sha256_tkrzw=d78a91676af43ad5075c20ab4ae014a8bc6e03b7a5f5ab656d014087f18ff7b8
+libzhuyin_sha256_tkrzw=adbcc8c8c3dec00a488ea89413a525f57fdccf280a8ca44e6c2ad6765fd24c3d
+# data_manifest_sha256 of the 17 reproducible data files, per cell (they
+# differ across cells only in table.conf). `build-oracle.sh --regen-data`
+# fails unless the regenerated manifest equals the cell's value.
+data_manifest_sha256_bdb=a050c357e5b80eac1d83204822d246fbe66f7049d25e7085ee1bc4fdc9e3c8f2
+data_manifest_sha256_kc=91e906bd42ddebe5070b8bfe3cf48a9104286c22fbe8d8acb90df18ed431c8ba
+data_manifest_sha256_tkrzw=4a03fce6eec26916bc5bd0f0f18cba24492f334698e1d9b14b83e9c50c58e281

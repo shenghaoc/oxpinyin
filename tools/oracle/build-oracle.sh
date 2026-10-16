@@ -68,6 +68,13 @@ model_dir=
 # tools/profile/run-w8-cycle.sh, docs/testing/capture-fixtures.md).
 dbm=bdb
 enable_libzhuyin=0
+# full: libraries, ibus-libpinyin and the model-derived data (the default).
+# libs: libraries, headers and oracle-pin.txt only — no model, no data. This
+#   is what CI builds and publishes (docs/findings/model-provenance.md).
+# data: regenerate lib/libpinyin/data into a prefix an earlier libs build
+#   (or a pulled oracle image) already provides, then check it against the
+#   recorded manifest.
+mode=full
 
 usage() {
 	cat <<'EOF'
@@ -104,9 +111,27 @@ Options:
                        (tools/bisection/oracle-cell.sh). The capture
                        goldens and the pinyin-oracle crate need
                        --dbm tkrzw (their frozen pin ref is +dbm-tkrzw).
+  --libs-only          Build only the libraries, headers, pkg-config files and
+                       oracle-pin.txt: no model, no ibus-libpinyin, no data.
+                       The result is byte-reproducible (see below) and is what
+                       the oracle image carries.
+  --regen-data         Into an existing --libs-only prefix, build the pin's
+                       data from the model (--model-dir or the pinned
+                       download) in a staging area beside the prefix and
+                       compare data_manifest_sha256 with the one recorded in
+                       tools/oracle/oracle-pin.txt. Only on a match is
+                       lib/libpinyin/data (with the data manifests and the
+                       prefix's oracle-pin.txt) swapped in; on a mismatch the
+                       prefix is left untouched and the script fails.
   -h, --help           Show this help
 
 Build variables CC, CXX, CFLAGS, CXXFLAGS and LDFLAGS are passed through.
+The library build is made reproducible: SOURCE_DATE_EPOCH is the pin's commit
+time, the source path is remapped (-ffile-prefix-map, -fdebug-prefix-map) to a
+fixed name, and the ELF build ID is omitted. The libraries then hash the same
+wherever the work directory is, provided the toolchain and --prefix are the
+same (tools/oracle/Dockerfile.oracle pins the toolchain; tools/oracle/
+check-reproducible.sh proves it).
 The final stdout line is the absolute path to the built libpinyin shared object.
 EOF
 }
@@ -140,6 +165,22 @@ while (($#)); do
 	--dbm)
 		dbm=$2
 		shift 2
+		;;
+	--libs-only)
+		[[ $mode == full ]] || {
+			printf '%s\n' '--libs-only and --regen-data are mutually exclusive' >&2
+			exit 2
+		}
+		mode=libs
+		shift
+		;;
+	--regen-data)
+		[[ $mode == full ]] || {
+			printf '%s\n' '--libs-only and --regen-data are mutually exclusive' >&2
+			exit 2
+		}
+		mode=data
+		shift
 		;;
 	-h | --help)
 		usage
@@ -199,7 +240,18 @@ if [[ -e $prefix && ! -d $prefix ]]; then
 	printf 'installation prefix is not a directory: %s\n' "$prefix" >&2
 	exit 1
 fi
-if [[ -d $prefix && -n $(find "$prefix" -mindepth 1 -print -quit) ]]; then
+if [[ $mode == data ]]; then
+	# Data is regenerated into a prefix that already holds the pin's libraries.
+	if [[ -n $apply_patches_dir ]]; then
+		printf '%s\n' '--regen-data cannot be combined with --apply-patches' >&2
+		exit 2
+	fi
+	if [[ ! -f $prefix/oracle-pin.txt ]] || ! grep -qx "pin_ref=$ORACLE_PIN_REF" "$prefix/oracle-pin.txt"; then
+		printf 'FAIL: %s is not a libs-only prefix of this pin and dbm\n' "$prefix" >&2
+		printf '  expected pin_ref=%s in %s/oracle-pin.txt\n' "$ORACLE_PIN_REF" "$prefix" >&2
+		exit 1
+	fi
+elif [[ -d $prefix && -n $(find "$prefix" -mindepth 1 -print -quit) ]]; then
 	printf 'installation prefix must be empty: %s\n' "$prefix" >&2
 	exit 1
 fi
@@ -281,7 +333,25 @@ fetch_commit() {
 }
 
 lib_src=$(fetch_commit libpinyin "$LIBPINYIN_GIT_URL" "$LIBPINYIN_SHA")
-ibus_src=$(fetch_commit ibus-libpinyin "$IBUS_LIBPINYIN_GIT_URL" "$IBUS_LIBPINYIN_SHA")
+ibus_src=
+[[ $mode == full ]] && ibus_src=$(fetch_commit ibus-libpinyin "$IBUS_LIBPINYIN_GIT_URL" "$IBUS_LIBPINYIN_SHA")
+
+# Reproducible-build settings (issue #818). The pin's commit time is the
+# build timestamp, so it is a function of the pin and nothing else. The
+# source path is rewritten to a fixed name in every place the compiler
+# records it (__FILE__, debug info, macro expansion), so the library hash
+# does not depend on --work-dir. The build ID would hash the path-bearing
+# sections' layout and is of no use to a parity oracle, so it is omitted.
+# CFLAGS/CXXFLAGS fall back to autoconf's own defaults (-g -O2) when the
+# caller sets none, so the optimisation level is that of the bare
+# ./configure reference build.
+SOURCE_DATE_EPOCH=$(git -C "$lib_src" log -1 --format=%ct)
+export SOURCE_DATE_EPOCH
+export TZ=UTC LC_ALL=C
+repro_map="-ffile-prefix-map=$lib_src=/usr/src/libpinyin -fdebug-prefix-map=$lib_src=/usr/src/libpinyin"
+export CFLAGS="${CFLAGS--g -O2} $repro_map"
+export CXXFLAGS="${CXXFLAGS--g -O2} $repro_map"
+export LDFLAGS="${LDFLAGS:+$LDFLAGS }-Wl,--build-id=none"
 
 # The model data is the 18-file model20 export that build-oracle.sh drops into
 # libpinyin's data dir (make install then ships it to $prefix/lib/libpinyin/data).
@@ -290,21 +360,23 @@ ibus_src=$(fetch_commit ibus-libpinyin "$IBUS_LIBPINYIN_GIT_URL" "$IBUS_LIBPINYI
 # verified against MODEL_SHA256 before that export was produced; applying it here
 # changes WHERE the bytes come from, never WHETHER they are checked. With no
 # --model-dir the pinned archive is downloaded and verified, exactly as before.
-model_data_dir=$lib_src/data
-mkdir -p "$model_data_dir"
-if [[ -n $model_dir ]]; then
-	model_dir=$(cd "$model_dir" && pwd)
-	# Copy the validated inventory only: a stray extra file in the cache dir
-	# must not ride into the pinned oracle's data dir, and a subdirectory
-	# would abort cp outright. The 18 names were checked above, so nothing
-	# here can be missing.
-	for f in "${MODEL_FILES[@]}"; do
-		cp "$model_dir/$f" "$model_data_dir/$f"
-	done
-	printf 'reusing pre-extracted model export from %s\n' "$model_dir" >&2
-else
-	model_archive=$(fetch model20.text.tar.gz "$MODEL_URL" "$MODEL_SHA256")
-	tar -xzf "$model_archive" -C "$model_data_dir"
+if [[ $mode != libs ]]; then
+	model_data_dir=$lib_src/data
+	mkdir -p "$model_data_dir"
+	if [[ -n $model_dir ]]; then
+		model_dir=$(cd "$model_dir" && pwd)
+		# Copy the validated inventory only: a stray extra file in the cache dir
+		# must not ride into the pinned oracle's data dir, and a subdirectory
+		# would abort cp outright. The 18 names were checked above, so nothing
+		# here can be missing.
+		for f in "${MODEL_FILES[@]}"; do
+			cp "$model_dir/$f" "$model_data_dir/$f"
+		done
+		printf 'reusing pre-extracted model export from %s\n' "$model_dir" >&2
+	else
+		model_archive=$(fetch model20.text.tar.gz "$MODEL_URL" "$MODEL_SHA256")
+		tar -xzf "$model_archive" -C "$model_data_dir"
+	fi
 fi
 
 patch_manifest=
@@ -336,28 +408,66 @@ if [[ -n $apply_patches_dir ]]; then
 	ORACLE_PIN_REF="$ORACLE_PIN_REF+patches-$patch_manifest_sha256"
 fi
 
+# --regen-data generates into a staging area next to the prefix (same
+# filesystem) and touches the prefix only after the regenerated manifest has
+# been checked against the recorded one: a failed run leaves it as it was.
+# Installing with DESTDIR keeps the real prefix in the installed binaries'
+# run paths, so what is published is exactly what an in-place install makes.
+stage=
+content_root=$prefix
+out_dir=$prefix
+if [[ $mode == data ]]; then
+	stage=$(mktemp -d "$prefix.stage.XXXXXX")
+	trap 'rm -rf "$stage"' EXIT
+	content_root=$stage$prefix
+	out_dir=$stage/out
+	mkdir -p "$out_dir"
+fi
+
 (
 	cd "$lib_src"
 	autoreconf --force --install --verbose
 	configure_args=(--prefix="$prefix" --disable-static --with-dbm="$dbm_name")
 	((enable_libzhuyin)) && configure_args+=(--enable-libzhuyin)
 	./configure "${configure_args[@]}"
-	make -j"$jobs"
-	make install
+	case $mode in
+	full)
+		make -j"$jobs"
+		make install
+		;;
+	libs)
+		# src/ holds both libraries and the installed headers; the .pc
+		# files are the top-level pkgconfig_DATA. Nothing here reads data/.
+		make -C src -j"$jobs"
+		make -C src install
+		make install-pkgconfigDATA
+		;;
+	data)
+		# Everything is built so utils/ links the freshly built libraries,
+		# but only data/ and the data-build utils are installed (into the
+		# staging area): the prefix's libraries stay the ones it was
+		# provisioned with.
+		make -j"$jobs"
+		make -C utils install DESTDIR="$stage"
+		make -C data install DESTDIR="$stage"
+		;;
+	esac
 )
 
-(
-	cd "$ibus_src"
-	autoreconf --force --install --verbose
-	./configure --prefix="$prefix" \
-		--disable-static \
-		--disable-boost \
-		--disable-cloud-input-mode \
-		--disable-english-input-mode \
-		--disable-libnotify \
-		--disable-lua-extension
-	make -j"$jobs"
-)
+if [[ $mode == full ]]; then
+	(
+		cd "$ibus_src"
+		autoreconf --force --install --verbose
+		./configure --prefix="$prefix" \
+			--disable-static \
+			--disable-boost \
+			--disable-cloud-input-mode \
+			--disable-english-input-mode \
+			--disable-libnotify \
+			--disable-lua-extension
+		make -j"$jobs"
+	)
+fi
 
 shared_object=$(find "$prefix" -type f \( -name 'libpinyin.so' -o -name 'libpinyin.so.*' \) -print | sort | head -n 1)
 [[ -n $shared_object ]] || {
@@ -366,13 +476,17 @@ shared_object=$(find "$prefix" -type f \( -name 'libpinyin.so' -o -name 'libpiny
 }
 
 header=$prefix/include/libpinyin-$LIBPINYIN_VERSION/pinyin.h
-data_dir=$prefix/lib/libpinyin/data
-data_manifest=$prefix/oracle-data.sha256
-data_unstable_manifest=$prefix/oracle-data-unstable.sha256
-[[ -f $header && -d $data_dir ]] || {
-	printf '%s\n' 'installed oracle header or data directory not found' >&2
+[[ -f $header ]] || {
+	printf '%s\n' 'installed oracle header not found' >&2
 	exit 1
 }
+read -r header_sha256 _ < <(sha256sum "$header")
+read -r shared_object_sha256 _ < <(sha256sum "$shared_object")
+zhuyin_sha256=
+if [[ -f $prefix/lib/libzhuyin.so ]]; then
+	read -r zhuyin_sha256 _ < <(sha256sum "$prefix/lib/libzhuyin.so")
+fi
+
 # The data payload is split into two manifests. libpinyin's generated data
 # is not reproducible at a fixed pin: two clean builds of the same pin, same
 # model, same container image, differ on exactly the six files produced
@@ -391,26 +505,37 @@ DATA_UNSTABLE_FILES=(
 	pinyin_index.bin
 	punct.bin
 )
-(
-	cd "$prefix"
-	find lib/libpinyin/data -type f -print0 | sort -z |
-		grep -zvF -e "$(printf '/%s\n' "${DATA_UNSTABLE_FILES[@]}")" |
-		xargs -0 sha256sum
-) >"$data_manifest"
-(
-	cd "$prefix"
-	for f in "${DATA_UNSTABLE_FILES[@]}"; do
-		[[ -f lib/libpinyin/data/$f ]] || {
-			printf 'generated data file not found: %s\n' "$f" >&2
-			exit 1
-		}
-		sha256sum "lib/libpinyin/data/$f"
-	done
-) >"$data_unstable_manifest"
-read -r header_sha256 _ < <(sha256sum "$header")
-read -r shared_object_sha256 _ < <(sha256sum "$shared_object")
-read -r data_manifest_sha256 _ < <(sha256sum "$data_manifest")
-read -r data_unstable_manifest_sha256 _ < <(sha256sum "$data_unstable_manifest")
+data_dir=$content_root/lib/libpinyin/data
+data_manifest=$out_dir/oracle-data.sha256
+data_unstable_manifest=$out_dir/oracle-data-unstable.sha256
+data_lines=
+if [[ $mode != libs ]]; then
+	[[ -d $data_dir ]] || {
+		printf '%s\n' 'installed oracle data directory not found' >&2
+		exit 1
+	}
+	(
+		cd "$content_root"
+		find lib/libpinyin/data -type f -print0 | sort -z |
+			grep -zvF -e "$(printf '/%s\n' "${DATA_UNSTABLE_FILES[@]}")" |
+			xargs -0 sha256sum
+	) >"$data_manifest"
+	(
+		cd "$content_root"
+		for f in "${DATA_UNSTABLE_FILES[@]}"; do
+			[[ -f lib/libpinyin/data/$f ]] || {
+				printf 'generated data file not found: %s\n' "$f" >&2
+				exit 1
+			}
+			sha256sum "lib/libpinyin/data/$f"
+		done
+	) >"$data_unstable_manifest"
+	read -r data_manifest_sha256 _ < <(sha256sum "$data_manifest")
+	read -r data_unstable_manifest_sha256 _ < <(sha256sum "$data_unstable_manifest")
+	data_lines="data_manifest_sha256=$data_manifest_sha256
+data_unstable_manifest_sha256=$data_unstable_manifest_sha256"
+fi
+
 {
 	cat <<EOF
 schema=pinyin-oracle-v1
@@ -423,13 +548,36 @@ model_sha256=$MODEL_SHA256
 dbm=$dbm_name
 header_sha256=$header_sha256
 shared_object_sha256=$shared_object_sha256
-data_manifest_sha256=$data_manifest_sha256
-data_unstable_manifest_sha256=$data_unstable_manifest_sha256
 EOF
+	[[ -z $zhuyin_sha256 ]] || printf 'zhuyin_shared_object_sha256=%s\n' "$zhuyin_sha256"
+	[[ -z $data_lines ]] || printf '%s\n' "$data_lines"
 	if [[ -n $patch_manifest ]]; then
 		printf 'patches_manifest_sha256=%s\n' "$patch_manifest_sha256"
 	fi
-} >"$prefix/oracle-pin.txt"
+} >"$out_dir/oracle-pin.txt.new"
+mv "$out_dir/oracle-pin.txt.new" "$out_dir/oracle-pin.txt"
+
+# --regen-data: the regenerated stable data must be the recorded one. The
+# recorded value is a pure function of the pin (see above), so a mismatch is
+# a wrong model, a wrong pin or a broken build — never host noise.
+if [[ $mode == data ]]; then
+	recorded=$(sed -n "s/^data_manifest_sha256_$dbm=//p" "$(dirname "${BASH_SOURCE[0]}")/oracle-pin.txt")
+	if [[ -z $recorded ]]; then
+		printf 'FAIL: tools/oracle/oracle-pin.txt records no data_manifest_sha256_%s\n' "$dbm" >&2
+		exit 1
+	fi
+	if [[ $recorded != "$data_manifest_sha256" ]]; then
+		printf 'FAIL: data_manifest_sha256 mismatch\n  recorded:    %s\n  regenerated: %s\n' "$recorded" "$data_manifest_sha256" >&2
+		exit 1
+	fi
+	printf 'data_manifest_sha256 matches the recorded value\n' >&2
+	# Verified: now, and only now, swap the data and the data-build utilities
+	# into the prefix and publish the manifests and pin file with them.
+	rm -rf "$prefix/lib/libpinyin/data"
+	cp -a "$content_root/." "$prefix/"
+	mv "$out_dir/oracle-data.sha256" "$out_dir/oracle-data-unstable.sha256" "$prefix/"
+	mv "$out_dir/oracle-pin.txt" "$prefix/oracle-pin.txt"
+fi
 
 printf 'libpinyin_tag=%s\nlibpinyin_commit=%s\n' "$LIBPINYIN_VERSION" "$LIBPINYIN_SHA" >&2
 printf 'ibus_libpinyin_tag=%s\nibus_libpinyin_commit=%s\n' "$IBUS_LIBPINYIN_TAG" "$IBUS_LIBPINYIN_SHA" >&2

@@ -1,0 +1,53 @@
+# Reproducible build of the pin-built oracle's LIBRARIES (issue #818).
+#
+# Stage `deps` is the pinned build environment: the same debian:testing
+# digest and apt snapshot as tools/bisection/Dockerfile.perf-matrix, so the
+# compiler, glibc and the three DBM dev packages are a function of this file.
+# Stage `build` runs tools/oracle/build-oracle.sh --libs-only once per DBM
+# backend at fixed in-image paths. The final stage is the published image:
+# libpinyin.so, libzhuyin.so, headers, pkg-config files and oracle-pin.txt
+# per backend. It carries NO model20-derived data (that is not
+# redistributable: docs/findings/model-provenance.md); a lane regenerates
+# lib/libpinyin/data locally with `build-oracle.sh --regen-data`
+# (docs/runbooks/oracle.md).
+#
+# The build context is tools/oracle/ (the recipe needs nothing else):
+#   docker build -f tools/oracle/Dockerfile.oracle -t oxpinyin-oracle tools/oracle
+
+# The hashes in oracle-pin.txt are for linux/amd64 (platform=): every stage is
+# pinned to it, and the build and run commands pass --platform as well.
+ARG ORACLE_PLATFORM=linux/amd64
+
+FROM --platform=$ORACLE_PLATFORM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9 AS deps
+
+RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
+    && echo 'deb http://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
+    > /etc/apt/sources.list
+
+RUN apt-get -o Acquire::Check-Valid-Until=false update \
+    && apt-get install -y --no-install-recommends \
+    build-essential \
+    autoconf automake autopoint libtool \
+    pkg-config gettext gnome-common \
+    curl ca-certificates git tar patch python3 \
+    libglib2.0-dev \
+    libsqlite3-dev \
+    libdb-dev \
+    libkyotocabinet-dev \
+    libtkrzw-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM deps AS build
+
+COPY build-oracle.sh /usr/local/bin/build-oracle.sh
+RUN set -eu; \
+    for dbm in bdb kc tkrzw; do \
+        build-oracle.sh --libs-only --enable-libzhuyin --dbm "$dbm" \
+            --work-dir "/build/$dbm" --prefix "/opt/pinyin-oracle/$dbm" \
+            --jobs "$(nproc)"; \
+        rm -rf "/build/$dbm"; \
+    done
+
+ARG ORACLE_PLATFORM=linux/amd64
+FROM --platform=$ORACLE_PLATFORM scratch
+COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle
