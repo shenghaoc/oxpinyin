@@ -136,6 +136,9 @@ into the future (PR #363).
 `rust-toolchain.toml` is the only supported toolchain. Portable crates:
 Linux/macOS/Windows. Oracle, capi: Linux-first.
 
+Cloud sessions are a supported host for every gate: provision one with
+`tools/cloud/setup.sh` (`docs/runbooks/cloud.md`).
+
 ## Concurrent sessions
 
 More than one agent may hold this checkout. Never switch the shared

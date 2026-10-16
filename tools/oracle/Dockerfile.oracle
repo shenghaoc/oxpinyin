@@ -20,22 +20,32 @@ ARG ORACLE_PLATFORM=linux/amd64
 
 FROM --platform=$ORACLE_PLATFORM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9 AS deps
 
-RUN rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list \
-    && echo 'deb http://snapshot.debian.org/archive/debian/20260831T000000Z testing main' \
-    > /etc/apt/sources.list
-
-RUN apt-get -o Acquire::Check-Valid-Until=false update \
-    && apt-get install -y --no-install-recommends \
-    build-essential \
-    autoconf automake autopoint libtool \
-    pkg-config gettext gnome-common \
-    curl ca-certificates git tar patch python3 \
-    libglib2.0-dev \
-    libsqlite3-dev \
-    libdb-dev \
-    libkyotocabinet-dev \
-    libtkrzw-dev \
-    && rm -rf /var/lib/apt/lists/*
+# Behind a TLS-intercepting egress proxy (a cloud session: tools/cloud/setup.sh)
+# the proxy arrives as the predefined build arg https_proxy and its CA as the
+# optional BuildKit secret `cacert`; apt then reads the same snapshot over
+# https. Without them (CI, a workstation) it is the plain http fetch. The
+# packages, and so the toolchain, are the same either way.
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; \
+    scheme=http; set --; \
+    if [ -s /run/secrets/cacert ]; then \
+        scheme=https; set -- -o Acquire::https::CaInfo=/run/secrets/cacert; \
+    fi; \
+    rm -f /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; \
+    echo "deb $scheme://snapshot.debian.org/archive/debian/20260831T000000Z testing main" \
+        > /etc/apt/sources.list; \
+    apt-get "$@" -o Acquire::Check-Valid-Until=false update; \
+    apt-get "$@" install -y --no-install-recommends \
+        build-essential \
+        autoconf automake autopoint libtool \
+        pkg-config gettext gnome-common \
+        curl ca-certificates git tar patch python3 \
+        libglib2.0-dev \
+        libsqlite3-dev \
+        libdb-dev \
+        libkyotocabinet-dev \
+        libtkrzw-dev; \
+    rm -rf /var/lib/apt/lists/*
 
 FROM deps AS build
 

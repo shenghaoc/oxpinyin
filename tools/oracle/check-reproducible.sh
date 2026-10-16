@@ -61,9 +61,25 @@ fi
 run_flags=(--rm)
 [[ $engine == podman ]] && run_flags+=(--security-opt label=disable)
 
+# Behind a session proxy (a cloud session, tools/cloud/setup.sh) containers
+# cannot reach the proxy at its loopback address or trust its CA: they run
+# with --network host, the proxy in their environment and the CA mounted,
+# and the deps build gets the proxy as a build arg and the CA as the
+# BuildKit secret that Dockerfile.oracle reads.
+build_flags=()
+proxy=${HTTPS_PROXY:-${https_proxy:-}}
+proxy_ca=${OXPINYIN_PROXY_CA:-/root/.ccr/ca-bundle.crt}
+if [[ $engine == docker && -n $proxy && -s $proxy_ca ]]; then
+	run_flags+=(--network host -e "https_proxy=$proxy" -e "HTTPS_PROXY=$proxy"
+		-e GIT_SSL_CAINFO=/run/ca.crt -e SSL_CERT_FILE=/run/ca.crt -e CURL_CA_BUNDLE=/run/ca.crt
+		-v "$proxy_ca:/run/ca.crt:ro")
+	build_flags=(--network host --build-arg "https_proxy=$proxy" --build-arg "HTTPS_PROXY=$proxy"
+		--secret "id=cacert,src=$proxy_ca")
+fi
+
 if [[ -z $image ]]; then
 	image=oxpinyin-oracle-deps:check
-	"$engine" build --platform linux/amd64 --target deps -f "$repo/tools/oracle/Dockerfile.oracle" -t "$image" "$repo/tools/oracle" >&2
+	"$engine" build --platform linux/amd64 "${build_flags[@]}" --target deps -f "$repo/tools/oracle/Dockerfile.oracle" -t "$image" "$repo/tools/oracle" >&2
 fi
 
 scratch=$(mktemp -d)
