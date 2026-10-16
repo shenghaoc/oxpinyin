@@ -10,8 +10,9 @@ work: record, design and analyse, implement, gate.
 
 - [x] 1. `[A]` Survey every subsystem against the pin and write the first
   record, with the component layout, the coefficients and the open gaps
-  (2026-10-16 UTC).
-  _Requirements: 1, 2.1, 5.1_
+  (2026-10-16 UTC). The coefficient inventory it took is partial; task
+  11 completes it.
+  _Requirements: 1, 5.1_
 
 - [x] 2. `[H]` Rule the method: compatibility in the first release,
   elegance, extensibility and performance afterwards; record, design
@@ -49,8 +50,8 @@ work: record, design and analyse, implement, gate.
   defect task.
   _Requirements: 3_
 
-- [ ] 6. `[A]` Write the arguments for the remaining "same behaviour"
-  and "different" rows in §§1–8, each with time and space complexity
+- [ ] 6. `[A]` Write the arguments for the remaining rows marked
+  "different / unverified" in §§1–8, each with time and space complexity
   against the pin.
   _Requirements: 3.1, 3.2_
 
@@ -66,7 +67,7 @@ work: record, design and analyse, implement, gate.
 - [ ] 9. `[A]` Move the key-driven layer (`KeyInput`, `process_key`,
   `type_pinyin`, `Preedit`, `commit`) off `Session` into an optional
   adapter over the operations, and move the oracle tools and tests that
-  use it onto the operations or the adapter. The C ABI already uses only
+  use it onto the operations or the adapter. Both C ABIs already use only
   the operations (record §0, "The operations"). This is a change to the
   supported Rust surface, so it starts with a STOP for the maintainer's
   ask.
@@ -81,3 +82,21 @@ work: record, design and analyse, implement, gate.
   the compatibility policy change with it: `[H]` rules on both before
   the task lands.
   _Requirements: 4.3_
+
+- [ ] 11. `[A]` Complete the coefficient and limit inventory: every
+  output-shaping constant and limit on the parity path, including those
+  written inline (literals in expressions, loop bounds), each with its
+  pin value or, when it has none, its call path and whether it reaches
+  the parity path (record §9).
+  _Requirements: 2.1_
+
+- [ ] 12. `[A]` Investigate the constraint-revalidation expansion cap
+  (record §11). Find a phrase in the pinned model whose abbreviation
+  expands past 4096; run ordinary unconstrained sentence guessing
+  against the pin as a control; then a stateful sequence that selects
+  or forces that phrase and triggers revalidation (`guess_sentence`, a
+  replaced selection), comparing constraint state, sentence results and
+  return values with the oracle on the reference cell. File an issue
+  only if a divergence reproduces; any fix lands outside this spec's
+  documentation PR.
+  _Requirements: 3.3_

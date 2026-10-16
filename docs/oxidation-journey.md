@@ -66,7 +66,7 @@ structure need not.
 framework-neutral IME session — key input, preedit, commit — because
 that is what a new Rust input method would want. libpinyin never sees a
 key: its frontends own keys and drive it through parse, guess, select,
-train and save. The C ABI ended up built on those operations alone, and
+train and save. Both C ABIs ended up built on those operations alone, and
 the key-driven layer is used only by tests and oracle tools, yet it
 still sits on the same `Session` type. For the first release the
 operations are the surface; a key-driven API is an optional adapter

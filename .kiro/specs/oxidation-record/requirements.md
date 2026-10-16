@@ -22,9 +22,13 @@ The narrative for human readers is `docs/oxidation-journey.md`.
 
 - **Pin** — libpinyin `074a2219` (2.11.92), `tools/oracle/oracle-pin.txt`.
 - **Row** — one entry of the record: a pin structure or algorithm, its
-  oxpinyin counterpart, and its mark (same / same behaviour / different).
-- **Parity path** — code whose result reaches any of the 79 `pinyin_*`
-  exports or the files they write.
+  oxpinyin counterpart, and its two marks: structure (same or
+  different) and behaviour (follows, argued, unverified, a policy class,
+  defect, or off path).
+- **Parity path** — code whose result reaches either C ABI —
+  libpinyin's 79 `pinyin_*` exports or libzhuyin's 52 — or the files
+  they write, and the offline tools whose output is promised identical
+  to the pin's (`oxpinyin-datagen`'s system files).
 - **Coefficient** — a numeric constant that shapes output: a seed,
   factor, ceiling, threshold, width, epsilon, penalty or discount.
 
@@ -72,7 +76,7 @@ behaviour" is a claim I can check.
 
 #### Acceptance Criteria
 
-1. EACH row marked "same behaviour" or "different" SHALL state why the
+1. EACH row whose structure is marked "different" SHALL state why the
    observable behaviour matches the pin, or which compatibility-policy
    class covers the difference.
 2. EACH such row SHALL compare oxpinyin's time and space complexity with
@@ -120,12 +124,17 @@ before anything else.
 
 #### Acceptance Criteria
 
-1. AFTER the first release, WHEN oxpinyin is measurably slower or larger than the pin for an
-   operation THEN the pin's structure or algorithm, written as
-   idiomatic Rust, SHALL be measured first, in one run beside the base
-   and the pin.
-2. THE faster of the measured versions SHALL be kept, subject to
-   Requirement 3.2.
+1. AFTER the first release, WHEN oxpinyin is measurably slower or
+   larger than the pin for an operation THEN the pin's structure or
+   algorithm, written as idiomatic Rust, SHALL be measured first, in one
+   run beside the base and the pin.
+2. EACH candidate SHALL be measured for time, peak resident memory and
+   installed size, with repeated measurements within that one run.
+3. THE kept version SHALL NOT be worse than the pin in both time and
+   space (Requirement 3.2) and SHALL stay within the install-size budget
+   (`/AGENTS.md` constitution 2); among the candidates that satisfy both,
+   the choice SHALL be justified on all three measures, not on speed
+   alone, and the idiomatic version SHALL be preferred on a tie.
 
 ### Requirement 7: The library's operations are the Rust surface
 
@@ -140,4 +149,5 @@ through an abstraction designed for a general IME.
    instance.
 2. A key-driven layer (key input, preedit, commit) SHALL sit in an
    optional adapter built on those operations, not in the same type.
-3. THE C ABI SHALL be built on the operations alone.
+3. BOTH C ABIs (libpinyin and libzhuyin) SHALL be built on the
+   operations alone.

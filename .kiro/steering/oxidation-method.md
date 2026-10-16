@@ -85,8 +85,10 @@ Work that predates this ruling is brought into the record by
   oxpinyin is measurably slower or larger than the pin for an
   operation, first try the pin's own structure or algorithm, written as
   idiomatic Rust, and measure it (one run, base and pin side by side,
-  as `/AGENTS.md` requires). The pin's algorithm is the first candidate,
-  not a mandate: if its Rust expression is no better, keep or find the
-  idiomatic alternative that is. A transliteration that is slower than
-  the idiomatic version is not adopted for fidelity's sake when the
-  behaviour is the same.
+  as `/AGENTS.md` requires, repeated within that run). Judge every
+  candidate on time, peak memory and installed size together, never on
+  speed alone: the kept version is never worse than the pin in both
+  time and space and stays within the install-size budget. The pin's
+  algorithm is the first candidate, not a mandate — if its Rust
+  expression is no better on those measures, keep or find the idiomatic
+  alternative that is, and prefer the idiomatic version on a tie.
