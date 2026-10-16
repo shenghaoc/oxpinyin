@@ -90,31 +90,13 @@ echo "data:   $ORACLE_DATA"
 
 # ── The capi's system data (per-backend) ────────────────────────────────
 #
-# The flat fixtures/w3 root lost its DBMs when the fixtures split into
-# per-backend directories (P6 345af16d and b63b237d, on main 2026-09-03);
-# from then on the capi side found no tables and this runner exited 1.
-# The data is now the cell backend's own directory, and its writer is
-# checked: all three DBMs share libpinyin's file names, so a directory
-# written by another backend would open as the wrong container.
-CAPI_SYSTEM="${IMPORT_SYSTEM:-$REPO_ROOT/fixtures/w3/$OXPINYIN_CAPI_BACKEND_EXT}"
-missing=()
-for t in pinyin_index.bin phrase_index.bin bigram.db gb_char.bin table.conf; do
-    [ -f "$CAPI_SYSTEM/$t" ] || missing+=("$t")
-done
-if [ ${#missing[@]} -gt 0 ]; then
-    echo "FAIL: IMPORT_SYSTEM=$CAPI_SYSTEM is not a system data directory"
-    echo "  missing: ${missing[*]}"
-    exit 1
-fi
-if ! data_ext=$(system_dir_data_ext "$CAPI_SYSTEM"); then
-    echo "FAIL: cannot tell which backend wrote IMPORT_SYSTEM=$CAPI_SYSTEM"
-    exit 1
-fi
-if [ "$data_ext" != "$OXPINYIN_CAPI_BACKEND_EXT" ]; then
-    echo "FAIL: BACKEND MISMATCH — the $ORACLE_DBM cell's capi is $(system_dir_ext_name "$OXPINYIN_CAPI_BACKEND_EXT"),"
-    echo "  but IMPORT_SYSTEM=$CAPI_SYSTEM was written for $(system_dir_ext_name "$data_ext")"
-    exit 1
-fi
+# The same full datagen output the pin reads, resolved through
+# system-dir.sh (IMPORT_SYSTEM stays the override). It checks completeness
+# and refuses a directory written by another backend: all three DBMs share
+# libpinyin's file names, so one written elsewhere would open as the wrong
+# container.
+CAPI_SYSTEM="$(resolve_system_dir IMPORT_SYSTEM import-diff)"
+data_ext=$(system_dir_data_ext "$CAPI_SYSTEM")
 echo "capi data: $CAPI_SYSTEM ($(system_dir_ext_name "$data_ext"))"
 echo ""
 
