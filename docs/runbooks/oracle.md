@@ -11,7 +11,9 @@ the pin is `docs/testing/oracle-environment.md`.
 
 Linux only. The model20 archive is not redistributable
 (`docs/findings/model-provenance.md`): no CI job fetches it, and nothing
-below runs on GitHub-hosted runners.
+below that needs it runs on GitHub-hosted runners. The one hosted job
+that touches the oracle, `.github/workflows/oracle-image.yml`, builds the
+libraries only and ships no model-derived data (section 2a).
 
 ## 1. Fetch the model (once per machine)
 
@@ -50,6 +52,116 @@ The script writes a manifest the differential runners compare against
 `oracle-pin.txt` before trusting the prefix. The container recipes in
 `tools/bisection/Dockerfile.perf-matrix` carry a prebuilt oracle at
 `/opt/libpinyin-tkrzw` for the perf work.
+
+## 2a. Or pull the prebuilt libraries (any machine)
+
+The oracle libraries build reproducibly: inside the pinned image
+(`tools/oracle/Dockerfile.oracle`: `debian:testing` by digest, apt from
+a dated snapshot) `build-oracle.sh --libs-only` produces byte-identical
+`libpinyin.so` and `libzhuyin.so` wherever it runs, so their hashes are
+recorded once in `tools/oracle/oracle-pin.txt`
+(`libpinyin_sha256_<dbm>`, `libzhuyin_sha256_<dbm>`) rather than per
+machine of the same architecture: the recorded hashes are for
+**linux/amd64** only (`platform=` in `oracle-pin.txt`; the Dockerfile,
+the workflow and the checks pin `--platform=linux/amd64`). CI
+(`oracle-image.yml`) builds the bdb, kc and tkrzw cells and publishes them
+as
+
+    ghcr.io/shenghaoc/oxpinyin-oracle:<tag>
+
+where `<tag>` is printed by `tools/oracle/image-tag.sh`: the libpinyin
+commit, the base image digest, the apt snapshot timestamp (all from
+`oracle-pin.txt`) and a hash of `Dockerfile.oracle` and `build-oracle.sh`,
+so it changes whenever the library hashes can. A published tag is
+immutable (the workflow never overwrites one), and `tools/cloud/setup.sh`
+and the commands below derive it the same way. The hashes are also in the
+image labels. The
+image holds `/opt/pinyin-oracle/{bdb,kc,tkrzw}` with `lib/`, `include/`,
+`lib/pkgconfig/` and `oracle-pin.txt`. It holds **no model-derived data**
+(the model is not redistributable), so a pulled prefix needs the data
+step below before any differential can use it.
+
+```sh
+img=ghcr.io/shenghaoc/oxpinyin-oracle:$(tools/oracle/image-tag.sh)
+docker pull --platform linux/amd64 "$img"    # podman, or your runtime's equivalent
+```
+
+Copy the cells out of the image (a `FROM scratch` image has no command, so
+`create` needs a dummy one) and point every cell's `.pc` files at the new
+location. The destination is created first and the *contents* of
+`/opt/pinyin-oracle` are copied into it (`/.` suffix), so a first run and a
+rerun give the same tree:
+
+```sh
+dest=$HOME/.local/opt/pinyin-oracle        # any directory
+mkdir -p "$dest"
+cid=$(docker create --platform linux/amd64 "$img" /none)
+docker cp "$cid:/opt/pinyin-oracle/." "$dest"
+docker rm "$cid"
+for cell in bdb kc tkrzw; do
+    sed -i "s|^prefix=.*|prefix=$dest/$cell|" "$dest/$cell"/lib/pkgconfig/*.pc
+done
+```
+
+Check the libraries against the recorded recipe hashes (a mismatch means
+the image is not this repository's recipe — stop and report it):
+
+```sh
+for lib in libpinyin libzhuyin; do
+    want=$(sed -n "s/^${lib}_sha256_bdb=//p" tools/oracle/oracle-pin.txt)
+    echo "$want  $dest/bdb/lib/$lib.so" | sha256sum --check
+done
+```
+
+### Regenerate the data (after every pull)
+
+The data directory is built from the model on your own machine, with
+this pin's data build, and then checked against the recorded manifest:
+
+```sh
+tools/model/fetch-model.sh
+export PINYIN_MODEL_DIR="$PWD/target/model20/extracted"
+tools/oracle/build-oracle.sh --regen-data --dbm bdb --prefix "$dest/bdb" \
+    --model-dir "$PINYIN_MODEL_DIR" --jobs "$(nproc)"
+```
+
+`--regen-data` fetches the pinned libpinyin commit, builds it in a work
+directory with the same configure arguments, runs the pin's data build
+(`data/Makefile.am`: `gen_binary_files`, `import_interpolation`,
+`gen_unigram`) over the model into a staging area beside the prefix, and
+computes `oracle-data.sha256`, `oracle-data-unstable.sha256` and the data
+fields of `oracle-pin.txt` there. **Only if the stable manifest's digest
+equals `data_manifest_sha256_<dbm>` in `tools/oracle/oracle-pin.txt`** does
+it swap `lib/libpinyin/data`, the data-build utilities and those files into
+the prefix — the pulled libraries are left as they are. On a mismatch it
+exits non-zero and the prefix is byte-for-byte what it was.
+It needs the build dependencies of section 2 (the pinned image's `deps`
+stage has them: `docker build --target deps -f tools/oracle/Dockerfile.oracle
+tools/oracle`). Use `--dbm kc` or `--dbm tkrzw` with the matching
+subdirectory for the other cells.
+
+Then use the prefix as if it had been built locally:
+
+```sh
+export PINYIN_ORACLE_PREFIX="$dest/bdb"
+export PINYIN_ORACLE_DBM=bdb
+```
+
+The six files in `oracle-data-unstable.sha256` are not reproducible
+upstream (`docs/findings/oracle-data-reproducibility.md`) and are not part
+of the check.
+
+### Reproducing the libraries
+
+`tools/oracle/check-reproducible.sh` builds each cell twice in the pinned
+image, from different work directories and prefixes, and fails unless the
+two builds agree with each other and with `oracle-pin.txt`. Run it when
+the recipe, the base image or the apt snapshot changes, and update the
+recorded hashes in the same commit. The recipe is
+`SOURCE_DATE_EPOCH` = the pin's commit time, `-ffile-prefix-map` and
+`-fdebug-prefix-map` on the source path, and `-Wl,--build-id=none`; the
+`.la` and `.pc` files still record the install prefix and are not part
+of the contract.
 
 ## 3. Produce the export
 

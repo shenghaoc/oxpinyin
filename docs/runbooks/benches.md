@@ -427,6 +427,37 @@ a recent full example with confidence intervals and an acceptance
 gate). A change that trades time for space or the reverse must say so
 and justify it (AGENTS.md, "Source policy").
 
+### Measure base, PR and pin in one run
+
+**A measurement is the ratio of artifacts timed in the same job on the same
+machine, never a number carried over from another run.** A measuring PR
+builds the base tree, the PR tree and the pin-built oracle, runs all three
+in one job on one machine (same CPU, same data), **interleaving** the base,
+PR and pin artifacts run by run, and reports only those figures and the
+ratios between them. Interleaving all three is a requirement of the
+measurement, not a property of `tools/bisection/run-perf-same-data.sh`,
+which interleaves two pin-built backends and two artifacts of the current
+tree and does not run a base artifact; a measuring PR that needs the
+base/PR/pin triple arranges that itself.
+No absolute figure from an earlier run, another host or another CPU is a
+baseline: callgrind `Ir` and wall time both move with the CPU (glibc picks
+`memcpy` and friends at run time), so a baseline taken elsewhere cannot be
+compared with a PR measured here. Earlier snapshots in this repository
+remain records of what was measured where; they are not baselines to
+subtract from. The pin comes from the reproducible oracle
+(`docs/runbooks/oracle.md`, section 2a), so the pin's hash is the same on
+every machine.
+
+### State the Valgrind version
+
+Every measurement report states the Valgrind version it used, as printed by
+`valgrind --version`, next to the figures. Callgrind `Ir` and Massif heap
+peaks move with the Valgrind release as well as the CPU, so a report
+without the version cannot be compared with another run. In a cloud session
+`tools/cloud/setup.sh` installs Valgrind from the distribution archive when
+it is missing and prints the version in its summary
+(`docs/runbooks/cloud.md`).
+
 ### State the build recipe, per artifact
 
 **Which artifact was timed is part of the measurement, not a detail of it.**

@@ -150,6 +150,16 @@ as found. Checking out an existing branch is `git worktree add
 a commit (`git worktree add --detach /tmp/<name> <commit>`). Two agents assuming
 sole ownership of one tree is how the shim.cc collision happened.
 
+## Measurement and lane state
+
+- **Measure in one run.** A measuring PR runs base, PR and pin in one job
+  on one machine and reports only those numbers and their ratios. No
+  absolute figure from another run, host or CPU is ever a baseline
+  (`docs/runbooks/benches.md`).
+- **Push, don't hoard.** A lane pushes `wip/<issue>` at every checkpoint.
+  Work that exists only in a local worktree or container does not exist:
+  treat every machine as disposable.
+
 ## Rebase discipline
 
 Fetch and rebase onto the current landing tip immediately before every
