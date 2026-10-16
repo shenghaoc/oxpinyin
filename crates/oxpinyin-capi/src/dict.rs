@@ -337,19 +337,20 @@ pub extern "C" fn pinyin_token_get_unigram_frequency(
                     .flatten()
             }
         }
-        5..=6 => inst.core.dict.addon_unigram_frequency(token).or_else(|| {
-            use oxpinyin_core::LanguageModel;
-            inst.core
-                .lm
-                .addon_unigram_freq(&oxpinyin_core::PhraseToken::new(token))
-                .ok()
-                .flatten()
-        }),
-        7 => inst
+        // The default facade's `USER_FILE` sub-indexes (addon.bin /
+        // network.bin / user.bin): the pin reads the item from
+        // `m_phrase_index`, never the addon facade (`pinyin.cpp:2821-2834`
+        // via `phrase_index.h:646-652`). The stored field is the user
+        // store's UNIGRAM accumulation; an absent item answers `false`, as
+        // `get_phrase_item`'s `ERROR_NO_ITEM` does.
+        5..=7 => inst
             .core
             .user
             .as_ref()
-            .and_then(|store| store.unigram_delta(token).ok()),
+            .and_then(|store| match store.phrase(token) {
+                Ok(Some(_)) => store.unigram_delta(token).ok(),
+                _ => None,
+            }),
         _ => None,
     };
     let Some(base) = base else {

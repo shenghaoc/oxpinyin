@@ -747,6 +747,40 @@ for _mode in ('pinyin', 'zhuyin'):
         lambda k: zhuyin_only_readings(k, (5, 6, 7)))
 
 
+# #808: the default facade's USER_FILE libraries 5 (ADDON), 6 (NETWORK) and 7
+# (USER) are read from m_phrase_index (074a2219 pinyin.cpp:2821-2834 via
+# phrase_index.h:646-652): true with the stored field for a real token, false
+# with 0 for an id that owns no item. The pinyin getter used to read the addon
+# facade for 5 and 6 and never checked the item for 7.
+def token_unigram_user_libraries(k):
+    out = {}
+    plants = {5: '你好你好', 6: '再见再见', 7: '你好你好呀'}
+    readings = {
+        'pinyin': {5: "ni3'hao3'ni3'hao3", 6: "zai4'jian4'zai4'jian4", 7: "ni3'hao3'ni3'hao3'ya1"},
+        'zhuyin': {5: 'ㄋㄧˇ ㄏㄠˇ ㄋㄧˇ ㄏㄠˇ', 6: 'ㄗㄞˋ ㄐㄧㄢˋ ㄗㄞˋ ㄐㄧㄢˋ',
+                   7: 'ㄋㄧˇ ㄏㄠˇ ㄋㄧˇ ㄏㄠˇ ㄧㄚ'},
+    }[k.mode]
+    for library, phrase in plants.items():
+        iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
+        assert iterator
+        added = k.fn('iterator_add_phrase', B, P, S, S, I)(
+            iterator, phrase.encode(), readings[library].encode(), 9)
+        k.fn('end_add_phrases', None, P)(iterator)
+        assert added
+        tokens = [token for token in tokens_of(k, phrase) if token >> 24 == library]
+        assert len(tokens) == 1, tokens
+        token = tokens[0]
+        out['lib %d token' % library] = hex(token)
+        out['lib %d item' % library] = unigram_of(k, token)
+        for delta in (0, 2, 100):
+            absent = (library << 24) | ((token & 0xFFFFFF) + delta) if delta else token - 1
+            out['lib %d absent %#x' % (library, absent)] = unigram_of(k, absent)
+        out['lib %d add' % library] = k.fn(
+            'token_add_unigram_frequency', B, P, U, U)(k.inst, token, 7)
+        out['lib %d after' % library] = unigram_of(k, token)
+    return out
+
+
 def train_selected_top(k, wanted, token, guess_before_choose=False):
     """Choose a normal phrase, guess n-best, then train result 0 without reset.
 
@@ -819,6 +853,8 @@ for _mode in ('pinyin', 'zhuyin'):
         token_unigram_user)
     case(_prefix + 'token-unigram-trained', mode=_mode, control=_mode == 'pinyin')(
         token_unigram_trained)
+    case(_prefix + 'token-unigram-user-libraries', mode=_mode, control=_mode == 'zhuyin')(
+        token_unigram_user_libraries)
 
 
 @case('train-unigram-total')
