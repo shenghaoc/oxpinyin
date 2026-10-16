@@ -2038,19 +2038,69 @@ impl Runtime {
     /// are skipped. Failed mappings keep the existing safe fallback;
     /// the facade reports their mmap diagnostic before calling this.
     pub fn reload_system_libraries(&self) -> oxpinyin_user::SystemOriginals {
+        self.remap_system_libraries(1..16, false)
+    }
+
+    /// Maps the unloaded SYSTEM_FILE/DICTIONARY default library `index`
+    /// again, as `_load_phrase_library` does before it merges the saved
+    /// `.dbin` (074a2219 `pinyin.cpp:246-264`, `zhuyin.cpp:298-312`). The
+    /// result is empty for a row with no system chunk and no user file
+    /// (the `USER_FILE` row, the unused rows) and for an unreadable file.
+    /// Call it before [`Runtime::load_library`] makes the library visible,
+    /// so no reader sees the session's state of the freed sub-index.
+    pub fn reload_system_library(&self, index: u8) -> oxpinyin_user::SystemOriginals {
+        self.remap_system_libraries(index..index.saturating_add(1), true)
+    }
+
+    /// The loaded SYSTEM_FILE/DICTIONARY default library `index` as it is
+    /// mapped now, without mapping it again: what `unload` frees
+    /// (074a2219 `phrase_index.cpp:261-268`). Empty for a row with no
+    /// system chunk and no user file, and for a library already unloaded.
+    pub fn current_system_library(&self, index: u8) -> oxpinyin_user::SystemOriginals {
+        let layout = UserFileLayout::from_conf(&self.conf);
+        let mut originals = oxpinyin_user::SystemOriginals::new(Default::default(), layout);
+        let Some(row) = self.conf.default_row(index) else {
+            return originals;
+        };
+        if !(1..16).contains(&index)
+            || !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
+            || row.user.is_none()
+            || !self.dict.library_visible(u32::from(index))
+        {
+            return originals;
+        }
+        if let Some(library) = self.dict.system.libraries().library(u32::from(index) << 24) {
+            originals.insert(
+                index,
+                oxpinyin_user::SystemLibrary {
+                    total: library.total_freq(),
+                    range_end: library.token_range().end,
+                    items: Default::default(),
+                    mapped: Some(library),
+                },
+            );
+        }
+        originals
+    }
+
+    fn remap_system_libraries(
+        &self,
+        indices: std::ops::Range<u8>,
+        include_unloaded: bool,
+    ) -> oxpinyin_user::SystemOriginals {
         let layout = UserFileLayout::from_conf(&self.conf);
         let mut originals = oxpinyin_user::SystemOriginals::new(Default::default(), layout);
         let Some(dir) = self.paths.system_data_dirs().first() else {
             return originals;
         };
         let libraries = self.dict.system.libraries();
-        for index in 1..16 {
+        for index in indices.filter(|&index| (1..16).contains(&index)) {
             let Some(row) = self.conf.default_row(index) else {
                 continue;
             };
             if !matches!(row.file_type, FileType::SystemFile | FileType::Dictionary)
                 || row.user.is_none()
-                || !self.dict.library_visible(u32::from(index))
+                || (!include_unloaded && !self.dict.library_visible(u32::from(index)))
             {
                 continue;
             }

@@ -7179,6 +7179,192 @@ def unload_accepted_bump(k):
 case('unload-drops-accepted-bump')(unload_accepted_bump)
 
 
+# #805: `pinyin_load_phrase_library` / `zhuyin_load_phrase_library` map a
+# SYSTEM_FILE library again and merge only its saved `.dbin`
+# (074a2219 pinyin.cpp:264-277, zhuyin.cpp:298-312), after `unload` freed
+# the sub-index with everything the session had changed in it
+# (phrase_index.cpp:261-268). An unsaved training step, an imported reading
+# or an imported item is gone after the reload; the user index tables are
+# not unloaded, so `lookup_tokens` still answers a dropped item's token while
+# the item reads answer false. The pin's `guess_candidates` dereferences
+# that dangling token (class (b)): the subject answers it as a missing item.
+RELOAD_WATCH = ('礙', '龘龘')
+
+
+def _reload_pron_keys(k, token):
+    new = k.glib.g_array_new
+    new.restype, new.argtypes = P, [I, I, U]
+    count = U(UNTOUCHED)
+    ok = k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(k.inst, token, C.byref(count))
+    out = [ok, count.value]
+    for nth in range(count.value if ok else 0):
+        keys = new(0, 0, 2)
+        k.fn('token_get_nth_pronunciation', B, P, U, U, P)(k.inst, token, nth, keys)
+        view = C.cast(keys, C.POINTER(Arr)).contents
+        out.append(C.string_at(view.data, view.len * 2).hex() if view.len else '')
+    return out
+
+
+def _reload_candidates(k, text):
+    """The candidate count, the first three rows and where the watched
+    phrases sit in the list a fresh guess builds."""
+    inst = k.alloc()
+    parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+    k.fn(parse, Z, P, S)(inst, text)
+    if k.mode == 'pinyin':
+        k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1e)
+    else:
+        k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    head, where = [], {}
+    for i in range(count.value):
+        cand, text_out, kind = P(), S(), I()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text_out))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        shown = text_out.value.decode() if text_out.value else None
+        if i < 3:
+            head.append([shown, kind.value])
+        if shown in RELOAD_WATCH:
+            where[shown] = [i, kind.value]
+    k.fn('free_instance', None, P)(inst)
+    return [count.value, head, where]
+
+
+def _reload_snapshot(k, phrases, inputs):
+    k._inst = None
+    out = {}
+    for phrase in phrases:
+        tokens = list(tokens_of(k, phrase))
+        out['tokens ' + phrase] = [hex(token) for token in tokens]
+        for token in tokens:
+            out['unigram %s %s' % (phrase, hex(token))] = unigram_of(k, token)
+            out['readings %s %s' % (phrase, hex(token))] = _reload_pron_keys(k, token)
+    for text in inputs:
+        out['candidates ' + text.decode()] = _reload_candidates(k, text)
+    return out
+
+
+def _reload_probe(change, library, save_first):
+    def probe(k):
+        phrases, inputs = change(k, False)
+        out = {'before': _reload_snapshot(k, phrases, inputs)}
+        change(k, True)
+        out['changed'] = _reload_snapshot(k, phrases, inputs)
+        if save_first:
+            out['save'] = bool(k.fn('save', B, P)(k.ctx))
+        out['unload'] = k.fn('unload_phrase_library', B, P, U)(k.ctx, library)
+        k._inst = None
+        out['load'] = k.fn('load_phrase_library', B, P, U)(k.ctx, library)
+        k._inst = None
+        out['reloaded'] = _reload_snapshot(k, phrases, inputs)
+        return out
+    return probe
+
+
+def _reload_train(phrase, token_library, reading):
+    def change(k, apply):
+        if not apply:
+            return [phrase], [reading]
+        parse = 'parse_more_full_pinyins' if k.mode == 'pinyin' else 'parse_more_chewings'
+        assert k.fn(parse, Z, P, S)(k.inst, reading) == len(reading)
+        token = [t for t in tokens_of(k, phrase) if t >> 24 == token_library][0]
+        train_selected_top(k, phrase, token)
+    return change
+
+
+def _reload_import(library, rows, phrases, inputs):
+    def change(k, apply):
+        if not apply:
+            return phrases, inputs
+        import_rows(k, library, rows)
+    return change
+
+
+# 礙 is GBK-only (0x02000005): library 2 is the one library `pinyin_unload_
+# phrase_library` lets go, and `癫痫` (library 1) is one it refuses.
+_RELOAD_PINYIN = (
+    ('train', 2, _reload_train('礙', 2, b'ai4')),
+    ('reading', 2, _reload_import(2, [('礙', 'ai1', 50)], ['礙'], [b'ai1'])),
+    ('new-item', 2, _reload_import(2, [('龘龘', "da3'da3", 50)], ['龘龘'], [])),
+    ('train-library-1', 1, _reload_train('癫痫', 1, b'dian4xian4')),
+    ('import-library-1', 1, _reload_import(1, [('癫痫', "dian3'xian4", 50)], ['癫痫'], [b'dian3xian4'])),
+)
+# The zhuyin facade runs the same path (zhuyin.cpp:298-312) and lets every
+# library but TSI_DICTIONARY (1) go. Inputs are standard-layout bopomofo.
+_RELOAD_ZHUYIN = (
+    ('train', 2, _reload_train('礙', 2, b'94')),
+    ('reading', 2, _reload_import(2, [('礙', 'ㄞ', 50)], ['礙'], [b'9'])),
+    ('new-item', 2, _reload_import(2, [('龘龘', 'ㄉㄚˇ ㄉㄚˇ', 50)], ['龘龘'], [])),
+    ('train-library-1', 1, _reload_train('癫痫', 1, b'2u04vu04')),
+)
+for _mode, _table in (('pinyin', _RELOAD_PINYIN), ('zhuyin', _RELOAD_ZHUYIN)):
+    for _name, _library, _change in _table:
+        _tag = '%s-%s' % (_mode, _name)
+        if _library == 1:
+            # The facade refuses to unload library 1: both calls answer false
+            # and the session's change stays.
+            case('reload-refused-%s' % _tag, mode=_mode, control=True)(_reload_probe(_change, _library, False))
+            continue
+        case('reload-drops-session-%s' % _tag, mode=_mode)(_reload_probe(_change, _library, False))
+        case('reload-keeps-saved-%s' % _tag, mode=_mode, control=True)(_reload_probe(_change, _library, True))
+
+
+# The dangling token: `lookup_tokens` keeps answering it, the item reads
+# answer false, and a candidate walk over it is the pin's SIGSEGV
+# (class (b)); the subject adds no candidate for it, as for a missing item.
+def _reload_dangling(walk, reading):
+    def probe(k):
+        import_rows(k, 2, [('龘龘', reading, 50)])
+        k._inst = None
+        token = [t for t in tokens_of(k, '龘龘') if t >> 24 == 2][0]
+        k.fn('unload_phrase_library', B, P, U)(k.ctx, 2)
+        k._inst = None
+        k.fn('load_phrase_library', B, P, U)(k.ctx, 2)
+        k._inst = None
+        return {'tokens': [hex(t) for t in tokens_of(k, '龘龘')], 'unigram': unigram_of(k, token),
+                'readings': _reload_pron_keys(k, token), 'candidates': _reload_candidates(k, walk)}
+    return probe
+
+
+_RELOAD_DANGLING = {'tokens': ['0x2003cfd'], 'unigram': [False, 0], 'readings': [False, 0],
+                    'candidates': [88, [['大大', 2], ['鞑靼', 2], ['达达', 2]], {}]}
+case('reload-dangling-token-candidates', crash=_RELOAD_DANGLING)(_reload_dangling(b'dada', "da3'da3"))
+case('reload-dangling-token-candidates-zhuyin', mode='zhuyin',
+     crash=_RELOAD_DANGLING)(_reload_dangling(b'283283', 'ㄉㄚˇ ㄉㄚˇ'))
+
+
+# `unload` takes the library's total out of the facade, an unsaved import's
+# mass included (phrase_index.cpp:261-268): while library 2 is gone, the
+# sentence and candidate order divide by the smaller total, and the reload
+# puts the saved state's share back.
+def _reload_total_window(k):
+    out = {}
+
+    def look(tag):
+        k._inst = None
+        for text in (b'nihao', b'women', b'xian', b'zhongguo'):
+            inst = k.alloc()
+            k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
+            k.fn('guess_sentence', B, P)(inst)
+            out['%s sentence %s' % (tag, text.decode())] = sentence_out(k, inst, 0)
+            out['%s candidates %s' % (tag, text.decode())] = guess_rows(k, inst, 0, 0x1e)['rows'][:12]
+            k.fn('free_instance', None, P)(inst)
+
+    look('loaded')
+    import_rows(k, 2, [('礙', 'ai1', 2000000000), ('龘龘', "da3'da3", 2000000000)])
+    look('imported')
+    out['unload'] = k.fn('unload_phrase_library', B, P, U)(k.ctx, 2)
+    look('unloaded')
+    out['load'] = k.fn('load_phrase_library', B, P, U)(k.ctx, 2)
+    look('reloaded')
+    return out
+
+
+case('reload-total-while-unloaded')(_reload_total_window)
+
+
 # A system-library import reloaded from its .dbin is counted twice by the
 # merge (phrase_index.cpp:453-459 after the header at :503-514). A mask_out
 # that removes it reloads the chunk and merges the masked log, taking out the

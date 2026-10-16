@@ -265,10 +265,22 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
         Ok(loaded) => loaded,
         // Class (c), `memory_chunk.h:493`: the library being loaded again is
         // a directory the pin maps and asserts on.
-        Err(oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead) => {
+        Err(oxpinyin_facade::LibraryLoadFault::Row(
+            oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead,
+        )) => {
             crate::ffi::log_warning(
                 "pinyin_load_phrase_library: assertion 'ret_len == sizeof(length)' failed \
                  (memory_chunk.h:493)",
+            );
+            false
+        }
+        // Class (c), policy row 103: the pin cannot fail here (`unload` is
+        // in memory, an unreadable `.dbin` an empty log, `:264-277`); the
+        // user store refused the replacement, so the library stays unloaded.
+        Err(oxpinyin_facade::LibraryLoadFault::StoreWrite(_)) => {
+            crate::ffi::log_warning(
+                "pinyin_load_phrase_library: the user store could not be written; \
+                 the library stays unloaded",
             );
             false
         }
@@ -314,7 +326,15 @@ pub extern "C" fn pinyin_unload_phrase_library(context: *mut PinyinContext, inde
     if index != GBK_DICTIONARY {
         return false;
     }
-    ctx.unload_phrase_library(index)
+    // Class (c), policy row 103: the pin's unload is in memory and answers
+    // `true`; a user store that refuses the removal leaves the library loaded.
+    ctx.unload_phrase_library(index).unwrap_or_else(|_| {
+        crate::ffi::log_warning(
+            "pinyin_unload_phrase_library: the user store could not be written; \
+             the library stays loaded",
+        );
+        false
+    })
 }
 
 ///

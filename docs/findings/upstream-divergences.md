@@ -3546,3 +3546,56 @@ previous token's gram).
   guarantee. No malformed pin crash probe was executed. Rows 98 and 100
   concern `SingleGram` tails and do not cover this distinct phrase-table
   record layout.
+
+### A reloaded library's dropped item stays in the user index tables, and a candidate walk dereferences it (#805; policy row 102, class (b), 2026-10-16 UTC)
+
+- **Upstream source cite:** `src/storage/phrase_index.cpp:261-268`
+  (`FacadePhraseIndex::unload` deletes the sub-index and takes its total out
+  of the facade), `src/pinyin.cpp:264-277` (`_load_phrase_library` maps the
+  system chunk and merges only the saved `.dbin`), `src/zhuyin.cpp:298-312`
+  (the same path), at `074a2219c90feaf962d0d24f034514033ece5f99`, read from
+  the libpinyin checkout at that commit.
+- **Mechanism:** the unload frees every item the session had added to the
+  library, but the user phrase and pinyin index tables are not unloaded. An
+  imported item that was never saved therefore keeps its token in the index,
+  and after the reload `pinyin_lookup_tokens` still returns it while the
+  sub-index holds no item for it. `pinyin_guess_candidates` (and
+  `zhuyin_guess_candidates_after_cursor`) read the item through that token and
+  die of SIGSEGV. Measured on the bdb cell: library 2 (GBK), `龘龘` imported with
+  count 50, unload, load, then `dada` (pinyin) or `283283` (zhuyin). A dereference
+  of an item the sub-index no longer owns has no safe construction.
+- **What oxpinyin does instead:** the reload and the unload reproduce the
+  pin's state (`GenericUserStore::load_system_libraries` and
+  `unload_system_libraries`): the library's rows, overrides and share of the
+  total revert to the system chunk plus the saved log, and the user index
+  tables are left as they are. `lookup_tokens` answers the dropped token, the
+  item reads answer false, and a candidate walk treats the token as an item
+  that does not exist: it adds no candidate and the walk completes. The
+  candidate list is the one the same input gives before the import.
+- **Externally observable:** yes. The pin dies of SIGSEGV in the candidate
+  call; oxpinyin returns the list without the dropped item. Every other
+  observation of the path (frequencies, readings, ranks, the facade total while
+  the library is unloaded, library 1 staying loaded) matches the pin.
+- **Held by:** the `reload-*` cases in `tools/bisection/contract-diff.py`
+  (`reload-dangling-token-candidates` for each facade as the class (b) case;
+  the rest as plain differentials with their saved-first controls), and
+  `reloading_a_system_library_drops_the_unsaved_session`
+  (`crates/oxpinyin-user/src/store_libpinyin.rs`) at store level.
+
+### A library unload or reload whose user-store write is refused (#805; policy row 103, class (c), 2026-10-16 UTC)
+
+- **Upstream source cite:** `src/pinyin.cpp:264-277` and `:473-474`,
+  `src/zhuyin.cpp:298-312`, `src/storage/phrase_index.cpp:261-268` at
+  `074a2219c90feaf962d0d24f034514033ece5f99`. The pin has no failing site
+  here: unload is in memory and answers `true`, and an unreadable `.dbin` is
+  an empty log. The construct is neither an `assert` nor an `abort()`.
+- **Mechanism:** oxpinyin keeps the library's session state in a database
+  that can refuse a write.
+- **What oxpinyin does instead:** the store is written first and the
+  visibility mask flips only after it took. On a refused write the call
+  answers `false`, the runtime is unchanged, and one `g_warning` is emitted
+  in the facade's domain (`libpinyin` or `libzhuyin`).
+- **Externally observable:** only when the store write fails, which the pin
+  cannot do.
+- **Held by:** `store_first_tests`
+  (`crates/oxpinyin-facade/src/context.rs`).

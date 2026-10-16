@@ -978,7 +978,33 @@ fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded) {
 /// `merge` returns false mid-log and `_load_phrase_library` keeps the
 /// partially-merged index).
 fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
-    load_logs_with_mask(SystemLogSource::Directory(dir), originals, loaded, None);
+    load_logs_with_mask(
+        SystemLogSource::Directory(dir),
+        originals,
+        loaded,
+        None,
+        false,
+    );
+}
+
+/// One reloaded library's saved state: the `.dbin` log in the user
+/// directory replayed onto the freshly mapped system original —
+/// `_load_phrase_library`'s `load` then `merge` (074a2219
+/// `pinyin.cpp:264-277`, `zhuyin.cpp:298-312`). Only the libraries in
+/// `originals` are read; unsaved session state never enters it.
+pub(crate) fn load_library_logs(
+    dir: &Path,
+    originals: &SystemOriginals,
+) -> (UserState, BTreeMap<u8, u32>) {
+    let mut loaded = Loaded::default();
+    load_logs_with_mask(
+        SystemLogSource::Directory(dir),
+        originals,
+        &mut loaded,
+        None,
+        true,
+    );
+    (loaded.state, loaded.library_totals)
 }
 
 /// Decoded system logs read and validated before mask_out mutates state.
@@ -1006,6 +1032,7 @@ pub(crate) fn load_masked_logs(
         originals,
         &mut loaded,
         Some((mask, value)),
+        false,
     );
     (loaded.state, loaded.library_totals)
 }
@@ -1020,9 +1047,13 @@ fn load_logs_with_mask(
     originals: &SystemOriginals,
     loaded: &mut Loaded,
     mask: Option<(u32, u32)>,
+    only_originals: bool,
 ) {
     for (nibble, file) in originals.layout().system_logs() {
         let nibble = *nibble;
+        if only_originals && !originals.contains_key(&nibble) {
+            continue;
+        }
         if mask.is_some_and(|(mask, value)| {
             !originals.contains_key(&nibble)
                 || (nibble & crate::phrase::phrase_index_library_index(mask))
