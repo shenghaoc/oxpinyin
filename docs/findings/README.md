@@ -120,6 +120,10 @@ series lives in `../perf/`.
 | [`store-key-ordering`](store-key-ordering.md) | Store key-ordering contract — one place for the whole stack | contract |
 | [`tkrzw-distro-compat`](tkrzw-distro-compat.md) | Debian now ships libpinyin on tkrzw; Ubuntu's tkrzw silently corrupts records | record (distro matrix; amended 2026-10-05 — tkrzw 1.0.34 fixes the sentinel defect upstream; what a defect-1 library does to the backend before and after #621) |
 | [`tkrzw-langc-exception-classification`](tkrzw-langc-exception-classification.md) | Findings — tkrzw C-API exception classification divergence | ruled accepted |
+| [`tooling-consolidation-phase1`](tooling-consolidation-phase1.md) | Developer-tooling consolidation — Phase 1 inventory, capability map, target architecture, migration roadmap and the maintainer's rulings D1–D11 (tree `e67f19d1`) | proposal (Stage 0 landed 2026-10-16 UTC; Stage 1 conditionally authorised; Stages 2–13 not) |
+| [`tooling-consolidation-phase1-inventory`](tooling-consolidation-phase1-inventory.md) | Appendix A — the 290 tooling inventory records (the migration ledger) | record (tree `e67f19d1`) |
+| [`tooling-consolidation-phase1-summary-table`](tooling-consolidation-phase1-summary-table.md) | Appendix A1 — one row per inventory record with its proposed destination | record (tree `e67f19d1`) |
+| [`tooling-consolidation-phase1-upstream-survey`](tooling-consolidation-phase1-upstream-survey.md) | Appendix F — libpinyin, libchewing, mozc and anthy-unicode developer tooling, observation/interpretation labelled | record (revisions named inside) |
 | [`trainer-parity-audit`](trainer-parity-audit.md) | Trainer-workflow parity audit (W9 full-scope re-audit) | audit (current trainer record) |
 | [`trainer-replacement-report`](trainer-replacement-report.md) | Trainer replacement — final report (W9) | report (W9 final) |
 | [`training-algorithm`](training-algorithm.md) | libpinyin training pipeline — algorithm characterization (W9-T0) | verified (W9-T0) |
