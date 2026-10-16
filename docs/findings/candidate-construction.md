@@ -776,8 +776,10 @@ appearing.
    fixes the start at the composition offset, walks the window end outward over
    every byte position, enumerates every key-path through the scan matrix, and
    searches the phrase table on each complete path. The scan matrix is the
-   selected parse (fewest keys, first-found tie) plus the frozen resplit and
-   divided additions (`docs/findings/matrix-split-tables.md`). Initial-only
+   selected parse (fewest keys, then the smaller total correction distance,
+   then first found — `pinyin_parser2.cpp:294-309` at 074a2219) plus the
+   frozen resplit and divided additions
+   (`docs/findings/matrix-split-tables.md`). Initial-only
    keys expand through the table's wildcard search (`expand_keys`); widening is
    prefix-driven (`SEARCH_CONTINUED` = a stored phrase can extend the
    sequence); consecutive apostrophe bytes are skipped; the key sequence is
@@ -861,3 +863,10 @@ separator handling in
 change; the k-best machinery and the compatibility invariants are untouched.
 
 STOP and report rather than inventing evidence.
+
+## Correction log
+
+- **2026-10-17** — §8.1: the selected parse's tie rule was "fewest keys,
+  first-found tie"; it is now the pin's rule, fewest keys, then the smaller
+  total correction distance, then first found (`pinyin_parser2.cpp:294-309`
+  at 074a2219; #830) (human approval, 2026-10-17).

@@ -174,6 +174,7 @@ pub struct Edge {
     key: SyllableKey,
     kind: EdgeKind,
     tone: u8,
+    distance: u8,
 }
 
 impl Edge {
@@ -213,6 +214,15 @@ impl Edge {
     #[must_use]
     pub const fn tone(&self) -> u8 {
         self.tone
+    }
+
+    /// The matched index row's correction distance: 1 for a
+    /// `PINYIN_CORRECT_*` or `PINYIN_AMB_S_SH` / `PINYIN_AMB_Z_ZH` alias,
+    /// 0 otherwise ([`SyllableKey::from_option_text_with_distance`]).
+    /// Pre-parsed edges ([`SegmentGraph::build_exact`]) are 0.
+    #[must_use]
+    pub const fn distance(&self) -> u8 {
+        self.distance
     }
 
     /// Whether a separator byte was consumed before the key.
@@ -366,6 +376,7 @@ impl SegmentGraph {
                 key: segment.key,
                 kind: EdgeKind::Exact,
                 tone: segment.tone,
+                distance: 0,
             });
             previous_end = segment.end;
         }
@@ -474,31 +485,46 @@ impl SegmentGraph {
     /// Fewest-keys path under the incomplete-edge filter.
     ///
     /// Longest prefix that a filtered path from byte zero actually covers,
-    /// then fewest keys, first-found ties — `pinyin_parser2.cpp` `final_step`
-    /// plus `candidate-construction.md` §8.1. Incomplete edges are included
+    /// then fewest keys, then least total correction distance, first-found
+    /// ties — `pinyin_parser2.cpp` `final_step` plus
+    /// `candidate-construction.md` §8.1. The distance is the sum of
+    /// [`Edge::distance`] along the path, as the pin sums each row's
+    /// `m_distance` into the step (`pinyin_parser2.cpp:291` at 074a2219)
+    /// and compares it last (`:305-309`). Incomplete edges are included
     /// only when `allow_incomplete`. Empty when no such path exists,
     /// including the empty input.
     #[must_use]
     pub fn fewest_keys(&self, allow_incomplete: bool) -> Vec<Edge> {
         let bound = self.consumed();
-        // steps[node] = (key count, incoming edge, previous node); node 0 is
-        // the root with count zero.
-        let mut steps: Vec<Option<(usize, Edge, usize)>> = vec![None; bound + 1];
+        // A step's rank is (key count, total correction distance) packed into
+        // one integer, the count above bit 32: one comparison orders them
+        // lexicographically. Both are bounded by the input length, which
+        // `MAX_GRAPH_INPUT` keeps far below 2^32, so the distance never
+        // carries into the count.
+        const ONE_KEY: u64 = 1 << 32;
+        // steps[node] = (rank, incoming edge); the incoming edge's `from` is
+        // the previous node. Node 0 is the root with rank zero.
+        let mut steps: Vec<Option<(u64, Edge)>> = vec![None; bound + 1];
 
         for node in 0..bound {
-            let count = if node == 0 {
+            let rank = if node == 0 {
                 0
             } else {
                 match steps[node] {
-                    Some((count, _, _)) => count,
+                    Some((rank, _)) => rank,
                     None => continue,
                 }
             };
             // At a fixed node each length matches at most one edge, so the
-            // edges here reach distinct nodes and share this node's key count.
+            // edges here reach distinct nodes and share this node's rank.
             // Within-node order cannot change the selection (competition is
             // resolved across nodes by the strict `candidate < seen` check in
             // ascending node order), so no per-node sort is needed.
+            //
+            // Every reachable step at a node has parsed the same length, so
+            // the pin's three rules (`pinyin_parser2.cpp:296-309` at
+            // 074a2219) reduce to (fewer keys, then lower distance), the
+            // packed rank's order.
             for edge in self
                 .outgoing(node)
                 .iter()
@@ -509,12 +535,10 @@ impl SegmentGraph {
                 if to > bound {
                     continue;
                 }
-                let candidate = count + 1;
-                let replace = steps[to]
-                    .as_ref()
-                    .is_none_or(|(seen, _, _)| candidate < *seen);
+                let candidate = rank + ONE_KEY + u64::from(edge.distance());
+                let replace = steps[to].as_ref().is_none_or(|(seen, _)| candidate < *seen);
                 if replace {
-                    steps[to] = Some((candidate, edge, node));
+                    steps[to] = Some((candidate, edge));
                 }
             }
         }
@@ -528,11 +552,11 @@ impl SegmentGraph {
 
         let mut path = Vec::new();
         while node > 0 {
-            let Some((_, edge, previous)) = steps[node] else {
+            let Some((_, edge)) = steps[node] else {
                 break;
             };
             path.push(edge);
-            node = previous;
+            node = edge.from();
         }
         path.reverse();
         path
@@ -560,7 +584,7 @@ impl SegmentGraph {
 /// Fewest-keys complete-syllable parse of a pinyin string.
 ///
 /// Longest parsed prefix from byte zero, fewest complete keys to reach
-/// it, first-found ties. Trailing bytes that do not extend the reachable
+/// it, then least correction distance, first-found ties. Trailing bytes that do not extend the reachable
 /// prefix are ignored. Incomplete initial-only keys are not admitted —
 /// the import ABI and the engine's complete-keys walk share this
 /// selection.
@@ -629,7 +653,7 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
     // validation, PHF hashing and option-alias work for the same spelling.
     // The fixed-size stack array keeps graph construction O(n * max_span)
     // in time and O(n * max_span) in space, with unchanged edge order.
-    let parsed_spans: [Option<(SyllableKey, u8)>; MAX_SYLLABLE_LEN + 1] =
+    let parsed_spans: [Option<(SyllableKey, u8, u8)>; MAX_SYLLABLE_LEN + 1] =
         core::array::from_fn(|index| {
             let length = index + 1;
             if length > max_span.min(available) {
@@ -637,15 +661,17 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
             }
             let text = &input[syllable_start..syllable_start + length];
             let (core, tone) = tone_split(text, use_tone, force_tone)?;
-            key_for_spelling(core, options).map(|key| (key, tone))
+            key_for_spelling(core, options).map(|(key, distance)| (key, tone, distance))
         });
     let longest_complete = parsed_spans
         .iter()
-        .rposition(|span| span.is_some_and(|(key, _)| key.completeness() == Completeness::Complete))
+        .rposition(|span| {
+            span.is_some_and(|(key, _, _)| key.completeness() == Completeness::Complete)
+        })
         .map(|index| index + 1);
 
     for (index, span) in parsed_spans.into_iter().enumerate().rev() {
-        let Some((key, tone)) = span else {
+        let Some((key, tone, distance)) = span else {
             continue;
         };
         let length = index + 1;
@@ -675,6 +701,7 @@ fn emit_edges(input: &[u8], node: usize, options: OptionBits, edges: &mut Vec<Ed
             key,
             kind,
             tone,
+            distance,
         });
     }
 }
@@ -729,16 +756,19 @@ fn key_start(input: &[u8], node: usize) -> Option<usize> {
     Some(node)
 }
 
-fn key_for_spelling(text: &[u8], options: OptionBits) -> Option<SyllableKey> {
+fn key_for_spelling(text: &[u8], options: OptionBits) -> Option<(SyllableKey, u8)> {
     core::str::from_utf8(text)
         .ok()
-        .and_then(|spelling| SyllableKey::from_option_text(spelling, options))
+        .and_then(|spelling| SyllableKey::from_option_text_with_distance(spelling, options))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{EdgeKind, FewestKeys, GraphError, MAX_GRAPH_INPUT, SegmentGraph};
-    use crate::{OptionBits, SyllableKey, USE_TONE};
+    use crate::{
+        OptionBits, PINYIN_CORRECT_GN_NG, PINYIN_CORRECT_IOU_IU, PINYIN_CORRECT_ON_ONG,
+        SyllableKey, USE_TONE,
+    };
 
     /// Renders the graph as `from-to:key:kind`, one edge per entry.
     fn rendered(input: &str) -> Vec<String> {
@@ -883,6 +913,7 @@ mod tests {
     fn key_of(spelling: &str) -> SyllableKey {
         super::key_for_spelling(spelling.as_bytes(), OptionBits::default())
             .expect("the test spellings are canonical")
+            .0
     }
 
     /// Renders the graph as `from-to:key:kind:tone` under `options`.
@@ -1329,6 +1360,69 @@ mod tests {
                 .map(|edge| edge.key().text())
                 .collect::<Vec<_>>(),
             ["xian"]
+        );
+    }
+
+    /// `text@start-end` of each selected key under `options`.
+    fn selected(input: &str, options: OptionBits) -> Vec<String> {
+        SegmentGraph::build_with_options(input.as_bytes(), options)
+            .expect("the test inputs are short")
+            .fewest_keys(false)
+            .iter()
+            .map(|edge| {
+                format!(
+                    "{}@{}-{}",
+                    edge.key().text(),
+                    edge.syllable_start(),
+                    edge.to()
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn fewest_keys_breaks_equal_key_counts_by_correction_distance() {
+        // Pin 074a2219 `pinyin_parser2.cpp:305-309`: `chon` is a distance-1
+        // `PINYIN_CORRECT_ON_ONG` row, so `chong'a` (0) beats `chon'ga` (1).
+        let on_ong = OptionBits::from_bits(PINYIN_CORRECT_ON_ONG);
+        assert_eq!(selected("chonga", on_ong), ["chong@0-5", "a@5-6"]);
+        assert_eq!(selected("chongan", on_ong), ["chong@0-5", "an@5-7"]);
+        assert_eq!(selected("zhonge", on_ong), ["zhong@0-5", "e@5-6"]);
+        assert_eq!(
+            selected("chonga", OptionBits::default()),
+            ["chong@0-5", "a@5-6"]
+        );
+
+        // Totals, not counts of corrected keys: `chong'agn` is 1, `chon'gagn` 2.
+        let two = OptionBits::from_bits(PINYIN_CORRECT_ON_ONG | PINYIN_CORRECT_GN_NG);
+        assert_eq!(selected("chongagn", two), ["chong@0-5", "ang@5-8"]);
+
+        // The key count still comes first: `liou` is one key at distance 1
+        // rather than `li'ou`, two keys at 0.
+        let iou_iu = OptionBits::from_bits(PINYIN_CORRECT_IOU_IU);
+        assert_eq!(selected("liou", iou_iu), ["liu@0-4"]);
+    }
+
+    #[test]
+    fn edge_distance_marks_alias_spellings_only() {
+        let graph = SegmentGraph::build_with_options(
+            b"chonga",
+            OptionBits::from_bits(PINYIN_CORRECT_ON_ONG),
+        )
+        .expect("valid");
+        let distances: Vec<String> = graph
+            .edges()
+            .iter()
+            .filter(|edge| edge.kind() != EdgeKind::Incomplete)
+            .map(|edge| format!("{}-{}:{}", edge.from(), edge.to(), edge.distance()))
+            .collect();
+        // `chong`, `chon`, then the unreachable-start `hong`, `hon`, `o`,
+        // `ong`, then `ga` and `a`: only the `-on` aliases carry 1.
+        assert_eq!(
+            distances,
+            [
+                "0-5:0", "0-4:1", "1-5:0", "1-4:1", "2-3:0", "3-5:0", "4-6:0", "5-6:0"
+            ]
         );
     }
 

@@ -102,11 +102,26 @@ impl SyllableKey {
     /// parser-table ambiguity aliases are admitted only when their bit is set.
     #[must_use]
     pub fn from_option_text(text: &str, options: OptionBits) -> Option<Self> {
+        Self::from_option_text_with_distance(text, options).map(|(key, _)| key)
+    }
+
+    /// [`Self::from_option_text`] plus the matched row's correction
+    /// distance, `pinyin_index_item_t::m_distance` (`pinyin_parser2.h:45`,
+    /// read at `pinyin_parser2.cpp:147` at 074a2219).
+    ///
+    /// In the pin's `pinyin_index` (`pinyin_parser_table.h:9-673`) every
+    /// `PINYIN_CORRECT_*` row and the two `PINYIN_AMB_S_SH` /
+    /// `PINYIN_AMB_Z_ZH` rows (`sua`, `zua`) carry distance 1 and every
+    /// other row 0. Those gated rows are exactly the aliases
+    /// [`option_alias_canonical`] admits, so an exact spelling is 0 and an
+    /// alias is 1.
+    #[must_use]
+    pub fn from_option_text_with_distance(text: &str, options: OptionBits) -> Option<(Self, u8)> {
         if let Some(key) = Self::from_text(text) {
-            return Some(key);
+            return Some((key, 0));
         }
         let canonical = option_alias_canonical(text, options)?;
-        Self::from_canonical_text(canonical)
+        Self::from_canonical_text(canonical).map(|key| (key, 1))
     }
 
     /// Matrix-level fuzzy alternates, upstream append order.
