@@ -381,13 +381,17 @@ pub fn prefix_keys_match(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
     if stored.len() < query.len() {
         return false;
     }
-    query.iter().zip(stored).all(|(q, s)| {
-        q.initial == s.initial
-            && ((q.middle == s.middle && q.final_ == s.final_)
-                || (q.middle == 0 && q.final_ == 0)
-                || (s.middle == 0 && s.final_ == 0))
-            && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
-    })
+    query.iter().zip(stored).all(|(q, s)| key_matches(q, s))
+}
+
+/// [`keys_match`] for one syllable.
+#[must_use]
+pub fn key_matches(q: &ChewingKey, s: &ChewingKey) -> bool {
+    q.initial == s.initial
+        && ((q.middle == s.middle && q.final_ == s.final_)
+            || (q.middle == 0 && q.final_ == 0)
+            || (s.middle == 0 && s.final_ == 0))
+        && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
 }
 
 #[cfg(test)]

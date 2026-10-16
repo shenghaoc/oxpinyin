@@ -40,6 +40,8 @@ ranking.
 
 2026-10-16: #821 (#757) changes `Dictionary::trellis_ranges` to fill token-only ranges (`PhraseIndexRanges<()>` in place of `PhraseIndexRanges<Self::Entry>`, as the pin's `convert` does), a signature change. A step prices a ranged token through the new defaulted `trellis_item(syllables, tones, token) -> Option<TrellisItem>`, and a result's text is read through the new defaulted `trellis_text(syllables, tones, token)` when it is emitted; `TrellisItem { chars, pronunciation }` is new. The helper trait `PhraseIndexToken` gains two required methods, `phrase_index_item` and `phrase_index_text`, which `PhraseEntry` implements. The defaults read `trellis_records`, so dictionaries that override none of them need no change. It also adds defaulted `trellis_ranges_continued`, the ranges and the `SEARCH_CONTINUED` probe from one read, whose default is `trellis_ranges` then `phrase_prefix_exists` (human approval, 2026-10-16).
 
+2026-10-16: #831 (#757) adds defaulted `Dictionary::trellis_item_on_path(syllables, tones, token, memo)`, whose default is `trellis_item`, and `TrellisPathMemo`, a fill-once slot the n-best caller holds per key path for one span search. `RuntimeDict` keeps the path's user lookup and tone-less keys there in place of recomputing them per token; a memo holding another type is not read, and the answer is `trellis_item`'s (human approval, 2026-10-16).
+
 ## `UserModel`
 
 ```rust

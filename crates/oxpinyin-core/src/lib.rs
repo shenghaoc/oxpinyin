@@ -223,6 +223,31 @@ pub trait Dictionary {
             .map(PhraseIndexToken::phrase_index_item))
     }
 
+    /// [`Self::trellis_item`], given the `memo` the caller keeps for this
+    /// key path while one n-best call prices the tokens ranged on it. A
+    /// dictionary may keep there whatever it would otherwise work out
+    /// again for each token of the path; the answer must be exactly
+    /// [`Self::trellis_item`]'s.
+    ///
+    /// The default ignores the memo.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
+    fn trellis_item_on_path(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        memo: &TrellisPathMemo,
+    ) -> Result<Option<TrellisItem>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        let _ = memo;
+        self.trellis_item(syllables, tones, token)
+    }
+
     /// The phrase text [`Self::trellis_item`] priced, read when a result
     /// is emitted (`convert_to_utf8`); `None` where that item is `None`.
     ///
@@ -577,6 +602,19 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         (**self).trellis_item(syllables, tones, token)
     }
 
+    fn trellis_item_on_path(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        memo: &TrellisPathMemo,
+    ) -> Result<Option<TrellisItem>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        (**self).trellis_item_on_path(syllables, tones, token, memo)
+    }
+
     fn trellis_text(
         &self,
         syllables: &[Self::Syllable],
@@ -707,6 +745,34 @@ pub struct TrellisItem {
     pub chars: u32,
     /// The pronunciation possibility, where the item counts one.
     pub pronunciation: Option<(u64, u64)>,
+}
+
+/// What a dictionary keeps about one trellis key path while one n-best
+/// call prices the tokens ranged on it
+/// ([`Dictionary::trellis_item_on_path`]). The caller holds one per path
+/// and drops it with the span search that found the path, so nothing kept
+/// here outlives one guess, or any user-store write between guesses.
+#[derive(Default)]
+pub struct TrellisPathMemo(std::cell::OnceCell<Box<dyn std::any::Any + Send>>);
+
+impl TrellisPathMemo {
+    /// The kept value, computed by `init` the first time. `Ok(None)` when
+    /// the memo already holds a value of another type.
+    ///
+    /// # Errors
+    ///
+    /// Returns `init`'s error, keeping nothing, so the next call tries
+    /// again.
+    pub fn get_or_try_init<T: Send + 'static, E>(
+        &self,
+        init: impl FnOnce() -> Result<T, E>,
+    ) -> Result<Option<&T>, E> {
+        if self.0.get().is_none() {
+            let value = init()?;
+            let _ = self.0.set(Box::new(value));
+        }
+        Ok(self.0.get().and_then(|value| value.downcast_ref()))
+    }
 }
 
 /// The phrase token a trellis entry stands for, so
@@ -1537,7 +1603,24 @@ pub trait InputParser {
 
 #[cfg(test)]
 mod tests {
-    use super::{PhraseIndexRanges, phrase_index_library};
+    use super::{PhraseIndexRanges, TrellisPathMemo, phrase_index_library};
+
+    /// A memo holding another type answers `None` without running `init`
+    /// and keeps what it holds; a failed `init` keeps nothing.
+    #[test]
+    fn trellis_path_memo_answers_none_for_another_type() {
+        let memo = TrellisPathMemo::default();
+        assert_eq!(memo.get_or_try_init(|| Err::<u8, _>("boom")), Err("boom"));
+        assert_eq!(memo.get_or_try_init(|| Ok::<_, ()>(7_u8)), Ok(Some(&7)));
+        assert_eq!(
+            memo.get_or_try_init::<u16, ()>(|| panic!("init runs on a filled memo")),
+            Ok(None)
+        );
+        assert_eq!(
+            memo.get_or_try_init::<u8, ()>(|| panic!("init runs on a filled memo")),
+            Ok(Some(&7))
+        );
+    }
 
     fn spans(ranges: &PhraseIndexRanges<u32>, library: usize) -> Vec<(u32, u32)> {
         ranges
