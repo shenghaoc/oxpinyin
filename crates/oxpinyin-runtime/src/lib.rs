@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use oxpinyin_core::scoring::key_cost_table;
 use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
-    PhraseItemRead, PhraseToken, SyllableKey, TrellisItem, UserCountDelta,
+    PhraseItemRead, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo, UserCountDelta,
 };
 pub use oxpinyin_data::phrase_library::{LibraryError, PhraseItemView, RowFault};
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
@@ -552,6 +552,15 @@ impl RuntimeDict {
             })
     }
 
+    /// What [`Self::priced_token`] reads of `syllables` whatever the
+    /// token: the user table's lookup and the path's tone-less keys.
+    fn path_pricing(&self, syllables: &[SyllableKey]) -> Result<PathPricing, DictError> {
+        Ok(PathPricing {
+            user: self.user_lookup()?.lookup(syllables),
+            keys: SystemDictionary::trellis_keys(syllables),
+        })
+    }
+
     /// What the ordinary lookup of `syllables` lists for `token`, which
     /// is what a step prices: the last entry of its system-then-user
     /// merge, the effective-item overlay applied, the library mask
@@ -566,10 +575,19 @@ impl RuntimeDict {
         if syllables.is_empty() {
             return Ok(None);
         }
-        let user = self
-            .user_lookup()?
-            .lookup(syllables)
-            .into_iter()
+        self.priced_on_path(&self.path_pricing(syllables)?, token, want_text)
+    }
+
+    /// [`Self::priced_token`] over a non-empty path's [`PathPricing`].
+    fn priced_on_path(
+        &self,
+        path: &PathPricing,
+        token: u32,
+        want_text: bool,
+    ) -> Result<Option<PricedToken>, DictError> {
+        let user = path
+            .user
+            .iter()
             .rev()
             .find(|entry| entry.token().value() == token);
         let mut priced = if let Some(entry) = user {
@@ -581,7 +599,11 @@ impl RuntimeDict {
                 text: want_text.then(|| entry.text().to_owned()),
             }
         } else {
-            let Some(item) = self.system.trellis_item(syllables, token) else {
+            let Some(item) = path
+                .keys
+                .as_deref()
+                .and_then(|keys| self.system.trellis_item_keys(keys, token))
+            else {
                 return Ok(None);
             };
             PricedToken {
@@ -596,8 +618,11 @@ impl RuntimeDict {
                 },
             }
         };
-        if let Some(query) = self.effective_query(syllables)
-            && let Some((matched, total)) = self.effective_possibility(&query, token)
+        // The effective-item overlay prices against the same keys, when
+        // the store holds system items.
+        if let Some(query) = path.keys.as_deref()
+            && self.user.as_ref().is_some_and(UserStore::has_system_items)
+            && let Some((matched, total)) = self.effective_possibility(query, token)
         {
             priced.item.pronunciation = Some((u64::from(matched), u64::from(total)));
         }
@@ -1109,6 +1134,15 @@ impl RuntimeDict {
     }
 }
 
+/// What one key path's pricing reads whatever the token, kept in a
+/// [`TrellisPathMemo`] for the n-best call that prices the path.
+struct PathPricing {
+    /// The user table's lookup of the path.
+    user: Vec<PhraseEntry>,
+    /// The path's tone-less keys; `None` when a syllable is no key.
+    keys: Option<Vec<oxpinyin_core::ChewingKey>>,
+}
+
 /// One token as the ordinary lookup prices it.
 struct PricedToken {
     item: TrellisItem,
@@ -1209,6 +1243,27 @@ impl Dictionary for RuntimeDict {
     ) -> Result<Option<TrellisItem>, Self::Error> {
         Ok(self
             .priced_token(syllables, token, false)?
+            .map(|priced| priced.item))
+    }
+
+    /// [`Self::trellis_item`], reading the user lookup and the keys once
+    /// per path. A memo some other dictionary filled is not read: the
+    /// answer is then [`Self::trellis_item`]'s, recomputed.
+    fn trellis_item_on_path(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+        memo: &TrellisPathMemo,
+    ) -> Result<Option<TrellisItem>, Self::Error> {
+        if syllables.is_empty() {
+            return Ok(None);
+        }
+        let Some(path) = memo.get_or_try_init(|| self.path_pricing(syllables))? else {
+            return self.trellis_item(syllables, tones, token);
+        };
+        Ok(self
+            .priced_on_path(path, token, false)?
             .map(|priced| priced.item))
     }
 

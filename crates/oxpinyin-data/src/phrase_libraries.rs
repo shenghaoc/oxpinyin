@@ -16,10 +16,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{OnceLock, RwLock};
 
-use oxpinyin_core::ChewingKey;
+use oxpinyin_core::{ChewingKey, TrellisItem};
 
-use crate::chewing_table::keys_match;
-use crate::phrase_library::{LibraryError, PhraseLibrary, RowFault, verify_chunk};
+use crate::chewing_table::key_matches;
+use crate::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk};
 
 pub use crate::system_files::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 
@@ -445,23 +445,23 @@ impl PhraseLibraries {
     ) -> Option<(u64, u64)> {
         let library = self.library(token)?;
         let item = library.item(token)?;
-        let mut matched: u64 = 0;
-        let mut total: u64 = 0;
-        for view in item.pronunciations() {
-            if !view.keys.len().is_multiple_of(2) {
-                continue;
-            }
-            total = total.saturating_add(u64::from(view.freq));
-            let stored: Vec<ChewingKey> = view
-                .keys
-                .chunks_exact(2)
-                .map(|pair| ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]])))
-                .collect();
-            if keys_match(query, &stored) {
-                matched = matched.saturating_add(u64::from(view.freq));
-            }
-        }
-        Some((matched, total))
+        Some(item_possibility(&item, query))
+    }
+
+    /// What one trellis step prices of `token` over `query`: the
+    /// [`Self::phrase_char_count`] and [`Self::pronunciation_possibility`]
+    /// pair, from one item read. `None` where the character count is.
+    #[must_use]
+    pub fn trellis_item(&self, token: u32, query: &[ChewingKey]) -> Option<TrellisItem> {
+        let library = self.library(token)?;
+        let item = library.item(token)?;
+        let chars = item
+            .phrase_chars()
+            .try_fold(0_u32, |count, char| char.map(|_| count.saturating_add(1)))?;
+        Some(TrellisItem {
+            chars,
+            pronunciation: Some(item_possibility(&item, query)),
+        })
     }
 
     /// `token`'s stored pronunciations as `(keys, freq)` rows in stored
@@ -517,6 +517,33 @@ impl PhraseLibraries {
         }
         Some(out)
     }
+}
+
+/// [`PhraseLibraries::pronunciation_possibility`] over a resolved item,
+/// comparing each stored pronunciation's packed keys in place.
+fn item_possibility(item: &PhraseItemView<'_>, query: &[ChewingKey]) -> (u64, u64) {
+    let mut matched: u64 = 0;
+    let mut total: u64 = 0;
+    for view in item.pronunciations() {
+        if !view.keys.len().is_multiple_of(2) {
+            continue;
+        }
+        total = total.saturating_add(u64::from(view.freq));
+        if view.keys.len() / 2 == query.len()
+            && query
+                .iter()
+                .zip(view.keys.chunks_exact(2))
+                .all(|(q, pair)| {
+                    key_matches(
+                        q,
+                        &ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]])),
+                    )
+                })
+        {
+            matched = matched.saturating_add(u64::from(view.freq));
+        }
+    }
+    (matched, total)
 }
 
 #[cfg(test)]

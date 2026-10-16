@@ -628,3 +628,82 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     drop(dict);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
+
+// The n-best keeps what it reads of a key path's user lookup only for the
+// span search that found the path. A write to the store between two
+// guesses on one session must reach the second guess, both ways.
+#[test]
+fn a_store_write_between_guesses_reaches_the_second_guess() {
+    let dir = std::env::temp_dir().join(format!("oxpinyin-guess-memo-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
+    let mut store = runtime.user_store().unwrap();
+    let mut session = runtime.new_session(&EmptyConfigSource).unwrap();
+    session.type_pinyin("nihao").unwrap();
+    let mut guess = || {
+        session.guess_sentence().unwrap();
+        session.sentence_text(0).unwrap().to_owned()
+    };
+    assert_eq!(guess(), "你好");
+
+    let keys: Vec<_> = ["ni", "hao"]
+        .into_iter()
+        .map(|text| SyllableKey::from_text(text).unwrap().index() as PinyinKey)
+        .collect();
+    let token = store.add_phrase("你鎄", &keys, Some(5)).unwrap();
+    store.set_bigram_count(SENTENCE_START, token, 1000).unwrap();
+    assert_eq!(guess(), "你鎄", "the second guess prices the added phrase");
+
+    store.mask_out(u32::MAX, token).unwrap();
+    assert_eq!(guess(), "你好", "the third guess no longer lists it");
+    drop(session);
+    drop(store);
+    drop(runtime);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+// A memo another dictionary filled with its own type is never read: the
+// runtime prices the token as `trellis_item` does, and does not panic.
+#[test]
+fn a_foreign_path_memo_falls_back_to_trellis_item() {
+    let runtime = Runtime::open(&w3_dir(), None).unwrap();
+    let dict = runtime.dict();
+    let syllables = [
+        SyllableKey::from_text("ni").unwrap(),
+        SyllableKey::from_text("hao").unwrap(),
+    ];
+    let tones = [0, 0];
+    let mut ranges = oxpinyin_core::PhraseIndexRanges::new();
+    dict.trellis_ranges(&syllables, &tones, &mut ranges)
+        .unwrap();
+    let tokens: Vec<u32> = ranges.walk_tokens().map(|(token, ())| token).collect();
+    assert!(!tokens.is_empty(), "vacuity guard: nihao ranges tokens");
+
+    let foreign = oxpinyin_core::TrellisPathMemo::default();
+    assert_eq!(foreign.get_or_try_init(|| Ok::<_, ()>(0_u8)), Ok(Some(&0)));
+    let own = oxpinyin_core::TrellisPathMemo::default();
+    for token in tokens.iter().copied().chain([0, u32::MAX]) {
+        let expected = dict.trellis_item(&syllables, &tones, token).unwrap();
+        assert_eq!(
+            dict.trellis_item_on_path(&syllables, &tones, token, &foreign)
+                .unwrap(),
+            expected,
+            "foreign memo, token {token:#x}"
+        );
+        assert_eq!(
+            dict.trellis_item_on_path(&syllables, &tones, token, &own)
+                .unwrap(),
+            expected,
+            "own memo, token {token:#x}"
+        );
+    }
+    assert!(
+        tokens.iter().any(|&token| {
+            dict.trellis_item(&syllables, &tones, token)
+                .unwrap()
+                .is_some()
+        }),
+        "vacuity guard: some token prices"
+    );
+}

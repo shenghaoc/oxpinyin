@@ -35,6 +35,7 @@ use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry,
     PhraseIndexRanges, PhraseItemRead, PhraseToken, PronunciationRows, SyllableKey,
+    TrellisPathMemo,
 };
 use smallvec::SmallVec;
 
@@ -579,11 +580,14 @@ impl LazySlot {
 
 /// The key paths of one span search, flat: path `i` is
 /// `keys[bounds[i].0..][..bounds[i].1]`, and likewise its tones.
+/// `memos[i]` is what the dictionary keeps while it prices path `i`, gone
+/// with the span search.
 #[derive(Default)]
 struct SpanPaths {
     keys: Vec<SyllableKey>,
     tones: Vec<u8>,
     bounds: Vec<(u32, u32)>,
+    memos: Vec<TrellisPathMemo>,
 }
 
 impl SpanPaths {
@@ -591,6 +595,7 @@ impl SpanPaths {
         self.keys.clear();
         self.tones.clear();
         self.bounds.clear();
+        self.memos.clear();
     }
 
     fn push(&mut self, keys: &[SyllableKey], tones: &[u8]) -> u32 {
@@ -600,7 +605,12 @@ impl SpanPaths {
         self.tones.extend_from_slice(tones);
         self.bounds
             .push((offset, u32::try_from(keys.len()).unwrap_or(u32::MAX)));
+        self.memos.push(TrellisPathMemo::default());
         id
+    }
+
+    fn memo(&self, id: u32) -> Option<&TrellisPathMemo> {
+        self.memos.get(id as usize)
     }
 
     fn path(&self, id: u32) -> (&[SyllableKey], &[u8]) {
@@ -653,10 +663,13 @@ where
             return Ok(priced.as_ref());
         }
         let (keys, tones) = self.paths.path(slot.path);
-        let item = self
-            .dictionary
-            .trellis_item(keys, tones, token)
-            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+        let item = match self.paths.memo(slot.path) {
+            Some(memo) => self
+                .dictionary
+                .trellis_item_on_path(keys, tones, token, memo),
+            None => self.dictionary.trellis_item(keys, tones, token),
+        }
+        .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         let entry = item.map(|item| SpanEntry {
             token,
             path: slot.path,
@@ -1579,11 +1592,11 @@ mod tests {
         ranges: &oxpinyin_core::PhraseIndexRanges<super::LazySlot>,
     ) -> super::Pricing<'_, FixtureDictionary> {
         static DICTIONARY: std::sync::OnceLock<FixtureDictionary> = std::sync::OnceLock::new();
-        static PATHS: std::sync::OnceLock<super::SpanPaths> = std::sync::OnceLock::new();
+        // The path memos are not `Sync`, so no static can hold the paths.
         super::Pricing {
             ranges,
             dictionary: DICTIONARY.get_or_init(FixtureDictionary::default),
-            paths: PATHS.get_or_init(super::SpanPaths::default),
+            paths: Box::leak(Box::default()),
         }
     }
 
