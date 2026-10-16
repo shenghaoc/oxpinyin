@@ -68,6 +68,10 @@ use crate::store::{
     UNIGRAM_TOTAL_KEY, UserStoreError,
 };
 
+/// The user pinyin index's `(token, packed keys)` entries that no item
+/// reading backs, by the token's library nibble ([`Target::kept_index`]).
+pub(crate) type KeptIndex = std::collections::BTreeMap<u8, BTreeSet<(u32, Vec<u16>)>>;
+
 /// The persistence target a session store carries: the user dir, the
 /// original system chunks (the `.dbin` diff base), the conformance
 /// triple, and the `user.conf` law and open counter the session's saves
@@ -102,6 +106,13 @@ pub struct Target {
     /// of every row a mask or a removal took out of the store since. The
     /// save writes back the ones no remaining row writes, empty.
     pub(crate) index_file_keys: std::sync::Mutex<IndexKeys>,
+    /// The entries the user pinyin index holds without an item reading
+    /// behind them: those of a dropped item (the pin's index tables keep
+    /// them when `unload` frees the sub-index, `phrase_index.cpp:261-268`)
+    /// and those a profile's `user_pinyin_index.bin` carries for a token
+    /// whose item lacks the reading. They are found on whatever item holds
+    /// the token, written by a save, and removed by a `mask_out`.
+    pub(crate) kept_index: std::sync::Mutex<KeptIndex>,
 }
 
 impl Target {
@@ -383,6 +394,7 @@ impl GenericUserStore<DefaultStore> {
         // Armed as soon as the load has raised the counter: an open that
         // fails from here on drops it and lowers the counter again, so a
         // failed open reads as a finished session, not a crash.
+        let kept_index = unbacked_index(&loaded.state, &originals);
         let target = Arc::new(Target {
             dir: user_dir.map(Path::to_path_buf),
             originals: std::sync::RwLock::new(originals),
@@ -392,6 +404,7 @@ impl GenericUserStore<DefaultStore> {
             overlong_index_keys,
             index_keys,
             index_file_keys: std::sync::Mutex::new(index_file_keys),
+            kept_index: std::sync::Mutex::new(kept_index),
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let (has_user_data, library_offsets) = db.write(|txn| {
@@ -441,6 +454,8 @@ impl GenericUserStore<DefaultStore> {
             dirty: std::sync::atomic::AtomicBool::new(false),
             write_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_generation: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(test)]
+            fail_replace: std::sync::atomic::AtomicBool::new(false),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
             facade_offset: std::sync::atomic::AtomicU32::new(
                 library_offsets
@@ -459,6 +474,47 @@ impl GenericUserStore<DefaultStore> {
 /// store; the user bigram lives in the container, which the caller asks.
 fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
     Ok(!txn.is_empty(UNIGRAM)? || !txn.is_empty(PHRASE)?)
+}
+
+/// The `(token, packed keys)` readings the items of `state` carry: the
+/// user libraries' items and the items added to a system library.
+pub(crate) fn backed_readings(
+    state: &UserState,
+    originals: &SystemOriginals,
+) -> BTreeSet<(u32, Vec<u16>)> {
+    let mut backed = BTreeSet::new();
+    let mut add = |nibble: u8, slot: u32, item: &ChunkItem| {
+        let token = (u32::from(nibble) << 24) | slot;
+        backed.extend(item.prons.iter().map(|(packed, _)| (token, packed.clone())));
+    };
+    for (&nibble, items) in &state.libraries {
+        for (&slot, item) in items {
+            add(nibble, slot, item);
+        }
+    }
+    for (&nibble, overrides) in &state.system_overrides {
+        for (&slot, item) in overrides {
+            let appended = !originals
+                .get(&nibble)
+                .is_some_and(|original| original.contains_item(slot));
+            if let (true, Some(item)) = (appended, item) {
+                add(nibble, slot, item);
+            }
+        }
+    }
+    backed
+}
+
+/// The index entries of `state` that no item reading backs, by library.
+pub(crate) fn unbacked_index(state: &UserState, originals: &SystemOriginals) -> KeptIndex {
+    let backed = backed_readings(state, originals);
+    let mut kept = KeptIndex::new();
+    for entry in state.indexed.difference(&backed) {
+        kept.entry(phrase_index_library_index(entry.0))
+            .or_default()
+            .insert(entry.clone());
+    }
+    kept
 }
 
 /// Writes the loaded profile's values into a fresh session store — the
@@ -745,6 +801,7 @@ pub fn export_state<S: WriteStore>(
 
     let system_items = store.stored_system_items();
     let mut state = UserState::default();
+    state.indexed.extend(store.kept_index_entries());
     db.for_each(crate::phrase_table::TABLE, &mut |key, value| {
         state.phrase_table.insert(key.to_vec(), value.to_vec());
         Ok(())
@@ -1674,6 +1731,131 @@ mod tests {
             .load_system_libraries(base)
             .expect("reload after unload");
         assert_eq!(counts(&store).len(), 2);
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn reloading_the_user_library_keeps_only_the_saved_chunk() {
+        let dir = tempdir("reload-user-library");
+        let ni = ChewingKey::from_pinyin("ni").expect("ni");
+        let dense = |tone| packed_to_pinyin_keys(&[ni.with_tone(tone).to_packed()]).expect("dense");
+        let readings = |store: &UserStore| {
+            store
+                .phrases()
+                .expect("phrases")
+                .iter()
+                .map(|phrase| {
+                    phrase
+                        .pronunciations()
+                        .iter()
+                        .map(|reading| reading.indexed())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        // Nothing saved: the library comes back empty.
+        store
+            .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(2), Some(20))
+            .expect("unsaved item");
+        store
+            .unload_user_library(crate::USER_DICTIONARY)
+            .expect("unload");
+        assert!(readings(&store).is_empty());
+        store
+            .load_user_library(crate::USER_DICTIONARY)
+            .expect("load");
+        assert!(readings(&store).is_empty());
+        // A saved item returns with its reading still indexed; an unsaved
+        // reading merged after the save does not.
+        store
+            .add_phrase_in(crate::USER_DICTIONARY, "鱻", &dense(2), Some(20))
+            .expect("item");
+        store.mark_modified();
+        assert!(store.save().expect("save"));
+        store
+            .add_phrase_in(crate::USER_DICTIONARY, "鱻", &dense(4), Some(30))
+            .expect("unsaved reading");
+        assert_eq!(readings(&store), [vec![true, false]]);
+        store
+            .unload_user_library(crate::USER_DICTIONARY)
+            .expect("unload");
+        assert!(readings(&store).is_empty());
+        store
+            .load_user_library(crate::USER_DICTIONARY)
+            .expect("load");
+        assert_eq!(readings(&store), [vec![true]]);
+        // A different phrase handed a dropped token is found under the
+        // reading the index kept for it.
+        let ni_key = || oxpinyin_core::SyllableKey::from_text("ni").expect("ni");
+        store
+            .unload_user_library(crate::USER_DICTIONARY)
+            .expect("unload again");
+        store
+            .load_user_library(crate::USER_DICTIONARY)
+            .expect("load again");
+        let reused = store
+            .add_phrase_in(crate::USER_DICTIONARY, "鱺", &dense(3), Some(20))
+            .expect("another phrase takes the dropped token");
+        let found = crate::UserLookup::from_store(&store)
+            .expect("lookup")
+            .lookup(&[ni_key()]);
+        assert!(found.iter().any(|entry| entry.token().value() == reused));
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn a_refused_library_write_leaves_the_kept_index_and_the_rows_alone() {
+        let dir = tempdir("refused-library-write");
+        let ni = ChewingKey::from_pinyin("ni").expect("ni");
+        let dense = |tone| packed_to_pinyin_keys(&[ni.with_tone(tone).to_packed()]).expect("dense");
+        let kept = |store: &UserStore| {
+            let mut entries = store.kept_index_entries();
+            entries.sort();
+            entries
+        };
+        let readings = |store: &UserStore| {
+            store
+                .phrases()
+                .expect("phrases")
+                .iter()
+                .map(|phrase| {
+                    phrase
+                        .pronunciations()
+                        .iter()
+                        .map(|reading| reading.indexed())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        store
+            .add_phrase_in(crate::USER_DICTIONARY, "龘", &dense(2), Some(20))
+            .expect("item");
+        assert!(kept(&store).is_empty());
+        // A refused unload keeps the index entries where they were: none
+        // set aside, the item and its indexed reading still there.
+        store.fail_next_replace();
+        assert!(store.unload_user_library(crate::USER_DICTIONARY).is_err());
+        assert!(kept(&store).is_empty());
+        assert_eq!(readings(&store), [vec![true]]);
+        // The unload that is not refused sets the entry aside; a refused
+        // load leaves it there and the library empty.
+        store
+            .unload_user_library(crate::USER_DICTIONARY)
+            .expect("unload");
+        let set_aside = kept(&store);
+        assert_eq!(set_aside.len(), 1);
+        store.fail_next_replace();
+        assert!(store.load_user_library(crate::USER_DICTIONARY).is_err());
+        assert_eq!(kept(&store), set_aside);
+        assert!(readings(&store).is_empty());
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
     }

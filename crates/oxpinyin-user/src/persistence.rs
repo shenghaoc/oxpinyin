@@ -543,6 +543,30 @@ pub(crate) fn chewing_rows(state: &UserState, originals: &SystemOriginals) -> Ve
             }
         }
     }
+    // The index also holds entries no item reading backs: a dropped item's,
+    // kept by the pin's index tables (074a2219 `phrase_index.cpp:261-268`),
+    // and a profile's own. They are written as they stand.
+    let written: BTreeSet<(u32, Vec<u16>)> = chewing_rows
+        .iter()
+        .map(|row| {
+            (
+                row.token,
+                row.keys.iter().map(|key| key.to_packed()).collect(),
+            )
+        })
+        .collect();
+    for (token, packed) in state.indexed.difference(&written) {
+        if packed.is_empty() || packed.len() > crate::phrase::MAX_PHRASE_LENGTH {
+            continue;
+        }
+        chewing_rows.push(PinyinIndexItem {
+            token: *token,
+            keys: packed
+                .iter()
+                .map(|&bits| ChewingKey::from_packed(bits))
+                .collect(),
+        });
+    }
     chewing_rows
 }
 
@@ -711,7 +735,7 @@ pub(crate) fn load_checked(
         index_file_keys: IndexKeys::default(),
     };
     if check.conform {
-        load_libraries(dir, originals.layout(), &mut profile.loaded);
+        load_libraries(dir, originals.layout(), &mut profile.loaded, None);
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         let mut records = Vec::new();
         load_user_pinyin_index(
@@ -1024,10 +1048,13 @@ pub(crate) fn load_user_bigram_db(dir: &Path) -> Result<DefaultUserBigramDb, Per
     Ok(db)
 }
 
-/// The `USER_FILE` chunk stores.
-fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded) {
+/// The `USER_FILE` chunk stores, or only library `only`'s.
+fn load_libraries(dir: &Path, layout: &UserFileLayout, loaded: &mut Loaded, only: Option<u8>) {
     for (nibble, file) in layout.user_libraries() {
         let nibble = *nibble;
+        if only.is_some_and(|only| only != nibble) {
+            continue;
+        }
         let name = file.display();
         let path = file.under(dir);
         let bytes = match std::fs::read(&path) {
@@ -1100,6 +1127,21 @@ pub(crate) fn load_library_logs(
         None,
         true,
     );
+    (loaded.state, loaded.library_totals)
+}
+
+/// One reloaded `USER_FILE` library's saved state: its chunk in the user
+/// directory, or nothing when the file is absent or unreadable —
+/// `_load_phrase_library`'s `USER_FILE` branch, which loads the chunk or
+/// creates an empty sub-index (074a2219 `pinyin.cpp:303-321`,
+/// `zhuyin.cpp:247-265`). Unsaved session state never enters it.
+pub(crate) fn load_user_library(
+    dir: &Path,
+    layout: &UserFileLayout,
+    nibble: u8,
+) -> (UserState, BTreeMap<u8, u32>) {
+    let mut loaded = Loaded::default();
+    load_libraries(dir, layout, &mut loaded, Some(nibble));
     (loaded.state, loaded.library_totals)
 }
 

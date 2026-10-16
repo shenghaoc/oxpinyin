@@ -639,7 +639,7 @@ impl RuntimeDict {
         }
         let mut index: TrellisIndex = HashMap::new();
         for phrase in store
-            .phrases()
+            .index_phrases()
             .map_err(|error| DictError::Parse(error.to_string()))?
         {
             for pronunciation in phrase

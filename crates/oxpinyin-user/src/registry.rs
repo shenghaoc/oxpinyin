@@ -76,6 +76,10 @@ pub struct StoreInner<S: WriteStore> {
     /// tables; the reverse index keys its cache on this, so count-only
     /// training writes never trigger a rebuild.
     pub(crate) phrase_generation: AtomicU64,
+    /// Test only: the next library replacement's transaction fails after it
+    /// has seeded, as a refused store write would.
+    #[cfg(test)]
+    pub(crate) fail_replace: AtomicBool,
     /// First gate on the decode read path: `false` answers `count_delta` and
     /// `unigram_delta` with zero from this one atomic, taking no mutex and
     /// opening no store transaction. Recomputed at `open` and maintained only

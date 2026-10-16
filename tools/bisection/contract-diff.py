@@ -2735,6 +2735,8 @@ def index_key_sequence(k, steps, phrases=None, readings=None):
             k.fn('fini', None, P)(ctx)
             ctx = k.init()
             assert ctx, 'the reopen failed'
+        elif step[0] in ('unload', 'load'):
+            out.append([step[0], bool(k.fn(step[0] + '_phrase_library', B, P, U)(ctx, 7))])
         elif step[0] == 'remove':
             inst = k.fn('alloc_instance', P, P)(ctx)
             guess(inst, step[1])
@@ -2871,6 +2873,17 @@ for _mode in ('pinyin', 'zhuyin'):
             continue  # the zhuyin facade has no `remove_user_candidate`
         case('issue785-pinyin-tails-%s-%s' % (_name, _mode), mode=_mode, control=_name in TAIL_CONTROLS)(
             lambda k, steps=_steps: index_key_sequence(k, steps, TAIL_PHRASES, TAIL_READINGS))
+
+
+# #814 meets #785: unsaved imports leave their index entries behind a library
+# 7 unload and reload; the item that takes the first token again sits among
+# them in the `da da` record (two items, a tail in the mask walk), and the
+# mask removes an entry no item reading backs. The zhuyin facade only: the
+# pinyin facade never unloads library 7.
+case('issue785-pinyin-tails-kept-entry-zhuyin', mode='zhuyin', cells=('kc', 'tkrzw'))(
+    lambda k: index_key_sequence(
+        k, SHARED + [DD, ('unload',), ('load',), ('add', 5), MASK_DA2, ('save',)],
+        TAIL_PHRASES, TAIL_READINGS))
 
 
 @case('abort-guess-predicted-short-bigram-value', abort=False)
@@ -7619,6 +7632,125 @@ for _mode, _table in (('pinyin', _RELOAD_PINYIN), ('zhuyin', _RELOAD_ZHUYIN)):
             continue
         case('reload-drops-session-%s' % _tag, mode=_mode)(_reload_probe(_change, _library, False))
         case('reload-keeps-saved-%s' % _tag, mode=_mode, control=True)(_reload_probe(_change, _library, True))
+
+
+# Library 7 is the USER_FILE library: `unload` deletes its sub-index and the
+# load builds it again from the saved `user.bin` chunk, or an empty sub-index
+# when none was saved (zhuyin.cpp:247-265; pinyin twin pinyin.cpp:303-321).
+# The pinyin facade never unloads it (pinyin.cpp:470-471). A dropped item's
+# token stays in the phrase table, so no input is walked for it (class (b),
+# policy row 102).
+def _reload_user(setup, change, phrases, inputs, save_setup, save_change):
+    def probe(k):
+        if setup:
+            import_rows(k, 7, setup)
+            if save_setup:
+                assert k.fn('save', B, P)(k.ctx)
+        k._inst = None
+        out = {'before': _reload_snapshot(k, phrases, inputs)}
+        import_rows(k, 7, change)
+        out['changed'] = _reload_snapshot(k, phrases, inputs)
+        if save_change:
+            out['save'] = bool(k.fn('save', B, P)(k.ctx))
+        out['unload'] = k.fn('unload_phrase_library', B, P, U)(k.ctx, 7)
+        k._inst = None
+        out['load'] = k.fn('load_phrase_library', B, P, U)(k.ctx, 7)
+        k._inst = None
+        out['reloaded'] = _reload_snapshot(k, phrases, inputs)
+        return out
+    return probe
+
+
+_RELOAD_USER = {
+    'pinyin': (("hao3'ni3", "hao4'ni3"), b'hao3ni3'),
+    'zhuyin': (('ㄏㄠˇ ㄋㄧˇ', 'ㄏㄠˋ ㄋㄧˇ'), b'cl3su3'),
+}
+for _mode, (_readings, _input) in _RELOAD_USER.items():
+    _first, _second = _readings
+    _item = [('好你', _first, 50)]
+    _more = [('好你', _second, 50)]
+    # An unsaved item (nothing saved: the sub-index comes back empty) and an
+    # unsaved reading on a saved item; the controls save first.
+    _user = (
+        ('item', [], _item, [], False, False, False),
+        ('item-saved', [], _item, [_input], False, True, True),
+        ('reading', _item, _more, [_input], True, False, False),
+        ('reading-saved', _item, _more, [_input], True, True, True),
+    )
+    for _name, _setup, _change, _inputs, _save_setup, _save_change, _control in _user:
+        _probe = _reload_user(_setup, _change, ['好你'], _inputs, _save_setup, _save_change)
+        _tag = '%s-%s' % (_mode, _name)
+        if _mode == 'pinyin':
+            # The pinyin facade refuses to unload library 7: both calls answer
+            # false and the session's change stays.
+            case('reload-refused-user-%s' % _tag, mode=_mode, control=True)(_probe)
+        else:
+            case('reload-user-%s' % _tag, mode=_mode, control=_control)(_probe)
+
+
+# After the reload the phrase table and the user pinyin index still hold the
+# dropped token, and an import takes `get_range(7).m_range_end` as its token
+# (zhuyin.cpp:472-478): a different phrase gets the dropped token again, and
+# the kept index entry for the old reading now finds it; the same phrase meets
+# its own token in the phrase table (zhuyin.cpp:447-468).
+def _reload_reuse_setup(k):
+    out = {'first': import_rows(k, 7, [('好你', 'ㄏㄠˇ ㄋㄧˇ', 50)])}
+    out['unload'] = k.fn('unload_phrase_library', B, P, U)(k.ctx, 7)
+    k._inst = None
+    out['load'] = k.fn('load_phrase_library', B, P, U)(k.ctx, 7)
+    k._inst = None
+    return out
+
+
+@case('reload-user-zhuyin-reuse-other', mode='zhuyin')
+def _(k):
+    out = _reload_reuse_setup(k)
+    out['again'] = import_rows(k, 7, [('你好', 'ㄋㄧˇ ㄏㄠˇ', 50)])
+    out['after'] = _reload_snapshot(k, ['好你', '你好'], [b'cl3su3', b'su3cl3'])
+    return out
+
+
+# The entries the pin's user pinyin index kept for the dropped token are real
+# rows: a save writes them, so a reopen still finds the old reading on the
+# phrase that took the token, and a `mask_out` over the library's token range
+# removes them, so a phrase that takes the token afterwards is not found under
+# the old reading.
+_REUSE_INPUTS = [b'cl3su3', b'su3cl3', b'cl3cl3']
+
+
+@case('reload-user-zhuyin-reuse-other-save-reopen', mode='zhuyin')
+def _(k):
+    out = _reload_reuse_setup(k)
+    out['again'] = import_rows(k, 7, [('你好', 'ㄋㄧˇ ㄏㄠˇ', 50)])
+    out['save'] = bool(k.fn('save', B, P)(k.ctx))
+    k._inst = None
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = None
+    out['after'] = _reload_snapshot(k, ['好你', '你好'], _REUSE_INPUTS[:2])
+    return out
+
+
+@case('reload-user-zhuyin-reuse-other-mask', mode='zhuyin')
+def _(k):
+    out = _reload_reuse_setup(k)
+    out['again'] = import_rows(k, 7, [('你好', 'ㄋㄧˇ ㄏㄠˇ', 50)])
+    out['mask'] = k.fn('mask_out', B, P, U, U)(k.ctx, 0xFF000000, 0x07000000)
+    k._inst = None
+    out['third'] = import_rows(k, 7, [('好好', 'ㄏㄠˇ ㄏㄠˇ', 50)])
+    out['after'] = _reload_snapshot(k, ['好你', '你好', '好好'], _REUSE_INPUTS)
+    return out
+
+
+# The same phrase meets its own token in the phrase table, `get_phrase_item`
+# finds no item, and `assert(phrase_length == item.get_phrase_length())`
+# (zhuyin.cpp:454) aborts the pin: class (c), the site the import iterator's
+# other two asserts (`:440`, `:457`) already answer.
+@case('reload-user-zhuyin-reuse-same', mode='zhuyin', abort=False)
+def _(k):
+    _reload_reuse_setup(k)
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    return {'ret': k.fn('iterator_add_phrase', B, P, S, S, I)(
+        it, '好你'.encode(), 'ㄏㄠˇ ㄋㄧˇ'.encode(), 50)}
 
 
 # The dangling token: `lookup_tokens` keeps answering it, the item reads
