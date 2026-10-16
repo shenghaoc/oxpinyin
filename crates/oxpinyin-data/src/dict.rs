@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use oxpinyin_core::{
     ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseToken,
-    SyllableKey,
+    SyllableKey, TrellisItem,
 };
 use oxpinyin_store::{DefaultStore, ReadStore};
 
@@ -493,23 +493,22 @@ impl SystemDictionary {
 
     /// `ChewingTableEntry::search` then `convert`
     /// (`chewing_large_table2.h:91-133` at the pin `074a2219`) over the
-    /// table's items in stored order, tone-filtered by the search. An item
-    /// whose library is not loaded — not in this facade, or not `visible`
-    /// to the caller's unload mask — is skipped before resolution without
-    /// closing the open range, the pin's `NULL == head` skip; a loaded item
-    /// `resolve` answers `None` for keeps its place with no entry.
-    /// `resolve` gets the query's tone-less keys and the token.
+    /// table's items in stored order, tone-filtered by the search: tokens
+    /// only, as the pin's ranges are. An item whose library is not loaded
+    /// — not in this facade, or not `visible` to the caller's unload mask
+    /// — is skipped without closing the open range, the pin's
+    /// `NULL == head` skip. A loaded item keeps its place whether or not
+    /// [`Self::trellis_item`] can read it.
     ///
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM read or a value decode fails.
-    pub fn trellis_ranges_with<E>(
+    pub fn trellis_ranges_with(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
-        ranges: &mut PhraseIndexRanges<E>,
+        ranges: &mut PhraseIndexRanges<()>,
         visible: impl Fn(u32) -> bool,
-        mut resolve: impl FnMut(&[ChewingKey], u32) -> Option<E>,
     ) -> Result<(), DictError> {
         let Some(keys) = syllables_to_chewing_keys(syllables) else {
             return Ok(());
@@ -520,14 +519,27 @@ impl SystemDictionary {
             .map(|(index, key)| key.with_tone(tones.get(index).copied().unwrap_or(0)))
             .collect();
         let items = self.pinyin.search(&query)?;
-        // Entries keep the ordinary lookup's pronunciation-pricing query.
         ranges.convert(
             items
                 .iter()
                 .filter(|item| self.library_loaded(item.token) && visible(item.token))
-                .map(|item| (item.token, resolve(&keys, item.token))),
+                .map(|item| (item.token, Some(()))),
         );
         Ok(())
+    }
+
+    /// What a step prices of `token` over `syllables`: its character count
+    /// and its possibility against the query's tone-less keys — the
+    /// ordinary lookup's pricing of that token. `None` when the library is
+    /// unloaded or the item cannot be read.
+    #[must_use]
+    pub fn trellis_item(&self, syllables: &[SyllableKey], token: u32) -> Option<TrellisItem> {
+        let keys = syllables_to_chewing_keys(syllables)?;
+        let chars = self.libraries.phrase_char_count(token)?;
+        Some(TrellisItem {
+            chars,
+            pronunciation: self.libraries.pronunciation_possibility(token, &keys),
+        })
     }
 
     /// [`Dictionary::lookup_into_flagged`]'s body.
@@ -570,27 +582,48 @@ impl Dictionary for SystemDictionary {
         syllables: &[SyllableKey],
         tones: &[u8],
     ) -> Result<Vec<PhraseEntry>, DictError> {
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(Vec::new());
+        };
         let mut ranges = PhraseIndexRanges::new();
         self.trellis_ranges(syllables, tones, &mut ranges)?;
-        Ok(ranges.into_walk_entries())
+        Ok(ranges
+            .walk_tokens()
+            .filter_map(|(token, ())| resolve_item(&self.libraries, &keys, token))
+            .collect())
     }
 
     /// `ChewingTableEntry::search` then `convert` over the system table:
     /// [`SystemDictionary::trellis_ranges_with`] with every loaded
-    /// library visible and each item resolved through its library.
+    /// library visible.
     fn trellis_ranges(
         &self,
         syllables: &[SyllableKey],
         tones: &[u8],
-        ranges: &mut PhraseIndexRanges<PhraseEntry>,
+        ranges: &mut PhraseIndexRanges<()>,
     ) -> Result<(), DictError> {
-        self.trellis_ranges_with(
-            syllables,
-            tones,
-            ranges,
-            |_| true,
-            |keys, token| resolve_item(&self.libraries, keys, token),
-        )
+        self.trellis_ranges_with(syllables, tones, ranges, |_| true)
+    }
+
+    fn trellis_item(
+        &self,
+        syllables: &[SyllableKey],
+        _tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TrellisItem>, DictError> {
+        Ok(self.trellis_item(syllables, token))
+    }
+
+    fn trellis_text(
+        &self,
+        syllables: &[SyllableKey],
+        _tones: &[u8],
+        token: u32,
+    ) -> Result<Option<String>, DictError> {
+        if syllables_to_chewing_keys(syllables).is_none() {
+            return Ok(None);
+        }
+        Ok(self.libraries.phrase_text(token))
     }
 
     fn lookup_into(

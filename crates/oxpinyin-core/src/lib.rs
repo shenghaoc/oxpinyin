@@ -138,8 +138,13 @@ pub trait Dictionary {
     /// (`facade_chewing_table2.h:109-129`). `tones` is as for
     /// [`Self::trellis_records`].
     ///
+    /// The ranges carry tokens only, as the pin's `convert` does: a step
+    /// prices the tokens it meets through [`Self::trellis_item`], and the
+    /// text of a result is read through [`Self::trellis_text`] when it is
+    /// emitted. Every ranged token holds a `Some(())` slot.
+    ///
     /// The default applies [`PhraseIndexRanges::convert`] to
-    /// [`Self::trellis_records`]' entries as one call, so dictionaries
+    /// [`Self::trellis_records`]' tokens as one call, so dictionaries
     /// without a stored index need no change.
     ///
     /// # Errors
@@ -149,7 +154,7 @@ pub trait Dictionary {
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
-        ranges: &mut PhraseIndexRanges<Self::Entry>,
+        ranges: &mut PhraseIndexRanges<()>,
     ) -> Result<(), Self::Error>
     where
         Self::Entry: PhraseIndexToken,
@@ -157,10 +162,62 @@ pub trait Dictionary {
         let entries = self.trellis_records(syllables, tones)?;
         ranges.convert(
             entries
-                .into_iter()
-                .map(|entry| (entry.phrase_index_token(), Some(entry))),
+                .iter()
+                .map(|entry| (entry.phrase_index_token(), Some(()))),
         );
         Ok(())
+    }
+
+    /// What one trellis step prices of `token`, a token
+    /// [`Self::trellis_ranges`] ranged over `syllables` and `tones`
+    /// (`get_phrase_item` and `compute_pronunciation_possibility`,
+    /// `phonetic_lookup.h:646-684`); `None` when the token has no
+    /// readable item there.
+    ///
+    /// The default reads the last of [`Self::trellis_records`]' entries
+    /// for the token.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
+    fn trellis_item(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TrellisItem>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        Ok(self
+            .trellis_records(syllables, tones)?
+            .iter()
+            .rev()
+            .find(|entry| entry.phrase_index_token() == token)
+            .map(PhraseIndexToken::phrase_index_item))
+    }
+
+    /// The phrase text [`Self::trellis_item`] priced, read when a result
+    /// is emitted (`convert_to_utf8`); `None` where that item is `None`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
+    fn trellis_text(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<String>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        Ok(self
+            .trellis_records(syllables, tones)?
+            .iter()
+            .rev()
+            .find(|entry| entry.phrase_index_token() == token)
+            .map(PhraseIndexToken::phrase_index_text))
     }
 
     /// [`Self::lookup`] into a caller-owned buffer, which keeps capacity
@@ -462,12 +519,36 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
-        ranges: &mut PhraseIndexRanges<Self::Entry>,
+        ranges: &mut PhraseIndexRanges<()>,
     ) -> Result<(), Self::Error>
     where
         Self::Entry: PhraseIndexToken,
     {
         (**self).trellis_ranges(syllables, tones, ranges)
+    }
+
+    fn trellis_item(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TrellisItem>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        (**self).trellis_item(syllables, tones, token)
+    }
+
+    fn trellis_text(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        token: u32,
+    ) -> Result<Option<String>, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        (**self).trellis_text(syllables, tones, token)
     }
 
     fn lookup_into(
@@ -580,16 +661,44 @@ pub const fn phrase_index_library(token: u32) -> usize {
     ((token >> 24) & 0x0f) as usize
 }
 
+/// What one trellis step prices of a ranged token: the phrase's length in
+/// characters and its pronunciation possibility `(matched, total)`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TrellisItem {
+    /// The phrase's length in characters.
+    pub chars: u32,
+    /// The pronunciation possibility, where the item counts one.
+    pub pronunciation: Option<(u64, u64)>,
+}
+
 /// The phrase token a trellis entry stands for, so
-/// [`Dictionary::trellis_ranges`]' default can file it into a range.
+/// [`Dictionary::trellis_ranges`]' default can file it into a range, and
+/// what [`Dictionary::trellis_item`]'s default reads of it.
 pub trait PhraseIndexToken {
     /// The entry's raw phrase token.
     fn phrase_index_token(&self) -> u32;
+
+    /// The entry's [`TrellisItem`].
+    fn phrase_index_item(&self) -> TrellisItem;
+
+    /// The entry's phrase text.
+    fn phrase_index_text(&self) -> String;
 }
 
 impl PhraseIndexToken for PhraseEntry {
     fn phrase_index_token(&self) -> u32 {
         self.token().value()
+    }
+
+    fn phrase_index_item(&self) -> TrellisItem {
+        TrellisItem {
+            chars: self.text().chars().count().try_into().unwrap_or(u32::MAX),
+            pronunciation: self.pronunciation_possibility(),
+        }
+    }
+
+    fn phrase_index_text(&self) -> String {
+        self.text().to_owned()
     }
 }
 
@@ -731,6 +840,14 @@ impl<E> PhraseIndexRanges<E> {
             .skip(usize::try_from(range.slot).unwrap_or(usize::MAX))
             .take(count)
             .filter_map(Option::as_ref)
+    }
+
+    /// Every filled slot with its token, in the walk order of [`Self::iter`].
+    pub fn walk_tokens(&self) -> impl Iterator<Item = (u32, &E)> {
+        self.iter().flat_map(move |range| {
+            (range.first..=range.last)
+                .filter_map(move |token| self.entry(range, token).map(|entry| (token, entry)))
+        })
     }
 
     /// Every resolved entry, in the walk order of [`Self::iter`].

@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use oxpinyin_core::scoring::key_cost_table;
 use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
-    PhraseItemRead, PhraseToken, SyllableKey, UserCountDelta,
+    PhraseItemRead, PhraseToken, SyllableKey, TrellisItem, UserCountDelta,
 };
 pub use oxpinyin_data::phrase_library::{LibraryError, PhraseItemView, RowFault};
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
@@ -456,6 +456,104 @@ impl RuntimeDict {
         if let Some(store) = self.user.as_ref() {
             store.note_pinyin_search(|| chewing_query(syllables), || lookup.has_record(syllables));
         }
+    }
+
+    /// The query keys the effective-item overlay prices against; `None`
+    /// when the store holds no system items or a syllable is no key.
+    fn effective_query(&self, syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
+        self.user
+            .as_ref()
+            .filter(|store| store.has_system_items())?;
+        syllables
+            .iter()
+            .map(|key| oxpinyin_core::ChewingKey::from_pinyin(key.text()))
+            .collect()
+    }
+
+    /// `(matched, total)` of `token`'s effective system item over `query`,
+    /// the wrapping `guint32` sums of `phrase_index.h:136-163`.
+    fn effective_possibility(
+        &self,
+        query: &[oxpinyin_core::ChewingKey],
+        token: u32,
+    ) -> Option<(u32, u32)> {
+        self.user
+            .as_ref()?
+            .with_effective_system_item(token, |item| {
+                let mut total = 0_u32;
+                let mut matched = 0_u32;
+                for (keys, frequency) in &item.prons {
+                    total = total.wrapping_add(*frequency);
+                    if query.len() == keys.len()
+                        && query.iter().zip(keys).all(|(q, bits)| {
+                            let s = oxpinyin_core::ChewingKey::from_packed(*bits);
+                            q.initial == s.initial
+                                && ((q.middle == s.middle && q.final_ == s.final_)
+                                    || (q.middle == 0 && q.final_ == 0)
+                                    || (s.middle == 0 && s.final_ == 0))
+                                && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
+                        })
+                    {
+                        matched = matched.wrapping_add(*frequency);
+                    }
+                }
+                (matched, total)
+            })
+    }
+
+    /// What the ordinary lookup of `syllables` lists for `token`, which
+    /// is what a step prices: the last entry of its system-then-user
+    /// merge, the effective-item overlay applied, the library mask
+    /// respected. `None` when the lookup does not list it. The text is
+    /// built only when `want_text`.
+    fn priced_token(
+        &self,
+        syllables: &[SyllableKey],
+        token: u32,
+        want_text: bool,
+    ) -> Result<Option<PricedToken>, DictError> {
+        if syllables.is_empty() {
+            return Ok(None);
+        }
+        let user = self
+            .user_lookup()?
+            .lookup(syllables)
+            .into_iter()
+            .rev()
+            .find(|entry| entry.token().value() == token);
+        let mut priced = if let Some(entry) = user {
+            PricedToken {
+                item: TrellisItem {
+                    chars: entry.text().chars().count().try_into().unwrap_or(u32::MAX),
+                    pronunciation: entry.pronunciation_possibility(),
+                },
+                text: want_text.then(|| entry.text().to_owned()),
+            }
+        } else {
+            let Some(item) = self.system.trellis_item(syllables, token) else {
+                return Ok(None);
+            };
+            PricedToken {
+                item,
+                text: if want_text {
+                    match self.system.phrase_text(token) {
+                        Some(text) => Some(text),
+                        None => return Ok(None),
+                    }
+                } else {
+                    None
+                },
+            }
+        };
+        if let Some(query) = self.effective_query(syllables)
+            && let Some((matched, total)) = self.effective_possibility(&query, token)
+        {
+            priced.item.pronunciation = Some((u64::from(matched), u64::from(total)));
+        }
+        if self.library_mask.load(Ordering::SeqCst) != 0 && !self.library_visible_token(token) {
+            return Ok(None);
+        }
+        Ok(Some(priced))
     }
 
     fn user_lookup(&self) -> Result<Arc<UserLookup>, DictError> {
@@ -960,6 +1058,12 @@ impl RuntimeDict {
     }
 }
 
+/// One token as the ordinary lookup prices it.
+struct PricedToken {
+    item: TrellisItem,
+    text: Option<String>,
+}
+
 impl Dictionary for RuntimeDict {
     type Syllable = SyllableKey;
     type Entry = PhraseEntry;
@@ -978,17 +1082,29 @@ impl Dictionary for RuntimeDict {
     ) -> Result<Vec<Self::Entry>, Self::Error> {
         let mut ranges = PhraseIndexRanges::new();
         self.trellis_ranges(syllables, tones, &mut ranges)?;
-        Ok(ranges.into_walk_entries())
+        let mut out = Vec::new();
+        for (token, ()) in ranges.walk_tokens() {
+            if let Some(priced) = self.priced_token(syllables, token, true)? {
+                let mut entry =
+                    PhraseEntry::new(PhraseToken::new(token), priced.text.unwrap_or_default());
+                if let Some((matched, total)) = priced.item.pronunciation {
+                    entry = entry.with_pronunciation_possibility(matched, total);
+                }
+                out.push(entry);
+            }
+        }
+        Ok(out)
     }
 
     /// `FacadeChewingTable2::search` (`facade_chewing_table2.h:109-129` at
     /// the pin `074a2219`): the system table's ranges, then the user
-    /// table's, each its own `convert` call.
+    /// table's, each its own `convert` call. Tokens only, as the pin's
+    /// `convert` files them; [`Self::trellis_item`] prices one on demand.
     fn trellis_ranges(
         &self,
         syllables: &[Self::Syllable],
         tones: &[u8],
-        ranges: &mut PhraseIndexRanges<Self::Entry>,
+        ranges: &mut PhraseIndexRanges<()>,
     ) -> Result<(), Self::Error> {
         let Some(query) = syllables
             .iter()
@@ -1001,21 +1117,17 @@ impl Dictionary for RuntimeDict {
         else {
             return Ok(());
         };
-        // Pricing and visibility remain the ordinary runtime's laws: a
-        // ranged token the ordinary lookup does not list has no entry.
-        let priced: HashMap<_, _> = self
-            .lookup(syllables)?
-            .into_iter()
-            .map(|entry| (entry.token().value(), entry))
-            .collect();
+        // The user table's search of this path (#785); the pin makes one
+        // per `FacadeChewingTable2::search`, and a repeat is idempotent.
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        {
+            let user = self.user_lookup()?;
+            self.note_user_search(syllables, &user);
+        }
         let loaded =
             |token: u32| self.system.library_loaded(token) && self.library_visible_token(token);
-        // A system token the ordinary lookup lists was resolved there; the
-        // user seam owns no system-index token.
         self.system
-            .trellis_ranges_with(syllables, tones, ranges, loaded, |_, token| {
-                priced.get(&token).cloned()
-            })?;
+            .trellis_ranges_with(syllables, tones, ranges, loaded)?;
         let initial: Vec<_> = query.iter().map(|key| key.initial).collect();
         if let Some(bucket) = self.user_trellis_index()?.get(&initial) {
             ranges.convert(
@@ -1035,13 +1147,32 @@ impl Dictionary for RuntimeDict {
                             })
                             && loaded(entry.token().value())
                     })
-                    .map(|(_, entry)| {
-                        let token = entry.token().value();
-                        (token, priced.get(&token).cloned())
-                    }),
+                    .map(|(_, entry)| (entry.token().value(), Some(()))),
             );
         }
         Ok(())
+    }
+
+    fn trellis_item(
+        &self,
+        syllables: &[Self::Syllable],
+        _tones: &[u8],
+        token: u32,
+    ) -> Result<Option<TrellisItem>, Self::Error> {
+        Ok(self
+            .priced_token(syllables, token, false)?
+            .map(|priced| priced.item))
+    }
+
+    fn trellis_text(
+        &self,
+        syllables: &[Self::Syllable],
+        _tones: &[u8],
+        token: u32,
+    ) -> Result<Option<String>, Self::Error> {
+        Ok(self
+            .priced_token(syllables, token, true)?
+            .and_then(|priced| priced.text))
     }
 
     fn lookup_into(
@@ -1065,39 +1196,14 @@ impl Dictionary for RuntimeDict {
         // 074a2219 phrase_index.h:136-163 uses wrapping guint32 sums;
         // pinyin_lookup2.cpp:437-466 reads pronunciation possibility from
         // the current item even when the match came from the shipped index.
-        if let Some(store) = self.user.as_ref().filter(|store| store.has_system_items()) {
-            let query = syllables
-                .iter()
-                .map(|key| oxpinyin_core::ChewingKey::from_pinyin(key.text()))
-                .collect::<Option<Vec<_>>>();
-            if let Some(query) = query {
-                for entry in out.iter_mut() {
-                    if let Some((matched, total)) =
-                        store.with_effective_system_item(entry.token().value(), |item| {
-                            let mut total = 0_u32;
-                            let mut matched = 0_u32;
-                            for (keys, frequency) in &item.prons {
-                                total = total.wrapping_add(*frequency);
-                                if query.len() == keys.len()
-                                    && query.iter().zip(keys).all(|(q, bits)| {
-                                        let s = oxpinyin_core::ChewingKey::from_packed(*bits);
-                                        q.initial == s.initial
-                                            && ((q.middle == s.middle && q.final_ == s.final_)
-                                                || (q.middle == 0 && q.final_ == 0)
-                                                || (s.middle == 0 && s.final_ == 0))
-                                            && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
-                                    })
-                                {
-                                    matched = matched.wrapping_add(*frequency);
-                                }
-                            }
-                            (matched, total)
-                        })
-                    {
-                        *entry = entry
-                            .clone()
-                            .with_pronunciation_possibility(u64::from(matched), u64::from(total));
-                    }
+        if let Some(query) = self.effective_query(syllables) {
+            for entry in out.iter_mut() {
+                if let Some((matched, total)) =
+                    self.effective_possibility(&query, entry.token().value())
+                {
+                    *entry = entry
+                        .clone()
+                        .with_pronunciation_possibility(u64::from(matched), u64::from(total));
                 }
             }
         }

@@ -429,7 +429,12 @@ fn convert_ranges(dict: &SystemDictionary, tones: &[u8]) -> (Spans, Vec<String>)
                 .collect()
         })
         .collect();
-    let texts = ranges.walk().map(|entry| entry.text().to_owned()).collect();
+    let texts = dict
+        .trellis_records(&syls("ni"), tones)
+        .unwrap()
+        .iter()
+        .map(|entry| entry.text().to_owned())
+        .collect();
     (spans, texts)
 }
 

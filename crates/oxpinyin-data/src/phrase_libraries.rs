@@ -345,6 +345,16 @@ impl PhraseLibraries {
         self.library(token)?.item(token)?.phrase_text()
     }
 
+    /// The character count of [`Self::phrase_text`], read without
+    /// building the string; `None` where that text is `None`.
+    #[must_use]
+    pub fn phrase_char_count(&self, token: u32) -> Option<u32> {
+        self.library(token)?
+            .item(token)?
+            .phrase_chars()
+            .try_fold(0_u32, |count, char| char.map(|_| count.saturating_add(1)))
+    }
+
     /// `PhraseItem::get_unigram_frequency` for `token` — the stored
     /// field, which carries `gen_unigram`'s `+1` on every system item.
     #[must_use]
