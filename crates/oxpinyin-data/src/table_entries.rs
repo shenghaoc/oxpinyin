@@ -38,7 +38,8 @@ pub type Entries = Vec<(Vec<u8>, Vec<u8>)>;
 /// syllable. This is the comparator the value arrays are sorted by
 /// (`ChewingTableEntry::add_index`'s `phrase_exact_less_than2`
 /// `equal_range`).
-fn exact_compare2(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> std::cmp::Ordering {
+#[must_use]
+pub fn exact_compare2(lhs: &[ChewingKey], rhs: &[ChewingKey]) -> std::cmp::Ordering {
     let len = lhs.len();
     debug_assert_eq!(len, rhs.len());
     for i in 0..len {

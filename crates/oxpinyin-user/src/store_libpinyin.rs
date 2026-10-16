@@ -182,6 +182,12 @@ impl IndexRows {
         }
     }
 
+    /// The rows' readings, in the order the pin removes them (#785).
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    pub(crate) fn readings(&self) -> impl Iterator<Item = &[oxpinyin_core::ChewingKey]> {
+        self.pinyin.iter().map(|item| item.keys.as_slice())
+    }
+
     /// Adds the rows' keys to `keys`.
     pub(crate) fn keep_in(&self, keys: &mut IndexKeys) {
         keys.keep_rows(&self.pinyin);

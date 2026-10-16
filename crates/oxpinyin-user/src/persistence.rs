@@ -468,6 +468,18 @@ pub(crate) struct LoadedProfile {
 pub(crate) struct IndexKeys {
     /// `user_pinyin_index.bin` keys.
     pub(crate) pinyin: BTreeSet<Vec<u8>>,
+    /// The records of `user_pinyin_index.bin` whose bytes differ from what
+    /// the held readings derive (#785): the tails a Kyoto Cabinet or tkrzw
+    /// mask walk leaves in them.
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    pub(crate) tails: BTreeMap<Vec<u8>, Vec<u8>>,
+    /// The keys the session's adds wrote, each standing for itself and its
+    /// prefixes; with [`Self::pinyin`], every key the table holds (#785).
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    pub(crate) added: BTreeSet<crate::pinyin_chain::ChainKey>,
+    /// What each key length's table entry holds (#785).
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+    pub(crate) slots: [crate::pinyin_chain::Slot; crate::phrase::MAX_PHRASE_LENGTH + 1],
 }
 
 impl IndexKeys {
@@ -480,9 +492,75 @@ impl IndexKeys {
     }
 }
 
+/// The readings `add_index` saw, as the pinyin index's rows: those the
+/// libraries carry and `state.indexed` names, and the indexed readings of
+/// items added to a system library.
+pub(crate) fn chewing_rows(state: &UserState, originals: &SystemOriginals) -> Vec<PinyinIndexItem> {
+    // The pinyin index holds the readings `add_index` saw. The phrase
+    // index is independently stored and copied verbatim below.
+    let mut chewing_rows: Vec<PinyinIndexItem> = Vec::new();
+    for (&nibble, items) in &state.libraries {
+        for (&slot, item) in items {
+            let token = token_of(nibble, slot);
+            for (packed, _freq) in &item.prons {
+                if !state.indexed.contains(&(token, packed.clone())) {
+                    continue;
+                }
+                chewing_rows.push(PinyinIndexItem {
+                    token,
+                    keys: packed
+                        .iter()
+                        .map(|&bits| ChewingKey::from_packed(bits))
+                        .collect(),
+                });
+            }
+        }
+    }
+    // Both add_index calls target the user trees even for a system token
+    // (074a2219, facade_phrase_table3.h:166-172 / facade_chewing_table2.h:167-172).
+    for (&nibble, overrides) in &state.system_overrides {
+        for (&slot, item) in overrides {
+            if originals
+                .get(&nibble)
+                .is_some_and(|base| base.contains_item(slot))
+            {
+                continue;
+            }
+            let Some(item) = item else {
+                continue;
+            };
+            let token = token_of(nibble, slot);
+            for (packed, _) in &item.prons {
+                if state.indexed.contains(&(token, packed.clone())) {
+                    chewing_rows.push(PinyinIndexItem {
+                        token,
+                        keys: packed
+                            .iter()
+                            .map(|&bits| ChewingKey::from_packed(bits))
+                            .collect(),
+                    });
+                }
+            }
+        }
+    }
+    chewing_rows
+}
+
+/// `rows` with the records a mask walk left tails in (#785).
+#[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+fn with_tails(kept: &IndexKeys, rows: Vec<(Vec<u8>, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>)> {
+    kept.with_tails(rows)
+}
+
+/// Berkeley DB keeps no tails.
+#[cfg(not(any(feature = "kyotocabinet", feature = "tkrzw")))]
+const fn with_tails(_kept: &IndexKeys, rows: Vec<(Vec<u8>, Vec<u8>)>) -> Vec<(Vec<u8>, Vec<u8>)> {
+    rows
+}
+
 /// `rows` with every kept key that no row writes added as an empty value,
 /// in ascending key order.
-fn with_kept_keys(
+pub(crate) fn with_kept_keys(
     rows: Vec<(Vec<u8>, Vec<u8>)>,
     kept: &BTreeSet<Vec<u8>>,
 ) -> Vec<(Vec<u8>, Vec<u8>)> {
@@ -634,12 +712,16 @@ pub(crate) fn load_checked(
     };
     if check.conform {
         load_libraries(dir, originals.layout(), &mut profile.loaded);
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        let mut records = Vec::new();
         load_user_pinyin_index(
             dir,
             &mut profile.loaded,
             &mut profile.overlong_index_keys,
             &mut profile.index_keys,
             &mut profile.index_file_keys.pinyin,
+            #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+            &mut records,
         );
         load_user_phrase_index(
             dir,
@@ -647,6 +729,17 @@ pub(crate) fn load_checked(
             &mut profile.loaded.state.phrase_table,
         );
         load_logs(dir, originals, &mut profile.loaded);
+        // The file's records are the table's: one that the readings do not
+        // derive keeps its bytes (#785).
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        {
+            profile.index_file_keys.tails = crate::pinyin_chain::file_tails(
+                &profile.loaded.state,
+                originals,
+                &profile.index_file_keys.pinyin,
+                records,
+            );
+        }
     }
     profile
 }
@@ -781,6 +874,7 @@ fn load_user_pinyin_index(
     overlong: &mut Vec<Vec<u16>>,
     index_keys: &mut BTreeSet<Vec<u16>>,
     file_keys: &mut BTreeSet<Vec<u8>>,
+    #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))] records: &mut Vec<(Vec<u8>, Vec<u8>)>,
 ) {
     let path = dir.join(UserDbm::PinyinIndex.file_name());
     if !path.exists() {
@@ -846,6 +940,8 @@ fn load_user_pinyin_index(
         }
         if key.len() / 2 <= crate::phrase::MAX_PHRASE_LENGTH {
             file_keys.insert(key.to_vec());
+            #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+            records.push((key.to_vec(), value.to_vec()));
         }
         if value.is_empty() {
             return Ok(()); // a prefix marker names no reading
@@ -1609,59 +1705,16 @@ fn stage_rest(
             tolerate(lenient, stage_chunk(dir, name, &bytes, staged))?;
         }
 
-        // The pinyin index holds the readings `add_index` saw. The phrase
-        // index is independently stored and copied verbatim below.
-        let mut chewing_rows: Vec<PinyinIndexItem> = Vec::new();
-        for (&nibble, items) in &state.libraries {
-            for (&slot, item) in items {
-                let token = token_of(nibble, slot);
-                for (packed, _freq) in &item.prons {
-                    if !state.indexed.contains(&(token, packed.clone())) {
-                        continue;
-                    }
-                    chewing_rows.push(PinyinIndexItem {
-                        token,
-                        keys: packed
-                            .iter()
-                            .map(|&bits| ChewingKey::from_packed(bits))
-                            .collect(),
-                    });
-                }
-            }
-        }
-        // Both add_index calls target the user trees even for a system token
-        // (074a2219, facade_phrase_table3.h:166-172 / facade_chewing_table2.h:167-172).
-        for (&nibble, overrides) in &state.system_overrides {
-            for (&slot, item) in overrides {
-                if originals
-                    .get(&nibble)
-                    .is_some_and(|base| base.contains_item(slot))
-                {
-                    continue;
-                }
-                let Some(item) = item else {
-                    continue;
-                };
-                let token = token_of(nibble, slot);
-                for (packed, _) in &item.prons {
-                    if state.indexed.contains(&(token, packed.clone())) {
-                        chewing_rows.push(PinyinIndexItem {
-                            token,
-                            keys: packed
-                                .iter()
-                                .map(|&bits| ChewingKey::from_packed(bits))
-                                .collect(),
-                        });
-                    }
-                }
-            }
-        }
+        let chewing_rows = chewing_rows(state, originals);
         tolerate(
             lenient,
             stage_dbm(
                 dir,
                 UserDbm::PinyinIndex,
-                &with_kept_keys(pinyin_index_entries(&chewing_rows), &kept.pinyin),
+                &with_tails(
+                    kept,
+                    with_kept_keys(pinyin_index_entries(&chewing_rows), &kept.pinyin),
+                ),
                 staged,
             ),
         )?;
