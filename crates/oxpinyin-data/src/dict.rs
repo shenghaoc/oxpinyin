@@ -24,7 +24,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use oxpinyin_core::{
-    ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseToken, SyllableKey,
+    ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseToken,
+    SyllableKey,
 };
 use oxpinyin_store::{DefaultStore, ReadStore};
 
@@ -664,6 +665,15 @@ impl Dictionary for SystemDictionary {
 
     fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
         SystemDictionary::overlong_extension_gate(self, syllables)
+    }
+
+    /// `get_phrase_item` then the item's stored pronunciations, read from
+    /// the loaded library ([`PhraseLibraries::pronunciation_rows`]).
+    fn phrase_item_pronunciations(&self, token: PhraseToken) -> Result<PhraseItemRead, DictError> {
+        Ok(self
+            .libraries
+            .pronunciation_rows(token.value())
+            .map_or(PhraseItemRead::NoItem, PhraseItemRead::Item))
     }
 
     /// The DBM double-indexes each row under both incomplete and complete

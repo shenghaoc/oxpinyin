@@ -611,14 +611,17 @@ where
 /// a column is occupied by either a real key or a zero key. `from_scan`
 /// records real keys in `matrix` and internal separator zero keys (and the
 /// reserved end slot) in `zeros`.
-fn column_is_empty(matrix: &[Vec<ScanKey>], zeros: &[bool], offset: usize) -> bool {
+pub(crate) fn column_is_empty(matrix: &[Vec<ScanKey>], zeros: &[bool], offset: usize) -> bool {
     matrix.get(offset).is_none_or(Vec::is_empty) && !zeros.get(offset).copied().unwrap_or(false)
 }
 
 /// 074a2219 storage/phonetic_key_matrix.cpp:603-670: lazy depth-first
 /// traversal keeps only one path, like the pin's cached_keys. Matrix order
 /// and multiplicity survive; separator zero keys are folded into scan edges.
-fn training_readings<'a>(
+/// `compute_pronunciation_possibility_recur` (`:534-585`), which revalidates
+/// a forcing, walks the columns the same way, so
+/// [`crate::nbest::ConstraintSpelling`] reads its paths from here too.
+pub(crate) fn training_readings<'a>(
     matrix: &'a [Vec<ScanKey>],
     input: &'a [u8],
     start: usize,
@@ -636,7 +639,7 @@ fn training_readings<'a>(
     }
 }
 
-struct TrainingReadings<'a> {
+pub(crate) struct TrainingReadings<'a> {
     matrix: &'a [Vec<ScanKey>],
     input: &'a [u8],
     end: usize,

@@ -454,6 +454,29 @@ impl PhraseLibraries {
         Some((matched, total))
     }
 
+    /// `token`'s stored pronunciations as `(keys, freq)` rows in stored
+    /// order — `get_nth_pronunciation` and `get_nth_pronunciation_freq`
+    /// (`phrase_index.h` at the pin `074a2219`), tones kept. `None` when
+    /// the token's library is not loaded or owns no such item.
+    #[must_use]
+    pub fn pronunciation_rows(&self, token: u32) -> Option<oxpinyin_core::PronunciationRows> {
+        let library = self.library(token)?;
+        let item = library.item(token)?;
+        Some(
+            item.pronunciations()
+                .filter(|view| view.keys.len().is_multiple_of(2))
+                .map(|view| {
+                    let keys = view
+                        .keys
+                        .chunks_exact(2)
+                        .map(|pair| ChewingKey::from_packed(u16::from_le_bytes([pair[0], pair[1]])))
+                        .collect();
+                    (keys, view.freq)
+                })
+                .collect(),
+        )
+    }
+
     /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
     /// order — `get_nth_pronunciation` rendered through the chewing key
     /// tables (syllables `'`-joined, no tone digits).

@@ -3959,3 +3959,169 @@ fn shared_graph_window_lengths_match_independent_suffix_parses() {
         check(&session);
     }
 }
+
+/// A fixture facade that also keeps phrase items, so a forcing is
+/// revalidated against stored pronunciations the way the pin does
+/// (`phonetic_lookup.cpp:120-165` at 074a2219).
+struct ItemDictionary {
+    inner: FixtureDictionary,
+    items: std::collections::HashMap<u32, oxpinyin_core::PronunciationRows>,
+    /// Every item read fails, as a backend that cannot serve it would.
+    failing: bool,
+}
+
+impl Dictionary for ItemDictionary {
+    type Entry = PhraseEntry;
+    type Error = EngineError;
+    type Syllable = SyllableKey;
+
+    fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
+        Ok(self
+            .inner
+            .lookup(syllables)
+            .expect("fixture lookups cannot fail"))
+    }
+
+    fn phrase_item_pronunciations(
+        &self,
+        token: PhraseToken,
+    ) -> Result<oxpinyin_core::PhraseItemRead, EngineError> {
+        if self.failing {
+            return Err(EngineError::Scoring(
+                oxpinyin_core::scoring::ScoringError::Dictionary("item read failed".into()),
+            ));
+        }
+        Ok(self
+            .items
+            .get(&token.value())
+            .cloned()
+            .map_or(oxpinyin_core::PhraseItemRead::NoItem, |rows| {
+                oxpinyin_core::PhraseItemRead::Item(rows)
+            }))
+    }
+}
+
+/// 中华人民 and 种花人民 as one item: `zhong1 hua2 ren2 min2` (frequency 50)
+/// and `zhong3 hua1 ren2 min2` (frequency 1).
+fn wide_abbreviation_item() -> oxpinyin_core::PronunciationRows {
+    let reading = |spellings: [(&str, u8); 4]| -> Vec<oxpinyin_core::ChewingKey> {
+        spellings
+            .into_iter()
+            .map(|(spelling, tone)| {
+                oxpinyin_core::ChewingKey::from_pinyin(spelling)
+                    .expect("a pinyin spelling")
+                    .with_tone(tone)
+            })
+            .collect()
+    };
+    vec![
+        (
+            reading([("zhong", 1), ("hua", 2), ("ren", 2), ("min", 2)]),
+            50,
+        ),
+        (
+            reading([("zhong", 3), ("hua", 1), ("ren", 2), ("min", 2)]),
+            1,
+        ),
+    ]
+}
+
+/// A session over `zhhrm` — four incomplete keys, 19 · 19 · 14 · 19 =
+/// 96,026 completions, past `SCAN_EXPANSION_LIMIT` — with token 7 forced
+/// over all of it and the selection record rebuilt from that forcing.
+fn wide_abbreviation_session(
+    item: Option<oxpinyin_core::PronunciationRows>,
+) -> Session<ItemDictionary, TrellisModel> {
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        ItemDictionary {
+            inner: FixtureDictionary::parse(TRAIN_VOCAB).expect("authored fixture"),
+            items: item.into_iter().map(|rows| (7, rows)).collect(),
+            failing: false,
+        },
+        TrellisModel {
+            blended: 100,
+            unigram: 200,
+        },
+    )
+    .expect("the fixtures open");
+    session.set_incomplete_pinyin(true).expect("incomplete on");
+    session.replace_raw("zhhrm").expect("parse");
+    session.constraints.resize(6);
+    assert_eq!(
+        session
+            .constraints
+            .add(0, 5, PhraseToken::new(7), "中华人民".into()),
+        5
+    );
+    session.rebuild_selection_from_constraints();
+    session
+}
+
+/// #825: the pin revalidates a forcing against the item's stored
+/// pronunciations, where an incomplete key matches any final, so a
+/// forcing over an abbreviation of any width survives the next guess.
+/// Revalidating by searching its expanded completions dropped it once
+/// they passed the expansion limit.
+#[test]
+fn a_forcing_over_a_wide_abbreviation_survives_the_next_guess() {
+    let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
+    session.guess_sentence().expect("guess cannot fail");
+    assert!(session.constraints.is_one_step_at(0));
+    assert_eq!(session.selected_tokens(), [PhraseToken::new(7)]);
+}
+
+/// The same forcing met by the replacement reconcile, which validates a
+/// copy before the next guess does.
+#[test]
+fn a_forcing_over_a_wide_abbreviation_survives_the_replacement_reconcile() {
+    let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
+    session.reconcile_replaced_selection().expect("reconcile");
+    assert_eq!(session.selected_tokens(), [PhraseToken::new(7)]);
+    assert!(session.constraints.is_one_step_at(0));
+}
+
+/// What still drops: an item no stored pronunciation of which shares an
+/// initial with every key, and a token with no item at all.
+#[test]
+fn a_forcing_the_stored_pronunciations_do_not_spell_is_dropped() {
+    let chao = |tone| {
+        oxpinyin_core::ChewingKey::from_pinyin("chao")
+            .expect("chao")
+            .with_tone(tone)
+    };
+    let mismatched = vec![(vec![chao(0); 4], 9_u32)];
+    for item in [Some(mismatched), None] {
+        let mut session = wide_abbreviation_session(item.clone());
+        session.guess_sentence().expect("guess cannot fail");
+        assert!(!session.constraints.is_one_step_at(0));
+        let mut session = wide_abbreviation_session(item);
+        session.reconcile_replaced_selection().expect("reconcile");
+        assert!(session.selected_tokens().is_empty());
+    }
+}
+
+/// A forcing the re-parse left past the matrix is cleared even when its
+/// item cannot be read: the pin's failed `get_phrase_item` leaves `item`
+/// alone and the overrun test still clears the run
+/// (`phonetic_lookup.cpp:141-154`). The guess goes on.
+#[test]
+fn an_overrunning_forcing_whose_item_read_fails_is_cleared() {
+    let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
+    session.dictionary.failing = true;
+    session.replace_raw("zh").expect("shrinking parse");
+    assert!(session.constraints.is_one_step_at(0));
+    session
+        .guess_sentence()
+        .expect("the overrun probe error is not surfaced");
+    assert!(!session.constraints.is_one_step_at(0));
+}
+
+/// A forcing that fits still surfaces the read failure.
+#[test]
+fn a_fitting_forcing_whose_item_read_fails_surfaces_the_error() {
+    let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
+    session.dictionary.failing = true;
+    assert!(session.guess_sentence().is_err());
+}

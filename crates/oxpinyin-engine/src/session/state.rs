@@ -337,8 +337,14 @@ where
         let mut retained = self.constraints.clone();
         if bound > 0 {
             let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
-            retained.validate(bound + 1, |start, end, token| {
-                crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
+            let spelling = crate::nbest::ConstraintSpelling::new(
+                &matrix,
+                bound,
+                self.input.physical_separators(),
+                self.input.as_bytes(),
+            );
+            retained.validate(bound + 1, |start, end, token, text_len| {
+                spelling.spells(&self.dictionary, start, end, token, text_len)
             })?;
         } else {
             // No selection text is valid for this matrix. The real

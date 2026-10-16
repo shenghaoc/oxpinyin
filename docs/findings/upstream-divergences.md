@@ -200,7 +200,7 @@ line.)
   train is the successful control. Before `74012938`, the subject
   trained the stale row and met neither class-(c) obligation.
 
-### validate_constraint's drop test is the span-search shape — CLOSED (academic: equivalent on model20)
+### validate_constraint's drop test is an integer zero test — CLOSED (academic: equivalent on model20)
 
 - **Upstream source cite:**
   `src/lookup/phonetic_lookup.cpp:142-168` (`validate_constraint`);
@@ -216,17 +216,35 @@ line.)
   share under the loose compare — initials exact, initial-only keys
   match any middle/final, zero tone matches any tone, fuzzy not
   handled.
-- **What oxpinyin does instead:** drops when no span entry spelling the
-  forced token carries a kept pronunciation possibility — `None` (no
-  counts, read as possibility 1) or `Some` with a nonzero matched
-  count; only `Some((0, _))` rejects (`span_finds_token`;
-  the `Some((0, _))` zero-guard landed with the §3 matched/total work)
-  — the possibility arithmetic itself is the already-recorded §3
-  divergence (first path per token, matched/total as a step-cost term),
-  so the below-ε threshold has no bit-faithful port. The cells also
-  carry the chosen phrase's display text where upstream re-fetches by
-  token from the phrase index, so the selection record rebuilds from
-  the store alone.
+- **What oxpinyin does instead:** the same walk and compare, with the
+  drop test as an integer zero test. `ConstraintSpelling::spells`
+  (`nbest.rs`) reads the forced token's phrase item through
+  `Dictionary::phrase_item_pronunciations`, walks the matrix columns
+  from the forcing's start to its end exactly as
+  `compute_pronunciation_possibility` does (an empty start or end
+  column answers zero, a path is as long as the item's phrase length),
+  and compares each path with the item's stored pronunciations by
+  `pinyin_compare_with_tones` (`pinyin_phrase3.h:108-144`; an incomplete
+  key matches any final, `:80-86`). It drops the forcing when no path
+  matches a stored pronunciation with a nonzero frequency, where
+  upstream drops when the f32 sum of the matched/total shares is below
+  `FLT_EPSILON`. There is no expansion of incomplete keys and no cap, so
+  a forcing over an abbreviation of any width survives as it does at the
+  pin (#825). Like the pin's single `PhraseItem item`
+  (`phonetic_lookup.cpp:141`), the last item read successfully is carried
+  across the forcings of one pass, so a token whose library is unloaded
+  is checked against the previous forcing's item
+  (`phrase_index.h:649-650`). A dictionary that keeps no phrase items (the test doubles)
+  is revalidated by searching the path instead. The cells also carry the
+  chosen phrase's display text where upstream re-fetches by token from
+  the phrase index, so the selection record rebuilds from the store
+  alone.
+- **History (#825):** the revalidation used to search the span's key
+  paths through the dictionary, expanding every incomplete key into its
+  completions (`SCAN_EXPANSION_LIMIT`, 4,096 combinations). Past the
+  limit nothing was searched, the forced token read as absent, and the
+  forcing was dropped where the pin keeps it. The zero-test equivalence
+  below holds for the read the pin makes and now so does the port.
 - **Status:** closed as **academic — equivalent on model20**. The
   arithmetic differs (upstream sums f32 per-path loose-compare terms;
   oxpinyin guards on integer zero before any division), but the drop
@@ -242,8 +260,8 @@ line.)
   is equivalently a zero test on both sides. The zero case agrees too:
   every stored pronunciation in model20 carries zero tone (no tone
   digits in any table), so the compare's tone rule never blocks; the
-  loose compare's initial-only lenience is mirrored by the span
-  search's partial-key expansion (both initial-exact); and fuzzy
+  loose compare's initial-only lenience is the same compare on both
+  sides (both initial-exact); and fuzzy
   alternates are explicit matrix-column keys on both sides, so the
   all-exact path always matches. No model20 input exists where the pin
   drops a forcing and oxpinyin keeps it — the E2E I/O rule is
@@ -254,13 +272,10 @@ line.)
   1 over a total above 2^23 = 8,388,608) makes the threshold — not
   zero — the drop boundary while a span entry still lists the token:
   this entry becomes a revert target, and the fix is the threshold port
-  over the already plumbed matched/total pairs in `span_finds_token`.
+  over the matched/total sums `ConstraintSpelling::spells` already forms.
   Separate, and not addressed by that port: a corpus storing nonzero
-  pronunciation tones breaks matching parity — the pin's loose compare
-  turns tone-sensitive where the record lookup behind the span entries
-  is tone-blind — so the pin computes a zero sum where oxpinyin's
-  entries still carry matched > 0; addressing it needs tone-aware
-  matching parity, not the ε comparison.
+  pronunciation tones needs no separate fix: the compare is the pin's
+  tone-aware one, and the matrix keys carry their tones into it.
 - **Externally observable:** was only ever reachable on edits that
   leave a span marginally spellable — the same inputs where the §3
   possibility divergence is already observable; on model20, not

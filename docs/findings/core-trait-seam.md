@@ -36,6 +36,8 @@ An empty lookup is `Ok(Vec::new())`. Implementations return entries in stable,
 deterministic order. The trait does not prescribe storage, token layout or
 ranking.
 
+2026-10-16: #825 adds defaulted `Dictionary::phrase_item_pronunciations(token)`, answering `PhraseItemRead::Unsupported` unless overridden; it reads the stored pronunciations of the phrase item behind a token so a forcing is revalidated as the pin's `validate_constraint` does (`phonetic_lookup.cpp:120-165` at 074a2219). A defaulted addition under the paragraph above (human approval, 2026-10-16).
+
 ## `UserModel`
 
 ```rust

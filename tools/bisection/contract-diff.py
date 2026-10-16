@@ -1559,6 +1559,154 @@ def _(k):
             'again': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
 
 
+# #825: a forced phrase over an abbreviation whose incomplete keys expand to
+# more than SCAN_EXPANSION_LIMIT (4,096) complete-key combinations. The pin's
+# `validate_constraint` (`phonetic_lookup.cpp:120-165` at 074a2219) searches
+# no table: `compute_pronunciation_possibility` walks the matrix columns
+# against the forced item's stored pronunciations
+# (`phonetic_key_matrix.cpp:534` onward), where an incomplete key matches any
+# final (`pinyin_compare_middle_and_final3`, `pinyin_phrase3.h:80-86`), so the
+# constraint survives however many completions the abbreviation has.
+# Option word 0x18a (incomplete pinyin), sort word 0x1e; two user phrases of
+# the same initials, the first (A) counted 50 and the second (B) counted 1.
+CONSTRAINT_OPTIONS, CONSTRAINT_SORT = 0x18A, 0x1E
+
+
+def constraint_phrases(k, phrases):
+    """Imports (text, reading, count) rows into USER_DICTIONARY; the returns."""
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    assert it
+    add = k.fn('iterator_add_phrase', B, P, S, S, I)
+    added = [add(it, text.encode(), reading, count) for text, reading, count in phrases]
+    k.fn('end_add_phrases', None, P)(it)
+    return added
+
+
+def candidate_heads(k, inst, limit=6):
+    """(kind, text) of the first `limit` rows of the candidate list."""
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    heads = []
+    for i in range(min(count.value, limit)):
+        cand, kind, text = P(), I(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        heads.append([kind.value, text.value.decode() if text.value else None])
+    return heads
+
+
+def constraint_instance(k, phrases, parse, options=CONSTRAINT_OPTIONS):
+    """The shared head of the sequence: options, imports, parse, control guess,
+    candidate list, and the second phrase's candidate chosen. On the full data
+    the n-best usually holds the first phrase alone, so the second reaches the
+    list as its NORMAL row, else as an NBEST row; choosing either installs
+    the same OneStep forcing over the whole input (`pinyin.cpp:2515-2520` and
+    `:2566-2576`)."""
+    out = {'options': k.fn('set_options', B, P, U)(k.ctx, options),
+           'import': constraint_phrases(k, phrases)}
+    inst = k.alloc()
+    out['parse'] = k.fn('parse_more_full_pinyins', Z, P, S)(inst, parse)
+    out['control guess'] = k.fn('guess_sentence', B, P)(inst)
+    out['control row 0'] = sentence_out(k, inst, 0)
+    out['candidates'] = k.fn('guess_candidates', B, P, Z, U)(inst, 0, CONSTRAINT_SORT)
+    out['head'] = candidate_heads(k, inst)
+    kind = 2 if row_with_text(k, inst, 2, phrases[1][0]) else 1
+    out['chosen kind'] = kind
+    row = row_with_text(k, inst, kind, phrases[1][0])
+    assert row, 'no row for ' + phrases[1][0]
+    out['choose'] = k.fn('choose_candidate', I, P, Z, P)(inst, 0, row)
+    return inst, out
+
+
+def constraint_survives(k, phrases, parse):
+    inst, out = constraint_instance(k, phrases, parse)
+    out['guess 5'] = k.fn('guess_sentence', B, P)(inst)
+    out['row 0 at 5'] = sentence_out(k, inst, 0)
+    out['reparse'] = k.fn('parse_more_full_pinyins', Z, P, S)(inst, parse)
+    out['guess 6'] = k.fn('guess_sentence', B, P)(inst)
+    out['row 0 at 6'] = sentence_out(k, inst, 0)
+    return out
+
+
+CONSTRAINT_PHRASES = [
+    ('中华人民', b"zhong1'hua2'ren2'min2", 50), ('种花人民', b"zhong3'hua1'ren2'min2", 1)]
+CONSTRAINT_PHRASES_LONG = [
+    ('中华人民共和国', b"zhong1'hua2'ren2'min2'gong4'he2'guo2", 50),
+    ('中华人民公会国', b"zhong1'hua2'ren2'min2'gong1'hui4'guo2", 1)]
+
+# (input, incomplete-key product on main's `expand_keys`): under the cap the
+# subject already agreed with the pin, so those rows are the controls.
+for _parse, _product, _phrases in (
+        (b'zhonghuarenmin', 'none', CONSTRAINT_PHRASES),
+        (b'zhonghuarm', '266', CONSTRAINT_PHRASES),
+        (b'zhhrenmin', '361', CONSTRAINT_PHRASES),
+        (b'zhonghrm', '5054', CONSTRAINT_PHRASES),
+        (b'zhhrm', '96026', CONSTRAINT_PHRASES),
+        (b'zhhrmghg', 'over 96026', CONSTRAINT_PHRASES_LONG)):
+    case('constraint-survives-' + _parse.decode(), control=_product in ('none', '266', '361'))(
+        lambda k, _p=_parse, _ph=_phrases: constraint_survives(k, _ph, _p))
+
+
+# The same forcing met by `reconcile_replaced_selection` instead of by the
+# next guess: with `PINYIN_CORRECT_V_U` on, `jve` and `jue` are one key, so
+# re-parsing `jvezhhrm` over `juezhhrm` changes a byte inside the covered span
+# without moving a key boundary. The replacement does not extend the covered
+# bytes, so the engine revalidates the retained forcing (96,026 completions of
+# `zh h r m`) before the next lookup; nothing is guessed in between.
+CONSTRAINT_PHRASES_V_U = [
+    ('决中华人民', b"jue2'zhong1'hua2'ren2'min2", 50),
+    ('绝种花人民', b"jue2'zhong3'hua1'ren2'min2", 1)]
+
+
+def constraint_survives_reconcile(parse, replacement):
+    def run(k):
+        inst, out = constraint_instance(k, CONSTRAINT_PHRASES_V_U, parse, options=CONSTRAINT_OPTIONS | 1 << 27)
+        out['reparse'] = k.fn('parse_more_full_pinyins', Z, P, S)(inst, replacement)
+        out['candidates after'] = k.fn('guess_candidates', B, P, Z, U)(inst, 0, CONSTRAINT_SORT)
+        out['head after'] = candidate_heads(k, inst)
+        out['guess'] = k.fn('guess_sentence', B, P)(inst)
+        out['row 0'] = sentence_out(k, inst, 0)
+        return out
+    return run
+
+
+for _parse, _replacement, _product in (
+        (b'juezhonghuarm', b'jvezhonghuarm', 266), (b'juezhhrm', b'jvezhhrm', 96026)):
+    case('constraint-survives-reconcile-' + _parse.decode(), control=_product < 4096)(
+        constraint_survives_reconcile(_parse, _replacement))
+
+
+# #825 review: `validate_constraint` declares `PhraseItem item;` once, before
+# its loop (`phonetic_lookup.cpp:141`), and `get_phrase_item` leaves it alone
+# when it fails (`phrase_index.h:649-650`, `phrase_index.cpp:189-193`). A
+# forced token whose library was unloaded is therefore checked against the
+# previous forcing's item. Two phrases forced, the later one only in the GBK
+# library (2), which is then unloaded: the stale item keeps the later forcing
+# when it spells the later span (`nini`: both read `ni`) and drops it when it
+# does not (`nihao`).
+def constraint_stale_item(first, second, parse):
+    def run(k):
+        out = {'options': k.fn('set_options', B, P, U)(k.ctx, CONSTRAINT_OPTIONS)}
+        inst = k.alloc()
+        out['parse'] = k.fn('parse_more_full_pinyins', Z, P, S)(inst, parse)
+        out['guess'] = k.fn('guess_sentence', B, P)(inst)
+        out['first'] = choose_text(k, inst, 0, first)
+        out['second'] = choose_text(k, inst, out['first'], second)
+        out['tokens'] = [hex(t) for t in tokens_of(k, second)]
+        out['guess loaded'] = k.fn('guess_sentence', B, P)(inst)
+        out['row 0 loaded'] = sentence_out(k, inst, 0)
+        out['unload'] = k.fn('unload_phrase_library', B, P, U)(k.ctx, 2)
+        out['guess unloaded'] = k.fn('guess_sentence', B, P)(inst)
+        out['row 0 unloaded'] = sentence_out(k, inst, 0)
+        return out
+    return run
+
+
+case('constraint-stale-item-keeps-nini')(constraint_stale_item('你', '抳', b'nini'))
+case('constraint-stale-item-drops-nihao', control=True)(constraint_stale_item('你', '晧', b'nihao'))
+
+
 # batch G: a stored forcing outlives a re-parse that shortened the input
 # (PR G, #525, row 82). The walk tails the LAST span at
 # `constraints->length() - 1` (phonetic_lookup.h:921), not the current
