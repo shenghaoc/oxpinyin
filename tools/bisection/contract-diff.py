@@ -697,6 +697,56 @@ def token_unigram_user(k):
     return out
 
 
+# #809: the ten zhuyin-only syllables (content_table keys that pinyin_index
+# lacks) are stored as key words the pin hands back unfiltered
+# (074a2219 zhuyin.cpp:1778-1811, phrase_index.cpp:33-44). Libraries 1-4 read
+# the replaced item through the spelling round trip, which dropped them;
+# libraries 5-7 read the user store and are the controls.
+ZHUYIN_ONLY = {
+    'chua': 'ㄔㄨㄚ', 'den': 'ㄉㄣ', 'din': 'ㄉㄧㄣ', 'fe': 'ㄈㄜ', 'kei': 'ㄎㄟ',
+    'len': 'ㄌㄣ', 'nia': 'ㄋㄧㄚ', 'rua': 'ㄖㄨㄚ', 'yai': 'ㄧㄞ', 'zhei': 'ㄓㄟ',
+}
+ZHUYIN_ONLY_WORDS = ['龘鱻', '麤靐', '驫齉', '爨馕', '鬻厵', '龘麤', '鱻靐', '驫爨', '齉鬻', '馕厵']
+
+
+def zhuyin_only_readings(k, libraries):
+    out = {}
+    new = k.glib.g_array_new
+    new.restype, new.argtypes = P, [I, I, U]
+    for library in libraries:
+        for (pinyin, zhuyin), word in zip(ZHUYIN_ONLY.items(), ZHUYIN_ONLY_WORDS):
+            if k.mode == 'pinyin':
+                readings = ["%s'%s" % (pinyin, pinyin), "%s3'%s3" % (pinyin, pinyin)]
+            else:
+                readings = ['%s %s' % (zhuyin, zhuyin), '%sˇ %sˇ' % (zhuyin, zhuyin)]
+            iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
+            added = [k.fn('iterator_add_phrase', B, P, S, S, I)(iterator, word.encode(), r.encode(), 5)
+                     for r in readings]
+            k.fn('end_add_phrases', None, P)(iterator)
+            row = {'added': added}
+            tokens = [token for token in tokens_of(k, word) if token >> 24 == library]
+            row['tokens'] = [hex(token) for token in tokens]
+            for token in tokens:
+                count = U(UNTOUCHED)
+                row['n_pron'] = [k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(
+                    k.inst, token, C.byref(count)), count.value]
+                for nth in range(min(count.value, 4)):
+                    keys = new(0, 0, 2)
+                    ret = k.fn('token_get_nth_pronunciation', B, P, U, U, P)(k.inst, token, nth, keys)
+                    view = C.cast(keys, C.POINTER(Arr)).contents
+                    row['nth %d' % nth] = [ret, C.string_at(view.data, view.len * 2).hex() if view.len else '']
+            out['lib %d %s' % (library, pinyin)] = row
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _prefix = 'zhuyin-' if _mode == 'zhuyin' else ''
+    case(_prefix + 'system-zhuyin-only-readings', mode=_mode)(
+        lambda k: zhuyin_only_readings(k, (1, 2, 3, 4)))
+    case(_prefix + 'user-zhuyin-only-readings', mode=_mode, control=True)(
+        lambda k: zhuyin_only_readings(k, (5, 6, 7)))
+
+
 def train_selected_top(k, wanted, token, guess_before_choose=False):
     """Choose a normal phrase, guess n-best, then train result 0 without reset.
 
@@ -8062,11 +8112,7 @@ def _wrap_zhuyin_readings():
     finals = ['ㄚ', 'ㄛ', 'ㄜ', 'ㄞ', 'ㄟ', 'ㄠ', 'ㄡ', 'ㄢ', 'ㄣ', 'ㄤ', 'ㄥ', 'ㄧ', 'ㄨ', 'ㄩ', 'ㄧㄚ', 'ㄧㄝ',
               'ㄧㄠ', 'ㄧㄡ', 'ㄧㄢ', 'ㄧㄣ', 'ㄧㄤ', 'ㄧㄥ', 'ㄨㄚ', 'ㄨㄛ', 'ㄨㄞ', 'ㄨㄟ', 'ㄨㄢ', 'ㄨㄣ',
               'ㄨㄤ', 'ㄨㄥ']
-    # ㄈㄜ is a key the pin parses but no pinyin syllable spells; the system
-    # libraries' key model folds it into another reading, which would
-    # shift where the 256th lands. It is not what this case probes.
-    return [(i + f + t).encode() for i in initials for f in finals for t in ('ˊ', 'ˇ', 'ˋ', '')
-            if i + f != 'ㄈㄜ']
+    return [(i + f + t).encode() for i in initials for f in finals for t in ('ˊ', 'ˇ', 'ˋ', '')]
 
 
 def _wrap_distinct(k, candidates):
