@@ -106,6 +106,13 @@ impl InstanceCore {
         lm: RuntimeLm,
         live: LiveOptions,
     ) -> Self {
+        // The C ABI answers every candidate list from the window
+        // `pinyin_guess_candidates` re-anchors (`anchored_window`), as
+        // upstream builds candidates only there (`pinyin.cpp:2184-2308` at
+        // 074a2219): a parse or sentence guess leaves the session's own
+        // list to its next reader.
+        let mut session = session;
+        session.set_defer_list_builds(true);
         Self {
             session,
             user,
@@ -128,6 +135,23 @@ impl InstanceCore {
     #[must_use]
     pub fn options(&self) -> OptionBits {
         OptionBits::from_bits(self.live.options.load(Ordering::Relaxed))
+    }
+
+    /// The list a lookup answers from: the window the last
+    /// `pinyin_guess_candidates` re-anchored, else the session's own list,
+    /// built first if a deferred parse or sentence guess left it stale
+    /// ([`oxpinyin_engine::Session::set_defer_list_builds`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the deferred build hits a backend
+    /// failure.
+    pub fn lookup_window(&mut self) -> Result<&CandidateList, EngineError> {
+        if let Some((_, window)) = self.anchored_window.as_ref() {
+            return Ok(window);
+        }
+        self.session.refresh_candidates()?;
+        Ok(self.session.candidates())
     }
 
     /// The parse-path reset: the composition's parse state goes, the

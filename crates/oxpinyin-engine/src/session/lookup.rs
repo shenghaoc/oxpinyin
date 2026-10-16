@@ -50,8 +50,48 @@ where
         let anchor = self.record.consumed();
         let mut items = Vec::new();
         self.lookup.candidates.swap_items(&mut items);
+        // A failed scan leaves the emptied list, as it always has; it is
+        // not stale, so the next reader indexes it rather than rescanning.
+        self.lookup.stale = false;
         self.lookup.parsed_prefix = self.scan_window(anchor, &mut items, false)?;
         self.lookup.candidates.swap_items(&mut items);
+        Ok(())
+    }
+
+    /// The parse seams' and sentence guesses' refresh: [`Self::refresh`],
+    /// unless the session defers list builds
+    /// ([`Session::set_defer_list_builds`]). Deferred, the scan matrix is
+    /// still built, so its errors surface here as before, and the list is
+    /// left stale for [`Session::refresh_candidates`].
+    pub(super) fn refresh_after_parse(&mut self) -> Result<(), EngineError> {
+        if !self.defer_list_builds {
+            return self.refresh();
+        }
+        self.ensure_matrix()?;
+        self.lookup.stale = true;
+        Ok(())
+    }
+
+    /// Builds the candidate list a deferred parse or sentence guess left
+    /// stale ([`Session::set_defer_list_builds`]): the list, and the parse
+    /// length behind it, that the parse or guess would have built. A no-op
+    /// when the list is current, and always under the default eager mode.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the deferred build hits a backend
+    /// failure. The list then stays stale, so the next
+    /// `refresh_candidates`, [`Session::select`] or `Space` retries the
+    /// scan.
+    pub fn refresh_candidates(&mut self) -> Result<(), EngineError> {
+        if self.lookup.stale
+            && let Err(error) = self.refresh()
+        {
+            // `refresh` marks the list current before it scans; the build
+            // the deferred parse or guess owes is still owed.
+            self.lookup.stale = true;
+            return Err(error);
+        }
         Ok(())
     }
 

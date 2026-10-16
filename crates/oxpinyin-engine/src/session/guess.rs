@@ -116,7 +116,7 @@ where
             .first()
             .map_or_else(Vec::new, |row| row.spans.clone());
 
-        self.refresh()?;
+        self.refresh_after_parse()?;
         Ok(true)
     }
 
@@ -211,7 +211,7 @@ where
             .first()
             .map_or_else(Vec::new, |row| row.spans.clone());
 
-        self.refresh()?;
+        self.refresh_after_parse()?;
         Ok(true)
     }
 
@@ -305,7 +305,7 @@ where
             }
         }
 
-        self.refresh()?;
+        self.refresh_after_parse()?;
         Ok(true)
     }
 }

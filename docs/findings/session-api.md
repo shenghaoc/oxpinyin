@@ -169,6 +169,15 @@ where
     pub fn guess_sentence(&mut self) -> Result<bool, EngineError>;
     pub fn sentence_lookup_active(&self) -> bool;
     pub fn sentence_text(&self, index: u8) -> Option<&str>;
+
+    // #757 added the deferred list build (human approval, 2026-10-16).
+    // Additions again; nothing frozen above changed. Off by default, so
+    // the parse seams and sentence guesses build `candidates` eagerly as
+    // before; on (the C facades), they leave it stale, `select`,
+    // `select_promoted` and `Space` rebuild it before indexing it, and a
+    // reader of `candidates` calls `refresh_candidates` first.
+    pub const fn set_defer_list_builds(&mut self, defer: bool);
+    pub fn refresh_candidates(&mut self) -> Result<(), EngineError>;
 }
 
 pub enum KeyOutcome { Ignored, Consumed, Commit(String) }   // #[non_exhaustive]
@@ -264,3 +273,15 @@ the pin's incomplete-key set and makes them graph edges.
 `UserModel`. None of the frozen W4-T0 signatures changed; these are
 additions. `train` is method-generic over `UserModel` so the engine
 stays user-agnostic. Recorded by W6-T4 so the SPEC and the code agree.
+
+**2026-10-16 — #757 deferred candidate list (human approval, 2026-10-16).**
+`Session` gained `set_defer_list_builds` and `refresh_candidates`. None
+of the frozen W4-T0 signatures changed; these are additions, and the
+default keeps the eager list, its parse length and the errors the parse
+seams and sentence guesses return. The C facades turn the mode on: the
+pin builds candidates only in `pinyin_guess_candidates`
+(`pinyin.cpp:2184-2308` at 074a2219), and the C ABI answers from the
+window it re-anchors there, so in that mode a sort-word change on a
+composing session (`set_sort_options`) also leaves the list stale, the
+pin taking the word as that call's argument (`pinyin.cpp:2198`).
+Recorded by the #757 change so the SPEC and the code agree.

@@ -175,6 +175,14 @@ pub struct Session<D, L> {
     /// ([`Session::set_nbest_shape`]). Surface config, like
     /// [`Self::collapse_sentence_rows_to_best`].
     nbest_shape: crate::nbest::NbestShape,
+    /// Whether the parse and sentence-guess paths leave the candidate list
+    /// to its next reader instead of building it — the C facades' mode,
+    /// set via [`Session::set_defer_list_builds`]; off (the session API's
+    /// eager list) by default. Upstream builds candidates only in
+    /// `pinyin_guess_candidates` (`pinyin.cpp:2184-2308` at 074a2219), whose
+    /// C-ABI port re-anchors its own window. Surface config, like
+    /// [`Self::collapse_sentence_rows_to_best`].
+    defer_list_builds: bool,
 
     // Composition state, decomposed into types that own their invariants.
     // Each groups the fields that move together, so an operation cannot
@@ -220,6 +228,10 @@ struct Lookup {
     /// `incomplete-pinyin` setting, not the unfiltered
     /// [`SegmentGraph::consumed`].
     parsed_prefix: usize,
+    /// Whether a deferred parse or sentence guess changed the input behind
+    /// [`Self::candidates`] and [`Self::parsed_prefix`] without rebuilding
+    /// them; the next [`Session::refresh_candidates`] does.
+    stale: bool,
     /// The last sort-option word applied — upstream's `m_sort_option`
     /// (`pinyin.cpp:2203`), which `pinyin_guess_candidates` re-stores on
     /// every call and `pinyin_choose_candidate` later reads. `0x1e` (all
@@ -243,6 +255,7 @@ impl Lookup {
     fn reset(&mut self) {
         self.candidates = CandidateList::default();
         self.parsed_prefix = 0;
+        self.stale = false;
     }
 }
 
@@ -251,6 +264,7 @@ impl Default for Lookup {
         Self {
             candidates: CandidateList::default(),
             parsed_prefix: 0,
+            stale: false,
             sort_word: Self::PARITY_SORT_WORD,
         }
     }

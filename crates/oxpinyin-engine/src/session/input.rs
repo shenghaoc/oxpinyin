@@ -131,6 +131,7 @@ where
     }
 
     pub(super) fn accept_first(&mut self) -> Result<KeyOutcome, EngineError> {
+        self.refresh_candidates()?;
         if self.lookup.candidates.is_empty() {
             if self.is_composing() {
                 return Ok(KeyOutcome::Commit(self.commit()?));
