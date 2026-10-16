@@ -2949,12 +2949,70 @@ impl<S: WriteStore> GenericUserStore<S> {
         value: Token,
         logs: crate::persistence::SystemLogSnapshot,
     ) -> Result<(), UserStoreError> {
+        if self.inner.libpinyin.is_none() {
+            return Ok(());
+        }
+        let (state, library_totals) =
+            crate::persistence::load_masked_logs(&originals, mask, value, logs);
+        self.replace_system_libraries(originals, &state, &library_totals)
+    }
+
+    /// `_load_phrase_library`'s system branch for the libraries in
+    /// `originals`: each is mapped again and only its saved `.dbin` is
+    /// merged, so everything the session changed since the last save
+    /// (trained unigrams, imported readings and items, removals) goes with
+    /// the sub-index `unload` freed (074a2219 `pinyin.cpp:264-277`,
+    /// `phrase_index.cpp:261-268`; `zhuyin.cpp:298-312`). The independent
+    /// phrase-table membership stays in place, separate from the
+    /// sub-index.
+    ///
+    /// # Errors
+    /// Returns [`UserStoreError`] when the session values cannot be written.
+    pub fn load_system_libraries(
+        &mut self,
+        originals: crate::persistence::SystemOriginals,
+    ) -> Result<(), UserStoreError> {
+        let Some(dir) = self
+            .inner
+            .libpinyin
+            .as_ref()
+            .and_then(|target| target.dir.clone())
+        else {
+            return Ok(());
+        };
+        let (state, library_totals) = crate::persistence::load_library_logs(&dir, &originals);
+        self.replace_system_libraries(originals, &state, &library_totals)
+    }
+
+    /// `FacadePhraseIndex::unload` for the libraries in `originals`: the
+    /// sub-index goes with everything the session changed in it and with
+    /// its share of the facade total, whatever was saved (074a2219
+    /// `phrase_index.cpp:261-268`). The user index tables keep their
+    /// entries.
+    ///
+    /// # Errors
+    /// Returns [`UserStoreError`] when the session values cannot be written.
+    pub fn unload_system_libraries(
+        &mut self,
+        originals: crate::persistence::SystemOriginals,
+    ) -> Result<(), UserStoreError> {
+        self.replace_system_libraries(
+            originals,
+            &crate::persistence::UserState::default(),
+            &std::collections::BTreeMap::new(),
+        )
+    }
+
+    fn replace_system_libraries(
+        &mut self,
+        originals: crate::persistence::SystemOriginals,
+        state: &crate::persistence::UserState,
+        library_totals: &std::collections::BTreeMap<u8, u32>,
+    ) -> Result<(), UserStoreError> {
         let Some(target) = self.inner.libpinyin.clone() else {
             return Ok(());
         };
         let reloaded = |token| originals.contains_key(&phrase_index_library_index(token));
-        let (state, library_totals) =
-            crate::persistence::load_masked_logs(&originals, mask, value, logs);
         let mut target_originals = target
             .originals
             .write()
@@ -3026,7 +3084,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 txn.remove(PRONUNCIATION, &key)?;
             }
             let reseeded =
-                crate::store_libpinyin::seed_txn(txn, &state, &originals, &library_totals)?;
+                crate::store_libpinyin::seed_txn(txn, state, &originals, library_totals)?;
             moved = reseeded
                 .values()
                 .fold(moved, |moved, &offset| moved.wrapping_add(offset));

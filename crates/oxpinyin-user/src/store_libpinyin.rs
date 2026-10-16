@@ -1615,6 +1615,63 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
+    #[test]
+    fn reloading_a_system_library_drops_the_unsaved_session() {
+        let dir = tempdir("reload-drops-session");
+        let mut base = originals();
+        let ni = ChewingKey::from_pinyin("ni").expect("ni");
+        base.get_mut(&1)
+            .expect("library")
+            .items
+            .get_mut(&1)
+            .expect("item")
+            .prons = vec![(vec![ni.with_tone(3).to_packed()], 100)];
+        let dense = |tone| packed_to_pinyin_keys(&[ni.with_tone(tone).to_packed()]).expect("dense");
+        let counts = |store: &UserStore| {
+            store
+                .with_effective_system_item(0x0100_0001, |item| {
+                    item.prons
+                        .iter()
+                        .map(|(_, count)| *count)
+                        .collect::<Vec<_>>()
+                })
+                .expect("live")
+        };
+        let mut store =
+            UserStore::open_libpinyin(&dir, base.clone(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        store
+            .add_system_phrase_in(1, Some(0x0100_0001), "你", &dense(2), Some(20))
+            .expect("saved reading");
+        store.mark_modified();
+        assert!(store.save().expect("save"));
+        store
+            .add_system_phrase_in(1, Some(0x0100_0001), "你", &dense(4), Some(30))
+            .expect("unsaved reading");
+        let saved = counts(&store);
+        assert_eq!(saved.len(), 3, "the unsaved reading is live");
+        // A reload merges only the saved log: the unsaved reading is gone.
+        store
+            .load_system_libraries(base.clone())
+            .expect("reload from the saved log");
+        assert_eq!(counts(&store).len(), 2);
+        // An unload takes the whole library, the saved log included; the
+        // next load puts the saved state back.
+        store.unload_system_libraries(base.clone()).expect("unload");
+        assert!(
+            store
+                .system_item_override(0x0100_0001)
+                .expect("item")
+                .is_none()
+        );
+        store
+            .load_system_libraries(base)
+            .expect("reload after unload");
+        assert_eq!(counts(&store).len(), 2);
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
     /// 256 or more distinct toned one-syllable readings, as packed words.
     fn distinct_readings() -> Vec<u16> {
         let mut readings: Vec<u16> = Vec::new();

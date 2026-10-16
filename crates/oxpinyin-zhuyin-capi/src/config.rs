@@ -229,10 +229,20 @@ pub extern "C" fn zhuyin_load_phrase_library(context: *mut ZhuyinContext, index:
         Ok(loaded) => loaded,
         // Class (c), `memory_chunk.h:493`: the library being loaded again is
         // a directory the pin maps and asserts on.
-        Err(oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead) => {
+        Err(oxpinyin_facade::LibraryLoadFault::Row(
+            oxpinyin_facade::LibraryRowAssert::ChunkHeaderRead,
+        )) => {
             crate::ffi::log_warning(
                 "zhuyin_load_phrase_library: assertion 'ret_len == sizeof(length)' failed \
                  (memory_chunk.h:493)",
+            );
+            false
+        }
+        // Class (c), policy row 103 (see `pinyin_load_phrase_library`).
+        Err(oxpinyin_facade::LibraryLoadFault::StoreWrite(_)) => {
+            crate::ffi::log_warning(
+                "zhuyin_load_phrase_library: the user store could not be written; \
+                 the library stays unloaded",
             );
             false
         }
@@ -273,5 +283,12 @@ pub extern "C" fn zhuyin_unload_phrase_library(context: *mut ZhuyinContext, inde
     if index == TSI_DICTIONARY {
         return false;
     }
-    ctx.unload_phrase_library(index)
+    // Class (c), policy row 103 (see `pinyin_unload_phrase_library`).
+    ctx.unload_phrase_library(index).unwrap_or_else(|_| {
+        crate::ffi::log_warning(
+            "zhuyin_unload_phrase_library: the user store could not be written; \
+             the library stays loaded",
+        );
+        false
+    })
 }

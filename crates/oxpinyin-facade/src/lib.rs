@@ -41,8 +41,8 @@ mod parse;
 mod predict;
 
 pub use context::{
-    ContextCore, FALLBACK_CLEARED_BIT, LibraryRowAssert, LiveOptions, MaskOutOutcome, OpenFailure,
-    SaveOutcome, UNKNOWN_DATABASE_FORMAT_WARNING,
+    ContextCore, FALLBACK_CLEARED_BIT, LibraryLoadFault, LibraryRowAssert, LiveOptions,
+    MaskOutOutcome, OpenFailure, SaveOutcome, StoreWriteFailed, UNKNOWN_DATABASE_FORMAT_WARNING,
 };
 pub use cursor::{KeyAt, SpanSource};
 pub use export_rows::{

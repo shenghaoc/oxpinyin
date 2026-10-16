@@ -219,6 +219,33 @@ pub enum LibraryRowAssert {
     ChunkHeaderRead,
 }
 
+/// Why [`ContextCore::load_phrase_library`] did not load.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LibraryLoadFault {
+    /// The pin `assert`s on the library's row.
+    Row(LibraryRowAssert),
+    /// The user store could not take the library's replacement; the runtime
+    /// was left as it was.
+    StoreWrite(StoreWriteFailed),
+}
+
+/// The user store refused the write a library load or unload makes. The pin
+/// cannot fail here: `unload` is in memory and an unreadable `.dbin` is an
+/// empty log (`pinyin.cpp:264-277` at 074a2219), so this is oxpinyin's own
+/// availability case (policy row 103).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StoreWriteFailed;
+
+/// Runs a library transition store-first: `write` replaces the library in
+/// the user store, and `commit` changes the runtime only when it succeeded.
+fn store_first(
+    write: impl FnOnce() -> Result<(), UserStoreError>,
+    commit: impl FnOnce() -> bool,
+) -> Result<bool, StoreWriteFailed> {
+    write().map_err(|_| StoreWriteFailed)?;
+    Ok(commit())
+}
+
 /// Bit 30 of [`LiveOptions::double_scheme`]: when set, the live
 /// scheme's fallback table is suppressed — upstream's half-mutation
 /// (`pinyin_parser2.cpp:580` + `:614`; `upstream-divergences.md`
@@ -617,8 +644,11 @@ impl ContextCore {
     /// index is in range and its default row is neither `SYSTEM_FILE` nor
     /// `USER_FILE` (`pinyin.cpp:457`, `zhuyin.cpp:372`); or
     /// [`LibraryRowAssert::ChunkHeaderRead`] when the library being loaded
-    /// again is a directory (`memory_chunk.h:493`).
-    pub fn load_phrase_library(&self, index: u32) -> Result<bool, LibraryRowAssert> {
+    /// again is a directory (`memory_chunk.h:493`), both under
+    /// [`LibraryLoadFault::Row`]; or [`LibraryLoadFault::StoreWrite`] when
+    /// the user store cannot take the replacement, with the library still
+    /// unloaded.
+    pub fn load_phrase_library(&self, index: u32) -> Result<bool, LibraryLoadFault> {
         let Some(runtime) = self.runtime.as_ref() else {
             return Ok(false);
         };
@@ -630,7 +660,7 @@ impl ContextCore {
             return Ok(false);
         };
         if !matches!(row.file_type, FileType::SystemFile | FileType::UserFile) {
-            return Err(LibraryRowAssert::NotLoadable);
+            return Err(LibraryLoadFault::Row(LibraryRowAssert::NotLoadable));
         }
         // A reload maps the file again (`pinyin.cpp:256`); a library that is
         // a directory the pin asserts on kills it there
@@ -640,10 +670,26 @@ impl ContextCore {
             return Ok(false);
         }
         if self.check_system_libraries(Some(row_index)) {
-            return Err(LibraryRowAssert::ChunkHeaderRead);
+            return Err(LibraryLoadFault::Row(LibraryRowAssert::ChunkHeaderRead));
         }
-        let loaded = runtime.load_library(index);
-        Ok(loaded)
+        // The sub-index `unload` freed comes back as the system chunk plus
+        // the saved log, so the session's unsaved changes to the library
+        // are gone (`pinyin.cpp:264-277`, `phrase_index.cpp:261-268`;
+        // `zhuyin.cpp:298-312`). The user index tables keep their entries.
+        // The store takes the replacement first and the mask clears only
+        // after it did, so no reader sees the freed state again and a store
+        // that refuses leaves the library unloaded. The system chunk mapped
+        // below sits behind the mask and is mapped again by the next load.
+        let originals = runtime.reload_system_library(row_index);
+        let mut store = self.user.clone();
+        store_first(
+            || match store.as_mut() {
+                Some(store) if !originals.is_empty() => store.load_system_libraries(originals),
+                _ => Ok(()),
+            },
+            || runtime.load_library(index),
+        )
+        .map_err(LibraryLoadFault::StoreWrite)
     }
 
     /// `load_addon_phrase_library`'s body: the runtime's addon load, with
@@ -676,11 +722,28 @@ impl ContextCore {
     }
 
     /// `unload_phrase_library`'s read side; `false` without a runtime.
-    #[must_use]
-    pub fn unload_phrase_library(&self, index: u8) -> bool {
-        self.runtime
-            .as_ref()
-            .is_some_and(|runtime| runtime.unload_library(u32::from(index)))
+    ///
+    /// # Errors
+    ///
+    /// [`StoreWriteFailed`] when the user store cannot take the library's
+    /// removal; the library stays loaded.
+    pub fn unload_phrase_library(&self, index: u8) -> Result<bool, StoreWriteFailed> {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return Ok(false);
+        };
+        // `unload` deletes the sub-index and takes its total out of the
+        // facade (`phrase_index.cpp:261-268`): the session's changes to the
+        // library and its saved log's share go now, not at the next load.
+        // The store is written first; the mask flips only after it took.
+        let originals = runtime.current_system_library(index);
+        let mut store = self.user.clone();
+        store_first(
+            || match store.as_mut() {
+                Some(store) if !originals.is_empty() => store.unload_system_libraries(originals),
+                _ => Ok(()),
+            },
+            || runtime.unload_library(u32::from(index)),
+        )
     }
 
     /// Clone of the context's user store, if this context has one.
@@ -716,5 +779,49 @@ mod open_failure_tests {
             "the message names the path: {failure}"
         );
         assert!(std::error::Error::source(&failure).is_some());
+    }
+}
+
+#[cfg(test)]
+mod store_first_tests {
+    use super::{StoreWriteFailed, store_first};
+    use oxpinyin_user::UserStoreError;
+    use std::cell::Cell;
+
+    /// `ContextCore` holds the concrete `UserStore`, so a store whose write
+    /// fails cannot be injected into it; the ordering law lives in
+    /// `store_first`, which both transitions use, and is held here with a
+    /// write that fails.
+    #[test]
+    fn a_failed_store_write_leaves_the_runtime_alone() {
+        let committed = Cell::new(false);
+        let result = store_first(
+            || Err(UserStoreError::Decode),
+            || {
+                committed.set(true);
+                true
+            },
+        );
+        assert_eq!(result, Err(StoreWriteFailed));
+        assert!(
+            !committed.get(),
+            "the runtime changed before the store took"
+        );
+    }
+
+    #[test]
+    fn a_written_store_commits_and_answers_the_runtimes_result() {
+        let wrote = Cell::new(false);
+        let result = store_first(
+            || {
+                wrote.set(true);
+                Ok(())
+            },
+            || {
+                assert!(wrote.get(), "the runtime changed before the store took");
+                false
+            },
+        );
+        assert_eq!(result, Ok(false));
     }
 }
