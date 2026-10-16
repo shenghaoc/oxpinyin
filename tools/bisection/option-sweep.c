@@ -7,6 +7,18 @@
  * count and the first ten candidate strings. Run against both libraries and
  * diff the logs.
  *
+ * Every parse also logs the parsed keys and key rests, walked by byte
+ * offset through pinyin_get_pinyin_key / pinyin_get_pinyin_key_rest (the
+ * pin has no pinyin_get_n_pinyin: pinyin.cpp:2889-2900 at 074a2219 is
+ * compiled out).
+ *
+ * With a fifth argument `pairs` the driver runs the parse-only pair sweep
+ * instead: every ordered pair of the pinned `pinyin_index` spellings
+ * (option-sweep-tables.h) whose concatenation could parse through an alias
+ * row the option word admits, i.e. at least one member is such a row. A
+ * string with no admitted alias parse parses as under the word without
+ * those bits, which the baseline case covers.
+ *
  * The runner (run-option-sweep.sh) invokes this once per (case, library).
  */
 
@@ -19,6 +31,8 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#include "option-sweep-tables.h"
 
 typedef void pinyin_context_t;
 typedef void pinyin_instance_t;
@@ -51,6 +65,29 @@ typedef bool (*fn_getc)(pinyin_instance_t *, guint, lookup_candidate_t **);
 typedef bool (*fn_getstr)(pinyin_instance_t *, lookup_candidate_t *, const gchar **);
 typedef bool (*fn_reset)(pinyin_instance_t *);
 
+/* Upstream chewing_key.h:41-48 / :100-104 mirrors (key-surface-diff.c). */
+typedef struct ChewingKey {
+    uint16_t m_initial :5;
+    uint16_t m_middle :2;
+    uint16_t m_final :5;
+    uint16_t m_tone :3;
+    uint16_t m_zero_padding :1;
+} ChewingKey;
+
+typedef struct ChewingKeyRest {
+    uint16_t m_raw_begin;
+    uint16_t m_raw_end;
+} ChewingKeyRest;
+
+_Static_assert(sizeof(ChewingKey) == 2, "packed chewing key must be 2 bytes");
+_Static_assert(sizeof(ChewingKeyRest) == 4, "key rest must be 4 bytes");
+
+typedef bool (*fn_key)(pinyin_instance_t *, size_t, ChewingKey **);
+typedef bool (*fn_key_rest)(pinyin_instance_t *, size_t, ChewingKeyRest **);
+typedef bool (*fn_key_rest_pos)(pinyin_instance_t *, ChewingKeyRest *,
+                                uint16_t *, uint16_t *);
+typedef bool (*fn_pinyin_string)(pinyin_instance_t *, ChewingKey *, gchar **);
+
 struct syms {
     fn_init init;
     fn_init fixture_init;
@@ -66,6 +103,10 @@ struct syms {
     fn_getc getc;
     fn_getstr getstr;
     fn_reset reset;
+    fn_key key;
+    fn_key_rest key_rest;
+    fn_key_rest_pos key_rest_pos;
+    fn_pinyin_string pinyin_string;
 };
 
 typedef void (*fn_g_free)(void *);
@@ -105,6 +146,10 @@ static void resolve_all(void *handle, struct syms *s) {
     s->getc = (fn_getc)load(handle, "pinyin_get_candidate");
     s->getstr = (fn_getstr)load(handle, "pinyin_get_candidate_string");
     s->reset = (fn_reset)load(handle, "pinyin_reset");
+    s->key = (fn_key)load(handle, "pinyin_get_pinyin_key");
+    s->key_rest = (fn_key_rest)load(handle, "pinyin_get_pinyin_key_rest");
+    s->key_rest_pos = (fn_key_rest_pos)load(handle, "pinyin_get_pinyin_key_rest_positions");
+    s->pinyin_string = (fn_pinyin_string)load(handle, "pinyin_get_pinyin_string");
 }
 
 static int file_exists(const char *dir, const char *name) {
@@ -115,11 +160,45 @@ static int file_exists(const char *dir, const char *name) {
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
+/* The parsed keys from byte 0: `pinyin:hex@begin-end` per key, the next
+ * key read at the previous rest's end. Both getters skip a leading
+ * apostrophe key (pinyin.cpp:2903-2919 at 074a2219). */
+static void print_keys(const struct syms *s, pinyin_instance_t *inst,
+                       size_t parsed_len) {
+    printf("keys=");
+    size_t offset = 0;
+    const char *sep = "";
+    while (offset < parsed_len) {
+        ChewingKey *key = NULL;
+        ChewingKeyRest *rest = NULL;
+        if (!s->key(inst, offset, &key) || !key)
+            break;
+        ChewingKey copy = *key;
+        if (!s->key_rest(inst, offset, &rest) || !rest)
+            break;
+        uint16_t begin = 0, end = 0;
+        s->key_rest_pos(inst, rest, &begin, &end);
+        gchar *text = NULL;
+        bool named = s->pinyin_string(inst, &copy, &text) && text;
+        uint16_t bits = 0;
+        memcpy(&bits, &copy, sizeof(bits));
+        printf("%s%s:%04x@%u-%u", sep, named ? text : "?", bits, begin, end);
+        if (text)
+            g_free_fn(text);
+        sep = " ";
+        if (end <= offset)
+            break;
+        offset = end;
+    }
+    printf("\n");
+}
+
 static void drive(const struct syms *s, pinyin_instance_t *inst,
                   const char *input) {
     size_t consumed = s->parse(inst, input);
     size_t parsed_len = s->parsed_len(inst);
     printf("input=%s consumed=%zu parsed=%zu\n", input, consumed, parsed_len);
+    print_keys(s, inst, parsed_len);
 
     gchar *aux = NULL;
     if (s->aux(inst, parsed_len, &aux)) {
@@ -153,6 +232,39 @@ static void drive(const struct syms *s, pinyin_instance_t *inst,
     s->reset(inst);
 }
 
+/* PINYIN_AMB_S_SH | PINYIN_AMB_Z_ZH | PINYIN_CORRECT_ALL
+ * (pinyin_custom2.h:51-52, :79 at 074a2219). */
+#define ALIAS_GATES ((pinyin_option_t)((1u << 11) | (1u << 12) | (0xFFu << 21)))
+
+static bool admitted_alias(unsigned int gate, unsigned long options) {
+    return gate != 0 && (gate & options) == gate;
+}
+
+/* Parse-only sweep: one `input=` and one `keys=` line per pair. */
+static void sweep_pairs(const struct syms *s, pinyin_instance_t *inst,
+                        unsigned long options) {
+    static const size_t n = sizeof(PINYIN_INDEX_SPELLINGS) /
+                            sizeof(PINYIN_INDEX_SPELLINGS[0]);
+    char input[32];
+    size_t count = 0;
+    for (size_t i = 0; i < n; i++) {
+        bool first = admitted_alias(PINYIN_INDEX_SPELLINGS[i].gate, options);
+        for (size_t j = 0; j < n; j++) {
+            if (!first && !admitted_alias(PINYIN_INDEX_SPELLINGS[j].gate, options))
+                continue;
+            snprintf(input, sizeof(input), "%s%s", PINYIN_INDEX_SPELLINGS[i].spelling,
+                     PINYIN_INDEX_SPELLINGS[j].spelling);
+            size_t consumed = s->parse(inst, input);
+            size_t parsed_len = s->parsed_len(inst);
+            printf("input=%s consumed=%zu parsed=%zu\n", input, consumed, parsed_len);
+            print_keys(s, inst, parsed_len);
+            s->reset(inst);
+            count++;
+        }
+    }
+    printf("pairs=%zu\n", count);
+}
+
 int main(int argc, char **argv) {
     const char *sort_env = getenv("OPTION_SWEEP_SORT");
     if (sort_env && *sort_env) {
@@ -171,12 +283,13 @@ int main(int argc, char **argv) {
         g_sort_word = (guint)parsed;
     }
     printf("sort=0x%02x\n", g_sort_word);
-    if (argc != 5) {
+    if (argc != 5 && !(argc == 6 && strcmp(argv[5], "pairs") == 0)) {
         fprintf(stderr,
-                "Usage: %s <so> <systemdir> <case> <options-hex>\n",
+                "Usage: %s <so> <systemdir> <case> <options-hex> [pairs]\n",
                 argv[0]);
         return 1;
     }
+    bool pairs = argc == 6;
     const char *so_path = argv[1];
     const char *system_dir = argv[2];
     const char *case_name = argv[3];
@@ -190,7 +303,10 @@ int main(int argc, char **argv) {
         "agn", "amg", "diou", "duei", "duen", "lue", "jv", "zon",
         "cang", "sua", "zua", "sang", "zang", "fang", "gang", "lan",
         "ban", "ben", "bin", "nihao", "lve", "dui", "dun", "zong",
-        "xian", "fanan", "fangan", "tian", "ang", "can"
+        "xian", "fanan", "fangan", "tian", "ang", "can",
+        /* #830: equal length and key count, the pin keeps the lower total
+         * correction distance (pinyin_parser2.cpp:305-309 at 074a2219). */
+        "chonga", "chongan", "zhonge"
     };
     static const size_t n_inputs = sizeof(inputs) / sizeof(inputs[0]);
 
@@ -229,8 +345,16 @@ int main(int argc, char **argv) {
     }
 
     printf("case=%s options=0x%08lx\n", case_name, options);
-    for (size_t i = 0; i < n_inputs; i++)
-        drive(&s, inst, inputs[i]);
+    if (pairs) {
+        if (!(options & ALIAS_GATES)) {
+            fprintf(stderr, "pairs: option word 0x%lx admits no alias row\n", options);
+            return 1;
+        }
+        sweep_pairs(&s, inst, options);
+    } else {
+        for (size_t i = 0; i < n_inputs; i++)
+            drive(&s, inst, inputs[i]);
+    }
 
     s.free_instance(inst);
     s.fini(ctx);

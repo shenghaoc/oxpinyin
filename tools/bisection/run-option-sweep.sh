@@ -7,6 +7,12 @@
 # existing ABI. Tie-order-only (same 10-set, phrase_length tied) is documented
 # against the RankKey contract. Any other TEXT/ORDER divergence is a STOP.
 #
+# The parse comparison includes every parsed key and key rest. After the
+# option cases, a parse-only two-syllable pair sweep (option-sweep.c `pairs`)
+# runs under each alias bit alone and under all correction bits: every
+# pinned pinyin_index spelling pair with an admitted alias member, keys and
+# rests diffed line for line (#830, the correction-distance tie-break).
+#
 # Environment:
 #   PINYIN_ORACLE_PREFIX   pin-built oracle prefix (default
 #                          $HOME/.local/opt/pinyin-oracle)
@@ -285,8 +291,8 @@ run_case() {
     fi
 
     parse_diff="$(diff -u \
-        <(grep -E '^(case=|input=|aux=)' "$oracle_log") \
-        <(grep -E '^(case=|input=|aux=)' "$capi_log") || true)"
+        <(grep -E '^(case=|input=|aux=|keys=)' "$oracle_log") \
+        <(grep -E '^(case=|input=|aux=|keys=)' "$capi_log") || true)"
     if [ -z "$parse_diff" ]; then
         parse_verdict="PASS"
     else
@@ -309,6 +315,39 @@ run_case() {
         return 0
     fi
     rm -f "$capi_log" "$oracle_log"
+}
+
+# Parse-only pair sweep: the logs are the comparison, keys and rests
+# included. A divergence prints the first differing pairs and exits 2.
+run_pairs() {
+    local name=$1 options=$2
+    local capi_log oracle_log
+    capi_log="$(mktemp)"
+    oracle_log="$(mktemp)"
+    if ! ./option-sweep "$CAPI_SO" "$CAPI_DATA" "$name" "$(printf '%x' "$options")" pairs \
+        > "$capi_log" 2> /dev/null; then
+        echo "FAIL: option-sweep pairs crashed against oxpinyin-capi ($name)"
+        rm -f "$capi_log" "$oracle_log"
+        exit 1
+    fi
+    if ! ./option-sweep "$ORACLE_SO" "$ORACLE_DATA" "$name" "$(printf '%x' "$options")" pairs \
+        > "$oracle_log" 2> /dev/null; then
+        echo "FAIL: option-sweep pairs crashed against the oracle ($name)"
+        rm -f "$capi_log" "$oracle_log"
+        exit 1
+    fi
+    local count differing
+    count="$(sed -n 's/^pairs=//p' "$oracle_log")"
+    differing="$(diff <(paste - - < "$oracle_log") <(paste - - < "$capi_log") | grep -c '^<' || true)"
+    if [ "$differing" -eq 0 ] && cmp -s "$oracle_log" "$capi_log"; then
+        echo "PASS  $name  0x$(printf '%08x' "$options")  [pairs: $count]"
+        rm -f "$capi_log" "$oracle_log"
+        return 0
+    fi
+    echo "FAIL  $name  0x$(printf '%08x' "$options")  [pairs: $differing of $count differ]"
+    diff -u "$oracle_log" "$capi_log" | head -40
+    rm -f "$capi_log" "$oracle_log"
+    exit 2
 }
 
 SWEEP_STOP=0
@@ -335,6 +374,13 @@ run_case "amb-chain" $((BASE | (1 << 10) | (1 << 17)))
 run_case "all-off" 0
 run_case "divided-contrast-off" $((0x8))
 run_case "divided-contrast-on" $((0x8 | 0x80))
+
+# The alias rows carry distance 1 (pinyin_parser_table.h:9-673 at 074a2219):
+# the two parser-table ambiguity bits, each correction bit, then all of them.
+for bit in 11 12 21 22 23 24 25 26 27 28; do
+    run_pairs "pairs-$bit" $((BASE | (1 << bit)))
+done
+run_pairs "pairs-correct-all" $((BASE | (0xFF << 21)))
 
 echo ""
 if [ "$SWEEP_STOP" -ne 0 ]; then
