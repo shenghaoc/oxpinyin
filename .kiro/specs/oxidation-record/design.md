@@ -65,10 +65,11 @@ Requirement 4 on the reference cell.
 ## Fitted coefficients
 
 `ScoringConfig::default` (`oxpinyin-core/src/scoring.rs`) holds
-sweep-chosen weights. The first step is to trace which outputs they
-reach; the record's §11 says "not established" until then. A weight
-that reaches no parity-path output is recorded as such; one that does is
-replaced by the pin's rule.
+sweep-chosen weights. The session reads them only on the branch taken
+when the model has no real unigram data. No C-ABI configuration takes
+it — the ABI's language model always reports real unigrams — so the
+weights reach no parity-path output (record §11). They are removed or
+replaced by a pin-derived rule after the first release.
 
 ## Idiom review
 

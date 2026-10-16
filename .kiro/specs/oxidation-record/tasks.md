@@ -29,9 +29,16 @@ work: record, design and analyse, implement, gate.
   revert-and-check. Update the record's §2 and §11.
   _Requirements: 3.3, 4_
 
-- [ ] 4. `[A]` Trace which outputs the `ScoringConfig` weights reach.
-  Record the result in §11; for each weight that reaches the parity
-  path, replace it with the pin's rule.
+- [x] 4. `[A]` Establish whether any configuration reachable through
+  the C ABI takes the `has_real_unigrams`-false branch that reads the
+  `ScoringConfig` weights. None does: `RuntimeLm` forwards to
+  `BigramLanguageModel`, which always reports real unigrams (§11,
+  2026-10-16 UTC).
+  _Requirements: 2.3_
+
+- [ ] 4a. `[A]` After the first release: remove the k-best fallback and
+  its fitted `ScoringConfig` weights, or replace them with a rule
+  derived from the pin, so no fitted coefficient remains in the tree.
   _Requirements: 2.3_
 
 - [ ] 5. `[A]` Write the equivalence arguments listed in §11 —

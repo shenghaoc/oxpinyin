@@ -55,6 +55,42 @@ Three things about that shape matter for a re-expression:
   construction, dedup, prediction, training orchestration and save — the
   logic that decides output lives beside the ABI glue.
 
+### The two objects
+
+Everything the API does hangs off two objects (`pinyin.cpp:39-95`):
+
+- **`pinyin_context_t`** (`:39-71`) — one per process or engine, the
+  long-lived state: the option word; the three parsers (full pinyin,
+  double pinyin, zhuyin); the dictionaries (pinyin table, phrase table,
+  phrase index, and the addon set of each); the system and user bigrams;
+  the punctuation table; the system and user table info; the system and
+  user directories; the `m_modified` flag that gates save; and the two
+  decoders, `PhoneticLookup<2, 3>` and `PhraseLookup`.
+- **`pinyin_instance_t`** (`:73-95`) — one per input session, the state
+  of one composition: a back pointer to its context; the prefix text
+  and its tokens; the parsed `PhoneticKeyMatrix` and parsed lengths; the
+  constraints; the n-best results; the phrase result; the candidate
+  list; and the sort option. Selection is not a separate structure:
+  choosing a candidate writes a constraint (`:2582`), and the next guess
+  reads it back.
+
+The split is not quite clean. The decoders sit in the context but keep
+per-call working state there — the trellis, cached keys and phrase item,
+and pointers to the calling instance's matrix and constraints
+(`lookup/phonetic_lookup.h:522-532`) — so every instance on one context
+shares one decoder and its scratch, and two instances on one context
+cannot decode from two threads at once.
+
+oxpinyin keeps the same two objects at the ABI and moves the decoder
+state to the instance side:
+
+| Pin | oxpinyin |
+| --- | --- |
+| `pinyin_context_t`: options, parsers, dictionaries, bigrams, user state, save flag | `ContextCore` (`oxpinyin-facade/src/context.rs`): `Config`, the assembled `Runtime` (tables and model), the `UserStore` (whose shared dirty flag is `m_modified`), `LiveOptions`; no parser objects — parsing runs per call in `oxpinyin-core` |
+| `pinyin_context_t`: the two decoders and their scratch | per instance: the `Session`'s lookup state and `Scratch` (`oxpinyin-engine/src/session/mod.rs`) |
+| `pinyin_instance_t`: matrix, constraints, n-best, phrase result, candidates, sort option | `InstanceCore` (`oxpinyin-facade/src/instance.rs`) holding a `RuntimeSession`, whose `Session` owns the input and parsed matrix, the `SelectionRecord`, the `ConstraintStore`, the sentence (n-best) state, the `CandidateList` and the sort word; the phrase result sits on `InstanceCore` |
+| back pointer from instance to context | cloned handles to the context's dictionary, model and user store; the raw context pointer is kept only for `pinyin_get_context` |
+
 ### How oxpinyin divides it
 
 oxpinyin keeps the pin's layers but makes each a crate with explicit
@@ -168,7 +204,7 @@ in the pin's formats.
 
 | Item | Pin | oxpinyin | Mark |
 | --- | --- | --- | --- |
-| Context and instance | `_pinyin_context_t` (`pinyin.cpp:39`) owns raw pointers to the tables; `_pinyin_instance_t` (`:73`) borrows them through a back pointer | `CapiContext` / `CapiInstance` (`oxpinyin-capi/src/state.rs`) over `ContextCore` and `UserStore` (shared handles, atomic dirty flag) | different (internal; an instance can outlive `pinyin_fini` where the pin's cannot, which no defined use observes) |
+| Context and instance | `_pinyin_context_t` (`pinyin.cpp:39`) owns raw pointers to the tables; `_pinyin_instance_t` (`:73`) borrows them through a back pointer | `CapiContext` / `CapiInstance` (`oxpinyin-capi/src/state.rs`) over `ContextCore` and `UserStore` (shared handles, atomic dirty flag) | different (internal; the field-by-field split is in §0, "The two objects"; an instance can outlive `pinyin_fini` where the pin's cannot, which no defined use observes) |
 | Edits between saves | direct mutation of the in-memory chunks and DBs | transactions on the in-memory session store | different (internal) |
 | Save | `pinyin_save` (`pinyin.cpp:1132`), `_write_files` (`:922`), rename, `mark_version` | `save_with_bigram_reporting` (`oxpinyin-user/src/persistence.rs`) with the pin's file set and rename order | same |
 | Aborts | asserts and `abort()` on caller-reachable input | `Result`, then warning plus `false` at the C ABI | different — class (c) |
@@ -234,13 +270,23 @@ replay of the pin's DP over its own index with every correction bit set
 finds about 500 two-syllable strings that differ. Not a divergence class:
 it is selection logic, so it is a defect to fix.
 
-**Fitted coefficients still in the tree.** `ScoringConfig::default`
+**Fitted coefficients still in the tree — off the parity path.** `ScoringConfig::default`
 (`oxpinyin-core/src/scoring.rs`) carries `segmentation_penalty`,
 `incomplete_penalty` and `phrase_key_bonus` values chosen by sweeping
 against the oracle (`scoring-constant-sweep.md`, 2026-08-10), and the
-engine session still holds a `ScoringConfig`. These are not pin values.
-Which outputs they still reach has not been established; any reachable
-one is to be replaced by the pin's rule.
+engine `Session` still holds a `ScoringConfig`. These are not pin values.
+The session reads them in two places, both on the branch taken when the
+language model has no real unigram data (`has_real_unigrams` false): the
+candidate scan in `session/lookup.rs` and the sentence guess in
+`session/guess.rs`, each falling back to `k_best`. Through the C ABI
+that branch is never taken: the ABI's session is
+`Session<RuntimeDict, RuntimeLm>` (`oxpinyin-runtime/src/lib.rs`,
+`RuntimeSession`), `RuntimeLm` forwards `has_real_unigrams` to its
+`BigramLanguageModel`, and that returns `true` unconditionally
+(`oxpinyin-data/src/lm/mod.rs`). So the fitted weights reach no output
+of the 79 exports; they act only for sessions built on models without
+unigram data (test doubles and oracle tools). The fallback path and its
+weights are a candidate for removal after the first release.
 
 **Equivalence arguments not yet written.** The survey found these to
 match, but the argument is not in this record:

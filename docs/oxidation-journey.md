@@ -49,7 +49,7 @@ oracle and moved towards the pin as the gaps showed up.
 | 2026-09-20 | The redb and LMDB backends were removed: nothing they did could be checked against the pin | `findings/backend-selection-audit.md` |
 | 2026-09-27 | An audit found that two rules inside the "arithmetic" residual were selection logic | `findings/upstream-divergences.md` |
 | 2026-10-04 | The pin's trellis selection was ported whole; the sentence gate went to 495/495/495, then 500/500/500 | `findings/sentence-surface.md` (lane D) |
-| 2026-10-16 | A source-level survey of every subsystem found one more selection rule missing — the full-pinyin parser's distance tie-break — and fitted scoring weights still in the tree | `findings/libpinyin-structures-and-algorithms.md` §11 |
+| 2026-10-16 | A source-level survey of every subsystem found one more selection rule missing — the full-pinyin parser's distance tie-break — and fitted scoring weights still in the tree, off the parity path | `findings/libpinyin-structures-and-algorithms.md` §11 |
 
 ## What it taught
 
@@ -67,7 +67,8 @@ constants and classifying residuals brought top-1 to 63–64%. Reading
 how the pin builds its candidate list brought it to 99% four days
 later. Every time the project measured its way towards the pin
 instead of reading the pin, it went slower and left something behind:
-the fitted `ScoringConfig` weights are still in the tree.
+the fitted `ScoringConfig` weights are still in the tree, now only on a
+fallback path the C ABI never takes.
 
 **A residual labelled "arithmetic" can hide logic.** The sentence
 residual was frozen as floating-point accumulation for over three weeks
@@ -125,6 +126,6 @@ it is better.
 ## What is still open
 
 The open gaps are listed in the record's §11 and tracked as tasks in
-`.kiro/specs/oxidation-record/`: the distance tie-break, the fitted
-weights, and the equivalence arguments the survey found plausible but
-did not write down.
+`.kiro/specs/oxidation-record/`: the distance tie-break, removing the
+fitted weights after the first release, and the equivalence arguments
+the survey found plausible but did not write down.
