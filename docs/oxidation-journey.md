@@ -80,9 +80,15 @@ instead of reading the pin, it went slower and left something behind:
 the fitted `ScoringConfig` weights are still in the tree, now only on a
 fallback path the C ABI never takes.
 
-**A residual labelled "arithmetic" can hide logic.** The sentence
-residual was frozen as floating-point accumulation for over three weeks
-before an audit found two selection rules inside it. A record of the
+**A residual labelled "arithmetic" can hide logic — and the arithmetic
+need not be a residual.** The sentence residual was frozen as
+floating-point accumulation for over three weeks before an audit found
+two selection rules inside it. What remained is `gfloat` and libm's
+`log`: the pin's float types and conversion points can be written in
+Rust exactly, and the same libm gives the same `log` on the same host.
+The fixed-point scale that made it a divergence was our choice, made
+for cross-platform determinism before the pin's behaviour was
+reproduced. A record of the
 pin's selection logic, made before the port, would have shown both at
 once — and would have shown the parser's distance tie-break, which went
 unnoticed until a structure-by-structure survey.

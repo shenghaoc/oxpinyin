@@ -71,3 +71,13 @@ work: record, design and analyse, implement, gate.
   supported Rust surface, so it starts with a STOP for the maintainer's
   ask.
   _Requirements: 7_
+
+- [ ] 10. `[A]` Score sentences as the pin does (record §11, "Sentence
+  scoring is reproducible"): `f32` and `f64` at the pin's conversion
+  points, its order of operations, and the platform libm's `log`.
+  Read the pin's binary for any fused multiply-add and confirm
+  oxpinyin's build calls `log`. Gate on the sentence-surface
+  differential on the reference cell. The class (a) register entry and
+  the compatibility policy change with it: `[H]` rules on both before
+  the task lands.
+  _Requirements: 4.3_

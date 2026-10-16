@@ -93,6 +93,10 @@ the segmentation the pin chooses under every option word.
    spellings at distance 1.
 2. WITH `PINYIN_CORRECT_ON_ONG` set, `chonga`, `chongan` and `zhonge`
    SHALL parse as `chong'a`, `chong'an` and `zhong'e`.
+3. THE sentence decoder SHALL score as the pin does: the pin's float
+   types, conversion points and order of operations, with `log` from
+   the platform libm, so that on the pin's host it matches the pin bit
+   for bit.
 
 ### Requirement 5: Idiomatic Rust, the pin's shape only where needed
 

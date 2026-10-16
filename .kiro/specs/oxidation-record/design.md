@@ -62,6 +62,16 @@ and how it is stored is the implementing lane's design, recorded in the
 row when it lands. The differential gains cases for the inputs in
 Requirement 4 on the reference cell.
 
+## Sentence scoring
+
+The pin's sentence scores are `gfloat` sums of `log` over expressions
+mixing `gfloat` and `gdouble` (record §11). The faithful path keeps
+those types and conversion points as `f32` and `f64` in the same order
+and takes `log` from the platform libm. Whether it replaces the
+fixed-point scale (`oxpinyin-core/src/cost.rs`) on the parity path or
+sits beside it is the implementing lane's design; either way the
+default build scores as the pin does.
+
 ## Fitted coefficients
 
 `ScoringConfig::default` (`oxpinyin-core/src/scoring.rs`) holds

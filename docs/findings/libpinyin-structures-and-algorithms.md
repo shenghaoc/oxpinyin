@@ -195,7 +195,7 @@ in the pin's formats.
 | Beam | `get_top_results` (`:143`), `nbeam = 32` (`:37`), libstdc++ `make_heap` / `pop_heap` | hand ports of the heap routines in `nbest.rs`, needed because the comparator is cyclic | same |
 | Expansion | `get_nbest_match` (`:736`): bigram over every beam value (`search_bigram2`, `:578`), unigram over the beam head only (`search_unigram2`, `:540`) | `nbest_sentences_with_seeds_generation`, `widen_free_span`, `expand_entries` | same |
 | Tails and extraction | heap top-n, `g_ptr_array_sort` with `trellis_value_compare` (`:174`), which truncates the cost difference to `gint`; `extract_result` backtracks (`:370`) | `Trellis::tails` with `glib_merge_sort` and `tail_compare` (same truncation, NaN included), `Trellis::extract` | same |
-| Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | integer fixed-point −log₂ × 1000 (`oxpinyin-core/src/cost.rs`); inputs from `nbest_step_costs_using`, `interpolate_ratio`, `raw_blend_cost` (`oxpinyin-data/src/lm/mod.rs`) | different — class (a), registered in `upstream-divergences.md` |
+| Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | integer fixed-point −log₂ × 1000 (`oxpinyin-core/src/cost.rs`); inputs from `nbest_step_costs_using`, `interpolate_ratio`, `raw_blend_cost` (`oxpinyin-data/src/lm/mod.rs`) | different — registered as class (a) in `upstream-divergences.md`, but reproducible: see §11 |
 | Constraints | `ForwardPhoneticConstraints` (`lookup/phonetic_lookup.cpp:61` onward); skip NOSEARCH, a single search for ONESTEP | `ConstraintStore` (`oxpinyin-engine/src/constraint.rs`) | same; `validate` drops a stale constraint by "span search still finds the token" rather than the pin's `FLT_EPSILON` test (§11) |
 | Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`oxpinyin-engine/src/phrase.rs`) | same, with fixed-point scores |
 | Per-keystroke work | trellis rebuilt and bigram rows reloaded and merged for each predecessor and span | trellis rebuilt; merged rows cached per predecessor and step (`NbestStepRow`), parse graph cached | same behaviour; fewer row loads |
@@ -293,6 +293,43 @@ correction spelling can win where the pin picks the plain one. With
 replay of the pin's DP over its own index with every correction bit set
 finds about 500 two-syllable strings that differ. Not a divergence class:
 it is selection logic, so it is a defect to fix.
+
+**Sentence scoring is reproducible — gfloat and libm.** The class (a)
+entry treats the pin's `gfloat` log accumulation as platform arithmetic
+oxpinyin cannot follow. It is two things, both reproducible in Rust:
+
+- *The float types and conversion points.* `gfloat` and `gdouble` are
+  IEEE binary32 and binary64, as Rust's `f32` and `f64` are, and on
+  x86-64 and aarch64 C evaluates each operation in its own type. The
+  pin's steps are fixed by its source:
+  - `unigram_lambda` is `(gfloat)(1. - lambda)`, computed in double
+    and rounded to float (`lookup/phonetic_lookup.h:713`);
+  - unigram step (`:650-663`): `elem_poss` is a double quotient;
+    `elem_poss * pinyin_poss * unigram_lambda` runs in double; `log`
+    is taken in double; the float `m_poss` is widened, added in
+    double, and the sum rounded back to float;
+  - bigram step (`:679-693`): `bigram_lambda * bigram_poss` is a float
+    product; `unigram_lambda * unigram_poss` a double product; their
+    sum and the product with `pinyin_poss` run in double; then `log`
+    and the same widen, add and round;
+  - `pinyin_poss` is a float sum over the matrix walk, in its order
+    (`storage/phonetic_key_matrix.cpp:534` onward);
+  - comparisons widen to double where the C does, for example
+    `LONG_SENTENCE_PENALTY`, `log(1.2f)` in double
+    (`lookup/phonetic_lookup.h:39`).
+- *libm's `log`.* The one transcendental. Calling the same platform
+  libm the pin calls gives the same result on that host; on Linux
+  targets Rust's `f64::ln` lowers to a call to the system `log`.
+
+What the source does not settle is read from the pin's binary: whether
+the compiler fused any multiply-add (GCC may contract on aarch64, where
+Rust never does; x86-64's baseline has no FMA) and that oxpinyin's
+build calls `log` rather than folding or inlining it. With those
+confirmed, the sentence decoder can follow the pin bit for bit on the
+same host, and the class (a) entry reduces to "a host whose libm
+differs from the pin's" — a property of the host, not of oxpinyin.
+oxpinyin's fixed-point scale (`oxpinyin-core/src/cost.rs`) was a design
+choice for cross-platform determinism, not a language limit.
 
 **Fitted coefficients still in the tree — off the parity path.** `ScoringConfig::default`
 (`oxpinyin-core/src/scoring.rs`) carries `segmentation_penalty`,

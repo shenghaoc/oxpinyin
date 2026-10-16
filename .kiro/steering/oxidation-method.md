@@ -26,6 +26,12 @@ makes a pin behaviour impossible to reproduce, record it in
 `docs/findings/upstream-divergences.md` as `/AGENTS.md` says and stop
 working on that area.
 
+**Floating point is not a language limit.** Rust's `f32` and `f64` are
+the same IEEE formats as `gfloat` and `gdouble`. Reproduce the pin's
+float types, conversion points and order of operations, and call the
+platform libm where the pin does. A difference that remains is a host
+whose libm differs from the pin's, not a reason to change arithmetic.
+
 ## The source is the specification
 
 oxpinyin and libpinyin are both GPL-3.0-or-later. This is not a reverse
