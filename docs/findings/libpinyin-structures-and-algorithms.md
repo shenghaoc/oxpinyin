@@ -211,7 +211,7 @@ in the pin's formats.
 | Expansion | `get_nbest_match` (`:736`): bigram over every beam value (`search_bigram2`, `:578`), unigram over the beam head only (`search_unigram2`, `:540`) | `nbest_sentences_with_seeds_generation`, `widen_free_span`, `expand_entries` | same / follows |
 | Tails and extraction | heap top-n, `g_ptr_array_sort` with `trellis_value_compare` (`:174`), which truncates the cost difference to `gint`; `extract_result` backtracks (`:370`) | `Trellis::tails` with `glib_merge_sort` and `tail_compare` (same truncation, NaN included), `Trellis::extract` | same / follows |
 | Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | integer fixed-point −log₂ × 1000 (`oxpinyin-core/src/cost.rs`); inputs from `nbest_step_costs_using`, `interpolate_ratio`, `raw_blend_cost` (`oxpinyin-data/src/lm/mod.rs`) | different / class (a), registered in `upstream-divergences.md`, but reproducible (§11) |
-| Constraints | `ForwardPhoneticConstraints` (`lookup/phonetic_lookup.cpp:61` onward); skip NOSEARCH, a single search for ONESTEP | `ConstraintStore` (`oxpinyin-engine/src/constraint.rs`) | same / unverified — the drop test and the expansion cap on its span search differ from the pin (§11) |
+| Constraints | `ForwardPhoneticConstraints` (`lookup/phonetic_lookup.cpp:61` onward); skip NOSEARCH, a single search for ONESTEP | `ConstraintStore` (`oxpinyin-engine/src/constraint.rs`) | same / defect — revalidation drops valid constraints past the expansion cap (#825); the drop test otherwise unverified (§11) |
 | Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`oxpinyin-engine/src/phrase.rs`) | same / class (a) — fixed-point scores |
 | Per-keystroke work | trellis rebuilt and bigram rows reloaded and merged for each predecessor and span | trellis rebuilt; merged rows cached per predecessor and step (`NbestStepRow`), parse graph cached | different / unverified — caching only |
 
@@ -294,7 +294,7 @@ coefficient, and oxpinyin reads the same value.
 
 | Value | Where it acts | Parity path? | Status |
 | --- | --- | --- | --- |
-| `SCAN_EXPANSION_LIMIT = 4096` (`oxpinyin-engine/src/session/mod.rs`) — chosen by measuring the W2 corpus | (1) the window scan's expansion in `scan_parsed_paths` (`session/lookup.rs`), taken only when the dictionary does not handle partial keys; the runtime's does, so off path. (2) `span_entries` → `extend_and_lookup` (`nbest.rs`), reached through `span_finds_token`, which revalidates constraints in `Session::guess_sentence` (`session/guess.rs`) and when a replaced selection is reconciled (`session/state.rs`). Ordinary sentence generation does not use it: `GenerationView::search` calls `trellis_ranges` directly. (3) `oxpinyin-engine/src/char_offset.rs`, behind `pinyin_get_character_offset`, expands one key at a time, so the product never approaches the cap | (1) no; (2) yes; (3) yes, cap unreachable | (2) unverified — the pin's counterpart has no cap (§11); past 4096, `expand_keys` returns nothing and the span search reports the token absent |
+| `SCAN_EXPANSION_LIMIT = 4096` (`oxpinyin-engine/src/session/mod.rs`) — chosen by measuring the W2 corpus | (1) the window scan's expansion in `scan_parsed_paths` (`session/lookup.rs`), taken only when the dictionary does not handle partial keys; the runtime's does, so off path. (2) `span_entries` → `extend_and_lookup` (`nbest.rs`), reached through `span_finds_token`, which revalidates constraints in `Session::guess_sentence` (`session/guess.rs`) and when a replaced selection is reconciled (`session/state.rs`). Ordinary sentence generation does not use it: `GenerationView::search` calls `trellis_ranges` directly. (3) `oxpinyin-engine/src/char_offset.rs`, behind `pinyin_get_character_offset`, expands one key at a time, so the product never approaches the cap | (1) no; (2) yes; (3) yes, cap unreachable | (2) defect, reproduced against a source build of the pin (#825; §11) |
 | `MAX_PHRASE_KEYS = 8` (`session/mod.rs`) | `Session::candidates_ending_at`, which libzhuyin's facade calls for its before-cursor candidates (`oxpinyin-zhuyin-capi/src/sentence.rs`) | yes (libzhuyin) | unverified — no pin counterpart found yet |
 | `MAX_INPUT_BYTES = 32767` (`session/mod.rs`), `MAX_GRAPH_INPUT = 65535` (`oxpinyin-core/src/graph.rs`) | input clamps | yes, only past the bound | unverified — no pin counterpart found yet |
 | `SEGMENTATION_K = 8` (`session/mod.rs`), `ScoringConfig.expansion_limit = 64` and the other `ScoringConfig` weights (`oxpinyin-core/src/scoring.rs`), `UNIGRAM_TIEBREAK_SCALE = 16` (`oxpinyin-data/src/lm/mod.rs`) | the k-best fallback and `LanguageModel::score`, read only when the model has no real unigram data | no — see §11 | fitted; removal after the first release (spec task 4a) |
@@ -385,8 +385,11 @@ that a valid constraint over an abbreviation of about four or more
 initials is dropped on revalidation, in `Session::guess_sentence` or
 when a replaced selection is reconciled. Ordinary sentence generation
 is a different path (`GenerationView::search` → `trellis_ranges`) and
-is not implicated. The source establishes the cap; whether it changes
-output has not been run against the oracle.
+is not implicated. A differential against a source build of the pin
+(not the hash-pinned oracle) reproduces it: a constraint chosen over an
+abbreviation whose expansion passes 4096 is dropped at the next
+`pinyin_guess_sentence`, while at or below 4096 and on full pinyin both
+sides agree (#825). Confirmation on the reference cell is still owed.
 
 **Fitted coefficients still in the tree — off the parity path.**
 `ScoringConfig::default` (`oxpinyin-core/src/scoring.rs`) carries `segmentation_penalty`,

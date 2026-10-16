@@ -90,7 +90,7 @@ work: record, design and analyse, implement, gate.
   the parity path (record §9).
   _Requirements: 2.1_
 
-- [ ] 12. `[A]` Investigate the constraint-revalidation expansion cap
+- [x] 12. `[A]` Investigate the constraint-revalidation expansion cap
   (record §11). Find a phrase in the pinned model whose abbreviation
   expands past 4096; run ordinary unconstrained sentence guessing
   against the pin as a control; then a stateful sequence that selects
@@ -98,5 +98,7 @@ work: record, design and analyse, implement, gate.
   replaced selection), comparing constraint state, sentence results and
   return values with the oracle on the reference cell. File an issue
   only if a divergence reproduces; any fix lands outside this spec's
-  documentation PR.
+  documentation PR. Reproduced against a source build of the pin with
+  user-imported phrases and filed as #825 (2026-10-16 UTC); the
+  reference-cell run on model20 is recorded there as still owed.
   _Requirements: 3.3_
