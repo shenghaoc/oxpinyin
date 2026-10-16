@@ -727,11 +727,25 @@ impl RuntimeDict {
         };
         // Ordinary additions need only the cached/global bound. Scan the
         // user library only at the overflow edge, not on every training bump.
+        // Until the next compact the library still holds its stored total,
+        // not its items' sum (`phrase_index.cpp:170-171`): the difference
+        // the user store keeps is part of the guarded sum, and it breaks the
+        // item-sum bound. One atomic load when no library carries one.
+        let offset = match self
+            .user
+            .as_ref()
+            .map(|user| user.library_offset(library as u8))
+            .transpose()
+        {
+            Ok(offset) => offset.unwrap_or(0),
+            Err(_) => return false,
+        };
         let bound = u64::from(base) + u64::from(accepted);
-        if bound
-            .saturating_add(user_bound)
-            .saturating_add(u64::from(delta))
-            > u64::from(u32::MAX)
+        if offset != 0
+            || bound
+                .saturating_add(user_bound)
+                .saturating_add(u64::from(delta))
+                > u64::from(u32::MAX)
         {
             let user_total = match self
                 .user
@@ -742,7 +756,10 @@ impl RuntimeDict {
                 Ok(total) => total.unwrap_or(0),
                 Err(_) => return false,
             };
-            let total = base.wrapping_add(accepted).wrapping_add(user_total);
+            let total = base
+                .wrapping_add(accepted)
+                .wrapping_add(user_total)
+                .wrapping_add(offset);
             if total.checked_add(delta).is_none() {
                 return false;
             }

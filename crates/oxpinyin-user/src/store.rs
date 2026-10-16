@@ -735,9 +735,9 @@ fn add_unigram_frequency(
 }
 
 /// Whether `library`'s `guint32` unigram total plus `delta` overflows —
-/// the sub-index's `m_total_freq > m_total_freq + delta` guard. The
-/// facade total bounds every library's sum from above, so the library's
-/// rows are summed only when that bound itself could overflow.
+/// the sub-index's `m_total_freq > m_total_freq + delta` guard. Absent an
+/// offset the facade total bounds every library's sum from above, so the
+/// library's rows are summed only when that bound itself could overflow.
 fn library_total_overflows(
     txn: &dyn WriteTxn,
     library: u8,
@@ -747,16 +747,21 @@ fn library_total_overflows(
         return Ok(false);
     }
     let base = txn_get_u64_or(txn, SYSTEM_BASE, &codec::encode_u8(library), 0)?;
+    // Until the next compact the sub-index still holds the stored total, not
+    // its items' sum (`phrase_index.cpp:170-171`): the difference
+    // [`LIBRARY_OFFSET`] keeps is part of the guarded sum, and it breaks the
+    // item-sum bound below.
+    let offset = txn_get_u64_or(txn, LIBRARY_OFFSET, &codec::encode_u8(library), 0)? as u32;
     let bound = txn_get_u64_or(txn, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)?
         .saturating_add(base);
-    if bound <= u64::from(u32::MAX - delta) {
+    if offset == 0 && bound <= u64::from(u32::MAX - delta) {
         return Ok(false);
     }
     let lo = codec::encode_token(phrase::phrase_index_make_token(library, 0));
     let hi = u32::from(library)
         .checked_add(1)
         .map(|next| codec::encode_token(next << 24));
-    let mut total = base as u32;
+    let mut total = (base as u32).wrapping_add(offset);
     txn.range(
         UNIGRAM,
         Bound::Included(lo.as_slice()),
@@ -1928,6 +1933,20 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(total)
     }
 
+    /// How far `library`'s stored total lies from the sum of its items
+    /// (a wrapping `guint32`), until the next [`Self::compact_libraries`];
+    /// `0` once compacted or when the two agree.
+    ///
+    /// # Errors
+    /// Returns the store error if the row cannot be read.
+    pub fn library_offset(&self, library: u8) -> Result<u32, UserStoreError> {
+        if !self.inner.has_library_offsets.load(Ordering::SeqCst) {
+            return Ok(0);
+        }
+        let db = self.database();
+        Ok(get_u64_or(&*db, LIBRARY_OFFSET, &codec::encode_u8(library), 0)? as u32)
+    }
+
     fn facade_offset(&self) -> u32 {
         self.inner.facade_offset.load(Ordering::SeqCst)
     }
@@ -1940,7 +1959,13 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
     /// `:829`).
     pub fn compact_libraries(&self) {
-        if !self.inner.has_library_offsets.swap(false, Ordering::SeqCst) {
+        // Flag invariant: `has_library_offsets` is never false while a
+        // LIBRARY_OFFSET row exists (true with no rows is harmless: the row
+        // read gives 0). `library_offset` reads the flag without the lock,
+        // so the flag is cleared only after the rows are gone, under the
+        // database lock that every offset writer also holds, and stays set
+        // if the write fails.
+        if !self.inner.has_library_offsets.load(Ordering::SeqCst) {
             return;
         }
         let db = self.database();
@@ -1955,8 +1980,10 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
             Ok(())
         });
-        if cleared.is_err() {
-            self.inner.has_library_offsets.store(true, Ordering::SeqCst);
+        if cleared.is_ok() {
+            self.inner
+                .has_library_offsets
+                .store(false, Ordering::SeqCst);
         }
     }
 
@@ -2933,6 +2960,10 @@ impl<S: WriteStore> GenericUserStore<S> {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let db = self.database();
+        // Flag invariant (see `compact_libraries`): set before the rows can
+        // exist, and cleared below only once the transaction leaves none,
+        // still under the database lock.
+        self.inner.has_library_offsets.store(true, Ordering::SeqCst);
         let (has_user_data, moved, offsets_left) = db.write(|txn| {
             // `FacadePhraseIndex::load` and `merge_with_mask` take the old
             // sub-index's total out of the facade and put the new one's in
