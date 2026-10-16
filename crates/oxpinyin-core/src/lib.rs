@@ -168,6 +168,32 @@ pub trait Dictionary {
         Ok(())
     }
 
+    /// [`Self::trellis_ranges`] and [`Self::phrase_prefix_exists`] for the
+    /// same key path, answered together: the pin's one
+    /// `ChewingLargeTable2::search` call gives the ranges and
+    /// `SEARCH_CONTINUED` from a single DBM get
+    /// (`chewing_large_table2_bdb.cpp:165-192` at `074a2219`). Returns
+    /// whether the prefix is continued.
+    ///
+    /// The default is the two calls; a dictionary that can serve both from
+    /// one read overrides it and must answer exactly as the pair does.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
+    fn trellis_ranges_continued(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<()>,
+    ) -> Result<bool, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        self.trellis_ranges(syllables, tones, ranges)?;
+        self.phrase_prefix_exists(syllables)
+    }
+
     /// What one trellis step prices of `token`, a token
     /// [`Self::trellis_ranges`] ranged over `syllables` and `tones`
     /// (`get_phrase_item` and `compute_pronunciation_possibility`,
@@ -525,6 +551,18 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         Self::Entry: PhraseIndexToken,
     {
         (**self).trellis_ranges(syllables, tones, ranges)
+    }
+
+    fn trellis_ranges_continued(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<()>,
+    ) -> Result<bool, Self::Error>
+    where
+        Self::Entry: PhraseIndexToken,
+    {
+        (**self).trellis_ranges_continued(syllables, tones, ranges)
     }
 
     fn trellis_item(

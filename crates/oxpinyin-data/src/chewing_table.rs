@@ -215,6 +215,30 @@ impl ChewingTable {
             .collect())
     }
 
+    /// [`Self::search`] and [`Self::key_exists`] from one DBM get: whether
+    /// the query's index key exists (an empty marker counts), and the
+    /// surviving records. The index key zeroes tones, so a toned query and
+    /// its tone-less spelling name the same row.
+    pub(crate) fn search_continued(
+        &self,
+        keys: &[ChewingKey],
+    ) -> Result<(bool, Vec<PinyinIndexItem>), DictError> {
+        if keys.is_empty() {
+            return Ok((false, Vec::new()));
+        }
+        let Some(value) = self.dbm.get(&index_key(keys))? else {
+            return Ok((false, Vec::new()));
+        };
+        if value.is_empty() {
+            return Ok((true, Vec::new()));
+        }
+        let items = decode_items(&value, keys.len())?
+            .into_iter()
+            .filter(|item| keys_match(keys, &item.keys))
+            .collect();
+        Ok((true, items))
+    }
+
     /// Whether the query's index key exists at all — `SEARCH_CONTINUED`
     /// without the record decode, for the widen probe.
     pub(crate) fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {

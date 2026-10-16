@@ -541,3 +541,90 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
     drop(runtime);
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// The fused `trellis_ranges_continued` answers exactly as the two calls
+/// it replaces: ranges and probe, over system rows, an empty-marker or
+/// absent key, a user-table-only prefix, toned and incomplete spellings,
+/// and a live library mask.
+#[test]
+fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
+    let dir = std::env::temp_dir().join(format!("oxpinyin-trellis-fused-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("user dir");
+    let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
+    let dict = runtime.dict();
+    let texts: [&[&str]; 9] = [
+        &["ni"],
+        &["ni", "hao"],
+        &["hao"],
+        &["n"],
+        &["n", "h"],
+        &["ni", "hao", "ma"],
+        &["zuo", "zuo", "zuo"],
+        &["zuo", "zuo"],
+        &["xyz"],
+    ];
+    let tones: [&[u8]; 5] = [&[], &[3], &[3, 3], &[1, 3], &[0, 3, 0]];
+    let paths: Vec<Vec<SyllableKey>> = texts
+        .iter()
+        .filter_map(|path| {
+            path.iter()
+                .map(|text| SyllableKey::from_text(text))
+                .collect::<Option<Vec<_>>>()
+        })
+        .collect();
+    assert!(paths.len() >= 8, "the key paths parse: {}", paths.len());
+    let seen = std::cell::Cell::new((0_u32, 0_u32, 0_u32));
+    let compare = |phase: &str| {
+        for path in &paths {
+            for tones in tones {
+                let mut pair = oxpinyin_core::PhraseIndexRanges::new();
+                dict.trellis_ranges(path, tones, &mut pair).unwrap();
+                let continued = dict.phrase_prefix_exists(path).unwrap();
+                let mut fused = oxpinyin_core::PhraseIndexRanges::new();
+                let fused_continued = dict
+                    .trellis_ranges_continued(path, tones, &mut fused)
+                    .unwrap();
+                assert_eq!(
+                    format!("{pair:?}"),
+                    format!("{fused:?}"),
+                    "{phase}: ranges of {path:?} {tones:?}"
+                );
+                assert_eq!(
+                    continued, fused_continued,
+                    "{phase}: probe of {path:?} {tones:?}"
+                );
+                let (ranged, yes, no) = seen.get();
+                seen.set((
+                    ranged + u32::from(fused.iter().next().is_some()),
+                    yes + u32::from(fused_continued),
+                    no + u32::from(!fused_continued),
+                ));
+            }
+        }
+    };
+    compare("system only");
+    let user = |texts: &[&str]| -> Vec<_> {
+        texts
+            .iter()
+            .map(|text| {
+                oxpinyin_user::toned_key(SyllableKey::from_text(text).unwrap().index(), 3).unwrap()
+            })
+            .collect()
+    };
+    let mut store = runtime.user_store().unwrap();
+    store
+        .add_phrase("你鎄", &user(&["ni", "hao"]), Some(5))
+        .unwrap();
+    store
+        .add_phrase("坐坐坐", &user(&["zuo", "zuo", "zuo"]), Some(5))
+        .unwrap();
+    compare("with user phrases");
+    assert!(runtime.unload_library(2));
+    compare("library 2 unloaded");
+    let (ranged, yes, no) = seen.get();
+    assert!(ranged > 0 && yes > 0 && no > 0, "{ranged} {yes} {no}");
+    drop(runtime);
+    drop(dict);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}

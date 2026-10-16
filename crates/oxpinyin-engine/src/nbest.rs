@@ -805,6 +805,8 @@ where
     };
     let seed_values: Vec<u32> = seeds.iter().map(|token| token.value()).collect();
     let mut trellis = Trellis::with_seeds(bound, &seed_values, shape);
+    // One path scratch for every span search of the call.
+    let mut scratch = GenerationPath::default();
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
 
     let mut position = 0_usize;
@@ -830,7 +832,7 @@ where
             // then move on: no widening, no other token starts there.
             if end > position && end <= bound {
                 let mut found = SpanRanges::default();
-                generation.search(position, end, dictionary, &mut found)?;
+                generation.search(position, end, dictionary, &mut scratch, &mut found)?;
                 let pricing = Pricing {
                     ranges: &found.ranges,
                     dictionary,
@@ -868,7 +870,15 @@ where
             dictionary,
             model,
         };
-        widen_free_span(&env, constraints, position, &beam, &mut costs, &mut trellis)?;
+        widen_free_span(
+            &env,
+            constraints,
+            position,
+            &beam,
+            &mut scratch,
+            &mut costs,
+            &mut trellis,
+        )?;
         position += 1;
     }
 
@@ -934,6 +944,7 @@ impl GenerationView<'_> {
         start: usize,
         end: usize,
         dictionary: &D,
+        path: &mut GenerationPath,
         into: &mut SpanRanges,
     ) -> Result<bool, EngineError>
     where
@@ -950,11 +961,14 @@ impl GenerationView<'_> {
         if end + 1 < self.columns.len() && self.columns[end].is_empty() && !self.zeros[end] {
             return Ok(true);
         }
-        let mut path = GenerationPath::default();
+        // A failed search leaves the scratch mid-path.
+        path.keys.clear();
+        path.tones.clear();
+        path.ranges.clear();
         let mut continued = false;
         // search_matrix appends every path's ranges, system table then user
         // table, to the per-library arrays in walk order.
-        self.walk(start, end, dictionary, &mut path, into, &mut continued)?;
+        self.walk(start, end, dictionary, path, into, &mut continued)?;
         Ok(continued)
     }
 
@@ -982,13 +996,8 @@ impl GenerationView<'_> {
                 *continued = true;
                 return Ok(());
             }
-            dictionary
-                .trellis_ranges(&path.keys, &path.tones, &mut path.ranges)
-                .map_err(|error| {
-                    EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                })?;
             *continued |= dictionary
-                .phrase_prefix_exists(&path.keys)
+                .trellis_ranges_continued(&path.keys, &path.tones, &mut path.ranges)
                 .map_err(|error| {
                     EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
                 })?;
@@ -1048,6 +1057,7 @@ fn widen_free_span<D, L>(
     constraints: Option<&ConstraintStore>,
     position: usize,
     beam: &[BeamEntry],
+    scratch: &mut GenerationPath,
     costs: &mut StepCosts,
     trellis: &mut Trellis,
 ) -> Result<(), EngineError>
@@ -1069,7 +1079,7 @@ where
         found.clear();
         widening = env
             .generation
-            .search(position, end, env.dictionary, &mut found)?;
+            .search(position, end, env.dictionary, scratch, &mut found)?;
         let pricing = Pricing {
             ranges: &found.ranges,
             dictionary: env.dictionary,
