@@ -62,6 +62,16 @@ gives each a crate, puts the backend behind a seam, and has both ABIs
 share one facade (the record's §0). Behaviour comes from the pin;
 structure need not.
 
+**A library is not a frontend.** The first design built a
+framework-neutral IME session — key input, preedit, commit — because
+that is what a new Rust input method would want. libpinyin never sees a
+key: its frontends own keys and drive it through parse, guess, select,
+train and save. The C ABI ended up built on those operations alone, and
+the key-driven layer is used only by tests and oracle tools, yet it
+still sits on the same `Session` type. For the first release the
+operations are the surface; a key-driven API is an optional adapter
+afterwards.
+
 **Reading the source beats searching for the answer.** Sweeping our own
 constants and classifying residuals brought top-1 to 63–64%. Reading
 how the pin builds its candidate list brought it to 99% four days

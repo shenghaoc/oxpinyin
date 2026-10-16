@@ -12,7 +12,7 @@ closes the gaps the first survey found, and keeps the record current.
 The guiding principle: reproduce the existing system's observable
 behaviour before improving its internal design — compatibility in the
 first release, elegance, extensibility and performance afterwards.
-Requirements 1–4 serve the first release; Requirements 5.2 and 6
+Requirements 1–4 and 7 serve the first release; Requirements 5.2 and 6
 govern the work after it.
 
 The record is `docs/findings/libpinyin-structures-and-algorithms.md`.
@@ -122,3 +122,18 @@ before anything else.
    and the pin.
 2. THE faster of the measured versions SHALL be kept, subject to
    Requirement 3.2.
+
+### Requirement 7: The library's operations are the Rust surface
+
+**User Story:** As a frontend author, I want oxpinyin's Rust surface to
+be libpinyin's operations, so that libpinyin's semantics are not forced
+through an abstraction designed for a general IME.
+
+#### Acceptance Criteria
+
+1. THE Rust surface for the first release SHALL be the pin's operations
+   — parse, guess, select, train, segment, save — on a context and an
+   instance.
+2. A key-driven layer (key input, preedit, commit) SHALL sit in an
+   optional adapter built on those operations, not in the same type.
+3. THE C ABI SHALL be built on the operations alone.

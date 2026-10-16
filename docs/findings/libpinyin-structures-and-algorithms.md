@@ -91,6 +91,30 @@ state to the instance side:
 | `pinyin_instance_t`: matrix, constraints, n-best, phrase result, candidates, sort option | `InstanceCore` (`oxpinyin-facade/src/instance.rs`) holding a `RuntimeSession`, whose `Session` owns the input and parsed matrix, the `SelectionRecord`, the `ConstraintStore`, the sentence (n-best) state, the `CandidateList` and the sort word; the phrase result sits on `InstanceCore` |
 | back pointer from instance to context | cloned handles to the context's dictionary, model and user store; the raw context pointer is kept only for `pinyin_get_context` |
 
+### The operations
+
+libpinyin is a library, not a frontend: it never sees a key press. The
+frontend (ibus-libpinyin, fcitx5) owns keys, preedit and commit, and
+drives the instance through a small set of operations (`pinyin.h`):
+parse (`pinyin_parse_more_full_pinyins`, `:465`, and its double-pinyin
+and zhuyin peers), guess (`pinyin_guess_sentence`, `:376`;
+`pinyin_guess_candidates`, `:554`), select (`pinyin_choose_candidate`,
+`:568`, and the constraint calls), train (`pinyin_train`, `:618`),
+segment (`pinyin_phrase_segment`, `:423`) and save (`pinyin_save`,
+`:264`).
+
+oxpinyin's `Session` (`oxpinyin-engine`) carries the same operations as
+methods — `replace_raw` and its variants for parse, `guess_sentence`
+and `candidates_at` for guess, `select` and `clear_constraint` for
+select, `train` and `train_nbest`, `phrase_segment` — with save on
+`ContextCore::save_user` (`oxpinyin-facade`). The C ABI drives only
+these. The same type also carries a key-driven layer from the first
+design — `KeyInput`, `process_key`, `type_pinyin`, `Preedit`, `commit`
+— which no C-ABI path calls; the oracle tools and tests use it. For the
+first release the operations are the Rust surface that matters; the
+key-driven layer belongs in an optional adapter on top of them, not in
+the same type (`.kiro/specs/oxidation-record/` task 9).
+
 ### How oxpinyin divides it
 
 oxpinyin keeps the pin's layers but makes each a crate with explicit

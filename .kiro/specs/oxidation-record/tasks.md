@@ -62,3 +62,12 @@ work: record, design and analyse, implement, gate.
 - [ ] 8. `[A]` Keep the record current: a change that alters a recorded
   structure or algorithm updates its row in the same PR.
   _Requirements: 1.4_
+
+- [ ] 9. `[A]` Move the key-driven layer (`KeyInput`, `process_key`,
+  `type_pinyin`, `Preedit`, `commit`) off `Session` into an optional
+  adapter over the operations, and move the oracle tools and tests that
+  use it onto the operations or the adapter. The C ABI already uses only
+  the operations (record §0, "The operations"). This is a change to the
+  supported Rust surface, so it starts with a STOP for the maintainer's
+  ask.
+  _Requirements: 7_
