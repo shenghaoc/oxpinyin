@@ -371,8 +371,12 @@ struct Trellis {
     /// `nodes[position][token]` = the physical pinned heap slots.
     nodes: Vec<TokenMap<NodeValues>>,
     node_order: Vec<Vec<u32>>,
-    /// Token → phrase text, gathered from the span searches.
-    texts: TokenMap<CompactString>,
+    /// Token → the key path its first step priced it over, as an offset
+    /// and length into `text_keys`/`text_tones`; the phrase text is read
+    /// through the dictionary when a result is emitted.
+    texts: TokenMap<(u32, u32)>,
+    text_keys: Vec<SyllableKey>,
+    text_tones: Vec<u8>,
 }
 
 impl Trellis {
@@ -397,6 +401,8 @@ impl Trellis {
             nodes,
             node_order,
             texts: TokenMap::default(),
+            text_keys: Vec::new(),
+            text_tones: Vec::new(),
         }
     }
 
@@ -481,24 +487,197 @@ impl Trellis {
         spans
     }
 
-    fn text(&self, spans: &[(usize, u32)]) -> Option<CompactString> {
+    /// The phrase text of `token`, read once per call through `cache`;
+    /// `None` where the dictionary has no text for it.
+    fn token_text<D>(
+        &self,
+        dictionary: &D,
+        cache: &mut TokenMap<Option<CompactString>>,
+        token: u32,
+    ) -> Result<Option<CompactString>, EngineError>
+    where
+        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D::Error: core::fmt::Display,
+    {
+        if let Some(text) = cache.get(&token) {
+            return Ok(text.clone());
+        }
+        let text = match self.texts.get(&token) {
+            Some(&(offset, len)) => {
+                let range = offset as usize..offset as usize + len as usize;
+                match (
+                    self.text_keys.get(range.clone()),
+                    self.text_tones.get(range),
+                ) {
+                    (Some(keys), Some(tones)) => dictionary
+                        .trellis_text(keys, tones, token)
+                        .map_err(|error| {
+                            EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
+                        })?
+                        .map(CompactString::from),
+                    _ => None,
+                }
+            }
+            None => None,
+        };
+        cache.insert(token, text.clone());
+        Ok(text)
+    }
+
+    fn text<D>(
+        &self,
+        dictionary: &D,
+        cache: &mut TokenMap<Option<CompactString>>,
+        spans: &[(usize, u32)],
+    ) -> Result<Option<CompactString>, EngineError>
+    where
+        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D::Error: core::fmt::Display,
+    {
         let mut text = CompactString::const_new("");
         for (_, token) in spans {
-            text.push_str(self.texts.get(token)?);
+            let Some(part) = self.token_text(dictionary, cache, *token)? else {
+                return Ok(None);
+            };
+            text.push_str(&part);
         }
-        Some(text)
+        Ok(Some(text))
     }
 }
 
-/// One `(token, text)` pair a span search found, with the key count of the
-/// path that spelled it (captured during enumeration, before the path is
-/// unwound) and the entry's pronunciation possibility.
+/// One ranged token a step priced: the key count of the path that spelled
+/// it (captured during enumeration, before the path is unwound), the
+/// phrase's length in characters and the entry's pronunciation possibility.
+/// `path` indexes the span's [`SpanPaths`].
 #[derive(Clone)]
 struct SpanEntry {
     token: u32,
-    text: CompactString,
+    path: u32,
     keys: u32,
+    chars: u32,
     pronunciation: Option<(u64, u64)>,
+}
+
+/// A ranged token, priced on first use (`phonetic_lookup.h:646-684`: the
+/// pin reads a phrase item only when a step prices it). `None` inside
+/// the cell: the dictionary has no readable item for the token over its
+/// path, so the token keeps its place in its range with no entry.
+#[derive(Clone)]
+struct LazySlot {
+    path: u32,
+    priced: OnceCell<Option<SpanEntry>>,
+}
+
+impl LazySlot {
+    fn new(path: u32) -> Self {
+        Self {
+            path,
+            priced: OnceCell::new(),
+        }
+    }
+}
+
+/// The key paths of one span search, flat: path `i` is
+/// `keys[bounds[i].0..][..bounds[i].1]`, and likewise its tones.
+#[derive(Default)]
+struct SpanPaths {
+    keys: Vec<SyllableKey>,
+    tones: Vec<u8>,
+    bounds: Vec<(u32, u32)>,
+}
+
+impl SpanPaths {
+    fn clear(&mut self) {
+        self.keys.clear();
+        self.tones.clear();
+        self.bounds.clear();
+    }
+
+    fn push(&mut self, keys: &[SyllableKey], tones: &[u8]) -> u32 {
+        let id = u32::try_from(self.bounds.len()).unwrap_or(u32::MAX);
+        let offset = u32::try_from(self.keys.len()).unwrap_or(u32::MAX);
+        self.keys.extend_from_slice(keys);
+        self.tones.extend_from_slice(tones);
+        self.bounds
+            .push((offset, u32::try_from(keys.len()).unwrap_or(u32::MAX)));
+        id
+    }
+
+    fn path(&self, id: u32) -> (&[SyllableKey], &[u8]) {
+        let Some(&(offset, len)) = self.bounds.get(id as usize) else {
+            return (&[], &[]);
+        };
+        let range = offset as usize..offset as usize + len as usize;
+        (
+            self.keys.get(range.clone()).unwrap_or(&[]),
+            self.tones.get(range).unwrap_or(&[]),
+        )
+    }
+}
+
+/// A span search's ranges and the paths they were found on.
+#[derive(Default)]
+struct SpanRanges {
+    ranges: PhraseIndexRanges<LazySlot>,
+    paths: SpanPaths,
+}
+
+impl SpanRanges {
+    fn clear(&mut self) {
+        self.ranges.clear();
+        self.paths.clear();
+    }
+}
+
+/// Prices a [`LazySlot`] through the dictionary, once per slot.
+struct Pricing<'a, D> {
+    /// The span search's ranges.
+    ranges: &'a PhraseIndexRanges<LazySlot>,
+    dictionary: &'a D,
+    paths: &'a SpanPaths,
+}
+
+impl<'a, D> Pricing<'a, D>
+where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
+{
+    /// `slot`'s entry for `token`; `None` when the dictionary reads no
+    /// item for it. The answer is kept in the slot for the span's steps.
+    fn price<'s>(
+        &self,
+        slot: &'s LazySlot,
+        token: u32,
+    ) -> Result<Option<&'s SpanEntry>, EngineError> {
+        if let Some(priced) = slot.priced.get() {
+            return Ok(priced.as_ref());
+        }
+        let (keys, tones) = self.paths.path(slot.path);
+        let item = self
+            .dictionary
+            .trellis_item(keys, tones, token)
+            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+        let entry = item.map(|item| SpanEntry {
+            token,
+            path: slot.path,
+            keys: keys.len().try_into().unwrap_or(u32::MAX),
+            chars: item.chars,
+            pronunciation: item.pronunciation,
+        });
+        Ok(slot.priced.get_or_init(|| entry).as_ref())
+    }
+
+    /// The first slot in walk order that spells `token` and prices.
+    fn first_priced(&self, token: u32) -> Result<Option<&'a SpanEntry>, EngineError> {
+        for (ranged, slot) in self.ranges.walk_tokens() {
+            if ranged == token
+                && let Some(entry) = self.price(slot, token)?
+            {
+                return Ok(Some(entry));
+            }
+        }
+        Ok(None)
+    }
 }
 
 /// Computes the sentence rows for the input covered by `matrix`.
@@ -650,16 +829,24 @@ where
             // entered on any `SEARCH_OK` (`phonetic_lookup.h:775-788`) —
             // then move on: no widening, no other token starts there.
             if end > position && end <= bound {
-                let mut entries = PhraseIndexRanges::new();
-                generation.search(position, end, dictionary, &mut entries)?;
+                let mut found = SpanRanges::default();
+                generation.search(position, end, dictionary, &mut found)?;
+                let pricing = Pricing {
+                    ranges: &found.ranges,
+                    dictionary,
+                    paths: &found.paths,
+                };
                 let mut forced = PhraseIndexRanges::new();
-                forced.convert(
-                    entries
-                        .walk()
-                        .find(|entry| entry.token == token.value())
-                        .map(|entry| (entry.token, Some(entry.clone()))),
-                );
-                if entries.iter().next().is_some() {
+                forced.convert(pricing.first_priced(token.value())?.map(|entry| {
+                    let slot = LazySlot::new(entry.path);
+                    let _ = slot.priced.set(Some(entry.clone()));
+                    (entry.token, Some(slot))
+                }));
+                if found.ranges.iter().next().is_some() {
+                    let forced = Pricing {
+                        ranges: &forced,
+                        ..pricing
+                    };
                     expand_entries(
                         &forced,
                         &beam,
@@ -687,9 +874,10 @@ where
 
     let span = bound;
     let mut rows = Vec::new();
+    let mut texts = TokenMap::default();
     for tail in trellis.tails() {
         let spans = trellis.extract(&tail);
-        let Some(text) = trellis.text(&spans) else {
+        let Some(text) = trellis.text(dictionary, &mut texts, &spans)? else {
             continue;
         };
         if text.is_empty() {
@@ -700,7 +888,7 @@ where
             .map(|(start, token)| PhraseSpan {
                 start: *start,
                 token: PhraseToken::new(*token),
-                text: trellis.texts.get(token).cloned().unwrap_or_default(),
+                text: texts.get(token).cloned().flatten().unwrap_or_default(),
             })
             .collect();
         let tokens = phrase_spans.iter().map(|span| span.token).collect();
@@ -728,7 +916,7 @@ struct GenerationPath {
     keys: SmallVec<[SyllableKey; 16]>,
     tones: SmallVec<[u8; 16]>,
     /// One table search's ranges, drained into the span's arrays.
-    ranges: PhraseIndexRanges<PhraseEntry>,
+    ranges: PhraseIndexRanges<()>,
 }
 
 /// Additional trellis-only view of the unchanged ordinary scan matrix.
@@ -746,7 +934,7 @@ impl GenerationView<'_> {
         start: usize,
         end: usize,
         dictionary: &D,
-        into: &mut PhraseIndexRanges<SpanEntry>,
+        into: &mut SpanRanges,
     ) -> Result<bool, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -776,7 +964,7 @@ impl GenerationView<'_> {
         end: usize,
         dictionary: &D,
         path: &mut GenerationPath,
-        into: &mut PhraseIndexRanges<SpanEntry>,
+        into: &mut SpanRanges,
         continued: &mut bool,
     ) -> Result<(), EngineError>
     where
@@ -804,17 +992,10 @@ impl GenerationView<'_> {
                 .map_err(|error| {
                     EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
                 })?;
-            let keys = path.keys.len().try_into().unwrap_or(u32::MAX);
+            let id = into.paths.push(&path.keys, &path.tones);
             // Drains the scratch, keeping its capacity for the next path.
-            into.append_from(&mut path.ranges, |entry| {
-                let pronunciation = entry.pronunciation_possibility();
-                SpanEntry {
-                    token: entry.token().value(),
-                    text: entry.into_text(),
-                    keys,
-                    pronunciation,
-                }
-            });
+            into.ranges
+                .append_from(&mut path.ranges, |()| LazySlot::new(id));
             return Ok(());
         }
         if self.zeros.get(start).copied().unwrap_or(false) {
@@ -879,18 +1060,23 @@ where
     let cell_at = |position: usize| constraints.and_then(|store| store.cell(position));
     let mut end = position + 1;
     let mut widening = true;
-    let mut entries = PhraseIndexRanges::new();
+    let mut found = SpanRanges::default();
     while end <= env.bound && widening {
         if matches!(cell_at(end), Some(Cell::NoSearch { .. })) {
             // A span may not end inside a forced run.
             break;
         }
-        entries.clear();
+        found.clear();
         widening = env
             .generation
-            .search(position, end, env.dictionary, &mut entries)?;
+            .search(position, end, env.dictionary, &mut found)?;
+        let pricing = Pricing {
+            ranges: &found.ranges,
+            dictionary: env.dictionary,
+            paths: &found.paths,
+        };
         expand_entries(
-            &entries,
+            &pricing,
             beam,
             position..end,
             env.model,
@@ -1119,8 +1305,8 @@ struct StepCosts {
 ///
 /// The model's load failures, and a lookup refusal where the pin's read
 /// of a predecessor's merged row asserts or leaves the value.
-fn expand_entries<L>(
-    entries: &PhraseIndexRanges<SpanEntry>,
+fn expand_entries<D, L>(
+    pricing: &Pricing<'_, D>,
     beam: &[BeamEntry],
     span: std::ops::Range<usize>,
     model: &L,
@@ -1129,9 +1315,12 @@ fn expand_entries<L>(
     one_step: Option<u32>,
 ) -> Result<(), EngineError>
 where
+    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+    D::Error: core::fmt::Display,
     L: LanguageModel<Token = PhraseToken>,
     L::Error: core::fmt::Display,
 {
+    let entries = pricing.ranges;
     let eligible = |entry: &SpanEntry| !matches!(entry.pronunciation, Some((0, _)));
     // Entered on `SEARCH_OK` only; the predecessors' rows are loaded and
     // merged then even when no ranged item can step.
@@ -1163,12 +1352,16 @@ where
                 if let Some(token) = one_step {
                     if let Some(freq) = gram.get_freq(token).map_err(refuse)? {
                         let total = gram.total().map_err(refuse)?;
-                        selected.extend(
-                            entries
-                                .walk()
-                                .filter(|entry| entry.token == token && eligible(entry))
-                                .map(|entry| (entry, (freq, total))),
-                        );
+                        for (ranged, slot) in entries.walk_tokens() {
+                            if ranged != token {
+                                continue;
+                            }
+                            if let Some(entry) = pricing.price(slot, ranged)?
+                                && eligible(entry)
+                            {
+                                selected.push((entry, (freq, total)));
+                            }
+                        }
                     }
                 } else {
                     for range in entries.iter() {
@@ -1185,13 +1378,21 @@ where
                         // phrase spells this span (`bigram_gen_next_step`'s
                         // `get_phrase_item` and pronunciation check), so such
                         // a token takes this span's entry for it, if any.
-                        selected.extend(items.iter().filter_map(|&(token, freq)| {
-                            entries
-                                .entry(range, token)
-                                .or_else(|| entries.walk().find(|entry| entry.token == token))
-                                .filter(|entry| eligible(entry))
-                                .map(|entry| (entry, (freq, total)))
-                        }));
+                        for &(token, freq) in &items {
+                            let own = match entries.entry(range, token) {
+                                Some(slot) => pricing.price(slot, token)?,
+                                None => None,
+                            };
+                            let found = match own {
+                                Some(entry) => Some(entry),
+                                None => pricing.first_priced(token)?,
+                            };
+                            if let Some(entry) = found
+                                && eligible(entry)
+                            {
+                                selected.push((entry, (freq, total)));
+                            }
+                        }
                     }
                 }
                 true
@@ -1202,9 +1403,8 @@ where
                 let branch = Branch::Bigram(Some(item));
                 expand_one(
                     entry,
+                    StepCtx::new(pricing.paths, span.clone(), model),
                     predecessor,
-                    span.clone(),
-                    model,
                     row,
                     trellis,
                     branch,
@@ -1212,13 +1412,16 @@ where
             }
         } else {
             // Models without row traversal retain their existing scalar path.
-            for entry in entries.walk().filter(|entry| eligible(entry)) {
+            for (token, slot) in entries.walk_tokens() {
+                let Some(entry) = pricing.price(slot, token)?.filter(|entry| eligible(entry))
+                else {
+                    continue;
+                };
                 let branch = Branch::Bigram(None);
                 expand_one(
                     entry,
+                    StepCtx::new(pricing.paths, span.clone(), model),
                     predecessor,
-                    span.clone(),
-                    model,
                     row,
                     trellis,
                     branch,
@@ -1230,13 +1433,15 @@ where
     // (search_unigram2, phonetic_lookup.h:560-572).
     if let Some(predecessor) = beam.first() {
         let row = costs.rows.entry(predecessor.value.token).or_default();
-        for entry in entries.walk().filter(|entry| eligible(entry)) {
+        for (token, slot) in entries.walk_tokens() {
+            let Some(entry) = pricing.price(slot, token)?.filter(|entry| eligible(entry)) else {
+                continue;
+            };
             let branch = Branch::Unigram;
             expand_one(
                 entry,
+                StepCtx::new(pricing.paths, span.clone(), model),
                 predecessor,
-                span.clone(),
-                model,
                 row,
                 trellis,
                 branch,
@@ -1256,12 +1461,24 @@ enum Branch {
     Unigram,
 }
 
+/// What a trellis step reads besides its entry and predecessor.
+struct StepCtx<'a, L> {
+    paths: &'a SpanPaths,
+    span: std::ops::Range<usize>,
+    model: &'a L,
+}
+
+impl<'a, L> StepCtx<'a, L> {
+    const fn new(paths: &'a SpanPaths, span: std::ops::Range<usize>, model: &'a L) -> Self {
+        Self { paths, span, model }
+    }
+}
+
 /// One trellis step on `branch`.
 fn expand_one<L: LanguageModel<Token = PhraseToken>>(
     entry: &SpanEntry,
+    ctx: StepCtx<'_, L>,
     predecessor: &BeamEntry,
-    span: std::ops::Range<usize>,
-    model: &L,
     row: &mut oxpinyin_core::NbestStepRow,
     trellis: &mut Trellis,
     branch: Branch,
@@ -1269,6 +1486,7 @@ fn expand_one<L: LanguageModel<Token = PhraseToken>>(
 where
     L::Error: core::fmt::Display,
 {
+    let StepCtx { paths, span, model } = ctx;
     let prev = predecessor.value.token;
     let step = model
         .nbest_item_costs_in_row(
@@ -1294,11 +1512,16 @@ where
     {
         cost = cost_add(cost, oxpinyin_core::cost::surprisal(matched, total));
     }
-    trellis
-        .texts
-        .entry(entry.token)
-        .or_insert_with(|| entry.text.clone());
-    let chars = entry.text.chars().count().try_into().unwrap_or(u32::MAX);
+    if let Entry::Vacant(slot) = trellis.texts.entry(entry.token) {
+        // The first step to price the token names the path whose text
+        // a result reads.
+        let (keys, tones) = paths.path(entry.path);
+        let offset = u32::try_from(trellis.text_keys.len()).unwrap_or(u32::MAX);
+        trellis.text_keys.extend_from_slice(keys);
+        trellis.text_tones.extend_from_slice(tones);
+        slot.insert((offset, u32::try_from(keys.len()).unwrap_or(u32::MAX)));
+    }
+    let chars = entry.chars;
     trellis.insert(
         span.end,
         Value {
@@ -1326,6 +1549,33 @@ mod tests {
     use crate::error::EngineError;
     use crate::session::build_scan_matrix;
     use crate::storage::StoragePaths;
+
+    /// A slot whose pricing is already known, so no dictionary is read.
+    fn priced_slot(token: u32) -> super::LazySlot {
+        let slot = super::LazySlot::new(0);
+        slot.priced
+            .set(Some(super::SpanEntry {
+                token,
+                path: 0,
+                keys: 1,
+                chars: 1,
+                pronunciation: None,
+            }))
+            .ok();
+        slot
+    }
+
+    fn pricing(
+        ranges: &oxpinyin_core::PhraseIndexRanges<super::LazySlot>,
+    ) -> super::Pricing<'_, FixtureDictionary> {
+        static DICTIONARY: std::sync::OnceLock<FixtureDictionary> = std::sync::OnceLock::new();
+        static PATHS: std::sync::OnceLock<super::SpanPaths> = std::sync::OnceLock::new();
+        super::Pricing {
+            ranges,
+            dictionary: DICTIONARY.get_or_init(FixtureDictionary::default),
+            paths: PATHS.get_or_init(super::SpanPaths::default),
+        }
+    }
 
     fn loses_to(left: &Value, right: &Value) -> bool {
         super::loses_to(left, right, 2)
@@ -1667,22 +1917,12 @@ mod tests {
         }
 
         let mut entries = oxpinyin_core::PhraseIndexRanges::new();
-        entries.convert([3, 2, 1, 3].map(|token| {
-            (
-                token,
-                Some(super::SpanEntry {
-                    token,
-                    text: "一".into(),
-                    keys: 1,
-                    pronunciation: None,
-                }),
-            )
-        }));
+        entries.convert([3, 2, 1, 3].map(|token| (token, Some(priced_slot(token)))));
         let model = Sparse(RefCell::new(Vec::new()));
         let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
         let beam = trellis.beam(0);
         super::expand_entries(
-            &entries,
+            &pricing(&entries),
             &beam,
             0..1,
             &model,
@@ -1756,22 +1996,12 @@ mod tests {
             value
         };
         let mut entries = oxpinyin_core::PhraseIndexRanges::new();
-        entries.convert([1, 2].map(|token| {
-            (
-                token,
-                Some(super::SpanEntry {
-                    token,
-                    text: "一".into(),
-                    keys: 1,
-                    pronunciation: None,
-                }),
-            )
-        }));
+        entries.convert([1, 2].map(|token| (token, Some(priced_slot(token)))));
         let run = |row: Option<MergedGram>, one_step: Option<u32>| {
             let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
             let beam = trellis.beam(0);
             super::expand_entries(
-                &entries,
+                &pricing(&entries),
                 &beam,
                 0..1,
                 &Rows(row),
@@ -1851,22 +2081,12 @@ mod tests {
         }
 
         let mut entries = oxpinyin_core::PhraseIndexRanges::new();
-        entries.convert([1, 3, 2].map(|token| {
-            (
-                token,
-                Some(super::SpanEntry {
-                    token,
-                    text: "一".into(),
-                    keys: 1,
-                    pronunciation: None,
-                }),
-            )
-        }));
+        entries.convert([1, 3, 2].map(|token| (token, Some(priced_slot(token)))));
         let model = Walked(RefCell::new(Vec::new()));
         let mut trellis = super::Trellis::with_seeds(1, &[11], NbestShape::PINYIN);
         let beam = trellis.beam(0);
         super::expand_entries(
-            &entries,
+            &pricing(&entries),
             &beam,
             0..1,
             &model,
