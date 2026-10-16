@@ -12,6 +12,8 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
 # shellcheck source=tools/bisection/oracle-cell.sh
 source ./oracle-cell.sh
+# shellcheck source=tools/bisection/system-dir.sh
+. ./system-dir.sh
 
 echo "--- building train-diff driver ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o train-diff train-diff.c -ldl
@@ -33,15 +35,19 @@ if [ ! -f "$PREFIX/oracle-pin.txt" ] || [ ! -f "$ORACLE_SO" ]; then
     exit 77
 fi
 
+# The capi reads the same full datagen output as the pin; resolved after the
+# oracle gate so a missing oracle still skips (exit 77).
+SYSTEM="$(resolve_system_dir TRAINDIFF_SYSTEM train-diff)"
+
 DRIVER_ERROR=$(mktemp)
-trap 'rm -f "$DRIVER_ERROR"' EXIT
+trap 'rm -f "$DRIVER_ERROR"; [ -z "${SCRATCH_DATA:-}" ] || rm -rf "$SCRATCH_DATA"' EXIT
 OPTIONS="${TRAINDIFF_OFF_OPTIONS:-0x00000188}"
 echo "options: $OPTIONS"
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
 
 if TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" \
-    ./train-diff "$CAPI_SO" "$REPO_ROOT/fixtures/w3/$OXPINYIN_CAPI_BACKEND_EXT" > "$CAPI_LOG" 2> "$DRIVER_ERROR"; then
+    ./train-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2> "$DRIVER_ERROR"; then
     :
 else
     driver_status=$?
@@ -79,14 +85,16 @@ rm -f "$CAPI_LOG" "$ORACLE_LOG"
 # index). Full system tables on both sides so ranking is the real-frequency
 # construction, not the mini-fixture cost fallback.
 
-if [ -n "${OPTION_SWEEP_CAPI_DATA:-${OXPINYIN_SYSTEM_DIR:-}}" ]; then
-    CAPI_DATA="${OPTION_SWEEP_CAPI_DATA:-$OXPINYIN_SYSTEM_DIR}"
-elif [ -f /tmp/oxpinyin-export/pinyin_index.bin ] \
-	&& grep -Fxq "backend=$OXPINYIN_CAPI_BACKEND_EXT" /tmp/oxpinyin-export/datagen-manifest.txt; then
-    CAPI_DATA="$(mktemp -d /tmp/traindiff-capi-data-XXXXXX)"
-    for table in pinyin_index.bin phrase_index.bin bigram.db; do
-        cp "/tmp/oxpinyin-export/$table" "$CAPI_DATA/$table"
-    done
+# Read from the SYSTEM resolved above (not re-derived from the environment),
+# so both phases use the same data. OPTION_SWEEP_CAPI_DATA stays an override.
+CAPI_DATA="${OPTION_SWEEP_CAPI_DATA:-$SYSTEM}"
+if [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
+    # The export carries no interpolation2.text: stage a copy of its tables in a
+    # scratch directory and take the text from the model directory.
+    SOURCE_DATA="$CAPI_DATA"
+    SCRATCH_DATA="$(mktemp -d /tmp/traindiff-capi-data-XXXXXX)"
+    cp -a "$SOURCE_DATA"/. "$SCRATCH_DATA"/
+    CAPI_DATA="$SCRATCH_DATA"
     for model_dir in \
         ${PINYIN_MODEL_DIR:+"$PINYIN_MODEL_DIR"} \
         "$REPO_ROOT/target/model20/extracted"; do
@@ -95,11 +103,9 @@ elif [ -f /tmp/oxpinyin-export/pinyin_index.bin ] \
             break
         fi
     done
-else
-    CAPI_DATA=""
 fi
 
-if [ -z "$CAPI_DATA" ] || [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
+if [ ! -f "$CAPI_DATA/interpolation2.text" ]; then
     echo "SKIP: no full capi tables + interpolation2.text; cannot run populated-store candidate dump"
     echo "train-diff dynamic-off: PASS (exports only)"
     exit 77

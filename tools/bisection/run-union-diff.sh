@@ -27,6 +27,8 @@ cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
 # shellcheck source=tools/bisection/oracle-cell.sh
 source ./oracle-cell.sh
+# shellcheck source=tools/bisection/system-dir.sh
+source ./system-dir.sh
 
 echo "--- building union-diff drivers ---"
 gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o union-diff union-diff.c -ldl
@@ -65,20 +67,11 @@ if ! grep -qxF "$EXPECTED_PIN_REF" "$PREFIX/oracle-pin.txt"; then
 fi
 echo "oracle: $ORACLE_SO"
 
-CAPI_SYS="$(mktemp -d)"
+# The capi reads the same full datagen output as the pin.
+CAPI_SYS="$(resolve_system_dir UNION_SYSTEM union-diff)"
 CAPI_EDGE_USER="$(mktemp -d)"
 ORACLE_EDGE_USER="$(mktemp -d)"
-trap 'rm -rf "$CAPI_SYS" "$CAPI_EDGE_USER" "$ORACLE_EDGE_USER"' EXIT
-# Each backend directory is a complete native-layout data set, including
-# table.conf, chunk files and the shared addon index pair.
-FIXTURE_EXT=${OXPINYIN_CAPI_BACKEND_EXT:-db}
-case "$FIXTURE_EXT" in
-    db|kct|tkt) ;;
-    *) echo "fatal: invalid fixture backend: $FIXTURE_EXT" >&2; exit 1 ;;
-esac
-cp -a "$REPO_ROOT/fixtures/w3/$FIXTURE_EXT/." "$CAPI_SYS/"
-printf '%s\n' '\data model interpolation' '\1-gram' '\item 1 ok count 1' \
-    > "$CAPI_SYS/interpolation2.text"
+trap 'rm -rf "$CAPI_EDGE_USER" "$ORACLE_EDGE_USER"' EXIT
 
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
