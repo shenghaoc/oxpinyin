@@ -1690,7 +1690,7 @@ impl LanguageModel for RuntimeLm {
         _prev: &Self::Token,
         token: &Self::Token,
         item: Option<(u32, u32)>,
-        _row: &mut oxpinyin_core::NbestStepRow,
+        row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<NbestStepCosts, Self::Error> {
         loop {
             // A committed write moves the generation under the same database
@@ -1706,7 +1706,8 @@ impl LanguageModel for RuntimeLm {
                 } else {
                     false
                 };
-                self.inner.nbest_item_costs(token, extra, imported, item)
+                self.inner
+                    .nbest_item_costs_with_memo(token, extra, imported, item, row.log2_memo())
             })();
             if self
                 .user

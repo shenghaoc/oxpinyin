@@ -43,7 +43,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use oxpinyin_core::cost::{UNKNOWN_COST, cost_of_probability, reduce_ratio, surprisal};
+use oxpinyin_core::cost::{
+    Log2Memo, UNKNOWN_COST, cost_of_probability, reduce_ratio, surprisal, surprisal_with_memo,
+};
 use oxpinyin_core::{Cost, LanguageModel, PhraseToken, UserCountDelta, single_gram};
 
 use crate::bigram_table::BigramTable;
@@ -718,7 +720,7 @@ impl BigramLanguageModel {
         user: UserCountDelta,
         imported_item: bool,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
-        self.nbest_step_costs_using(token, user, imported_item, || {
+        self.nbest_step_costs_using(token, user, imported_item, &mut Log2Memo::default(), || {
             self.merged_transition(prev.value(), token.value(), user)
         })
     }
@@ -737,7 +739,24 @@ impl BigramLanguageModel {
         imported_item: bool,
         item: Option<(u32, u32)>,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
-        self.nbest_step_costs_using(token, user, imported_item, || {
+        self.nbest_item_costs_with_memo(token, user, imported_item, item, &mut Log2Memo::default())
+    }
+
+    /// [`Self::nbest_item_costs`] taking the denominators' logarithms from
+    /// `memo`, the predecessor row's ([`oxpinyin_core::NbestStepRow::log2_memo`]).
+    /// The memo is keyed by exact argument, so the costs are bit-identical.
+    ///
+    /// # Errors
+    /// None today; the signature keeps the cost law's error type.
+    pub fn nbest_item_costs_with_memo(
+        &self,
+        token: &PhraseToken,
+        user: UserCountDelta,
+        imported_item: bool,
+        item: Option<(u32, u32)>,
+        memo: &mut Log2Memo,
+    ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
+        self.nbest_step_costs_using(token, user, imported_item, memo, || {
             Ok(item.map(|(freq, total)| (u64::from(freq), u64::from(total), true)))
         })
     }
@@ -747,6 +766,7 @@ impl BigramLanguageModel {
         token: &PhraseToken,
         user: UserCountDelta,
         imported_item: bool,
+        memo: &mut Log2Memo,
         transition: impl FnOnce() -> Result<Option<(u64, u64, bool)>, LmError>,
     ) -> Result<oxpinyin_core::NbestStepCosts, LmError> {
         // The pin's presence gate is `get_phrase_item` over the token's
@@ -797,7 +817,7 @@ impl BigramLanguageModel {
                     .zip(lambda_den.checked_mul(u128::from(unigram_total)))
             })
             .flatten()
-            .and_then(ratio_cost);
+            .and_then(|ratio| ratio_cost(ratio, memo));
 
         // The blended branch, only when the merged bigram row actually
         // carries this successor: upstream's bigram expansion walks
@@ -830,7 +850,7 @@ impl BigramLanguageModel {
                         unigram_total,
                     )
                 } else {
-                    ratio_cost(ratio)
+                    ratio_cost(ratio, memo)
                 }
             }),
             _ => None,
@@ -886,9 +906,9 @@ impl LanguageModel for BigramLanguageModel {
         _prev: &Self::Token,
         token: &Self::Token,
         item: Option<(u32, u32)>,
-        _row: &mut oxpinyin_core::NbestStepRow,
+        row: &mut oxpinyin_core::NbestStepRow,
     ) -> Result<oxpinyin_core::NbestStepCosts, Self::Error> {
-        self.nbest_item_costs(token, UserCountDelta::ZERO, false, item)
+        self.nbest_item_costs_with_memo(token, UserCountDelta::ZERO, false, item, row.log2_memo())
     }
 
     fn nbest_successors_in_row<'a>(
@@ -909,9 +929,9 @@ impl LanguageModel for BigramLanguageModel {
 /// Surprisal of one ratio, `None` when the reduced parts do not fit `u64`
 /// (a pathological λ; the step then reports no cost, like a below-ε
 /// possibility upstream).
-fn ratio_cost((numerator, denominator): (u128, u128)) -> Option<Cost> {
+fn ratio_cost((numerator, denominator): (u128, u128), memo: &mut Log2Memo) -> Option<Cost> {
     let (numerator, denominator) = reduce_ratio(numerator, denominator);
-    match surprisal(numerator, denominator) {
+    match surprisal_with_memo(numerator, denominator, memo) {
         UNKNOWN_COST => None,
         cost => Some(cost),
     }

@@ -1228,9 +1228,17 @@ pub struct NbestStepRow {
     // The generation tag adds one word per cached row. None means unloaded;
     // a loaded missing gram still has a nonzero generation tag.
     generation: Option<core::num::NonZeroU64>,
+    /// The step's repeated denominators' logarithms. Lives and dies with
+    /// the row, so it never outlasts one step of one guess.
+    log2: cost::Log2Memo,
 }
 
 impl NbestStepRow {
+    /// The logarithm memo the pricing of this row's steps shares.
+    pub fn log2_memo(&mut self) -> &mut cost::Log2Memo {
+        &mut self.log2
+    }
+
     /// Loads once on success, including a missing row. Errors are propagated
     /// without turning corruption into a cached miss.
     ///

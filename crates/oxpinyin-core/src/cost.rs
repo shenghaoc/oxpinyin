@@ -140,11 +140,64 @@ pub fn surprisal(count: u64, total: u64) -> Cost {
         // Equal logarithms: `(0 + HALF) >> FRAC_BITS` is zero.
         return 0;
     }
-    let bits = log2_fixed(total) - log2_fixed(count);
+    bits_to_cost(log2_fixed(total) - log2_fixed(count))
+}
+
+/// [`surprisal`] with `log2(total)` taken from `memo` when `total` is one of
+/// the last two denominators it saw.
+///
+/// The memo is keyed by the exact argument of the logarithm and the logarithm
+/// is a pure function, so the cost is bit-identical to [`surprisal`]'s.
+#[must_use]
+pub fn surprisal_with_memo(count: u64, total: u64, memo: &mut Log2Memo) -> Cost {
+    if count == 0 || total == 0 {
+        return UNKNOWN_COST;
+    }
+    let count = count.min(total);
+    if count == total {
+        return 0;
+    }
+    bits_to_cost(memo.log2_fixed(total) - log2_fixed(count))
+}
+
+/// A surprisal in fixed-point bits, rounded to cost units and floored at
+/// [`UNKNOWN_COST`].
+fn bits_to_cost(bits: u64) -> Cost {
     let scaled = (bits.saturating_mul(COST_PER_BIT.unsigned_abs()) + HALF) >> FRAC_BITS;
     Cost::try_from(scaled)
         .unwrap_or(UNKNOWN_COST)
         .min(UNKNOWN_COST)
+}
+
+/// The last two fixed-point logarithms [`surprisal_with_memo`] took, keyed
+/// by their exact argument.
+///
+/// One n-best step divides by the same few denominators over and over: the
+/// unigram branch by `λ_den · total`, the blended branch by
+/// `λ_den · bigram_total · total`, both after [`reduce_ratio`]. Two slots
+/// hold one of each. Keying by the exact argument means a total that moves
+/// (training, import, mask, unload) is a miss, never a stale hit.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Log2Memo {
+    /// `(argument, log2_fixed(argument))`, most recent first. An argument of
+    /// zero marks an empty slot: the logarithm is never asked for zero.
+    entries: [(u64, u64); 2],
+}
+
+impl Log2Memo {
+    fn log2_fixed(&mut self, value: u64) -> u64 {
+        let [first, second] = self.entries;
+        if first.0 == value {
+            return first.1;
+        }
+        if second.0 == value {
+            self.entries = [second, first];
+            return second.1;
+        }
+        let log = log2_fixed(value);
+        self.entries = [(value, log), first];
+        log
+    }
 }
 
 /// Base-2 logarithm of `value` as a fixed-point number with [`FRAC_BITS`]
@@ -227,7 +280,10 @@ mod tests {
         // A subnormal still has a finite cost: 2^-1074 is 1074 bits.
         assert_eq!(cost_of_probability(f64::from_bits(1)), 1074 * COST_PER_BIT);
     }
-    use super::{COST_PER_BIT, FRAC_BITS, UNKNOWN_COST, log2_fixed, reduce_ratio, surprisal};
+    use super::{
+        COST_PER_BIT, FRAC_BITS, Log2Memo, UNKNOWN_COST, log2_fixed, reduce_ratio, surprisal,
+        surprisal_with_memo,
+    };
 
     #[test]
     fn exact_powers_of_two_have_exact_logarithms() {
@@ -353,6 +409,62 @@ mod tests {
                 "{count}/{total}"
             );
             assert_eq!(surprisal(total, total), reference(total, total), "{total}");
+        }
+    }
+
+    #[test]
+    fn the_memo_path_matches_surprisal_bit_for_bit() {
+        // Totals the n-best pricing divides by: 0, 1, every u32 bit edge,
+        // the u32 totals #801's wrapping facade total can land on (small
+        // values just past a wrap, and u32::MAX itself), and each of those
+        // times the pinned λ denominator, as the unigram branch passes it.
+        let mut totals = vec![0_u64, 1, 2, 3];
+        for width in 0..=32_u32 {
+            let edge = 1_u64 << width;
+            totals.extend([edge - 1, edge, edge + 1]);
+        }
+        totals.extend((0..300).map(|wrapped| u64::from(u32::MAX) - wrapped));
+        totals.extend(1..300);
+        let lambda_den = 1_000_000_u64;
+        totals.extend(
+            totals
+                .clone()
+                .iter()
+                .map(|total| total.saturating_mul(lambda_den)),
+        );
+        totals.extend([u64::MAX, u64::MAX - 1, 1 << 62, (1 << 63) - 1]);
+        let mut counts = vec![0_u64, 1, 2, 3, u64::from(u32::MAX), u64::MAX];
+        for width in 0..64_u32 {
+            let edge = 1_u64 << width;
+            counts.extend([edge - 1, edge, edge + 1]);
+        }
+
+        // One memo across the sweep, so hits, the second-slot swap and
+        // eviction are all exercised: each total is priced against every
+        // count, interleaved with its neighbour as the unigram and blended
+        // branches interleave inside one step.
+        let mut memo = Log2Memo::default();
+        for pair in totals.windows(2) {
+            let (total, other) = (pair[0], pair[1]);
+            for &count in &counts {
+                for (c, t) in [(count, total), (count, other), (count.min(total), total)] {
+                    assert_eq!(
+                        surprisal_with_memo(c, t, &mut memo),
+                        surprisal(c, t),
+                        "{c}/{t}"
+                    );
+                }
+            }
+        }
+        // A fresh memo per call is the uncached computation.
+        for &total in &totals {
+            for &count in &counts {
+                assert_eq!(
+                    surprisal_with_memo(count, total, &mut Log2Memo::default()),
+                    surprisal(count, total),
+                    "{count}/{total}"
+                );
+            }
         }
     }
 
