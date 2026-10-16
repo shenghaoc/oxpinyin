@@ -52,7 +52,7 @@ node's DICompileUnit; for a bdb row, the .cpp of the caller on the LLVM edge
 that ends its witness path, the only unit an internal-linkage clone is
 callable from). Each cell's own rows keep their exact identities.
 
-Oracle shared-object SHA-256: libpinyin=`caa9f594c04003630dae6eda313e33f2cd0cb2911bf0a54d5f5258f97fc76021`; libzhuyin=`5f554ed0d78e57af295baace7905eb9bf901077ae6e315323db794d801a4f889`. The prefix manifest records the pinyin digest; the zhuyin digest was computed from the installed file at generation. Both digests are verified before any native comparison.
+Oracle shared-object SHA-256: libpinyin=`d78a91676af43ad5075c20ab4ae014a8bc6e03b7a5f5ab656d014087f18ff7b8`; libzhuyin=`adbcc8c8c3dec00a488ea89413a525f57fdccf280a8ca44e6c2ad6765fd24c3d`. These are the reproducible-recipe digests recorded in `tools/oracle/oracle-pin.txt` (#818): the same on any linux/amd64 machine that builds the pin with `tools/oracle/build-oracle.sh --libs-only` in the pinned image (the hashes are for linux/amd64 only; other architectures would need their own). They replace the digests of the original measurement host's build (libpinyin `caa9f594…`, libzhuyin `5f554ed0…`), which no other host could reproduce (#793). Both digests are verified before any native comparison.
 
 Subject shared-object SHA-256: libpinyin_capi=`a03a2cdf233e83ac96cd77fa18f489ba82a43462049df9cbbe2b97156ab9c1a5`; libzhuyin_capi=`f791c61ad600921b7d12d05fb239d9eb0402f244a664a314d446ed8871f63e67`; surface libpinyin_capi=`828fbeca7a35b2509752ede7e75f0adf6e66f758743f98b09f7500060ef92252`: the debug facades and the opt-level-1 surface facade that were measured, built from the recorded crates tree; a regeneration against other binaries differs here.
 
@@ -60,7 +60,7 @@ Pin `074a2219c90feaf962d0d24f034514033ece5f99`; subject crates tree `8804b662994
 
 Pinning: this ledger records the crates tree and subject digests it measured, so any later change under crates/ makes `--check` fail until it is regenerated on that tree (#793).
 
-Inherits from the bdb ledger: **971** function rows, identity-set SHA-256 `d23088362bda6a69f20566aca63a42e58869bd7956ae02cf3b99714b23de0094`, oracle digests libpinyin=`d535d077eb55736f742a270a4128763ca4f9b0471819778b06b5708b47b4badc`; libzhuyin=`ef64ad78c7b5c30c34543e420c81de4547d7207244a7b7441ae57f62e8b85ad3`. Inherited by reference **846** (of which **2** link-local clones matched one to one by unsuffixed identity and translation unit); absent by recipe (Berkeley DB conditional sources) **108**; bdb rows without an export witness here (`delta-b-`) **17**.
+Inherits from the bdb ledger: **971** function rows, identity-set SHA-256 `d23088362bda6a69f20566aca63a42e58869bd7956ae02cf3b99714b23de0094`, oracle digests libpinyin=`754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30`; libzhuyin=`cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b`. Inherited by reference **846** (of which **2** link-local clones matched one to one by unsuffixed identity and translation unit); absent by recipe (Berkeley DB conditional sources) **108**; bdb rows without an export witness here (`delta-b-`) **17**.
 
 Export roots **131/131**; TUs **23/23**; reachable graph candidates in this cell **959**. Delta rows **140**: conditional-source **123**, reachable only here **0**, bdb-witness-only **17**. Classification: BEHAVIOR-COVERED **92**, KNOWN-DEFECT **2**, T5-REVIEWED **46**.
 
