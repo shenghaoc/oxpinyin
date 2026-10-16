@@ -400,6 +400,8 @@ fn convert_fixture() -> Fixture {
         &dir.join(SystemDbm::PinyinIndex.file_name()),
         &[
             (encode_complete(&[ni]), items.clone()),
+            // An empty marker: the key exists for longer phrases only.
+            (encode_complete(&[ni, ni]), Vec::new()),
             (encode_incomplete(&[n_key]), items),
         ],
     );
@@ -475,4 +477,40 @@ fn trellis_ranges_split_runs_in_stored_order_without_a_tone() {
         ]
     );
     assert_eq!(texts, ["你", "拟", "泥", "逆"]);
+}
+
+/// The fused single-get answer is the pair it replaces: the ranges of
+/// `trellis_ranges` and the probe of `phrase_prefix_exists`, over a row of
+/// items, an empty marker (the key exists, so the probe is true), an
+/// absent key, an incomplete spelling and each tone filter.
+#[test]
+fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
+    let fix = convert_fixture();
+    let dict = fix.dict();
+    let mut seen = (0_u32, 0_u32, 0_u32);
+    for path in ["ni", "ni,ni", "ni,hao", "n", "n,n", "hao"] {
+        for tones in [&[][..], &[3], &[2], &[3, 3], &[4, 0]] {
+            let path = syls(path);
+            let mut pair = PhraseIndexRanges::new();
+            dict.trellis_ranges(&path, tones, &mut pair).unwrap();
+            let continued = dict.phrase_prefix_exists(&path).unwrap();
+            let mut fused = PhraseIndexRanges::new();
+            let fused_continued = dict
+                .trellis_ranges_continued(&path, tones, &mut fused)
+                .unwrap();
+            assert_eq!(
+                format!("{pair:?}"),
+                format!("{fused:?}"),
+                "{path:?} {tones:?}"
+            );
+            assert_eq!(continued, fused_continued, "{path:?} {tones:?}");
+            seen = (
+                seen.0 + u32::from(fused.iter().next().is_some()),
+                seen.1 + u32::from(fused_continued && fused.iter().next().is_none()),
+                seen.2 + u32::from(!fused_continued),
+            );
+        }
+    }
+    // Ranged rows, markers that range nothing, and absent keys all occur.
+    assert!(seen.0 > 0 && seen.1 > 0 && seen.2 > 0, "{seen:?}");
 }

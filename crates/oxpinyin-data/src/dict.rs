@@ -528,6 +528,41 @@ impl SystemDictionary {
         Ok(())
     }
 
+    /// [`Self::trellis_ranges_with`] and the prefix probe from one DBM get:
+    /// the ranges, and whether the query's index key exists
+    /// (`SEARCH_CONTINUED`, set from the same get that serves the search).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read or a value decode fails.
+    pub fn trellis_ranges_continued_with(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<()>,
+        visible: impl Fn(u32) -> bool,
+    ) -> Result<bool, DictError> {
+        if syllables.is_empty() {
+            return Ok(true);
+        }
+        let Some(keys) = syllables_to_chewing_keys(syllables) else {
+            return Ok(false);
+        };
+        let query: Vec<_> = keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| key.with_tone(tones.get(index).copied().unwrap_or(0)))
+            .collect();
+        let (continued, items) = self.pinyin.search_continued(&query)?;
+        ranges.convert(
+            items
+                .iter()
+                .filter(|item| self.library_loaded(item.token) && visible(item.token))
+                .map(|item| (item.token, Some(()))),
+        );
+        Ok(continued)
+    }
+
     /// What a step prices of `token` over `syllables`: its character count
     /// and its possibility against the query's tone-less keys — the
     /// ordinary lookup's pricing of that token. `None` when the library is
@@ -603,6 +638,15 @@ impl Dictionary for SystemDictionary {
         ranges: &mut PhraseIndexRanges<()>,
     ) -> Result<(), DictError> {
         self.trellis_ranges_with(syllables, tones, ranges, |_| true)
+    }
+
+    fn trellis_ranges_continued(
+        &self,
+        syllables: &[SyllableKey],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<()>,
+    ) -> Result<bool, DictError> {
+        self.trellis_ranges_continued_with(syllables, tones, ranges, |_| true)
     }
 
     fn trellis_item(

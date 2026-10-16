@@ -458,6 +458,57 @@ impl RuntimeDict {
         }
     }
 
+    /// The query's toned keys; `None` when a syllable is no key.
+    fn trellis_query(
+        syllables: &[SyllableKey],
+        tones: &[u8],
+    ) -> Option<Vec<oxpinyin_core::ChewingKey>> {
+        syllables
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                oxpinyin_core::ChewingKey::from_pinyin(key.text())
+                    .map(|key| key.with_tone(tones.get(index).copied().unwrap_or(0)))
+            })
+            .collect()
+    }
+
+    /// Whether a ranged `token` is loaded and visible to the library mask.
+    fn token_ranged(&self, token: u32) -> bool {
+        self.system.library_loaded(token) && self.library_visible_token(token)
+    }
+
+    /// The user table's `convert` call of [`Self::trellis_ranges`].
+    fn user_trellis_ranges(
+        &self,
+        query: &[oxpinyin_core::ChewingKey],
+        ranges: &mut PhraseIndexRanges<()>,
+    ) -> Result<(), DictError> {
+        let initial: Vec<_> = query.iter().map(|key| key.initial).collect();
+        if let Some(bucket) = self.user_trellis_index()?.get(&initial) {
+            ranges.convert(
+                bucket
+                    .iter()
+                    .filter(|(keys, entry)| {
+                        query.len() == keys.len()
+                            && query.iter().zip(keys).all(|(query, stored)| {
+                                query.initial == stored.initial
+                                    && ((query.middle == stored.middle
+                                        && query.final_ == stored.final_)
+                                        || (query.middle == 0 && query.final_ == 0)
+                                        || (stored.middle == 0 && stored.final_ == 0))
+                                    && (query.tone == stored.tone
+                                        || query.tone == 0
+                                        || stored.tone == 0)
+                            })
+                            && self.token_ranged(entry.token().value())
+                    })
+                    .map(|(_, entry)| (entry.token().value(), Some(()))),
+            );
+        }
+        Ok(())
+    }
+
     /// The query keys the effective-item overlay prices against; `None`
     /// when the store holds no system items or a syllable is no key.
     fn effective_query(&self, syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::ChewingKey>> {
@@ -1106,15 +1157,7 @@ impl Dictionary for RuntimeDict {
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
     ) -> Result<(), Self::Error> {
-        let Some(query) = syllables
-            .iter()
-            .enumerate()
-            .map(|(index, key)| {
-                oxpinyin_core::ChewingKey::from_pinyin(key.text())
-                    .map(|key| key.with_tone(tones.get(index).copied().unwrap_or(0)))
-            })
-            .collect::<Option<Vec<_>>>()
-        else {
+        let Some(query) = Self::trellis_query(syllables, tones) else {
             return Ok(());
         };
         // The user table's search of this path (#785); the pin makes one
@@ -1124,33 +1167,38 @@ impl Dictionary for RuntimeDict {
             let user = self.user_lookup()?;
             self.note_user_search(syllables, &user);
         }
-        let loaded =
-            |token: u32| self.system.library_loaded(token) && self.library_visible_token(token);
+        let loaded = |token: u32| self.token_ranged(token);
         self.system
             .trellis_ranges_with(syllables, tones, ranges, loaded)?;
-        let initial: Vec<_> = query.iter().map(|key| key.initial).collect();
-        if let Some(bucket) = self.user_trellis_index()?.get(&initial) {
-            ranges.convert(
-                bucket
-                    .iter()
-                    .filter(|(keys, entry)| {
-                        query.len() == keys.len()
-                            && query.iter().zip(keys).all(|(query, stored)| {
-                                query.initial == stored.initial
-                                    && ((query.middle == stored.middle
-                                        && query.final_ == stored.final_)
-                                        || (query.middle == 0 && query.final_ == 0)
-                                        || (stored.middle == 0 && stored.final_ == 0))
-                                    && (query.tone == stored.tone
-                                        || query.tone == 0
-                                        || stored.tone == 0)
-                            })
-                            && loaded(entry.token().value())
-                    })
-                    .map(|(_, entry)| (entry.token().value(), Some(()))),
-            );
+        self.user_trellis_ranges(&query, ranges)
+    }
+
+    /// [`Self::trellis_ranges`] and [`Self::phrase_prefix_exists`] with one
+    /// system DBM get. A live library mask keeps the two calls: the
+    /// visibility walk behind its probe is a different read.
+    fn trellis_ranges_continued(
+        &self,
+        syllables: &[Self::Syllable],
+        tones: &[u8],
+        ranges: &mut PhraseIndexRanges<()>,
+    ) -> Result<bool, Self::Error> {
+        let query = Self::trellis_query(syllables, tones);
+        let (Some(query), 0) = (query, self.library_mask.load(Ordering::SeqCst)) else {
+            self.trellis_ranges(syllables, tones, ranges)?;
+            return self.phrase_prefix_exists(syllables);
+        };
+        let loaded = |token: u32| self.token_ranged(token);
+        let system_extends = self
+            .system
+            .trellis_ranges_continued_with(syllables, tones, ranges, loaded)?;
+        self.user_trellis_ranges(&query, ranges)?;
+        let user = self.user_lookup()?;
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        self.note_user_search(syllables, &user);
+        if system_extends {
+            return Ok(true);
         }
-        Ok(())
+        Ok(user.phrase_prefix_exists(syllables))
     }
 
     fn trellis_item(
