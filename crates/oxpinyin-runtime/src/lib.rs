@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use oxpinyin_core::scoring::key_cost_table;
 use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
-    PhraseToken, SyllableKey, UserCountDelta,
+    PhraseItemRead, PhraseToken, SyllableKey, UserCountDelta,
 };
 pub use oxpinyin_data::phrase_library::{LibraryError, PhraseItemView, RowFault};
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
@@ -1281,6 +1281,28 @@ impl Dictionary for RuntimeDict {
             .ok()
             .flatten()
             .map(|phrase| phrase.text().to_owned())
+    }
+
+    /// `get_phrase_item` over the facade (074a2219 `phrase_index.h:646-657`):
+    /// the item a library mask hides is the pin's freed sub-index, an item
+    /// the user store replaced or owns is read from there, and any other
+    /// system item from the shipped chunk.
+    fn phrase_item_pronunciations(
+        &self,
+        token: PhraseToken,
+    ) -> Result<PhraseItemRead, Self::Error> {
+        let value = token.value();
+        if !self.library_visible_token(value) {
+            return Ok(PhraseItemRead::NoItem);
+        }
+        if let Some(store) = self.user.as_ref()
+            && let Some(rows) = store
+                .item_pronunciations(value)
+                .map_err(|error| DictError::Parse(error.to_string()))?
+        {
+            return Ok(PhraseItemRead::Item(rows));
+        }
+        self.system.phrase_item_pronunciations(token)
     }
 
     /// Both seams under this facade handle partial-key queries with one

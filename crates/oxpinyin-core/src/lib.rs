@@ -416,6 +416,29 @@ pub trait Dictionary {
     fn overlong_extension_gate(&self, _syllables: &[Self::Syllable]) -> bool {
         false
     }
+
+    /// The stored pronunciations of the phrase item behind `token` —
+    /// `FacadePhraseIndex::get_phrase_item` then `get_nth_pronunciation`
+    /// (`phrase_index.h` at the pin `074a2219`): each pronunciation's keys,
+    /// tones included, and its `guint32` frequency, in stored order. This is
+    /// what `ForwardPhoneticConstraints::validate_constraint` revalidates a
+    /// forcing against (`phonetic_lookup.cpp:120-165`): it searches no
+    /// table, so it has no expansion of incomplete keys to bound.
+    ///
+    /// Defaulted to [`PhraseItemRead::Unsupported`] so existing implementors
+    /// compile unchanged (`docs/findings/core-trait-seam.md`: the seam grows
+    /// by defaulted methods only); a dictionary that keeps no phrase items is
+    /// revalidated through [`Self::lookup`] instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Self::Error`] when the backend cannot read the item.
+    fn phrase_item_pronunciations(
+        &self,
+        _token: PhraseToken,
+    ) -> Result<PhraseItemRead, Self::Error> {
+        Ok(PhraseItemRead::Unsupported)
+    }
 }
 
 impl<D: Dictionary + ?Sized> Dictionary for &D {
@@ -519,6 +542,32 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
     fn overlong_extension_gate(&self, syllables: &[Self::Syllable]) -> bool {
         (**self).overlong_extension_gate(syllables)
     }
+
+    fn phrase_item_pronunciations(
+        &self,
+        token: PhraseToken,
+    ) -> Result<PhraseItemRead, Self::Error> {
+        (**self).phrase_item_pronunciations(token)
+    }
+}
+
+/// A phrase item's stored pronunciations in stored order: each one's keys,
+/// tones included, and its `guint32` frequency.
+pub type PronunciationRows = Vec<(Vec<ChewingKey>, u32)>;
+
+/// What [`Dictionary::phrase_item_pronunciations`] found behind a token.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PhraseItemRead {
+    /// The dictionary keeps no phrase items to read.
+    Unsupported,
+    /// The token has no readable item: its library is not loaded or hidden,
+    /// or the slot is empty. The pin's `get_phrase_item` then fails and
+    /// leaves the caller's `PhraseItem` untouched (`phrase_index.h:649-650`,
+    /// `phrase_index.cpp:189-193`), so the caller keeps whatever item it
+    /// last read.
+    NoItem,
+    /// The item's pronunciations.
+    Item(PronunciationRows),
 }
 
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`novel_types.h` at the pin `074a2219`):

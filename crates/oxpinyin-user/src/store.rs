@@ -3674,6 +3674,51 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(Some(item))
     }
 
+    /// The stored pronunciations of the item this store holds behind
+    /// `token`, as `(keys, frequency)` rows in stored order (074a2219
+    /// `phrase_index.h` `get_nth_pronunciation`): an imported or trained
+    /// system item (libraries 1..=4, `None` while the shipped item is
+    /// untouched), or a user-file library's phrase (libraries 5..=7).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UserStoreError`] when a user phrase cannot be read.
+    pub fn item_pronunciations(
+        &self,
+        token: Token,
+    ) -> Result<Option<oxpinyin_core::PronunciationRows>, UserStoreError> {
+        use crate::store_libpinyin::pinyin_keys_to_packed;
+        match token >> 24 {
+            1..=4 => Ok(self.with_effective_system_item(token, |item| {
+                item.prons
+                    .iter()
+                    .map(|(packed, frequency)| {
+                        let keys = packed
+                            .iter()
+                            .map(|&bits| oxpinyin_core::ChewingKey::from_packed(bits))
+                            .collect();
+                        (keys, *frequency)
+                    })
+                    .collect()
+            })),
+            5..=7 => Ok(self.phrase(token)?.map(|phrase| {
+                phrase
+                    .pronunciations()
+                    .iter()
+                    .filter_map(|pronunciation| {
+                        let keys = pinyin_keys_to_packed(pronunciation.keys())?
+                            .into_iter()
+                            .map(oxpinyin_core::ChewingKey::from_packed)
+                            .collect();
+                        let frequency = u32::try_from(pronunciation.count()).unwrap_or(u32::MAX);
+                        Some((keys, frequency))
+                    })
+                    .collect()
+            })),
+            _ => Ok(None),
+        }
+    }
+
     /// Exclusive token end of imported system items in one library, without
     /// cloning payloads for the streaming export's range probe.
     #[must_use]

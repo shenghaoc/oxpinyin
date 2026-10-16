@@ -298,6 +298,7 @@ mod input;
 mod lookup;
 mod offsets;
 mod selection;
+pub(crate) use selection::{column_is_empty, training_readings};
 mod state;
 
 #[cfg(test)]

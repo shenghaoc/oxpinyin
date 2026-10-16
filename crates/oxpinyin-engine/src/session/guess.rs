@@ -76,8 +76,14 @@ where
         // forcing dropped (the buffer changed under it), the selection
         // record follows the surviving forcings.
         let mut store = core::mem::take(&mut self.constraints);
-        let dropped = store.validate(bound + 1, |start, end, token| {
-            crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
+        let spelling = crate::nbest::ConstraintSpelling::new(
+            &matrix,
+            bound,
+            self.input.physical_separators(),
+            self.input.as_bytes(),
+        );
+        let dropped = store.validate(bound + 1, |start, end, token, text_len| {
+            spelling.spells(&self.dictionary, start, end, token, text_len)
         });
         self.constraints = store;
         if dropped? || (self.constraints.is_active() && self.record.history().is_empty()) {
@@ -165,8 +171,14 @@ where
         let matrix = build_scan_matrix(&graph, self.settings.options, self.input.full_pinyin());
 
         let mut store = core::mem::take(&mut self.constraints);
-        let dropped = store.validate(bound + 1, |start, end, token| {
-            crate::nbest::span_finds_token(&matrix, start, end, token, &self.dictionary)
+        let spelling = crate::nbest::ConstraintSpelling::new(
+            &matrix,
+            bound,
+            self.input.physical_separators(),
+            self.input.as_bytes(),
+        );
+        let dropped = store.validate(bound + 1, |start, end, token, text_len| {
+            spelling.spells(&self.dictionary, start, end, token, text_len)
         });
         self.constraints = store;
         if dropped? || (self.constraints.is_active() && self.record.history().is_empty()) {

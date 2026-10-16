@@ -24,6 +24,7 @@
 //! `docs/findings/sentence-surface.md` §3 for the recorded divergences
 //! (polyphone discounting, float accumulation).
 
+use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::hash::{BuildHasherDefault, Hasher};
@@ -32,14 +33,17 @@ use compact_str::CompactString;
 use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
-    Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry, PhraseIndexRanges,
-    PhraseToken, SyllableKey,
+    ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry,
+    PhraseIndexRanges, PhraseItemRead, PhraseToken, PronunciationRows, SyllableKey,
 };
 use smallvec::SmallVec;
 
 use crate::constraint::{Cell, ConstraintStore, PhraseSpan};
 use crate::error::EngineError;
-use crate::session::{MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey};
+use crate::session::matrix::ParsedMatrix;
+use crate::session::{
+    MAX_PHRASE_LENGTH, SCAN_EXPANSION_LIMIT, ScanKey, column_is_empty, training_readings,
+};
 
 /// Inline capacity of a node's value list: libpinyin's `nstore`, the
 /// larger of the two shapes, so neither allocates per node. The live cap
@@ -899,38 +903,205 @@ where
     Ok(())
 }
 
-/// Whether the forced `token` still spells over `[start, end)` with a
-/// kept pronunciation possibility under the current matrix: an entry
-/// spelling the token keeps it when its possibility is `None` (no
-/// counts — read as possibility 1) or `Some` with a nonzero matched
-/// count; only `Some((0, _))` rejects. The engine-side counterpart of
-/// `validate_constraint`'s `compute_pronunciation_possibility` drop
-/// test (below-`FLT_EPSILON` upstream; the zero-guard from the §3
-/// matched/total work). Recorded equivalent on
-/// model20 data (`docs/findings/upstream-divergences.md`, the
-/// `validate_constraint` entry): the below-ε boundary is unreachable
-/// there, so the zero test decides both sides.
-///
-/// # Errors
-///
-/// Propagates the dictionary lookup's backend failure.
-pub fn span_finds_token<D>(
-    matrix: &[Vec<ScanKey>],
-    start: usize,
-    end: usize,
-    token: PhraseToken,
+/// The matrix a forcing is revalidated against: the pin's
+/// `ForwardPhoneticConstraints::validate_constraint`
+/// (`src/lookup/phonetic_lookup.cpp:120-165` at 074a2219) over the columns
+/// of the current parse, with the separator zero keys the pin's
+/// `fill_matrix` writes.
+pub(crate) struct ConstraintSpelling<'a> {
+    scan: &'a [Vec<ScanKey>],
+    bound: usize,
+    physical: bool,
+    input: &'a [u8],
+    parsed: OnceCell<ParsedMatrix>,
+    /// The last item a read returned: the pin's one `PhraseItem item`.
+    last_item: RefCell<Option<PronunciationRows>>,
+}
+
+impl<'a> ConstraintSpelling<'a> {
+    /// `scan` is the parse's scan matrix, `bound` its parsed length and
+    /// `input` the raw bytes it was built over.
+    pub(crate) const fn new(
+        scan: &'a [Vec<ScanKey>],
+        bound: usize,
+        physical: bool,
+        input: &'a [u8],
+    ) -> Self {
+        Self {
+            scan,
+            bound,
+            physical,
+            input,
+            parsed: OnceCell::new(),
+            last_item: RefCell::new(None),
+        }
+    }
+
+    /// Whether the forced `token` still spells over `[start, end)`:
+    /// `compute_pronunciation_possibility` of the token's item over the
+    /// span is not below `FLT_EPSILON` (`phonetic_lookup.cpp:161-164`).
+    ///
+    /// The pin searches no table. It walks the matrix columns from `start`
+    /// to `end` (`phonetic_key_matrix.cpp:534-585`), one key per column
+    /// step, and for each complete path as long as the phrase asks
+    /// `PhraseItem::get_pronunciation_possibility` (`phrase_index.h:136-163`)
+    /// over the item's stored pronunciations, summing the paths. An
+    /// incomplete key compares equal to any final
+    /// (`pinyin_compare_middle_and_final3`, `pinyin_phrase3.h:73-94`), so the
+    /// walk never expands one and has no cap on how many completions an
+    /// abbreviation stands for. An empty start or end column answers zero
+    /// (`:593-596`).
+    ///
+    /// The drop test is the integer zero test: a path counts when some
+    /// stored pronunciation matches it with a nonzero frequency
+    /// (`matched > 0` over a nonzero total). It decides what the `f32`
+    /// `< FLT_EPSILON` test does on the pinned data, where no per-token
+    /// total reaches 2^23 (`docs/findings/upstream-divergences.md`, the
+    /// `validate_constraint` entry).
+    ///
+    /// `text_len` is the forced phrase's character count; it only bounds
+    /// the walk for a dictionary that keeps no phrase items
+    /// ([`PhraseItemRead::Unsupported`]).
+    ///
+    /// # Errors
+    ///
+    /// Propagates the dictionary's backend failure.
+    pub(crate) fn spells<D>(
+        &self,
+        dictionary: &D,
+        start: usize,
+        end: usize,
+        token: PhraseToken,
+        text_len: usize,
+    ) -> Result<bool, EngineError>
+    where
+        D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
+        D::Error: core::fmt::Display,
+    {
+        let dictionary_error =
+            |error: D::Error| EngineError::Scoring(ScoringError::Dictionary(error.to_string()));
+        // `PhraseItem item;` is declared once before the pin's loop
+        // (`phonetic_lookup.cpp:141`) and `get_phrase_item` leaves it alone
+        // when it fails (`phrase_index.h:649-650`, `phrase_index.cpp:189-193`):
+        // a token with no readable item is checked against the item the
+        // last successful read left, and against a zero-length one only
+        // when no read has succeeded yet. The read comes before the
+        // overrun test (`:154`), so a forcing that is then cleared for
+        // overrunning still leaves its item behind.
+        let read = dictionary
+            .phrase_item_pronunciations(token)
+            .map_err(dictionary_error)?;
+        let item_less = matches!(read, PhraseItemRead::Unsupported);
+        let mut last = self.last_item.borrow_mut();
+        if let PhraseItemRead::Item(rows) = read {
+            *last = Some(rows);
+        }
+        let parsed = self
+            .parsed
+            .get_or_init(|| ParsedMatrix::from_scan(self.scan, self.bound, self.physical));
+        let columns = &parsed.columns;
+        if end >= columns.len()
+            || column_is_empty(columns, &parsed.zeros, start)
+            || column_is_empty(columns, &parsed.zeros, end)
+        {
+            return Ok(false);
+        }
+        if item_less {
+            for reading in training_readings(columns, self.input, start, end, text_len) {
+                if lookup_finds_token(dictionary, &reading, token)? {
+                    return Ok(true);
+                }
+            }
+            return Ok(false);
+        }
+        let Some(rows) = last.as_ref() else {
+            return Ok(false);
+        };
+        // `phrase_length`: every stored pronunciation spells it.
+        let Some(length) = rows.first().map(|(keys, _)| keys.len()) else {
+            return Ok(false);
+        };
+        // `total_freq` is read-independent; the pin's guard returns zero
+        // for an item whose frequencies sum to zero.
+        let total = rows.iter().fold(0_u32, |total, (_, frequency)| {
+            total.wrapping_add(*frequency)
+        });
+        if total == 0 {
+            return Ok(false);
+        }
+        for reading in training_readings(columns, self.input, start, end, length) {
+            let matched = rows
+                .iter()
+                .filter(|(stored, _)| reading_matches(&reading, stored))
+                .fold(0_u32, |matched, (_, frequency)| {
+                    matched.wrapping_add(*frequency)
+                });
+            if matched != 0 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}
+
+/// `pinyin_compare_with_tones(query, stored, phrase_length) == 0`
+/// (`src/storage/pinyin_phrase3.h:108-144` at 074a2219), key by key
+/// (the three passes only reorder which difference is reported): initials
+/// equal (`:68-71`); middle and final equal, or either side the
+/// incomplete `(ZERO_MIDDLE, ZERO_FINAL)` pair (`:73-94`, the incomplete
+/// test at `:80-86`); tones equal, or either side zero (`:96-105`).
+fn reading_matches(query: &[ChewingKey], stored: &[ChewingKey]) -> bool {
+    query.len() == stored.len()
+        && query.iter().zip(stored).all(|(q, s)| {
+            q.initial == s.initial
+                && ((q.middle == s.middle && q.final_ == s.final_)
+                    || (q.middle == 0 && q.final_ == 0)
+                    || (s.middle == 0 && s.final_ == 0))
+                && (q.tone == s.tone || q.tone == 0 || s.tone == 0)
+        })
+}
+
+/// [`ConstraintSpelling::spells`] for a dictionary that keeps no phrase
+/// items: the token is searched under `reading`, an incomplete key standing
+/// for its bounded completions, and kept unless its possibility is the
+/// zero count. Every shipping dictionary reads its items instead.
+fn lookup_finds_token<D>(
     dictionary: &D,
+    reading: &[ChewingKey],
+    token: PhraseToken,
 ) -> Result<bool, EngineError>
 where
     D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
     D::Error: core::fmt::Display,
 {
-    let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
-    let mut entries: Vec<SpanEntry> = Vec::new();
-    span_entries(matrix, start, end, &mut path, dictionary, &mut entries)?;
-    Ok(entries
+    let Some(path) = reading
         .iter()
-        .any(|entry| entry.token == token.value() && !matches!(entry.pronunciation, Some((0, _)))))
+        .map(|key| SyllableKey::from_canonical_text(key.pinyin_spelling()))
+        .collect::<Option<SmallVec<[SyllableKey; 16]>>>()
+    else {
+        return Ok(false);
+    };
+    let has_incomplete = path
+        .iter()
+        .any(|key| key.completeness() == Completeness::Partial);
+    let mut found = false;
+    let mut look = |sequence: &[SyllableKey]| -> Result<(), EngineError> {
+        let entries = dictionary
+            .lookup(sequence)
+            .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
+        found |= entries.iter().any(|entry| {
+            entry.token() == token && !matches!(entry.pronunciation_possibility(), Some((0, _)))
+        });
+        Ok(())
+    };
+    if has_incomplete && !dictionary.handles_partial_keys() {
+        for sequence in expand_keys(&path, SCAN_EXPANSION_LIMIT) {
+            look(sequence.as_slice())?;
+        }
+    } else {
+        look(&path)?;
+    }
+    Ok(found)
 }
 
 #[derive(Default)]
@@ -1140,87 +1311,6 @@ where
             cost: cost_add(predecessor.value.cost, cost),
         },
     );
-    Ok(())
-}
-
-/// Enumerates every key-path from `start` to `end` and collects the
-/// dictionary entries it spells (`search_matrix`).
-fn span_entries<D>(
-    matrix: &[Vec<ScanKey>],
-    start: usize,
-    end: usize,
-    path: &mut SmallVec<[SyllableKey; 16]>,
-    dictionary: &D,
-    into: &mut Vec<SpanEntry>,
-) -> Result<(), EngineError>
-where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
-    D::Error: core::fmt::Display,
-{
-    let Some(column) = matrix.get(start) else {
-        return Ok(());
-    };
-    for scan_key in column.iter().copied() {
-        if scan_key.to > end {
-            continue;
-        }
-        path.push(scan_key.key);
-        if scan_key.to == end {
-            extend_and_lookup(path, path.len(), dictionary, into)?;
-        } else if path.len() < MAX_PHRASE_LENGTH {
-            span_entries(matrix, scan_key.to, end, path, dictionary, into)?;
-        }
-        path.pop();
-    }
-    Ok(())
-}
-
-/// Incomplete-key expansion then one dictionary lookup per sequence.
-fn extend_and_lookup<D>(
-    path: &[SyllableKey],
-    path_len: usize,
-    dictionary: &D,
-    into: &mut Vec<SpanEntry>,
-) -> Result<(), EngineError>
-where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
-    D::Error: core::fmt::Display,
-{
-    let has_incomplete = path
-        .iter()
-        .any(|key| key.completeness() == Completeness::Partial);
-    if has_incomplete {
-        for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
-            push_span_entries(sequence.as_slice(), path_len, dictionary, into)?;
-        }
-    } else {
-        push_span_entries(path, path_len, dictionary, into)?;
-    }
-    Ok(())
-}
-
-fn push_span_entries<D>(
-    sequence: &[SyllableKey],
-    path_len: usize,
-    dictionary: &D,
-    into: &mut Vec<SpanEntry>,
-) -> Result<(), EngineError>
-where
-    D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
-    D::Error: core::fmt::Display,
-{
-    let entries = dictionary
-        .lookup(sequence)
-        .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-    for entry in entries {
-        let pronunciation = entry.pronunciation_possibility();
-        into.push(SpanEntry {
-            token: entry.token().value(),
-            text: entry.into_text(),
-            keys: path_len.try_into().unwrap_or(u32::MAX),
-            pronunciation,
-        });
-    }
     Ok(())
 }
 
