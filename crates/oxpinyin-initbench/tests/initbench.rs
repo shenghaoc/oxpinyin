@@ -76,8 +76,15 @@ fn a_missing_library_is_refused_with_nothing_on_stdout() {
         dir.to_str().expect("utf-8"),
         user.to_str().expect("utf-8"),
     )));
+    // Where there is no memory probe (anything but Linux and macOS) the child
+    // refuses before it reaches the library; that is the documented refusal.
+    let expected = if cfg!(any(target_os = "linux", target_os = "macos")) {
+        "cannot load"
+    } else {
+        "unsupported on this host"
+    };
     assert!(
-        stderr.contains("initbench:") && stderr.contains("cannot load"),
+        stderr.contains("initbench:") && stderr.contains(expected),
         "{stderr}"
     );
 }
