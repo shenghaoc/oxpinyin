@@ -6291,17 +6291,18 @@ def _item_size(item):
 
 
 def _system_items(k, name='gb_char.bin'):
-    """A system chunk's total and its items, `{slot: bytes}` at their header
-    length."""
+    """A system chunk's total, its items `{slot: bytes}` at their header
+    length, and the item-area offsets `{slot: offset}`."""
     payload = Path(k.data, name).read_bytes()[8:]
     word = lambda offset: int.from_bytes(payload[offset:offset + 4], 'little')
     total, index, content = word(0), word(4), word(8)
-    items = {}
+    items, offsets = {}, {}
     for slot in range((content - index - 1) // 4):
         offset = word(index + slot * 4)
         if offset:
             items[slot] = payload[content + offset:content + offset + _item_size(payload[content + offset:])]
-    return total, items
+            offsets[slot] = offset
+    return total, items, offsets
 
 
 def _item_with(item, unigram=None, freq=None):
@@ -6313,6 +6314,12 @@ def _item_with(item, unigram=None, freq=None):
     if freq is not None:
         item[-4:] = freq.to_bytes(4, 'little')
     return bytes(item)
+
+
+def _flip(item):
+    """`item` with its last byte changed: the same size, so only the
+    `memcmp` can refuse it."""
+    return item[:-1] + bytes((item[-1] ^ 0xFF,))
 
 
 def _item_text(item):
@@ -6327,22 +6334,30 @@ def _observe_system_item(k, watched, phrase):
     return out
 
 
-def system_replay(k, build, reopen=False):
+def system_replay(k, build, reopen=False, unigram_add=True):
     """`build(p)` returns the records after the header and the tokens to
-    watch; `p` maps `one` and `fresh` to (token, bytes) of library 1: an item
-    it holds and one it does not, for a trailing ADD."""
-    total, items = _system_items(k)
+    watch; `p` maps `one`, `two` (an item of two or more readings) and `last`
+    (the item at the highest item-area offset) to (token, bytes) of library 1,
+    and `fresh` and `absent` to a token it does not hold: one for a trailing
+    ADD, one no record adds."""
+    total, items, offsets = _system_items(k)
     one = next(slot for slot, item in items.items() if item[0] == 1 and item[1] == 1)
+    two = next(slot for slot, item in items.items() if item[0] == 1 and item[1] >= 2)
+    last = max(offsets, key=offsets.get)
     fresh = max(items) + 2
     records, watched = build({'one': (0x01000000 | one, items[one]),
-                              'fresh': (0x01000000 | fresh, _item_with(items[one], unigram=11))})
+                              'two': (0x01000000 | two, items[two]),
+                              'last': (0x01000000 | last, items[last]),
+                              'fresh': (0x01000000 | fresh, _item_with(items[one], unigram=11)),
+                              'absent': (0x01000000 | (fresh + 3), b'')})
     phrase = _item_text(items[one])
     _write_user_conf(k)
     _write_log(k, _modify_header(0, total, total) + b''.join(records))
     out = {'total': total, 'ctx': bool(k.ctx)}
     out.update(_observe_system_item(k, watched, phrase))
-    # A unigram add reaches only an item the sub-index holds.
-    out['add-unigram'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, watched['one'], 7)
+    if unigram_add:
+        # A unigram add reaches only an item the sub-index holds.
+        out['add-unigram'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, watched['one'], 7)
     # An import marks the context modified, so the save writes the diff.
     reading = b"ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode()
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
@@ -6358,10 +6373,10 @@ def system_replay(k, build, reopen=False):
     return out
 
 
-def _replay_case(name, build, reopen=False):
+def _replay_case(name, build, reopen=False, unigram_add=True, **options):
     for mode in ('pinyin', 'zhuyin'):
-        case('replay-' + name + '-' + mode, mode=mode, stderr=True)(
-            lambda k, build=build: system_replay(k, build, reopen))
+        case('replay-' + name + '-' + mode, mode=mode, stderr=True, **options)(
+            lambda k, build=build: system_replay(k, build, reopen, unigram_add))
 
 
 def _watch(p):
@@ -6384,6 +6399,254 @@ _replay_case('matched-remove', _matched_remove)
 _replay_case('matched-remove-reopen', _matched_remove, reopen=True)
 
 
+# #850: journal replay compares and sizes items as the pin does. `merge`
+# compares a record's old chunk with the visible item by `PhraseItem::operator==`
+# (equal chunk sizes, then `memcmp`: `phrase_index.h:235-240`); the visible
+# item's length comes from its header, `6 + 4L + n(2L + 4)` (`get_phrase_item`,
+# `phrase_index.cpp:180-206`), not from the stored payload; `add_phrase_item`
+# stores the whole payload, trailing bytes included (`:208-217`). REMOVE deletes
+# the item before it compares (`:460-475`), so a mismatch returns false with
+# the removal kept. MODIFY compares first (`:477-483`); a chunk longer than the
+# visible item is a remove plus an add of the whole new payload, otherwise it
+# is `memmove`d over the stored bytes (`:486-500`). The first failure ends the
+# merge and the records before it stay applied (`pinyin.cpp:276` ignores the
+# answer). The probe is #851's `system_replay`.
+
+def _compare_case(name, build, **options):
+    """The probe without its unigram add: a live item's added delta is a
+    different path than the compare and sizing these cases hold."""
+    _replay_case(name, build, unigram_add=False, **options)
+
+
+# REMOVE whose old chunk carries a trailing byte: the sizes differ, the item
+# is gone already and the merge stops before the ADD.
+_compare_case('remove-trailing-old', lambda p: ([
+    _log_record(_LOG_REMOVE, p['one'][0], old=p['one'][1] + b'\xaa'), _add_fresh(p)], _watch(p)))
+
+# MODIFY whose old chunk carries a trailing byte: the compare refuses it and
+# nothing is changed.
+_compare_case('modify-trailing-old', lambda p: ([
+    _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1] + b'\xaa',
+                new=_item_with(p['one'][1], freq=77)), _add_fresh(p)], _watch(p)))
+
+
+# MODIFY whose new chunk is longer than the visible item by trailing bytes:
+# the growing path stores all of it, and the item is still its header's
+# length, so the next record compares against the header-length bytes.
+def _modify_grow(stored_old=False):
+    def build(p):
+        token, item = p['one']
+        new = _item_with(item, unigram=item[2] + 500, freq=5)
+        trailing = b'\x01\x02\x03'
+        # The second record's old chunk is the item at its header length, or
+        # with the trailing bytes the first record stored.
+        second = _item_with(new, freq=9)
+        return ([_log_record(_LOG_MODIFY, token, old=item, new=new + trailing),
+                 _log_record(_LOG_MODIFY, token, old=new + (trailing if stored_old else b''), new=second),
+                 _add_fresh(p)], _watch(p))
+    return build
+
+
+_compare_case('modify-trailing-new-grow', _modify_grow(), control=True)
+_compare_case('modify-trailing-new-grow-stored-old', _modify_grow(True))
+
+
+# The in-place path: a new chunk with a pronunciation fewer and trailing bytes
+# that still fits the old size is `memmove`d over the item. Its header now
+# gives a shorter item, so the second record compares against that, and not
+# against the bytes the memmove left behind it.
+def _modify_in_place(stored_old=False):
+    def build(p):
+        token, item = p['two']
+        new = bytes((item[0], item[1] - 1)) + item[2:-6]
+        assert _item_size(new) == len(item) - 6
+        trailing = b'\x01\x02\x03\x04'
+        second = _item_with(new, freq=9)
+        return ([_log_record(_LOG_MODIFY, token, old=item, new=new + trailing),
+                 _log_record(_LOG_MODIFY, token, old=new + (trailing if stored_old else b''), new=second),
+                 _add_fresh(p)], _watch(p))
+    return build
+
+
+_compare_case('modify-trailing-new-in-place', _modify_in_place(), control=True)
+_compare_case('modify-trailing-new-in-place-stored-old', _modify_in_place(True))
+
+
+# An empty phrase is an item of `6 + 4n` bytes. In place, then once more
+# against the shorter item.
+def _modify_empty(p):
+    token, item = p['one']
+    empty = bytes((0, 0)) + item[2:6]
+    return ([_log_record(_LOG_MODIFY, token, old=item, new=empty),
+             _log_record(_LOG_MODIFY, token, old=empty, new=_item_with(empty, unigram=3)),
+             _add_fresh(p)], _watch(p))
+
+
+_compare_case('modify-empty-phrase', _modify_empty)
+
+# A mismatch ends the merge: the record before it applied, the one after it
+# did not.
+_compare_case('mismatch-then-valid', lambda p: ([
+    _log_record(_LOG_MODIFY, p['two'][0], old=p['two'][1], new=_item_with(p['two'][1], freq=21)),
+    _log_record(_LOG_MODIFY, p['one'][0], old=_flip(p['one'][1]), new=_item_with(p['one'][1], freq=33)),
+    _log_record(_LOG_MODIFY, p['two'][0], old=_item_with(p['two'][1], freq=21),
+                new=_item_with(p['two'][1], freq=22)),
+    _add_fresh(p)], _watch(p)))
+
+# A REMOVE whose old chunk has the right size and the wrong bytes: the item
+# and its unigram are gone from the total already, and the merge stops.
+_compare_case('failed-remove', lambda p: ([
+    _log_record(_LOG_REMOVE, p['one'][0], old=_flip(p['one'][1])), _add_fresh(p)], _watch(p)))
+
+# A record for a token the library does not hold. `get_phrase_item` fails
+# (`ERROR_OUT_OF_RANGE`, `phrase_index.cpp:187-189`) and `merge` goes on with
+# what its result leaves behind: REMOVE dereferences the NULL `tmpitem`
+# (`:468`, `remove_phrase_item` `:219-224` leaves it unset); MODIFY ignores
+# the failure and compares a stale `item` (`:478-483`), the default one with no
+# earlier MODIFY, else the last item a MODIFY fetched.
+def _watch_absent(p):
+    return dict(_watch(p), absent=p['absent'][0])
+
+
+# The pin dies of SIGSEGV at init; the subject opens, goes on past the
+# record and answers the library as it holds it.
+_NO_ITEM = [[False, 0, None], [False, 0]]
+_compare_case('remove-absent', lambda p: ([
+    _log_record(_LOG_REMOVE, p['absent'][0], old=p['one'][1]), _add_fresh(p)], _watch_absent(p)),
+    crash={'ctx': True, 'absent': _NO_ITEM, 'one': [[True, 1, '锕'], [True, 3]],
+           'fresh': [[True, 1, '锕'], [True, 11]]})
+
+_compare_case('modify-absent', lambda p: ([
+    _log_record(_LOG_MODIFY, p['absent'][0], old=p['one'][1],
+                new=_item_with(p['one'][1], freq=77)), _add_fresh(p)], _watch_absent(p)))
+
+
+# After a MODIFY of `two`, the stale `item` is `two`'s bytes. A MODIFY of the
+# absent token whose old chunk equals them passes the compare: the same-size
+# new chunk is `memmove`d over `two` (`:495-500`), the growing one meets the
+# NULL of REMOVE's assert (`:486-491`).
+def _modify_absent_stale(grow):
+    def build(p):
+        token, item = p['two']
+        first = _item_with(item, freq=21)
+        new = _item_with(first, freq=22)
+        return ([_log_record(_LOG_MODIFY, token, old=item, new=first),
+                 _log_record(_LOG_MODIFY, p['absent'][0], old=first,
+                             new=new + (b'\x01' if grow else b'')),
+                 _add_fresh(p)], _watch_absent(p))
+    return build
+
+
+_compare_case('modify-absent-stale', _modify_absent_stale(False))
+# The growing form reaches REMOVE's NULL: the pin dies of SIGSEGV, the subject
+# stops at the record and keeps what the first MODIFY did.
+_compare_case('modify-absent-stale-grow', _modify_absent_stale(True),
+             crash={'ctx': True, 'absent': _NO_ITEM, 'fresh': _NO_ITEM,
+                    'one': [[True, 1, '锕'], [True, 3]]})
+
+
+# A MODIFY's new chunk is not checked against its own header: only the old
+# chunk is compared (`phrase_index.cpp:481-483`), and a new chunk no longer
+# than the visible item is `memmove`d over the stored bytes (`:493-500`). The
+# stored item keeps its length, so its header still names the whole item.
+_compare_case('modify-short-in-place', lambda p: ([
+    _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                new=p['one'][1][:2] + (200).to_bytes(4, 'little')),
+    _add_fresh(p)], _watch(p)))
+
+
+# The default `PhraseItem` is six zero bytes (`phrase_index.h:81-84`), not an
+# empty item: a MODIFY of an absent token whose old chunk is those zeros passes
+# the compare with no earlier MODIFY, and a new chunk that fits the six bytes
+# is written into `item`'s own buffer. No entry is created and the merge goes
+# on; a later compare sees what the write left there.
+_ZERO_ITEM = bytes(6)
+
+
+def _modify_absent_default(twice=False):
+    def build(p):
+        first = bytes((0, 0)) + (50).to_bytes(4, 'little')
+        records = [_log_record(_LOG_MODIFY, p['absent'][0], old=_ZERO_ITEM, new=first)]
+        if twice:
+            second = bytes((0, 0)) + (60).to_bytes(4, 'little')
+            records.append(_log_record(_LOG_MODIFY, p['absent'][0], old=first, new=second))
+        records.append(_add_fresh(p))
+        return records, _watch_absent(p)
+    return build
+
+
+_compare_case('modify-absent-default', _modify_absent_default())
+_compare_case('modify-absent-default-twice', _modify_absent_default(True))
+# A new chunk longer than the six-byte default reaches the NULL of REMOVE's
+# assert (`:486-491`): the pin dies of SIGSEGV, the subject stops at the record.
+_compare_case('modify-absent-default-grow', lambda p: ([
+    _log_record(_LOG_MODIFY, p['absent'][0], old=_ZERO_ITEM,
+                new=bytes((0, 0)) + (50).to_bytes(4, 'little') + b'\x00'),
+    _add_fresh(p)], _watch_absent(p)),
+    crash={'ctx': True, 'absent': _NO_ITEM, 'fresh': _NO_ITEM,
+           'one': [[True, 1, '锕'], [True, 3]]}, control=True)
+
+
+# A small over-long header on a non-last item: the compare passes, the
+# six-byte chunk is written in place, and the next read takes the twenty-two
+# bytes its header names, six of them from the following item. That read ends
+# inside the content buffer, so the pin's answer is reproduced.
+_compare_case('modify-header-overlong-small', lambda p: ([
+    _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                new=bytes((2, 1)) + (200).to_bytes(4, 'little')),
+    _add_fresh(p)], _watch(p)))
+
+
+# The pin does not check a new chunk's header against its size: the compare is
+# on the old chunk only. A stored item whose header then names more bytes than
+# were written is read past by a later `get_phrase_item` (class (b); row 107).
+# The last item of the item area sits at the end of the pin's `m_phrase_content`
+# copy once the trailing ADD has appended: a 132,096-byte header (255, 255)
+# reads past the item, the copy and its allocation, and the pin dies of
+# SIGSEGV at the first read. The subject keeps its safe answer: it applies the
+# write and the ADD, and the over-read item is unreadable at the finish.
+def _watch_last(p):
+    return dict(_watch(p), last=p['last'][0])
+
+
+_compare_case('modify-header-overlong', lambda p: ([
+    _log_record(_LOG_MODIFY, p['last'][0], old=p['last'][1],
+                new=bytes((255, 255)) + (200).to_bytes(4, 'little')),
+    _add_fresh(p)], _watch_last(p)),
+    crash={'ctx': True, 'fresh': [[True, 1, '锕'], [True, 11]],
+           'one': [[True, 1, '锕'], [True, 3]],
+           'last': [[True, 14, '中华人民共和国中央军事委员会'], [True, 62]]})
+
+
+# An ADD payload shorter than the six bytes `add_phrase_item` reads its
+# unigram from: `PhraseItem::get_unigram_frequency` (`phrase_index.h:124-126`)
+# reads four bytes at offset 2 through `MemoryChunk::get_content<guint32>`
+# (`memory_chunk.h:388-392`), whose `check_result` is an `assert` in the oracle
+# build, so `pinyin_init`/`zhuyin_init` dies of SIGABRT (class (c), row 108).
+# oxpinyin stops that library's replay at the record, keeps the earlier
+# records and logs one warning; init succeeds.
+def _short_add(payload):
+    def build(p):
+        return ([
+            _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                        new=_item_with(p['one'][1], freq=77)),
+            _log_record(_LOG_ADD, p['fresh'][0], new=payload),
+            _add_fresh(p)], _watch(p))
+
+    def probe(k):
+        out = system_replay(k, build, unigram_add=False)
+        out['ret'] = out['ctx']
+        return out
+    return probe
+
+
+for _name, _payload in (('one-byte', b'\x01'), ('five-bytes', bytes((1, 1, 7, 0, 0)))):
+    for _mode in ('pinyin', 'zhuyin'):
+        _suffix = '-zhuyin' if _mode == 'zhuyin' else '-pinyin'
+        case('replay-short-add-' + _name + _suffix,
+             mode=_mode, abort=True, stderr=True)(_short_add(_payload))
+
+
 # A removed item and the prefix it extends. `SEARCH_CONTINUED` comes from the
 # pinyin table's DB get alone (`chewing_large_table2_bdb.cpp:182-187` at
 # 074a2219): a REMOVE clears only the sub-index (`phrase_index.cpp:219-236`), so
@@ -6396,7 +6659,7 @@ _replay_case('matched-remove-reopen', _matched_remove, reopen=True)
 # candidate list of the prefix. The pin lists the removed token itself through
 # a stale item (a SIGSEGV), so no candidate list is taken where it is one.
 def _removed_extension(k, candidates, labels=('exact', 'longer', 'prefix'), before=False):
-    total, items = _system_items(k, 'merged.bin')
+    total, items, _offsets = _system_items(k, 'merged.bin')
 
     def readings(item):
         length, prons = item[0], item[1]

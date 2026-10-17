@@ -106,6 +106,10 @@ pub struct Target {
     /// of every row a mask or a removal took out of the store since. The
     /// save writes back the ones no remaining row writes, empty.
     pub(crate) index_file_keys: std::sync::Mutex<IndexKeys>,
+    /// A system journal's ADD payload was shorter than its unigram; the
+    /// replay stopped at that record and the facade logs one warning
+    /// (class (c), register row 108).
+    pub(crate) short_add_payload: bool,
     /// The entries the user pinyin index holds without an item reading
     /// behind them: those of a dropped item (the pin's index tables keep
     /// them when `unload` frees the sub-index, `phrase_index.cpp:261-268`)
@@ -401,6 +405,7 @@ impl GenericUserStore<DefaultStore> {
             versions,
             law,
             open_counter: loaded.open_counter,
+            short_add_payload: loaded.short_add_payload,
             overlong_index_keys,
             index_keys,
             index_file_keys: std::sync::Mutex::new(index_file_keys),

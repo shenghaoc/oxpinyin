@@ -55,6 +55,9 @@ pub extern "C" fn zhuyin_init(
     let user_path = cstr_to_path(userdir);
     match CapiContext::try_open(&system_path, user_path.as_deref()) {
         Ok(ctx) => {
+            for warning in ctx.core.load_warnings() {
+                crate::ffi::log_warning(warning);
+            }
             let handle = box_context(ctx);
             crate::live::register(handle);
             handle
