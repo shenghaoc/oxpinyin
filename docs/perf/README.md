@@ -35,6 +35,7 @@ recipe, per artifact".
 | [`perf-fill-lookup-2026-08`](perf-fill-lookup-2026-08.md) | Stage-2 leftover: `fill_lookup` (2026-08-20) |
 | [`perf-init-text-slurp-2026-08`](perf-init-text-slurp-2026-08.md) | Stage-2 init cut: interpolation2.text parse + redb slurp (2026-08-21) |
 | [`perf-init-user-profile-2026-10`](perf-init-user-profile-2026-10.md) | Init: opening a profile that modifies system phrases — stop materialising and cloning the same items (2026-10-17) |
+| [`perf-init-journal-old-items-2026-10`](perf-init-journal-old-items-2026-10.md) | Init: compare journal old items in place instead of decoding them to owned items (2026-10-17) |
 | [`perf-init-typed-map-2026-08`](perf-init-typed-map-2026-08.md) | Stage-2 leftover: init typed-map insert (2026-08-21) |
 | [`perf-so-size-2026-09`](perf-so-size-2026-09.md) | `.so` size — fat LTO + single codegen unit (2026-09) |
 | [`perf-stage2-harness-2026-08`](perf-stage2-harness-2026-08.md) | Stage-2 measurement harness (continues the W8 baseline) |

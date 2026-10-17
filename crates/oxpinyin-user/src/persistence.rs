@@ -194,36 +194,120 @@ impl SystemLibrary {
             .map_or(0, |pron| pron.freq)
     }
 
-    /// `self.item(slot).map(|current| &current == other)`, decided in place:
-    /// `None` when no item is readable at `slot`, otherwise whether it equals
-    /// `other`. A mapped item is compared against the mapping without being
-    /// copied out; its text is still scanned to the end first, so an item
+    /// `self.item(slot).map(|current| current == decoded(other))`, decided in
+    /// place: `None` when no item is readable at `slot`, otherwise whether it
+    /// equals `other`. A mapped item is compared against the mapping without
+    /// being copied out; its text is still scanned to the end first, so an item
     /// whose phrase does not decode is `None` whatever else differs.
-    pub(crate) fn item_matches(&self, slot: u32, other: &ChunkItem) -> Option<bool> {
+    pub(crate) fn item_matches(&self, slot: u32, other: &WireItem<'_>) -> Option<bool> {
         if let Some(item) = self.items.get(&slot) {
-            return Some(item == other);
+            return Some(other.equals(item));
         }
         let view = self.mapped.as_ref()?.item(slot)?;
-        let mut equal = view.phrase_length() == other.phrase.len();
-        for (index, scalar) in view.phrase_chars().enumerate() {
-            equal &= other.phrase.get(index) == Some(&u32::from(scalar?));
+        let mut theirs = other.phrase();
+        let mut equal = view.phrase_length() == other.phrase_length;
+        for scalar in view.phrase_chars() {
+            equal &= theirs.next() == Some(u32::from(scalar?));
         }
         equal &= view.unigram() == other.unigram;
-        equal &= view.n_pronunciations() == other.prons.len();
+        equal &= view.n_pronunciations() == other.n_prons;
         if equal {
+            // Both key runs are little-endian `u16`s of even length, so equal
+            // runs are equal bytes.
             equal = view
                 .pronunciations()
-                .zip(&other.prons)
-                .all(|(pron, (keys, frequency))| {
-                    pron.freq == *frequency
-                        && pron
-                            .keys
-                            .chunks_exact(2)
-                            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
-                            .eq(keys.iter().copied())
-                });
+                .zip(other.pronunciations())
+                .all(|(pron, (keys, frequency))| pron.freq == frequency && pron.keys == keys);
         }
         Some(equal)
+    }
+}
+
+/// A journal record's `PhraseItem` bytes, validated as [`decode_phrase_item`]
+/// validates them and read in place: what a replay needs of an *old* item (to
+/// compare it with the held one, and its unigram and stored length) without
+/// building the owned [`ChunkItem`] it would discard.
+///
+/// [`WireItem::parse`] accepts exactly the payloads `decode_phrase_item`
+/// accepts: the header, the phrase's `ucs4_t` run and every pronunciation must
+/// fit, and bytes after the last pronunciation are ignored. No scalar check
+/// happens there either; the phrase stays raw `u32`s.
+pub(crate) struct WireItem<'a> {
+    phrase_length: usize,
+    n_prons: usize,
+    unigram: u32,
+    /// The phrase's `4 * phrase_length` bytes.
+    phrase: &'a [u8],
+    /// The pronunciations' `n_prons * (2 * phrase_length + 4)` bytes.
+    prons: &'a [u8],
+}
+
+impl<'a> WireItem<'a> {
+    /// `None` exactly when `decode_phrase_item(bytes)` fails.
+    pub(crate) fn parse(bytes: &'a [u8]) -> Option<Self> {
+        let phrase_length = usize::from(*bytes.first()?);
+        let n_prons = usize::from(*bytes.get(1)?);
+        let unigram = u32::from_le_bytes(bytes.get(2..6)?.try_into().ok()?);
+        let phrase_end = 6 + 4 * phrase_length;
+        let phrase = bytes.get(6..phrase_end)?;
+        let prons = bytes.get(phrase_end..phrase_end + n_prons * (2 * phrase_length + 4))?;
+        Some(Self {
+            phrase_length,
+            n_prons,
+            unigram,
+            phrase,
+            prons,
+        })
+    }
+
+    /// The unigram the decoded item carries.
+    pub(crate) const fn unigram(&self) -> u32 {
+        self.unigram
+    }
+
+    /// `phrase_item_wire_len(&decoded)`: `encode_phrase_item`'s length for the
+    /// decoded item, or its refusal. The decoder already guarantees the
+    /// pronunciation count and key runs, so only an empty phrase is refused.
+    pub(crate) const fn wire_len(&self) -> Option<usize> {
+        if self.phrase_length == 0 {
+            return None;
+        }
+        Some(6 + self.phrase.len() + self.prons.len())
+    }
+
+    fn phrase(&self) -> impl Iterator<Item = u32> + '_ {
+        self.phrase
+            .chunks_exact(4)
+            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+    }
+
+    /// Each pronunciation's packed key bytes and frequency, in stored order.
+    fn pronunciations(&self) -> impl Iterator<Item = (&[u8], u32)> + '_ {
+        self.prons
+            .chunks_exact(2 * self.phrase_length + 4)
+            .map(|run| {
+                let (keys, freq) = run.split_at(2 * self.phrase_length);
+                (
+                    keys,
+                    u32::from_le_bytes([freq[0], freq[1], freq[2], freq[3]]),
+                )
+            })
+    }
+
+    /// `*item == decode_phrase_item(bytes)`.
+    fn equals(&self, item: &ChunkItem) -> bool {
+        self.unigram == item.unigram
+            && self.n_prons == item.prons.len()
+            && self.phrase().eq(item.phrase.iter().copied())
+            && self.pronunciations().zip(&item.prons).all(
+                |((packed, frequency), (keys, expected))| {
+                    frequency == *expected
+                        && packed
+                            .chunks_exact(2)
+                            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                            .eq(keys.iter().copied())
+                },
+            )
     }
 }
 
@@ -1367,10 +1451,10 @@ fn load_logs_with_mask(
         // the original's — equals `probe`; `None` when there is none.
         let current_matches = |overrides: &BTreeMap<u32, Option<ChunkItem>>,
                                slot: u32,
-                               probe: &ChunkItem|
+                               probe: &WireItem<'_>|
          -> Option<bool> {
             match overrides.get(&slot) {
-                Some(Some(item)) => Some(item == probe),
+                Some(Some(item)) => Some(probe.equals(item)),
                 Some(None) => None,
                 None => original.and_then(|library| library.item_matches(slot, probe)),
             }
@@ -1392,13 +1476,12 @@ fn load_logs_with_mask(
                 },
                 LogRecord::Remove { token, old_item } => {
                     let slot = token & PHRASE_MASK;
-                    let matched = decode_phrase_item(&old_item)
-                        .ok()
+                    let matched = WireItem::parse(&old_item)
                         .map(|old| (current_matches(&overrides, slot, &old), old));
                     match matched {
                         // An equal item has the record's own unigram.
                         Some((Some(true), old)) => {
-                            total = total.map(|total| total.wrapping_sub(old.unigram));
+                            total = total.map(|total| total.wrapping_sub(old.unigram()));
                             overrides.insert(slot, None);
                         }
                         Some((None, _)) => {
@@ -1421,17 +1504,18 @@ fn load_logs_with_mask(
                     new_item,
                 } => {
                     let slot = token & PHRASE_MASK;
-                    match (decode_phrase_item(&old_item), decode_phrase_item(&new_item)) {
-                        (Ok(old), Ok(new))
-                            if current_matches(&overrides, slot, &old) == Some(true) =>
-                        {
+                    // Only the new item is kept, so only it is built.
+                    let old = WireItem::parse(&old_item)
+                        .filter(|old| current_matches(&overrides, slot, old) == Some(true));
+                    match (old, decode_phrase_item(&new_item)) {
+                        (Some(old), Ok(new)) => {
                             // The held item equals `old`, so its stored
                             // form and unigram are `old`'s.
-                            let grows = phrase_item_wire_len(&old)
-                                .is_some_and(|stored| new_item.len() > stored);
+                            let grows =
+                                old.wire_len().is_some_and(|stored| new_item.len() > stored);
                             if grows {
                                 total = total.map(|total| {
-                                    total.wrapping_sub(old.unigram).wrapping_add(new.unigram)
+                                    total.wrapping_sub(old.unigram()).wrapping_add(new.unigram)
                                 });
                             }
                             overrides.insert(slot, Some(new));
@@ -1477,24 +1561,6 @@ fn load_logs_with_mask(
             loaded.state.system_overrides.insert(nibble, overrides);
         }
     }
-}
-
-/// `encode_phrase_item(item).ok().map(|bytes| bytes.len())`, computed from the
-/// item's shape: the same refusals, and otherwise the header, the phrase's
-/// `ucs4_t` run, and each pronunciation's key run and frequency.
-fn phrase_item_wire_len(item: &ChunkItem) -> Option<usize> {
-    let phrase_length = item.phrase.len();
-    if phrase_length == 0
-        || phrase_length > usize::from(u8::MAX)
-        || item.prons.len() > usize::from(u8::MAX)
-        || item
-            .prons
-            .iter()
-            .any(|(keys, _)| keys.len() != phrase_length)
-    {
-        return None;
-    }
-    Some(6 + 4 * phrase_length + item.prons.len() * (2 * phrase_length + 4))
 }
 
 /// `PhraseItem::get_unigram_frequency` read from a record's raw item: the
@@ -3237,11 +3303,16 @@ mod tests {
                 "slot {slot}"
             );
             for probe in &probes {
-                assert_eq!(
-                    library.item_matches(slot, probe),
-                    materialized.as_ref().map(|current| current == probe),
-                    "slot {slot} against {probe:?}"
-                );
+                // Bytes after the last pronunciation change nothing.
+                for tail in [&[][..], &[0xa5, 0x5a]] {
+                    let bytes = [raw_wire(probe), tail.to_vec()].concat();
+                    let wire = WireItem::parse(&bytes).expect("a well-formed probe");
+                    assert_eq!(
+                        library.item_matches(slot, &wire),
+                        materialized.as_ref().map(|current| current == probe),
+                        "slot {slot} against {probe:?}"
+                    );
+                }
             }
             for keys in key_probes {
                 let expected = materialized.as_ref().map_or(0, |current| {
@@ -3427,28 +3498,407 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
+    /// `ChunkItem`'s wire form without `encode_phrase_item`'s shape refusals,
+    /// so a test can write the payloads a hostile journal carries: a key run
+    /// of the wrong length, an empty phrase.
+    fn raw_wire(item: &ChunkItem) -> Vec<u8> {
+        let mut bytes = vec![item.phrase.len() as u8, item.prons.len() as u8];
+        bytes.extend_from_slice(&item.unigram.to_le_bytes());
+        for code in &item.phrase {
+            bytes.extend_from_slice(&code.to_le_bytes());
+        }
+        for (keys, frequency) in &item.prons {
+            for key in keys {
+                bytes.extend_from_slice(&key.to_le_bytes());
+            }
+            bytes.extend_from_slice(&frequency.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Items that differ from `item` in one way each: every field the
+    /// comparison reads, the pronunciation count and order, and the shape.
+    fn one_edit_apart(item: &ChunkItem) -> Vec<ChunkItem> {
+        let mut out = Vec::new();
+        let mut edit = |change: &dyn Fn(&mut ChunkItem)| {
+            let mut next = item.clone();
+            change(&mut next);
+            out.push(next);
+        };
+        edit(&|next| next.unigram += 1);
+        edit(&|next| next.phrase.push(0x4e00));
+        edit(&|next| next.prons.push((vec![9; next.phrase.len()], 3)));
+        edit(&|next| {
+            next.prons.pop();
+        });
+        edit(&|next| next.prons.reverse());
+        if let Some(first) = item.phrase.first() {
+            let first = *first;
+            edit(&|next| next.phrase[0] = first ^ 1);
+            edit(&|next| next.phrase.clear());
+        }
+        if !item.prons.is_empty() {
+            edit(&|next| next.prons[0].1 += 1);
+            edit(&|next| next.prons[0].0.push(1));
+            edit(&|next| next.prons[0].0.clear());
+            edit(&|next| {
+                if let Some(key) = next.prons[0].0.first_mut() {
+                    *key ^= 1;
+                }
+            });
+        }
+        out
+    }
+
+    /// `WireItem` is the old route's decode: it accepts the payloads
+    /// `decode_phrase_item` accepts and no others, reads the same unigram and
+    /// stored length, and says "equal" for the same items.
     #[test]
-    fn phrase_item_wire_len_is_the_encoded_length_or_the_same_refusal() {
-        let long_prons: Vec<(Vec<u16>, u32)> = (0..256).map(|n| (vec![n as u16], 1)).collect();
-        let cases = [
+    fn wire_item_agrees_with_decode_phrase_item() {
+        let key = |n: u16| vec![n, n + 1];
+        let seeds = [
+            item(&[], 3, &[]),
+            item(&[], 3, &[(vec![], 9)]),
             item(&[0x4f60], 1, &[]),
             item(&[0x4f60], 1, &[(vec![1], 2)]),
-            item(&[0x4f60, 0x597d], 1, &[(vec![1, 2], 2), (vec![3, 4], 5)]),
-            item(&[], 1, &[]),
+            item(&[0xd800], 6, &[(vec![1], 2)]),
+            item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(3), 7)]),
+            item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(1), 5)]),
             item(&[7; 255], 1, &[(vec![1; 255], 2)]),
-            item(&[7; 256], 1, &[]),
-            item(&[0x4f60], 1, &long_prons[..255]),
-            item(&[0x4f60], 1, &long_prons),
-            item(&[0x4f60, 0x597d], 1, &[(vec![1], 2)]),
-            item(&[0x4f60], 1, &[(vec![1, 2], 2)]),
         ];
-        for case in &cases {
-            assert_eq!(
-                phrase_item_wire_len(case),
-                encode_phrase_item(case).ok().map(|bytes| bytes.len()),
-                "{case:?}"
-            );
+        let mut payloads: Vec<Vec<u8>> = Vec::new();
+        for seed in &seeds {
+            let bytes = raw_wire(seed);
+            // Every truncation, with the header intact.
+            for end in 0..=bytes.len() {
+                payloads.push(bytes[..end].to_vec());
+            }
+            // Bytes after the last pronunciation.
+            for tail in 1..=5_u8 {
+                payloads.push([bytes.clone(), vec![0xa5; usize::from(tail)]].concat());
+            }
+            // A header that disagrees with the body, in either direction.
+            for value in 0..=255_u8 {
+                for field in [0, 1] {
+                    let mut lie = bytes.clone();
+                    if let Some(slot) = lie.get_mut(field) {
+                        *slot = value;
+                    }
+                    payloads.push(lie);
+                }
+            }
+            // A key run one key short or long, as `encode_phrase_item` refuses.
+            for edited in one_edit_apart(seed) {
+                payloads.push(raw_wire(&edited));
+            }
         }
+        let (mut accepted, mut refused) = (0, 0);
+        for bytes in &payloads {
+            let decoded = decode_phrase_item(bytes);
+            let parsed = WireItem::parse(bytes);
+            assert_eq!(parsed.is_some(), decoded.is_ok(), "{bytes:?}");
+            let (Ok(decoded), Some(parsed)) = (decoded, parsed) else {
+                refused += 1;
+                continue;
+            };
+            accepted += 1;
+            assert_eq!(parsed.unigram(), decoded.unigram, "{bytes:?}");
+            assert_eq!(
+                parsed.wire_len(),
+                encode_phrase_item(&decoded)
+                    .ok()
+                    .map(|encoded| encoded.len()),
+                "{decoded:?}"
+            );
+            assert!(parsed.equals(&decoded), "{decoded:?}");
+            for other in one_edit_apart(&decoded) {
+                assert_eq!(
+                    parsed.equals(&other),
+                    decoded == other,
+                    "{decoded:?} {other:?}"
+                );
+            }
+        }
+        assert!(accepted > 300 && refused > 1000, "{accepted} {refused}");
+    }
+
+    /// The replay as it was before `WireItem`: every record payload decoded
+    /// to an owned item, and the held item materialised to compare with it.
+    /// Returns what the replay leaves behind: overrides, total and diagnostics.
+    fn replay_with_owned_items(
+        original: &SystemLibrary,
+        name: &str,
+        records: &[LogRecord],
+    ) -> (BTreeMap<u32, Option<ChunkItem>>, Option<u32>, Vec<String>) {
+        let mut overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::new();
+        let mut skipped = Vec::new();
+        let mut total = Some(original.total);
+        let held =
+            |overrides: &BTreeMap<u32, Option<ChunkItem>>, slot: u32| match overrides.get(&slot) {
+                Some(item) => item.clone(),
+                None => original.item(slot),
+            };
+        let wire_len = |item: &ChunkItem| encode_phrase_item(item).ok().map(|bytes| bytes.len());
+        for record in records {
+            match record {
+                LogRecord::Add { token, new_item } => match decode_phrase_item(new_item) {
+                    Ok(item) => {
+                        total = total.map(|total| total.wrapping_add(item.unigram));
+                        overrides.insert(token & PHRASE_MASK, Some(item));
+                    }
+                    Err(error) => {
+                        skipped.push(format!("{name}: {error}"));
+                        break;
+                    }
+                },
+                LogRecord::Remove { token, old_item } => {
+                    let slot = token & PHRASE_MASK;
+                    match decode_phrase_item(old_item) {
+                        Ok(old) => match held(&overrides, slot) {
+                            Some(current) if current == old => {
+                                total = total.map(|total| total.wrapping_sub(old.unigram));
+                                overrides.insert(slot, None);
+                            }
+                            None => {
+                                overrides.insert(slot, None);
+                            }
+                            Some(_) => {
+                                skipped.push(format!(
+                                    "{name}: replay stopped at a mismatched REMOVE for {token:#010x}"
+                                ));
+                                break;
+                            }
+                        },
+                        Err(_) => {
+                            skipped.push(format!(
+                                "{name}: replay stopped at a mismatched REMOVE for {token:#010x}"
+                            ));
+                            break;
+                        }
+                    }
+                }
+                LogRecord::Modify {
+                    token,
+                    old_item,
+                    new_item,
+                } => {
+                    let slot = token & PHRASE_MASK;
+                    match (decode_phrase_item(old_item), decode_phrase_item(new_item)) {
+                        (Ok(old), Ok(new)) if held(&overrides, slot) == Some(old.clone()) => {
+                            if wire_len(&old).is_some_and(|stored| new_item.len() > stored) {
+                                total = total.map(|total| {
+                                    total.wrapping_sub(old.unigram).wrapping_add(new.unigram)
+                                });
+                            }
+                            overrides.insert(slot, Some(new));
+                        }
+                        _ => {
+                            skipped.push(format!(
+                                "{name}: replay stopped at a mismatched MODIFY for {token:#010x}"
+                            ));
+                            break;
+                        }
+                    }
+                }
+                LogRecord::ModifyHeader {
+                    old_total,
+                    new_total,
+                } => {
+                    let now = total.unwrap_or_else(|| system_new_total(original, &overrides));
+                    if now != *old_total {
+                        skipped.push(format!("{name}: replay stopped at a mismatched header"));
+                        break;
+                    }
+                    total = total.map(|_| *new_total);
+                }
+            }
+        }
+        (overrides, total, skipped)
+    }
+
+    /// Replays journals whose old payloads are right, wrong, truncated,
+    /// padded and malformed, over mapped and inline originals, and requires
+    /// what the pre-`WireItem` replay leaves behind: overrides, total and the
+    /// diagnostic naming the record the replay stopped at.
+    #[test]
+    fn replay_agrees_with_the_owned_decoding_replay() {
+        let key = |n: u16| vec![n, n + 1];
+        let items = [
+            (1_u32, item(&[0x4f60], 100, &[(vec![1], 100)])),
+            (2, item(&[0x597d], 50, &[(vec![2], 30), (vec![3], 20)])),
+            (3, item(&[0x4f60, 0x597d], 7, &[(key(4), 7), (key(4), 7)])),
+            (4, item(&[0x754c], 9, &[])),
+            (5, item(&[0xd800], 4, &[(vec![1], 2)])),
+        ];
+        let chunk = build_chunk(&items).expect("chunk");
+        let dir = tempdir("replay-owned-oracle");
+        let path = dir.join("lib.bin");
+        std::fs::write(&path, chunk).expect("write");
+        let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open");
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+        let total = items.iter().map(|(_, item)| item.unigram).sum::<u32>();
+        // Inline originals add what a mapping cannot hold: an empty phrase.
+        let inline_items: BTreeMap<u32, ChunkItem> = items
+            .iter()
+            .cloned()
+            .chain([(6, item(&[], 5, &[(vec![], 3)]))])
+            .collect();
+        let originals_of = |inline: bool| -> SystemOriginals {
+            BTreeMap::from([(
+                1_u8,
+                SystemLibrary {
+                    total,
+                    range_end: 7,
+                    items: if inline {
+                        inline_items.clone()
+                    } else {
+                        BTreeMap::new()
+                    },
+                    mapped: (!inline).then(|| mapped.clone()),
+                },
+            )])
+            .into()
+        };
+        let name = originals_of(true)
+            .layout()
+            .system_logs()
+            .iter()
+            .find(|(nibble, _)| *nibble == 1)
+            .map(|(_, file)| file.display().to_string())
+            .expect("nibble 1 has a system log");
+
+        let mut corpus: Vec<Vec<LogRecord>> = Vec::new();
+        let slots: Vec<u32> = inline_items.keys().copied().chain([40]).collect();
+        for &slot in &slots {
+            // The item a record about `slot` claims, whether or not it is held.
+            let claimed = inline_items.get(&slot).unwrap_or(&inline_items[&1]).clone();
+            let exact = raw_wire(&claimed);
+            let mut olds = vec![
+                exact.clone(),
+                Vec::new(),
+                [exact.clone(), vec![9, 9]].concat(),
+            ];
+            olds.extend((0..exact.len()).map(|end| exact[..end].to_vec()));
+            olds.extend(one_edit_apart(&claimed).iter().map(raw_wire));
+            for value in [0_u8, 1, 2, 255] {
+                for field in [0, 1] {
+                    let mut lie = exact.clone();
+                    if let Some(byte) = lie.get_mut(field) {
+                        *byte = value;
+                    }
+                    olds.push(lie);
+                }
+            }
+            let mut grown = claimed.clone();
+            grown.unigram += 5;
+            grown.prons.push((vec![8; grown.phrase.len()], 1));
+            let mut padded = claimed.clone();
+            padded.unigram += 3;
+            let news = [
+                raw_wire(&grown),
+                raw_wire(&padded),
+                [raw_wire(&padded), vec![1, 2, 3]].concat(),
+                raw_wire(&claimed),
+                raw_wire(&item(&[0x1234], 1, &[]))[..4].to_vec(),
+                Vec::new(),
+            ];
+            for old in &olds {
+                corpus.push(vec![LogRecord::Remove {
+                    token: slot,
+                    old_item: old.clone(),
+                }]);
+                // The record over a slot an earlier record already changed.
+                for earlier in [
+                    LogRecord::Remove {
+                        token: slot,
+                        old_item: exact.clone(),
+                    },
+                    LogRecord::Modify {
+                        token: slot,
+                        old_item: exact.clone(),
+                        new_item: news[0].clone(),
+                    },
+                    LogRecord::Add {
+                        token: slot,
+                        new_item: news[1].clone(),
+                    },
+                ] {
+                    corpus.push(vec![
+                        earlier.clone(),
+                        LogRecord::Remove {
+                            token: slot,
+                            old_item: old.clone(),
+                        },
+                    ]);
+                    corpus.push(vec![
+                        earlier,
+                        LogRecord::Modify {
+                            token: slot,
+                            old_item: old.clone(),
+                            new_item: news[0].clone(),
+                        },
+                    ]);
+                }
+                for new in &news {
+                    corpus.push(vec![
+                        LogRecord::ModifyHeader {
+                            old_total: total,
+                            new_total: total + 1,
+                        },
+                        LogRecord::Modify {
+                            token: slot | 0x0100_0000,
+                            old_item: old.clone(),
+                            new_item: new.clone(),
+                        },
+                        LogRecord::ModifyHeader {
+                            old_total: total + 1,
+                            new_total: 7,
+                        },
+                    ]);
+                }
+            }
+        }
+
+        let mut stopped = 0;
+        let mut kept = 0;
+        for inline in [false, true] {
+            let originals = originals_of(inline);
+            for (index, records) in corpus.iter().enumerate() {
+                let mut loaded = Loaded::default();
+                load_logs_with_mask(
+                    SystemLogSource::Snapshot(SystemLogSnapshot {
+                        records: BTreeMap::from([(1, records.clone())]),
+                    }),
+                    &originals,
+                    &mut loaded,
+                    None,
+                    false,
+                );
+                let (overrides, expected_total, skipped) =
+                    replay_with_owned_items(&originals[&1], &name, records);
+                let context = format!("inline {inline}, journal {index}: {records:?}");
+                assert_eq!(loaded.skipped, skipped, "{context}");
+                assert_eq!(
+                    loaded.library_totals.get(&1).copied(),
+                    expected_total,
+                    "{context}"
+                );
+                assert_eq!(
+                    loaded
+                        .state
+                        .system_overrides
+                        .get(&1)
+                        .cloned()
+                        .unwrap_or_default(),
+                    overrides,
+                    "{context}"
+                );
+                stopped += usize::from(!skipped.is_empty());
+                kept += usize::from(skipped.is_empty() && !overrides.is_empty());
+            }
+        }
+        // The corpus exercises both outcomes, not one of them thousands of times.
+        assert!(stopped > 1000 && kept > 100, "{stopped} {kept}");
     }
 
     #[test]
