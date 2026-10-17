@@ -43,8 +43,14 @@ convention, not a repo guarantee) or from a clone at the pin whose cited
 blobs you have hashed against it, and say which tree you read.
 Cite oxpinyin code by file and item name, never by line number; cite the pin by file:line at 074a2219. Dated records keep the line numbers of the tree they name.
 
-Method: copy as much as possible from upstream, rewrite it in Rust with a
-loosely coupled project structure, then oxidize further. Internal structure
+Method (`.kiro/steering/oxidation-method.md`, ruling 2026-10-16 UTC):
+reproduce the pin's observable behaviour before improving the internal
+design — compatibility first, then elegance, extensibility and
+performance. For each subsystem, record the pin's data structures and
+algorithms (`docs/findings/libpinyin-structures-and-algorithms.md`),
+design and analyse oxpinyin's, then implement in idiomatic Rust across
+the loosely coupled crate structure and gate on the oracle. Coefficients
+are the pin's, never fitted. Internal structure
 is free to diverge, subject to two constraints: external interface behavior
 must be unchanged, and time and space complexity must never both be worsened
 — a regression in one is acceptable only when traded against a gain in the
