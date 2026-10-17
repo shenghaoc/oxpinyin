@@ -1513,6 +1513,16 @@ struct TrainingCheck {
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
+    /// Whether a system journal's ADD payload was shorter than its
+    /// unigram, which stops that library's replay there (register row 108).
+    #[must_use]
+    pub fn short_add_payload(&self) -> bool {
+        self.inner
+            .libpinyin
+            .as_ref()
+            .is_some_and(|target| target.short_add_payload)
+    }
+
     /// Crate-visible handle assembly for the libpinyin constructor
     /// ([`crate::store_libpinyin`]), which runs in memory and arms
     /// the fini guard of the open that raised the counter.

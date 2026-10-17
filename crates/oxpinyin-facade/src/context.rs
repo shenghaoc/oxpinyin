@@ -151,6 +151,14 @@ impl std::error::Error for OpenFailure {
 pub const UNKNOWN_DATABASE_FORMAT_WARNING: &str =
     "check_format: unknown database format in user.conf";
 
+/// A system journal's ADD payload is shorter than the unigram
+/// `add_phrase_item` reads from it (`phrase_index.h:124-126`); the pin's
+/// `get_content` asserts (`memory_chunk.h:388-392`) and dies at init
+/// (class (c), register row 108). The replay stops at the record and the
+/// facades log this one warning; init goes on.
+pub const SHORT_ADD_WARNING: &str =
+    "journal replay: an ADD payload shorter than six bytes (upstream asserts, memory_chunk.h:390)";
+
 impl OpenFailure {
     /// Whether this failure is the user marker's class-(c) refusal: a
     /// `user.conf` whose `database format:` field upstream's
@@ -338,6 +346,9 @@ pub struct ContextCore {
     pub user: Option<UserStore>,
     /// The live option/scheme word, shared with every instance.
     pub live: LiveOptions,
+    /// Class-(c) load warnings the facades log once after a successful
+    /// open, in order. Today only the short-ADD replay stop (row 108).
+    load_warnings: Vec<&'static str>,
 }
 
 impl ContextCore {
@@ -398,11 +409,16 @@ impl ContextCore {
             pin_stderr::mmap_failed(path);
         }
         let user = runtime.user_store();
+        let mut load_warnings = Vec::new();
+        if user.as_ref().is_some_and(|store| store.short_add_payload()) {
+            load_warnings.push(SHORT_ADD_WARNING);
+        }
         Ok(Self {
             config: Config::default(),
             runtime: Some(runtime),
             user,
             live: LiveOptions::new(option_word),
+            load_warnings,
         })
     }
 
@@ -426,12 +442,23 @@ impl ContextCore {
             law,
         )
         .ok()?;
+        let mut load_warnings = Vec::new();
+        if user.short_add_payload() {
+            load_warnings.push(SHORT_ADD_WARNING);
+        }
         Some(Self {
             config: Config::default(),
             runtime: None,
             user: Some(user),
             live: LiveOptions::new(option_word),
+            load_warnings,
         })
+    }
+
+    /// The class-(c) warnings the load met that do not fail it.
+    #[must_use]
+    pub fn load_warnings(&self) -> &[&'static str] {
+        &self.load_warnings
     }
 
     /// `set_options`'s law: the word is stored, the bools it carries are

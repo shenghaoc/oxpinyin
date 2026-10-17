@@ -348,6 +348,15 @@ pub struct PhraseItemView<'a> {
     bytes: &'a [u8],
 }
 
+impl<'a> PhraseItemView<'a> {
+    /// The item's bytes as `get_phrase_item` hands them out: the header-derived
+    /// length from its offset, nothing beyond it.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
 impl PhraseItemView<'_> {
     /// `PhraseItem::get_phrase_length`.
     #[must_use]
@@ -668,6 +677,22 @@ impl PhraseLibrary {
         Some(PhraseItemView {
             bytes: content.get(offset..offset + total)?,
         })
+    }
+
+    /// The entry area — `SubPhraseIndex::m_phrase_content` as loaded, the
+    /// bytes the pin's item offsets address (`SubPhraseIndex::load`'s
+    /// `[index_two, index_three)` sub-chunk, `phrase_index.cpp:301-330`).
+    #[must_use]
+    pub fn item_area(&self) -> &[u8] {
+        &self.payload()[self.content.clone()]
+    }
+
+    /// The raw entry-area offset of `token`'s slot, `None` when the slot has
+    /// no item. The offset indexes [`Self::item_area`].
+    #[must_use]
+    pub fn content_offset(&self, token: u32) -> Option<u32> {
+        let offset = self.slot_offset((token & PHRASE_MASK) as usize)?;
+        (offset != 0).then_some(offset)
     }
 
     /// Every `(slot, item)` pair with a resident item, slot order — a

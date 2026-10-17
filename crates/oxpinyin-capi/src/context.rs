@@ -34,6 +34,9 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     let user_path = cstr_to_path(userdir);
     match CapiContext::try_new(&system_path, user_path.as_deref()) {
         Ok(context) => {
+            for warning in context.core.load_warnings() {
+                crate::ffi::log_warning(warning);
+            }
             let handle = box_context(context);
             crate::live::register(handle);
             handle
