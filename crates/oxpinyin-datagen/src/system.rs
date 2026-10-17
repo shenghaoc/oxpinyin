@@ -622,16 +622,12 @@ fn bad_line(path: &Path, line: usize, message: &str) -> DatagenError {
 mod tests {
     use super::*;
 
-    fn tmp_model(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "oxpinyin-datagen-sys-{}-{name}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    /// A fresh, uniquely named model dir, removed on drop (including unwind).
+    fn tmp_model(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("oxpinyin-datagen-sys-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 
     fn write(path: &std::path::PathBuf, content: &str) {
@@ -658,17 +654,18 @@ mod tests {
 
     #[test]
     fn compile_matches_upstream_arithmetic() {
-        let dir = tmp_model("libpinyin");
+        let tmp = tmp_model("libpinyin");
+        let dir = tmp.path();
         write(
             &dir.join("gb_char.table"),
             "a\t吖\t16777218\t104\nya\t吖\t16777218\t793\nb\t吧\t16777219\t5\n",
         );
-        write_empty_libraries(&dir, "gb_char");
+        write_empty_libraries(dir, "gb_char");
         write(
             &dir.join("interpolation2.text"),
             "\\data model interpolation\n\\1-gram\n\\item 16777218 吖 count 9\n\\end\n",
         );
-        let (out, stats) = compile(&dir, Subset::Full).unwrap();
+        let (out, stats) = compile(dir, Subset::Full).unwrap();
         assert_eq!(stats.library_rows, [3, 0, 0, 0]);
         assert_eq!(stats.index_keys, 3);
         assert_eq!(stats.phrases, 2);
@@ -697,24 +694,24 @@ mod tests {
         assert_eq!(out.pinyin_index.len(), 5);
         // Phrase index: two phrases, each a single character → no markers.
         assert_eq!(out.phrase_index.len(), 2);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn bigram_groups_total_and_start_token() {
-        let dir = tmp_model("bigram");
+        let tmp = tmp_model("bigram");
+        let dir = tmp.path();
         write(
             &dir.join("gb_char.table"),
             "de\t的\t16778715\t275240\nzhong'guo\t中国\t16778716\t5\n",
         );
-        write_empty_libraries(&dir, "gb_char");
+        write_empty_libraries(dir, "gb_char");
         write(
             &dir.join("interpolation2.text"),
             "\\data model interpolation\n\
              \\1-gram\n\\item 16778715 的 count 5\n\\item 1 <start> count 99\n\
              \\2-gram\n\\item 16778716 中国 16778715 的 count 2\n\\item 1 <start> 16778715 的 count 3\n\\end\n",
         );
-        let (out, stats) = compile(&dir, Subset::Full).unwrap();
+        let (out, stats) = compile(dir, Subset::Full).unwrap();
         assert_eq!(stats.special_tokens, 2);
         assert_eq!(stats.bigram_entries, 2);
         // Bigram: ascending key-byte order; each value = total + records.
@@ -722,72 +719,72 @@ mod tests {
         assert_eq!(&out.bigram[0].1[..4], &3_u32.to_le_bytes());
         assert_eq!(out.bigram[1].0, 16_778_716_u32.to_le_bytes());
         assert_eq!(out.bigram[1].1.len(), 4 + 8);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn model_word_contradiction_is_an_error() {
-        let dir = tmp_model("contradiction");
+        let tmp = tmp_model("contradiction");
+        let dir = tmp.path();
         write(&dir.join("gb_char.table"), "de\t的\t16778715\t275240\n");
-        write_empty_libraries(&dir, "gb_char");
+        write_empty_libraries(dir, "gb_char");
         write(
             &dir.join("interpolation2.text"),
             "\\data model interpolation\n\\1-gram\n\\item 16778715 地 count 5\n\\end\n",
         );
-        let err = compile(&dir, Subset::Full).unwrap_err().to_string();
+        let err = compile(dir, Subset::Full).unwrap_err().to_string();
         assert!(err.contains("0x010005db"), "{err}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn regrouped_token_is_refused() {
-        let dir = tmp_model("regroup");
+        let tmp = tmp_model("regroup");
+        let dir = tmp.path();
         write(
             &dir.join("gb_char.table"),
             "a\t吖\t16777218\t1\nb\t吧\t16777219\t2\nya\t吖\t16777218\t3\n",
         );
-        write_empty_libraries(&dir, "gb_char");
+        write_empty_libraries(dir, "gb_char");
         write(
             &dir.join("interpolation2.text"),
             "\\data model interpolation\n\\end\n",
         );
-        let err = compile(&dir, Subset::Full).unwrap_err().to_string();
+        let err = compile(dir, Subset::Full).unwrap_err().to_string();
         assert!(err.contains("two row groups"), "{err}");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn mini_subset_keeps_the_allowlisted_spellings_only() {
-        let dir = tmp_model("mini");
+        let tmp = tmp_model("mini");
+        let dir = tmp.path();
         write(
             &dir.join("gb_char.table"),
             "a\t吖\t16777218\t104\nya\t吖\t16777218\t793\nb\t吧\t16777219\t5\n",
         );
-        write_empty_libraries(&dir, "gb_char");
+        write_empty_libraries(dir, "gb_char");
         write(
             &dir.join("interpolation2.text"),
             "\\data model interpolation\n\\end\n",
         );
-        let (full, _) = compile(&dir, Subset::Full).unwrap();
-        let (mini, _) = compile(&dir, Subset::MiniFixture).unwrap();
+        let (full, _) = compile(dir, Subset::Full).unwrap();
+        let (mini, _) = compile(dir, Subset::MiniFixture).unwrap();
         assert_eq!(full.phrase_index.len(), 2);
         // "a" is allowlisted and names 吖 (both its readings survive);
         // 吧 is only reachable through "b", which is not.
         assert_eq!(mini.phrase_index.len(), 1);
         assert_eq!(mini.pinyin_index.len(), 4, "a and ya in both keyspaces");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn mini_subset_prunes_dangling_bigram_successors_and_recomputes_totals() {
-        let dir = tmp_model("mini-bigram");
+        let tmp = tmp_model("mini-bigram");
+        let dir = tmp.path();
         // a → 吖 (kept), b → 吧 (pruned: "b" is not an allowlisted
         // spelling), ni → 妮 (kept).
         write(
             &dir.join("gb_char.table"),
             "a\t吖\t16777218\t104\nb\t吧\t16777219\t5\nni\t妮\t16777220\t7\n",
         );
-        write_empty_libraries(&dir, "gb_char");
+        write_empty_libraries(dir, "gb_char");
         write(
             &dir.join("interpolation2.text"),
             "\\data model interpolation\n\
@@ -798,11 +795,11 @@ mod tests {
              \\item 16777220 妮 16777219 吧 count 9\n\
              \\end\n",
         );
-        let (full, _) = compile(&dir, Subset::Full).unwrap();
+        let (full, _) = compile(dir, Subset::Full).unwrap();
         // Three groups: 吖 (2 records, total 8), 吧 (1, total 7),
         // 妮 (1, total 9).
         assert_eq!(full.bigram.len(), 3);
-        let (mini, _) = compile(&dir, Subset::MiniFixture).unwrap();
+        let (mini, _) = compile(dir, Subset::MiniFixture).unwrap();
         // The 吧-keyed group is pruned wholesale; the 妮-keyed group's
         // only record dangles and the group empties out; the 吖-keyed
         // group keeps its 妮 record, drops the 吧 record, and its total
@@ -819,6 +816,5 @@ mod tests {
             .concat(),
             "total 3 + one record (妮, 3)"
         );
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

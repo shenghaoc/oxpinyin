@@ -3,42 +3,28 @@
 //! These tests pin fetch infrastructure only. They do not open the language
 //! model, the scorer, or a [`oxpinyin_engine::Session`].
 
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 use pinyin_oracle::{
     EXPECTED_MODEL_FILES, ModelDirError, model_dir_is_complete, verified_model_dir,
 };
 
-static SCRATCH_SEQ: AtomicU64 = AtomicU64::new(0);
-
-struct Scratch(PathBuf);
+/// A uniquely named scratch dir, removed on drop (including unwind).
+struct Scratch(tempfile::TempDir);
 
 impl Scratch {
     fn new(label: &str) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_nanos());
-        let dir = std::env::temp_dir().join(format!(
-            "oxpinyin-model-{}-{}-{}-{}",
-            label,
-            std::process::id(),
-            nanos,
-            SCRATCH_SEQ.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).expect("scratch dir");
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("oxpinyin-model-{label}-"))
+            .tempdir()
+            .expect("scratch dir");
         Self(dir)
     }
 
     fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+        self.0.path()
     }
 }
 

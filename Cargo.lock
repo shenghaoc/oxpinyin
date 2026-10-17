@@ -660,6 +660,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-store",
  "oxpinyin-testsupport",
+ "tempfile",
 ]
 
 [[package]]
@@ -696,6 +697,9 @@ dependencies = [
 [[package]]
 name = "oxpinyin-kmm"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "oxpinyin-punct"
@@ -735,6 +739,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-kmm",
  "oxpinyin-testsupport",
+ "tempfile",
 ]
 
 [[package]]
@@ -857,6 +862,7 @@ dependencies = [
  "oxpinyin-engine",
  "oxpinyin-testsupport",
  "oxpinyin-user",
+ "tempfile",
 ]
 
 [[package]]

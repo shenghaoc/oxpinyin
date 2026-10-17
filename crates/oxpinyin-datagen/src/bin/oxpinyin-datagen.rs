@@ -466,15 +466,12 @@ fn main() -> ExitCode {
 mod tests {
     use super::write_interpolation2_1gram;
 
-    /// A fresh per-test scratch dir; this workspace keeps no tempfile dep.
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "oxpinyin-datagen-bin-{name}-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("scratch dir");
-        dir
+    /// A fresh, uniquely named per-test scratch dir, removed on drop.
+    fn scratch(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("oxpinyin-datagen-bin-{name}-"))
+            .tempdir()
+            .expect("scratch dir")
     }
 
     fn tmp_litter(dir: &std::path::Path) -> Vec<String> {
@@ -489,7 +486,8 @@ mod tests {
 
     #[test]
     fn emits_1gram_section_only_and_leaves_no_temp_file() {
-        let dir = scratch("emits");
+        let tmp = scratch("emits");
+        let dir = tmp.path();
         let src = dir.join("src.text");
         std::fs::write(
             &src,
@@ -504,12 +502,13 @@ mod tests {
             std::fs::read_to_string(&dst).expect("read dst"),
             "\\created_by\tmarisa\n\\1-gram\n\\item\ta 1.0\n\\end\n"
         );
-        assert!(tmp_litter(&dir).is_empty());
+        assert!(tmp_litter(dir).is_empty());
     }
 
     #[test]
     fn missing_1gram_section_leaves_destination_intact() {
-        let dir = scratch("missing");
+        let tmp = scratch("missing");
+        let dir = tmp.path();
         let src = dir.join("src.text");
         std::fs::write(&src, "\\created_by\tmarisa\n").expect("write src");
         let dst = dir.join("interpolation2.text");
@@ -525,12 +524,13 @@ mod tests {
             std::fs::read_to_string(&dst).expect("read dst"),
             "previous output\n"
         );
-        assert!(tmp_litter(&dir).is_empty());
+        assert!(tmp_litter(dir).is_empty());
     }
 
     #[test]
     fn aliased_source_and_destination_rejected() {
-        let dir = scratch("alias");
+        let tmp = scratch("alias");
+        let dir = tmp.path();
         let src = dir.join("interpolation2.text");
         std::fs::write(&src, "\\1-gram\n").expect("write src");
 
@@ -544,13 +544,14 @@ mod tests {
             std::fs::read_to_string(&src).expect("read src"),
             "\\1-gram\n"
         );
-        assert!(tmp_litter(&dir).is_empty());
+        assert!(tmp_litter(dir).is_empty());
     }
 
     #[cfg(unix)]
     #[test]
     fn symlinked_destination_alias_rejected() {
-        let dir = scratch("symlink-alias");
+        let tmp = scratch("symlink-alias");
+        let dir = tmp.path();
         let src = dir.join("src.text");
         std::fs::write(&src, "\\1-gram\n").expect("write src");
         let link = dir.join("interpolation2.text");
