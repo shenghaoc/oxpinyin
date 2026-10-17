@@ -1,4 +1,4 @@
-# Stage-2 allocation pass — W8 candidate-cycle (2026-08-19)
+# Stage-3 allocation pass — W8 candidate-cycle (2026-08-19)
 
 Status: **measured decode-path change.** This is **keystroke heap** on the
 123-step W8 candidate-cycle. It is not the W8 158× `pinyin_init` / table

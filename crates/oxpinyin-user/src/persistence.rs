@@ -1,5 +1,5 @@
-//! The user directory in libpinyin's own file shapes — drop-in task 9's
-//! persistence half.
+//! The user directory as the backend's native user files — drop-in
+//! task 9's persistence half.
 //!
 //! The store's durable representation is the pin's file set
 //! (`docs/findings/user-store.md` §4 for the save cycle's semantics,

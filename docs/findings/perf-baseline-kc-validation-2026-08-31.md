@@ -1,6 +1,6 @@
 # KC Baseline Validation — 2026-08-31
 
-> **Superseded** by the Stage-2 re-baseline
+> **Superseded** by the Stage-3 re-baseline
 > (`../perf/perf-baseline-kc-2026-09.md`), re-measured after the P1–P6
 > data-layer inversion. The corrections recorded here were folded into
 > that re-baseline; the numbers below hold for the tree they cite.
@@ -256,7 +256,7 @@ not compare candidate strings, scores, or state transitions between oracle
 and oxpinyin — output equivalence is covered by the bisection differential
 tests, not by this performance harness.
 
-## Stage-2 conclusion reassessment
+## Stage-3 conclusion reassessment
 
 ### Initialization bottleneck: PARTIALLY PROVEN, REATTRIBUTED
 
@@ -274,7 +274,7 @@ the root cause is **KC eager B-tree initialization**, not text file parsing.
 The oracle avoids this cost by using mmap-backed binary files with lazy
 page-fault loading.
 
-### Implications for Stage-2 optimization
+### Implications for Stage-3 optimization
 
 1. **Binary interpolation2.text**: would save only 5–13 ms (5–11% of init).
    Worth doing but not the primary win.
@@ -302,5 +302,5 @@ These are optimization directions, not changes made in this validation.
 | 8 | Architecture portability | UNVERIFIED | Source-level review found no arch-specific code; dynamic pkgconfig discovery and pure-C harness are portable. linux/amd64 image build, dependency resolution, and runtime were not tested |
 | 9 | W8 workload/API sequence verified | PASS | Same bisect.c harness, same CAPI call sequence, same model20 data. Candidate strings, scores, and state transitions were not compared between oracle and oxpinyin |
 | 10 | Headline numbers from raw JSONL | PASS | init 118.1×, cold 0.986×, steady 1.079×, RSS 5.45×, HWM 4.46×. Baseline's "~110×" init was imprecise |
-| 11 | Stage-2 conclusion classified | PASS | PARTIALLY PROVEN: bottleneck exists (118.1×) but root cause is KC init, not text parsing |
+| 11 | Stage-3 conclusion classified | PASS | PARTIALLY PROVEN: bottleneck exists (118.1×) but root cause is KC init, not text parsing |
 | 12 | No production code optimized | PASS | Only measurement scripts, Dockerfile, and documentation modified |

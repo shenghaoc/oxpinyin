@@ -231,7 +231,7 @@ not that: the pin's `gen_k_mixture_model` aborts on it (the repeated fixture
 concatenates into one document with W2-only tokens), while native
 `oxpinyin-kmm generate` completes in ~6 ms — a robustness data point (native
 does not abort on caller input), not a like-for-like throughput number. So no
-throughput/RAM claim is made here; proper profiling on a real corpus is Stage-2
+throughput/RAM claim is made here; proper profiling on a real corpus is Stage-3
 work (`ROADMAP.md`). The source policy's constraint ("time and space complexity
 must never both be worsened") is met by construction: the algorithms are the
 same, with the one mechanism trade of ordered maps (O(log n) per access,
@@ -253,7 +253,7 @@ deterministic) for upstream's hash maps (O(1) average, nondeterministic order).
   reloaded), plus the persisted `GenerateStart/End`/`GenerateModelEnd` markers;
   fine-grained mid-generate crash-resume reloads from the last persisted
   candidate boundary rather than mid-document.
-- **No throughput/RAM benchmark** (above) — Stage-2 work.
+- **No throughput/RAM benchmark** (above) — Stage-3 work.
 - **`--fast` (spseg) and `--skip-pi-gram-training`** are wired through the
   orchestrator but the acceptance test pins the default (ngseg, pi-gram on)
   path; the spseg path shares the same downstream stages.

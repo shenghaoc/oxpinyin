@@ -1,4 +1,4 @@
-# Stage-2 measurement harness (continues the W8 baseline)
+# Stage-3 measurement harness (continues the W8 baseline)
 
 Date: 2026-08-19 · Status: **measurement only — no decode, capi, or core
 behavior changed.** Continues `docs/perf/perf-baseline-2026-08.md` and
@@ -12,7 +12,7 @@ Criterion header and the profile script both print this SHA.
 ## What this adds
 
 1. **Criterion 0.8** groups on the W8 C-ABI surface
-   (`crates/oxpinyin-capi/benches/stage2.rs`), over the pinned model dir:
+   (`crates/oxpinyin-capi/benches/stage3.rs`), over the pinned model dir:
    - `parse_more_full_pinyins` — short / medium / junk-leading
    - `guess_candidates` — offset 0 and mid-phrase
    - `guess_sentence_get_sentence_0/full_nbest_post_116` — full n-best,
@@ -94,7 +94,7 @@ is `CString::new` in `pinyin_guess_candidates` (72e6) plus init
 
 ## Criterion snapshot (this host, pinned tables)
 
-`cargo bench --locked -p oxpinyin-capi --bench stage2`. Median of 20
+`cargo bench --locked -p oxpinyin-capi --bench stage3`. Median of 20
 samples after 500 ms warmup. Not a pin. First column is the harness
 branch before rebase onto #120; second is `fcbc227`.
 
@@ -126,7 +126,7 @@ The bench is labeled `full_nbest_post_116`. Re-save the local Criterion
 baseline on current `main`:
 
 ```sh
-cargo bench --locked -p oxpinyin-capi --bench stage2 -- --save-baseline post-116
+cargo bench --locked -p oxpinyin-capi --bench stage3 -- --save-baseline post-116
 ```
 
 `noise_threshold(0.50)` stays. Benches stay out of required checks.
@@ -136,11 +136,11 @@ cargo bench --locked -p oxpinyin-capi --bench stage2 -- --save-baseline post-116
 ```sh
 # benches (needs PINYIN_EXPORT_DIR or /tmp/oxpinyin-export, and
 # tools/model/fetch-model.sh)
-cargo bench --locked -p oxpinyin-capi --bench stage2
+cargo bench --locked -p oxpinyin-capi --bench stage3
 
 # optional large-regression compare (local; not CI)
-cargo bench --locked -p oxpinyin-capi --bench stage2 -- --save-baseline pin
-cargo bench --locked -p oxpinyin-capi --bench stage2 -- --baseline pin
+cargo bench --locked -p oxpinyin-capi --bench stage3 -- --save-baseline pin
+cargo bench --locked -p oxpinyin-capi --bench stage3 -- --baseline pin
 
 # profile the W8 candidate cycle against installed oxpinyin-capi
 tools/profile/run-w8-cycle.sh

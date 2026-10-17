@@ -118,7 +118,7 @@ for name in pinyin_index.bin phrase_index.bin bigram.db; do
 done
 verify_pinned_model "$MODEL_DIR"
 
-echo "oxpinyin Stage-2 W8-cycle profile"
+echo "oxpinyin Stage-3 W8-cycle profile"
 echo "  pin: $PIN_REF"
 echo "  model20 SHA-256: $MODEL20_SHA256"
 echo "  model dir: $MODEL_DIR"

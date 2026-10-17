@@ -1,27 +1,22 @@
-# Requirements Document — Drop-in replacement
+# Requirements Document — Drop-in: the libpinyin binary
 
 ## Introduction
 
-oxpinyin replaces libpinyin at the ABI level: a distributor renames the
-built object to `libpinyin.so.15`, puts it on the library path, and
-unmodified consumers run against the data already on the system. The
-surface is merged and measured (PRs #206, #192, #228); this spec records
-the goal, the mechanisms and the remaining work.
-
-## Glossary
-
-- **Direct_data_path** — opening installed libpinyin data in place, through
-  the runtime's own readers, without conversion or a compatibility layer
-  (P6, 2026-09-02).
-- **R1** — the predicted-candidate row-order divergence; oxpinyin's
-  defined order is text-ascending (maintainer decision, 2026-08-25).
+An oxpinyin build is a bug-for-bug libpinyin binary: `libpinyin.so.15`
+(and `libzhuyin.so.15`), built on one of the three backends libpinyin is
+built on, handling that backend's files natively. A distributor installs
+it in libpinyin's place and consumers run unchanged on the data already
+on the system. The identity and the storage are merged and measured
+(PRs #206, #192; P6; tasks 9 and 10). This spec is pinned behaviour
+(`.kiro/steering/pinned-behaviour.md`); the differences oxpinyin is
+allowed are in `.kiro/steering/oxpinyin-improvements.md`.
 
 ## Requirements
 
-### Requirement 1: Binary identity with the pinned ABI
+### Requirement 1: libpinyin's binary identity
 
-**User Story:** As a distributor, I want oxpinyin under libpinyin's names
-so that unmodified consumers link and run.
+**User Story:** As a distributor, I want an oxpinyin build to be
+libpinyin's binary so that unmodified consumers link and run.
 
 #### Acceptance Criteria
 
@@ -30,74 +25,51 @@ so that unmodified consumers link and run.
 2. THE header SHALL install under `include/libpinyin-<version>/`, and the
    pkg-config `Version` SHALL be `<version>`, where `<version>` is the
    pinned libpinyin's (`libpinyin_tag` in `tools/oracle/oracle-pin.txt`;
-   `2.11.92` at `074a2219`). The drop-in identity follows the pin; this
-   supersedes the PR #363 rule that held it at 2.11.91 until upstream
-   tagged a release (version ruling 2026-09-26 UTC, #592).
+   `2.11.92` at `074a2219`; version ruling 2026-09-26 UTC, #592).
 3. THE pkg-config file SHALL ship as `libpinyin.pc` exposing `pkgdatadir`,
    `database_format` and `exec_prefix`.
 4. THE exported surface SHALL be the full live upstream ABI — 79
    `pinyin_*` symbols (`docs/findings/abi-reference.md`).
 
-### Requirement 2: Direct read of installed data
+### Requirement 2: Storage — libpinyin's three backends, natively
 
-**User Story:** As a packager, I want oxpinyin to consume the installed
-libpinyin data so that no conversion step ships.
+**User Story:** As a distributor, I want an oxpinyin build to use the
+same backend and the same files as the libpinyin build it replaces, so
+that nothing on disk changes.
 
 #### Acceptance Criteria
 
-1. WHEN `pinyin_init` is pointed at a libpinyin data directory THEN the
-   runtime SHALL open it in place through the same readers it uses for
-   its own output — no layout detection, no conversion.
-2. THE reader SHALL parse libpinyin's `MemoryChunk` container (8-byte
-   header: u32 LE length, u32 XOR checksum) and verify before use.
-3. THE path SHALL cover Kyoto Cabinet installs (Fedora, NixOS) and tkrzw
-   installs (Debian).
-4. ON every measured backend THE prediction surface SHALL read 1,571/1,571
-   rows with sorted row sets byte-identical.
+1. oxpinyin SHALL be built on exactly one of Berkeley DB, Kyoto Cabinet
+   and tkrzw, chosen at compile time (`bdb` by default, as a bare
+   `./configure` chooses Berkeley DB), and on no other backend.
+2. WHEN `pinyin_init` is given its backend's system data directory THEN
+   the runtime SHALL open it the way the pin does — the backend's DBMs,
+   the `MemoryChunk` library files and `table.conf` — with no conversion
+   and no layout detection.
+3. THE `MemoryChunk` reader SHALL parse the 8-byte header (u32 LE length,
+   u32 XOR checksum) and verify the checksum before use.
+4. THE user dir SHALL be the backend's native user files (`user.conf`,
+   `user_bigram`, `user_pinyin_index`, `user_phrase_index`, `user.bin`,
+   the `*.dbin` logs), kept as the pin keeps them.
+5. WHEN a user dir was written on another backend THEN it SHALL be
+   treated as the pin treats it: non-conforming, cleaned, fresh start
+   (`check_format`).
 
-### Requirement 3: Output compatibility under the recorded exceptions
+### Requirement 3: Output identical to the pin
 
 **User Story:** As a consumer, I want byte-identical output so that the
 replacement changes nothing observable.
 
 #### Acceptance Criteria
 
-1. FOR every exported symbol, given the same inputs and state, the
-   whole observable output SHALL be byte-identical to the pinned libpinyin
-   2.11.92 at `074a2219` (the pin since 2026-09-06). State includes the on-disk user state of a same-backend user
-   dir (Kyoto Cabinet↔Kyoto Cabinet, tkrzw↔tkrzw); a user dir in
-   another KV backend's format is outside the compared state — data
-   loss when the KV database backend changes is taken for granted
-   (compatibility policy goal amendment, 2026-09-09).
+1. FOR every exported symbol, given the same inputs and state, the whole
+   observable output SHALL be byte-identical to the pinned libpinyin
+   2.11.92 at `074a2219`. State includes the user dir on the same
+   backend.
 2. Divergence SHALL be permitted only under classes (a) MATH, (b) MEMORY
-   SAFETY, (c) AVAILABILITY — see
-   `docs/findings/compatibility-policy.md` (the retired consumer-scope
-   class is not an exception: every exported symbol is in scope).
-3. THE predicted-candidate list order (the exempt surface: the rows of
-   `pinyin_guess_predicted_candidates[_with_punctuations]` /
-   `pinyin_choose_predicted_candidate`) SHALL follow the defined
-   text-ascending order (register R1): the rows' content and sorted sets
-   SHALL be byte-identical, and only the list positions are exempt from
-   the pin-order comparison.
+   SAFETY, (c) AVAILABILITY — `docs/findings/compatibility-policy.md`.
+3. THE predicted-candidate rows
+   (`pinyin_guess_predicted_candidates[_with_punctuations]` /
+   `pinyin_choose_predicted_candidate`) SHALL match the pin, list order
+   included (register R1, closed by P6; policy row 12).
 4. A stub returning `false` SHALL be treated as a defect, not compliance.
-
-### Requirement 4: Divergences attributed, not hidden
-
-**User Story:** As a maintainer, I want every recorded divergence owned by
-a rule or a plan so that nothing is silently re-frozen.
-
-#### Acceptance Criteria
-
-1. THE predicted-row order (R1) SHALL follow the defined text-ascending
-   order, per Requirement 3's bounded exception; the pin's order SHALL be
-   recorded as a constant, never a target.
-2. THE BerkeleyDB backend SHALL interoperate with same-backend
-   libpinyin user data per the goal amendment (task 10, landed
-   2026-09-12: the fifth store peer, non-default, libdb 5.3 only —
-   `docs/findings/berkeleydb-backend.md`).
-3. THE per-backend user-data rule SHALL stay attributed in
-   `docs/findings/compatibility-policy.md` (goal amendment, 2026-09-09):
-   same-backend pairs interoperate seamlessly in both directions (task
-   9); across a genuine KV-backend change, fresh-start applies and the
-   value-level interchange is the migration path (user phrase
-   dictionary carried, trained bigram not).

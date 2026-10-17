@@ -21,7 +21,7 @@ yanked = "deny"
 ignore = []
 
 [bans]
-# Duplicate versions are a Stage-2 binary-size signal, not a correctness
+# Duplicate versions are a Stage-3 binary-size signal, not a correctness
 # issue — warn and let the size pins arbitrate.
 multiple-versions = "warn"
 highlight = "simplest-path"

@@ -21,7 +21,7 @@ Method: `cargo build --locked --release -p oxpinyin-capi
 `cdylib` (`libpinyin_capi.so`). `strip --strip-all` removes `.symtab`,
 so `nm` reports "no symbols" on the stripped file; the symbol-level
 analysis below ran on the unstripped copies (saved under
-`/tmp/measure-{before,after}/`). Bench: `cargo bench --bench stage2
+`/tmp/measure-{before,after}/`). Bench: `cargo bench --bench stage3
 --no-default-features --features redb -- guess_candidates/offset_0`,
 back-to-back on the same host and fixtures (model20 via
 `target/model20/extracted`, exported `.redb` tables regenerated once
@@ -63,7 +63,7 @@ remain — the root-cause split below stands.
 Against the pinned oracle (`789,512 B` stripped), the ARM64/KC ratio
 moves 2.081× → 1.832×.
 
-Steady-state: `guess_candidates/offset_0` (stage2 criterion,
+Steady-state: `guess_candidates/offset_0` (stage3 criterion,
 `taskset -c 0`, four alternating rounds × 20 samples, shared tables):
 before median 11.27 ns, after median 8.67 ns — **−23.1%**, after
 faster on every round, no regression. The absolute nanosecond scale
@@ -86,7 +86,7 @@ deterministic predictions, and both builds ran on identical tables.
 The frozen residual needs a maintainer-signed re-freeze (§12) — flagged,
 not done here.
 
-Measuring on KC required one companion fix on this branch: the stage2
+Measuring on KC required one companion fix on this branch: the stage3
 benches still staged the pre-P1–P5 `.kct` table names while the KC
 runtime opens libpinyin-native names (`SystemDbm::file_name`), so
 `pinyin_init` failed before the profile change could be benched;
@@ -259,7 +259,7 @@ x86_64/redb says about the shape of the problem:
   Cargo". Recorded as the remaining lever and closed; reopening it is
   a toolchain-policy question, not a code change.
 - **`opt-level = "z"`** — expects another single-digit % at a real
-  speed cost, working against the Stage-2 steady-cycle parity goal
+  speed cost, working against the Stage-3 steady-cycle parity goal
   (1.079× at the KC baseline). Not recommended while speed parity is
   the binding constraint.
 - **Static tables** — the ~227 KiB of `oxpinyin_core` lookup data is

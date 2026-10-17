@@ -1,4 +1,4 @@
-# Stage-2 Performance Baseline — KC Backend (2026-09)
+# Stage-3 Performance Baseline — KC Backend (2026-09)
 
 Re-baseline of the ARM64/KC scoreboard after the P1–P6 data-layer
 inversion, the alloc fix, the interpolation2.text trim, and the
@@ -274,7 +274,7 @@ Three readings:
   policy) changes nothing measurable on its own. The
   mechanism is not investigated here; the abort commit's report and the
   size doc measured size and a criterion micro-bench, not this harness.
-  **Open Stage-2 item:** the trade needs a decision with both numbers
+  **Open Stage-3 item:** the trade needs a decision with both numbers
   on the table, since AGENTS.md accepts a regression on one axis only
   when it is traded against, minimised, and justified in the change's
   report — and this one was not measured there.

@@ -217,9 +217,9 @@ steady-state conclusion.
 - **S3 (`MDB_WRITEMAP`) is not isolated here** — the LMDB write numbers
   are the store's shipped configuration; see
   [perf-store-opt-2026-09.md](perf-store-opt-2026-09.md).
-- **End-to-end keystroke cycles are not measured** — the Stage 2
+- **End-to-end keystroke cycles are not measured** — the Stage 3
   headline number is deferred to the planned Option B extension at the
-  C ABI (`oxpinyin-capi`'s `stage2` bench covers the oxpinyin side).
+  C ABI (`oxpinyin-capi`'s `stage3` bench covers the oxpinyin side).
 - **libpinyin-BDB is the upstream distro default**, tkrzw/KC are
   alternative builds; that asymmetry is a feature of the matrix, not a
   control gap, but it means BDB numbers are the ones a distro user

@@ -51,7 +51,7 @@ notation: `chang'an` yields an edge `5 → 8` whose reported segment is
 | `Segmentation` | a shorter complete syllable where a longer one also matches |
 | `Incomplete` | an initial-only key |
 
-`Fuzzy`, `Typo` and `Abbrev` are Stage 2 and are deliberately **not declared**.
+`Fuzzy`, `Typo` and `Abbrev` are Stage 3 and are deliberately **not declared**.
 A variant nothing produces is a promise the decoder would have to keep;
 `EdgeKind` is `#[non_exhaustive]`, so adding them later is not a break.
 

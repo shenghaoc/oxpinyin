@@ -1,7 +1,11 @@
 # Perf
 
-Performance measurement snapshots for Stage 2, dated in the file name.
-`perf-stage2-harness-2026-08.md` describes the harness; the container
+Performance measurement snapshots for Stage 3, dated in the file name (the
+stage was called Stage 2 until the 2026-10-14 UTC relabel; `../../ROADMAP.md`).
+Records here cite the `oxpinyin-capi` bench as `stage3`; every one predates
+the relabel and ran it under its earlier name, `stage2` — use that name at a
+record's own commit.
+`perf-stage3-harness-2026-08.md` describes the harness; the container
 recipe and the runbook are in `../runbooks/benches.md`. Snapshots that
 belong to a finding (the backend matrix, store optimisations, the
 key-cost walk) are filed under `../findings/perf-*.md` and indexed there.
@@ -26,14 +30,14 @@ recipe, per artifact".
 | Document | Subject |
 | --- | --- |
 | [`ci-perf-size-gate-proposal-2026-09-09`](ci-perf-size-gate-proposal-2026-09-09.md) | Perf and size in CI — PR gate **rejected**, nightly snapshot series adopted in principle (2026-09-12) |
-| [`perf-alloc-2026-08`](perf-alloc-2026-08.md) | Stage-2 allocation pass — W8 candidate-cycle (2026-08-19) |
+| [`perf-alloc-2026-08`](perf-alloc-2026-08.md) | Stage-3 allocation pass — W8 candidate-cycle (2026-08-19) |
 | [`perf-baseline-2026-08`](perf-baseline-2026-08.md) | W8 performance baseline — oracle vs installed oxpinyin (2026-08) |
-| [`perf-baseline-kc-2026-09`](perf-baseline-kc-2026-09.md) | Stage-2 Performance Baseline — KC Backend (2026-09) |
+| [`perf-baseline-kc-2026-09`](perf-baseline-kc-2026-09.md) | Stage-3 Performance Baseline — KC Backend (2026-09) |
 | [`perf-candidate-cap-2026-08`](perf-candidate-cap-2026-08.md) | Perf attribution — candidate-cap removal (2026-08) |
 | [`perf-decode-path-baseline-2026-09-19`](perf-decode-path-baseline-2026-09-19.md) | First criterion baseline — `parse_and_graph` + `session_keystroke` (2026-09-19) |
 | [`perf-exploration`](perf-exploration.md) | Window-scan performance exploration |
-| [`perf-fill-lookup-2026-08`](perf-fill-lookup-2026-08.md) | Stage-2 leftover: `fill_lookup` (2026-08-20) |
-| [`perf-init-text-slurp-2026-08`](perf-init-text-slurp-2026-08.md) | Stage-2 init cut: interpolation2.text parse + redb slurp (2026-08-21) |
-| [`perf-init-typed-map-2026-08`](perf-init-typed-map-2026-08.md) | Stage-2 leftover: init typed-map insert (2026-08-21) |
+| [`perf-fill-lookup-2026-08`](perf-fill-lookup-2026-08.md) | Stage-3 leftover: `fill_lookup` (2026-08-20) |
+| [`perf-init-text-slurp-2026-08`](perf-init-text-slurp-2026-08.md) | Stage-3 init cut: interpolation2.text parse + redb slurp (2026-08-21) |
+| [`perf-init-typed-map-2026-08`](perf-init-typed-map-2026-08.md) | Stage-3 leftover: init typed-map insert (2026-08-21) |
 | [`perf-so-size-2026-09`](perf-so-size-2026-09.md) | `.so` size — fat LTO + single codegen unit (2026-09) |
-| [`perf-stage2-harness-2026-08`](perf-stage2-harness-2026-08.md) | Stage-2 measurement harness (continues the W8 baseline) |
+| [`perf-stage3-harness-2026-08`](perf-stage3-harness-2026-08.md) | Stage-3 measurement harness (continues the W8 baseline) |

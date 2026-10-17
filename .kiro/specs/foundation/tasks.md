@@ -78,8 +78,8 @@ fixtures are human-frozen.
     installed naming (#192).
   _Requirements: R7_
 
-- [x] 11. **[B]** Open installed libpinyin data and measure it on the distro backends.
-  - the #228 reader (since replaced by P6's direct readers) + the
+- [x] 11. **[B]** Open the backend's data directory and measure it on the distro backends.
+  - the #228 reader (since replaced by P6's native readers) + the
     `MemoryChunk` reader; measured
     order-only with sets byte-identical, 1,571/1,571 rows, on Fedora
     rawhide (Kyoto Cabinet), Debian testing (tkrzw) and NixOS (Kyoto
@@ -89,5 +89,6 @@ fixtures are human-frozen.
 - [x] 12. **[A]** Record the output-compatibility policy.
   - `docs/findings/compatibility-policy.md`: the four exception classes
     and the E2E I/O rule; compact steering copy in
-    `.kiro/steering/compatibility-policy.md`.
+    `.kiro/steering/compatibility-policy.md` (split 2026-10-14 into
+    `pinned-behaviour.md` and `oxpinyin-improvements.md`).
   _Requirements: R9_

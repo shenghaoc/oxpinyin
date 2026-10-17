@@ -1,4 +1,4 @@
-//! Stage-2 Criterion groups over the W8 C-ABI surface.
+//! Stage-3 Criterion groups over the W8 C-ABI surface.
 //!
 //! Groups:
 //! - `parse_more_full_pinyins`: short / medium / junk-leading
@@ -191,7 +191,7 @@ impl Drop for TempStorePath {
 
 fn user_store_count_delta(criterion: &mut Criterion) {
     let path = std::env::temp_dir().join(format!(
-        "oxpinyin-stage2-count-delta-{}.store",
+        "oxpinyin-stage3-count-delta-{}.store",
         std::process::id()
     ));
     let _ = std::fs::remove_file(&path);

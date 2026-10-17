@@ -129,7 +129,7 @@ table from it.
 - The repository, release archives, packages, installers, and generated
   shipping artefacts must not contain `interpolation2.text`, any listed
   `.table` file, or converted/compiled derivatives of them.
-- Shipping the reimplementation — including Stage 2 — is gated on exactly
+- Shipping the reimplementation — including Stage 3 — is gated on exactly
   that: not vendoring the model or its derivatives, which a build-time fetch
   of the checksum-pinned archive satisfies. It is **not** gated on Branch B
   producing a replacement model. The code ships under GPL-3.0-or-later (this

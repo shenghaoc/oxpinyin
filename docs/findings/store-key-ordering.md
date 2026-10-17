@@ -1,7 +1,7 @@
 # Store key-ordering contract — one place for the whole stack
 
 Date: 2026-08-24 (updated 2026-08-25 for the tkrzw backend; 2026-09-12
-for the Berkeley DB backend; 2026-09-13 for the Stage 2 hash/tree note,
+for the Berkeley DB backend; 2026-09-13 for the Stage 3 hash/tree note,
 rechecked against the landed Berkeley DB backend; **2026-09-21 peer-set
 sweep** — the LMDB and redb peers were removed 2026-09-20
 (`refactor/drop-redb-lmdb-backends`, `refactor/drop-redb-backend`), so the
@@ -226,7 +226,7 @@ encoding from a broken one. Every ordering test here crosses 256 deliberately;
 a small-id-only fixture is the blind spot that would let an ordering defect
 pass unseen.
 
-## Deferred to Stage 2: the hash/tree split the type system does not carry
+## Deferred to Stage 3: the hash/tree split the type system does not carry
 
 Recorded 2026-09-13, noticed while reviewing #445 (the Berkeley DB
 backend, merged the same day as `33c2e238`). **This note queues a trait
@@ -337,7 +337,7 @@ on another, with no compile-time signal and no red test until a fixture
 happens to cross a hash bucket boundary in the wrong direction. That is
 the failure mode this note exists to pre-empt.
 
-### Candidate fixes for Stage 2
+### Candidate fixes for Stage 3
 
 Not ranked; each has a different blast radius and the redesign picks one.
 
@@ -363,7 +363,7 @@ Not ranked; each has a different blast radius and the redesign picks one.
 ### Where this sits
 
 It joins the store-trait items ruled out of Stage 1 on 2026-09-05 and
-deferred to the Stage 2 trait redesign — #340's "Deferred by ruling": F2
+deferred to the Stage 3 trait redesign — #340's "Deferred by ruling": F2
 (point gets return `Vec<u8>` for 4- and 8-byte values because the trait
 signature forces it) and F5 (`mask_out` / `remove_user_phrase`
 materialise whole tables because `&dyn WriteTxn` cannot remove while
@@ -371,7 +371,7 @@ iterating). Those two were recorded in that PR's body and never written
 into a document; this section is the repo-side home for the list, and
 the three of them share one precondition — a `ReadStore` / `WriteStore` /
 `RawReadStore` / `WriteTxn` signature change, which is a STOP until a
-maintainer opens Stage 2.
+maintainer opens Stage 3.
 
 `BdbStore::walk` and `BdbStore::first_key_of` carry a doc comment saying
 they assume a `DB_BTREE` handle, why that holds, and that nothing

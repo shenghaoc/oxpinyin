@@ -111,7 +111,7 @@ impl std::error::Error for GraphError {}
 
 /// What kind of match an edge represents.
 ///
-/// `Fuzzy`, `Typo` and `Abbrev` are reserved for Stage 2 and deliberately not
+/// `Fuzzy`, `Typo` and `Abbrev` are reserved for Stage 3 and deliberately not
 /// declared: an unimplemented variant is a promise the decoder would have to
 /// keep. The enum is `#[non_exhaustive]` so adding them is not a break.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

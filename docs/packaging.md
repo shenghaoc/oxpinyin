@@ -75,40 +75,32 @@ those exist only in the source tree and the Rust artifact names under
 
 ## User data across the takeover
 
-The user-data guarantee is per KV backend family, and the release lanes
-match each distro's own backend — that is the point of the lane table
-above (maintainer ruling 2026-09-09:
-`docs/findings/compatibility-policy.md`, goal amendment). The profile in
-question is the one ibus-libpinyin keeps under `~/.cache/ibus/libpinyin/`
-— the directory the [libpinyin FAQ](https://github.com/libpinyin/libpinyin/wiki/libpinyin-FAQ)
+An oxpinyin lane is built on the same backend as the distro's libpinyin
+— that is the point of the lane table above — and keeps the user dir as
+that backend's native user files, exactly as the libpinyin build it
+replaces does (maintainer ruling 2026-09-09). The profile in question is
+the one ibus-libpinyin keeps under `~/.cache/ibus/libpinyin/` — the
+directory the [libpinyin FAQ](https://github.com/libpinyin/libpinyin/wiki/libpinyin-FAQ)
 tells users to reset by deleting its `user.conf`:
 
-- **Same backend, seamless.** A Fedora or Arch lane (Kyoto Cabinet)
-  reads the user state a KC-built libpinyin leaves — `user_bigram.db`,
-  `user_pinyin_index.bin`, `user_phrase_index.bin`, `user.bin`, the
-  `*.dbin` diff logs, `user.conf` — and saves back what a KC-built
-  libpinyin picks up; the Debian lane (tkrzw) does the same against a
-  tkrzw-built libpinyin. Swap either direction; the learned data
-  carries. This is drop-in task 9, landed 2026-09-09 and measured
-  against pin-built Kyoto Cabinet and tkrzw oracles by
+- **Same backend: nothing changes.** `user.conf`, `user_bigram.db`,
+  `user_pinyin_index.bin`, `user_phrase_index.bin`, `user.bin` and the
+  `*.dbin` logs are the backend's native files. The Kyoto Cabinet lanes
+  (Fedora, Arch) keep the same ones a KC-built libpinyin keeps; the
+  tkrzw lane (Debian) the same ones a tkrzw-built libpinyin keeps.
+  Measured against pin-built Kyoto Cabinet and tkrzw oracles by
   `tools/oracle/user-dir-round-trip.sh` (`docs/findings/user-store.md`
   §11).
-- **Backend actually changed, data loss taken for granted.** BDB-built
-  libpinyin (Debian stable, Ubuntu) against these lanes, redb/LMDB
-  builds, KC↔tkrzw transitions: fresh start, the norm libpinyin's own
-  ecosystem uses *(historical as of 2026-09-20: the redb/LMDB builds named here no longer exist —
-  removed in `refactor/drop-redb-lmdb-backends` and `refactor/drop-redb-backend`; the
-  BDB-vs-lanes and KC↔tkrzw examples remain live)*. (Debian's BerkeleyDB→Tkrzw switch carried a
-  ecosystem uses (Debian's BerkeleyDB→Tkrzw switch carried a
-  `debian/NEWS` warning; model-version bumps wipe via `check_format`).
-  A distro whose users cross a backend boundary by installing a
-  takeover package should carry the same `debian/NEWS`-style notice.
-  The migration path for users who care is the value-level
-  interchange: export with the consumer's Import/Export UI
-  (ibus-libpinyin's dictionary export) or `oxpinyin-dictool` before
-  the change, import after. It carries the **user phrase dictionary**,
-  not the trained **bigram** (upstream's ABI has no bigram import) — a
-  cross-backend residual, disclosed; same-backend swaps lose nothing.
+- **Different backend: fresh start, as with libpinyin.** A build on
+  another backend cannot read the user dir and starts fresh: libpinyin's
+  tkrzw build cannot read its Berkeley DB user files either
+  (`check_format`; Debian's BerkeleyDB→Tkrzw switch carried a
+  `debian/NEWS` warning). A distro whose users cross a backend boundary
+  by installing a takeover package should carry the same
+  `debian/NEWS`-style notice. Users who want to keep their phrases can
+  use their frontend's dictionary export and import (ibus-libpinyin's
+  Import/Export) — libpinyin's ordinary ABI, which carries the user
+  phrase dictionary but not the trained bigram.
 
 ## Static library decision: ship it
 

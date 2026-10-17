@@ -63,7 +63,7 @@ warning, SCHED = scheduled analysis, REV = human review.
 | No known-vulnerable deps | unenforced | HGATE | `cargo deny check advisories` per PR (RustSec DB) |
 | License hygiene | unenforced | HGATE | `cargo deny check licenses` (GPL-3.0-or-later + permissive list) |
 | No unexpected sources | unenforced | HGATE | `cargo deny check sources`: crates.io registry only — git sources are disabled entirely (`allow-git = []`) |
-| Duplicate-version drift visible | unenforced | WARN | `cargo deny check bans multiple-versions = warn` (Stage-2 size signal) |
+| Duplicate-version drift visible | unenforced | WARN | `cargo deny check bans multiple-versions = warn` (Stage-3 size signal) |
 | New deps need ask | prose only | prose + advisory visibility | constitution rule stays (it's a process rule); deny.toml `bans` starts empty. *(geiger visibility retired 2026-09-01.)* |
 | Unmaintained deps tracked | unenforced | reviewed ignore entries | advisory ignores in `deny.toml` carry a `reason` string with the review-by date inside it (the 0.20 schema has no expiry field; dates are prose, not a parsed key) |
 

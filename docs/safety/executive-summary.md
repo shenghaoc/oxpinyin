@@ -114,7 +114,7 @@ re-state these.
   lanes were retired 2026-09-01 — `docs/findings/verify-nightly.md`; Lizard
   remains.)*
 - **TRIAL**: cargo-mutants (scoped to core + user/store);
-  `significant_drop_tightening` during Stage-2 profiling. Kani was a
+  `significant_drop_tightening` during Stage-3 profiling. Kani was a
   trial candidate until dropped for toolchain age (see O). *(cargo-mutants
   retired 2026-09-01.)*
 - **DEFER**: cargo-audit (redundant with deny's RustSec DB; keep as
@@ -152,7 +152,7 @@ F-7 (closed twice over: the three iterator-end entry points were wrapped, then t
 
 `user/store.rs`: `add_phrase_in` 38, `mask_out` 33, `remove_user_phrase`
 31, `promote_addon_phrase` 22; `engine/nbest.rs nbest_sentences` 22 and
-`session/mod.rs build_scan_matrix` 16 (parity-critical — leave until Stage 2);
+`session/mod.rs build_scan_matrix` 16 (parity-critical — leave until Stage 3);
 parsers 16–19 (legitimate table-driven); everything else ≤15 (avg CCN
 2.5 across 2,283 functions).
 

@@ -279,7 +279,7 @@ path and leaves the deliberate one; policy closes the remainder.
 | 1.1 #566 null key-rest | A (core) / contract (seam) | `Option`-returning lookups; capi NULL-tolerance rule | F-E fixture (`nih` + select); per-symbol oracle test |
 | 1.2 candidate SIGSEGVs | A | owned candidate lists, bounds checks | session replay (F-D) + fuzz |
 | 1.3 save-path race | A/B | ownership across config callbacks | hard-kill + replay |
-| 2.1 async `user_data` | B | task ownership, cancel-on-`Drop`, no detached spawns | review rule; Stage-2 provider tests |
+| 2.1 async `user_data` | B | task ownership, cancel-on-`Drop`, no detached spawns | review rule; Stage-3 provider tests |
 | 2.2 `FILE*`/path leaks | A | `Drop` on every path | — (pattern unwritable) |
 | 2.3 tool leaks | A | same | — |
 | 2.4 multi-GB growth | C | bounded caches | memory figures on the bench page |

@@ -115,7 +115,7 @@ Classification: `user/store.rs` quartet = genuine refactor candidates;
 parsers/decoders (`parse_input`, `scheme::parse`, `decode_tokens`,
 `from_decimal`) = legitimate table-driven complexity;
 `nbest_sentences`/`build_scan_matrix` = parity-critical, deliberately
-unrefactored until Stage 2; oracle/dictool = tooling.
+unrefactored until Stage 3; oracle/dictool = tooling.
 
 ## 8. Cross-reference: risk × verification coverage
 

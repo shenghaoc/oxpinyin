@@ -168,7 +168,7 @@ ignore = [
 ]
 
 [bans]
-multiple-versions = "warn"    # informational: Stage-2 size-budget signal
+multiple-versions = "warn"    # informational: Stage-3 size-budget signal
 deny = []                     # start empty; constitution's "no IME crates" stays a review rule
 highlight = "simplest-path"   # 0.20 rejects "simplest"
 

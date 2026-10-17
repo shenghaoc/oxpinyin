@@ -30,7 +30,7 @@ use crate::{
 /// **Not constant across stages.** This is 440 for Stage 1 — the 405 complete
 /// syllables, the 23 initial-only keys, the two option-only correction
 /// targets (`eng`, `nun`), and the ten zhuyin-only syllables reachable
-/// through the zhuyin index alone. Stage 2 additions take ids *after* the
+/// through the zhuyin index alone. Stage 3 additions take ids *after* the
 /// current end rather than renumbering, so the existing ids stay stable
 /// while this count grows. Anything that persists a key id must record the
 /// inventory it was written against; anything that sizes an array by this

@@ -86,8 +86,7 @@ on every store-affecting change (`store-backends.yml`, `backend-matrix`).
 ## Fixtures per backend
 
 `fixtures/w3/<kct|tkt>/` is the committed mini data set, one
-directory per backend, with libpinyin's own file names on KC, tkrzw and
-Berkeley DB.
+directory per backend, with each backend's native file names.
 Regenerate with `oxpinyin-datagen compile --mini` from the model20 cache
 (`goldens-and-pins.md`).
 

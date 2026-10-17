@@ -2,7 +2,7 @@
 //! `oxpinyin-core`: full-pinyin parsing, segment-graph construction,
 //! fewest-keys extraction, k-best search, and syllable-key lookups.
 //!
-//! These are the Stage 2 baseline measurements for the IME's input-to-
+//! These are the Stage 3 baseline measurements for the IME's input-to-
 //! candidate decode chain. No I/O, no external data — the parser, graph
 //! and k-best search are pure functions over the frozen syllable inventory.
 
