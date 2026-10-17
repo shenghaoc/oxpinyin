@@ -1,7 +1,6 @@
 //! Integration tests for `BigramLanguageModel` over `bigram.db` and the
 //! chunk-file unigrams.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -11,8 +10,7 @@ use oxpinyin_store::{DefaultStore, WriteStore};
 
 mod support;
 use support::ChunkBuilder;
-
-static FIXTURE_COUNTER: AtomicU32 = AtomicU32::new(0);
+use tempfile::TempDir;
 
 const NI: u32 = 0x0100_0010;
 const HAO: u32 = 0x0100_0011;
@@ -20,28 +18,29 @@ const NIHAO: u32 = 0x0100_0099;
 const GBK: u32 = 0x0200_0001;
 
 struct Fixture {
-    dir: PathBuf,
+    dir: TempDir,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let n = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir =
-            std::env::temp_dir().join(format!("oxpinyin-lm-test-{}-{}", std::process::id(), n,));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-lm-test-")
+            .tempdir()
+            .unwrap();
         // gb_char: 你 count 9 (+1 = 10), 好 count 4 (+1 = 5), 你好 never
         // seen (+1 = 1) → total 16, items 3.
         let mut gb = ChunkBuilder::new(16);
         gb.add(0x10, 10, "你", vec![(vec![0, 0], 1)]);
         gb.add(0x11, 5, "好", vec![(vec![0, 0], 1)]);
         gb.add(0x99, 1, "你好", vec![(vec![0, 0, 0, 0], 1)]);
-        std::fs::write(dir.join("gb_char.bin"), gb.build()).unwrap();
+        std::fs::write(dir.path().join("gb_char.bin"), gb.build()).unwrap();
         // gbk_char: one item, count 2 (+1 = 3).
         let mut gbk = ChunkBuilder::new(3);
         gbk.add(0x01, 3, "鎄", vec![(vec![0, 0], 1)]);
-        std::fs::write(dir.join("gbk_char.bin"), gbk.build()).unwrap();
+        std::fs::write(dir.path().join("gbk_char.bin"), gbk.build()).unwrap();
         // bigram.db: 你 → 好 ×7 (row total 7).
-        let store = DefaultStore::create_hash(&dir.join(SystemDbm::Bigram.file_name())).unwrap();
+        let store =
+            DefaultStore::create_hash(&dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
         store
             .write(|txn| {
                 let mut value = 7_u32.to_le_bytes().to_vec();
@@ -54,21 +53,16 @@ impl Fixture {
     }
 
     fn open(&self) -> (BigramLanguageModel, Arc<AtomicU32>) {
-        let libraries = Arc::new(PhraseLibraries::open(&self.dir, SYSTEM_LIBRARY_FILES).unwrap());
+        let libraries =
+            Arc::new(PhraseLibraries::open(self.dir.path(), SYSTEM_LIBRARY_FILES).unwrap());
         let mask = Arc::new(AtomicU32::new(0));
         let lm = BigramLanguageModel::open_with_mask(
-            &self.dir.join(SystemDbm::Bigram.file_name()),
+            &self.dir.path().join(SystemDbm::Bigram.file_name()),
             libraries,
             Arc::clone(&mask),
         )
         .unwrap();
         (lm, mask)
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 
@@ -360,7 +354,7 @@ fn unigram_availability_survives_a_total_that_wraps_to_zero() {
     gb.add(0x10, 10, "你", vec![(vec![0, 0], 1)]);
     gb.add(0x11, 5, "好", vec![(vec![0, 0], 1)]);
     gb.add(0x99, 1, "你好", vec![(vec![0, 0, 0, 0], 1)]);
-    std::fs::write(fix.dir.join("gb_char.bin"), gb.build()).unwrap();
+    std::fs::write(fix.dir.path().join("gb_char.bin"), gb.build()).unwrap();
     let (lm, mask) = fix.open();
     assert_eq!(
         lm.unigram_total(),
@@ -544,7 +538,8 @@ fn merged_row_items_price_as_the_pair_overlay_at_wrap_presence_and_lambda_edges(
 fn reusable_row_keeps_visibility_live_and_propagates_empty_value() {
     use oxpinyin_core::NbestStepRow;
     let fix = Fixture::new();
-    let store = DefaultStore::create_hash(&fix.dir.join(SystemDbm::Bigram.file_name())).unwrap();
+    let store =
+        DefaultStore::create_hash(&fix.dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
     store
         .write(|txn| txn.put_raw(&NI.to_le_bytes(), &[]))
         .unwrap();
@@ -581,7 +576,8 @@ fn reusable_row_keeps_visibility_live_and_propagates_empty_value() {
 fn row_and_pair_read_a_stored_unsorted_row_through_the_pins_lower_bound() {
     use oxpinyin_core::NbestSuccessors;
     let fix = Fixture::new();
-    let store = DefaultStore::create_hash(&fix.dir.join(SystemDbm::Bigram.file_name())).unwrap();
+    let store =
+        DefaultStore::create_hash(&fix.dir.path().join(SystemDbm::Bigram.file_name())).unwrap();
     let value = oxpinyin_data::row_format::bigram::encode_value(&oxpinyin_data::BigramRow {
         total: 11,
         records: vec![(NIHAO, 0), (HAO, 7), (NI, 4), (HAO, 99)],
