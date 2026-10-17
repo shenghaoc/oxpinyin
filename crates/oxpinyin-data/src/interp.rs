@@ -371,16 +371,17 @@ mod tests {
 
     use super::{InterpolationError, parse_interpolation2};
 
-    /// One distinct name per test: tests run in parallel and each file is
-    /// written once, read once, and removed, so the name is the collision
-    /// domain.
-    fn temp_file(name: &str, contents: &str) -> std::path::PathBuf {
-        let mut path = std::env::temp_dir();
-        path.push(format!("pinyin-interp-{name}.text"));
-        let mut file = std::fs::File::create(&path).expect("temp file");
+    /// A uniquely named file holding `contents`, removed when the returned
+    /// path drops (including on unwind).
+    fn temp_file(name: &str, contents: &str) -> tempfile::TempPath {
+        let mut file = tempfile::Builder::new()
+            .prefix(&format!("pinyin-interp-{name}-"))
+            .suffix(".text")
+            .tempfile()
+            .expect("temp file");
         file.write_all(contents.as_bytes())
             .expect("write temp file");
-        path
+        file.into_temp_path()
     }
 
     #[test]
@@ -396,7 +397,6 @@ mod tests {
              \\end\n",
         );
         let table = parse_interpolation2(&path).expect("parses");
-        std::fs::remove_file(&path).ok();
         assert_eq!(table.len(), 2);
         assert_eq!(table.total(), 12);
         assert_eq!(table.count(10), Some(5));
@@ -411,7 +411,6 @@ mod tests {
             "\\data model interpolation\n\\2-gram\n\\end\n",
         );
         let result = parse_interpolation2(&path);
-        std::fs::remove_file(&path).ok();
         assert!(matches!(result, Err(InterpolationError::MissingOneGram)));
     }
 
@@ -422,7 +421,6 @@ mod tests {
             "\\data model interpolation\n\\1-gram\n\\item 10 甲 5\n",
         );
         let result = parse_interpolation2(&path);
-        std::fs::remove_file(&path).ok();
         assert!(matches!(
             result,
             Err(InterpolationError::Parse { line: 3, .. })
@@ -437,7 +435,6 @@ mod tests {
              \\item 10 甲 count 5\n\\item 10 乙 count 7\n",
         );
         let result = parse_interpolation2(&path);
-        std::fs::remove_file(&path).ok();
         assert!(matches!(result, Err(InterpolationError::Parse { .. })));
     }
 

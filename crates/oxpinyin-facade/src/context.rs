@@ -778,8 +778,13 @@ mod open_failure_tests {
 
     #[test]
     fn missing_system_dir_carries_the_runtime_error_and_path() {
-        let dir =
-            std::env::temp_dir().join(format!("oxpinyin-facade-missing-{}", std::process::id()));
+        // A child of a fresh dir this test owns: absent by construction, and
+        // nothing another process does to a shared temp path can create it.
+        let root = tempfile::Builder::new()
+            .prefix("oxpinyin-facade-missing-")
+            .tempdir()
+            .expect("temp dir");
+        let dir = root.path().join("system");
         let failure = ContextCore::try_open(&dir, None, WORD, UserConfLaw::Pinyin)
             .err()
             .expect("a missing system dir cannot open");
