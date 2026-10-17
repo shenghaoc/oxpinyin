@@ -31,6 +31,7 @@ use std::hash::{BuildHasherDefault, Hasher};
 
 use compact_str::CompactString;
 use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
+use oxpinyin_core::graph::{GraphError, MAX_GRAPH_INPUT};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry,
@@ -131,24 +132,31 @@ pub struct NbestRow {
     pub(crate) cost: Cost,
 }
 
-/// One hypothesis in the trellis.
-#[derive(Clone, Debug)]
+/// `m_last_step` of the seed: the pin's `-1` (074a2219 `phonetic_lookup.h:59`).
+const SEED_STEP: u32 = u32::MAX;
+
+/// One hypothesis in the trellis, at the pin's `trellis_value_t` field
+/// widths (074a2219 phonetic_lookup.h:41-52) wherever every value fits.
+#[derive(Clone, Copy, Debug)]
 struct Value {
-    /// Phrase token ending at this step (`m_handles[1]`).
+    /// Phrase token ending at this step (`m_handles[1]`, `phrase_token_t`).
     token: u32,
     /// Token of the phrase the predecessor value ended on (`m_handles[0]`).
     prev_token: u32,
-    /// Position the covering phrase starts at (`m_last_step`); `usize::MAX`
-    /// marks the seed.
-    from: usize,
+    /// Position the covering phrase starts at (`m_last_step`, a `gint32`
+    /// step); [`SEED_STEP`] marks the seed. A step is a byte position of a
+    /// graph's input, at most `MAX_GRAPH_INPUT`.
+    from: u32,
     /// Slot of the predecessor value in node `(from, prev_token)`
-    /// (`m_sub_index`).
-    sub: usize,
-    /// Accumulated phrase characters (`m_sentence_length`).
+    /// (`m_sub_index`, a `gint32` below `nstore`).
+    sub: u32,
+    /// Accumulated phrase characters (`m_sentence_length`, `gint32`).
     length: u32,
     /// Accumulated keys covered (the candidate's `consumed_keys`).
     keys: u32,
-    /// Accumulated surprisal (`m_poss`, negated: lower is better).
+    /// Accumulated surprisal (`m_poss`, negated: lower is better). Stays
+    /// the core's fixed-point `Cost`: the pin's `gfloat` is a different
+    /// representation, not a narrower one.
     cost: Cost,
 }
 
@@ -157,7 +165,7 @@ impl Value {
         Self {
             token,
             prev_token: 0,
-            from: usize::MAX,
+            from: SEED_STEP,
             sub: 0,
             length: 0,
             keys: 0,
@@ -169,10 +177,10 @@ impl Value {
 /// One beam member: the value plus its slot inside its own node, which is
 /// what a successor records as its backtracking `sub` (upstream's
 /// `number()` assigns `m_current_index` before the beam is built).
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 struct BeamEntry {
     value: Value,
-    slot: usize,
+    slot: u32,
 }
 
 /// 074a2219 phonetic_lookup.h:66-91, including the nstore gate. The
@@ -336,8 +344,8 @@ fn tail_merge(values: &mut [Value]) {
 /// A multiplicative hasher for the trellis's `u32` token keys.
 ///
 /// These maps are only probed (`get`, `entry`), never iterated: the order of
-/// a position's nodes is `node_order`, so the hash function cannot reach the
-/// output. SipHash's per-lookup cost dominated the step expansion.
+/// a position's nodes is its [`Step`]'s node vector, so the hash function
+/// cannot reach the output. SipHash's per-lookup cost dominated the step expansion.
 #[derive(Default, Clone, Copy)]
 struct TokenHasher(u64);
 
@@ -363,15 +371,70 @@ impl Hasher for TokenHasher {
 
 type TokenMap<V> = HashMap<u32, V, BuildHasherDefault<TokenHasher>>;
 
-/// The trellis state over the remaining input's byte positions.
-type NodeValues = SmallVec<[Value; NSTORE]>;
+/// One `(position, token)` node: the pin's `trellis_node<nstore>`
+/// (074a2219 phonetic_lookup_heap.h:31-82), a fixed array whose first
+/// `len` values are the pinned heap. The rest are unused.
+#[derive(Clone, Copy, Debug)]
+struct Node {
+    /// `m_nelem`, at most `nstore`.
+    len: u32,
+    /// `m_elements`, sized for the larger shape's `nstore`.
+    values: [Value; NSTORE],
+}
+
+impl Node {
+    const EMPTY: Self = Self {
+        len: 0,
+        values: [Value::seed(0); NSTORE],
+    };
+
+    /// The stored values in their physical heap slots.
+    fn values(&self) -> &[Value] {
+        self.values.get(..self.len as usize).unwrap_or_default()
+    }
+
+    fn values_mut(&mut self) -> &mut [Value] {
+        self.values.get_mut(..self.len as usize).unwrap_or_default()
+    }
+}
+
+/// One position's nodes, laid out as the pin's per-step pair
+/// (074a2219 phonetic_lookup.h:184-186, filled by `insert_candidate` at
+/// :300-330): `m_steps_index`, a token → node-index `GHashTable`, and
+/// `m_steps_content`, a `GArray` of nodes in creation order.
+#[derive(Clone, Default)]
+struct Step {
+    index: TokenMap<u32>,
+    nodes: Vec<Node>,
+}
+
+impl Step {
+    fn node(&self, token: u32) -> Option<&Node> {
+        let index = *self.index.get(&token)?;
+        self.nodes.get(index as usize)
+    }
+
+    /// The node for `token`, appended in creation order when it is new
+    /// (`g_array_append_val` + `g_hash_table_insert`, :314-315).
+    fn node_mut(&mut self, token: u32) -> Option<&mut Node> {
+        let index = match self.index.entry(token) {
+            Entry::Occupied(slot) => *slot.get(),
+            Entry::Vacant(slot) => {
+                // One node per distinct `u32` token: the count always fits.
+                let index = u32::try_from(self.nodes.len()).ok()?;
+                self.nodes.push(Node::EMPTY);
+                *slot.insert(index)
+            }
+        };
+        self.nodes.get_mut(index as usize)
+    }
+}
 
 struct Trellis {
     /// The surface's `<nstore, nbest>`.
     shape: NbestShape,
-    /// `nodes[position][token]` = the physical pinned heap slots.
-    nodes: Vec<TokenMap<NodeValues>>,
-    node_order: Vec<Vec<u32>>,
+    /// One [`Step`] per byte position of the remaining input.
+    steps: Vec<Step>,
     /// Token → the key path its first step priced it over, as an offset
     /// and length into `text_keys`/`text_tones`; the phrase text is read
     /// through the dictionary when a result is emitted.
@@ -387,20 +450,21 @@ impl Trellis {
     /// `pinyin_guess_sentence_with_prefix` drives this with the prefix
     /// token list; the single-seed `new` stays the sentence path's law.
     fn with_seeds(bound: usize, seeds: &[u32], shape: NbestShape) -> Self {
-        let mut nodes = vec![TokenMap::default(); bound + 1];
-        let mut node_order = vec![Vec::new(); bound + 1];
-        for &seed_token in seeds {
-            let mut seed_values = NodeValues::new();
-            seed_values.push(Value::seed(seed_token));
-            if !nodes[0].contains_key(&seed_token) {
-                node_order[0].push(seed_token);
+        let mut steps = vec![Step::default(); bound + 1];
+        if let Some(first) = steps.first_mut() {
+            for &seed_token in seeds {
+                // A repeated seed replaces its node in place, keeping the
+                // node's creation slot.
+                if let Some(node) = first.node_mut(seed_token) {
+                    *node = Node::EMPTY;
+                    node.values[0] = Value::seed(seed_token);
+                    node.len = 1;
+                }
             }
-            nodes[0].insert(seed_token, seed_values);
         }
         Self {
             shape,
-            nodes,
-            node_order,
+            steps,
             texts: TokenMap::default(),
             text_keys: Vec::new(),
             text_tones: Vec::new(),
@@ -412,37 +476,43 @@ impl Trellis {
     /// so reproducing the pin deliberately evicts the best stored value.
     fn insert(&mut self, position: usize, value: Value) {
         let nstore = self.shape.nstore();
-        let node = match self.nodes[position].entry(value.token) {
-            Entry::Occupied(node) => node.into_mut(),
-            Entry::Vacant(slot) => {
-                self.node_order[position].push(value.token);
-                slot.insert(NodeValues::new())
-            }
+        let Some(node) = self
+            .steps
+            .get_mut(position)
+            .and_then(|step| step.node_mut(value.token))
+        else {
+            return;
         };
         let less = |left: &Value, right: &Value| loses_to(left, right, nstore);
-        if node.len() < nstore {
-            node.push(value.clone());
-            let last = node.len() - 1;
-            heap_push(node, last, 0, value, &less);
-        } else if less(&node[0], &value) {
-            heap_pop(node, &less);
-            let last = node.len() - 1;
-            heap_push(node, last, 0, value, &less);
+        let len = node.len as usize;
+        if len < nstore.min(NSTORE) {
+            node.values[len] = value;
+            node.len += 1;
+            heap_push(node.values_mut(), len, 0, value, &less);
+        } else if node
+            .values()
+            .first()
+            .is_some_and(|front| less(front, &value))
+        {
+            let values = node.values_mut();
+            heap_pop(values, &less);
+            heap_push(values, len - 1, 0, value, &less);
         }
     }
 
     /// 074a2219 phonetic_lookup.h:272-297: creation order, physical slots.
     fn candidates(&self, position: usize) -> Vec<BeamEntry> {
-        self.node_order[position]
-            .iter()
-            .filter_map(|token| self.nodes[position].get(token))
-            .flat_map(|node| {
-                node.iter().enumerate().map(|(slot, value)| BeamEntry {
-                    value: value.clone(),
-                    slot,
+        self.steps.get(position).map_or_else(Vec::new, |step| {
+            step.nodes
+                .iter()
+                .flat_map(|node| {
+                    node.values()
+                        .iter()
+                        .zip(0_u32..)
+                        .map(|(&value, slot)| BeamEntry { value, slot })
                 })
-            })
-            .collect()
+                .collect()
+        })
     }
 
     fn beam(&mut self, position: usize) -> SmallVec<[BeamEntry; NBEAM]> {
@@ -458,7 +528,7 @@ impl Trellis {
     /// Fewer final-step values yield fewer tails; an empty final step
     /// never falls back to an earlier populated step (#594).
     fn tails(&mut self) -> Vec<Value> {
-        let position = self.nodes.len() - 1;
+        let position = self.steps.len().saturating_sub(1);
         let mut values: Vec<_> = heap_top(
             self.candidates(position),
             self.shape.nbest(),
@@ -473,16 +543,19 @@ impl Trellis {
 
     fn extract(&self, tail: &Value) -> Vec<(usize, u32)> {
         let mut spans = Vec::new();
-        let mut current = tail.clone();
-        while current.from != usize::MAX {
-            spans.push((current.from, current.token));
-            let Some(node) = self.nodes[current.from].get(&current.prev_token) else {
+        let mut current = *tail;
+        while current.from != SEED_STEP {
+            let from = current.from as usize;
+            spans.push((from, current.token));
+            let Some(next) = self
+                .steps
+                .get(from)
+                .and_then(|step| step.node(current.prev_token))
+                .and_then(|node| node.values().get(current.sub as usize))
+            else {
                 break;
             };
-            let Some(next) = node.get(current.sub) else {
-                break;
-            };
-            current = next.clone();
+            current = *next;
         }
         spans.reverse();
         spans
@@ -1544,13 +1617,21 @@ where
         trellis.text_tones.extend_from_slice(tones);
         slot.insert((offset, u32::try_from(keys.len()).unwrap_or(u32::MAX)));
     }
+    // `m_last_step` is a `gint32` step; a graph's positions all fit.
+    let from = u32::try_from(span.start)
+        .ok()
+        .filter(|&from| from != SEED_STEP)
+        .ok_or(EngineError::Graph(GraphError::InputTooLong {
+            len: span.start,
+            limit: MAX_GRAPH_INPUT,
+        }))?;
     let chars = entry.chars;
     trellis.insert(
         span.end,
         Value {
             token: entry.token,
             prev_token: prev,
-            from: span.start,
+            from,
             sub: predecessor.slot,
             length: predecessor.value.length.saturating_add(chars),
             keys: predecessor.value.keys.saturating_add(entry.keys),
@@ -1608,7 +1689,7 @@ mod tests {
         Value {
             token: 1,
             prev_token: 0,
-            from: usize::MAX,
+            from: super::SEED_STEP,
             sub: 0,
             length,
             keys: length,
@@ -1777,7 +1858,8 @@ mod tests {
         for cost in [10, 20, 5] {
             trellis.insert(1, value(cost, 1, 0));
         }
-        let costs: Vec<_> = trellis.nodes[1][&1].iter().map(|item| item.cost).collect();
+        let node = trellis.steps[1].node(1).expect("token 1 has a node");
+        let costs: Vec<_> = node.values().iter().map(|item| item.cost).collect();
         assert_eq!(costs, [5, 20], "pin discards 10, despite it beating 20");
     }
 
