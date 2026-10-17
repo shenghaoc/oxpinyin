@@ -70,6 +70,9 @@ compact_str = "0.10"
 phf = "0.14"
 phf_codegen = "0.14"
 glib-sys = "0.22"
+# The phrase-library chunk mapping (oxpinyin-data, Unix only). No features:
+# `stable_deref_trait` stays off.
+memmap2 = { version = "0.9.11", default-features = false }
 # Test-only: collision-free, self-cleaning temp dirs for test harnesses.
 # Never a dependency of a shipping crate's normal or build graph.
 tempfile = "3.27"

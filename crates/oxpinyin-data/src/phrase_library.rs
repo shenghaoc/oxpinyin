@@ -218,167 +218,114 @@ mod map {
 
     use super::LibraryError;
 
-    /// A chunk's bytes as one immutable slice: `mmap`ed on Unix, read into
-    /// a heap buffer elsewhere. This mirrors upstream's
-    /// `MemoryChunk::mmap` (`memory_chunk.h:470-520`) over the chunk's
-    /// `header + data_len` extent, with `PROT_READ` where upstream maps
-    /// read-write-private because its item views may be mutated in memory;
-    /// this reader never writes, and a read-only mapping is strictly safer
-    /// for the same bytes.
-    pub struct MappedFile {
-        /// First byte of the mapping (or of the heap fallback).
-        data: *const u8,
-        /// Mapping length in bytes.
-        len: usize,
-        /// `None` when `data` came from `mmap` (released with
-        /// `munmap`); `Some` on the non-Unix fallback, where it holds
-        /// the bytes `data` points into and frees them itself.
-        heap: Option<Box<[u8]>>,
+    /// Map the chunk extent as one immutable slice on all targets.
+    pub struct MappedFile(Bytes);
+
+    /// Each variant owns its bytes. Both are `Send + Sync`.
+    enum Bytes {
+        /// A private mapping of the chunk extent at offset zero.
+        Mapped(memmap2::Mmap),
+        /// Empty bytes for a zero-length file or a refused sub-index.
+        Heap(Box<[u8]>),
     }
 
     impl MappedFile {
         /// No bytes and no mapping: the payload of a chunk whose header was
         /// accepted but whose sub-index layout the pin refused.
         pub(crate) fn empty() -> Self {
-            Self {
-                data: std::ptr::NonNull::<u8>::dangling().as_ptr(),
-                len: 0,
-                heap: Some(Box::new([])),
-            }
+            Self(Bytes::Heap(Box::new([])))
         }
 
-        /// Maps (or reads) exactly the first `len` bytes of `file` — the
-        /// chunk `MemoryChunk::mmap` exposes (`header + data_len`), not the
-        /// whole file when the header's truncated length is shorter.
+        /// Map the first `len` bytes of `file`.
+        /// This is the header plus data length used by `MemoryChunk::mmap`.
+        /// Do not map the rest of the file if the header has a shorter length.
         pub(crate) fn open_len(file: std::fs::File, len: usize) -> Result<Self, LibraryError> {
             Self::from_file(file, len)
         }
 
-        #[cfg(unix)]
         fn from_file(file: std::fs::File, len: usize) -> Result<Self, LibraryError> {
-            use std::os::fd::AsRawFd;
-            // Historic cross-Unix values (Linux, macOS, the BSDs agree).
-            const PROT_READ: i32 = 0x1;
-            const MAP_PRIVATE: i32 = 0x02;
             if len == 0 {
-                // mmap rejects zero lengths; an empty heap buffer
-                // represents the empty mapping without a syscall.
-                return Ok(Self {
-                    data: std::ptr::NonNull::<u8>::dangling().as_ptr(),
-                    len: 0,
-                    heap: Some(Box::new([])),
-                });
+                // Keep an empty heap slice. Do not map a zero-length file.
+                return Ok(Self(Bytes::Heap(Box::new([]))));
             }
-            // SAFETY: the platform's own mmap entry point,
-            // declared below verbatim so no dependency is needed. Its
-            // invariants hold by construction on entry: `addr` is null
-            // and `offset` zero so the kernel places the mapping; `len`
-            // is the file's `fstat` length, so the whole range is
-            // file-backed; the protection is read + `MAP_PRIVATE`
-            // (never `MAP_SHARED`), so the returned pages are a
-            // read-only snapshot — writing them faults and no write can
-            // reach the file; the fd is open and may be closed right
-            // after, the mapping holds its own reference. `MAP_FAILED`
-            // (all-ones) is checked before the pointer is kept.
+            // SAFETY: The file is open. The offset is zero. The explicit
+            // length is the chunk extent checked by map_chunk. Mmap owns
+            // the mapping. Each returned slice borrows that owner. This
+            // code does not write through the mapping. Do not change a
+            // table file while it is mapped. These are system and addon
+            // libraries. This runtime does not write them.
+            // On Unix, map_copy_read_only uses PROT_READ and MAP_PRIVATE.
+            // A private mapping is not a snapshot. An in-place file write
+            // can change its bytes. Truncation can cause SIGBUS on a later
+            // read. A rename replacement leaves the view on the old file.
+            // On Windows, memmap2 uses FILE_MAP_COPY with PAGE_WRITECOPY
+            // or PAGE_EXECUTE_WRITECOPY. It can then reduce page access
+            // with VirtualProtect. The Mmap API gives this code no mutable
+            // slice. The OS view need not be read-only. On Windows CI,
+            // std::fs::write fails with error 1224 when it tries to
+            // truncate a mapped file for an in-place rewrite. Deletion
+            // through std::fs::remove_file succeeds in the addon test.
+            // Replacement by rename is not tested on Windows. These
+            // checks do not test a write without truncation on Windows.
+            // The truncation/SIGBUS case is Unix only.
+            // The pin maps these files on targets with mmap. Without mmap,
+            // the pin reads the file into the heap (memory_chunk.h:31-33,
+            // :446-452; CMakeLists.txt:64 at 074a2219). Thus, on Windows
+            // this is an internal storage change. The returned bytes are
+            // the same. The mapping keeps the file alive after this File
+            // is closed.
             let mapped = unsafe {
-                mmap(
-                    std::ptr::null_mut(),
-                    len,
-                    PROT_READ,
-                    MAP_PRIVATE,
-                    file.as_raw_fd(),
-                    0,
-                )
-            };
-            if mapped.addr() == usize::MAX {
-                return Err(LibraryError::Io(std::io::Error::last_os_error()));
+                memmap2::MmapOptions::new()
+                    .len(len)
+                    .map_copy_read_only(&file)
             }
+            .map_err(LibraryError::Io)?;
             drop(file);
-            Ok(Self {
-                data: mapped.cast::<u8>(),
-                len,
-                heap: None,
-            })
-        }
-
-        #[cfg(not(unix))]
-        fn from_file(mut file: std::fs::File, len: usize) -> Result<Self, LibraryError> {
-            use std::io::Read;
-            let mut buffer = Vec::with_capacity(len.min(1 << 20));
-            file.by_ref()
-                .take(len as u64)
-                .read_to_end(&mut buffer)
-                .map_err(LibraryError::Io)?;
-            if buffer.len() != len {
-                return Err(LibraryError::Io(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "phrase chunk shorter than its declared length",
-                )));
-            }
-            let heap = buffer.into_boxed_slice();
-            Ok(Self {
-                data: heap.as_ptr(),
-                len,
-                heap: Some(heap),
-            })
+            Ok(Self(Bytes::Mapped(mapped)))
         }
 
         /// The mapped bytes. The slice borrows `self`, so the mapping
         /// outlives every view taken over it.
-        pub(crate) const fn as_slice(&self) -> &[u8] {
-            // SAFETY: `data` is non-null and `len` bytes from it
-            // are readable for the whole life of `self` — guaranteed by
-            // `mmap` (released only in `Drop`, which borrowck keeps
-            // after this borrow) or by the heap owner (the `Box` is a
-            // field and frees only in `Drop`).
-            unsafe { std::slice::from_raw_parts(self.data, self.len) }
-        }
-    }
-
-    // SAFETY: the mapping is immutable read-only memory. No
-    // method writes through `data`; the pointer never escapes except as
-    // `&[u8]` borrows tied to `&self`. Moving or sharing the owner
-    // across threads is exactly the mmap contract for
-    // `PROT_READ | MAP_PRIVATE` pages — the same guarantee libpinyin's
-    // MemoryChunk relies on.
-    unsafe impl Send for MappedFile {}
-    // SAFETY: same as Send — the mapping is read-only (`PROT_READ | MAP_PRIVATE`),
-    // and no method writes through `data`.
-    unsafe impl Sync for MappedFile {}
-
-    impl Drop for MappedFile {
-        fn drop(&mut self) {
-            #[cfg(unix)]
-            if self.heap.is_none() {
-                // SAFETY: the address and length are exactly
-                // what `mmap` returned (never modified in between), and
-                // `Drop` runs only after every `as_slice` borrow has
-                // ended, so no view can outlive the unmap.
-                unsafe { munmap(self.data.cast_mut().cast(), self.len) };
+        pub(crate) fn as_slice(&self) -> &[u8] {
+            match &self.0 {
+                Bytes::Mapped(mapped) => mapped,
+                Bytes::Heap(heap) => heap,
             }
-            // Non-Unix builds have no mapping to release — the heap
-            // fallback frees itself. Reading it here keeps the field
-            // live where the munmap branch is compiled out.
-            #[cfg(not(unix))]
-            let _frees_itself = &self.heap;
         }
     }
 
-    // The platform mmap surface, declared verbatim instead of through a
-    // dependency (adding one is a hard-forbid without an ask). Every
-    // Unix passes `off_t` as the widest integer; the constants live at
-    // the call site above.
-    #[cfg(unix)]
-    unsafe extern "C" {
-        fn mmap(
-            addr: *mut std::ffi::c_void,
-            len: usize,
-            prot: i32,
-            flags: i32,
-            fd: i32,
-            offset: i64,
-        ) -> *mut std::ffi::c_void;
-        fn munmap(addr: *mut std::ffi::c_void, len: usize) -> i32;
+    // `PhraseLibrary` shares one mapping across threads through an `Arc`;
+    // keep that a compile error to lose, now that the bounds are inferred.
+    const _: () = {
+        const fn send_sync<T: Send + Sync>() {}
+        send_sync::<MappedFile>();
+    };
+
+    #[cfg(test)]
+    mod tests {
+        use super::MappedFile;
+
+        /// The mapping hands out exactly the file's bytes: empty, one byte,
+        /// and lengths on and across page boundaries.
+        #[test]
+        fn maps_exactly_the_file_bytes() {
+            let dir = tempfile::Builder::new()
+                .prefix("oxpinyin-mapped-file-")
+                .tempdir()
+                .expect("tmpdir");
+            for len in [0_usize, 1, 7, 8, 4095, 4096, 4097, 3 * 4096 + 1] {
+                let path = dir.path().join(format!("len-{len}"));
+                let bytes: Vec<u8> = (0..len).map(|i| (i * 31 % 251) as u8).collect();
+                std::fs::write(&path, &bytes).unwrap();
+                let mapped =
+                    MappedFile::open_len(std::fs::File::open(&path).unwrap(), len).unwrap();
+                assert_eq!(mapped.as_slice(), std::fs::read(&path).unwrap(), "{len}");
+                // Reopening while the first mapping lives gives an
+                // independent mapping of the same bytes.
+                let again = MappedFile::open_len(std::fs::File::open(&path).unwrap(), len).unwrap();
+                assert_eq!(again.as_slice(), mapped.as_slice(), "{len}");
+            }
+        }
     }
 }
 
