@@ -32,38 +32,36 @@ pub fn system_dir() -> PathBuf {
         .join(oxpinyin_data::DEFAULT_STORE_EXT)
 }
 
+/// A uniquely named scratch dir, removed when the owning guard drops.
+fn scratch_dir(prefix: &str, what: &str) -> (PathBuf, tempfile::TempDir) {
+    let dir = tempfile::Builder::new()
+        .prefix(prefix)
+        .suffix(".d")
+        .tempdir()
+        .expect(what);
+    (dir.path().to_path_buf(), dir)
+}
+
 pub struct TempUserDir {
     pub(crate) path: PathBuf,
+    _dir: tempfile::TempDir,
 }
 
 impl TempUserDir {
     pub(crate) fn new(tag: &str) -> Self {
-        let path =
-            std::env::temp_dir().join(format!("oxpinyin-capi-{tag}-{}.d", std::process::id()));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("temp user dir");
-        Self { path }
-    }
-}
-
-impl Drop for TempUserDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        let (path, dir) = scratch_dir(&format!("oxpinyin-capi-{tag}-"), "temp user dir");
+        Self { path, _dir: dir }
     }
 }
 
 pub struct TempSystemDir {
     pub(crate) path: PathBuf,
+    _dir: tempfile::TempDir,
 }
 
 impl TempSystemDir {
     pub(crate) fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-capi-system-{tag}-{}.d",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("temp system dir");
+        let (path, dir) = scratch_dir(&format!("oxpinyin-capi-system-{tag}-"), "temp system dir");
         // The whole fixture directory of the compiled-in backend
         // (`fixtures/w3/<ext>`: the DBMs, the chunk files, table.conf),
         // so this helper works under every backend gate.
@@ -73,17 +71,11 @@ impl TempSystemDir {
                 std::fs::copy(entry.path(), path.join(entry.file_name())).expect("copy fixture");
             }
         }
-        Self { path }
+        Self { path, _dir: dir }
     }
 
     pub(crate) fn write(&self, name: &str, contents: &str) {
         std::fs::write(self.path.join(name), contents).expect("write temp system file");
-    }
-}
-
-impl Drop for TempSystemDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
     }
 }
 

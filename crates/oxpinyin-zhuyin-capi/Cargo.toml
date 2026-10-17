@@ -64,6 +64,11 @@ oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 glib-sys.workspace = true
 
+[dev-dependencies]
+# Dev-only: scratch dirs for the test fixtures. Never a dependency of the
+# C ABI itself.
+tempfile.workspace = true
+
 # cargo-c packaging metadata. See docs/packaging.md for the rationale and the
 # upstream libzhuyin.pc.in this mirrors.
 [package.metadata.capi.header]
