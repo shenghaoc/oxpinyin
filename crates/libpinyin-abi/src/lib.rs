@@ -18,9 +18,14 @@
 //!   parse reports;
 //! - [`capture`] — the escaping rules and `pinyin-capture-v1` field notation.
 //!
-//! The crate is pure and portable: it compiles and its tests run on Linux,
-//! macOS and Windows with no libpinyin installed.
-#![forbid(unsafe_code)]
+//! - [`subject`] — a dynamically loaded libpinyin or libzhuyin and a checked
+//!   subset of its operations.
+//!
+//! Everything except [`subject`]'s calls into a loaded library is pure and
+//! portable, and the crate's tests run on Linux, macOS and Windows with no
+//! libpinyin installed. `subject` is the crate's only `unsafe` and carries a
+//! `// SAFETY:` comment on every block.
+#![deny(unsafe_code)]
 // Constitution §4, mechanically: library builds may not unwrap, expect, or
 // panic. Inline #[cfg(test)] modules are exempt; tests/ are separate crates.
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
@@ -30,5 +35,16 @@
 #![warn(missing_docs)]
 
 pub mod capture;
+mod error;
 pub mod observation;
 pub mod option;
+// The one module that loads a shared object and calls through it. Every
+// unsafe block in it is justified; see its module documentation.
+#[allow(unsafe_code)]
+pub mod subject;
+
+pub use error::AbiError;
+pub use subject::{
+    Context, Facade, PinyinCandidate, PinyinSession, Subject, ZhuyinCandidate, ZhuyinInput,
+    ZhuyinSession,
+};

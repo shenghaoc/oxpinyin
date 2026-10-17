@@ -8,7 +8,21 @@ rust-version.workspace = true
 publish = false
 description = "Independent vocabulary, option bits and wire formats for observing the public libpinyin and libzhuyin C ABIs. Depends on no oxpinyin crate; never ships."
 
-[lints]
-workspace = true
+# The workspace lints, plus the two clippy lints that make the `// SAFETY:`
+# clause of the constitution mechanical for the one module that loads and
+# calls a shared object (`subject`, the only place `unsafe_code` is allowed).
+[lints.rust]
+unsafe_code = "deny"
+unexpected_cfgs = "deny"
+missing_docs = "warn"
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+must_use_candidate = "warn"
 
 [dependencies]
+libloading.workspace = true

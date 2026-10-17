@@ -194,9 +194,75 @@ impl Segment {
     }
 }
 
+/// The `lookup_candidate_type_t` of **libzhuyin's** `zhuyin.h`.
+///
+/// Four values, discriminants 1..=4 in declared order. It shares a name with
+/// libpinyin's enumeration but not its meaning (libpinyin's `2` is
+/// `NORMAL_CANDIDATE`, libzhuyin's is `NORMAL_CANDIDATE_AFTER_CURSOR`), which is
+/// why the two are separate types.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ZhuyinCandidateType {
+    /// `BEST_MATCH_CANDIDATE`.
+    BestMatch,
+    /// `NORMAL_CANDIDATE_AFTER_CURSOR`.
+    NormalAfterCursor,
+    /// `NORMAL_CANDIDATE_BEFORE_CURSOR`.
+    NormalBeforeCursor,
+    /// `ZOMBIE_CANDIDATE`.
+    Zombie,
+}
+
+impl ZhuyinCandidateType {
+    /// Maps the C enum discriminant to a variant, or `None` if it is not one of
+    /// the four libzhuyin declares.
+    #[must_use]
+    pub const fn from_raw(value: i32) -> Option<Self> {
+        match value {
+            1 => Some(Self::BestMatch),
+            2 => Some(Self::NormalAfterCursor),
+            3 => Some(Self::NormalBeforeCursor),
+            4 => Some(Self::Zombie),
+            _ => None,
+        }
+    }
+
+    /// The public enum **name**.
+    #[must_use]
+    pub const fn as_wire(self) -> &'static str {
+        match self {
+            Self::BestMatch => "BEST_MATCH_CANDIDATE",
+            Self::NormalAfterCursor => "NORMAL_CANDIDATE_AFTER_CURSOR",
+            Self::NormalBeforeCursor => "NORMAL_CANDIDATE_BEFORE_CURSOR",
+            Self::Zombie => "ZOMBIE_CANDIDATE",
+        }
+    }
+}
+
+/// What one input produced on a loaded subject, with the candidate record of
+/// the facade that produced it.
+///
+/// The candidate list is capped by the caller; `candidate_total` is the
+/// library's own uncapped count. When nothing was parsed no candidates are
+/// listed (some revisions abort on a query against an empty parse).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Observation<C> {
+    /// Exact input bytes handed to the library.
+    pub input: Vec<u8>,
+    /// Value returned by the parse call.
+    pub parse_return: usize,
+    /// Value returned by `*_get_parsed_input_length`.
+    pub parsed_input_length: usize,
+    /// The best sentence, when the sentence guess succeeded.
+    pub sentence: Option<String>,
+    /// Uncapped candidate count the library reported.
+    pub candidate_total: u32,
+    /// The first candidates, in the library's order.
+    pub candidates: Vec<C>,
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CandidateType, Completeness, Segment};
+    use super::{CandidateType, Completeness, Segment, ZhuyinCandidateType};
 
     #[test]
     fn completeness_wire_tokens_match_the_capture_format() {
@@ -260,5 +326,35 @@ mod tests {
             assert_eq!(sentinel.syllable(), None);
             assert_eq!(sentinel.range(), None);
         }
+    }
+
+    #[test]
+    fn zhuyin_candidate_types_are_not_pinyin_candidate_types() {
+        let ordered = [
+            (1, ZhuyinCandidateType::BestMatch, "BEST_MATCH_CANDIDATE"),
+            (
+                2,
+                ZhuyinCandidateType::NormalAfterCursor,
+                "NORMAL_CANDIDATE_AFTER_CURSOR",
+            ),
+            (
+                3,
+                ZhuyinCandidateType::NormalBeforeCursor,
+                "NORMAL_CANDIDATE_BEFORE_CURSOR",
+            ),
+            (4, ZhuyinCandidateType::Zombie, "ZOMBIE_CANDIDATE"),
+        ];
+        for (raw, variant, wire) in ordered {
+            assert_eq!(ZhuyinCandidateType::from_raw(raw), Some(variant));
+            assert_eq!(variant.as_wire(), wire);
+        }
+        assert_eq!(ZhuyinCandidateType::from_raw(0), None);
+        assert_eq!(ZhuyinCandidateType::from_raw(5), None);
+        // The same integer means different things in the two facades.
+        assert_eq!(CandidateType::from_raw(2), Some(CandidateType::Normal));
+        assert_eq!(
+            ZhuyinCandidateType::from_raw(2),
+            Some(ZhuyinCandidateType::NormalAfterCursor)
+        );
     }
 }
