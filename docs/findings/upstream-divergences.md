@@ -3614,3 +3614,24 @@ previous token's gram).
   cannot do.
 - **Held by:** `store_first_tests`
   (`crates/oxpinyin-facade/src/context.rs`).
+
+### A second `pinyin_fini` / `zhuyin_fini` on one context (#573; policy row 105, class (b), 2026-10-17 UTC)
+
+- **Upstream source cite:** `src/pinyin.cpp:1194-1222` (`pinyin_fini`),
+  `src/zhuyin.cpp:741-757` (`zhuyin_fini`), at
+  `074a2219c90feaf962d0d24f034514033ece5f99`.
+- **Mechanism:** a double free. The second call reads the freed context
+  (`pinyin_fini` first reads `m_user_table_info`) and deletes its members and
+  the context again.
+- **What oxpinyin does instead:** both entry points return at once for a
+  context the live-context registry does not hold (row 60's registries), with
+  no log, since the pin has no path to mirror.
+- **Externally observable:** yes. Bdb, `fini-twice` and `zhuyin-fini-twice`
+  in `contract-diff.py`, six runs (command in policy row 105): the pin dies of
+  SIGSEGV every run on both facades and the subject returns. The cases hold
+  the exit status and leave stderr out, since the pin reads freed memory.
+- **Left as is:** a second `pinyin_free_instance` / `zhuyin_free_instance`
+  (`pinyin.cpp:1347-1356`, `zhuyin.cpp:876-884`) is caller UB on both sides
+  (the audit saw SIGSEGV on one pin run and SIGABRT on another). A
+  registry of live instances would worsen time and space on every
+  alloc/free, so there is no case and no change.

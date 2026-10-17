@@ -114,15 +114,23 @@ pub extern "C" fn zhuyin_init(
 /// and writes no `user.conf` either: libzhuyin keeps no open counter of
 /// its own (`zhuyin_init` only reads the marker, `zhuyin_fini` writes
 /// nothing, `zhuyin.cpp:126-162`, `:741-757`).
+///
+/// A second call on a context that is already finalised (or was never
+/// handed out by `zhuyin_init`) returns at once: the pin deletes the freed
+/// context's members again (`zhuyin.cpp:741-757`), a double free that kills
+/// it with SIGSEGV (register row 105, class (b)).
 #[unsafe(no_mangle)]
 pub extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
-    if context.is_null() {
+    // One step: the registry held the address and this call removed it, so
+    // of two calls on one context only the first goes on to free it.
+    if context.is_null() || !crate::live::unregister(context) {
         return;
     }
 
-    crate::live::unregister(context);
     // SAFETY: `context` was created by `zhuyin_init` via `box_context`
-    // (= `Box::into_raw`). The caller transfers ownership back.
+    // (= `Box::into_raw`), the registry held its address and this call
+    // removed it, so no other call can free it. The caller transfers
+    // ownership back.
     unsafe {
         drop(Box::from_raw(context.cast::<CapiContext>()));
     };
