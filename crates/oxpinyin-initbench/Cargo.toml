@@ -1,0 +1,37 @@
+[package]
+name = "oxpinyin-initbench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Standalone initialisation and startup benchmark: oxpinyin against the pinned libpinyin, with a bug-for-bug equivalence check before any timing is accepted. Dev-only; never ships."
+
+# The workspace lints, plus the two clippy lints that make the `// SAFETY:`
+# clause of the constitution mechanical for the one module (`ffi`) that loads a
+# shared object and calls through it. `unsafe_code` is allowed in that module
+# only; the crate root denies it.
+[lints.rust]
+unsafe_code = "deny"
+unexpected_cfgs = "deny"
+missing_docs = "warn"
+unused_must_use = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+undocumented_unsafe_blocks = "deny"
+missing_safety_doc = "deny"
+must_use_candidate = "warn"
+
+[dependencies]
+# Cross-platform dlopen/dlsym (D1-approved; authorised directly for this tool).
+libloading = { workspace = true }
+# Structured samples and reports. Both are already in the lockfile.
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "initbench"
+path = "src/bin/initbench.rs"

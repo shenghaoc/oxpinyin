@@ -542,3 +542,6 @@ The line is bulk machine output, not evidence as such.
 Derived readers stay in `tools/bisection/` (`rss-smaps.py`,
 `cg-calls.py`): they are tools, not evidence, and they are what makes the
 pipeline reproducible for anyone holding the bundle.
+
+Initialization and startup are measured by `initbench`, not by a criterion
+bench: see [`initbench.md`](initbench.md).

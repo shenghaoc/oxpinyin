@@ -21,6 +21,7 @@ members = [
   "crates/oxpinyin-corpus",
   "crates/oxpinyin-testsupport",
   "crates/oxpinyin-zhuyin-capi",
+  "crates/oxpinyin-initbench",
 ]
 
 [workspace.package]
@@ -68,6 +69,11 @@ compact_str = "0.10"
 phf = "0.14"
 phf_codegen = "0.14"
 glib-sys = "0.22"
+# Dynamic loading of a libpinyin/libzhuyin shared object by path
+# (oxpinyin-initbench only). Already in the lockfile through bindgen.
+libloading = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 # Release .so size/speed lever: fat LTO + one codegen unit lets the linker
 # drop cross-crate dead code and duplicate generic instantiations that
