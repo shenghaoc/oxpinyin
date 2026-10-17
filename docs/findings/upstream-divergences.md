@@ -2696,9 +2696,11 @@ call measured here, not every independent caller of reduce_tokens.
   reload, a modified save and a mask-out, `false` from the addon load. It
   never reads through the empty chunk. The failure is the typed
   `LibraryError::Unmappable` the chunk reader raises for exactly what
-  `MemoryChunk::mmap` refuses; a layout fault past the chunk is
-  `LibraryError::Format` and has no line, as `SubPhraseIndex::load`'s
-  `g_return_val_if_fail` has none. With several libraries broken it writes one
+  `MemoryChunk::mmap` refuses; a separator or index outside the payload
+  is `LibraryError::Format` and has no line; a payload shorter than 17
+  bytes is `LibraryError::Layout`, and the caller loads the empty
+  sub-index and logs one critical, as `SubPhraseIndex::load`'s
+  `g_return_val_if_fail` does. With several libraries broken it writes one
   line for each, in library order; the pin's bytes are the first. An init that
   fails on a library judges the user profile first, as the pin does, so the pin's
   `open <user>/user.conf failed.`, wipe and marker write precede its line and its NULL.
@@ -2750,6 +2752,45 @@ call measured here, not every independent caller of reduce_tokens.
       sigaction(SIGSEGV, &sa, NULL);
   }
   ```
+
+**Extended 2026-10-18 UTC (#865):** the same `SubPhraseIndex::load`
+separator/index reads at `phrase_index.cpp:354-356` also run past the chunk
+for an in-bounds header whose separator/index lies outside the payload, or for
+a payload shorter than the four-word header. The pin reads the separator/index
+outside the mapped chunk; on the first shape it dies of SIGSEGV before any
+line. oxpinyin's `PhraseLibrary::open` refuses a separator or index outside the
+payload as `LibraryError::Format` without the read and without a critical,
+and a payload shorter than 17 bytes as `LibraryError::Layout`; the caller
+loads the empty sub-index and logs one critical. Both are class (b), the same
+site as row 76. Held by `crash-oob-layout-{pinyin,zhuyin}` (pin SIGSEGV,
+subject `init` false; no critical) and `short-chunk-layout-{pinyin,zhuyin}`
+(the pin's empty sub-index + one critical matched by the subject's Layout
+empty sub-index + one critical; the out-of-object read itself is not
+performed) of `contract-diff.py`, all MATCH on bdb; the OOB cases are controls
+that also match the parent build.
+
+### A sparse chunk's whole mapping is retained after `fini` (#865; policy row 109)
+
+- **Upstream source cite:** `src/include/memory_chunk.h:470-520`
+  (`MemoryChunk::mmap` maps the whole file) and `:72-78`
+  (`MemoryChunk::freemem` unmaps only `header + capacity()`).
+- **Mechanism:** a 2^32+8 file whose length word is 0 makes `mmap` read a
+  `guint32` payload length of 0; the mapping is the whole 4 GiB file, while
+  `freemem` releases only the 8-byte header extent. The remaining ~4 GiB stays
+  mapped after `pinyin_fini`/`zhuyin_fini`; measured on bdb in the #865 report
+  at 4,242,620 KiB VmSize after init and 4,228,488 KiB after fini, against
+  51,412/37,284 KiB for the subject process.
+- **What oxpinyin does instead:** `map_chunk`
+  (`crates/oxpinyin-data/src/phrase_library.rs`) maps only
+  `header + data_len` — 8 bytes for this chunk — and `MappedFile::drop`
+  releases that whole mapping. The ~4 GiB virtual-address retention is a pin
+  resource defect, not an API answer, and is not reproduced.
+- **Status:** **CLOSED** — pin resource defect, not reproduced; no
+  compatibility exception. (The safe construction releases the map; it is not
+  class (b) UB.)
+- **Held by:** `a_sparse_chunk_maps_only_its_chunk_extent`
+  (`crates/oxpinyin-data/src/phrase_library.rs`, the mapping is the chunk
+  extent) and the #865 sparse measurement above.
 
 ### `table.conf` follows its rows; malformed ones fail the triggering call (#694 and #525 batch B; policy rows 78, 79, 80 and 83)
 

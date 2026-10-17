@@ -67,7 +67,7 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
 def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
-         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), stderr_varies=False):
+         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), stderr_varies=False, abort_logs=None):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -80,7 +80,10 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     bytes and answer `<fields>` (a dict of result fields). `userdir=True`
     also holds the user directory a side leaves behind (file names, the
     `user.conf` text, the size of each library chunk) to the pin's, for an
-    abort that comes after the pin has written some of its profile. `cells`
+    abort that comes after the pin has written some of its profile.
+    `abort_logs=<list>` overrides the expected subject `logs` list when the
+    operation already logged a common entry earlier (e.g. the init critical
+    before the candidate warning). `cells`
     names the DBM cells whose storage format the case's fixture reproduces;
     a case skipped on the others prints `SKIP` instead of a verdict.
     `either=True` (with both `abort=` and `crash=`) is for a fixture whose
@@ -101,7 +104,7 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
         assert not either or (abort is not NO_ABORT and crash is not None), name
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
                            crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
-                           stderr_varies=stderr_varies)
+                           stderr_varies=stderr_varies, abort_logs=abort_logs)
         return fn
     return register
 
@@ -3772,14 +3775,107 @@ def private_system(k):
     return system
 
 
+SPARSE_CHUNK_SIZE = (1 << 32) + 8
+
+
+def sparse_chunk(path):
+    """The 2^32+8 chunk `MemoryChunk::mmap` truncates to a zero payload.
+
+    `guint32 data_len = file_size - header` (`memory_chunk.h:499`) turns
+    2^32 into 0, so the length word and the checksum word both read 0 and
+    the pin accepts the all-zero payload. Only the 8-byte header block is
+    allocated: the rest is a hole, so the fixture is 4 GiB logically and
+    one file-system block physically, and no copy or read materialises it.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        os.write(fd, b'\0' * 8)  # length word 0, checksum 0
+        os.ftruncate(fd, SPARSE_CHUNK_SIZE)
+    finally:
+        os.close(fd)
+    stat = os.stat(path)
+    assert stat.st_size == SPARSE_CHUNK_SIZE, stat
+    # st_blocks is in 512-byte units; one 4 KiB block for the header.
+    assert stat.st_blocks * 512 <= 1 << 20, ('the fixture materialised', stat)
+
+
+def chunk_stats(path):
+    stat = os.stat(path)
+    return {'fixture_size': stat.st_size, 'fixture_allocated': stat.st_blocks * 512}
+
+
+def nonzero_layout_chunk():
+    # A valid header and checksum with total_freq 123 and an in-bounds
+    # second-separator fault. The pin reads 123 into the sub-index's local
+    # total and does not add it to the facade aggregate
+    # (`phrase_index.cpp:237-248`).
+    payload = bytearray(32)
+    payload[0:4] = (123).to_bytes(4, 'little')
+    payload[4:8] = (17).to_bytes(4, 'little')
+    payload[8:12] = (20).to_bytes(4, 'little')
+    payload[12:16] = (24).to_bytes(4, 'little')
+    payload[16] = ord('#')
+    payload[19] = ord('!')
+    return _chunk(bytes(payload))
+
+
 def break_library(k, system, name, how):
     """Replaces the link to library `name` with a file `MemoryChunk::mmap`
-    refuses: none (`missing`), shorter than the 8-byte header (`short`), or a
-    payload whose checksum does not verify (`checksum`)."""
+    refuses: none (`missing`), empty (`empty`), shorter than the 8-byte
+    header (`short`), a wrong length word (`bad-length`), or a payload whose
+    checksum does not verify (`checksum`) — or with the header-only 8-byte
+    chunk (`header-only`) or the sparse 2^32+8 chunk (`sparse`), which both
+    map but whose sub-index the pin refuses while main refuses the chunk."""
     path = os.path.join(system, name)
     os.unlink(path)
-    if how == 'short':
+    if how == 'empty':
+        Path(path).write_bytes(b'')
+    elif how == 'short':
         Path(path).write_bytes(b'\0\0\0\0')
+    elif how == 'bad-length':
+        # 16-byte file, payload 8, declared length 7: the pin's truncated
+        # length check refuses it before the checksum.
+        Path(path).write_bytes((7).to_bytes(4, 'little') + (0).to_bytes(4, 'little') + b'\0' * 8)
+    elif how == 'header-only':
+        Path(path).write_bytes(b'\0' * 8)
+    elif how == 'sparse':
+        sparse_chunk(path)
+    elif how == 'oob-layout':
+        # An in-bounds four-word header whose second separator index lies
+        # past the payload. The pin reads the separator outside the mapped
+        # chunk (phrase_index.cpp:354-356); oxpinyin refuses the layout.
+        payload = bytearray(32)
+        payload[0:4] = (123).to_bytes(4, 'little')
+        payload[4:8] = (17).to_bytes(4, 'little')
+        payload[8:12] = (1 << 28).to_bytes(4, 'little')
+        payload[12:16] = (24).to_bytes(4, 'little')
+        payload[16] = ord('#')
+        Path(path).write_bytes(_chunk(bytes(payload)))
+    elif how == 'short-chunk':
+        # A payload shorter than the four-word header: the pin's
+        # SubPhraseIndex::load reads the index words past the mapped chunk.
+        payload = bytearray(8)
+        payload[0:4] = (123).to_bytes(4, 'little')
+        payload[4:8] = (17).to_bytes(4, 'little')
+        Path(path).write_bytes(_chunk(bytes(payload)))
+    elif how == 'nonzero-layout':
+        Path(path).write_bytes(nonzero_layout_chunk())
+    elif how in ('second-separator', 'third-separator'):
+        # A chunk with a valid header and checksum whose second or third
+        # `SubPhraseIndex::load` separator is in-bounds but is not '#':
+        # the pin's checks at `phrase_index.cpp:355-356`.
+        payload = bytearray(32)
+        payload[4:8] = (17).to_bytes(4, 'little')     # index_one
+        payload[8:12] = (20).to_bytes(4, 'little')    # index_two
+        payload[12:16] = (21).to_bytes(4, 'little')   # index_three
+        payload[16] = ord('#')
+        if how == 'second-separator':
+            payload[19] = ord('!')                    # index_two - 1
+        else:
+            payload[19] = ord('#')
+            payload[12:16] = (24).to_bytes(4, 'little')
+            payload[23] = ord('!')                    # index_three - 1
+        Path(path).write_bytes(_chunk(bytes(payload)))
     elif how == 'checksum':
         data = bytearray(Path(k.data, name).read_bytes())
         data[-1] ^= 0xff
@@ -3804,7 +3900,7 @@ def train_once(k, ctx, parse, text, train_args):
     return k.fn('train', B, P, *train_args)(inst, *((0,) if train_args else ()))
 
 
-LIBRARY_BREAKS = ('missing', 'short', 'checksum')
+LIBRARY_BREAKS = ('missing', 'empty', 'short', 'bad-length', 'checksum')
 # mode -> (library file, index, parse call, text, train args)
 LIBRARY_FACADES = {
     'pinyin': ('merged.bin', 4, 'parse_more_full_pinyins', b'nihao', (C.c_ubyte,)),
@@ -3999,6 +4095,311 @@ for _mode in ('pinyin', 'zhuyin'):
             (('addon-already-loaded',) if _mode == 'pinyin' else ()):
         case(f'stderr-library-control-{_site}' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode,
              control=True, stderr=True)(library_control(_site))
+
+
+# The pin's ignored `SubPhraseIndex::load` failure. `MemoryChunk::mmap`
+# accepts a header whose length word matches `(file_size - 8)` truncated to
+# `guint32` (`memory_chunk.h:499`) and whose checksum verifies; the pinned
+# `SubPhraseIndex::load` then rejects the layout with a `g_return_val_if_fail`
+# critical (`phrase_index.cpp:354`), which `_load_phrase_library` ignores
+# (`pinyin.cpp:264-277`, `zhuyin.cpp:208-221`) and the caller reports as
+# success. Main refuses the chunk outright. The sparse 2^32+8 chunk is one
+# instance (its truncated payload is 0); the eight-byte header-only chunk is
+# the control that separates the truncation from the ignored layout failure.
+# The file lives in the private copy of the system directory and replaces
+# merged.bin, gbk_char.bin (the one unloadable system library) or art.bin
+# (the pinyin facade's addon entry; the zhuyin facade has none).
+def chunk_limits():
+    # The pin's init maps 2^32+8 and its save/mask/reinit map it again while
+    # the earlier mapping is still held (freemem unmaps only 8 bytes). 8 GiB
+    # makes those calls fail on `mmap` — a limit artifact, not pin behaviour.
+    # 12 GiB admits the pin's init plus one re-map and the retained mapping
+    # (three 4 GiB mappings would not fit, but no case needs a third). The
+    # safe subject maps only the 8+data_len chunk (8 bytes for this
+    # fixture). The CPU bound and dumpable=0 keep a surprise inside this
+    # worker.
+    resource.setrlimit(resource.RLIMIT_AS, (12 << 30, 12 << 30))
+    resource.setrlimit(resource.RLIMIT_CPU, (60, 60))
+    libc = C.CDLL(None, use_errno=True)
+    libc.prctl.argtypes, libc.prctl.restype = [I, C.c_ulong, C.c_ulong, C.c_ulong, C.c_ulong], I
+    assert libc.prctl(4, 0, 0, 0, 0) == 0, ('PR_SET_DUMPABLE failed', C.get_errno())
+
+
+def chunk_init_probe(site, how):
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        if site == 'init-settled':
+            # A consumer's second run: the user dir carries the profile and
+            # a per-library merged.dbin, which init merges after the failed
+            # sub-index load.
+            settled = k.init()
+            assert settled, 'settled init failed'
+            _, _, parse, text, train_args = LIBRARY_FACADES[k.mode]
+            assert train_once(k, settled, parse, text, train_args), 'train failed'
+            assert k.fn('save', B, P)(settled), 'save failed'
+            k.fn('fini', None, P)(settled)
+        path = os.path.join(system, 'merged.bin')
+        break_library(k, system, 'merged.bin', how)
+        out = {'ctx': bool(k.init(system=system))}
+        return out | chunk_stats(path)
+    return probe
+
+
+def chunk_addon_probe(how, reload):
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        path = os.path.join(system, 'art.bin')
+        break_library(k, system, 'art.bin', how)
+        addon = k.fn('load_addon_phrase_library', B, P, C.c_ubyte)
+        out = {'first': bool(addon(ctx, 4))}
+        if reload:
+            out['unload'] = bool(k.fn('unload_addon_phrase_library', B, P, C.c_ubyte)(ctx, 4))
+            out['again'] = bool(addon(ctx, 4))
+        return out | chunk_stats(path)
+    return probe
+
+
+def chunk_load_probe(how):
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        unload = k.fn('unload_phrase_library', B, P, C.c_ubyte)
+        load = k.fn('load_phrase_library', B, P, C.c_ubyte)
+        out = {'unload': bool(unload(ctx, 2))}
+        break_library(k, system, 'gbk_char.bin', how)
+        out['load'] = bool(load(ctx, 2))
+        return out
+    return probe
+
+
+def chunk_save_probe(how):
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        path = os.path.join(system, 'merged.bin')
+        break_library(k, system, 'merged.bin', how)
+        ctx = k.init(system=system)
+        out = {'ctx': bool(ctx)}
+        if not ctx:
+            return out | chunk_stats(path)
+        _, _, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        out['train'] = train_once(k, ctx, parse, text, train_args)
+        out['save'] = k.fn('save', B, P)(ctx)
+        return out | chunk_stats(path)
+    return probe
+
+
+def chunk_mask_probe(how):
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        path = os.path.join(system, 'merged.bin')
+        break_library(k, system, 'merged.bin', how)
+        ctx = k.init(system=system)
+        out = {'ctx': bool(ctx)}
+        if not ctx:
+            return out | chunk_stats(path)
+        _, _, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        out['train'] = train_once(k, ctx, parse, text, train_args)
+        out['mask_out'] = k.fn('mask_out', B, P, U, U)(ctx, 0xff000000, 0x04000000)
+        return out | chunk_stats(path)
+    return probe
+
+
+def chunk_reinit_probe():
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        path = os.path.join(system, 'merged.bin')
+        break_library(k, system, 'merged.bin', 'sparse')
+        first = k.init(system=system)
+        if first:
+            k.fn('fini', None, P)(first)
+        second = k.init(system=system)
+        out = {'ctxs': [bool(first), bool(second)]}
+        if second:
+            k.fn('fini', None, P)(second)
+        return out | chunk_stats(path)
+    return probe
+
+
+def chunk_candidates_probe():
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        break_library(k, system, 'merged.bin', 'sparse')
+        ctx = k.init(system=system)
+        out = {'ctx': bool(ctx)}
+        if not ctx:
+            return out
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        _, _, parse, text, _ = LIBRARY_FACADES[k.mode]
+        out['parse'] = k.fn(parse, Z, P, S)(inst, text)
+        out['guess_sentence'] = bool(k.fn('guess_sentence', B, P)(inst))
+        if k.mode == 'pinyin':
+            out['guess_candidates'] = bool(k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0))
+        else:
+            out['guess_candidates'] = bool(k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0))
+        n = U()
+        k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(n))
+        out['n'] = n.value
+        rows = []
+        for i in range(min(n.value, 8)):
+            cand, ctype, string = P(), I(), S()
+            k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+            k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(ctype))
+            k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(string))
+            rows.append([ctype.value, string.value.decode('utf-8', 'replace') if string.value else None])
+        out['rows'] = rows
+        return out
+    return probe
+
+
+def chunk_token_probe():
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        break_library(k, system, 'merged.bin', 'sparse')
+        ctx = k.init(system=system)
+        out = {'ctx': bool(ctx)}
+        if not ctx:
+            return out
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        # The empty sub-index owns no item: every token read refuses, and
+        # the library's export range is empty.
+        for token in (0x04000001, 0x04000002):
+            length, text = U(0), P(0)
+            n, freq = U(0), U(0)
+            out[hex(token)] = [
+                bool(k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
+                    inst, token, C.byref(length), C.byref(text))),
+                length.value,
+                None if not text.value else k.text(text.value),
+                bool(k.fn('token_get_n_pronunciation', B, P, U, C.POINTER(U))(inst, token, C.byref(n))),
+                n.value,
+                bool(k.fn('token_get_unigram_frequency', B, P, U, C.POINTER(U))(inst, token, C.byref(freq))),
+                freq.value,
+            ]
+        if k.mode == 'pinyin':
+            it = k.fn('begin_get_phrases', P, P, U)(ctx, 4)
+            out['has_next'] = bool(k.fn('iterator_has_next_phrase', B, P)(it))
+            k.fn('end_get_phrases', None, P)(it)
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    for _site, _label in (('init', ''), ('init-settled', '-settled')):
+        case(f'sparse-library-init{_label}{_suffix}', mode=_mode,
+             stderr=True)(chunk_init_probe(_site, 'sparse'))
+    case(f'sparse-library-load{_suffix}', mode=_mode, stderr=True)(chunk_load_probe('sparse'))
+    case(f'sparse-library-save{_suffix}', mode=_mode, stderr=True,
+         userdir=True)(chunk_save_probe('sparse'))
+    case(f'sparse-library-mask-out{_suffix}', mode=_mode, stderr=True,
+         userdir=True)(chunk_mask_probe('sparse'))
+    case(f'sparse-library-reinit{_suffix}', mode=_mode, stderr=True)(chunk_reinit_probe())
+    case(f'sparse-library-candidates{_suffix}', mode=_mode, stderr=True)(chunk_candidates_probe())
+case('sparse-library-addon', stderr=True)(chunk_addon_probe('sparse', False))
+case('sparse-library-addon-reload', stderr=True)(chunk_addon_probe('sparse', True))
+case('sparse-library-tokens', stderr=True)(chunk_token_probe())
+case('sparse-library-tokens-zhuyin', mode='zhuyin', stderr=True)(chunk_token_probe())
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    case(f'header-only-library-init{_suffix}', mode=_mode,
+         stderr=True)(chunk_init_probe('init', 'header-only'))
+    case(f'header-only-library-load{_suffix}', mode=_mode,
+         stderr=True)(chunk_load_probe('header-only'))
+case('header-only-library-save', stderr=True, userdir=True)(chunk_save_probe('header-only'))
+
+
+def nonzero_total_candidates_probe():
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        break_library(k, system, 'merged.bin', 'nonzero-layout')
+        # The loaded valid libraries' stored totals; the failed merged is
+        # excluded by the pin, and (before the correction) added by main.
+        total = 0
+        for name in ('gb_char.bin', 'gbk_char.bin', 'opengram.bin'):
+            total = (total + int.from_bytes(Path(system, name).read_bytes()[8:12], 'little')) & 0xFFFFFFFF
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        delta = (1 << 32) - total
+        add = k.fn('token_add_unigram_frequency', B, P, U, U)
+        out = {'add': bool(add(inst, 0x04000001, delta & 0xFFFFFFFF))}
+        _, _, parse, text, _ = LIBRARY_FACADES[k.mode]
+        out['parse'] = k.fn(parse, Z, P, S)(inst, text)
+        out['guess_sentence'] = bool(k.fn('guess_sentence', B, P)(inst))
+        if k.mode == 'pinyin':
+            out['ret'] = bool(k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0))
+        else:
+            out['ret'] = bool(k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0))
+        return out
+    return probe
+
+
+def nonzero_total_save_probe():
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        break_library(k, system, 'merged.bin', 'nonzero-layout')
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        _, _, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        out = {'train': train_once(k, ctx, parse, text, train_args)}
+        out['save'] = k.fn('save', B, P)(ctx)
+        # The local sub-index total survives in the failed library's log:
+        # a MODIFY_HEADER record carries the same old/new 123.
+        data = Path(k.user, 'merged.dbin').read_bytes()
+        payload = data[8:]
+        out['dbin'] = [len(data), int.from_bytes(payload[10:14], 'little'),
+                       int.from_bytes(payload[14:18], 'little')]
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    case(f'nonzero-total-candidates{_suffix}', mode=_mode, abort=False,
+         userdir=True, abort_logs=[[None, 8], [WARNING_DOMAIN[_mode], 16]])(
+             nonzero_total_candidates_probe())
+    case(f'nonzero-total-save{_suffix}', mode=_mode, stderr=True)(nonzero_total_save_probe())
+
+
+def crash_layout_init_probe(how, library='gbk_char.bin'):
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        break_library(k, system, library, how)
+        return {'init': bool(k.init(system=system))}
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    # Class (b) row 76 extensions: the same SubPhraseIndex::load separator
+    # reads run past the mapped chunk; the subject refuses without the read.
+    # The pin SIGSEGVs, so these are crash controls (MATCH on the parent too).
+    case('crash-oob-layout' + _suffix, mode=_mode, crash={'init': False},
+         control=True)(crash_layout_init_probe('oob-layout'))
+    # A short chunk keeps the pin's observable empty sub-index + critical;
+    # the out-of-object index reads behind it are not reproduced (class (b)
+    # arm of row 76), so the answer is the matched control.
+    case('short-chunk-layout' + _suffix, mode=_mode, stderr=True,
+         control=True)(crash_layout_init_probe('short-chunk'))
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    for _how in ('second-separator', 'third-separator'):
+        case(f'{_how}-library-init{_suffix}', mode=_mode,
+             stderr=True)(chunk_init_probe('init', _how))
 
 
 # --------------------------------------------------------------------------
@@ -10039,8 +10440,10 @@ def matches(spec, pin, subject):
             all(shown.get(key) == value for key, value in spec['crash'].items())
     elif as_abort:
         shown = subject['result'] or {}
+        expected_logs = spec['abort_logs'] if spec['abort_logs'] is not None \
+            else [[WARNING_DOMAIN[spec['mode']], 16]]
         same = pin['exit'] == -6 and subject['exit'] == 0 and \
-            shown.get('ret') == spec['abort'] and shown.get('logs') == [[WARNING_DOMAIN[spec['mode']], 16]] and \
+            shown.get('ret') == spec['abort'] and shown.get('logs') == expected_logs and \
             all(v for key, v in shown.items() if key.startswith('untouched')) and \
             (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
     else:

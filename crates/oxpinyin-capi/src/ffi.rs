@@ -265,3 +265,24 @@ pub fn log_warning(message: &str) {
         );
     }
 }
+
+/// The pin's `g_return_val_if_fail` line: domain NULL (the pin leaves
+/// `G_LOG_DOMAIN` undefined there) at `G_LOG_LEVEL_CRITICAL`, exactly the
+/// channel `SubPhraseIndex::load` uses (`phrase_index.cpp:354-356`). A
+/// message with an interior NUL is dropped rather than truncated.
+pub fn log_critical(message: &str) {
+    let Ok(message) = CString::new(message) else {
+        return;
+    };
+    // SAFETY: `g_log` is variadic; the `%s` format consumes exactly one
+    // `const char *`. The NULL domain is the pin's own, and the message is
+    // a NUL-terminated buffer that outlives the call.
+    unsafe {
+        glib_sys::g_log(
+            std::ptr::null(),
+            glib_sys::G_LOG_LEVEL_CRITICAL,
+            c"%s".as_ptr(),
+            message.as_ptr(),
+        );
+    }
+}

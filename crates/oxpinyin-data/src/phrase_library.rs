@@ -10,8 +10,10 @@
 //!
 //! - `src/include/memory_chunk.h` — `MemoryChunk::mmap`: an 8-byte
 //!   header `{length: u32, checksum: u32}` then the payload; `mmap`
-//!   verifies `length == file_size − 8` and recomputes the checksum
-//!   over the payload before handing out a pointer.
+//!   verifies `length == (file_size − 8) as guint32` (the truncation at
+//!   `:499`) and recomputes the checksum over exactly that many payload
+//!   bytes before handing out a pointer. The chunk it exposes is
+//!   `header + data_len`, not the whole file when the two differ.
 //! - `src/storage/phrase_index.cpp` — `SubPhraseIndex::load`: the
 //!   payload is `[total_freq: u32][index_one, index_two, index_three:
 //!   u32×3]['#']`, an offset array at `index_one` (one `u32` per
@@ -54,6 +56,39 @@ use crate::chunk_format::{
     CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, ITEM_HEADER_SIZE, PHRASE_MASK, SEPARATOR, chunk_checksum,
 };
 
+/// The pin's `G_STRFUNC` for `SubPhraseIndex::load`: the C++
+/// `__PRETTY_FUNCTION__` the measured critical carries (the pin logs it in
+/// domain NULL at level `G_LOG_LEVEL_CRITICAL`).
+pub const SUB_PHRASE_LOAD_SIGNATURE: &str =
+    "bool pinyin::SubPhraseIndex::load(pinyin::MemoryChunk*, table_offset_t, table_offset_t)";
+
+/// A `SubPhraseIndex::load` check the pin reaches through a read inside the
+/// chunk and reports by `g_return_val_if_fail` (`phrase_index.cpp:354-356`),
+/// which every caller ignores. The load then answers success with an empty
+/// sub-index. Only checks whose bytes are inside the chunk are represented
+/// here; a layout the pin reaches through an out-of-bounds read stays a
+/// [`LibraryError::Format`] refusal.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LayoutFault {
+    /// The failed assertion's expression, as the pin's `#expr` spells it.
+    pub expression: &'static str,
+    /// `m_total_freq` as the pin read it before the failing check — 0 when
+    /// the four-word header itself is short.
+    pub total_freq: u32,
+}
+
+impl LayoutFault {
+    /// The pin's critical message, as `g_return_if_fail_warning` formats it:
+    /// `G_STRFUNC: assertion 'expr' failed`.
+    #[must_use]
+    pub fn critical_message(&self) -> String {
+        format!(
+            "{SUB_PHRASE_LOAD_SIGNATURE}: assertion '{}' failed",
+            self.expression
+        )
+    }
+}
+
 /// Why a phrase library could not be opened.
 #[derive(Debug)]
 pub enum LibraryError {
@@ -62,13 +97,20 @@ pub enum LibraryError {
     /// The chunk header, checksum, or sub-index layout is not what the
     /// upstream reader would accept.
     Format(String),
+    /// The chunk header and checksum verified, but `SubPhraseIndex::load`
+    /// refused the layout through a check the pin reports with a critical
+    /// and ignores. The caller loads an empty sub-index and reports the
+    /// success the pin reports.
+    Layout(LayoutFault),
     /// Upstream's `MemoryChunk::mmap` answers `false` for `path`: the file
     /// cannot be opened or mapped, is shorter than the chunk header, its
-    /// length word is not the payload length, or its checksum does not
-    /// verify. The pin then writes `mmap %s failed!` (`pinyin.cpp:256`) and
-    /// goes on with an empty chunk. A layout fault past the chunk
-    /// (`SubPhraseIndex::load`'s checks) is [`LibraryError::Format`] and
-    /// writes no such line. `cause` is the [`LibraryError::Io`] or
+    /// length word is not the (truncated) payload length, or its checksum
+    /// does not verify. The pin then writes `mmap %s failed!`
+    /// (`pinyin.cpp:256`) and goes on with an empty chunk. A layout fault
+    /// past the chunk (`SubPhraseIndex::load`'s checks) writes no such line:
+    /// a check reached inside the chunk is [`LibraryError::Layout`], one
+    /// the pin reaches through an out-of-bounds read is
+    /// [`LibraryError::Format`]. `cause` is the [`LibraryError::Io`] or
     /// [`LibraryError::Format`] that says which.
     Unmappable {
         /// The file, as the caller named it.
@@ -109,7 +151,7 @@ impl LibraryError {
     pub fn unmappable_path(&self) -> Option<&Path> {
         match self {
             Self::Unmappable { path, .. } => Some(path),
-            Self::Io(_) | Self::Format(_) | Self::Row(_) => None,
+            Self::Io(_) | Self::Format(_) | Self::Layout(_) | Self::Row(_) => None,
         }
     }
 }
@@ -119,6 +161,7 @@ impl fmt::Display for LibraryError {
         match self {
             Self::Io(e) => write!(f, "phrase library I/O error: {e}"),
             Self::Format(message) => write!(f, "phrase library format error: {message}"),
+            Self::Layout(fault) => write!(f, "phrase library layout error: {}", fault.expression),
             Self::Unmappable { cause, .. } => cause.fmt(f),
             Self::Row(RowFault::NotDictionary) => {
                 f.write_str("addon table.conf row is not a DICTIONARY")
@@ -135,7 +178,7 @@ impl std::error::Error for LibraryError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Format(_) | Self::Row(_) => None,
+            Self::Format(_) | Self::Layout(_) | Self::Row(_) => None,
             Self::Unmappable { cause, .. } => Some(cause.as_ref()),
         }
     }
@@ -164,14 +207,14 @@ mod map {
     )]
 
     use super::LibraryError;
-    use std::path::Path;
 
-    /// A whole file's bytes as one immutable slice: `mmap`ed on Unix,
-    /// read into a heap buffer elsewhere. This mirrors upstream's
-    /// `MemoryChunk::mmap` (`memory_chunk.h:470-520`), with
-    /// `PROT_READ` where upstream maps read-write-private because its
-    /// item views may be mutated in memory; this reader never writes,
-    /// and a read-only mapping is strictly safer for the same bytes.
+    /// A chunk's bytes as one immutable slice: `mmap`ed on Unix, read into
+    /// a heap buffer elsewhere. This mirrors upstream's
+    /// `MemoryChunk::mmap` (`memory_chunk.h:470-520`) over the chunk's
+    /// `header + data_len` extent, with `PROT_READ` where upstream maps
+    /// read-write-private because its item views may be mutated in memory;
+    /// this reader never writes, and a read-only mapping is strictly safer
+    /// for the same bytes.
     pub struct MappedFile {
         /// First byte of the mapping (or of the heap fallback).
         data: *const u8,
@@ -184,19 +227,20 @@ mod map {
     }
 
     impl MappedFile {
-        /// Maps (or reads) the file at `path`.
-        ///
-        /// A zero-length file becomes an empty mapping on every
-        /// platform; whether empty bytes are a valid chunk is the
-        /// parser's call.
-        pub(crate) fn open(path: &Path) -> Result<Self, LibraryError> {
-            let file = std::fs::File::open(path).map_err(LibraryError::Io)?;
-            let len: usize = file
-                .metadata()
-                .map_err(LibraryError::Io)?
-                .len()
-                .try_into()
-                .map_err(|_| LibraryError::Format("file too large for this platform".to_owned()))?;
+        /// No bytes and no mapping: the payload of a chunk whose header was
+        /// accepted but whose sub-index layout the pin refused.
+        pub(crate) fn empty() -> Self {
+            Self {
+                data: std::ptr::NonNull::<u8>::dangling().as_ptr(),
+                len: 0,
+                heap: Some(Box::new([])),
+            }
+        }
+
+        /// Maps (or reads) exactly the first `len` bytes of `file` — the
+        /// chunk `MemoryChunk::mmap` exposes (`header + data_len`), not the
+        /// whole file when the header's truncated length is shorter.
+        pub(crate) fn open_len(file: std::fs::File, len: usize) -> Result<Self, LibraryError> {
             Self::from_file(file, len)
         }
 
@@ -251,8 +295,16 @@ mod map {
         fn from_file(mut file: std::fs::File, len: usize) -> Result<Self, LibraryError> {
             use std::io::Read;
             let mut buffer = Vec::with_capacity(len.min(1 << 20));
-            file.read_to_end(&mut buffer).map_err(LibraryError::Io)?;
-            let len = buffer.len();
+            file.by_ref()
+                .take(len as u64)
+                .read_to_end(&mut buffer)
+                .map_err(LibraryError::Io)?;
+            if buffer.len() != len {
+                return Err(LibraryError::Io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "phrase chunk shorter than its declared length",
+                )));
+            }
             let heap = buffer.into_boxed_slice();
             Ok(Self {
                 data: heap.as_ptr(),
@@ -463,14 +515,58 @@ fn map_chunk(path: &Path) -> Result<map::MappedFile, LibraryError> {
     if path.is_dir() {
         return Err(directory_chunk_fault(path));
     }
-    let file = map::MappedFile::open(path).map_err(unmappable)?;
-    let bytes = file.as_slice();
-    let declared_len = u32_at(bytes, 0).ok_or_else(|| bad("chunk shorter than its header"))?;
-    if bytes.len() < CHUNK_HEADER_SIZE || declared_len as usize != bytes.len() - CHUNK_HEADER_SIZE {
+    use std::io::{Read as _, Seek as _, SeekFrom};
+
+    let file = std::fs::File::open(path).map_err(|error| unmappable(LibraryError::Io(error)))?;
+    let file_size = file
+        .metadata()
+        .map_err(|error| unmappable(LibraryError::Io(error)))?
+        .len();
+    if file_size < CHUNK_HEADER_SIZE as u64 {
+        return Err(bad("chunk shorter than its header"));
+    }
+    let payload_u64 = file_size - CHUNK_HEADER_SIZE as u64;
+    if payload_u64 <= u64::from(u32::MAX) {
+        // The common path — the whole file is the chunk, exactly as before
+        // this reader learned the pin's truncation. Map once and read the
+        // header and checksum out of the mapping; no extra syscall.
+        let len =
+            usize::try_from(file_size).map_err(|_| bad("file too large for this platform"))?;
+        let file = map::MappedFile::open_len(file, len).map_err(unmappable)?;
+        let bytes = file.as_slice();
+        let declared_len = u32_at(bytes, 0).ok_or_else(|| bad("chunk shorter than its header"))?;
+        if declared_len != payload_u64 as u32 {
+            return Err(bad("chunk length word does not match the file"));
+        }
+        let checksum = u32_at(bytes, 4).ok_or_else(|| bad("chunk checksum unreadable"))?;
+        if checksum != chunk_checksum(&bytes[CHUNK_HEADER_SIZE..]) {
+            return Err(bad("chunk checksum mismatch"));
+        }
+        return Ok(file);
+    }
+
+    // `MemoryChunk::mmap`: `guint32 data_len = file_size - header`
+    // (`memory_chunk.h:499`). The file is larger than the pin's chunk: the
+    // pin compares the truncated word and checksums exactly that many
+    // payload bytes, then `set_chunk`s `header + data_len` as the chunk.
+    // Read the header, then map only that extent — the sparse 2^32+8 case
+    // maps 8 bytes, not 4 GiB.
+    let mut file = file;
+    let mut header = [0u8; CHUNK_HEADER_SIZE];
+    file.read_exact(&mut header)
+        .map_err(|error| unmappable(LibraryError::Io(error)))?;
+    let declared_len = u32::from_le_bytes([header[0], header[1], header[2], header[3]]);
+    let payload_len = payload_u64 as u32;
+    if declared_len != payload_len {
         return Err(bad("chunk length word does not match the file"));
     }
-    let checksum = u32_at(bytes, 4).ok_or_else(|| bad("chunk checksum unreadable"))?;
-    if checksum != chunk_checksum(&bytes[CHUNK_HEADER_SIZE..]) {
+    let chunk_len = usize::try_from(u64::from(payload_len) + CHUNK_HEADER_SIZE as u64)
+        .map_err(|_| bad("file too large for this platform"))?;
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| unmappable(LibraryError::Io(error)))?;
+    let file = map::MappedFile::open_len(file, chunk_len).map_err(unmappable)?;
+    let checksum = u32::from_le_bytes([header[4], header[5], header[6], header[7]]);
+    if checksum != chunk_checksum(&file.as_slice()[CHUNK_HEADER_SIZE..]) {
         return Err(bad("chunk checksum mismatch"));
     }
     Ok(file)
@@ -531,9 +627,45 @@ pub struct PhraseLibrary {
     offsets: Range<usize>,
     /// The entry area, `[index_two, index_three)` in payload bytes.
     content: Range<usize>,
+    /// True for the empty sub-index the pin leaves behind when its
+    /// `SubPhraseIndex::load` refused the layout; the save path re-checks
+    /// such a library exactly as the pin re-maps it.
+    layout_failed: bool,
 }
 
 impl PhraseLibrary {
+    /// The pin's empty sub-index after `SubPhraseIndex::load` refused the
+    /// layout: no mapping, `total_freq` as the pin read it before the
+    /// failing check, and `get_range`'s `1..1`.
+    pub(crate) fn empty(total_freq: u32) -> Self {
+        Self {
+            file: std::sync::Arc::new(map::MappedFile::empty()),
+            payload: 0..0,
+            total_freq,
+            offsets: 0..0,
+            content: 0..0,
+            layout_failed: true,
+        }
+    }
+
+    /// `FacadePhraseIndex::compact` rebuilds the sub-index from its items
+    /// (`phrase_index.cpp:648-675`). The layout-failed sub-index has no
+    /// items, so its newly built local total is zero; a well-formed
+    /// library's stored total already equals its item sum. The facade does
+    /// not adjust its own aggregate here.
+    pub(crate) fn compact(&mut self) {
+        if self.layout_failed {
+            self.total_freq = 0;
+        }
+    }
+
+    /// Whether this is the empty sub-index a refused layout left behind,
+    /// as opposed to a mapped chunk that merely holds no items.
+    #[must_use]
+    pub const fn is_layout_failed(&self) -> bool {
+        self.layout_failed
+    }
+
     /// Maps and validates one library file (`MemoryChunk::mmap` +
     /// `SubPhraseIndex::load`).
     ///
@@ -541,46 +673,71 @@ impl PhraseLibrary {
     ///
     /// Returns [`LibraryError`] when the file cannot be read, the chunk
     /// header or checksum does not verify, or the sub-index layout is
-    /// not what the upstream loader accepts.
+    /// not what the upstream loader accepts. A layout check the pin
+    /// reaches through an in-chunk read is [`LibraryError::Layout`]: the
+    /// caller loads an empty sub-index and reports the pin's success. A
+    /// layout the pin would reach through an out-of-bounds read, or state
+    /// the pin would expose as a huge/overlapping chunk, stays
+    /// [`LibraryError::Format`] and is refused.
     pub fn open(path: &Path) -> Result<Self, LibraryError> {
         let file = map_chunk(path)?;
         let bytes = file.as_slice();
         let bad = |message: &str| LibraryError::Format(message.to_owned());
         let payload = CHUNK_HEADER_SIZE..bytes.len();
-
-        // SubPhraseIndex::load's checks: the four leading words, the
-        // separator at the end of each, and bounds.
         let payload_bytes = &bytes[payload.clone()];
-        let total_freq = u32_at(payload_bytes, 0).ok_or_else(|| bad("payload too short"))?;
+        // The pin's `get_content` leaves a failed read's destination at 0;
+        // `m_total_freq` is read before the layout checks.
+        let total_freq = u32_at(payload_bytes, 0).unwrap_or(0);
+        let layout = |expression: &'static str| {
+            LibraryError::Layout(LayoutFault {
+                expression,
+                total_freq,
+            })
+        };
+
+        // `SubPhraseIndex::load`: the four words, then the separator at
+        // payload[16], then `index_two - 1`, then `index_three - 1`.
+        // A payload of 16 bytes or fewer makes the first read leave the
+        // chunk; the failure is the same one, reproduced without the read.
+        if payload_bytes.len() < 17 || payload_bytes[16] != SEPARATOR {
+            return Err(layout("*(buf_begin + offset) == c_separate"));
+        }
         let index_one = u32_at(payload_bytes, 4).ok_or_else(|| bad("payload too short"))? as usize;
         let index_two = u32_at(payload_bytes, 8).ok_or_else(|| bad("payload too short"))? as usize;
         let index_three =
             u32_at(payload_bytes, 12).ok_or_else(|| bad("payload too short"))? as usize;
-        if payload_bytes.get(16).copied() != Some(SEPARATOR) {
-            return Err(bad("missing separator after the sub-index header"));
+        // The second and third checks read payload[index - 1]. Only an
+        // index in `1..=len` keeps that read inside the chunk; index 0 or
+        // one past the chunk is the pin's out-of-bounds read, which this
+        // reader refuses as Format rather than reproduce.
+        let second = index_two
+            .checked_sub(1)
+            .filter(|&at| at < payload_bytes.len())
+            .ok_or_else(|| bad("sub-index offset-array separator out of bounds"))?;
+        if payload_bytes[second] != SEPARATOR {
+            return Err(layout("*(buf_begin + index_two - 1) == c_separate"));
         }
+        let third = index_three
+            .checked_sub(1)
+            .filter(|&at| at < payload_bytes.len())
+            .ok_or_else(|| bad("sub-index entry-area separator out of bounds"))?;
+        if payload_bytes[third] != SEPARATOR {
+            return Err(layout("*(buf_begin + index_three - 1) == c_separate"));
+        }
+        // The pin's fourth check (`index_three <= end`) is then true.
+        // These guards cover the state the pin would expose as a
+        // huge/overlapping chunk through `set_chunk`'s unsigned
+        // subtraction; they stay refusals.
+        //
         // `index_one` is 17 in every upstream file (4 words + separator)
         // and carries no alignment requirement — the loader reads u32s
         // at unaligned offsets; only the array's length is u32-sized.
-        // `index_two` sits past the offset array's separator, so it is
-        // at least `index_one + 1` even for an empty array (an empty
-        // library's array is zero slots, not a negative one).
         // `index_three > index_two` accounts for the entry area's own
         // closing separator, which `SubPhraseIndex::store` always emits —
         // the range built below subtracts it. The entry area itself may
-        // still be empty: a library with no items never reaches
-        // `add_phrase_item`'s `FIRST_ITEM_OFFSET` reservation, so the pin
-        // writes `index_two + 1 == index_three` for it.
+        // still be empty.
         if index_two <= index_one || index_three <= index_two {
             return Err(bad("sub-index sections out of order"));
-        }
-        if index_three > payload_bytes.len() {
-            return Err(bad("sub-index extends past the payload"));
-        }
-        if payload_bytes.get(index_two.wrapping_sub(1)).copied() != Some(SEPARATOR)
-            || payload_bytes.get(index_three.wrapping_sub(1)).copied() != Some(SEPARATOR)
-        {
-            return Err(bad("missing section separator"));
         }
         if !(index_two - index_one - 1).is_multiple_of(4) {
             return Err(bad("offset array is not u32-sized"));
@@ -595,6 +752,7 @@ impl PhraseLibrary {
             // before the final separator (`phrase_index.cpp:356-359`).
             offsets: index_one..index_two - 1,
             content: index_two..index_three - 1,
+            layout_failed: false,
         })
     }
 
@@ -713,5 +871,31 @@ impl fmt::Debug for PhraseLibrary {
             .field("total_freq", &self.total_freq)
             .field("token_range", &self.token_range())
             .finish()
+    }
+}
+
+#[cfg(all(test, unix))]
+mod sparse_mapping_tests {
+    use super::map_chunk;
+    use std::io::Write;
+
+    #[test]
+    fn a_sparse_chunk_maps_only_its_chunk_extent() {
+        // The pin maps the whole 2^32+8 file and retains it after fini; the
+        // subject's mapping layer takes only header + data_len (the 8-byte
+        // header for this header-only sparse chunk, the layout refusal
+        // happening only after the map).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("merged.bin");
+        let mut file = std::fs::File::create(&path).expect("create");
+        file.set_len((1_u64 << 32) + 8).expect("sparse length");
+        file.write_all(&[0_u8; 8]).expect("header");
+        drop(file);
+        let mapped = map_chunk(&path).expect("map");
+        assert_eq!(
+            mapped.as_slice().len(),
+            8,
+            "the sparse map is the chunk extent"
+        );
     }
 }

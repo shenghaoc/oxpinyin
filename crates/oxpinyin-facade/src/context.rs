@@ -519,17 +519,22 @@ impl ContextCore {
         if !store.has_user_directory() || !store.is_modified() {
             return SaveOutcome::NotSaved;
         }
+        // `pinyin_save`/`zhuyin_save` rebuild every sub-index from its
+        // items before `_write_files` (`pinyin.cpp:1139`,
+        // `zhuyin.cpp:554`); the failed empty sub-index's local total
+        // becomes zero, while the facade aggregate already excludes it.
+        let compacted = self.compact_layout_failed();
         // `_write_files` maps every loaded system library again to diff it
         // against the live one (`pinyin.cpp:956`, `zhuyin.cpp:589`), before
         // it writes anything. A library that is a directory the pin asserts
         // on kills it there (`memory_chunk.h:493`).
-        if self.check_system_libraries(None) {
+        if self.check_system_libraries(None, true) {
             return SaveOutcome::ChunkHeaderRead;
         }
         let Some(store) = self.user.as_mut() else {
             return SaveOutcome::NotSaved;
         };
-        let report = match store.save_reporting() {
+        let report = match store.save_reporting_compacted(&compacted) {
             Ok(report) => report,
             Err(UserStoreError::ChunkHeaderWrite(field)) => {
                 return SaveOutcome::ChunkWriteFailed(field);
@@ -555,11 +560,11 @@ impl ContextCore {
     /// map again at this call and cannot: one `mmap %s failed!` each, in
     /// library order. The pin dies on the first; nothing here does, and the
     /// call answers what it answered before.
-    fn check_system_libraries(&self, only: Option<u8>) -> bool {
+    fn check_system_libraries(&self, only: Option<u8>, record_layout: bool) -> bool {
         let Some(runtime) = &self.runtime else {
             return false;
         };
-        let checked = runtime.check_system_libraries(only);
+        let checked = runtime.check_system_libraries(only, record_layout);
         if checked.chunk_header_fault {
             return true;
         }
@@ -567,6 +572,29 @@ impl ContextCore {
             pin_stderr::mmap_failed(&path);
         }
         false
+    }
+
+    /// Takes the pin's `SubPhraseIndex::load` criticals recorded by the
+    /// operation just performed: the C ABI logs each where the pin logs it.
+    #[must_use]
+    pub fn take_layout_faults(&self) -> Vec<oxpinyin_runtime::LayoutFault> {
+        self.runtime
+            .as_ref()
+            .map(oxpinyin_runtime::Runtime::take_layout_faults)
+            .unwrap_or_default()
+    }
+
+    /// `FacadePhraseIndex::compact` over the system layout-failed empty
+    /// sub-indices. The pin calls it before a save (`pinyin.cpp:1139`,
+    /// `zhuyin.cpp:554`), at `begin_add_phrases` (`pinyin.cpp:657`,
+    /// `zhuyin.cpp:542`) and at the end of `mask_out` (`pinyin.cpp:1294`,
+    /// `zhuyin.cpp:829`). Returns the compacted nibbles.
+    #[must_use]
+    pub fn compact_layout_failed(&self) -> Vec<u8> {
+        self.runtime
+            .as_ref()
+            .map(oxpinyin_runtime::Runtime::compact_layout_failed)
+            .unwrap_or_default()
     }
 
     /// `mask_out`'s body: the store-level deletion, or
@@ -591,7 +619,7 @@ impl ContextCore {
     /// whose library bits match are merged. A refused mask leaves the store untouched,
     /// where the pin's partial reloads die with its abort.
     pub fn mask_out(&mut self, mask: u32, value: u32) -> MaskOutOutcome {
-        if self.check_system_libraries(None) {
+        if self.check_system_libraries(None, false) {
             return MaskOutOutcome::ChunkHeaderRead;
         }
         // The pin's mask loop walks `index` 1..`PHRASE_INDEX_LIBRARY_COUNT`
@@ -632,9 +660,11 @@ impl ContextCore {
                     {
                         return MaskOutOutcome::Done(false);
                     }
+                    // The mask ends with a compact (`pinyin.cpp:1294`,
+                    // `zhuyin.cpp:829`); the failed empty sub-index's local
+                    // total becomes zero.
+                    let _compacted = runtime.compact_layout_failed();
                 }
-                // The mask ends with a compact (`pinyin.cpp:1294`,
-                // `zhuyin.cpp:829`).
                 store.compact_libraries();
                 MaskOutOutcome::Done(true)
             }
@@ -696,7 +726,7 @@ impl ContextCore {
         if runtime.dict().library_visible(index) {
             return Ok(false);
         }
-        if self.check_system_libraries(Some(row_index)) {
+        if self.check_system_libraries(Some(row_index), false) {
             return Err(LibraryLoadFault::Row(LibraryRowAssert::ChunkHeaderRead));
         }
         // The sub-index `unload` freed comes back as the system chunk plus

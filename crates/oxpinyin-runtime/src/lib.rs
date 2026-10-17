@@ -42,7 +42,7 @@ use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
     PhraseItemRead, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo, UserCountDelta,
 };
-pub use oxpinyin_data::phrase_library::{LibraryError, PhraseItemView, RowFault};
+pub use oxpinyin_data::phrase_library::{LayoutFault, LibraryError, PhraseItemView, RowFault};
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
 pub use oxpinyin_data::table_info::{TableConf, TableConfError};
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
@@ -251,6 +251,10 @@ impl AddonSet {
 
     fn is_empty(&self) -> bool {
         self.dict.is_empty()
+    }
+
+    fn take_layout_faults(&self) -> Vec<LayoutFault> {
+        self.dict.take_layout_faults()
     }
 
     /// The addon phrase item behind `token`: its text, its pronunciations as
@@ -735,6 +739,28 @@ impl RuntimeDict {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         addons.load_reporting(index, system_dir)
+    }
+
+    /// Takes the layout faults recorded by the system and addon libraries
+    /// since the last take, in load order.
+    #[must_use]
+    pub fn take_layout_faults(&self) -> Vec<LayoutFault> {
+        let mut faults = self.system.libraries().take_layout_faults();
+        faults.extend(
+            self.addons
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take_layout_faults(),
+        );
+        faults
+    }
+
+    /// `FacadePhraseIndex::compact` over the system layout-failed empty
+    /// sub-indices: their local total becomes zero and the facade aggregate
+    /// already excludes it. Returns the compacted nibbles.
+    #[must_use]
+    pub fn compact_layout_failed(&self) -> Vec<u8> {
+        self.system.libraries().compact_layout_failed()
     }
 
     /// The system library files absent when the runtime opened, in the
@@ -2295,6 +2321,7 @@ impl Runtime {
     pub fn check_system_libraries(
         &self,
         only: Option<u8>,
+        record_layout: bool,
     ) -> oxpinyin_data::phrase_libraries::LibraryCheck {
         self.dict.system.libraries().check_now(
             |nibble| {
@@ -2310,7 +2337,22 @@ impl Runtime {
                         }))
             },
             only,
+            record_layout,
         )
+    }
+
+    /// Takes the pin's `SubPhraseIndex::load` criticals recorded by the
+    /// system and addon libraries since the last take.
+    #[must_use]
+    pub fn take_layout_faults(&self) -> Vec<LayoutFault> {
+        self.dict.take_layout_faults()
+    }
+
+    /// `FacadePhraseIndex::compact` over the system layout-failed empty
+    /// sub-indices. Returns the compacted nibbles.
+    #[must_use]
+    pub fn compact_layout_failed(&self) -> Vec<u8> {
+        self.dict.compact_layout_failed()
     }
 
     /// Maps every loaded SYSTEM_FILE/DICTIONARY default library again for

@@ -34,6 +34,7 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
     let user_path = cstr_to_path(userdir);
     match CapiContext::try_new(&system_path, user_path.as_deref()) {
         Ok(context) => {
+            log_layout_faults(&context);
             for warning in context.core.load_warnings() {
                 crate::ffi::log_warning(warning);
             }
@@ -82,6 +83,14 @@ fn init_context(systemdir: *const c_char, userdir: *const c_char) -> *mut Pinyin
             }
             ptr::null_mut()
         }
+    }
+}
+
+/// Logs the pin's `SubPhraseIndex::load` criticals the preceding operation
+/// recorded, in the order the pin emits them.
+pub(crate) fn log_layout_faults(ctx: &CapiContext) {
+    for fault in ctx.take_layout_faults() {
+        crate::ffi::log_critical(&fault.critical_message());
     }
 }
 
@@ -202,7 +211,11 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     // removed it, so no other call can free it. The caller transfers
     // ownership back.
     unsafe {
-        drop(Box::from_raw(context.cast::<CapiContext>()));
+        let ctx = Box::from_raw(context.cast::<CapiContext>());
+        // The pin logs its layout criticals at the load, not at fini; a
+        // fault an entry did not log is dropped rather than repeated here.
+        let _ = ctx.take_layout_faults();
+        drop(ctx);
     };
 }
 
@@ -239,7 +252,12 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     {
         crate::locale::pin_table_info_locale();
     }
-    match ctx.save_user() {
+    let outcome = ctx.save_user();
+    // The pin's save diffs every loaded system library again (`:956`); a
+    // header-accepted chunk whose layout fails emits its critical there,
+    // before the chunk header writes below.
+    log_layout_faults(ctx);
+    match outcome {
         // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header
         // write failed and the pin `assert`s there. The save fails and
         // logs one line, as every class-(c) site does.

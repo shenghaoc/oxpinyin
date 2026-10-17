@@ -1485,7 +1485,11 @@ pub fn save_with_bigram(
     let kept = IndexKeys::default();
     save_session(
         dir,
-        SaveSource { state, kept: &kept },
+        SaveSource {
+            state,
+            kept: &kept,
+            compacted: &[],
+        },
         originals,
         versions,
         open_counter,
@@ -1500,6 +1504,9 @@ pub fn save_with_bigram(
 pub(crate) struct SaveSource<'a> {
     pub(crate) state: &'a UserState,
     pub(crate) kept: &'a IndexKeys,
+    /// The nibbles whose live empty sub-index the pin's `compact` rebuilt
+    /// from no items; their log header's new total is zero.
+    pub(crate) compacted: &'a [u8],
 }
 
 /// [`save_with_bigram`] for a session, whose `source` carries the index
@@ -1716,7 +1723,11 @@ fn stage_rest(
     lenient: bool,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
-    let SaveSource { state, kept } = source;
+    let SaveSource {
+        state,
+        kept,
+        compacted,
+    } = source;
     {
         // ---- the library files, by sub-index -----------------------------
         let empty_library = SystemLibrary::default();
@@ -1739,7 +1750,12 @@ fn stage_rest(
                         .get(&nibble)
                         .cloned()
                         .unwrap_or_default();
-                    let records = diff_records(nibble, original, &overrides)?;
+                    let records = diff_records_with_new_total(
+                        nibble,
+                        original,
+                        &overrides,
+                        compacted.contains(&nibble).then_some(0),
+                    )?;
                     let payload = encode_log_records(&records)
                         .map_err(|e| PersistenceError::Codec(e.to_string()))?;
                     build_memory_chunk(&payload).map_err(PersistenceError::from)?
@@ -1826,13 +1842,26 @@ fn finish_save(
 ///
 /// Returns the store's error when a diff walk or record append fails.
 pub fn diff_records(
-    _nibble: u8,
+    nibble: u8,
     original: &SystemLibrary,
     overrides: &BTreeMap<u32, Option<ChunkItem>>,
 ) -> Result<Vec<LogRecord>, PersistenceError> {
+    diff_records_with_new_total(nibble, original, overrides, None)
+}
+
+/// [`diff_records`] with an explicit new header total: the pin's `compact`
+/// rebuilds a layout-failed empty sub-index and its saved log carries zero
+/// as the new total while the system chunk's old total is unchanged
+/// (`phrase_index.cpp:648-675`).
+fn diff_records_with_new_total(
+    _nibble: u8,
+    original: &SystemLibrary,
+    overrides: &BTreeMap<u32, Option<ChunkItem>>,
+    new_total: Option<u32>,
+) -> Result<Vec<LogRecord>, PersistenceError> {
     let mut records = vec![LogRecord::ModifyHeader {
         old_total: original.total,
-        new_total: system_new_total(original, overrides),
+        new_total: new_total.unwrap_or_else(|| system_new_total(original, overrides)),
     }];
 
     // 074a2219 phrase_index.cpp:394-442 emits local SubPhraseIndex slots.
@@ -2127,6 +2156,7 @@ mod tests {
         let source = SaveSource {
             state: &saved,
             kept: &kept,
+            compacted: &[],
         };
         save_session(&dir, source, &originals, &versions(), 1, None).expect("save");
 
@@ -2930,6 +2960,7 @@ mod tests {
         let source = SaveSource {
             state: &state,
             kept: &IndexKeys::default(),
+            compacted: &[],
         };
         let error =
             save_with_bigram_reporting(&dir, source, &originals, &versions(), 0, None, false)
