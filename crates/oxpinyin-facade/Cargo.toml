@@ -28,6 +28,9 @@ oxpinyin-engine.workspace = true
 oxpinyin-runtime.workspace = true
 oxpinyin-user.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [features]
 # Backend selection, forwarded to oxpinyin-runtime, which carries it down
 # runtime -> user -> data -> store (one backend per binary; see

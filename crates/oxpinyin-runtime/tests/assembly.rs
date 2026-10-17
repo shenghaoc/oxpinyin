@@ -14,6 +14,16 @@ use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection};
 use oxpinyin_runtime::{OpenError, Runtime, RuntimeSession};
 use oxpinyin_user::{FIRST_USER_TOKEN, PinyinKey, SENTENCE_START};
 
+/// A fresh, uniquely named scratch dir, removed on drop (including unwind).
+/// Declared before the runtime that opens it, so it drops after every
+/// handle into it.
+fn scratch_dir(prefix: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("temp dir")
+}
+
 fn w3_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -25,9 +35,8 @@ fn w3_dir() -> PathBuf {
 
 #[test]
 fn trellis_records_filter_user_tones_and_refresh_after_import() {
-    let dir = std::env::temp_dir().join(format!("oxpinyin-trellis-records-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("user dir");
+    let tmp = scratch_dir("oxpinyin-trellis-records-");
+    let dir = tmp.path().to_path_buf();
     let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
     let dict = runtime.dict();
     let syllables = [
@@ -74,7 +83,7 @@ fn trellis_records_filter_user_tones_and_refresh_after_import() {
     );
     drop(runtime);
     drop(dict);
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    tmp.close().expect("cleanup");
 }
 
 #[test]
@@ -105,9 +114,8 @@ fn opens_the_w3_fixture_and_decodes_nihao() {
 
 #[test]
 fn open_refuses_a_directory_without_the_dbms() {
-    let dir = std::env::temp_dir().join(format!("oxpinyin-runtime-empty-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    let tmp = scratch_dir("oxpinyin-runtime-empty-");
+    let dir = tmp.path().to_path_buf();
     match Runtime::open(&dir, None) {
         Err(OpenError::Missing(path)) => {
             assert!(
@@ -118,7 +126,6 @@ fn open_refuses_a_directory_without_the_dbms() {
         Err(other) => panic!("expected Missing, got {other}"),
         Ok(_) => panic!("an empty dir must not open"),
     }
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -152,13 +159,8 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     // actually opens. Learning must surface through BOTH moved seams —
     // the dictionary's user-phrase merge and the language model's
     // unigram overlay — via nothing but public accessors.
-    let dir = std::env::temp_dir().join(format!(
-        "oxpinyin-runtime-user-{}-{}",
-        std::process::id(),
-        line!()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("temp user dir");
+    let tmp = scratch_dir("oxpinyin-runtime-user-");
+    let dir = tmp.path().to_path_buf();
 
     let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("open");
     let mut store = runtime.user_store().expect("usable user dir opens a store");
@@ -223,24 +225,27 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     );
 
     drop(store);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn regular_file_as_user_dir_degrades_to_no_user_state() {
-    let marker = std::env::temp_dir().join(format!(
-        "oxpinyin-runtime-file-user-{}.tmp",
-        std::process::id()
-    ));
-    std::fs::write(&marker, b"not a directory").expect("temp file");
-    let runtime = Runtime::open(&w3_dir(), Some(&marker));
+    let mut file = tempfile::Builder::new()
+        .prefix("oxpinyin-runtime-file-user-")
+        .suffix(".tmp")
+        .tempfile()
+        .expect("temp file");
+    std::io::Write::write_all(&mut file, b"not a directory").expect("temp file");
+    // Only the path is kept: no handle on the file stays open across the
+    // open below.
+    let marker = file.into_temp_path();
+    let runtime = Runtime::open(&w3_dir(), Some(&*marker));
     // A non-directory user path must not fail init (capi contract); it
     // simply leaves the engine without learning state.
     if let Err(error) = &runtime {
         panic!("expected open to succeed over a file user dir: {error}");
     }
     assert!(runtime.expect("open").user_store().is_none());
-    std::fs::remove_file(&marker).expect("cleanup temp file");
+    marker.close().expect("cleanup temp file");
 }
 
 #[test]
@@ -422,9 +427,8 @@ fn the_facade_total_delta_wraps_like_a_guint32() {
 #[test]
 fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
     use oxpinyin_core::NbestStepRow;
-    let dir = std::env::temp_dir().join(format!("oxpinyin-nbest-step-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = scratch_dir("oxpinyin-nbest-step-");
+    let dir = tmp.path().to_path_buf();
     let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let mut store = runtime.user_store().unwrap();
     let keys: Vec<_> = ["ni", "hao"]
@@ -462,15 +466,14 @@ fn fresh_nbest_step_observes_training_store_writes_and_mask_out() {
     drop(lm);
     drop(store);
     drop(runtime);
-    std::fs::remove_dir_all(dir).unwrap();
+    tmp.close().unwrap();
 }
 
 #[test]
 fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
     use oxpinyin_core::{NbestStepRow, NbestSuccessors};
-    let dir = std::env::temp_dir().join(format!("oxpinyin-nbest-snapshot-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = scratch_dir("oxpinyin-nbest-snapshot-");
+    let dir = tmp.path().to_path_buf();
     let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let mut store = runtime.user_store().unwrap();
     let keys: Vec<_> = ["ni", "hao"]
@@ -539,7 +542,7 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
     drop(lm);
     drop(store);
     drop(runtime);
-    std::fs::remove_dir_all(dir).unwrap();
+    tmp.close().unwrap();
 }
 
 /// The fused `trellis_ranges_continued` answers exactly as the two calls
@@ -548,9 +551,8 @@ fn cached_nbest_row_observes_a_cloned_stores_committed_write() {
 /// and a live library mask.
 #[test]
 fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
-    let dir = std::env::temp_dir().join(format!("oxpinyin-trellis-fused-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("user dir");
+    let tmp = scratch_dir("oxpinyin-trellis-fused-");
+    let dir = tmp.path().to_path_buf();
     let runtime = Runtime::open(&w3_dir(), Some(&dir)).expect("runtime");
     let dict = runtime.dict();
     let texts: [&[&str]; 9] = [
@@ -626,7 +628,7 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     assert!(ranged > 0 && yes > 0 && no > 0, "{ranged} {yes} {no}");
     drop(runtime);
     drop(dict);
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    tmp.close().expect("cleanup");
 }
 
 // The n-best keeps what it reads of a key path's user lookup only for the
@@ -634,9 +636,8 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
 // guesses on one session must reach the second guess, both ways.
 #[test]
 fn a_store_write_between_guesses_reaches_the_second_guess() {
-    let dir = std::env::temp_dir().join(format!("oxpinyin-guess-memo-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
+    let tmp = scratch_dir("oxpinyin-guess-memo-");
+    let dir = tmp.path().to_path_buf();
     let runtime = Runtime::open(&w3_dir(), Some(&dir)).unwrap();
     let mut store = runtime.user_store().unwrap();
     let mut session = runtime.new_session(&EmptyConfigSource).unwrap();
@@ -660,7 +661,7 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
     drop(session);
     drop(store);
     drop(runtime);
-    std::fs::remove_dir_all(dir).unwrap();
+    tmp.close().unwrap();
 }
 
 // A memo another dictionary filled with its own type is never read: the

@@ -552,16 +552,18 @@ mod tests {
 
     #[test]
     fn open_of_an_empty_directory_loads_nothing() {
-        let dir = std::env::temp_dir().join(format!("oxpinyin-empty-libs-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let mut libs = PhraseLibraries::open(&dir, SYSTEM_LIBRARY_STEMS).unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-empty-libs-")
+            .tempdir()
+            .unwrap();
+        let mut libs = PhraseLibraries::open(dir.path(), SYSTEM_LIBRARY_STEMS).unwrap();
         assert!(libs.is_empty());
         assert!(libs.phrase_text(0x0100_0001).is_none());
         assert_eq!(libs.unigram_total(), 0);
         assert_eq!(libs.item_count(), 0);
         assert!(!libs.is_loaded(1));
         assert!(!libs.unload(1));
-        std::fs::remove_dir_all(&dir).unwrap();
+        dir.close().unwrap();
     }
 
     #[test]

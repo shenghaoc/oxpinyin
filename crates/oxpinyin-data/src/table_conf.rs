@@ -180,16 +180,16 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_fifo_table_conf_reads_as_absent_without_blocking() {
-        let dir = std::env::temp_dir().join(format!("oxpinyin-table-conf-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("table.conf");
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-table-conf-")
+            .tempdir()
+            .expect("temp dir");
+        let path = dir.path().join("table.conf");
         let made = std::process::Command::new("mkfifo")
             .arg(&path)
             .status()
             .is_ok_and(|status| status.success());
         if !made {
-            let _ = std::fs::remove_dir_all(&dir);
             return; // no mkfifo on this host; nothing to assert
         }
 
@@ -199,7 +199,6 @@ mod tests {
             let _ = tx.send(read_table_conf_lambda(&probe));
         });
         let verdict = rx.recv_timeout(std::time::Duration::from_secs(10));
-        let _ = std::fs::remove_dir_all(&dir);
 
         match verdict {
             Ok(lambda) => assert!(lambda.is_none(), "a FIFO carries no lambda"),
@@ -210,13 +209,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_directory_table_conf_reads_as_absent() {
-        let dir =
-            std::env::temp_dir().join(format!("oxpinyin-table-conf-d-{}", std::process::id()));
-        let path = dir.join("table.conf");
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-table-conf-d-")
+            .tempdir()
+            .expect("temp dir");
+        let path = dir.path().join("table.conf");
         std::fs::create_dir_all(&path).expect("temp dir");
         assert!(read_table_conf_lambda(&path).is_none());
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

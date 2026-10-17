@@ -483,11 +483,15 @@ mod tests {
     use crate::phrase::{NETWORK_DICTIONARY, USER_DICTIONARY};
     use crate::store::UserStore;
 
-    fn temp_path(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "oxpinyin-user-lookup-{tag}-{}.store",
-            std::process::id()
-        ))
+    /// A store path inside a fresh, uniquely named dir. Bind the dir before
+    /// the store so it drops (and is removed) after the store's handle.
+    fn temp_path(tag: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("oxpinyin-user-lookup-{tag}-"))
+            .tempdir()
+            .unwrap();
+        let path = dir.path().join(format!("{tag}.store"));
+        (dir, path)
     }
 
     fn key(text: &str) -> SyllableKey {
@@ -496,7 +500,7 @@ mod tests {
 
     #[test]
     fn lookup_surfaces_user_then_network_by_token() {
-        let path = temp_path("order");
+        let (_dir, path) = temp_path("order");
         let mut store = UserStore::open(&path).unwrap();
         let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
             .expect("frozen syllable inventory fits u16");
@@ -512,7 +516,6 @@ mod tests {
         assert_eq!(entries[0].text(), "拟");
         assert_eq!(entries[1].text(), "你");
         assert!(lookup.phrase_prefix_exists(&[key("ni")]));
-        let _ = std::fs::remove_file(&path);
     }
 
     /// `lookup` with an incomplete syllable at the head of the query must
@@ -523,7 +526,7 @@ mod tests {
     /// shenghaoc/oxpinyin#403's fix.
     #[test]
     fn lookup_answers_a_single_syllable_incomplete_query_from_by_initial() {
-        let path = temp_path("incomplete-single");
+        let (_dir, path) = temp_path("incomplete-single");
         let mut store = UserStore::open(&path).unwrap();
         let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
             .expect("frozen syllable inventory fits u16");
@@ -560,7 +563,6 @@ mod tests {
             !texts.contains(&"号"),
             "hao does not start with n: {texts:?}"
         );
-        let _ = std::fs::remove_file(&path);
     }
 
     /// A two-syllable query where the first key is incomplete and the
@@ -570,7 +572,7 @@ mod tests {
     /// shenghaoc/oxpinyin#403's fix.
     #[test]
     fn lookup_filters_mixed_incomplete_and_complete_syllables() {
-        let path = temp_path("incomplete-mixed");
+        let (_dir, path) = temp_path("incomplete-mixed");
         let mut store = UserStore::open(&path).unwrap();
         let ni = u16::try_from(SyllableKey::from_text("ni").unwrap().index())
             .expect("frozen syllable inventory fits u16");
@@ -611,6 +613,5 @@ mod tests {
             !texts.contains(&"礼号"),
             "礼 starts with l, must not match n-partial: {texts:?}"
         );
-        let _ = std::fs::remove_file(&path);
     }
 }

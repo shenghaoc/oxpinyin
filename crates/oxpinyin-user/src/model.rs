@@ -76,18 +76,20 @@ mod tests {
         PhraseToken::new(value)
     }
 
-    fn temp_path(tag: &str) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-user-model-{tag}-{}.store",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_file(&path);
-        path
+    /// A store path inside a fresh, uniquely named dir. Bind the dir before
+    /// the store so it drops (and is removed) after the store's handle.
+    fn temp_path(tag: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("oxpinyin-user-model-{tag}-"))
+            .tempdir()
+            .unwrap();
+        let path = dir.path().join(format!("{tag}.store"));
+        (dir, path)
     }
 
     #[test]
     fn observe_uses_last_of_history_as_predecessor() {
-        let path = temp_path("history");
+        let (_dir, path) = temp_path("history");
         let mut store = UserStore::open(&path).unwrap();
 
         // history [5, 7] -> predecessor is 7.
@@ -98,13 +100,11 @@ mod tests {
         // empty history -> sentence_start.
         UserModel::observe(&mut store, &[], &token(9)).unwrap();
         assert_eq!(store.bigram_count(SENTENCE_START, 9).unwrap(), 69);
-
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
     fn score_is_neutral_zero() {
-        let path = temp_path("score");
+        let (_dir, path) = temp_path("score");
         let mut store = UserStore::open(&path).unwrap();
         assert_eq!(
             UserModel::score(&store, &[token(1), token(2)], &token(3)).unwrap(),
@@ -115,6 +115,5 @@ mod tests {
         UserModel::observe(&mut store, &[], &token(3)).unwrap();
         assert_eq!(UserModel::score(&store, &[], &token(3)).unwrap(), 0);
         assert_eq!(store.count_delta(None, 3).unwrap().unigram_delta, 483);
-        let _ = std::fs::remove_file(&path);
     }
 }

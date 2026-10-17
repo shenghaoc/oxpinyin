@@ -473,9 +473,11 @@ mod tests {
             },
         )];
         let file = build_chunk(&items).expect("build");
-        let dir = std::env::temp_dir().join(format!("oxpinyin-chunks-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("tmpdir");
-        let path = dir.join("test.bin");
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-chunks-test-")
+            .tempdir()
+            .expect("tmpdir");
+        let path = dir.path().join("test.bin");
         std::fs::write(&path, &file).expect("write");
         let lib = crate::phrase_library::PhraseLibrary::open(&path).expect("open");
         assert_eq!(lib.total_freq(), 9);
@@ -486,7 +488,7 @@ mod tests {
         let pron = item.pronunciation(0).expect("pronunciation");
         assert_eq!(pron.keys, &[0x11_u8, 0x00, 0x22, 0x00]);
         assert_eq!(pron.freq, 9);
-        std::fs::remove_dir_all(&dir).expect("cleanup");
+        dir.close().expect("cleanup");
     }
 
     /// An empty library is the 16-byte header plus three separators — no
@@ -508,17 +510,18 @@ mod tests {
                 b'#', b'#', b'#'
             ]
         );
-        let dir =
-            std::env::temp_dir().join(format!("oxpinyin-chunks-empty-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("tmpdir");
-        let path = dir.join("empty.bin");
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-chunks-empty-")
+            .tempdir()
+            .expect("tmpdir");
+        let path = dir.path().join("empty.bin");
         std::fs::write(&path, &file).expect("write");
         let lib = crate::phrase_library::PhraseLibrary::open(&path).expect("open");
         assert_eq!(lib.total_freq(), 0);
         assert!(lib.item(0x0000_0001).is_none());
         assert_eq!(lib.items().count(), 0);
         assert!(!lib.has_items());
-        std::fs::remove_dir_all(&dir).expect("cleanup");
+        dir.close().expect("cleanup");
     }
 
     #[test]
