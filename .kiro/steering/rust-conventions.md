@@ -10,7 +10,7 @@ for development; bumps use a dedicated human-reviewed PR.
 **unsafe tiers:** data `deny` (the documented mmap exception, `// SAFETY:`
 + module soundness note) · every other portable crate `forbid` (the
 constitution's floor for user/engine is `deny`; they sit at `forbid` in
-practice) · capi/zhuyin-capi/oracle `allow` at FFI only, `// SAFETY:` on
+practice) · capi/zhuyin-capi/oracle `allow` at FFI only (initbench: `ffi` module only), `// SAFETY:` on
 every block (mechanically enforced — AGENTS.md constitution §5).
 
 **Errors:** every public API returns `Result`; nothing panics on any input — a

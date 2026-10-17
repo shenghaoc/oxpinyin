@@ -651,6 +651,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oxpinyin-initbench"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oxpinyin-kmm"
 version = "0.1.0"
 

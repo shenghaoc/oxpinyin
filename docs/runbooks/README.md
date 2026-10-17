@@ -10,6 +10,7 @@ the reasoning behind each procedure lives in the findings it links.
 | [`oracle.md`](oracle.md) | building the pin-built libpinyin and running the differentials against it |
 | [`cloud.md`](cloud.md) | provisioning a Claude Code cloud session (dockerd, oracle, data) so every gate runs there |
 | [`benches.md`](benches.md) | running a criterion bench, the perf baseline, or a profile |
+| [`initbench.md`](initbench.md) | measuring library load, init and time to first candidate against the pin |
 | [`goldens-and-pins.md`](goldens-and-pins.md) | refreshing a committed golden, moving the oracle pin, re-freezing a pinned number |
 | [`axis-j-ledgers.md`](axis-j-ledgers.md) | what may be expected of an axis-J ledger at a later `main`, and when to regenerate one |
 | [`release.md`](release.md) | cutting a release and what the packaging pipeline gates |
