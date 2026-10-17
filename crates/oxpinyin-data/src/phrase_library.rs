@@ -348,6 +348,15 @@ pub struct PhraseItemView<'a> {
     bytes: &'a [u8],
 }
 
+impl<'a> PhraseItemView<'a> {
+    /// The item's bytes as `get_phrase_item` hands them out: the header-derived
+    /// length from its offset, nothing beyond it.
+    #[must_use]
+    pub const fn as_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+}
+
 impl PhraseItemView<'_> {
     /// `PhraseItem::get_phrase_length`.
     #[must_use]
