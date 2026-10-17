@@ -103,6 +103,14 @@ stream:
 - Empty parenthesis pairs left behind by dropped templates (`（）`,
   `（ ，）`).
 
+Unbalanced openers cost linear time in total: `</…`, `<!--`, `<name …`,
+`[[` and `{{` each look ahead for their closer, and an unclosed one would
+otherwise rescan to the end of the page from every later opener
+(quadratic — a 32 MiB page of `</pag` ran for minutes). `Memo` in
+`markup.rs` reuses the earlier scans' results; output is unchanged, which
+the scanner-level equivalence test and the pinned fixture reproduction
+assert.
+
 The stripper consumes *balanced* markup. Source pages with unbalanced
 braces are real (a few in the 300-article slice); the sentence layer's
 `MARKUP_RESIDUE` net (`{{ }} [[ ]] {| |} <ref`) drops any fragment that
