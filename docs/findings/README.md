@@ -35,6 +35,7 @@ series lives in `../perf/`.
 | [`abi-reference`](abi-reference.md) | Reference — the exported libpinyin ABI (all 79 `pinyin_*` symbols; signatures, state model, config, error behaviour) | living reference |
 | [`addon-choose-promotion`](addon-choose-promotion.md) | Addon choose-promotion (default nibble 5) — #105 | record (#105) |
 | [`all-off-tails`](all-off-tails.md) | Findings — W12 all-off TEXT-set tails (the six option-sweep residuals) | closed (row 17 parked here) |
+| [`backend-dependency-audit-2026-10-14`](backend-dependency-audit-2026-10-14.md) | Backend dependency audit — how the storage-backend choice reaches the crates, and which coupling the project can remove | audit |
 | [`backend-selection-audit`](backend-selection-audit.md) | Backend-selection alignment: libpinyin vs oxpinyin | audit |
 | [`berkeleydb-compat-open-items`](berkeleydb-compat-open-items.md) | BerkeleyDB compat — the open items Phase 2 inherits | resolved 2026-09-12 (→ `berkeleydb-backend.md`) |
 | [`berkeleydb-compat-phase1`](berkeleydb-compat-phase1.md) | BerkeleyDB compatibility — Phase 1 survey | landed 2026-09-12 (→ `berkeleydb-backend.md`) |
