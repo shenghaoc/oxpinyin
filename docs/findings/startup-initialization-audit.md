@@ -1,8 +1,13 @@
 # Startup and initialization audit: pin vs oxpinyin
 
-Scope: library load, `pinyin_init` / `zhuyin_init`, option setup,
-`*_alloc_instance`, and the first usable candidate. Steady-state typing,
-repeated guessing and training are out of scope. Measurements are in
+Scope: where initialization time and memory go: library load,
+`pinyin_init` / `zhuyin_init`, system-data mapping and checksums, native
+database opens, user-profile loading and replay, option setup and
+`*_alloc_instance`. The first usable candidate is the outer boundary of startup
+and is measured only to expose initialization cost deferred until first use.
+Steady-state typing, repeated guessing, runtime algorithm tuning and training
+are out of scope. This document analyses and instruments; it changes no
+production code. Measurements are in
 `../perf/startup-baseline-2026-10.md`; the tool is
 `crates/oxpinyin-initbench` (`../runbooks/initbench.md`).
 
@@ -74,51 +79,136 @@ Path: `pinyin_init` (oxpinyin-capi `context.rs`) → `CapiContext::try_new`
   empty profile clones empty maps.
 - `open_session` duplicates `system_overrides` into `StoreInner.system_items`.
 
-## Measured, and what it tells us (Linux, Berkeley DB, see the baseline for CIs)
+## Fixtures (what they are, and what they are not)
 
-| claim | status |
-| --- | --- |
-| Library load: oxpinyin 0.50× the pin, 4.1 M vs 0.82 M Ir | measured |
-| Empty profile: time to first candidate 0.71× (pinyin), 0.73× (zhuyin) | measured |
-| 80-import profile: oxpinyin init 0.27× the pin | measured; the pin is *slower* here than on the larger profiles, 6.7 ms vs 3.1 ms, with 8.25 MiB anonymous memory against 0.8 MiB. Cause not established (hypothesis: a libdb or phrase-index growth path the 80-row profile triggers). The pin's behaviour, not a benchmark artefact: all three oxpinyin controls and the pin were run on identical bytes |
-| 20 000-row profiles: oxpinyin init 6.8–8.3× the pin, 21 ms vs 3 ms; 141 M Ir and 268 k allocations vs 10 M Ir and 1.3 k | measured; dominated by profile-size-proportional work (`seed_txn`, journal replay, `put` replay into libdb). Instruction attribution by function was not captured, so the split between those three is a hypothesis |
-| oxpinyin first-result phase 2.8–4× the pin's, but ~0.2 ms | measured; small against init |
+All three populated profiles were built through the public import API by the
+pin, then checked to load (witness inputs answer differently from `empty`).
+Their shapes differ, so they are **not** a controlled size-scaling series.
 
-Same-bytes control (`ox-control` vs `ox`): ratios sit at 1.00× within the CIs
-for init and time to first candidate, so the benchmark's own noise is below the
-effects reported.
+| profile | import calls | distinct phrases | frequency per row | libraries touched | user journal bytes |
+| --- | ---: | ---: | ---: | --- | ---: |
+| `empty` | 0 | 0 | – | – | 0 |
+| `modest` | 80 | 2 (the same two in each library) | 5 | all four | 392 (122/90/90/90) |
+| `phrases` | 10 000 | 10 000 | 20 000 | almost all in `gb_char` | 467 290 (`gb_char`) |
+| `journals` | 10 000 | 10 000 | 20 000 | all four (quota 3000/3000/3000/1000) | 515 044 (four journals: 141 434, 150 386, 68 342, 154 882) |
 
-## Ranked candidates (not implemented; none asserted as a bottleneck)
+20 000 is the **frequency** each imported row carries, not a row count. Earlier
+drafts of these documents called `phrases` "20 000-row" and "20k imports"; that
+was wrong. Row count, distinct phrases and frequency all differ between
+`modest` and `phrases`, and so does which library receives the rows, so no
+timing difference between them is attributable to size alone.
 
-1. **Profile-size init cost** (`seed_txn`, journal replay, buffered `put`
-   replay). 0.27× on a small profile and 7× on a 20 000-row one means the cost
-   is per profile row, not fixed. Candidates: avoid the deep `libraries.clone()`
-   and per-override clones; write puts directly instead of buffering and
-   replaying; skip `DB->sync` on an in-memory handle; defer seeding to first
-   use. Must stay bug-for-bug: journal replay order and `user.conf` effects are
-   observable (checked by the persistence scenario).
-2. **Deferred user-index load.** If the first candidate does not need the user
-   tables, loading them lazily moves work out of init; the first-candidate
-   phase would take it back. Needs a behavioural argument about observable
-   ordering before any change.
-3. **Checksum pass.** Parity with the pin (`get_check_sum`); both pay it. A
-   cheaper check would be an observable change on corrupt files, so this is a
-   policy question, not a free win.
-4. **Resident memory at first candidate on large profiles.** 5 MiB more
-   anonymous memory than the pin and 4× the minor faults; follows from item 1.
+## Measured results
 
-Out of scope here, noted only: `CountCache::unigram` does not memoise absent
-rows. That is a steady-state matter.
+Source: `../perf/startup-baseline-2026-10.md` (Linux, Berkeley DB, one host).
 
-## Observed behavioural difference (recorded, not gating)
+- Library load: oxpinyin 0.50× the pin in time; 0.82 M against 4.12 M
+  instructions.
+- `empty`: time to first candidate 0.71× (pinyin), 0.73× (zhuyin).
+- `modest`: oxpinyin `*_init` 0.27× the pin. The pin is slower on `modest`
+  (6.7 ms, 11.8 M Ir, 8.25 MiB anonymous memory) than on `phrases` (3.1 ms,
+  10.3 M Ir, 0.8 MiB anonymous).
+- `phrases` and `journals`: oxpinyin `*_init` 6.8–8.3× the pin (about 21 ms
+  against 3 ms; 141 M Ir and 268 k allocation calls against 10 M Ir and 1.3 k).
+- Same-bytes control (`ox-control` against `ox`): 0.94–1.05× for init and time
+  to first candidate in every cell, which is the noise floor of these runs.
+- The first-result phase is about 0.1–0.34 ms and is not where startup goes.
+
+## The pin's `modest` anomaly: measured, then hypotheses
+
+Measured on the pin only (Callgrind, `pinyin` facade, stop after `init`, inclusive
+cost; one run per profile; the oxpinyin object was not profiled this way):
+
+Command (Valgrind 3.22.0; the profile directory is a private copy of the
+fixture): `valgrind --tool=callgrind --callgrind-out-file=<out> initbench child
+--facade pinyin --lib <pin libpinyin> --system-dir <data> --user-dir
+<profile copy>/user --bind now --stop-after init`, then
+`callgrind_annotate --inclusive=yes <out>`. Totals: 16.58 M (`modest`) and
+15.09 M (`phrases`) for the whole child process.
+
+| inclusive instructions | `modest` | `phrases` |
+| --- | ---: | ---: |
+| `pinyin_init` | 11.81 M | 10.32 M |
+| `_load_phrase_library` | 11.08 M | 9.63 M |
+| `SubPhraseIndex::merge` (journal replay) | 5.84 M | 3.81 M |
+| `SubPhraseIndex::add_phrase_item` | 5.83 M | not among the largest entries |
+| `MemoryChunk::set_content` | 5.84 M | 1.14 M |
+
+In `modest`, nearly all of `merge` is `add_phrase_item` calling
+`MemoryChunk::set_content`. In `phrases`, `merge` spends its time in
+`PhraseIndexLogger::next_record`, and `add_phrase_item` does not appear among the
+largest inclusive entries. That is the measured difference. Not measured:
+which record types the journals hold.
+
+Unverified hypotheses, each testable and none asserted:
+
+1. The `modest` journals replay new-phrase (ADD) records, whose
+   `add_phrase_item` appends through `MemoryChunk::set_content`; the `phrases`
+   journal replays records for phrases already in the system library, which would
+   not append. `MemoryChunk::set_content` / `ensure_has_more_space`
+   (`memory_chunk.h`) is a copy-on-resize (see the pin section above), which
+   would also explain the 8.25 MiB anonymous footprint.
+   Test: decode the journal records' types.
+2. Each of the four libraries is resized once in `modest`, against one in
+   `phrases`. Test: count `set_content` calls and bytes.
+
+## Candidates for reducing initialization time and space (hypotheses; not implemented)
+
+None of these has been attributed to a function in oxpinyin by measurement:
+the instruction and allocation figures above are whole-process, per phase, and
+the per-function profile exists for the pin only. They are where to look first,
+in order of how much of the measured gap each could cover.
+
+1. **Work proportional to the user profile at init** (`seed_txn`, journal
+   replay, buffered `put` replay into the in-memory libdb, per the source read
+   above). The 141 M Ir and 268 k allocation calls at init on `phrases` and
+   `journals` are the largest measured gap. Candidate Rust changes: avoid the
+   deep `libraries.clone()` and per-override clones; write puts directly rather
+   than buffering and replaying them; skip `DB->sync` on an in-memory handle.
+   Any change must keep journal replay order and `user.conf` effects, which the
+   persistence scenario observes.
+2. **Deferred user-index loading.** If the first candidate does not need the
+   user tables, loading them lazily moves cost out of init and into first use;
+   the first-candidate phase is how that would show. Needs a behavioural
+   argument first.
+3. **The checksum pass** over the four system chunks. Both implementations pay
+   it, by parity with `get_check_sum`; a cheaper check would change behaviour
+   on corrupt files, so it is a policy decision, not a free win.
+4. **Anonymous memory at first candidate on `phrases`/`journals`** (about 5 MiB
+   more than the pin, 4× the minor faults): follows from item 1 if the copies
+   are what is retained; not separately established.
+
+The next measurement that would turn these into findings is a Callgrind and
+DHAT per-function profile of the oxpinyin object on `phrases`, which this PR did
+not capture.
+
+Out of scope here (steady state): `CountCache::unigram` does not memoise
+absent rows.
+
+## Observed behavioural difference (recorded, not gating, unresolved)
 
 The hostile-input probe found one: zhuyin facade, inputs `'` and `''`
-(parse consumes 1 or 2 bytes, 0 candidates). The pin's `zhuyin_guess_sentence`
-returns false and `zhuyin_guess_candidates_after_cursor` returns false;
-oxpinyin returns true for both, with no sentence. Pin side: `zhuyin_guess_sentence`
-(`src/zhuyin.cpp:895`) returns the result of `get_nbest_match`, which returns
-false when `m_matrix->size() == 0` (`src/lookup/phonetic_lookup.h:743-745`).
-This was seen at option word `0x18a`; whether `compatibility-policy.md` already
-covers it at another option word has not been re-checked here, so it is
-reported as a difference, not classified. It affects only inputs the timed
-workload never uses, and the report keeps it in its own table.
+(parse consumes 1 and 2 bytes, 0 candidates). The pin's `zhuyin_guess_sentence`
+and `zhuyin_guess_candidates_after_cursor` return false; oxpinyin returns true
+for both, with no sentence.
+
+Pin side (source): `zhuyin_guess_sentence` (`src/zhuyin.cpp:895`) returns the
+result of `get_nbest_match`, which returns false when `m_matrix->size() == 0`
+(`src/lookup/phonetic_lookup.h:743-745`); a keyless parse leaves the matrix empty
+(`src/storage/phonetic_key_matrix.cpp:34-38`).
+
+Against the compatibility register: `compatibility-policy.md` row 53, item 2,
+records exactly this contract (the pin answers false for one, two and three
+apostrophes under the default and the parity word, and lists zhuyin among the
+facades) as **CLOSED in code** (#542). The object this benchmark loaded, built
+from this tree, still answers true. A focused check on both objects with a
+fresh instance, no option set, `0x20` and `0x18a`, on `'` and `''` found the
+same difference at every option word, so the option word is not the cause. The
+pin answered false in every case.
+
+What is not established: why a build from this tree contradicts a row recorded
+as closed (a regression, a feature or build-configuration dependence of the
+object built here, or a facade the row's cases did not cover). It was not
+investigated further, not fixed, and not classified as acceptable. It affects
+only inputs outside the timed workload; the report keeps it in its own table. It
+should be checked against the register by a maintainer.

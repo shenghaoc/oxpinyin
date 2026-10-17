@@ -29,9 +29,11 @@ use crate::workload::{Driver, PhraseRow};
 pub const REGISTERED_PHRASE_INPUT_SHA256: &str =
     "22637aee560c86761bb6d9d187d9af8b9fea970a6690bc21e21e5b6fc1cbb117";
 
-/// Import count of the fixtures' phrases: large enough that a reopened profile
-/// answers differently (at count 5 the import changes no answer).
-pub const FIXTURE_IMPORT_COUNT: i32 = 20_000;
+/// Frequency each imported phrase carries in the `Phrases` and `Journals`
+/// fixtures: large enough that a reopened profile answers differently (at 5 the
+/// import changes no answer). It is a per-row frequency, not a number of rows;
+/// both fixtures hold 10,000 rows.
+pub const FIXTURE_FREQUENCY: i32 = 20_000;
 
 /// Phrases per library in the balanced selection (libraries 1 to 4). The fourth
 /// library has only 1,000 phrases the others lack; the total is the 10,000 rows
@@ -43,11 +45,14 @@ pub const BALANCED_QUOTA: [usize; 4] = [3000, 3000, 3000, 1000];
 pub enum Level {
     /// A fresh, writable, empty directory.
     Empty,
-    /// 80 imports: two phrases into each system library, ten times.
+    /// 80 import calls of only two distinct phrases (two phrases into each of
+    /// the four system libraries, ten times each), frequency 5.
     Modest,
-    /// 10,000 distinct system phrases, in export order.
+    /// 10,000 distinct system phrases taken in export order, frequency
+    /// [`FIXTURE_FREQUENCY`].
     Phrases,
-    /// 10,000 system phrases drawn from all four libraries.
+    /// 10,000 distinct system phrases drawn from all four libraries by
+    /// [`BALANCED_QUOTA`], frequency [`FIXTURE_FREQUENCY`].
     Journals,
 }
 

@@ -28,7 +28,7 @@ use oxpinyin_initbench::BenchError;
 use oxpinyin_initbench::child::{self, ChildOptions};
 use oxpinyin_initbench::ffi::Native;
 use oxpinyin_initbench::fixtures::{
-    self, FIXTURE_IMPORT_COUNT, Level, REGISTERED_PHRASE_INPUT_SHA256,
+    self, FIXTURE_FREQUENCY, Level, REGISTERED_PHRASE_INPUT_SHA256,
 };
 use oxpinyin_initbench::instrument::{parse_callgrind_ir, parse_dhat_summary};
 use oxpinyin_initbench::memory::host_probe;
@@ -439,8 +439,8 @@ fn build_profiles(out: &Path, lib: &Path, system: &Path, work: &Path) -> Result<
         let rows = match level {
             Level::Empty => Vec::new(),
             Level::Modest => fixtures::modest_rows(),
-            Level::Phrases => fixtures::select_sequential(&export, FIXTURE_IMPORT_COUNT)?,
-            Level::Journals => fixtures::select_balanced(&export, FIXTURE_IMPORT_COUNT)?,
+            Level::Phrases => fixtures::select_sequential(&export, FIXTURE_FREQUENCY)?,
+            Level::Journals => fixtures::select_balanced(&export, FIXTURE_FREQUENCY)?,
         };
         if !rows.is_empty() {
             fixtures::populate(&mut pin, system, &user, &rows)?;

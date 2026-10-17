@@ -1,8 +1,10 @@
 # Running the initialization benchmark
 
-`initbench` (crate `oxpinyin-initbench`) measures library load, `*_init`,
-option setup, `*_alloc_instance` and the time to the first usable candidate for
-two shared objects, plus startup memory. It loads each object with `dlopen`
+`initbench` (crate `oxpinyin-initbench`) measures where initialization time and
+memory go for two shared objects: library load, `*_init`, option setup,
+`*_alloc_instance` and startup memory. The time to the first usable candidate is
+the outer startup boundary, measured to expose initialization deferred until
+first use. It loads each object with `dlopen`
 (`libloading`), so it measures the *artifact*, not a source tree. It does not
 measure typing, steady state or training. Evidence and findings:
 `../findings/startup-initialization-audit.md`; numbers:
@@ -39,7 +41,8 @@ that contradicts the verified transcript is rejected, not averaged.
 ```sh
 cargo build --release -p oxpinyin-initbench
 B=target/release/initbench
-# fixtures: empty, modest (80 imports), phrases (20 000), journals; built
+# fixtures: empty; modest (80 import calls, 2 distinct phrases); phrases and
+# journals (10 000 distinct phrases at frequency 20 000); built
 # through the public import API by the reference library and checked to load
 $B profiles --out <dir> --pin-lib <pin libpinyin> --system-dir <data>
 $B run --subject pin=<pin libpinyin> --zhuyin-subject pin=<pin libzhuyin> \

@@ -1,7 +1,9 @@
 # Startup baseline, 2026-10-17
 
-Initialization and time to first candidate, oxpinyin against the pin, measured
-by `initbench` (`../runbooks/initbench.md`). Nothing here is steady-state.
+Initialization cost (time, instructions, allocations and memory) of oxpinyin
+against the pin, measured by `initbench` (`../runbooks/initbench.md`). The first
+usable candidate is the outer startup boundary and is measured only to expose
+initialization work deferred until first use. Nothing here is steady-state.
 
 Dates are `date -u` of the run (2026-10-17). Evidence for what each phase does:
 `../findings/startup-initialization-audit.md`.
@@ -27,10 +29,20 @@ another path. The pin is libpinyin 2.11.92 at `074a2219`, Berkeley DB backend.
 | ox, ox-control | libpinyin.so.15.0.0 | 5281016 | `8c57fb7d9b41b4e6421fca365cd19b72e3cf8a316137c7082a24d220c1ffd69b` | libglib-2.0, libdb-5.3, libgcc_s, libc, ld-linux-x86-64 |
 | ox, ox-control | libzhuyin.so.15.0.0 | 5065096 | `712acf24bb6350e2984c730f6521d23c3725aa474dbcbf9f9e350610e8c3b771` | libglib-2.0, libdb-5.3, libgcc_s, libc, ld-linux-x86-64 |
 
-Profiles (all private copies, one per sample): `empty` (0 B), `modest` (80
-imports, 29 233 B), `phrases` (20 000 imports, 496 209 B), `journals` (journal
-files present, 543 885 B). Each non-empty fixture was accepted only after
-witness inputs answered differently from `empty`.
+Profiles (each sample gets a private copy). The fixtures have different shapes
+and are **not** a controlled size-scaling series:
+
+| profile | import calls | distinct phrases | frequency per row | libraries | user directory |
+| --- | ---: | ---: | ---: | --- | ---: |
+| `empty` | 0 | 0 | – | – | 0 B |
+| `modest` | 80 | 2 (the same two in every library) | 5 | all four | 29 233 B |
+| `phrases` | 10 000 | 10 000 | 20 000 | almost all `gb_char` | 496 209 B |
+| `journals` | 10 000 | 10 000 | 20 000 | all four, 3000/3000/3000/1000 | 543 885 B |
+
+20 000 is the **frequency** each row carries, not a record count. Each
+non-empty fixture was accepted only after witness inputs answered differently
+from `empty`. Results are therefore described per profile, never as a function
+of size.
 
 Host: Linux x86_64, 4 vCPU KVM guest, kernel 6.18, CPU pin 2, warm page cache
 unless stated, Valgrind 3.22.0. 60 timed rounds (3 warm-up); 30 for memory,
@@ -48,8 +60,12 @@ ran one process each; none crashed.
 
 One recorded difference, outside the timed workload: zhuyin `'` and `''`. The
 pin's `zhuyin_guess_sentence` and `zhuyin_guess_candidates_after_cursor`
-return false; oxpinyin returns true. See the audit. It does not affect the
-comparability of the timed workload and is shown in its own table.
+return false; oxpinyin returns true. It is the behaviour compatibility-policy
+row 53 item 2 records as closed in code, so it contradicts the register; it was
+reproduced at no option word, `0x20` and `0x18a`. Not fixed, not classified as
+acceptable, not explained (see the audit). It does not affect the comparability
+of the timed workload (the workload never parses these inputs) and is shown in
+its own table.
 
 ## 2. Timing (milliseconds, warm cache, median [95% CI])
 
@@ -72,6 +88,12 @@ comparability of the timed workload and is shown in its own table.
 | zhuyin | phrases | time to first candidate | 4.34 | 21.61 | 4.98× |
 | zhuyin | journals | `zhuyin_init` | 2.69 | 22.29 | 8.28× |
 | zhuyin | journals | time to first candidate | 4.44 | 23.58 | 5.31× |
+
+The ox/pin ratios on `modest` look favourable to oxpinyin because the pin's own
+`modest` init is slower than its own `phrases` init (anomaly and measured
+cause in `../findings/startup-initialization-audit.md`). On `phrases` and
+`journals` oxpinyin is slower at `*_init`. Do not read the table as a trend
+over profile size.
 
 Option setup and `*_alloc_instance` are 1–8 µs for both and negligible; the
 first-result phase (parse, candidate list, first string) is 0.1 ms for the pin
@@ -108,7 +130,8 @@ comparable with C instruments' counts.
 | pinyin | phrases | 9.47 | 13.34 | 0.83 | 5.00 | 12.16 | 16.11 | 432 | 1785 |
 | pinyin | journals | 9.48 | 13.36 | 0.88 | 5.03 | 12.18 | 16.26 | 440 | 1619 |
 
-zhuyin differs by under 0.5 MiB in every cell. RSS includes shared file-backed
+The pin's `modest` anonymous memory (8.27 MiB) is the same anomaly. zhuyin
+differs by under 0.5 MiB in every cell. RSS includes shared file-backed
 pages in full (PSS and private figures are in the report). Peak RSS is a
 high-water mark.
 
@@ -125,13 +148,20 @@ produced by the same command with `--cache cold` / `--bind lazy`. Cold means
 - One host, one backend (BDB). kc and tkrzw cells: not measured.
 - One CPU model, a KVM guest; absolute values do not transfer. Ratios are
   within-run only.
-- The pin's `modest` init is slower and larger than its own `phrases` init;
-  the cause is not established (see the audit). It makes the `modest` ratios
-  look favourable to oxpinyin; they are measured but are not a general trend.
-- Instruction attribution by function inside oxpinyin's init was not captured;
-  the ranking in the audit is by phase, not by function.
+- The fixtures are not a controlled size-scaling series (different row counts,
+  distinct phrases, frequencies and libraries). No claim is made about how init
+  cost scales with profile size.
+- The pin's `modest` init is slower and larger than its own `phrases` init.
+  Per-function Callgrind on the pin shows the extra cost is in journal replay
+  (`SubPhraseIndex::merge` → `add_phrase_item` → `MemoryChunk::set_content`);
+  why the two journals take different paths is a hypothesis (audit §anomaly).
+- Per-function attribution exists for the **pin** (one Callgrind run per profile,
+  command in the audit) and **not** for oxpinyin: its figures here are
+  whole-process per phase. The candidates in the audit are hypotheses.
 - Cold-cache runs are guest-level.
-- zhuyin `'`/`''` differs (see §1); it is outside the timed workload.
+- zhuyin `'`/`''` differs (see §1) and contradicts compatibility-policy row 53
+  item 2, which records it as closed in code; unresolved, outside the timed
+  workload, not fixed here.
 - **Evidence.** Raw JSONL and profiler output are not committed and were not
   retained anywhere: the capture environment was an ephemeral container. The
   figures above are reproducible from the commands in
