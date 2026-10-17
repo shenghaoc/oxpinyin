@@ -67,7 +67,7 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
 def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
-         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=()):
+         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), stderr_varies=False):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -86,6 +86,10 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     `either=True` (with both `abort=` and `crash=`) is for a fixture whose
     pin site depends on the file system: the pin's own signal picks the
     matcher, SIGABRT the class (c) one and anything else the class (b) one.
+    `stderr_varies=True` (with `crash=`) is for a site where the pin's raw
+    stderr is read from freed memory and so changes from run to run: the pin
+    must still die of SIGSEGV and the subject answer `<fields>`, but the
+    stderr bytes are not compared.
     `host_scanf=<spellings>` names `%f` inputs the case expects the host
     libc's scanner to reject, as the oracle image's glibc does. The pin
     reads them with the host libc, so on a host whose scanner accepts one
@@ -96,7 +100,8 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     def register(fn):
         assert not either or (abort is not NO_ABORT and crash is not None), name
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
-                           crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf))
+                           crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
+                           stderr_varies=stderr_varies)
         return fn
     return register
 
@@ -1049,6 +1054,23 @@ def _(k):
     k.fn('fini', None, P)(context)
     after = k.fn('alloc_instance', P, P)(context)
     return {'live instance': bool(live), '~instance after fini': bool(after)}
+
+
+# #573 (B battery): a second pinyin_fini / zhuyin_fini on one context
+def fini_twice(k):
+    # The pin reads and deletes the freed context again (pinyin.cpp:1194-1222,
+    # zhuyin.cpp:741-757) and dies of SIGSEGV, with stderr bytes read from
+    # freed memory; the ruled answer is a silent return (class (b), row 105).
+    context = k.init()
+    live = k.fn('alloc_instance', P, P)(context)
+    k.fn('free_instance', None, P)(live)
+    k.fn('fini', None, P)(context)
+    k.fn('fini', None, P)(context)
+    return {'second fini returned': True}
+
+
+case('fini-twice', crash={'second fini returned': True}, stderr_varies=True)(fini_twice)
+case('zhuyin-fini-twice', mode='zhuyin', crash={'second fini returned': True}, stderr_varies=True)(fini_twice)
 
 
 # batch2 group 11: the facade unigram total wraps like the pin's (PR 11, #540)
@@ -9508,7 +9530,7 @@ def matches(spec, pin, subject):
     if spec['crash'] is not None and not as_abort:
         shown = subject['result'] or {}
         same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
-            pin['stderr'] == subject['stderr'] and \
+            (spec['stderr_varies'] or pin['stderr'] == subject['stderr']) and \
             all(shown.get(key) == value for key, value in spec['crash'].items())
     elif as_abort:
         shown = subject['result'] or {}

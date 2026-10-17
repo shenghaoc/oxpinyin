@@ -26,13 +26,15 @@ fn insert(live: &mut Option<BTreeSet<usize>>, address: usize) {
     live.get_or_insert_with(BTreeSet::new).insert(address);
 }
 
-fn remove(live: &mut Option<BTreeSet<usize>>, address: usize) {
-    if let Some(addresses) = live {
-        addresses.remove(&address);
-        if addresses.is_empty() {
-            *live = None;
-        }
+fn remove(live: &mut Option<BTreeSet<usize>>, address: usize) -> bool {
+    let Some(addresses) = live else {
+        return false;
+    };
+    let held = addresses.remove(&address);
+    if addresses.is_empty() {
+        *live = None;
     }
+    held
 }
 
 /// Records a context `zhuyin_init` just boxed.
@@ -40,9 +42,11 @@ pub(crate) fn register(context: *mut ZhuyinContext) {
     insert(&mut set(), context as usize);
 }
 
-/// Forgets a context `zhuyin_fini` is about to free.
-pub(crate) fn unregister(context: *mut ZhuyinContext) {
-    remove(&mut set(), context as usize);
+/// Forgets a context `zhuyin_fini` is about to free. Answers whether the
+/// registry held it: the test and the removal are one step under the lock,
+/// so of two calls on one context exactly one sees `true`.
+pub(crate) fn unregister(context: *mut ZhuyinContext) -> bool {
+    remove(&mut set(), context as usize)
 }
 
 /// Whether `context` was handed out and not finalised since.
@@ -69,11 +73,15 @@ mod tests {
             crate::instance::zhuyin_alloc_instance(context).is_null(),
             "a finalised context allocates nothing"
         );
+        // A second finalise is a no-op, where the pin double-frees (row 105).
+        crate::context::zhuyin_fini(context);
+        assert!(!is_live(context));
         // Registering and forgetting a stray address leaves the rest alone.
         let stray = std::ptr::NonNull::<crate::types::ZhuyinContext>::dangling().as_ptr();
         register(stray);
         assert!(is_live(stray));
-        unregister(stray);
+        assert!(unregister(stray));
+        assert!(!unregister(stray), "a second removal finds nothing");
         assert!(!is_live(stray));
     }
 

@@ -177,9 +177,16 @@ pub extern "C" fn oxpinyin_test_set_user_bigram(
 /// user store's fini, run as the context drops. A process that never
 /// calls this leaves the raised counter behind, and the init that reads
 /// it past the limit wipes the profile, exactly as upstream's does.
+///
+/// A second call on a context that is already finalised (or was never
+/// handed out by `pinyin_init`) returns at once: the pin reads and deletes
+/// the freed context again (`pinyin.cpp:1194-1222`), a double free that
+/// kills it with SIGSEGV (register row 105, class (b)).
 #[unsafe(no_mangle)]
 pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
-    if context.is_null() {
+    // One step: the registry held the address and this call removed it, so
+    // of two calls on one context only the first goes on to free it.
+    if context.is_null() || !crate::live::unregister(context) {
         return;
     }
 
@@ -187,9 +194,10 @@ pub extern "C" fn pinyin_fini(context: *mut PinyinContext) {
     // fini and resets LC_NUMERIC to "C" (`table_info.cpp:378`; register
     // row 39).
     crate::locale::pin_table_info_locale();
-    crate::live::unregister(context);
     // SAFETY: `context` was created by `pinyin_init` via `box_context`
-    // (= `Box::into_raw`). The caller transfers ownership back.
+    // (= `Box::into_raw`), the registry held its address and this call
+    // removed it, so no other call can free it. The caller transfers
+    // ownership back.
     unsafe {
         drop(Box::from_raw(context.cast::<CapiContext>()));
     };
