@@ -27,6 +27,9 @@ oxpinyin-core = { workspace = true }
 # [features] block below forwards the backend selection.
 oxpinyin-store = { workspace = true }
 
+# Map phrase-library chunks on all targets.
+memmap2 = { workspace = true }
+
 [dev-dependencies]
 tempfile.workspace = true
 

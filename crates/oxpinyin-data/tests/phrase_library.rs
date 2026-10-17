@@ -486,15 +486,34 @@ fn libraries_record_absent_files_and_recheck_the_loaded_ones() {
     // The file goes bad after the open: the pin maps it again on a save.
     let mut bytes = sample();
     bytes[4] ^= 0xFF;
-    std::fs::write(&first, bytes).expect("damage a.bin");
-    assert_eq!(
-        libraries.unmappable_now(|_| true, None),
-        std::slice::from_ref(&first)
-    );
-    assert_eq!(
-        libraries.unmappable_now(|n| n == 1, Some(1)),
-        std::slice::from_ref(&first)
-    );
+    #[cfg(not(windows))]
+    {
+        std::fs::write(&first, bytes).expect("damage a.bin");
+        assert_eq!(
+            libraries.unmappable_now(|_| true, None),
+            std::slice::from_ref(&first)
+        );
+        assert_eq!(
+            libraries.unmappable_now(|n| n == 1, Some(1)),
+            std::slice::from_ref(&first)
+        );
+    }
+    #[cfg(windows)]
+    {
+        // Windows keeps the mapped file in use. Compare the full mapped
+        // extent with a separate file before and after the failed write.
+        let original_path = dir.join("original.bin");
+        std::fs::write(&original_path, sample()).expect("write original.bin");
+        let original = PhraseLibrary::open(&original_path).expect("map original.bin");
+        let loaded = libraries.library(1 << 24).expect("a.bin is loaded");
+        assert!(loaded.byte_identical(&original));
+        let error = std::fs::write(&first, bytes).expect_err("mapped file cannot be truncated");
+        assert_eq!(error.raw_os_error(), Some(1224));
+        assert!(loaded.byte_identical(&original), "mapped bytes changed");
+        assert_eq!(std::fs::read(&first).expect("read a.bin"), sample());
+        assert!(libraries.unmappable_now(|_| true, None).is_empty());
+        assert!(libraries.unmappable_now(|n| n == 1, Some(1)).is_empty());
+    }
     assert!(
         libraries.unmappable_now(|_| true, Some(2)).is_empty(),
         "only the named library is looked at"
