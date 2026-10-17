@@ -396,25 +396,36 @@ fn a_directory_chunk_follows_the_size_the_file_system_reports() {
     for (name, entry) in [("long", "e".repeat(25)), ("short", "x".to_owned())] {
         let path = temp_dir(&format!("directory-chunk-{name}"));
         std::fs::write(path.join(&entry), b"x").expect("fill the directory");
-        let size = std::fs::File::open(&path)
-            .and_then(|mut dir| dir.seek(SeekFrom::End(0)))
-            .expect("seek the directory");
+        let size = std::fs::File::open(&path).and_then(|mut dir| dir.seek(SeekFrom::End(0)));
         for error in [
             PhraseLibrary::open(&path).expect_err(name),
             verify_chunk(&path).expect_err(name),
         ] {
-            if size >= 8 {
-                assert!(
-                    matches!(error, LibraryError::Row(RowFault::ChunkHeaderRead)),
-                    "{name}: size {size}: {error}"
-                );
-                assert!(error.unmappable_path().is_none(), "{name}");
-            } else {
-                assert_eq!(
-                    error.unmappable_path(),
-                    Some(path.as_path()),
-                    "{name}: {size}"
-                );
+            match &size {
+                Err(seek_error) => {
+                    assert_eq!(error.unmappable_path(), Some(path.as_path()), "{name}");
+                    let LibraryError::Unmappable { cause, .. } = &error else {
+                        panic!("{name}: {error}");
+                    };
+                    let LibraryError::Io(io_error) = cause.as_ref() else {
+                        panic!("{name}: {error}");
+                    };
+                    assert_eq!(io_error.raw_os_error(), seek_error.raw_os_error(), "{name}");
+                }
+                Ok(size) if *size >= 8 => {
+                    assert!(
+                        matches!(error, LibraryError::Row(RowFault::ChunkHeaderRead)),
+                        "{name}: size {size}: {error}"
+                    );
+                    assert!(error.unmappable_path().is_none(), "{name}");
+                }
+                Ok(size) => {
+                    assert_eq!(
+                        error.unmappable_path(),
+                        Some(path.as_path()),
+                        "{name}: {size}"
+                    );
+                }
             }
         }
         let _ = std::fs::remove_dir_all(&path);
