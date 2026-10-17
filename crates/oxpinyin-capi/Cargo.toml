@@ -115,6 +115,9 @@ criterion = "0.8"
 # locator and export-dir resolution (oxpinyin_testsupport::model_cache).
 # Never a dependency of the C ABI itself.
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
+# Dev-only: scratch dirs for the test fixtures. Never a dependency of the
+# C ABI itself.
+tempfile.workspace = true
 
 [[bench]]
 name = "stage2"

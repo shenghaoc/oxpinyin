@@ -28,24 +28,21 @@ pub fn system_dir() -> PathBuf {
 pub struct TempUserDir {
     /// The directory to pass as the init's user dir.
     pub path: PathBuf,
+    _dir: tempfile::TempDir,
 }
 
 impl TempUserDir {
-    /// Creates (after clearing) a unique per-process scratch dir.
+    /// Creates a fresh, uniquely named scratch dir.
     pub fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-zhuyin-capi-{tag}-{}.d",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("temp user dir");
-        Self { path }
-    }
-}
-
-impl Drop for TempUserDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("oxpinyin-zhuyin-capi-{tag}-"))
+            .suffix(".d")
+            .tempdir()
+            .expect("temp user dir");
+        Self {
+            path: dir.path().to_path_buf(),
+            _dir: dir,
+        }
     }
 }
 
