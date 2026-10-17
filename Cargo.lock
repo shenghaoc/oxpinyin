@@ -609,6 +609,7 @@ dependencies = [
  "oxpinyin-runtime",
  "oxpinyin-testsupport",
  "oxpinyin-user",
+ "tempfile",
 ]
 
 [[package]]
@@ -774,6 +775,7 @@ dependencies = [
  "oxpinyin-facade",
  "oxpinyin-runtime",
  "oxpinyin-user",
+ "tempfile",
 ]
 
 [[package]]
