@@ -253,6 +253,16 @@ always".
 8. Differentials build debug, never release. Keep one target directory
    per cell and reuse it; do not delete target directories between
    issues. Clean once, at the end of the lane.
+9. The tkrzw cell runs only against a sound libtkrzw: one that
+   `tools/tkrzw/distro-probe.sh` reports healthy, which
+   `tools/cloud/setup.sh` provides on hosts whose packaged library is
+   defective (Ubuntu's, `docs/findings/tkrzw-distro-compat.md`). A tkrzw
+   result taken against a defective libtkrzw is not a result: do not report
+   its DIFFERs, do not triage them, and do not propose sessions for them.
+   Rerun with the sound library on `LD_LIBRARY_PATH` (check with `ldd` that
+   both the oracle and the subject resolve `libtkrzw.so.1` to it). If none
+   is available, write "tkrzw: not run (no sound libtkrzw on this host)" and
+   move on.
 
 ## Operational rules that live with their procedures
 
