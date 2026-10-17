@@ -12,3 +12,5 @@ workspace = true
 
 [dependencies]
 oxpinyin-core.workspace = true
+# PinDir owns its scratch dir; this crate is test support and never ships.
+tempfile.workspace = true

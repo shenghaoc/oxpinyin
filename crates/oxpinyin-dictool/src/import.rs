@@ -192,16 +192,16 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use super::*;
 
-    fn temp_dir(tag: &str) -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("oxpinyin-dictool-{tag}-{}.d", std::process::id()));
-        let _ = fs::remove_dir_all(&path);
-        fs::create_dir_all(&path).expect("temp dir");
-        path
+    /// A fresh, uniquely named scratch dir, removed when the returned
+    /// guard drops (at the end of the test, after every reopen).
+    fn temp_dir(tag: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("oxpinyin-dictool-{tag}-"))
+            .suffix(".d")
+            .tempdir()
+            .expect("temp dir")
     }
 
     fn write(file: &Path, text: &str) {
@@ -218,7 +218,8 @@ mod tests {
 
     #[test]
     fn import_round_trips_through_export_and_is_idempotent() {
-        let dir = temp_dir("roundtrip");
+        let tmp = temp_dir("roundtrip");
+        let dir = tmp.path();
         let input = dir.join("input.txt");
         write(&input, "你好 ni'hao 3\n世界 shi'jie 7\n词 ci 1\n");
 
@@ -268,7 +269,8 @@ mod tests {
 
     #[test]
     fn two_field_lines_floor_at_the_abi_default_count() {
-        let dir = temp_dir("default-count");
+        let tmp = temp_dir("default-count");
+        let dir = tmp.path();
         let input = dir.join("input.txt");
         write(&input, "词 ci\n");
 
@@ -287,7 +289,8 @@ mod tests {
 
     #[test]
     fn import_raises_existing_counts_to_the_desired_floor() {
-        let dir = temp_dir("floor");
+        let tmp = temp_dir("floor");
+        let dir = tmp.path();
         let first = dir.join("first.txt");
         let second = dir.join("second.txt");
         write(&first, "词 ci 5\n");
@@ -310,7 +313,8 @@ mod tests {
 
     #[test]
     fn malformed_file_reports_its_line_number() {
-        let dir = temp_dir("malformed");
+        let tmp = temp_dir("malformed");
+        let dir = tmp.path();
         let input = dir.join("bad.txt");
         write(&input, "# ok\n你好 ni'hao 3\n词 ci not-a-count\n");
 
@@ -325,7 +329,8 @@ mod tests {
 
     #[test]
     fn imported_phrase_with_same_text_and_new_reading_merges() {
-        let dir = temp_dir("merge");
+        let tmp = temp_dir("merge");
+        let dir = tmp.path();
         let input = dir.join("merge.txt");
         write(&input, "行 xing 4\n行 hang 2\n");
 
@@ -349,7 +354,8 @@ mod tests {
 
     #[test]
     fn unseparated_pinyin_is_the_same_pronunciation_as_the_export_row() {
-        let dir = temp_dir("canonical");
+        let tmp = temp_dir("canonical");
+        let dir = tmp.path();
         let input = dir.join("input.txt");
         write(&input, "你好 nihao 3\n");
 

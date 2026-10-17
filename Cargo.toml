@@ -70,6 +70,9 @@ compact_str = "0.10"
 phf = "0.14"
 phf_codegen = "0.14"
 glib-sys = "0.22"
+# Test-only: collision-free, self-cleaning temp dirs for test harnesses.
+# Never a dependency of a shipping crate's normal or build graph.
+tempfile = "3.27"
 
 # Release .so size/speed lever: fat LTO + one codegen unit lets the linker
 # drop cross-crate dead code and duplicate generic instantiations that
