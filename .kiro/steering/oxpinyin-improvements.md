@@ -55,6 +55,7 @@ requirements, design direction and task list in
 `.kiro/specs/stage3-performance/`. The default build is always the
 bug-for-bug binary: a Stage 3 change that is not bug-for-bug — any
 change to observable output or to the files on disk — sits behind an
-opt-in cargo feature, off by default. No performance work happens
-in Stage 2; ideas found there are reported as Stage 3 leads. Work that landed
+opt-in cargo feature, off by default. Stage 2 fixes complexity
+regressions against the pin (axis L) but does not optimise beyond it;
+ideas for beating the pin are reported as Stage 3 leads. Work that landed
 early is recorded in `ROADMAP.md`.

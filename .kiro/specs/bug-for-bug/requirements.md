@@ -81,14 +81,21 @@ place by a test, so that it cannot silently regress.
    oxpinyin's side. The pin SHALL NOT be mutated.
 3. New cases SHALL go into an existing driver where one can take them.
 
-### Requirement 4: No performance work
+### Requirement 4: Complexity no worse than the pin; no optimisation beyond it
 
-**User Story:** As the maintainer, I want Stage 2 to spend its time on
-compatibility only.
+**User Story:** As the maintainer, I want oxpinyin never worse than the
+pin on both time and space by the end of Stage 2, without spending
+Stage 2 on beating the pin.
 
 #### Acceptance Criteria
 
-1. Stage 2 changes SHALL NOT include performance work.
-2. Internal changes SHALL NOT worsen time and space both.
-3. A performance idea found during Stage 2 SHALL be reported as a Stage 3
-   lead in the change's report, not implemented.
+1. THE complexity axis (round-2 audit axis L) SHALL be measured against
+   the pin on named workloads — executed instructions or time, and peak
+   heap — with the workload, build and repeats stated (#757 is the
+   worked example).
+2. WHEN oxpinyin is worse than the pin on both time and space for a
+   workload THEN the regression SHALL be fixed in Stage 2, by reproducing
+   the pin's way of doing the work, or the trade justified per the
+   Source policy.
+3. A change whose aim is to be faster or smaller than the pin SHALL be
+   reported as a Stage 3 lead in the change's report, not implemented.

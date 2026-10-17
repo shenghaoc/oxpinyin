@@ -38,7 +38,9 @@ the user-store surfaces — the round-2 audit issues, then a third
 bug-for-bug sweep, are this stage's work. Behaviour is derived by
 reading the pin's source, then its disassembly, never by running
 experiments (`/AGENTS.md` "Stage 2 — bug-for-bug";
-`.kiro/specs/bug-for-bug/`). No performance work.
+`.kiro/specs/bug-for-bug/`). Complexity counts: oxpinyin must not be
+worse than the pin on both time and space (axis L, #757); optimising
+beyond the pin waits for Stage 3.
 
 **Stage 3 — performance (after Stage 2).** Smaller binary, faster
 execution, much lower RAM than libpinyin. The default build stays the

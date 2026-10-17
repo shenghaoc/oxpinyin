@@ -131,8 +131,15 @@ behaviour you have already derived (Verification cells, below); it is
 not how you derive it. If reading cannot settle a question, STOP and
 report what you read and where it ran out.
 
-Stage 2 takes no performance work. A performance idea found on the way
-goes in the change's report as a Stage 3 lead; it is not implemented.
+Complexity against the pin is Stage 2 work (round-2 audit axis L; #757).
+The Source policy's rule — time and space never both worse than the pin
+— is part of the bug-for-bug target: measure the complexity axes (time,
+instructions, heap) on named workloads against the pin, and fix a
+measured regression where oxpinyin is worse on both, by doing the work
+the way the pin does (e.g. one row load per predecessor, not one per
+pair). What Stage 2 does not take is optimisation beyond the pin: a
+change whose aim is to be faster or smaller than libpinyin goes in the
+change's report as a Stage 3 lead and is not implemented.
 
 ## Pinned behaviour and oxpinyin improvements
 
@@ -298,10 +305,11 @@ always".
    backend code. Decide by path check, not by judgement — any of three:
    - `git diff --name-only origin/main...HEAD` lists a file under
      `crates/oxpinyin-store/`;
-   - a changed file contains `feature = "bdb"`, `feature = "tkrzw"` or
-     `feature = "kyotocabinet"`
-     (`git diff --name-only origin/main...HEAD | xargs grep -lE
-     'feature *= *"(bdb|tkrzw|kyotocabinet)"'`);
+   - a changed non-Markdown file contains `feature = "bdb"`,
+     `feature = "tkrzw"` or `feature = "kyotocabinet"`
+     (`git diff --name-only origin/main...HEAD -- ':!*.md' | xargs -r
+     grep -lE 'feature *= *"(bdb|tkrzw|kyotocabinet)"'` — Markdown is
+     excluded because docs, this file included, quote the pattern);
    - the diff changes a line naming a backend in any Cargo.toml
      (`git diff -U0 origin/main...HEAD -- '*Cargo.toml' | grep -E
      '^[+-][^+-].*(bdb|tkrzw|kyotocabinet)'`).

@@ -48,6 +48,16 @@ If the ladder runs out, STOP (Requirement 2.4).
 - A departure is argued into a class in
   `docs/findings/compatibility-policy.md`, with a register row.
 
+## Complexity (axis L)
+
+Measured, not read: complexity is the one Stage 2 question the reading
+ladder does not answer, because it is about cost, not output. Run both
+sides on a named workload in the same container — whole-process
+instructions (callgrind) and peak heap (massif), three repeats, spread
+stated — and attribute any regression to a source component on both
+sides, as #757 does. A fix makes oxpinyin do the work the way the pin
+does; output stays byte-identical and its differential stays the gate.
+
 ## Gating
 
 The differential is written after the derivation, to hold it: reference

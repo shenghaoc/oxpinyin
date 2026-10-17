@@ -15,7 +15,7 @@ rules: `AGENTS.md`. Crate roles: `.kiro/steering/structure.md`.
 |---|---|
 | **0** | Scaffold, pin, SPECs/fixtures (complete) |
 | **1** | Exact-output parity with the pin-built libpinyin oracle (differential testing) — complete: candidate surface bit-identical on all 10,190 corpus rows (`docs/testing/corpus-tail.md`); the sentence-trellis float band stays the frozen exception (row 11) |
-| **2** | **Current.** Bug-for-bug compatibility with the pin across the whole exported ABI and the user-store surfaces, defects included (ruling 2026-10-14 UTC). Behaviour is derived by reading the pin's source, then its disassembly — never by running experiments (`AGENTS.md`, "Stage 2 — bug-for-bug"); no performance work. Spec: `.kiro/specs/bug-for-bug/` |
+| **2** | **Current.** Bug-for-bug compatibility with the pin across the whole exported ABI and the user-store surfaces, defects included (ruling 2026-10-14 UTC). Behaviour is derived by reading the pin's source, then its disassembly — never by running experiments (`AGENTS.md`, "Stage 2 — bug-for-bug"). Complexity against the pin (axis L, #757) is measured and regressions fixed; optimisation beyond the pin waits for Stage 3. Spec: `.kiro/specs/bug-for-bug/` |
 | **3** | Performance — smaller binary, faster execution, much lower RAM than libpinyin. The default build stays the bug-for-bug binary; anything that is not bug-for-bug sits behind an opt-in compile flag, off by default. After Stage 2; some work landed early under the old "Stage 2" label (below). Spec: `.kiro/specs/stage3-performance/`. Model upgrades (trigram/KN, typo edges, own data) remain candidates, behind that flag |
 
 Stage 1 uses the backend's native tables (no redistribution required:
