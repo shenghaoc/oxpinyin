@@ -59,7 +59,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 config = args.next().ok_or("missing --opencc-config argument")?;
             }
             "--no-convert" => no_convert = true,
-            flag if flag.starts_with('-') => {
+            // A bare `-` is the stdin path, not a flag.
+            flag if flag.starts_with('-') && flag != "-" => {
                 return Err(format!("unknown option: {flag}").into());
             }
             path => {
