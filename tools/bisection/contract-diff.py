@@ -6495,6 +6495,13 @@ case('removed-candidate-before-cursor-zhuyin', mode='zhuyin', stderr=True, crash
 })(lambda k: _removed_candidate(k, before=True))
 
 
+# A unigram added to a live system item reaches the saved `.dbin`. The pin's
+# `add_unigram_frequency` writes the item (`SubPhraseIndex::add_unigram_frequency`,
+# `phrase_index.cpp:150-178`: the item's own field and `m_total_freq`) and the
+# save's `diff` (`:392-436`) emits a MODIFY record under a raised header.
+_replay_case('unigram-add-live-item', lambda p: ([], _watch(p)))
+
+
 # Batch F (#525): `zhuyin.cpp`'s phrase-table walk in `_add_phrase`. A token
 # whose sub-index equals the target trips `assert(PHRASE_INDEX_LIBRARY_INDEX
 # (token) != index)` (`:440`); a lone match whose phrase-index item text
