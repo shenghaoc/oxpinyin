@@ -5,8 +5,6 @@
 //! full round-trip: key encoding → store write → store read → value
 //! decoding.
 
-use std::path::PathBuf;
-
 use oxpinyin_core::ChewingKey;
 // The fixtures are written with the crate's own row schema, not a copy of
 // it: a layout change has to break the reader's behaviour here, never pass
@@ -16,6 +14,7 @@ use oxpinyin_data::row_format::pinyin_index::{
     encode_item, item2_stride,
 };
 use oxpinyin_store::{DefaultStore, RawReadStore, ReadStore, WriteStore};
+use tempfile::TempDir;
 
 fn key_no_tone(spelling: &str) -> ChewingKey {
     ChewingKey::from_pinyin(spelling).expect("valid spelling")
@@ -37,24 +36,19 @@ fn encode_items(entries: &[(u32, &[ChewingKey])]) -> Vec<u8> {
 
 // ── Fixture builder ──────────────────────────────────────────────
 
-use std::sync::atomic::{AtomicU32, Ordering};
-
-static FIXTURE_COUNTER: AtomicU32 = AtomicU32::new(0);
-
 struct Fixture {
-    dir: PathBuf,
+    dir: TempDir,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let n = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "oxpinyin-chewing-test-{}-{}",
-            std::process::id(),
-            n,
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join(oxpinyin_store::default_store_file("pinyin_index"));
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-chewing-test-")
+            .tempdir()
+            .unwrap();
+        let path = dir
+            .path()
+            .join(oxpinyin_store::default_store_file("pinyin_index"));
         write_fixture(&path);
         Self { dir }
     }
@@ -62,14 +56,9 @@ impl Fixture {
     fn store(&self) -> DefaultStore {
         let path = self
             .dir
+            .path()
             .join(oxpinyin_store::default_store_file("pinyin_index"));
         DefaultStore::open_read_only(&path).unwrap()
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 

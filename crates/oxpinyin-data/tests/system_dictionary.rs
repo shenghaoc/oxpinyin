@@ -6,9 +6,6 @@
 //! a `gb_char.bin` chunk file through the shared `ChunkBuilder` — and
 //! exercises the `Dictionary` trait plus the runtime's extra surface.
 
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
-
 use oxpinyin_core::{
     ChewingKey, Completeness, Dictionary, PHRASE_INDEX_LIBRARY_COUNT, PhraseIndexRanges,
     SyllableKey,
@@ -25,37 +22,29 @@ use oxpinyin_store::DefaultStore;
 
 mod support;
 use support::{ChunkBuilder, write_raw_rows};
-
-static FIXTURE_COUNTER: AtomicU32 = AtomicU32::new(0);
+use tempfile::TempDir;
 
 struct Fixture {
-    dir: PathBuf,
+    dir: TempDir,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let n = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "oxpinyin-system-dict-test-{}-{}",
-            std::process::id(),
-            n,
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        write_pinyin_index(&dir.join(SystemDbm::PinyinIndex.file_name()));
-        write_phrase_index(&dir.join(SystemDbm::PhraseIndex.file_name()));
-        write_gb_char_chunk(&dir.join("gb_char.bin"));
+        let dir = scratch_dir("oxpinyin-system-dict-test-");
+        write_pinyin_index(&dir.path().join(SystemDbm::PinyinIndex.file_name()));
+        write_phrase_index(&dir.path().join(SystemDbm::PhraseIndex.file_name()));
+        write_gb_char_chunk(&dir.path().join("gb_char.bin"));
         Self { dir }
     }
 
     fn dict(&self) -> SystemDictionary {
-        SystemDictionary::open(&self.dir).unwrap()
+        SystemDictionary::open(self.dir.path()).unwrap()
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
-    }
+/// A fresh, uniquely named data dir, removed on drop (including unwind).
+fn scratch_dir(prefix: &str) -> TempDir {
+    tempfile::Builder::new().prefix(prefix).tempdir().unwrap()
 }
 
 // ── Encoding helpers ─────────────────────────────────────────────
@@ -368,8 +357,8 @@ fn suggest_after_walks_the_longer_phrases() {
 #[test]
 fn a_missing_dbm_fails_open() {
     let fix = Fixture::new();
-    std::fs::remove_file(fix.dir.join(SystemDbm::PhraseIndex.file_name())).unwrap();
-    assert!(SystemDictionary::open(&fix.dir).is_err());
+    std::fs::remove_file(fix.dir.path().join(SystemDbm::PhraseIndex.file_name())).unwrap();
+    assert!(SystemDictionary::open(fix.dir.path()).is_err());
 }
 
 /// A data dir whose only pinyin row is `ni`, holding (in stored order)
@@ -377,13 +366,7 @@ fn a_missing_dbm_fails_open() {
 /// 0x0100_0011 ni3, 0x0100_0014 ni2, 0x0100_0012 ni3 and 0x0100_0013 ni3
 /// (library 1, but no chunk item: unreadable).
 fn convert_fixture() -> Fixture {
-    let n = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "oxpinyin-system-dict-convert-{}-{}",
-        std::process::id(),
-        n,
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = scratch_dir("oxpinyin-system-dict-convert-");
     let ni = key("ni");
     let ni3 = ni.with_tone(3);
     let ni2 = ni.with_tone(2);
@@ -397,7 +380,7 @@ fn convert_fixture() -> Fixture {
     ]);
     let n_key = ChewingKey::new(ni.initial, 0, 0, 0);
     write_raw_rows::<DefaultStore>(
-        &dir.join(SystemDbm::PinyinIndex.file_name()),
+        &dir.path().join(SystemDbm::PinyinIndex.file_name()),
         &[
             (encode_complete(&[ni]), items.clone()),
             // An empty marker: the key exists for longer phrases only.
@@ -405,14 +388,14 @@ fn convert_fixture() -> Fixture {
             (encode_incomplete(&[n_key]), items),
         ],
     );
-    write_raw_rows::<DefaultStore>(&dir.join(SystemDbm::PhraseIndex.file_name()), &[]);
+    write_raw_rows::<DefaultStore>(&dir.path().join(SystemDbm::PhraseIndex.file_name()), &[]);
     let pron = |key: ChewingKey| vec![(key.to_packed().to_le_bytes().to_vec(), 5_u32)];
     let mut builder = ChunkBuilder::new(20);
     builder.add(0x10, 5, "你", pron(ni3));
     builder.add(0x11, 5, "拟", pron(ni3));
     builder.add(0x12, 5, "逆", pron(ni3));
     builder.add(0x14, 5, "泥", pron(ni2));
-    std::fs::write(dir.join("gb_char.bin"), builder.build()).unwrap();
+    std::fs::write(dir.path().join("gb_char.bin"), builder.build()).unwrap();
     Fixture { dir }
 }
 

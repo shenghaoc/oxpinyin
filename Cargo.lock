@@ -650,6 +650,7 @@ version = "0.1.0"
 dependencies = [
  "oxpinyin-core",
  "oxpinyin-store",
+ "tempfile",
 ]
 
 [[package]]
@@ -692,6 +693,7 @@ dependencies = [
  "oxpinyin-engine",
  "oxpinyin-runtime",
  "oxpinyin-user",
+ "tempfile",
 ]
 
 [[package]]
@@ -713,6 +715,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-engine",
  "oxpinyin-user",
+ "tempfile",
 ]
 
 [[package]]
@@ -751,6 +754,7 @@ dependencies = [
  "oxpinyin-data",
  "oxpinyin-store",
  "proptest",
+ "tempfile",
 ]
 
 [[package]]
