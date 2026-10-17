@@ -71,6 +71,9 @@ compact_str = "0.10"
 phf = "0.14"
 phf_codegen = "0.14"
 glib-sys = "0.22"
+# Dynamic loading of a libpinyin/libzhuyin shared object by path
+# (libpinyin-abi only). Already in the lockfile through bindgen's clang-sys.
+libloading = "0.8"
 
 # Release .so size/speed lever: fat LTO + one codegen unit lets the linker
 # drop cross-crate dead code and duplicate generic instantiations that

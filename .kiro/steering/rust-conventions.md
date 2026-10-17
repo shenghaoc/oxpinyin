@@ -11,7 +11,8 @@ for development; bumps use a dedicated human-reviewed PR.
 + module soundness note) · every other portable crate `forbid` (the
 constitution's floor for user/engine is `deny`; they sit at `forbid` in
 practice) · capi/zhuyin-capi/oracle `allow` at FFI only, `// SAFETY:` on
-every block (mechanically enforced — AGENTS.md constitution §5).
+every block (mechanically enforced — AGENTS.md constitution §5) ·
+libpinyin-abi `deny`, with its `subject` module the only allowed one.
 
 **Errors:** every public API returns `Result`; nothing panics on any input — a
 panic is a defect of the same severity as data loss. Public error enums are
