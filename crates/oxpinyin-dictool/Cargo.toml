@@ -21,6 +21,9 @@ oxpinyin-core = { workspace = true }
 oxpinyin-facade = { path = "../oxpinyin-facade", default-features = false }
 oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [features]
 # Backend selection, forwarded to oxpinyin-facade, which carries it down
 # facade -> runtime -> user -> data -> store (one backend per binary; see

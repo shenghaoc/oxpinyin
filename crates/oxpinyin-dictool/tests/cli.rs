@@ -22,7 +22,6 @@
 //! drags glib); the workspace's macOS/Windows lanes exclude this crate,
 //! so this file runs in the Linux test and store-backend lanes.
 
-use std::path::PathBuf;
 use std::process::Command;
 
 /// The classic-format corpus: comments, blanks, a 2-field line (ABI
@@ -36,11 +35,14 @@ const INPUT: &str = "\
 计算机 ji'suan'ji 10
 ";
 
-fn temp_dir(tag: &str) -> PathBuf {
-    let path =
-        std::env::temp_dir().join(format!("oxpinyin-dictool-cli-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&path);
-    path
+/// A fresh, uniquely named scratch root, removed when the returned guard
+/// drops — after every dictool child the test spawned has exited, since
+/// each `dictool` call waits for its child.
+fn temp_dir(tag: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("oxpinyin-dictool-cli-{tag}-"))
+        .tempdir()
+        .expect("temp dir creates")
 }
 
 fn dictool(args: &[&str]) -> std::process::Output {
@@ -71,7 +73,8 @@ fn help_exits_zero_and_prints_usage() {
 /// second import/export cycle reproduces it exactly.
 #[test]
 fn import_then_export_is_a_fixed_point() {
-    let work = temp_dir("roundtrip");
+    let tmp = temp_dir("roundtrip");
+    let work = tmp.path();
     let user_a = work.join("user-a");
     let user_b = work.join("user-b");
     std::fs::create_dir_all(&user_a).expect("user dir A creates");
@@ -144,8 +147,6 @@ fn import_then_export_is_a_fixed_point() {
         "import→export must be a fixed point: count drift, pinyin \
          re-canonicalization, or row-order instability all fail this"
     );
-
-    std::fs::remove_dir_all(&work).ok();
 }
 
 /// A malformed input line fails the run with the line-numbered message
@@ -153,7 +154,8 @@ fn import_then_export_is_a_fixed_point() {
 /// too, not a crash.
 #[test]
 fn malformed_input_fails_with_a_line_numbered_error() {
-    let work = temp_dir("malformed");
+    let tmp = temp_dir("malformed");
+    let work = tmp.path();
     let user = work.join("user");
     std::fs::create_dir_all(&user).expect("user dir creates");
     let user_flag = user.to_str().expect("temp path is UTF-8").to_owned();
@@ -196,15 +198,14 @@ fn malformed_input_fails_with_a_line_numbered_error() {
         stderr.contains("import requires an input"),
         "the usage message names the missing argument: {stderr}"
     );
-
-    std::fs::remove_dir_all(&work).ok();
 }
 
 /// Export from a user dir that never saw an import answers an empty
 /// document (or a bare header-free empty file), not an error.
 #[test]
 fn export_of_a_fresh_user_dir_is_clean() {
-    let work = temp_dir("fresh-export");
+    let tmp = temp_dir("fresh-export");
+    let work = tmp.path();
     let user = work.join("user");
     std::fs::create_dir_all(&user).expect("user dir creates");
     let out = work.join("export.txt");
@@ -220,5 +221,4 @@ fn export_of_a_fresh_user_dir_is_clean() {
         body.lines().all(str::is_empty),
         "no phrase rows can exist yet: {body:?}"
     );
-    std::fs::remove_dir_all(&work).ok();
 }
