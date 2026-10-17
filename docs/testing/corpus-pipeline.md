@@ -49,12 +49,16 @@ with the engine.
 
 ## Dependencies
 
-**Zero Cargo dependencies.** Each stage was weighed against a crate and
-a hand-roll or a binary won:
+**One Cargo dependency, `memchr`.** Each stage was weighed against a crate
+and a hand-roll or a binary won; the one crate is the byte-substring
+search under the hand-rolled XML scanner (adopted 2026-10-17 UTC: the
+naive `windows()` search it replaced was about a third of the cleaner's
+instructions on real zhwiki page blocks, and the swap is byte-identical
+in output):
 
 | Stage | Choice | Why |
 |---|---|---|
-| XML `<page>` extraction | hand-rolled two-tag byte scanner (`xml.rs`) | a `<page>`/`<text>` scan does not justify a parser dependency |
+| XML `<page>` extraction | hand-rolled two-tag byte scanner (`xml.rs`) over `memchr::memmem::find` | a `<page>`/`<text>` scan does not justify a parser dependency; the substring search under it is the scanner's hot path |
 | markup stripping | hand-rolled two-pass cleaner (`markup.rs`) | rules are small and testable; no extractor crate needed |
 | trad → simp | shell to the **`opencc` binary** (Apache-2.0), config `t2s` | OpenCC is the standard, permissively licensed converter; shelling adds zero Cargo dependencies and keeps the crate portable. The runtime requirement is one documented executable (`--opencc` overrides, `--no-convert` skips) |
 | sentence split | hand-rolled (`split.rs`) | a punctuation scan |

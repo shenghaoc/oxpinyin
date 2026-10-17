@@ -2,8 +2,8 @@
 //!
 //! Deliberately no new Cargo dependency: `OpenCC` is the standard
 //! permissively-licensed (Apache-2.0) converter, and calling the
-//! standard `opencc` binary keeps the corpus front-end dependency-free
-//! and portable. The runtime requirement is one documented executable;
+//! standard `opencc` binary keeps the corpus front-end free of a
+//! converter dependency and portable. The runtime requirement is one documented executable;
 //! `--no-convert` skips the stage entirely when a corpus is already
 //! simplified.
 

@@ -641,8 +641,10 @@ dependencies = [
 name = "oxpinyin-corpus"
 version = "0.1.0"
 dependencies = [
+ "memchr",
  "oxpinyin-testsupport",
  "oxpinyin-training",
+ "proptest",
 ]
 
 [[package]]
