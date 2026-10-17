@@ -46,7 +46,10 @@ The import gate additionally requires the pin-built IBus frontend objects;
 native backend dump utilities are among the stateful gates' other prerequisites.
 The requested-row training gates use `db5.3_dump` for bdb, `kchashmgr` for kc,
 and `tkrzw_dbm_util` for tkrzw; installing a backend development library alone
-does not provide those command-line tools.
+does not provide those command-line tools. `tools/cloud/setup.sh` provides
+all three (`docs/runbooks/cloud.md`): it requires `db5.3_dump` and `kchashmgr`
+and builds a sound libtkrzw, with its `tkrzw_dbm_util`, when the host's fails
+`tools/tkrzw/distro-probe.sh`.
 
 The registry's `oracle_variant` defaults to `unpatched`. Only
 `bigram-export-diff` and `residue-a-tail-diff` select `bigram-export-strjoinv`.

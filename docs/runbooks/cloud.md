@@ -1,7 +1,8 @@
 # Cloud sessions — provisioning a Claude Code cloud host
 
 A Claude Code cloud session is a supported host for every gate in this
-repository (`AGENTS.md`). It is a root container with Docker installed
+repository (`AGENTS.md`), and so is any Linux host with rootless podman
+(below). A cloud session is a root container with Docker installed
 but not necessarily running, outbound HTTPS only through a session proxy
 that re-terminates TLS, and a network policy that allows a fixed list of
 domains. `tools/cloud/setup.sh` brings it to the state the gates expect;
@@ -21,9 +22,10 @@ tools/cloud/setup.sh
 
 It is idempotent: every step checks its result and skips when it holds,
 so a second run only re-verifies (under a second here). Options:
-`--cache-dir DIR` (oracle prefixes and the model cache; default
-`~/.cache/oxpinyin`), `--cells`, `--jobs`, `--no-pull` (build the
-libraries even if the published image exists). Progress goes to stderr;
+`--cache-dir DIR` (oracle prefixes, the model cache and the tkrzw build;
+default `~/.cache/oxpinyin`), `--cells`, `--jobs`, `--no-pull` (build the
+libraries even if the published image exists). `OXPINYIN_CONTAINER`
+names the container command (see step 1). Progress goes to stderr;
 stdout is one line per cell:
 
 ```
@@ -55,10 +57,21 @@ provision stops the `source` with an error. The file needs bash.
 0. Installs Valgrind with `apt-get install -y valgrind` (through `sudo`
    when not root) if `valgrind --version` fails, and prints the version in
    the summary; `benches.md` requires every measurement report to state it.
-1. Starts `dockerd` detached (`setsid nohup dockerd`) unless
-   `docker info` already answers, and waits for it. When it starts the
-   daemon it first installs `/root/.ccr/agent-proxy-ca.crt` into the
-   system trust store, so the daemon's own pulls trust the session proxy.
+   Then requires the backend dump utilities the stateful differentials
+   call, for the cells requested: `db5.3_dump` (package `db5.3-util`, bdb)
+   and `kchashmgr` (`kyotocabinet-utils`, kc). A missing one is installed
+   with `apt-get install -y` when running as root; otherwise the script
+   prints `run as root: apt-get install -y <packages>` and exits 1. It never
+   runs `sudo` for these. `tkrzw_dbm_util` (tkrzw) comes from step 3b.
+1. Chooses the container command: `$OXPINYIN_CONTAINER` if set, else
+   `podman` if it is on `PATH`, else `docker`; every container call goes
+   through it. Only the docker path starts `dockerd` (detached, `setsid
+   nohup dockerd`) unless `docker info` already answers, and waits for it.
+   When it starts the daemon it first installs
+   `/root/.ccr/agent-proxy-ca.crt` into the system trust store, so the
+   daemon's own pulls trust the session proxy. podman needs no daemon, no
+   root and no `sudo`: `podman info` must answer, and the pulls, the
+   `deps` build and the data runs are the same commands rootless.
 2. Pulls the `base_image` digest of `tools/oracle/oracle-pin.txt`
    (`debian:testing@sha256:dab11cdb…`), retrying 429s from the registry
    at 2, 4, 8 and 16 s.
@@ -77,6 +90,22 @@ provision stops the `source` with an error. The file needs bash.
    `libzhuyin_sha256_<cell>` in `oracle-pin.txt` and **stops with exit 3
    after printing both values** if any differs: a library that was *built*
    here and differs means the recipe is not reproducible on this host.
+   3b. The tkrzw cell's host library. `tools/tkrzw/distro-probe.sh` is run
+   against the host's `libtkrzw` (`tkrzw_dbm_util` on `PATH`). If it
+   exits 0 nothing more happens. If it reports a defect, or finds no
+   tkrzw, upstream tkrzw is built from source at
+   `9ee84164cf45e441aa8186418c03a02c9b89f08b` (1.0.34: its sentinel fix
+   makes defect 1 immune to LTO; 1.0.32 is healthy only without LTO,
+   `docs/findings/tkrzw-distro-compat.md`) with `env -u CFLAGS -u CXXFLAGS
+   -u LDFLAGS ./configure --prefix=<cache>/tkrzw && make && make install`,
+   so no LTO or `-Bsymbolic-functions` can come in from the environment.
+   The probe is then run against that build and the build is refused
+   unless it prints `RESULT : healthy` and resolves to the cache. The
+   environment file puts `<cache>/tkrzw` first on `PKG_CONFIG_PATH`,
+   `LD_LIBRARY_PATH` and `PATH` (so `tkrzw_dbm_util` is the built one), and
+   the script checks with `ldd` that the tkrzw oracle `libpinyin.so`
+   resolves `libtkrzw.so.1` to `<cache>/tkrzw/lib`. A rerun skips the
+   build when the cached revision is present and its probe passes.
 4. Fetches model20 with `tools/model/fetch-model.sh` into
    `<cache>/model20`, runs `build-oracle.sh --regen-data` per cell inside
    the image, and re-verifies the installed files against
@@ -123,9 +152,10 @@ the apt dependency.
 ## Setup time and disk use
 
 Measured on 2026-10-16 UTC in a 4-core, 15 GiB cloud session (x86_64,
-`/dev/vda`, `docker` 29.8.2). No oracle image is published yet, so only
-the build path ("without the published image") was measured; the "with"
-column is not measured and is not estimated.
+`/dev/vda`, `docker` 29.8.2). No oracle image was reachable in that run, so
+only the build path ("without the published image") was measured here; the
+"with" column is measured end to end in "With the published image, from
+scratch" below, not step by step.
 
 **Starting state of the from-scratch figures.** Docker emptied and stopped,
 and the cache removed, then `df` read before and after:
@@ -171,6 +201,140 @@ docker system df                                  # images 1.03GB, build cache 1
 The build cache shares its layers with the images (`docker system df`
 reports 12.29 kB of it reclaimable), so the two Docker figures are not
 additive. `docker builder prune -af` after the setup drops the cache copy.
+
+### tkrzw step and the CI child
+
+CI's tkrzw child uses Debian's `libtkrzw` 1.0.32, built without LTO; the
+cloud setup builds upstream 1.0.34 (`9ee8416`) when the host's library fails
+the probe. The two differ in version, and both pass
+`tools/tkrzw/distro-probe.sh` (`RESULT : healthy`), which is the criterion
+the setup enforces.
+
+### Rootless podman on a workstation
+
+Measured 2026-10-16 UTC on the maintainer's own host (Ubuntu 26.10, 12
+cores, 15 GiB, podman 5.8.6 rootless, no `sudo`, no Docker; the host's
+`libtkrzw` 1.0.32 is Ubuntu's and fails the probe). Not a cloud session, so
+these figures are **not** the cloud figures above. The podman image store
+already held the pinned base image and the `deps` image, so neither was
+pulled or built; the cache directory was new and empty. `db5.3_dump` and
+`kchashmgr` were unpacked from the distribution `.deb`s onto `PATH`
+(`apt-get download`, `dpkg -x`) because the host user cannot install
+packages. The published oracle image existed on this host's registry
+path and was pulled, so the libraries came from it, not from a build.
+
+`SECONDS` offsets from the stderr of `tools/cloud/setup.sh --cache-dir
+<new>`:
+
+| Step | Seconds |
+| --- | --- |
+| podman check, base image present (`0` to `1`) | 1 |
+| published image pull, three cells copied out, hashes match (`1` to `7`) | 6 |
+| tkrzw: probe, source fetch, configure, `make -j12`, install, probe, `ldd` (`7` to `45`) | 38 |
+| model20 fetch and `--regen-data` bdb, kc, tkrzw (`45` to `114`, `114` to `205`, `205` to `279`) | 69 (including the 20 s fetch), 91, 74 |
+| setup, end to end (`time`) | **278.6 s** |
+
+Rerun with nothing removed: `real 0m1.959s`; it re-probes the host
+library, probes the cached build, and re-runs the `ldd` check. The cached
+build is `120M`.
+
+After sourcing the generated environment file, the tkrzw oracle
+`libpinyin.so`, the `oxpinyin-capi` tkrzw `libpinyin_capi.so` and an
+`oxpinyin-store` test binary built with `--features tkrzw`
+(`cargo test -p oxpinyin-store --no-default-features --features tkrzw
+--no-run`) all resolve `libtkrzw.so.1` to `<cache>/tkrzw/lib`; the store
+test binary also carries that directory as its `RUNPATH`. On this host the
+`issue784-index-keys-*` contract-diff cases (26, pinyin and zhuyin) ran
+`MATCH` 26 of 26 on bdb, kc and tkrzw.
+
+### This change in a Claude Code cloud session
+
+Measured 2026-10-16 UTC in a Claude Code cloud session with this change at
+`c270ad8`: 4 cores, x86_64, root, `docker` 29.8.2, no `podman`. This is the
+session's own host, not the maintainer's workstation above, and not the
+earlier 15 GiB session in "Setup time and disk use". `~/.cache/oxpinyin`
+did not exist before the first run.
+
+**Image and tkrzw.** In this run no oracle image was found at the tag the script
+tries (`ghcr.io/shenghaoc/oxpinyin-oracle:074a2219c90f-…`), so the libraries
+were **built**, not pulled, and the `deps` image was built. The host
+`libtkrzw` failed the probe, so the **tkrzw source build ran** (upstream
+`9ee8416`). `db5.3-util` and `kyotocabinet-utils` were installed with
+`apt-get` (root).
+
+`SECONDS` offsets from the stderr of `bash tools/cloud/setup.sh`:
+
+| Step | Seconds |
+| --- | --- |
+| dump utilities (`1` to `4`, including the `dockerd` start) | 3 |
+| base image pull and the published-image attempt (`4` to `8`) | 4 |
+| `deps` image build (`8` to `94`) | 86 |
+| libraries bdb, kc, tkrzw (`94` to `142`, `142` to `212`, `212` to `267`) | 48, 70, 55 |
+| tkrzw: probe, source build, install, probe, `ldd` (`267` to `329`) | 62 |
+| model20 fetch and `--regen-data` bdb, kc, tkrzw (`329` to `398`, `398` to `516`, `516` to `596`) | 69, 118, 80 |
+| setup, end to end (`time`) | **595.98 s** |
+
+Rerun with nothing removed: `real 0m1.164s`.
+
+**Capi and contract diff.** `oxpinyin-capi` and `oxpinyin-zhuyin-capi` debug
+builds, one target directory per cell (`--no-default-features --features
+bdb|kyotocabinet|tkrzw`), then `tools/bisection/run-contract-diff.sh` with
+`--cases` set to the 26 `issue784-index-keys-*` cases (pinyin and zhuyin),
+after `source ~/.oxpinyin-oracle.env`:
+
+| Cell | Capi build (`oxpinyin-capi`) | `issue784-index-keys-*` |
+| --- | --- | --- |
+| bdb | 24.3 s | 26 of 26 `MATCH` |
+| kc | 20.0 s | 26 of 26 `MATCH` |
+| tkrzw | 21.1 s | 26 of 26 `MATCH` |
+
+`ldd` on the tkrzw `libpinyin_capi.so` resolves `libtkrzw.so.1` to
+`~/.cache/oxpinyin/tkrzw/lib/libtkrzw.so.1`; the bdb and kc ones resolve
+`libdb-5.3.so` and `libkyotocabinet.so.16` from `/lib/x86_64-linux-gnu`.
+`issue785` has no cases of its own in `contract-diff.py`; its mask behaviour
+is inside the 784 mask cases.
+
+### With the published image, from scratch
+
+Measured 2026-10-16 UTC on the same 4-core cloud host as above, after the
+session's network policy allowed `ghcr.io` and
+`pkg-containers.githubusercontent.com`. The container was restarted, so
+`db5.3-util` and `kyotocabinet-utils` were still installed from the earlier
+run (no install step), and `~/.cache/oxpinyin` and `/var/lib/docker` were
+emptied before the run, so everything else started from nothing.
+
+The published oracle image **was pulled** (`ghcr.io/shenghaoc/oxpinyin-oracle:074a2219c90f-…`),
+and all three cells' libraries matched `oracle-pin.txt`, so no library was
+built. The tkrzw source build still ran (the host library failed the probe),
+and the `deps` image was still built, because `--regen-data` needs it.
+
+`SECONDS` offsets from the stderr of `bash tools/cloud/setup.sh`:
+
+| Step | Seconds |
+| --- | --- |
+| `dockerd` start and pinned-digest pull, two retries (`1` to `17`) | 16 |
+| published image pull, three cells copied out, hashes match (`17` to `21`) | 4 |
+| tkrzw: probe, source build, install, probe, `ldd` (`21` to `86`) | 65 |
+| `deps` image build (starts at `89`) and model20 fetch, inside the bdb data step (`86` to `244`) | 158 for the step |
+| `--regen-data` kc, tkrzw (`244` to `359`, `359` to `441`) | 115, 82 |
+| setup, end to end (`time`) | **440.71 s** |
+
+Against the 595.98 s build-only run above, the image saves the three
+library builds (173 s there) and adds a 4 s pull; the other steps differ
+between runs by amounts the two runs do not separate.
+
+### When the published image cannot be pulled
+
+`setup.sh` keeps the pull's stderr in `<cache>/pull-published.err`, logs its
+last five lines, and says which case it is before building the libraries:
+`manifest unknown / not found` (the tag is not published) or `pull FAILED
+(network, auth or proxy, not "not found")` for anything else. Both fall
+back to the build.
+
+### Not measured here
+
+Disk use in this session and whether `podman info` or `docker info` works
+in a Codex cloud environment were not measured.
 
 ## Gates in a cloud session
 
