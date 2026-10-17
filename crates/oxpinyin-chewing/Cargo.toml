@@ -13,4 +13,4 @@ workspace = true
 [dev-dependencies]
 # keyboard-tables property test; pinned to the same version as the
 # core/user/engine property suites (workspace lock pins =1.11.0).
-proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }

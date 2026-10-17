@@ -32,7 +32,7 @@ tkrzw = ["oxpinyin-data/tkrzw"]
 [dev-dependencies]
 # Store micro-benches (benches/); workspace lock pins 0.8.
 criterion = "0.8"
-proptest = { version = "=1.11.0", default-features = false, features = ["std"] }
+proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 
 [[bench]]
 name = "export_phrases"
