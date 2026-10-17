@@ -3109,6 +3109,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 crate::persistence::SaveSource {
                     state: &state,
                     kept: &kept,
+                    compacted: &[],
                 },
                 &originals,
                 &target.versions,
@@ -3144,6 +3145,17 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// compacted — failures the pin has no counterpart for. A filesystem
     /// failure is never one.
     pub fn save_reporting(&mut self) -> Result<SaveReport, UserStoreError> {
+        self.save_reporting_compacted(&[])
+    }
+
+    /// [`Self::save_reporting`] with the nibbles whose live empty sub-index
+    /// the pin's `compact` rebuilt from no items: their saved log records a
+    /// new header total of zero even though the system chunk's old total is
+    /// the one the failed load read (`phrase_index.cpp:648-675`).
+    pub fn save_reporting_compacted(
+        &mut self,
+        compacted: &[u8],
+    ) -> Result<SaveReport, UserStoreError> {
         let mut report = SaveReport::default();
         if let Some(target) = self.inner.libpinyin.clone() {
             let Some(dir) = target.dir.as_deref() else {
@@ -3162,6 +3174,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 crate::persistence::SaveSource {
                     state: &state,
                     kept: &kept,
+                    compacted,
                 },
                 &originals,
                 &target.versions,

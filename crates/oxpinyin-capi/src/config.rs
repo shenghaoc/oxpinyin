@@ -203,7 +203,11 @@ pub extern "C" fn pinyin_load_addon_phrase_library(context: *mut PinyinContext, 
 
     // SAFETY: `context` is non-null and was produced by `pinyin_init`.
     let ctx = unsafe { context_ref(context) };
-    ctx.load_addon(index)
+    let loaded = ctx.load_addon(index);
+    // The pin's `_load_phrase_library` reports success and logs the
+    // `SubPhraseIndex::load` critical the ignored refusal left (`:290-300`).
+    crate::context::log_layout_faults(ctx);
+    loaded
 }
 
 /// Unload an addon phrase library.
@@ -261,7 +265,11 @@ pub extern "C" fn pinyin_load_phrase_library(context: *mut PinyinContext, index:
     // loaded library is a `SYSTEM_FILE` or `USER_FILE` (an index of 16 or
     // more answers `false` first, `:448`); which rows are is the
     // context's `table.conf`.
-    match ctx.core.load_phrase_library(u32::from(index)) {
+    let outcome = ctx.core.load_phrase_library(u32::from(index));
+    // The reload maps the chunk again (`:264`) and logs the critical of a
+    // layout the pin then ignores.
+    crate::context::log_layout_faults(ctx);
+    match outcome {
         Ok(loaded) => loaded,
         // Class (c), `memory_chunk.h:493`: the library being loaded again is
         // a directory the pin maps and asserts on.
@@ -370,7 +378,11 @@ pub extern "C" fn pinyin_mask_out(context: *mut PinyinContext, mask: u32, value:
     // SAFETY: `context` is non-null and was produced by `pinyin_init`;
     // the unique borrow lasts only for the mask call.
     let ctx = unsafe { context_mut(context) };
-    match ctx.mask_out(mask, value) {
+    let outcome = ctx.mask_out(mask, value);
+    // The mask reloads every loaded system library (`:1265`); a layout the
+    // pin refuses there logs its critical and is ignored.
+    crate::context::log_layout_faults(ctx);
+    match outcome {
         oxpinyin_facade::MaskOutOutcome::Done(answer) => answer,
         oxpinyin_facade::MaskOutOutcome::OverlongIndexKey => {
             // Class (c), `chewing_large_table2_bdb.cpp:529`: the user

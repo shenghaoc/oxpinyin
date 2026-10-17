@@ -917,6 +917,14 @@ impl AddonDictionary {
         self.libraries.load(index, &path)
     }
 
+    /// Takes the layout faults of the addon libraries loaded since the
+    /// last take — the pin's `SubPhraseIndex::load` criticals, for the C
+    /// ABI to log where the pin logs them.
+    #[must_use]
+    pub fn take_layout_faults(&self) -> Vec<crate::phrase_library::LayoutFault> {
+        self.libraries.take_layout_faults()
+    }
+
     /// Drops addon library `index` — `pinyin_unload_addon_phrase_library`.
     /// Answers `true` whether or not it was loaded, the pin's unconditional
     /// `unload` (`pinyin.cpp:124-131`).

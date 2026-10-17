@@ -40,6 +40,10 @@ pub extern "C" fn zhuyin_begin_add_phrases(
 
     // SAFETY: `context` is non-null and was produced by `zhuyin_init`.
     let ctx = unsafe { context_ref(context) };
+    // `begin_add_phrases` starts with a compact (`pinyin.cpp:657`,
+    // `zhuyin.cpp:542`); a layout-failed empty sub-index's local total
+    // becomes zero there.
+    let _compacted = ctx.core.compact_layout_failed();
     let handle = ImportHandle {
         index,
         user: ctx.user_store(),

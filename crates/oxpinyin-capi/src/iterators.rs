@@ -65,6 +65,10 @@ pub fn begin_add_phrases_impl(context: *mut PinyinContext, index: u8) -> *mut Im
     // `CapiContext::new_user_only`; the borrow lasts only for this
     // constructor.
     let ctx = unsafe { context_ref(context) };
+    // `begin_add_phrases` starts with a compact (`pinyin.cpp:657`,
+    // `zhuyin.cpp:542`); a layout-failed empty sub-index's local total
+    // becomes zero there.
+    let _compacted = ctx.core.compact_layout_failed();
     let handle = ImportHandle {
         index,
         user: ctx.user_store(),

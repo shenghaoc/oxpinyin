@@ -14,12 +14,14 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 
 use oxpinyin_core::{ChewingKey, TrellisItem};
 
 use crate::chewing_table::key_matches;
-use crate::phrase_library::{LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk};
+use crate::phrase_library::{
+    LayoutFault, LibraryError, PhraseItemView, PhraseLibrary, RowFault, verify_chunk,
+};
 
 pub use crate::system_files::SYSTEM_LIBRARY_FILES as SYSTEM_LIBRARY_STEMS;
 
@@ -58,11 +60,12 @@ impl Loaded {
 
 /// The phrase libraries of one facade, dispatched by token nibble.
 ///
-/// Every reader maps its chunk file on open and holds it; nothing here
-/// scans anything eagerly beyond the mmap-time checksum pass upstream
-/// itself performs. Libraries whose file is absent are simply unloaded —
-/// token resolution answers `None` for their nibble, matching upstream's
-/// `ERROR_NO_SUB_PHRASE_INDEX`.
+/// Every reader maps its chunk on open and holds it; nothing here scans
+/// anything eagerly beyond the mmap-time checksum pass upstream itself
+/// performs. A layout the pin's `SubPhraseIndex::load` refuses inside the
+/// chunk is present but empty, as the pin leaves it; a file that is absent
+/// is simply unloaded, and token resolution answers `None` for its nibble,
+/// matching upstream's `ERROR_NO_SUB_PHRASE_INDEX`.
 pub struct PhraseLibraries {
     /// nibble → library, `None` = not loaded.
     by_nibble: [RwLock<Option<Loaded>>; 16],
@@ -78,6 +81,10 @@ pub struct PhraseLibraries {
     /// item: whether a frequency table is there to price with, which the
     /// wrapping [`Self::total`] cannot tell when it lands on zero.
     stocked: AtomicU32,
+    /// The pin's `g_return_val_if_fail` criticals from `SubPhraseIndex::load`
+    /// that the caller must emit where the pin emits them. Drained by the C
+    /// ABI after the operation that loaded or re-mapped the library.
+    layout_faults: Mutex<Vec<LayoutFault>>,
 }
 
 /// The fault and diagnostic paths from one validation of each selected
@@ -99,7 +106,25 @@ impl PhraseLibraries {
             unmapped: Vec::new(),
             total: AtomicU32::new(0),
             stocked: AtomicU32::new(0),
+            layout_faults: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Takes the layout faults recorded since the last take, in the order
+    /// the libraries loaded or re-mapped. The C ABI logs each as the pin's
+    /// `g_return_val_if_fail` critical (`phrase_index.cpp:354-356`).
+    #[must_use]
+    pub fn take_layout_faults(&self) -> Vec<LayoutFault> {
+        std::mem::take(
+            &mut *self
+                .layout_faults
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    fn record_layout_fault(&self, fault: LayoutFault) {
+        record_layout_fault(&self.layout_faults, fault);
     }
 
     /// Opens the libraries named by `(nibble, file)` pairs from `dir`;
@@ -189,7 +214,12 @@ impl PhraseLibraries {
     /// first fault's classification and the reportable paths. The caller
     /// applies its operation's table-row and visibility guards.
     #[must_use]
-    pub fn check_now(&self, selected: impl Fn(u8) -> bool, only: Option<u8>) -> LibraryCheck {
+    pub fn check_now(
+        &self,
+        selected: impl Fn(u8) -> bool,
+        only: Option<u8>,
+        record_layout: bool,
+    ) -> LibraryCheck {
         let mut checked = LibraryCheck::default();
         let mut first_fault = false;
         for (_, slot) in (0u8..)
@@ -211,6 +241,15 @@ impl PhraseLibraries {
                 if error.unmappable_path().is_some() {
                     checked.unmappable.push(loaded.path.clone());
                 }
+            } else if record_layout && loaded.library.is_layout_failed() {
+                // The pin's save diffs every loaded system library by
+                // mapping its file again (`pinyin.cpp:956`) and the mask
+                // reloads each one (`:1265`): a header-accepted chunk whose
+                // layout still fails emits the critical again. The reload
+                // path records its own fault; this branch is the save diff's.
+                if let Err(LibraryError::Layout(fault)) = PhraseLibrary::open(&loaded.path) {
+                    self.record_layout_fault(fault);
+                }
             }
         }
         checked
@@ -231,15 +270,33 @@ impl PhraseLibraries {
                 "library nibble {nibble} out of range"
             )));
         }
+        if self.is_loaded(nibble) {
+            return Ok(false);
+        }
+        let (library, accepted) = match PhraseLibrary::open(path) {
+            Ok(library) => (library, true),
+            // The pin's `SubPhraseIndex::load` refused the layout and its
+            // caller ignored the `false`: the sub-index is present but
+            // empty, and the load reports success (`pinyin.cpp:264-277`,
+            // `zhuyin.cpp:208-221`). `FacadePhraseIndex::load` subtracts the
+            // old total, then returns `false` **before** adding the newly
+            // read one (`phrase_index.cpp:237-248`), so the local total is
+            // kept on the empty sub-index but stays out of the facade
+            // aggregate.
+            Err(LibraryError::Layout(fault)) => {
+                let total = fault.total_freq;
+                self.record_layout_fault(fault);
+                (PhraseLibrary::empty(total), false)
+            }
+            Err(error) => return Err(error),
+        };
         let slot = self.by_nibble[slot]
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if slot.is_some() {
-            return Ok(false);
+        if accepted {
+            let total = self.total.get_mut();
+            *total = total.wrapping_add(library.total_freq());
         }
-        let library = PhraseLibrary::open(path)?;
-        let total = self.total.get_mut();
-        *total = total.wrapping_add(library.total_freq());
         if library.has_items() {
             *self.stocked.get_mut() |= 1 << nibble;
         }
@@ -267,7 +324,26 @@ impl PhraseLibraries {
         let Some(old) = slot.as_ref().map(|loaded| loaded.library.total_freq()) else {
             return Ok(false);
         };
-        let library = PhraseLibrary::open(path)?;
+        let library = match PhraseLibrary::open(path) {
+            Ok(library) => library,
+            Err(LibraryError::Layout(fault)) => {
+                // `FacadePhraseIndex::load` subtracts the old sub-index's
+                // total first, then returns false without adding the new
+                // one; the caller ignores the false and the slot holds the
+                // empty sub-index the failed load left.
+                let total = fault.total_freq;
+                record_layout_fault(&self.layout_faults, fault);
+                self.total.fetch_sub(old, Ordering::SeqCst);
+                self.stocked.fetch_and(!(1 << nibble), Ordering::SeqCst);
+                *slot = Some(Loaded {
+                    library: PhraseLibrary::empty(total),
+                    path: path.to_path_buf(),
+                    item_count: OnceLock::new(),
+                });
+                return Ok(true);
+            }
+            Err(error) => return Err(error),
+        };
         // The old sub-index's total leaves and the new one's enters, as
         // `FacadePhraseIndex::load` does over a loaded slot.
         self.total
@@ -369,6 +445,31 @@ impl PhraseLibraries {
     #[must_use]
     pub fn unigram_total(&self) -> u32 {
         self.total.load(Ordering::SeqCst)
+    }
+
+    /// `FacadePhraseIndex::compact` over the layout-failed empty
+    /// sub-indices (`phrase_index.cpp:648-675`, called by `pinyin_save`
+    /// at `pinyin.cpp:1139`, `zhuyin_save` at `zhuyin.cpp:554`,
+    /// `begin_add_phrases` at `pinyin.cpp:657` / `zhuyin.cpp:542`, and
+    /// `mask_out` at `pinyin.cpp:1294` / `zhuyin.cpp:829`). Their local
+    /// total becomes zero; the facade aggregate already excludes it. A
+    /// well-formed library's stored total equals its item sum, so it is
+    /// left alone. Returns the compacted nibbles.
+    #[must_use]
+    pub fn compact_layout_failed(&self) -> Vec<u8> {
+        let mut compacted = Vec::new();
+        for (nibble, slot) in self.by_nibble.iter().enumerate() {
+            let mut slot = slot
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(loaded) = slot.as_mut()
+                && loaded.library.is_layout_failed()
+            {
+                loaded.library.compact();
+                compacted.push(nibble as u8);
+            }
+        }
+        compacted
     }
 
     /// Whether a loaded library outside the `unloaded` bits holds an
@@ -519,6 +620,15 @@ impl PhraseLibraries {
     }
 }
 
+/// Records one layout fault on `faults`; a free function so a caller that
+/// holds a borrow of another `PhraseLibraries` field can still record.
+fn record_layout_fault(faults: &Mutex<Vec<LayoutFault>>, fault: LayoutFault) {
+    faults
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(fault);
+}
+
 /// [`PhraseLibraries::pronunciation_possibility`] over a resolved item,
 /// comparing each stored pronunciation's packed keys in place.
 fn item_possibility(item: &PhraseItemView<'_>, query: &[ChewingKey]) -> (u64, u64) {
@@ -572,5 +682,160 @@ mod tests {
         assert!(libs.load(16, Path::new("/no/such/file")).is_err());
         assert!(!libs.is_loaded(16));
         assert!(libs.library(0xFF00_0001).is_none());
+    }
+
+    /// A `MemoryChunk` image: `{length: u32, checksum: u32}` then `payload`.
+    fn chunk(payload: &[u8]) -> Vec<u8> {
+        let mut checksum = 0_u32;
+        let aligned = payload.len() & !0x3;
+        for word in payload[..aligned].chunks_exact(4) {
+            checksum ^= u32::from_le_bytes([word[0], word[1], word[2], word[3]]);
+        }
+        for (shift, byte) in payload[aligned..].iter().enumerate() {
+            checksum ^= u32::from(*byte) << (8 * shift);
+        }
+        let mut bytes = Vec::with_capacity(8 + payload.len());
+        bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&checksum.to_le_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    /// A valid empty `SubPhraseIndex`: total 0, the four words, then the
+    /// three separators with an empty offset array and an empty entry area.
+    fn valid_empty_payload() -> Vec<u8> {
+        let mut payload = vec![0_u8; 19];
+        payload[4..8].copy_from_slice(&17_u32.to_le_bytes());
+        payload[8..12].copy_from_slice(&18_u32.to_le_bytes());
+        payload[12..16].copy_from_slice(&19_u32.to_le_bytes());
+        payload[16..19].fill(b'#');
+        payload
+    }
+
+    fn temp_library(bytes: &[u8]) -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-layout-")
+            .tempdir()
+            .unwrap();
+        let path = dir.path().join("merged.bin");
+        std::fs::write(&path, bytes).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn a_header_only_chunk_loads_the_pins_empty_sub_index() {
+        let (dir, path) = temp_library(&[0_u8; 8]);
+        assert!(verify_chunk(&path).is_ok(), "the pin's mmap accepts it");
+        let libs = PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]).unwrap();
+        assert!(libs.is_loaded(4));
+        assert!(libs.phrase_text(0x0400_0001).is_none());
+        assert_eq!(libs.item_count(), 0);
+        assert_eq!(libs.unigram_total(), 0);
+        let library = libs.library(0x0400_0000).expect("loaded");
+        assert!(library.is_layout_failed());
+        assert_eq!(library.token_range(), 1..1);
+        assert!(!library.has_items());
+        let faults = libs.take_layout_faults();
+        assert_eq!(faults.len(), 1);
+        assert_eq!(faults[0].expression, "*(buf_begin + offset) == c_separate");
+        assert_eq!(faults[0].total_freq, 0);
+        assert!(libs.take_layout_faults().is_empty());
+    }
+
+    #[test]
+    fn a_valid_empty_chunk_is_mapped_not_layout_failed() {
+        let (dir, _) = temp_library(&chunk(&valid_empty_payload()));
+        let libs = PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]).unwrap();
+        let library = libs.library(0x0400_0000).expect("loaded");
+        assert!(!library.is_layout_failed());
+        assert_eq!(library.token_range(), 1..1);
+        assert!(libs.take_layout_faults().is_empty());
+    }
+
+    #[test]
+    fn a_bad_length_word_is_unmappable_not_a_layout_fault() {
+        let mut bytes = vec![0_u8; 16];
+        bytes[..4].copy_from_slice(&7_u32.to_le_bytes());
+        let (dir, _) = temp_library(&bytes);
+        let error = match PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]) {
+            Err(error) => error,
+            Ok(_) => panic!("a bad chunk must be refused"),
+        };
+        assert!(matches!(error, LibraryError::Unmappable { .. }), "{error}");
+    }
+
+    #[test]
+    fn a_checksum_mismatch_is_unmappable_not_a_layout_fault() {
+        let mut bytes = chunk(&valid_empty_payload());
+        bytes[4] ^= 0xFF;
+        let (dir, _) = temp_library(&bytes);
+        let error = match PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]) {
+            Err(error) => error,
+            Ok(_) => panic!("a bad chunk must be refused"),
+        };
+        assert!(matches!(error, LibraryError::Unmappable { .. }), "{error}");
+    }
+
+    #[test]
+    fn an_out_of_bounds_separator_index_stays_a_format_refusal() {
+        // The pin would read payload[index_two - 1] past the chunk; this
+        // reader refuses the layout instead of reproducing the read.
+        let mut payload = vec![0_u8; 32];
+        payload[4..8].copy_from_slice(&17_u32.to_le_bytes());
+        payload[8..12].copy_from_slice(&20_u32.to_le_bytes());
+        payload[12..16].copy_from_slice(&21_u32.to_le_bytes());
+        payload[16] = b'#';
+        payload[8..12].copy_from_slice(&100_u32.to_le_bytes());
+        let (dir, _) = temp_library(&chunk(&payload));
+        let error = match PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]) {
+            Err(error) => error,
+            Ok(_) => panic!("an out-of-bounds layout must be refused"),
+        };
+        assert!(matches!(error, LibraryError::Format(_)), "{error}");
+    }
+
+    #[test]
+    fn a_failed_layout_keeps_its_local_total_out_of_the_facade_total() {
+        // `FacadePhraseIndex::load` subtracts the old total, then returns
+        // before adding the newly read one (`phrase_index.cpp:237-248`).
+        // The 123 stays on the empty sub-index, not on the facade aggregate.
+        let mut payload = vec![0_u8; 32];
+        payload[0..4].copy_from_slice(&123_u32.to_le_bytes());
+        payload[4..8].copy_from_slice(&17_u32.to_le_bytes());
+        payload[8..12].copy_from_slice(&20_u32.to_le_bytes());
+        payload[12..16].copy_from_slice(&24_u32.to_le_bytes());
+        payload[16] = b'#';
+        payload[19] = b'!';
+        let (dir, _) = temp_library(&chunk(&payload));
+        let mut libs = PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]).unwrap();
+        let library = libs.library(0x0400_0000).expect("loaded");
+        assert_eq!(library.total_freq(), 123, "the local total is preserved");
+        assert!(library.is_layout_failed());
+        assert_eq!(libs.unigram_total(), 0, "the facade does not add it");
+        assert_eq!(libs.take_layout_faults()[0].total_freq, 123);
+        // The pin's `FacadePhraseIndex::unload` subtracts the local total
+        // whether or not the failed load added it.
+        assert!(libs.unload(4));
+        assert_eq!(libs.unigram_total(), 0_u32.wrapping_sub(123));
+    }
+
+    #[test]
+    fn an_in_bounds_second_separator_fault_is_a_layout_fault() {
+        let mut payload = vec![0_u8; 32];
+        payload[4..8].copy_from_slice(&17_u32.to_le_bytes());
+        payload[8..12].copy_from_slice(&20_u32.to_le_bytes());
+        payload[12..16].copy_from_slice(&21_u32.to_le_bytes());
+        payload[16] = b'#';
+        payload[19] = b'!';
+        let (dir, _) = temp_library(&chunk(&payload));
+        let libs = PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]).unwrap();
+        let library = libs.library(0x0400_0000).expect("loaded");
+        assert!(library.is_layout_failed());
+        let faults = libs.take_layout_faults();
+        assert_eq!(faults.len(), 1);
+        assert_eq!(
+            faults[0].expression,
+            "*(buf_begin + index_two - 1) == c_separate"
+        );
     }
 }

@@ -55,6 +55,7 @@ pub extern "C" fn zhuyin_init(
     let user_path = cstr_to_path(userdir);
     match CapiContext::try_open(&system_path, user_path.as_deref()) {
         Ok(ctx) => {
+            log_layout_faults(&ctx);
             for warning in ctx.core.load_warnings() {
                 crate::ffi::log_warning(warning);
             }
@@ -106,6 +107,14 @@ pub extern "C" fn zhuyin_init(
     }
 }
 
+/// Logs the pin's `SubPhraseIndex::load` criticals the preceding operation
+/// recorded, in the order the pin emits them.
+pub(crate) fn log_layout_faults(ctx: &CapiContext) {
+    for fault in ctx.take_layout_faults() {
+        crate::ffi::log_critical(&fault.critical_message());
+    }
+}
+
 /// Finalize and free a zhuyin context.
 ///
 /// # C signature
@@ -135,7 +144,11 @@ pub extern "C" fn zhuyin_fini(context: *mut ZhuyinContext) {
     // removed it, so no other call can free it. The caller transfers
     // ownership back.
     unsafe {
-        drop(Box::from_raw(context.cast::<CapiContext>()));
+        let ctx = Box::from_raw(context.cast::<CapiContext>());
+        // The pin logs at the load, not at fini; drop a fault no entry
+        // logged rather than repeat it here.
+        let _ = ctx.take_layout_faults();
+        drop(ctx);
     };
 }
 
@@ -169,7 +182,11 @@ pub extern "C" fn zhuyin_save(context: *mut ZhuyinContext) -> bool {
     {
         crate::locale::pin_table_info_locale();
     }
-    match ctx.save_user() {
+    let outcome = ctx.save_user();
+    // The pin's save diffs every loaded system library again (`:589`); a
+    // header-accepted chunk whose layout fails logs its critical there.
+    log_layout_faults(ctx);
+    match outcome {
         // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header
         // write failed and the pin `assert`s there. The save fails and
         // logs one line in this facade's own domain.

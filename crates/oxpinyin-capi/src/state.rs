@@ -79,6 +79,12 @@ impl CapiContext {
         })
     }
 
+    /// Takes the pin's `SubPhraseIndex::load` criticals the operation just
+    /// recorded, for `pinyin_init`/`pinyin_save`/the load entries to log.
+    pub(crate) fn take_layout_faults(&self) -> Vec<oxpinyin_runtime::LayoutFault> {
+        self.core.take_layout_faults()
+    }
+
     pub(crate) fn alloc_instance(&self, context: *mut PinyinContext) -> Option<CapiInstance> {
         Some(CapiInstance {
             context,
