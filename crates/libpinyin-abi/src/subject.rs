@@ -20,25 +20,58 @@
 //!
 //! Differential runs keep one library per process, so a crash or abort in one
 //! subject cannot take the other's observation with it and the libraries'
-//! global state (GLib, locale, allocator) never mixes. [`Subject::open`]
-//! therefore refuses to open a second subject in a process that already has
-//! one; [`Subject::open_additional`] is the explicit opt-out for callers that
-//! know the two libraries do not interfere. Neither call tries to mask an abort
-//! the library itself raises (some revisions assert on inputs such as an
-//! apostrophe-only string): run untrusted inputs in a child process.
+//! global state (GLib, locale, allocator, function-static tables) never mixes.
+//! [`Subject::open`] therefore refuses to open a second subject in a process
+//! that already has one; [`Subject::open_additional`] is the explicit opt-out
+//! for callers that know the two libraries do not interfere. Neither call tries
+//! to mask an abort the library itself raises (some revisions assert on inputs
+//! such as an apostrophe-only string): run untrusted inputs in a child process.
+//!
+//! The rule is about *live* subjects. A shared object is never unloaded (see
+//! below), so a subject opened after another was dropped finds the library's
+//! process-global state as the earlier one left it. Anything that must start
+//! from a clean library state needs a fresh process, not just a fresh
+//! [`Subject`].
+//!
+//! # Threads
+//!
+//! libpinyin is not thread-safe: it keeps function-static state, and the
+//! pinned revision aborts when several threads each open a context. A
+//! [`Subject`] and everything derived from it ([`Context`], the sessions) is
+//! therefore neither `Send` nor `Sync`, and a compile-time test pins that.
 //!
 //! # Safety model
 //!
 //! Every symbol is resolved once, as a typed function pointer, when the subject
 //! opens. The library handle is **never unloaded**: libpinyin and GLib keep
-//! process-global state and registered callbacks, and unloading them is a
-//! hazard that buys nothing for a short-lived tool, so the function pointers
-//! stay valid for the life of the process. Handles are owned by RAII values
-//! that borrow the thing they came from ([`Subject`] → [`Context`] → session),
-//! so they cannot outlive it and are released in the right order. Strings the
-//! library lends are copied before the next call; strings it hands over are
-//! copied and released with the `g_free` of the GLib the library itself uses.
-//! No value here is `Send` or `Sync`.
+//! process-global state, and unloading code whose function pointers, callbacks
+//! or static destructors may still be reachable is a hazard that buys nothing
+//! for a short-lived tool. The cost is one leaked loader reference per
+//! [`Subject`] opened, and the function pointers stay valid for the life of the
+//! process. Handles are owned by RAII values that borrow what they came from
+//! ([`Subject`] → [`Context`] → session), so they cannot outlive it and are
+//! released in the right order.
+//!
+//! An owned handle is created only if it can be released. `*_fini` is resolved
+//! before `*_init` runs and `*_free_instance` before `*_alloc_instance` does; a
+//! library missing either fails the constructor with
+//! [`AbiError::SymbolMissing`] having created nothing.
+//!
+//! Strings the library lends (`*_get_candidate_string` points into the
+//! candidate the instance holds) are copied before the next call. The sentence
+//! string is caller-owned: the public headers say "the returned sentence should
+//! be freed by g_free()". It is copied and released with the `g_free` found as
+//! follows. First the subject itself is asked (a symbol lookup on a library
+//! handle also searches the libraries it depends on on ELF platforms, so this
+//! yields the GLib the library was linked against; checked for the pinned
+//! libpinyin/libzhuyin and oxpinyin's on Linux). Only if that finds nothing is
+//! a GLib looked up by its usual name for the platform; that may be a different
+//! GLib from the library's if several are installed, which matters little
+//! because GLib 2.46 and later route `g_malloc`/`g_free` to the system
+//! allocator, and is reported rather than hidden: with no `g_free` at all,
+//! reading a sentence fails with `SymbolMissing { name: "g_free" }` *before*
+//! the library is asked, so nothing is leaked. The fallback names are untested
+//! on macOS and Windows.
 //!
 //! The one thing a safe wrapper cannot check is that the file really is a
 //! libpinyin of the facade requested: opening a shared object runs its
@@ -217,10 +250,10 @@ impl Api {
         }
     }
 
-    fn fini(&self) -> Option<VoidHandleFn> {
+    fn fini(&self) -> Result<VoidHandleFn, AbiError> {
         match self {
-            Self::Pinyin(f) => f.fini().ok(),
-            Self::Zhuyin(f) => f.fini().ok(),
+            Self::Pinyin(f) => f.fini(),
+            Self::Zhuyin(f) => f.fini(),
         }
     }
 
@@ -279,6 +312,10 @@ pub struct Subject {
     // Never unloaded (module docs). Wrapped so a drop cannot `dlclose`.
     _libraries: Vec<ManuallyDrop<Library>>,
     _slot: Option<OpenGuard>,
+    // libpinyin is not thread-safe, so no handle derived from a subject may
+    // cross threads; the raw-pointer marker makes the whole chain `!Send` and
+    // `!Sync` (a test pins this).
+    _single_threaded: PhantomData<*const ()>,
 }
 
 impl core::fmt::Debug for Subject {
@@ -309,7 +346,7 @@ impl Subject {
     /// subject, and [`AbiError::LibraryLoad`] when the loader refuses the file.
     /// A library that lacks symbols still opens; see [`Self::missing_symbols`].
     pub fn open(path: impl AsRef<Path>, facade: Facade) -> Result<Self, AbiError> {
-        Self::load(path.as_ref(), facade, LIVE_SUBJECTS.exclusive()?)
+        Self::open_in(&LIVE_SUBJECTS, path.as_ref(), facade, true)
     }
 
     /// Opens a subject alongside one that is already open in this process.
@@ -322,7 +359,23 @@ impl Subject {
     ///
     /// [`AbiError::LibraryLoad`] when the loader refuses the file.
     pub fn open_additional(path: impl AsRef<Path>, facade: Facade) -> Result<Self, AbiError> {
-        Self::load(path.as_ref(), facade, LIVE_SUBJECTS.additional())
+        Self::open_in(&LIVE_SUBJECTS, path.as_ref(), facade, false)
+    }
+
+    /// Takes a slot from `slots` (the only one when `exclusive`), then loads.
+    /// The slot is released if loading fails.
+    fn open_in(
+        slots: &'static Slots,
+        path: &Path,
+        facade: Facade,
+        exclusive: bool,
+    ) -> Result<Self, AbiError> {
+        let slot = if exclusive {
+            slots.exclusive()?
+        } else {
+            slots.additional()
+        };
+        Self::load(path, facade, slot)
     }
 
     fn load(path: &Path, facade: Facade, slot: OpenGuard) -> Result<Self, AbiError> {
@@ -376,6 +429,7 @@ impl Subject {
             missing,
             _libraries: libraries,
             _slot: Some(slot),
+            _single_threaded: PhantomData,
         })
     }
 
@@ -417,6 +471,9 @@ impl Subject {
         system_dir: &Path,
         user_dir: &Path,
     ) -> Result<Context<'_>, AbiError> {
+        // The destructor is checked before the constructor runs: no owned
+        // handle is ever created that cannot be released.
+        let fini = self.api.fini()?;
         let init = self.api.init()?;
         let system = path_to_cstring(system_dir)?;
         let user = path_to_cstring(user_dir)?;
@@ -430,6 +487,7 @@ impl Subject {
         Ok(Context {
             subject: self,
             handle,
+            fini,
         })
     }
 }
@@ -466,6 +524,9 @@ unsafe fn copy_string(text: *const c_char, function: &'static str) -> Result<Str
 pub struct Context<'s> {
     subject: &'s Subject,
     handle: NonNull<c_void>,
+    // Resolved before the context was created, so a context can always be
+    // released: one that could not be is never made.
+    fini: VoidHandleFn,
 }
 
 impl core::fmt::Debug for Context<'_> {
@@ -517,9 +578,9 @@ impl Context<'_> {
                 requested: Facade::Pinyin,
             });
         };
-        // Resolve what the session will need up front, so a library missing a
-        // symbol fails here, before an instance exists to leak.
-        fns.free_instance()?;
+        // Resolve the destructor and the allocator up front, so a library
+        // missing a symbol fails here, before an instance exists to leak.
+        let free = fns.free_instance()?;
         let alloc = fns.alloc_instance()?;
         // SAFETY: `handle` is the live context this value owns.
         let raw = unsafe { alloc(self.handle.as_ptr()) };
@@ -528,6 +589,7 @@ impl Context<'_> {
             fns,
             g_free: self.subject.g_free,
             instance,
+            free,
             _context: PhantomData,
         })
     }
@@ -544,7 +606,7 @@ impl Context<'_> {
                 requested: Facade::Zhuyin,
             });
         };
-        fns.free_instance()?;
+        let free = fns.free_instance()?;
         let alloc = fns.alloc_instance()?;
         // SAFETY: `handle` is the live context this value owns.
         let raw = unsafe { alloc(self.handle.as_ptr()) };
@@ -553,6 +615,7 @@ impl Context<'_> {
             fns,
             g_free: self.subject.g_free,
             instance,
+            free,
             _context: PhantomData,
         })
     }
@@ -560,13 +623,9 @@ impl Context<'_> {
 
 impl Drop for Context<'_> {
     fn drop(&mut self) {
-        // A library without `*_fini` cannot be released; leaking its context is
-        // the only safe thing left, and Drop must not fail.
-        if let Some(fini) = self.subject.api.fini() {
-            // SAFETY: `handle` is the live context this value owns, released
-            // exactly once, after every session that borrowed it.
-            unsafe { fini(self.handle.as_ptr()) };
-        }
+        // SAFETY: `handle` is the live context this value owns, released
+        // exactly once, after every session that borrowed it.
+        unsafe { (self.fini)(self.handle.as_ptr()) };
     }
 }
 
@@ -648,6 +707,8 @@ pub struct PinyinSession<'c> {
     fns: PinyinFns,
     g_free: Option<GFreeFn>,
     instance: NonNull<c_void>,
+    // Resolved before the instance was allocated (see `Context`).
+    free: VoidHandleFn,
     _context: PhantomData<&'c ()>,
 }
 
@@ -870,11 +931,9 @@ impl PinyinSession<'_> {
 
 impl Drop for PinyinSession<'_> {
     fn drop(&mut self) {
-        if let Some(free) = self.fns.free_instance {
-            // SAFETY: `instance` is the live instance this value owns, freed
-            // exactly once, before the context it borrows.
-            unsafe { free(self.instance.as_ptr()) };
-        }
+        // SAFETY: `instance` is the live instance this value owns, freed
+        // exactly once, before the context it borrows.
+        unsafe { (self.free)(self.instance.as_ptr()) };
     }
 }
 
@@ -892,6 +951,8 @@ pub struct ZhuyinSession<'c> {
     fns: ZhuyinFns,
     g_free: Option<GFreeFn>,
     instance: NonNull<c_void>,
+    // Resolved before the instance was allocated (see `Context`).
+    free: VoidHandleFn,
     _context: PhantomData<&'c ()>,
 }
 
@@ -1081,11 +1142,9 @@ impl ZhuyinSession<'_> {
 
 impl Drop for ZhuyinSession<'_> {
     fn drop(&mut self) {
-        if let Some(free) = self.fns.free_instance {
-            // SAFETY: `instance` is the live instance this value owns, freed
-            // exactly once, before the context it borrows.
-            unsafe { free(self.instance.as_ptr()) };
-        }
+        // SAFETY: `instance` is the live instance this value owns, freed
+        // exactly once, before the context it borrows.
+        unsafe { (self.free)(self.instance.as_ptr()) };
     }
 }
 
@@ -1105,6 +1164,8 @@ mod tests {
         static STRINGS_FREED: Cell<usize> = const { Cell::new(0) };
         static NBEST_ASSERTS: Cell<usize> = const { Cell::new(0) };
         static SENTENCE_GUESSES: Cell<usize> = const { Cell::new(0) };
+        static INITS: Cell<usize> = const { Cell::new(0) };
+        static ALLOCS: Cell<usize> = const { Cell::new(0) };
     }
 
     fn bump(counter: &'static std::thread::LocalKey<Cell<usize>>) {
@@ -1123,6 +1184,7 @@ mod tests {
     }
 
     extern "C" fn init(system: *const c_char, _user: *const c_char) -> *mut c_void {
+        bump(&INITS);
         // SAFETY: the code under test passes a valid NUL-terminated string.
         if unsafe { CStr::from_ptr(system) }.to_bytes() == b"fail" {
             return ptr::null_mut();
@@ -1141,6 +1203,7 @@ mod tests {
     }
 
     extern "C" fn alloc_instance(_context: *mut c_void) -> *mut c_void {
+        bump(&ALLOCS);
         Box::into_raw(Box::new(Instance {
             parsed: 0,
             guessed: false,
@@ -1412,6 +1475,7 @@ mod tests {
             missing,
             _libraries: Vec::new(),
             _slot: None,
+            _single_threaded: PhantomData,
         }
     }
 
@@ -1637,6 +1701,150 @@ mod tests {
             session.parse_full_pinyin(b"n\0i"),
             Err(AbiError::InteriorNul { what: "input" })
         ));
+    }
+
+    #[test]
+    fn a_context_that_could_not_be_released_is_never_created() {
+        let (system, user) = dirs();
+        for (facade, mock, fini) in [
+            (Facade::Pinyin, pinyin_mock(), "pinyin_fini"),
+            (Facade::Zhuyin, zhuyin_mock(), "zhuyin_fini"),
+        ] {
+            let subject = subject(facade, &without(mock, fini));
+            assert_eq!(subject.missing_symbols(), [fini]);
+            assert!(matches!(
+                subject.open_context(&system, &user),
+                Err(AbiError::SymbolMissing { name }) if name == fini
+            ));
+            // `*_init` was never called, so no context exists to leak.
+            assert_eq!(read(&INITS), 0, "{facade:?}");
+            assert_eq!(read(&CONTEXTS_FINISHED), 0, "{facade:?}");
+        }
+    }
+
+    #[test]
+    fn an_instance_that_could_not_be_freed_is_never_allocated() {
+        let (system, user) = dirs();
+        for (facade, mock, free) in [
+            (Facade::Pinyin, pinyin_mock(), "pinyin_free_instance"),
+            (Facade::Zhuyin, zhuyin_mock(), "zhuyin_free_instance"),
+        ] {
+            let subject = subject(facade, &without(mock, free));
+            let context = subject.open_context(&system, &user).expect("context");
+            let refused = match facade {
+                Facade::Pinyin => context.pinyin_session().err(),
+                Facade::Zhuyin => context.zhuyin_session().err(),
+            };
+            assert!(matches!(
+                refused,
+                Some(AbiError::SymbolMissing { name }) if name == free
+            ));
+            // `*_alloc_instance` was never called.
+            assert_eq!(read(&ALLOCS), 0, "{facade:?}");
+        }
+    }
+
+    #[test]
+    fn a_missing_allocator_creates_nothing_either() {
+        let (system, user) = dirs();
+        let subject = subject(
+            Facade::Pinyin,
+            &without(pinyin_mock(), "pinyin_alloc_instance"),
+        );
+        let context = subject.open_context(&system, &user).expect("context");
+        assert!(matches!(
+            context.pinyin_session(),
+            Err(AbiError::SymbolMissing {
+                name: "pinyin_alloc_instance"
+            })
+        ));
+        assert_eq!(read(&ALLOCS), 0);
+        drop(context);
+        // The context that was created is still released.
+        assert_eq!(read(&CONTEXTS_FINISHED), 1);
+    }
+
+    #[test]
+    fn every_context_created_is_released_even_when_a_session_fails() {
+        let (system, user) = dirs();
+        let subject = subject(Facade::Pinyin, &pinyin_mock());
+        {
+            let context = subject.open_context(&system, &user).expect("context");
+            let mut session = context.pinyin_session().expect("session");
+            assert!(matches!(
+                session.parse_full_pinyin(b"n\0i"),
+                Err(AbiError::InteriorNul { .. })
+            ));
+        }
+        assert_eq!(read(&INITS), 1);
+        assert_eq!(read(&ALLOCS), 1);
+        assert_eq!(read(&INSTANCES_FREED), 1);
+        assert_eq!(read(&CONTEXTS_FINISHED), 1);
+    }
+
+    /// Compile-time check that a type is neither `Send` nor `Sync`: if it were,
+    /// the call below would be ambiguous and the test would not compile.
+    trait AmbiguousIfSend<A> {
+        fn probe() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSend<()> for T {}
+    impl<T: ?Sized + Send> AmbiguousIfSend<u8> for T {}
+    trait AmbiguousIfSync<A> {
+        fn probe() {}
+    }
+    impl<T: ?Sized> AmbiguousIfSync<()> for T {}
+    impl<T: ?Sized + Sync> AmbiguousIfSync<u8> for T {}
+
+    #[test]
+    fn nothing_derived_from_a_subject_can_cross_threads() {
+        // libpinyin is not thread-safe (function-static slots, and the pin
+        // aborts when several threads each open a context), so the whole chain
+        // is `!Send` and `!Sync`.
+        <Subject as AmbiguousIfSend<_>>::probe();
+        <Subject as AmbiguousIfSync<_>>::probe();
+        <Context<'static> as AmbiguousIfSend<_>>::probe();
+        <Context<'static> as AmbiguousIfSync<_>>::probe();
+        <PinyinSession<'static> as AmbiguousIfSend<_>>::probe();
+        <PinyinSession<'static> as AmbiguousIfSync<_>>::probe();
+        <ZhuyinSession<'static> as AmbiguousIfSend<_>>::probe();
+        <ZhuyinSession<'static> as AmbiguousIfSync<_>>::probe();
+    }
+
+    #[test]
+    fn a_failed_open_gives_its_slot_back() {
+        static SLOTS: Slots = Slots::new();
+        let missing = Path::new("definitely-not-a-libpinyin.so");
+        // The load fails; the default open must not be left blocked by it.
+        assert!(matches!(
+            Subject::open_in(&SLOTS, missing, Facade::Pinyin, true),
+            Err(AbiError::LibraryLoad { .. })
+        ));
+        drop(SLOTS.exclusive().expect("slot released after the failure"));
+    }
+
+    #[test]
+    fn the_default_open_refuses_a_second_subject_before_touching_the_file() {
+        static SLOTS: Slots = Slots::new();
+        let Some(name) = system_library() else {
+            return;
+        };
+        let first =
+            Subject::open_in(&SLOTS, Path::new(name), Facade::Pinyin, true).expect("first subject");
+        // The path is irrelevant: the slot is checked first.
+        assert!(matches!(
+            Subject::open_in(&SLOTS, Path::new("not-even-a-file"), Facade::Pinyin, true),
+            Err(AbiError::SubjectAlreadyOpen)
+        ));
+        // The explicit opt-out still works alongside it.
+        let second = Subject::open_in(&SLOTS, Path::new(name), Facade::Zhuyin, false)
+            .expect("additional subject");
+        drop(first);
+        assert!(matches!(
+            Subject::open_in(&SLOTS, Path::new(name), Facade::Pinyin, true),
+            Err(AbiError::SubjectAlreadyOpen)
+        ));
+        drop(second);
+        drop(Subject::open_in(&SLOTS, Path::new(name), Facade::Pinyin, true).expect("free again"));
     }
 
     #[test]

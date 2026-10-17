@@ -16,8 +16,10 @@ file wins on any conflict.
 4. Nothing panics on any input; public APIs return `Result`.
 5. `unsafe`: `forbid` in oxpinyin-core/user/engine; `deny` in data (the
    documented mmap exception) and store (whose backend bindings sit under
-   module-scoped allows); the public C ABI's FFI only in capi/oracle;
-   `// SAFETY:` on every block. The allowlist is mechanical now: crate-root
+   module-scoped allows); the public C ABI's FFI only in capi/oracle, plus
+   one module of `libpinyin-abi` (`subject`, which loads a libpinyin or
+   libzhuyin under test by path; the crate is `deny` and no other module of
+   it may allow unsafe); `// SAFETY:` on every block. The allowlist is mechanical now: crate-root
    `#![forbid]`/scoped allows enforce it, and two Clippy lints enforce the
    comments — `undocumented_unsafe_blocks` requires a safety comment on
    every `unsafe` block, `missing_safety_doc` requires a `# Safety` doc

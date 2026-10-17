@@ -1,14 +1,16 @@
-//! Generic vocabulary and wire formats for observing the public libpinyin and
-//! libzhuyin C ABIs.
+//! A reusable, oxpinyin-independent Rust foundation for observing the public
+//! libpinyin and libzhuyin C ABIs.
 //!
-//! This crate is the shared foundation of the developer toolchain
-//! (`docs/findings/tooling-consolidation-phase1.md`, stage 1). It knows the
-//! public libpinyin interface and nothing about oxpinyin: it depends on no
-//! oxpinyin crate, names no pin, no oracle prefix and no divergence register,
-//! and never decides what counts as success. Those belong to `pinyin-oracle`
-//! (the pinned oracle and oxpinyin's verification policy), which builds on this
-//! crate and re-exports every item it used to define, so existing consumers are
-//! unaffected.
+//! This is stage 1 of the developer-tooling consolidation
+//! (`docs/findings/tooling-consolidation-phase1.md`). It is a library, not a
+//! tool: it supplies the vocabulary, the capture notation and a checked loader,
+//! and it does not compare, report or provide a command line (those are later,
+//! separately reviewed stages). It knows the public libpinyin interface and
+//! nothing about oxpinyin: it depends on no oxpinyin crate, names no pin, no
+//! oracle prefix and no divergence register, and never decides what counts as
+//! success. Those belong to `pinyin-oracle` (the pinned oracle and oxpinyin's
+//! verification policy), which builds on this crate and re-exports every item
+//! it used to define, so existing consumers are unaffected.
 //!
 //! What lives here is only what was already generic in `pinyin-oracle`:
 //!

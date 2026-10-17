@@ -9,7 +9,7 @@ use crate::subject::Facade;
 ///
 /// Every variant is a reported failure rather than a panic: a subject is a
 /// program under test, so a missing symbol, a refused call or a hostile answer
-/// must be an observation, not a crash of the tool.
+/// must be an observation, not a crash of the caller.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum AbiError {
