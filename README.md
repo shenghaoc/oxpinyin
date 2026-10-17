@@ -1,10 +1,14 @@
 # oxpinyin
 
 A portable Rust re-expression of
-[libpinyin](https://github.com/libpinyin/libpinyin), built as bug-for-bug
-`libpinyin.so.15` binaries. Stage 1 was exact-output parity with a checksum-pinned,
-source-built libpinyin oracle; Stage 2 is bug-for-bug compatibility with that
-pin across the whole exported ABI, defects included; Stage 3 is performance.
+[libpinyin](https://github.com/libpinyin/libpinyin). Each build replaces
+`libpinyin.so.15`. The target is bug-for-bug compatibility with a pinned
+libpinyin, defects included.
+
+- Stage 1 (complete): exact-output parity with the pin on the corpus surfaces.
+- Stage 2 (current): bug-for-bug compatibility across the whole exported ABI.
+  It is not complete. Open work is tracked in #573.
+- Stage 3 (next): performance.
 
 **Status:** Stage 1 complete — 1,571/1,571 corpus rows; 79/79 exported
 symbols; drop-in as `libpinyin.so.15` verified on Fedora rawhide, Debian

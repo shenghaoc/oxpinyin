@@ -331,7 +331,9 @@ always".
    needs a line in the PR body saying why none could.
 7. Re-verification is proportional to what changed since the last
    green gate:
-   - Docs, comments or findings only: fmt, then push. No builds.
+   - Docs, comments or findings only: fmt, then push. No builds. This
+     case overrides rule 2. If a diff changes only comments in a backend
+     file, rule 2's check fires, but do not run the three cells.
    - A review fix in code: fmt, clippy, `cargo test -p` for the touched
      crates, and only the differential(s) belonging to that issue, on
      the reference cell.

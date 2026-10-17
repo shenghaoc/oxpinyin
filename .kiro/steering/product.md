@@ -32,10 +32,11 @@ depth 10: top-1 10,190/10,190, top-5-set 10,190, absent 0, order-only 0,
 prefix-10 98,930/98,930. Drop-in measured on Fedora rawhide (Kyoto
 Cabinet), Debian testing (tkrzw) and NixOS — 1,571/1,571 rows each.
 
-**Stage 2 — bug-for-bug compatibility (current).** Every exported
-behaviour matches the pin, defects included, across the whole ABI and
-the user-store surfaces — the round-2 audit issues, then a third
-bug-for-bug sweep, are this stage's work. Behaviour is derived by
+**Stage 2 — bug-for-bug compatibility (current, not complete).** The
+target is that every exported behaviour matches the pin, defects
+included. This applies to the whole ABI and the user-store surfaces.
+The work is the round-2 audit issues (#573), then a third bug-for-bug
+sweep. Behaviour is derived by
 reading the pin's source, then its disassembly, never by running
 experiments (`/AGENTS.md` "Stage 2 — bug-for-bug";
 `.kiro/specs/bug-for-bug/`). Complexity counts: oxpinyin must not be

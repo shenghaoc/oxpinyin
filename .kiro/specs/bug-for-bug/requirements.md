@@ -4,9 +4,12 @@
 
 Stage 2 (maintainer ruling 2026-10-14 UTC) makes oxpinyin match the
 pinned libpinyin bug for bug across the whole exported ABI and the
-user-store surfaces. This spec is pinned behaviour only
-(`.kiro/steering/pinned-behaviour.md`). Where oxpinyin may differ, the
-rule is in `.kiro/steering/oxpinyin-improvements.md`; performance is
+user-store surfaces. Requirements 1–3 are pinned behaviour
+(`.kiro/steering/pinned-behaviour.md`). Requirement 4 is different: it
+is an oxpinyin guardrail, not a behaviour of the pin. It keeps oxpinyin
+from being worse than the pin on both time and space. Where oxpinyin may
+differ from the pin, the rule is in
+`.kiro/steering/oxpinyin-improvements.md`. Performance beyond the pin is
 Stage 3 (`.kiro/specs/stage3-performance/`).
 
 ## Glossary
