@@ -6253,6 +6253,248 @@ for _mode in ('pinyin', 'zhuyin'):
         lambda k: logger_mask_out_probe(k, _ONE_HEADER_BAD_TAIL))
 
 
+# #851: a journal REMOVE of a system item takes it out of the session. A
+# system library's `.dbin` is merged at init by `SubPhraseIndex::merge`
+# (`phrase_index.cpp:439-517` at 074a2219); REMOVE (`:460-475`) calls
+# `remove_phrase_item` (`:219-236`), which zeroes the item's offset and takes its
+# unigram off the library total. From then on `get_phrase_item` fails for the
+# token (`:180-206`): the item is not readable, a unigram add is refused, an
+# export skips it and a save diffs the removal out as a REMOVE record under a
+# lowered header, while the phrase table still holds the token.
+# `_load_phrase_library` ignores `merge`'s answer (`pinyin.cpp:276`).
+#
+# The probe crafts the `.dbin` before the only init, then observes the state
+# after replay: the touched items through the API, a trailing ADD (whether a
+# later record applied), and the `gb_char.dbin` a following `save` diffs out of
+# the visible items and the library total (`phrase_index.cpp:392-436`), whose
+# header carries the total the replay left. With `reopen` it then closes the
+# context and opens the saved profile again, which replays what the save wrote.
+_LOG_ADD, _LOG_REMOVE, _LOG_MODIFY = 1, 2, 3
+
+
+def _log_record(kind, token, old=b'', new=b''):
+    """One record as `PhraseIndexLogger::next_record` reads it
+    (`phrase_index_logger.h:160-209`): ADD and REMOVE carry one length and
+    one chunk, MODIFY both lengths and both chunks."""
+    head = kind.to_bytes(4, 'little') + token.to_bytes(4, 'little')
+    if kind == _LOG_ADD:
+        return head + len(new).to_bytes(2, 'little') + new
+    if kind == _LOG_REMOVE:
+        return head + len(old).to_bytes(2, 'little') + old
+    return head + len(old).to_bytes(2, 'little') + len(new).to_bytes(2, 'little') + old + new
+
+
+def _item_size(item):
+    """`get_phrase_item`'s length from the header bytes alone."""
+    length, prons = item[0], item[1]
+    return 6 + 4 * length + prons * (2 * length + 4)
+
+
+def _system_items(k, name='gb_char.bin'):
+    """A system chunk's total and its items, `{slot: bytes}` at their header
+    length."""
+    payload = Path(k.data, name).read_bytes()[8:]
+    word = lambda offset: int.from_bytes(payload[offset:offset + 4], 'little')
+    total, index, content = word(0), word(4), word(8)
+    items = {}
+    for slot in range((content - index - 1) // 4):
+        offset = word(index + slot * 4)
+        if offset:
+            items[slot] = payload[content + offset:content + offset + _item_size(payload[content + offset:])]
+    return total, items
+
+
+def _item_with(item, unigram=None, freq=None):
+    """`item` with its unigram and/or its last pronunciation's frequency
+    replaced; the size is unchanged."""
+    item = bytearray(item)
+    if unigram is not None:
+        item[2:6] = unigram.to_bytes(4, 'little')
+    if freq is not None:
+        item[-4:] = freq.to_bytes(4, 'little')
+    return bytes(item)
+
+
+def _item_text(item):
+    return ''.join(chr(int.from_bytes(item[6 + 4 * i:10 + 4 * i], 'little')) for i in range(item[0]))
+
+
+def _observe_system_item(k, watched, phrase):
+    out = {name: [token_phrase_of(k, token), unigram_of(k, token)] for name, token in watched.items()}
+    # The phrase table keeps the token whatever the sub-index holds.
+    out['phrase-table'] = list(tokens_of(k, phrase))
+    out['export'] = remember_export(k, 1, phrase)
+    return out
+
+
+def system_replay(k, build, reopen=False):
+    """`build(p)` returns the records after the header and the tokens to
+    watch; `p` maps `one` and `fresh` to (token, bytes) of library 1: an item
+    it holds and one it does not, for a trailing ADD."""
+    total, items = _system_items(k)
+    one = next(slot for slot, item in items.items() if item[0] == 1 and item[1] == 1)
+    fresh = max(items) + 2
+    records, watched = build({'one': (0x01000000 | one, items[one]),
+                              'fresh': (0x01000000 | fresh, _item_with(items[one], unigram=11))})
+    phrase = _item_text(items[one])
+    _write_user_conf(k)
+    _write_log(k, _modify_header(0, total, total) + b''.join(records))
+    out = {'total': total, 'ctx': bool(k.ctx)}
+    out.update(_observe_system_item(k, watched, phrase))
+    # A unigram add reaches only an item the sub-index holds.
+    out['add-unigram'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, watched['one'], 7)
+    # An import marks the context modified, so the save writes the diff.
+    reading = b"ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode()
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    assert k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), reading, 1)
+    k.fn('end_add_phrases', None, P)(it)
+    out['save'] = k.fn('save', B, P)(k.ctx)
+    out['dbin'] = Path(k.user, 'gb_char.dbin').read_bytes().hex()
+    if reopen:
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        out['reopen'] = _observe_system_item(k, watched, phrase)
+    return out
+
+
+def _replay_case(name, build, reopen=False):
+    for mode in ('pinyin', 'zhuyin'):
+        case('replay-' + name + '-' + mode, mode=mode, stderr=True)(
+            lambda k, build=build: system_replay(k, build, reopen))
+
+
+def _watch(p):
+    return {'one': p['one'][0], 'fresh': p['fresh'][0]}
+
+
+def _add_fresh(p):
+    return _log_record(_LOG_ADD, p['fresh'][0], new=p['fresh'][1])
+
+
+# A matching REMOVE, then an ADD: the item is gone, the total is lower and the
+# ADD after it applied.
+def _matched_remove(p):
+    return [_log_record(_LOG_REMOVE, p['one'][0], old=p['one'][1]), _add_fresh(p)], _watch(p)
+
+
+_replay_case('matched-remove', _matched_remove)
+# The same, saved and opened again: the REMOVE the save wrote replays to the
+# same state.
+_replay_case('matched-remove-reopen', _matched_remove, reopen=True)
+
+
+# A removed item and the prefix it extends. `SEARCH_CONTINUED` comes from the
+# pinyin table's DB get alone (`chewing_large_table2_bdb.cpp:182-187` at
+# 074a2219): a REMOVE clears only the sub-index (`phrase_index.cpp:219-236`), so
+# the table still reports the removed phrase's key path as continuing, and the
+# item drops out later, where `get_phrase_item` fails (`phonetic_lookup.h:646`,
+# `:674`). The probe removes the one four-character phrase of the merged
+# library that nothing extends, then looks at what the C ABI shows of a search
+# over its reading: the parse and the guessed sentence for the reading, for a
+# reading that goes on past it and for the prefix the phrase extends; and the
+# candidate list of the prefix. The pin lists the removed token itself through
+# a stale item (a SIGSEGV), so no candidate list is taken where it is one.
+def _removed_extension(k, candidates, labels=('exact', 'longer', 'prefix'), before=False):
+    total, items = _system_items(k, 'merged.bin')
+
+    def readings(item):
+        length, prons = item[0], item[1]
+        start = 6 + 4 * length
+        stride = 2 * length + 4
+        return [item[start + stride * i:start + stride * i + 2 * length] for i in range(prons)]
+
+    # The item's key path must be no other phrase's prefix, in any system
+    # library: only then does the removal leave nothing that extends it.
+    longer = set()
+    for name in ('merged.bin', 'opengram.bin', 'gb_char.bin', 'gbk_char.bin'):
+        for item in _system_items(k, name)[1].values():
+            if item[0] > 4:
+                longer.update(reading[:8] for reading in readings(item))
+    slot = next(slot for slot, item in items.items()
+                if item[0] == 4 and item[1] == 1 and readings(item)[0] not in longer)
+    token = 0x04000000 | slot
+    # Read the phrase and its reading from the untouched library first.
+    phrase = token_phrase_of(k, token)[2]
+    new = k.glib.g_array_new
+    new.restype, new.argtypes = P, [I, I, U]
+    keys = new(0, 0, 2)
+    assert k.fn('token_get_nth_pronunciation', B, P, U, U, P)(k.inst, token, 0, keys)
+    view = C.cast(keys, C.POINTER(Arr)).contents
+    syllables = []
+    for i in range(view.len):
+        key = C.c_ushort(C.cast(view.data, C.POINTER(C.c_ushort))[i])
+        rendered = P(UNTOUCHED)
+        assert k.fn('get_pinyin_string', B, P, C.POINTER(C.c_ushort), C.POINTER(P))(
+            k.inst, C.byref(key), C.byref(rendered))
+        syllables.append(k.text(rendered.value))
+    reading = ''.join(syllables)
+    k.fn('free_instance', None, P)(k.inst)
+    k.fn('fini', None, P)(k.ctx)
+    k._ctx = k._inst = None
+    _write_user_conf(k)
+    _write_log(k, _modify_header(0, total, total) + _log_record(_LOG_REMOVE, token, old=items[slot]),
+               'merged.dbin')
+    out = {'phrase': phrase, 'reading': reading, 'removed': token_phrase_of(k, token)}
+    if k.mode == 'zhuyin':
+        assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+    texts = {'exact': reading, 'longer': reading + 'ni', 'prefix': ''.join(syllables[:-1])}
+    for label in labels:
+        text = texts[label]
+        inst = k.alloc()
+        out[label] = {'parsed': k.fn('parse_more_full_pinyins', Z, P, S)(inst, text.encode())}
+        out[label]['guessed'] = k.fn('guess_sentence', B, P)(inst)
+        out[label]['sentence'] = (sentence_out(k, inst, 0) if k.mode == 'pinyin' else
+                                  zhuyin_sentence_out(k, inst))
+        if candidates and k.mode == 'pinyin':
+            out[label]['candidates'] = guess_rows(k, inst, 0, 0x1e)
+        elif candidates and before:
+            ret = k.fn('guess_candidates_before_cursor', B, P, Z)(inst, out[label]['parsed'])
+            out[label]['candidates'] = {'ret': ret, 'rows': candidate_rows(k, inst)}
+        elif candidates:
+            out[label]['candidates'] = zhuyin_guess_rows(k, inst, 0)
+        k.fn('free_instance', None, P)(inst)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('removed-extension-sentence-' + _mode, mode=_mode, stderr=True)(
+        lambda k: _removed_extension(k, False))
+    case('removed-extension-candidates-' + _mode, mode=_mode, stderr=True)(
+        lambda k: _removed_extension(k, True, ('prefix',)))
+
+
+# The candidate list over the removed token itself. `_compute_phrase_strings_of_items`
+# leaves `m_phrase_string` unset when `_token_get_phrase` finds no item
+# (`pinyin.cpp:1635-1637`, result ignored at `:2013-2016`; `zhuyin.cpp:1103-1105`),
+# and `_remove_duplicated_items_by_phrase_string` hands the NULL to `strcmp` in
+# `compare_indexed_item_with_phrase_string` (`pinyin.cpp:2053`, called from
+# `pinyin_guess_candidates` at `:2300`; `zhuyin.cpp:1360`, from
+# `zhuyin_guess_candidates_after_cursor` at `:1537`): SIGSEGV. A removed token
+# stays in the phrase table, so a search over its reading lists it. oxpinyin
+# lists no candidate for an item that does not exist.
+def _removed_candidate(k, before=False):
+    out = _removed_extension(k, True, ('exact',), before)
+    exact = out.pop('exact')
+    out['exact-parsed'] = exact['parsed']
+    out['exact-guessed'] = exact['guessed']
+    out['exact-candidates-ret'] = exact['candidates']['ret']
+    out['~exact-candidates'] = exact['candidates']['rows']
+    return out
+
+
+# Row 102's answer for the site: an item a reload freed adds no candidate and
+# the call returns normally. A removed item is the same case, a token whose item
+# `get_phrase_item` no longer finds, so the calls answer `true`.
+for _mode in ('pinyin', 'zhuyin'):
+    case('removed-candidate-' + _mode, mode=_mode, stderr=True, crash={
+        'removed': [False, 0, None], 'exact-guessed': True, 'exact-candidates-ret': True,
+    })(_removed_candidate)
+case('removed-candidate-before-cursor-zhuyin', mode='zhuyin', stderr=True, crash={
+    'removed': [False, 0, None], 'exact-guessed': True, 'exact-candidates-ret': True,
+})(lambda k: _removed_candidate(k, before=True))
+
+
 # Batch F (#525): `zhuyin.cpp`'s phrase-table walk in `_add_phrase`. A token
 # whose sub-index equals the target trips `assert(PHRASE_INDEX_LIBRARY_INDEX
 # (token) != index)` (`:440`); a lone match whose phrase-index item text

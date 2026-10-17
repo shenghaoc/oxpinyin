@@ -2020,6 +2020,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(Arc::new(StoreInner {
             has_system_items: AtomicBool::new(false),
             system_items: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            has_removed_system_items: AtomicBool::new(false),
+            removed_system_items: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             count_cache: Mutex::new(None),
             db: Mutex::new(db),
             dirty: AtomicBool::new(false),
@@ -2290,6 +2292,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         seed: u64,
     ) -> Result<(), UserStoreError> {
         use crate::store_libpinyin::{pinyin_keys_to_packed, pronunciation_matches};
+        if self.system_item_removed(token) {
+            // `get_phrase_item` fails: there is no item to train (074a2219
+            // `phrase_index.cpp:180-206`).
+            return Ok(());
+        }
         let original = self.inner.libpinyin.as_ref().and_then(|target| {
             target
                 .originals()
@@ -3486,17 +3493,25 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .system_items
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut removed = self.removed_system_items_guard();
             items.retain(|&token, _| !reloaded(token));
+            removed.retain(|&token| !reloaded(token));
             for (&nibble, overrides) in &state.system_overrides {
                 for (&slot, item) in overrides {
+                    let token = (u32::from(nibble) << 24) | slot;
                     if let Some(item) = item {
-                        items.insert((u32::from(nibble) << 24) | slot, item.clone());
+                        items.insert(token, item.clone());
+                    } else {
+                        removed.insert(token);
                     }
                 }
             }
             self.inner
                 .has_system_items
-                .store(!items.is_empty(), Ordering::Relaxed);
+                .store(!items.is_empty() || !removed.is_empty(), Ordering::Relaxed);
+            self.inner
+                .has_removed_system_items
+                .store(!removed.is_empty(), Ordering::Relaxed);
         }
         target_originals.extend(
             originals
@@ -3520,9 +3535,14 @@ impl<S: WriteStore> GenericUserStore<S> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         items.retain(|&token, _| (token & mask) != value);
+        let mut removed = self.removed_system_items_guard();
+        removed.retain(|&token| (token & mask) != value);
         self.inner
             .has_system_items
-            .store(!items.is_empty(), Ordering::Relaxed);
+            .store(!items.is_empty() || !removed.is_empty(), Ordering::Relaxed);
+        self.inner
+            .has_removed_system_items
+            .store(!removed.is_empty(), Ordering::Relaxed);
     }
 
     /// `pinyin_mask_out`'s store side.
@@ -3896,6 +3916,48 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.inner.has_system_items.load(Ordering::Relaxed)
     }
 
+    fn removed_system_items_guard(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::BTreeSet<Token>> {
+        self.inner
+            .removed_system_items
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Whether this session holds a system token whose item a journal REMOVE
+    /// took out ([`Self::system_item_removed`]).
+    #[must_use]
+    pub fn has_removed_system_items(&self) -> bool {
+        self.inner.has_removed_system_items.load(Ordering::Relaxed)
+    }
+
+    /// Whether a journal REMOVE took the item behind system `token` out of
+    /// its sub-index: `get_phrase_item` fails for it (074a2219
+    /// `phrase_index.cpp:219-236`), while the shipped chunk and the phrase
+    /// table still hold it.
+    #[must_use]
+    pub fn system_item_removed(&self, token: Token) -> bool {
+        self.has_removed_system_items() && self.removed_system_items_guard().contains(&token)
+    }
+
+    pub(crate) fn stored_removed_system_items(&self) -> std::collections::BTreeSet<Token> {
+        self.removed_system_items_guard().clone()
+    }
+
+    /// The token's item is live again: an add put it back (`add_phrase_item`
+    /// stores at the token whatever the index held).
+    fn revive_system_item(&self, token: Token) {
+        if !self.has_removed_system_items() {
+            return;
+        }
+        let mut removed = self.removed_system_items_guard();
+        removed.remove(&token);
+        self.inner
+            .has_removed_system_items
+            .store(!removed.is_empty(), Ordering::Relaxed);
+    }
+
     /// The imported/replayed system item, with its current unigram field.
     ///
     /// # Errors
@@ -4154,6 +4216,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         sync_system_rows(&*db, original, token, &item, &reading, (untouched, wrapped))?;
         system_items.insert(token, item);
         drop(system_items);
+        self.revive_system_item(token);
         self.inner.has_system_items.store(true, Ordering::Relaxed);
         self.mark_committed_phrase_write(db, true);
         Ok(token)

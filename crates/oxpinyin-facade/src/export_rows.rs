@@ -572,6 +572,14 @@ impl PhraseExportCursor {
         Some(rows)
     }
 
+    /// Whether a journal REMOVE took the system item behind `token` out of
+    /// its sub-index (`phrase_index.cpp:219-236`).
+    fn removed(&self, token: u32) -> bool {
+        self.user
+            .as_ref()
+            .is_some_and(|user| user.system_item_removed(token))
+    }
+
     /// Re-reads the store-derived answers when the store's write generation
     /// moved since they were taken. A range end the store cannot read leaves
     /// the memo as it was, so the next call asks again.
@@ -631,6 +639,11 @@ impl PhraseExportCursor {
         let end = (base | library.token_range().end).max(self.memo.appended_end);
         let mut token = start;
         while token < end {
+            if self.removed(token) {
+                // `get_phrase_item` fails for a token a journal REMOVE took out.
+                token += 1;
+                continue;
+            }
             let replaced = self.user.as_ref().and_then(|user| {
                 user.with_effective_system_item(token, |item| {
                     ItemRef::Override {
@@ -702,6 +715,9 @@ impl PhraseExportCursor {
                 let Some(dict) = self.system.as_ref() else {
                     return Ok(None);
                 };
+                if self.removed(token) {
+                    return Ok(None);
+                }
                 let mut read = Some(read);
                 if self.memo.plain_token != token
                     && let Some(user) = self.user.as_ref()

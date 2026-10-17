@@ -56,6 +56,13 @@ pub struct StoreInner<S: WriteStore> {
     pub(crate) has_system_items: AtomicBool,
     pub(crate) system_items:
         Mutex<std::collections::BTreeMap<Token, oxpinyin_data::chunk_write::ChunkItem>>,
+    /// Whether [`Self::removed_system_items`] holds a token.
+    pub(crate) has_removed_system_items: AtomicBool,
+    /// The system tokens whose item a journal REMOVE took out of its
+    /// sub-index: `get_phrase_item` fails for them from then on
+    /// (074a2219 `phrase_index.cpp:180-206`, `:219-236`), though the shipped
+    /// chunk still holds the item and the phrase table the token.
+    pub(crate) removed_system_items: Mutex<std::collections::BTreeSet<Token>>,
     /// Decode-time count memo. Declared before `db` so it is dropped
     /// first (struct fields drop in declaration order).
     pub(crate) count_cache: Mutex<Option<CountCache>>,
