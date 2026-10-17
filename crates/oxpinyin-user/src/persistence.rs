@@ -37,8 +37,7 @@ use std::path::{Path, PathBuf};
 use oxpinyin_core::ChewingKey;
 use oxpinyin_data::chunk_format::{CHUNK_HEADER_SIZE, build_memory_chunk};
 use oxpinyin_data::chunk_write::{
-    ChunkItem, PHRASE_MASK, build_chunk, decode_phrase_item, decode_sub_phrase_index,
-    encode_phrase_item,
+    ChunkItem, PHRASE_MASK, build_chunk, decode_sub_phrase_index, encode_phrase_item,
 };
 use oxpinyin_data::phrase_libraries::PhraseLibraries;
 use oxpinyin_data::pin_stderr;
@@ -53,6 +52,7 @@ use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
 };
 
+use crate::replay::{Merge, Stop, raw_unigram};
 use crate::store::SaveReport;
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
@@ -194,36 +194,15 @@ impl SystemLibrary {
             .map_or(0, |pron| pron.freq)
     }
 
-    /// `self.item(slot).map(|current| &current == other)`, decided in place:
-    /// `None` when no item is readable at `slot`, otherwise whether it equals
-    /// `other`. A mapped item is compared against the mapping without being
-    /// copied out; its text is still scanned to the end first, so an item
-    /// whose phrase does not decode is `None` whatever else differs.
-    pub(crate) fn item_matches(&self, slot: u32, other: &ChunkItem) -> Option<bool> {
+    /// The item `get_phrase_item` finds at `slot` as bytes: the shipped
+    /// chunk's header-length bytes, read in place from the mapping; an inline
+    /// item (a fixture store) is serialised. `None` when there is no item.
+    pub(crate) fn visible_bytes(&self, slot: u32) -> Option<std::borrow::Cow<'_, [u8]>> {
         if let Some(item) = self.items.get(&slot) {
-            return Some(item == other);
+            return Some(std::borrow::Cow::Owned(journal_item_bytes(item)));
         }
         let view = self.mapped.as_ref()?.item(slot)?;
-        let mut equal = view.phrase_length() == other.phrase.len();
-        for (index, scalar) in view.phrase_chars().enumerate() {
-            equal &= other.phrase.get(index) == Some(&u32::from(scalar?));
-        }
-        equal &= view.unigram() == other.unigram;
-        equal &= view.n_pronunciations() == other.prons.len();
-        if equal {
-            equal = view
-                .pronunciations()
-                .zip(&other.prons)
-                .all(|(pron, (keys, frequency))| {
-                    pron.freq == *frequency
-                        && pron
-                            .keys
-                            .chunks_exact(2)
-                            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
-                            .eq(keys.iter().copied())
-                });
-        }
-        Some(equal)
+        Some(std::borrow::Cow::Borrowed(view.as_bytes()))
     }
 }
 
@@ -1354,121 +1333,27 @@ fn load_logs_with_mask(
             );
         }
 
-        let original = originals.get(&nibble);
-        let mut overrides: BTreeMap<u32, Option<ChunkItem>> = BTreeMap::new();
-        // `SubPhraseIndex::m_total_freq` through `merge`, a wrapping
-        // `guint32`: a header sets it, an added item adds its unigram, a
-        // removed one takes the current item's away, and a modified one
-        // moves it only when the new item is longer and is removed and
-        // added back; an in-place modify leaves it (074a2219
-        // `phrase_index.cpp:439-520`, `:208-235`).
-        let mut total = original.map(|library| library.total);
-        // Whether the item the replay holds at `slot` — an override, else
-        // the original's — equals `probe`; `None` when there is none.
-        let current_matches = |overrides: &BTreeMap<u32, Option<ChunkItem>>,
-                               slot: u32,
-                               probe: &ChunkItem|
-         -> Option<bool> {
-            match overrides.get(&slot) {
-                Some(Some(item)) => Some(item == probe),
-                Some(None) => None,
-                None => original.and_then(|library| library.item_matches(slot, probe)),
-            }
-        };
-
         // The pin emits local slots, but its reader masks high bits even
         // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
+        // `SubPhraseIndex::merge` over the records, in the pin's own terms:
+        // bytes compared as bytes, payloads kept whole, the first failure the
+        // end (`phrase_index.cpp:439-517`); typed items are made once, below.
+        let mut merge = Merge::new(originals.get(&nibble));
         for record in records {
-            match record {
-                LogRecord::Add { token, new_item } => match decode_phrase_item(&new_item) {
-                    Ok(item) => {
-                        total = total.map(|total| total.wrapping_add(item.unigram));
-                        overrides.insert(token & PHRASE_MASK, Some(item));
+            if let Err(stop) = merge.apply(record) {
+                loaded.skipped.push(match stop {
+                    Stop::Malformed(error) => format!("{name}: {error}"),
+                    Stop::Mismatch("header", _) => {
+                        format!("{name}: replay stopped at a mismatched header")
                     }
-                    Err(error) => {
-                        loaded.skipped.push(format!("{name}: {error}"));
-                        break;
+                    Stop::Mismatch(kind, token) => {
+                        format!("{name}: replay stopped at a mismatched {kind} for {token:#010x}")
                     }
-                },
-                LogRecord::Remove { token, old_item } => {
-                    let slot = token & PHRASE_MASK;
-                    let matched = decode_phrase_item(&old_item)
-                        .ok()
-                        .map(|old| (current_matches(&overrides, slot, &old), old));
-                    match matched {
-                        // An equal item has the record's own unigram.
-                        Some((Some(true), old)) => {
-                            total = total.map(|total| total.wrapping_sub(old.unigram));
-                            overrides.insert(slot, None);
-                        }
-                        Some((None, _)) => {
-                            overrides.insert(slot, None); // already gone; a no-op removal
-                        }
-                        _ => {
-                            // payload mismatch: merge's failure return,
-                            // recorded so a clean load is distinguishable
-                            // from a truncated replay.
-                            loaded.skipped.push(format!(
-                                "{name}: replay stopped at a mismatched REMOVE for {token:#010x}"
-                            ));
-                            break;
-                        }
-                    }
-                }
-                LogRecord::Modify {
-                    token,
-                    old_item,
-                    new_item,
-                } => {
-                    let slot = token & PHRASE_MASK;
-                    match (decode_phrase_item(&old_item), decode_phrase_item(&new_item)) {
-                        (Ok(old), Ok(new))
-                            if current_matches(&overrides, slot, &old) == Some(true) =>
-                        {
-                            // The held item equals `old`, so its stored
-                            // form and unigram are `old`'s.
-                            let grows = phrase_item_wire_len(&old)
-                                .is_some_and(|stored| new_item.len() > stored);
-                            if grows {
-                                total = total.map(|total| {
-                                    total.wrapping_sub(old.unigram).wrapping_add(new.unigram)
-                                });
-                            }
-                            overrides.insert(slot, Some(new));
-                        }
-                        _ => {
-                            // payload mismatch: merge's failure return,
-                            // recorded (see the REMOVE note above).
-                            loaded.skipped.push(format!(
-                                "{name}: replay stopped at a mismatched MODIFY for {token:#010x}"
-                            ));
-                            break;
-                        }
-                    }
-                }
-                LogRecord::ModifyHeader {
-                    old_total,
-                    new_total,
-                } => {
-                    // The header must land on the current total, as the
-                    // merge has moved it so far; a mismatch is merge's
-                    // failure return. A header that lands sets the total,
-                    // which is the old one moved by `new_total - old_total`
-                    // (`phrase_index.cpp:503-514`).
-                    let fallback = SystemLibrary::default();
-                    let now = total.unwrap_or_else(|| {
-                        system_new_total(original.unwrap_or(&fallback), &overrides)
-                    });
-                    if now != old_total {
-                        loaded
-                            .skipped
-                            .push(format!("{name}: replay stopped at a mismatched header"));
-                        break;
-                    }
-                    total = total.map(|_| new_total);
-                }
+                });
+                break;
             }
         }
+        let (total, overrides) = merge.finish(&mut loaded.skipped, &name);
         if let Some(total) = total {
             loaded.library_totals.insert(nibble, total);
         }
@@ -1479,31 +1364,38 @@ fn load_logs_with_mask(
     }
 }
 
-/// `encode_phrase_item(item).ok().map(|bytes| bytes.len())`, computed from the
-/// item's shape: the same refusals, and otherwise the header, the phrase's
-/// `ucs4_t` run, and each pronunciation's key run and frequency.
-fn phrase_item_wire_len(item: &ChunkItem) -> Option<usize> {
-    let phrase_length = item.phrase.len();
-    if phrase_length == 0
-        || phrase_length > usize::from(u8::MAX)
-        || item.prons.len() > usize::from(u8::MAX)
-        || item
-            .prons
-            .iter()
-            .any(|(keys, _)| keys.len() != phrase_length)
-    {
-        return None;
+/// An item serialised as the pin stores it (`PhraseItem`: the two length
+/// bytes, the unigram, the phrase, then each reading's keys and count),
+/// without judging its shape: the bytes of an item as it is.
+pub(crate) fn journal_item_bytes(item: &ChunkItem) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(6 + 4 * item.phrase.len());
+    bytes.push(u8::try_from(item.phrase.len()).unwrap_or(u8::MAX));
+    bytes.push(u8::try_from(item.prons.len()).unwrap_or(u8::MAX));
+    bytes.extend_from_slice(&item.unigram.to_le_bytes());
+    for &code in &item.phrase {
+        bytes.extend_from_slice(&code.to_le_bytes());
     }
-    Some(6 + 4 * phrase_length + item.prons.len() * (2 * phrase_length + 4))
+    for (keys, frequency) in &item.prons {
+        for key in keys {
+            bytes.extend_from_slice(&key.to_le_bytes());
+        }
+        bytes.extend_from_slice(&frequency.to_le_bytes());
+    }
+    bytes
 }
 
-/// `PhraseItem::get_unigram_frequency` read from a record's raw item: the
-/// `guint32` after the two length bytes (074a2219 `phrase_index.h:124-126`),
-/// `0` when the payload is too short to hold one.
-fn raw_unigram(item: &[u8]) -> u32 {
-    item.get(2..6)
-        .and_then(|bytes| bytes.try_into().ok())
-        .map_or(0, u32::from_le_bytes)
+/// [`encode_phrase_item`] for a journal record: the same refusals, except that
+/// an empty phrase is an item. `PhraseItem` keeps one of `6 + 4n` bytes
+/// (`get_phrase_item`, 074a2219 `phrase_index.cpp:180-206`) and the pin's `diff`
+/// writes it (`:392-436`); a journal can leave one there.
+fn journal_record_item(item: &ChunkItem) -> Result<Vec<u8>, PersistenceError> {
+    if item.phrase.is_empty()
+        && item.prons.len() <= usize::from(u8::MAX)
+        && item.prons.iter().all(|(keys, _)| keys.is_empty())
+    {
+        return Ok(journal_item_bytes(item));
+    }
+    encode_phrase_item(item).map_err(PersistenceError::from)
 }
 
 /// The library's new `total_freq` — the original plus the overrides'
@@ -1948,21 +1840,21 @@ pub fn diff_records(
                 if old != new {
                     records.push(LogRecord::Modify {
                         token,
-                        old_item: encode_phrase_item(old).map_err(PersistenceError::from)?,
-                        new_item: encode_phrase_item(new).map_err(PersistenceError::from)?,
+                        old_item: journal_record_item(old)?,
+                        new_item: journal_record_item(new)?,
                     });
                 }
             }
             (Some(old), None) => {
                 records.push(LogRecord::Remove {
                     token,
-                    old_item: encode_phrase_item(old).map_err(PersistenceError::from)?,
+                    old_item: journal_record_item(old)?,
                 });
             }
             (None, Some(new)) => {
                 records.push(LogRecord::Add {
                     token,
-                    new_item: encode_phrase_item(new).map_err(PersistenceError::from)?,
+                    new_item: journal_record_item(new)?,
                 });
             }
             (None, None) => {}
@@ -3236,12 +3128,19 @@ mod tests {
                 materialized.as_ref().map(|current| current.unigram),
                 "slot {slot}"
             );
-            for probe in &probes {
-                assert_eq!(
-                    library.item_matches(slot, probe),
-                    materialized.as_ref().map(|current| current == probe),
-                    "slot {slot} against {probe:?}"
-                );
+            // The bytes the replay compares: the item's own, whatever holds it.
+            if let Some(current) = &materialized {
+                let bytes = library
+                    .visible_bytes(slot)
+                    .map(std::borrow::Cow::into_owned);
+                assert_eq!(bytes, Some(journal_item_bytes(current)), "slot {slot}");
+                for probe in &probes {
+                    assert_eq!(
+                        bytes.as_deref() == Some(journal_item_bytes(probe).as_slice()),
+                        current == probe,
+                        "slot {slot} against {probe:?}"
+                    );
+                }
             }
             for keys in key_probes {
                 let expected = materialized.as_ref().map_or(0, |current| {
@@ -3428,13 +3327,12 @@ mod tests {
     }
 
     #[test]
-    fn phrase_item_wire_len_is_the_encoded_length_or_the_same_refusal() {
+    fn a_journal_item_is_the_encoded_item_or_the_same_refusal_but_for_an_empty_phrase() {
         let long_prons: Vec<(Vec<u16>, u32)> = (0..256).map(|n| (vec![n as u16], 1)).collect();
         let cases = [
             item(&[0x4f60], 1, &[]),
             item(&[0x4f60], 1, &[(vec![1], 2)]),
             item(&[0x4f60, 0x597d], 1, &[(vec![1, 2], 2), (vec![3, 4], 5)]),
-            item(&[], 1, &[]),
             item(&[7; 255], 1, &[(vec![1; 255], 2)]),
             item(&[7; 256], 1, &[]),
             item(&[0x4f60], 1, &long_prons[..255]),
@@ -3444,11 +3342,20 @@ mod tests {
         ];
         for case in &cases {
             assert_eq!(
-                phrase_item_wire_len(case),
-                encode_phrase_item(case).ok().map(|bytes| bytes.len()),
+                journal_record_item(case).ok(),
+                encode_phrase_item(case).ok(),
                 "{case:?}"
             );
         }
+        // An empty phrase is an item of `6 + 4n` bytes in the pin.
+        let empty = item(&[], 7, &[(vec![], 5), (vec![], 6)]);
+        let bytes = journal_record_item(&empty).expect("empty phrase");
+        assert_eq!(bytes.len(), 6 + 4 * 2);
+        assert_eq!(
+            oxpinyin_data::chunk_write::decode_phrase_item(&bytes).expect("round trip"),
+            empty
+        );
+        assert!(journal_record_item(&item(&[], 7, &[(vec![1], 5)])).is_err());
     }
 
     #[test]
