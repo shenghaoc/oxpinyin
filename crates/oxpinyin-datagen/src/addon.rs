@@ -162,13 +162,16 @@ mod tests {
 
     #[test]
     fn addon_chunks_carry_unigram_one() {
-        let dir = std::env::temp_dir().join(format!("oxpinyin-addon-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("oxpinyin-addon-test-")
+            .tempdir()
+            .unwrap();
+        let dir = tmp.path();
         std::fs::write(dir.join("art.table"), "er'huang\t二簧\t67108865\t100\n").unwrap();
         for &(_, name) in &ADDON_LIBRARY_NAMES[1..] {
             std::fs::write(dir.join(format!("{name}.table")), "").unwrap();
         }
-        let out = compile(&dir, Subset::Full).unwrap();
+        let out = compile(dir, Subset::Full).unwrap();
         assert_eq!(out.chunks.len(), 12);
         assert_eq!(out.chunks[0].0, "art.bin");
         let path = dir.join("art.bin");
@@ -176,6 +179,5 @@ mod tests {
         let lib = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).unwrap();
         assert_eq!(lib.total_freq(), 1);
         assert_eq!(lib.item(67_108_865).unwrap().unigram(), 1);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

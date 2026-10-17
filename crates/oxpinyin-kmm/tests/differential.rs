@@ -242,14 +242,15 @@ fn locate_data() -> Option<PathBuf> {
 /// points at the built data dir (`libpinyin/data` after `gen_binary_files` +
 /// `import_interpolation`; see `docs/testing/oracle-environment.md`).
 struct PinDir {
-    dir: PathBuf,
+    dir: tempfile::TempDir,
 }
 
 impl PinDir {
     fn fresh(data: &Path, tag: &str) -> Result<Self, String> {
-        let dir = std::env::temp_dir().join(format!("oxpinyin-kmm-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("oxpinyin-kmm-{tag}-"))
+            .tempdir()
+            .map_err(|e| e.to_string())?;
         for entry in data.read_dir().map_err(|e| e.to_string())?.flatten() {
             if entry.file_type().is_ok_and(|t| t.is_file()) {
                 let name = entry.file_name();
@@ -262,7 +263,7 @@ impl PinDir {
                     || name.ends_with(".table")
                     || name.ends_with(".bin")
                 {
-                    std::fs::copy(entry.path(), dir.join(entry.file_name()))
+                    std::fs::copy(entry.path(), dir.path().join(entry.file_name()))
                         .map_err(|e| e.to_string())?;
                 }
             }
@@ -272,7 +273,7 @@ impl PinDir {
 
     fn run(&self, bin: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         let output = Command::new(bin)
-            .current_dir(&self.dir)
+            .current_dir(self.dir.path())
             .args(args)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -290,13 +291,7 @@ impl PinDir {
     }
 
     fn path(&self, name: &str) -> PathBuf {
-        self.dir.join(name)
-    }
-}
-
-impl Drop for PinDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
+        self.dir.path().join(name)
     }
 }
 

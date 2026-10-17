@@ -49,6 +49,9 @@ oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 # this edge.
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [[bin]]
 name = "oxpinyin-datagen"
 path = "src/bin/oxpinyin-datagen.rs"

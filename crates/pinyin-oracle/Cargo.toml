@@ -102,6 +102,7 @@ dhat = "0.3"
 # default-features = false so workspace `--no-default-features` runs are not
 # re-defaulted through this dev edge.
 oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
+tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 glib-sys = { workspace = true, optional = true }

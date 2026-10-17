@@ -59,3 +59,4 @@ oxpinyin-kmm = { path = "../oxpinyin-kmm" }
 
 [dev-dependencies]
 oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
+tempfile.workspace = true
