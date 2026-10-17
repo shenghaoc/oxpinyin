@@ -20,7 +20,7 @@ A change that removes a feature edge does not remove architectural coupling by i
 
 ## Method
 
-The audit did not compile code. It did not run a build script. The tools were `git`, `grep`, file reads and `cargo tree --locked`.
+The feature-resolution measurements did not compile code. They did not run a build script. They used `git`, `grep`, file reads and `cargo tree --locked`. §6 records separate test runs.
 
 The audit took the feature resolution of each selection with this command:
 
@@ -40,9 +40,75 @@ The audit used 125 selections:
 - `-p oxpinyin-corpus --features oxpinyin-training/<backend>`.
 - The `fuzz/` workspace.
 
-The audit removed one edge at a time from a scratch copy of the manifests. This gave 95 variants. The audit never changed a tracked file. For each variant, it compared the resolved feature sets of each package over all selections.
+The audit removed one edge at a time from a scratch copy of the manifests. This gave 95 variants. The audit never changed a tracked file. For each variant, it compared the resolved feature sets of each workspace crate over all selections.
+
+Each comparison read the feature sets of the workspace crates only. It did not read the other crates in the graph. For this reason it did not show a change in the set of other packages. The `dep:bindgen` entries cause such a change. The audit checked them with a separate comparison of the full package list.
 
 The audit also removed together the 33 edges that §2 marks redundant. The result was identical across all selections.
+
+The audit did not retain the raw outputs, because the session was ephemeral. This block regenerates the 125-selection results and the 95-variant results:
+
+```sh
+# Run in a clean checkout of 5ef5258. Needs cargo 1.97.1 and access to the crate index.
+resolve() {  # one line "crate|features" for each workspace crate in the graph
+  cargo tree --locked --target all --prefix none --format '{p}|{f}' "$@" 2>&1 |
+    sed -E 's/ v[0-9.]+ \([^)]*\)//; s/ \(\*\)$//' | grep -E '^(oxpinyin|pinyin)|^error' | sort -u
+}
+selections() {  # the 125 selections
+  for f in "" "--no-default-features" "--no-default-features --features bdb" \
+           "--no-default-features --features kyotocabinet" "--no-default-features --features tkrzw"; do
+    for c in $(ls crates); do echo "-p $c $f"; done
+    echo "--workspace $f"
+    echo "--workspace --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct --exclude oxpinyin-word $f"
+    echo "-p oxpinyin-capi -p oxpinyin-zhuyin-capi $f"
+  done
+  for b in bdb kyotocabinet tkrzw; do
+    echo "-p oxpinyin-engine --features oxpinyin-testsupport/$b"
+    echo "-p oxpinyin-core --features oxpinyin-testsupport/$b"
+    echo "-p oxpinyin-corpus --features oxpinyin-training/$b"
+  done
+  echo "--manifest-path fuzz/Cargo.toml"
+}
+snapshot() { selections | while read -r sel; do echo "== $sel"; resolve $sel; done; }
+
+cat > variant.py <<'PY'
+import glob, re, sys
+FEAT = re.compile(r'^(bdb|kyotocabinet|tkrzw)(\s*=\s*)\[(.*?)\]', re.S | re.M)
+DEF = re.compile(r'^default(\s*=\s*)\["bdb"\]', re.M)
+DFF = re.compile(r'^.*default-features\s*=\s*false.*$', re.M)
+def variants():  # yields (manifest, label, new text): the 95 variants
+    for m in ['Cargo.toml'] + sorted(glob.glob('crates/*/Cargo.toml')):
+        t = open(m).read()
+        for f in FEAT.finditer(t):
+            els = re.findall(r'"([^"]+)"', f.group(3))
+            for e in els:
+                keep = ', '.join('"%s"' % x for x in els if x != e)
+                yield m, f'{m} [{f.group(1)}] drop {e}', t[:f.start(3)] + keep + t[f.end(3):]
+        for d in DEF.finditer(t):
+            yield m, f'{m} default = []', t[:d.start()] + 'default' + d.group(1) + '[]' + t[d.end():]
+        for l in DFF.finditer(t):
+            if 'oxpinyin' in l.group(0):
+                new = re.sub(r',?\s*default-features\s*=\s*false', '', l.group(0))
+                yield m, f'{m} drop default-features = false: {l.group(0).strip()[:40]}', t[:l.start()] + new + t[l.end():]
+v = list(variants())
+if sys.argv[1] == 'count': print(len(v))
+elif sys.argv[1] == 'label': print(v[int(sys.argv[2])][1])
+else: open(v[int(sys.argv[2])][0], 'w').write(v[int(sys.argv[2])][2])
+PY
+
+snapshot > base.txt
+for i in $(seq 0 $(( $(python3 -I variant.py count) - 1 ))); do
+  python3 -I variant.py apply $i
+  snapshot > variant.txt
+  git checkout -q -- Cargo.toml 'crates/*/Cargo.toml'
+  if cmp -s base.txt variant.txt; then echo "identical: $(python3 -I variant.py label $i)"
+  else echo "changed:   $(python3 -I variant.py label $i)"; fi
+done
+# Package-list check for dep:bindgen. The comparison above cannot show its effect.
+tree_all() { cargo tree --locked --target all -e normal,build,dev --prefix none "$@" | sed -E 's/ \(\*\)$//' | sort -u; }
+for b in bdb kyotocabinet tkrzw; do tree_all -p oxpinyin-store --no-default-features --features $b | wc -l; done   # 85 each
+# Remove "dep:bindgen" from that feature in crates/oxpinyin-store/Cargo.toml and repeat: 74 each.
+```
 
 ## 1. Cargo's rule for `--features` across several selected packages
 
@@ -112,11 +178,11 @@ These builds and CI invocations depend on the edges:
 | Edge | Verdict | Evidence |
 | --- | --- | --- |
 | Every crate's `default = ["bdb"]` (store, data, user, runtime, facade, capi, zhuyin-capi, dictool, training, oracle, datagen) | **necessary** | Dropping it zeroes the store backend in `-p <crate>` default builds. `fuzz/` relies on the data, user and capi defaults; at least one of the three must stay. |
-| `oxpinyin-testsupport` `default = []` | **necessary** at the audited SHA | The manifest comment says a default would re-enable kyotocabinet through the macOS path dev-dependencies. |
+| `oxpinyin-testsupport` `default = []` | **resolution-neutral** at the audited SHA | Removing the declaration changes no selection. 0 of 125 selections differ, except for the label `default`. The default set must hold no backend. The manifest comment says a default would re-enable kyotocabinet through the macOS path dev-dependencies. |
 | `data`: `B = [store/B]` | **necessary** | The only path to the store. |
 | `training`: `B = [data/B]`; `pinyin-oracle`: `B = [data/B]` | **necessary** | Each is the only path. Training also has `build.rs:23,31`. |
 | `testsupport`: `B = [store/B]` | **necessary** at the audited SHA | The only path for `-p oxpinyin-testsupport --features B` and the engine gate in the dated records. See G1. |
-| `store`: `B = ["dep:bindgen"]` | **necessary** | `build.rs:184`, `:335` and the bdb arm call `bindgen::Builder` under `cfg`. Removing `dep:bindgen` from bdb breaks `fuzz/`'s `--locked` resolution. For kyotocabinet and tkrzw the resolution is unchanged, so the necessity rests on the source reading. |
+| `store`: `B = ["dep:bindgen"]` | **necessary** | `build.rs:184`, `:335` and the bdb arm call `bindgen::Builder` under `cfg`. Without `dep:bindgen`, the graph of `-p oxpinyin-store --no-default-features --features <backend>` loses 11 packages (the `bindgen` subtree): 85 packages become 74. This holds for all three backends. The comparison of workspace-crate feature sets does not show it (see Method). Removing `dep:bindgen` from bdb also breaks the `--locked` resolution of `fuzz/`. |
 | `capi`, `zhuyin-capi`: own `B` features and one path to the store | **necessary** | `CARGO_FEATURE_*` reads in `build.rs`; `cinstall --features` and the perf scripts pass the feature to the crate itself. |
 | `dictool`, `training`: own `kyotocabinet` feature | **necessary** | `build.rs` rpath. |
 | `datagen`: own `B` features | **necessary** | 38 gated sites. |
@@ -129,9 +195,21 @@ These builds and CI invocations depend on the edges:
 | `dictool`: `user/B`; `facade`: `user/B`; `runtime`: `data/B`; `user`: `store/B` | **redundant** | The chain through the retained edge reaches the store. |
 | `capi`/`zhuyin-capi` `facade/B`; `dictool` `facade/B`; `facade` `runtime/B`; `runtime` `user/B`; `user` `data/B`; `datagen` `testsupport/B` | **redundant, flag-only** | Each is an alternative to a row above, so at most one of each pair can go. Removal changes only the enabled flag on facade, runtime, data or testsupport, none of which has compiled backend-gated code (their gated code is test-only). This rests on the gating inventory. |
 
-Two more entries also resolved identically when the audit removed them one at a time. They are `oxpinyin-store`'s `kyotocabinet` and `tkrzw` `dep:bindgen`. They are not forwarder edges. They are not among the 33.
+The single-edge comparison also listed two more entries as identical. They are `oxpinyin-store`'s `kyotocabinet` and `tkrzw` `dep:bindgen`. That result was wrong. The comparison read only the feature sets of the workspace crates, so it did not show the effect of `dep:bindgen` (see Method). The two entries are not forwarder edges. They are not among the 33.
 
 They are necessary. `crates/oxpinyin-store/build.rs` calls `bindgen::Builder` under those features. See the `store` row above.
+
+The 33 jointly tested entries are these 11 entries for each of the backends `bdb`, `kyotocabinet` and `tkrzw`:
+
+- `oxpinyin-runtime/<backend>`, `oxpinyin-data/<backend>` and `oxpinyin-user/<backend>` in `oxpinyin-capi`;
+- the same three entries in `oxpinyin-zhuyin-capi`;
+- `oxpinyin-store/<backend>` in `oxpinyin-datagen`;
+- `oxpinyin-user/<backend>` in `oxpinyin-dictool`;
+- `oxpinyin-user/<backend>` in `oxpinyin-facade`;
+- `oxpinyin-data/<backend>` in `oxpinyin-runtime`;
+- `oxpinyin-store/<backend>` in `oxpinyin-user`.
+
+The flag-only entries are not in this set. Each one is an alternative to an entry in this set, so the audit did not remove it.
 
 After the audit removes the 33 redundant edges, two chains remain. The first chain is capi, zhuyin-capi and dictool → facade → runtime → user → data → store. The second chain is datagen → testsupport → store. The store selection and the own flag of each crate resolve identically across all 125 selections.
 
@@ -177,9 +255,11 @@ G1 meets the constraints:
 
 - the `DEFAULT_STORE_IS_LIBPINYIN_DBM` const;
 - the `else` arms of the const in `data/system_files.rs` and `data/user_files.rs`;
+- the use of the const in `crates/oxpinyin-datagen/tests/backend_default.rs`;
 - `runtime::user_store_file()`;
 - the training re-export of `default_store_file`;
-- the data re-export of the const.
+- the data re-export of the const;
+- the `oxpinyin_data::default_store_file` re-export.
 
 After G2, the non-test code of data does not read `DEFAULT_STORE_EXT` or the flag. Runtime does not export a helper that names the backend. `data::DEFAULT_STORE_EXT` stays, because `fuzz/` and several test fixtures use it. After G2, one non-test reader of backend identity remains outside the store and datagen. It is `DEFAULT_STORE_DB_FORMAT` in data. Compatibility requires it.
 
@@ -232,9 +312,9 @@ Measured result for C1: the audit recomputed the redundant set on the graph afte
 
 The `store/B` edge of datagen became necessary after G1. It is now the only route of datagen to the backend, so it stays. The "flag-only" edges also stay.
 
-Correction to the Phase 1 count: the audited SHA has 33 redundant forwarder edges, not 35. Two other entries resolved identically when the audit removed them one at a time. They are `oxpinyin-store`'s `kyotocabinet` and `tkrzw` `dep:bindgen`. They are not forwarders.
+Correction to the Phase 1 count: the audited SHA has 33 redundant forwarder edges, not 35. The Phase 1 count of 35 included two entries that the comparison listed as identical when the audit removed them one at a time. They are `oxpinyin-store`'s `kyotocabinet` and `tkrzw` `dep:bindgen`. They are not forwarders. The comparison read only the feature sets of the workspace crates, so it did not show the effect of `dep:bindgen`. Without it, 11 packages leave the graph of the store.
 
-The source shows that these two entries are necessary: `crates/oxpinyin-store/build.rs` calls `bindgen::Builder` under those features. The joint removal at the audited SHA covered the 33 forwarders. The Method section, §2 and §4 give the corrected figure of 33.
+These two entries are necessary: `crates/oxpinyin-store/build.rs` calls `bindgen::Builder` under those features. The joint removal at the audited SHA covered the 33 forwarders. The counts of 30 and 33 stand. The Method section, §2 and §4 give the corrected figure of 33.
 
 Correction to the Phase 1 report: G1 removes the store only from the graphs of `oxpinyin-core`, `oxpinyin-engine` and `oxpinyin-testsupport`. The Phase 1 report said that G1 also removes the store from the graphs of capi, corpus and training. That was wrong. Capi and training keep the store through their own normal dependencies. Corpus keeps it through training.
 
