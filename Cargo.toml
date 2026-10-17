@@ -11,6 +11,7 @@ members = [
   "crates/oxpinyin-capi-marshal",
   "crates/oxpinyin-capi",
   "crates/oxpinyin-runtime",
+  "crates/libpinyin-abi",
   "crates/pinyin-oracle",
   "crates/oxpinyin-dictool",
   "crates/oxpinyin-training",

@@ -497,6 +497,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "libpinyin-abi"
+version = "0.1.0"
+
+[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -834,6 +838,7 @@ dependencies = [
  "criterion",
  "dhat",
  "glib-sys",
+ "libpinyin-abi",
  "oxpinyin-core",
  "oxpinyin-data",
  "oxpinyin-engine",

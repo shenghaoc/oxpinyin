@@ -5,133 +5,43 @@
 //! the W2-T3 comparison run in portable CI with no oracle installed: the oracle
 //! side is real output the pinned program already produced, not a mock.
 //!
+//! The escaping rules and the notation of the individual fields are generic and
+//! live in [`libpinyin_abi::capture`]; they are re-exported here under their
+//! old names. What stays is the part that is this harness's policy: which
+//! fields a record must carry, that an off-pin record is *not* rejected at the
+//! door, and the [`OracleError`] each failure maps to.
+//!
 //! Pure and always compiled. The escaping helpers are shared with the
 //! differential logs, so fixtures and logs cannot drift apart.
 
-use std::fmt::Write as _;
+use libpinyin_abi::capture::{RawRecord, WireError};
 
-use crate::observation::{OracleCompleteness, OracleObservation, OracleSegment};
+pub use libpinyin_abi::capture::{
+    CAPTURE_SCHEMA, escape, segment_to_wire, segments_to_wire, unescape,
+};
+
+use crate::observation::{OracleObservation, OracleSegment};
 use crate::{OracleError, OracleFlags};
-
-/// Schema tag of the capture format.
-pub const CAPTURE_SCHEMA: &str = "pinyin-capture-v1";
-
-/// Escapes a byte string for a single log or fixture field.
-///
-/// `\\`, TAB, CR and LF get C-style escapes. Control bytes, DEL and every byte
-/// at or above `0x80` become `\xNN`. Bytes `0x20..=0x7e` pass through, so ASCII
-/// text stays readable.
-///
-/// Escaping the high half is deliberately *stricter* than
-/// `tools/capture/capture.c`, which passes bytes above DEL through raw. Two
-/// reasons: the output must be a Rust `String`, so a raw high byte would be
-/// re-encoded as two UTF-8 bytes and break the round trip [`unescape`] depends
-/// on; and a pure-ASCII log line diffs cleanly. The two rules agree on every
-/// byte either format actually carries, since capture inputs and the parity
-/// corpus are both ASCII. [`unescape`] still accepts a raw high byte, so this
-/// reader remains tolerant of anything the C harness could emit.
-#[must_use]
-pub fn escape(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len());
-    for byte in bytes {
-        match byte {
-            b'\\' => out.push_str("\\\\"),
-            b'\t' => out.push_str("\\t"),
-            b'\n' => out.push_str("\\n"),
-            b'\r' => out.push_str("\\r"),
-            0x00..=0x1f | 0x7f..=0xff => {
-                let _ = write!(out, "\\x{byte:02x}");
-            }
-            _ => out.push(char::from(*byte)),
-        }
-    }
-    out
-}
-
-/// Reverses [`escape`].
-///
-/// A trailing lone backslash or a malformed `\xNN` is preserved literally rather
-/// than treated as fatal: a fixture the reader cannot fully decode must still be
-/// reportable, not silently dropped.
-#[must_use]
-pub fn unescape(text: &str) -> Vec<u8> {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-
-    while index < bytes.len() {
-        if bytes[index] != b'\\' {
-            out.push(bytes[index]);
-            index += 1;
-            continue;
-        }
-        match bytes.get(index + 1) {
-            Some(b'\\') => {
-                out.push(b'\\');
-                index += 2;
-            }
-            Some(b't') => {
-                out.push(b'\t');
-                index += 2;
-            }
-            Some(b'n') => {
-                out.push(b'\n');
-                index += 2;
-            }
-            Some(b'r') => {
-                out.push(b'\r');
-                index += 2;
-            }
-            Some(b'x') => {
-                let hex = bytes.get(index + 2..index + 4).and_then(|pair| {
-                    let text = core::str::from_utf8(pair).ok()?;
-                    u8::from_str_radix(text, 16).ok()
-                });
-                if let Some(value) = hex {
-                    out.push(value);
-                    index += 4;
-                } else {
-                    out.push(b'\\');
-                    index += 1;
-                }
-            }
-            _ => {
-                out.push(b'\\');
-                index += 1;
-            }
-        }
-    }
-    out
-}
 
 /// One `pinyin-capture-v1` record, as raw fields.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct CaptureRecord {
-    fields: Vec<(String, String)>,
+    raw: RawRecord,
 }
 
 impl CaptureRecord {
     /// Splits one line into TAB-separated `key=value` fields.
     #[must_use]
     pub fn parse_line(line: &str) -> Self {
-        let fields = line
-            .trim_end_matches(['\r', '\n'])
-            .split('\t')
-            .filter_map(|field| {
-                let (key, value) = field.split_once('=')?;
-                Some((key.to_owned(), value.to_owned()))
-            })
-            .collect();
-        Self { fields }
+        Self {
+            raw: RawRecord::parse_line(line),
+        }
     }
 
     /// Returns the raw, still-escaped value of `field`.
     #[must_use]
     pub fn field(&self, field: &str) -> Option<&str> {
-        self.fields
-            .iter()
-            .find(|(key, _)| key == field)
-            .map(|(_, value)| value.as_str())
+        self.raw.field(field)
     }
 
     fn require(&self, field: &'static str) -> Result<&str, OracleError> {
@@ -203,102 +113,22 @@ impl CaptureRecord {
     }
 }
 
-/// Parses the `segments` field.
-///
-/// `-` means no segment. Otherwise entries are comma-separated
-/// `text@begin:end:complete|partial`, or one of the sentinel spellings the
-/// capture harness emits for the F-E-01 shape.
+/// Parses the `segments` field (notation owned by [`libpinyin_abi::capture`]).
 fn parse_segments(raw: &str) -> Result<Vec<OracleSegment>, OracleError> {
-    if raw == "-" {
-        return Ok(Vec::new());
-    }
-
-    let mut segments = Vec::new();
-    for entry in raw.split(',') {
-        segments.push(parse_segment(entry)?);
-    }
-    Ok(segments)
+    libpinyin_abi::capture::parse_segments(raw).map_err(wire_error)
 }
 
-fn parse_segment(entry: &str) -> Result<OracleSegment, OracleError> {
-    let malformed = || OracleError::CaptureFieldMalformed {
-        field: "segments",
-        value: entry.to_owned(),
-    };
-
-    for (prefix, build) in [
-        (
-            "<missing-rest>@",
-            (|offset| OracleSegment::MissingKeyRest { offset }) as fn(usize) -> OracleSegment,
-        ),
-        ("<missing-position>@", |offset| {
-            OracleSegment::MissingPosition { offset }
-        }),
-        ("<missing-pinyin>@", |offset| {
-            OracleSegment::MissingPinyinString { offset }
-        }),
-        ("<no-key-columns>@", |parsed_len| {
-            OracleSegment::NoKeyColumns { parsed_len }
-        }),
-    ] {
-        if let Some(rest) = entry.strip_prefix(prefix) {
-            let offset = rest.parse::<usize>().map_err(|_| malformed())?;
-            return Ok(build(offset));
-        }
-    }
-
-    // text@begin:end:completeness — split from the right, because a syllable
-    // spelling never contains ':' but this keeps the parse unambiguous.
-    let (text, positions) = entry.rsplit_once('@').ok_or_else(malformed)?;
-    let mut parts = positions.split(':');
-    let begin = parts
-        .next()
-        .and_then(|value| value.parse::<u16>().ok())
-        .ok_or_else(malformed)?;
-    let end = parts
-        .next()
-        .and_then(|value| value.parse::<u16>().ok())
-        .ok_or_else(malformed)?;
-    let completeness = match parts.next() {
-        Some("complete") => OracleCompleteness::Complete,
-        Some("partial") => OracleCompleteness::Partial,
-        _ => return Err(malformed()),
-    };
-    if parts.next().is_some() {
-        return Err(malformed());
-    }
-
-    Ok(OracleSegment::Syllable {
-        syllable: String::from_utf8_lossy(&unescape(text)).into_owned(),
-        begin,
-        end,
-        completeness,
-    })
-}
-
-/// Parses the `candidates_hex` field: `-`, or comma-separated lowercase hex.
+/// Parses the `candidates_hex` field.
 fn parse_candidates(raw: &str) -> Result<Vec<String>, OracleError> {
-    if raw == "-" {
-        return Ok(Vec::new());
-    }
+    libpinyin_abi::capture::parse_candidates(raw).map_err(wire_error)
+}
 
-    let mut candidates = Vec::new();
-    for entry in raw.split(',') {
-        let malformed = || OracleError::CaptureFieldMalformed {
-            field: "candidates_hex",
-            value: entry.to_owned(),
-        };
-        if entry.len() % 2 != 0 {
-            return Err(malformed());
-        }
-        let mut bytes = Vec::with_capacity(entry.len() / 2);
-        for pair in entry.as_bytes().chunks(2) {
-            let text = core::str::from_utf8(pair).map_err(|_| malformed())?;
-            bytes.push(u8::from_str_radix(text, 16).map_err(|_| malformed())?);
-        }
-        candidates.push(String::from_utf8(bytes).map_err(|_| malformed())?);
+/// Maps a generic field failure to the harness's error, field and value intact.
+fn wire_error(error: WireError) -> OracleError {
+    OracleError::CaptureFieldMalformed {
+        field: error.field,
+        value: error.value,
     }
-    Ok(candidates)
 }
 
 /// Reads every record from a capture fixture's contents.
@@ -326,40 +156,6 @@ pub fn read_fixture(contents: &str) -> Result<Vec<OracleObservation>, OracleErro
         observations.push(observation);
     }
     Ok(observations)
-}
-
-/// Renders one segment in capture notation.
-#[must_use]
-pub fn segment_to_wire(segment: &OracleSegment) -> String {
-    match segment {
-        OracleSegment::Syllable {
-            syllable,
-            begin,
-            end,
-            completeness,
-        } => format!(
-            "{}@{begin}:{end}:{}",
-            escape(syllable.as_bytes()),
-            completeness.as_wire()
-        ),
-        OracleSegment::MissingKeyRest { offset } => format!("<missing-rest>@{offset}"),
-        OracleSegment::MissingPosition { offset } => format!("<missing-position>@{offset}"),
-        OracleSegment::MissingPinyinString { offset } => format!("<missing-pinyin>@{offset}"),
-        OracleSegment::NoKeyColumns { parsed_len } => format!("<no-key-columns>@{parsed_len}"),
-    }
-}
-
-/// Renders a segment list in capture notation, using `-` when empty.
-#[must_use]
-pub fn segments_to_wire(segments: &[OracleSegment]) -> String {
-    if segments.is_empty() {
-        return "-".to_owned();
-    }
-    segments
-        .iter()
-        .map(segment_to_wire)
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 #[cfg(test)]

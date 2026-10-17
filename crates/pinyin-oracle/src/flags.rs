@@ -11,45 +11,15 @@
 
 use crate::OracleError;
 
-/// `IS_PINYIN` — the base full-pinyin bit. F-C's baseline word.
-pub const IS_PINYIN: u32 = 1 << 1;
-
-/// `IS_ZHUYIN`.
-pub const IS_ZHUYIN: u32 = 1 << 2;
-
-/// `PINYIN_INCOMPLETE` — admit partial (initial-only) tails.
-pub const PINYIN_INCOMPLETE: u32 = 1 << 3;
-
-/// `ZHUYIN_INCOMPLETE`.
-pub const ZHUYIN_INCOMPLETE: u32 = 1 << 4;
-
-/// `USE_TONE`.
-pub const USE_TONE: u32 = 1 << 5;
-
-/// `FORCE_TONE`.
-pub const FORCE_TONE: u32 = 1 << 6;
-
-/// `USE_DIVIDED_TABLE`.
-pub const USE_DIVIDED_TABLE: u32 = 1 << 7;
-
-/// `USE_RESPLIT_TABLE`.
-pub const USE_RESPLIT_TABLE: u32 = 1 << 8;
-
-/// `DYNAMIC_ADJUST` — forbidden by the parity protocol.
-///
-/// The capture protocol in `docs/testing/capture-fixtures.md` rejects this bit
-/// outright. Masking it silently would make a run look protocol-clean while
-/// learning was active, so [`OracleFlags::new`] returns an error instead.
-pub const DYNAMIC_ADJUST: u32 = 1 << 9;
-
-/// Every pinyin ambiguity bit (`PINYIN_AMB_ALL`).
-pub const PINYIN_AMB_ALL: u32 = 0x3ff << 10;
-
-/// Sort order used for candidate enumeration.
-///
-/// `SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY`, the value
-/// `tools/capture/capture.c` passes to `pinyin_guess_candidates`.
-pub const SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY: u32 = 0x1e;
+// The option bits and the sort word are the public headers' values and live in
+// `libpinyin-abi`; re-exported here under the same names. What stays in this
+// module is the capture protocol's policy: the two profile words and the rule
+// that `DYNAMIC_ADJUST` is rejected, never masked (see `OracleFlags::new`).
+pub use libpinyin_abi::option::{
+    DYNAMIC_ADJUST, FORCE_TONE, IS_PINYIN, IS_ZHUYIN, PINYIN_AMB_ALL, PINYIN_INCOMPLETE,
+    SORT_BY_PHRASE_LENGTH_AND_PINYIN_LENGTH_AND_FREQUENCY, USE_DIVIDED_TABLE, USE_RESPLIT_TABLE,
+    USE_TONE, ZHUYIN_INCOMPLETE,
+};
 
 /// The F-A capture profile: `0x18a`.
 ///
