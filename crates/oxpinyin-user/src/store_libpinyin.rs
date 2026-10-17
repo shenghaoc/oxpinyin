@@ -436,18 +436,30 @@ impl GenericUserStore<DefaultStore> {
         // the session now owns: move them into the live map rather than
         // cloning every item and dropping the originals with `loaded`.
         let has_system_items = !loaded.state.system_overrides.is_empty();
-        let system_items = std::mem::take(&mut loaded.state.system_overrides)
-            .into_iter()
-            .flat_map(|(nibble, items)| {
-                items.into_iter().filter_map(move |(slot, item)| {
-                    item.map(|item| (((u32::from(nibble) << 24) | slot), item))
-                })
-            })
-            .collect();
+        // One pass over the replayed overrides: an item is kept, a removal has
+        // none to keep and the session records its token.
+        let mut kept_items = Vec::new();
+        let mut removed_system_items = std::collections::BTreeSet::new();
+        for (nibble, items) in std::mem::take(&mut loaded.state.system_overrides) {
+            for (slot, item) in items {
+                let token = (u32::from(nibble) << 24) | slot;
+                match item {
+                    Some(item) => kept_items.push((token, item)),
+                    None => {
+                        removed_system_items.insert(token);
+                    }
+                }
+            }
+        }
+        let system_items = kept_items.into_iter().collect();
 
         let inner = Arc::new(StoreInner {
             has_system_items: std::sync::atomic::AtomicBool::new(has_system_items),
             system_items: std::sync::Mutex::new(system_items),
+            has_removed_system_items: std::sync::atomic::AtomicBool::new(
+                !removed_system_items.is_empty(),
+            ),
+            removed_system_items: std::sync::Mutex::new(removed_system_items),
             count_cache: std::sync::Mutex::new(None),
             db: std::sync::Mutex::new(db),
             dirty: std::sync::atomic::AtomicBool::new(false),
@@ -796,6 +808,7 @@ pub fn export_state<S: WriteStore>(
     })?;
 
     let system_items = store.stored_system_items();
+    let removed_items = store.stored_removed_system_items();
     let mut state = UserState::default();
     state.indexed.extend(store.kept_index_entries());
     db.for_each(crate::phrase_table::TABLE, &mut |key, value| {
@@ -898,6 +911,15 @@ pub fn export_state<S: WriteStore>(
             .entry(nibble)
             .or_default()
             .insert(slot, Some(item));
+    }
+    // A removal is recorded last: it wins over any override a slot gathered
+    // from the rows, as the sub-index no longer holds the item to modify.
+    for token in removed_items {
+        state
+            .system_overrides
+            .entry(phrase_index_library_index(token))
+            .or_default()
+            .insert(token & crate::phrase::PHRASE_MASK, None);
     }
     state
         .libraries
@@ -1076,6 +1098,14 @@ mod tests {
         let (dir, store) = open_with_log("owned-overrides-remove", &remove);
         assert!(store.stored_system_items().is_empty());
         assert!(store.has_system_items());
+        // The session remembers the removal: the shipped chunk still holds
+        // the item, but `get_phrase_item` no longer finds it.
+        assert!(store.has_removed_system_items());
+        assert!(store.system_item_removed(token));
+        assert!(!store.system_item_removed(token + 1));
+        // What a save diffs from the session is the removal, not the item.
+        let state = export_state(&store, &originals()).expect("export");
+        assert_eq!(state.system_overrides[&1].get(&1), Some(&None));
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
 

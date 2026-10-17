@@ -612,7 +612,7 @@ impl RuntimeDict {
         {
             priced.item.pronunciation = Some((u64::from(matched), u64::from(total)));
         }
-        if self.library_mask.load(Ordering::SeqCst) != 0 && !self.library_visible_token(token) {
+        if self.token_filter_active() && !self.library_visible_token(token) {
             return Ok(None);
         }
         Ok(Some(priced))
@@ -1000,10 +1000,28 @@ impl RuntimeDict {
             .item_count_where(|nibble| self.library_visible(u32::from(nibble)))
     }
 
-    /// The token's library-nibble visibility, for entry-level filters.
+    /// Whether the token's item is readable, for entry-level filters: its
+    /// library is not unloaded, and no journal REMOVE took the item out of the
+    /// sub-index (`get_phrase_item` fails for both, 074a2219
+    /// `phrase_index.cpp:180-206`). The phrase table still holds the token
+    /// either way ([`Self::phrase_table_token_enabled`]).
     #[must_use]
     pub fn library_visible_token(&self, token: u32) -> bool {
         self.library_visible(token >> 24)
+            && !self
+                .user
+                .as_ref()
+                .is_some_and(|store| store.system_item_removed(token))
+    }
+
+    /// Whether any entry-level filter can hide a token: a library is
+    /// unloaded, or the user store holds a removed system item.
+    fn token_filter_active(&self) -> bool {
+        self.library_mask.load(Ordering::SeqCst) != 0
+            || self
+                .user
+                .as_ref()
+                .is_some_and(UserStore::has_removed_system_items)
     }
 
     /// Whether phrase-table search has an enabled token array for this library.
@@ -1012,7 +1030,7 @@ impl RuntimeDict {
     #[must_use]
     pub fn phrase_table_token_enabled(&self, token: u32) -> bool {
         let nibble = token >> 24;
-        self.library_visible_token(token)
+        self.library_visible(nibble)
             && (self.system.library_loaded(token)
                 || ((5..=7).contains(&nibble)
                     && self
@@ -1030,7 +1048,7 @@ impl RuntimeDict {
         let nibble = token >> 24;
         match nibble {
             1..=4 => {
-                if !self.library_visible(nibble) {
+                if !self.library_visible_token(token) {
                     return None;
                 }
                 // The facade reads the replaced item, not the immutable
@@ -1296,7 +1314,7 @@ impl Dictionary for RuntimeDict {
                 }
             }
         }
-        if self.library_mask.load(Ordering::SeqCst) != 0 {
+        if self.token_filter_active() {
             // An unloaded library's phrases leave every read: upstream
             // frees the sub-index (`phrase_index.cpp:260-268`), the
             // mask keeps the monolithic tables resident but invisible.
@@ -1312,12 +1330,17 @@ impl Dictionary for RuntimeDict {
         // tokens (`pinyin_unload_phrase_library(2)` leaves the underlying
         // rows resident; only the visibility mask changes). With the
         // mask clear, the plain probe's fast path stays.
+        // A journal REMOVE does not reach this answer: `SEARCH_CONTINUED` comes
+        // from the pinyin table's DB get alone (`chewing_large_table2_bdb.cpp:182-187`
+        // at 074a2219), and the removal clears only the sub-index. The removed item
+        // leaves where `get_phrase_item` is read, so the walk below sees the library
+        // mask and nothing else.
         let system_extends = if self.library_mask.load(Ordering::SeqCst) == 0 {
             self.system.phrase_prefix_exists(syllables)?
         } else {
             self.system
                 .phrase_prefix_exists_visible(syllables, |token| {
-                    self.library_visible_token(token)
+                    self.library_visible(token >> 24)
                 })?
         };
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
@@ -1439,7 +1462,7 @@ impl Dictionary for RuntimeDict {
         }
         tokens.extend(user.suggest_extensions(syllables));
         if self.library_mask.load(Ordering::SeqCst) != 0 {
-            tokens.retain(|token| self.library_visible_token(*token));
+            tokens.retain(|token| self.library_visible(*token >> 24));
         }
         tokens.sort_by_key(|token| token >> 24);
         Ok(Some(tokens.into_iter().map(PhraseToken::new).collect()))
