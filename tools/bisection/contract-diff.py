@@ -67,7 +67,7 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
 def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
-         cells=('bdb', 'kc', 'tkrzw'), either=False):
+         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=()):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -85,13 +85,42 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     a case skipped on the others prints `SKIP` instead of a verdict.
     `either=True` (with both `abort=` and `crash=`) is for a fixture whose
     pin site depends on the file system: the pin's own signal picks the
-    matcher, SIGABRT the class (c) one and anything else the class (b) one."""
+    matcher, SIGABRT the class (c) one and anything else the class (b) one.
+    `host_scanf=<spellings>` names `%f` inputs the case expects the host
+    libc's scanner to reject, as the oracle image's glibc does. The pin
+    reads them with the host libc, so on a host whose scanner accepts one
+    the pin loads what the subject refuses. Only that difference (the pin
+    created its context; the subject refused `table.conf`) prints
+    `HOST-DEPENDENT` instead of `DIFFER` and is not a failure; any other
+    difference stays a DIFFER. A MATCH is reported as such on any host."""
     def register(fn):
         assert not either or (abort is not NO_ABORT and crash is not None), name
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
-                           crash=crash, userdir=userdir, cells=cells, either=either)
+                           crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf))
         return fn
     return register
+
+
+def host_scanf_accepts(spelling):
+    """Whether this host's libc converts `spelling` with `%f`, as the pin's
+    `fscanf` does. The pin's workers run on this libc."""
+    scanned = C.c_float()
+    return C.CDLL(None).sscanf(spelling.encode(), b'%f', C.byref(scanned)) == 1
+
+
+def pin_loaded_subject_refused_table_conf(pin, subject):
+    """The one difference a host-libc `%f` explains: the pin created its
+    context and the subject refused `table.conf` with its single message.
+    The pin's stderr must be exactly its fresh-profile line,
+    `open <user dir>/user.conf failed.` (`UserTableInfo::load` writes it
+    with no trailing newline when the empty user directory has no
+    `user.conf`: `table_info.cpp:330-333` at 074a2219), so any other pin
+    diagnostic, and an empty one, stays a DIFFER."""
+    return (pin['exit'] == 0 and subject['exit'] == 0
+            and (pin['result'] or {}).get('ctx') is True
+            and (subject['result'] or {}).get('ctx') is False
+            and re.fullmatch(r'open \S*/user\.conf failed\.', pin['stderr']) is not None
+            and re.fullmatch(r'load \S*table\.conf failed!\n', subject['stderr']) is not None)
 
 
 class Kit:
@@ -5751,8 +5780,10 @@ for _mode in ('pinyin', 'zhuyin'):
     # it, a `0x` with no hex digit and `infin` fail the `%f` conversion.
     for _name, _spelling in (('exponent-without-digits', '1e'), ('hex-without-digits', '0x'),
                              ('hex-exponent-without-digits', '0x1p'), ('infin', 'infin')):
-        case('table-conf-lambda-' + _name + _suffix, mode=_mode,
-             stderr=True)(header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
+        # The oracle image's glibc rejects `1e` and `0x1p` (2.43); Ubuntu's
+        # 2.39 accepts them, and the pin follows the host libc.
+        case('table-conf-lambda-' + _name + _suffix, mode=_mode, stderr=True,
+             host_scanf=(_spelling,) if _name.endswith('exponent-without-digits') else ())(header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
 
 
 # Every spelling glibc's `%f` accepts, hexadecimal floats included.
@@ -9585,10 +9616,18 @@ def main():
             same = matches(spec, pin, subject)
             expected = same if (not args.expect_parent or spec['control']) else not same
             verdict = 'MATCH' if same else 'DIFFER'
+            host_dependent = (not same and not args.expect_parent
+                              and any(map(host_scanf_accepts, spec['host_scanf']))
+                              and pin_loaded_subject_refused_table_conf(pin, subject))
+            if host_dependent:
+                verdict = 'HOST-DEPENDENT'
+                expected = True
             print(json.dumps(dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,
                                   exit=[pin['exit'], subject['exit']],
                                   stderr_lines=[pin['stderr_lines'], subject['stderr_lines']]),
                              sort_keys=True), flush=True)
+            if host_dependent:
+                continue
             if not expected or (not same and not args.expect_parent):
                 failures += 1
                 if not same:
