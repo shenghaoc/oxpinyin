@@ -24,3 +24,6 @@ name = "oxpinyin-kmm"
 path = "src/bin/oxpinyin-kmm.rs"
 
 [dependencies]
+
+[dev-dependencies]
+tempfile.workspace = true

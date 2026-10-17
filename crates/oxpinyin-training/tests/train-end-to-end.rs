@@ -16,7 +16,7 @@
 //! correction rate 1/2 = 0.5.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use oxpinyin_core::{PhraseToken, SyllableKey};
 use oxpinyin_kmm::{GenerateParams, KMixtureModel};
@@ -27,6 +27,7 @@ use oxpinyin_training::train::{
     CorpusIndex, EvalInputs, PhraseSource, SegmentMethod, SegmentedDoc, Stage, Status, TrainConfig,
     Trainer, TrainerPaths, generate_candidates,
 };
+use tempfile::TempDir;
 
 // ---- fixture vocabulary ----------------------------------------------------
 
@@ -101,29 +102,12 @@ const EVALS: &str = "10 中\n30 国\n0 \n20 钟\n0 \n";
 
 // ---- temp workspace --------------------------------------------------------
 
-struct TempDir {
-    path: PathBuf,
-}
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "oxpinyin-train-{}-{tag}-{:?}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |d| d.as_nanos())
-        ));
-        let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).expect("temp dir");
-        Self { path }
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
+/// A fresh, uniquely named scratch dir, removed on drop (including unwind).
+fn temp_dir(tag: &str) -> TempDir {
+    tempfile::Builder::new()
+        .prefix(&format!("oxpinyin-train-{tag}-"))
+        .tempdir()
+        .expect("temp dir")
 }
 
 fn write(path: &Path, text: &str) {
@@ -151,10 +135,10 @@ fn test_config() -> TrainConfig {
 
 #[test]
 fn raw_corpus_to_final_model_and_correction_rate() {
-    let temp = TempDir::new("e2e");
-    let text_dir = temp.path.join("texts");
-    let model_dir = temp.path.join("models");
-    let final_dir = temp.path.join("finals");
+    let temp = temp_dir("e2e");
+    let text_dir = temp.path().join("texts");
+    let model_dir = temp.path().join("models");
+    let final_dir = temp.path().join("finals");
 
     // Raw Han corpus: three documents, each containing 中国.
     write(&text_dir.join("a.text"), "中国中国\n中国\n");
@@ -284,7 +268,7 @@ fn raw_corpus_to_final_model_and_correction_rate() {
 // ---- resumability ----------------------------------------------------------
 
 fn write_raw_corpus(temp: &TempDir) {
-    let text_dir = temp.path.join("texts");
+    let text_dir = temp.path().join("texts");
     write(&text_dir.join("a.text"), "中国中国\n中国\n");
     write(&text_dir.join("b.text"), "中国中\n国中国\n");
     write(&text_dir.join("c.text"), "中国\n中国中国\n");
@@ -322,9 +306,9 @@ fn run_full_with_index(
         deleted: &deleted_counts,
     };
     let paths = TrainerPaths {
-        text_dir: temp.path.join("texts"),
-        model_dir: temp.path.join("models"),
-        final_dir: temp.path.join("finals"),
+        text_dir: temp.path().join("texts"),
+        model_dir: temp.path().join("models"),
+        final_dir: temp.path().join("finals"),
     };
     let trainer = Trainer::new(test_config(), paths, SegmentMethod::Ngseg);
     trainer.run(&segmenter(), &index, &scoring_deleted, &eval, tryname)
@@ -332,7 +316,7 @@ fn run_full_with_index(
 
 #[test]
 fn resume_skips_segmentation_after_the_raw_corpus_is_corrupted() {
-    let temp = TempDir::new("resume-seg");
+    let temp = temp_dir("resume-seg");
     write_raw_corpus(&temp);
     let first = run_full(&temp, "1").expect("first run");
 
@@ -341,7 +325,7 @@ fn resume_skips_segmentation_after_the_raw_corpus_is_corrupted() {
     // committed `.segmented` is reused and the corrupted raw is never
     // re-segmented — the result is identical. This is the resume-after-a-stage
     // guarantee: a completed stage is not redone.
-    write(&temp.path.join("texts/a.text"), "钟钟钟\n");
+    write(&temp.path().join("texts/a.text"), "钟钟钟\n");
     let second = run_full(&temp, "2").expect("second run");
 
     assert_eq!(
@@ -351,20 +335,20 @@ fn resume_skips_segmentation_after_the_raw_corpus_is_corrupted() {
     assert_eq!(second.correction_rate, first.correction_rate);
     // The segmented file still holds the original 中/国 tokens, not 钟.
     let segmented =
-        std::fs::read_to_string(temp.path.join("texts/a.text.segmented")).expect("segmented");
+        std::fs::read_to_string(temp.path().join("texts/a.text.segmented")).expect("segmented");
     assert!(segmented.contains("10 中\n") && !segmented.contains("20 钟\n"));
 }
 
 #[test]
 fn a_status_with_a_newer_epoch_is_rejected_not_silently_resumed() {
-    let temp = TempDir::new("resume-epoch");
+    let temp = temp_dir("resume-epoch");
     write_raw_corpus(&temp);
     run_full(&temp, "1").expect("first run");
 
     // A status file stamped by a *newer* trainer (SegmentEpoch 2 > this build's
     // 1) must not be silently resumed — the orchestrator refuses it.
     write(
-        &temp.path.join("texts/a.text.segmented.status"),
+        &temp.path().join("texts/a.text.segmented.status"),
         "{\"SegmentEpoch\": 2}",
     );
     let error = run_full(&temp, "2").expect_err("must reject a newer epoch");
@@ -383,14 +367,14 @@ fn a_status_with_a_newer_epoch_is_rejected_not_silently_resumed() {
 
 #[test]
 fn a_newer_epoch_in_the_index_status_is_rejected() {
-    let temp = TempDir::new("resume-epoch-index");
+    let temp = temp_dir("resume-epoch-index");
     write_raw_corpus(&temp);
     run_full(&temp, "1").expect("first run");
 
     // models/corpus.index.status stamped by a newer trainer at Estimate: the
     // generate stage meets it first and must refuse it rather than rewrite it.
     write(
-        &temp.path.join("models/corpus.index.status"),
+        &temp.path().join("models/corpus.index.status"),
         "{\"GenerateEpoch\": 1, \"EstimateEpoch\": 2}",
     );
     let error = run_full(&temp, "2").expect_err("must reject a newer index epoch");
@@ -409,7 +393,7 @@ fn a_newer_epoch_in_the_index_status_is_rejected() {
 
 #[test]
 fn a_newer_epoch_in_the_final_status_is_rejected() {
-    let temp = TempDir::new("resume-epoch-final");
+    let temp = temp_dir("resume-epoch-final");
     write_raw_corpus(&temp);
     run_full(&temp, "1").expect("first run");
 
@@ -417,7 +401,7 @@ fn a_newer_epoch_in_the_final_status_is_rejected() {
     // try name is reused so the prune stage meets the file before it would
     // overwrite it.
     write(
-        &temp.path.join("finals/try1/cwd.status"),
+        &temp.path().join("finals/try1/cwd.status"),
         "{\"PruneEpoch\": 1, \"EvaluateEpoch\": 2}",
     );
     let error = run_full(&temp, "1").expect_err("must reject a newer final epoch");
@@ -436,13 +420,13 @@ fn a_newer_epoch_in_the_final_status_is_rejected() {
 
 #[test]
 fn resume_regenerates_when_the_corpus_index_grew() {
-    let temp = TempDir::new("resume-grow");
+    let temp = temp_dir("resume-grow");
     write_raw_corpus(&temp);
     let first = run_full(&temp, "1").expect("first run");
 
     // A document appended to the index after a signed Generate must be
     // generated, not silently dropped by reloading the old candidates.
-    write(&temp.path.join("texts/d.text"), "中国中国\n");
+    write(&temp.path().join("texts/d.text"), "中国中国\n");
     let grown = format!("{CORPUS_INDEX}doc d#/d.text\n");
     let second = run_full_with_index(&temp, "2", &grown).expect("second run");
     assert_eq!(
@@ -450,19 +434,19 @@ fn resume_regenerates_when_the_corpus_index_grew() {
         first.candidate_count + 1,
         "the appended document forms its own candidate under the test config"
     );
-    assert!(temp.path.join("models/model-candidates-3.db").is_file());
+    assert!(temp.path().join("models/model-candidates-3.db").is_file());
 }
 
 #[test]
 fn a_malformed_status_is_an_error_not_a_panic() {
-    let temp = TempDir::new("resume-malformed");
+    let temp = temp_dir("resume-malformed");
     write_raw_corpus(&temp);
     run_full(&temp, "1").expect("first run");
 
     // A corrupted status file is a typed error, never a panic (constitution
     // item 4).
     write(
-        &temp.path.join("texts/a.text.segmented.status"),
+        &temp.path().join("texts/a.text.segmented.status"),
         "not json at all",
     );
     let error = run_full(&temp, "2").expect_err("must reject malformed status");
