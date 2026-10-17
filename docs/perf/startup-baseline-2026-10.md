@@ -14,13 +14,18 @@ Same backend (Berkeley DB), same system data (identity
 **verified identical observable behaviour** before any timing. Equivalence,
 performance and limitations are separate sections.
 
-Artifacts (SHA-256):
+Artifacts. Every timed object, with its full SHA-256, size in bytes and
+`NEEDED` list (`readelf -d`). The oxpinyin objects were built from this tree
+with `cargo cinstall --release` (libpinyin: `--no-default-features --features
+bdb,shipped`; libzhuyin: `--features bdb`); `ox-control` is the same bytes at
+another path. The pin is libpinyin 2.11.92 at `074a2219`, Berkeley DB backend.
 
-| subject | libpinyin.so.15.0.0 | libzhuyin.so.15.0.0 |
-| --- | --- | --- |
-| pin (libpinyin 2.11.92 @ `074a2219`, BDB) | `754499651c302efd…` | `cf4ccbce9f70f6c7…` |
-| ox (this tree, `cargo cinstall --release`, `--no-default-features --features bdb,shipped`; zhuyin `--features bdb`) | `8c57fb7d9b41b4e6…` | `712acf24bb6350e2…` |
-| ox-control (same bytes as ox at another path) | same | same |
+| subject | object | bytes | SHA-256 | NEEDED |
+| --- | --- | ---: | --- | --- |
+| pin | libpinyin.so.15.0.0 | 4802600 | `754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30` | libglib-2.0, libdb-5.3, libstdc++, libm, libc, libgcc_s |
+| pin | libzhuyin.so.15.0.0 | 4681128 | `cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b` | libglib-2.0, libdb-5.3, libstdc++, libm, libc, libgcc_s |
+| ox, ox-control | libpinyin.so.15.0.0 | 5281016 | `8c57fb7d9b41b4e6421fca365cd19b72e3cf8a316137c7082a24d220c1ffd69b` | libglib-2.0, libdb-5.3, libgcc_s, libc, ld-linux-x86-64 |
+| ox, ox-control | libzhuyin.so.15.0.0 | 5065096 | `712acf24bb6350e2984c730f6521d23c3725aa474dbcbf9f9e350610e8c3b771` | libglib-2.0, libdb-5.3, libgcc_s, libc, ld-linux-x86-64 |
 
 Profiles (all private copies, one per sample): `empty` (0 B), `modest` (80
 imports, 29 233 B), `phrases` (20 000 imports, 496 209 B), `journals` (journal
@@ -127,4 +132,13 @@ produced by the same command with `--cache cold` / `--bind lazy`. Cold means
   the ranking in the audit is by phase, not by function.
 - Cold-cache runs are guest-level.
 - zhuyin `'`/`''` differs (see §1); it is outside the timed workload.
-- Raw JSONL and profiler output are not committed.
+- **Evidence.** Raw JSONL and profiler output are not committed and were not
+  retained anywhere: the capture environment was an ephemeral container. The
+  figures above are reproducible from the commands in
+  `../runbooks/initbench.md`; the ones used here were
+  `initbench run … --kind timing --rounds 60 --warmup 3` (§2),
+  `--kind memory --rounds 30 --warmup 2` (§4), `--cache cold` and `--bind lazy`
+  at 30 rounds (§5), and `initbench instrument --tool callgrind|dhat` once per
+  facade, subject and profile (§3), each with `--cpu 2`, followed by
+  `initbench report --input <file> --reference pin --ratio ox/pin --ratio
+  ox-control/ox`.

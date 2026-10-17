@@ -822,6 +822,15 @@ fn validate_plan(plan: &Plan) -> Result<(), BenchError> {
             )));
         }
     }
+    for (i, p) in plan.profiles.iter().enumerate() {
+        let name = p.file_name();
+        if name.is_none() || plan.profiles[..i].iter().any(|o| o.file_name() == name) {
+            return Err(BenchError::invalid(format!(
+                "profile {} has no name or repeats another profile's name",
+                p.display()
+            )));
+        }
+    }
     for facade in &plan.facades {
         for s in &plan.subjects {
             if s.path(*facade).is_none() {
@@ -1157,6 +1166,15 @@ mod tests {
             max_load: None,
             timeout: Duration::from_secs(5),
         }
+    }
+
+    #[test]
+    fn profiles_that_share_a_name_are_refused() {
+        let mut p = plan();
+        p.profiles = vec![PathBuf::from("/a/modest"), PathBuf::from("/b/modest")];
+        assert!(validate_plan(&p).is_err());
+        p.profiles = vec![PathBuf::from("/a/modest"), PathBuf::from("/b/empty")];
+        assert!(validate_plan(&p).is_ok());
     }
 
     #[test]

@@ -194,8 +194,20 @@ fn comparable(
     subject: &str,
     reference: &str,
 ) -> bool {
-    subject == reference
-        || records.iter().all(|r| match r {
+    if subject == reference {
+        return true;
+    }
+    // No recorded observation verdict is no proof of equivalence (a filtered or
+    // truncated stream, or a run that stopped before its verdicts).
+    let observed = records.iter().any(|r| {
+        matches!(r, Record::Verdict(v)
+            if v.facade == facade
+                && v.subject == subject
+                && v.profile == profile
+                && v.phase == "observation")
+    });
+    observed
+        && records.iter().all(|r| match r {
             Record::Verdict(v)
                 if v.facade == facade
                     && v.subject == subject
@@ -934,9 +946,23 @@ mod tests {
             files_judged_by_content: vec![],
             transcript_lines: 5,
         })));
+        r.push(verdict("ox", true, "observation"));
+        let mut phrases = verdict("ox", true, "observation");
+        if let Record::Verdict(v) = &mut phrases {
+            v.profile = "phrases".into();
+        }
+        r.push(phrases);
         assert!(comparable(&r, Facade::Pinyin, "empty", "ox", "pin"));
         assert!(!comparable(&r, Facade::Pinyin, "phrases", "ox", "pin"));
         assert!(comparable(&r, Facade::Pinyin, "phrases", "pin", "pin"));
+    }
+
+    #[test]
+    fn a_subject_with_no_observation_verdict_is_not_comparable() {
+        let r = vec![verdict("ox", true, "timed-samples")];
+        assert!(!comparable(&r, Facade::Pinyin, "empty", "ox", "pin"));
+        assert!(!comparable(&[], Facade::Pinyin, "empty", "ox", "pin"));
+        assert!(comparable(&[], Facade::Pinyin, "empty", "pin", "pin"));
     }
 
     #[test]

@@ -400,9 +400,12 @@ fn cmd_profiles(args: &Args) -> Result<(), BenchError> {
     let out = PathBuf::from(args.require("out")?);
     let system = PathBuf::from(args.require("system-dir")?);
     let lib = PathBuf::from(args.require("pin-lib")?);
-    let work = args
+    // The work directory may be one the caller owns: build in a subdirectory
+    // this process creates and remove only that.
+    let parent = args
         .one("work-dir")?
         .map_or_else(|| out.join(".work"), PathBuf::from);
+    let work = parent.join(format!("initbench-profiles-{}", std::process::id()));
     fs::create_dir_all(&work).map_err(|e| BenchError::io("creating the work dir", e))?;
     let result = build_profiles(&out, &lib, &system, &work);
     let _ = fs::remove_dir_all(&work);
