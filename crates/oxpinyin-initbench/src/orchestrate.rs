@@ -735,10 +735,80 @@ fn hostile_probe(
 /// A child that fails or hangs, an unreadable fixture, a fixture changed during
 /// the run, a cold-cache request the host cannot honour. A behavioural
 /// difference is not an error; it is a [`VerdictRecord`].
-pub fn run(
-    plan: &Plan,
-    sink: &mut dyn FnMut(&Record) -> Result<(), BenchError>,
-) -> Result<Summary, BenchError> {
+pub fn run(plan: &Plan, sink: &mut Sink<'_>) -> Result<Summary, BenchError> {
+    validate_plan(plan)?;
+    if plan.cache == CacheState::ColdDropCaches {
+        drop_file_caches()?;
+    }
+    let fixtures = plan
+        .profiles
+        .iter()
+        .map(|root| Fixture::open(root))
+        .collect::<Result<Vec<_>, _>>()?;
+    emit_manifest(plan, &fixtures, sink)?;
+
+    let verify_path = plan
+        .work_dir
+        .join(format!("verify-user-{}", std::process::id()));
+    fs::create_dir_all(&plan.work_dir).map_err(|e| BenchError::io("creating the work dir", e))?;
+    let mut summary = Summary::default();
+    let reference = &plan.subjects[0];
+    for &facade in &plan.facades {
+        for (profile_index, fixture) in fixtures.iter().enumerate() {
+            let cell = Cell {
+                plan,
+                facade,
+                fixture,
+                verify_path: &verify_path,
+            };
+            let observations = verify_cell(&cell, &mut summary, sink)?;
+            if profile_index == 0 {
+                hostile_cell(&cell, sink)?;
+                persist_cell(&cell, &mut summary, sink)?;
+            }
+            let _ = fs::remove_dir_all(&verify_path);
+            let mismatches = timed_cell(&cell, &observations, &mut summary, sink)?;
+            fixture.verify()?;
+            for (label, reasons) in mismatches {
+                summary.not_comparable += 1;
+                sink(&Record::Verdict(Box::new(VerdictRecord {
+                    facade,
+                    profile: fixture.name.clone(),
+                    subject: label,
+                    reference: reference.label.clone(),
+                    phase: "timed-samples".to_owned(),
+                    comparable: false,
+                    reasons: reasons.into_iter().take(5).collect(),
+                    files_compared_by_bytes: Vec::new(),
+                    files_judged_by_content: Vec::new(),
+                    transcript_lines: 0,
+                })))?;
+            }
+        }
+    }
+    Ok(summary)
+}
+
+/// The record consumer [`run`] hands every record to.
+pub type Sink<'a> = dyn FnMut(&Record) -> Result<(), BenchError> + 'a;
+
+/// One (facade, profile) cell of a run.
+struct Cell<'a> {
+    plan: &'a Plan,
+    facade: Facade,
+    fixture: &'a Fixture,
+    verify_path: &'a Path,
+}
+
+impl Cell<'_> {
+    fn library<'s>(&self, subject: &'s SubjectSpec) -> Result<&'s Path, BenchError> {
+        subject
+            .path(self.facade)
+            .ok_or_else(|| BenchError::invalid("no library"))
+    }
+}
+
+fn validate_plan(plan: &Plan) -> Result<(), BenchError> {
     if plan.subjects.is_empty() || plan.profiles.is_empty() || plan.facades.is_empty() {
         return Err(BenchError::invalid(
             "a run needs at least one subject, profile and facade",
@@ -763,14 +833,10 @@ pub fn run(
             }
         }
     }
-    if plan.cache == CacheState::ColdDropCaches {
-        drop_file_caches()?;
-    }
-    let fixtures = plan
-        .profiles
-        .iter()
-        .map(|root| Fixture::open(root))
-        .collect::<Result<Vec<_>, _>>()?;
+    Ok(())
+}
+
+fn emit_manifest(plan: &Plan, fixtures: &[Fixture], sink: &mut Sink<'_>) -> Result<(), BenchError> {
     let mut identities = Vec::new();
     for s in &plan.subjects {
         identities.push(SubjectIdentity {
@@ -803,202 +869,224 @@ pub fn run(
         cache: plan.cache,
         cpu: plan.cpu,
         bind: plan.bind,
-    })))?;
+    })))
+}
 
-    let verify_path = plan
-        .work_dir
-        .join(format!("verify-user-{}", std::process::id()));
-    fs::create_dir_all(&plan.work_dir).map_err(|e| BenchError::io("creating the work dir", e))?;
-    let mut summary = Summary::default();
+/// The verification phase: every subject against the reference, with the
+/// reference run twice to find the files that are not byte-stable.
+fn verify_cell(
+    cell: &Cell<'_>,
+    summary: &mut Summary,
+    sink: &mut Sink<'_>,
+) -> Result<BTreeMap<String, Observation>, BenchError> {
+    let Cell {
+        plan,
+        facade,
+        fixture,
+        verify_path,
+    } = *cell;
     let reference = &plan.subjects[0];
-    for &facade in &plan.facades {
-        for (profile_index, fixture) in fixtures.iter().enumerate() {
-            // 1. Verification.
-            let mut observations: BTreeMap<String, Observation> = BTreeMap::new();
-            let ref_lib = reference
-                .path(facade)
-                .ok_or_else(|| BenchError::invalid("no reference library"))?;
-            let ref_obs = verify_once(plan, fixture, facade, ref_lib, &verify_path)?;
-            let ref_again = verify_once(plan, fixture, facade, ref_lib, &verify_path)?;
-            let stable = stable_files(&ref_obs, &ref_again);
-            // The control must itself agree on everything but unstable files.
-            if let Verdict::NotComparable(why) = compare(&ref_obs, &ref_again, &stable) {
-                return Err(BenchError::invalid(format!(
-                    "the reference is not deterministic on {} / {}: {}",
-                    facade.prefix(),
-                    fixture.name,
-                    why.join("; ")
-                )));
-            }
-            observations.insert(reference.label.clone(), ref_obs.clone());
-            for subject in &plan.subjects[1..] {
-                let lib = subject
-                    .path(facade)
-                    .ok_or_else(|| BenchError::invalid("no library"))?;
-                let obs = verify_once(plan, fixture, facade, lib, &verify_path)?;
-                let verdict = compare(&ref_obs, &obs, &stable);
-                if !verdict.is_comparable() {
-                    summary.not_comparable += 1;
-                }
-                sink(&Record::Verdict(Box::new(verdict_record(
-                    facade,
-                    &fixture.name,
-                    &subject.label,
-                    &reference.label,
-                    &verdict,
-                    &ref_obs,
-                    &stable,
-                ))))?;
-                observations.insert(subject.label.clone(), obs);
-            }
-            // Hostile inputs, one process each, on the first profile only.
-            if profile_index == 0 {
-                for input in HOSTILE_INPUTS {
-                    let ref_probe =
-                        hostile_probe(plan, fixture, facade, ref_lib, &verify_path, input)?;
-                    sink(&Record::Probe(Box::new(ProbeRecord {
-                        facade,
-                        subject: reference.label.clone(),
-                        outcome: ref_probe.clone(),
-                        against_reference: "reference".to_owned(),
-                    })))?;
-                    for subject in &plan.subjects[1..] {
-                        let lib = subject
-                            .path(facade)
-                            .ok_or_else(|| BenchError::invalid("no library"))?;
-                        let outcome =
-                            hostile_probe(plan, fixture, facade, lib, &verify_path, input)?;
-                        let against = match compare_probe(&ref_probe, &outcome) {
-                            ProbeVerdict::SameOutcome => "same outcome".to_owned(),
-                            ProbeVerdict::Different(why) => format!("DIFFERENT: {why}"),
-                        };
-                        sink(&Record::Probe(Box::new(ProbeRecord {
-                            facade,
-                            subject: subject.label.clone(),
-                            outcome,
-                            against_reference: against,
-                        })))?;
-                    }
-                }
-            }
-            // Save and reopen, on a fresh empty directory, first profile only.
-            if profile_index == 0 {
-                let ref_persist = persist_once(plan, facade, ref_lib, &verify_path)?;
-                let ref_persist_again = persist_once(plan, facade, ref_lib, &verify_path)?;
-                let stable = stable_files(&ref_persist, &ref_persist_again);
-                if let Verdict::NotComparable(why) =
-                    compare(&ref_persist, &ref_persist_again, &stable)
-                {
-                    return Err(BenchError::invalid(format!(
-                        "the reference is not deterministic in the save/reopen scenario ({}): {}",
-                        facade.prefix(),
-                        why.join("; ")
-                    )));
-                }
-                for subject in &plan.subjects[1..] {
-                    let lib = subject
-                        .path(facade)
-                        .ok_or_else(|| BenchError::invalid("no library"))?;
-                    let obs = persist_once(plan, facade, lib, &verify_path)?;
-                    let verdict = compare(&ref_persist, &obs, &stable);
-                    if !verdict.is_comparable() {
-                        summary.not_comparable += 1;
-                    }
-                    sink(&Record::Verdict(Box::new(verdict_record(
-                        facade,
-                        "persist:save-reopen",
-                        &subject.label,
-                        &reference.label,
-                        &verdict,
-                        &ref_persist,
-                        &stable,
-                    ))))?;
-                }
-            }
-            let _ = fs::remove_dir_all(&verify_path);
+    let ref_lib = cell.library(reference)?;
+    let ref_obs = verify_once(plan, fixture, facade, ref_lib, verify_path)?;
+    let ref_again = verify_once(plan, fixture, facade, ref_lib, verify_path)?;
+    let stable = stable_files(&ref_obs, &ref_again);
+    // The control must itself agree on everything but unstable files.
+    if let Verdict::NotComparable(why) = compare(&ref_obs, &ref_again, &stable) {
+        return Err(BenchError::invalid(format!(
+            "the reference is not deterministic on {} / {}: {}",
+            facade.prefix(),
+            fixture.name,
+            why.join("; ")
+        )));
+    }
+    let mut observations = BTreeMap::new();
+    observations.insert(reference.label.clone(), ref_obs.clone());
+    for subject in &plan.subjects[1..] {
+        let lib = cell.library(subject)?;
+        let obs = verify_once(plan, fixture, facade, lib, verify_path)?;
+        let verdict = compare(&ref_obs, &obs, &stable);
+        if !verdict.is_comparable() {
+            summary.not_comparable += 1;
+        }
+        sink(&Record::Verdict(Box::new(verdict_record(
+            facade,
+            &fixture.name,
+            &subject.label,
+            &reference.label,
+            &verdict,
+            &ref_obs,
+            &stable,
+        ))))?;
+        observations.insert(subject.label.clone(), obs);
+    }
+    Ok(observations)
+}
 
-            // 2. Timing.
-            let n = plan.subjects.len();
-            let mut mismatches: BTreeMap<String, Vec<String>> = BTreeMap::new();
-            for round in 0..plan.warmup + plan.rounds {
-                if plan.rounds == 0 {
-                    break;
-                }
-                let warmup = round < plan.warmup;
-                for step in 0..n {
-                    let subject = &plan.subjects[(round + step) % n];
-                    let lib = subject
-                        .path(facade)
-                        .ok_or_else(|| BenchError::invalid("no library"))?;
-                    let copy = fixture.working_copy(&plan.work_dir)?;
-                    let command =
-                        child_command(plan, &timing_args(plan, facade, lib, copy.path()))?;
-                    if plan.cache == CacheState::ColdDropCaches {
-                        drop_file_caches()?;
-                    }
-                    let load = loadavg_1m();
-                    let output = run_process(command, plan.timeout)?;
-                    let sample = parse_sample(&output.stdout)?;
-                    if let Some(reason) = contamination(&sample, plan.max_skew, load, plan.max_load)
-                    {
-                        summary.rejected += 1;
-                        sink(&Record::Rejected(RejectedRecord {
-                            round,
-                            facade,
-                            subject: subject.label.clone(),
-                            profile: fixture.name.clone(),
-                            reason,
-                        }))?;
-                        continue;
-                    }
-                    let verified = observations
-                        .get(&subject.label)
-                        .map(|o| o.unit_trace_digest.as_str());
-                    if sample.workload_digest != workload_digest() {
-                        mismatches.entry(subject.label.clone()).or_default().push(format!(
-                            "round {round}: the timed child ran workload {}, not the verified {}",
-                            sample.workload_digest,
-                            workload_digest()
-                        ));
-                    } else if verified != Some(sample.trace_digest.as_str()) {
-                        mismatches.entry(subject.label.clone()).or_default().push(format!(
-                            "round {round}: the timed units' trace digest differs from the verified one"
-                        ));
-                    }
-                    if !warmup {
-                        summary.accepted += 1;
-                    }
-                    sink(&Record::Sample(Box::new(SampleRecord {
-                        round,
-                        warmup,
-                        facade,
-                        subject: subject.label.clone(),
-                        profile: fixture.name.clone(),
-                        process_wall_ns: output.wall_ns,
-                        loadavg_1m: load,
-                        sample,
-                    })))?;
-                }
-            }
-            fixture.verify()?;
-            for (label, reasons) in mismatches {
-                summary.not_comparable += 1;
-                sink(&Record::Verdict(Box::new(VerdictRecord {
-                    facade,
-                    profile: fixture.name.clone(),
-                    subject: label,
-                    reference: reference.label.clone(),
-                    phase: "timed-samples".to_owned(),
-                    comparable: false,
-                    reasons: reasons.into_iter().take(5).collect(),
-                    files_compared_by_bytes: Vec::new(),
-                    files_judged_by_content: Vec::new(),
-                    transcript_lines: 0,
-                })))?;
-            }
+/// Hostile inputs, one process each; their outcomes are compared, never timed.
+fn hostile_cell(cell: &Cell<'_>, sink: &mut Sink<'_>) -> Result<(), BenchError> {
+    let Cell {
+        plan,
+        facade,
+        fixture,
+        verify_path,
+    } = *cell;
+    let reference = &plan.subjects[0];
+    let ref_lib = cell.library(reference)?;
+    for input in HOSTILE_INPUTS {
+        let ref_probe = hostile_probe(plan, fixture, facade, ref_lib, verify_path, input)?;
+        sink(&Record::Probe(Box::new(ProbeRecord {
+            facade,
+            subject: reference.label.clone(),
+            outcome: ref_probe.clone(),
+            against_reference: "reference".to_owned(),
+        })))?;
+        for subject in &plan.subjects[1..] {
+            let lib = cell.library(subject)?;
+            let outcome = hostile_probe(plan, fixture, facade, lib, verify_path, input)?;
+            let against = match compare_probe(&ref_probe, &outcome) {
+                ProbeVerdict::SameOutcome => "same outcome".to_owned(),
+                ProbeVerdict::Different(why) => format!("DIFFERENT: {why}"),
+            };
+            sink(&Record::Probe(Box::new(ProbeRecord {
+                facade,
+                subject: subject.label.clone(),
+                outcome,
+                against_reference: against,
+            })))?;
         }
     }
-    Ok(summary)
+    Ok(())
+}
+
+/// Save and reopen on a fresh empty directory.
+fn persist_cell(
+    cell: &Cell<'_>,
+    summary: &mut Summary,
+    sink: &mut Sink<'_>,
+) -> Result<(), BenchError> {
+    let Cell {
+        plan,
+        facade,
+        verify_path,
+        ..
+    } = *cell;
+    let reference = &plan.subjects[0];
+    let ref_lib = cell.library(reference)?;
+    let ref_persist = persist_once(plan, facade, ref_lib, verify_path)?;
+    let ref_persist_again = persist_once(plan, facade, ref_lib, verify_path)?;
+    let stable = stable_files(&ref_persist, &ref_persist_again);
+    if let Verdict::NotComparable(why) = compare(&ref_persist, &ref_persist_again, &stable) {
+        return Err(BenchError::invalid(format!(
+            "the reference is not deterministic in the save/reopen scenario ({}): {}",
+            facade.prefix(),
+            why.join("; ")
+        )));
+    }
+    for subject in &plan.subjects[1..] {
+        let lib = cell.library(subject)?;
+        let obs = persist_once(plan, facade, lib, verify_path)?;
+        let verdict = compare(&ref_persist, &obs, &stable);
+        if !verdict.is_comparable() {
+            summary.not_comparable += 1;
+        }
+        sink(&Record::Verdict(Box::new(verdict_record(
+            facade,
+            "persist:save-reopen",
+            &subject.label,
+            &reference.label,
+            &verdict,
+            &ref_persist,
+            &stable,
+        ))))?;
+    }
+    Ok(())
+}
+
+/// The timed rounds. Returns, per subject, the samples whose trace contradicts
+/// the verified transcript.
+fn timed_cell(
+    cell: &Cell<'_>,
+    observations: &BTreeMap<String, Observation>,
+    summary: &mut Summary,
+    sink: &mut Sink<'_>,
+) -> Result<BTreeMap<String, Vec<String>>, BenchError> {
+    let Cell {
+        plan,
+        facade,
+        fixture,
+        ..
+    } = *cell;
+    let n = plan.subjects.len();
+    let mut mismatches: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    if plan.rounds == 0 {
+        return Ok(mismatches);
+    }
+    for round in 0..plan.warmup + plan.rounds {
+        let warmup = round < plan.warmup;
+        for step in 0..n {
+            let subject = &plan.subjects[(round + step) % n];
+            let lib = cell.library(subject)?;
+            let copy = fixture.working_copy(&plan.work_dir)?;
+            let command = child_command(plan, &timing_args(plan, facade, lib, copy.path()))?;
+            if plan.cache == CacheState::ColdDropCaches {
+                drop_file_caches()?;
+            }
+            let load = loadavg_1m();
+            let output = run_process(command, plan.timeout)?;
+            let sample = parse_sample(&output.stdout)?;
+            if let Some(reason) = contamination(&sample, plan.max_skew, load, plan.max_load) {
+                summary.rejected += 1;
+                sink(&Record::Rejected(RejectedRecord {
+                    round,
+                    facade,
+                    subject: subject.label.clone(),
+                    profile: fixture.name.clone(),
+                    reason,
+                }))?;
+                continue;
+            }
+            let verified = observations
+                .get(&subject.label)
+                .map(|o| o.unit_trace_digest.as_str());
+            if let Some(why) = trace_mismatch(&sample, verified, round) {
+                mismatches
+                    .entry(subject.label.clone())
+                    .or_default()
+                    .push(why);
+            }
+            if !warmup {
+                summary.accepted += 1;
+            }
+            sink(&Record::Sample(Box::new(SampleRecord {
+                round,
+                warmup,
+                facade,
+                subject: subject.label.clone(),
+                profile: fixture.name.clone(),
+                process_wall_ns: output.wall_ns,
+                loadavg_1m: load,
+                sample,
+            })))?;
+        }
+    }
+    Ok(mismatches)
+}
+
+/// Why a timed sample does not reproduce the verified workload, if it does not.
+fn trace_mismatch(sample: &Sample, verified: Option<&str>, round: usize) -> Option<String> {
+    if sample.workload_digest != workload_digest() {
+        Some(format!(
+            "round {round}: the timed child ran workload {}, not the verified {}",
+            sample.workload_digest,
+            workload_digest()
+        ))
+    } else if verified != Some(sample.trace_digest.as_str()) {
+        Some(format!(
+            "round {round}: the timed units' trace digest differs from the verified one"
+        ))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

@@ -313,6 +313,86 @@ fn must(ok: bool, function: &'static str) -> Result<(), BenchError> {
     }
 }
 
+/// U5: parse the first input and read the first candidate, validating every
+/// observation. Returns the phase breakdown and the instant the unit ended.
+fn first_candidate_unit<D: Driver>(
+    driver: &mut D,
+    trace: &mut Vec<String>,
+) -> Result<(FirstCandidate, Instant), BenchError> {
+    let facade = driver.facade();
+    let s = Instant::now();
+    let consumed = driver.parse(ParseKind::FullPinyin, FIRST_INPUT)?;
+    let after_parse = Instant::now();
+    let parsed_length = if facade == Facade::Pinyin {
+        Some(driver.parsed_length()?)
+    } else {
+        None
+    };
+    let after_length = Instant::now();
+    let guessed = driver.guess_candidates(0, SORT)?;
+    let after_guess = Instant::now();
+    let count = driver.candidate_count()?;
+    let after_count = Instant::now();
+    let first = driver.candidate(0)?;
+    let e = Instant::now();
+    trace.push(format!("parse({FIRST_INPUT}):{consumed}"));
+    if let Some(length) = parsed_length {
+        trace.push(format!("get_parsed_input_length:{length}"));
+    }
+    trace.push(format!("guess_candidates:{guessed}"));
+    trace.push(format!("get_n_candidate:{count:?}"));
+    match &first {
+        Some(c) => trace.push(format!(
+            "get_candidate(0):type={}:text={}:nbest={:?}",
+            c.raw_type, c.text, c.nbest
+        )),
+        None => trace.push("get_candidate(0):none".to_owned()),
+    }
+    if consumed != FIRST_INPUT.len() {
+        return Err(BenchError::invalid(format!(
+            "the first input parsed {consumed} of {} bytes",
+            FIRST_INPUT.len()
+        )));
+    }
+    if let Some(length) = parsed_length
+        && length != FIRST_INPUT.len()
+    {
+        return Err(BenchError::invalid(format!(
+            "parsed input length {length}, expected {}",
+            FIRST_INPUT.len()
+        )));
+    }
+    must(guessed, "guess_candidates")?;
+    let count = count.ok_or(BenchError::Call {
+        function: "get_n_candidate",
+    })?;
+    if count == 0 {
+        return Err(BenchError::invalid(
+            "zero candidates for the first input, where at least one is expected",
+        ));
+    }
+    let first = first.ok_or(BenchError::Call {
+        function: "get_candidate",
+    })?;
+    if first.text.is_empty() {
+        return Err(BenchError::invalid("the first candidate's string is empty"));
+    }
+    Ok((
+        FirstCandidate {
+            parse_ns: between(s, after_parse),
+            length_ns: between(after_parse, after_length),
+            guess_ns: between(after_length, after_guess),
+            count_ns: between(after_guess, after_count),
+            candidate_ns: between(after_count, e),
+            total_ns: between(s, e),
+            text: first.text,
+            raw_type: first.raw_type,
+            count,
+        },
+        e,
+    ))
+}
+
 /// Runs the units once.
 ///
 /// `open` is U1 and is timed. `hook` runs after U5 on the live instance and
@@ -465,75 +545,8 @@ pub fn run_units<D: Driver>(
     }
 
     // U5 first candidate.
-    let facade = driver.facade();
-    let s = Instant::now();
-    let consumed = driver.parse(ParseKind::FullPinyin, FIRST_INPUT)?;
-    let after_parse = Instant::now();
-    let parsed_length = if facade == Facade::Pinyin {
-        Some(driver.parsed_length()?)
-    } else {
-        None
-    };
-    let after_length = Instant::now();
-    let guessed = driver.guess_candidates(0, SORT)?;
-    let after_guess = Instant::now();
-    let count = driver.candidate_count()?;
-    let after_count = Instant::now();
-    let first = driver.candidate(0)?;
-    let e = Instant::now();
-    trace.push(format!("parse({FIRST_INPUT}):{consumed}"));
-    if let Some(length) = parsed_length {
-        trace.push(format!("get_parsed_input_length:{length}"));
-    }
-    trace.push(format!("guess_candidates:{guessed}"));
-    trace.push(format!("get_n_candidate:{count:?}"));
-    match &first {
-        Some(c) => trace.push(format!(
-            "get_candidate(0):type={}:text={}:nbest={:?}",
-            c.raw_type, c.text, c.nbest
-        )),
-        None => trace.push("get_candidate(0):none".to_owned()),
-    }
-    if consumed != FIRST_INPUT.len() {
-        return Err(BenchError::invalid(format!(
-            "the first input parsed {consumed} of {} bytes",
-            FIRST_INPUT.len()
-        )));
-    }
-    if let Some(length) = parsed_length
-        && length != FIRST_INPUT.len()
-    {
-        return Err(BenchError::invalid(format!(
-            "parsed input length {length}, expected {}",
-            FIRST_INPUT.len()
-        )));
-    }
-    must(guessed, "guess_candidates")?;
-    let count = count.ok_or(BenchError::Call {
-        function: "get_n_candidate",
-    })?;
-    if count == 0 {
-        return Err(BenchError::invalid(
-            "zero candidates for the first input, where at least one is expected",
-        ));
-    }
-    let first = first.ok_or(BenchError::Call {
-        function: "get_candidate",
-    })?;
-    if first.text.is_empty() {
-        return Err(BenchError::invalid("the first candidate's string is empty"));
-    }
-    phases.first_candidate = Some(FirstCandidate {
-        parse_ns: between(s, after_parse),
-        length_ns: between(after_parse, after_length),
-        guess_ns: between(after_length, after_guess),
-        count_ns: between(after_guess, after_count),
-        candidate_ns: between(after_count, e),
-        total_ns: between(s, e),
-        text: first.text.clone(),
-        raw_type: first.raw_type,
-        count,
-    });
+    let (first_candidate, e) = first_candidate_unit(&mut driver, &mut trace)?;
+    phases.first_candidate = Some(first_candidate);
     timeline.first_candidate_end_ns = Some(between(t0, e));
     let ttfc = Some(between(t0, e));
     phase_end!("first_candidate");
