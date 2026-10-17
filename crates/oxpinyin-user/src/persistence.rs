@@ -154,6 +154,77 @@ impl SystemLibrary {
                 .collect(),
         })
     }
+
+    /// Whether [`Self::item`] would answer `Some` for `slot`, without building
+    /// the item: an inline item, or a mapped one whose phrase text decodes.
+    pub(crate) fn is_readable(&self, slot: u32) -> bool {
+        self.items.contains_key(&slot)
+            || self.mapped.as_ref().is_some_and(|library| {
+                library
+                    .item(slot)
+                    .is_some_and(|view| view.phrase_chars().all(|scalar| scalar.is_some()))
+            })
+    }
+
+    /// The frequency `keys` carries in the item [`Self::item`] would build for
+    /// `slot` — the first pronunciation with exactly those keys — or `0` when
+    /// the item has none (or no item is readable). Read in place from the
+    /// mapping; nothing is allocated.
+    pub(crate) fn pronunciation_frequency(&self, slot: u32, keys: &[u16]) -> u32 {
+        if let Some(item) = self.items.get(&slot) {
+            return item
+                .prons
+                .iter()
+                .find(|(base, _)| base.as_slice() == keys)
+                .map_or(0, |(_, frequency)| *frequency);
+        }
+        let Some(view) = self.mapped.as_ref().and_then(|library| library.item(slot)) else {
+            return 0;
+        };
+        if !view.phrase_chars().all(|scalar| scalar.is_some()) {
+            return 0; // `item` is `None` for an item whose text does not decode
+        }
+        view.pronunciations()
+            .find(|pron| {
+                pron.keys
+                    .chunks_exact(2)
+                    .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+                    .eq(keys.iter().copied())
+            })
+            .map_or(0, |pron| pron.freq)
+    }
+
+    /// `self.item(slot).map(|current| &current == other)`, decided in place:
+    /// `None` when no item is readable at `slot`, otherwise whether it equals
+    /// `other`. A mapped item is compared against the mapping without being
+    /// copied out; its text is still scanned to the end first, so an item
+    /// whose phrase does not decode is `None` whatever else differs.
+    pub(crate) fn item_matches(&self, slot: u32, other: &ChunkItem) -> Option<bool> {
+        if let Some(item) = self.items.get(&slot) {
+            return Some(item == other);
+        }
+        let view = self.mapped.as_ref()?.item(slot)?;
+        let mut equal = view.phrase_length() == other.phrase.len();
+        for (index, scalar) in view.phrase_chars().enumerate() {
+            equal &= other.phrase.get(index) == Some(&u32::from(scalar?));
+        }
+        equal &= view.unigram() == other.unigram;
+        equal &= view.n_pronunciations() == other.prons.len();
+        if equal {
+            equal = view
+                .pronunciations()
+                .zip(&other.prons)
+                .all(|(pron, (keys, frequency))| {
+                    pron.freq == *frequency
+                        && pron
+                            .keys
+                            .chunks_exact(2)
+                            .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+                            .eq(keys.iter().copied())
+                });
+        }
+        Some(equal)
+    }
 }
 
 /// The `SYSTEM_FILE` libraries' originals together with the user dir's
@@ -1292,13 +1363,18 @@ fn load_logs_with_mask(
         // added back; an in-place modify leaves it (074a2219
         // `phrase_index.cpp:439-520`, `:208-235`).
         let mut total = original.map(|library| library.total);
-        let current =
-            |overrides: &BTreeMap<u32, Option<ChunkItem>>, slot: u32| -> Option<ChunkItem> {
-                overrides
-                    .get(&slot)
-                    .cloned()
-                    .unwrap_or_else(|| original.and_then(|library| library.item(slot)))
-            };
+        // Whether the item the replay holds at `slot` — an override, else
+        // the original's — equals `probe`; `None` when there is none.
+        let current_matches = |overrides: &BTreeMap<u32, Option<ChunkItem>>,
+                               slot: u32,
+                               probe: &ChunkItem|
+         -> Option<bool> {
+            match overrides.get(&slot) {
+                Some(Some(item)) => Some(item == probe),
+                Some(None) => None,
+                None => original.and_then(|library| library.item_matches(slot, probe)),
+            }
+        };
 
         // The pin emits local slots, but its reader masks high bits even
         // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
@@ -1316,12 +1392,16 @@ fn load_logs_with_mask(
                 },
                 LogRecord::Remove { token, old_item } => {
                     let slot = token & PHRASE_MASK;
-                    match (decode_phrase_item(&old_item), current(&overrides, slot)) {
-                        (Ok(old), Some(cur)) if old == cur => {
-                            total = total.map(|total| total.wrapping_sub(cur.unigram));
+                    let matched = decode_phrase_item(&old_item)
+                        .ok()
+                        .map(|old| (current_matches(&overrides, slot, &old), old));
+                    match matched {
+                        // An equal item has the record's own unigram.
+                        Some((Some(true), old)) => {
+                            total = total.map(|total| total.wrapping_sub(old.unigram));
                             overrides.insert(slot, None);
                         }
-                        (Ok(_), None) => {
+                        Some((None, _)) => {
                             overrides.insert(slot, None); // already gone; a no-op removal
                         }
                         _ => {
@@ -1341,17 +1421,17 @@ fn load_logs_with_mask(
                     new_item,
                 } => {
                     let slot = token & PHRASE_MASK;
-                    match (
-                        decode_phrase_item(&old_item),
-                        decode_phrase_item(&new_item),
-                        current(&overrides, slot),
-                    ) {
-                        (Ok(old), Ok(new), Some(cur)) if old == cur => {
-                            let grows = encode_phrase_item(&cur)
-                                .is_ok_and(|stored| new_item.len() > stored.len());
+                    match (decode_phrase_item(&old_item), decode_phrase_item(&new_item)) {
+                        (Ok(old), Ok(new))
+                            if current_matches(&overrides, slot, &old) == Some(true) =>
+                        {
+                            // The held item equals `old`, so its stored
+                            // form and unigram are `old`'s.
+                            let grows = phrase_item_wire_len(&old)
+                                .is_some_and(|stored| new_item.len() > stored);
                             if grows {
                                 total = total.map(|total| {
-                                    total.wrapping_sub(cur.unigram).wrapping_add(new.unigram)
+                                    total.wrapping_sub(old.unigram).wrapping_add(new.unigram)
                                 });
                             }
                             overrides.insert(slot, Some(new));
@@ -1397,6 +1477,24 @@ fn load_logs_with_mask(
             loaded.state.system_overrides.insert(nibble, overrides);
         }
     }
+}
+
+/// `encode_phrase_item(item).ok().map(|bytes| bytes.len())`, computed from the
+/// item's shape: the same refusals, and otherwise the header, the phrase's
+/// `ucs4_t` run, and each pronunciation's key run and frequency.
+fn phrase_item_wire_len(item: &ChunkItem) -> Option<usize> {
+    let phrase_length = item.phrase.len();
+    if phrase_length == 0
+        || phrase_length > usize::from(u8::MAX)
+        || item.prons.len() > usize::from(u8::MAX)
+        || item
+            .prons
+            .iter()
+            .any(|(keys, _)| keys.len() != phrase_length)
+    {
+        return None;
+    }
+    Some(6 + 4 * phrase_length + item.prons.len() * (2 * phrase_length + 4))
 }
 
 /// `PhraseItem::get_unigram_frequency` read from a record's raw item: the
@@ -3075,6 +3173,282 @@ mod tests {
         assert_eq!(first, second);
 
         std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// A system library with one mapped item per probe slot and one inline
+    /// item, so every in-place comparison runs against the mapping and the
+    /// inline map alike.
+    fn library_for_equivalence(name: &str) -> SystemLibrary {
+        let key = |n: u16| vec![n, n + 1];
+        let items = vec![
+            (1, item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(3), 7)])),
+            (2, item(&[0x4f60], 4, &[])),
+            (3, item(&[0xd800], 4, &[(vec![1], 2)])),
+            (4, item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(1), 8)])),
+        ];
+        let chunk = oxpinyin_data::chunk_write::build_chunk(&items).expect("chunk");
+        let dir = tempdir(name);
+        let path = dir.join("equiv.bin");
+        std::fs::write(&path, chunk).expect("write");
+        let mapped = oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open");
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+        SystemLibrary {
+            total: 0,
+            range_end: 0,
+            items: BTreeMap::from([(9, item(&[0x1234], 3, &[(vec![7], 11), (vec![7], 12)]))]),
+            mapped: Some(mapped),
+        }
+    }
+
+    #[test]
+    fn in_place_item_reads_agree_with_the_materialized_item() {
+        let library = library_for_equivalence("equivalence");
+        let probes = [
+            item(&[0x4f60, 0x597d], 9, &[(vec![1, 2], 5), (vec![3, 4], 7)]),
+            item(&[0x4f60, 0x597d], 10, &[(vec![1, 2], 5), (vec![3, 4], 7)]),
+            item(&[0x4f60, 0x597e], 9, &[(vec![1, 2], 5), (vec![3, 4], 7)]),
+            item(&[0x4f60], 9, &[(vec![1, 2], 5), (vec![3, 4], 7)]),
+            item(&[0x4f60, 0x597d], 9, &[(vec![1, 2], 6), (vec![3, 4], 7)]),
+            item(&[0x4f60, 0x597d], 9, &[(vec![1, 2], 5)]),
+            item(
+                &[0x4f60, 0x597d],
+                9,
+                &[(vec![1, 2], 5), (vec![3, 4], 7), (vec![5, 6], 1)],
+            ),
+            item(&[0x4f60, 0x597d], 9, &[(vec![3, 4], 7), (vec![1, 2], 5)]),
+            item(&[0x4f60], 4, &[]),
+            item(&[0xd800], 4, &[(vec![1], 2)]),
+            item(&[0x1234], 3, &[(vec![7], 11), (vec![7], 12)]),
+            item(&[0x1234], 3, &[(vec![7], 12), (vec![7], 11)]),
+            item(&[], 0, &[]),
+        ];
+        let key_probes: [&[u16]; 6] = [&[1, 2], &[3, 4], &[5, 6], &[7], &[], &[1]];
+        // Present, inline, unreadable text, and absent slots alike.
+        for slot in [0_u32, 1, 2, 3, 4, 5, 9, 1000] {
+            let materialized = library.item(slot);
+            assert_eq!(
+                library.is_readable(slot),
+                materialized.is_some(),
+                "slot {slot}"
+            );
+            assert_eq!(
+                library.unigram(slot).filter(|_| materialized.is_some()),
+                materialized.as_ref().map(|current| current.unigram),
+                "slot {slot}"
+            );
+            for probe in &probes {
+                assert_eq!(
+                    library.item_matches(slot, probe),
+                    materialized.as_ref().map(|current| current == probe),
+                    "slot {slot} against {probe:?}"
+                );
+            }
+            for keys in key_probes {
+                let expected = materialized.as_ref().map_or(0, |current| {
+                    current
+                        .prons
+                        .iter()
+                        .find(|(base, _)| base.as_slice() == keys)
+                        .map_or(0, |(_, frequency)| *frequency)
+                });
+                assert_eq!(
+                    library.pronunciation_frequency(slot, keys),
+                    expected,
+                    "slot {slot} keys {keys:?}"
+                );
+            }
+        }
+    }
+
+    /// The replay reads the originals in place when they are mapped; it must
+    /// land on exactly what it lands on with the same items held inline, for
+    /// every record kind and every way a record can disagree with the original.
+    #[test]
+    fn replay_over_mapped_originals_matches_replay_over_inline_ones() {
+        let key = |n: u16| vec![n];
+        let items = vec![
+            (1_u32, item(&[0x4f60], 100, &[(key(1), 100)])),
+            (2, item(&[0x597d], 50, &[(key(2), 30), (key(3), 20)])),
+            (3, item(&[0x4e16], 7, &[(key(4), 7)])),
+            (4, item(&[0x754c], 9, &[(key(5), 9)])),
+        ];
+        let total = 100 + 50 + 7 + 9;
+        let chunk = build_chunk(&items).expect("chunk");
+        let dir = tempdir("mapped-vs-inline");
+        let path = dir.join("lib.bin");
+        std::fs::write(&path, chunk).expect("write");
+        let mapped_library =
+            oxpinyin_data::phrase_library::PhraseLibrary::open(&path).expect("open");
+        let originals_of = |inline: bool| -> SystemOriginals {
+            let library = SystemLibrary {
+                total,
+                range_end: 5,
+                items: if inline {
+                    items.iter().cloned().collect()
+                } else {
+                    BTreeMap::new()
+                },
+                mapped: (!inline).then(|| mapped_library.clone()),
+            };
+            BTreeMap::from([(1_u8, library)]).into()
+        };
+        let grown = |base: &ChunkItem, extra: u32| {
+            let mut next = base.clone();
+            next.prons[0].1 += extra;
+            next.unigram += extra;
+            next
+        };
+        let longer = {
+            let mut next = items[1].1.clone();
+            next.prons.push((key(9), 4));
+            next
+        };
+        let wire = |item: &ChunkItem| encode_phrase_item(item).expect("wire");
+        let scenarios: Vec<Vec<LogRecord>> = vec![
+            // An in-place modify, a growing modify, a matching remove.
+            vec![
+                LogRecord::ModifyHeader {
+                    old_total: total,
+                    new_total: total,
+                },
+                LogRecord::Modify {
+                    token: 1,
+                    old_item: wire(&items[0].1),
+                    new_item: wire(&grown(&items[0].1, 5)),
+                },
+                LogRecord::Modify {
+                    token: 2,
+                    old_item: wire(&items[1].1),
+                    new_item: wire(&longer),
+                },
+                LogRecord::Remove {
+                    token: 3,
+                    old_item: wire(&items[2].1),
+                },
+            ],
+            // A record over a slot an earlier record already changed.
+            vec![
+                LogRecord::Modify {
+                    token: 1,
+                    old_item: wire(&items[0].1),
+                    new_item: wire(&grown(&items[0].1, 5)),
+                },
+                LogRecord::Modify {
+                    token: 1,
+                    old_item: wire(&grown(&items[0].1, 5)),
+                    new_item: wire(&grown(&items[0].1, 9)),
+                },
+                LogRecord::Remove {
+                    token: 1,
+                    old_item: wire(&grown(&items[0].1, 9)),
+                },
+                LogRecord::Remove {
+                    token: 1,
+                    old_item: wire(&grown(&items[0].1, 9)),
+                },
+            ],
+            // Each way a record disagrees with the original stops the replay.
+            vec![LogRecord::Modify {
+                token: 4,
+                old_item: wire(&grown(&items[3].1, 1)),
+                new_item: wire(&items[3].1),
+            }],
+            vec![LogRecord::Remove {
+                token: 4,
+                old_item: wire(&grown(&items[3].1, 1)),
+            }],
+            vec![LogRecord::Remove {
+                token: 4,
+                old_item: wire(&item(&[0x754c, 0x754c], 9, &[(vec![5, 5], 9)])),
+            }],
+            // A slot with no original item.
+            vec![LogRecord::Remove {
+                token: 40,
+                old_item: wire(&items[3].1),
+            }],
+            vec![LogRecord::Modify {
+                token: 40,
+                old_item: wire(&items[3].1),
+                new_item: wire(&items[3].1),
+            }],
+            // A payload that does not decode.
+            vec![LogRecord::Modify {
+                token: 4,
+                old_item: vec![1],
+                new_item: wire(&items[3].1),
+            }],
+            // A header that misses the running total.
+            vec![LogRecord::ModifyHeader {
+                old_total: total + 1,
+                new_total: 0,
+            }],
+            // An add, then a modify of the added item.
+            vec![
+                LogRecord::Add {
+                    token: 7,
+                    new_item: wire(&item(&[0x1234], 3, &[(key(8), 3)])),
+                },
+                LogRecord::Modify {
+                    token: 7,
+                    old_item: wire(&item(&[0x1234], 3, &[(key(8), 3)])),
+                    new_item: wire(&item(&[0x1234], 4, &[(key(8), 4)])),
+                },
+            ],
+        ];
+        for (index, records) in scenarios.iter().enumerate() {
+            let outcome = |inline: bool| {
+                let run_dir = tempdir(&format!("mapped-vs-inline-{index}-{inline}"));
+                std::fs::write(
+                    run_dir.join("gb_char.dbin"),
+                    build_memory_chunk(&encode_log_records(records).expect("log")).expect("chunk"),
+                )
+                .expect("write log");
+                std::fs::write(
+                    run_dir.join("user.conf"),
+                    UserTableInfo::conform_to(&versions()).to_text(),
+                )
+                .expect("marker");
+                let loaded = load(
+                    &run_dir,
+                    &originals_of(inline),
+                    &versions(),
+                    UserConfLaw::Pinyin,
+                )
+                .expect("load");
+                std::fs::remove_dir_all(run_dir).expect("cleanup");
+                (
+                    loaded.state.system_overrides.clone(),
+                    loaded.library_totals.clone(),
+                    loaded.skipped.clone(),
+                )
+            };
+            assert_eq!(outcome(false), outcome(true), "scenario {index}");
+        }
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn phrase_item_wire_len_is_the_encoded_length_or_the_same_refusal() {
+        let long_prons: Vec<(Vec<u16>, u32)> = (0..256).map(|n| (vec![n as u16], 1)).collect();
+        let cases = [
+            item(&[0x4f60], 1, &[]),
+            item(&[0x4f60], 1, &[(vec![1], 2)]),
+            item(&[0x4f60, 0x597d], 1, &[(vec![1, 2], 2), (vec![3, 4], 5)]),
+            item(&[], 1, &[]),
+            item(&[7; 255], 1, &[(vec![1; 255], 2)]),
+            item(&[7; 256], 1, &[]),
+            item(&[0x4f60], 1, &long_prons[..255]),
+            item(&[0x4f60], 1, &long_prons),
+            item(&[0x4f60, 0x597d], 1, &[(vec![1], 2)]),
+            item(&[0x4f60], 1, &[(vec![1, 2], 2)]),
+        ];
+        for case in &cases {
+            assert_eq!(
+                phrase_item_wire_len(case),
+                encode_phrase_item(case).ok().map(|bytes| bytes.len()),
+                "{case:?}"
+            );
+        }
     }
 
     #[test]

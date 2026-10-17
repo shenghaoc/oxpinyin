@@ -386,7 +386,7 @@ impl GenericUserStore<DefaultStore> {
             return Err(UserStoreError::SystemLogHeaderToken);
         }
         let persistence::LoadedProfile {
-            loaded,
+            mut loaded,
             overlong_index_keys,
             index_keys,
             index_file_keys,
@@ -432,23 +432,22 @@ impl GenericUserStore<DefaultStore> {
         };
         let has_user_data = has_user_data || has_bigram_file;
 
+        // The seed and the kept index are done with the loaded overrides, which
+        // the session now owns: move them into the live map rather than
+        // cloning every item and dropping the originals with `loaded`.
+        let has_system_items = !loaded.state.system_overrides.is_empty();
+        let system_items = std::mem::take(&mut loaded.state.system_overrides)
+            .into_iter()
+            .flat_map(|(nibble, items)| {
+                items.into_iter().filter_map(move |(slot, item)| {
+                    item.map(|item| (((u32::from(nibble) << 24) | slot), item))
+                })
+            })
+            .collect();
+
         let inner = Arc::new(StoreInner {
-            has_system_items: std::sync::atomic::AtomicBool::new(
-                !loaded.state.system_overrides.is_empty(),
-            ),
-            system_items: std::sync::Mutex::new(
-                loaded
-                    .state
-                    .system_overrides
-                    .iter()
-                    .flat_map(|(&nibble, items)| {
-                        items.iter().filter_map(move |(&slot, item)| {
-                            item.clone()
-                                .map(|item| (((u32::from(nibble) << 24) | slot), item))
-                        })
-                    })
-                    .collect(),
-            ),
+            has_system_items: std::sync::atomic::AtomicBool::new(has_system_items),
+            system_items: std::sync::Mutex::new(system_items),
             count_cache: std::sync::Mutex::new(None),
             db: std::sync::Mutex::new(db),
             dirty: std::sync::atomic::AtomicBool::new(false),
@@ -653,18 +652,14 @@ pub(crate) fn seed_txn(
                 continue; // a replayed removal: not expressible in the
                 // value model; the load's `skipped` list carries it
             };
-            let Some(old) = original.item(slot) else {
+            if !original.is_readable(slot) {
                 continue;
-            };
+            }
             // Restore packed system-pronunciation deltas on reopen, so
             // train/save does not erase earlier matched-reading updates.
             let token = (u32::from(nibble) << 24) | slot;
             for (keys, frequency) in &new_item.prons {
-                let base = old
-                    .prons
-                    .iter()
-                    .find(|(base, _)| base == keys)
-                    .map_or(0, |(_, frequency)| *frequency);
+                let base = original.pronunciation_frequency(slot, keys);
                 let delta = frequency.wrapping_sub(base);
                 if delta != 0 {
                     let value = crate::store::PronValue {
@@ -679,7 +674,8 @@ pub(crate) fn seed_txn(
                     )?;
                 }
             }
-            let base = old.unigram;
+            // `is_readable` held, so the item exists and this is its unigram.
+            let base = original.unigram(slot).unwrap_or(0);
             let delta = u64::from(new_item.unigram.saturating_sub(base));
             if delta == 0 {
                 continue;
@@ -1001,6 +997,101 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("tmpdir");
         dir
+    }
+
+    /// Opens a profile whose `gb_char.dbin` holds `records` over [`originals`].
+    fn open_with_log(
+        name: &str,
+        records: &[oxpinyin_data::user_files::LogRecord],
+    ) -> (PathBuf, UserStore) {
+        let dir = tempdir(name);
+        let payload = oxpinyin_data::user_files::encode_log_records(records).expect("log");
+        std::fs::write(
+            dir.join("gb_char.dbin"),
+            oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("chunk"),
+        )
+        .expect("write log");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("open");
+        (dir, store)
+    }
+
+    #[test]
+    fn session_owns_the_replayed_overrides_it_was_opened_with() {
+        use oxpinyin_data::chunk_write::encode_phrase_item;
+        use oxpinyin_data::user_files::LogRecord;
+        let original = ChunkItem {
+            phrase: vec![0x4f60],
+            unigram: 100,
+            prons: vec![(vec![ChewingKey::new(23, 0, 1, 0).to_packed()], 100)],
+        };
+        let mut modified = original.clone();
+        modified.prons[0].1 += 7;
+        let modify = [
+            LogRecord::ModifyHeader {
+                old_total: 100,
+                new_total: 100,
+            },
+            LogRecord::Modify {
+                token: 1,
+                old_item: encode_phrase_item(&original).expect("old"),
+                new_item: encode_phrase_item(&modified).expect("new"),
+            },
+        ];
+        let (dir, mut store) = open_with_log("owned-overrides-modify", &modify);
+        let token = (1_u32 << 24) | 1;
+        let live = store.stored_system_items();
+        assert_eq!(live.len(), 1);
+        assert_eq!(live.get(&token), Some(&modified));
+        assert!(store.has_system_items());
+        // Saved (a clean session writes nothing) and reopened, the session
+        // holds the same overrides.
+        store.save().expect("save");
+        drop(store);
+        let reopened =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("reopen");
+        assert_eq!(reopened.stored_system_items(), live);
+        assert!(reopened.has_system_items());
+        drop(reopened);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+
+        // A replayed removal is an override with no payload: the library
+        // counts as overridden, and there is no item to keep.
+        let remove = [
+            LogRecord::ModifyHeader {
+                old_total: 100,
+                new_total: 0,
+            },
+            LogRecord::Remove {
+                token: 1,
+                old_item: encode_phrase_item(&original).expect("old"),
+            },
+        ];
+        let (dir, store) = open_with_log("owned-overrides-remove", &remove);
+        assert!(store.stored_system_items().is_empty());
+        assert!(store.has_system_items());
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+
+        // No journal, no overrides.
+        let dir = tempdir("owned-overrides-none");
+        std::fs::write(
+            dir.join("user.conf"),
+            oxpinyin_data::user_files::UserTableInfo::conform_to(&versions()).to_text(),
+        )
+        .expect("write marker");
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("open");
+        assert!(store.stored_system_items().is_empty());
+        assert!(!store.has_system_items());
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
     #[test]
