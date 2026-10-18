@@ -1,17 +1,29 @@
 #!/usr/bin/env python3
-"""Regressions for the contract differential's fatal-log predicate."""
+"""Regressions for contract verdicts, selection, timing and worker cleanup."""
 
 import copy
+import contextlib
+import importlib.util
+import io
+import os
+import subprocess
+import sys
+import time
 import json
-import runpy
 import signal
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-contract = runpy.run_path(str(Path(__file__).with_name('contract-diff.py')))
+spec = importlib.util.spec_from_file_location('contract_diff', Path(__file__).with_name('contract-diff.py'))
+driver = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(driver)
+contract = vars(driver)
+
+
+def worker_process(stdout=b'{}\n', stderr=b''):
+    return MagicMock(returncode=0, communicate=MagicMock(return_value=(stdout, stderr)))
 
 
 class FatalLogTests(unittest.TestCase):
@@ -77,13 +89,9 @@ class DiagnosticPathTests(unittest.TestCase):
                         'reopen_stderr': text,
                         'payload': 'literal user-input and sys-input',
                     }
-                    process = SimpleNamespace(
-                        returncode=0,
-                        stdout=json.dumps(result).encode(),
-                        stderr=text.encode(),
-                    )
+                    process = worker_process(json.dumps(result).encode(), text.encode())
                     with patch.object(
-                        contract['subprocess'], 'run', return_value=process
+                        contract['subprocess'], 'Popen', return_value=process
                     ):
                         value = contract['run_worker'](
                             'pinyin', '/unused', '/unused', 'case', scratch
@@ -203,7 +211,7 @@ class VerdictTests(unittest.TestCase):
 class DriverInvalidTests(unittest.TestCase):
     """main(): two failed workers under --expect-parent exit 1 with INVALID."""
 
-    def invoke(self, parent, workers):
+    def invoke(self, parent, workers, plan=False, host=False):
         import contextlib
         import io
         with tempfile.TemporaryDirectory() as scratch:
@@ -215,8 +223,13 @@ class DriverInvalidTests(unittest.TestCase):
                 'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
             argv = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
                     '--cases', 'default-option-parse'] + (['--expect-parent'] if parent else [])
+            if plan:
+                argv.append('--plan-only')
             output = io.StringIO()
-            with patch.object(contract['sys'], 'argv', argv), \
+            cases = {'default-option-parse': dict(contract['CASES']['default-option-parse'],
+                                                host_scanf=('1e',) if host else ())}
+            with patch.dict(contract['main'].__globals__, CASES=cases), \
+                    patch.object(contract['sys'], 'argv', argv), \
                     patch.dict(contract['main'].__globals__, run_worker=lambda *a, **k: workers.pop(0)), \
                     contextlib.redirect_stdout(output):
                 status = contract['main']()
@@ -239,14 +252,25 @@ class DriverInvalidTests(unittest.TestCase):
         status, rows = self.invoke(True, [observation(result={'a': 1}), observation(result={'a': 2})])
         self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (0, 'DIFFER', True))
 
+    def test_plan_only_never_runs_a_case(self):
+        with patch.object(driver, 'run_case', side_effect=AssertionError('plan executed a case')):
+            status, rows = self.invoke(False, [], plan=True)
+        self.assertEqual((status, rows), (0, []))
+
+    def test_invalid_observations_cannot_be_host_dependent(self):
+        with patch.object(driver, 'host_scanf_accepts', return_value=True), \
+                patch.object(driver, 'pin_loaded_subject_refused_table_conf', return_value=True):
+            status, rows = self.invoke(False, [observation(exit=1), observation(exit=1)], host=True)
+        self.assertEqual((status, rows[0]['verdict']), (1, 'INVALID'))
+
 
 class WorkerEntryTests(unittest.TestCase):
     """Workers start from contract-worker.py, which loads the same driver."""
 
     def test_run_worker_starts_the_cached_entry(self):
-        process = SimpleNamespace(returncode=0, stdout=b'{}\n', stderr=b'')
+        process = worker_process()
         with tempfile.TemporaryDirectory() as scratch, \
-                patch.object(contract['subprocess'], 'run', return_value=process) as run:
+                patch.object(contract['subprocess'], 'Popen', return_value=process) as run:
             contract['run_worker']('pinyin', '/so', '/data', 'case', scratch)
         command = run.call_args.args[0]
         self.assertEqual(command[1:], [str(contract['WORKER']), 'pinyin', '/so', '/data', 'case'])
@@ -343,10 +367,10 @@ class TimingTests(unittest.TestCase):
 
     def test_timing_line_is_kept_apart_from_the_observation(self):
         stdout = b'T {"startup": 0.1, "load": 0.2, "fixture": 0.3, "execute": 0.4}\n{"ret": true}\n'
-        process = SimpleNamespace(returncode=0, stdout=stdout, stderr=b'')
+        process = worker_process(stdout)
         before = len(contract['TIMINGS'])
         with tempfile.TemporaryDirectory() as scratch, \
-                patch.object(contract['subprocess'], 'run', return_value=process) as run:
+                patch.object(contract['subprocess'], 'Popen', return_value=process) as run:
             value = contract['run_worker']('pinyin', '/so', '/data', 'case', scratch)
         self.assertEqual(value['result'], {'ret': True})
         self.assertNotIn('timing', value)
@@ -369,6 +393,245 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(summary['workers'], 2)
         self.assertEqual(summary['seconds'], dict(startup=2, load=4, fixture=6, pin_execute=4, subject_execute=6,
                                                    teardown=10, compare=0.5, total=30.0))
+
+
+    def test_summary_preserves_sides_after_a_pin_timeout(self):
+        timings = [dict(execute=1, side='pin'), dict(execute=2, side='pin'),
+                   dict(execute=3, side='subject')]
+        with patch.object(driver, 'TIMINGS', timings):
+            summary = driver.timing_summary(['timed-out', 'next'], 0, 6)
+        self.assertEqual(summary['workers'], 3)
+        self.assertEqual(summary['seconds']['pin_execute'], 3)
+        self.assertEqual(summary['seconds']['subject_execute'], 3)
+
+
+class DeadlineTests(unittest.TestCase):
+    def test_shared_budget_and_fatal_environment(self):
+        spec = dict(mode='pinyin', fatal=True)
+        with patch.object(driver.time, 'monotonic', side_effect=[10, 11, 17]), \
+             patch.object(driver, 'run_worker', side_effect=[observation(result={'ret': True}), observation(result={'ret': True})]) as run:
+            pin, subject = driver.run_case(spec, Path('/pin'), Path('/subject'), Path('/data'), 'case', '/tmp', 20)
+        self.assertEqual([call.kwargs['timeout'] for call in run.call_args_list], [19, 13])
+        self.assertEqual(run.call_args.kwargs['extra_env'], {'G_DEBUG': 'fatal-criticals'})
+        self.assertEqual(pin, subject)
+
+    def test_pin_timeout_does_not_launch_subject(self):
+        with patch.object(driver, 'run_worker', side_effect=subprocess.TimeoutExpired('worker', 1)) as run:
+            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/p'), Path('/s'), '/data', 'case', '/tmp', 1)
+        self.assertEqual([r['exit'] for r in results], ['TIMEOUT', 'NOT-RUN'])
+        self.assertEqual(run.call_count, 1)
+
+    def test_subject_timeout_preserves_completed_pin(self):
+        good = observation(result={'ret': True})
+        with patch.object(driver, 'run_worker', side_effect=[good, subprocess.TimeoutExpired('worker', 1, stderr=b'partial\n')]):
+            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/p'), Path('/s'), '/data', 'case', '/tmp', 1)
+        self.assertIs(results[0], good)
+        self.assertEqual(results[1]['exit'], 'TIMEOUT')
+        self.assertEqual(results[1]['stderr_lines'], 1)
+        self.assertIsNone(results[1]['result'])
+
+    def test_expired_budget_does_not_start_another_worker(self):
+        with patch.object(driver.time, 'monotonic', side_effect=[0, 1, 4]), \
+             patch.object(driver, 'run_worker', return_value=observation(result={'ret': True})) as run:
+            results = driver.run_case(dict(mode='pinyin', fatal=False), Path('/p'), Path('/s'), '/data', 'case', '/tmp', 3)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(results[1]['exit'], 'TIMEOUT')
+
+    def test_timeout_kills_descendants_holding_output_pipes(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            worker = Path(scratch) / 'worker.py'
+            worker.write_text('import os, time\n'
+                              'print(\'T {"startup": 0.01, "load": 0.02}\', flush=True)\n'
+                              'if os.fork() == 0:\n'
+                              '    time.sleep(60)\n'
+                              'else:\n'
+                              '    print("ready", flush=True)\n'
+                              '    time.sleep(60)\n')
+            start = time.monotonic()
+            before = len(driver.TIMINGS)
+            with patch.object(driver, 'WORKER', worker), self.assertRaises(subprocess.TimeoutExpired) as caught:
+                driver.run_worker('pinyin', Path('/unused'), Path('/unused'), 'case', scratch, timeout=.2)
+            self.assertIn(b'ready', caught.exception.output)
+            timing = driver.TIMINGS[before]
+            self.assertEqual((timing['startup'], timing['load']), (0.01, 0.02))
+            self.assertGreater(timing['wall'], 0.19)
+            del driver.TIMINGS[before:]
+            self.assertLess(time.monotonic() - start, 3)
+
+
+class DriverVerdictTests(unittest.TestCase):
+    def invoke(self, parent=False, timeout=None, timeout_side=0):
+        with tempfile.TemporaryDirectory() as scratch:
+            prefix = Path(scratch)
+            (prefix / 'lib/libpinyin/data').mkdir(parents=True)
+            (prefix / 'lib/libpinyin.so').touch()
+            (prefix / 'lib/libpinyin/data/bigram.db').touch()
+            (prefix / 'oracle-pin.txt').write_text('libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+            args = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'), '--cases', 'slow,next']
+            if parent:
+                args.append('--expect-parent')
+            if timeout is not None:
+                args.extend(['--case-timeout', str(timeout)])
+            cases = {name: dict(driver.CASES['default-option-parse'], control=True) for name in ('slow', 'next')}
+            cases['slow'].update(control=False, host_scanf=('1e',))
+            calls = []
+            def worker(*args, **kwargs):
+                calls.append(kwargs)
+                if len(calls) == timeout_side + 1:
+                    raise subprocess.TimeoutExpired('worker', kwargs['timeout'])
+                return observation(result={'ret': True})
+            output = io.StringIO()
+            with patch.object(driver.sys, 'argv', args), patch.object(driver, 'CASES', cases), \
+                 patch.object(driver, 'run_worker', side_effect=worker), contextlib.redirect_stdout(output):
+                status = driver.main()
+            rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{') and 'case' in json.loads(line)]
+            return status, rows, calls
+
+    def test_pin_timeout_is_failure_and_next_case_runs(self):
+        with patch.object(driver, 'host_scanf_accepts', return_value=True), \
+                patch.object(driver, 'pin_loaded_subject_refused_table_conf', return_value=True):
+            status, rows, calls = self.invoke()
+        self.assertEqual(status, 1)
+        self.assertEqual([r['verdict'] for r in rows], ['TIMEOUT', 'MATCH'])
+        self.assertFalse(rows[0]['expected_ok'])
+        self.assertEqual(rows[0]['exit'], ['TIMEOUT', 'NOT-RUN'])
+        self.assertTrue(299 < calls[0]['timeout'] <= 300)
+
+    def test_subject_timeout_is_failure_in_parent_mode(self):
+        status, rows, calls = self.invoke(parent=True, timeout=7, timeout_side=1)
+        self.assertEqual(status, 1)
+        self.assertEqual([r['verdict'] for r in rows], ['TIMEOUT', 'MATCH'])
+        self.assertFalse(rows[0]['expected_ok'])
+        self.assertEqual(rows[0]['exit'], [0, 'TIMEOUT'])
+        self.assertTrue(6 < calls[0]['timeout'] <= 7)
+
+    def test_completed_observations_still_match(self):
+        status, rows, _ = self.invoke(timeout_side=99)
+        self.assertEqual(status, 0)
+        self.assertEqual([r['verdict'] for r in rows], ['MATCH', 'MATCH'])
+
+    def test_invalid_limits_are_rejected(self):
+        for value in ('0', '-1', 'nan', 'inf'):
+            with self.subTest(value=value), contextlib.redirect_stderr(io.StringIO()), \
+                 patch.object(driver.sys, 'argv', ['driver', 'bdb', '/unused', '/unused', '--case-timeout', value]), \
+                 self.assertRaises(SystemExit) as caught:
+                driver.main()
+            self.assertEqual(caught.exception.code, 2)
+
+
+class CancellationTests(unittest.TestCase):
+    """Cancel a real driver while its worker and a descendant ignore TERM."""
+
+    def children(self, pid):
+        try:
+            return [int(item) for item in Path(f'/proc/{pid}/task/{pid}/children').read_text().split()]
+        except FileNotFoundError:
+            return []
+
+    def tree(self, pid):
+        result = [pid]
+        for child in self.children(pid):
+            result.extend(self.tree(child))
+        return result
+
+    def running(self, pid):
+        try:
+            return Path(f'/proc/{pid}/stat').read_text().split(') ')[1].split()[0] != 'Z'
+        except FileNotFoundError:
+            return False
+
+    def cancel(self, signum, through_runner=False, leader_exits=False):
+        with tempfile.TemporaryDirectory() as scratch:
+            prefix = Path(scratch)
+            (prefix / 'lib/libpinyin/data').mkdir(parents=True)
+            (prefix / 'lib/libpinyin.so').touch()
+            (prefix / 'lib/libpinyin/data/bigram.db').touch()
+            (prefix / 'oracle-pin.txt').write_text(
+                'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+            worker = prefix / 'worker.py'
+            worker.write_text('import os, signal, time\n'
+                              'signal.signal(signal.SIGTERM, signal.SIG_IGN)\n'
+                              'child = os.fork()\n'
+                              f'if child and {leader_exits!r}:\n'
+                              '    signal.signal(signal.SIGTERM, signal.SIG_DFL)\n'
+                              'time.sleep(60)\n')
+            code = ("import importlib.util, pathlib, sys; "
+                    "spec = importlib.util.spec_from_file_location('contract', sys.argv[1]); "
+                    "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+                    "module.WORKER = pathlib.Path(sys.argv.pop(2)); sys.argv.pop(0); "
+                    "sys.exit(module.main())")
+            command = [sys.executable, '-c', code, str(Path(driver.__file__).resolve()),
+                       str(worker), 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
+                       '--cases', 'default-option-parse']
+            if through_runner:
+                command = [sys.executable, str(Path(__file__).with_name('run-all.py')),
+                           '--heavy-slot', '--', *command]
+            proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    start_new_session=True)
+            worker_pid = descendant = None
+            try:
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    for pid in self.tree(proc.pid):
+                        try:
+                            argv = Path(f'/proc/{pid}/cmdline').read_bytes().split(b'\0')
+                        except FileNotFoundError:
+                            continue
+                        if len(argv) > 1 and argv[1] == os.fsencode(worker):
+                            children = self.children(pid)
+                            if children:
+                                worker_pid, descendant = pid, children[0]
+                                break
+                    if descendant is not None or proc.poll() is not None:
+                        break
+                    time.sleep(0.02)
+                self.assertIsNotNone(descendant, 'worker and descendant did not start')
+                self.assertTrue(self.running(worker_pid))
+                self.assertTrue(self.running(descendant))
+                proc.send_signal(signum)
+                stdout, stderr = proc.communicate(timeout=10)
+                self.assertNotEqual(proc.returncode, 0, stderr.decode(errors='replace'))
+                self.assertFalse(any(word in stdout for word in (b'MATCH', b'DIFFER', b'TIMEOUT')))
+                deadline = time.monotonic() + 2
+                while any(self.running(pid) for pid in (worker_pid, descendant)) and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertFalse(self.running(worker_pid), 'worker survived cancellation')
+                self.assertFalse(self.running(descendant), 'descendant survived cancellation')
+                # The direct worker must be reaped, not left as a zombie.
+                self.assertFalse(Path(f'/proc/{worker_pid}').exists())
+            finally:
+                if worker_pid is not None:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(worker_pid, signal.SIGKILL)
+                if proc.poll() is None:
+                    proc.kill()
+                proc.communicate()
+
+    def test_sigint(self):
+        self.cancel(signal.SIGINT)
+
+    def test_sigterm(self):
+        for leader_exits in (False, True):
+            with self.subTest(leader_exits=leader_exits):
+                self.cancel(signal.SIGTERM, leader_exits=leader_exits)
+
+    def test_sighup(self):
+        self.cancel(signal.SIGHUP)
+
+    def test_sigterm_through_run_all(self):
+        self.cancel(signal.SIGTERM, through_runner=True)
+
+    def test_exception_and_keyboard_interrupt_stop_group_and_reap(self):
+        for error in (KeyboardInterrupt(), RuntimeError('wait failed')):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as scratch:
+                process = worker_process()
+                process.communicate.side_effect = error
+                with patch.object(driver.subprocess, 'Popen', return_value=process), \
+                        patch.object(driver.os, 'killpg') as kill, self.assertRaises(type(error)):
+                    driver.run_worker('pinyin', '/so', '/data', 'case', scratch)
+                self.assertEqual([call.args for call in kill.call_args_list],
+                                 [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)])
+                self.assertEqual(process.wait.call_count, 2)
 
 
 if __name__ == '__main__':
