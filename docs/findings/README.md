@@ -62,6 +62,7 @@ series lives in `../perf/`.
 | [`double-pinyin-spec`](double-pinyin-spec.md) | Double-pinyin scheme SPEC | frozen |
 | [`drop-in-abi-identity`](drop-in-abi-identity.md) | What `dlopen("libpinyin.so.15")` actually requires | record |
 | [`dynamic-adjust`](dynamic-adjust.md) | DYNAMIC_ADJUST | record (implemented, #204) |
+| [`dynamic-dispatch-inventory`](dynamic-dispatch-inventory.md) | Dynamic-dispatch inventory — what was erased, what replaced it, what it cost | record |
 | [`emitter-port`](emitter-port.md) | Emitter port — `export_interpolation` → `interpolation2.text` (W9-T4a) | historical (pre-P6) |
 | [`error-handling`](error-handling.md) | Error-handling audit | record (re-verified 2026-08-28; still cites oxpinyin-migrate) |
 | [`full-pinyin-aux-overread`](full-pinyin-aux-overread.md) | Findings — upstream heap over-read in `pinyin_get_full_pinyin_auxiliary_text` | record (upstream defect) |
