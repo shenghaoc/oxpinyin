@@ -25,11 +25,12 @@ oracle-ffi = ["dep:glib-sys"]
 # Installs dhat's allocator in alloc_profile; off by default so the bench's
 # other modes run on the system allocator.
 dhat-heap = ["dep:dhat"]
-# Backend selection, forwarded through oxpinyin-data (one backend per
-# binary; see oxpinyin-store's [features] for the model and precedence).
-kyotocabinet = ["oxpinyin-data/kyotocabinet"]
-bdb = ["oxpinyin-data/bdb"]
-tkrzw = ["oxpinyin-data/tkrzw"]
+# Backend selection, forwarded to oxpinyin-data and oxpinyin-user (one
+# backend per binary; see oxpinyin-store's [features] for the model and
+# precedence).
+kyotocabinet = ["oxpinyin-data/kyotocabinet", "oxpinyin-user/kyotocabinet"]
+bdb = ["oxpinyin-data/bdb", "oxpinyin-user/bdb"]
+tkrzw = ["oxpinyin-data/tkrzw", "oxpinyin-user/tkrzw"]
 
 [lints.rust]
 unsafe_code = "allow" # FFI to the real libpinyin; // SAFETY: on every block
@@ -91,6 +92,13 @@ oxpinyin-core = { path = "../oxpinyin-core" }
 oxpinyin-data = { path = "../oxpinyin-data", default-features = false }
 oxpinyin-engine = { path = "../oxpinyin-engine" }
 
+# Internal workspace crate: the `decode_pass_user_store` bench
+# rebuilds oxpinyin-capi's `SharedLm` overlay on the scan harness. Not an
+# external dependency, and pinyin-oracle never ships.
+# default-features = false so `--no-default-features` reaches the store
+# selection; the [features] block above forwards the same backend as data.
+oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
+
 # Canonical home of the model20-cache locator: pinyin-oracle re-exports
 # `model_cache` from it so its bins, tests, and benches keep
 # `pinyin_oracle::model_cache` without a second copy of the pin constants.
@@ -99,12 +107,6 @@ oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 [dev-dependencies]
 # Integration tests share the same internal crates as the parity tooling.
 criterion = "0.8"
-# Internal workspace crate, dev-only: the `decode_pass_user_store` bench
-# rebuilds oxpinyin-capi's `SharedLm` overlay on the scan harness. Not an
-# external dependency, and pinyin-oracle never ships.
-# default-features = false so workspace `--no-default-features` runs are not
-# re-defaulted through this dev edge.
-oxpinyin-user = { path = "../oxpinyin-user", default-features = false }
 tempfile.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
