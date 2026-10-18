@@ -1,0 +1,471 @@
+# libpinyin data structures and algorithms, and oxpinyin's counterparts
+
+Date: 2026-10-16 UTC · Status: **register** (living) · Pin: libpinyin
+`074a2219` (2.11.92), read from a clone at the pin · oxpinyin tree:
+first surveyed at `origin/main` `3b2bfdf`; rows updated 2026-10-18 UTC
+at `84b7e79` for #828 (merged as `928466f7`) and #832 (merged as
+`1726f685`).
+
+This is the record that `.kiro/steering/oxidation-method.md` asks for:
+what the pin stores and computes, subsystem by subsystem, and what
+oxpinyin does in its place. Pin code is cited `file:line` under `src/`;
+oxpinyin code by file and item.
+
+Each row carries two marks, `structure / behaviour`, because whether
+oxpinyin is built the same way and whether it behaves the same way are
+separate questions:
+
+- **Structure** — **same**: the pin's structure and algorithm,
+  re-expressed in Rust; **different**: another structure or algorithm.
+- **Behaviour**, against the pin, on the parity path:
+  - **follows** — the structure is the pin's, so the behaviour follows
+    from it;
+  - **argued** — the structure differs and an equivalence argument is
+    written, here or in the cited finding;
+  - **unverified** — the structure differs and equivalence is believed
+    but not yet argued (tracked in §11);
+  - **class (a)**, **(b)** or **(c)** — a divergence registered under
+    the compatibility policy;
+  - **defect** — known to differ with no class to cover it;
+  - **off path** — the code does not reach the parity path, and the row
+    says why.
+
+The **parity path** is code whose result reaches either C ABI —
+libpinyin's 79 `pinyin_*` exports or libzhuyin's 52 — or the files
+they write, and the offline tools whose output is promised identical
+to the pin's (`oxpinyin-datagen`'s system files).
+
+A row is a survey result, not a proof of equivalence. Rows whose
+behaviour is unverified, and the open gaps, are listed at the end and
+tracked by `.kiro/specs/oxidation-record/`.
+
+## 0. Components and modularisation
+
+### How libpinyin is put together
+
+libpinyin is one shared library whose layers are directories and static
+convenience archives, not separately built components:
+
+| Layer | Pin | Role |
+| --- | --- | --- |
+| Base | `src/include/` — `memory_chunk.h`, `novel_types.h`, `stl_lite.h`, `unaligned_memory.h`, `pinyin_utils.h` | byte buffer, token and range types, STL shims |
+| Storage | `src/storage/`, built as `libstorage.a` (`src/storage/Makefile.am:77`) | keys and key tables, the pinyin/zhuyin parsers, the phonetic key matrix, the phrase index, the phrase and pinyin tables, n-grams, punctuation, table info, and the facades over system and user tables |
+| Lookup | `src/lookup/`, built as `liblookup.a` (`src/lookup/Makefile.am:31`) | sentence and phrase decoding (`PhoneticLookup`, `PhraseLookup`; `PinyinLookup2` is legacy) |
+| API | `src/pinyin.cpp` (3,774 lines), `src/zhuyin.cpp` (2,250 lines) | the C API: context and instance state, candidate construction, training entry points, user phrases, import and export, persistence |
+| Tools | `utils/storage`, `utils/training`, `utils/segment` | data generation, k-mixture-model training, segmentation; they link `libstorage.a` |
+
+Three things about that shape matter for a re-expression:
+
+- **The shipped libraries are monoliths.** `libpinyin.so` is
+  `$(pinyin_SOURCES) pinyin.cpp` and `libzhuyin.so` is the same sources
+  plus `zhuyin.cpp` (`src/Makefile.am:89`, `:110`): each carries its own
+  copy of storage and lookup, and the two API files repeat much of the
+  same state handling.
+- **The backend is a preprocessor switch.** Each DBM-backed class has
+  one header and one source per backend, chosen by `HAVE_BERKELEY_DB`,
+  `HAVE_KYOTO_CABINET` or `HAVE_TKRZW` (`src/storage/chewing_large_table2.h:29-39`
+  and its peers) and by `if BERKELEYDB` / `KYOTOCABINET` / `TKRZW` in
+  `src/Makefile.am`. There is no backend interface; callers include the
+  backend's concrete class.
+- **The API file is also the application.** `pinyin.cpp` holds the
+  context and instance structs (`:39`, `:73`) and also candidate
+  construction, dedup, prediction, training orchestration and save — the
+  logic that decides output lives beside the ABI glue.
+
+### The two objects
+
+Everything the API does hangs off two objects (`pinyin.cpp:39-95`):
+
+- **`pinyin_context_t`** (`:39-71`) — one per process or engine, the
+  long-lived state: the option word; the three parsers (full pinyin,
+  double pinyin, zhuyin); the dictionaries (pinyin table, phrase table,
+  phrase index, and the addon set of each); the system and user bigrams;
+  the punctuation table; the system and user table info; the system and
+  user directories; the `m_modified` flag that gates save; and the two
+  decoders, `PhoneticLookup<2, 3>` and `PhraseLookup`.
+- **`pinyin_instance_t`** (`:73-95`) — one per input session, the state
+  of one composition: a back pointer to its context; the prefix text
+  and its tokens; the parsed `PhoneticKeyMatrix` and parsed lengths; the
+  constraints; the n-best results; the phrase result; the candidate
+  list; and the sort option. Selection is not a separate structure:
+  choosing a candidate writes a constraint (`:2582`), and the next guess
+  reads it back.
+
+The split is not quite clean. The decoders sit in the context but keep
+per-call working state there — the trellis, cached keys and phrase item,
+and pointers to the calling instance's matrix and constraints
+(`lookup/phonetic_lookup.h:522-532`) — so every instance on one context
+shares one decoder and its scratch, and two instances on one context
+cannot decode from two threads at once.
+
+oxpinyin keeps the same two objects at the ABI and moves the decoder
+state to the instance side:
+
+| Pin | oxpinyin |
+| --- | --- |
+| `pinyin_context_t`: options, parsers, dictionaries, bigrams, user state, save flag | `ContextCore` (`oxpinyin-facade/src/context.rs`): `Config`, the assembled `Runtime` (tables and model), the `UserStore` (whose shared dirty flag is `m_modified`), `LiveOptions`; no parser objects — parsing runs per call in `oxpinyin-core` |
+| `pinyin_context_t`: the two decoders and their scratch | per instance: the `Session`'s lookup state and `Scratch` (`oxpinyin-engine/src/session/mod.rs`) |
+| `pinyin_instance_t`: matrix, constraints, n-best, phrase result, candidates, sort option | `InstanceCore` (`oxpinyin-facade/src/instance.rs`) holding a `RuntimeSession`, whose `Session` owns the input and parsed matrix, the `SelectionRecord`, the `ConstraintStore`, the sentence (n-best) state, the `CandidateList` and the sort word; the phrase result sits on `InstanceCore` |
+| back pointer from instance to context | cloned handles to the context's dictionary, model and user store; the raw context pointer is kept only for `pinyin_get_context` |
+
+### The operations
+
+libpinyin is a library, not a frontend: it never sees a key press. The
+frontend (ibus-libpinyin, fcitx5) owns keys, preedit and commit, and
+drives the instance through a small set of operations (`pinyin.h`):
+parse (`pinyin_parse_more_full_pinyins`, `:465`, and its double-pinyin
+and zhuyin peers), guess (`pinyin_guess_sentence`, `:376`;
+`pinyin_guess_candidates`, `:554`), select (`pinyin_choose_candidate`,
+`:568`, and the constraint calls), train (`pinyin_train`, `:618`),
+segment (`pinyin_phrase_segment`, `:423`) and save (`pinyin_save`,
+`:264`).
+
+oxpinyin's `Session` (`oxpinyin-engine`) carries the same operations as
+methods — `replace_raw` and its variants for parse, `guess_sentence`
+and `candidates_at` for guess, `select` and `clear_constraint` for
+select, `train` and `train_nbest`, `phrase_segment` — with save on
+`ContextCore::save_user` (`oxpinyin-facade`). Both C ABIs drive only
+these. The same type also carries a key-driven layer from the first
+design — `KeyInput`, `process_key`, `type_pinyin`, `Preedit`, `commit`
+— which no C-ABI path calls; the oracle tools and tests use it. For the
+bug-for-bug build the operations are the Rust surface that matters; the
+key-driven layer belongs in an optional adapter on top of them, not in
+the same type (`.kiro/specs/oxidation-record/` task 9).
+
+### How oxpinyin divides it
+
+oxpinyin keeps the pin's layers but makes each a crate with explicit
+dependencies (`.kiro/steering/structure.md` has the full map):
+
+| Pin layer | oxpinyin crates |
+| --- | --- |
+| Base (`src/include/`) | `oxpinyin-chewing` (keys and content tables, a dependency-free leaf), `oxpinyin-data` (`chunk_format`, the `MemoryChunk` reader) |
+| Storage: keys, parsers, matrix helpers, `SingleGram` | `oxpinyin-core` |
+| Storage: system tables and their file formats | `oxpinyin-data` |
+| Storage: the DBM backends | `oxpinyin-store`, one backend per build by cargo feature behind one ordered byte-KV seam |
+| Storage: user tables and user files | `oxpinyin-user` |
+| Lookup, and the output logic in `pinyin.cpp` | `oxpinyin-engine` |
+| Wiring done in `pinyin_init` | `oxpinyin-runtime` |
+| Context and instance state shared by both APIs | `oxpinyin-facade` |
+| `pinyin.cpp` / `zhuyin.cpp` as ABI | `oxpinyin-capi`, `oxpinyin-zhuyin-capi`, sharing `oxpinyin-capi-marshal` |
+| `utils/storage` | `oxpinyin-datagen` |
+| `utils/training`, `utils/segment` | `oxpinyin-kmm`, `oxpinyin-training` |
+
+The differences are deliberate: the backend is a seam rather than an
+`#ifdef`, the two ABIs share one facade rather than two API files, and
+the logic that decides output sits in `oxpinyin-engine`, away from the
+ABI glue. The crate split dates from the first, clean-room design and is
+kept (crate-count ruling, October 2026): its purpose is to undo the
+pin's coupling while preserving its behaviour.
+
+## 1. Storage
+
+| Item | Pin | oxpinyin | Mark |
+| --- | --- | --- | --- |
+| Phrase item | `PhraseItem` (`storage/phrase_index.h:64`): `{u8 len, u8 npron, u32 unigram, ucs4[len], {ChewingKey[len], u32 freq} × npron}` in a `MemoryChunk` | `PhraseItemView` and `PronunciationView` in `oxpinyin-data/src/phrase_library.rs`, borrowed views over the same bytes | same / follows |
+| Sub phrase index | `SubPhraseIndex` (`storage/phrase_index.h:257`): header (total freq), offset array indexed by `token & PHRASE_MASK`, content area; file `mmap`ped `PROT_READ\|PROT_WRITE, MAP_PRIVATE` (`include/memory_chunk.h:505-506`); O(1) token → item | `PhraseLibrary` (`phrase_library.rs`), `item`, `slot_offset`; the same files mapped read-only; O(1) token → item | same / follows (reads) |
+| Phrase index edits | in place on the private mapping: `PhraseItem::add_pronunciation` (`storage/phrase_index.cpp:56`), `SubPhraseIndex::add_unigram_frequency` (`:150`) | mapping never written; edits go to overlays — `StoreInner` system-item map (`oxpinyin-user/src/registry.rs`), user value tables in `oxpinyin-user/src/store.rs`, `ChunkItem` (`oxpinyin-data/src/chunk_write.rs`) — and the chunk is rebuilt by `build_chunk` at save | different / unverified — the files written at save are the pin's formats; the in-memory equivalence is not yet argued |
+| Facade phrase index | `FacadePhraseIndex` (`storage/phrase_index.h:438`): 16 `SubPhraseIndex*` and a running `m_total_freq` | `PhraseLibraries` (`oxpinyin-data/src/phrase_libraries.rs`): 16 lock-guarded slots; system total read from the chunk header, user total a separate row | different / unverified |
+| Pinyin key → tokens | `ChewingLargeTable2` per backend (`storage/chewing_large_table2_bdb.h:34` and peers): DBM keyed by packed `ChewingKey[len]`, values `PinyinIndexItem2` arrays (`storage/pinyin_phrase3.h:181`), per-length `ChewingTableEntry` objects with a reused buffer (`storage/chewing_large_table2.h:74`); results compressed to token ranges by `convert` (`:90`) | `ChewingTable` (`oxpinyin-data/src/chewing_table.rs`) over the same file and keys; each lookup decodes rows into a fresh `Vec`; range compression ported as `PhraseIndexRanges::convert` (`oxpinyin-core/src/lib.rs`) | different / unverified; one heap allocation per record per lookup where the pin reuses a buffer |
+| User pinyin table | the user DBM loaded into an in-memory DB (`storage/facade_chewing_table2.h:87`, `load_db`) and searched like the system table | `UserLookup` (`oxpinyin-user/src/lookup.rs`): text-keyed ordered maps plus an initials map, rebuilt in full when the phrase generation changes; the pin's file format is written back at save | different / unverified |
+| Phrase string → tokens | `PhraseLargeTable3` per backend; system `attach`, user `load_db` (`storage/facade_phrase_table3.h:81`, `:86`) | system: `PhraseTable` (`oxpinyin-data/src/phrase_table.rs`), point gets and a cursor walk for suggestions; user: rows in the session store (`oxpinyin-user/src/phrase_table.rs`) | same / follows (system); different / unverified (user) |
+| Bigram row | `SingleGram` (`storage/ngram.h:59`): `MemoryChunk` of `{u32 total}` then sorted `SingleGramItem {token, freq}` (`storage/ngram.cpp:31`) | free functions over the same bytes in `oxpinyin-core/src/single_gram.rs` (`lower_bound`, `insert_freq`, `mask_out`, `merge_single_gram`) | same / follows |
+| System bigram | `Bigram::attach` read-only on the DBM (`storage/ngram_bdb.h:88`), one `load` per row | `BigramTable::load_raw_successors` (`oxpinyin-data/src/bigram_table.rs`) | same / follows |
+| User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`oxpinyin-store/src/lib.rs`): the pin's container per backend through the real library | same / follows |
+| Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` only | in-memory ordered maps in `oxpinyin-kmm/src/model.rs` | different / off path — training tools only; their outputs are rows in §8 |
+
+oxpinyin's own internal tables live in one in-memory session keyspace
+with a `table\0key` prefix (`oxpinyin-store/src/common.rs`). Nothing in
+that keyspace is written to disk: at save the pin's files are produced
+in the pin's formats.
+
+## 2. Parsing
+
+| Item | Pin | oxpinyin | Mark |
+| --- | --- | --- | --- |
+| Key | `ChewingKey` (`storage/chewing_key.h:41-48`): 16-bit bitfield 5/2/5/3/1 | `ChewingKey` in `oxpinyin-chewing/src/chewing_key.rs` with `to_packed` / `from_packed` for the identical layout; the engine itself keys on `SyllableKey` (`oxpinyin-core/src/vocab.rs`), a dense id, with tone carried beside it | same / follows at the ABI and on disk; different / unverified inside the engine |
+| Content and key tables | `content_table`, `chewing_key_table` (`storage/pinyin_parser_table.h`) | copied in `oxpinyin-chewing/src/chewing_key_data.rs` | same / follows |
+| Hanyu pinyin index | sorted `pinyin_index` (`storage/pinyin_parser_table.h:9`), 662 rows including correction rows, each with flags and a distance; `equal_range` per probe, O(log n) | `phf` maps generated by `oxpinyin-core/build.rs`; correction spellings recomputed by `option_alias_canonical` (`oxpinyin-core/src/syllables.rs`); O(1) per probe | different / argued — since #832 each edge carries the matched row's distance (`SyllableKey::from_option_text_with_distance`: 0 for an exact spelling, 1 for an admitted alias); verification in §11 |
+| Full pinyin parse | forward DP, one `parse_value_t` per byte (`storage/pinyin_parser2.cpp:64`, `:217`); spans up to `max_full_pinyin_length = 7` (`:82`); a step is replaced by a longer parse, else fewer keys, else lower total distance (`:296-310`); `final_step` backtracks (`:346`); O(7n) time, O(n) space | `SegmentGraph::build_with_options` builds the whole lattice (`emit_edges`), then `SegmentGraph::fewest_keys` selects (`oxpinyin-core/src/graph.rs`); O(7n) time, O(7n) space | different / argued — since #832 `fewest_keys` ranks a step by (key count, total distance) and replaces it only on strictly less, the pin's three rules; verification in §11 |
+| Double pinyin | greedy longest match, `DoublePinyinParser2::parse` (`storage/pinyin_parser2.cpp:532`), `parse_one_key` (`:405`) | `parse_with_options`, `parse_one_key` in `oxpinyin-core/src/scheme.rs` | same / follows |
+| Zhuyin keyboards | `storage/zhuyin_parser2.cpp` (DaChen CP26 at `:573`) | `oxpinyin-core/src/zhuyin_map.rs` and the scheme parsers | same / follows |
+| Pinyin direct parser | `PinyinDirectParser2` (`storage/pinyin_parser2.cpp:618`), used only to load `.table` text (`storage/chewing_large_table2.cpp:130`, `storage/phrase_index.cpp:564`), so on the data-generation path, not the runtime | `parse_pinyin_keys` (`oxpinyin-datagen/src/system.rs`), which resolves spellings through `ChewingKey::from_pinyin` where the pin looks them up in `pinyin_index` with option flags | different / unverified (§11) |
+
+## 3. Phonetic key matrix
+
+| Item | Pin | oxpinyin | Mark |
+| --- | --- | --- | --- |
+| Layout | `PhoneticKeyMatrix`: two parallel tables of columns (keys and key rests) | one `Vec<Vec<ScanKey>>` from `build_scan_matrix` (`oxpinyin-engine/src/session/mod.rs`); apostrophe zero keys as a side array in `ParsedMatrix` | different / unverified |
+| Fill | `fill_matrix` (`storage/phonetic_key_matrix.cpp:30`) | `ParsedMatrix::from_scan` (`oxpinyin-engine/src/session/matrix.rs`) | different / unverified |
+| Resplit and inner split | `resplit_step` (`:87`), `inner_split_step` (`:169`); linear scans of the `special_table.h` tables | `resplit_step`, `inner_split_step` (`session/mod.rs`), same tables (`matrix-split-tables.md`) | same / follows |
+| Fuzzy | `fuzzy_syllable_step` (`:226`): an initials pass, then a finals pass over the grown column | `SyllableKey::fuzzy_alternatives` (`vocab.rs`) composes both swaps, keeping only keys that exist | different / argued — the pin's extra non-existent finals match nothing downstream |
+| Column dedup | none — a column is a bag | `keep_first_in_column` (`session/mod.rs`), O(k²) per column | different / unverified (§11) |
+
+## 4. Sentence decoding
+
+| Item | Pin | oxpinyin | Mark |
+| --- | --- | --- | --- |
+| Instance | `PhoneticLookup<2, 3>` (`pinyin.cpp:55`, `:406`); zhuyin uses `<1, 1>` | `NbestShape` chooses the shape at run time (`oxpinyin-engine/src/session/state.rs`) | different / unverified |
+| Trellis | `ForwardPhoneticTrellis` (`lookup/phonetic_lookup.h:181`): per step a token → node hash table and an array of `trellis_node<nstore>` | `Trellis` (`nbest.rs`): per step a token map plus an explicit insertion order, so iteration never depends on hashing | different / argued (`sentence-surface.md`, lane D) |
+| Node store | `trellis_node::eval_item` (`lookup/phonetic_lookup_heap.h:56`): a fixed heap of `nstore` values whose front is replaced when a newcomer beats it; a separate `<1>` specialisation (`:89`, `:108`) | `Trellis::insert` reproduces the front replacement | same / follows; unverified for `nstore = 1` (§11) |
+| Comparator | `trellis_value_less_than` (`lookup/phonetic_lookup.h:66`) with `LONG_SENTENCE_PENALTY = log(1.2f)` (`:39`) | `loses_to` (`nbest.rs`), penalty 263 on oxpinyin's scale | same / follows |
+| Beam | `get_top_results` (`:143`), `nbeam = 32` (`:37`), libstdc++ `make_heap` / `pop_heap` | hand ports of the heap routines in `nbest.rs`, needed because the comparator is cyclic | same / follows |
+| Expansion | `get_nbest_match` (`:736`): bigram over every beam value (`search_bigram2`, `:578`), unigram over the beam head only (`search_unigram2`, `:540`) | `nbest_sentences_with_seeds_generation`, `widen_free_span`, `expand_entries` | same / follows |
+| Tails and extraction | heap top-n, `g_ptr_array_sort` with `trellis_value_compare` (`:174`), which truncates the cost difference to `gint`; `extract_result` backtracks (`:370`) | `Trellis::tails` with `glib_merge_sort` and `tail_compare` (same truncation, NaN included), `Trellis::extract` | same / follows |
+| Scores | `gfloat` running sum of natural logs: unigram step `:663`, bigram step `:692-693` | integer fixed-point −log₂ × 1000 (`oxpinyin-core/src/cost.rs`); inputs from `nbest_step_costs_using`, `interpolate_ratio`, `raw_blend_cost` (`oxpinyin-data/src/lm/mod.rs`) | different / class (a), registered in `upstream-divergences.md`, but the arithmetic can be followed in Rust once verified (§11) |
+| Constraints | `ForwardPhoneticConstraints` (`lookup/phonetic_lookup.cpp:61` onward); skip NOSEARCH, a single search for ONESTEP | `ConstraintStore` (`oxpinyin-engine/src/constraint.rs`) | same / argued — revalidation follows the pin's `validate_constraint` since #828 (`ConstraintSpelling::spells`, §11); its integer drop test is argued for model20 data only (§11) |
+| Phrase segmentation | `PhraseLookup` (`lookup/phrase_lookup.cpp:119`), one value per (step, token), `save_next_step` (`:348`) replaces on strictly better, `final_step` (`:382`) | `phrase_segment`, `Step::relax`, `Step::best` (`oxpinyin-engine/src/phrase.rs`) | same / class (a) — fixed-point scores |
+| Per-keystroke work | trellis rebuilt and bigram rows reloaded and merged for each predecessor and span | trellis rebuilt; merged rows cached per predecessor and step (`NbestStepRow`), parse graph cached | different / unverified — caching only |
+
+## 5. Candidate list
+
+| Item | Pin (`pinyin.cpp`) | oxpinyin | Mark |
+| --- | --- | --- | --- |
+| Window scan | `:2224` onward | `collect_window_scan`, `scan_parsed_paths` (`oxpinyin-engine/src/session/lookup.rs`) | same / follows |
+| Frequency | `_compute_frequency_of_items` (`:1810`), `BIGRAM_FREQUENCY_DISCOUNT 0.1f` (`:33`), f32 expression truncated to `guint32` (`:1862`) | `candidate_frequencies` (`session/lookup.rs`), `amplified_frequency_with_bigram` (`session/mod.rs`) | same / follows, bit for bit |
+| Sort | `compare_item_with_sort_option` (`:1678`) under GLib's stable sort | `RankKey::pin_compare`, `glib_rank_sort` | same / follows |
+| Longer candidate | `_prepend_longer_candidates` (`:1870`) | `longer_candidate` (`session/lookup.rs`) | same / follows |
+| Dedup | `_remove_duplicated_items_by_phrase_string` (`:2058`) | `prepend_nbest_rows` (`session/lookup.rs`), `dedup_by_text_keep_first` (`session/mod.rs`) | different / unverified (§11) |
+| Prediction | `pinyin_guess_predicted_candidates` (`:2413`), filter 10 (`:2313`) | `oxpinyin-capi/src/predict.rs` | same / follows |
+
+## 6. Training and user phrases
+
+| Item | Pin | oxpinyin | Mark |
+| --- | --- | --- | --- |
+| Online training | `train_result3` (`lookup/phonetic_lookup.h:844`) | `train_spans` (`oxpinyin-engine/src/session/selection.rs`), `trained_gram` and `train_pronunciations` (`oxpinyin-user/src/store.rs`), constants in `oxpinyin-user/src/seed.rs` | same / follows; class (c) where the pin aborts |
+| Predicted choice | `pinyin_choose_predicted_candidate` (`pinyin.cpp:2591`) | `observe_predicted`, `observe_predicted_prefix` | same / follows |
+| Add phrase | `_add_phrase` (`pinyin.cpp:514`) | `add_phrase_in` (`store.rs`); next token from a cursor row instead of `get_range` | different / unverified |
+| Remember input | `_remember_phrase_recur` (`pinyin.cpp:3578`), recursive matrix walk | `pinyin_remember_user_input` (`oxpinyin-capi/src/user_data.rs`), a walk over the selected syllables | different / unverified |
+| Remove user phrase | `pinyin_remove_user_candidate` (`pinyin.cpp:3726`) | `remove_user_phrase` (`store.rs`), same order; refuses before mutating where the pin asserts | same / follows; class (c) at the asserts |
+| Mask out | `pinyin_mask_out` (`pinyin.cpp:1224`): reload system chunks, `merge_with_mask` | `mask_out` (`oxpinyin-user/src/store_libpinyin.rs`) in one transaction, totals and allocation cursors recomputed | different / unverified |
+| Import end | `pinyin_end_add_phrases` (`pinyin.cpp:655-660`): `compact()`, mark modified | `compact_libraries`, `mark_modified` (`oxpinyin-capi/src/iterators.rs`) | different / unverified (§11) |
+| Export | export iterators (`pinyin.cpp:792` threshold) | `export_phrases_in`, `oxpinyin-facade/src/export_rows.rs` | different / unverified (§11) |
+
+## 7. Object model and persistence
+
+| Item | Pin | oxpinyin | Mark |
+| --- | --- | --- | --- |
+| Context and instance | `_pinyin_context_t` (`pinyin.cpp:39`) owns raw pointers to the tables; `_pinyin_instance_t` (`:73`) borrows them through a back pointer | `CapiContext` / `CapiInstance` (`oxpinyin-capi/src/state.rs`) over `ContextCore` and `UserStore` (shared handles, atomic dirty flag) | different / unverified — the field-by-field split is in §0, "The two objects"; an instance can outlive `pinyin_fini` where the pin's cannot, which no defined use observes |
+| Edits between saves | direct mutation of the in-memory chunks and DBs | transactions on the in-memory session store | different / unverified |
+| Save | `pinyin_save` (`pinyin.cpp:1132`), `_write_files` (`:922`), rename, `mark_version` | `save_with_bigram_reporting` (`oxpinyin-user/src/persistence.rs`) with the pin's file set and rename order | same / follows |
+| Aborts | asserts and `abort()` on caller-reachable input | `Result`, then warning plus `false` at the C ABI | different / class (c) |
+
+## 8. Offline tooling
+
+| Item | Pin | oxpinyin | Mark |
+| --- | --- | --- | --- |
+| K-mixture model | `utils/training` (`k_mixture_model.h` and tools) | `oxpinyin-kmm`, audited term by term in `kmm-arithmetic-audit.md` | same / argued (`kmm-arithmetic-audit.md`); output in token order, an iteration cap and `Err` for asserts (that audit's §7) |
+| System data | `gen_binary_files`, `import_interpolation`, `gen_unigram` | `oxpinyin-datagen`, one compiler from `model20` (`datagen-model20.md`) | different / argued — byte-identical output (`datagen-model20.md`) |
+
+## 9. Constants
+
+Two inventories: the pin's coefficients and limits, which oxpinyin
+takes at the pin's value (converted to oxpinyin's scale where it
+appears there, never fitted), and oxpinyin's own limits and weights,
+which have no pin counterpart and are classified by call path. The
+second inventory was taken by searching the runtime crates for numeric
+constants on 2026-10-16 UTC; it is not yet proven complete (§11).
+
+### The pin's values
+
+| Constant | Value | Pin |
+| --- | --- | --- |
+| `nbeam` | 32 | `lookup/phonetic_lookup.h:37` |
+| `LONG_SENTENCE_PENALTY` | `log(1.2f)` | `lookup/phonetic_lookup.h:39` |
+| node store × n-best (pinyin) | 2 × 3 | `pinyin.cpp:55` |
+| training `initial_seed` | 23 × 3 = 69 | `lookup/phonetic_lookup.h:847` |
+| training `expand_factor` | 2 | `:848` |
+| training `unigram_factor` | 7 | `:849` |
+| training `pinyin_factor` | 1 | `:850` |
+| training `ceiling_seed` | 23 × 15 × 64 = 22080 | `:851` |
+| predicted choice seed × unigram factor | 69 × 7 | `pinyin.cpp:2597-2598` |
+| `_add_phrase` default count, unigram factor | 5, 3 | `pinyin.cpp:521-522` |
+| export threshold | `initial_seed - 1` = 68 | `pinyin.cpp:792` |
+| `BIGRAM_FREQUENCY_DISCOUNT` | 0.1f | `pinyin.cpp:33` |
+| predicted bigram candidate filter | 10 | `pinyin.cpp:2313` (`_compute_predicted_bigram_candidates`) |
+| `max_full_pinyin_length` | 7 (tone included) | `storage/pinyin_parser2.cpp:82` |
+| parse-step distance | 1 on the 232 `PINYIN_CORRECT_*` rows and the two `PINYIN_AMB_S_SH` / `PINYIN_AMB_Z_ZH` rows (`sua`, `zua`); 0 on the other 428 | `storage/pinyin_parser_table.h:9-673` |
+| `MAX_PHRASE_LENGTH` | 16 keys | `include/novel_types.h:119` (oxpinyin: `MAX_PHRASE_LENGTH` in `oxpinyin-engine` and `oxpinyin-user`, `MAX_INDEX_KEY_WORDS` in `oxpinyin-data`) |
+| `PHRASE_INDEX_LIBRARY_COUNT` | 16 | `include/novel_types.h:43` |
+| `OPEN_COUNTER_LIMIT` | 6 | `storage/table_info.cpp:32` (oxpinyin: `oxpinyin-data/src/user_files.rs`) |
+
+The pin also reads λ from the system `table.conf`; that is data, not a
+coefficient, and oxpinyin reads the same value.
+
+### oxpinyin's own values, by call path
+
+| Value | Where it acts | Parity path? | Status |
+| --- | --- | --- | --- |
+| `SCAN_EXPANSION_LIMIT = 4096` (`oxpinyin-engine/src/session/mod.rs`) — chosen by measuring the W2 corpus | (1) the window scan's expansion in `scan_parsed_paths` (`session/lookup.rs`), taken only when the dictionary does not handle partial keys; the runtime's does. (2) `lookup_finds_token` (`nbest.rs`), the constraint revalidation fallback for a dictionary that keeps no phrase items (the test doubles); the runtime's dictionaries read their items instead. (3) `oxpinyin-engine/src/char_offset.rs`, behind `pinyin_get_character_offset`, which expands one key at a time, so the product never approaches the cap. Until #828 it was also reached through `span_finds_token` in constraint revalidation (§11) | (1) no; (2) no; (3) yes, cap unreachable | off path or unreachable since #828 |
+| `MAX_PHRASE_KEYS = 8` (`session/mod.rs`) | `Session::candidates_ending_at`, which libzhuyin's facade calls for its before-cursor candidates (`oxpinyin-zhuyin-capi/src/sentence.rs`) | yes (libzhuyin) | unverified — no pin counterpart found yet |
+| `MAX_INPUT_BYTES = 32767` (`session/mod.rs`), `MAX_GRAPH_INPUT = 65535` (`oxpinyin-core/src/graph.rs`) | input clamps | yes, only past the bound | unverified — no pin counterpart found yet |
+| `SEGMENTATION_K = 8` (`session/mod.rs`), `ScoringConfig.expansion_limit = 64` and the other `ScoringConfig` weights (`oxpinyin-core/src/scoring.rs`), `UNIGRAM_TIEBREAK_SCALE = 16` (`oxpinyin-data/src/lm/mod.rs`) | the k-best fallback and `LanguageModel::score`, read only when the model has no real unigram data | no — see §11 | fitted; removal is internal work (spec task 4a) |
+| `COUNT_MEMO_MAX_ENTRIES = 8192` (`oxpinyin-user/src/store.rs`) | size of a count cache | no output effect | cache bound only |
+
+## 10. Where oxpinyin keeps the pin's code shape
+
+`.kiro/steering/oxidation-method.md` prefers idiomatic Rust and keeps the
+pin's code shape only where behaviour depends on it. The places found so
+far where oxpinyin keeps C-shaped code:
+
+| Place | Why | Needed for behaviour? |
+| --- | --- | --- |
+| Hand-written libstdc++ `push_heap` / `pop_heap` / `make_heap` (`heap_push`, `heap_adjust`, `heap_pop`, `heap_make` in `oxpinyin-engine/src/nbest.rs`) and GLib's merge sort (`glib_merge_sort`) | the comparator is cyclic, so the pin's result is defined by the exact sequence of swaps | yes |
+| `SingleGram` operations over raw bytes (`oxpinyin-core/src/single_gram.rs`), including libstdc++'s `lower_bound` on unsorted arrays | the byte layout is the on-disk format, and the unsorted-array result reaches output | yes |
+| The pin's `SEARCH_*` / `ERROR_*` integer codes in the user phrase table (`oxpinyin-user/src/phrase_table.rs`) | carried over from the pin's interface | no — they are read only inside `oxpinyin-user` (`store.rs`) and never cross the C ABI; a candidate for an enum or `Result` |
+
+## 11. Open gaps
+
+**Full-pinyin distance rule — fixed in #832.** The pin's DP prefers,
+among steps with equal parsed length and equal key count, the one with
+the lower total distance (`storage/pinyin_parser2.cpp:306-310`); the
+rows that carry distance 1 are listed in §9.
+
+- *Found (2026-10-16 UTC, source reading).* `SegmentGraph::fewest_keys`
+  had no distance and kept the first-found step. With
+  `PINYIN_CORRECT_ON_ONG` set it returned `chon'ga`, `chon'gan` and
+  `zhon'ge` for `chonga`, `chongan` and `zhonge`, where the pin's rule
+  gives `chong'a`, `chong'an` and `zhong'e`. The survey also estimated
+  "about 500" differing two-syllable strings, from a Python replay of
+  the pin's DP over its `pinyin_index` with every correction bit set,
+  over ordered pairs of the index's non-incomplete spellings. That
+  replay was never committed and did not model option gating beyond
+  the correction bits, so the figure is not reproducible from the
+  repository and is superseded by the measurement below; the two
+  enumerate different string sets and are not comparable.
+- *Fixed (#832, 2026-10-17 UTC).* Each edge carries its row's distance
+  and `fewest_keys` ranks by (key count, total distance).
+- *Verified at the C ABI (#832, reference cell bdb).* The option-sweep
+  differential logs every parsed key and key rest, and its parse-only
+  `pairs` mode covers every ordered pair of the 662 pinned
+  `pinyin_index` spellings with an admitted alias member
+  (`tools/bisection/option-sweep.c`; the spellings are in
+  `option-sweep-tables.h`, whose generator over the pin's table is in
+  its header comment). Run as
+  `PINYIN_ORACLE_PREFIX=<bdb oracle prefix> tools/bisection/run-option-sweep.sh`
+  (exit 0 identical, 2 divergence). Before the fix, 291 of 253,344
+  strings differed under every correction bit (`0x1fe00188`), all
+  `PINYIN_CORRECT_ON_ONG` splits, and 223 of 22,219 under that bit
+  alone; with it, every pair sweep and option case is identical.
+
+**Sentence scoring: gfloat and libm, which Rust can follow.** The class (a)
+entry treats the pin's `gfloat` log accumulation as platform arithmetic
+oxpinyin cannot follow. It is two things, both of which Rust can follow:
+
+- *The float types and conversion points.* `gfloat` and `gdouble` are
+  IEEE binary32 and binary64, as Rust's `f32` and `f64` are, and on
+  x86-64 and aarch64 C evaluates each operation in its own type. The
+  pin's steps are fixed by its source:
+  - `unigram_lambda` is `(gfloat)(1. - lambda)`, computed in double
+    and rounded to float (`lookup/phonetic_lookup.h:713`);
+  - unigram step (`:650-663`): `elem_poss` is a double quotient;
+    `elem_poss * pinyin_poss * unigram_lambda` runs in double; `log`
+    is taken in double; the float `m_poss` is widened, added in
+    double, and the sum rounded back to float;
+  - bigram step (`:679-693`): `bigram_lambda * bigram_poss` is a float
+    product; `unigram_lambda * unigram_poss` a double product; their
+    sum and the product with `pinyin_poss` run in double; then `log`
+    and the same widen, add and round;
+  - `pinyin_poss` is a float sum over the matrix walk, in its order
+    (`storage/phonetic_key_matrix.cpp:534` onward);
+  - comparisons widen to double where the C does, for example
+    `LONG_SENTENCE_PENALTY`, `log(1.2f)` in double
+    (`lookup/phonetic_lookup.h:39`).
+- *libm's `log`.* The one transcendental. The pin calls the platform
+  libm's `log`. Rust's `f64::ln` documents unspecified precision that
+  may vary by platform and Rust version, so whether a given oxpinyin
+  build resolves it to the same `log` is not a language guarantee; it
+  has to be verified for the identified artifacts.
+
+What the source does not settle has to be verified for the identified
+artifacts, neither of which is verified yet: in the pin's
+`libpinyin.so`, whether the compiler contracted any multiply-add (GCC
+may on aarch64, where Rust does not; x86-64's baseline has no FMA); in
+oxpinyin's shipping build, that `f64::ln` resolves to the same `log`
+rather than being folded, inlined or replaced. Matching types,
+conversion points and operation order is necessary, not sufficient: a
+difference that remains after that is investigated and attributed, not
+classified as a host difference by default. oxpinyin's fixed-point
+scale (`oxpinyin-core/src/cost.rs`) was a design choice for
+cross-platform determinism, not a language limit.
+
+**Constraint revalidation and the expansion cap — fixed in #828.**
+
+- *Found (2026-10-16 UTC).* `span_finds_token` answered "does this
+  token still span this range" by enumerating key paths and expanding
+  every incomplete key through `expand_keys` with
+  `SCAN_EXPANSION_LIMIT`; past 4096 combinations it found nothing and
+  the forcing was dropped. The pin revalidates without searching any
+  table: `validate_constraint` (`lookup/phonetic_lookup.cpp:120-165`)
+  reads the constrained phrase item and calls
+  `compute_pronunciation_possibility`
+  (`storage/phonetic_key_matrix.cpp:534` onward), which matches the
+  matrix against the item's stored pronunciations, an incomplete key
+  matching any final (`storage/pinyin_phrase3.h:80-86`), with no
+  expansion and no cap. A first reproduction ran against a source build
+  of the pin whose hash was not the pinned one, on the mini fixture,
+  with user-imported phrases (#825).
+- *Fixed (#828).* `ConstraintSpelling::spells` (`nbest.rs`) ports
+  `validate_constraint` and `compute_pronunciation_possibility` through
+  `Dictionary::phrase_item_pronunciations`, carrying the last item read
+  across a pass as the pin's single `PhraseItem` does.
+- *Verified (#828, reference cell bdb, hash-pinned oracle, full
+  model20).* Cases in `tools/bisection/contract-diff.py`:
+  `constraint-survives-{zhonghuarenmin,zhonghuarm,zhhrenmin,zhonghrm,zhhrm,zhhrmghg}`,
+  `constraint-survives-reconcile-{juezhonghuarm,juezhhrm}` and
+  `constraint-stale-item-{keeps-nini,drops-nihao}`, run as
+  `tools/bisection/run-contract-diff.sh bdb <oracle prefix> <libpinyin_capi.so> -- --cases <names>`;
+  with `--expect-parent` against the parent build, the over-cap and
+  `keeps-nini` cases differ and the controls match. All match with the
+  fix.
+- *Scope of that verification.* The phrases are user imports on full
+  model20, not phrases of the model. For the six original inputs the
+  chosen phrase is taken from its NORMAL row, because on full data the
+  n-best holds only the first phrase; the reconcile pair is chosen from
+  its NBEST row. A forcing over a phrase of the pinned model whose
+  abbreviation passes the cap has not been run (spec task 12b).
+
+**Fitted coefficients still in the tree — off the parity path.**
+`ScoringConfig::default` (`oxpinyin-core/src/scoring.rs`) carries `segmentation_penalty`,
+`incomplete_penalty` and `phrase_key_bonus` values chosen by sweeping
+against the oracle (`scoring-constant-sweep.md`, 2026-08-10), and the
+engine `Session` still holds a `ScoringConfig`. These are not pin values.
+The session reads them in two places, both on the branch taken when the
+language model has no real unigram data (`has_real_unigrams` false): the
+candidate scan in `session/lookup.rs` and the sentence guess in
+`session/guess.rs`, each falling back to `k_best`. Through either C ABI
+that branch is never taken: both facades build on `InstanceCore`, whose
+session is `Session<RuntimeDict, RuntimeLm>` (`oxpinyin-runtime/src/lib.rs`,
+`RuntimeSession`); `RuntimeLm` forwards `has_real_unigrams` to its
+`BigramLanguageModel`, and that returns `true` unconditionally
+(`oxpinyin-data/src/lm/mod.rs`). So the fitted weights reach no output
+of either ABI; they act only for sessions built on models without
+unigram data (test doubles and oracle tools). These weights do not affect either C ABI under the established runtime
+configuration, so their removal is not required to close a C-ABI
+compatibility gap. Removal remains internal-work scope (spec task 4a),
+subject to checking supported Rust callers, test and tool consumers,
+and any required interface-change approval.
+
+**The value inventory is not yet proven complete.** §9's second table
+came from a search of the runtime crates for numeric constants; limits
+expressed inline (a literal in an expression, a loop bound) are not yet
+covered.
+
+**Equivalence arguments not yet written.** The survey found these to
+match, but the argument is not in this record:
+
+- matrix column dedup (`keep_first_in_column`) against the pin's bag;
+- candidate dedup (`dedup_by_text_keep_first`) against
+  `_remove_duplicated_items_by_phrase_string`;
+- the constraint drop test: oxpinyin's integer zero test against the
+  pin's `< FLT_EPSILON` is argued for model20 data in the
+  `validate_constraint` entry of `upstream-divergences.md` (no per-token
+  total there reaches 2^23); the general case is not argued, and #828
+  did not change it;
+- the node store with `nstore = 1` against the `<1>` specialisation's
+  empty check;
+- `compact_libraries` against `FacadePhraseIndex::compact`, and the
+  export iterators' per-pronunciation order;
+- `parse_pinyin_keys` (`oxpinyin-datagen`) against `PinyinDirectParser2::parse` with `USE_TONE`;
+- double pinyin's handling of a table whose first yunmu slot is empty
+  and second is not (no shipped table has one).
