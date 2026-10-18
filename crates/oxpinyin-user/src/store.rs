@@ -2465,7 +2465,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub(crate) fn train_pronunciations(
         &mut self,
         token: Token,
-        readings: &mut dyn Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
+        readings: impl Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
         seed: u64,
     ) -> Result<(), UserStoreError> {
         self.flush_system_unigrams()?;
@@ -3338,7 +3338,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         &mut self,
         compacted: &[u8],
     ) -> Result<SaveReport, UserStoreError> {
-        self.save_reporting_inner(compacted, None)
+        self.save_reporting_inner(compacted, None::<crate::persistence::NoBaseline>)
     }
 
     /// [`Self::save_reporting_compacted`] with the current-on-disk baseline
@@ -3349,15 +3349,15 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn save_reporting_with_baseline(
         &mut self,
         compacted: &[u8],
-        baseline: &mut dyn FnMut(u8) -> crate::persistence::SaveBaseline,
+        baseline: impl FnMut(u8) -> crate::persistence::SaveBaseline,
     ) -> Result<SaveReport, UserStoreError> {
         self.save_reporting_inner(compacted, Some(baseline))
     }
 
-    fn save_reporting_inner(
+    fn save_reporting_inner<B: FnMut(u8) -> crate::persistence::SaveBaseline>(
         &mut self,
         compacted: &[u8],
-        baseline: Option<&mut dyn FnMut(u8) -> crate::persistence::SaveBaseline>,
+        baseline: Option<B>,
     ) -> Result<SaveReport, UserStoreError> {
         let mut report = SaveReport::default();
         if !self.is_modified() {

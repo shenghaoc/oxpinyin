@@ -205,7 +205,7 @@ fn visible_extension_exists(
     table: &ChewingTable,
     libraries: &PhraseLibraries,
     keys: &[ChewingKey],
-    visible: &dyn Fn(u32) -> bool,
+    visible: impl Fn(u32) -> bool,
 ) -> Result<bool, DictError> {
     table.walk_extensions(keys, |_, items| {
         Ok(items.iter().any(|item| {
@@ -414,7 +414,7 @@ impl SystemDictionary {
         let Some(keys) = syllables_to_chewing_keys(syllables) else {
             return Ok(false);
         };
-        visible_extension_exists(&self.pinyin, &self.libraries, &keys, &visible)
+        visible_extension_exists(&self.pinyin, &self.libraries, &keys, visible)
     }
 
     /// `ChewingLargeTable2::search_suggestion` over the default facade's

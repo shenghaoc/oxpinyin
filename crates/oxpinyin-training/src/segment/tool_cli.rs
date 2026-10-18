@@ -53,12 +53,11 @@ impl ToolArgs {
     /// Mirrors the per-tool messages: a shared flag missing its value, a
     /// tool flag missing its value (from `extra`), an unknown option, or a
     /// second positional input.
-    pub fn parse(
+    pub fn parse<I: Iterator<Item = String>>(
         &mut self,
-        args: impl Iterator<Item = String>,
-        mut extra: impl FnMut(&mut Self, &str, &mut dyn Iterator<Item = String>) -> Result<bool, String>,
+        mut args: I,
+        mut extra: impl FnMut(&mut Self, &str, &mut I) -> Result<bool, String>,
     ) -> Result<ToolAction, String> {
-        let mut args = args;
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "-h" | "--help" => return Ok(ToolAction::Help),

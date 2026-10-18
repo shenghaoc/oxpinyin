@@ -58,7 +58,7 @@ impl UserModel for UserStore {
         &mut self,
         history: &[Self::Token],
         token: &Self::Token,
-        readings: &mut dyn Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
+        readings: impl Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
     ) -> Result<(), Self::Error> {
         let last = history.last().map_or(SENTENCE_START, |t| t.value());
         let seed = self.observe_selection(last, token.value())?;

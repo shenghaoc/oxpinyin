@@ -28,7 +28,7 @@ where
     /// real unigram frequencies never walks, so no such rejection exists
     /// for it and construction currently always succeeds.
     pub fn new(
-        config: &dyn ConfigSource,
+        config: &impl ConfigSource,
         paths: StoragePaths,
         dictionary: D,
         model: L,
@@ -43,7 +43,13 @@ where
         } else {
             key_cost_table(&dictionary, &model)?
         };
-        Ok(Self::init(config, paths, dictionary, model, key_costs))
+        Ok(Self::init(
+            Settings::read(config),
+            paths,
+            dictionary,
+            model,
+            key_costs,
+        ))
     }
 
     /// Builds a session over a caller-supplied key-cost table.
@@ -69,17 +75,23 @@ where
     /// infallible; the `Result` return keeps this constructor's shape
     /// aligned with [`Self::new`], whose fallback walk can fail.
     pub fn new_with_key_costs(
-        config: &dyn ConfigSource,
+        config: &impl ConfigSource,
         paths: StoragePaths,
         dictionary: D,
         model: L,
         key_costs: Vec<Cost>,
     ) -> Result<Self, EngineError> {
-        Ok(Self::init(config, paths, dictionary, model, key_costs))
+        Ok(Self::init(
+            Settings::read(config),
+            paths,
+            dictionary,
+            model,
+            key_costs,
+        ))
     }
 
     pub(super) fn init(
-        config: &dyn ConfigSource,
+        settings: Settings,
         paths: StoragePaths,
         dictionary: D,
         model: L,
@@ -108,7 +120,7 @@ where
             dictionary,
             model,
             paths,
-            settings: Settings::read(config),
+            settings,
             scoring: ScoringConfig::default(),
             key_costs,
             collapse_sentence_rows_to_best: false,

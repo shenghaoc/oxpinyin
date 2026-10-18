@@ -1061,8 +1061,8 @@ pub trait UserModel {
     /// Records a trained token and the tone-bearing readings of its matrix span.
     ///
     /// Readings retain matrix order and multiplicity; each has the phrase's
-    /// syllable length. The default preserves existing implementors by
-    /// delegating to [`Self::observe`]. Learning-off callers omit this call.
+    /// syllable length. The default records the token alone, by delegating
+    /// to [`Self::observe`]. Learning-off callers omit this call.
     ///
     /// # Errors
     ///
@@ -1071,7 +1071,7 @@ pub trait UserModel {
         &mut self,
         history: &[Self::Token],
         token: &Self::Token,
-        _readings: &mut dyn Iterator<Item = Vec<ChewingKey>>,
+        _readings: impl Iterator<Item = Vec<ChewingKey>>,
     ) -> Result<(), Self::Error> {
         self.observe(history, token)
     }

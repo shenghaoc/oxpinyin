@@ -519,7 +519,7 @@ impl ContextCore {
     /// save's operation boundary.
     pub fn save_user(&mut self) -> SaveOutcome {
         let mut faults = Vec::new();
-        let outcome = self.save_user_with_layout_faults(&mut |fault| faults.push(fault.clone()));
+        let outcome = self.save_user_with_layout_faults(|fault| faults.push(fault.clone()));
         if !faults.is_empty()
             && let Some(runtime) = &self.runtime
         {
@@ -534,7 +534,7 @@ impl ContextCore {
     /// faults for [`Self::take_layout_faults`] instead of logging them.
     pub fn save_user_with_layout_faults(
         &mut self,
-        on_layout_fault: &mut dyn FnMut(&oxpinyin_runtime::LayoutFault),
+        mut on_layout_fault: impl FnMut(&oxpinyin_runtime::LayoutFault),
     ) -> SaveOutcome {
         let Some(store) = self.user.as_ref() else {
             return SaveOutcome::NotSaved;
@@ -561,7 +561,7 @@ impl ContextCore {
         let Some(store) = self.user.as_mut() else {
             return SaveOutcome::NotSaved;
         };
-        let mut baseline = |nibble: u8| -> oxpinyin_user::SaveBaseline {
+        let baseline = |nibble: u8| -> oxpinyin_user::SaveBaseline {
             let Some(runtime) = runtime else {
                 return oxpinyin_user::SaveBaseline::Keep;
             };
@@ -575,7 +575,7 @@ impl ContextCore {
                 }
             }
         };
-        let report = match store.save_reporting_with_baseline(&compacted, &mut baseline) {
+        let report = match store.save_reporting_with_baseline(&compacted, baseline) {
             Ok(report) => report,
             Err(UserStoreError::ChunkHeaderWrite(field)) => {
                 return SaveOutcome::ChunkWriteFailed(field);

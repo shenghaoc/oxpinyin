@@ -252,7 +252,7 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     {
         crate::locale::pin_table_info_locale();
     }
-    let outcome = ctx.save_user(&mut |fault| crate::ffi::log_critical(&fault.critical_message()));
+    let outcome = ctx.save_user(|fault| crate::ffi::log_critical(&fault.critical_message()));
     match outcome {
         // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header
         // write failed and the pin `assert`s there. The save fails and
