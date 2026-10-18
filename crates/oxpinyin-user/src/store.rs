@@ -1329,7 +1329,7 @@ impl LibraryChange {
 /// index carried, as `(token, packed keys)`.
 fn remove_reloaded_rows(
     txn: &mut impl WriteTxn,
-    reloaded: &dyn Fn(Token) -> bool,
+    reloaded: impl Fn(Token) -> bool,
     user_library: Option<u8>,
 ) -> Result<std::collections::BTreeSet<(Token, Vec<u16>)>, StoreError> {
     let mut unigrams = Vec::new();
@@ -3688,7 +3688,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 moved = moved.wrapping_sub(old as u32);
                 txn.remove(LIBRARY_OFFSET, &key)?;
             }
-            let indexed = remove_reloaded_rows(txn, &reloaded, user_library)?;
+            let indexed = remove_reloaded_rows(txn, reloaded, user_library)?;
             let (state, pending) = kept_index_state(&target, &originals, change, indexed, state);
             let reseeded =
                 crate::store_libpinyin::seed_txn(txn, &state, &originals, library_totals)?;
@@ -3814,7 +3814,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             // tables hold, and the mask and the system reload after it
             // only take rows away, so keep the keys of all of them.
             let index_rows = if session {
-                IndexRows::read(txn, &|_| true)?
+                IndexRows::read(txn, |_| true)?
             } else {
                 IndexRows::default()
             };

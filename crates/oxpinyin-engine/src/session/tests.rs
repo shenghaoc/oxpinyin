@@ -124,6 +124,7 @@ struct Silent;
 impl Dictionary for Silent {
     type Entry = PhraseEntry;
     type Error = EngineError;
+    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -635,6 +636,7 @@ struct Flaky {
 impl Dictionary for Flaky {
     type Entry = PhraseEntry;
     type Error = FixtureError;
+    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
@@ -1455,6 +1457,7 @@ struct SystemPhrases(Vec<PhraseEntry>);
 impl Dictionary for SystemPhrases {
     type Entry = PhraseEntry;
     type Error = EngineError;
+    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -1990,6 +1993,7 @@ struct TwoFacadeDict {
 impl Dictionary for TwoFacadeDict {
     type Entry = PhraseEntry;
     type Error = EngineError;
+    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, _syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -3628,6 +3632,7 @@ struct StoredTone3;
 impl Dictionary for StoredTone3 {
     type Entry = PhraseEntry;
     type Error = EngineError;
+    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
@@ -4119,6 +4124,7 @@ struct ItemDictionary {
 impl Dictionary for ItemDictionary {
     type Entry = PhraseEntry;
     type Error = EngineError;
+    type PathMemo = ();
     type Syllable = SyllableKey;
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {

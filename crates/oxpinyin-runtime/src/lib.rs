@@ -1184,7 +1184,7 @@ impl RuntimeDict {
 
 /// What one key path's pricing reads whatever the token, kept in a
 /// [`TrellisPathMemo`] for the n-best call that prices the path.
-struct PathPricing {
+pub struct PathPricing {
     /// The user table's lookup of the path.
     user: Vec<PhraseEntry>,
     /// The path's tone-less keys; `None` when a syllable is no key.
@@ -1201,6 +1201,7 @@ impl Dictionary for RuntimeDict {
     type Syllable = SyllableKey;
     type Entry = PhraseEntry;
     type Error = DictError;
+    type PathMemo = TrellisPathMemo<PathPricing>;
 
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         let mut entries = Vec::new();
@@ -1295,21 +1296,18 @@ impl Dictionary for RuntimeDict {
     }
 
     /// [`Self::trellis_item`], reading the user lookup and the keys once
-    /// per path. A memo some other dictionary filled is not read: the
-    /// answer is then [`Self::trellis_item`]'s, recomputed.
+    /// per path.
     fn trellis_item_on_path(
         &self,
         syllables: &[Self::Syllable],
-        tones: &[u8],
+        _tones: &[u8],
         token: u32,
-        memo: &TrellisPathMemo,
+        memo: &Self::PathMemo,
     ) -> Result<Option<TrellisItem>, Self::Error> {
         if syllables.is_empty() {
             return Ok(None);
         }
-        let Some(path) = memo.get_or_try_init(|| self.path_pricing(syllables))? else {
-            return self.trellis_item(syllables, tones, token);
-        };
+        let path = memo.get_or_try_init(|| self.path_pricing(syllables))?;
         Ok(self
             .priced_on_path(path, token, false)?
             .map(|priced| priced.item))
@@ -2164,10 +2162,7 @@ impl Runtime {
     /// The walk runs only for a model without real unigram frequencies. A
     /// runtime over [`BigramLanguageModel`] always has them, so in practice
     /// this allocates the session and reads nothing.
-    pub fn new_session(
-        &self,
-        config: &impl ConfigSource,
-    ) -> Result<RuntimeSession, EngineError> {
+    pub fn new_session(&self, config: &impl ConfigSource) -> Result<RuntimeSession, EngineError> {
         // Real frequencies mean the session decodes through the pinned
         // construction, which prices each candidate inline from the phrase
         // item it has already fetched — upstream's

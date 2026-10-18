@@ -204,6 +204,7 @@ fn a_failing_backend_is_reported_not_swallowed() {
     impl Dictionary for Broken {
         type Entry = PhraseEntry;
         type Error = &'static str;
+        type PathMemo = ();
         type Syllable = SyllableKey;
 
         fn lookup(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, &'static str> {

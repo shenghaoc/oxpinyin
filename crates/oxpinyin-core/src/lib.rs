@@ -107,6 +107,12 @@ pub trait Dictionary {
     /// Lookup failure reported by this dictionary.
     type Error;
 
+    /// What this dictionary keeps about one trellis key path while one
+    /// n-best call prices the tokens ranged on it
+    /// ([`Self::trellis_item_on_path`]). A dictionary with nothing to keep
+    /// uses `()`.
+    type PathMemo: Default;
+
     /// Looks up entries matching `syllables`.
     ///
     /// # Errors
@@ -228,7 +234,9 @@ pub trait Dictionary {
     /// key path while one n-best call prices the tokens ranged on it. A
     /// dictionary may keep there whatever it would otherwise work out
     /// again for each token of the path; the answer must be exactly
-    /// [`Self::trellis_item`]'s.
+    /// [`Self::trellis_item`]'s. The caller makes a fresh
+    /// [`Self::PathMemo`] per path and drops it with the span search that
+    /// found the path.
     ///
     /// The default ignores the memo.
     ///
@@ -240,7 +248,7 @@ pub trait Dictionary {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-        memo: &TrellisPathMemo,
+        memo: &Self::PathMemo,
     ) -> Result<Option<TrellisItem>, Self::Error>
     where
         Self::Entry: PhraseIndexToken,
@@ -551,6 +559,8 @@ pub trait Dictionary {
 }
 
 impl<D: Dictionary + ?Sized> Dictionary for &D {
+    type PathMemo = D::PathMemo;
+
     type Syllable = D::Syllable;
     type Entry = D::Entry;
     type Error = D::Error;
@@ -608,7 +618,7 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-        memo: &TrellisPathMemo,
+        memo: &Self::PathMemo,
     ) -> Result<Option<TrellisItem>, Self::Error>
     where
         Self::Entry: PhraseIndexToken,
@@ -748,31 +758,33 @@ pub struct TrellisItem {
     pub pronunciation: Option<(u64, u64)>,
 }
 
-/// What a dictionary keeps about one trellis key path while one n-best
-/// call prices the tokens ranged on it
-/// ([`Dictionary::trellis_item_on_path`]). The caller holds one per path
-/// and drops it with the span search that found the path, so nothing kept
-/// here outlives one guess, or any user-store write between guesses.
-#[derive(Default)]
-pub struct TrellisPathMemo(std::cell::OnceCell<Box<dyn std::any::Any + Send>>);
+/// A value a dictionary works out once per trellis key path and keeps for
+/// the n-best call that prices the path ([`Dictionary::PathMemo`]). The
+/// caller holds one per path and drops it with the span search that found
+/// the path, so nothing kept here outlives one guess, or any user-store
+/// write between guesses.
+#[derive(Debug)]
+pub struct TrellisPathMemo<T>(std::cell::OnceCell<T>);
 
-impl TrellisPathMemo {
-    /// The kept value, computed by `init` the first time. `Ok(None)` when
-    /// the memo already holds a value of another type.
+impl<T> Default for TrellisPathMemo<T> {
+    fn default() -> Self {
+        Self(std::cell::OnceCell::new())
+    }
+}
+
+impl<T> TrellisPathMemo<T> {
+    /// The kept value, computed by `init` the first time.
     ///
     /// # Errors
     ///
     /// Returns `init`'s error, keeping nothing, so the next call tries
     /// again.
-    pub fn get_or_try_init<T: Send + 'static, E>(
-        &self,
-        init: impl FnOnce() -> Result<T, E>,
-    ) -> Result<Option<&T>, E> {
-        if self.0.get().is_none() {
-            let value = init()?;
-            let _ = self.0.set(Box::new(value));
+    pub fn get_or_try_init<E>(&self, init: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+        if let Some(value) = self.0.get() {
+            return Ok(value);
         }
-        Ok(self.0.get().and_then(|value| value.downcast_ref()))
+        let value = init()?;
+        Ok(self.0.get_or_init(|| value))
     }
 }
 
@@ -1614,20 +1626,16 @@ pub trait InputParser {
 mod tests {
     use super::{PhraseIndexRanges, TrellisPathMemo, phrase_index_library};
 
-    /// A memo holding another type answers `None` without running `init`
-    /// and keeps what it holds; a failed `init` keeps nothing.
+    /// A memo runs `init` once and keeps what it made; a failed `init`
+    /// keeps nothing, so the next call tries again.
     #[test]
-    fn trellis_path_memo_answers_none_for_another_type() {
-        let memo = TrellisPathMemo::default();
+    fn trellis_path_memo_keeps_the_first_value_and_nothing_on_failure() {
+        let memo = TrellisPathMemo::<u8>::default();
         assert_eq!(memo.get_or_try_init(|| Err::<u8, _>("boom")), Err("boom"));
-        assert_eq!(memo.get_or_try_init(|| Ok::<_, ()>(7_u8)), Ok(Some(&7)));
+        assert_eq!(memo.get_or_try_init(|| Ok::<_, ()>(7)), Ok(&7));
         assert_eq!(
-            memo.get_or_try_init::<u16, ()>(|| panic!("init runs on a filled memo")),
-            Ok(None)
-        );
-        assert_eq!(
-            memo.get_or_try_init::<u8, ()>(|| panic!("init runs on a filled memo")),
-            Ok(Some(&7))
+            memo.get_or_try_init::<()>(|| panic!("init runs on a filled memo")),
+            Ok(&7)
         );
     }
 
