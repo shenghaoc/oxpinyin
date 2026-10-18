@@ -59,7 +59,6 @@ fn main() {
         writeln!(generated).expect("write generated map separator");
     }
 
-    generate_zhuyin(&out_dir);
     fs::write(out_dir.join("syllable_maps.rs"), generated).expect("write syllable_maps.rs");
 }
 
@@ -106,67 +105,4 @@ fn extract(source: &str, name: &str) -> Option<(usize, Vec<String>)> {
         pieces.next();
     }
     Some((declared, entries))
-}
-
-/// Keep frozen Rust literals reviewable, but never compile their fat pointers
-/// into production. Reject unexpected syntax rather than silently dropping rows.
-fn generate_zhuyin(out_dir: &std::path::Path) {
-    println!("cargo:rerun-if-changed=src/zhuyin_rows.rs");
-    let source = fs::read_to_string("src/zhuyin_rows.rs").expect("read frozen Zhuyin rows");
-    let mut pool = String::new();
-    let mut spans = std::collections::BTreeMap::new();
-    let mut rows = String::new();
-    let mut count = 0;
-    for line in source
-        .lines()
-        .filter(|line| line.trim_start().starts_with('('))
-    {
-        let fields: Vec<_> = line
-            .trim()
-            .strip_prefix('(')
-            .unwrap()
-            .strip_suffix("),")
-            .expect("row terminator")
-            .split(", ")
-            .collect();
-        assert_eq!(fields.len(), 4, "frozen row shape");
-        let mut encoded = Vec::new();
-        for field in &fields[..3] {
-            let text = field
-                .strip_prefix('"')
-                .and_then(|s| s.strip_suffix('"'))
-                .expect("literal string");
-            assert!(!text.contains(['"', '\\']), "unescaped frozen literal");
-            let span = *spans.entry(text.to_owned()).or_insert_with(|| {
-                let start = u16::try_from(pool.len()).expect("pool offset fits u16");
-                let len = u8::try_from(text.len()).expect("span length fits u8");
-                pool.push_str(text);
-                assert_eq!(
-                    pool.get(usize::from(start)..usize::from(start) + usize::from(len)),
-                    Some(text)
-                );
-                (start, len)
-            });
-            encoded.push(format!("TextSpan {{ start: {}, len: {} }}", span.0, span.1));
-        }
-        assert!(
-            matches!(
-                fields[3],
-                "0" | "ZHUYIN_INCOMPLETE" | "ZHUYIN_CORRECT_SHUFFLE"
-            ),
-            "known exact flags"
-        );
-        writeln!(
-            rows,
-            "CompactRow {{ input: {}, canonical: {}, pinyin: {}, flags: {} }},",
-            encoded[0], encoded[1], encoded[2], fields[3]
-        )
-        .unwrap();
-        count += 1;
-    }
-    assert_eq!(count, 1493, "frozen row count");
-    let generated = format!(
-        "static ZHUYIN_POOL: &str = {pool:?};\nstatic ZHUYIN_ROWS: [CompactRow; ZHUYIN_PINYIN_COUNT] = [\n{rows}];\n"
-    );
-    fs::write(out_dir.join("zhuyin_compact.rs"), generated).expect("write compact Zhuyin data");
 }

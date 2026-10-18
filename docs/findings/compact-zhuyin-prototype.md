@@ -1,10 +1,21 @@
-# Compact Zhuyin prototype (acceptance pending)
+# Compact Zhuyin prototype — rejected and reverted
 
 Audit timestamp: 2026-10-18T17:43:54Z. Base: `dd55aeb5` (origin/main fetched on this host).
 The base contains `e6b3f368`, PR #881's packaging `--gc-sections` change.
 Only ZHUYIN_PINYIN_MAP is prototyped. No expansion is authorized by results yet.
 No final timing or performance comparison has run: the maintainer has reserved
 this host for two concurrent correctness/build tasks. Await an explicit slot.
+
+## Final disposition (2026-10-18T19:32:26Z)
+
+Rejected after controlled deterministic instruction comparison: Simple lookup
++21.69%, CP26 +18.80%, aggregate pinyin_parse_chewing +10.23%. Production
+representation changes and their tests/generator have been reverted to the
+base. Historical size/equivalence evidence below describes the rejected
+prototype, not current production. No expansion to HSU/ETEN26/content.
+The measurement slot has been released; no profiling/build jobs remain.
+See the final measurement section for commands and limitations. Earlier
+pending-status paragraphs below are chronological checkpoint records.
 
 ## Source and compatibility
 
@@ -226,3 +237,97 @@ Recommended first review boundary is only the global index; reject/revert it
 if the controlled trade-off fails. Subsequent HSU/ETEN26 and content work
 must remain independent measured boundaries. Public full-pinyin tables stay
 follow-up-only. Logs/captures/models were not uploaded or attached.
+
+
+## Final measurement session and rejection
+
+The maintainer released the slot after #889 and #890 heavy work finished.
+Host-wide `ps -eo pid,comm,%cpu,args --sort=-%cpu`, `pidstat -u 1 3` and
+`mpstat -P 0,6 1 2` showed no build/test job, but active desktop/ChatGPT GPU
+and renderers (about 31%, 13%, 13% of one CPU); CPU0 was about 96% idle
+and its sibling CPU6 about 92% idle. Docker CLI was unavailable. Therefore
+this report does not claim an uncontended idle host or valid wall-clock
+latency comparison. No external process was stopped or changed.
+
+Used x86_64 CPU0 via taskset, Valgrind 3.27.1, existing key-surface-diff.c,
+strict compiled as documented above to /tmp/compact-key-driver. The same
+shipping libraries and hashes from the size checkpoint were measured;
+unstripped copies retain symbol names but have the same loadable code.
+All cells read the same task-local system-bdb, and every process ran in
+a fresh temporary working directory for equal user state. Each cell's
+three Callgrind runs alternated base/candidate/pin, pin/candidate/base,
+base/candidate/pin in this one session:
+
+    taskset -c 0 valgrind --tool=callgrind --cache-sim=no --branch-sim=no --callgrind-out-file=<local-file> /tmp/compact-key-driver <base-candidate-or-pin-so> <task>/system-bdb
+    callgrind_annotate --inclusive=yes --threshold=100 <local-file>
+
+Each symbol figure below is inclusive Ir for its named (object,file,name),
+not a sum of unrelated string-matching symbols. Three-run medians:
+
+| Existing 2131-probe key-surface workload | Base | Candidate | Pin | Candidate/base |
+|---|---:|---:|---:|---:|
+| Whole process Ir | 9214004 | 9352749 | 16436105 | 1.0151 |
+| pinyin_parse_chewing Ir | 1884462 | 2077162 | 1163435 | 1.1023 |
+| Rust parse_one_zhuyin_key Ir (Simple) | 810649 | 986511 | n/a | 1.2169 |
+| Rust parse_one_cp26_key Ir | 145616 | 172994 | n/a | 1.1880 |
+| pinyin_init Ir | 1392031 | 1392031 | 5800748 | 1.0000 |
+| dlopen Ir (includes relocation/loading) | 845184 | 791436 | 4227648 | 0.9364 |
+
+Simple, CP26 and aggregate chewing counts were identical in all three runs.
+Whole-process candidate Ir varied by one instruction (9352749,9352749,
+9352750); candidate init likewise by one. All nine stdout SHA-256 values:
+bd78c15a644e1e23d7cefc9ed88c351cf77e1d422afb23f3a2f5c6431b9e58f7.
+All processes returned zero. Rust subroutine names have no exact pin-side
+counterpart; the pinyin C ABI row is the comparable boundary. These are
+named workload results, not general claims that one implementation is faster.
+
+Allocation and memory checks used the SAME existing driver, fresh working
+directory, same cells/data, serialized base/candidate/pin, with:
+
+    taskset -c 0 valgrind --tool=memcheck --leak-check=no /tmp/compact-key-driver <so> <task>/system-bdb
+    taskset -c 0 valgrind --tool=massif --time-unit=i --heap=yes --stacks=no --peak-inaccuracy=0.0 --detailed-freq=1 --max-snapshots=1000 --massif-out-file=<local-file> /tmp/compact-key-driver <so> <task>/system-bdb
+
+Read total allocations/allocated bytes and exit live bytes from Memcheck's
+HEAP SUMMARY, and max(mem_heap_B) from Massif snapshots. One diagnostic run
+per cell/tool, all stdout hashes identical to above, all returned zero:
+
+| Whole-process diagnostic | Base | Candidate | Pin |
+|---|---:|---:|---:|
+| Allocations | 5004 | 5004 | 4077 |
+| Allocated bytes | 265235 | 265231 | 631137 |
+| Exit live bytes / blocks | 29633 / 155 | 29630 / 155 | 126275 / 202 |
+| Peak live heap (Massif) | 213598 | 213595 | 327201 |
+
+Memcheck reported zero errors. The small byte differences include path strings
+(stage-clean-base versus stage-candidate); they are not evidence of table
+allocation savings. Equal allocation count and source inspection support
+no additional runtime allocations. One diagnostic sample is not a statistical
+peak-memory benchmark or proof of absence of every leak.
+
+RSS diagnostic used the existing strict-compiled bisect.c as /tmp/compact-bisect,
+one base/candidate/pin process with `PERF_MODE=rss-diag PERF_CYCLES=1
+PERF_BACKEND=<cell> taskset -c 0 /tmp/compact-bisect --perf <so> <task>/system-bdb`.
+This is the existing full-pinyin cycle, NOT the targeted Zhuyin workload.
+After-init RSS KiB: 11508 / 11124 / 12068; after-cycle: 13156 / 12888 /
+13804; reported HWM: 13260 / 12948 / 13804; after-trim RSS: 12744 / 12476 /
+13704. Base/candidate mallinfo2 uordblks exactly matched: 219296 at init,
+750352 after cycle and trim; pin 323056 / 654416 / 654416. These are single
+memory diagnostics, sensitive to mapping residency; no broad RSS reduction
+claim. alloc-count symbols are absent from shipping builds (reported -1),
+so allocation evidence comes from Memcheck, not those unavailable counters.
+The harness also emits ns fields; they are deliberately not used for latency
+claims because of the observed desktop activity and single-sample design.
+
+Acceptance fails on the stable 18.8–21.7% affected parser instruction increase.
+The decrease in loader instructions, stripped bytes and resident data does
+not erase a critical-path regression. Per the approved specification, reject
+rather than retain the extra generator/accessor complexity or expand scope.
+Further latency repetitions, cold-lookup timing and broader measurements
+were stopped once this deterministic rejection criterion was established;
+those metrics are unestablished, not assumed equal. No new framework, runtime
+dependency, public interface, frozen specification, CI policy or model changed.
+The production revert restores the original tuple representation. Only this
+plain-text findings record and a short algorithms-register entry remain in
+the final diff; prototype checkpoints remain in history for review/recovery.
+No raw captures or models are uploaded or attached. Recommended publication
+boundary is this rejected-experiment report only; no optimization PR.
