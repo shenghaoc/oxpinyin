@@ -38,10 +38,14 @@
 //!   `_add_phrase`, `seed·7` per training, the promotion unigram).
 //! * system tokens — a `.dbin` MODIFY record is the original item with
 //!   `unigram + UNIGRAM[token]`; the value model tracks no per-token
-//!   removal (a replayed REMOVE degrades to a skip, noted at load), and
-//!   exact-reading pronunciation deltas in `PRONUNCIATION`. The live
-//!   system-item view folds those deltas when training commits, so lookup
-//!   and export observe them before save.
+//!   removal (a replayed REMOVE degrades to a skip, noted at load). The
+//!   session holds a replayed item whole, readings included, in its live
+//!   system-item view, and that item is where its readings' counts are read:
+//!   opening writes no `PRONUNCIATION` row for it. Training writes the
+//!   exact-reading delta over the original for the readings it moves (a row
+//!   is that delta, kept for the tables that probe it), and the live view
+//!   takes the new count when training commits, so lookup and export observe
+//!   it before save.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -536,6 +540,10 @@ pub(crate) fn unbacked_index(state: &UserState, originals: &SystemOriginals) -> 
 /// Writes the loaded profile's values into a fresh session store — the
 /// seed half of the value mapping.
 ///
+/// A replayed MODIFY of a shipped item seeds its unigram delta and no reading
+/// row: the session holds the item whole (`StoreInner::system_items`) and its
+/// readings' counts are read there, as a list of entries.
+///
 /// `state.phrase_table` is the pin's raw `m_phrase_table` read from
 /// `user_phrase_index.bin` ([`UserState::phrase_table`]). It is seeded verbatim,
 /// not derived from `state.libraries`, so a profile whose phrase index
@@ -659,7 +667,9 @@ pub(crate) fn seed_txn(
         txn.put(crate::phrase_table::TABLE, key, value)?;
     }
 
-    // System-token deltas: the training mass on top of the originals.
+    // System-token deltas: the training mass on top of the originals. Only
+    // the unigram is a stored delta here (the count reads and the library
+    // totals consult it); the readings' counts stay in the live items.
     for (&nibble, overrides) in &state.system_overrides {
         let Some(original) = originals.get(&nibble) else {
             continue;
@@ -672,25 +682,11 @@ pub(crate) fn seed_txn(
             if !original.is_readable(slot) {
                 continue;
             }
-            // Restore packed system-pronunciation deltas on reopen, so
-            // train/save does not erase earlier matched-reading updates.
+            // The replayed readings write no row: the session's live item
+            // ([`StoreInner::system_items`]) holds their counts. Training
+            // writes the row for the readings it moves, as the delta over the
+            // original.
             let token = (u32::from(nibble) << 24) | slot;
-            for (keys, frequency) in &new_item.prons {
-                let base = original.pronunciation_frequency(slot, keys);
-                let delta = frequency.wrapping_sub(base);
-                if delta != 0 {
-                    let value = crate::store::PronValue {
-                        count: u64::from(delta),
-                        seq: u32::MAX,
-                        indexed: false,
-                    };
-                    txn.put(
-                        PRONUNCIATION,
-                        &codec::encode_token_bytes(token, &phrase::encode_keys(keys)),
-                        &value.encode(),
-                    )?;
-                }
-            }
             // `is_readable` held, so the item exists and this is its unigram.
             let base = original.unigram(slot).unwrap_or(0);
             let delta = u64::from(new_item.unigram.saturating_sub(base));
@@ -886,31 +882,11 @@ pub fn export_state<S: WriteStore>(
             .and_then(|original| original.unigram(slot))
             .unwrap_or(0);
         item.unigram = base.wrapping_add(unigrams.get(&token).copied().unwrap_or(0) as u32);
-        // A payload carries the pronunciation counts it was saved with. For
-        // an item the library originally holds, the stored rows are deltas
-        // over the original counts (the loader writes them, training adds
-        // to them), so a reading with a row is rebuilt from the original
-        // count plus its delta. A phrase added to the library has no
-        // original: its payload is the authority, as for its unigram.
-        let original_item = originals
-            .get(&nibble)
-            .and_then(|original| original.item(slot));
-        if let Some(original_item) = original_item.as_ref() {
-            for (keys, frequency) in &mut item.prons {
-                let Some(row) = pronunciations
-                    .get(&token)
-                    .and_then(|rows| rows.iter().find(|row| &row.1 == keys))
-                else {
-                    continue;
-                };
-                let base_count = original_item
-                    .prons
-                    .iter()
-                    .find(|(original, _)| original == keys)
-                    .map_or(0, |(_, count)| *count);
-                *frequency = base_count.wrapping_add(u32::try_from(row.2).unwrap_or(u32::MAX));
-            }
-        }
+        // The live item is the authority for its readings' counts, as it is
+        // for pricing: replay, an import and training each leave it holding
+        // the count the save writes. The rows training writes are the delta
+        // over the original, kept for the tables that probe them; the entries
+        // are a list, so a count is never rebuilt from a row found by keys.
         state
             .system_overrides
             .entry(nibble)
@@ -2795,3 +2771,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 }
+
+#[cfg(test)]
+mod replayed_readings;
