@@ -2164,7 +2164,10 @@ impl Runtime {
     /// The walk runs only for a model without real unigram frequencies. A
     /// runtime over [`BigramLanguageModel`] always has them, so in practice
     /// this allocates the session and reads nothing.
-    pub fn new_session(&self, config: &dyn ConfigSource) -> Result<RuntimeSession, EngineError> {
+    pub fn new_session(
+        &self,
+        config: &impl ConfigSource,
+    ) -> Result<RuntimeSession, EngineError> {
         // Real frequencies mean the session decodes through the pinned
         // construction, which prices each candidate inline from the phrase
         // item it has already fetched — upstream's

@@ -121,7 +121,7 @@ impl CapiContext {
     /// so the caller can log it.
     pub(crate) fn save_user(
         &mut self,
-        on_layout_fault: &mut dyn FnMut(&oxpinyin_runtime::LayoutFault),
+        on_layout_fault: impl FnMut(&oxpinyin_runtime::LayoutFault),
     ) -> oxpinyin_facade::SaveOutcome {
         self.core.save_user_with_layout_faults(on_layout_fault)
     }

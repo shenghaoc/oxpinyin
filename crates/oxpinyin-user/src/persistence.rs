@@ -1559,14 +1559,17 @@ pub(crate) struct SaveSource<'a> {
 /// written; the facade maps the current chunk there, so a layout critical
 /// is emitted after the earlier libraries' writes and before the failing
 /// one (`pinyin.cpp:956`, `zhuyin.cpp:589`).
-pub(crate) struct SaveReporting<'a, 'b> {
+pub(crate) struct SaveReporting<'a, B> {
     pub(crate) versions: &'a SystemVersions,
     pub(crate) open_counter: i32,
     pub(crate) bigram_db: Option<&'a DefaultUserBigramDb>,
     pub(crate) interleaved: bool,
     pub(crate) lenient: bool,
-    pub(crate) baseline: Option<&'b mut dyn FnMut(u8) -> SaveBaseline>,
+    pub(crate) baseline: Option<B>,
 }
+
+/// The baseline hook's type for a save that has none.
+pub(crate) type NoBaseline = fn(u8) -> SaveBaseline;
 
 /// [`save_with_bigram`] for a session, whose `source` carries the index
 /// keys its tables hold.
@@ -1588,7 +1591,7 @@ pub(crate) fn save_session(
         bigram_db,
         interleaved: false,
         lenient: false,
-        baseline: None,
+        baseline: None::<NoBaseline>,
     };
     let mut staged = Staged::default();
     let result = stage_all(dir, source, originals, &mut reporting, &mut staged);
@@ -1675,17 +1678,17 @@ pub(crate) fn save_with_bigram_reporting(
         bigram_db,
         interleaved,
         lenient: true,
-        baseline: None,
+        baseline: None::<NoBaseline>,
     };
     save_reporting(dir, source, originals, &mut reporting)
 }
 
 /// [`save_with_bigram_reporting`] with the current-on-disk baseline hook.
-pub(crate) fn save_reporting(
+pub(crate) fn save_reporting<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
     originals: &SystemOriginals,
-    reporting: &mut SaveReporting<'_, '_>,
+    reporting: &mut SaveReporting<'_, B>,
 ) -> Result<SaveReport, PersistenceError> {
     // `_write_files` writes every file whatever the one before did
     // (`pinyin.cpp:940-1020`): a write that fails leaves no `.tmp` and the
@@ -1762,11 +1765,11 @@ impl Staged {
 }
 
 /// [`save_with_bigram`]'s staging half, shared with the reporting save.
-fn stage_all(
+fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
     originals: &SystemOriginals,
-    reporting: &mut SaveReporting<'_, '_>,
+    reporting: &mut SaveReporting<'_, B>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     // `_write_files` writes the libraries by sub-index, then the user pinyin
@@ -1806,11 +1809,11 @@ fn tolerate<T>(
 }
 
 /// Every file of the set but the user bigram, staged as `.tmp` siblings.
-fn stage_rest(
+fn stage_rest<B: FnMut(u8) -> SaveBaseline>(
     dir: &Path,
     source: SaveSource<'_>,
     originals: &SystemOriginals,
-    reporting: &mut SaveReporting<'_, '_>,
+    reporting: &mut SaveReporting<'_, B>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     let SaveSource {
@@ -1844,7 +1847,7 @@ fn stage_rest(
                     // loop (`pinyin.cpp:956`), after the earlier libraries'
                     // files are written. The hook maps it and, for a
                     // layout fault, emits the critical here.
-                    let baseline = reporting.baseline.as_mut().map(|hook| (**hook)(nibble));
+                    let baseline = reporting.baseline.as_mut().map(|hook| hook(nibble));
                     let records = match baseline {
                         Some(SaveBaseline::Changed(disk)) => diff_records_against(
                             nibble,

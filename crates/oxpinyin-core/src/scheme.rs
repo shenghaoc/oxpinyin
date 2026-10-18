@@ -2881,8 +2881,8 @@ mod tests {
 
     /// Heap's algorithm over the symbol slice, in any order — the test
     /// only needs the full permutation set, not a canonical order.
-    fn permute<'a>(symbols: &[&'a str], emit: &mut dyn FnMut(&[&'a str])) {
-        fn go<'a>(symbols: &mut [&'a str], k: usize, emit: &mut dyn FnMut(&[&'a str])) {
+    fn permute<'a>(symbols: &[&'a str], mut emit: impl FnMut(&[&'a str])) {
+        fn go<'a, F: FnMut(&[&'a str])>(symbols: &mut [&'a str], k: usize, emit: &mut F) {
             if k <= 1 {
                 emit(symbols);
                 return;
@@ -2899,7 +2899,7 @@ mod tests {
         }
         let mut owned = symbols.to_vec();
         let len = owned.len();
-        go(&mut owned, len, emit);
+        go(&mut owned, len, &mut emit);
     }
 
     #[test]

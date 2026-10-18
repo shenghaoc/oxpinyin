@@ -102,7 +102,7 @@ struct Settings {
 }
 
 impl Settings {
-    fn read(config: &dyn ConfigSource) -> Self {
+    fn read(config: &impl ConfigSource) -> Self {
         let page_size = config
             .get_int(KEY_PAGE_SIZE)
             .and_then(|value| usize::try_from(value).ok())
