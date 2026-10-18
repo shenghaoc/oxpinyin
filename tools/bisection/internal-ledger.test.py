@@ -281,12 +281,18 @@ class ReviewGuardTests(unittest.TestCase):
     def test_rebased_worker_preserves_extra_environment_and_timeout(self):
         module = gcov_measure.contract_module()
         with tempfile.TemporaryDirectory() as scratch:
-            result = SimpleNamespace(returncode=0, stdout=b'{"ret": true}\n', stderr=b'')
-            with patch.object(module.subprocess, 'run', return_value=result) as run:
+            with patch.object(module.subprocess, 'Popen') as run:
+                process = run.return_value
+                process.returncode = 0
+                process.communicate.return_value = (b'{"ret": true}\n', b'')
                 observed = module.run_worker('pinyin', Path('/p'), Path('/data'), 'probe', scratch,
                                              extra_env={'J_TEST_ENV': 'retained'}, timeout=60)
             self.assertEqual(run.call_args.kwargs['env']['J_TEST_ENV'], 'retained')
-            self.assertEqual(run.call_args.kwargs['timeout'], 60)
+            self.assertEqual(process.communicate.call_count, 1)
+            self.assertGreater(process.communicate.call_args.kwargs['timeout'], 0)
+            self.assertLessEqual(process.communicate.call_args.kwargs['timeout'], 0.1)
+            self.assertTrue(run.call_args.kwargs['start_new_session'])
+            self.assertEqual(run.call_args.args[0][1], str(module.WORKER))
             self.assertEqual(observed['result'], {'ret': True})
 
     def test_default_sweep_matches_ordinary_driver_scope(self):

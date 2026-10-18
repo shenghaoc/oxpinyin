@@ -3,7 +3,7 @@
 
 Usage: contract-diff.py CELL PREFIX PINYIN_SO [--zhuyin-so PATH]
                         [--cases a,b,...] [--issue N]... [--family F]...
-                        [--expect-parent] [--plan-only]
+                        [--expect-parent] [--plan-only] [--case-timeout SECONDS]
        contract-diff.py --list-tags
        contract-diff.py bdb PREFIX PREFIX/lib/libpinyin.so
                         --regenerate-sentence-ties FIXTURE
@@ -37,7 +37,7 @@ reproduced.
 
 A difference counts only between two valid observations. For an ordinary
 case (no `abort=`, `crash=` or `both_abort=`), each side must have exited
-normally with a result document; a side that died, timed out or printed no
+normally with a result document; a side that died or printed no
 result is INVALID, and the case fails in both modes — two failed workers are
 not a MATCH, and they are not the expected DIFFER of a parent build either.
 For a case whose spec registers how the pin dies, the matcher's own exit
@@ -45,6 +45,10 @@ conditions stand unchanged.
 
 Missing inputs and an empty case list fail. Scratch lives under TMPDIR and is
 removed even on failure.
+
+Ordinary cases share a 300-second deadline across pin and subject.
+--case-timeout overrides it. A timeout reports TIMEOUT and fails in both
+modes. Later cases still run.
 
 Selection. --cases names case IDs. --issue N (repeatable; `#N`, `W11` and
 `row:54` forms as the registry uses them) selects every case registered with
@@ -68,6 +72,7 @@ listing) and comparison. The verdict rows are unchanged.
 """
 import argparse
 import copy
+import contextlib
 import ctypes as C
 import hashlib
 import json
@@ -5474,36 +5479,138 @@ for _j_mode in ('pinyin', 'zhuyin'):
 TIMINGS = []
 
 
+CANCELLED = False
+
+
+class Cancelled(Exception):
+    """The caller cancelled the driver; no case verdict is available."""
+
+
+def check_cancelled():
+    if CANCELLED:
+        raise Cancelled('cancelled; worker group terminated and reaped')
+
+
+@contextlib.contextmanager
+def cancellation_handlers():
+    """Defer signals until the active worker can be stopped and reaped."""
+    global CANCELLED
+    CANCELLED = False
+    previous = {}
+
+    def cancel(signum, frame):
+        global CANCELLED
+        CANCELLED = True
+
+    # Python cannot handle SIGKILL of the driver.
+    for signum in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        previous[signum] = signal.signal(signum, cancel)
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def terminate_group(proc):
+    """Stop descendants even if the group leader exits during the grace period."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGTERM)
+    try:
+        proc.wait(timeout=0.5)
+    except subprocess.TimeoutExpired:
+        pass
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    proc.wait()
+
+
 def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
     env = dict(os.environ, TMPDIR=str(scratch))
     env.update(extra_env or {})
     before = set(os.listdir(scratch))
     spawned = time.monotonic()
     env['CONTRACT_DIFF_SPAWNED'] = repr(spawned)
-    proc = subprocess.run([sys.executable, str(WORKER), mode, str(so), str(data), name],
-                          capture_output=True, env=env, timeout=timeout)
-    stdout = proc.stdout.decode('utf-8', 'replace')
-    phases = [json.loads(line[2:]) for line in stdout.splitlines() if line.startswith('T {')]
-    timing = dict(case=name, so=str(so), **(phases[-1] if phases else {}))
-    # stderr keeps invalid UTF-8 apart from a real U+FFFD (`surrogateescape`),
-    # since the pin writes paths as their bytes.
-    stderr = proc.stderr.decode('utf-8', 'surrogateescape')
-    # Replace the generated root before user/sys names: TMPDIR itself may
-    # contain either prefix, and rewriting it first hides random worker
-    # directories from axis_c_normalize_diagnostics's literal path replace.
-    stderr = stderr.replace(str(scratch), 'SCRATCH')
-    lines = [json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
-    observation = dict(exit=proc.returncode, result=lines[-1] if lines else None,
-                       userfiles=user_dir_listing(scratch, before),
-                       measurement_roots=[line.removeprefix('J-ROOT ') for line in stdout.splitlines() if line.startswith('J-ROOT ')],
-                       measurement_abort_flush=('J-GCOV-ABORT-BEGIN' in stdout.splitlines()
-                                                and 'J-GCOV-ABORT-END' in stdout.splitlines()),
-                       stderr_lines=len(stderr.splitlines()),
-                       stderr=re.sub(r'(user|sys)-(\udcff)?[A-Za-z0-9_]+', r'\1-\2X', stderr))
-    timing['wall'] = time.monotonic() - spawned
-    timing['teardown'] = timing['wall'] - sum(timing.get(k, 0.0) for k in ('startup', 'load', 'fixture', 'execute'))
-    TIMINGS.append(timing)
-    return observation
+    command = [sys.executable, str(WORKER), mode, str(so), str(data), name]
+    check_cancelled()
+    proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            env=env, start_new_session=True)
+    stdout, stderr = b'', b''
+    completed = False
+    deadline = None if timeout is None else spawned + timeout
+    try:
+        while True:
+            check_cancelled()
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                # Descendants can hold the output pipes after the leader dies.
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(proc.pid, signal.SIGKILL)
+                stdout, stderr = proc.communicate()
+                completed = True
+                check_cancelled()
+                raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr)
+            try:
+                stdout, stderr = proc.communicate(timeout=min(0.1, remaining) if remaining is not None else 0.1)
+                check_cancelled()
+                break
+            except subprocess.TimeoutExpired as error:
+                stdout, stderr = error.output or b'', error.stderr or b''
+        stdout_text = stdout.decode('utf-8', 'replace')
+        # Keep invalid UTF-8 apart from a real U+FFFD: the pin writes path bytes.
+        stderr_text = stderr.decode('utf-8', 'surrogateescape')
+        # Replace the generated root before normalizing user/sys names.
+        stderr_text = stderr_text.replace(str(scratch), 'SCRATCH')
+        lines = [json.loads(line) for line in stdout_text.splitlines() if line.startswith('{')]
+        observation = dict(exit=proc.returncode, result=lines[-1] if lines else None,
+                    userfiles=user_dir_listing(scratch, before),
+                    measurement_roots=[line.removeprefix('J-ROOT ') for line in stdout_text.splitlines() if line.startswith('J-ROOT ')],
+                    measurement_abort_flush=('J-GCOV-ABORT-BEGIN' in stdout_text.splitlines()
+                                             and 'J-GCOV-ABORT-END' in stdout_text.splitlines()),
+                    stderr_lines=len(stderr_text.splitlines()),
+                    stderr=re.sub(r'(user|sys)-(\udcff)?[A-Za-z0-9_]+', r'\1-\2X', stderr_text))
+        check_cancelled()
+        completed = True
+        return observation
+    finally:
+        if not completed:
+            # This also covers KeyboardInterrupt and exceptions while waiting.
+            terminate_group(proc)
+        proc.stdout.close()
+        proc.stderr.close()
+        phases = [json.loads(line[2:]) for line in stdout.decode('utf-8', 'replace').splitlines()
+                  if line.startswith('T {')]
+        timing = dict(case=name, so=str(so), **(phases[-1] if phases else {}))
+        timing['wall'] = time.monotonic() - spawned
+        timing['teardown'] = timing['wall'] - sum(timing.get(k, 0.0) for k in ('startup', 'load', 'fixture', 'execute'))
+        TIMINGS.append(timing)
+
+
+def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
+    """One deadline for both sides; incomplete observations cannot be a match."""
+    deadline = time.monotonic() + timeout
+    results = []
+    fatal_env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else None
+    for side, so in (('pin', pin_so), ('subject', subject_so)):
+        before = len(TIMINGS)
+        remaining = deadline - time.monotonic()
+        try:
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(str(so), timeout)
+            result = run_worker(spec['mode'], so.resolve(), data, name, scratch,
+                                extra_env=fatal_env, timeout=remaining)
+        except subprocess.TimeoutExpired as error:
+            results.append(dict(exit='TIMEOUT', result=None, userfiles=[],
+                                stderr_lines=len((error.stderr or b'').splitlines()),
+                                stderr=(error.stderr or b'').decode('utf-8', 'surrogateescape')))
+            break
+        finally:
+            for timing in TIMINGS[before:]:
+                timing['side'] = side
+        results.append(result)
+    if len(results) == 1:
+        results.append(dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr=''))
+    return results
 
 
 # #640 leading separators, #698 retained before-cursor windows, #681 zero keys.
@@ -11418,7 +11525,7 @@ def matches(spec, pin, subject):
     return same
 
 
-def main():
+def run_main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('cell', nargs='?', choices=['bdb', 'kc', 'tkrzw'])
     parser.add_argument('prefix', nargs='?', type=Path)
@@ -11431,6 +11538,8 @@ def main():
                         help='select every case whose ID starts with F/')
     parser.add_argument('--list-tags', action='store_true', help='print the tag index as JSON and exit')
     parser.add_argument('--plan-only', action='store_true', help='print the selection plan and exit')
+    parser.add_argument('--case-timeout', type=float, default=300,
+                        help='wall-clock seconds per ordinary case, pin and subject combined (default: 300)')
     parser.add_argument('--expect-parent', action='store_true')
     parser.add_argument('--regenerate-sentence-ties', type=Path,
                         help='regenerate pin expectations in the supplementary #747 source fixture')
@@ -11443,6 +11552,8 @@ def main():
     parser.add_argument('--axis-c-mutant-pinyin-so', type=Path)
     parser.add_argument('--axis-c-mutant-zhuyin-so', type=Path)
     args = parser.parse_args()
+    if not 0 < args.case_timeout < float('inf'):
+        parser.error('--case-timeout must be a positive finite number of seconds')
     if args.list_tags:
         print(json.dumps(dict(tags=tag_index(), modes={name: spec['mode'] for name, spec in CASES.items()
                                                        if not name.startswith('axis-c-')}), indent=1))
@@ -11507,6 +11618,7 @@ def main():
         args.observations.write_text('')
     with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch:
         for n in names:
+            check_cancelled()
             spec = CASES[n]
             if args.cell not in spec['cells']:
                 # The case crafts a fixture in another cell's storage format
@@ -11522,16 +11634,16 @@ def main():
                 pin_so, subject_so = lib / 'libzhuyin.so', args.zhuyin_so
             else:
                 pin_so, subject_so = lib / 'libpinyin.so', args.pinyin_so
-            fatal_env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else None
-            pin = run_worker(spec['mode'], pin_so.resolve(), data, n, scratch,
-                             extra_env=fatal_env)
-            subject = run_worker(spec['mode'], subject_so.resolve(), data, n, scratch,
-                                 extra_env=fatal_env)
+            pin, subject = run_case(spec, pin_so, subject_so, data, n, scratch, args.case_timeout)
+            check_cancelled()
             if args.observations:
                 with args.observations.open('a') as capture:
                     capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
             compared = time.monotonic()
-            verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
+            if any(side['exit'] == 'TIMEOUT' for side in (pin, subject)):
+                verdict, expected, same = 'TIMEOUT', False, False
+            else:
+                verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
             compare_seconds += time.monotonic() - compared
             host_dependent = (verdict == 'DIFFER' and not args.expect_parent
                               and any(map(host_scanf_accepts, spec['host_scanf']))
@@ -11568,9 +11680,20 @@ def timing_summary(names, compare_seconds, total):
     for index, timing in enumerate(TIMINGS):
         for phase in ('startup', 'load', 'fixture', 'teardown'):
             seconds[phase] += timing.get(phase, 0.0)
-        seconds['pin_execute' if index % 2 == 0 else 'subject_execute'] += timing.get('execute', 0.0)
+        seconds[timing.get('side', 'pin' if index % 2 == 0 else 'subject') + '_execute'] += timing.get('execute', 0.0)
     return dict(cases=len(names), workers=len(TIMINGS),
                 seconds={phase: round(value, 4) for phase, value in seconds.items()})
+
+
+def main():
+    with cancellation_handlers():
+        try:
+            status = run_main()
+            check_cancelled()
+            return status
+        except Cancelled as error:
+            print(str(error), file=sys.stderr)
+            return 1
 
 
 if __name__ == '__main__':
