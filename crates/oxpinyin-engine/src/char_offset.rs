@@ -262,6 +262,7 @@ mod tests {
         type Syllable = SyllableKey;
         type Entry = PhraseEntry;
         type Error = core::convert::Infallible;
+        type PathMemo = ();
 
         fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> {
             let [key] = syllables else {

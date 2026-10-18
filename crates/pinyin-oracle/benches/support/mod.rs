@@ -103,6 +103,7 @@ impl Dictionary for CountingDict<'_> {
     type Syllable = SyllableKey;
     type Entry = PhraseEntry;
     type Error = oxpinyin_data::DictError;
+    type PathMemo = ();
 
     fn lookup(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         self.stats.lookups.fetch_add(1, Ordering::Relaxed);

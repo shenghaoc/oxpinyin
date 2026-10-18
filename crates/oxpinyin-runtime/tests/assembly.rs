@@ -682,10 +682,10 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
     tmp.close().unwrap();
 }
 
-// A memo another dictionary filled with its own type is never read: the
-// runtime prices the token as `trellis_item` does, and does not panic.
+// Pricing a path's tokens through one shared memo answers exactly what
+// `trellis_item` answers for each, the memo being filled by the first.
 #[test]
-fn a_foreign_path_memo_falls_back_to_trellis_item() {
+fn a_path_memo_prices_as_trellis_item_does() {
     let runtime = Runtime::open(&w3_dir(), None).unwrap();
     let dict = runtime.dict();
     let syllables = [
@@ -699,17 +699,9 @@ fn a_foreign_path_memo_falls_back_to_trellis_item() {
     let tokens: Vec<u32> = ranges.walk_tokens().map(|(token, ())| token).collect();
     assert!(!tokens.is_empty(), "vacuity guard: nihao ranges tokens");
 
-    let foreign = oxpinyin_core::TrellisPathMemo::default();
-    assert_eq!(foreign.get_or_try_init(|| Ok::<_, ()>(0_u8)), Ok(Some(&0)));
-    let own = oxpinyin_core::TrellisPathMemo::default();
+    let own = <oxpinyin_runtime::RuntimeDict as Dictionary>::PathMemo::default();
     for token in tokens.iter().copied().chain([0, u32::MAX]) {
         let expected = dict.trellis_item(&syllables, &tones, token).unwrap();
-        assert_eq!(
-            dict.trellis_item_on_path(&syllables, &tones, token, &foreign)
-                .unwrap(),
-            expected,
-            "foreign memo, token {token:#x}"
-        );
         assert_eq!(
             dict.trellis_item_on_path(&syllables, &tones, token, &own)
                 .unwrap(),

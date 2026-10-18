@@ -277,6 +277,7 @@ mod tests {
         type Syllable = SyllableKey;
         type Entry = PhraseEntry;
         type Error = core::convert::Infallible;
+        type PathMemo = ();
 
         fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
             Ok(Vec::new())

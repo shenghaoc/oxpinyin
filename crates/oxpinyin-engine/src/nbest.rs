@@ -36,7 +36,6 @@ use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry,
     PhraseIndexRanges, PhraseItemRead, PhraseToken, PronunciationRows, SyllableKey,
-    TrellisPathMemo,
 };
 use smallvec::SmallVec;
 
@@ -653,14 +652,11 @@ impl LazySlot {
 
 /// The key paths of one span search, flat: path `i` is
 /// `keys[bounds[i].0..][..bounds[i].1]`, and likewise its tones.
-/// `memos[i]` is what the dictionary keeps while it prices path `i`, gone
-/// with the span search.
 #[derive(Default)]
 struct SpanPaths {
     keys: Vec<SyllableKey>,
     tones: Vec<u8>,
     bounds: Vec<(u32, u32)>,
-    memos: Vec<TrellisPathMemo>,
 }
 
 impl SpanPaths {
@@ -668,7 +664,6 @@ impl SpanPaths {
         self.keys.clear();
         self.tones.clear();
         self.bounds.clear();
-        self.memos.clear();
     }
 
     fn push(&mut self, keys: &[SyllableKey], tones: &[u8]) -> u32 {
@@ -678,12 +673,7 @@ impl SpanPaths {
         self.tones.extend_from_slice(tones);
         self.bounds
             .push((offset, u32::try_from(keys.len()).unwrap_or(u32::MAX)));
-        self.memos.push(TrellisPathMemo::default());
         id
-    }
-
-    fn memo(&self, id: u32) -> Option<&TrellisPathMemo> {
-        self.memos.get(id as usize)
     }
 
     fn path(&self, id: u32) -> (&[SyllableKey], &[u8]) {
@@ -699,25 +689,46 @@ impl SpanPaths {
 }
 
 /// A span search's ranges and the paths they were found on.
-#[derive(Default)]
-struct SpanRanges {
+/// `memos[i]` is what the dictionary keeps while it prices path `i` (its
+/// [`Dictionary::PathMemo`]), gone with the span search.
+struct SpanRanges<M> {
     ranges: PhraseIndexRanges<LazySlot>,
     paths: SpanPaths,
+    memos: Vec<M>,
 }
 
-impl SpanRanges {
+impl<M> Default for SpanRanges<M> {
+    fn default() -> Self {
+        Self {
+            ranges: PhraseIndexRanges::default(),
+            paths: SpanPaths::default(),
+            memos: Vec::new(),
+        }
+    }
+}
+
+impl<M: Default> SpanRanges<M> {
     fn clear(&mut self) {
         self.ranges.clear();
         self.paths.clear();
+        self.memos.clear();
+    }
+
+    /// Records a key path and files a fresh memo for it; the id indexes both.
+    fn push_path(&mut self, keys: &[SyllableKey], tones: &[u8]) -> u32 {
+        self.memos.push(M::default());
+        self.paths.push(keys, tones)
     }
 }
 
 /// Prices a [`LazySlot`] through the dictionary, once per slot.
-struct Pricing<'a, D> {
+struct Pricing<'a, D: Dictionary> {
     /// The span search's ranges.
     ranges: &'a PhraseIndexRanges<LazySlot>,
     dictionary: &'a D,
     paths: &'a SpanPaths,
+    /// The dictionary's memo of each path, indexed like `paths`.
+    memos: &'a [D::PathMemo],
 }
 
 impl<'a, D> Pricing<'a, D>
@@ -736,7 +747,7 @@ where
             return Ok(priced.as_ref());
         }
         let (keys, tones) = self.paths.path(slot.path);
-        let item = match self.paths.memo(slot.path) {
+        let item = match self.memos.get(slot.path as usize) {
             Some(memo) => self
                 .dictionary
                 .trellis_item_on_path(keys, tones, token, memo),
@@ -923,6 +934,7 @@ where
                     ranges: &found.ranges,
                     dictionary,
                     paths: &found.paths,
+                    memos: &found.memos,
                 };
                 let mut forced = PhraseIndexRanges::new();
                 forced.convert(pricing.first_priced(token.value())?.map(|entry| {
@@ -1031,7 +1043,7 @@ impl GenerationView<'_> {
         end: usize,
         dictionary: &D,
         path: &mut GenerationPath,
-        into: &mut SpanRanges,
+        into: &mut SpanRanges<D::PathMemo>,
     ) -> Result<bool, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
@@ -1064,7 +1076,7 @@ impl GenerationView<'_> {
         end: usize,
         dictionary: &D,
         path: &mut GenerationPath,
-        into: &mut SpanRanges,
+        into: &mut SpanRanges<D::PathMemo>,
         continued: &mut bool,
     ) -> Result<(), EngineError>
     where
@@ -1087,7 +1099,7 @@ impl GenerationView<'_> {
                 .map_err(|error| {
                     EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
                 })?;
-            let id = into.paths.push(&path.keys, &path.tones);
+            let id = into.push_path(&path.keys, &path.tones);
             // Drains the scratch, keeping its capacity for the next path.
             into.ranges
                 .append_from(&mut path.ranges, |()| LazySlot::new(id));
@@ -1170,6 +1182,7 @@ where
             ranges: &found.ranges,
             dictionary: env.dictionary,
             paths: &found.paths,
+            memos: &found.memos,
         };
         expand_entries(
             &pricing,
@@ -1673,11 +1686,12 @@ mod tests {
         ranges: &oxpinyin_core::PhraseIndexRanges<super::LazySlot>,
     ) -> super::Pricing<'_, FixtureDictionary> {
         static DICTIONARY: std::sync::OnceLock<FixtureDictionary> = std::sync::OnceLock::new();
-        // The path memos are not `Sync`, so no static can hold the paths.
+        // The paths are leaked rather than held in a static.
         super::Pricing {
             ranges,
             dictionary: DICTIONARY.get_or_init(FixtureDictionary::default),
             paths: Box::leak(Box::default()),
+            memos: &[],
         }
     }
 

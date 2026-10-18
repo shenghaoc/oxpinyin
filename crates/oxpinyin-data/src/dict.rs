@@ -626,6 +626,7 @@ impl Dictionary for SystemDictionary {
     type Syllable = SyllableKey;
     type Entry = PhraseEntry;
     type Error = DictError;
+    type PathMemo = ();
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();

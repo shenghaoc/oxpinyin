@@ -152,7 +152,7 @@ impl IndexRows {
     /// whose `indexed` flag is set, in packed `ChewingKey` words.
     pub(crate) fn read(
         txn: &impl WriteTxn,
-        select: &dyn Fn(Token) -> bool,
+        select: impl Fn(Token) -> bool,
     ) -> Result<Self, StoreError> {
         let mut rows = Self::default();
         let mut phrases: BTreeSet<Token> = BTreeSet::new();

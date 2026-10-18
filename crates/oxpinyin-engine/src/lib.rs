@@ -20,6 +20,7 @@
 //! #     type Syllable = SyllableKey;
 //! #     type Entry = PhraseEntry;
 //! #     type Error = std::convert::Infallible;
+//! #     type PathMemo = ();
 //! #     fn lookup(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, Self::Error> { Ok(Vec::new()) }
 //! # }
 //! # impl LanguageModel for Empty {
