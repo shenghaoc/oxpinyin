@@ -19,7 +19,7 @@
 //! See `docs/findings/libpinyin-system-data-formats-2026-09-01.md` §1.1
 //! and `phrase_large_table3_tkrzwdb.cpp`.
 
-use crate::chewing_table::{ChewingDbm, prefix_upper_bound};
+use crate::chewing_table::{ChewingDbm, DefaultDbm, prefix_upper_bound};
 use crate::dict::DictError;
 // The key and value layouts this reader shares with
 // `oxpinyin-datagen`'s writer: one written copy (`crate::row_format`).
@@ -34,12 +34,12 @@ use crate::row_format::phrase_index::{decode_tokens, encode_ucs4_key};
 ///
 /// Does not materialize the entire index at open time. Lookups are
 /// point reads against the DBM backend.
-pub struct PhraseTable {
-    dbm: Box<dyn ChewingDbm + Send + Sync>,
+pub struct PhraseTable<D = DefaultDbm> {
+    dbm: D,
 }
 
-impl PhraseTable {
-    pub(crate) fn new(dbm: Box<dyn ChewingDbm + Send + Sync>) -> Self {
+impl<D: ChewingDbm> PhraseTable<D> {
+    pub(crate) const fn new(dbm: D) -> Self {
         Self { dbm }
     }
 
@@ -92,16 +92,15 @@ impl PhraseTable {
         }
         let upper = prefix_upper_bound(&key);
         let mut tokens = Vec::new();
-        self.dbm
-            .walk(&key, upper.as_deref(), &mut |row_key, value| {
-                // The jump lands on the prefix's own row; upstream steps past
-                // it before reading.
-                if row_key.len() <= key.len() || !row_key.starts_with(&key) {
-                    return Ok(false);
-                }
-                tokens.extend(decode_tokens(value)?);
-                Ok(false)
-            })?;
+        self.dbm.walk(&key, upper.as_deref(), |row_key, value| {
+            // The jump lands on the prefix's own row; upstream steps past
+            // it before reading.
+            if row_key.len() <= key.len() || !row_key.starts_with(&key) {
+                return Ok(false);
+            }
+            tokens.extend(decode_tokens(value)?);
+            Ok(false)
+        })?;
         Ok(tokens)
     }
 
@@ -148,7 +147,7 @@ mod tests {
             &self,
             lo: &[u8],
             hi: Option<&[u8]>,
-            visit: &mut crate::chewing_table::RowVisitor<'_>,
+            mut visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
         ) -> Result<(), DictError> {
             let data = self.data.lock().unwrap();
             for (key, value) in data.range(lo.to_vec()..) {
@@ -175,7 +174,7 @@ mod tests {
         dbm.put(encode_ucs4_key("你好吗"), encode_tokens(&[0x0300_0005]));
         dbm.put(encode_ucs4_key("你们"), encode_tokens(&[0x0100_0098]));
         dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x0100_0011]));
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         let mut tokens = table.search_suggestion("你").unwrap();
         tokens.sort_unstable();
         assert_eq!(
@@ -189,7 +188,7 @@ mod tests {
         // longer phrases would extend it.
         let dbm = MemoryDbm::new();
         dbm.put(encode_ucs4_key("你好"), encode_tokens(&[0x0100_0099]));
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         assert!(table.search_suggestion("你").unwrap().is_empty());
         assert!(table.search_suggestion("").unwrap().is_empty());
     }
@@ -201,7 +200,7 @@ mod tests {
         let value = encode_tokens(&[0x0100_0099]);
         dbm.put(key, value);
 
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         let tokens = table.search("你好").unwrap();
         assert_eq!(tokens, vec![0x0100_0099]);
     }
@@ -213,7 +212,7 @@ mod tests {
         let value = encode_tokens(&[0x0100_0020, 0x0200_0020]);
         dbm.put(key, value);
 
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         let tokens = table.search("中").unwrap();
         assert_eq!(tokens.len(), 2);
     }
@@ -221,7 +220,7 @@ mod tests {
     #[test]
     fn search_miss_returns_empty() {
         let dbm = MemoryDbm::new();
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         let tokens = table.search("不存在").unwrap();
         assert!(tokens.is_empty());
     }
@@ -229,7 +228,7 @@ mod tests {
     #[test]
     fn search_empty_input_returns_empty() {
         let dbm = MemoryDbm::new();
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         let tokens = table.search("").unwrap();
         assert!(tokens.is_empty());
     }
@@ -240,7 +239,7 @@ mod tests {
         let key = encode_ucs4_key("你");
         dbm.put(key, Vec::new());
 
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         let tokens = table.search("你").unwrap();
         assert!(tokens.is_empty());
     }
@@ -250,7 +249,7 @@ mod tests {
         let dbm = MemoryDbm::new();
         dbm.put(encode_ucs4_key("好"), encode_tokens(&[0x0100_0011]));
 
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         assert!(table.has_key("好").unwrap());
         assert!(!table.has_key("坏").unwrap());
     }
@@ -260,14 +259,14 @@ mod tests {
         let dbm = MemoryDbm::new();
         dbm.put(encode_ucs4_key("你"), Vec::new());
 
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         assert!(table.has_key("你").unwrap());
     }
 
     #[test]
     fn has_key_empty_returns_false() {
         let dbm = MemoryDbm::new();
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         assert!(!table.has_key("").unwrap());
     }
 
@@ -276,7 +275,7 @@ mod tests {
         let dbm = MemoryDbm::new();
         dbm.put(encode_ucs4_key("坏"), vec![0xFF; 5]);
 
-        let table = PhraseTable::new(Box::new(dbm));
+        let table = PhraseTable::new(dbm);
         assert!(table.search("坏").is_err());
     }
 }

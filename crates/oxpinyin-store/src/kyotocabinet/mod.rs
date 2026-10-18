@@ -79,7 +79,7 @@ use std::ops::Bound;
 use std::path::Path;
 
 use crate::common::{frame, in_bounds, prefix, unframe};
-use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name};
+use crate::{Flow, ReadStore, StoreError, WriteStore, WriteTxn, validate_table_name};
 
 use ffi::{Db, DbType};
 
@@ -157,7 +157,7 @@ impl KcStore {
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         validate_table_name(table)?;
         let table_prefix = prefix(table);
@@ -180,7 +180,9 @@ impl KcStore {
             if !in_bounds(key, Bound::Unbounded, hi) {
                 return Ok(());
             }
-            visit(key, record.value())?;
+            if visit(key, record.value())?.is_break() {
+                return Ok(());
+            }
         }
         Ok(())
     }
@@ -198,18 +200,14 @@ impl ReadStore for KcStore {
         Ok(self.db.get(&frame(table, key))?.map(|buf| buf.to_vec()))
     }
 
-    fn range(
+    fn scan(
         &self,
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         self.walk(table, lo, hi, visit)
-    }
-
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        self.walk(table, Bound::Unbounded, Bound::Unbounded, visit)
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
@@ -232,11 +230,11 @@ impl crate::RawReadStore for KcStore {
         Ok(self.db.get(key)?.map(|buf| buf.to_vec()))
     }
 
-    fn range_raw(
+    fn scan_raw(
         &self,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, crate::StoreError>,
     ) -> Result<(), crate::StoreError> {
         // The contract is ascending key order, but a cursor over the
         // unordered containers (HashDB, and the StashDB the user bigram
@@ -264,7 +262,9 @@ impl crate::RawReadStore for KcStore {
             if !in_bounds(&key, Bound::Unbounded, hi) {
                 return Ok(());
             }
-            visit(&key, &value)?;
+            if visit(&key, &value)?.is_break() {
+                return Ok(());
+            }
         }
         Ok(())
     }
@@ -309,6 +309,8 @@ impl crate::RawReadStore for KcStore {
 }
 
 impl WriteStore for KcStore {
+    type Txn<'a> = KcTxn<'a>;
+
     fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open(path, DbType::Tree, false, true)?,
@@ -378,7 +380,7 @@ impl WriteStore for KcStore {
 
     fn write<R>(
         &self,
-        f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<R, StoreError> {
         // A read-only store refuses the whole transaction, not merely the
         // writes inside it: the tier contract is that `write` on a
@@ -439,7 +441,7 @@ impl WriteStore for KcStore {
 /// Cabinet's transaction, so read-your-writes is the database's semantics
 /// rather than something this type has to emulate, and rollback is the
 /// library's.
-struct KcTxn<'store> {
+pub struct KcTxn<'store> {
     store: &'store KcStore,
 }
 
@@ -464,12 +466,12 @@ impl WriteTxn for KcTxn<'_> {
         self.store.db.remove(&frame(table, key))
     }
 
-    fn range(
+    fn scan(
         &self,
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         // A cursor inside the transaction sees the transaction's writes,
         // so the walk needs no merge pass. It does need the rows
@@ -477,18 +479,16 @@ impl WriteTxn for KcTxn<'_> {
         // store, and holding a cursor across that is what the borrow of
         // `self.store.db` would otherwise allow.
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-        self.store.walk(table, lo, hi, &mut |key, value| {
+        self.store.walk(table, lo, hi, |key, value| {
             rows.push((key.to_vec(), value.to_vec()));
-            Ok(())
+            Ok(Flow::Continue(()))
         })?;
         for (key, value) in &rows {
-            visit(key, value)?;
+            if visit(key, value)?.is_break() {
+                break;
+            }
         }
         Ok(())
-    }
-
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        self.range(table, Bound::Unbounded, Bound::Unbounded, visit)
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {

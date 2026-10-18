@@ -92,9 +92,7 @@ use std::ops::Bound;
 use std::path::Path;
 
 use crate::common::{frame, in_bounds, prefix, unframe};
-use crate::{
-    RawReadStore, ReadStore, StoreError, Visitor, WriteStore, WriteTxn, validate_table_name,
-};
+use crate::{Flow, RawReadStore, ReadStore, StoreError, WriteStore, WriteTxn, validate_table_name};
 
 use ffi::{Seek, SharedDb as Db};
 
@@ -127,7 +125,7 @@ impl BdbStore {
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         validate_table_name(table)?;
         let table_prefix = prefix(table);
@@ -161,7 +159,9 @@ impl BdbStore {
                 Bound::Excluded(bound) if key.as_slice() < bound => {}
                 _ => return Ok(()),
             }
-            visit(&key, &value)?;
+            if visit(&key, &value)?.is_break() {
+                return Ok(());
+            }
         }
     }
 
@@ -189,7 +189,7 @@ impl BdbStore {
         &self,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         let mut cursor = self.db.cursor()?;
         let mut seek = match lo {
@@ -208,7 +208,9 @@ impl BdbStore {
             if !in_bounds(row.key, Bound::Unbounded, hi) {
                 return Ok(());
             }
-            visit(row.key, row.value)?;
+            if visit(row.key, row.value)?.is_break() {
+                return Ok(());
+            }
         }
     }
 
@@ -221,7 +223,7 @@ impl BdbStore {
         &self,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         let mut cursor = self.db.cursor()?;
         let mut seek = Seek::First;
@@ -246,7 +248,9 @@ impl BdbStore {
             if !in_bounds(&key, Bound::Unbounded, hi) {
                 return Ok(());
             }
-            visit(&key, &value)?;
+            if visit(&key, &value)?.is_break() {
+                return Ok(());
+            }
         }
         Ok(())
     }
@@ -264,18 +268,14 @@ impl ReadStore for BdbStore {
         self.db.get(&frame(table, key))
     }
 
-    fn range(
+    fn scan(
         &self,
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         self.walk(table, lo, hi, visit)
-    }
-
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        self.walk(table, Bound::Unbounded, Bound::Unbounded, visit)
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
@@ -288,11 +288,11 @@ impl RawReadStore for BdbStore {
         self.db.get(key)
     }
 
-    fn range_raw(
+    fn scan_raw(
         &self,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         if self.db.is_hash() {
             self.range_raw_unordered(lo, hi, visit)
@@ -309,6 +309,8 @@ impl RawReadStore for BdbStore {
 }
 
 impl WriteStore for BdbStore {
+    type Txn<'a> = BdbTxn<'a>;
+
     /// A system table, created as `attach` creates one: mode 0644
     /// ([`ffi::SYSTEM_FILE_MODE`]).
     fn create(path: &Path) -> Result<Self, StoreError> {
@@ -352,7 +354,7 @@ impl WriteStore for BdbStore {
 
     fn write<R>(
         &self,
-        f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<R, StoreError> {
         // A read-only store refuses the whole transaction, not merely the
         // writes inside it: the tier contract is that `write` on a
@@ -401,7 +403,7 @@ impl WriteStore for BdbStore {
 }
 
 /// The buffered write transaction described in the module note.
-struct BdbTxn<'store> {
+pub struct BdbTxn<'store> {
     store: &'store BdbStore,
     /// Key (framed for table rows, bare for `put_raw` rows) → new value,
     /// or `None` for a removal. Ordered so the apply pass touches keys
@@ -446,37 +448,26 @@ impl WriteTxn for BdbTxn<'_> {
         Ok(())
     }
 
-    fn range(
+    fn scan(
         &self,
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         self.merged_walk(table, lo, hi, visit)
     }
 
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        self.merged_walk(table, Bound::Unbounded, Bound::Unbounded, visit)
-    }
-
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         let mut empty = true;
-        self.merged_walk(table, Bound::Unbounded, Bound::Unbounded, &mut |_, _| {
+        self.merged_walk(table, Bound::Unbounded, Bound::Unbounded, |_, _| {
             empty = false;
             // Stop at the first row rather than walking the table.
-            Err(StoreError::Backend(STOP.into()))
-        })
-        .or_else(|error| match &error {
-            StoreError::Backend(inner) if inner.to_string() == STOP => Ok(()),
-            _ => Err(error),
+            Ok(Flow::Break(()))
         })?;
         Ok(empty)
     }
 }
-
-/// Sentinel that unwinds `is_empty`'s walk after the first row.
-const STOP: &str = "oxpinyin-store: stop walk";
 
 impl BdbTxn<'_> {
     /// A walk that reads the database and the buffer as one table.
@@ -490,7 +481,7 @@ impl BdbTxn<'_> {
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         validate_table_name(table)?;
         let table_prefix = prefix(table);
@@ -510,34 +501,46 @@ impl BdbTxn<'_> {
         // shares one prefix, so `pending` is already in key order.
 
         let mut next_pending = 0_usize;
-        let mut result = Ok(());
-        self.store.walk(table, lo, hi, &mut |key, value| {
+        let mut stopped = false;
+        self.store.walk(table, lo, hi, |key, value| {
             while next_pending < pending.len() && pending[next_pending].0.as_slice() < key {
                 let (buffered_key, buffered_value) = &pending[next_pending];
                 next_pending += 1;
-                visit(buffered_key, buffered_value)?;
+                if visit(buffered_key, buffered_value)?.is_break() {
+                    stopped = true;
+                    return Ok(Flow::Break(()));
+                }
             }
             let overwritten = self.buffer.contains_key(&frame(table, key));
-            if overwritten {
+            let flow = if overwritten {
                 // Either removed, or already emitted from `pending`.
                 if next_pending > 0 && pending[next_pending - 1].0.as_slice() == key {
-                    return Ok(());
-                }
-                if next_pending < pending.len() && pending[next_pending].0.as_slice() == key {
+                    Flow::Continue(())
+                } else if next_pending < pending.len() && pending[next_pending].0.as_slice() == key
+                {
                     let (buffered_key, buffered_value) = &pending[next_pending];
                     next_pending += 1;
-                    return visit(buffered_key, buffered_value);
+                    visit(buffered_key, buffered_value)?
+                } else {
+                    Flow::Continue(())
                 }
-                return Ok(());
-            }
-            visit(key, value)
+            } else {
+                visit(key, value)?
+            };
+            stopped = flow.is_break();
+            Ok(flow)
         })?;
-        while next_pending < pending.len() && result.is_ok() {
+        if stopped {
+            return Ok(());
+        }
+        while next_pending < pending.len() {
             let (key, value) = &pending[next_pending];
             next_pending += 1;
-            result = visit(key, value);
+            if visit(key, value)?.is_break() {
+                break;
+            }
         }
-        result
+        Ok(())
     }
 }
 
@@ -552,7 +555,10 @@ pub struct BdbUserBigramDb {
 }
 
 /// Visits one borrowed record at a time in the database's native order.
-fn visit_db(db: &Db, visit: &mut crate::Visitor<'_>) -> Result<(), StoreError> {
+fn visit_db(
+    db: &Db,
+    mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
     let mut cursor = db.cursor()?;
     let mut seek = ffi::Seek::First;
     while let Some(row) = cursor.get(seek)? {
@@ -577,7 +583,7 @@ impl crate::UserBigramDb for BdbUserBigramDb {
         if let Ok(file) = Db::open(path, ffi::DB_HASH, true, false, ffi::USER_FILE_MODE) {
             // Keep the usable in-memory container if source traversal fails;
             // callers of the pin retain it even when load_db returns false.
-            if let Err(error) = visit_db(&file, &mut |key, value| this.db.put(key, value)) {
+            if let Err(error) = visit_db(&file, |key, value| this.db.put(key, value)) {
                 eprintln!("user-bigram load {}: {error}", path.display());
             }
         }
@@ -598,7 +604,7 @@ impl crate::UserBigramDb for BdbUserBigramDb {
 
     fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
         let mut keys = Vec::new();
-        visit_db(&self.db, &mut |key, _| {
+        visit_db(&self.db, |key, _| {
             keys.push(key.to_vec());
             Ok(())
         })?;
@@ -611,7 +617,7 @@ impl crate::UserBigramDb for BdbUserBigramDb {
         // in cursor order, sync, close.
         crate::remove_if_present(path)?;
         let file = Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?;
-        visit_db(&self.db, &mut |key, value| file.put(key, value))?;
+        visit_db(&self.db, |key, value| file.put(key, value))?;
         file.sync()
     }
 }

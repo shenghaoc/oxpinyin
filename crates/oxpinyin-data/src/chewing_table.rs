@@ -30,20 +30,11 @@ pub use crate::row_format::pinyin_index::{
 
 // ── ChewingTable ─────────────────────────────────────────────────
 
-/// The callback a [`ChewingDbm::walk`] hands each `(key, value)` row to;
-/// `Ok(true)` stops the walk — the backend abandons the underlying scan
-/// right there rather than skipping the remaining rows.
-pub type RowVisitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool, DictError> + 'a;
-
-/// The callback [`ChewingTable::walk_extensions`] hands each non-empty
-/// extension row's `(syllable count, records)` to; `Ok(true)` stops the
-/// walk.
-pub type ExtensionVisitor<'a> =
-    dyn FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError> + 'a;
-
-/// An abstraction over the DBM access method, so the `ChewingTable` can
-/// read both libpinyin's raw DBM files (KC/Tkrzw with no table framing)
-/// and oxpinyin's store-backed files.
+/// The DBM access method behind the tables ([`ChewingTable`],
+/// [`crate::PhraseTable`], [`crate::BigramTable`], [`crate::PunctTable`]):
+/// each table is generic over it, so the one implementation of a table's
+/// logic runs over the production [`DefaultDbm`] and over the in-memory,
+/// counting and failing test doubles alike.
 pub trait ChewingDbm {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError>;
 
@@ -53,12 +44,13 @@ pub trait ChewingDbm {
     ///
     /// A visitor return of `Ok(true)` stops the walk: implementations
     /// must terminate the underlying scan there (not merely skip the
-    /// remaining rows), and the walk returns `Ok(())`.
+    /// remaining rows), and the walk returns `Ok(())`. A visitor `Err`
+    /// ends the walk and comes back as itself.
     fn walk(
         &self,
         lo: &[u8],
         hi: Option<&[u8]>,
-        visit: &mut RowVisitor<'_>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
     ) -> Result<(), DictError>;
 }
 
@@ -90,33 +82,9 @@ impl<S> RawChewingDbm<S> {
     }
 }
 
-/// Aborts the store scan when a row visitor stops or fails: the store's
-/// visitor signature has no stop channel, so the abort rides the error
-/// path under a private marker type that cannot collide with a backend
-/// failure.
-#[derive(Debug)]
-struct WalkStopped;
-
-impl std::fmt::Display for WalkStopped {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("row visitor stopped the walk")
-    }
-}
-
-impl std::error::Error for WalkStopped {}
-
-/// The sentinel a stopping (or failed) visitor aborts the store scan
-/// with — see [`WalkStopped`].
-fn stop_scan() -> oxpinyin_store::StoreError {
-    oxpinyin_store::StoreError::Backend(Box::new(WalkStopped))
-}
-
-/// Whether `e` is the [`WalkStopped`] sentinel rather than a backend
-/// failure.
-fn is_stop_scan(e: &oxpinyin_store::StoreError) -> bool {
-    matches!(e, oxpinyin_store::StoreError::Backend(b)
-        if b.downcast_ref::<WalkStopped>().is_some())
-}
+/// The production [`ChewingDbm`]: the compiled-in backend read through
+/// its raw (unframed) keyspace.
+pub type DefaultDbm = RawChewingDbm<oxpinyin_store::DefaultStore>;
 
 impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm<S> {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
@@ -129,39 +97,34 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
         &self,
         lo: &[u8],
         hi: Option<&[u8]>,
-        visit: &mut RowVisitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
     ) -> Result<(), DictError> {
-        use std::ops::Bound;
-        // The store's callback speaks `StoreError` and has no stop
-        // channel, while the row visitor speaks `DictError` and asks to
-        // stop: both are bridged by aborting the scan with the sentinel
-        // and sorting the outcome out afterwards. Rows are visited as
-        // the store hands them over — no collect-then-replay buffer, and
-        // nothing past the stop is scanned.
+        use std::ops::{Bound, ControlFlow};
+        // The store's visitor speaks `StoreError` and answers
+        // continue/break, while the row visitor speaks `DictError` and
+        // asks to stop: a stop is a `Break`, which ends the store scan
+        // right there with no error; a visitor failure is parked here,
+        // also ends the scan with a `Break`, and is returned as itself
+        // once the scan is over. Rows are visited as the store hands
+        // them over — no collect-then-replay buffer, and nothing past
+        // the stop is scanned.
         let mut failure: Option<DictError> = None;
-        let scan = self.store.range_raw(
+        let scan = self.store.scan_raw(
             Bound::Included(lo),
             hi.map_or(Bound::Unbounded, Bound::Excluded),
-            &mut |key, value| match visit(key, value) {
-                Ok(true) => Err(stop_scan()),
-                Ok(false) => Ok(()),
+            |key, value| match visit(key, value) {
+                Ok(true) => Ok(ControlFlow::Break(())),
+                Ok(false) => Ok(ControlFlow::Continue(())),
                 Err(e) => {
                     failure = Some(e);
-                    Err(stop_scan())
+                    Ok(ControlFlow::Break(()))
                 }
             },
         );
         if let Some(e) = failure {
             return Err(e);
         }
-        match scan {
-            Ok(()) => Ok(()),
-            // The sentinel is this walk's own stop request, not a store
-            // failure — every backend aborts its scan on the first
-            // visitor error, so nothing else can follow it.
-            Err(e) if is_stop_scan(&e) => Ok(()),
-            Err(e) => Err(DictError::Table(e.into())),
-        }
+        scan.map_err(|e| DictError::Table(e.into()))
     }
 }
 
@@ -170,12 +133,12 @@ impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm
 ///
 /// Does not materialize the entire index at open time. Lookups are
 /// point reads against the DBM backend.
-pub struct ChewingTable {
-    dbm: Box<dyn ChewingDbm + Send + Sync>,
+pub struct ChewingTable<D = DefaultDbm> {
+    dbm: D,
 }
 
-impl ChewingTable {
-    pub(crate) fn new(dbm: Box<dyn ChewingDbm + Send + Sync>) -> Self {
+impl<D: ChewingDbm> ChewingTable<D> {
+    pub(crate) const fn new(dbm: D) -> Self {
         Self { dbm }
     }
 
@@ -261,7 +224,7 @@ impl ChewingTable {
     pub(crate) fn walk_extensions(
         &self,
         keys: &[ChewingKey],
-        visit: &mut ExtensionVisitor<'_>,
+        mut visit: impl FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError>,
     ) -> Result<bool, DictError> {
         if keys.is_empty() {
             return Ok(false);
@@ -269,16 +232,15 @@ impl ChewingTable {
         let encoded = index_key(keys);
         let upper = prefix_upper_bound(&encoded);
         let mut found = false;
-        self.dbm
-            .walk(&encoded, upper.as_deref(), &mut |key, value| {
-                if value.is_empty() || !key.len().is_multiple_of(2) {
-                    return Ok(false);
-                }
-                let phrase_length = key.len() / 2;
-                let items = decode_items(value, phrase_length)?;
-                found = visit(phrase_length, &items)?;
-                Ok(found)
-            })?;
+        self.dbm.walk(&encoded, upper.as_deref(), |key, value| {
+            if value.is_empty() || !key.len().is_multiple_of(2) {
+                return Ok(false);
+            }
+            let phrase_length = key.len() / 2;
+            let items = decode_items(value, phrase_length)?;
+            found = visit(phrase_length, &items)?;
+            Ok(found)
+        })?;
         Ok(found)
     }
 
@@ -296,11 +258,10 @@ impl ChewingTable {
         let encoded = index_key(keys);
         let upper = prefix_upper_bound(&encoded);
         let mut found = false;
-        self.dbm
-            .walk(&encoded, upper.as_deref(), &mut |key, _value| {
-                found = key.len() / 2 > MAX_INDEX_KEY_WORDS;
-                Ok(found)
-            })?;
+        self.dbm.walk(&encoded, upper.as_deref(), |key, _value| {
+            found = key.len() / 2 > MAX_INDEX_KEY_WORDS;
+            Ok(found)
+        })?;
         Ok(found)
     }
 
@@ -310,7 +271,7 @@ impl ChewingTable {
     pub(crate) fn walk_suggestions(
         &self,
         keys: &[ChewingKey],
-        visit: &mut ExtensionVisitor<'_>,
+        mut visit: impl FnMut(usize, &[PinyinIndexItem]) -> Result<bool, DictError>,
     ) -> Result<bool, DictError> {
         if !self.key_exists(keys)? {
             return Ok(false);
@@ -318,19 +279,18 @@ impl ChewingTable {
         let encoded = index_key(keys);
         let upper = prefix_upper_bound(&encoded);
         let mut overlong = false;
-        self.dbm
-            .walk(&encoded, upper.as_deref(), &mut |key, value| {
-                overlong = key.len() / 2 > MAX_INDEX_KEY_WORDS;
-                if overlong {
-                    return Ok(true);
-                }
-                if value.is_empty() || !key.len().is_multiple_of(2) {
-                    return Ok(false);
-                }
-                let length = key.len() / 2;
-                let items = decode_items(value, length)?;
-                visit(length, &items)
-            })?;
+        self.dbm.walk(&encoded, upper.as_deref(), |key, value| {
+            overlong = key.len() / 2 > MAX_INDEX_KEY_WORDS;
+            if overlong {
+                return Ok(true);
+            }
+            if value.is_empty() || !key.len().is_multiple_of(2) {
+                return Ok(false);
+            }
+            let length = key.len() / 2;
+            let items = decode_items(value, length)?;
+            visit(length, &items)
+        })?;
         Ok(overlong)
     }
 }
@@ -428,7 +388,7 @@ mod tests {
             &self,
             lo: &[u8],
             hi: Option<&[u8]>,
-            visit: &mut RowVisitor<'_>,
+            mut visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
         ) -> Result<(), DictError> {
             let data = self.data.lock().unwrap();
             for (key, value) in data.range(lo.to_vec()..) {
@@ -471,7 +431,7 @@ mod tests {
         assert!(!prefix_keys_match(&[ni, ni], &[ni3]));
     }
 
-    fn table_with_ba() -> ChewingTable {
+    fn table_with_ba() -> ChewingTable<MemoryDbm> {
         let dbm = MemoryDbm::new();
         let ba = ChewingKey::from_pinyin("ba").unwrap();
         let ba_item = PinyinIndexItem {
@@ -487,7 +447,7 @@ mod tests {
             keys: vec![ChewingKey::new(ba.initial, 0, 0, 0)],
         }]);
         dbm.put(ikey, ivalue);
-        ChewingTable::new(Box::new(dbm))
+        ChewingTable::new(dbm)
     }
 
     #[test]
@@ -513,7 +473,7 @@ mod tests {
         };
         let key = encode_complete_key(&[ba]);
         dbm.put(key, encode_items(&[ba1, ba3]));
-        let table = ChewingTable::new(Box::new(dbm));
+        let table = ChewingTable::new(dbm);
 
         let items = table.search(&[ba.with_tone(1)]).unwrap();
         assert_eq!(items.len(), 1);
@@ -550,7 +510,7 @@ mod tests {
         let key1 = encode_complete_key(&[ni]);
         dbm.put(key1, Vec::new());
 
-        let table = ChewingTable::new(Box::new(dbm));
+        let table = ChewingTable::new(dbm);
 
         let items = table.search(&[ni]).unwrap();
         assert!(items.is_empty());
@@ -587,7 +547,7 @@ mod tests {
                 },
             ]),
         );
-        let table = ChewingTable::new(Box::new(dbm));
+        let table = ChewingTable::new(dbm);
 
         // The initial alone: both records.
         let items = table.search(&[b]).unwrap();
@@ -620,7 +580,7 @@ mod tests {
                 },
             ]),
         );
-        let table = ChewingTable::new(Box::new(dbm));
+        let table = ChewingTable::new(dbm);
         // "ni" + "h": the incomplete-space key `n h`, records filtered to
         // those whose first syllable is `ni`.
         let items = table.search(&[ni, h]).unwrap();
@@ -657,10 +617,10 @@ mod tests {
                 keys: vec![hao.with_tone(3)],
             }]),
         );
-        let table = ChewingTable::new(Box::new(dbm));
+        let table = ChewingTable::new(dbm);
         let mut seen = Vec::new();
         let found = table
-            .walk_extensions(&[ni], &mut |len, items| {
+            .walk_extensions(&[ni], |len, items| {
                 seen.push((len, items[0].token));
                 Ok(false)
             })
@@ -670,7 +630,7 @@ mod tests {
         assert!(seen.iter().all(|(len, _)| *len == 2));
         // Early exit on the first accepted row.
         let found = table
-            .walk_extensions(&[ni], &mut |_, items| Ok(items[0].token >> 24 == 2))
+            .walk_extensions(&[ni], |_, items| Ok(items[0].token >> 24 == 2))
             .unwrap();
         assert!(found);
     }
@@ -685,7 +645,7 @@ mod tests {
             for row in rows {
                 dbm.put(row.clone(), Vec::new());
             }
-            ChewingTable::new(Box::new(dbm))
+            ChewingTable::new(dbm)
         };
         // Sixteen words is the longest key the pin's switch instantiates.
         let sixteen = encode_complete_key(&[ni; 16]);
@@ -748,7 +708,7 @@ mod tests {
                 &self,
                 lo: &[u8],
                 hi: Option<&[u8]>,
-                visit: &mut RowVisitor<'_>,
+                visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
             ) -> Result<(), DictError> {
                 self.walks.fetch_add(1, Ordering::Relaxed);
                 self.inner.walk(lo, hi, visit)
@@ -765,15 +725,13 @@ mod tests {
             }
             let gets = Arc::new(AtomicUsize::new(0));
             let walks = Arc::new(AtomicUsize::new(0));
-            let table = ChewingTable::new(Box::new(Counted {
+            let table = ChewingTable::new(Counted {
                 inner: dbm,
                 gets: gets.clone(),
                 walks: walks.clone(),
-            }));
+            });
             assert_eq!(
-                table
-                    .walk_suggestions(&[ni], &mut |_, _| Ok(false))
-                    .unwrap(),
+                table.walk_suggestions(&[ni], |_, _| Ok(false)).unwrap(),
                 malformed
             );
             assert_eq!(gets.load(Ordering::Relaxed), 1);
@@ -787,11 +745,11 @@ mod tests {
         for i in 0_u8..8 {
             dbm.put(vec![i], vec![i]);
         }
-        let table = ChewingTable::new(Box::new(dbm));
+        let table = ChewingTable::new(dbm);
         let mut seen = Vec::new();
         table
             .dbm
-            .walk(&[2], Some(&[8]), &mut |key, _| {
+            .walk(&[2], Some(&[8]), |key, _| {
                 seen.push(key[0]);
                 Ok(true)
             })
@@ -804,7 +762,9 @@ mod tests {
     #[cfg(feature = "bdb")]
     #[test]
     fn shared_raw_readers_keep_rows_valid_during_concurrent_and_reentrant_reads() {
-        use oxpinyin_store::{DefaultStore, RawReadStore as _, ReadStore as _, WriteStore as _};
+        use oxpinyin_store::{
+            DefaultStore, RawReadStore as _, ReadStore as _, WriteStore as _, WriteTxn as _,
+        };
         use std::sync::{Arc, Barrier};
 
         let dir = std::env::temp_dir().join(format!(
@@ -842,7 +802,7 @@ mod tests {
             };
             // This is the shared adapter used by chewing/phrase indexes,
             // system bigrams, addon indexes and punctuation readers.
-            let dbm: Arc<dyn ChewingDbm + Send + Sync> = Arc::new(RawChewingDbm::new(store));
+            let dbm: Arc<DefaultDbm> = Arc::new(RawChewingDbm::new(store));
             let barrier = Arc::new(Barrier::new(4));
             std::thread::scope(|scope| {
                 for _ in 0..4 {
@@ -853,7 +813,7 @@ mod tests {
                         for _ in 0..20 {
                             assert_eq!(dbm.get(&[3]).unwrap(), Some(vec![3; 9000]));
                             let mut keys = Vec::new();
-                            dbm.walk(&[2], Some(&[6]), &mut |key, value| {
+                            dbm.walk(&[2], Some(&[6]), |key, value| {
                                 assert_eq!(dbm.get(key).unwrap().as_deref(), Some(value));
                                 assert!(value.iter().all(|byte| *byte == key[0]));
                                 keys.push(key[0]);
@@ -872,7 +832,7 @@ mod tests {
 
     #[test]
     fn raw_walk_stops_the_store_scan_and_keeps_errors_distinct() {
-        use oxpinyin_store::{DefaultStore, ReadStore as _, WriteStore as _};
+        use oxpinyin_store::{DefaultStore, ReadStore as _, WriteStore as _, WriteTxn as _};
         let dir = std::env::temp_dir().join(format!(
             "oxpinyin-raw-walk-stop-{}-{}",
             std::process::id(),
@@ -897,7 +857,7 @@ mod tests {
         // A stop after two rows: only two rows are visited and the walk
         // succeeds — the store scan is aborted, not run to the end.
         let mut seen = Vec::new();
-        dbm.walk(&[2], Some(&[8]), &mut |key, _| {
+        dbm.walk(&[2], Some(&[8]), |key, _| {
             seen.push(key[0]);
             Ok(seen.len() == 2)
         })
@@ -906,7 +866,7 @@ mod tests {
 
         // No stop: every row of the range.
         let mut count = 0;
-        dbm.walk(&[2], Some(&[8]), &mut |_, _| {
+        dbm.walk(&[2], Some(&[8]), |_, _| {
             count += 1;
             Ok(false)
         })
@@ -916,7 +876,7 @@ mod tests {
         // A visitor error comes back as itself, not as the sentinel that
         // aborted the store scan.
         let err = dbm
-            .walk(&[2], Some(&[8]), &mut |_, _| {
+            .walk(&[2], Some(&[8]), |_, _| {
                 Err(DictError::Parse("boom".to_owned()))
             })
             .unwrap_err();
@@ -934,7 +894,7 @@ mod tests {
         let ba = ChewingKey::from_pinyin("ba").unwrap();
         let key = encode_complete_key(&[ba]);
         dbm.put(key, vec![0xFF; 5]);
-        let table = ChewingTable::new(Box::new(dbm));
+        let table = ChewingTable::new(dbm);
         let result = table.search(&[ba]);
         assert!(result.is_err());
     }
@@ -946,7 +906,7 @@ mod tests {
         let hao = ChewingKey::from_pinyin("hao").unwrap();
         let key = encode_complete_key(&[ni, hao]);
         dbm.put(key, vec![0x01, 0x00, 0x00, 0x00, 0x0E, 0x00]);
-        let table = ChewingTable::new(Box::new(dbm));
+        let table = ChewingTable::new(dbm);
         let result = table.search(&[ni, hao]);
         assert!(result.is_err());
     }

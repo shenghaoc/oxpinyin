@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use oxpinyin_core::{LanguageModel, PhraseToken, UserCountDelta};
 use oxpinyin_data::{BigramLanguageModel, PhraseLibraries, SYSTEM_LIBRARY_FILES, SystemDbm};
-use oxpinyin_store::{DefaultStore, WriteStore};
+use oxpinyin_store::{DefaultStore, WriteStore, WriteTxn};
 
 mod support;
 use support::ChunkBuilder;

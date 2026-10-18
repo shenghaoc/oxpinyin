@@ -190,7 +190,7 @@ pub fn search_suggestion(db: &impl ReadStore, text: &str) -> Result<SearchResult
         Bound::Unbounded
     };
     let mut malformed = None;
-    let _ = db.range(TABLE, Bound::Excluded(&prefix), hi, &mut |_, bytes| {
+    let _ = db.range(TABLE, Bound::Excluded(&prefix), hi, |_, bytes| {
         let entry = match PhraseTableEntry::from_bytes(bytes.to_vec()) {
             Ok(entry) => entry,
             Err(error) => {
@@ -218,7 +218,7 @@ pub fn search_suggestion(db: &impl ReadStore, text: &str) -> Result<SearchResult
 /// Callers following pin's `_add_phrase` intentionally ignore this numeric
 /// result and retain earlier changes (`pinyin.cpp:596-606`); it is not a
 /// transaction rollback request.
-pub fn add_index(txn: &mut dyn WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
+pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
     let key = key(text);
     if key.is_empty() {
         return Err(StoreError::InvalidInput("phrase table text is empty"));
@@ -256,7 +256,7 @@ pub fn add_index(txn: &mut dyn WriteTxn, text: &str, token: u32) -> Result<i32, 
 /// (`phrase_large_table3_bdb.cpp:349-366`, KC
 /// `phrase_large_table3_kyotodb.cpp:324-343`, tkrzw
 /// `phrase_large_table3_tkrzwdb.cpp:253-272`, pin 074a2219).
-pub fn remove_index(txn: &mut dyn WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
+pub fn remove_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
     let key = key(text);
     let Ok(Some(bytes)) = txn.get(TABLE, &key) else {
         return Ok(ERROR_REMOVE_ITEM_DONOT_EXISTS);
@@ -276,9 +276,9 @@ pub fn remove_index(txn: &mut dyn WriteTxn, text: &str, token: u32) -> Result<i3
 ///
 /// # Errors
 /// Returns store errors or an incomplete-token error.
-pub fn mask_out(txn: &mut dyn WriteTxn, mask: u32, value: u32) -> Result<bool, StoreError> {
+pub fn mask_out(txn: &mut impl WriteTxn, mask: u32, value: u32) -> Result<bool, StoreError> {
     let mut rows = Vec::new();
-    txn.for_each(TABLE, &mut |key, bytes| {
+    txn.for_each(TABLE, |key, bytes| {
         rows.push((key.to_vec(), bytes.to_vec()));
         Ok(())
     })?;

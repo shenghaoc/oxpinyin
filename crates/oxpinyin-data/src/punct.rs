@@ -19,7 +19,7 @@ use std::path::Path;
 
 use oxpinyin_store::{DefaultStore, ReadStore};
 
-use crate::chewing_table::{ChewingDbm, RawChewingDbm};
+use crate::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
 use crate::dict::DictError;
 // The key and value layout this reader shares with `oxpinyin-datagen`'s
 // writer: one written copy (`crate::row_format`).
@@ -33,12 +33,12 @@ use crate::table::TableError;
 ///
 /// Does not materialize the table at open time. Each lookup is a single
 /// point read.
-pub struct PunctTable {
-    dbm: Option<Box<dyn ChewingDbm + Send + Sync>>,
+pub struct PunctTable<D = DefaultDbm> {
+    dbm: Option<D>,
 }
 
-impl PunctTable {
-    pub(crate) fn new(dbm: Box<dyn ChewingDbm + Send + Sync>) -> Self {
+impl<D: ChewingDbm> PunctTable<D> {
+    pub(crate) const fn new(dbm: D) -> Self {
         Self { dbm: Some(dbm) }
     }
 
@@ -48,30 +48,9 @@ impl PunctTable {
         Self { dbm: None }
     }
 
-    /// Opens a punct DBM lazily (no scan). `punct.bin` is a KC
-    /// **`TreeDB`** / Tkrzw **`TreeDBM`** — the plain read-only open.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`DictError`] when the file cannot be opened read-only.
-    pub fn open(path: &Path) -> Result<Self, DictError> {
-        let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
-        Ok(Self::new(Box::new(RawChewingDbm::new(store))))
-    }
-
-    /// Opens `path` when it is a readable table; otherwise empty —
-    /// upstream `pinyin_init` ignores a failed `PunctTable::attach`.
-    #[must_use]
-    pub fn open_optional(path: &Path) -> Self {
-        if !path.is_file() {
-            return Self::empty();
-        }
-        Self::open(path).unwrap_or_else(|_| Self::empty())
-    }
-
     /// Whether a table file is open behind this handle.
     #[must_use]
-    pub fn is_open(&self) -> bool {
+    pub const fn is_open(&self) -> bool {
         self.dbm.is_some()
     }
 
@@ -91,6 +70,29 @@ impl PunctTable {
             Some(value) if !value.is_empty() => decode_puncts(&value),
             _ => Ok(Vec::new()),
         }
+    }
+}
+
+impl PunctTable {
+    /// Opens a punct DBM lazily (no scan). `punct.bin` is a KC
+    /// **`TreeDB`** / Tkrzw **`TreeDBM`** — the plain read-only open.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the file cannot be opened read-only.
+    pub fn open(path: &Path) -> Result<Self, DictError> {
+        let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
+        Ok(Self::new(RawChewingDbm::new(store)))
+    }
+
+    /// Opens `path` when it is a readable table; otherwise empty —
+    /// upstream `pinyin_init` ignores a failed `PunctTable::attach`.
+    #[must_use]
+    pub fn open_optional(path: &Path) -> Self {
+        if !path.is_file() {
+            return Self::empty();
+        }
+        Self::open(path).unwrap_or_else(|_| Self::empty())
     }
 }
 
@@ -126,7 +128,7 @@ mod tests {
             &self,
             _lo: &[u8],
             _hi: Option<&[u8]>,
-            _visit: &mut crate::chewing_table::RowVisitor<'_>,
+            _visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
         ) -> Result<(), DictError> {
             unreachable!("the punct reader never walks")
         }
@@ -134,7 +136,7 @@ mod tests {
 
     #[test]
     fn an_empty_table_answers_nothing() {
-        let table = PunctTable::empty();
+        let table = PunctTable::<MemoryDbm>::empty();
         assert!(!table.is_open());
         assert!(table.punctuations(0x0100_0295).unwrap().is_empty());
         assert!(!PunctTable::open_optional(std::path::Path::new("/no/such/punct.bin")).is_open());
@@ -147,7 +149,7 @@ mod tests {
         let value = encode_puncts(&["，", "。"]);
         dbm.put(token.to_le_bytes().to_vec(), value);
 
-        let table = PunctTable::new(Box::new(dbm));
+        let table = PunctTable::new(dbm);
         let result = table.punctuations(token).unwrap();
         assert_eq!(result, vec!["，", "。"]);
     }
@@ -155,7 +157,7 @@ mod tests {
     #[test]
     fn lookup_miss_returns_empty() {
         let dbm = MemoryDbm::new();
-        let table = PunctTable::new(Box::new(dbm));
+        let table = PunctTable::new(dbm);
         let result = table.punctuations(0x0100_0295).unwrap();
         assert!(result.is_empty());
     }
@@ -164,7 +166,7 @@ mod tests {
     fn malformed_value_does_not_panic() {
         let dbm = MemoryDbm::new();
         dbm.put(0x0100_0295_u32.to_le_bytes().to_vec(), vec![0xFF; 3]);
-        let table = PunctTable::new(Box::new(dbm));
+        let table = PunctTable::new(dbm);
         assert!(table.punctuations(0x0100_0295).is_err());
     }
 }

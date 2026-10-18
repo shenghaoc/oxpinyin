@@ -1017,7 +1017,7 @@ mod tests {
 
     #[test]
     fn empty_and_missing_ranges_remain_empty_after_buffer_reuse() {
-        use crate::{BdbStore, ReadStore, WriteStore};
+        use crate::{BdbStore, ReadStore, WriteStore, WriteTxn};
         use std::ops::Bound::{Excluded, Included, Unbounded};
         let store = BdbStore::create_in_memory().unwrap();
         assert!(store.is_empty("rows").unwrap());
@@ -1030,7 +1030,7 @@ mod tests {
             ] {
                 let mut count = 0;
                 store
-                    .range("rows", lo, hi, &mut |_, _| {
+                    .range("rows", lo, hi, |_, _| {
                         count += 1;
                         Ok(())
                     })
@@ -1039,7 +1039,7 @@ mod tests {
             }
             let mut seen = Vec::new();
             store
-                .range("rows", Included(b"a"), Unbounded, &mut |key, value| {
+                .range("rows", Included(b"a"), Unbounded, |key, value| {
                     seen.push((key.to_vec(), value.to_vec()));
                     Ok(())
                 })

@@ -54,7 +54,7 @@ use oxpinyin_store::BdbStore;
 use oxpinyin_store::KcStore;
 #[cfg(feature = "tkrzw")]
 use oxpinyin_store::TkrzwStore;
-use oxpinyin_store::{ReadStore, WriteStore};
+use oxpinyin_store::{ReadStore, WriteStore, WriteTxn};
 
 const SCENARIOS: [&str; 5] = [
     "bulk_load",
@@ -405,7 +405,7 @@ fn measure_prefix_scans<S: ReadStore>(store: &S, cfg: &Config) -> (u64, u64, u64
                 BIGRAM,
                 Bound::Included(&lo[..]),
                 Bound::Excluded(&hi[..]),
-                &mut |key, value| {
+                |key, value| {
                     rows += 1;
                     bigram_sum = fold_bytes(fold_bytes(bigram_sum, key), value);
                     Ok(())
@@ -422,7 +422,7 @@ fn measure_prefix_scans<S: ReadStore>(store: &S, cfg: &Config) -> (u64, u64, u64
                 PRON,
                 Bound::Included(&lo[..]),
                 Bound::Excluded(&hi[..]),
-                &mut |key, value| {
+                |key, value| {
                     rows += 1;
                     pron_sum = fold_bytes(fold_bytes(pron_sum, key), value);
                     Ok(())
@@ -439,7 +439,7 @@ fn measure_full_scan<S: ReadStore>(store: &S, table: &str) -> (u64, u64, u64) {
     let mut key_bytes = 0_u64;
     let mut value_sum = 0_u64;
     store
-        .for_each(table, &mut |key, value| {
+        .for_each(table, |key, value| {
             rows += 1;
             key_bytes += key.len() as u64;
             value_sum = fold_bytes(value_sum, value);
@@ -481,7 +481,7 @@ fn fresh<S: WriteStore>(path: &Path) -> S {
 fn count_rows<S: ReadStore>(store: &S, table: &str) -> u64 {
     let mut rows = 0_u64;
     store
-        .for_each(table, &mut |_key, _value| {
+        .for_each(table, |_key, _value| {
             rows += 1;
             Ok(())
         })
