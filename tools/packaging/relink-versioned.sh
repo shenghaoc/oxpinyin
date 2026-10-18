@@ -115,11 +115,15 @@ BACKEND_LIBS="$(backend_libs "$BACKEND")"
 TMP_DEST="$(mktemp "${DEST%.so*}.relink.XXXXXX")"
 trap 'rm -f "$TMP_DEST"' EXIT
 
+# --whole-archive includes every member of the staticlib, all of
+# compiler_builtins among them, and GNU ld keeps every section of an
+# included member unless told to collect. --gc-sections drops the sections
+# nothing reaches from the version script's exports and the constructors.
 # shellcheck disable=SC2086
 "$CC_CMD" -shared -o "$TMP_DEST" \
   -Wl,-soname,"$SONAME" \
   -Wl,--version-script="$VER" \
-  -Wl,--whole-archive "$STATICLIB" -Wl,--no-whole-archive \
+  -Wl,--gc-sections -Wl,--whole-archive "$STATICLIB" -Wl,--no-whole-archive \
   $GLIB_LIBS $BACKEND_LIBS \
   -lpthread -ldl -lm
 
