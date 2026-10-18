@@ -53,8 +53,7 @@
 # `skipped`), which required status checks treat as satisfied, and the
 # always-running `ci-aggregate` job at the tail reports on every push
 # and PR no matter what changed — it is the shape a required check
-# needs. Main's required set is `ci-aggregate`, `trailer-lint`, and
-# `trailer-test` (the last two from commit-trailers.yml). `ci-aggregate`
+# needs. Main's required set is `ci-aggregate`. `ci-aggregate`
 # fails when any lane that should have run failed or was cancelled,
 # and when a gated-out lane was skipped despite its paths changing.
 # The path-set bypass (a PR editing ci.yml to skip its own lanes) is
@@ -459,9 +458,8 @@ jobs:
       # was in the tree; that backend now binds a system C library, so
       # heed, heed-types and bincode are all gone.
 
-  # One of the three required checks (with `trailer-lint` and
-  # `trailer-test` from commit-trailers.yml): always runs, always
-  # reports. Red only when a lane that should have run ended as
+  # The required aggregate check: always runs, always reports. Red only
+  # when a lane that should have run ended as
   # anything but success, or when the path gate said run but a lane
   # was skipped anyway (a broken `if`, or a PR narrowing its own
   # gates). `skipped` with run=false is green: those lanes had no

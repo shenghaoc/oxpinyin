@@ -6,8 +6,8 @@ clippy `-D warnings` + Lizard), `test` (+ C++ smoke gate + live-typing
 differential), `test-macos` / `test-windows`,
 `deny`, `fuzz` (pinned nightly; builds all ten targets, ~10s smoke run of
 each) and `ci-aggregate`. Fuzzing left the PR gate on 2026-09-23: every
-target builds and soaks nightly (`verify-nightly.yml` fuzz-soak). Main's required checks are `ci-aggregate`,
-`trailer-lint`, and `trailer-test`.
+target builds and soaks nightly (`verify-nightly.yml` fuzz-soak). Main's
+required check is `ci-aggregate`.
 Estimated costs below are rough additive deltas on a cached runner.
 
 ## Tier 1 — FAST PR GATE (every push/PR, ~+2 min over today)

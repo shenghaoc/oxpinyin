@@ -76,26 +76,11 @@ Anything outside those three is a defect to be reverted, not a divergence to
 be recorded. The policy carries the classes, their citations, and a
 classification of every existing register entry.
 
-## Attribution
+## Contributor responsibility
 
-Trailer form: `Assisted-by: <AgentName>:<model-id>`, where `<AgentName>` is the
-tool or harness you are running in, not the model's vendor (e.g. `Codex:qwen3.8-max`).
-Nothing after the model.
-
-Every agent that authored or helped write a commit adds its own Assisted-by
-line, once per agent and model. A different agent, or the same agent running
-a different model, gets a separate line; an identical line is never repeated.
-This is the only trailer this repository asks for. Leave all other trailers
-exactly as your tool produces them by default, and do not add, remove, or
-change any of them because of this file.
-
-The linter checks the shape of these lines on every non-merge PR commit (R2)
-and at commit time via `.githooks/commit-msg` (R2):
-
-- **R2** — `Assisted-by:` house form: `AGENT:MODEL` shape with nothing after
-  the model; the `MODEL` token must contain at least one ASCII letter (a bare
-  version number names no model — `Grok:4.6` fails, `Grok:grok-4.6` passes);
-  no placeholder text; no duplicate lines (set semantics).
+Every contributor remains responsible for understanding, reviewing, testing,
+and maintaining the changes they submit, including changes produced with
+assistance from any tool.
 
 ## STOP → do not improvise
 

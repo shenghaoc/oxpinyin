@@ -1,6 +1,0 @@
-#!/bin/sh
-# commit-msg hook — delegates to the canonical commit-trailer linter so the
-# local hook and CI can never disagree (single source of truth). Both run R2.
-set -eu
-repo_root=$(git rev-parse --show-toplevel)
-exec "$repo_root/.github/scripts/lint-commits.sh" --hook "$1"
