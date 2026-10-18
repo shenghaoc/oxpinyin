@@ -3156,6 +3156,27 @@ impl<S: WriteStore> GenericUserStore<S> {
         &mut self,
         compacted: &[u8],
     ) -> Result<SaveReport, UserStoreError> {
+        self.save_reporting_inner(compacted, None)
+    }
+
+    /// [`Self::save_reporting_compacted`] with the current-on-disk baseline
+    /// hook. The store calls it once per selected system library, in the
+    /// pin's `_write_files` order, immediately before that library's log is
+    /// staged; the hook maps the current chunk and emits any layout
+    /// critical at that point (`pinyin.cpp:956`, `zhuyin.cpp:589`).
+    pub fn save_reporting_with_baseline(
+        &mut self,
+        compacted: &[u8],
+        baseline: &mut dyn FnMut(u8) -> crate::persistence::SaveBaseline,
+    ) -> Result<SaveReport, UserStoreError> {
+        self.save_reporting_inner(compacted, Some(baseline))
+    }
+
+    fn save_reporting_inner(
+        &mut self,
+        compacted: &[u8],
+        baseline: Option<&mut dyn FnMut(u8) -> crate::persistence::SaveBaseline>,
+    ) -> Result<SaveReport, UserStoreError> {
         let mut report = SaveReport::default();
         if let Some(target) = self.inner.libpinyin.clone() {
             let Some(dir) = target.dir.as_deref() else {
@@ -3169,19 +3190,26 @@ impl<S: WriteStore> GenericUserStore<S> {
                 .as_ref()
                 .map(|db| db.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
             let kept = target.index_file_keys();
-            report = crate::persistence::save_with_bigram_reporting(
-                dir,
-                crate::persistence::SaveSource {
-                    state: &state,
-                    kept: &kept,
-                    compacted,
-                },
-                &originals,
-                &target.versions,
-                target.open_counter,
-                bigram_db.as_deref(),
-                target.law == crate::persistence::UserConfLaw::Zhuyin,
-            )?;
+            {
+                let mut reporting = crate::persistence::SaveReporting {
+                    versions: &target.versions,
+                    open_counter: target.open_counter,
+                    bigram_db: bigram_db.as_deref(),
+                    interleaved: target.law == crate::persistence::UserConfLaw::Zhuyin,
+                    lenient: true,
+                    baseline,
+                };
+                report = crate::persistence::save_reporting(
+                    dir,
+                    crate::persistence::SaveSource {
+                        state: &state,
+                        kept: &kept,
+                        compacted,
+                    },
+                    &originals,
+                    &mut reporting,
+                )?;
+            }
             drop(bigram_db);
         }
         let mut cache = self.count_cache();

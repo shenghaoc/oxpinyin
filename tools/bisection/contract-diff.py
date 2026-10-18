@@ -67,7 +67,8 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
 def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
-         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), stderr_varies=False, abort_logs=None):
+         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), stderr_varies=False, abort_logs=None,
+         fatal=False, both_abort=False):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -83,7 +84,11 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     abort that comes after the pin has written some of its profile.
     `abort_logs=<list>` overrides the expected subject `logs` list when the
     operation already logged a common entry earlier (e.g. the init critical
-    before the candidate warning). `cells`
+    before the candidate warning). `fatal=True` runs both sides with
+    `G_DEBUG=fatal-criticals`; `both_abort=True` (implied fatal) expects both
+    sides to die of SIGABRT and compares the raw stderr (GLib process id and
+    timestamp normalised) and the partial user directory instead of a
+    surviving subject result. `cells`
     names the DBM cells whose storage format the case's fixture reproduces;
     a case skipped on the others prints `SKIP` instead of a verdict.
     `either=True` (with both `abort=` and `crash=`) is for a fixture whose
@@ -102,9 +107,11 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     difference stays a DIFFER. A MATCH is reported as such on any host."""
     def register(fn):
         assert not either or (abort is not NO_ABORT and crash is not None), name
+        assert not both_abort or fatal, name
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
                            crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
-                           stderr_varies=stderr_varies, abort_logs=abort_logs)
+                           stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
+                           both_abort=both_abort)
         return fn
     return register
 
@@ -4382,6 +4389,112 @@ def crash_layout_init_probe(how, library='gbk_char.bin'):
         return {'init': bool(k.init(system=system))}
     return probe
 
+def log_walk(data):
+    """The `.dbin` chunk's first MODIFY_HEADER totals and record counts.
+    Record layout: type(4), token(4), then ADD/REMOVE len(2)+data,
+    MODIFY oldlen(2)+newlen(2)+old+new, MODIFY_HEADER len(2)+old+new
+    (`phrase_index_logger.h`, `next_record`)."""
+    payload = data[8:]
+    pos = 0
+    header = None
+    counts = {'add': 0, 'remove': 0, 'modify': 0, 'header': 0}
+    while pos + 10 <= len(payload):
+        typ = int.from_bytes(payload[pos:pos + 4], 'little')
+        if typ == 4:
+            ln = int.from_bytes(payload[pos + 8:pos + 10], 'little')
+            if pos + 10 + 2 * ln > len(payload):
+                break
+            if header is None:
+                header = [int.from_bytes(payload[pos + 10:pos + 14], 'little'),
+                          int.from_bytes(payload[pos + 14:pos + 18], 'little')]
+            counts['header'] += 1
+            pos += 10 + 2 * ln
+        elif typ in (1, 2):
+            ln = int.from_bytes(payload[pos + 8:pos + 10], 'little')
+            counts['add' if typ == 1 else 'remove'] += 1
+            pos += 10 + ln
+        elif typ == 3:
+            old = int.from_bytes(payload[pos + 8:pos + 10], 'little')
+            new = int.from_bytes(payload[pos + 10:pos + 12], 'little')
+            counts['modify'] += 1
+            pos += 12 + old + new
+        else:
+            break
+    return header, counts
+
+
+def save_replacement_probe(initial, replacement):
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        if initial == 'invalid':
+            break_library(k, system, 'merged.bin', 'nonzero-layout')
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        _, _, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        out = {'train': train_once(k, ctx, parse, text, train_args)}
+        if replacement != 'same':
+            path = Path(system, 'merged.bin')
+            if replacement == 'invalid':
+                data = nonzero_layout_chunk()
+            elif replacement == 'valid':
+                data = Path(k.data, 'merged.bin').read_bytes()
+            else:
+                # A different valid chunk: the gbk sub-index's bytes under
+                # the merged path. Its items and total differ from merged's.
+                data = Path(k.data, 'gbk_char.bin').read_bytes()
+            tmp = Path(str(path) + '.new')
+            tmp.write_bytes(data)
+            os.replace(tmp, path)
+        out['save'] = bool(k.fn('save', B, P)(ctx))
+        data = Path(k.user, 'merged.dbin').read_bytes()
+        header, counts = log_walk(data)
+        out['merged'] = [len(data), hashlib.sha256(data).hexdigest(), header]
+        out['records'] = counts
+        return out
+    return probe
+
+
+def save_changed_with_override_probe():
+    """A loaded user override of a gb_char item plus a different valid gb_char
+    chunk on disk: the save diff must union the disk, the loaded original and
+    the user override (`diff_records_against`)."""
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        payload = Path(k.data, 'gb_char.bin').read_bytes()[8:]
+        word = lambda offset: int.from_bytes(payload[offset:offset + 4], 'little')
+        total, index, content = word(0), word(4), word(8)
+        token = 0x01001225
+        offset = content + word(index + (token & 0x00FFFFFF) * 4)
+        length, prons = payload[offset:offset + 2]
+        size = 6 + length * 4 + prons * (length * 2 + 4)
+        old = payload[offset:offset + size]
+        assert length == 1 and int.from_bytes(old[6:10], 'little') == ord('你')
+        new = old[:6] + ord('龘').to_bytes(4, 'little') + old[10:]
+        record = ((3).to_bytes(4, 'little') +
+                  (token & 0x00FFFFFF).to_bytes(4, 'little') +
+                  len(old).to_bytes(2, 'little') + len(new).to_bytes(2, 'little') +
+                  old + new)
+        _write_user_conf(k)
+        _write_log(k, _modify_header(0, total, total) + record, 'gb_char.dbin')
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        _, _, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        out = {'train': train_once(k, ctx, parse, text, train_args)}
+        data = Path(k.data, 'gbk_char.bin').read_bytes()
+        path = Path(system, 'gb_char.bin')
+        tmp = Path(str(path) + '.new')
+        tmp.write_bytes(data)
+        os.replace(tmp, path)
+        out['save'] = bool(k.fn('save', B, P)(ctx))
+        data = Path(k.user, 'gb_char.dbin').read_bytes()
+        header, counts = log_walk(data)
+        out['dbin'] = [len(data), hashlib.sha256(data).hexdigest(), header]
+        out['records'] = counts
+        return out
+    return probe
+
 
 for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
@@ -4395,6 +4508,78 @@ for _mode in ('pinyin', 'zhuyin'):
     # arm of row 76), so the answer is the matched control.
     case('short-chunk-layout' + _suffix, mode=_mode, stderr=True,
          control=True)(crash_layout_init_probe('short-chunk'))
+    case('save-replacement-valid-to-different-valid-with-user-override' +
+         ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode, stderr=True,
+         userdir=True)(save_changed_with_override_probe())
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    for _name, _initial, _replacement in (
+            ('save-replacement-valid-to-invalid', 'valid', 'invalid'),
+            ('save-replacement-invalid-to-valid', 'invalid', 'valid'),
+            ('save-replacement-valid-to-different-valid', 'valid', 'different'),
+            ('save-unchanged-valid', 'valid', 'same'),
+            ('save-unchanged-layout-failed', 'invalid', 'same')):
+        case(_name + _suffix, mode=_mode, stderr=True, userdir=True)(
+            save_replacement_probe(_initial, _replacement))
+    # `_write_files` emits the critical synchronously; under fatal mode both
+    # sides die before the failing library's log and after the earlier
+    # libraries' writes (pinyin `.tmp`s; zhuyin already-renamed `.dbin`s).
+    case('save-fatal-valid-to-invalid' + _suffix, mode=_mode, fatal=True,
+         both_abort=True, stderr=True, userdir=True)(
+        save_replacement_probe('valid', 'invalid'))
+
+
+def save_missing_system_probe():
+    """A modified save after the first system chunk is removed. The pin
+    prints `mmap %s failed!` and dies in the empty chunk's
+    SubPhraseIndex::load (row 76); the subject prints the line and saves,
+    the registered row 76 answer."""
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        _, _, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        out = {'train': train_once(k, ctx, parse, text, train_args)}
+        Path(system, 'gb_char.bin').unlink()
+        out['save'] = bool(k.fn('save', B, P)(ctx))
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    case('crash-save-missing-system' + _suffix, mode=_mode,
+         crash={'save': True}, control=True)(save_missing_system_probe())
+
+
+def save_unloaded_replacement_probe():
+    """Unload a system library, replace its file with a different valid
+    chunk, then save. `_write_files` skips a library whose `get_range` has no
+    sub-index (`pinyin.cpp:928-933`, `zhuyin.cpp:563-568`), so the pin never
+    remaps the unloaded library; the subject must answer `Keep` for it."""
+    def probe(k):
+        chunk_limits()
+        system = private_system(k)
+        ctx = k.init(system=system)
+        assert ctx, 'init failed'
+        _, _, parse, text, train_args = LIBRARY_FACADES[k.mode]
+        out = {'train': train_once(k, ctx, parse, text, train_args)}
+        out['unload'] = bool(k.fn('unload_phrase_library', B, P, C.c_ubyte)(ctx, 2))
+        path = Path(system, 'gbk_char.bin')
+        tmp = Path(str(path) + '.new')
+        tmp.write_bytes(Path(k.data, 'merged.bin').read_bytes())
+        os.replace(tmp, path)
+        out['save'] = bool(k.fn('save', B, P)(ctx))
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
+    case('save-unloaded-replacement' + _suffix, mode=_mode, stderr=True,
+         userdir=True)(save_unloaded_replacement_probe())
 for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
     for _how in ('second-separator', 'third-separator'):
@@ -4921,8 +5106,11 @@ for _mode in ('pinyin', 'zhuyin'):
 
 def user_dir_listing(scratch, before):
     """What the run left in the user directories it created under `scratch`:
-    every file by name, `user.conf` by text, library chunks by size. The
-    directories are removed."""
+    every file by name, `user.conf` by text, chunk logs and their `.tmp`
+    siblings by size and SHA-256, DBM containers by size. The directories
+    are removed. The chunk hashes make a save's `.dbin` bytes and its
+    partial writes exact comparisons; the DBM containers are value-level in
+    this implementation, so only their size is held."""
     listing = {}
     for entry in sorted(set(os.listdir(scratch)) - before):
         path = os.path.join(scratch, entry)
@@ -4932,8 +5120,19 @@ def user_dir_listing(scratch, before):
             file = os.path.join(path, name)
             if name == 'user.conf':
                 listing[name] = Path(file).read_text().replace('\n', '|')
-            elif os.path.isfile(file) and not name.startswith('user_') and name.endswith(('.bin', '.dbin')):
-                listing[name] = os.path.getsize(file)
+            elif os.path.isfile(file) and (name.endswith('.tmp') or
+                                           (not name.startswith('user_') and
+                                            name.endswith(('.bin', '.dbin')))):
+                # Chunk logs and their partial `.tmp` siblings are compared
+                # byte-for-byte; a replaced system chunk makes those bytes
+                # the save's observable result.
+                listing[name] = [os.path.getsize(file),
+                                 hashlib.sha256(Path(file).read_bytes()).hexdigest()]
+            elif os.path.isfile(file):
+                # The DBM containers are value-level in this implementation;
+                # the pin and subject agree on their size and records, not
+                # their backend byte layout.
+                listing[name] = [os.path.getsize(file)]
             else:
                 listing[name] = None
         shutil.rmtree(path, ignore_errors=True)
@@ -10430,10 +10629,29 @@ def run_axis_c(args, names):
         return 0
     return 1 if totals['case_differ'] else 0
 
+_FATAL_GLIB_PREFIX = re.compile(
+    r'\*\* \(process:\d+\): (CRITICAL|WARNING|MESSAGE|ERROR|DEBUG|INFO) \*\*: '
+    r'\d\d:\d\d:\d\d\.\d+: ')
+
+
+def fatal_stderr(text):
+    """Drop GLib's process id and timestamp from a fatal run's stderr: they
+    differ between the two processes, while the severity and the message are
+    the diagnostics under comparison."""
+    return _FATAL_GLIB_PREFIX.sub(r'** \1 **: ', text)
+
+
 def matches(spec, pin, subject):
     """The verdict predicate shared by the driver and gcov measurement tier."""
     as_abort = spec['abort'] is not NO_ABORT and (not spec['either'] or pin['exit'] == -6)
-    if spec['crash'] is not None and not as_abort:
+    if spec['both_abort']:
+        # A synchronous save-time critical makes both sides die of SIGABRT;
+        # the comparison is the signal, the raw stderr and the partial
+        # profile left behind, not a surviving subject result.
+        same = pin['exit'] == -6 and subject['exit'] == -6 and \
+            (not spec['stderr'] or fatal_stderr(pin['stderr']) == fatal_stderr(subject['stderr'])) and \
+            (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
+    elif spec['crash'] is not None and not as_abort:
         shown = subject['result'] or {}
         same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
             (spec['stderr_varies'] or pin['stderr'] == subject['stderr']) and \
@@ -10538,8 +10756,11 @@ def main():
                 pin_so, subject_so = lib / 'libzhuyin.so', args.zhuyin_so
             else:
                 pin_so, subject_so = lib / 'libpinyin.so', args.pinyin_so
-            pin = run_worker(spec['mode'], pin_so.resolve(), data, n, scratch)
-            subject = run_worker(spec['mode'], subject_so.resolve(), data, n, scratch)
+            fatal_env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else None
+            pin = run_worker(spec['mode'], pin_so.resolve(), data, n, scratch,
+                             extra_env=fatal_env)
+            subject = run_worker(spec['mode'], subject_so.resolve(), data, n, scratch,
+                                 extra_env=fatal_env)
             if args.observations:
                 with args.observations.open('a') as capture:
                     capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')

@@ -252,11 +252,7 @@ pub fn save_context(context: *mut PinyinContext) -> bool {
     {
         crate::locale::pin_table_info_locale();
     }
-    let outcome = ctx.save_user();
-    // The pin's save diffs every loaded system library again (`:956`); a
-    // header-accepted chunk whose layout fails emits its critical there,
-    // before the chunk header writes below.
-    log_layout_faults(ctx);
+    let outcome = ctx.save_user(&mut |fault| crate::ffi::log_critical(&fault.critical_message()));
     match outcome {
         // Class (c), `memory_chunk.h:543`/`:547`: a chunk file's header
         // write failed and the pin `assert`s there. The save fails and

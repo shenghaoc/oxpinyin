@@ -117,7 +117,63 @@ pub struct SystemLibrary {
     pub mapped: Option<oxpinyin_data::phrase_library::PhraseLibrary>,
 }
 
+/// What a save's current-on-disk remap says about one selected system
+/// library. `Keep` is the safe fallback for a failure that is not a
+/// header-accepted layout fault (the existing init-snapshot behavior);
+/// `Unchanged` means the current chunk is byte-identical to the loaded
+/// snapshot, so the authoritative fast path still applies; `Changed`
+/// carries the current on-disk sub-index to diff against the live state.
+pub enum SaveBaseline {
+    /// A mapping failure that is not a header-accepted layout fault: keep
+    /// the existing init-snapshot behavior. This is the registered row 76
+    /// answer at the save site: the caller writes `mmap %s failed!`, the
+    /// save continues, and the pin's empty-chunk `SubPhraseIndex::load`
+    /// SIGSEGV is not reproduced.
+    Keep,
+    /// The current chunk is byte-identical to the loaded snapshot; the
+    /// authoritative override-only fast path applies.
+    Unchanged,
+    /// The current chunk differs and is the old side of the full union
+    /// diff against the live sub-index.
+    Changed(SystemLibrary),
+}
+
 impl SystemLibrary {
+    /// A current on-disk chunk as a diff baseline, with items read through
+    /// the shared immutable mapping.
+    #[must_use]
+    pub fn from_library(library: oxpinyin_data::phrase_library::PhraseLibrary) -> Self {
+        Self {
+            total: library.total_freq(),
+            range_end: library.token_range().end,
+            items: BTreeMap::new(),
+            mapped: Some(library),
+        }
+    }
+
+    /// The empty sub-index the pin's failed `SubPhraseIndex::load` leaves:
+    /// the local total it read, no items, `get_range` `1..1`.
+    #[must_use]
+    pub fn failed(total: u32) -> Self {
+        Self {
+            total,
+            range_end: 1,
+            items: BTreeMap::new(),
+            mapped: None,
+        }
+    }
+
+    /// Slots with a resident item, inline or mapped. The diff walks the
+    /// union of these and the live state; slot 0 is outside the pin's
+    /// `get_range` (`1..range_end`) and is filtered by the caller.
+    pub(crate) fn slots(&self) -> impl Iterator<Item = u32> + '_ {
+        self.items.keys().copied().chain(
+            self.mapped
+                .iter()
+                .flat_map(|library| library.items().map(|(slot, _)| slot)),
+        )
+    }
+
     pub(crate) fn contains_item(&self, slot: u32) -> bool {
         self.items.contains_key(&slot)
             || self
@@ -1509,6 +1565,21 @@ pub(crate) struct SaveSource<'a> {
     pub(crate) compacted: &'a [u8],
 }
 
+/// The save's I/O parameters and its optional current-on-disk baseline
+/// hook. The hook is called once per selected system library, in the pin's
+/// `_write_files` order, immediately before that library's `.tmp` is
+/// written; the facade maps the current chunk there, so a layout critical
+/// is emitted after the earlier libraries' writes and before the failing
+/// one (`pinyin.cpp:956`, `zhuyin.cpp:589`).
+pub(crate) struct SaveReporting<'a, 'b> {
+    pub(crate) versions: &'a SystemVersions,
+    pub(crate) open_counter: i32,
+    pub(crate) bigram_db: Option<&'a DefaultUserBigramDb>,
+    pub(crate) interleaved: bool,
+    pub(crate) lenient: bool,
+    pub(crate) baseline: Option<&'b mut dyn FnMut(u8) -> SaveBaseline>,
+}
+
 /// [`save_with_bigram`] for a session, whose `source` carries the index
 /// keys its tables hold.
 ///
@@ -1523,9 +1594,23 @@ pub(crate) fn save_session(
     open_counter: i32,
     bigram_db: Option<&DefaultUserBigramDb>,
 ) -> Result<(), PersistenceError> {
+    let mut reporting = SaveReporting {
+        versions,
+        open_counter,
+        bigram_db,
+        interleaved: false,
+        lenient: false,
+        baseline: None,
+    };
     let mut staged = Staged::default();
-    let result = stage_all(dir, source, originals, bigram_db, false, &mut staged);
-    finish_save(dir, versions, open_counter, &staged.pending, result)
+    let result = stage_all(dir, source, originals, &mut reporting, &mut staged);
+    finish_save(
+        dir,
+        reporting.versions,
+        reporting.open_counter,
+        &staged.pending,
+        result,
+    )
 }
 
 /// The files of a save in the pin's rename order (`_rename_files`,
@@ -1586,6 +1671,7 @@ fn libraries_in_pin_order(layout: &UserFileLayout) -> Vec<(u8, &FileName, Librar
 /// fails: the pin `assert`s and dies right there, so this is the one
 /// failure the save does not carry past — no rename pass and no marker
 /// follow it, and the caller logs the point.
+#[cfg(all(test, target_os = "linux"))]
 pub(crate) fn save_with_bigram_reporting(
     dir: &Path,
     source: SaveSource<'_>,
@@ -1595,20 +1681,38 @@ pub(crate) fn save_with_bigram_reporting(
     bigram_db: Option<&DefaultUserBigramDb>,
     interleaved: bool,
 ) -> Result<SaveReport, PersistenceError> {
+    let mut reporting = SaveReporting {
+        versions,
+        open_counter,
+        bigram_db,
+        interleaved,
+        lenient: true,
+        baseline: None,
+    };
+    save_reporting(dir, source, originals, &mut reporting)
+}
+
+/// [`save_with_bigram_reporting`] with the current-on-disk baseline hook.
+pub(crate) fn save_reporting(
+    dir: &Path,
+    source: SaveSource<'_>,
+    originals: &SystemOriginals,
+    reporting: &mut SaveReporting<'_, '_>,
+) -> Result<SaveReport, PersistenceError> {
     // `_write_files` writes every file whatever the one before did
     // (`pinyin.cpp:940-1020`): a write that fails leaves no `.tmp` and the
     // next file is written anyway.
     let mut staged = Staged {
-        immediate: interleaved,
+        immediate: reporting.interleaved,
         ..Staged::default()
     };
-    stage_all(dir, source, originals, bigram_db, true, &mut staged)?;
+    stage_all(dir, source, originals, reporting, &mut staged)?;
     // `_rename_files` then renames every file of the set in its own order and
     // prints the ones that fail (`:1025-1130`), a file whose write failed
     // among them: the unaffected files are updated and the profile can mix
     // two saves.
     let mut outcome = SaveReport::default();
-    if interleaved {
+    if reporting.interleaved {
         // `zhuyin_save` renames each file as soon as it has written it.
         outcome.renames_failed = staged.failed;
     } else {
@@ -1620,12 +1724,11 @@ pub(crate) fn save_with_bigram_reporting(
             }
         }
     }
-    if write_marker(dir, versions, open_counter).is_err() {
+    if write_marker(dir, reporting.versions, reporting.open_counter).is_err() {
         outcome.user_conf_write_failed = Some(dir.join(USER_CONF));
     }
     Ok(outcome)
 }
-
 /// The files a save has written to `.tmp` siblings. libpinyin writes them
 /// all (`_write_files`) and then renames them all (`_rename_files`); libzhuyin
 /// renames each as soon as it is written (`zhuyin_save`), so a name two roles
@@ -1675,17 +1778,16 @@ fn stage_all(
     dir: &Path,
     source: SaveSource<'_>,
     originals: &SystemOriginals,
-    bigram_db: Option<&DefaultUserBigramDb>,
-    lenient: bool,
+    reporting: &mut SaveReporting<'_, '_>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     // `_write_files` writes the libraries by sub-index, then the user pinyin
     // index, the user phrase index and the bigram (`pinyin.cpp:933-1020`):
     // where a `table.conf` gives two roles one name, the last writer's
     // contents are what the first rename moves into place.
-    stage_rest(dir, source, originals, lenient, staged)?;
+    stage_rest(dir, source, originals, reporting, staged)?;
     let state = source.state;
-    if let Some(db) = bigram_db {
+    if let Some(db) = reporting.bigram_db {
         let final_path = dir.join(UserDbm::Bigram.file_name());
         let tmp = dir.join(format!("{}.tmp", UserDbm::Bigram.file_name()));
         remove_dbm_sidecars(dir, &tmp);
@@ -1693,10 +1795,10 @@ fn stage_all(
         if written.is_ok() {
             remove_dbm_sidecars(dir, &tmp);
         }
-        tolerate(lenient, staged.finish((tmp, final_path), written))?;
+        tolerate(reporting.lenient, staged.finish((tmp, final_path), written))?;
         return Ok(());
     }
-    tolerate(lenient, stage_user_bigram(dir, &state.bigram))?;
+    tolerate(reporting.lenient, stage_user_bigram(dir, &state.bigram))?;
     Ok(())
 }
 
@@ -1720,7 +1822,7 @@ fn stage_rest(
     dir: &Path,
     source: SaveSource<'_>,
     originals: &SystemOriginals,
-    lenient: bool,
+    reporting: &mut SaveReporting<'_, '_>,
     staged: &mut Staged,
 ) -> Result<(), PersistenceError> {
     let SaveSource {
@@ -1750,23 +1852,37 @@ fn stage_rest(
                         .get(&nibble)
                         .cloned()
                         .unwrap_or_default();
-                    let records = diff_records_with_new_total(
-                        nibble,
-                        original,
-                        &overrides,
-                        compacted.contains(&nibble).then_some(0),
-                    )?;
+                    // The pin maps the current chunk at this point in the
+                    // loop (`pinyin.cpp:956`), after the earlier libraries'
+                    // files are written. The hook maps it and, for a
+                    // layout fault, emits the critical here.
+                    let baseline = reporting.baseline.as_mut().map(|hook| (**hook)(nibble));
+                    let records = match baseline {
+                        Some(SaveBaseline::Changed(disk)) => diff_records_against(
+                            nibble,
+                            original,
+                            &overrides,
+                            &disk,
+                            compacted.contains(&nibble).then_some(0),
+                        )?,
+                        _ => diff_records_with_new_total(
+                            nibble,
+                            original,
+                            &overrides,
+                            compacted.contains(&nibble).then_some(0),
+                        )?,
+                    };
                     let payload = encode_log_records(&records)
                         .map_err(|e| PersistenceError::Codec(e.to_string()))?;
                     build_memory_chunk(&payload).map_err(PersistenceError::from)?
                 }
             };
-            tolerate(lenient, stage_chunk(dir, name, &bytes, staged))?;
+            tolerate(reporting.lenient, stage_chunk(dir, name, &bytes, staged))?;
         }
 
         let chewing_rows = chewing_rows(state, originals);
         tolerate(
-            lenient,
+            reporting.lenient,
             stage_dbm(
                 dir,
                 UserDbm::PinyinIndex,
@@ -1778,7 +1894,7 @@ fn stage_rest(
             ),
         )?;
         tolerate(
-            lenient,
+            reporting.lenient,
             stage_dbm(
                 dir,
                 UserDbm::PhraseIndex,
@@ -1876,6 +1992,62 @@ fn diff_records_with_new_total(
         let current = overrides.get(&slot).and_then(|item| item.as_ref());
         let token = slot;
         match (old.as_ref(), current) {
+            (Some(old), Some(new)) => {
+                if old != new {
+                    records.push(LogRecord::Modify {
+                        token,
+                        old_item: journal_record_item(old)?,
+                        new_item: journal_record_item(new)?,
+                    });
+                }
+            }
+            (Some(old), None) => {
+                records.push(LogRecord::Remove {
+                    token,
+                    old_item: journal_record_item(old)?,
+                });
+            }
+            (None, Some(new)) => {
+                records.push(LogRecord::Add {
+                    token,
+                    new_item: journal_record_item(new)?,
+                });
+            }
+            (None, None) => {}
+        }
+    }
+    Ok(records)
+}
+
+/// [`diff_records`] against a changed on-disk sub-index: the pin's
+/// `_write_files` diffs the currently mapped chunk (`old`) against the live
+/// sub-index (`new` = loaded original + user overrides) over the union of
+/// resident slots (`SubPhraseIndex::diff`, `phrase_index.cpp:394-442`).
+fn diff_records_against(
+    _nibble: u8,
+    original: &SystemLibrary,
+    overrides: &BTreeMap<u32, Option<ChunkItem>>,
+    baseline: &SystemLibrary,
+    new_total: Option<u32>,
+) -> Result<Vec<LogRecord>, PersistenceError> {
+    let mut records = vec![LogRecord::ModifyHeader {
+        old_total: baseline.total,
+        new_total: new_total.unwrap_or_else(|| system_new_total(original, overrides)),
+    }];
+    let mut slots = BTreeSet::new();
+    // `SubPhraseIndex::diff` walks `1 .. max(range_begin, range_end)`; slot 0
+    // is outside `get_range` and never emitted.
+    slots.extend(baseline.slots().filter(|slot| *slot >= 1));
+    slots.extend(original.slots().filter(|slot| *slot >= 1));
+    slots.extend(overrides.keys().copied().filter(|slot| *slot >= 1));
+    for slot in slots {
+        let old = baseline.item(slot);
+        let current = match overrides.get(&slot) {
+            Some(item) => item.clone(),
+            None => original.item(slot),
+        };
+        let token = slot;
+        match (old.as_ref(), current.as_ref()) {
             (Some(old), Some(new)) => {
                 if old != new {
                     records.push(LogRecord::Modify {
@@ -3398,6 +3570,31 @@ mod tests {
             empty
         );
         assert!(journal_record_item(&item(&[], 7, &[(vec![1], 5)])).is_err());
+    }
+
+    #[test]
+    fn a_changed_baseline_writes_an_empty_phrase_item_like_the_normal_path() {
+        let originals = originals();
+        let original = originals[&1].clone();
+        let mut baseline = original.clone();
+        let empty = item(&[], 7, &[(vec![], 5), (vec![], 6)]);
+        baseline.items.insert(1, empty.clone());
+        let records = diff_records_against(1, &original, &BTreeMap::new(), &baseline, None)
+            .expect("a changed baseline with an empty phrase");
+        let old_item = records
+            .iter()
+            .find_map(|record| match record {
+                LogRecord::Modify {
+                    token: 1, old_item, ..
+                } => Some(old_item),
+                _ => None,
+            })
+            .expect("modify at slot 1");
+        assert_eq!(
+            old_item,
+            &journal_record_item(&empty).expect("empty phrase"),
+            "the changed-baseline diff writes the item as the normal path does"
+        );
     }
 
     #[test]

@@ -853,6 +853,17 @@ impl PhraseLibrary {
         (offset != 0).then_some(offset)
     }
 
+    /// Whether the mapped chunk is byte-for-byte the same as `other` —
+    /// the full `header + data_len` extent `MemoryChunk::mmap` exposes.
+    /// A save compares the current on-disk chunk against the snapshot the
+    /// session loaded with this, rather than path, size or mtime: a
+    /// replacement may keep all three (`_write_files` remaps the path at
+    /// `pinyin.cpp:956`, `zhuyin.cpp:589`).
+    #[must_use]
+    pub fn byte_identical(&self, other: &Self) -> bool {
+        self.file.as_slice() == other.file.as_slice()
+    }
+
     /// Every `(slot, item)` pair with a resident item, slot order — a
     /// tooling/test surface (upstream never iterates; its reverse
     /// lookup goes through the phrase DBM).

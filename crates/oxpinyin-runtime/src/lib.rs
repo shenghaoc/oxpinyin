@@ -51,7 +51,9 @@ use oxpinyin_data::{
     SystemDictionary,
 };
 use oxpinyin_engine::{ConfigSource, EngineError, Session, StoragePaths};
-use oxpinyin_user::{PinyinKey, UserConfLaw, UserLookup, UserStore, UserStoreError};
+use oxpinyin_user::{
+    PinyinKey, SaveBaseline, SystemLibrary, UserConfLaw, UserLookup, UserStore, UserStoreError,
+};
 
 /// Orders the system and user `suggest_after` rows the way
 /// `_compute_predicted_prefix_candidates` receives them
@@ -761,6 +763,15 @@ impl RuntimeDict {
     #[must_use]
     pub fn compact_layout_failed(&self) -> Vec<u8> {
         self.system.libraries().compact_layout_failed()
+    }
+
+    /// Records layout faults collected by a pure-Rust save so the facade's
+    /// `take_layout_faults` surface can carry them; the C ABI's synchronous
+    /// hook logs them instead and does not call this.
+    pub fn record_layout_faults(&self, faults: impl IntoIterator<Item = LayoutFault>) {
+        for fault in faults {
+            self.system.libraries().record_layout_fault(fault);
+        }
     }
 
     /// The system library files absent when the runtime opened, in the
@@ -2353,6 +2364,47 @@ impl Runtime {
     #[must_use]
     pub fn compact_layout_failed(&self) -> Vec<u8> {
         self.dict.compact_layout_failed()
+    }
+
+    /// Records layout faults collected by the pure-Rust facade's save.
+    pub fn record_layout_faults(&self, faults: impl IntoIterator<Item = LayoutFault>) {
+        self.dict.record_layout_faults(faults);
+    }
+
+    /// The save's current on-disk baseline for one selected system library.
+    /// The pin remaps the library at its `_write_files` position and diffs
+    /// that chunk against the live sub-index (`pinyin.cpp:956`,
+    /// `zhuyin.cpp:589`). `Unchanged` is a byte-for-byte match with the
+    /// loaded snapshot; `Changed` carries the current sub-index; a
+    /// header-accepted layout refusal is returned for the caller to log and
+    /// turn into the pin's empty old sub-index. A missing or unmappable
+    /// chunk falls back to the pre-existing init-snapshot behavior: the
+    /// registered row 76 answer at the save site (the caller writes
+    /// `mmap %s failed!` and the save continues; the pin's empty-chunk
+    /// SIGSEGV is not reproduced).
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`LayoutFault`] when the current chunk passed the header
+    /// and checksum but its sub-index layout is refused.
+    pub fn save_disk_baseline(&self, nibble: u8) -> Result<SaveBaseline, LayoutFault> {
+        // `_write_files` skips a default library whose sub-index is gone
+        // (`pinyin.cpp:928-933`, `zhuyin.cpp:563-568`): an unloaded library
+        // is never remapped at save, and nibble 0 is the USER_FILE row the
+        // system loop never visits.
+        if nibble == 0 || !self.dict.library_visible(u32::from(nibble)) {
+            return Ok(SaveBaseline::Keep);
+        }
+        let Some((path, original)) = self.dict.system.libraries().loaded_path_library(nibble)
+        else {
+            return Ok(SaveBaseline::Keep);
+        };
+        match oxpinyin_data::phrase_library::PhraseLibrary::open(&path) {
+            Ok(current) if current.byte_identical(&original) => Ok(SaveBaseline::Unchanged),
+            Ok(current) => Ok(SaveBaseline::Changed(SystemLibrary::from_library(current))),
+            Err(LibraryError::Layout(fault)) => Err(fault),
+            Err(_) => Ok(SaveBaseline::Keep),
+        }
     }
 
     /// Maps every loaded SYSTEM_FILE/DICTIONARY default library again for

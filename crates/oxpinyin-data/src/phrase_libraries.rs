@@ -123,7 +123,11 @@ impl PhraseLibraries {
         )
     }
 
-    fn record_layout_fault(&self, fault: LayoutFault) {
+    /// Records one layout fault as if a load had just emitted it, for a
+    /// caller that collected it through a save hook and wants the facade's
+    /// `take_layout_faults` surface to carry it. The C ABI logs through its
+    /// hook; the pure-Rust save keeps the fault available here.
+    pub fn record_layout_fault(&self, fault: LayoutFault) {
         record_layout_fault(&self.layout_faults, fault);
     }
 
@@ -412,6 +416,21 @@ impl PhraseLibraries {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
             .map(|loaded| loaded.library.clone())
+    }
+
+    /// A loaded library's on-disk path and its snapshot, for the save's
+    /// current-chunk remap (`_write_files` maps every loaded system
+    /// library again at `pinyin.cpp:956`, `zhuyin.cpp:589`). The path is
+    /// the one `load` was given; the snapshot is the mapping that load
+    /// made, which keeps the replaced file's old bytes alive.
+    #[must_use]
+    pub fn loaded_path_library(&self, nibble: u8) -> Option<(std::path::PathBuf, PhraseLibrary)> {
+        let slot = self.by_nibble.get(usize::from(nibble))?;
+        let slot = slot
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let loaded = slot.as_ref()?;
+        Some((loaded.path.clone(), loaded.library.clone()))
     }
 
     /// `FacadePhraseIndex::get_phrase_item`'s text half: the phrase
