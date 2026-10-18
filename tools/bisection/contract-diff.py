@@ -7247,6 +7247,147 @@ for _name, _payload in (('one-byte', b'\x01'), ('five-bytes', bytes((1, 1, 7, 0,
              mode=_mode, abort=True, stderr=True)(_short_add(_payload))
 
 
+# #871: the pronunciation counts of a replayed system item. A MODIFY record
+# changes the item the sub-index holds in place (`phrase_index.cpp:477-501`);
+# the item is then a list of (keys, frequency) entries in the file's order,
+# and the pin trains (`phrase_index.cpp:114-143`, every entry in turn), merges
+# an imported reading (`:122-139`) and diffs the list back out at save
+# (`:392-436`) without ever keying the entries by their keys. Two entries with
+# the same keys are two entries. The probe replays one journalled item
+# (癫痫, one reading `dian4 xian4` at 100), then runs the item through the
+# lifecycle a session sees: train it, import a reading, save, open the saved
+# profile, train again, save and open once more. It reports the C ABI's view
+# after each step and the bytes `gb_char.dbin` holds after each save. The
+# export (pinyin only) lists one row per entry, so entries that were merged
+# into one show there.
+_PRON_TOKEN = 0x01003e57
+_PRON_PHRASE = '癫痫'
+
+
+def _pron_entries(item, entries):
+    """`item` with its readings replaced by `entries`, each (keys, freq):
+    the header's count and the unigram stay, the rest is rebuilt."""
+    length = item[0]
+    head = bytes((length, len(entries))) + item[2:6 + 4 * length]
+    return head + b''.join(keys + freq.to_bytes(4, 'little') for keys, freq in entries)
+
+
+def _pron_shape(entries, unigram=None):
+    def new_item(item):
+        keys = item[6 + 4 * item[0]:6 + 4 * item[0] + 2 * item[0]]
+        built = _pron_entries(item, [(keys if name is None else name, freq) for name, freq in entries])
+        return _item_with(built, unigram=unigram) if unigram is not None else built
+    return new_item
+
+
+# Another reading's keys (two syllables, as the item's own), taken from a
+# two-reading item of the same library: the pin does not check them.
+_PRON_OTHER_KEYS = bytes.fromhex('81024702')
+
+
+def pron_lifecycle(k, new_item_of, steps):
+    """`steps` is `train`, `import` or `mask`: the lifecycle that follows the
+    replay. `train` trains the item and imports a reading before the first
+    save; `import` only imports (twice, the second time onto the reading the
+    first one added, after a reopen); `mask` masks the library the journal
+    changed before the import. Every variant saves and opens the saved
+    profile at least once."""
+    total, items, _offsets = _system_items(k)
+    token = _PRON_TOKEN
+    item = items[token & 0xFFFFFF]
+    assert _item_text(item) == _PRON_PHRASE and item[1] == 1, item.hex()
+    _write_user_conf(k)
+    _write_log(k, _modify_header(0, total, total) +
+               _log_record(_LOG_MODIFY, token, old=item, new=new_item_of(item)))
+    out = {'ctx': bool(k.ctx)}
+    pinyin = k.mode == 'pinyin'
+    parse = 'parse_more_full_pinyins' if pinyin else 'parse_more_chewings'
+    typed = b'dian4xian4' if pinyin else b'2u04vu04'
+    imported = "dian3'xian4" if pinyin else 'ㄉㄧㄢˇ ㄒㄧㄢˋ'
+
+    def look(tag):
+        out[tag] = {'export': remember_export(k, 1, _PRON_PHRASE), 'unigram': unigram_of(k, token),
+                    'phrase': token_phrase_of(k, token)}
+
+    def train():
+        assert k.fn(parse, Z, P, S)(k.inst, typed) == len(typed)
+        return train_selected_top(k, _PRON_PHRASE, token)
+
+    def save(tag):
+        out[tag + '-save'] = k.fn('save', B, P)(k.ctx)
+        out[tag + '-dbin'] = Path(k.user, 'gb_char.dbin').read_bytes().hex()
+
+    def reopen(tag):
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        look(tag)
+
+    look('opened')
+    if steps == 'train':
+        out['trained'] = train()
+        look('after-train')
+        out['imported'] = import_rows(k, 1, [(_PRON_PHRASE, imported, 50)])
+        look('after-import')
+        save('first')
+        reopen('reopened')
+        out['trained-again'] = train()
+        look('after-train-again')
+        save('second')
+        reopen('reopened-again')
+    elif steps == 'import':
+        out['imported'] = import_rows(k, 1, [(_PRON_PHRASE, imported, 50)])
+        look('after-import')
+        save('first')
+        reopen('reopened')
+        out['imported-again'] = import_rows(k, 1, [(_PRON_PHRASE, imported, 7), (_PRON_PHRASE, "dian4'xian4" if pinyin else 'ㄉㄧㄢˋ ㄒㄧㄢˋ', 9)])
+        look('after-import-again')
+        save('second')
+        reopen('reopened-again')
+    else:
+        assert steps == 'mask'
+        # Library 1 as a whole: its journal is skipped when the libraries
+        # are merged again, so the item is the shipped one.
+        out['mask'] = k.fn('mask_out', B, P, U, U)(k.ctx, 0xFF000000, 0x01000000)
+        look('after-mask')
+        out['imported'] = import_rows(k, 1, [(_PRON_PHRASE, imported, 50)])
+        look('after-import')
+        save('first')
+        reopen('reopened')
+    return out
+
+
+# Each shape is the item the MODIFY record leaves: (keys, frequency) entries,
+# `None` standing for the item's own keys. The first two leave one reading;
+# the dup- shapes carry the item's keys twice; `other` adds a second reading.
+_PRON_SHAPES = {
+    'raised': ([(None, 250)], None),
+    'unigram-only': ([(None, 100)], 500),
+    'lowered': ([(None, 40)], None),
+    'dup-raised-last': ([(None, 100), (None, 160)], None),
+    'dup-raised-first': ([(None, 160), (None, 100)], None),
+    'dup-both': ([(None, 160), (None, 220)], None),
+    'dup-equal': ([(None, 100), (None, 100)], 500),
+    'other-reading': ([(None, 100), (_PRON_OTHER_KEYS, 130)], None),
+    'other-first': ([(_PRON_OTHER_KEYS, 130), (None, 250)], None),
+}
+# Training an item whose journal lowered a reading, or left two entries with
+# the same keys, is not held here: the pin trains every matching entry on its
+# own count, and the subject's training still merges the entries it finds by
+# their keys and writes a reading's count through a `u64` row that a lowered
+# count wraps. Both predate #871 and differ from the pin with and without the
+# rows it removed; the `import` and `mask` lifecycles of the same journals
+# are held, and are where the rows made a difference.
+_PRON_TRAIN_DIFFERS = {'lowered', 'dup-raised-last', 'dup-raised-first', 'dup-both'}
+for _shape, (_entries, _unigram) in _PRON_SHAPES.items():
+    for _steps in ('train', 'import', 'mask'):
+        if _steps == 'train' and _shape in _PRON_TRAIN_DIFFERS:
+            continue
+        for _mode in ('pinyin', 'zhuyin'):
+            case('replay-pron-' + _steps + '-' + _shape + '-' + _mode, mode=_mode, stderr=True)(
+                lambda k, e=_entries, u=_unigram, st=_steps: pron_lifecycle(k, _pron_shape(e, u), st))
+
+
 # A removed item and the prefix it extends. `SEARCH_CONTINUED` comes from the
 # pinyin table's DB get alone (`chewing_large_table2_bdb.cpp:182-187` at
 # 074a2219): a REMOVE clears only the sub-index (`phrase_index.cpp:219-236`), so
