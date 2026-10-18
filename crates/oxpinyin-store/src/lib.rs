@@ -1573,6 +1573,80 @@ mod tests {
                     cleanup(&path);
                 }
 
+                /// The write transaction's merged scan equals a model map for
+                /// every overlay of {absent, put, remove} on every stored
+                /// subset of four keys, under no bounds and under a bounded
+                /// range, running to the end (`stop` 0) and stopping after
+                /// each row in turn.
+                #[test]
+                fn write_txn_scan_matches_a_model_for_every_small_overlay() {
+                    use std::collections::BTreeMap;
+                    const KEYS: [&[u8]; 4] = [b"a", b"b", b"c", b"d"];
+                    let bounded = (Bound::Included(b"b".as_slice()), Bound::Excluded(b"d".as_slice()));
+                    let unbounded = (Bound::Unbounded, Bound::Unbounded);
+                    for stored_mask in 0_u32..16 {
+                        for overlay in 0_u32..81 {
+                            let store = <$store>::create_in_memory().unwrap();
+                            let mut model: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
+                            store
+                                .write(|txn| {
+                                    for (index, key) in KEYS.iter().enumerate() {
+                                        if stored_mask >> index & 1 == 1 {
+                                            txn.put("t", key, b"stored")?;
+                                            model.insert(key.to_vec(), b"stored".to_vec());
+                                        }
+                                    }
+                                    Ok(())
+                                })
+                                .unwrap();
+                            store
+                                .write(|txn| {
+                                    let mut code = overlay;
+                                    for key in KEYS {
+                                        match code % 3 {
+                                            1 => {
+                                                txn.put("t", key, b"buffered")?;
+                                                model.insert(key.to_vec(), b"buffered".to_vec());
+                                            }
+                                            2 => {
+                                                txn.remove("t", key)?;
+                                                model.remove(key);
+                                            }
+                                            _ => {}
+                                        }
+                                        code /= 3;
+                                    }
+                                    for (lo, hi) in [unbounded, bounded] {
+                                        let want: Vec<(Vec<u8>, Vec<u8>)> = model
+                                            .range::<[u8], _>((lo, hi))
+                                            .map(|(k, v)| (k.clone(), v.clone()))
+                                            .collect();
+                                        for stop in 0..=want.len() {
+                                            let mut seen = Vec::new();
+                                            txn.scan("t", lo, hi, |k, v| {
+                                                seen.push((k.to_vec(), v.to_vec()));
+                                                Ok(if seen.len() == stop {
+                                                    ControlFlow::Break(())
+                                                } else {
+                                                    ControlFlow::Continue(())
+                                                })
+                                            })?;
+                                            let upto = if stop == 0 { want.len() } else { stop };
+                                            assert_eq!(
+                                                seen,
+                                                want[..upto],
+                                                "stored {stored_mask:#06b} overlay {overlay} stop {stop}"
+                                            );
+                                        }
+                                        assert_eq!(txn.is_empty("t")?, model.is_empty());
+                                    }
+                                    Ok(())
+                                })
+                                .unwrap();
+                        }
+                    }
+                }
+
                 #[test]
                 fn remove_in_write() {
                     let path = temp_path("remove");

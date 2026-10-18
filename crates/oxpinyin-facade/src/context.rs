@@ -519,7 +519,7 @@ impl ContextCore {
     /// save's operation boundary.
     pub fn save_user(&mut self) -> SaveOutcome {
         let mut faults = Vec::new();
-        let outcome = self.save_user_with_layout_faults(|fault| faults.push(fault.clone()));
+        let outcome = self.save_user_with_layout_faults(&mut |fault| faults.push(fault.clone()));
         if !faults.is_empty()
             && let Some(runtime) = &self.runtime
         {
@@ -534,7 +534,7 @@ impl ContextCore {
     /// faults for [`Self::take_layout_faults`] instead of logging them.
     pub fn save_user_with_layout_faults(
         &mut self,
-        mut on_layout_fault: impl FnMut(&oxpinyin_runtime::LayoutFault),
+        on_layout_fault: &mut dyn FnMut(&oxpinyin_runtime::LayoutFault),
     ) -> SaveOutcome {
         let Some(store) = self.user.as_ref() else {
             return SaveOutcome::NotSaved;

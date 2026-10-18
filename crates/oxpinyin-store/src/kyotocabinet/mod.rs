@@ -78,7 +78,7 @@ mod ffi;
 use std::ops::Bound;
 use std::path::Path;
 
-use crate::common::{frame, in_bounds, prefix, unframe};
+use crate::common::{Row, frame, in_bounds, prefix, unframe};
 use crate::{Flow, ReadStore, StoreError, WriteStore, WriteTxn, validate_table_name};
 
 use ffi::{Db, DbType};
@@ -146,6 +146,27 @@ impl KcStore {
 }
 
 impl KcStore {
+    /// Ends the open transaction by committing it. Not generic, so the many
+    /// `write` closures share one copy of it.
+    #[inline(never)]
+    fn commit(&self) -> Result<(), StoreError> {
+        self.db.end_transaction(true)?;
+        // Push the commit to the operating system (`hard = 0`), so another
+        // process — or another handle in this one — reading the database
+        // observes it, and a process crash cannot lose it. `compact` is the
+        // hard sync; see the module docs for why the device-level sync sits
+        // there.
+        self.db.sync(false)
+    }
+
+    /// Ends the open transaction by rolling it back. The rollback's own
+    /// failure must not mask the reason the closure failed, which is what
+    /// the caller needs to see.
+    #[inline(never)]
+    fn roll_back(&self) {
+        let _ = self.db.end_transaction(false);
+    }
+
     /// Walks `table`'s rows in ascending key order within `[lo, hi]`.
     ///
     /// One cursor, positioned once with `kccurjumpkey` and advanced by
@@ -159,32 +180,132 @@ impl KcStore {
         hi: Bound<&[u8]>,
         mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
+        // The cursor logic is `TableRows::next`, one copy shared by every
+        // call site; each visitor's instantiation is only this loop.
+        let mut rows = self.table_rows(table, lo, hi)?;
+        while let Some(row) = rows.next()? {
+            if visit(row.key(), row.value())?.is_break() {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// The row stream behind [`Self::walk`].
+    fn table_rows<'b>(
+        &self,
+        table: &str,
+        lo: Bound<&'b [u8]>,
+        hi: Bound<&'b [u8]>,
+    ) -> Result<TableRows<'_, 'b>, StoreError> {
         validate_table_name(table)?;
         let table_prefix = prefix(table);
         let start = match lo {
             Bound::Unbounded => table_prefix.clone(),
             Bound::Included(key) | Bound::Excluded(key) => frame(table, key),
         };
+        Ok(TableRows {
+            cursor: self.db.cursor()?,
+            positioned: false,
+            start,
+            table_prefix,
+            lo,
+            hi,
+        })
+    }
+
+    /// Every row of the file, sorted by key. Not generic, so the many
+    /// visitors share one copy of the cursor loop and the sort.
+    #[inline(never)]
+    fn sorted_rows(&self) -> Result<Vec<Row>, StoreError> {
         let mut cursor = self.db.cursor()?;
-        if !cursor.jump_to(&start)? {
-            return Ok(());
+        let mut rows: Vec<Row> = Vec::new();
+        if !cursor.jump_first()? {
+            return Ok(rows);
         }
         while let Some(record) = cursor.next()? {
-            let Some(key) = unframe(&table_prefix, record.key()) else {
-                // Past the last row of this table.
-                return Ok(());
-            };
-            if matches!(lo, Bound::Excluded(bound) if key == bound) {
-                continue;
-            }
-            if !in_bounds(key, Bound::Unbounded, hi) {
-                return Ok(());
-            }
-            if visit(key, record.value())?.is_break() {
-                return Ok(());
+            rows.push((record.key().to_vec(), record.value().to_vec()));
+        }
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
+        Ok(rows)
+    }
+
+    /// Every row of `table` in `[lo, hi]`, copied out in key order.
+    fn collect_rows(
+        &self,
+        table: &str,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+    ) -> Result<Vec<Row>, StoreError> {
+        let mut out = Vec::new();
+        let mut rows = self.table_rows(table, lo, hi)?;
+        while let Some(row) = rows.next()? {
+            out.push((row.key().to_vec(), row.value().to_vec()));
+        }
+        Ok(out)
+    }
+}
+
+/// A table's rows in ascending key order within `[lo, hi]`: one cursor,
+/// positioned once with `kccurjumpkey` and advanced by `kccurget`'s own
+/// step, ending at the first key outside the table's framed prefix — so a
+/// walk costs the rows it returns and one more.
+///
+/// The stepping is a method of this concrete type rather than a loop in
+/// each generic visitor, so the many `scan` call sites share one copy of
+/// it and each instantiation is only a thin `while let`.
+struct TableRows<'db, 'b> {
+    cursor: ffi::Cursor<'db>,
+    positioned: bool,
+    start: Vec<u8>,
+    table_prefix: Vec<u8>,
+    lo: Bound<&'b [u8]>,
+    hi: Bound<&'b [u8]>,
+}
+
+/// One row of a [`TableRows`] walk: the record the cursor read, whose key
+/// still carries the table's framing prefix.
+struct TableRow {
+    record: ffi::Record,
+    key_at: usize,
+}
+
+impl TableRow {
+    fn key(&self) -> &[u8] {
+        self.record.key().get(self.key_at..).unwrap_or(&[])
+    }
+
+    fn value(&self) -> &[u8] {
+        self.record.value()
+    }
+}
+
+impl TableRows<'_, '_> {
+    /// The next row inside the table and bounds, or `None` at the end of
+    /// the walk.
+    #[inline(never)]
+    fn next(&mut self) -> Result<Option<TableRow>, StoreError> {
+        if !self.positioned {
+            self.positioned = true;
+            if !self.cursor.jump_to(&self.start)? {
+                return Ok(None);
             }
         }
-        Ok(())
+        while let Some(record) = self.cursor.next()? {
+            let Some(key) = unframe(&self.table_prefix, record.key()) else {
+                // Past the last row of this table.
+                return Ok(None);
+            };
+            if matches!(self.lo, Bound::Excluded(bound) if key == bound) {
+                continue;
+            }
+            if !in_bounds(key, Bound::Unbounded, self.hi) {
+                return Ok(None);
+            }
+            let key_at = self.table_prefix.len();
+            return Ok(Some(TableRow { record, key_at }));
+        }
+        Ok(None)
     }
 }
 
@@ -243,16 +364,7 @@ impl crate::RawReadStore for KcStore {
         // every row, sort by key, and apply the bounds here: the only
         // walk that is correct on all three container classes. TreeDB
         // rows arrive sorted, so the sort is a no-op re-sort there.
-        let mut cursor = self.db.cursor()?;
-        if !cursor.jump_first()? {
-            return Ok(());
-        }
-        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-        while let Some(record) = cursor.next()? {
-            rows.push((record.key().to_vec(), record.value().to_vec()));
-        }
-        rows.sort_by(|a, b| a.0.cmp(&b.0));
-        for (key, value) in rows {
+        for (key, value) in self.sorted_rows()? {
             if matches!(lo, Bound::Excluded(bound) if key == *bound) {
                 continue;
             }
@@ -399,19 +511,11 @@ impl WriteStore for KcStore {
         let mut txn = KcTxn { store: self };
         match f(&mut txn) {
             Ok(out) => {
-                self.db.end_transaction(true)?;
-                // Push the commit to the operating system (`hard = 0`),
-                // so another process — or another handle in this one —
-                // reading the database observes it, and a process crash
-                // cannot lose it. `compact` is the hard sync; see the
-                // module docs for why the device-level sync sits there.
-                self.db.sync(false)?;
+                self.commit()?;
                 Ok(out)
             }
             Err(error) => {
-                // The rollback's own failure must not mask the reason the
-                // closure failed, which is what the caller needs to see.
-                let _ = self.db.end_transaction(false);
+                self.roll_back();
                 Err(error)
             }
         }
@@ -446,21 +550,29 @@ pub struct KcTxn<'store> {
 }
 
 impl WriteTxn for KcTxn<'_> {
+    // The point operations stay out of line: the user store calls them from
+    // hundreds of sites, and inlining each one's validation, framing and
+    // buffer insert (or FFI call) into every caller costs far more code
+    // than a direct call. Dispatch is static either way.
+    #[inline(never)]
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         self.store.get(table, key)
     }
 
+    #[inline(never)]
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;
         self.store.db.set(&frame(table, key), value)
     }
 
+    #[inline(never)]
     fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         // The file's bare keyspace, no table-name framing — what
         // `get_raw`/`range_raw` read back on this backend.
         self.store.db.set(key, value)
     }
 
+    #[inline(never)]
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         validate_table_name(table)?;
         self.store.db.remove(&frame(table, key))
@@ -478,11 +590,7 @@ impl WriteTxn for KcTxn<'_> {
         // collected first: the visitor may itself call back into the
         // store, and holding a cursor across that is what the borrow of
         // `self.store.db` would otherwise allow.
-        let mut rows: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-        self.store.walk(table, lo, hi, |key, value| {
-            rows.push((key.to_vec(), value.to_vec()));
-            Ok(Flow::Continue(()))
-        })?;
+        let rows = self.store.collect_rows(table, lo, hi)?;
         for (key, value) in &rows {
             if visit(key, value)?.is_break() {
                 break;
@@ -491,6 +599,7 @@ impl WriteTxn for KcTxn<'_> {
         Ok(())
     }
 
+    #[inline(never)]
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         self.store.is_empty(table)
     }

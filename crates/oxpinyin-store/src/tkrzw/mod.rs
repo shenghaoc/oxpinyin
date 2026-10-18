@@ -160,6 +160,7 @@
 
 mod ffi;
 
+use std::cell::Cell;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::ffi::CStr;
@@ -435,18 +436,27 @@ fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
 
 // ── zero-copy record callbacks ────────────────────────────────────
 
-/// Everything [`walk_row`] needs for one walk: the table's framed
-/// prefix, the caller's bounds, the visitor, the slot that carries a
-/// failed visit out of the C callback — an error cannot unwind through
-/// the C ABI, so it is stored and re-raised after the call — and the
-/// flag by which the callback stops the walk.
-struct ScanCtx<'a, F> {
+/// What a walk and its [`walk_row`] callback share, none of it generic:
+/// the table's framed prefix, the caller's bounds, the slot that carries
+/// a failed visit out of the C callback — an error cannot unwind through
+/// the C ABI, so it is stored and re-raised after the call — and the flag
+/// by which the callback stops the walk. The callback writes the slot and
+/// the flag; [`drive_scan`] reads them between records.
+struct ScanShared<'a> {
     prefix: &'a [u8],
     lo: Bound<&'a [u8]>,
     hi: Bound<&'a [u8]>,
+    error: Cell<Option<StoreError>>,
+    stop: Cell<bool>,
+}
+
+/// The callback argument [`walk_row`] receives: the shared walk state and
+/// the visitor. Only the visitor's type is generic, so [`walk_row`] is the
+/// one function that is instantiated per visitor; the driver loop that
+/// calls it is [`drive_scan`], shared by every visitor.
+struct ScanCtx<'a, F> {
+    shared: &'a ScanShared<'a>,
     row: F,
-    error: Option<StoreError>,
-    stop: bool,
 }
 
 /// The `tkrzw_dbm_iter_process` record callback: assembles the borrowed
@@ -485,34 +495,37 @@ where
     // passed as the callback argument together with `walk_row::<F>`, so
     // the cast names the type it was made from. Only this callback receives it,
     // only the one `tkrzw_dbm_iter_process` call that took the argument
-    // can invoke the callback, and that call returns before `scan`
+    // can invoke the callback, and that call returns before `scan_rows`
     // drops its context — so the reference lives for every invocation.
     // Nothing else aliases the context: the walk is single-threaded and
-    // reentrant only through `row`, which cannot reach the argument.
+    // reentrant only through `row`, which cannot reach the argument. The
+    // shared state it points at is only ever touched through `Cell`s and
+    // shared references.
     let ctx = unsafe { &mut *(arg.cast::<ScanCtx<'_, F>>()) };
+    let shared = ctx.shared;
     // Ascending order means the first key outside the table's run is
     // the end of it.
-    let Some(user_key) = key.strip_prefix(ctx.prefix) else {
-        ctx.stop = true;
+    let Some(user_key) = key.strip_prefix(shared.prefix) else {
+        shared.stop.set(true);
         return rec_proc_noop();
     };
-    if past_upper(user_key, ctx.hi) {
-        ctx.stop = true;
+    if past_upper(user_key, shared.hi) {
+        shared.stop.set(true);
         return rec_proc_noop();
     }
-    if in_bounds(user_key, ctx.lo, ctx.hi) {
+    if in_bounds(user_key, shared.lo, shared.hi) {
         // The visitor runs inside tkrzw's call stack, reached through the
-        // C ABI. Store errors surface through `ctx.error` and stop the
+        // C ABI. Store errors surface through `shared.error` and stop the
         // walk; a panic in `row` (a bug — visitors are panic-free by the
         // no-panic lints) reaches this callback's `extern "C"` boundary,
         // where Rust aborts the process; it is never allowed to run on
         // into tkrzw's frames.
         match (ctx.row)(user_key, value) {
             Ok(Flow::Continue(())) => {}
-            Ok(Flow::Break(())) => ctx.stop = true,
+            Ok(Flow::Break(())) => shared.stop.set(true),
             Err(error) => {
-                ctx.error = Some(error);
-                ctx.stop = true;
+                shared.error.set(Some(error));
+                shared.stop.set(true);
             }
         }
     }
@@ -646,6 +659,10 @@ fn db_get(db: &Db, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
 ///
 /// Every row the walk yields is already inside the bounds, so callers
 /// do not re-check them.
+///
+/// Only this wrapper and [`walk_row`] are instantiated per visitor; the
+/// iterator, the positioning and the record loop are [`drive_scan`], one
+/// copy for every call site.
 fn scan_rows<F>(
     db: &Db,
     prefix: &[u8],
@@ -656,20 +673,44 @@ fn scan_rows<F>(
 where
     F: FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
 {
+    let shared = ScanShared {
+        prefix,
+        lo,
+        hi,
+        error: Cell::new(None),
+        stop: Cell::new(false),
+    };
+    let mut ctx = ScanCtx {
+        shared: &shared,
+        row,
+    };
+    drive_scan(
+        db,
+        &shared,
+        Some(walk_row::<F>),
+        (&raw mut ctx).cast::<c_void>(),
+    )
+}
+
+/// The iterator and record loop of [`scan_rows`], for the callback `walk`
+/// and its argument `arg`, which the caller pairs: `arg` is the address of
+/// the `ScanCtx<F>` that `walk` is `walk_row::<F>` for, and it outlives
+/// this call.
+#[inline(never)]
+fn drive_scan(
+    db: &Db,
+    shared: &ScanShared<'_>,
+    walk: ffi::tkrzw_record_processor,
+    arg: *mut c_void,
+) -> Result<(), StoreError> {
+    let prefix = shared.prefix;
+    let lo = shared.lo;
     // The C iterator's Jump is a lower-bound seek, so an Excluded lower
     // bound lands on the excluded key itself and is skipped by
     // walk_row.
     let start = match lo {
         Bound::Unbounded => prefix.to_vec(),
         Bound::Included(key) | Bound::Excluded(key) => framed(prefix, key),
-    };
-    let mut ctx = ScanCtx {
-        prefix,
-        lo,
-        hi,
-        row,
-        error: None,
-        stop: false,
     };
     // SAFETY: the handle is open. The returned iterator is freed by
     // `Iter`'s Drop at the end of this scope, before the database can
@@ -706,23 +747,16 @@ where
         return Err(status_error());
     }
     loop {
-        // SAFETY: the iterator is positioned and open; the callback
-        // argument is `&mut ctx`, which outlives this call, and the
-        // callback honours the contract documented at `walk_row`.
+        // SAFETY: the iterator is positioned and open; `walk` and `arg`
+        // are the pair `scan_rows` made, the argument outliving this call,
+        // and the callback honours the contract documented at `walk_row`.
         // writable=false keeps the walk a pure read.
-        let ok = unsafe {
-            ffi::tkrzw_dbm_iter_process(
-                iter.0.as_ptr(),
-                Some(walk_row::<F>),
-                (&raw mut ctx).cast::<c_void>(),
-                false,
-            )
-        };
+        let ok = unsafe { ffi::tkrzw_dbm_iter_process(iter.0.as_ptr(), walk, arg, false) };
         // The records ran out: the walk ended successfully.
         if check_end(ok)? {
             break;
         }
-        if ctx.stop {
+        if shared.stop.get() {
             break;
         }
         // SAFETY: as above. Next past the last record reports
@@ -733,7 +767,7 @@ where
             break;
         }
     }
-    ctx.error.take().map_or(Ok(()), Err)
+    shared.error.take().map_or(Ok(()), Err)
 }
 
 /// Applies every buffered mutation in one `ProcessMulti` batch: tkrzw
@@ -899,24 +933,7 @@ impl WriteStore for TkrzwStore {
         // On `Err` the buffer dies with the transaction and nothing was
         // ever written: rollback is the absence of the apply below.
         let result = f(&mut txn)?;
-        let mut mutations: Vec<Mutation> = Vec::with_capacity(txn.buffer.len());
-        for (key, slot) in txn.buffer {
-            let (value, remove) = slot.map_or((Vec::new(), true), |value| (value, false));
-            mutations.push(Mutation {
-                key_size: c_len(&key)?,
-                value_size: c_len(&value)?,
-                key,
-                value,
-                remove,
-            });
-        }
-        if !mutations.is_empty() {
-            db_apply(db, &mutations)?;
-            // Soft: on a file-backed store the commit is visible and
-            // process-crash durable, and `compact` is its hard sync. The
-            // in-memory session store has no file for either level.
-            db_synchronize(db, false)?;
-        }
+        commit(db, txn.buffer)?;
         Ok(result)
     }
 
@@ -934,6 +951,31 @@ impl WriteStore for TkrzwStore {
 }
 
 // ── write transaction ─────────────────────────────────────────────
+
+/// Applies a finished transaction's buffer in one batch. Not generic, so
+/// the many `write` closures share one copy of it.
+#[inline(never)]
+fn commit(db: &Db, buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>) -> Result<(), StoreError> {
+    let mut mutations: Vec<Mutation> = Vec::with_capacity(buffer.len());
+    for (key, slot) in buffer {
+        let (value, remove) = slot.map_or((Vec::new(), true), |value| (value, false));
+        mutations.push(Mutation {
+            key_size: c_len(&key)?,
+            value_size: c_len(&value)?,
+            key,
+            value,
+            remove,
+        });
+    }
+    if !mutations.is_empty() {
+        db_apply(db, &mutations)?;
+        // Soft: on a file-backed store the commit is visible and
+        // process-crash durable, and `compact` is its hard sync. The
+        // in-memory session store has no file for either level.
+        db_synchronize(db, false)?;
+    }
+    Ok(())
+}
 
 /// Buffers a write transaction's mutations until the single
 /// `ProcessMulti` apply in [`WriteStore::write`].
@@ -1024,6 +1066,11 @@ impl TkrzwTxn<'_> {
 }
 
 impl WriteTxn for TkrzwTxn<'_> {
+    // The point operations stay out of line: the user store calls them from
+    // hundreds of sites, and inlining each one's validation, framing and
+    // buffer insert (or FFI call) into every caller costs far more code
+    // than a direct call. Dispatch is static either way.
+    #[inline(never)]
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let prefix = table_prefix(table)?;
         let framed_key = framed(&prefix, key);
@@ -1033,6 +1080,7 @@ impl WriteTxn for TkrzwTxn<'_> {
         db_get(self.db, &framed_key)
     }
 
+    #[inline(never)]
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         let prefix = table_prefix(table)?;
         self.buffer
@@ -1040,6 +1088,7 @@ impl WriteTxn for TkrzwTxn<'_> {
         Ok(())
     }
 
+    #[inline(never)]
     fn put_raw(&mut self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         // The file's bare keyspace — no framing prefix, so the row is
         // exactly what `get_raw`/`range_raw` read back on this backend.
@@ -1047,6 +1096,7 @@ impl WriteTxn for TkrzwTxn<'_> {
         Ok(())
     }
 
+    #[inline(never)]
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError> {
         let prefix = table_prefix(table)?;
         self.buffer.insert(framed(&prefix, key), None);
@@ -1064,6 +1114,7 @@ impl WriteTxn for TkrzwTxn<'_> {
         self.merged_visit(&prefix, lo, hi, visit)
     }
 
+    #[inline(never)]
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         let prefix = table_prefix(table)?;
         // A buffered value settles it without touching storage.
