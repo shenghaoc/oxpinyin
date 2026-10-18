@@ -94,13 +94,73 @@ use std::path::Path;
 pub enum StoreError {
     /// An I/O error from the underlying storage layer.
     Io(std::io::Error),
-    /// A non-I/O error from the storage backend (type-erased).
-    Backend(Box<dyn std::error::Error + Send + Sync>),
+    /// A non-I/O error from the storage backend.
+    Backend(BackendError),
     /// A mutation was requested through a read-only store.
     ReadOnly,
     /// A public input cannot be represented by the selected backend.
     InvalidInput(&'static str),
 }
+
+/// A non-I/O failure the storage backend reported: its message, and the
+/// backend's own status code where the library gives one (tkrzw).
+///
+/// Every backend builds this the same way — from the library's message
+/// text — so the store's error type carries no erased payload.
+#[derive(Debug)]
+pub struct BackendError {
+    code: Option<i32>,
+    message: String,
+}
+
+impl BackendError {
+    /// A failure with a message and the backend's status `code`.
+    #[must_use]
+    pub const fn with_code(code: i32, message: String) -> Self {
+        Self {
+            code: Some(code),
+            message,
+        }
+    }
+
+    /// The backend's status code, where the library reports one.
+    #[must_use]
+    pub const fn code(&self) -> Option<i32> {
+        self.code
+    }
+
+    /// The message text, as displayed.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl From<&str> for BackendError {
+    fn from(message: &str) -> Self {
+        Self {
+            code: None,
+            message: message.to_owned(),
+        }
+    }
+}
+
+impl From<String> for BackendError {
+    fn from(message: String) -> Self {
+        Self {
+            code: None,
+            message,
+        }
+    }
+}
+
+impl fmt::Display for BackendError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for BackendError {}
 
 impl fmt::Display for StoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -117,7 +177,7 @@ impl std::error::Error for StoreError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Backend(e) => Some(e.as_ref()),
+            Self::Backend(e) => Some(e),
             Self::ReadOnly | Self::InvalidInput(_) => None,
         }
     }

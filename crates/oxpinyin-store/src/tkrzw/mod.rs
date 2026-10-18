@@ -165,7 +165,6 @@ use std::collections::BTreeMap;
 use std::ffi::CStr;
 use std::ffi::CString;
 use std::ffi::{c_char, c_void};
-use std::fmt;
 use std::ops::Bound;
 use std::path::Path;
 use std::ptr::NonNull;
@@ -194,24 +193,15 @@ const _: () = assert!(ffi::TKRZW_STATUS_NOT_FOUND_ERROR == STATUS_NOT_FOUND_ERRO
 
 // ── errors ────────────────────────────────────────────────────────
 
-/// A non-I/O tkrzw status, carrying the code and message verbatim.
-#[derive(Debug)]
-struct TkrzwError {
-    code: i32,
-    message: String,
-}
-
-impl fmt::Display for TkrzwError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.message.is_empty() {
-            write!(f, "tkrzw status {}", self.code)
-        } else {
-            write!(f, "tkrzw status {}: {}", self.code, self.message)
-        }
+/// The text of a non-I/O tkrzw status, carrying the code and message
+/// verbatim.
+fn status_message(code: i32, message: &str) -> String {
+    if message.is_empty() {
+        format!("tkrzw status {code}")
+    } else {
+        format!("tkrzw status {code}: {message}")
     }
 }
-
-impl std::error::Error for TkrzwError {}
 
 /// Reads the thread-local "last status" and copies it out — the
 /// message region is valid only until the next tkrzw call on this
@@ -245,7 +235,10 @@ fn status_error() -> StoreError {
     let (code, message) = last_status();
     match code {
         STATUS_SYSTEM_ERROR => StoreError::Io(std::io::Error::other(message)),
-        code => StoreError::Backend(Box::new(TkrzwError { code, message })),
+        code => StoreError::Backend(crate::BackendError::with_code(
+            code,
+            status_message(code, &message),
+        )),
     }
 }
 
