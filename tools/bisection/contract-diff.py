@@ -4589,7 +4589,11 @@ for _mode in ('pinyin', 'zhuyin'):
 
 # --------------------------------------------------------------------------
 
-def remember_export(k, library, phrase):
+def remember_export(k, library, phrase, adjacent=False):
+    """The export rows of `phrase` in `library`. `adjacent=True` stops at the
+    first row of another phrase after the phrase's own: one item's readings
+    are consecutive, so for a text held by one token this is the same list
+    without walking the rest of a 93,000-item library in Python."""
     if k.mode == 'zhuyin':
         return 'NO EXPORT API'
     it=k.fn('begin_get_phrases',P,P,U)(k.ctx,library)
@@ -4599,6 +4603,7 @@ def remember_export(k, library, phrase):
         ret=k.fn('iterator_get_next_phrase',B,P,C.POINTER(P),C.POINTER(P),C.POINTER(I))(it,C.byref(ph),C.byref(py),C.byref(n))
         text,reading=k.text(ph.value),k.text(py.value)
         if text==phrase: rows.append([ret,text,reading,n.value])
+        elif adjacent and rows: break
     k.fn('end_get_phrases',None,P)(it)
     return rows
 
@@ -7306,7 +7311,7 @@ def pron_lifecycle(k, new_item_of, steps):
     imported = "dian3'xian4" if pinyin else 'ㄉㄧㄢˇ ㄒㄧㄢˋ'
 
     def look(tag):
-        out[tag] = {'export': remember_export(k, 1, _PRON_PHRASE), 'unigram': unigram_of(k, token),
+        out[tag] = {'export': remember_export(k, 1, _PRON_PHRASE, adjacent=True), 'unigram': unigram_of(k, token),
                     'phrase': token_phrase_of(k, token)}
 
     def train():
@@ -7371,21 +7376,76 @@ _PRON_SHAPES = {
     'other-reading': ([(None, 100), (_PRON_OTHER_KEYS, 130)], None),
     'other-first': ([(_PRON_OTHER_KEYS, 130), (None, 250)], None),
 }
-# Training an item whose journal lowered a reading, or left two entries with
-# the same keys, is not held here: the pin trains every matching entry on its
-# own count, and the subject's training still merges the entries it finds by
-# their keys and writes a reading's count through a `u64` row that a lowered
-# count wraps. Both predate #871 and differ from the pin with and without the
-# rows it removed; the `import` and `mask` lifecycles of the same journals
-# are held, and are where the rows made a difference.
-_PRON_TRAIN_DIFFERS = {'lowered', 'dup-raised-last', 'dup-raised-first', 'dup-both'}
 for _shape, (_entries, _unigram) in _PRON_SHAPES.items():
     for _steps in ('train', 'import', 'mask'):
-        if _steps == 'train' and _shape in _PRON_TRAIN_DIFFERS:
-            continue
         for _mode in ('pinyin', 'zhuyin'):
             case('replay-pron-' + _steps + '-' + _shape + '-' + _mode, mode=_mode, stderr=True)(
                 lambda k, e=_entries, u=_unigram, st=_steps: pron_lifecycle(k, _pron_shape(e, u), st))
+
+
+# The same lifecycle over a profile with all of it at once: the journal
+# changes 癫痫's reading and unigram and appends a fresh item to the library
+# (its reading is seeded, the shipped item's is not), a user phrase is
+# imported into library 7, and 癫痫 is trained, which also trains a gram.
+# Each save is followed by a reopen; the second round trains again.
+def pron_mixed(k):
+    total, items, _offsets = _system_items(k)
+    token = _PRON_TOKEN
+    item = items[token & 0xFFFFFF]
+    one = next(slot for slot, it in items.items() if it[0] == 1 and it[1] == 1)
+    fresh = 0x01000000 | (max(items) + 2)
+    appended = _item_with(items[one], unigram=11)
+    changed = _item_with(item, unigram=item[2] + 400, freq=250)
+    _write_user_conf(k)
+    _write_log(k, _modify_header(0, total, total + 400 + 11) +
+               _log_record(_LOG_MODIFY, token, old=item, new=changed) +
+               _log_record(_LOG_ADD, fresh, new=appended))
+    out = {'ctx': bool(k.ctx)}
+    pinyin = k.mode == 'pinyin'
+    parse = 'parse_more_full_pinyins' if pinyin else 'parse_more_chewings'
+    typed = b'dian4xian4' if pinyin else b'2u04vu04'
+    user_row = ('龘龘', "da2'da2" if pinyin else 'ㄉㄚˊ ㄉㄚˊ', 20)
+
+    def look(tag):
+        out[tag] = {'export': remember_export(k, 1, _PRON_PHRASE, adjacent=True),
+                    'user-export': remember_export(k, 7, user_row[0], adjacent=True),
+                    'unigram': unigram_of(k, token), 'fresh': unigram_of(k, fresh),
+                    'fresh-phrase': token_phrase_of(k, fresh),
+                    # The appended item shares its text with slot `one`: walk every row.
+                    'fresh-export': remember_export(k, 1, token_phrase_of(k, fresh)[2])}
+
+    def train():
+        assert k.fn(parse, Z, P, S)(k.inst, typed) == len(typed)
+        return train_selected_top(k, _PRON_PHRASE, token)
+
+    def save(tag):
+        out[tag + '-save'] = k.fn('save', B, P)(k.ctx)
+        for name in ('gb_char.dbin', 'user.bin'):
+            out[tag + '-' + name] = Path(k.user, name).read_bytes().hex()
+
+    def reopen(tag):
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        look(tag)
+
+    look('opened')
+    out['imported-user'] = import_rows(k, 7, [user_row])
+    out['trained'] = train()
+    look('after-train')
+    out['imported'] = import_rows(k, 1, [(_PRON_PHRASE, "dian3'xian4" if pinyin else 'ㄉㄧㄢˇ ㄒㄧㄢˋ', 50)])
+    look('after-import')
+    save('first')
+    reopen('reopened')
+    out['trained-again'] = train()
+    look('after-train-again')
+    save('second')
+    reopen('reopened-again')
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('replay-pron-mixed-' + _mode, mode=_mode, stderr=True)(pron_mixed)
 
 
 # A removed item and the prefix it extends. `SEARCH_CONTINUED` comes from the
