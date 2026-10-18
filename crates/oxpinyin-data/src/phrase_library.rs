@@ -41,6 +41,7 @@
 //! degrading to `None` where upstream would answer `ERROR_NO_ITEM` /
 //! `ERROR_FILE_CORRUPTION`.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -55,6 +56,15 @@ compile_error!(
 use crate::chunk_format::{
     CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, ITEM_HEADER_SIZE, PHRASE_MASK, SEPARATOR, chunk_checksum,
 };
+
+/// Bytes of stack the dictionary-hit path gives a phrase's UTF-8 before
+/// it falls back to the heap ([`PhraseItemView::phrase_text_into`]):
+/// eight characters of any width, or ten three-byte CJK characters. The
+/// typical hit is one to four CJK characters
+/// (`docs/perf/perf-alloc-2026-08.md`); the entry type the text lands in
+/// keeps up to 24 bytes inline, so a text that fits here but not there
+/// costs the one allocation a longer text costs anyway.
+pub(crate) const PHRASE_TEXT_STACK_BYTES: usize = 32;
 
 /// The pin's `G_STRFUNC` for `SubPhraseIndex::load`: the C++
 /// `__PRETTY_FUNCTION__` the measured critical carries (the pin logs it in
@@ -450,6 +460,56 @@ impl PhraseItemView<'_> {
             let code = u32_at(self.bytes, offset)?;
             char::from_u32(code)
         })
+    }
+
+    /// [`Self::phrase_text`] written into `buf` while it fits, for the
+    /// dictionary-hit path: the same characters, the same `None` on the
+    /// same malformed items, and no heap allocation for a phrase whose
+    /// UTF-8 is at most `buf.len()` bytes. A longer phrase falls back to
+    /// one owned [`String`] that carries the bytes already written and
+    /// the rest of the text; nothing is decoded twice.
+    ///
+    /// The boundary is in UTF-8 bytes, not characters: a buffer of
+    /// [`PHRASE_TEXT_STACK_BYTES`] holds any phrase of eight characters
+    /// whatever their width, and every phrase of up to ten CJK
+    /// characters.
+    pub(crate) fn phrase_text_into<'b>(
+        &self,
+        buf: &'b mut [u8; PHRASE_TEXT_STACK_BYTES],
+    ) -> Option<Cow<'b, str>> {
+        let length = self.phrase_length();
+        let mut written = 0_usize;
+        let mut chars = self.phrase_chars().enumerate();
+        for (index, ch) in chars.by_ref() {
+            let ch = ch?;
+            let width = ch.len_utf8();
+            match buf.get_mut(written..written + width) {
+                Some(slot) => {
+                    ch.encode_utf8(slot);
+                    written += width;
+                }
+                None => {
+                    // The text outgrows the buffer: keep what is encoded
+                    // and finish into one owned string sized for the
+                    // worst case (four bytes per remaining character), so
+                    // it never grows again.
+                    let remaining = length.saturating_sub(index);
+                    let mut text = String::with_capacity(written + 4 * remaining);
+                    text.push_str(core::str::from_utf8(&buf[..written]).ok()?);
+                    text.push(ch);
+                    for (_, ch) in chars {
+                        text.push(ch?);
+                    }
+                    return Some(Cow::Owned(text));
+                }
+            }
+        }
+        // Every byte of `buf[..written]` was produced by `encode_utf8`
+        // for one scalar after another, so the prefix is valid UTF-8; the
+        // check is kept rather than trusted, at the cost of one scan.
+        core::str::from_utf8(&buf[..written])
+            .ok()
+            .map(Cow::Borrowed)
     }
 
     /// `PhraseItem::get_nth_pronunciation` — pronunciation `index`'s
@@ -923,5 +983,213 @@ mod sparse_mapping_tests {
             8,
             "the sparse map is the chunk extent"
         );
+    }
+}
+
+#[cfg(test)]
+mod phrase_text_into_tests {
+    //! `phrase_text_into` against `phrase_text`: the same bytes and the
+    //! same `None`s on every shape of item, and the stack buffer taken
+    //! exactly when the UTF-8 fits it.
+
+    use std::borrow::Cow;
+
+    use super::{PHRASE_TEXT_STACK_BYTES, PhraseItemView};
+
+    /// An item with `codes` as its UCS-4 text and no pronunciations:
+    /// `{u8 len, u8 npron = 0, u32 unigram}` then the raw little-endian
+    /// words, invalid values included.
+    fn item_bytes(codes: &[u32]) -> Vec<u8> {
+        let mut bytes = vec![u8::try_from(codes.len()).expect("test phrase fits u8"), 0];
+        bytes.extend_from_slice(&7_u32.to_le_bytes());
+        for code in codes {
+            bytes.extend_from_slice(&code.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn codes(text: &str) -> Vec<u32> {
+        text.chars().map(u32::from).collect()
+    }
+
+    /// Both decoders over one item: `(phrase_text, phrase_text_into,
+    /// borrowed?)`.
+    fn both(bytes: &[u8]) -> (Option<String>, Option<String>, Option<bool>) {
+        let item = PhraseItemView { bytes };
+        let old = item.phrase_text();
+        let mut buf = [0_u8; PHRASE_TEXT_STACK_BYTES];
+        let new = item.phrase_text_into(&mut buf);
+        let borrowed = new.as_ref().map(|text| matches!(text, Cow::Borrowed(_)));
+        (old, new.map(Cow::into_owned), borrowed)
+    }
+
+    fn assert_same(text: &str, expect_borrowed: bool) {
+        let bytes = item_bytes(&codes(text));
+        let (old, new, borrowed) = both(&bytes);
+        assert_eq!(old.as_deref(), Some(text), "phrase_text of {text:?}");
+        assert_eq!(new, old, "phrase_text_into of {text:?}");
+        assert_eq!(
+            borrowed,
+            Some(expect_borrowed),
+            "{text:?} ({} bytes) should {}use the stack buffer",
+            text.len(),
+            if expect_borrowed { "" } else { "not " }
+        );
+    }
+
+    #[test]
+    fn empty_phrase_is_the_empty_string_on_the_stack() {
+        assert_same("", true);
+    }
+
+    #[test]
+    fn ascii_phrases_match() {
+        assert_same("a", true);
+        assert_same("nihao", true);
+        assert_same("abcdefghijklmnopqrstuvw", true); // 23 bytes
+        assert_same("abcdefghijklmnopqrstuvwx", true); // 24 bytes
+        assert_same("abcdefghijklmnopqrstuvwxy", true); // 25 bytes
+        assert_same("abcdefghijklmnopqrstuvwxyzABCDEF", true); // 32 bytes
+        assert_same("abcdefghijklmnopqrstuvwxyzABCDEFG", false); // 33 bytes
+    }
+
+    #[test]
+    fn cjk_phrases_of_every_length_match() {
+        let han = "中华人民共和国万岁大家一起来学习";
+        for chars in [1_usize, 2, 4, 7, 8, 9, 10, 11, 16] {
+            let text: String = han.chars().take(chars).collect();
+            // 3 bytes per character: 10 characters fill the 30 of 32
+            // bytes, 11 overflow.
+            assert_same(&text, text.len() <= PHRASE_TEXT_STACK_BYTES);
+        }
+    }
+
+    #[test]
+    fn inline_boundary_bytes_23_24_25_match() {
+        // 7 Han + 2 ASCII = 23, 8 Han = 24, 8 Han + 1 ASCII = 25.
+        assert_same("中华人民共和国ab", true);
+        assert_same("中华人民共和国万", true);
+        assert_same("中华人民共和国万a", true);
+    }
+
+    #[test]
+    fn every_utf8_width_and_mixed_text_match() {
+        assert_same("a", true);
+        assert_same("\u{e9}", true);
+        assert_same("\u{4e2d}", true);
+        assert_same("\u{20000}", true);
+        assert_same("a\u{e9}\u{4e2d}\u{20000}", true);
+        // Eight four-byte scalars are exactly the buffer; nine overflow
+        // in the middle of a phrase, which is where the fallback starts.
+        let eight: String = std::iter::repeat_n('\u{20000}', 8).collect();
+        assert_same(&eight, true);
+        let nine: String = std::iter::repeat_n('\u{20000}', 9).collect();
+        assert_same(&nine, false);
+        let long_mixed = "a\u{e9}\u{4e2d}\u{20000}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}";
+        assert_same(long_mixed, false);
+    }
+
+    #[test]
+    fn embedded_nul_is_kept_as_a_character() {
+        // `char::from_u32(0)` is `Some('\0')` for both decoders; where that
+        // becomes observable is the C-string edge, not here.
+        assert_same("\u{4e2d}\0\u{6587}", true);
+        assert_same("\0", true);
+    }
+
+    #[test]
+    fn invalid_ucs4_is_none_wherever_it_sits() {
+        let han = codes("中华人民共和国万岁大家一起来");
+        for bad in [
+            0xD800_u32,
+            0xDBFF,
+            0xDC00,
+            0xDFFF,
+            0x11_0000,
+            0x7FFF_FFFF,
+            0xFFFF_FFFF,
+        ] {
+            for len in [1_usize, 2, 8, 12] {
+                for position in [0_usize, len / 2, len - 1] {
+                    let mut text: Vec<u32> = han[..len].to_vec();
+                    text[position] = bad;
+                    let (old, new, _) = both(&item_bytes(&text));
+                    assert_eq!(old, None, "phrase_text {bad:#x} at {position} of {len}");
+                    assert_eq!(
+                        new, None,
+                        "phrase_text_into {bad:#x} at {position} of {len}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_scalar_after_the_fallback_point_is_still_none() {
+        // 11 Han (33 bytes) overflows the buffer at the 11th; make the
+        // 12th invalid so the owned tail is what refuses.
+        let mut text = codes("中华人民共和国万岁大家一");
+        text.push(0xD800);
+        let (old, new, _) = both(&item_bytes(&text));
+        assert_eq!(old, None);
+        assert_eq!(new, None);
+    }
+
+    #[test]
+    fn truncated_items_are_none_for_both() {
+        let full = item_bytes(&codes("中华人"));
+        // Whole missing character, then a character cut mid-word, then a
+        // header with no text at all, then nothing but one length byte.
+        for cut in [full.len() - 4, full.len() - 1, 6, 1] {
+            let (old, new, _) = both(&full[..cut]);
+            assert_eq!(old, None, "cut at {cut}");
+            assert_eq!(new, None, "cut at {cut}");
+        }
+        // An item whose header claims more characters than the buffer
+        // holds, cut after the buffer would have filled: the fallback
+        // path meets the truncation.
+        let long = item_bytes(&codes("中华人民共和国万岁大家一起来学习"));
+        let (old, new, _) = both(&long[..long.len() - 3]);
+        assert_eq!(old, None);
+        assert_eq!(new, None);
+    }
+
+    #[test]
+    fn a_length_byte_of_zero_with_trailing_bytes_is_the_empty_string() {
+        // `phrase_length` is the header's word; extra bytes belong to the
+        // pronunciations, not the text.
+        let mut bytes = item_bytes(&[]);
+        bytes.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]);
+        let (old, new, borrowed) = both(&bytes);
+        assert_eq!(old.as_deref(), Some(""));
+        assert_eq!(new.as_deref(), Some(""));
+        assert_eq!(borrowed, Some(true));
+    }
+
+    #[test]
+    fn generated_valid_scalar_sequences_agree() {
+        // A deterministic walk over scalar values of every width and
+        // lengths across both sides of the buffer boundary.
+        let pool: [char; 7] = [
+            'a',
+            '\u{7f}',
+            '\u{e9}',
+            '\u{7ff}',
+            '\u{4e2d}',
+            '\u{ffff}',
+            '\u{10ffff}',
+        ];
+        let mut state = 0x9E37_79B9_u32;
+        for len in 0..=20_usize {
+            for _ in 0..8 {
+                let text: String = (0..len)
+                    .map(|_| {
+                        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                        pool[(state >> 29) as usize % pool.len()]
+                    })
+                    .collect();
+                assert_same(&text, text.len() <= PHRASE_TEXT_STACK_BYTES);
+            }
+        }
     }
 }
