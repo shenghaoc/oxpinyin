@@ -48,7 +48,7 @@ series lives in `../perf/`.
 | [`compact-zhuyin-prototype`](compact-zhuyin-prototype.md) | Compact Zhuyin prototype — rejected and reverted | shelved (rejected 2026-10-18 UTC: Ir regression; reverted) |
 | [`compatibility-policy`](compatibility-policy.md) | Compatibility policy — what oxpinyin may diverge on, and what it may not | policy |
 | [`config-layering`](config-layering.md) | Layered configuration SPEC | historical (pre-P6) |
-| [`core-trait-seam`](core-trait-seam.md) | Core trait seam SPEC | frozen |
+| [`core-trait-seam`](core-trait-seam.md) | Core trait seam SPEC | behaviour frozen; Rust-signature freeze retired 2026-10-18 |
 | [`counter-port`](counter-port.md) | Counter port — `gen_ngram` n-gram counting (W9-T2) | historical (pre-P6) |
 | [`data-formats`](data-formats.md) | Data formats — pinned oracle table files | historical (pre-P6) |
 | [`data-layer-export`](data-layer-export.md) | Data-layer export SPEC — public-ABI derivation of the system tables | historical (pre-P6) |
@@ -117,7 +117,7 @@ series lives in `../perf/`.
 | [`segmenter-port`](segmenter-port.md) | W9-T1 segmenter port — `ngseg` → Rust | port record |
 | [`send-sync-audit-2026-09-21`](send-sync-audit-2026-09-21.md) | Send+Sync mechanisms vs the C ABI (PR #503 follow-up) | audit |
 | [`sentence-surface`](sentence-surface.md) | Sentence surface (W14) | frozen (§12 residual re-frozen 2026-09-04) |
-| [`session-api`](session-api.md) | Framework-neutral session API SPEC | frozen |
+| [`session-api`](session-api.md) | Framework-neutral session API SPEC | behaviour frozen; Rust-signature freeze retired 2026-10-18 |
 | [`session-replay`](session-replay.md) | Session replay SPEC | frozen |
 | [`spec-derivation`](spec-derivation.md) | Findings — Specification by Execution | method |
 | [`store-key-ordering`](store-key-ordering.md) | Store key-ordering contract — one place for the whole stack | contract |

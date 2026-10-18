@@ -2,15 +2,17 @@ name: verify-nightly
 
 # Tier-3 scheduled verification (docs/safety/ci-strategy.md): everything
 # too slow or too nightly for the PR gate. Findings here open issues —
-# they do not block merges unless a ratchet exists (two: the coverage
-# floor and the public-API snapshot; Lizard's CCN limit moved to ci.yml's
-# lint job on 2026-09-08 — seconds of runtime, so it gates the PR).
+# they do not block merges unless a ratchet exists (one: the coverage
+# floor; Lizard's CCN limit moved to ci.yml's lint job on 2026-09-08 —
+# seconds of runtime, so it gates the PR). The public-API snapshot ratchet
+# was retired on 2026-10-18 UTC: the C APIs/ABIs are the only supported
+# external interfaces (AGENTS.md, "External interfaces").
 #
 # No trial lanes remain: the Miri, cargo-mutants and cargo-geiger jobs
 # were retired on 2026-09-01 (docs/findings/verify-nightly.md). There are
 # no continue-on-error lanes; every job in this workflow must be green.
 # Surviving lanes: fuzz-soak, differentials, overflow-lane, coverage (via
-# coverage.yml, also the path-filtered PR gate), public-api, nextest.
+# coverage.yml, also the path-filtered PR gate), nextest.
 #
 # All jobs run in debian:testing containers in the store-backends.yml
 # style: the nightly lanes exist to surface drift early, and the rolling
@@ -207,48 +209,6 @@ jobs:
   coverage:
     uses: ./.github/workflows/coverage.yml
 
-  # Public-API snapshot for the supported Rust surface (structure.md:
-  # "cargo-public-api snapshots apply to the supported surface only").
-  # The committed snapshot is docs/api/oxpinyin-engine.public-api.txt;
-  # any diff fails the lane. A deliberate surface change regenerates the
-  # file in the same PR (docs/runbooks/goldens-and-pins.md). The tool
-  # reads rustdoc JSON, which is nightly-only, so it shares the fuzz
-  # lane's pinned nightly; cargo-public-api is cargo-installed and
-  # version-pinned the way cargo-fuzz is above. The engine has no
-  # features and no store dependency, so no C library is needed.
-  public-api:
-    runs-on: ubuntu-latest
-    container:
-      image: debian:testing # deliberately unpinned; see the header comment
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - name: Bootstrap the bare runner essentials (apt)
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libssl-dev
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          safe-directory: 'true'
-      # libssl-dev above: cargo-public-api links openssl-sys; the first
-      # container run without it failed in that build script.
-      - name: Install the pinned nightly
-        run: |
-          set -euo pipefail
-          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
-            | sh -s -- -y --profile minimal --default-toolchain nightly-2026-08-01
-          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
-      - run: cargo install cargo-public-api --version 0.52.0 --locked
-      - name: Diff the engine's public API against the committed snapshot
-        run: |
-          set -euo pipefail
-          cargo +nightly-2026-08-01 public-api -p oxpinyin-engine --simplified > public-api.txt
-          diff -u docs/api/oxpinyin-engine.public-api.txt public-api.txt
-
   # nextest over the whole workspace: proven equivalent locally (751/751
   # vs cargo test). If this stays green on the schedule, flipping the PR
   # gate's unit lane to nextest is a one-line follow-up.
@@ -345,9 +305,8 @@ jobs:
             binutils valgrind python3 util-linux
       # libssl-dev above: cargo-c pulls openssl-sys through the cargo crate,
       # and without it the build script dies with "Could not find directory of
-      # OpenSSL installation" — the same way cargo-public-api did in the
-      # public-api job, which is why that job installs it too. Confirmed by
-      # dispatching this lane once without it.
+      # OpenSSL installation". Confirmed by dispatching this lane once
+      # without it.
       - run: cargo install cargo-c --version 0.10.25 --locked
       # Its own cache namespace: perf-snapshot-, disjoint from fuzz-corpus-.
       # Same latest-wins shape the fuzz soak uses — the run-id key always

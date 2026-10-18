@@ -1,6 +1,11 @@
 # Core trait seam SPEC
 
-Date: 2026-08-09 · Status: frozen for Foundation
+Date: 2026-08-09 · Status: frozen for Foundation. **Superseded 2026-10-18 UTC
+in part:** the trait *signatures*, unsealed shape, object safety and
+"grow by defaulted methods only" rule were a Rust-source-compatibility
+freeze, retired by the maintainer ruling that the C APIs/ABIs are the only
+supported external interfaces (`AGENTS.md`, "External interfaces"). The
+behavioural rules below (totality, determinism, ordering, costs) remain.
 
 This SPEC freezes the dependency-free `oxpinyin-core` seam before downstream
 implementation. The traits are public and unsealed. Existing required methods

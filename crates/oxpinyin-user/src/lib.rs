@@ -1,7 +1,8 @@
 //! ACID store for user data over the compiled-in `DefaultStore` (tkrzw,
 //! Kyoto Cabinet, Berkeley DB or tkrzw — one per binary, selected by feature;
 //! see `oxpinyin-store`): learning, frequencies, preferences. Internal
-//! crate — the supported public API is `oxpinyin-engine`.
+//! crate — the supported external interfaces are the libpinyin-compatible and
+//! libzhuyin-compatible C APIs and ABIs.
 //!
 //! W6-T1: the integer count [`seed`] arithmetic pinned in
 //! `docs/findings/user-store.md` §2, the count tables, and the first

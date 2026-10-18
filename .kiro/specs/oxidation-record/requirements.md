@@ -153,6 +153,10 @@ before anything else.
 
 ### Requirement 7: The library's operations are the Rust surface
 
+> *Note 2026-10-18 UTC: the Rust surface is internal and not a supported
+> external interface (`/AGENTS.md`, "External interfaces"). The requirement
+> is an architecture goal for the in-tree layering, not an external promise.*
+
 **User Story:** As a frontend author, I want oxpinyin's Rust surface to
 be libpinyin's operations, so that libpinyin's semantics are not forced
 through an abstraction designed for a general IME.

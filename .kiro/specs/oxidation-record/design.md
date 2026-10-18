@@ -81,8 +81,8 @@ it — the ABI's language model always reports real unigrams — so the
 weights reach no parity-path output (record §11). These weights do not affect either C ABI under the established runtime
 configuration, so their removal is not required to close a C-ABI
 compatibility gap. Removal remains internal-work scope,
-subject to checking supported Rust callers, test and tool consumers,
-and any required interface-change approval.
+subject to checking in-tree Rust callers and test and tool consumers
+(a Rust interface change needs no approval since 2026-10-18 UTC).
 
 ## Idiom review
 

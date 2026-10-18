@@ -1,8 +1,8 @@
 #![no_main]
 //! Arbitrary key sequences through the Rust session API — the G5 gap in
 //! the testing-strategy assessment (`testing-strategy.md` §2): the C ABI
-//! command stream has a fuzzer (`capi_commands`), but the supported Rust
-//! surface (`oxpinyin-engine::Session`) had only the authored
+//! command stream has a fuzzer (`capi_commands`), but the internal Rust
+//! session layer (`oxpinyin-engine::Session`) had only the authored
 //! `session_replay` proptest scenarios, nothing hostile.
 //!
 //! Each input builds a fresh session over the committed w4 fixture

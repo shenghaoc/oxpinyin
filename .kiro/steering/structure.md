@@ -9,7 +9,7 @@ inclusion: always
 | oxpinyin-chewing | chewing/zhuyin layer: the packed chewing key, its renderers, and the frozen content tables — a dependency-free leaf *under* core, not a module over it (core depends on chewing) | forbid | yes | via capi, engine |
 | oxpinyin-data | native readers for the backend's data files — the formats a libpinyin build on that backend uses (D3 route) | deny (+mmap) | yes | via engine |
 | oxpinyin-user | ACID store over DefaultStore; no format-version row, matching libpinyin's unversioned user files (ruling 2026-09-08, `docs/findings/user-store.md` §4) | forbid | yes | via engine |
-| oxpinyin-engine | session API — the supported Rust surface | forbid | yes | yes |
+| oxpinyin-engine | session API — an internal Rust surface for the in-tree C facades, tools and tests; not a supported external interface | forbid | yes | yes |
 | oxpinyin-facade | shared facade-orchestration layer (instance/context state machines, parse seams, cursor laws, the §9 user-data export materialization) consumed by both C-ABI facades; depends on core, engine, runtime and user — it holds the runtime's concrete dict/lm/user handles by value, so it forwards the whole backend feature matrix rather than staying generic over the engine traits | forbid | yes | via capi |
 | oxpinyin-capi | the libpinyin C ABI — `libpinyin.so.15`, all 79 `pinyin_*` exports, libpinyin's SONAME/header/pkg-config via cargo-c | allow | Linux | yes |
 | oxpinyin-zhuyin-capi | C ABI of libpinyin's zhuyin facade — `libzhuyin.so.15`, the `--enable-libzhuyin` counterpart (52 symbols, own SONAME); delegates to the same engine/chewing surface as oxpinyin-capi | allow | Linux | yes |
@@ -62,13 +62,17 @@ config and storage paths injected as data; no platform services and no
 oxpinyin-capi, never in the engine. Sessions are instance-per-context and
 main-thread-friendly (TSF/IMK/ArkTS models).
 
-**Supported surface:** `oxpinyin-engine` (Rust) and `oxpinyin-capi` (C ABI; `oxpinyin-zhuyin-capi` for the zhuyin facade).
-core/data/user are published to hold names but are internal — no
-stability promise. There is no cargo-public-api snapshot tooling in the
-tree; the supported surface's stability is review-enforced
-(docs/safety/enforcement-matrix.md records this). Extension traits (`Dictionary`, `UserModel`,
-`LanguageModel`) are unsealed and grow only by defaulted methods; public
-error enums are `#[non_exhaustive]`.
+**Supported external interfaces:** the libpinyin-compatible C API/ABI
+(`oxpinyin-capi`) and the libzhuyin-compatible one
+(`oxpinyin-zhuyin-capi`), and only those (maintainer ruling 2026-10-18
+UTC; `/AGENTS.md`, "External interfaces"). Every crate's Rust interface,
+`oxpinyin-engine`'s included, is an implementation detail with no
+stability promise: published crate names hold names, nothing more. No
+cargo-public-api snapshot exists and none is enforced. Extension traits
+(`Dictionary`, `UserModel`, `LanguageModel`) may change incompatibly,
+lose object safety and lose defaulted methods when the implementation
+is better for it; the same holds for error enums and `#[non_exhaustive]`.
+The C export set is gated by the export check in ci.yml.
 
 **Configuration model:** layered — the frozen upstream defaults
 (`docs/findings/upstream-schema.md`, verbatim) → system drop-ins → a user

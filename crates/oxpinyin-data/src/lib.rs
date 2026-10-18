@@ -7,8 +7,8 @@
 //!
 //! Every reader is lazy: opening a directory costs the DBM handles and
 //! the chunk-file mappings, and each lookup is a point read. Portable: no
-//! glib, no Linux-only deps. Internal crate — the supported public API is
-//! `oxpinyin-engine`.
+//! glib, no Linux-only deps. Internal crate — the supported external interfaces
+//! are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
 //!
 //! The format notes live under `docs/findings/`:
 //! `libpinyin-system-data-formats-2026-09-01.md` (overview),

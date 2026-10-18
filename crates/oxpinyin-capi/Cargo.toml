@@ -24,8 +24,8 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 # enabled by default, so plain `cargo build`/`--workspace` behaviour is unchanged.
 capi = []
 # Rust-visible facade for the in-tree fuzz harness only. Off by default:
-# the released Rust API surface is unchanged for every consumer that does
-# not opt in (the supported surfaces remain the C ABI and the engine).
+# the default build carries no Rust-visible facade (the supported external
+# interfaces are the C ABI alone).
 fuzz-api = []
 # Backend selection (one backend per binary; see oxpinyin-store's
 # [features] for the model and precedence). Each peer feature forwards to

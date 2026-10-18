@@ -34,6 +34,21 @@ audit, #573):** five human rulings are recorded with their sources in
 reference build, the drop-in version, class (c)'s obligations, the
 `LC_NUMERIC` side effect and the evidence standard follow from them.
 
+## External interfaces: C only
+
+Maintainer ruling 2026-10-18 UTC. The full statement is in `AGENTS.md`,
+"External interfaces". In short: the only supported external library
+interfaces are the libpinyin-compatible and libzhuyin-compatible C
+APIs and ABIs; every native Rust interface is an implementation detail,
+free to change incompatibly with its in-tree callers updated in the same
+change. This policy's classes (a)–(c), the drop-in goal, the persistent
+data compatibility and the diagnostics below govern the C side and are
+untouched. A Rust-interface constraint is never a reason to diverge, and
+it is never a sixth class: where this document or its register says
+"engine interface change", "supported Rust surface" or "approved
+interface change" for a Rust signature, that wording is history and no
+STOP applies to it any more. Register rows keep their original text.
+
 ## The goal this policy serves
 
 oxpinyin is a **drop-in replacement**: rename the built shared object to

@@ -443,8 +443,8 @@ of either ABI; they act only for sessions built on models without
 unigram data (test doubles and oracle tools). These weights do not affect either C ABI under the established runtime
 configuration, so their removal is not required to close a C-ABI
 compatibility gap. Removal remains internal-work scope (spec task 4a),
-subject to checking supported Rust callers, test and tool consumers,
-and any required interface-change approval.
+subject to checking in-tree Rust callers and test and tool consumers
+(a Rust interface change needs no approval since 2026-10-18 UTC).
 
 **The value inventory is not yet proven complete.** §9's second table
 came from a search of the runtime crates for numeric constants; limits
