@@ -196,8 +196,62 @@ static int phrase_file(void *so, void *ctx, const char *path) {
     printf("operations\t%u\t%u\n", imported, exported);
     return 0;
 }
+/* #853 release cost stops. No profiler dump requests or output files.
+ * --unigram-pinyin|--unigram-zhuyin followed by lib-load, init, ready,
+ * increments, dirty-zero, dirty-increments, save-zero or save-increments.
+ * A prepared profile is an input. _exit retains the requested stop's live
+ * heap, including at init, instead of measuring teardown as part of it. */
+static void *facade_symbol(void *so, const char *facade, const char *suffix) {
+    char name[128];
+    if (snprintf(name, sizeof(name), "%s_%s", facade, suffix) >= (int)sizeof(name)) exit(2);
+    return symbol(so, name);
+}
+static int unigram_stop(const char *path, const char *data, const char *user,
+                        const char *facade, const char *stop) {
+    const char *valid[] = {"lib-load", "init", "ready", "increments", "dirty-zero",
+                           "dirty-increments", "save-zero", "save-increments"};
+    bool known = false;
+    for (unsigned i = 0; i < sizeof(valid) / sizeof(valid[0]); ++i)
+        if (!strcmp(stop, valid[i])) known = true;
+    if (!known) return 2;
+    void *so = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    if (!so) { fprintf(stderr, "%s\n", dlerror()); return 1; }
+    void *(*init)(const char *, const char *) = facade_symbol(so, facade, "init");
+    void *(*alloc)(void *) = facade_symbol(so, facade, "alloc_instance");
+    bool (*get)(void *, uint32_t, uint32_t *) = facade_symbol(so, facade, "token_get_unigram_frequency");
+    bool (*increment)(void *, uint32_t, uint32_t) = facade_symbol(so, facade, "token_add_unigram_frequency");
+    void *(*begin)(void *, uint8_t) = facade_symbol(so, facade, "begin_add_phrases");
+    bool (*add)(void *, const char *, const char *, int32_t) = facade_symbol(so, facade, "iterator_add_phrase");
+    void (*end)(void *) = facade_symbol(so, facade, "end_add_phrases");
+    bool (*save)(void *) = facade_symbol(so, facade, "save");
+    if (!strcmp(stop, "lib-load")) { puts("loaded"); fflush(stdout); _exit(0); }
+    void *ctx = init(data, user);
+    if (!ctx) return 1;
+    if (!strcmp(stop, "init")) { puts("initialized"); fflush(stdout); _exit(0); }
+    void *instance = alloc(ctx);
+    const uint32_t token = 0x01000001;
+    uint32_t before = 0, after = 0;
+    if (!instance || !get(instance, token, &before)) return 1;
+    unsigned count = strstr(stop, "increments") ? 1000 : 0;
+    for (unsigned i = 0; i < count; ++i) if (!increment(instance, token, 1)) return 1;
+    bool dirty = !strncmp(stop, "dirty-", 6) || !strncmp(stop, "save-", 5);
+    if (dirty) {
+        void *it = begin(ctx, 7);
+        if (!it || !add(it, "你好", !strcmp(facade, "pinyin") ? "ni3'hao3" : "ㄋㄧˇ ㄏㄠˇ", 1)) return 1;
+        end(it);
+    }
+    bool saved = !strncmp(stop, "save-", 5);
+    if ((saved && !save(ctx)) || !get(instance, token, &after) || after != before + count) return 1;
+    printf("increments=%u before=%u after=%u saved=%u\n", count, before, after, saved);
+    fflush(stdout);
+    _exit(0);
+}
 int main(int argc, char **argv) {
     if (argc < 4 || argc > 6) return 2;
+    if (argc == 6 && !strcmp(argv[4], "--unigram-pinyin"))
+        return unigram_stop(argv[1], argv[2], argv[3], "pinyin", argv[5]);
+    if (argc == 6 && !strcmp(argv[4], "--unigram-zhuyin"))
+        return unigram_stop(argv[1], argv[2], argv[3], "zhuyin", argv[5]);
     if (mkdir(argv[3], 0700) != 0 && errno != EEXIST) {
         perror("create user directory");
         return 1;

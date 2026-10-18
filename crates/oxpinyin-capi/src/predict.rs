@@ -429,8 +429,9 @@ fn predicted_total(lm: &SharedLm) -> u64 {
     lm.amplified_total()
 }
 
-/// Both predicted row kinds read the live item counter. User dictionary
-/// imports and training live in the store; ABI unigram adds live in the dict.
+/// Both predicted row kinds read the live item counter. Imports, training
+/// and system ABI increments share store rows; remaining transient increments
+/// live in the dictionary overlay.
 fn predicted_frequency(
     dict: &SharedDict,
     user: Option<&UserStore>,

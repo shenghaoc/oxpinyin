@@ -463,6 +463,8 @@ impl GenericUserStore<DefaultStore> {
         let system_items = kept_items.into_iter().collect();
 
         let inner = Arc::new(StoreInner {
+            system_bumps_live: std::sync::atomic::AtomicBool::new(false),
+            system_bumps: std::sync::Mutex::new(crate::registry::SystemUnigramBumps::default()),
             has_system_items: std::sync::atomic::AtomicBool::new(has_system_items),
             system_items: std::sync::Mutex::new(system_items),
             has_removed_system_items: std::sync::atomic::AtomicBool::new(
@@ -689,7 +691,7 @@ pub(crate) fn seed_txn(
             let token = (u32::from(nibble) << 24) | slot;
             // `is_readable` held, so the item exists and this is its unigram.
             let base = original.unigram(slot).unwrap_or(0);
-            let delta = u64::from(new_item.unigram.saturating_sub(base));
+            let delta = u64::from(new_item.unigram.wrapping_sub(base));
             if delta == 0 {
                 continue;
             }
@@ -750,6 +752,7 @@ pub fn export_state<S: WriteStore>(
     store: &GenericUserStore<S>,
     originals: &SystemOriginals,
 ) -> Result<UserState, UserStoreError> {
+    store.flush_system_unigrams()?;
     let db = store.database();
 
     let mut phrase_text: BTreeMap<Token, Vec<u32>> = BTreeMap::new();
@@ -864,9 +867,7 @@ pub fn export_state<S: WriteStore>(
                 *frequency = frequency.wrapping_add(delta as u32);
             }
         }
-        new_item.unigram = old
-            .unigram
-            .saturating_add(u32::try_from(*delta).unwrap_or(u32::MAX));
+        new_item.unigram = old.unigram.wrapping_add(*delta as u32);
         state
             .system_overrides
             .entry(nibble)
@@ -1149,6 +1150,9 @@ mod tests {
         // Raw Remove may have different backend results. The helper must
         // immediately reflect whichever value the in-memory DBM kept.
         let live_after_mask = store.has_oob_bigram_value_for(1);
+        // This fixture explicitly exercises serialization after the raw mask;
+        // the reporting helper now enforces the pin's modified guard too.
+        store.mark_modified();
         let report = store.save_reporting().expect("save masked gram");
         assert!(report.renames_failed.is_empty());
         assert!(report.user_conf_write_failed.is_none());
@@ -1487,6 +1491,9 @@ mod tests {
                 .and_then(|gram| oxpinyin_core::single_gram::get_freq(gram, 9))
                 .map_or(0, u64::from)
         );
+        // This fixture explicitly exercises serialization after the raw mask;
+        // the reporting helper now enforces the pin's modified guard too.
+        store.mark_modified();
         let report = store.save_reporting().expect("save masked gram");
         assert!(report.renames_failed.is_empty());
         assert!(report.user_conf_write_failed.is_none());

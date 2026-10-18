@@ -174,6 +174,25 @@ impl SystemLibrary {
         )
     }
 
+    /// The wrapping item sum `FacadePhraseIndex::compact` rebuilds,
+    /// independent of the stored header. Borrow fields without cloning items.
+    pub(crate) fn item_total(&self) -> u32 {
+        let inline = self
+            .items
+            .iter()
+            .filter(|(slot, _)| **slot >= 1)
+            .fold(0_u32, |total, (_, item)| total.wrapping_add(item.unigram));
+        self.mapped.as_ref().map_or(inline, |library| {
+            self.items
+                .keys()
+                .filter(|slot| **slot >= 1)
+                .filter_map(|slot| library.item(*slot))
+                .fold(inline.wrapping_add(library.item_total()), |total, item| {
+                    total.wrapping_sub(item.unigram())
+                })
+        })
+    }
+
     pub(crate) fn contains_item(&self, slot: u32) -> bool {
         self.items.contains_key(&slot)
             || self
@@ -1437,29 +1456,26 @@ fn journal_record_item(item: &ChunkItem) -> Result<Vec<u8>, PersistenceError> {
     encode_phrase_item(item).map_err(PersistenceError::from)
 }
 
-/// The library's new `total_freq` — the original plus the overrides'
-/// deltas.
-///
-/// `m_total_freq`'s incremental arithmetic recomputed deterministically
-/// (saturating; upstream drops a delta that would overflow instead, an
-/// edge no training run reaches).
+/// The compacted library's wrapping item sum, with live overrides applied
+/// (`phrase_index.cpp:648-675` at 074a2219). The original header may differ
+/// from its items; compact does not preserve that difference.
 #[must_use]
 pub fn system_new_total(
     original: &SystemLibrary,
     overrides: &BTreeMap<u32, Option<ChunkItem>>,
 ) -> u32 {
-    let mut total = original.total;
+    let mut total = original.item_total();
     for (slot, override_item) in overrides {
         match (original.item(*slot), override_item) {
             (Some(old), Some(new)) => {
-                total = total.saturating_sub(old.unigram);
-                total = total.saturating_add(new.unigram);
+                total = total.wrapping_sub(old.unigram);
+                total = total.wrapping_add(new.unigram);
             }
             (Some(old), None) => {
-                total = total.saturating_sub(old.unigram);
+                total = total.wrapping_sub(old.unigram);
             }
             (None, Some(new)) => {
-                total = total.saturating_add(new.unigram);
+                total = total.wrapping_add(new.unigram);
             }
             (None, None) => {}
         }

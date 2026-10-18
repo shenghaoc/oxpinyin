@@ -52,7 +52,18 @@ pub struct CountCache {
     pub(crate) bigram_rows: HashMap<Token, Vec<u8>>,
 }
 
+/// Accepted exported increments since the last operation that writes counts.
+/// The library totals are cached only while these live item deltas exist.
+#[derive(Default)]
+pub(crate) struct SystemUnigramBumps {
+    pub(crate) tokens: HashMap<Token, u64>,
+    pub(crate) libraries: HashMap<u8, u32>,
+    pub(crate) total: u64,
+}
+
 pub struct StoreInner<S: WriteStore> {
+    pub(crate) system_bumps_live: AtomicBool,
+    pub(crate) system_bumps: Mutex<SystemUnigramBumps>,
     pub(crate) has_system_items: AtomicBool,
     pub(crate) system_items:
         Mutex<std::collections::BTreeMap<Token, oxpinyin_data::chunk_write::ChunkItem>>,
