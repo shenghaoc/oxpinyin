@@ -497,3 +497,45 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     // Ranged rows, markers that range nothing, and absent keys all occur.
     assert!(seen.0 > 0 && seen.1 > 0 && seen.2 > 0, "{seen:?}");
 }
+
+// ── Long phrases through the hit path ───────────────────────────
+
+/// A phrase whose UTF-8 does not fit the hit path's stack buffer (eleven
+/// CJK characters, 33 bytes) resolves through `lookup` with its text and
+/// pronunciation possibility intact — the owned fallback of the decoder,
+/// reached from the dictionary and not only from the unit tests.
+#[test]
+fn a_long_phrase_resolves_with_text_and_possibility() {
+    let dir = scratch_dir("oxpinyin-system-dict-long-");
+    let zhong1 = key("zhong").with_tone(1);
+    let keys: Vec<ChewingKey> = std::iter::repeat_n(zhong1, 11).collect();
+    let untoned: Vec<ChewingKey> = std::iter::repeat_n(key("zhong"), 11).collect();
+    let text = "中中中中中中中中中中中";
+    assert_eq!(text.chars().count(), 11);
+    assert_eq!(text.len(), 33, "the fallback must be reached");
+
+    let rows: Vec<(Vec<u8>, Vec<u8>)> = vec![(
+        encode_complete(&untoned),
+        encode_items(&[(0x0100_00B0, &keys[..])]),
+    )];
+    write_raw_rows::<DefaultStore>(&dir.path().join(SystemDbm::PinyinIndex.file_name()), &rows);
+    write_raw_rows::<DefaultStore>(
+        &dir.path().join(SystemDbm::PhraseIndex.file_name()),
+        &[(encode_ucs4_key(text), encode_tokens(&[0x0100_00B0]))],
+    );
+    let packed: Vec<u8> = keys
+        .iter()
+        .flat_map(|key| key.to_packed().to_le_bytes())
+        .collect();
+    let mut builder = ChunkBuilder::new(9);
+    builder.add(0xB0, 9, text, vec![(packed, 9)]);
+    std::fs::write(dir.path().join("gb_char.bin"), builder.build()).unwrap();
+
+    let dict = SystemDictionary::open(dir.path()).unwrap();
+    let query: Vec<SyllableKey> = std::iter::repeat_n(syl("zhong"), 11).collect();
+    let entries = dict.lookup(&query).unwrap();
+    assert_eq!(entries.len(), 1, "{entries:?}");
+    assert_eq!(entries[0].text(), text);
+    assert_eq!(entries[0].token().value(), 0x0100_00B0);
+    assert_eq!(entries[0].pronunciation_possibility(), Some((9, 9)));
+}

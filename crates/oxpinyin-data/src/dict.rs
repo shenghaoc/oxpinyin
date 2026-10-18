@@ -19,6 +19,7 @@
 //! surviving token through its library — a token whose library is not
 //! loaded is invisible, upstream's `NULL == head` skip.
 
+use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
@@ -32,7 +33,7 @@ use oxpinyin_store::{DefaultStore, ReadStore};
 use crate::chewing_table::{ChewingTable, PinyinIndexItem, RawChewingDbm, prefix_keys_match};
 use crate::phrase_libraries::PhraseLibraries;
 use crate::phrase_library::LibraryError;
-use crate::phrase_library::RowFault;
+use crate::phrase_library::{PHRASE_TEXT_STACK_BYTES, RowFault};
 use crate::phrase_table::PhraseTable;
 use crate::system_files::{SYSTEM_LIBRARY_FILES, SystemDbm};
 use crate::table::TableError;
@@ -131,13 +132,24 @@ fn resolve_items(
 
 /// `token`'s entry: its text, priced against `keys`; `None` when the
 /// library is unloaded or the item cannot be read.
+///
+/// The text is `PhraseItem::get_phrase_string` then `g_ucs4_to_utf8`
+/// (`_token_get_phrase`, `pinyin.cpp:1627-1647` at 074a2219), decoded
+/// here into a stack buffer and handed to the entry as `&str`, so a hit
+/// of ordinary length costs no heap allocation; a longer text takes the
+/// one owned `String` it needs ([`PhraseItemView::phrase_text_into`]).
 fn resolve_item(
     libraries: &PhraseLibraries,
     keys: &[ChewingKey],
     token: u32,
 ) -> Option<PhraseEntry> {
-    let text = libraries.phrase_text(token)?;
-    let mut entry = PhraseEntry::new(PhraseToken::new(token), text);
+    let library = libraries.library(token)?;
+    let item = library.item(token)?;
+    let mut buf = [0_u8; PHRASE_TEXT_STACK_BYTES];
+    let mut entry = match item.phrase_text_into(&mut buf)? {
+        Cow::Borrowed(text) => PhraseEntry::new(PhraseToken::new(token), text),
+        Cow::Owned(text) => PhraseEntry::new(PhraseToken::new(token), text),
+    };
     if let Some((matched, total)) = libraries.pronunciation_possibility(token, keys) {
         entry = entry.with_pronunciation_possibility(matched, total);
     }
