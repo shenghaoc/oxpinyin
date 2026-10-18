@@ -177,7 +177,9 @@ rkyv is for a **new** archived format plus a migrator. Do not rkyv the
 live redb schema. Replacing `interpolation2.text` with an archive is
 exactly the "do not replace interpolation2 as a first move" ban. Disk
 size of the 81 MB `\2-gram` section is a Stage-2 format project, not
-this one.
+this one. *(Note added 2026-10-18 UTC: under the 2026-10-14 restaging, a
+change to the on-disk format is a Stage 3 departure. See
+`.kiro/specs/stage3-departures/`.)*
 
 ### Cheaper win — **chosen**
 

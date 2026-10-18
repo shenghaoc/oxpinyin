@@ -80,6 +80,7 @@ The only departures are the classes in `oxpinyin-improvements.md`.
 By reading it: the pin's source first, then the disassembly of the
 pin-built object that holds the code — the reference cell's by default,
 the backend's own build for backend-specific code, `libzhuyin.so.15` for
-the zhuyin facade (`/AGENTS.md`, "Stage 2 — bug-for-bug"). Never by
-running experiments against the oracle. Every reproduced behaviour cites
+the zhuyin facade (`/AGENTS.md`, "Stage 2 — bug-for-bug compatibility
+and internal improvement"). Never by running experiments against the
+oracle. Every reproduced behaviour cites
 `path:line` at the pin, or symbol and instruction offsets.

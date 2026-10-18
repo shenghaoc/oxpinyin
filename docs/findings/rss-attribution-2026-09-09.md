@@ -605,7 +605,10 @@ marshalling — and does not pass through Rust's `GlobalAlloc` at all.
    library chunk file and the phrase index are resident to the byte in
    both engines; the largest gap term is C-side backend allocation. This
    diagnosis neither supports nor advances that Stage 2 item, and the two
-   should not be conflated.
+   should not be conflated. *(Note added 2026-10-18 UTC: the 2026-10-14
+   restaging puts the compiled binary text model in Stage 3, because it
+   changes the system data files. See
+   `.kiro/specs/stage3-departures/`.)*
 
 6. **Timing was not measured and is not claimed.** The cycle timings the
    harness emits were not analysed and no timing figure appears in this

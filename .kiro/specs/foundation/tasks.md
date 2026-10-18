@@ -87,8 +87,11 @@ fixtures are human-frozen.
   _Requirements: R8, R9_
 
 - [x] 12. **[A]** Record the output-compatibility policy.
-  - `docs/findings/compatibility-policy.md`: the four exception classes
-    and the E2E I/O rule; compact steering copy in
-    `.kiro/steering/compatibility-policy.md` (split 2026-10-14 into
-    `pinned-behaviour.md` and `oxpinyin-improvements.md`).
+  - `docs/findings/compatibility-policy.md`: the exception classes and
+    the E2E I/O rule. The policy had four classes when this task closed;
+    class (d), consumer scope, was retired on 2026-09-06, and three
+    classes, (a)–(c), are live.
+  - Steering copies: `.kiro/steering/pinned-behaviour.md` and
+    `.kiro/steering/oxpinyin-improvements.md`. These replaced the
+    earlier compact copy on 2026-10-14.
   _Requirements: R9_

@@ -5,11 +5,17 @@
 Stage 2 (maintainer ruling 2026-10-14 UTC) makes oxpinyin match the
 pinned libpinyin bug for bug across the whole exported ABI and the
 user-store surfaces. It also allows internal improvement that keeps
-compatibility. Requirements 1–3 are pinned behaviour
-(`.kiro/steering/pinned-behaviour.md`). Requirement 4 is different: it
-is an oxpinyin rule, not a behaviour of the pin. It sets a performance
-floor and no ceiling. Where oxpinyin may differ from the pin, the rule is
-in `.kiro/steering/oxpinyin-improvements.md`. Intentional departures
+compatibility. This spec contains requirements from both sides:
+
+- Requirements 1–3 are pinned behaviour
+  (`.kiro/steering/pinned-behaviour.md`).
+- Requirements 4–5 are oxpinyin rules, not behaviours of the pin
+  (`.kiro/steering/oxpinyin-improvements.md`). Requirement 4 sets a
+  performance floor and no ceiling. Requirement 5 sets the measurement
+  method.
+
+Where oxpinyin may differ from the pin, the rule is in
+`.kiro/steering/oxpinyin-improvements.md`. Intentional departures
 from the pin are Stage 3 (`.kiro/specs/stage3-departures/`).
 
 ## Glossary
@@ -97,14 +103,22 @@ compatibility stays.
    heap — with the workload, build and repeats stated (#757 is the
    worked example).
 2. WHEN oxpinyin is worse than the pin on both time and space for a
-   workload THEN the regression SHALL be fixed in Stage 2, by reproducing
-   the pin's way of doing the work, or the trade justified per the
-   Source policy.
-3. A change that makes oxpinyin faster or smaller than the pin SHALL be
-   accepted in Stage 2 WHEN observable output, the files on disk and the
-   ABI do not change. Its differentials SHALL stay identical.
-4. A performance change that needs an observable or on-disk change
-   SHALL NOT land in Stage 2. It is a Stage 3 departure.
+   workload THEN the regression SHALL be fixed in Stage 2. A written
+   justification SHALL NOT replace the fix.
+3. WHEN a change makes oxpinyin worse on one axis only THEN the change
+   SHALL make the other axis better. The change SHALL keep the
+   regression as small as possible, and its report SHALL justify the
+   trade (`/AGENTS.md`, Source policy).
+4. A change that makes oxpinyin faster or smaller than the pin is
+   eligible for Stage 2 WHEN observable output, the files on disk and the
+   ABI do not change. Its differentials SHALL stay identical. Eligibility
+   is not approval: the change SHALL also satisfy the other rules that
+   apply to it (safety, dependencies, install size, review and
+   verification).
+5. A performance change that needs an observable or on-disk change
+   SHALL NOT land in Stage 2, unless a registered class (a)–(c)
+   exception in `docs/findings/compatibility-policy.md` covers that
+   change. Otherwise the change is a Stage 3 departure.
 
 ### Requirement 5: Performance measured the same way on both sides
 

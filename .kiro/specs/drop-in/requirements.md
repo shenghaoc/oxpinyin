@@ -2,7 +2,7 @@
 
 ## Introduction
 
-An oxpinyin build is a bug-for-bug libpinyin binary: `libpinyin.so.15`
+The default oxpinyin build is a bug-for-bug libpinyin binary: `libpinyin.so.15`
 (and `libzhuyin.so.15`), built on one of the three backends libpinyin is
 built on, handling that backend's files natively. A distributor installs
 it in libpinyin's place and consumers run unchanged on the data already

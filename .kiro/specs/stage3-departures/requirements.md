@@ -6,7 +6,8 @@ Stage 3 (maintainer ruling 2026-10-14 UTC) permits intentional
 departures from the pinned libpinyin: changes to observable behaviour,
 to the files on disk or to the ABI. Examples are a new language model,
 different candidate behaviour and an incompatible data format. It starts
-after Stage 2. It is an oxpinyin improvement
+after the Stage 2 compatibility exit gate
+(`.kiro/specs/bug-for-bug/tasks.md`, task 4). It is an oxpinyin improvement
 (`.kiro/steering/oxpinyin-improvements.md`). The default build keeps the
 pinned behaviour (`.kiro/steering/pinned-behaviour.md`).
 

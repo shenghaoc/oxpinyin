@@ -39,10 +39,10 @@ architecture work is allowed when output, files on disk and the ABI do
 not change. oxpinyin may be faster or smaller than the pin by any
 amount. This applies to the whole ABI and the user-store surfaces.
 The round-2 audit closed on 2026-10-17 (#573). The open work is the
-init complexity tracker (#870), then a third bug-for-bug sweep. Behaviour is derived by
-reading the pin's source, then its disassembly, never by running
-experiments (`/AGENTS.md` "Stage 2 — bug-for-bug";
-`.kiro/specs/bug-for-bug/`). The performance floor: oxpinyin must not
+init complexity tracker (#870), then a third bug-for-bug sweep. Behaviour
+is derived by reading the pin's source, then its disassembly, never by
+running experiments (`/AGENTS.md`, "Stage 2 — bug-for-bug compatibility
+and internal improvement"; `.kiro/specs/bug-for-bug/`). The performance floor: oxpinyin must not
 be worse than the pin on both time and space (axis L, #757). There is no
 ceiling. Landed performance work (P1–P6, fat LTO, the key-cost table,
 store/user hot paths) is recorded in `ROADMAP.md` and

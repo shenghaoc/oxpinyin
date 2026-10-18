@@ -2,7 +2,7 @@
 
 ## Overview
 
-Two merged pieces make an oxpinyin build a libpinyin binary: the binary
+Two merged pieces make the default oxpinyin build a libpinyin binary: the binary
 identity (SONAME, header, pkg-config — #206, #192) and native storage on
 libpinyin's three backends. The runtime opens its backend's system data
 directory the way `pinyin_init` does (P6, 2026-09-02) and keeps the user
