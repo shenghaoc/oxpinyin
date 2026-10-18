@@ -71,6 +71,7 @@ series lives in `../perf/`.
 | [`kyotocabinet-backend`](kyotocabinet-backend.md) | Kyoto Cabinet compat backend | record (backend; the compat framing is pre-P6) |
 | [`lambda-port`](lambda-port.md) | λ-estimator port — deleted-interpolation EM (W9-T3) | historical (pre-P6) |
 | [`legacy-migration`](legacy-migration.md) | Legacy user-data migration (W7-T2) — SHELVED | shelved |
+| [`libpinyin-structures-and-algorithms`](libpinyin-structures-and-algorithms.md) | libpinyin's components, data structures, algorithms and coefficients beside oxpinyin's, with the open gaps | register |
 | [`libpinyin-system-data-formats-2026-09-01`](libpinyin-system-data-formats-2026-09-01.md) | libpinyin system-data formats vs the #269 sysimage — source-level comparison | record (P1 input) |
 | [`live-typing`](live-typing.md) | Findings — live-typing differential (post-choose surfaces no pin gates) | record (W12, parked behaviours) |
 | [`matrix-split-tables`](matrix-split-tables.md) | Matrix split tables SPEC | frozen |
