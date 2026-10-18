@@ -1,14 +1,14 @@
-# Design — Drop-in replacement
+# Design — Drop-in: the libpinyin binary
 
 ## Overview
 
-Three merged pieces carry the surface: the binary identity (SONAME,
-header, pkg-config — #206, #192), the direct data path — the runtime
-opens libpinyin's own data directory in place through `oxpinyin-data`'s
-readers (P6, 2026-09-02, which replaced the #228 compatibility layer),
-with learned user data read and written in libpinyin's own user-file set
-(task 9, 2026-09-09) — and the output-compatibility policy that governs
-every divergence (`docs/findings/compatibility-policy.md`).
+Two merged pieces make an oxpinyin build a libpinyin binary: the binary
+identity (SONAME, header, pkg-config — #206, #192) and native storage on
+libpinyin's three backends. The runtime opens its backend's system data
+directory the way `pinyin_init` does (P6, 2026-09-02) and keeps the user
+dir as that backend's native user files (task 9, 2026-09-09; task 10
+added Berkeley DB, 2026-09-12). Every difference from the pin is governed
+by `docs/findings/compatibility-policy.md`.
 
 ## Architecture
 
@@ -24,14 +24,14 @@ crates/oxpinyin-capi/
                              @libdir@/@includedir@/@VERSION@/@DATABASE_FORMAT@
   pinyin.h, libpinyin.ver  — the declarations and the 79-symbol export list
 crates/oxpinyin-data/src/
-  system_files.rs          — libpinyin's file inventory: DBM names per backend
-                             family, the chunk files, the addon library table
+  system_files.rs          — the backend's system file names, the chunk files,
+                             the addon library table
   chunk_format.rs, phrase_library.rs — the MemoryChunk reader (mmap, checksum)
   row_format.rs            — the four DBM row layouts, shared with datagen
   chewing_table.rs, phrase_table.rs, bigram_table.rs, punct.rs, table_conf.rs
                            — lazy readers: a handle plus a point read each
   user_files.rs            — user.conf codec, the user DBM names, .dbin records
-crates/oxpinyin-user/src/persistence.rs — the user dir in libpinyin's own shapes
+crates/oxpinyin-user/src/persistence.rs — the user dir, native per backend
 crates/oxpinyin-runtime/src/lib.rs      — Runtime::open(system_dir, user_dir),
                                           what pinyin_init does
 tools/packaging/install.sh              — fills @prefix@/@exec_prefix@/@libdir@/
@@ -48,41 +48,34 @@ tools/packaging/install.sh              — fills @prefix@/@exec_prefix@/@libdir
   confirmed against Ubuntu's shipped `libpinyin15`).
 - Header: `subdirectory = "libpinyin-2.11.92"`; asset install of
   `pinyin.h` into the same subdirectory. The version is the pin's
-  (`libpinyin_tag` in `tools/oracle/oracle-pin.txt`): the drop-in
-  identity follows the pinned libpinyin (`074a2219`), superseding the
-  PR #363 split that held it at 2.11.91 until upstream tagged
-  (version ruling 2026-09-26 UTC, #592). `build.rs` reads the pin
-  record and fails the build when the `[package.metadata.capi]` tables
-  disagree with it.
+  (`libpinyin_tag` in `tools/oracle/oracle-pin.txt`); `build.rs` reads
+  the pin record and fails the build when the `[package.metadata.capi]`
+  tables disagree with it (version ruling 2026-09-26 UTC, #592).
 - pkg-config: `libpinyin.pc.in` is the pin's template line for line
   (`pkgdatadir`, `database_format`, `exec_prefix`); `build.rs` bakes
   `@VERSION@`/`@DATABASE_FORMAT@`, and `tools/packaging/install.sh` fills
   `@prefix@`/`@exec_prefix@`/`@libdir@`/`@includedir@` as the pin's
-  configure does (prefix-relative `${exec_prefix}/lib` and
-  `${prefix}/include` unless `--libdir`/`--includedir` are given).
-  `tools/packaging/check-pc-metadata.sh` diffs the result against a pin
-  install.
+  configure does. `tools/packaging/check-pc-metadata.sh` diffs the
+  result against a pin install.
 - Exported surface: the full live upstream ABI, 79 `pinyin_*` symbols
   (`docs/findings/abi-reference.md`, `tools/abi/check-exports.sh`); no
   symbol is scoped by which consumer calls it.
 
-### Direct data path (`oxpinyin-runtime`, `oxpinyin-data`)
+### Storage (`oxpinyin-store`, `oxpinyin-data`, `oxpinyin-runtime`)
 
-- `Runtime::open(system_dir, user_dir)` opens a directory the way
-  `pinyin_init` does: the three required DBMs (`pinyin_index`,
+- One backend per build — `bdb` (default), `kyotocabinet` or `tkrzw` —
+  selected by cargo feature as libpinyin selects with `--with-dbm`;
+  `oxpinyin-store` refuses a build naming none or several.
+- `Runtime::open(system_dir, user_dir)` opens the system directory the
+  way `pinyin_init` does: the three required DBMs (`pinyin_index`,
   `phrase_index`, `bigram`), the per-library chunk files, and optionally
   `table.conf` (λ), `punct` and the addon DBM pair. The caller supplies
   the directory (`StoragePaths`); no distro layout is auto-detected.
-- The DBM file names follow the compiled-in backend family: libpinyin's
-  own (`pinyin_index.bin`, `bigram.db`, …) on Kyoto Cabinet, tkrzw and
-  Berkeley DB, so an unmodified install's `data/` opens as is;
-  `<stem>.<ext>` on redb and LMDB, which no libpinyin build writes. On every backend the
-  directory `oxpinyin-datagen compile` writes opens the same way.
+- File names and record layouts are the backend's native ones
+  (`pinyin_index.bin`, `bigram.db`, …): the set a libpinyin build on that
+  backend uses, and the set `oxpinyin-datagen compile` writes.
 - Nothing is converted or scanned at open — a handle plus a point read
-  per file, chunk files mmapped and checksummed. There is no
-  compatibility layer: the readers that open an install are the readers
-  that open oxpinyin's own output
-  (`docs/findings/runtime-direct-libpinyin-data-2026-09-02.md`).
+  per file, chunk files mmapped and checksummed.
 
 ### MemoryChunk (`oxpinyin-data/src/chunk_format.rs`, `phrase_library.rs`)
 
@@ -95,32 +88,21 @@ tools/packaging/install.sh              — fills @prefix@/@exec_prefix@/@libdir
 
 - Content tables (`gb_char.bin`, `merged.bin`, …): backend-independent
   `MemoryChunk` images holding the `SubPhraseIndex` structures.
-- `phrase_index` / `pinyin_index` / `punct`: the build DBM's tree
-  databases (TreeDB for Kyoto Cabinet, TreeDBM for tkrzw — despite the
-  `.bin` extension), read in place through point lookups.
-- `bigram`: the build DBM's hash database keyed by the raw `u32` token,
+- `phrase_index` / `pinyin_index` / `punct`: the backend's tree databases
+  (TreeDB on Kyoto Cabinet, TreeDBM on tkrzw, a B-tree on Berkeley DB),
+  read through point lookups.
+- `bigram`: the backend's hash database keyed by the raw `u32` token,
   valued by a `SingleGram` chunk.
-- User dir: `user.conf`, `user_bigram` (a Kyoto Cabinet StashDB snapshot
-  or a tkrzw HashDBM — its own container, not the system bigram's),
-  `user_pinyin_index`, `user_phrase_index`, `user.bin` and the `*.dbin`
-  diff logs — loaded through `check_format`, saved whole to `.tmp`
-  siblings then renamed (`docs/findings/user-store.md` §11).
 
-### User data (task 9, landed 2026-09-09)
+### User data
 
-An oxpinyin built on Kyoto Cabinet and a libpinyin built on Kyoto
-Cabinet — likewise the tkrzw pair — read and write the same user dir,
-and a swap in either direction carries the learned data with it;
-measured by `tools/oracle/user-dir-round-trip.sh` against pin-built
-oracles, 10/10 export rows byte-identical each way on both backends
-(`docs/findings/compatibility-policy.md`, goal amendment 2026-09-09).
-Fresh-start applies only across a genuine KV-backend change.
-
-## Out of scope / shelved
-
-- ~~The BerkeleyDB backend — SHELVED~~ Landed 2026-09-12 as the fifth
-  store peer (`docs/findings/berkeleydb-backend.md`); the shelved
-  first cut on `feat/bdb-backend` supplied its FFI shape and
-  byte-layout evidence.
+The user dir is the backend's native user file set — `user.conf`,
+`user_bigram`, `user_pinyin_index`, `user_phrase_index`, `user.bin` and
+the `*.dbin` diff logs — loaded through `check_format` and saved whole to
+`.tmp` siblings then renamed, as the pin does (`docs/findings/user-store.md`
+§11). Builds on the same backend, libpinyin or oxpinyin, use the same
+user dir; a build on another backend cannot read it and starts fresh, as
+libpinyin's own builds do. Measured by `tools/oracle/user-dir-round-trip.sh`
+against pin-built oracles (task 9).
 
 **Reference:** [libpinyin wiki](https://github.com/libpinyin/libpinyin/wiki) — the n-gram model format, internals and multiple-dictionary layout are documented there; the pinned source (`074a2219`) is the authority where the two differ.

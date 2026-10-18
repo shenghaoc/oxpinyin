@@ -4,10 +4,10 @@
 //! `pinyin_init` does — the pinyin and phrase DBMs, the per-library
 //! chunk files, `bigram.db`, `punct.bin`, the addon DBM pair, λ from
 //! `table.conf` — installs the optional user store, and hands out
-//! [`Session`]s over the merged backends. On Kyoto Cabinet, tkrzw and
-//! Berkeley DB that directory is an unmodified libpinyin install's
-//! `data/`; on every backend it is what `oxpinyin-datagen compile`
-//! writes. Nothing is scanned at open: every reader in `oxpinyin-data`
+//! [`Session`]s over the merged backends. On each backend that
+//! directory is the backend's native data directory — the one a
+//! libpinyin build on the same backend uses, or what
+//! `oxpinyin-datagen compile` writes. Nothing is scanned at open: every reader in `oxpinyin-data`
 //! is a handle plus a point read. The algorithms stay where they
 //! belong — decoding/composition in `oxpinyin-engine`, tables and model math
 //! in `oxpinyin-data`, user state in `oxpinyin-user` — and the user-count
@@ -1961,8 +1961,8 @@ impl Runtime {
     /// (`SystemDbm::file_name` — libpinyin's own names on Kyoto Cabinet,
     /// tkrzw and Berkeley DB), the
     /// per-library chunk files, and optionally `table.conf` (λ),
-    /// `punct.bin`, and the addon DBM pair. On Kyoto Cabinet, tkrzw and
-    /// Berkeley DB an unmodified libpinyin install's `data/` opens as is.
+    /// `punct.bin`, and the addon DBM pair — the backend's native data
+    /// directory, opened as is.
     /// When `user_dir` is given, the learning store opens too (its
     /// creation or read failure degrades to "no user state", matching the
     /// C ABI so a bad user dir cannot fail init), under libpinyin's

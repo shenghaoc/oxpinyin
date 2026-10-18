@@ -1,20 +1,25 @@
 # oxpinyin
 
 A portable Rust re-expression of
-[libpinyin](https://github.com/libpinyin/libpinyin): Stage 1 is exact-output
-parity with a checksum-pinned, source-built libpinyin oracle; Stage 2 is
-measured algorithm upgrades.
+[libpinyin](https://github.com/libpinyin/libpinyin). Each build replaces
+`libpinyin.so.15`. The target is bug-for-bug compatibility with a pinned
+libpinyin, defects included.
 
-**Status:** Stage 1 implementation complete — 1,571/1,571 corpus rows
-(ORDER-ONLY divergence class); 79/79 exported symbols; drop-in as
-`libpinyin.so.15` verified on Fedora rawhide, Debian testing, and NixOS.
-One verification gap open — the differential suite does not yet drive the
-full 79-symbol exported ABI; the one defect the policy carried (row 30, the
-pinyin facade's chewing batch `FORCE_TONE` seam) closed in code 2026-09-14
-and verified live 2026-09-16 — all eight implemented keyboards IDENTICAL
-(`docs/findings/compatibility-policy.md`
-row 30; `ROADMAP.md`, Stage 1 status). Stage 2 (binary model compilation,
-init/RAM reduction) in progress.
+- Stage 1 (complete): exact-output parity with the pin on the corpus surfaces.
+- Stage 2 (current): bug-for-bug compatibility across the whole exported ABI,
+  with internal improvements. Performance work is allowed when compatibility
+  stays. It is not complete. Open work is tracked in the open issues with the
+  `bug-for-bug` label; the current tracker is #870.
+- Stage 3 (next): opt-in departures from the pin, such as a new language
+  model or an incompatible data format. The default build stays bug-for-bug.
+
+**Status:** Stage 1 complete — 1,571/1,571 corpus rows; 79/79 exported
+symbols; drop-in as `libpinyin.so.15` verified on Fedora rawhide, Debian
+testing, and NixOS. Stage 2 (bug-for-bug) is current. The round-2 audit
+closed on 2026-10-17 (#573). The open work is the init complexity
+tracker (#870), then a third bug-for-bug sweep (`ROADMAP.md`). Performance
+work that keeps compatibility continues in Stage 2 (`docs/perf/`). Stage 3
+(opt-in departures) follows.
 
 ## Quickstart
 
@@ -41,12 +46,12 @@ cargo test --locked --workspace
 | `AGENTS.md` | Agent/collaborator contract |
 | `docs/runbooks/` | How to: backends, the oracle and differentials, benches, goldens and pins, releases |
 | `docs/findings/` | Decisions, divergence records, audit trail — indexed with a status per file |
-| `docs/perf/` | Performance measurement snapshots (Stage 2 baseline) |
+| `docs/perf/` | Performance measurement snapshots |
 | `docs/testing/` | Corpus pipeline, oracle environment, fixture formats |
 | `docs/safety/` | MISRA-Rust mapping, audit, safety profile |
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
 | `tools/oracle/` | Pin build recipe (`docs/runbooks/oracle.md`) |
-| `.kiro/` | Steering and specs (foundation/drop-in) in Kiro's documented layout (<https://kiro.dev/docs/>); the format is used, the Kiro IDE and CLI are not |
+| `.kiro/` | Steering and specs in Kiro's documented layout (<https://kiro.dev/docs/>), split into pinned libpinyin behaviour (`steering/pinned-behaviour.md`; specs `drop-in`, `bug-for-bug`) and oxpinyin's improvements (`steering/oxpinyin-improvements.md`; spec `stage3-departures`); the format is used, the Kiro IDE and CLI are not |
 
 | Group | Crates |
 |---|---|
