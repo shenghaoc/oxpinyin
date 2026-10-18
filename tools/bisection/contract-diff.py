@@ -86,7 +86,8 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     operation already logged a common entry earlier (e.g. the init critical
     before the candidate warning). `fatal=True` runs both sides with
     `G_DEBUG=fatal-criticals`; `both_abort=True` (implied fatal) expects both
-    sides to die of SIGABRT and compares the raw stderr (GLib process id and
+    sides to die of the same GLib fatal-log signal (SIGABRT or SIGTRAP) and
+    compares the raw stderr (GLib process id and
     timestamp normalised) and the partial user directory instead of a
     surviving subject result. `cells`
     names the DBM cells whose storage format the case's fixture reproduces;
@@ -5188,6 +5189,10 @@ def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
     # stderr keeps invalid UTF-8 apart from a real U+FFFD (`surrogateescape`),
     # since the pin writes paths as their bytes.
     stderr = proc.stderr.decode('utf-8', 'surrogateescape')
+    # Replace the generated root before user/sys names: TMPDIR itself may
+    # contain either prefix, and rewriting it first hides random worker
+    # directories from axis_c_normalize_diagnostics's literal path replace.
+    stderr = stderr.replace(str(scratch), 'SCRATCH')
     lines = [json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
     return dict(exit=proc.returncode, result=lines[-1] if lines else None,
                 userfiles=user_dir_listing(scratch, before),
@@ -11045,12 +11050,19 @@ def matches(spec, pin, subject):
     """The verdict predicate shared by the driver and gcov measurement tier."""
     as_abort = spec['abort'] is not NO_ABORT and (not spec['either'] or pin['exit'] == -6)
     if spec['both_abort']:
-        # A synchronous save-time critical makes both sides die of SIGABRT;
+        # GLib's _g_log_abort can use g_abort or G_BREAKPOINT (gmessages.c
+        # at GLib 2.80.0 / 2.89.4). Require the same fatal-log signal;
         # the comparison is the signal, the raw stderr and the partial
         # profile left behind, not a surviving subject result.
-        same = pin['exit'] == -6 and subject['exit'] == -6 and \
-            (not spec['stderr'] or fatal_stderr(pin['stderr']) == fatal_stderr(subject['stderr'])) and \
-            (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
+        same = (
+            pin['exit'] in (-signal.SIGABRT, -signal.SIGTRAP)
+            and subject['exit'] == pin['exit']
+            and (
+                not spec['stderr']
+                or fatal_stderr(pin['stderr']) == fatal_stderr(subject['stderr'])
+            )
+            and (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
+        )
     elif spec['crash'] is not None and not as_abort:
         shown = subject['result'] or {}
         same = pin['exit'] == -signal.SIGSEGV and subject['exit'] == 0 and \
