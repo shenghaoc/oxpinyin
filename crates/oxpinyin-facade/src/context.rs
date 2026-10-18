@@ -512,7 +512,30 @@ impl ContextCore {
     /// `assert`s (`memory_chunk.h:543`, `:547`) kill the process there, so
     /// the store's `save_reporting` stops instead of reporting, and this
     /// surface must fail the call. The caller logs the point.
+    /// The pure-Rust facade's save: the synchronous layout hook is used to
+    /// collect the faults into the runtime's `take_layout_faults` surface
+    /// rather than discarding them. The C ABI calls
+    /// [`Self::save_user_with_layout_faults`] and logs each fault at the
+    /// save's operation boundary.
     pub fn save_user(&mut self) -> SaveOutcome {
+        let mut faults = Vec::new();
+        let outcome = self.save_user_with_layout_faults(&mut |fault| faults.push(fault.clone()));
+        if !faults.is_empty()
+            && let Some(runtime) = &self.runtime
+        {
+            runtime.record_layout_faults(faults);
+        }
+        outcome
+    }
+
+    /// The C ABI's save entry: the same save body, with the synchronous
+    /// layout-fault hook invoked at the pin's per-library save position.
+    /// The pure-Rust convenience is [`Self::save_user`], which collects the
+    /// faults for [`Self::take_layout_faults`] instead of logging them.
+    pub fn save_user_with_layout_faults(
+        &mut self,
+        on_layout_fault: &mut dyn FnMut(&oxpinyin_runtime::LayoutFault),
+    ) -> SaveOutcome {
         let Some(store) = self.user.as_ref() else {
             return SaveOutcome::NotSaved;
         };
@@ -527,14 +550,32 @@ impl ContextCore {
         // `_write_files` maps every loaded system library again to diff it
         // against the live one (`pinyin.cpp:956`, `zhuyin.cpp:589`), before
         // it writes anything. A library that is a directory the pin asserts
-        // on kills it there (`memory_chunk.h:493`).
-        if self.check_system_libraries(None, true) {
+        // on kills it there (`memory_chunk.h:493`). The layout refusal is
+        // handled per library by the save hook below, at the pin's loop
+        // position, so a fatal critical stops before the library's own
+        // write and after the earlier ones.
+        if self.check_system_libraries(None, false) {
             return SaveOutcome::ChunkHeaderRead;
         }
+        let runtime = self.runtime.as_ref();
         let Some(store) = self.user.as_mut() else {
             return SaveOutcome::NotSaved;
         };
-        let report = match store.save_reporting_compacted(&compacted) {
+        let mut baseline = |nibble: u8| -> oxpinyin_user::SaveBaseline {
+            let Some(runtime) = runtime else {
+                return oxpinyin_user::SaveBaseline::Keep;
+            };
+            match runtime.save_disk_baseline(nibble) {
+                Ok(baseline) => baseline,
+                Err(fault) => {
+                    on_layout_fault(&fault);
+                    oxpinyin_user::SaveBaseline::Changed(oxpinyin_user::SystemLibrary::failed(
+                        fault.total_freq,
+                    ))
+                }
+            }
+        };
+        let report = match store.save_reporting_with_baseline(&compacted, &mut baseline) {
             Ok(report) => report,
             Err(UserStoreError::ChunkHeaderWrite(field)) => {
                 return SaveOutcome::ChunkWriteFailed(field);
