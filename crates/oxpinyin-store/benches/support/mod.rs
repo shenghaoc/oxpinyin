@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 
 use criterion::{BatchSize, Criterion};
 
-use oxpinyin_store::{DEFAULT_STORE_EXT, RawReadStore, ReadStore, WriteStore};
+use oxpinyin_store::{DEFAULT_STORE_EXT, RawReadStore, ReadStore, WriteStore, WriteTxn};
 
 /// User-store table names, mirroring the user store's own tables.
 pub const BIGRAM: &str = "user_bigram";
@@ -113,7 +113,7 @@ pub fn run_train_write<S: WriteStore>(store: &S, n: usize) {
 /// Read-modify-write of one big-endian `u64` counter, the shape every
 /// counter bump in `UserStore::update` takes (`txn_get_u64_or`, add, put).
 fn bump_counter(
-    txn: &mut dyn oxpinyin_store::WriteTxn,
+    txn: &mut impl oxpinyin_store::WriteTxn,
     table: &str,
     key: &[u8],
     delta: u64,
@@ -158,7 +158,7 @@ pub fn run_observe_commit<S: WriteStore>(store: &S, i: u64) {
 fn count_rows<S: ReadStore>(store: &S, table: &str) -> u64 {
     let mut rows = 0_u64;
     store
-        .for_each(table, &mut |_key, _value| {
+        .for_each(table, |_key, _value| {
             rows += 1;
             Ok(())
         })

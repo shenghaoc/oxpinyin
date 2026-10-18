@@ -13,7 +13,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use oxpinyin_store::{RawReadStore, WriteStore};
+use oxpinyin_store::{RawReadStore, WriteStore, WriteTxn};
 
 use crate::{DatagenError, Entries};
 
@@ -235,7 +235,7 @@ impl Backend {
             store.range_raw(
                 std::ops::Bound::Unbounded,
                 std::ops::Bound::Unbounded,
-                &mut |key, value| {
+                |key, value| {
                     rows.push((key.to_vec(), value.to_vec()));
                     Ok(())
                 },
@@ -362,7 +362,7 @@ fn verify_raw<S: RawReadStore>(path: &Path, entries: &Entries) -> Result<(), Dat
     read_only.range_raw(
         std::ops::Bound::Unbounded,
         std::ops::Bound::Unbounded,
-        &mut |key, value| {
+        |key, value| {
             rows.push((key.to_vec(), value.to_vec()));
             Ok(())
         },

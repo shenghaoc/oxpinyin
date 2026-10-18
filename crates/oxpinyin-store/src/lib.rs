@@ -81,7 +81,7 @@ compile_error!(
 );
 
 use std::fmt;
-use std::ops::Bound;
+use std::ops::{Bound, ControlFlow};
 use std::path::Path;
 
 /// Errors that can occur when opening or scanning a store.
@@ -123,8 +123,12 @@ impl std::error::Error for StoreError {
     }
 }
 
-/// Row visitor passed to store scan methods.
-pub type Visitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
+/// What a scan visitor answers after each row: [`ControlFlow::Continue`]
+/// to go on, [`ControlFlow::Break`] to end the scan right there. A break
+/// is a normal end of the scan — the backend abandons the underlying
+/// cursor walk and the scan returns `Ok(())` — and is distinct from a
+/// visitor `Err`, which aborts the scan and propagates.
+pub type Flow = ControlFlow<()>;
 
 // ── traits ─────────────────────────────────────────────────────────
 
@@ -132,7 +136,8 @@ pub type Visitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<(), StoreError> + 'a;
 ///
 /// Operations see their own writes (read-your-writes within the closure).
 /// All modifications land atomically on commit or are fully rolled back.
-/// Used as `&mut dyn WriteTxn`.
+/// Reached through [`WriteStore::write`] as the backend's own
+/// [`WriteStore::Txn`] type; the trait is not object safe.
 ///
 /// Opening a table inside a write transaction creates it when absent, so
 /// read-side methods ([`WriteTxn::get`], [`WriteTxn::range`],
@@ -179,6 +184,23 @@ pub trait WriteTxn {
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError>;
 
     /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
+    /// ascending key-byte order, until `visit` answers [`ControlFlow::Break`]
+    /// (which ends the scan with `Ok(())`) or fails (which aborts it and
+    /// propagates). The one required scan: [`WriteTxn::range`] and
+    /// [`WriteTxn::for_each`] are built on it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend scan fails or `visit` does.
+    fn scan(
+        &self,
+        table: &str,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
+    ) -> Result<(), StoreError>;
+
+    /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
     /// ascending key-byte order.
     ///
     /// # Errors
@@ -189,15 +211,25 @@ pub trait WriteTxn {
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
-    ) -> Result<(), StoreError>;
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        self.scan(table, lo, hi, |key, value| {
+            visit(key, value).map(|()| ControlFlow::Continue(()))
+        })
+    }
 
     /// Visit every row of `table` in ascending key-byte order.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend scan fails.
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
+    fn for_each(
+        &self,
+        table: &str,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        self.range(table, Bound::Unbounded, Bound::Unbounded, visit)
+    }
 
     /// Whether `table` has no rows (an absent table counts as empty).
     ///
@@ -236,6 +268,24 @@ pub trait ReadStore {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
     /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
+    /// ascending, borrowing each row, until `visit` answers
+    /// [`ControlFlow::Break`] (the scan ends with `Ok(())`) or fails (the
+    /// scan aborts and propagates). An absent table is treated as empty.
+    /// The one required scan: [`ReadStore::range`] and
+    /// [`ReadStore::for_each`] are built on it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend scan fails or `visit` does.
+    fn scan(
+        &self,
+        table: &str,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
+    ) -> Result<(), StoreError>;
+
+    /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
     /// ascending.  An absent table is treated as empty.
     ///
     /// # Errors
@@ -246,8 +296,12 @@ pub trait ReadStore {
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
-    ) -> Result<(), StoreError>;
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        self.scan(table, lo, hi, |key, value| {
+            visit(key, value).map(|()| ControlFlow::Continue(()))
+        })
+    }
 
     /// Visit every `(key, value)` of `table` in ascending key-byte order,
     /// borrowing each row (no per-row clone).  Stops early on visitor
@@ -256,7 +310,13 @@ pub trait ReadStore {
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend scan fails.
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError>;
+    fn for_each(
+        &self,
+        table: &str,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
+    ) -> Result<(), StoreError> {
+        self.range(table, Bound::Unbounded, Bound::Unbounded, visit)
+    }
 
     /// Whether `table` has no rows (an absent table counts as empty).
     ///
@@ -271,6 +331,14 @@ pub trait ReadStore {
 /// Adds mutation on top of [`ReadStore`], whose reads a writable backend
 /// necessarily also provides.
 pub trait WriteStore: ReadStore {
+    /// The backend's write transaction, handed to the closure of
+    /// [`WriteStore::write`] by mutable reference. Each backend names
+    /// its own concrete type, so the transaction's methods are called
+    /// without dynamic dispatch.
+    type Txn<'a>: WriteTxn
+    where
+        Self: 'a;
+
     /// Open or create a store file in read-write mode.
     ///
     /// # Errors
@@ -490,7 +558,7 @@ pub trait WriteStore: ReadStore {
     /// Returns [`StoreError`] when the transaction or its callback fails.
     fn write<R>(
         &self,
-        f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<R, StoreError>;
 
     /// Perform backend-dependent compaction work, and put the store on
@@ -549,14 +617,33 @@ pub trait RawReadStore: ReadStore {
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend walk fails; a visitor
+    /// error aborts the walk and propagates. A visitor
+    /// [`ControlFlow::Break`] ends the walk with `Ok(())`. The one
+    /// required raw walk: [`RawReadStore::range_raw`] is built on it.
+    fn scan_raw(
+        &self,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
+    ) -> Result<(), StoreError> {
+        self.scan(RAW_TABLE, lo, hi, visit)
+    }
+
+    /// [`Self::scan_raw`] for a visitor that never stops the walk early.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend walk fails; a visitor
     /// error aborts the walk and propagates.
     fn range_raw(
         &self,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
     ) -> Result<(), StoreError> {
-        self.range(RAW_TABLE, lo, hi, visit)
+        self.scan_raw(lo, hi, |key, value| {
+            visit(key, value).map(|()| ControlFlow::Continue(()))
+        })
     }
 
     /// The number of raw (unframed) rows — the count half of the raw
@@ -574,7 +661,7 @@ pub trait RawReadStore: ReadStore {
     /// Returns [`StoreError`] when the backend count fails.
     fn count_raw(&self) -> Result<u64, StoreError> {
         let mut count: u64 = 0;
-        self.range_raw(Bound::Unbounded, Bound::Unbounded, &mut |_key, _value| {
+        self.range_raw(Bound::Unbounded, Bound::Unbounded, |_key, _value| {
             count += 1;
             Ok(())
         })?;
@@ -847,17 +934,17 @@ mod common;
 #[cfg(feature = "tkrzw")]
 mod tkrzw;
 #[cfg(feature = "tkrzw")]
-pub use tkrzw::{TkrzwStore, TkrzwUserBigramDb};
+pub use tkrzw::{TkrzwStore, TkrzwTxn, TkrzwUserBigramDb};
 
 #[cfg(feature = "bdb")]
 mod bdb;
 #[cfg(feature = "bdb")]
-pub use bdb::{BdbStore, BdbUserBigramDb};
+pub use bdb::{BdbStore, BdbTxn, BdbUserBigramDb};
 
 #[cfg(feature = "kyotocabinet")]
 pub mod kyotocabinet;
 #[cfg(feature = "kyotocabinet")]
-pub use kyotocabinet::{KcStore, KcUserBigramDb};
+pub use kyotocabinet::{KcStore, KcTxn, KcUserBigramDb};
 
 // ── tests ──────────────────────────────────────────────────────────
 
@@ -878,6 +965,8 @@ mod tests {
     use super::TkrzwStore;
     #[cfg(feature = "tkrzw")]
     use super::WriteStore;
+    #[cfg(feature = "tkrzw")]
+    use super::WriteTxn;
 
     /// Emits the temp-path plumbing every tier group needs.
     ///
@@ -942,7 +1031,7 @@ mod tests {
                 /// read-only `$store` handle over the same file.
                 fn seeded(
                     path: &std::path::Path,
-                    build: impl FnOnce(&mut dyn WriteTxn) -> Result<(), StoreError>,
+                    build: impl FnOnce(&mut <$writer as WriteStore>::Txn<'_>) -> Result<(), StoreError>,
                 ) -> $store {
                     let writer = <$writer>::create(path).unwrap();
                     writer.write(build).unwrap();
@@ -981,7 +1070,7 @@ mod tests {
                             "t",
                             Bound::Included(b"b".as_slice()),
                             Bound::Included(b"c".as_slice()),
-                            &mut |k, v| {
+                            |k, v| {
                                 rows.push((k.to_vec(), v.to_vec()));
                                 Ok(())
                             },
@@ -1011,7 +1100,7 @@ mod tests {
                             "t",
                             Bound::Included(b"b".as_slice()),
                             Bound::Unbounded,
-                            &mut |k, _v| {
+                            |k, _v| {
                                 keys.push(k.to_vec());
                                 Ok(())
                             },
@@ -1047,7 +1136,7 @@ mod tests {
                     });
                     let mut rows = Vec::new();
                     store
-                        .for_each("missing", &mut |key, value| {
+                        .for_each("missing", |key, value| {
                             rows.push((key.to_vec(), value.to_vec()));
                             Ok(())
                         })
@@ -1059,7 +1148,7 @@ mod tests {
                             "t",
                             Bound::Excluded(&[]),
                             Bound::Unbounded,
-                            &mut |key, _| {
+                            |key, _| {
                                 rows.push((key.to_vec(), Vec::new()));
                                 Ok(())
                             },
@@ -1081,7 +1170,7 @@ mod tests {
 
                     let mut keys = Vec::new();
                     store
-                        .range("t", Bound::Included(&[]), Bound::Unbounded, &mut |k, _| {
+                        .range("t", Bound::Included(&[]), Bound::Unbounded, |k, _| {
                             keys.push(k.to_vec());
                             Ok(())
                         })
@@ -1091,7 +1180,7 @@ mod tests {
                     for hi in [Bound::<&[u8]>::Excluded(&[]), Bound::Included(&[])] {
                         let mut upper_empty_keys = Vec::new();
                         store
-                            .range("t", Bound::Unbounded, hi, &mut |k, _| {
+                            .range("t", Bound::Unbounded, hi, |k, _| {
                                 upper_empty_keys.push(k.to_vec());
                                 Ok(())
                             })
@@ -1112,12 +1201,12 @@ mod tests {
                     let store = seeded(&path, |_| Ok(()));
                     for table in ["", "bad\0name"] {
                         assert_invalid(store.get(table, b"key"));
-                        assert_invalid(store.for_each(table, &mut |_, _| Ok(())));
+                        assert_invalid(store.for_each(table, |_, _| Ok(())));
                         assert_invalid(store.range(
                             table,
                             Bound::Unbounded,
                             Bound::Unbounded,
-                            &mut |_, _| Ok(()),
+                            |_, _| Ok(()),
                         ));
                         assert_invalid(store.is_empty(table));
                     }
@@ -1202,7 +1291,7 @@ mod tests {
                         .range_raw(
                             std::ops::Bound::Unbounded,
                             std::ops::Bound::Unbounded,
-                            &mut |_k, _v| {
+                            |_k, _v| {
                                 walked += 1;
                                 Ok(())
                             },
@@ -1283,7 +1372,7 @@ mod tests {
                     assert_eq!(store.get("t", b"full").unwrap(), Some(Vec::new()));
                     let mut rows = Vec::new();
                     store
-                        .for_each("t", &mut |key, value| {
+                        .for_each("t", |key, value| {
                             rows.push((key.to_vec(), value.to_vec()));
                             Ok(())
                         })
@@ -1352,7 +1441,7 @@ mod tests {
                                 "t",
                                 Bound::Included(&[]),
                                 Bound::Excluded(&[]),
-                                &mut |key, _| {
+                                |key, _| {
                                     visited.push(key.to_vec());
                                     Ok(())
                                 },
@@ -1384,10 +1473,10 @@ mod tests {
                                 table,
                                 Bound::Unbounded,
                                 Bound::Unbounded,
-                                &mut |_, _| Ok(()),
+                                |_, _| Ok(()),
                             )
                         }));
-                        assert_invalid(store.write(|txn| txn.for_each(table, &mut |_, _| Ok(()))));
+                        assert_invalid(store.write(|txn| txn.for_each(table, |_, _| Ok(()))));
                         assert_invalid(store.write(|txn| txn.is_empty(table)));
                     }
                     drop(store);
@@ -1464,7 +1553,7 @@ mod tests {
                     assert_eq!(store.get("u", b"a").unwrap(), Some(b"other".to_vec()));
                     let mut walked = Vec::new();
                     store
-                        .for_each("t", &mut |k, v| {
+                        .for_each("t", |k, v| {
                             walked.push((k.to_vec(), v.to_vec()));
                             Ok(())
                         })
@@ -1483,7 +1572,7 @@ mod tests {
                             "t",
                             Bound::Included(&b"b"[..]),
                             Bound::Unbounded,
-                            &mut |k, _| {
+                            |k, _| {
                                 ranged.push(k.to_vec());
                                 Ok(())
                             },
@@ -1687,7 +1776,7 @@ mod tests {
 
         let mut walked = Vec::new();
         store
-            .for_each("t", &mut |key, _value| {
+            .for_each("t", |key, _value| {
                 walked.push(key.to_vec());
                 Ok(())
             })
@@ -1706,7 +1795,7 @@ mod tests {
                 "t",
                 Bound::Included(&[0x80][..]),
                 Bound::Included(&[0xfe][..]),
-                &mut |key, _value| {
+                |key, _value| {
                     ranged.push(key.to_vec());
                     Ok(())
                 },
@@ -1746,7 +1835,7 @@ mod tests {
             );
             let mut rows = 0_usize;
             store
-                .for_each(table, &mut |_key, value| {
+                .for_each(table, |_key, value| {
                     assert_eq!(value, expected.as_bytes());
                     rows += 1;
                     Ok(())
@@ -1791,7 +1880,7 @@ mod tests {
                 txn.put("t", b"g", b"insert-g")?; // after the last stored key
 
                 let mut rows = Vec::new();
-                txn.for_each("t", &mut |key, value| {
+                txn.for_each("t", |key, value| {
                     rows.push((key.to_vec(), value.to_vec()));
                     Ok(())
                 })?;
@@ -1853,7 +1942,7 @@ mod tests {
 
         let mut seen = 0u32;
         store
-            .for_each("t", &mut |key, value| {
+            .for_each("t", |key, value| {
                 let i = u32::from_be_bytes(key.try_into().unwrap());
                 assert_eq!(i, seen, "scan must visit keys in ascending order");
                 assert_eq!(
@@ -1984,7 +2073,7 @@ mod tests {
         use std::ops::Bound;
         use std::path::Path;
 
-        use super::super::{DefaultStore, WriteStore};
+        use super::super::{DefaultStore, WriteStore, WriteTxn};
 
         /// Tokens that cross the 256 boundary in the low byte and in
         /// higher bytes, so their little-endian byte order differs from
@@ -2051,7 +2140,7 @@ mod tests {
                 .expect("bulk insert");
             let mut rows = Rows::new();
             store
-                .for_each("data", &mut |key, value| {
+                .for_each("data", |key, value| {
                     rows.push((key.to_vec(), value.to_vec()));
                     Ok(())
                 })
@@ -2082,7 +2171,7 @@ mod tests {
                     "data",
                     Bound::Included(lo),
                     Bound::Excluded(hi),
-                    &mut |key, value| {
+                    |key, value| {
                         rows.push((key.to_vec(), value.to_vec()));
                         Ok(())
                     },

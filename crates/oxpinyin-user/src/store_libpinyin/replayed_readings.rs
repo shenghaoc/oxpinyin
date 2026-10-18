@@ -142,8 +142,7 @@ fn exported(store: &UserStore, base: &SystemOriginals, slot: u32) -> Vec<u32> {
 fn pronunciation_rows(store: &UserStore) -> usize {
     let mut rows = 0_usize;
     let db = store.database();
-    let db: &dyn oxpinyin_store::ReadStore = &*db;
-    db.for_each(crate::store::PRONUNCIATION, &mut |_, _| {
+    oxpinyin_store::ReadStore::for_each(&*db, crate::store::PRONUNCIATION, |_, _| {
         rows += 1;
         Ok(())
     })

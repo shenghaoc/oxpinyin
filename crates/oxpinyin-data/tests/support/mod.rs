@@ -17,7 +17,7 @@ use std::path::Path;
 // own shared format module — the fixtures are built with the layout
 // under test, not a second copy of it.
 use oxpinyin_data::chunk_format::{FIRST_ITEM_OFFSET, INDEX_ONE, SEPARATOR, chunk_checksum};
-use oxpinyin_store::WriteStore;
+use oxpinyin_store::{WriteStore, WriteTxn};
 
 /// Builds one phrase-library chunk file from slot → item entries.
 /// One item's pieces: `(unigram, text, pronunciations as (packed

@@ -171,7 +171,7 @@ use std::path::Path;
 use std::ptr::NonNull;
 
 use crate::common::{framed, in_bounds, table_prefix, validate_path};
-use crate::{ReadStore, StoreError, Visitor, WriteStore, WriteTxn};
+use crate::{Flow, ReadStore, StoreError, WriteStore, WriteTxn};
 
 /// `TKRZW_STATUS_SUCCESS` — pinned by number so an upstream renumbering
 /// fails the build instead of silently misclassifying statuses.
@@ -293,9 +293,6 @@ fn c_len(bytes: &[u8]) -> Result<i32, StoreError> {
 
 // ── key framing ───────────────────────────────────────────────────
 
-/// Row callback for [`scan`]. Returning `false` stops the walk.
-type Row<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool, StoreError> + 'a;
-
 /// Whether iteration has walked past `hi` and can stop.
 fn past_upper(key: &[u8], hi: Bound<&[u8]>) -> bool {
     match hi {
@@ -339,7 +336,7 @@ unsafe impl Sync for Db {}
 
 /// An iterator over one [`Db`], freed when dropped.
 ///
-/// It exists only as a local of [`scan`]: created, positioned, walked
+/// It exists only as a local of [`scan_rows`]: created, positioned, walked
 /// and destroyed before the database handle can go away, so the
 /// DBM-outlives-iterator invariant holds by construction. The raw
 /// pointer keeps it `!Send`/`!Sync`, which nothing here needs.
@@ -450,11 +447,11 @@ fn open(path: &Path, writable: bool) -> Result<TkrzwStore, StoreError> {
 /// failed visit out of the C callback — an error cannot unwind through
 /// the C ABI, so it is stored and re-raised after the call — and the
 /// flag by which the callback stops the walk.
-struct ScanCtx<'a, 'row> {
+struct ScanCtx<'a, F> {
     prefix: &'a [u8],
     lo: Bound<&'a [u8]>,
     hi: Bound<&'a [u8]>,
-    row: &'a mut Row<'row>,
+    row: F,
     error: Option<StoreError>,
     stop: bool,
 }
@@ -469,14 +466,17 @@ struct ScanCtx<'a, 'row> {
 /// The pointer contract is libtkrzw's: `key_ptr`/`value_ptr` point at
 /// the record being processed, pinned by the call that reaches this
 /// callback, non-null with `key_len`/`value_len` their true sizes.
-unsafe extern "C" fn walk_row(
+unsafe extern "C" fn walk_row<F>(
     arg: *mut c_void,
     key_ptr: *const c_char,
     key_len: i32,
     value_ptr: *const c_char,
     value_len: i32,
     _new_value_size: *mut i32,
-) -> *const c_char {
+) -> *const c_char
+where
+    F: FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
+{
     // SAFETY: the pointer contract above — pinned, non-null, true
     // lengths — is kept by the only caller that can reach this.
     let (key, value) = unsafe {
@@ -488,14 +488,15 @@ unsafe extern "C" fn walk_row(
             ),
         )
     };
-    // SAFETY: `arg` is the address of the `ScanCtx` local in `scan`,
-    // passed as the callback argument. Only this callback receives it,
+    // SAFETY: `arg` is the address of the `ScanCtx<F>` local in `scan_rows`,
+    // passed as the callback argument together with `walk_row::<F>`, so
+    // the cast names the type it was made from. Only this callback receives it,
     // only the one `tkrzw_dbm_iter_process` call that took the argument
     // can invoke the callback, and that call returns before `scan`
     // drops its context — so the reference lives for every invocation.
     // Nothing else aliases the context: the walk is single-threaded and
     // reentrant only through `row`, which cannot reach the argument.
-    let ctx = unsafe { &mut *(arg.cast::<ScanCtx<'_, '_>>()) };
+    let ctx = unsafe { &mut *(arg.cast::<ScanCtx<'_, F>>()) };
     // Ascending order means the first key outside the table's run is
     // the end of it.
     let Some(user_key) = key.strip_prefix(ctx.prefix) else {
@@ -514,8 +515,8 @@ unsafe extern "C" fn walk_row(
         // where Rust aborts the process; it is never allowed to run on
         // into tkrzw's frames.
         match (ctx.row)(user_key, value) {
-            Ok(true) => {}
-            Ok(false) => ctx.stop = true,
+            Ok(Flow::Continue(())) => {}
+            Ok(Flow::Break(())) => ctx.stop = true,
             Err(error) => {
                 ctx.error = Some(error);
                 ctx.stop = true;
@@ -648,17 +649,20 @@ fn db_get(db: &Db, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
 
 /// Walks `table`'s records whose key lies in `(lo, hi)`, ascending,
 /// handing each to `row` borrowed from tkrzw's record buffer. `row`
-/// returns `false` to stop early.
+/// returns [`Flow::Break`] to stop early.
 ///
 /// Every row the walk yields is already inside the bounds, so callers
 /// do not re-check them.
-fn scan(
+fn scan_rows<F>(
     db: &Db,
     prefix: &[u8],
     lo: Bound<&[u8]>,
     hi: Bound<&[u8]>,
-    row: &mut Row<'_>,
-) -> Result<(), StoreError> {
+    row: F,
+) -> Result<(), StoreError>
+where
+    F: FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
+{
     // The C iterator's Jump is a lower-bound seek, so an Excluded lower
     // bound lands on the excluded key itself and is skipped by
     // walk_row.
@@ -716,7 +720,7 @@ fn scan(
         let ok = unsafe {
             ffi::tkrzw_dbm_iter_process(
                 iter.0.as_ptr(),
-                Some(walk_row),
+                Some(walk_row::<F>),
                 (&raw mut ctx).cast::<c_void>(),
                 false,
             )
@@ -811,19 +815,16 @@ impl crate::RawReadStore for TkrzwStore {
         db_get(&self.db, key)
     }
 
-    fn range_raw(
+    fn scan_raw(
         &self,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
-        // `scan` over the file's bare keyspace — an empty prefix leaves
-        // every stored key verbatim, the raw counterpart of the framed
-        // `range` walk.
-        scan(&self.db, &[], lo, hi, &mut |key, value| {
-            visit(key, value)?;
-            Ok(true)
-        })
+        // `scan_rows` over the file's bare keyspace — an empty prefix
+        // leaves every stored key verbatim, the raw counterpart of the
+        // framed `scan` walk.
+        scan_rows(&self.db, &[], lo, hi, visit)
     }
 
     /// The library's own record count — over the whole file, which on
@@ -847,35 +848,28 @@ impl ReadStore for TkrzwStore {
         db_get(&self.db, &framed(&prefix, key))
     }
 
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        self.range(table, Bound::Unbounded, Bound::Unbounded, visit)
-    }
-
-    fn range(
+    fn scan(
         &self,
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         let prefix = table_prefix(table)?;
-        scan(&self.db, &prefix, lo, hi, &mut |key, value| {
-            visit(key, value)?;
-            Ok(true)
-        })
+        scan_rows(&self.db, &prefix, lo, hi, visit)
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
         let prefix = table_prefix(table)?;
         let mut empty = true;
-        scan(
+        scan_rows(
             &self.db,
             &prefix,
             Bound::Unbounded,
             Bound::Unbounded,
-            &mut |_key, _value| {
+            |_key, _value| {
                 empty = false;
-                Ok(false)
+                Ok(Flow::Break(()))
             },
         )?;
         Ok(empty)
@@ -883,6 +877,8 @@ impl ReadStore for TkrzwStore {
 }
 
 impl WriteStore for TkrzwStore {
+    type Txn<'a> = TkrzwTxn<'a>;
+
     fn create(path: &Path) -> Result<Self, StoreError> {
         open(path, true)
     }
@@ -897,13 +893,13 @@ impl WriteStore for TkrzwStore {
 
     fn write<R>(
         &self,
-        f: impl FnOnce(&mut dyn WriteTxn) -> Result<R, StoreError>,
+        f: impl FnOnce(&mut Self::Txn<'_>) -> Result<R, StoreError>,
     ) -> Result<R, StoreError> {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
         let db = &self.db;
-        let mut txn = TkrzwWriteTxn {
+        let mut txn = TkrzwTxn {
             db,
             buffer: BTreeMap::new(),
         };
@@ -952,12 +948,12 @@ impl WriteStore for TkrzwStore {
 /// Keys are framed (`table || 0x00 || key`), and the map is ordered so
 /// the merged scans below yield rows in the same key order the store
 /// does. A `None` slot is a pending removal.
-struct TkrzwWriteTxn<'db> {
+pub struct TkrzwTxn<'db> {
     db: &'db Db,
     buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
 }
 
-impl TkrzwWriteTxn<'_> {
+impl TkrzwTxn<'_> {
     /// The buffered rows of `table` inside `(lo, hi)`, as
     /// `(user key, slot)`.
     fn buffered<'a>(
@@ -982,46 +978,59 @@ impl TkrzwWriteTxn<'_> {
         prefix: &[u8],
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         let mut buffered = self.buffered(prefix, lo, hi).peekable();
-        scan(self.db, prefix, lo, hi, &mut |stored_key, stored_value| {
+        let mut stopped = false;
+        scan_rows(self.db, prefix, lo, hi, |stored_key, stored_value| {
             // Buffered keys below the stored one have no stored twin:
             // the live ones are inserts, the dead ones tombstones.
             while let Some(&(key, slot)) = buffered.peek() {
                 match key.cmp(stored_key) {
                     Ordering::Less => {
                         buffered.next();
-                        if let Some(value) = slot {
-                            visit(key, value)?;
+                        if let Some(value) = slot
+                            && visit(key, value)?.is_break()
+                        {
+                            stopped = true;
+                            return Ok(Flow::Break(()));
                         }
                     }
                     // Equal key: the buffer overrides storage either way.
                     Ordering::Equal => {
                         buffered.next();
-                        if let Some(value) = slot {
-                            visit(key, value)?;
+                        if let Some(value) = slot
+                            && visit(key, value)?.is_break()
+                        {
+                            stopped = true;
+                            return Ok(Flow::Break(()));
                         }
-                        return Ok(true);
+                        return Ok(Flow::Continue(()));
                     }
                     Ordering::Greater => break,
                 }
             }
-            visit(stored_key, stored_value)?;
-            Ok(true)
+            let flow = visit(stored_key, stored_value)?;
+            stopped = flow.is_break();
+            Ok(flow)
         })?;
+        if stopped {
+            return Ok(());
+        }
         // Past the last stored row, whatever buffering remains is all
         // inserts.
         for (key, slot) in buffered {
-            if let Some(value) = slot {
-                visit(key, value)?;
+            if let Some(value) = slot
+                && visit(key, value)?.is_break()
+            {
+                break;
             }
         }
         Ok(())
     }
 }
 
-impl WriteTxn for TkrzwWriteTxn<'_> {
+impl WriteTxn for TkrzwTxn<'_> {
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let prefix = table_prefix(table)?;
         let framed_key = framed(&prefix, key);
@@ -1051,19 +1060,15 @@ impl WriteTxn for TkrzwWriteTxn<'_> {
         Ok(())
     }
 
-    fn range(
+    fn scan(
         &self,
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut Visitor<'_>,
+        visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
     ) -> Result<(), StoreError> {
         let prefix = table_prefix(table)?;
         self.merged_visit(&prefix, lo, hi, visit)
-    }
-
-    fn for_each(&self, table: &str, visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-        self.range(table, Bound::Unbounded, Bound::Unbounded, visit)
     }
 
     fn is_empty(&self, table: &str) -> Result<bool, StoreError> {
@@ -1078,21 +1083,21 @@ impl WriteTxn for TkrzwWriteTxn<'_> {
         // Otherwise the first stored row this transaction has not
         // removed does, so the walk stops there rather than counting.
         let mut empty = true;
-        scan(
+        scan_rows(
             self.db,
             &prefix,
             Bound::Unbounded,
             Bound::Unbounded,
-            &mut |key, _value| {
+            |key, _value| {
                 if self
                     .buffer
                     .get(&framed(&prefix, key))
                     .is_some_and(Option::is_none)
                 {
-                    return Ok(true);
+                    return Ok(Flow::Continue(()));
                 }
                 empty = false;
-                Ok(false)
+                Ok(Flow::Break(()))
             },
         )?;
         Ok(empty)
@@ -1124,17 +1129,14 @@ fn db_set_one(db: &Db, key: &[u8], value: Option<&[u8]>) -> Result<(), StoreErro
 }
 
 /// Visits one borrowed record at a time in the database's native order.
-fn visit_db(db: &Db, visit: &mut crate::Visitor<'_>) -> Result<(), StoreError> {
-    scan(
-        db,
-        b"",
-        Bound::Unbounded,
-        Bound::Unbounded,
-        &mut |key, value| {
-            visit(key, value)?;
-            Ok(true)
-        },
-    )
+fn visit_db(
+    db: &Db,
+    mut visit: impl FnMut(&[u8], &[u8]) -> Result<(), StoreError>,
+) -> Result<(), StoreError> {
+    scan_rows(db, b"", Bound::Unbounded, Bound::Unbounded, |key, value| {
+        visit(key, value)?;
+        Ok(Flow::Continue(()))
+    })
 }
 
 impl crate::UserBigramDb for TkrzwUserBigramDb {
@@ -1157,7 +1159,7 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
         // leaves the container empty, as the pin's does.
         if let Ok(file) = open_hash(path) {
             // A failed source walk must not discard unrelated learned data.
-            if let Err(error) = visit_db(&file.db, &mut |key, value| {
+            if let Err(error) = visit_db(&file.db, |key, value| {
                 db_set_one(&this.db, key, Some(value))
             }) {
                 eprintln!("user-bigram load {}: {error}", path.display());
@@ -1180,7 +1182,7 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
 
     fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
         let mut keys = Vec::new();
-        visit_db(&self.db, &mut |key, _| {
+        visit_db(&self.db, |key, _| {
             keys.push(key.to_vec());
             Ok(())
         })?;
@@ -1193,7 +1195,7 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
         // container into it in iterator order, synchronize, close.
         crate::remove_if_present(path)?;
         let file = open_hash_create(path)?;
-        visit_db(&self.db, &mut |key, value| {
+        visit_db(&self.db, |key, value| {
             db_set_one(&file.db, key, Some(value))
         })?;
         db_synchronize(&file.db, false)

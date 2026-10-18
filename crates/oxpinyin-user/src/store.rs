@@ -386,7 +386,7 @@ fn get_u64_or(
     Ok(get_u64(store, table, key)?.unwrap_or(default))
 }
 
-fn txn_get_u64(txn: &dyn WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64>, StoreError> {
+fn txn_get_u64(txn: &impl WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64>, StoreError> {
     txn.get(table, key)?.map_or_else(
         || Ok(None),
         |bytes| {
@@ -398,7 +398,7 @@ fn txn_get_u64(txn: &dyn WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64
 }
 
 pub fn txn_get_u64_or(
-    txn: &dyn WriteTxn,
+    txn: &impl WriteTxn,
     table: &str,
     key: &[u8],
     default: u64,
@@ -406,7 +406,7 @@ pub fn txn_get_u64_or(
     Ok(txn_get_u64(txn, table, key)?.unwrap_or(default))
 }
 
-fn bump_unigram_total(txn: &mut dyn WriteTxn, delta: u64) -> Result<(), StoreError> {
+fn bump_unigram_total(txn: &mut impl WriteTxn, delta: u64) -> Result<(), StoreError> {
     let key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
     let prev = txn_get_u64_or(txn, UNIGRAM_TOTAL, &key, 0)?;
     txn.put(
@@ -633,7 +633,7 @@ fn sync_system_rows<S: WriteStore>(
 
 /// Drops every stored reading of `token`: the item a wrapped count leaves.
 fn clear_pronunciations(
-    txn: &mut dyn WriteTxn,
+    txn: &mut impl WriteTxn,
     rows: &[PronRow],
     token: Token,
 ) -> Result<(), StoreError> {
@@ -668,7 +668,7 @@ fn chewing_keys(keys: &[PinyinKey]) -> Option<Vec<ChewingKey>> {
 /// the appended bytes are unreachable, so the item is one with no readings.
 /// The unigram, the phrase rows and the next add are untouched by the wrap.
 fn add_pronunciation(
-    txn: &mut dyn WriteTxn,
+    txn: &mut impl WriteTxn,
     token: Token,
     key_bytes: &[u8],
     delta: u32,
@@ -722,7 +722,7 @@ fn add_pronunciation(
 /// turns into `false` (`pinyin.cpp:2609-2612`) and the training walk
 /// ignores (`phonetic_lookup.h:928-929`).
 fn add_unigram_frequency(
-    txn: &mut dyn WriteTxn,
+    txn: &mut impl WriteTxn,
     library: u8,
     token: Token,
     delta: u32,
@@ -746,7 +746,7 @@ fn add_unigram_frequency(
 /// offset the facade total bounds every library's sum from above, so the
 /// library's rows are summed only when that bound itself could overflow.
 fn library_total_overflows(
-    txn: &dyn WriteTxn,
+    txn: &impl WriteTxn,
     library: u8,
     delta: u32,
 ) -> Result<bool, StoreError> {
@@ -774,7 +774,7 @@ fn library_total_overflows(
         Bound::Included(lo.as_slice()),
         hi.as_ref()
             .map_or(Bound::Unbounded, |hi| Bound::Excluded(hi.as_slice())),
-        &mut |_key, value| {
+        |_key, value| {
             let unigram = codec::decode_u64(value)
                 .map_err(|_| StoreError::Backend("corrupt unigram".into()))?;
             total = total.wrapping_add(unigram as u32);
@@ -815,7 +815,7 @@ fn collect_pronunciations_from_store(
         PRONUNCIATION,
         lo.as_ref().map(<[u8; 4]>::as_slice),
         hi.as_ref().map(<[u8; 4]>::as_slice),
-        &mut |key, value| {
+        |key, value| {
             let (Ok((_, key_bytes)), Ok(value)) =
                 (codec::decode_token_bytes(key), PronValue::decode(value))
             else {
@@ -841,7 +841,7 @@ fn collect_pronunciations_from_store(
 
 /// `token`'s readings inside `txn`, in insertion order.
 pub(crate) fn collect_pronunciations_from_txn(
-    txn: &dyn WriteTxn,
+    txn: &impl WriteTxn,
     token: Token,
 ) -> Result<Vec<PronRow>, StoreError> {
     let (lo, hi) = pronunciation_range(token);
@@ -850,7 +850,7 @@ pub(crate) fn collect_pronunciations_from_txn(
         PRONUNCIATION,
         lo.as_ref().map(<[u8; 4]>::as_slice),
         hi.as_ref().map(<[u8; 4]>::as_slice),
-        &mut |key, value| {
+        |key, value| {
             let (_, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
             out.push(PronRow {
@@ -866,7 +866,7 @@ pub(crate) fn collect_pronunciations_from_txn(
 
 /// The sequence the next reading appended to a phrase with `rows` takes.
 fn next_pron_seq(
-    txn: &mut dyn WriteTxn,
+    txn: &mut impl WriteTxn,
     token: Token,
     rows: &[PronRow],
 ) -> Result<u32, StoreError> {
@@ -897,7 +897,7 @@ fn next_pron_seq(
     Ok(next)
 }
 
-fn remove_pronunciations(txn: &mut dyn WriteTxn, token: Token) -> Result<(), StoreError> {
+fn remove_pronunciations(txn: &mut impl WriteTxn, token: Token) -> Result<(), StoreError> {
     let rows = collect_pronunciations_from_txn(txn, token)?;
     for row in rows {
         txn.remove(
@@ -925,7 +925,7 @@ fn collect_pronunciations_for_tokens(
     if tokens.is_empty() {
         return Ok(std::collections::BTreeMap::new());
     }
-    store.for_each(PRONUNCIATION, &mut |key, value| {
+    store.for_each(PRONUNCIATION, |key, value| {
         let (token, key_bytes) = codec::decode_token_bytes(key)
             .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
         if !tokens.contains(&token) {
@@ -953,14 +953,14 @@ fn collect_pronunciations_for_tokens(
 /// rows afterwards. Returns `(token, key tail)` pairs so each removal can
 /// rebuild its full key with [`codec::encode_token_bytes`].
 fn collect_pronunciation_keys_from_txn(
-    txn: &dyn WriteTxn,
+    txn: &impl WriteTxn,
     tokens: &std::collections::HashSet<Token>,
 ) -> Result<Vec<(Token, Vec<u8>)>, StoreError> {
     let mut out = Vec::new();
     if tokens.is_empty() {
         return Ok(out);
     }
-    txn.for_each(PRONUNCIATION, &mut |key, _value| {
+    txn.for_each(PRONUNCIATION, |key, _value| {
         let (token, key_bytes) = codec::decode_token_bytes(key)
             .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
         if tokens.contains(&token) {
@@ -1021,12 +1021,12 @@ impl GramOps for ContainerGrams<'_> {
 }
 
 /// A plain store's [`BIGRAM_GRAM`] rows inside one write transaction.
-pub(crate) struct TableGrams<'a>(pub(crate) &'a mut dyn WriteTxn);
+pub(crate) struct TableGrams<'a, T>(pub(crate) &'a mut T);
 
-impl GramOps for TableGrams<'_> {
+impl<T: WriteTxn> GramOps for TableGrams<'_, T> {
     fn keys(&mut self) -> Result<Vec<Option<Token>>, StoreError> {
         let mut keys = Vec::new();
-        self.0.for_each(BIGRAM_GRAM, &mut |key, _| {
+        self.0.for_each(BIGRAM_GRAM, |key, _| {
             keys.push(<[u8; 4]>::try_from(key).ok().map(Token::from_be_bytes));
             Ok(())
         })?;
@@ -1096,7 +1096,7 @@ fn has_partial_tail(gram: &[u8]) -> bool {
 /// one left with no items is removed and any other is stored back.
 /// Answers whether a key remains. The faults the pin dies on are the
 /// caller's to refuse first ([`gram_mask_fault`]).
-fn mask_grams(grams: &mut dyn GramOps, mask: Token, value: Token) -> Result<bool, StoreError> {
+fn mask_grams(grams: &mut impl GramOps, mask: Token, value: Token) -> Result<bool, StoreError> {
     let mut remaining = false;
     for key in grams.keys()? {
         let Some(prev) = key else {
@@ -1134,7 +1134,7 @@ fn mask_grams(grams: &mut dyn GramOps, mask: Token, value: Token) -> Result<bool
 /// asserts in `get_length` (`ngram.cpp:70`, reached at `ngram_bdb.cpp:243`).
 /// The last is found by running the mask on a copy.
 fn gram_mask_fault(
-    grams: &mut dyn GramOps,
+    grams: &mut impl GramOps,
     mask: Token,
     value: Token,
 ) -> Result<Option<UserStoreError>, StoreError> {
@@ -1218,10 +1218,10 @@ fn predicted_gram(row: Option<Vec<u8>>, cur: Token) -> Result<Vec<u8>, UserStore
     Ok(gram)
 }
 
-fn mask_phrase_rows(txn: &mut dyn WriteTxn, mask: Token, value: Token) -> Result<(), StoreError> {
+fn mask_phrase_rows(txn: &mut impl WriteTxn, mask: Token, value: Token) -> Result<(), StoreError> {
     // User phrases: text, reverse lookup, and pronunciations.
     let mut matched: Vec<(Token, String)> = Vec::new();
-    txn.for_each(PHRASE, &mut |k, v| {
+    txn.for_each(PHRASE, |k, v| {
         let token = codec::decode_token(k)
             .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
         if (token & mask) == value {
@@ -1267,10 +1267,10 @@ fn mask_phrase_rows(txn: &mut dyn WriteTxn, mask: Token, value: Token) -> Result
 /// `promote_addon_phrase` keep the cursor at that value on every add; this
 /// restores it after a removal, in the same walk-the-table cost the removal
 /// already paid.
-fn rederive_alloc_cursors(txn: &mut dyn WriteTxn, only: &[u8]) -> Result<(), StoreError> {
+fn rederive_alloc_cursors(txn: &mut impl WriteTxn, only: &[u8]) -> Result<(), StoreError> {
     const LIBRARIES: [u8; 3] = [ADDON_DICTIONARY, NETWORK_DICTIONARY, USER_DICTIONARY];
     let mut highest: [Option<Token>; 3] = [None; 3];
-    txn.for_each(PHRASE, &mut |key, _| {
+    txn.for_each(PHRASE, |key, _| {
         let token = codec::decode_token(key)
             .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
         let library = phrase_index_library_index(token);
@@ -1328,12 +1328,12 @@ impl LibraryChange {
 /// libraries. Returns the readings of `user_library` that the user pinyin
 /// index carried, as `(token, packed keys)`.
 fn remove_reloaded_rows(
-    txn: &mut dyn WriteTxn,
+    txn: &mut impl WriteTxn,
     reloaded: &dyn Fn(Token) -> bool,
     user_library: Option<u8>,
 ) -> Result<std::collections::BTreeSet<(Token, Vec<u16>)>, StoreError> {
     let mut unigrams = Vec::new();
-    txn.for_each(UNIGRAM, &mut |key, _| {
+    txn.for_each(UNIGRAM, |key, _| {
         let token = codec::decode_token(key)
             .map_err(|_| StoreError::Backend("corrupt unigram key".into()))?;
         if reloaded(token) {
@@ -1347,7 +1347,7 @@ fn remove_reloaded_rows(
     // PHRASE represents a live sub-index item, unlike the raw phrase table.
     // Discard the old library's items before seeding the filtered log.
     let mut phrases = Vec::new();
-    txn.for_each(PHRASE, &mut |key, value| {
+    txn.for_each(PHRASE, |key, value| {
         let token = codec::decode_token(key)
             .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
         if reloaded(token) {
@@ -1369,7 +1369,7 @@ fn remove_reloaded_rows(
     }
     let mut deltas = Vec::new();
     let mut indexed = std::collections::BTreeSet::new();
-    txn.for_each(PRONUNCIATION, &mut |key, value| {
+    txn.for_each(PRONUNCIATION, |key, value| {
         let (token, key_bytes) = codec::decode_token_bytes(key)
             .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
         // These are item readings/deltas, not phrase-table membership.
@@ -1436,9 +1436,9 @@ fn kept_index_state<'a>(
 }
 
 /// The facade total's unigram sum, stored after a replacement.
-fn store_unigram_total(txn: &mut dyn WriteTxn) -> Result<(), StoreError> {
+fn store_unigram_total(txn: &mut impl WriteTxn) -> Result<(), StoreError> {
     let mut total = 0_u64;
-    txn.for_each(UNIGRAM, &mut |_, value| {
+    txn.for_each(UNIGRAM, |_, value| {
         total = total.saturating_add(
             codec::decode_u64(value)
                 .map_err(|_| StoreError::Backend("corrupt unigram value".into()))?,
@@ -1456,7 +1456,7 @@ fn store_unigram_total(txn: &mut dyn WriteTxn) -> Result<(), StoreError> {
 ///
 /// `||` short-circuits, so each table is probed with a first-row
 /// `WriteTxn::is_empty` check and full-table scans are avoided.
-fn has_user_data_in_write_txn(txn: &dyn WriteTxn) -> Result<bool, StoreError> {
+fn has_user_data_in_write_txn(txn: &impl WriteTxn) -> Result<bool, StoreError> {
     Ok(!txn.is_empty(BIGRAM_GRAM)?
         || !txn.is_empty(UNIGRAM)?
         || !txn.is_empty(PHRASE)?
@@ -1649,7 +1649,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
         let db = self.database();
         let mut keys = Vec::new();
-        db.for_each(BIGRAM_GRAM, &mut |key, _| {
+        db.for_each(BIGRAM_GRAM, |key, _| {
             keys.push(<[u8; 4]>::try_from(key).ok().map(Token::from_be_bytes));
             Ok(())
         })?;
@@ -1744,7 +1744,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         } else {
             let db = self.database();
             let mut keys = Vec::new();
-            let _ = db.for_each(BIGRAM_GRAM, &mut |key, gram| {
+            let _ = db.for_each(BIGRAM_GRAM, |key, gram| {
                 keys.push((key.to_vec(), gram.to_vec()));
                 Ok(())
             });
@@ -2029,7 +2029,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             let total_key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
             if txn.get(UNIGRAM_TOTAL, &total_key)?.is_none() {
                 let mut sum = 0_u64;
-                txn.for_each(UNIGRAM, &mut |_k, v| {
+                txn.for_each(UNIGRAM, |_k, v| {
                     let delta = codec::decode_u64(v)
                         .map_err(|_| StoreError::Backend("corrupt unigram value".into()))?;
                     sum = sum.saturating_add(delta);
@@ -2334,7 +2334,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             Bound::Included(lo.as_slice()),
             hi.as_ref()
                 .map_or(Bound::Unbounded, |hi| Bound::Excluded(hi.as_slice())),
-            &mut |_, value| {
+            |_, value| {
                 let count = codec::decode_u64(value)
                     .map_err(|_| StoreError::Backend("corrupt unigram".into()))?;
                 total = total.wrapping_add(count as u32);
@@ -2400,7 +2400,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
 
             let mut keys = Vec::new();
-            txn.for_each(LIBRARY_OFFSET, &mut |key, _| {
+            txn.for_each(LIBRARY_OFFSET, |key, _| {
                 keys.push(key.to_vec());
                 Ok(())
             })?;
@@ -3090,7 +3090,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     ) -> Result<std::collections::BTreeMap<Vec<u8>, Vec<u8>>, UserStoreError> {
         let mut records = std::collections::BTreeMap::new();
         self.database()
-            .for_each(phrase_table::TABLE, &mut |key, value| {
+            .for_each(phrase_table::TABLE, |key, value| {
                 records.insert(key.to_vec(), value.to_vec());
                 Ok(())
             })?;
@@ -3154,7 +3154,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn export_phrases_in(&self, library: u8) -> Result<Vec<ExportedPhrase>, UserStoreError> {
         let db = self.database();
         let mut rows = Vec::new();
-        db.for_each(PHRASE, &mut |k, v| {
+        db.for_each(PHRASE, |k, v| {
             let token = codec::decode_token(k)
                 .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
             if phrase_index_library_index(token) != library {
@@ -3194,7 +3194,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn phrases(&self) -> Result<Vec<UserPhrase>, UserStoreError> {
         let db = self.database();
         let mut tokens_and_texts = Vec::new();
-        db.for_each(PHRASE, &mut |k, v| {
+        db.for_each(PHRASE, |k, v| {
             let token = codec::decode_token(k)
                 .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
             let text = codec::decode_str(v)
@@ -3826,7 +3826,7 @@ impl<S: WriteStore> GenericUserStore<S> {
 
             // Unigram deltas and their running total.
             let mut unigram_rows: Vec<(Token, u64)> = Vec::new();
-            txn.for_each(UNIGRAM, &mut |k, v| {
+            txn.for_each(UNIGRAM, |k, v| {
                 let token = codec::decode_token(k)
                     .map_err(|_| StoreError::Backend("corrupt unigram key".into()))?;
                 let delta = codec::decode_u64(v)
@@ -3941,7 +3941,7 @@ impl<S: WriteStore> GenericUserStore<S> {
 
                 // Unigram: recompute total excluding the removed token.
                 let mut kept_sum = 0_u64;
-                txn.for_each(UNIGRAM, &mut |k, v| {
+                txn.for_each(UNIGRAM, |k, v| {
                     let candidate = codec::decode_token(k)
                         .map_err(|_| StoreError::Backend("corrupt unigram key".into()))?;
                     if candidate != token {
@@ -4453,7 +4453,6 @@ impl<S: WriteStore> GenericUserStore<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oxpinyin_store::Visitor;
     use std::collections::BTreeMap;
 
     macro_rules! user_store_tests {
@@ -6000,18 +5999,14 @@ mod tests {
             Ok(self.0.get(key).map(|v| codec::encode_u64(*v).to_vec()))
         }
 
-        fn range(
+        fn scan(
             &self,
             _table: &str,
             _lo: std::ops::Bound<&[u8]>,
             _hi: std::ops::Bound<&[u8]>,
-            _visit: &mut Visitor<'_>,
+            _visit: impl FnMut(&[u8], &[u8]) -> Result<oxpinyin_store::Flow, StoreError>,
         ) -> Result<(), StoreError> {
-            Err(StoreError::Backend("stub ranges nothing".into()))
-        }
-
-        fn for_each(&self, _table: &str, _visit: &mut Visitor<'_>) -> Result<(), StoreError> {
-            Err(StoreError::Backend("stub walks nothing".into()))
+            Err(StoreError::Backend("stub scans nothing".into()))
         }
 
         fn is_empty(&self, table: &str) -> Result<bool, StoreError> {

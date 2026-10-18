@@ -95,12 +95,12 @@ fn syllables_to_chewing_keys(syllables: &[SyllableKey]) -> Option<Vec<ChewingKey
 
 fn open_tree(path: &Path) -> Result<ChewingTable, DictError> {
     let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
-    Ok(ChewingTable::new(Box::new(RawChewingDbm::new(store))))
+    Ok(ChewingTable::new(RawChewingDbm::new(store)))
 }
 
 fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
     let store = DefaultStore::open_read_only(path).map_err(TableError::from)?;
-    Ok(PhraseTable::new(Box::new(RawChewingDbm::new(store))))
+    Ok(PhraseTable::new(RawChewingDbm::new(store)))
 }
 
 /// Resolves the surviving records of one search through `libraries`:
@@ -207,7 +207,7 @@ fn visible_extension_exists(
     keys: &[ChewingKey],
     visible: &dyn Fn(u32) -> bool,
 ) -> Result<bool, DictError> {
-    table.walk_extensions(keys, &mut |_, items| {
+    table.walk_extensions(keys, |_, items| {
         Ok(items.iter().any(|item| {
             prefix_keys_match(keys, &item.keys)
                 && visible(item.token)
@@ -464,7 +464,7 @@ impl SystemDictionary {
             return Ok(Some(Vec::new()));
         };
         let mut tokens: Vec<u32> = Vec::new();
-        let overlong = self.pinyin.walk_suggestions(&keys, &mut |length, items| {
+        let overlong = self.pinyin.walk_suggestions(&keys, |length, items| {
             // The query-length row is the phrase itself — the pin's cursor
             // starts one past it (`Jump` + `Next`).
             if length > keys.len() {

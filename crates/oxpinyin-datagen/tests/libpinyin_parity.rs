@@ -60,7 +60,7 @@ fn rows_of(path: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
         .range_raw(
             std::ops::Bound::Unbounded,
             std::ops::Bound::Unbounded,
-            &mut |key, value| {
+            |key, value| {
                 rows.push((key.to_vec(), value.to_vec()));
                 Ok(())
             },

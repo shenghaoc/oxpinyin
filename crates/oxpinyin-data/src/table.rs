@@ -17,6 +17,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::marker::PhantomData;
+use std::ops::{Bound, ControlFlow};
 use std::path::Path;
 
 use oxpinyin_store::{DefaultStore, ReadStore, StoreError};
@@ -99,13 +100,19 @@ where
         .map_err(TableError::from)
         .map_err(E::from)?;
     let mut visitor_error: Option<E> = None;
-    let scan_result = store.for_each("data", &mut |key, value| match visit(key, value) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            visitor_error = Some(e);
-            Err(StoreError::Backend("visitor error".into()))
-        }
-    });
+    let scan_result =
+        store.scan(
+            "data",
+            Bound::Unbounded,
+            Bound::Unbounded,
+            |key, value| match visit(key, value) {
+                Ok(()) => Ok(ControlFlow::Continue(())),
+                Err(e) => {
+                    visitor_error = Some(e);
+                    Ok(ControlFlow::Break(()))
+                }
+            },
+        );
     if let Some(e) = visitor_error {
         return Err(e);
     }

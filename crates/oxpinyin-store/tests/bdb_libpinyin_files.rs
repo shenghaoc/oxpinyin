@@ -65,7 +65,7 @@ fn bigram_rows(dir: &Path) -> Vec<(Vec<u8>, Vec<u8>)> {
         .expect("the system bigram opens as a Berkeley DB hash");
     let mut rows = Vec::new();
     store
-        .range_raw(Bound::Unbounded, Bound::Unbounded, &mut |key, value| {
+        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
             rows.push((key.to_vec(), value.to_vec()));
             Ok(())
         })
@@ -142,7 +142,7 @@ fn the_real_index_tree_walks_in_byte_order() {
         let mut previous: Option<Vec<u8>> = None;
         let mut count = 0_u64;
         store
-            .range_raw(Bound::Unbounded, Bound::Unbounded, &mut |key, _value| {
+            .range_raw(Bound::Unbounded, Bound::Unbounded, |key, _value| {
                 if let Some(previous) = &previous {
                     assert!(
                         previous.as_slice() < key,
@@ -210,7 +210,7 @@ fn a_written_user_bigram_reads_back_through_the_user_seam() {
     let store = BdbStore::open_user_bigram(&path).expect("the user seam opens it");
     let mut read_back: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
     store
-        .range_raw(Bound::Unbounded, Bound::Unbounded, &mut |key, value| {
+        .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
             read_back.push((key.to_vec(), value.to_vec()));
             Ok(())
         })
@@ -228,7 +228,7 @@ fn a_written_user_bigram_reads_back_through_the_user_seam() {
     let keys = |lo: Bound<&[u8]>, hi: Bound<&[u8]>| -> Vec<Vec<u8>> {
         let mut keys = Vec::new();
         store
-            .range_raw(lo, hi, &mut |key, _value| {
+            .range_raw(lo, hi, |key, _value| {
                 keys.push(key.to_vec());
                 Ok(())
             })

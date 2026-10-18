@@ -151,12 +151,12 @@ impl IndexRows {
     /// them into the save's rows: each reading
     /// whose `indexed` flag is set, in packed `ChewingKey` words.
     pub(crate) fn read(
-        txn: &dyn WriteTxn,
+        txn: &impl WriteTxn,
         select: &dyn Fn(Token) -> bool,
     ) -> Result<Self, StoreError> {
         let mut rows = Self::default();
         let mut phrases: BTreeSet<Token> = BTreeSet::new();
-        txn.for_each(PHRASE, &mut |key, _value| {
+        txn.for_each(PHRASE, |key, _value| {
             let token = codec::decode_token(key)
                 .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
             if select(token) {
@@ -167,7 +167,7 @@ impl IndexRows {
         if phrases.is_empty() {
             return Ok(rows);
         }
-        txn.for_each(PRONUNCIATION, &mut |key, value| {
+        txn.for_each(PRONUNCIATION, |key, value| {
             let (token, key_bytes) = codec::decode_token_bytes(key)
                 .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
             if phrases.contains(&token) && PronValue::decode(value)?.indexed {
@@ -494,7 +494,7 @@ impl GenericUserStore<DefaultStore> {
 
 /// `init_and_wrap`'s `has_user_data` probe, against a seeded session
 /// store; the user bigram lives in the container, which the caller asks.
-fn count_tables(txn: &mut dyn WriteTxn) -> Result<bool, StoreError> {
+fn count_tables(txn: &mut impl WriteTxn) -> Result<bool, StoreError> {
     Ok(!txn.is_empty(UNIGRAM)? || !txn.is_empty(PHRASE)?)
 }
 
@@ -561,7 +561,7 @@ pub(crate) fn unbacked_index(state: &UserState, originals: &SystemOriginals) -> 
 /// `compact` rebuilds the libraries' totals and never the facade's
 /// (074a2219 `phrase_index.cpp:648-675`).
 pub(crate) fn seed_txn(
-    txn: &mut dyn WriteTxn,
+    txn: &mut impl WriteTxn,
     state: &UserState,
     originals: &SystemOriginals,
     library_totals: &BTreeMap<u8, u32>,
@@ -756,7 +756,7 @@ pub fn export_state<S: WriteStore>(
     let db = store.database();
 
     let mut phrase_text: BTreeMap<Token, Vec<u32>> = BTreeMap::new();
-    db.for_each(PHRASE, &mut |key, value| {
+    db.for_each(PHRASE, |key, value| {
         let token = codec::decode_token(key)
             .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
         let text = codec::decode_str(value)
@@ -766,7 +766,7 @@ pub fn export_state<S: WriteStore>(
     })?;
 
     let mut pronunciations: BTreeMap<Token, Vec<StoredReading>> = BTreeMap::new();
-    db.for_each(PRONUNCIATION, &mut |key, value| {
+    db.for_each(PRONUNCIATION, |key, value| {
         let (token, key_bytes) = codec::decode_token_bytes(key)
             .map_err(|_| StoreError::Backend("corrupt pronunciation key".into()))?;
         let value = PronValue::decode(value)?;
@@ -802,7 +802,7 @@ pub fn export_state<S: WriteStore>(
     }
 
     let mut unigrams: BTreeMap<Token, u64> = BTreeMap::new();
-    db.for_each(UNIGRAM, &mut |key, value| {
+    db.for_each(UNIGRAM, |key, value| {
         let token = codec::decode_token(key)
             .map_err(|_| StoreError::Backend("corrupt unigram key".into()))?;
         let delta = codec::decode_u64(value)
@@ -815,7 +815,7 @@ pub fn export_state<S: WriteStore>(
     let removed_items = store.stored_removed_system_items();
     let mut state = UserState::default();
     state.indexed.extend(store.kept_index_entries());
-    db.for_each(crate::phrase_table::TABLE, &mut |key, value| {
+    db.for_each(crate::phrase_table::TABLE, |key, value| {
         state.phrase_table.insert(key.to_vec(), value.to_vec());
         Ok(())
     })?;
@@ -1997,10 +1997,10 @@ mod tests {
     }
 
     fn pronunciation_rows(store: &UserStore) -> usize {
+        use oxpinyin_store::ReadStore as _;
         let mut rows = 0_usize;
         let db = store.database();
-        let db: &dyn oxpinyin_store::ReadStore = &*db;
-        db.for_each(PRONUNCIATION, &mut |_, _| {
+        db.for_each(PRONUNCIATION, |_, _| {
             rows += 1;
             Ok(())
         })
@@ -2494,7 +2494,7 @@ mod tests {
                 .range_raw(
                     std::ops::Bound::Unbounded,
                     std::ops::Bound::Unbounded,
-                    &mut |k, v| {
+                    |k, v| {
                         rows.insert(k.to_vec(), v.to_vec());
                         Ok(())
                     },

@@ -19,7 +19,7 @@ use std::path::Path;
 
 use oxpinyin_store::{DefaultStore, RawReadStore};
 
-use crate::chewing_table::{ChewingDbm, RawChewingDbm};
+use crate::chewing_table::{ChewingDbm, DefaultDbm, RawChewingDbm};
 use crate::dict::DictError;
 use crate::lm::BigramRow;
 // The key and value layout this reader shares with `oxpinyin-datagen`'s
@@ -36,15 +36,11 @@ use crate::table::TableError;
 ///
 /// Does not materialize the entire database at open time. Each
 /// `load_successors` call is a single DBM `get_raw`.
-pub struct BigramTable {
-    dbm: Box<dyn ChewingDbm + Send + Sync>,
+pub struct BigramTable<D = DefaultDbm> {
+    dbm: D,
 }
 
 impl BigramTable {
-    pub(crate) fn new(dbm: Box<dyn ChewingDbm + Send + Sync>) -> Self {
-        Self { dbm }
-    }
-
     /// Opens a bigram DBM lazily (no scan). libpinyin's `bigram.db` is
     /// a KC **`HashDB`** / Tkrzw **`HashDBM`**, so the open goes through
     /// `RawReadStore::open_hash_read_only`.
@@ -54,7 +50,13 @@ impl BigramTable {
     /// Returns [`DictError`] when the file cannot be opened read-only.
     pub fn open(path: &Path) -> Result<Self, DictError> {
         let store = DefaultStore::open_hash_read_only(path).map_err(TableError::from)?;
-        Ok(Self::new(Box::new(RawChewingDbm::new(store))))
+        Ok(Self::new(RawChewingDbm::new(store)))
+    }
+}
+
+impl<D: ChewingDbm> BigramTable<D> {
+    pub(crate) const fn new(dbm: D) -> Self {
+        Self { dbm }
     }
 
     /// Loads successor records for `prev_token`.
@@ -145,7 +147,7 @@ mod tests {
             &self,
             _lo: &[u8],
             _hi: Option<&[u8]>,
-            _visit: &mut crate::chewing_table::RowVisitor<'_>,
+            _visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
         ) -> Result<(), DictError> {
             unreachable!("the bigram reader never walks")
         }
@@ -162,7 +164,7 @@ mod tests {
             0x0100_0010_u32.to_le_bytes().to_vec(),
             encode_bigram_value(&row),
         );
-        let table = BigramTable::new(Box::new(dbm));
+        let table = BigramTable::new(dbm);
         let result = table.load_successors(0x0100_0010).unwrap().unwrap();
         assert_eq!(result.total, 50);
         assert_eq!(result.records.len(), 1);
@@ -171,7 +173,7 @@ mod tests {
     #[test]
     fn load_successors_miss_returns_none() {
         let dbm = MemoryDbm::new();
-        let table = BigramTable::new(Box::new(dbm));
+        let table = BigramTable::new(dbm);
         assert!(table.load_successors(0x0100_0010).unwrap().is_none());
     }
 
@@ -186,7 +188,7 @@ mod tests {
             0x0100_0010_u32.to_le_bytes().to_vec(),
             encode_bigram_value(&row),
         );
-        let table = BigramTable::new(Box::new(dbm));
+        let table = BigramTable::new(dbm);
         let (count, total) = table.transition(0x0100_0010, 0x0100_0099).unwrap().unwrap();
         assert_eq!(count, 60);
         assert_eq!(total, 100);
@@ -203,7 +205,7 @@ mod tests {
             0x0100_0010_u32.to_le_bytes().to_vec(),
             encode_bigram_value(&row),
         );
-        let table = BigramTable::new(Box::new(dbm));
+        let table = BigramTable::new(dbm);
         let (count, total) = table.transition(0x0100_0010, 0xFFFF_FFFF).unwrap().unwrap();
         assert_eq!(count, 0);
         assert_eq!(total, 100);
@@ -213,7 +215,7 @@ mod tests {
     fn malformed_value_does_not_panic() {
         let dbm = MemoryDbm::new();
         dbm.put(0x0100_0010_u32.to_le_bytes().to_vec(), vec![0xFF; 5]);
-        let table = BigramTable::new(Box::new(dbm));
+        let table = BigramTable::new(dbm);
         assert!(table.load_successors(0x0100_0010).is_err());
         assert!(table.load_raw_successors(0x0100_0010).is_err());
     }
@@ -224,7 +226,7 @@ mod tests {
         // libpinyin never stores a zero-length SingleGram. Surface it.
         let dbm = MemoryDbm::new();
         dbm.put(0x0100_0010_u32.to_le_bytes().to_vec(), Vec::new());
-        let table = BigramTable::new(Box::new(dbm));
+        let table = BigramTable::new(dbm);
         assert!(table.load_successors(0x0100_0010).is_err());
         assert!(matches!(
             table.load_raw_successors(0x0100_0010),

@@ -30,7 +30,9 @@
 
 use std::ops::Bound;
 
-use oxpinyin_store::{DEFAULT_STORE_EXT, DefaultStore, ReadStore, StoreError, WriteStore};
+use oxpinyin_store::{
+    DEFAULT_STORE_EXT, DefaultStore, ReadStore, StoreError, WriteStore, WriteTxn,
+};
 
 /// Owns a temporary store path and removes the data file or directory
 /// and the `-lock` sidecar (either shape) when it drops — including on
@@ -96,7 +98,7 @@ fn iteration_is_ordered_and_prefix_scans_respect_boundaries() {
 
     let mut seen = Vec::new();
     store
-        .for_each("laws", &mut |key, _| {
+        .for_each("laws", |key, _| {
             seen.push(key.to_vec());
             Ok(())
         })
@@ -112,7 +114,7 @@ fn iteration_is_ordered_and_prefix_scans_respect_boundaries() {
             "laws",
             Bound::Included(b"a".as_slice()),
             Bound::Excluded(b"b".as_slice()),
-            &mut |key, _| {
+            |key, _| {
                 in_range.push(key.to_vec());
                 Ok(())
             },
@@ -127,7 +129,7 @@ fn iteration_is_ordered_and_prefix_scans_respect_boundaries() {
             "laws",
             Bound::Included(b"a".as_slice()),
             Bound::Included(b"b".as_slice()),
-            &mut |key, _| {
+            |key, _| {
                 through_b.push(key.to_vec());
                 Ok(())
             },
@@ -203,7 +205,7 @@ fn rows_survive_reopen_through_a_read_only_handle() {
     let reader = DefaultStore::open_read_only(&path).unwrap();
     let mut seen = Vec::new();
     reader
-        .for_each("laws", &mut |key, value| {
+        .for_each("laws", |key, value| {
             seen.push((key.to_vec(), value.to_vec()));
             Ok(())
         })
@@ -265,7 +267,7 @@ fn an_untouched_table_reads_empty() {
     assert!(store.is_empty("never-touched").unwrap());
     let mut rows = 0;
     store
-        .for_each("never-touched", &mut |_, _| {
+        .for_each("never-touched", |_, _| {
             rows += 1;
             Ok(())
         })

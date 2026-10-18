@@ -2327,7 +2327,7 @@ mod tests {
                 .range_raw(
                     std::ops::Bound::Unbounded,
                     std::ops::Bound::Unbounded,
-                    &mut |k, v| {
+                    |k, v| {
                         rows.insert(k.to_vec(), v.to_vec());
                         Ok(())
                     },
@@ -2774,7 +2774,7 @@ mod tests {
             .range_raw(
                 std::ops::Bound::Unbounded,
                 std::ops::Bound::Unbounded,
-                &mut |key, value| {
+                |key, value| {
                     rows.insert(key.to_vec(), value.to_vec());
                     Ok(())
                 },
@@ -3686,7 +3686,7 @@ mod tests {
             .range_raw(
                 std::ops::Bound::Unbounded,
                 std::ops::Bound::Unbounded,
-                &mut |key, _value| {
+                |key, _value| {
                     seen.push(u32::from_le_bytes([key[0], key[1], key[2], key[3]]));
                     Ok(())
                 },
@@ -3923,7 +3923,7 @@ mod tests {
                 .range_raw(
                     std::ops::Bound::Unbounded,
                     std::ops::Bound::Unbounded,
-                    &mut |k, v| {
+                    |k, v| {
                         rows.push((k.to_vec(), v.to_vec()));
                         Ok(())
                     },

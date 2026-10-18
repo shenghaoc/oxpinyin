@@ -13,7 +13,7 @@ use oxpinyin_data::row_format::pinyin_index::{
     encode_complete_key as encode_complete, encode_incomplete_key as encode_incomplete,
     encode_item, item2_stride,
 };
-use oxpinyin_store::{DefaultStore, RawReadStore, ReadStore, WriteStore};
+use oxpinyin_store::{DefaultStore, RawReadStore, ReadStore, WriteStore, WriteTxn};
 use tempfile::TempDir;
 
 fn key_no_tone(spelling: &str) -> ChewingKey {
