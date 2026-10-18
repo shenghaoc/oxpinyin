@@ -27,6 +27,10 @@ use crate::validate_table_name;
 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw", feature = "bdb"))]
 pub const SEPARATOR: u8 = 0;
 
+/// One owned `(key, value)` row.
+#[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
+pub(crate) type Row = (Vec<u8>, Vec<u8>);
+
 /// `table || 0x00 || key`. The caller has validated `table`.
 #[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
 pub(crate) fn frame(table: &str, key: &[u8]) -> Vec<u8> {
