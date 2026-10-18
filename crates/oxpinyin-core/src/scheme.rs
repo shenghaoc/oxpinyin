@@ -1082,7 +1082,7 @@ struct SimpleTables {
     /// `(key, tone number)` rows.
     tones: &'static [(u8, u8)],
     /// The global chewing index every Simple keyboard shares.
-    index: &'static [(&'static str, &'static str, &'static str, u32)],
+    index: &'static crate::zhuyin_map::CompactIndex,
 }
 
 impl SimpleTables {
@@ -1602,12 +1602,11 @@ pub const fn tone_symbol(tone: u8) -> &'static str {
 /// (`pinyin.cpp` strips `ZHUYIN_CORRECT_ALL` from caller options at every
 /// chewing entry point, so caller corrections can never reach this gate).
 fn search_zhuyin_index(
-    index: &[(&'static str, &'static str, &'static str, u32)],
+    index: &(impl crate::zhuyin_map::ZhuyinIndex + ?Sized),
     zhuyin: &str,
     options: u32,
 ) -> Option<(SyllableKey, &'static str)> {
-    let position = index.partition_point(|row| row.0 < zhuyin);
-    let &(spelling, canonical, pinyin, flags) = index.get(position)?;
+    let (spelling, canonical, pinyin, flags) = index.find_row(zhuyin)?;
 
     if spelling != zhuyin {
         return None;
@@ -2814,28 +2813,61 @@ mod tests {
     }
 
     #[test]
+    fn compact_index_preserves_every_row_and_option_gate() {
+        use super::search_zhuyin_index;
+        use crate::ZHUYIN_CORRECT_SHUFFLE;
+        use crate::zhuyin_map::{ZHUYIN_PINYIN_MAP, compact_tests::REFERENCE_ROWS};
+        for row in REFERENCE_ROWS {
+            for options in [
+                0,
+                ZHUYIN_INCOMPLETE,
+                ZHUYIN_CORRECT_SHUFFLE,
+                ZHUYIN_INCOMPLETE | ZHUYIN_CORRECT_SHUFFLE,
+                u32::MAX,
+            ] {
+                assert_eq!(
+                    search_zhuyin_index(&ZHUYIN_PINYIN_MAP, row.0, options),
+                    search_zhuyin_index(&REFERENCE_ROWS, row.0, options)
+                );
+            }
+            let expected = REFERENCE_ROWS
+                .iter()
+                .find(|r| r.2 == row.2 && r.0 == r.1)
+                .map(|r| r.1);
+            assert_eq!(crate::zhuyin_for_pinyin(row.2), expected);
+        }
+        for invalid in ["", "a", "ㄅㄅ", "ㄅ\0", "🦀", "ㄩㄩㄩㄩ"] {
+            assert_eq!(
+                search_zhuyin_index(&ZHUYIN_PINYIN_MAP, invalid, u32::MAX),
+                search_zhuyin_index(&REFERENCE_ROWS, invalid, u32::MAX)
+            );
+        }
+    }
+
+    #[test]
     fn index_matches_the_pinned_row_counts_and_shuffle_law() {
         use crate::ZHUYIN_CORRECT_SHUFFLE;
         use crate::ZHUYIN_INCOMPLETE;
         use crate::zhuyin_map::ZHUYIN_PINYIN_MAP;
 
-        assert_eq!(ZHUYIN_PINYIN_MAP.len(), 1493);
+        let rows: Vec<_> = ZHUYIN_PINYIN_MAP.iter().collect();
+        assert_eq!(rows.len(), 1493);
 
         // Sorted and unique: the binary-search invariant of the pinned
         // table (strcmp order == UTF-8 byte order).
-        for pair in ZHUYIN_PINYIN_MAP.windows(2) {
+        for pair in rows.windows(2) {
             assert!(pair[0].0 < pair[1].0, "rows not strictly sorted");
         }
 
-        let incomplete: Vec<_> = ZHUYIN_PINYIN_MAP
+        let incomplete: Vec<_> = rows
             .iter()
             .filter(|row| row.3 & ZHUYIN_INCOMPLETE != 0)
             .collect();
-        let shuffle: Vec<_> = ZHUYIN_PINYIN_MAP
+        let shuffle: Vec<_> = rows
             .iter()
             .filter(|row| row.3 & ZHUYIN_CORRECT_SHUFFLE != 0)
             .collect();
-        let plain: Vec<_> = ZHUYIN_PINYIN_MAP.iter().filter(|row| row.3 == 0).collect();
+        let plain: Vec<_> = rows.iter().filter(|row| row.3 == 0).collect();
         assert_eq!(incomplete.len(), 14);
         assert_eq!(shuffle.len(), 1062);
         assert_eq!(plain.len(), 417);
