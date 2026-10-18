@@ -2,9 +2,10 @@
 
 ## Overview
 
-Not started. Nothing below begins until Stage 2's tasks are done
-(`.kiro/specs/bug-for-bug/tasks.md`). Each task adds one opt-in cargo
-feature, off by default.
+Not started. Nothing below begins until the Stage 2 compatibility exit
+gate is complete: task 4 in `.kiro/specs/bug-for-bug/tasks.md`, after
+tasks 1 and 2. Stage 2 task 3 (internal improvement) does not need to be
+complete. Each task below adds one opt-in cargo feature, off by default.
 
 ## Tasks
 

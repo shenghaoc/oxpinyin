@@ -43,10 +43,12 @@ reimplementation a consumer is ported to — the same binary interface,
 the same file formats, the same observable behaviour, with the consumer
 unchanged and unaware.
 
-> **Amended 2026-10-14 UTC — oxpinyin builds are bug-for-bug libpinyin
-> binaries (maintainer ruling).** libpinyin is built on one of three
-> backends — Berkeley DB, Kyoto Cabinet, tkrzw — chosen by `--with-dbm`;
-> oxpinyin is built on one of the same three, chosen by cargo feature,
+> **Amended 2026-10-14 UTC — the default oxpinyin build is a bug-for-bug
+> libpinyin binary (maintainer ruling).** A Stage 3 departure is opt-in
+> and off by default (`AGENTS.md`, "Stages"). libpinyin is built on one
+> of three backends — Berkeley DB, Kyoto Cabinet, tkrzw — chosen by
+> `--with-dbm`; oxpinyin is built on one of the same three, chosen by
+> cargo feature,
 > and handles that backend's system and user files natively, exactly as
 > a libpinyin build on it does. There is no compatibility mode, no
 > reading of libpinyin's files as something foreign, and no import or

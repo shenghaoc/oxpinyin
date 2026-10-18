@@ -55,9 +55,11 @@ ladder does not answer, because it is about cost, not output. Run both
 sides on a named workload in the same container — whole-process
 instructions (callgrind) and peak heap (massif), three repeats, spread
 stated — and attribute any regression to a source component on both
-sides, as #757 does. A fix makes oxpinyin do the work the way the pin
-does, or a better way. Output stays byte-identical and its differential
-stays the gate.
+sides, as #757 does. A regression on both axes must be fixed; a written
+justification does not replace the fix. A fix makes oxpinyin do the work
+the way the pin does, or a better way. Output stays byte-identical and
+its differential stays the gate. A threshold such as the 1.10× ratio of
+#757 and #870 applies to the workloads of that issue only.
 
 ## Internal improvement
 

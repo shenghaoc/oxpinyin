@@ -1,9 +1,16 @@
 # oxpinyin
 
 A portable Rust re-expression of
-[libpinyin](https://github.com/libpinyin/libpinyin). Each build replaces
-`libpinyin.so.15`. The target is bug-for-bug compatibility with a pinned
-libpinyin, defects included.
+[libpinyin](https://github.com/libpinyin/libpinyin). The default build is
+the drop-in target: it replaces `libpinyin.so.15` and `libzhuyin.so.15`.
+Its target is bug-for-bug compatibility with a pinned libpinyin, defects
+included. Full bug-for-bug coverage is not complete yet.
+
+An opt-in Stage 3 build that changes only observable output keeps the ABI
+and the data formats. It states its departure in its build metadata. An
+opt-in Stage 3 build that changes the ABI or the native data formats does
+not use libpinyin's SONAME, pkg-config file or header directory, unless a
+maintainer ruling permits it.
 
 - Stage 1 (complete): exact-output parity with the pin on the corpus surfaces.
 - Stage 2 (current): bug-for-bug compatibility across the whole exported ABI,
@@ -51,7 +58,7 @@ cargo test --locked --workspace
 | `docs/safety/` | MISRA-Rust mapping, audit, safety profile |
 | `docs/packaging.md` | cargo-c packaging and installed-tree layout |
 | `tools/oracle/` | Pin build recipe (`docs/runbooks/oracle.md`) |
-| `.kiro/` | Steering and specs in Kiro's documented layout (<https://kiro.dev/docs/>), split into pinned libpinyin behaviour (`steering/pinned-behaviour.md`; specs `drop-in`, `bug-for-bug`) and oxpinyin's improvements (`steering/oxpinyin-improvements.md`; spec `stage3-departures`); the format is used, the Kiro IDE and CLI are not |
+| `.kiro/` | Steering and specs in Kiro's documented layout (<https://kiro.dev/docs/>), split into pinned libpinyin behaviour (`steering/pinned-behaviour.md`; spec `drop-in`; spec `bug-for-bug` Requirements 1–3) and oxpinyin's improvements (`steering/oxpinyin-improvements.md`; spec `bug-for-bug` Requirements 4–5; spec `stage3-departures`); the format is used, the Kiro IDE and CLI are not |
 
 | Group | Crates |
 |---|---|

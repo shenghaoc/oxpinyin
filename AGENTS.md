@@ -175,13 +175,14 @@ Every requirement, spec line and finding belongs to exactly one side:
   pkg-config, the exports' observable I/O, file formats, stderr bytes,
   process-wide side effects, and its defects. This is the Stage 2
   target. Kiro: `.kiro/steering/pinned-behaviour.md`,
-  `.kiro/specs/drop-in/`, `.kiro/specs/bug-for-bug/`.
+  `.kiro/specs/drop-in/`, `.kiro/specs/bug-for-bug/` (Requirements 1–3).
 - **oxpinyin improvements** — everything oxpinyin does that the pin does
   not: the classes (a)–(c) and the log line (c) owes, the registered
   standing divergences, the constitution's no-panic, `unsafe` and
   determinism rules, internal architecture and crate decoupling,
   performance, and the Stage 3 departures. Kiro:
   `.kiro/steering/oxpinyin-improvements.md`,
+  `.kiro/specs/bug-for-bug/` (Requirements 4–5),
   `.kiro/specs/stage3-departures/`.
 
 An improvement that changes nothing observable is internal. It is
