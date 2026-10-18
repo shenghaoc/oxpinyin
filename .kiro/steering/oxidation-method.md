@@ -8,6 +8,9 @@ Maintainer ruling 2026-10-16 UTC. `/AGENTS.md` wins on conflict, and
 `docs/findings/compatibility-policy.md`) decide what may differ. This
 file says how a piece of libpinyin is turned into Rust.
 
+Amended 2026-10-18 UTC: binary size follows Constitution §2's recording
+and disclosure rule, separately from runtime time/space comparisons.
+
 ## Guiding principle
 
 Stage 2 delivers bug-for-bug compatibility with the pinned libpinyin,
@@ -95,9 +98,11 @@ Work that predates this ruling is brought into the record by
   operation, first try the pin's own structure or algorithm, written as
   idiomatic Rust, and measure it (one run, base and pin side by side,
   as `/AGENTS.md` requires, repeated within that run). Judge every
-  candidate on time, peak memory and installed size together, never on
-  speed alone: the kept version is never worse than the pin in both
-  time and space and stays within the install-size budget. The pin's
+  candidate on time and peak memory, never on speed alone: the kept
+  version is never worse than the pin in both runtime time and space.
+  Record binary file sizes and note increases over base in the PR under
+  /AGENTS.md Constitution §2, outside the runtime time/space trade rule.
+  The pin's
   algorithm is the first candidate, not a mandate — if its Rust
   expression is no better on those measures, keep or find the idiomatic
   alternative that is, and prefer the idiomatic version on a tie.

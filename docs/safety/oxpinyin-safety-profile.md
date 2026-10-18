@@ -114,9 +114,9 @@ record, enforced present-but-not-verified by Clippy, verified by review.
   allow-list (GPL-3.0-or-later + permissive set, NCSA scoped to
   libfuzzer-sys via `[[licenses.exceptions]]`); **sources = crates.io
   registry only — git sources disallowed** (`unknown-git = "deny"`,
-  empty `allow-git`); multiple-versions = warn (informational for the
-  Stage-2 size budget). The release tarball that CI executes is
-  checksum-verified before install.
+  empty `allow-git`); multiple-versions = warn (informational for binary-size
+  disclosure under Constitution §2; no size cap). The release tarball that
+  CI executes is checksum-verified before install.
 - No new runtime dependency without ask (constitution) — `deny.toml`
   `bans.deny = [{ name = "..." }]` only if a concrete ban ever becomes
   policy; start empty.

@@ -10,6 +10,11 @@
 > store and data's mmap module, the workspace has 26 crates and a
 > 173-package lockfile. `enforcement-matrix.md` carries the current state.
 
+Amended 2026-10-18 UTC: the historical §2 install-size row below is
+superseded by Constitution §2 binary-size recording and disclosure of
+increases. Size pins are not a gate; the pin remains the behaviour/ABI
+oracle.
+
 Companion to the profile. Principle: AGENTS.md should keep architecture,
 workflow, rationale, commands, and inherently-contextual instructions; every
 rule that a tool can enforce should migrate to Cargo/CI and then *shrink to a

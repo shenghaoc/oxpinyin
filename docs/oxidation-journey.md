@@ -147,6 +147,11 @@ The open gaps are listed in the record's §11 and tracked as tasks in
 fitted weights after the first release, and the equivalence arguments
 the survey found plausible but did not write down.
 
+Amended 2026-10-18 UTC: the size budget mentioned above is retired.
+Constitution §2 now says to record binary file sizes and note increases
+over base in the PR; binary size per PR is not complexity and is outside
+the runtime time/space trade rule.
+
 ## Amendments since this snapshot
 
 Amended 2026-10-18 UTC. The text above describes the tree at `3b2bfdf`

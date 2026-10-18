@@ -113,8 +113,8 @@ compatibility stays.
    eligible for Stage 2 WHEN observable output, the files on disk and the
    ABI do not change. Its differentials SHALL stay identical. Eligibility
    is not approval: the change SHALL also satisfy the other rules that
-   apply to it (safety, dependencies, install size, review and
-   verification).
+   apply to it (safety, dependencies, binary-size disclosure under
+   Constitution §2, review and verification).
 5. A performance change that needs an observable or on-disk change
    SHALL NOT land in Stage 2, unless a registered class (a)–(c)
    exception in `docs/findings/compatibility-policy.md` covers that

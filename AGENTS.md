@@ -13,7 +13,9 @@ file wins on any conflict.
 ## Constitution
 
 1. Broad appeal only — no niche features at cost to everyone.
-2. Install-size budget: default payload ≤ pinned reference stack +10%.
+2. Binary size (ruling 2026-10-18 UTC): record stripped shipping-library
+   file sizes and note increases over base in the PR; minor decreases need
+   no mention. No pin +10% cap. Details: `docs/perf/ci-perf-size-gate-proposal-2026-09-09.md`.
 3. No local AI (no client neural/LLM inference).
 4. Nothing panics on any input; public APIs return `Result`.
 5. `unsafe`: `forbid` in oxpinyin-core/user/engine; `deny` in data (the
@@ -59,6 +61,8 @@ is free to diverge, subject to two constraints: external interface behavior
 must be unchanged, and time and space complexity must never both be worsened
 — a regression in one is acceptable only when traded against a gain in the
 other, must be minimized, and must be justified in the change's report.
+Binary size per PR is not complexity (it can be split into arbitrarily
+small PRs), so §2 governs it outside the runtime time/space trade rule.
 The target is a smaller binary, faster execution and much lower RAM than
 libpinyin. Internal freedom exists to serve that, not to erode it.
 

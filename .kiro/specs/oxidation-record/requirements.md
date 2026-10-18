@@ -1,5 +1,8 @@
 # Requirements Document — Oxidation record
 
+Amended 2026-10-18 UTC: Requirement 6 uses Constitution §2's binary-size
+recording rule separately from runtime time/space comparisons.
+
 ## Introduction
 
 `.kiro/steering/oxidation-method.md` (maintainer ruling 2026-10-16 UTC)
@@ -137,13 +140,16 @@ before anything else.
    operation THEN the pin's structure or algorithm, written as idiomatic
    Rust, SHALL be measured first, in one run beside the base and the
    pin.
-2. EACH candidate SHALL be measured for time, peak resident memory and
-   installed size, with repeated measurements within that one run.
-3. THE kept version SHALL NOT be worse than the pin in both time and
-   space (Requirement 3.2) and SHALL stay within the install-size budget
-   (`/AGENTS.md` constitution 2); among the candidates that satisfy both,
-   the choice SHALL be justified on all three measures, not on speed
-   alone, and the idiomatic version SHALL be preferred on a tie.
+2. EACH candidate SHALL be measured for time and peak resident memory,
+   with repeated measurements within that one run. Record stripped
+   shipping-library file sizes under `/AGENTS.md` Constitution §2 and
+   note increases over base in the PR; insignificant decreases need no
+   mention.
+3. THE kept version SHALL NOT be worse than the pin in both runtime time
+   and space (Requirement 3.2). Binary size per PR is not complexity and
+   is outside that trade rule. The choice SHALL be justified on runtime
+   time and memory, not on speed alone, and the idiomatic version SHALL
+   be preferred on a tie.
 
 ### Requirement 7: The library's operations are the Rust surface
 
