@@ -1,3 +1,8 @@
+> **Historical record — not active policy.** The `Assisted-by` requirement and
+> its linter, hook, test harness, and CI checks were retired on 2026-10-18 UTC.
+> References below preserve the audit's citations, commit SHAs, and findings;
+> they are not current requirements.
+
 # Commit-hygiene failures
 
 Date: 2026-08-17 · Status: closed historical record. History is not

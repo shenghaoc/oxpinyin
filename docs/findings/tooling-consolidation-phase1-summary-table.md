@@ -1,5 +1,11 @@
 # Appendix A1 — inventory summary and destination per record
 
+> **Historical inventory snapshot — not active policy.** This record reflects
+> the named tree. The `Assisted-by` commit-trailer policy and its linter, hook,
+> test harness, and CI jobs were later retired; their references here are
+> archival and do not describe current requirements.
+
+
 Destination legend: Absorb = migrate into shared Rust; Integrate = specialised implementation kept behind the unified interface; Retain = instrument or frozen data; Retire = delete only after the named replacement is proven. "D<n>" refers to the decisions in section E of the main report.
 
 | ID | Path | Implementation | Platform | Purpose | Destination |

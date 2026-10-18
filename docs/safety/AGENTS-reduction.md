@@ -41,10 +41,11 @@ mechanization exists.
 | "`unsafe` outside allowlisted crates" | **mechanized** (see §5 above) |
 | "silence lints" | **assisted**: `#[allow]`/`--cap-lints` greps in review; a deny-by-default lint surface makes silence *visible* (each allow needs a justification comment per profile) — stays review because legitimate allows exist |
 
-## Attribution (commit trailers)
+## Attribution (commit trailers) — retired
 
-Already mechanical: `.githooks/commit-msg` + CI R2 lint every commit.
-AGENTS.md keeps the spec; the mechanics exist. **No change.**
+The former `Assisted-by` trailer policy and its hook and CI enforcement were
+retired. This section is retained only as a record of the earlier study; no
+AI-attribution trailer is required.
 
 ## Toolchain / rebase / worktree / concurrent-session sections
 

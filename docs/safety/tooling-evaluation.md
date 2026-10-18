@@ -528,17 +528,17 @@ not CI-enforced); superseded by §22 and dropped in review.**
 
 ## 22. Pre-commit / local workflow
 
-Existing: `.githooks/commit-msg` → trailer linter (fast, single source of
-truth with CI). Proposing a `pre-commit` that runs `cargo fmt --check` on
-staged `.rs` files only (~0.3s) plus the existing hook. Full `clippy
+Existing: no tracked hooks; the former `.githooks/commit-msg` trailer linter
+was retired with the `Assisted-by` policy. Proposing a `pre-commit` that runs
+`cargo fmt --check` on staged `.rs` files only (~0.3s). Full `clippy
 --all-targets` (≈ minutes cold) as pre-commit would get `--no-verify`'d into
 oblivion — hooks are a convenience, not a boundary; CI stays authoritative.
 **Verdict: DROP** (was drafted as ADOPT, implemented as PR-1g, then
 dropped in review): CI's fmt gate is already seconds-fast, so the hook
-added convenience without enforcement. The tracked `.githooks/commit-msg`
-hook stays as-is — it is the single source of truth for R2 and is
-cheap because it lints one message. The .vscode suggestion met the same
-fate; editors can set `rust-analyzer.check.command` locally.
+added convenience without enforcement. No tracked hook is retained; the
+former trailer hook was removed with the retired attribution policy. The
+.vscode suggestion met the same fate; editors can set
+`rust-analyzer.check.command` locally.
 
 ## 23. Toolchain / MSRV impact summary
 

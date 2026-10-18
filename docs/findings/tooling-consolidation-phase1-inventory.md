@@ -1,5 +1,11 @@
 # Appendix A — tooling inventory records (origin/main e67f19d1, inspected 2026-10-16 UTC; Stage 0 record of the ruling of 2026-10-16 UTC)
 
+> **Historical inventory snapshot — not active policy.** This record reflects
+> the named tree. The `Assisted-by` commit-trailer policy and its linter, hook,
+> test harness, and CI jobs were later retired; their references here are
+> archival and do not describe current requirements.
+
+
 Record format: one table per unit with the ten required fields; IDs are stable. Produced by nine full-file reading passes over a detached worktree; counts in the main report were re-verified directly. Three units appear twice (TLS-36≡CI-27, TLS-37≡CI-28, ORC-18≡CI-11).
 
 

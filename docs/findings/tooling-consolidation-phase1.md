@@ -1,5 +1,11 @@
 # Developer-tooling consolidation — Phase 1 (research and architecture)
 
+> **Historical inventory snapshot — not active policy.** This record reflects
+> the named tree. The `Assisted-by` commit-trailer policy and its linter, hook,
+> test harness, and CI jobs were later retired; their references here are
+> archival and do not describe current requirements.
+
+
 Dates (captured with `date -u` on the executing host, never hand-written):
 tree inspected and inventory recorded 2026-10-16 UTC (reading passes ran
 between roughly 15:40 and 17:00 UTC); maintainer ruling received and this

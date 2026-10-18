@@ -246,7 +246,9 @@ echo "$staged" | xargs rustfmt --check --edition 2024 >/dev/null 2>&1 || {
 }
 ```
 
-(plus keep `core.hooksPath .githooks` as documented in CONTRIBUTING.md)
+(At the study tree, `core.hooksPath .githooks` was configured as documented
+in CONTRIBUTING.md. That setup and the `commit-msg` trailer hook have since
+been retired with the `Assisted-by` policy.)
 
 ## 9. `.vscode/settings.json` — **dropped in review** (PR-1g)
 
