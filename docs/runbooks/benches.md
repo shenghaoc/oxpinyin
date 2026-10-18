@@ -35,6 +35,37 @@ the lib under libtest, which rejects criterion flags such as
 `--profile-time`. To run a bench in debug mode: `cargo test --bench
 <name>` (AGENTS.md points here).
 
+### `alloc_profile` — heap attribution is opt-in
+
+`alloc_profile` is a custom harness, not a Criterion group. Its timing and
+probe-count modes run on the system allocator. Heap attribution
+(`--dhat`) needs the non-default `dhat-heap` feature, which installs
+`dhat`'s global allocator for the whole executable:
+
+```sh
+cargo bench -p pinyin-oracle --features dhat-heap --bench alloc_profile -- --dhat [--keystroke-only]
+cargo bench -p pinyin-oracle --bench alloc_profile -- --parity-timed
+```
+
+Each build rejects the other's modes: without the feature `--dhat` exits
+with this command, and with it every mode except `--dhat` exits rather than
+print timings the installed allocator would inflate. With the feature,
+`--dhat` combined with `--parity-timed` or `--repeats` also exits 2, because
+the profile would run a different workload from the one requested;
+`--dhat` alone and `--dhat --keystroke-only` are unchanged. `dhat` is an optional
+dependency of `pinyin-oracle` (a non-shipping crate), so ordinary test and
+bench builds do not compile it. Dormant, the wrapper took the allocator
+lock on every allocation: on the keystroke cycle it measured about 18% over
+no wrapper in one run on one host, which is a property of that run, not a
+factor to apply to older numbers. Timings that earlier snapshots took from
+this bench's non-`--dhat` modes came from the always-installed wrapper and
+stand as recorded.
+
+DHAT site counts and stack grouping are build-specific; compare matched
+workloads using allocation totals and reconciled source-level attribution,
+rather than treating raw site-count changes alone as allocation
+regressions.
+
 ### `kyotocabinet_bnum` — the #402 time-and-space measurement
 
 Motivation: shenghaoc/oxpinyin#402 quantifies the space side of lowering

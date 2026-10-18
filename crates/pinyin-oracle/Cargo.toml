@@ -22,6 +22,9 @@ default = ["bdb"]
 # glib-sys is reached only through this feature's `ffi` module, so the
 # feature is what pulls it in; without it no glib binding is compiled.
 oracle-ffi = ["dep:glib-sys"]
+# Installs dhat's allocator in alloc_profile; off by default so the bench's
+# other modes run on the system allocator.
+dhat-heap = ["dep:dhat"]
 # Backend selection, forwarded through oxpinyin-data (one backend per
 # binary; see oxpinyin-store's [features] for the model and precedence).
 kyotocabinet = ["oxpinyin-data/kyotocabinet"]
@@ -78,6 +81,7 @@ name = "sentence-tail"
 path = "src/bin/sentence_tail.rs"
 
 [dependencies]
+dhat = { version = "0.3", optional = true }
 # Internal workspace crate: the corpus is generated from the frozen syllable
 # inventory, and W2-T3 compares against this parser. Not an external dependency.
 oxpinyin-core = { path = "../oxpinyin-core" }
@@ -95,7 +99,6 @@ oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 [dev-dependencies]
 # Integration tests share the same internal crates as the parity tooling.
 criterion = "0.8"
-dhat = "0.3"
 # Internal workspace crate, dev-only: the `decode_pass_user_store` bench
 # rebuilds oxpinyin-capi's `SharedLm` overlay on the scan harness. Not an
 # external dependency, and pinyin-oracle never ships.

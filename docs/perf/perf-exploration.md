@@ -193,7 +193,8 @@ the prefix tables, the path `Vec`, or the interp parser.
 
 ## Allocation profile (dhat, one serial W2 batch)
 
-Tool: `dhat` 0.3, `cargo bench -p pinyin-oracle --bench alloc_profile -- --dhat`.
+Tool: `dhat` 0.3, `cargo bench -p pinyin-oracle --features dhat-heap --bench alloc_profile -- --dhat`
+(the `dhat-heap` feature postdates this record; see `docs/runbooks/benches.md`).
 The profiler now wraps only the decode loop: table load and corpus
 parsing happen first, so the previous run's corpus-parse rows are gone
 and the totals are decode-only. Totals: **1 059 752 541 bytes in
