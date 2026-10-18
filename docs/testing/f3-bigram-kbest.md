@@ -78,7 +78,7 @@ decoder actually selects in a multi-key path. Charging a per-edge delta based
 on this proxy adds noise that outweighs the bigram signal. The correct fix
 requires phrase-level lattice edges where each edge carries its own phrase
 token, so the bigram is scored on the actual phrase sequence — an
-architectural change deferred to Stage 2.
+architectural change deferred to Stage 3.
 
 ## Conclusion
 

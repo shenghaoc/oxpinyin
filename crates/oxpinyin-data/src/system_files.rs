@@ -2,11 +2,10 @@
 //!
 //! libpinyin names its files in `src/pinyin_internal.h` (`pinyin_index.bin`,
 //! `phrase_index.bin`, `bigram.db`, `punct.bin`, the `addon_*` pair) and its
-//! per-library chunk files in `table.conf`. On a backend libpinyin itself
-//! builds against — Kyoto Cabinet or tkrzw — those are the names the
-//! runtime opens, so an unmodified libpinyin install's `data/` is the
-//! runtime's input.
-//! backend's own container under `<stem>.<ext>`.
+//! per-library chunk files in `table.conf`. Those are the native names on
+//! all three backends — Berkeley DB, Kyoto Cabinet and tkrzw — and the
+//! names the runtime opens, the same ones a libpinyin build on that
+//! backend opens.
 //!
 //! The chunk files are backend-independent (`MemoryChunk` on every build
 //! of libpinyin) and keep their names everywhere.

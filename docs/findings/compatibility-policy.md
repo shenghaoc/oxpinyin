@@ -26,7 +26,9 @@ one defect the 2026-09-12 amendment carried — row 30 — is closed in
 code (the table and totals below carry the state; the live FORCE_TONE
 differential ran 2026-09-16 — all eight implemented keyboards
 IDENTICAL, register amendment in `docs/findings/upstream-divergences.md`).
-**Amended 2026-09-27 UTC (lane G, register integrity after the round-2
+**Amended 2026-10-14 UTC:** the goal is restated for bug-for-bug
+binaries on libpinyin's three backends (under "The goal this policy
+serves"). **Amended 2026-09-27 UTC (lane G, register integrity after the round-2
 audit, #573):** five human rulings are recorded with their sources in
 "Amendment — rulings recorded" at the end of this document; the
 reference build, the drop-in version, class (c)'s obligations, the
@@ -40,6 +42,22 @@ work against the data already on the system. Not a compatible
 reimplementation a consumer is ported to — the same binary interface,
 the same file formats, the same observable behaviour, with the consumer
 unchanged and unaware.
+
+> **Amended 2026-10-14 UTC — oxpinyin builds are bug-for-bug libpinyin
+> binaries (maintainer ruling).** libpinyin is built on one of three
+> backends — Berkeley DB, Kyoto Cabinet, tkrzw — chosen by `--with-dbm`;
+> oxpinyin is built on one of the same three, chosen by cargo feature,
+> and handles that backend's system and user files natively, exactly as
+> a libpinyin build on it does. There is no compatibility mode, no
+> reading of libpinyin's files as something foreign, and no import or
+> migration feature: a user dir carries between builds on the same
+> backend because both use that backend's native files, and a build on
+> another backend starts fresh because libpinyin's own builds do (its
+> tkrzw build cannot read its Berkeley DB user files). Where the
+> 2026-09-09 amendment below and later prose speak of same-backend pairs
+> "interoperating", a "migration path" or a "value-level interchange",
+> read them in this light: the import/export calls are libpinyin's
+> ordinary ABI, reproduced like any other.
 
 > **Amended 2026-09-09 — same-backend user data is seamless (maintainer
 > ruling).** The guarantee is per KV database backend family: an

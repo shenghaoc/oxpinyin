@@ -54,6 +54,8 @@ F-A–F-D. F-E is the cross-lane evidence register and may cite Linux-only or
 advisory platform evidence; it is not itself a platform-free golden. Golden
 (curated) · property (`proptest`: totality, determinism) · fuzz (`cargo-fuzz`,
 from W1) · crash-path (hard-kill, all OSes) · differential (the
-`pinyin-oracle` harness against the pinned libpinyin, Linux-only).
+`pinyin-oracle` harness against the pinned libpinyin, Linux-only). A
+differential gates a behaviour already derived from the pin's source; it
+is not a way to discover one.
 
 **Style:** `cargo fmt --check`, `clippy -D warnings`.

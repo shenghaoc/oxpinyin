@@ -12,7 +12,7 @@ workspace = true
 
 [dependencies]
 oxpinyin-core = { workspace = true }
-# The user store persists in libpinyin's own file shapes; the codecs
+# The user store persists in the backend's native user files; the codecs
 # (chunk builder, tree record builders, SingleGram, the logger and
 # user.conf codecs) live in oxpinyin-data beside their readers.
 oxpinyin-data = { workspace = true }

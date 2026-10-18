@@ -13,7 +13,7 @@ comparable within one container on one host; every published snapshot
 | --- | --- | --- |
 | oxpinyin-capi | `stage2` | the export (`PINYIN_EXPORT_DIR`), the C-ABI surface |
 | oxpinyin-store | `backend_matrix_{tkrzw,kyotocabinet,bdb}` | `--features <backend>` (each is `required-features`-gated) |
-| oxpinyin-store | `kyotocabinet_bnum` | `--features kyotocabinet,bench-internal`; **an installed libpinyin `data/` via `OXPINYIN_BNUM_DATA_DIR`** for meaningful numbers (see below) |
+| oxpinyin-store | `kyotocabinet_bnum` | `--features kyotocabinet,bench-internal`; **a distro-installed Kyoto Cabinet data directory via `OXPINYIN_BNUM_DATA_DIR`** for meaningful numbers (see below) |
 | oxpinyin-user | `export_phrases`, `phrase_read` | the export |
 | pinyin-oracle | `scan_perf`, `dbm_bench`, `alloc_profile` | the export, model20 (`dbm_bench` also the bench oracles) |
 
