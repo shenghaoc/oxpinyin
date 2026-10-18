@@ -784,6 +784,11 @@ fn library_total_overflows(
     Ok(total.checked_add(delta).is_none())
 }
 
+/// A reading on its way through one training call: row key, packed keys,
+/// running count, the stored row, and for a live item the entry's place in it
+/// with the original count of its keys.
+type TrainRow = (Vec<u8>, Vec<u16>, u32, PronValue, Option<(usize, u32)>);
+
 /// Pronunciation-range bounds for `token`: every key whose 4-byte
 /// big-endian prefix is `token`, so `[token, token + 1)` over the prefix
 /// alone. The bytes are exactly what `encode_token_bytes(token, &[])`
@@ -1843,6 +1848,20 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.inner.has_user_data.load(Ordering::Acquire)
     }
 
+    /// The gate in front of the count reads, as the session holds it.
+    #[cfg(test)]
+    pub(crate) fn gate_for_test(&self) -> bool {
+        self.has_user_data()
+    }
+
+    /// Sets the gate and retires the count cache, as a committed write does.
+    #[cfg(test)]
+    pub(crate) fn force_gate_for_test(&self, open: bool) {
+        self.inner.has_user_data.store(open, Ordering::Release);
+        self.inner.write_generation.fetch_add(1, Ordering::AcqRel);
+        *self.count_cache() = None;
+    }
+
     /// Runs `read` against the count cache for the current write
     /// generation, discarding a cache built against an older one first.
     ///
@@ -2321,10 +2340,15 @@ impl<S: WriteStore> GenericUserStore<S> {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut live = items.get(&token).cloned().or_else(|| original.clone());
         db.write(|txn| {
-            // (row key, packed reading, running count, stored row value).
-            let mut rows: Vec<(Vec<u8>, Vec<u16>, u32, PronValue)> = Vec::new();
+            // (row key, packed reading, running count, stored row value, and
+            // for a live item the entry's place in it with its original count).
+            // The item is a list: each entry keeps its own count
+            // (`increase_pronunciation_possibility` walks every entry,
+            // 074a2219 `phrase_index.cpp:114-143`), whatever its keys, so the
+            // rows are matched to the entries by place and not by keys.
+            let mut rows: Vec<TrainRow> = Vec::new();
             if let Some(item) = &live {
-                for (keys, frequency) in &item.prons {
+                for (place, (keys, frequency)) in item.prons.iter().enumerate() {
                     // Original system items store exact packed-key deltas.
                     // Appended items store absolute counts under dense keys.
                     let row_keys = if original.is_some() {
@@ -2336,23 +2360,25 @@ impl<S: WriteStore> GenericUserStore<S> {
                         keys
                     };
                     let key = codec::encode_token_bytes(token, &phrase::encode_keys(&row_keys));
-                    let base = original.as_ref().map(|item| {
+                    let base = original.as_ref().map_or(0, |item| {
                         item.prons
                             .iter()
                             .find(|(reading, _)| reading == keys)
                             .map_or(0, |(_, count)| *count)
                     });
-                    let value = txn
+                    // The entry's count is the live one. A row that is there
+                    // only gives the sequence and the index flag.
+                    let mut stored = txn
                         .get(PRONUNCIATION, &key)?
                         .map(|bytes| PronValue::decode(&bytes))
-                        .transpose()?;
-                    let current = effective_pronunciation_count(base, *frequency, value.as_ref());
-                    let stored = value.unwrap_or(PronValue {
-                        count: u64::from(current.wrapping_sub(base.unwrap_or(0))),
-                        seq: u32::MAX,
-                        indexed: false,
-                    });
-                    rows.push((key, keys.clone(), current, stored));
+                        .transpose()?
+                        .unwrap_or(PronValue {
+                            count: 0,
+                            seq: u32::MAX,
+                            indexed: false,
+                        });
+                    stored.count = u64::from(frequency.wrapping_sub(base));
+                    rows.push((key, keys.clone(), *frequency, stored, Some((place, base))));
                 }
             } else {
                 for row in collect_pronunciations_from_txn(txn, token)? {
@@ -2361,12 +2387,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                         continue;
                     };
                     let key = codec::encode_token_bytes(token, &row.key_bytes);
-                    rows.push((key, packed, row.value.count as u32, row.value));
+                    rows.push((key, packed, row.value.count as u32, row.value, None));
                 }
             }
             for reading in readings {
                 let mut total = 0_u32;
-                for (key, packed, frequency, stored) in &mut rows {
+                for (key, packed, frequency, stored, entry) in &mut rows {
                     // 074a2219 phrase_index.cpp:122-139: accumulate each
                     // current count before matching; retain partial updates
                     // if the running total would overflow on this addition.
@@ -2380,16 +2406,19 @@ impl<S: WriteStore> GenericUserStore<S> {
                     }
                     *frequency = frequency.wrapping_add(delta);
                     total = total.wrapping_add(delta);
-                    stored.count = stored.count.wrapping_add(seed);
+                    stored.count = match entry {
+                        // The delta over the original, in `guint32` as the
+                        // count is.
+                        Some((_, base)) => u64::from(frequency.wrapping_sub(*base)),
+                        None => stored.count.wrapping_add(seed),
+                    };
                     txn.put(PRONUNCIATION, key, &stored.encode())?;
                 }
             }
             if let Some(item) = &mut live {
-                for (keys, frequency) in &mut item.prons {
-                    if let Some((_, _, current, _)) =
-                        rows.iter().find(|(_, packed, _, _)| packed == keys)
-                    {
-                        *frequency = *current;
+                for (_, _, current, _, entry) in &rows {
+                    if let Some((place, _)) = entry {
+                        item.prons[*place].1 = *current;
                     }
                 }
             }
@@ -3938,18 +3967,6 @@ impl CountCache {
     }
 }
 
-/// One live pronunciation count (074a2219 phrase_index.cpp:114-143).
-/// `Some(base)` means an original system item: the exact-reading row is
-/// its delta, even when zero; no row leaves the imported payload alone.
-/// `None` means an appended token whose row is absolute. Replayed payloads
-/// are never added to their own deltas. Training applies the prefix-total
-/// overflow guard before writing the row, so reading it only wraps once.
-fn effective_pronunciation_count(base: Option<u32>, payload: u32, row: Option<&PronValue>) -> u32 {
-    row.map_or(payload, |row| {
-        base.unwrap_or(0).wrapping_add(row.count as u32)
-    })
-}
-
 impl<S: WriteStore> GenericUserStore<S> {
     pub(crate) fn stored_system_items(
         &self,
@@ -4236,9 +4253,10 @@ impl<S: WriteStore> GenericUserStore<S> {
         // tables; a live reverse-index row is not phrase-table membership.
         let existing = original_token;
         // A delta row for an original token exists only if training or an
-        // earlier import published its live item here, and a reopen restores
-        // rows from the same replayed items. An untouched original therefore
-        // has no row to reconcile, and the lookup below can be skipped.
+        // earlier import moved one of its readings: a replayed item carries
+        // its counts in its live item and writes no row at open. An untouched
+        // original therefore has no row to reconcile, and the lookup below
+        // can be skipped.
         let live = existing.and_then(|token| system_items.get(&token).cloned());
         let was_live = live.is_some();
         let (token, mut item) = if let Some(token) = existing {
@@ -4279,33 +4297,6 @@ mod tests {
     use super::*;
     use oxpinyin_store::Visitor;
     use std::collections::BTreeMap;
-
-    #[test]
-    fn effective_reading_distinguishes_absent_zero_replayed_and_absolute_counts() {
-        let row = |count| PronValue {
-            count,
-            seq: 0,
-            indexed: false,
-        };
-        assert_eq!(effective_pronunciation_count(Some(100), 120, None), 120);
-        assert_eq!(
-            effective_pronunciation_count(Some(100), 120, Some(&row(0))),
-            100
-        );
-        assert_eq!(
-            effective_pronunciation_count(Some(100), 120, Some(&row(20))),
-            120
-        );
-        assert_eq!(
-            effective_pronunciation_count(Some(0), 20, Some(&row(20))),
-            20
-        );
-        assert_eq!(effective_pronunciation_count(None, 20, Some(&row(89))), 89);
-        assert_eq!(
-            effective_pronunciation_count(Some(u32::MAX), 0, Some(&row(1))),
-            0
-        );
-    }
 
     macro_rules! user_store_tests {
         ($mod:ident, $backend:ty, $ext:literal) => {

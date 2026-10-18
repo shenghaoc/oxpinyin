@@ -222,34 +222,6 @@ impl SystemLibrary {
             })
     }
 
-    /// The frequency `keys` carries in the item [`Self::item`] would build for
-    /// `slot` — the first pronunciation with exactly those keys — or `0` when
-    /// the item has none (or no item is readable). Read in place from the
-    /// mapping; nothing is allocated.
-    pub(crate) fn pronunciation_frequency(&self, slot: u32, keys: &[u16]) -> u32 {
-        if let Some(item) = self.items.get(&slot) {
-            return item
-                .prons
-                .iter()
-                .find(|(base, _)| base.as_slice() == keys)
-                .map_or(0, |(_, frequency)| *frequency);
-        }
-        let Some(view) = self.mapped.as_ref().and_then(|library| library.item(slot)) else {
-            return 0;
-        };
-        if !view.phrase_chars().all(|scalar| scalar.is_some()) {
-            return 0; // `item` is `None` for an item whose text does not decode
-        }
-        view.pronunciations()
-            .find(|pron| {
-                pron.keys
-                    .chunks_exact(2)
-                    .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
-                    .eq(keys.iter().copied())
-            })
-            .map_or(0, |pron| pron.freq)
-    }
-
     /// The item `get_phrase_item` finds at `slot` as bytes: the shipped
     /// chunk's header-length bytes, read in place from the mapping; an inline
     /// item (a fixture store) is serialised. `None` when there is no item.
@@ -3328,7 +3300,6 @@ mod tests {
             item(&[0x1234], 3, &[(vec![7], 12), (vec![7], 11)]),
             item(&[], 0, &[]),
         ];
-        let key_probes: [&[u16]; 6] = [&[1, 2], &[3, 4], &[5, 6], &[7], &[], &[1]];
         // Present, inline, unreadable text, and absent slots alike.
         for slot in [0_u32, 1, 2, 3, 4, 5, 9, 1000] {
             let materialized = library.item(slot);
@@ -3355,20 +3326,6 @@ mod tests {
                         "slot {slot} against {probe:?}"
                     );
                 }
-            }
-            for keys in key_probes {
-                let expected = materialized.as_ref().map_or(0, |current| {
-                    current
-                        .prons
-                        .iter()
-                        .find(|(base, _)| base.as_slice() == keys)
-                        .map_or(0, |(_, frequency)| *frequency)
-                });
-                assert_eq!(
-                    library.pronunciation_frequency(slot, keys),
-                    expected,
-                    "slot {slot} keys {keys:?}"
-                );
             }
         }
     }
