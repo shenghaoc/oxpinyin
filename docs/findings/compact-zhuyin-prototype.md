@@ -95,3 +95,53 @@ Still pending: clean shipping artifacts/ELF attribution, final verification
 summary, debug BDB differentials, controlled base/candidate/pin instruction,
 latency, allocations and RSS measurements. No prototype acceptance claim.
 No PR, reviewer request, bot invocation, merge or auto-merge is authorized.
+
+## Interim verification and ELF evidence
+
+`CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=<task>/target-test cargo test -p
+oxpinyin-core -p oxpinyin-chewing --locked`: 199 passed, zero failed,
+zero ignored. Includes exhaustive 1493-row equivalence and five option words,
+first-match renderer equivalence, all existing scheme and key tests and
+property tests. `cargo fmt --all --check` passes. `cargo clippy -p
+oxpinyin-core -p oxpinyin-chewing --all-targets --locked -- -D warnings`
+passes after moving the test module below production items (no lint suppression).
+The three AGENTS.md backend checks each output nothing: no store paths,
+no matching backend feature condition in changed non-Markdown files, no
+backend Cargo.toml changes. BDB only is selected mechanically.
+
+The clean unmodified base libpinyin is 2519792 stripped bytes (SHA-256
+131f5faf22746a3c0799bed83692083d1a140eac59bf4f0d130d8d5aff0aaa52).
+Baseline libzhuyin is 2335472 (af34d4130e82d9995da3ff5fc41cfa15f98c02999794c1d8e196d937a7254f8e);
+candidate libzhuyin is 2167536 (38a5a021651b6212f07e75ef41ad56cb3500b104c16a8bf33bfc84d2aea36acb),
+a 167936-byte reduction. These artifacts were packaged with the recipe above,
+then `strip --strip-unneeded <copy>`, `stat -c %s <copy>` and
+`sha256sum <copy>`. Inspect sections with `readelf -WS <copy>` and symbols
+with `nm -S -C <unstripped>`; read relocation offsets with `readelf -Wr
+<unstripped>` and count offsets in each symbol's half-open address range.
+
+Both base libraries contain all audited tables. The global table is 83608
+bytes plus 4479 RELA entries (107496 bytes). HSU: 28000 + 1500 (36000);
+ETEN26: 26992 + 1446 (34704). Content: 45864 + 2604 (62496), fewer
+relocations than its pointer-field count because empty string descriptors
+need no relocated storage. Each public full-pinyin index: 12992 + 812
+(19488). CHEWING_KEY_TABLE: 3456 + zero relocations. In the candidate
+libzhuyin the 23888-byte ZHUYIN_ROWS symbol has zero relocations. The old
+83608-byte table is absent; its old name survives only as a zero-size marker.
+
+Reading all 4479 baseline descriptors by ELF virtual address, grouping their
+UTF-8 contents and comparing pointer values confirms exactly 1924 distinct
+strings, and exactly one address per equal string. Compiler/linker string
+sharing already exists: repeated literal bytes must not be counted as savings.
+
+For libzhuyin: text 1481637 -> 1482597 (+960); rodata 76608 -> 104832
+(+28224); data.rel.ro 257944 -> 174336 (-83608); rela.dyn 337920 ->
+230424 (-107496); eh_frame 109280 -> 109288 (+8); eh_frame_hdr 12540
+unchanged; gcc_except_table 38732 -> 38724 (-8). BSS stays 160 bytes and
+is memory-only, not part of the stripped file byte total. Section changes
+are reported separately from the actual file saving; padding and other
+sections explain their difference. No RSS claim follows from these sizes.
+
+Both libraries' NEEDED list: libglib-2.0.so.0, libdb-5.3.so,
+libgcc_s.so.1, libc.so.6, ld-linux-x86-64.so.2 (readelf -d).
+Remaining: candidate pinyin final artifact, paired accounting, padding,
+BDB debug C differentials, and the held controlled measurement session.

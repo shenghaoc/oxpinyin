@@ -103,20 +103,6 @@ impl ZhuyinIndex for [(&'static str, &'static str, &'static str, u32)] {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod compact_tests {
-    use super::*;
-    include!("zhuyin_rows.rs");
-    #[test]
-    fn every_original_row_is_preserved() {
-        assert_eq!(ZHUYIN_ROWS.len(), ZHUYIN_PINYIN_COUNT);
-        for (expected, actual) in REFERENCE_ROWS.iter().zip(ZHUYIN_PINYIN_MAP.iter()) {
-            assert_eq!(*expected, actual);
-            assert_eq!(ZHUYIN_PINYIN_MAP.find_row(expected.0), Some(*expected));
-        }
-    }
-}
-
 /// Tone-validity bitmask per [`crate::SyllableKey`] id.
 ///
 /// Bit `t` is set iff `_ChewingKey::is_valid_zhuyin` is true for that key
@@ -1204,4 +1190,18 @@ pub fn zhuyin_display_for_pinyin(pinyin: &str, tone: u8) -> Option<String> {
         return Some(format!("{spelling}{}", crate::scheme::tone_symbol(tone)));
     }
     Some(spelling.to_owned())
+}
+
+#[cfg(test)]
+pub(crate) mod compact_tests {
+    use super::*;
+    include!("zhuyin_rows.rs");
+    #[test]
+    fn every_original_row_is_preserved() {
+        assert_eq!(ZHUYIN_ROWS.len(), ZHUYIN_PINYIN_COUNT);
+        for (expected, actual) in REFERENCE_ROWS.iter().zip(ZHUYIN_PINYIN_MAP.iter()) {
+            assert_eq!(*expected, actual);
+            assert_eq!(ZHUYIN_PINYIN_MAP.find_row(expected.0), Some(*expected));
+        }
+    }
 }
