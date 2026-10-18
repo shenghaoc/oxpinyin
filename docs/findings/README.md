@@ -45,6 +45,7 @@ series lives in `../perf/`.
 | [`candidate-construction`](candidate-construction.md) | Candidate-construction SPEC (Discrepancy 2) | record |
 | [`chewing-crate-seam`](chewing-crate-seam.md) | Findings — the oxpinyin-chewing crate seam (D6) | design rationale |
 | [`commit-hygiene-failures`](commit-hygiene-failures.md) | Commit-hygiene failures | historical |
+| [`compact-zhuyin-prototype`](compact-zhuyin-prototype.md) | Compact Zhuyin prototype — rejected and reverted | shelved (rejected 2026-10-18 UTC: Ir regression; reverted) |
 | [`compatibility-policy`](compatibility-policy.md) | Compatibility policy — what oxpinyin may diverge on, and what it may not | policy |
 | [`config-layering`](config-layering.md) | Layered configuration SPEC | historical (pre-P6) |
 | [`core-trait-seam`](core-trait-seam.md) | Core trait seam SPEC | frozen |

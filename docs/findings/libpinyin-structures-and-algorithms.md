@@ -523,3 +523,23 @@ A flush makes O(k log n) ordered row updates once, rather than per call.
 The immutable mapped sum costs O(n) once per mapping, then O(1) per compact
 apart from inline fixture overrides. Save retains the existing sparse diff.
 No startup scan, reading-row seeding, or candidate-path allocation is added.
+
+### Compact Zhuyin experiment (2026-10-18 UTC; rejected)
+
+The pinned global `zhuyin_index` uses spelling pointers, flags and canonical
+content IDs (`src/storage/pinyin_parser_table.h:1492` at 074a2219).
+`search_chewing_index` uses strcmp/equal_range, gates flags and reads the key
+from content (`src/storage/zhuyin_parser2.cpp:44-101`). The Rust prototype
+keeps the sorted 1493-row inventory and partition_point, but stores immutable
+UTF-8 pool spans rather than three fat string slices; canonical rendering
+keeps the original first-match scan. Both search complexities are O(log n)
+with bounded-length comparisons; rendering remains O(n). No runtime table
+allocation or initialization. See [the prototype findings](compact-zhuyin-prototype.md) for source
+verification, alternatives and measured rejection: Simple lookup +21.7% and
+CP26 +18.8% instructions despite 320 KiB paired stripped-size saving. The
+prototype was reverted; the original representation remains in production.
+
+Under #864, binary file savings cannot offset a runtime regression: file
+size is governed separately by Constitution §2. Heap use and allocation
+counts did not improve meaningfully, so the runtime time/space rule rejects
+the increased parser instruction cost.
