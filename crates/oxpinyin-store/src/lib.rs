@@ -1171,6 +1171,51 @@ mod tests {
                     cleanup(&path);
                 }
 
+                /// A visitor `Break` ends the scan right there, with `Ok(())`
+                /// and no further row visited; a visitor `Err` ends it and
+                /// comes back as itself.
+                #[test]
+                fn scan_break_stops_and_error_propagates() {
+                    let path = temp_path("scan-break");
+                    let store = seeded(&path, |txn| {
+                        for key in [b"a", b"b", b"c", b"d"] {
+                            txn.put("t", key, b"v")?;
+                        }
+                        Ok(())
+                    });
+                    for stop in 1..=4_usize {
+                        let mut seen = Vec::new();
+                        store
+                            .scan("t", Bound::Unbounded, Bound::Unbounded, |k, _v| {
+                                seen.push(k.to_vec());
+                                Ok(if seen.len() == stop {
+                                    ControlFlow::Break(())
+                                } else {
+                                    ControlFlow::Continue(())
+                                })
+                            })
+                            .unwrap();
+                        let all = [b"a".to_vec(), b"b".to_vec(), b"c".to_vec(), b"d".to_vec()];
+                        assert_eq!(seen, all[..stop], "break after {stop} rows");
+                    }
+                    let mut visited = 0;
+                    let outcome = store.scan("t", Bound::Unbounded, Bound::Unbounded, |_k, _v| {
+                        visited += 1;
+                        if visited == 2 {
+                            Err(StoreError::Backend("visitor failed".into()))
+                        } else {
+                            Ok(ControlFlow::Continue(()))
+                        }
+                    });
+                    assert!(matches!(
+                        outcome,
+                        Err(StoreError::Backend(ref e)) if e.message() == "visitor failed"
+                    ));
+                    assert_eq!(visited, 2, "the failing row is the last one visited");
+                    drop(store);
+                    cleanup(&path);
+                }
+
                 #[test]
                 fn is_empty_lifecycle() {
                     let path = temp_path("empty");
@@ -1459,6 +1504,68 @@ mod tests {
                             assert!(!txn.is_empty("t")?);
                             txn.remove("t", b"k")?;
                             assert!(txn.is_empty("t")?);
+                            Ok(())
+                        })
+                        .unwrap();
+                    drop(store);
+                    cleanup(&path);
+                }
+
+                /// `Break` and `Err` in the write transaction's merged view
+                /// (stored rows with the transaction's puts and removes laid
+                /// over them) stop at exactly the requested row, wherever it
+                /// falls: a buffered insert, an overridden stored row or a
+                /// trailing insert.
+                #[test]
+                fn write_txn_scan_break_and_error_stop_the_merged_walk() {
+                    let path = temp_path("wtxn-scan-break");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            for key in [b"a", b"c", b"e"] {
+                                txn.put("t", key, b"stored")?;
+                            }
+                            Ok(())
+                        })
+                        .unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"b", b"new")?;
+                            txn.put("t", b"c", b"over")?;
+                            txn.put("t", b"f", b"new")?;
+                            txn.remove("t", b"e")?;
+                            let all: [&[u8]; 4] = [b"a", b"b", b"c", b"f"];
+                            for stop in 1..=all.len() {
+                                let mut seen: Vec<Vec<u8>> = Vec::new();
+                                txn.scan("t", Bound::Unbounded, Bound::Unbounded, |k, _v| {
+                                    seen.push(k.to_vec());
+                                    Ok(if seen.len() == stop {
+                                        ControlFlow::Break(())
+                                    } else {
+                                        ControlFlow::Continue(())
+                                    })
+                                })?;
+                                let want: Vec<Vec<u8>> =
+                                    all[..stop].iter().map(|k| k.to_vec()).collect();
+                                assert_eq!(seen, want, "break after {stop} rows");
+                            }
+                            for fail_at in 1..=all.len() {
+                                let mut visited = 0;
+                                let outcome =
+                                    txn.scan("t", Bound::Unbounded, Bound::Unbounded, |_k, _v| {
+                                        visited += 1;
+                                        if visited == fail_at {
+                                            Err(StoreError::Backend("visitor failed".into()))
+                                        } else {
+                                            Ok(ControlFlow::Continue(()))
+                                        }
+                                    });
+                                assert!(matches!(
+                                    outcome,
+                                    Err(StoreError::Backend(ref e)) if e.message() == "visitor failed"
+                                ));
+                                assert_eq!(visited, fail_at);
+                            }
                             Ok(())
                         })
                         .unwrap();
