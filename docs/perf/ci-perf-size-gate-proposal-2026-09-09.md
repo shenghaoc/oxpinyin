@@ -141,6 +141,28 @@ the pin is a reviewed change to that document, not something a measurement
 may do on its own — a budget whose reference can drift silently is not a
 budget.
 
+## Amended 2026-10-18 UTC: binary-size recording
+
+The pin +10% install-size limit is retired; the pin remains the
+behaviour/ABI oracle. Build as usual and record in the PR the byte sizes
+of the stripped regular files `libpinyin.so.15.0.0` and
+`libzhuyin.so.15.0.0`, each counted once, plus their build's revision and
+backend. The files must be stripped (for example, `file` reports
+“stripped”, not “not stripped”). The release recipe is
+`tools/packaging/release-stage.sh` / `tools/packaging/relink-versioned.sh`
+with `strip --strip-unneeded`; the script currently skips stripping if
+`strip` is missing, so its completion alone does not establish this.
+
+Exclude model data, symlinks, headers, `.pc`, `.a`, debug packages,
+packaging files and `DT_NEEDED` libraries. Note any increase over base in
+the PR. Decreases are welcome; insignificant ones need no mention.
+Binary size per PR is not complexity: work can be split across PRs until
+each piece is arbitrarily small, so it is outside the runtime time/space
+trade rule. No CI gate is reinstated; docs-only PRs record nothing.
+
+Rust's static `std`/`alloc` and monomorphised code versus C++'s shared
+`libstdc++` make a fixed cross-language file-size cap a poor rule.
+
 ## As built
 
 The lane is `perf-snapshot` in `.github/workflows/verify-nightly.yml`: a

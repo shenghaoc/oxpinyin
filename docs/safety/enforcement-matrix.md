@@ -5,6 +5,10 @@ Companion to `oxpinyin-safety-profile.md`. "Today" reflects commit `2382bdd`;
 toolchain), HGATE = hard CI gate (merge blocked), WARN = non-blocking
 warning, SCHED = scheduled analysis, REV = human review.
 
+Amended 2026-10-18 UTC: in the historical Constitution items 1–3 row,
+the size budget is superseded by Constitution §2 binary-size recording
+and disclosure of increases, with no size gate.
+
 ## A. Language & memory safety
 
 | Rule | Today | Proposed | Mechanism |
