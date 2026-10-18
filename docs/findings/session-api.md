@@ -1,6 +1,9 @@
 # Framework-neutral session API SPEC
 
-Date: 2026-08-09 · Status: **frozen for W4-T0**
+Date: 2026-08-09 · Status: **frozen for W4-T0** (behavioural contract); the
+Rust-signature freeze below was **retired 2026-10-18 UTC** by the maintainer's
+ruling that the C APIs/ABIs are the only supported external interfaces
+(`AGENTS.md`, "External interfaces")
 
 This SPEC freezes the `oxpinyin-engine` session surface before any decoder work
 lands on top of it. Every later W4 task fills these signatures in; none of them
@@ -14,9 +17,11 @@ and know exactly what they consume.
 
 ## What this seam is for
 
-`oxpinyin-engine` is one of the two supported surfaces (the other is
-`oxpinyin-capi`'s C ABI). Everything below it — `oxpinyin-core`, `oxpinyin-data`,
-`oxpinyin-user` — is internal and carries no stability promise.
+`oxpinyin-engine` is the in-tree session layer under the C facades; since
+2026-10-18 UTC the supported external interfaces are the C APIs/ABIs alone
+(`oxpinyin-capi`, `oxpinyin-zhuyin-capi`). This crate and everything below it —
+`oxpinyin-core`, `oxpinyin-data`, `oxpinyin-user` — is internal and carries no
+stability promise.
 
 A shell supplies platform facts as **data** and receives platform-free results:
 
@@ -117,7 +122,8 @@ pub trait ConfigSource {
 
 The four `ConfigValue` variants mirror the GSettings types actually used by the
 upstream schema frozen in `docs/findings/upstream-schema.md` (`b`, `i`, `x`,
-`s`). `ConfigSource` is object-safe and grows only by defaulted methods.
+`s`). `ConfigSource` was object-safe and grew only by defaulted methods; that
+constraint was Rust-source compatibility only and is retired (2026-10-18 UTC).
 
 W4-T0c supplies the concrete layered `Config`, its captured upstream defaults
 and the pure merge function. The replay harness (W4-T4b) is the second
@@ -285,3 +291,12 @@ window it re-anchors there, so in that mode a sort-word change on a
 composing session (`set_sort_options`) also leaves the list stale, the
 pin taking the word as that call's argument (`pinyin.cpp:2198`).
 Recorded by the #757 change so the SPEC and the code agree.
+
+**2026-10-18 UTC — Rust-signature freeze retired (maintainer ruling).** The
+C APIs/ABIs are the only supported external library interfaces; no external
+Rust consumers are expected or supported. This SPEC's frozen signatures, the
+"none of them may change one" rule and the Architect+human correction process
+for a signature change no longer bind. Its behavioural contract (candidate
+order, preedit coverage, selection and commit semantics, error conditions that
+the C facades surface) stays in force. Entries above are history and are not
+rewritten.

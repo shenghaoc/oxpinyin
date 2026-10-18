@@ -1,7 +1,8 @@
-//! Session state machine — the supported Rust surface. Framework-neutral:
+//! Session state machine — the internal session layer under the C facades. Framework-neutral:
 //! abstract `KeyInput`, injected config/paths, no platform types. Portable.
 //!
-//! The surface is frozen in `docs/findings/session-api.md`. A shell supplies
+//! The behaviour is specified in `docs/findings/session-api.md`; the Rust
+//! signatures carry no stability promise. A shell supplies
 //! platform facts as data — a [`KeyInput`], a [`StoragePaths`], a
 //! [`ConfigSource`] — and receives platform-free results: a [`Preedit`] of
 //! text plus styled spans, and a [`CandidateList`] with checked indexing.

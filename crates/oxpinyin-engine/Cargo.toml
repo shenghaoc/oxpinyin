@@ -5,9 +5,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Supported oxpinyin session API — the stable Rust surface."
+description = "oxpinyin internal crate — no stability promise; the supported interfaces are the C APIs."
 
-# Supported Rust surface; SemVer freezes with the first public release.
+# Internal session layer; no Rust stability promise (AGENTS.md, "External interfaces").
 [lints]
 workspace = true
 

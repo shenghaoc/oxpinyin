@@ -8,7 +8,7 @@
 //!   disturbing state, choosing without a candidate window fails, and a
 //!   mid-composition choice commits the exact chosen phrase.
 //!
-//! The oxpinyin seam is the supported engine `Session` API over the
+//! The oxpinyin seam is the internal engine `Session` API over the
 //! `oxpinyin-testsupport` fixture doubles. Chewing's commit/preedit
 //! buffer mechanics map onto `commit()`/`preedit()`; its config setters
 //! map onto `set_options`/`set_incomplete_pinyin`/`set_scoring_config`.

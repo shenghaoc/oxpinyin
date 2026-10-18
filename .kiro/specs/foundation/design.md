@@ -24,7 +24,8 @@ doc; learning off, fresh state.
 backtracking; returns alternatives (`xian` → [xian] and [xi,an]);
 `ParseResult { syllables, remainder }`; never an error for well-formed UTF-8.
 Traits defined signatures-only: Dictionary, UserModel, LanguageModel,
-InputParser — unsealed, defaulted growth.
+InputParser — unsealed, defaulted growth (a Rust-source-compatibility
+rule, retired 2026-10-18 UTC; `/AGENTS.md`, "External interfaces").
 
 **Data path (P6, `crates/oxpinyin-data`, `crates/oxpinyin-runtime`):**
 `Runtime::open` opens its backend's system data directory the way

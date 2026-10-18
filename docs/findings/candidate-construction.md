@@ -483,7 +483,9 @@ Stage-1 call sites must stay valid. The `Dictionary`, `LanguageModel` (and
    apostrophe path disagreements (`segment-graph.md`), and the
    apostrophe-only abort guard (`docs/testing/oracle-apostrophe-abort.md`,
    F-E-14). No new exception is introduced.
-2. **Public session API unchanged.** `session-api.md` is frozen: `Candidate`
+2. **Public session API unchanged.** (Historical, 2026-09: a Rust-signature
+   constraint, retired 2026-10-18 UTC; the behaviours named here still bind.)
+   `session-api.md` was frozen: `Candidate`
    (text, kind, `consumed_keys`, `consumed_bytes`, cost), `CandidateList`,
    `Session::{candidates, select, commit}` semantics, and `select` consuming the
    candidate's bytes. Candidate emission may change; the surface may not.

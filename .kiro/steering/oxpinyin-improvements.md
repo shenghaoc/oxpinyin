@@ -43,7 +43,15 @@ upstream after the rewrite.
   config).
 - Loose coupling: oxpinyin exists to undo libpinyin's tight coupling
   while keeping its behaviour. The 20 crates stay; the aim is fewer
-  unnecessary edges, not fewer crates, and no generic-runtime rewrite.
+  unnecessary edges, not fewer crates, and no unrelated workspace
+  restructuring. Carrying a concrete type through the code that uses it
+  is not a "generic-runtime rewrite": type erasure (`dyn`) stays only
+  where a runtime heterogeneity, a standard or foreign interface, or a
+  measured trade-off calls for it, never to keep a Rust signature.
+- Rust interfaces are not a compatibility boundary (maintainer ruling
+  2026-10-18 UTC; `/AGENTS.md`, "External interfaces"). Only the C
+  APIs/ABIs are supported externally; Rust signatures change freely,
+  with every in-tree caller updated in the same change.
 - Complexity: an internal change never worsens time and space both; a
   regression in one is traded against a gain in the other, minimized
   and justified.

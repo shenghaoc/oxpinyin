@@ -93,8 +93,10 @@ record, enforced present-but-not-verified by Clippy, verified by review.
   `user/codec.rs` and `store` were closed in PR-1/#200 (4ea4355): the 23
   flagged sites gained the attribute and the lint has sat at zero hits
   since.)
-- Public error enums stay `#[non_exhaustive]`; extension traits grow only by
-  defaulted methods (structure.md freeze — unchanged).
+- Error enums may stay `#[non_exhaustive]` where it helps in-tree matching;
+  that is a style choice, not a stability promise. The 2026-09 structure.md
+  freeze (extension traits grow only by defaulted methods) was retired
+  2026-10-18 UTC (`AGENTS.md`, "External interfaces").
 
 ## Layer 6 — dependency & supply chain (HARD CI GATE)
 

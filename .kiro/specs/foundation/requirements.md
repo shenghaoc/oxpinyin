@@ -92,7 +92,9 @@ that implementation tasks compose without interface drift.
    2. They SHALL compile in oxpinyin-core under `#![forbid(unsafe_code)]`
    with no dependencies. 3. WHEN a signature change seems needed after the
    freeze THEN an Architect correction PR SHALL merge before implementation
-   resumes.
+   resumes. *(Superseded 2026-10-18 UTC: Rust signatures are not a
+   compatibility boundary; update the in-tree callers in the same change.
+   `/AGENTS.md`, "External interfaces".)*
 
 ### Requirement R7: Drop-in replacement surface
 

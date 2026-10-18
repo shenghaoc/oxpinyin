@@ -1,6 +1,7 @@
 //! Pure pinyin algorithms: parsing, `SegmentGraph`, k-best search, scoring
 //! traits. No I/O, no platform deps, no `unsafe`. Internal crate — the
-//! supported public API is `oxpinyin-engine`.
+//! supported external interfaces are the libpinyin-compatible and
+//! libzhuyin-compatible C APIs and ABIs.
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 // Constitution §4, mechanically: library builds may not unwrap, expect,

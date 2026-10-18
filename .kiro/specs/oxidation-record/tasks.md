@@ -45,8 +45,9 @@ work: record, design and analyse, implement, gate.
   k-best fallback and its fitted `ScoringConfig` weights, or replace
   them with a rule derived from the pin, so no fitted coefficient
   remains in the tree. The weights do not affect either C ABI; before
-  removal, check supported Rust callers and test and tool consumers,
-  and get any interface-change approval the removal needs.
+  removal, check in-tree Rust callers and test and tool consumers
+  (no interface-change approval is needed for a Rust signature since
+  2026-10-18 UTC).
   _Requirements: 2.3_
 
 - [ ] 5. `[A]` Write the equivalence arguments listed in §11 —
@@ -76,9 +77,10 @@ work: record, design and analyse, implement, gate.
   `type_pinyin`, `Preedit`, `commit`) off `Session` into an optional
   adapter over the operations, and move the oracle tools and tests that
   use it onto the operations or the adapter. Both C ABIs already use only
-  the operations (record §0, "The operations"). This is a change to the
-  supported Rust surface, so it starts with a STOP for the maintainer's
-  ask.
+  the operations (record §0, "The operations"). This was a change to the
+  Rust surface, which began with a STOP for the maintainer's ask; since
+  2026-10-18 UTC Rust interfaces are not a compatibility boundary, so no
+  STOP applies to the interface itself.
   _Requirements: 7_
 
 - [ ] 10. `[A]` Score sentences as the pin does (record §11, "Sentence

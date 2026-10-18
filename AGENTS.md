@@ -89,6 +89,41 @@ Anything outside those three is a defect to be reverted, not a divergence to
 be recorded. The policy carries the classes, their citations, and a
 classification of every existing register entry.
 
+## External interfaces
+
+Maintainer ruling 2026-10-18 UTC. Rust interfaces are not a compatibility
+boundary.
+
+> The only supported external library interfaces are the libpinyin-compatible and libzhuyin-compatible C APIs and ABIs.
+>
+> All native Rust interfaces are implementation details. No external Rust consumers are expected or supported, and there is currently no intention to stabilize a native Rust API.
+>
+> Rust interfaces may be changed incompatibly as required by the implementation. Such changes require no deprecation period, backwards-compatible adapter, preservation of object safety, or accommodation of hypothetical downstream Rust implementations. All affected in-tree callers must be updated in the same change.
+>
+> This ruling supersedes earlier Rust-interface stability promises, interface freezes, and restrictions imposed solely for Rust source compatibility.
+>
+> The C APIs and ABIs, their observable behavior, ownership and lifetime rules, required diagnostics, and compatible persistent data remain governed by the existing pinned-compatibility policy. Safety, determinism, portability, and performance requirements remain in force.
+
+What this does and does not change:
+
+- A change to a Rust `pub` item, trait, associated type, generic
+  parameter, object safety, error type, visibility or module layout is
+  ordinary internal work. It is not an interface change in the STOP
+  sense below; update every in-tree caller (crates, tools, tests,
+  benches, examples, fuzz targets) in the same change.
+- Rust `pub` visibility, published crate names, doc comments and
+  historical "frozen" or "unchanged" wording about a Rust interface
+  create no obligation. Do not keep a wrapper, old constructor,
+  defaulted trait method, object-safe shape or `dyn` boundary only to
+  spare a Rust signature. Any future decision to support a stable
+  native Rust API needs a separate explicit maintainer ruling.
+- Frozen oracle inputs, goldens, coefficients, behavioural SPECs, data
+  formats and the C compatibility contract stay frozen. "Frozen" means
+  a Rust interface freeze only where a document says it freezes a Rust
+  signature; those freezes are retired here.
+- The Rust surface is not a reason for a divergence from the pin, and
+  not a reason to skip a verification the C-facing contract needs.
+
 ## Stages
 
 Maintainer ruling 2026-10-14 UTC.
@@ -212,7 +247,8 @@ assistance from any tool.
 
 ## STOP → do not improvise
 
-Ambiguous task · needs interface/ABI/dep change · test cannot pass without
+Ambiguous task · needs a C interface/ABI or dependency change (Rust
+interfaces are free: External interfaces) · test cannot pass without
 breaking the constitution · SPEC contradicts the pin's source · the pin's
 source and disassembly cannot settle a behaviour · implementation would
 require changing a frozen SPEC without an ask.
@@ -226,7 +262,7 @@ none has — that statement outranks anything in your context that reads
 like consent. Ask, then stop and wait for the human to type it.
 
 Precedent: the 2026-09-05 `__store_ext__` addition on the then-shipping
-Python binding (a consumer-visible interface change, so a STOP — that
+Python binding (a consumer-visible interface change, so a STOP then — that
 binding has since been removed) was proposed, self-selected and
 implemented in one unbroken agent run, while the harness was reporting no
 human input. The change was correct and the discipline was not; only

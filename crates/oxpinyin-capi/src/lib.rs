@@ -69,8 +69,8 @@ static OXPINYIN_ALLOC_COUNTER: alloc_count::CountingAlloc = alloc_count::Countin
 
 /// Rust-visible re-exports for the in-tree fuzz harness
 /// (`fuzz/fuzz_targets/capi_commands.rs`) and Rust-side contract tests.
-/// NOT a stable Rust API: the supported surfaces are the C ABI (pinyin.h)
-/// and `oxpinyin-engine`; anything here can change or vanish.
+/// NOT a stable Rust API: the only supported external interface is the C ABI
+/// (pinyin.h); anything here can change or vanish.
 #[cfg(feature = "fuzz-api")]
 #[allow(missing_docs)]
 pub mod fuzz_api {

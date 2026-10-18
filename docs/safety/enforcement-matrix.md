@@ -51,7 +51,7 @@ and disclosure of increases, with no size gate.
 | `Result`/`Option` never silently dropped | WARN (via CI `-D warnings` → HGATE) | HGATE | `rust::unused_must_use = deny` workspace lints |
 | Value-returning queries are `#[must_use]` | 665 attrs workspace-wide (store 6); F-10 fixed | WARN→HGATE | `clippy::must_use_candidate = warn` + gap fixes; then the deny above bites |
 | Errors documented | partial | deferred by decision (PR-1 review round 1) | none: the two doc lints are enabled nowhere in the tree; a dedicated sweep is the planned vehicle |
-| Public API stability freezes (non_exhaustive, defaulted methods) | REV + nightly snapshot (2026-09-08) | unchanged | the nightly `public-api` lane (verify-nightly.yml) diffs `cargo public-api -p oxpinyin-engine --simplified` against the committed `docs/api/oxpinyin-engine.public-api.txt`; the C ABI by the export gate in ci.yml |
+| C ABI export set | export gate in ci.yml | unchanged | the C APIs/ABIs are the only supported external interfaces. Native Rust API stability (non_exhaustive, defaulted methods, object safety, the `cargo public-api` snapshot) is **not enforced**: the nightly `public-api` lane and `docs/api/oxpinyin-engine.public-api.txt` were retired 2026-10-18 UTC (maintainer ruling, `AGENTS.md` "External interfaces"). The 2026-09-08 row they implemented is superseded, not rewritten, in git history |
 
 ## E. Complexity & maintainability
 

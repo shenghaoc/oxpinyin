@@ -7,7 +7,9 @@ inclusion: always
 Follow `/AGENTS.md` (wins on conflict). Tiers: `[A]` architect · `[B]` basic ·
 `[H]` human — never hand `[A]`/`[H]` work to a basic agent.
 
-Implement from frozen SPECs/fixtures only.
+Implement from frozen SPECs/fixtures only. A SPEC that freezes behaviour binds;
+one that only froze a Rust signature does not (`/AGENTS.md`, "External
+interfaces").
 
 ## Phases
 
@@ -17,7 +19,8 @@ For Stage 2 work the plan also names the pin's source lines (or the
 disassembled symbol and offsets) each behaviour was read from; Phase 1
 reads code, it does not run the oracle to find out what it does.
 Phase 2 implements. STOP in Phase 1 when `/AGENTS.md` says so: ambiguous
-task; an interface/ABI/dependency change; a test that cannot pass without
+task; a C interface/ABI or dependency change (Rust interfaces are free —
+`/AGENTS.md`, "External interfaces"); a test that cannot pass without
 breaking the constitution; a SPEC contradicting the pin's source; a
 behaviour the pin's source and disassembly cannot settle; an
 implementation that would change a frozen SPEC without an ask.

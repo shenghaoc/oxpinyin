@@ -66,7 +66,7 @@ cost data”. The default `nbest_step_costs` is
 `Ok(NbestStepCosts::default())` — no cost data, not a failure. That is
 the W14 / #113 shape: an empty n-best is a successful empty lookup.
 
-### `oxpinyin-engine` (library, supported Rust surface)
+### `oxpinyin-engine` (library; internal Rust surface under the C facades)
 
 | Type | Shape | Callers distinguish? |
 |---|---|---|
