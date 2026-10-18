@@ -6905,7 +6905,11 @@ def _system_items(k, name='gb_char.bin'):
     for slot in range((content - index - 1) // 4):
         offset = word(index + slot * 4)
         if offset:
-            items[slot] = payload[content + offset:content + offset + _item_size(payload[content + offset:])]
+            start = content + offset
+            # Only the two header bytes size an item; copying the remaining
+            # chunk here for every slot makes fixture setup quadratic.
+            size = _item_size(payload[start:start + 2])
+            items[slot] = payload[start:start + size]
             offsets[slot] = offset
     return total, items, offsets
 
@@ -6939,7 +6943,7 @@ def _observe_system_item(k, watched, phrase):
     return out
 
 
-def system_replay(k, build, reopen=False, unigram_add=True):
+def system_replay(k, build, reopen=False, unigram_add=True, observe_add=False):
     """`build(p)` returns the records after the header and the tokens to
     watch; `p` maps `one`, `two` (an item of two or more readings) and `last`
     (the item at the highest item-area offset) to (token, bytes) of library 1,
@@ -6950,7 +6954,7 @@ def system_replay(k, build, reopen=False, unigram_add=True):
     two = next(slot for slot, item in items.items() if item[0] == 1 and item[1] >= 2)
     last = max(offsets, key=offsets.get)
     fresh = max(items) + 2
-    records, watched = build({'one': (0x01000000 | one, items[one]),
+    records, watched = build({'total': total, 'one': (0x01000000 | one, items[one]),
                               'two': (0x01000000 | two, items[two]),
                               'last': (0x01000000 | last, items[last]),
                               'fresh': (0x01000000 | fresh, _item_with(items[one], unigram=11)),
@@ -6963,6 +6967,10 @@ def system_replay(k, build, reopen=False, unigram_add=True):
     if unigram_add:
         # A unigram add reaches only an item the sub-index holds.
         out['add-unigram'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, watched['one'], 7)
+    if observe_add:
+        out['after-add'] = _observe_system_item(k, watched, phrase)
+        if k.mode == 'pinyin':
+            out['facade-after-add'] = _facade_total_out(k)
     # An import marks the context modified, so the save writes the diff.
     reading = b"ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode()
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
@@ -6978,14 +6986,180 @@ def system_replay(k, build, reopen=False, unigram_add=True):
     return out
 
 
-def _replay_case(name, build, reopen=False, unigram_add=True, **options):
+def _replay_case(name, build, reopen=False, unigram_add=True, observe_add=False, **options):
     for mode in ('pinyin', 'zhuyin'):
         case('replay-' + name + '-' + mode, mode=mode, stderr=True, **options)(
-            lambda k, build=build: system_replay(k, build, reopen, unigram_add))
+            lambda k, build=build: system_replay(k, build, reopen, unigram_add, observe_add))
 
 
 def _watch(p):
     return {'one': p['one'][0], 'fresh': p['fresh'][0]}
+
+
+# #853: accepted live-item increments survive a later dirty save.
+_replay_case('unigram-add-live-item', lambda p: ([], _watch(p)))
+_replay_case('unigram-add-live-item-reopen', lambda p: ([], _watch(p)), reopen=True)
+_replay_case('unigram-add-live-item-control', lambda p: ([], _watch(p)), unigram_add=False, control=True)
+_replay_case('unigram-add-overridden-item-reopen', lambda p: (
+    [_log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                 new=_item_with(p['one'][1], unigram=19))], _watch(p)), reopen=True)
+
+
+# #853 lifecycle: the rules are read from phrase_index.cpp:150-178,
+# :237-269, :392-436, :648-675; pinyin.cpp:956, :1132-1145,
+# :1253-1285, and phonetic_lookup.h:925-929 at 074a2219.
+def unigram_lifecycle(k, variant):
+    system = private_system(k)
+    k.data = system
+    name = 'gbk_char.bin' if variant == 'reload' else 'gb_char.bin'
+    library = 2 if variant == 'reload' else 1
+    total, items, offsets = _system_items(k, name)
+    slot = next(slot for slot, item in items.items() if item[0] == 1 and item[1] == 1)
+    if variant == 'import-system':
+        slot = 0x1225  # 你
+    token, item = (library << 24) | slot, items[slot]
+    _write_user_conf(k)
+    if variant == 'removed':
+        _write_log(k, _modify_header(0, total, total) +
+                   _log_record(_LOG_REMOVE, token, old=item))
+    elif variant == 'wrap':
+        # A valid layout with an intentionally inconsistent stored total:
+        # item arithmetic wraps independently of the guarded library total.
+        payload = bytearray(Path(system, name).read_bytes()[8:])
+        content = int.from_bytes(payload[8:12], 'little')
+        start = content + offsets[slot] + 2
+        payload[start:start + 4] = (0xfffffffc).to_bytes(4, 'little')
+        path = Path(system, name)
+        path.unlink()  # private symlink; never write the source data
+        path.write_bytes(_chunk(payload))
+    elif variant == 'overflow':
+        _write_log(k, _modify_header(0, total, 0xfffffffc))
+    assert k.ctx
+    if variant == 'import-system':
+        reading = 'ni3' if k.mode == 'pinyin' else 'ㄋㄧˇ'
+        assert import_rows(k, 1, [('你', reading, 9)]) == [True]
+    add = k.fn('token_add_unigram_frequency', B, P, U, U)
+    watched = token if variant != 'missing' else ((library << 24) | (max(items) + 20))
+    out = {'before': unigram_of(k, watched)}
+    out['add'] = add(k.inst, watched, 7)
+    out['after'] = unigram_of(k, watched)
+    if variant == 'timing':
+        started = time.perf_counter_ns()
+        for _ in range(1000):
+            assert add(k.inst, token, 1)
+        out['~increment-ns'] = time.perf_counter_ns() - started
+    if variant == 'repeat':
+        out['again'] = add(k.inst, watched, 11)
+        out['after-again'] = unigram_of(k, watched)
+        other = k.alloc()
+        frequency = U()
+        out['other-instance'] = [k.fn('token_get_unigram_frequency', B, P, U, C.POINTER(U))(
+            other, watched, C.byref(frequency)), frequency.value]
+        k.fn('free_instance', None, P)(other)
+    if variant in ('overflow', 'missing', 'removed') and k.mode == 'pinyin':
+        out['facade'] = _facade_total_out(k)
+    out['clean-save'] = k.fn('save', B, P)(k.ctx)
+    if variant == 'reload':
+        out['unload'] = k.fn('unload_phrase_library', B, P, C.c_ubyte)(k.ctx, 2)
+        out['unloaded-add'] = add(k.inst, token, 13)
+        out['load'] = k.fn('load_phrase_library', B, P, C.c_ubyte)(k.ctx, 2)
+        out['after-load'] = unigram_of(k, token)
+    elif variant == 'mask':
+        out['mask'] = k.fn('mask_out', B, P, U, U)(k.ctx, 0xffffffff, 0)
+        out['after-mask'] = unigram_of(k, token)
+    elif variant == 'replacement':
+        payload = bytearray(Path(system, name).read_bytes()[8:])
+        content = int.from_bytes(payload[8:12], 'little')
+        start = content + offsets[slot] + 2
+        payload[start:start + 4] = (37).to_bytes(4, 'little')
+        payload[:4] = (total - int.from_bytes(item[2:6], 'little') + 37).to_bytes(4, 'little')
+        path = Path(system, name)
+        temporary = Path(str(path) + '.new')
+        temporary.write_bytes(_chunk(payload))
+        os.replace(temporary, path)
+    elif variant == 'import-system':
+        out['system-import'] = import_rows(k, 1, [('你', reading, 17)])
+    elif variant == 'training':
+        trained_token = 0x01003e57
+        out['training-add'] = add(k.inst, trained_token, 7)
+        out['training'] = token_unigram_trained(k)
+    # An import makes save dirty without replacing the watched system item.
+    reading = b"ni3'hao3" if k.mode == 'pinyin' else 'ㄋㄧˇ ㄏㄠˇ'.encode()
+    it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+    out['import'] = k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), reading, 1)
+    k.fn('end_add_phrases', None, P)(it)
+    started = time.perf_counter_ns()
+    out['save'] = k.fn('save', B, P)(k.ctx)
+    if variant == 'timing':
+        out['~save-ns'] = time.perf_counter_ns() - started
+    log = Path(k.user, name.replace('.bin', '.dbin')).read_bytes()
+    out['journal'] = [len(log), hashlib.sha256(log).hexdigest(), log_walk(log)]
+    out['after-save'] = unigram_of(k, watched)
+    phrase_table_reopen(k)
+    out['reopen'] = unigram_of(k, watched)
+    out['add-reopened'] = add(k.inst, watched, 5)
+    out['after-reopened'] = unigram_of(k, watched)
+    if variant == 'repeat':
+        it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
+        out['second-import'] = k.fn('iterator_add_phrase', B, P, S, S, I)(
+            it, '你好'.encode(), reading, 1)
+        k.fn('end_add_phrases', None, P)(it)
+        out['second-save'] = k.fn('save', B, P)(k.ctx)
+        phrase_table_reopen(k)
+        out['second-reopen'] = unigram_of(k, watched)
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _variant in ('repeat', 'replacement', 'wrap', 'overflow', 'missing', 'removed',
+                     'reload', 'mask', 'training', 'timing', 'import-system'):
+        case('unigram-lifecycle-' + _variant + '-' + _mode, mode=_mode, stderr=True,
+             control=_variant in ('overflow', 'missing', 'removed', 'reload', 'mask'))(
+            lambda k, variant=_variant: unigram_lifecycle(k, variant))
+
+
+def unigram_null_user_save(k):
+    # The pin's save guards precede compact (pinyin.cpp:1132-1145,
+    # zhuyin.cpp:547-554). Both C facades already enforce those guards;
+    # direct reporting-helper coverage is a user-store unit test.
+    system = private_system(k)
+    k.data = system
+    payload = bytearray(Path(system, 'gb_char.bin').read_bytes()[8:])
+    payload[:4] = (0xfffffffb).to_bytes(4, 'little')
+    path = Path(system, 'gb_char.bin')
+    path.unlink()  # replace our private symlink, never the oracle data
+    path.write_bytes(_chunk(payload))
+    k._ctx = k.init(system, None, literal=True)
+    assert k._ctx
+    token = 0x01000001
+    add = k.fn('token_add_unigram_frequency', B, P, U, U)
+    out = {'before': unigram_of(k, token)}
+    out['near-bound'] = add(k.inst, token, 2)
+    out['before-save'] = unigram_of(k, token)
+    out['save'] = k.fn('save', B, P)(k.ctx)
+    out['across-bound'] = add(k.inst, token, 4)
+    out['after-refusal'] = unigram_of(k, token)
+    out['pricing'] = _dynamic_adjust_out(k, b'ni3')
+    return out
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('unigram-null-user-save-' + _mode, mode=_mode, control=True, stderr=True)(
+        unigram_null_user_save)
+
+
+# #853/#876 overlap: unigram ownership must not erase a replayed reading's
+# count, whether the sub-index accepts or refuses the increment. The facade
+# still takes the refused delta before dispatch (phrase_index.h:628-636).
+_replay_case('unigram-add-changed-reading-reopen', lambda p: (
+    [_log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                 new=_item_with(p['one'][1], unigram=19, freq=250))], _watch(p)),
+    reopen=True, observe_add=True)
+_replay_case('unigram-refused-changed-reading-reopen', lambda p: (
+    [_log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                 new=_item_with(p['one'][1], freq=250)),
+     _modify_header(0, p['total'], 0xfffffffc)], _watch(p)),
+    reopen=True, observe_add=True, control=True)
 
 
 def _add_fresh(p):
@@ -6994,6 +7168,10 @@ def _add_fresh(p):
 
 # A matching REMOVE, then an ADD: the item is gone, the total is lower and the
 # ADD after it applied.
+_replay_case('unigram-add-appended-item-reopen', lambda p: (
+    [_add_fresh(p)], {'one': p['fresh'][0], 'original': p['one'][0]}), reopen=True)
+
+
 def _matched_remove(p):
     return [_log_record(_LOG_REMOVE, p['one'][0], old=p['one'][1]), _add_fresh(p)], _watch(p)
 
@@ -7329,6 +7507,23 @@ def pron_lifecycle(k, new_item_of, steps):
         look(tag)
 
     look('opened')
+    if steps == 'unigram':
+        add = k.fn('token_add_unigram_frequency', B, P, U, U)
+        out['added-unigram'] = add(k.inst, token, 7)
+        look('after-unigram')
+        out['trained'] = train()
+        look('after-train')
+        save('first')
+        reopen('reopened')
+        out['added-again'] = add(k.inst, token, 5)
+        look('after-unigram-again')
+        # A unigram increment does not set m_modified. Dirty an unrelated
+        # user library before the second save, preserving both live readings.
+        out['dirty'] = import_rows(k, 7, [('你好', "ni3'hao3" if pinyin else 'ㄋㄧˇ ㄏㄠˇ', 1)])
+        save('second')
+        reopen('reopened-again')
+        return out
+
     if steps == 'train':
         out['trained'] = train()
         look('after-train')
@@ -7376,6 +7571,10 @@ _PRON_SHAPES = {
     'other-reading': ([(None, 100), (_PRON_OTHER_KEYS, 130)], None),
     'other-first': ([(_PRON_OTHER_KEYS, 130), (None, 250)], None),
 }
+for _mode in ('pinyin', 'zhuyin'):
+    case('replay-pron-unigram-combined-' + _mode, mode=_mode, stderr=True)(
+        lambda k: pron_lifecycle(k, _pron_shape([(None, 160), (None, 220)]), 'unigram'))
+
 for _shape, (_entries, _unigram) in _PRON_SHAPES.items():
     for _steps in ('train', 'import', 'mask'):
         for _mode in ('pinyin', 'zhuyin'):

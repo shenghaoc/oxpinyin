@@ -777,7 +777,7 @@ fn library_total_overflows(
         &mut |_key, value| {
             let unigram = codec::decode_u64(value)
                 .map_err(|_| StoreError::Backend("corrupt unigram".into()))?;
-            total = total.wrapping_add(u32::try_from(unigram).unwrap_or(u32::MAX));
+            total = total.wrapping_add(unigram as u32);
             Ok(())
         },
     )?;
@@ -2047,6 +2047,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         })?;
 
         Ok(Arc::new(StoreInner {
+            system_bumps_live: std::sync::atomic::AtomicBool::new(false),
+            system_bumps: Mutex::new(crate::registry::SystemUnigramBumps::default()),
             has_system_items: AtomicBool::new(false),
             system_items: std::sync::Mutex::new(std::collections::BTreeMap::new()),
             has_removed_system_items: AtomicBool::new(false),
@@ -2172,10 +2174,115 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn unigram_delta(&self, token: Token) -> Result<u64, UserStoreError> {
-        if !self.has_user_data() {
-            return Ok(0);
+        let bumps = self.system_unigrams_for_read();
+        let stored = if self.has_user_data() {
+            self.with_count_cache(|cached, db| cached.unigram_delta(db, token))?
+        } else {
+            0
+        };
+        Ok(stored.wrapping_add(
+            bumps
+                .as_ref()
+                .and_then(|b| b.tokens.get(&token))
+                .copied()
+                .unwrap_or(0),
+        ))
+    }
+
+    /// Apply the exported unigram increment to a loaded system library.
+    /// The caller checks library visibility. The facade total changes even
+    /// for a missing item or overflowing sub-index; accepted increments stay
+    /// in memory until another count writer or the save diff needs the rows. This does not mark the context dirty
+    /// (074a2219 `pinyin.cpp:2836-2843`, `zhuyin.cpp:1828-1835`).
+    ///
+    /// # Errors
+    /// Returns the store error if the in-memory transaction fails.
+    pub fn add_system_unigram_frequency(
+        &self,
+        token: Token,
+        delta: u32,
+    ) -> Result<bool, UserStoreError> {
+        let library = phrase_index_library_index(token);
+        let mut bumps = self
+            .inner
+            .system_bumps
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let exists = !self.system_item_removed(token)
+            && (self.with_effective_system_item(token, |_| ()).is_some()
+                || self.inner.libpinyin.as_ref().is_some_and(|target| {
+                    target.originals().get(&library).is_some_and(|original| {
+                        original.unigram(token & phrase::PHRASE_MASK).is_some()
+                    })
+                }));
+        if !exists {
+            self.inner.facade_offset.fetch_add(delta, Ordering::SeqCst);
+            return Ok(false);
         }
-        self.with_count_cache(|cached, db| cached.unigram_delta(db, token))
+        let total = if let Some(total) = bumps.libraries.get(&library) {
+            *total
+        } else {
+            let db = self.database();
+            let base = get_u64_or(&*db, SYSTEM_BASE, &codec::encode_u8(library), 0)? as u32;
+            let offset = get_u64_or(&*db, LIBRARY_OFFSET, &codec::encode_u8(library), 0)? as u32;
+            drop(db);
+            base.wrapping_add(offset)
+                .wrapping_add(self.stored_unigram_library_total(library)?)
+        };
+        let Some(total) = total.checked_add(delta) else {
+            self.inner.facade_offset.fetch_add(delta, Ordering::SeqCst);
+            return Ok(false);
+        };
+        bumps.libraries.insert(library, total);
+        let count = bumps.tokens.entry(token).or_default();
+        *count = count.wrapping_add(u64::from(delta));
+        bumps.total = bumps.total.wrapping_add(u64::from(delta));
+        self.inner.system_bumps_live.store(true, Ordering::Release);
+        Ok(true)
+    }
+
+    fn system_unigrams_for_read(
+        &self,
+    ) -> Option<MutexGuard<'_, crate::registry::SystemUnigramBumps>> {
+        self.inner
+            .system_bumps_live
+            .load(Ordering::Acquire)
+            .then(|| {
+                self.inner
+                    .system_bumps
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            })
+    }
+
+    /// Commit live item counts before another count writer or the save diff.
+    /// This does not change the modified gate. Lock order is bumps, then DB;
+    /// readers take the same bumps-first order so a flush cannot split a
+    /// read between old rows and an already cleared overlay.
+    pub(crate) fn flush_system_unigrams(&self) -> Result<(), UserStoreError> {
+        if !self.inner.system_bumps_live.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let mut bumps = self
+            .inner
+            .system_bumps
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let db = self.database();
+        db.write(|txn| {
+            for (&token, &delta) in &bumps.tokens {
+                let key = codec::encode_token(token);
+                let old = txn_get_u64_or(txn, UNIGRAM, &key, 0)?;
+                txn.put(UNIGRAM, &key, &codec::encode_u64(old.wrapping_add(delta)))?;
+            }
+            bump_unigram_total(txn, bumps.total)
+        })?;
+        bumps.tokens.clear();
+        bumps.libraries.clear();
+        bumps.total = 0;
+        self.inner.system_bumps_live.store(false, Ordering::Release);
+        self.mark_committed_write(db, true);
+        Ok(())
     }
 
     /// What the user side adds to the facade's unigram total: the sum of
@@ -2187,9 +2294,13 @@ impl<S: WriteStore> GenericUserStore<S> {
     ///
     /// Returns [`UserStoreError`] when the store cannot be read.
     pub fn unigram_total(&self) -> Result<u64, UserStoreError> {
+        let bumps = self.system_unigrams_for_read();
         let db = self.database();
         let total = get_u64_or(&*db, UNIGRAM_TOTAL, &codec::encode_u8(UNIGRAM_TOTAL_KEY), 0)?;
-        Ok(total.wrapping_add(u64::from(self.facade_offset())))
+        drop(db);
+        Ok(total
+            .wrapping_add(u64::from(self.facade_offset()))
+            .wrapping_add(bumps.as_ref().map_or(0, |b| b.total)))
     }
 
     /// The pinned sub-index's wrapping u32 total of stored deltas in one library.
@@ -2197,6 +2308,20 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// # Errors
     /// Returns the store error if a unigram row cannot be read or decoded.
     pub fn unigram_library_total(&self, library: u8) -> Result<u32, UserStoreError> {
+        let bumps = self.system_unigrams_for_read();
+        let stored = self.stored_unigram_library_total(library)?;
+        Ok(bumps.as_ref().map_or(stored, |bumps| {
+            bumps
+                .tokens
+                .iter()
+                .filter(|(token, _)| phrase_index_library_index(**token) == library)
+                .fold(stored, |total, (_, delta)| {
+                    total.wrapping_add(*delta as u32)
+                })
+        }))
+    }
+
+    fn stored_unigram_library_total(&self, library: u8) -> Result<u32, UserStoreError> {
         let db = self.database();
         let lo = codec::encode_token(u32::from(library) << 24);
         let hi = u32::from(library)
@@ -2212,7 +2337,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             &mut |_, value| {
                 let count = codec::decode_u64(value)
                     .map_err(|_| StoreError::Backend("corrupt unigram".into()))?;
-                total = total.wrapping_add(u32::try_from(count).unwrap_or(u32::MAX));
+                total = total.wrapping_add(count as u32);
                 Ok(())
             },
         )?;
@@ -2245,17 +2370,35 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// (`pinyin.cpp:1139`, `:657`, `:1294`; `zhuyin.cpp:554`, `:542`,
     /// `:829`).
     pub fn compact_libraries(&self) {
+        if self.flush_system_unigrams().is_err() {
+            return;
+        }
         // Flag invariant: `has_library_offsets` is never false while a
         // LIBRARY_OFFSET row exists (true with no rows is harmless: the row
         // read gives 0). `library_offset` reads the flag without the lock,
         // so the flag is cleared only after the rows are gone, under the
         // database lock that every offset writer also holds, and stays set
         // if the write fails.
-        if !self.inner.has_library_offsets.load(Ordering::SeqCst) {
+        let originals = self
+            .inner
+            .libpinyin
+            .as_ref()
+            .map(|target| target.originals());
+        if originals.is_none() && !self.inner.has_library_offsets.load(Ordering::SeqCst) {
             return;
         }
         let db = self.database();
         let cleared = db.write(|txn| {
+            if let Some(originals) = originals.as_ref() {
+                for (&library, original) in originals.iter() {
+                    txn.put(
+                        SYSTEM_BASE,
+                        &codec::encode_u8(library),
+                        &codec::encode_u64(u64::from(original.item_total())),
+                    )?;
+                }
+            }
+
             let mut keys = Vec::new();
             txn.for_each(LIBRARY_OFFSET, &mut |key, _| {
                 keys.push(key.to_vec());
@@ -2283,18 +2426,23 @@ impl<S: WriteStore> GenericUserStore<S> {
         prev: Option<Token>,
         token: Token,
     ) -> Result<UserCountDelta, UserStoreError> {
-        let offset = u64::from(self.facade_offset());
-        if !self.has_user_data() {
-            return Ok(UserCountDelta {
-                unigram_total_delta: offset,
-                ..UserCountDelta::ZERO
-            });
-        }
-        let mut delta = self.with_count_cache(|cached, db| {
-            let prev = prev.map(|prev| (prev, move || self.gram_in(db, prev)));
-            cached.count_delta(db, prev, token)
-        })?;
-        delta.unigram_total_delta = delta.unigram_total_delta.wrapping_add(offset);
+        let bumps = self.system_unigrams_for_read();
+        let mut delta = if self.has_user_data() {
+            self.with_count_cache(|cached, db| {
+                let prev = prev.map(|prev| (prev, move || self.gram_in(db, prev)));
+                cached.count_delta(db, prev, token)
+            })?
+        } else {
+            UserCountDelta::ZERO
+        };
+        let (item, total) = bumps.as_ref().map_or((0, 0), |bumps| {
+            (bumps.tokens.get(&token).copied().unwrap_or(0), bumps.total)
+        });
+        delta.unigram_delta = delta.unigram_delta.wrapping_add(item);
+        delta.unigram_total_delta = delta
+            .unigram_total_delta
+            .wrapping_add(u64::from(self.facade_offset()))
+            .wrapping_add(total);
         Ok(delta)
     }
 
@@ -2320,6 +2468,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         readings: &mut dyn Iterator<Item = Vec<oxpinyin_core::ChewingKey>>,
         seed: u64,
     ) -> Result<(), UserStoreError> {
+        self.flush_system_unigrams()?;
         use crate::store_libpinyin::{pinyin_keys_to_packed, pronunciation_matches};
         if self.system_item_removed(token) {
             // `get_phrase_item` fails: there is no item to train (074a2219
@@ -2460,6 +2609,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// cannot accept 483. The facade-total increment is retained even on
     /// refusal, as at the pin. Other store failures return [`UserStoreError`].
     pub fn observe_predicted_prefix(&mut self, cur: Token) -> Result<u64, UserStoreError> {
+        self.flush_system_unigrams()?;
         let seed = seed::predicted_seed();
         let delta = seed::unigram_delta(seed) as u32;
         let db = self.database();
@@ -2481,6 +2631,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         cur: Token,
         policy: SeedPolicy,
     ) -> Result<u64, UserStoreError> {
+        self.flush_system_unigrams()?;
         let db = self.database();
         let row = self.gram_in(&db, last)?;
         // Refuse before anything changes: the pin asserts on a total it
@@ -2648,6 +2799,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         keys: &[PinyinKey],
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
+        self.flush_system_unigrams()?;
         if !is_user_file_library(library)
             || !self.has_user_library(library)
             || !phrase::phrase_and_keys_valid(phrase, keys)
@@ -3160,12 +3312,13 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(true)
     }
 
-    /// [`Self::save`] the way the pin saves, without its `m_modified` gate
-    /// (the caller's: [`Self::is_modified`]): the file set is written and
+    /// [`Self::save`] the way the pin saves, with the same directory and
+    /// modified guards: the file set is written and
     /// renamed and the marker rewritten whatever fails on the way, and the
     /// failures come back in the [`SaveReport`] instead of ending the save.
     /// A store with no libpinyin target (no directory to write) reports
-    /// nothing. The store is clean afterwards, as after [`Self::save`].
+    /// nothing. A completed save leaves the store clean, as after
+    /// [`Self::save`]; a guard return leaves its state unchanged.
     ///
     /// # Errors
     ///
@@ -3207,10 +3360,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         baseline: Option<&mut dyn FnMut(u8) -> crate::persistence::SaveBaseline>,
     ) -> Result<SaveReport, UserStoreError> {
         let mut report = SaveReport::default();
+        if !self.is_modified() {
+            return Ok(report);
+        }
         if let Some(target) = self.inner.libpinyin.clone() {
             let Some(dir) = target.dir.as_deref() else {
                 return Ok(report);
             };
+            self.compact_libraries();
             let originals = target.originals();
             let state = crate::store_libpinyin::export_state(self, &originals)?;
             let bigram_db = self
@@ -3500,6 +3657,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         state: &crate::persistence::UserState,
         library_totals: &std::collections::BTreeMap<u8, u32>,
     ) -> Result<(), UserStoreError> {
+        self.flush_system_unigrams()?;
         let Some(target) = self.inner.libpinyin.clone() else {
             return Ok(());
         };
@@ -3635,6 +3793,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// it (`chewing_large_table2_bdb.cpp:529`) — or [`UserStoreError`] when
     /// the mask cannot otherwise be written.
     pub fn mask_out(&mut self, mask: Token, value: Token) -> Result<(), UserStoreError> {
+        self.flush_system_unigrams()?;
         if self.has_overlong_index_key() {
             return Err(UserStoreError::OverlongIndexKey);
         }
@@ -4051,9 +4210,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     .and_then(|library| library.unigram(token & PHRASE_MASK))
             })
             .unwrap_or(0);
-        let db = self.database();
-        item.unigram =
-            base.wrapping_add(get_u64_or(&*db, UNIGRAM, &codec::encode_token(token), 0)? as u32);
+        item.unigram = base.wrapping_add(self.unigram_delta(token)? as u32);
         Ok(Some(item))
     }
 
@@ -4222,6 +4379,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         keys: &[PinyinKey],
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
+        self.flush_system_unigrams()?;
         use oxpinyin_data::chunk_write::{ChunkItem, encode_phrase_item};
         if !(1..=4).contains(&library) || !phrase::phrase_and_keys_valid(text, keys) {
             return Err(UserStoreError::InvalidPhrase);
@@ -5567,6 +5725,152 @@ mod tests {
             std::env::temp_dir().join(format!("oxpinyin-user-{tag}-{}.store", std::process::id()));
         let _ = std::fs::remove_file(&path);
         path
+    }
+
+    #[test]
+    fn reporting_save_guards_preserve_unigram_overflow() {
+        use crate::persistence::{SystemLibrary, SystemOriginals, UserConfLaw};
+        use oxpinyin_data::user_files::SystemVersions;
+        fn originals() -> SystemOriginals {
+            BTreeMap::from([(
+                1,
+                SystemLibrary {
+                    total: 100,
+                    range_end: 2,
+                    mapped: None,
+                    items: BTreeMap::from([(
+                        1,
+                        oxpinyin_data::chunk_write::ChunkItem {
+                            phrase: vec![0x4f60],
+                            unigram: 100,
+                            prons: Vec::new(),
+                        },
+                    )]),
+                },
+            )])
+            .into()
+        }
+        fn versions() -> SystemVersions {
+            SystemVersions::for_this_build(7, 14)
+        }
+        for has_dir in [false, true] {
+            for entry in 0..3 {
+                for law in [UserConfLaw::Pinyin, UserConfLaw::Zhuyin] {
+                    let scratch = tempfile::tempdir().expect("scratch");
+                    let dir = scratch.path();
+                    let mut store = if has_dir {
+                        UserStore::open_libpinyin(dir, originals(), versions(), law)
+                    } else {
+                        UserStore::open_transient(originals(), versions(), law)
+                    }
+                    .expect("open");
+                    // A stored sub-index total of MAX-4, independent of its
+                    // one item's frequency 100. Compact must not erase this
+                    // offset on either rejected save path.
+                    let offset = u32::MAX - 104;
+                    store
+                        .database()
+                        .write(|txn| {
+                            txn.put(
+                                LIBRARY_OFFSET,
+                                &codec::encode_u8(1),
+                                &codec::encode_u64(u64::from(offset)),
+                            )
+                        })
+                        .expect("offset");
+                    store
+                        .inner
+                        .has_library_offsets
+                        .store(true, std::sync::atomic::Ordering::Release);
+                    store
+                        .inner
+                        .facade_offset
+                        .store(offset, std::sync::atomic::Ordering::Release);
+                    if !has_dir {
+                        store.mark_modified();
+                    }
+                    let token = 0x0100_0001;
+                    assert!(
+                        store
+                            .add_system_unigram_frequency(token, 2)
+                            .expect("near bound")
+                    );
+                    let before = (
+                        store.unigram_delta(token).unwrap(),
+                        store.unigram_total().unwrap(),
+                        store.library_offset(1).unwrap(),
+                        store.is_modified(),
+                    );
+                    let report = match entry {
+                        0 => store.save_reporting(),
+                        1 => store.save_reporting_compacted(&[]),
+                        _ => store
+                            .save_reporting_with_baseline(&[], &mut |_| panic!("guarded baseline")),
+                    }
+                    .expect("guarded save");
+                    assert_eq!(report, crate::SaveReport::default());
+                    assert_eq!(
+                        (
+                            store.unigram_delta(token).unwrap(),
+                            store.unigram_total().unwrap(),
+                            store.library_offset(1).unwrap(),
+                            store.is_modified()
+                        ),
+                        before
+                    );
+                    assert!(
+                        !store
+                            .add_system_unigram_frequency(token, 4)
+                            .expect("refusal")
+                    );
+                    assert_eq!(store.unigram_delta(token).unwrap(), 2);
+                    assert_eq!((store.unigram_total().unwrap() as u32).wrapping_add(100), 1);
+                    drop(store);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn concurrent_readers_keep_live_unigrams_across_flushes() {
+        let path = temp_path("live-unigram-flush");
+        let store = UserStore::open(&path).unwrap();
+        let token = 0x0100_0001;
+        store.inner.system_items.lock().unwrap().insert(
+            token,
+            oxpinyin_data::chunk_write::ChunkItem {
+                phrase: vec![u32::from('你')],
+                unigram: 0,
+                prons: Vec::new(),
+            },
+        );
+        store.inner.has_system_items.store(true, Ordering::Release);
+        let writer = store.clone();
+        let done = AtomicBool::new(false);
+        let start = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                start.wait();
+                for _ in 0..2000 {
+                    assert!(writer.add_system_unigram_frequency(token, 1).unwrap());
+                    writer.flush_system_unigrams().unwrap();
+                }
+                done.store(true, Ordering::Release);
+            });
+            start.wait();
+            let mut last = 0;
+            while !done.load(Ordering::Acquire) {
+                let counts = store.count_delta(None, token).unwrap();
+                assert_eq!(counts.unigram_delta, counts.unigram_total_delta);
+                assert!(counts.unigram_delta >= last);
+                last = counts.unigram_delta;
+            }
+        });
+        assert_eq!(store.unigram_delta(token).unwrap(), 2000);
+        assert_eq!(store.unigram_total().unwrap(), 2000);
+        drop(writer);
+        drop(store);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

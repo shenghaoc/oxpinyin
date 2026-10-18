@@ -631,9 +631,22 @@ pub struct PhraseLibrary {
     /// `SubPhraseIndex::load` refused the layout; the save path re-checks
     /// such a library exactly as the pin re-maps it.
     layout_failed: bool,
+    /// Immutable mapped item sum, shared by clones and filled at first compact.
+    item_total: std::sync::Arc<std::sync::OnceLock<u32>>,
 }
 
 impl PhraseLibrary {
+    /// The wrapping sum of mapped item frequencies, excluding slot zero.
+    /// The mapping is immutable, so repeated compaction shares one scan.
+    #[must_use]
+    pub fn item_total(&self) -> u32 {
+        *self.item_total.get_or_init(|| {
+            self.items()
+                .filter(|(slot, _)| *slot >= 1)
+                .fold(0_u32, |total, (_, item)| total.wrapping_add(item.unigram()))
+        })
+    }
+
     /// The pin's empty sub-index after `SubPhraseIndex::load` refused the
     /// layout: no mapping, `total_freq` as the pin read it before the
     /// failing check, and `get_range`'s `1..1`.
@@ -645,6 +658,7 @@ impl PhraseLibrary {
             offsets: 0..0,
             content: 0..0,
             layout_failed: true,
+            item_total: std::sync::Arc::default(),
         }
     }
 
@@ -753,6 +767,7 @@ impl PhraseLibrary {
             offsets: index_one..index_two - 1,
             content: index_two..index_three - 1,
             layout_failed: false,
+            item_total: std::sync::Arc::default(),
         })
     }
 

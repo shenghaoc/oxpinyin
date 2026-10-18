@@ -381,6 +381,8 @@ fn gbk_visibility_changes_the_key_cost_table() {
 fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let dict = runtime.dict();
+    let store = runtime.user_store().expect("store");
+    let before = runtime.lm().amplified_total() as u32;
     let library = dict
         .system()
         .libraries()
@@ -395,12 +397,23 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
     assert_eq!(tokens.len(), 2);
     let remaining = u32::MAX - library.total_freq();
     assert!(dict.add_unigram_delta(tokens[0], u64::from(remaining)));
-    assert_eq!(dict.unigram_delta(tokens[0]), Some(u64::from(remaining)));
+    assert_eq!(dict.unigram_delta(tokens[0]), None);
+    assert_eq!(
+        store.unigram_delta(tokens[0]).unwrap(),
+        u64::from(remaining)
+    );
     assert!(!dict.add_unigram_delta(tokens[1], 1));
-    assert_eq!(dict.unigram_delta(tokens[1]), None);
+    assert_eq!(store.unigram_delta(tokens[1]).unwrap(), 0);
     assert!(!dict.add_unigram_delta(tokens[0], 1));
-    assert_eq!(dict.unigram_delta(tokens[0]), Some(u64::from(remaining)));
-    assert_eq!(dict.unigram_total_delta(), remaining + 2);
+    assert_eq!(dict.unigram_delta(tokens[0]), None);
+    assert_eq!(
+        store.unigram_delta(tokens[0]).unwrap(),
+        u64::from(remaining)
+    );
+    assert_eq!(
+        (runtime.lm().amplified_total() as u32).wrapping_sub(before),
+        remaining + 2
+    );
     assert!(dict.add_unigram_delta(tokens[1], 0));
 }
 
@@ -410,6 +423,7 @@ fn rejected_unigram_add_keeps_item_and_library_counts_but_moves_facade_total() {
 fn the_facade_total_delta_wraps_like_a_guint32() {
     let runtime = Runtime::open(&w3_dir(), None).expect("open");
     let dict = runtime.dict();
+    let before = runtime.lm().amplified_total() as u32;
     let token = dict
         .system()
         .libraries()
@@ -421,7 +435,10 @@ fn the_facade_total_delta_wraps_like_a_guint32() {
         .expect("a token");
     let _ = dict.add_unigram_delta(token, u64::from(u32::MAX));
     let _ = dict.add_unigram_delta(token, 3);
-    assert_eq!(dict.unigram_total_delta(), 2);
+    assert_eq!(
+        (runtime.lm().amplified_total() as u32).wrapping_sub(before),
+        2
+    );
 }
 
 #[test]

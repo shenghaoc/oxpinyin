@@ -410,15 +410,9 @@ pub struct RuntimeDict {
     trellis_cache: TrellisCache,
     addons: Arc<RwLock<AddonSet>>,
     punct: Arc<PunctTable>,
-    /// The `add_unigram_frequency` overlay: in-memory per-token deltas
-    /// over the baked counts, and the facade-total bump it applies
-    /// unconditionally once the token's library is loaded
-    /// (`phrase_index.h:632` — before the item-level dispatch, so an
-    /// absent-token add still moves the total). Upstream writes the same
-    /// deltas into its in-memory `FacadePhraseIndex` and nothing persists
-    /// them (`pinyin_save` flushes user data exclusively), so the overlay
-    /// is the faithful shape: shared per context with the language model,
-    /// gone at fini.
+    /// Transient bumps for libraries without canonical store ownership,
+    /// plus rejected calls' unconditional facade-total changes. Accepted
+    /// system-item bumps live in the user store alongside training/replay.
     bumps: Arc<FacadeBumps>,
     /// The loaded-library mask: bit `n` **set** = library `n` unloaded
     /// (matches `library_visible` at :344 and the query surface —
@@ -895,8 +889,21 @@ impl RuntimeDict {
     /// the rest of the surface honours.
     #[must_use]
     pub fn add_unigram_delta(&self, token: u32, delta: u64) -> bool {
-        if !self.library_visible_token(token) {
+        if !self.library_visible(token >> 24) {
             return false;
+        }
+        // System libraries share live counts with training and journal replay.
+        // The store folds them into count rows before writing. It owns the
+        // facade total, including refusals; never overlay them a second time.
+        if (1..=4).contains(&(token >> 24))
+            && let Some(user) = self.user.as_ref()
+        {
+            let Ok(delta) = u32::try_from(delta) else {
+                return false;
+            };
+            return user
+                .add_system_unigram_frequency(token, delta)
+                .unwrap_or(false);
         }
         let found = {
             let system_found = self.system_unigram_count(token).is_some();

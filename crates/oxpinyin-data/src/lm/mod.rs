@@ -148,6 +148,12 @@ pub const fn merge_counts(system: u64, user: u64) -> u64 {
     system.saturating_add(user)
 }
 
+/// Phrase-item frequencies are `guint32`, even when their accumulated
+/// overlay is wider (074a2219 `phrase_index.cpp:173-175`).
+const fn merge_unigram_counts(system: u64, user: u64) -> u64 {
+    (system as u32).wrapping_add(user as u32) as u64
+}
+
 /// Stored `SingleGram` fields, unlike scoring costs, are `guint32`s.
 /// Both sums in 074a2219 `storage/ngram.cpp:305,332` wrap before the
 /// merged row is read. Keep this separate from wider unigram overlays.
@@ -529,7 +535,7 @@ impl BigramLanguageModel {
             return Self::pure_bigram_cost(history, transition);
         }
 
-        let unigram = merge_counts(
+        let unigram = merge_unigram_counts(
             self.unigram_count(token.value()).unwrap_or(0),
             user.unigram_delta,
         );
@@ -669,7 +675,7 @@ impl BigramLanguageModel {
     /// are the real frequency table, so this is never `None`.
     #[must_use]
     pub fn unigram_freq_with_user_delta(&self, token: u32, user_delta: u64) -> Option<u64> {
-        Some(merge_counts(
+        Some(merge_unigram_counts(
             self.unigram_count(token).unwrap_or(0),
             user_delta,
         ))
@@ -786,7 +792,7 @@ impl BigramLanguageModel {
             None if self.visible(nibble) && (is_user_file_library(nibble) || imported_item) => 0,
             None => return Ok(oxpinyin_core::NbestStepCosts::default()),
         };
-        let count = merge_counts(count, user.unigram_delta);
+        let count = merge_unigram_counts(count, user.unigram_delta);
         let unigram_total = self.facade_total(user.unigram_total_delta);
         if unigram_total == 0 {
             return Ok(oxpinyin_core::NbestStepCosts::default());

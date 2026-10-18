@@ -469,3 +469,57 @@ match, but the argument is not in this record:
 - `parse_pinyin_keys` (`oxpinyin-datagen`) against `PinyinDirectParser2::parse` with `USE_TONE`;
 - double pinyin's handling of a table whose first yunmu slot is empty
   and second is not (no shipped table has one).
+
+### #853: exported system-item unigram increments
+
+Source tree read: `/home/sheng/repos/libpinyin`, using `git show` at
+`074a2219c90feaf962d0d24f034514033ece5f99` (the checkout itself is on a
+later commit). `src/storage/phrase_index.h:628-636` rejects an absent
+sub-index before adding to the facade's wrapping u32 total.
+`src/storage/phrase_index.cpp:150-178` reads the item before checking
+sub-index-total overflow; a refusal leaves the facade increment in place.
+An accepted increment wraps the item's u32 frequency and raises the
+sub-index total. Both exports merely return success and do not mark dirty
+(`src/pinyin.cpp:2836-2843`, `src/zhuyin.cpp:1828-1835`).
+
+Save requires a user directory and the dirty flag, then compacts
+(`src/pinyin.cpp:1132-1145`, `src/zhuyin.cpp:547-554`). Compact rebuilds
+sub-index totals from items without rebuilding the facade total
+(`src/storage/phrase_index.cpp:648-675`). Diff writes the old/live header
+and compares complete items (`:392-436`); reload/unload removes the old
+sub-index total (`:237-269`). The #866 current-disk baseline remains the
+old side of that comparison.
+
+Design: `UserStore::add_system_unigram_frequency` keeps accepted live item
+increments in a sparse in-memory map, with one cached running total per
+touched library. It borrows the effective item's presence without cloning
+its readings. `RuntimeDict::add_unigram_delta` delegates these increments
+and does not also enter them in `FacadeBumps`. Count readers add these live
+values while holding the live-count guard before the database/cache guards,
+so a flush cannot split a read across old rows and a cleared overlay. Refused additions live
+in the existing facade offset, outside the item sum rebuilt on replacement.
+Before another count writer, replacement, compaction or the save diff, the
+accepted values are folded into the existing UNIGRAM rows in one transaction;
+this does not mark the context dirty. Thus training guards see all prior
+increments, replacement removes accepted values with the old sub-index, and
+save carries them without a store write for each exported call. Live reading
+entries remain authoritative, including duplicate keys with different counts.
+
+Compact and save use the wrapping sum of original item frequencies,
+independent of an inconsistent stored header. Each immutable `PhraseLibrary`
+shares a lazily initialized item sum across mapping clones; inline originals
+are summed separately, replacing overlapping mapped slots. This scans at
+first compaction, with no startup materialization. The #866 current-disk
+baseline remains the old side of `diff_records_against`. Reopen seeds wrapping
+differences, and unigram pricing wraps the merged u32 field.
+
+The pin modifies a mapped item in O(1) time and space per call. The sparse
+live count map uses expected O(1) count updates and O(k) space for k touched
+items; checking presence in the live override tree costs O(log r) for r
+replayed/imported items, followed by a constant-time mapped lookup if needed.
+The first addition to a library computes its current total from stored rows;
+subsequent additions reuse it until a count writer flushes the live values.
+A flush makes O(k log n) ordered row updates once, rather than per call.
+The immutable mapped sum costs O(n) once per mapping, then O(1) per compact
+apart from inline fixture overrides. Save retains the existing sparse diff.
+No startup scan, reading-row seeding, or candidate-path allocation is added.

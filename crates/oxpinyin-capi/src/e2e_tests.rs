@@ -407,19 +407,22 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
     // Choose: cursor 1, exactly the pin's LONGER branch.
     assert_eq!(pinyin_choose_candidate(instance, 0, longer), 1);
 
-    // +483 through the phrase-index overlay (the pin's
-    // `m_phrase_index->add_unigram_frequency`, an in-memory shift the
-    // token getters read back); no user-bigram row anywhere.
+    // +483 through the canonical phrase-index count rows; no duplicate
+    // runtime overlay and no user-bigram row anywhere.
     {
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`; the borrow ends before any later call.
         let inst = unsafe { instance_ref(instance) };
-        assert_eq!(inst.core.dict.unigram_delta(token.value()), Some(483));
+        assert_eq!(inst.core.dict.unigram_delta(token.value()), None);
+        assert_eq!(
+            store_of(instance).unigram_delta(token.value()).unwrap(),
+            483
+        );
     }
     assert_eq!(store_of(instance).bigram_total(SENTENCE_START).unwrap(), 0);
 
     // The train that follows leans on the live sentence result and
-    // writes nothing more: the overlay stays at the choose's 483 and no
+    // writes nothing more: the stored count stays at the choose's 483 and no
     // bigram row appears (the pin's constraint-free `train_result3`
     // observes nothing).
     assert!(pinyin_guess_sentence(instance));
@@ -428,7 +431,11 @@ fn longer_choose_trains_the_row_unigram_and_answers_cursor_one() {
         // SAFETY: `instance` is non-null and was produced by
         // `pinyin_alloc_instance`; the borrow ends before any later call.
         let inst = unsafe { instance_ref(instance) };
-        assert_eq!(inst.core.dict.unigram_delta(token.value()), Some(483));
+        assert_eq!(inst.core.dict.unigram_delta(token.value()), None);
+        assert_eq!(
+            store_of(instance).unigram_delta(token.value()).unwrap(),
+            483
+        );
     }
     assert_eq!(store_of(instance).bigram_total(SENTENCE_START).unwrap(), 0);
 
