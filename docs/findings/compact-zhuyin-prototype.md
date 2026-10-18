@@ -145,3 +145,84 @@ Both libraries' NEEDED list: libglib-2.0.so.0, libdb-5.3.so,
 libgcc_s.so.1, libc.so.6, ld-linux-x86-64.so.2 (readelf -d).
 Remaining: candidate pinyin final artifact, paired accounting, padding,
 BDB debug C differentials, and the held controlled measurement session.
+
+## Paired shipping result and debug differential checkpoint
+
+Candidate pinyin stripped SHA-256:
+`3bd4745017544a3c2b234df5db5da30c257187201e9006ab2dfc08d5007a6d0d`.
+
+| File/section (bytes) | pinyin base | pinyin candidate | delta | zhuyin base | zhuyin candidate | delta |
+|---|---:|---:|---:|---:|---:|---:|
+| Stripped file | 2519792 | 2360048 | -159744 | 2335472 | 2167536 | -167936 |
+| .text | 1628853 | 1629541 | +688 | 1481637 | 1482597 | +960 |
+| .rodata | 80376 | 108600 | +28224 | 76608 | 104832 | +28224 |
+| .data.rel.ro | 266656 | 183048 | -83608 | 257944 | 174336 | -83608 |
+| .rela.dyn | 347760 | 240264 | -107496 | 337920 | 230424 | -107496 |
+| .eh_frame | 122824 | 122824 | 0 | 109280 | 109288 | +8 |
+| .eh_frame_hdr | 13796 | 13796 | 0 | 12540 | 12540 | 0 |
+| .gcc_except_table | 43180 | 43172 | -8 | 38732 | 38724 | -8 |
+| File padding | 1795 | 4251 | +2456 | 8038 | 2022 | -6016 |
+| .bss (memory only) | 160 | 160 | 0 | 160 | 160 | 0 |
+
+Paired stripped file: 4855264 -> 4527584 bytes, -327680 bytes (320 KiB).
+All other section sizes unchanged. ELF/program/section headers total 2544
+bytes in each stripped file. Padding is file length minus headers minus
+all section sizes excluding SHT_NOBITS; it includes alignment gaps, not RSS.
+Allocated file-section sums: pinyin 2515095 -> 2352895; zhuyin 2324532 ->
+2162612. Global compact rows are 23888 bytes/alignment 4 in both libraries,
+with zero dynamic relocations. Pool is 13212 bytes; the extra rodata accounts
+for pooling versus existing shared literal storage and other compiler output.
+No fat-pointer global map remains. Artifact size is measured without timing;
+all runtime performance/memory comparisons remain unrun.
+
+The baseline is detached dd55aeb583abd475a6f9d72a592726a2d32ed1de under
+`<task>/baseline`; candidate production representation is checkpoint
+9d12cd31767987b2207dfb20dc2c3aabe734ceb9, with the subsequent checkpoint
+moving a test module only and adding evidence. Candidate target directory
+is `<task>/target-base` (historical name, not a baseline); clean base uses
+`<task>/target-clean-base`. Installed trees are stage-candidate and
+stage-clean-base. An early stage-base tree is excluded.
+
+Debug artifacts were built with:
+
+    CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=<task>/target-test cargo build --locked -p oxpinyin-capi -p oxpinyin-zhuyin-capi --no-default-features --features bdb
+
+BDB pin prefix: `/home/sheng/.local/opt/pinyin-oracle/bdb`; manifest identifies
+074a2219 + model20 SHA 59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155.
+Pin library hashes: pinyin 754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30;
+zhuyin cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b.
+Task-local system-bdb links the pin's immutable data files and the cached
+model20 interpolation2.text. It does not change the external model directory.
+
+`run-scheme-diff.sh bopomofo <k>` wrapper attempts failed before parsing:
+its copied temporary data omitted table.conf. No harness/policy change was
+made. Using its existing strict-compiled chewing-diff.c directly, each library
+with a fresh SCHEME_DIFF_USER_DIR and the complete system-bdb directory,
+returned 0 and byte-identical full logs for k=1,2,3,4,5,6,8,9; respectively
+1512,412,367,367,367,425,412,1013 lines. Reproduction: compile with
+`gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o <driver> tools/bisection/chewing-diff.c -ldl`;
+run `SCHEME_DIFF_USER_DIR=<fresh> <driver> <debug-so-or-pin-so> <system-bdb> <k>`
+for each side, then cmp stdout. This retains all existing profile probes.
+The wrapper failure is a source-identified setup limitation, not a scored
+differential result; no baseline wrapper run was substituted with a release
+library. The direct driver result is the compatibility evidence.
+
+`PINYIN_ORACLE_DBM=bdb PINYIN_ORACLE_PREFIX=<prefix> OXPINYIN_CAPI_SO=<debug-pinyin>
+KEY_SYSTEM=<system-bdb> tools/bisection/run-key-surface-diff.sh`:
+IDENTICAL, all 2131 probe lines, including renderers and option profiles.
+
+`PINYIN_ORACLE_DBM=bdb ZHUYIN_ORACLE_PREFIX=<prefix>
+ZHUYIN_ORACLE_DATA=<system-bdb> ZHUYIN_RUST_DATA=<system-bdb>
+ZHUYIN_RUST_SO=<debug-zhuyin> tools/bisection/run-zhuyin-diff.sh`:
+IDENTICAL, 4558 lines. The runner byte-checks the oracle-data overlay against
+all pinned source data files before using it.
+
+Ready for controlled measurement slot. Pending action: alternating BDB
+baseline/candidate/pin timing, instruction, initialization, allocation and
+memory comparisons on this Linux host. Reason: maintainer-held uncontended
+slot while #889 correctness batteries run. Status: pending explicit release,
+not denied or uncertain. No performance claim, acceptance or Phase B expansion.
+Recommended first review boundary is only the global index; reject/revert it
+if the controlled trade-off fails. Subsequent HSU/ETEN26 and content work
+must remain independent measured boundaries. Public full-pinyin tables stay
+follow-up-only. Logs/captures/models were not uploaded or attached.
