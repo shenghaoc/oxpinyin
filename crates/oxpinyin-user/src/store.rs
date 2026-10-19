@@ -3054,7 +3054,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// Read the stored count of a live USER_FILE item in this session.
-    /// No phrase text or pronunciation record is decoded.
+    /// This path skips phrase text and pronunciation records.
     #[must_use]
     pub fn user_pronunciation_count(&self, token: Token) -> Option<u32> {
         self.inner

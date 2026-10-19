@@ -1096,7 +1096,7 @@ impl RuntimeDict {
     /// Read the live item's stored pronunciation count.
     /// The pin reads only its offset and two header bytes (074a2219
     /// `phrase_index.cpp:180-205`, `pinyin.cpp:2786-2798`,
-    /// `zhuyin.cpp:1778-1790`). No introspection view is built.
+    /// `zhuyin.cpp:1778-1790`). This path skips the introspection view.
     #[must_use]
     pub fn token_pronunciation_count(&self, token: u32) -> Option<u32> {
         // PHRASE_INDEX_LIBRARY_INDEX ignores the high four bits
