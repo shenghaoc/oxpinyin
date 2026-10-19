@@ -546,13 +546,13 @@ where
     /// What the shell should display.
     #[must_use]
     pub fn preedit(&self) -> Preedit {
-        let selected = self.record.selected();
+        let selected = self.record.selected_text();
         let remaining = &self.input.as_str()[self.record.consumed()..];
         if selected.is_empty() && remaining.is_empty() {
             return Preedit::default();
         }
 
-        let mut text = selected.to_owned();
+        let mut text = selected.to_string();
         text.push_str(remaining);
 
         let mut spans = Vec::with_capacity(2);
@@ -593,15 +593,26 @@ where
         self.sentence.active()
     }
 
-    /// The decoded text of n-best row `index`, best-first
+    /// The decoded string of n-best row `index`, best-first
     /// (`pinyin_get_sentence`'s payload). `None` when fewer rows exist. A row
-    /// of phrases that all make the empty string has the empty text.
+    /// of phrases that all make the empty string has the empty string, and a
+    /// row of phrases that all make NULL has NULL
+    /// ([`oxpinyin_core::PhraseString::is_null`]): the pin answers true with
+    /// a NULL sentence (`lookup.cpp:61-67`).
     #[must_use]
-    pub fn sentence_text(&self, index: u8) -> Option<&str> {
+    pub fn sentence_string(&self, index: u8) -> Option<&PhraseString> {
         self.sentence
             .rows
             .get(usize::from(index))
-            .map(|row| row.text.as_str())
+            .map(|row| &row.string)
+    }
+
+    /// [`Self::sentence_string`] as text, for a test that reads a row made
+    /// of text.
+    #[cfg(test)]
+    pub(crate) fn sentence_text(&self, index: u8) -> Option<&str> {
+        self.sentence_string(index)
+            .map(|string| string.as_str().unwrap_or_default())
     }
 
     /// The raw input typed so far.

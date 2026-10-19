@@ -150,9 +150,13 @@ pub extern "C" fn zhuyin_get_candidate_string(
     let cand = unsafe { candidate_ref(candidate) };
     if !utf8_str.is_null() {
         // SAFETY: Null-checked above. Pointer borrows into the
-        // CapiCandidate's CString, valid until candidates are rebuilt.
+        // CapiCandidate's CString, valid until candidates are rebuilt; the
+        // pin's NULL string is a NULL pointer.
         unsafe {
-            *utf8_str = cand.text.as_ptr();
+            *utf8_str = cand
+                .text
+                .as_ref()
+                .map_or(std::ptr::null(), |text| text.as_ptr());
         }
     }
     true
@@ -375,8 +379,15 @@ pub fn snapshot_candidates(
         if sentence_rows_only && cand.kind() != CandidateKind::Sentence {
             continue;
         }
-        let Ok(text) = std::ffi::CString::new(cand.text().as_bytes()) else {
-            continue;
+        // The pin's string: NULL for a word of 0x80000000 or more
+        // (`g_ucs4_to_utf8`, `glib/gutf8.c:1040-1045`), bytes that need not
+        // be UTF-8 otherwise.
+        let text = match cand.string().as_bytes() {
+            None => None,
+            Some(bytes) => match std::ffi::CString::new(bytes) {
+                Ok(text) => Some(text),
+                Err(_) => continue,
+            },
         };
         let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
             || cand.consumed_bytes(),

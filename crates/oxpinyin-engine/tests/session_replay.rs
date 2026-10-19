@@ -16,6 +16,9 @@ use oxpinyin_engine::{
 };
 use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
+mod support;
+use support::CandidateText;
+
 const SCENARIOS: &str = include_str!("../../../fixtures/w4/f-d-session.txt");
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");

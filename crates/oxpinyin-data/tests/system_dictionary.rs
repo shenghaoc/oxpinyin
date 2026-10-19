@@ -220,7 +220,7 @@ fn single_syllable_lookup_resolves_only_loaded_libraries() {
     // 0x02000010 sits under nibble 2, whose chunk file is absent: dropped,
     // upstream's NULL-array skip.
     assert_eq!(entries.len(), 1, "{entries:?}");
-    assert_eq!(entries[0].text(), "你");
+    assert_eq!(*entries[0].string(), "你");
     assert_eq!(entries[0].token().value(), 0x0100_0010);
 }
 
@@ -233,7 +233,7 @@ fn lookup_carries_the_pronunciation_possibility() {
     assert_eq!(entries[0].pronunciation_possibility(), Some((8, 8)));
     let entries = dict.lookup(&syls("ni,hao")).unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].text(), "你好");
+    assert_eq!(*entries[0].string(), "你好");
     assert_eq!(entries[0].pronunciation_possibility(), Some((5, 5)));
 }
 
@@ -246,13 +246,13 @@ fn incomplete_syllables_search_the_initial_keyspace() {
     // "n" alone: 你 (nibble 1 only).
     let entries = dict.lookup(&[n]).unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].text(), "你");
+    assert_eq!(*entries[0].string(), "你");
     // "ni" + "h": 你好 through the incomplete keyspace, filtered by the
     // complete first syllable.
     let h = SyllableKey::from_text("h").expect("initial-only key");
     let entries = dict.lookup(&[syl("ni"), h]).unwrap();
     assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0].text(), "你好");
+    assert_eq!(*entries[0].string(), "你好");
     // "n" + "m": 你们 is nibble 2 → unloaded → nothing, but the key exists.
     let m = SyllableKey::from_text("m").expect("initial-only key");
     assert!(dict.lookup(&[n, m]).unwrap().is_empty());
@@ -318,9 +318,14 @@ fn lookup_into_matches_lookup() {
 fn token_surface_resolves_through_the_chunk_file() {
     let fix = Fixture::new();
     let dict = fix.dict();
-    assert_eq!(dict.phrase_text(0x0100_0099).as_deref(), Some("你好"));
-    assert_eq!(dict.phrase_text(0x0200_0010), None, "unloaded library");
-    assert_eq!(dict.phrase_text(0xFFFF_FFFF), None);
+    assert_eq!(
+        dict.phrase_words(0x0100_0099)
+            .as_ref()
+            .and_then(|words| words.as_text()),
+        Some("你好")
+    );
+    assert_eq!(dict.phrase_words(0x0200_0010), None, "unloaded library");
+    assert_eq!(dict.phrase_words(0xFFFF_FFFF), None);
     assert_eq!(dict.unigram_count(0x0100_0010), Some(5));
     let prons = dict.pronunciations(0x0100_0010);
     assert_eq!(prons.len(), 2);
@@ -348,7 +353,10 @@ fn suggest_after_walks_the_longer_phrases() {
     let dict = fix.dict();
     // 你 → 你好 (loaded) and 你们 (unloaded, dropped); defined order.
     let rows = dict.suggest_after("你").unwrap();
-    assert_eq!(rows, vec![(0x0100_0099, "你好".to_owned())]);
+    assert_eq!(
+        rows,
+        vec![(0x0100_0099, oxpinyin_core::PhraseWords::from_text("你好"))]
+    );
     assert!(dict.suggest_after("你好").unwrap().is_empty());
     assert!(dict.suggest_after("无").unwrap().is_empty());
     assert!(dict.suggest_after("").unwrap().is_empty());
@@ -418,7 +426,7 @@ fn convert_ranges(dict: &SystemDictionary, tones: &[u8]) -> (Spans, Vec<String>)
         .trellis_records(&syls("ni"), tones)
         .unwrap()
         .iter()
-        .map(|entry| entry.text().to_owned())
+        .map(|entry| entry.string().to_string_lossy().into_owned())
         .collect();
     (spans, texts)
 }
@@ -535,7 +543,7 @@ fn a_long_phrase_resolves_with_text_and_possibility() {
     let query: Vec<SyllableKey> = std::iter::repeat_n(syl("zhong"), 11).collect();
     let entries = dict.lookup(&query).unwrap();
     assert_eq!(entries.len(), 1, "{entries:?}");
-    assert_eq!(entries[0].text(), text);
+    assert_eq!(*entries[0].string(), text);
     assert_eq!(entries[0].token().value(), 0x0100_00B0);
     assert_eq!(entries[0].pronunciation_possibility(), Some((9, 9)));
 }

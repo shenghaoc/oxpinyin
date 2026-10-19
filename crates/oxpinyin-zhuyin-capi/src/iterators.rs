@@ -152,14 +152,16 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
         // A missing item (a token a library reload left in the phrase
         // table) leaves the pin's `PhraseItem` at length zero: `:454` asserts
         // before any import mutation.
-        let item_text = dict
+        // The `memcmp` compares the `ucs4_t` arrays, so the item's words are
+        // read as stored, not as the string the pin makes of them.
+        let item_words = dict
             .token_introspection(token)
-            .map(|introspection| introspection.text);
-        if item_text.as_deref() != Some(phrase.as_str()) {
+            .map(|introspection| introspection.words);
+        if item_words.as_ref() != Some(&oxpinyin_core::PhraseWords::from_text(phrase.as_str())) {
             crate::ffi::log_warning(
-                if item_text
+                if item_words
                     .as_ref()
-                    .is_some_and(|text| text.chars().count() == length)
+                    .is_some_and(|words| words.len() == length)
                 {
                     "zhuyin_iterator_add_phrase: assertion \
                      '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"

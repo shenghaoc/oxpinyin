@@ -37,7 +37,12 @@ impl PhraseSource for SystemPhraseSource<'_> {
     }
 
     fn text(&self, token: PhraseToken) -> Option<String> {
-        self.dictionary.phrase_text(token.value())
+        // The offline evaluation reads text: a phrase with a word that is no
+        // scalar value has none.
+        self.dictionary
+            .phrase_words(token.value())?
+            .as_text()
+            .map(str::to_owned)
     }
 
     fn lexicon_tokens(&self) -> Vec<PhraseToken> {

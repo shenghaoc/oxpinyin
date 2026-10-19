@@ -10,7 +10,9 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use oxpinyin_core::{Completeness, PhraseEntry, PhraseToken, SyllableKey, syllable_initial};
+use oxpinyin_core::{
+    Completeness, PhraseEntry, PhraseToken, PhraseWords, SyllableKey, syllable_initial,
+};
 
 use crate::store::{UserStore, UserStoreError};
 
@@ -38,7 +40,7 @@ pub struct UserLookup {
     pinyin_keys: Box<[String]>,
     initial_keys: Box<[String]>,
     text_tokens: BTreeMap<Vec<u8>, Vec<u32>>,
-    token_text: BTreeMap<u32, String>,
+    token_text: BTreeMap<u32, PhraseWords>,
 }
 
 impl UserLookup {
@@ -58,13 +60,14 @@ impl UserLookup {
         let mut exact: BTreeMap<String, Vec<PhraseEntry>> = BTreeMap::new();
         let mut by_initial: BTreeMap<String, Vec<(String, PhraseEntry)>> = BTreeMap::new();
         let mut text_tokens: BTreeMap<Vec<u8>, Vec<u32>> = BTreeMap::new();
-        let mut token_text: BTreeMap<u32, String> = BTreeMap::new();
+        let mut token_text: BTreeMap<u32, PhraseWords> = BTreeMap::new();
         let mut pinyin_keys: Vec<String> = Vec::new();
         let mut initial_keys: Vec<String> = Vec::new();
 
         for phrase in store.index_phrases()? {
             let token = phrase.token();
-            token_text.insert(token, phrase.text().to_owned());
+            token_text.insert(token, phrase.words().clone());
+            let mut phrase_entry: Option<PhraseEntry> = None;
             for pronunciation in phrase.pronunciations() {
                 // Only readings the user pinyin index carries are found
                 // (`_add_phrase` never indexes a reading merged into an
@@ -77,7 +80,11 @@ impl UserLookup {
                 let Some(pinyin) = pronunciation.render_pinyin_toneless() else {
                     continue;
                 };
-                let entry = PhraseEntry::new(PhraseToken::new(token), phrase.text().to_owned());
+                let entry = phrase_entry
+                    .get_or_insert_with(|| {
+                        PhraseEntry::from_words(PhraseToken::new(token), phrase.words())
+                    })
+                    .clone();
                 exact.entry(pinyin.clone()).or_default().push(entry.clone());
                 by_initial
                     .entry(initial_of(&pinyin))
@@ -241,10 +248,10 @@ impl UserLookup {
         }
     }
 
-    /// Phrase text for `token`, if this snapshot holds it.
+    /// The words of the phrase for `token`, if this snapshot holds it.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<&str> {
-        self.token_text.get(&token).map(String::as_str)
+    pub fn phrase_words(&self, token: u32) -> Option<&PhraseWords> {
+        self.token_text.get(&token)
     }
 
     /// Tokens whose phrase text is exactly `text`.
@@ -513,8 +520,8 @@ mod tests {
         let lookup = UserLookup::from_store(&store).unwrap();
         let entries = lookup.lookup(&[key("ni")]);
         assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].text(), "拟");
-        assert_eq!(entries[1].text(), "你");
+        assert_eq!(*entries[0].string(), "拟");
+        assert_eq!(*entries[1].string(), "你");
         assert!(lookup.phrase_prefix_exists(&[key("ni")]));
     }
 
@@ -555,7 +562,7 @@ mod tests {
         let entries = lookup.lookup(&[n_partial]);
         let texts: Vec<&str> = entries
             .iter()
-            .map(oxpinyin_core::PhraseEntry::text)
+            .map(|entry| entry.string().as_str().unwrap_or_default())
             .collect();
         assert!(texts.contains(&"你"), "expected 你 in {texts:?}");
         assert!(texts.contains(&"那"), "expected 那 in {texts:?}");
@@ -605,7 +612,7 @@ mod tests {
         let entries = lookup.lookup(&[n_partial, key("hao")]);
         let texts: Vec<&str> = entries
             .iter()
-            .map(oxpinyin_core::PhraseEntry::text)
+            .map(|entry| entry.string().as_str().unwrap_or_default())
             .collect();
         assert!(texts.contains(&"你好"), "expected 你好 in {texts:?}");
         assert!(texts.contains(&"那号"), "expected 那号 in {texts:?}");

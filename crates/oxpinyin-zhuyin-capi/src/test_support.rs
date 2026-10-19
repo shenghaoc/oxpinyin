@@ -112,7 +112,7 @@ pub fn candidate_text(instance: *mut ZhuyinInstance, index: usize) -> String {
     // `zhuyin_alloc_instance`; the borrow ends with this function.
     let inst = unsafe { instance_mut(instance) };
     inst.candidates[index]
-        .text
+        .cstr()
         .to_str()
         .expect("candidate text is UTF-8")
         .to_owned()

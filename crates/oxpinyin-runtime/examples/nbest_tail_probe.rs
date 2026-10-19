@@ -136,7 +136,7 @@ fn main() {
             for entry in &entries {
                 let token = entry.token();
                 let lib = (token.value() >> 24) & 0xff;
-                if lib != 7 && prefix_len == 2 && entry.text() != "你好" {
+                if lib != 7 && prefix_len == 2 && entry.string() != "你好" {
                     continue;
                 }
                 let step = lm.nbest_step_costs(&start, &token).ok();
@@ -144,7 +144,7 @@ fn main() {
                     "  entry 0x{:08x} lib={lib} text={} pronunciation={:?} unigram_freq={:?} \
                      step_costs(sentence_start -> token): unigram={} blended={}",
                     token.value(),
-                    entry.text(),
+                    entry.string(),
                     entry.pronunciation_possibility(),
                     lm.unigram_freq(&token).ok().flatten(),
                     fmt_cost(step.as_ref().and_then(|s| s.unigram)),
@@ -159,11 +159,11 @@ fn main() {
         .lookup(&full[..2])
         .unwrap_or_default()
         .iter()
-        .filter(|entry| entry.text() == "你好")
+        .filter(|entry| entry.string() == "你好")
         .map(|entry| entry.token())
         .collect();
     for entry in dict.lookup(&tail).unwrap_or_default() {
-        if entry.text() != "世界" && entry.text() != "时节" {
+        if entry.string() != "世界" && entry.string() != "时节" {
             continue;
         }
         for head in &heads {
@@ -172,7 +172,7 @@ fn main() {
                 "step_costs(0x{:08x} 你好 -> 0x{:08x} {}): unigram={} blended={}",
                 head.value(),
                 entry.token().value(),
-                entry.text(),
+                entry.string(),
                 fmt_cost(step.as_ref().and_then(|s| s.unigram)),
                 fmt_cost(step.as_ref().and_then(|s| s.blended)),
             );
@@ -205,7 +205,7 @@ fn main() {
     for index in 0..3u8 {
         println!(
             "sentence_text({index}) = {:?}",
-            session.sentence_text(index)
+            session.sentence_string(index)
         );
     }
     match session.candidates_at(0) {
@@ -217,7 +217,7 @@ fn main() {
                 println!(
                     "row rank={:?} text={} keys={} cost={} nats={:.9}",
                     candidate.nbest_row(),
-                    candidate.text(),
+                    candidate.string(),
                     candidate.consumed_keys(),
                     candidate.cost(),
                     nats(candidate.cost()),

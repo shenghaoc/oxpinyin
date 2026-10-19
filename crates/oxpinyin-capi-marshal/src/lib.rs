@@ -165,39 +165,52 @@ macro_rules! opaque_handle_casts {
 /// Stamps a facade's `write_owned_sentence` helper: the `char **`-out
 /// sentence writer shared byte-for-byte by both `sentence.rs` files.
 ///
-/// The one per-facade seam is which crate-local `owned_cstr` duplicates the
-/// text into a libc-`malloc` buffer (the allocator edge each facade keeps
-/// in its own `ffi.rs`), so that path is passed in explicitly rather than
-/// assumed. The emitted `fn write_owned_sentence(text, sentence) -> bool`
-/// answers `false` — nulling the out-param first — on an interior NUL or an
-/// allocation failure, and otherwise transfers a caller-owned (`g_free`)
-/// buffer through the out-param. An empty text is a string like another:
-/// `convert_to_utf8` makes `""` of phrases whose first code point is zero
-/// (`g_ucs4_to_utf8` allocates an empty string, `glib/gutf8.c:1050-1060`)
-/// and `pinyin_get_sentence` answers it.
+/// The one per-facade seam is which crate-local `owned_cstr_bytes` duplicates
+/// the bytes into a libc-`malloc` buffer (the allocator edge each facade
+/// keeps in its own `ffi.rs`), so that path is passed in explicitly rather
+/// than assumed. The emitted
+/// `fn write_owned_sentence(bytes: Option<&[u8]>, sentence) -> bool` takes
+/// the sentence as the pin makes it: the bytes of the phrase strings
+/// `convert_to_utf8` joins (they are UTF-8 only while every stored word is a
+/// Unicode scalar value), or `None` for the NULL it makes when every phrase's
+/// string is NULL (`lookup.cpp:61-67`). It answers `false` — nulling the
+/// out-param first — on an interior NUL or an allocation failure, and
+/// otherwise transfers a caller-owned (`g_free`) buffer through the
+/// out-param. An empty sentence is a string like another: `convert_to_utf8`
+/// makes `""` of phrases whose first code point is zero (`g_ucs4_to_utf8`
+/// allocates an empty string, `glib/gutf8.c:1050-1060`). The NULL sentence
+/// is an answer too: `pinyin_get_sentence` returns true with `*sentence`
+/// NULL (`pinyin.cpp:1477-1482`).
 ///
 /// # Example
 ///
 /// ```ignore
-/// oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::owned_cstr);
+/// oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::owned_cstr_bytes);
 /// ```
 #[macro_export]
 macro_rules! write_owned_sentence {
     ($owned_cstr:path) => {
-        /// Writes `text` through the caller-owned out-param: `false` on an
-        /// interior NUL or allocation failure, with the out-param nulled on
-        /// every failure path.
-        fn write_owned_sentence(text: &str, sentence: *mut *mut ::std::os::raw::c_char) -> bool {
+        /// Writes the sentence through the caller-owned out-param: `false` on
+        /// an interior NUL or allocation failure, with the out-param nulled
+        /// on every failure path; the NULL sentence (`None`) writes NULL and
+        /// answers `true`.
+        fn write_owned_sentence(
+            bytes: Option<&[u8]>,
+            sentence: *mut *mut ::std::os::raw::c_char,
+        ) -> bool {
             if !sentence.is_null() {
-                // SAFETY: Null-checked above. `owned_cstr` returns null on an
-                // interior NUL or allocation failure; otherwise ownership
-                // transfers to the caller, which frees it with `g_free`.
-                let owned = $owned_cstr(text);
+                // `owned_cstr_bytes` returns null on an interior NUL or
+                // allocation failure; otherwise ownership transfers to the
+                // caller, which frees it with `g_free`.
+                let owned = match bytes {
+                    Some(bytes) => $owned_cstr(bytes),
+                    None => ::std::ptr::null_mut(),
+                };
                 // SAFETY: Null-checked above.
                 unsafe {
                     *sentence = owned;
                 }
-                if owned.is_null() {
+                if owned.is_null() && bytes.is_some() {
                     return false;
                 }
             }

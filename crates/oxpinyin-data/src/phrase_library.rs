@@ -41,7 +41,6 @@
 //! degrading to `None` where upstream would answer `ERROR_NO_ITEM` /
 //! `ERROR_FILE_CORRUPTION`.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -56,15 +55,7 @@ compile_error!(
 use crate::chunk_format::{
     CHEWING_KEY_SIZE, CHUNK_HEADER_SIZE, ITEM_HEADER_SIZE, PHRASE_MASK, SEPARATOR, chunk_checksum,
 };
-
-/// Bytes of stack the dictionary-hit path gives a phrase's UTF-8 before
-/// it falls back to the heap ([`PhraseItemView::phrase_text_into`]):
-/// eight characters of any width, or ten three-byte CJK characters. The
-/// typical hit is one to four CJK characters
-/// (`docs/perf/perf-alloc-2026-08.md`); the entry type the text lands in
-/// keeps up to 24 bytes inline, so a text that fits here but not there
-/// costs the one allocation a longer text costs anyway.
-pub(crate) const PHRASE_TEXT_STACK_BYTES: usize = 32;
+use oxpinyin_core::{PhraseString, PhraseWords};
 
 /// The pin's `G_STRFUNC` for `SubPhraseIndex::load`: the C++
 /// `__PRETTY_FUNCTION__` the measured critical carries (the pin logs it in
@@ -329,6 +320,14 @@ mod map {
     }
 }
 
+/// The little-endian `ucs4_t`s of `bytes`, four bytes each (a trailing
+/// partial word is dropped).
+fn word_values(bytes: &[u8]) -> impl Iterator<Item = u32> + Clone + '_ {
+    bytes
+        .chunks_exact(4)
+        .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+}
+
 // ── phrase item view ────────────────────────────────────────────────
 
 /// One pronunciation of a phrase item.
@@ -387,140 +386,55 @@ impl PhraseItemView<'_> {
         u32_at(self.bytes, 2).unwrap_or(0)
     }
 
-    /// The phrase text, decoded from its UCS-4 characters —
-    /// `PhraseItem::get_phrase_string`, one character per stored `ucs4_t`
-    /// (a U+0000 and what follows it included: the pin's string ends at
-    /// the first zero, [`oxpinyin_core::phrase_c_string`]). `None` when a
-    /// code point the pin converts is not a scalar value, or the item is
-    /// malformed (never a panic).
+    /// The `phrase_length()` stored words as bytes, `ucs4_t` after `ucs4_t`:
+    /// `None` where the item is shorter than its header says (never a panic).
+    fn word_bytes(&self) -> Option<&[u8]> {
+        let end = ITEM_HEADER_SIZE.checked_add(self.phrase_length().checked_mul(4)?)?;
+        self.bytes.get(ITEM_HEADER_SIZE..end)
+    }
+
+    /// The phrase's length in words, when the item holds all of them: the
+    /// item header's `get_phrase_length()`, which is also the length of the
+    /// string's words whatever the string is.
     #[must_use]
-    pub fn phrase_text(&self) -> Option<String> {
-        self.phrase_chars().collect()
+    pub fn checked_length(&self) -> Option<usize> {
+        self.word_bytes().map(|words| words.len() / 4)
     }
 
-    /// The phrase's code points in order, each `None` where the pin's
-    /// `g_ucs4_to_utf8` reads a stored `ucs4_t` that is not a Unicode scalar
-    /// value: what `phrase_text` collects, for a reader that writes the
-    /// characters itself instead of collecting a `String` first (the §9
-    /// export iterator).
-    ///
-    /// The conversion stops at the first zero (`glib/gutf8.c:1037-1038`,
-    /// GLib 2.89.4), so a word behind it is never read: it keeps its place
-    /// in the phrase's length as a character and cannot be `None`
-    /// ([`oxpinyin_core::ucs4_phrase_char`]).
-    pub fn phrase_chars(&self) -> impl Iterator<Item = Option<char>> + '_ {
-        let length = self.phrase_length();
-        let mut converting = true;
-        (0..length)
-            .map(move |index| oxpinyin_core::ucs4_phrase_char(self.word(index)?, &mut converting))
-    }
-
-    /// The phrase's stored words, in order, exactly as the item holds them
-    /// (`ucs4_t` each): `None` where the item does not hold one. No reading
-    /// rule applies, unlike [`Self::phrase_chars`], which reads them the way
-    /// the pin's string conversion does. For a reader that carries the item
-    /// on instead of making its string.
-    pub fn phrase_words(&self) -> impl Iterator<Item = Option<u32>> + '_ {
-        (0..self.phrase_length()).map(move |index| self.word(index))
-    }
-
-    /// The phrase as text when every stored word is a Unicode scalar value,
-    /// `None` otherwise, a zero and what follows it included. For a reader
-    /// that carries the item on as text (an addon item promoted into the user
-    /// store): a word the pin's string conversion never reads, which
-    /// [`Self::phrase_text`] stands for as U+FFFD, would come back altered.
+    /// The phrase's stored words, exactly as the item holds them
+    /// (`PhraseItem::get_phrase_string`'s `ucs4_t phrase[L]`): every value
+    /// the pin would convert, and every value it never reads. `None` where
+    /// the item holds fewer words than its header says.
     #[must_use]
-    pub fn scalar_text(&self) -> Option<String> {
-        self.phrase_words()
-            .map(|word| word.and_then(char::from_u32))
-            .collect()
+    pub fn phrase_words(&self) -> Option<PhraseWords> {
+        Some(PhraseWords::from_words(word_values(self.word_bytes()?)))
     }
 
-    /// Stored word `index`, `None` where the item does not hold it.
-    fn word(&self, index: usize) -> Option<u32> {
-        let offset = ITEM_HEADER_SIZE.checked_add(4 * index)?;
-        u32_at(self.bytes, offset)
+    /// The phrase's stored words in order, `ucs4_t` after `ucs4_t`, for a
+    /// reader that walks them without keeping them (the export writers). `None`
+    /// where the item holds fewer words than its header says.
+    #[must_use]
+    pub fn word_values(&self) -> Option<impl Iterator<Item = u32> + Clone + '_> {
+        Some(word_values(self.word_bytes()?))
     }
 
-    /// Stored word `index` as a character for the dictionary-hit path, which
-    /// keeps the smallest word it has read in `smallest` (zero once a zero has
-    /// been read, where the pin's conversion stops). A word that is a scalar
-    /// value reads as itself whatever stands before it, so the rule is not
-    /// run per word; one that is not goes to [`Self::nonscalar_word`].
-    #[inline(always)]
-    fn scalar_char(&self, index: usize, smallest: &mut u32) -> Option<char> {
-        let code = self.word(index)?;
-        *smallest = (*smallest).min(code);
-        match char::from_u32(code) {
-            Some(ch) => Some(ch),
-            None => self.nonscalar_word(code, *smallest),
-        }
-    }
-
-    /// Stored word `index`, `code`, which is not a Unicode scalar value, as the
-    /// pin's conversion reads it: a word behind a zero is never read and
-    /// stands as U+FFFD, one in front of it refuses the phrase.
-    /// [`oxpinyin_core::ucs4_phrase_char`] is the one place that rule is
-    /// written; the state it needs is whether a zero stands before the word.
-    #[cold]
-    #[inline(never)]
-    fn nonscalar_word(&self, code: u32, smallest: u32) -> Option<char> {
-        let mut converting = smallest != 0;
-        oxpinyin_core::ucs4_phrase_char(code, &mut converting)
-    }
-
-    /// [`Self::phrase_text`] written into `buf` while it fits, for the
-    /// dictionary-hit path: the same characters, the same `None` on the
-    /// same malformed items, and no heap allocation for a phrase whose
-    /// UTF-8 is at most `buf.len()` bytes. A longer phrase falls back to
-    /// one owned [`String`] that carries the bytes already written and
-    /// the rest of the text; nothing is decoded twice.
+    /// The string the pin makes of the phrase, `g_ucs4_to_utf8` of its
+    /// words (`_token_get_phrase`, `pinyin.cpp:1627-1645`; `glib/gutf8.c:
+    /// 1023-1070` at GLib 2.89.4): the characters before the first zero
+    /// word, as bytes that are not UTF-8 for a surrogate or a value above
+    /// U+10FFFF, or NULL for a value of 0x80000000 or more. A word behind
+    /// the zero is never read. `None` where the item holds fewer words than
+    /// its header says.
     ///
-    /// The answer also says whether the text holds a U+0000, which the
-    /// walk knows once it has read the word the pin's string stops at
-    /// ([`oxpinyin_core::holds_zero`] of the text, without scanning it
-    /// again).
-    ///
-    /// The boundary is in UTF-8 bytes, not characters: a buffer of
-    /// [`PHRASE_TEXT_STACK_BYTES`] holds any phrase of eight characters
-    /// whatever their width, and every phrase of up to ten CJK
-    /// characters.
-    pub(crate) fn phrase_text_into<'b>(
-        &self,
-        buf: &'b mut [u8; PHRASE_TEXT_STACK_BYTES],
-    ) -> Option<(Cow<'b, str>, bool)> {
-        let length = self.phrase_length();
-        let mut smallest = u32::MAX;
-        let mut written = 0_usize;
-        for index in 0..length {
-            let ch = self.scalar_char(index, &mut smallest)?;
-            let width = ch.len_utf8();
-            match buf.get_mut(written..written + width) {
-                Some(slot) => {
-                    ch.encode_utf8(slot);
-                    written += width;
-                }
-                None => {
-                    // The text outgrows the buffer: keep what is encoded
-                    // and finish into one owned string sized for the
-                    // worst case (four bytes per remaining character), so
-                    // it never grows again.
-                    let remaining = length.saturating_sub(index);
-                    let mut text = String::with_capacity(written + 4 * remaining);
-                    text.push_str(core::str::from_utf8(&buf[..written]).ok()?);
-                    text.push(ch);
-                    for index in index + 1..length {
-                        text.push(self.scalar_char(index, &mut smallest)?);
-                    }
-                    return Some((Cow::Owned(text), smallest == 0));
-                }
-            }
-        }
-        // Every byte of `buf[..written]` was produced by `encode_utf8`
-        // for one scalar after another, so the prefix is valid UTF-8; the
-        // check is kept rather than trusted, at the cost of one scan.
-        let text = core::str::from_utf8(&buf[..written]).ok()?;
-        Some((Cow::Borrowed(text), smallest == 0))
+    /// The dictionary-hit path: a phrase whose UTF-8 is at most 24 bytes
+    /// (the typical hit is one to four CJK characters,
+    /// `docs/perf/perf-alloc-2026-08.md`) costs no heap allocation, and a
+    /// word that is a scalar value is read without any rule applied.
+    #[must_use]
+    pub fn phrase_string(&self) -> Option<PhraseString> {
+        Some(PhraseString::from_word_iter(word_values(
+            self.word_bytes()?,
+        )))
     }
 
     /// `PhraseItem::get_nth_pronunciation` — pronunciation `index`'s
@@ -998,14 +912,14 @@ mod sparse_mapping_tests {
 }
 
 #[cfg(test)]
-mod phrase_text_into_tests {
-    //! `phrase_text_into` against `phrase_text`: the same bytes and the
-    //! same `None`s on every shape of item, and the stack buffer taken
-    //! exactly when the UTF-8 fits it.
+mod phrase_string_tests {
+    //! `phrase_string` and `phrase_words` against the core functions
+    //! (`pin_string`, `PhraseWords`): the same answer on every shape of item,
+    //! including the `None`s of a truncated one.
 
-    use std::borrow::Cow;
+    use oxpinyin_core::{PhraseString, PhraseWords, pin_string};
 
-    use super::{PHRASE_TEXT_STACK_BYTES, PhraseItemView};
+    use super::PhraseItemView;
 
     /// An item with `codes` as its UCS-4 text and no pronunciations:
     /// `{u8 len, u8 npron = 0, u32 unigram}` then the raw little-endian
@@ -1023,55 +937,57 @@ mod phrase_text_into_tests {
         text.chars().map(u32::from).collect()
     }
 
-    /// Both decoders over one item: `(phrase_text, phrase_text_into,
-    /// borrowed?)`. The zero flag `phrase_text_into` answers is checked
-    /// against the text it wrote for every item that passes through here.
-    fn both(bytes: &[u8]) -> (Option<String>, Option<String>, Option<bool>) {
-        let item = PhraseItemView { bytes };
-        let old = item.phrase_text();
-        let mut buf = [0_u8; PHRASE_TEXT_STACK_BYTES];
-        let new = item.phrase_text_into(&mut buf);
-        if let Some((text, zero)) = &new {
-            assert_eq!(
-                *zero,
-                oxpinyin_core::holds_zero(text),
-                "zero flag of {text:?}"
-            );
-        }
-        let borrowed = new
-            .as_ref()
-            .map(|(text, _)| matches!(text, Cow::Borrowed(_)));
-        (old, new.map(|(text, _)| text.into_owned()), borrowed)
+    /// Every reader of one item against what the core functions make of its
+    /// words.
+    fn assert_item(words: &[u32]) {
+        let bytes = item_bytes(words);
+        let item = PhraseItemView { bytes: &bytes };
+        assert_eq!(item.phrase_length(), words.len(), "{words:x?}");
+        assert_eq!(item.checked_length(), Some(words.len()), "{words:x?}");
+        assert_eq!(
+            item.phrase_words(),
+            Some(PhraseWords::from_words(words.iter().copied())),
+            "phrase_words of {words:x?}"
+        );
+        let string = item.phrase_string().expect("readable");
+        assert_eq!(string, PhraseString::from_words(words), "{words:x?}");
+        assert_eq!(
+            string.as_bytes().map(<[u8]>::to_vec),
+            pin_string(words),
+            "{words:x?}"
+        );
     }
 
-    fn assert_same(text: &str, expect_borrowed: bool) {
+    fn assert_text(text: &str) {
+        assert_item(&codes(text));
         let bytes = item_bytes(&codes(text));
-        let (old, new, borrowed) = both(&bytes);
-        assert_eq!(old.as_deref(), Some(text), "phrase_text of {text:?}");
-        assert_eq!(new, old, "phrase_text_into of {text:?}");
+        let item = PhraseItemView { bytes: &bytes };
         assert_eq!(
-            borrowed,
-            Some(expect_borrowed),
-            "{text:?} ({} bytes) should {}use the stack buffer",
-            text.len(),
-            if expect_borrowed { "" } else { "not " }
+            item.phrase_string().expect("readable"),
+            text,
+            "string of {text:?}"
+        );
+        assert_eq!(
+            item.phrase_words().expect("readable").as_text(),
+            Some(text),
+            "words of {text:?}"
         );
     }
 
     #[test]
-    fn empty_phrase_is_the_empty_string_on_the_stack() {
-        assert_same("", true);
+    fn empty_phrase_is_the_empty_string() {
+        assert_text("");
     }
 
     #[test]
     fn ascii_phrases_match() {
-        assert_same("a", true);
-        assert_same("nihao", true);
-        assert_same("abcdefghijklmnopqrstuvw", true); // 23 bytes
-        assert_same("abcdefghijklmnopqrstuvwx", true); // 24 bytes
-        assert_same("abcdefghijklmnopqrstuvwxy", true); // 25 bytes
-        assert_same("abcdefghijklmnopqrstuvwxyzABCDEF", true); // 32 bytes
-        assert_same("abcdefghijklmnopqrstuvwxyzABCDEFG", false); // 33 bytes
+        assert_text("a");
+        assert_text("nihao");
+        assert_text("abcdefghijklmnopqrstuvw"); // 23 bytes
+        assert_text("abcdefghijklmnopqrstuvwx"); // 24 bytes
+        assert_text("abcdefghijklmnopqrstuvwxy"); // 25 bytes
+        assert_text("abcdefghijklmnopqrstuvwxyzABCDEF"); // 32 bytes
+        assert_text("abcdefghijklmnopqrstuvwxyzABCDEFG"); // 33 bytes
     }
 
     #[test]
@@ -1079,58 +995,144 @@ mod phrase_text_into_tests {
         let han = "中华人民共和国万岁大家一起来学习";
         for chars in [1_usize, 2, 4, 7, 8, 9, 10, 11, 16] {
             let text: String = han.chars().take(chars).collect();
-            // 3 bytes per character: 10 characters fill the 30 of 32
-            // bytes, 11 overflow.
-            assert_same(&text, text.len() <= PHRASE_TEXT_STACK_BYTES);
+            assert_text(&text);
         }
     }
 
     #[test]
     fn inline_boundary_bytes_23_24_25_match() {
         // 7 Han + 2 ASCII = 23, 8 Han = 24, 8 Han + 1 ASCII = 25.
-        assert_same("中华人民共和国ab", true);
-        assert_same("中华人民共和国万", true);
-        assert_same("中华人民共和国万a", true);
+        assert_text("中华人民共和国ab");
+        assert_text("中华人民共和国万");
+        assert_text("中华人民共和国万a");
     }
 
     #[test]
     fn every_utf8_width_and_mixed_text_match() {
-        assert_same("a", true);
-        assert_same("\u{e9}", true);
-        assert_same("\u{4e2d}", true);
-        assert_same("\u{20000}", true);
-        assert_same("a\u{e9}\u{4e2d}\u{20000}", true);
-        // Eight four-byte scalars are exactly the buffer; nine overflow
-        // in the middle of a phrase, which is where the fallback starts.
-        let eight: String = std::iter::repeat_n('\u{20000}', 8).collect();
-        assert_same(&eight, true);
-        let nine: String = std::iter::repeat_n('\u{20000}', 9).collect();
-        assert_same(&nine, false);
-        let long_mixed = "a\u{e9}\u{4e2d}\u{20000}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}";
-        assert_same(long_mixed, false);
+        assert_text("a");
+        assert_text("\u{e9}");
+        assert_text("\u{4e2d}");
+        assert_text("\u{20000}");
+        assert_text("a\u{e9}\u{4e2d}\u{20000}");
+        assert_text(&std::iter::repeat_n('\u{20000}', 9).collect::<String>());
+        assert_text(
+            "a\u{e9}\u{4e2d}\u{20000}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}\u{4e2d}",
+        );
     }
 
     #[test]
-    fn embedded_nul_is_kept_as_a_character() {
-        // `char::from_u32(0)` is `Some('\0')` for both decoders, and the
-        // text keeps one character per stored word so that its length is
-        // the item's `get_phrase_length()`; the pin's string ends at the
-        // zero (`oxpinyin_core::phrase_c_string`), which is the string
-        // edge's business, not the decoder's.
-        assert_same("\u{4e2d}\0\u{6587}", true);
-        assert_same("\0", true);
-        assert_same("\0\u{4e2d}\u{6587}", true);
-        assert_same("\u{4e2d}\u{6587}\0", true);
+    fn the_string_ends_at_the_first_zero_and_the_words_keep_it() {
+        for (stored, string) in [
+            (vec![0x4e2d, 0, 0x6587], "\u{4e2d}"),
+            (vec![0], ""),
+            (vec![0, 0x4e2d, 0x6587], ""),
+            (vec![0x4e2d, 0x6587, 0], "\u{4e2d}\u{6587}"),
+        ] {
+            assert_item(&stored);
+            let bytes = item_bytes(&stored);
+            let item = PhraseItemView { bytes: &bytes };
+            assert_eq!(item.phrase_string().expect("readable"), string);
+            assert_eq!(item.phrase_length(), stored.len());
+            assert_eq!(
+                item.phrase_words().expect("readable").words().count(),
+                stored.len()
+            );
+        }
     }
 
     #[test]
-    fn the_item_readers_apply_the_rule_of_the_core_function_to_every_sequence() {
-        // The dictionary-hit path reads a scalar word without running the
-        // rule and sends the rest to `ucs4_phrase_char`; here every sequence
-        // up to four words over the interesting values (a scalar of each
-        // width, the zero, both ends of the surrogates, the first value
-        // above U+10FFFF, the last of the 31 bits, the first past them and
-        // the largest) must come out as the rule alone makes it.
+    fn a_word_behind_the_first_zero_is_never_read() {
+        // `g_ucs4_to_utf8` breaks out of its loop at the zero
+        // (`glib/gutf8.c:1037-1038`): a word behind it, whatever it is,
+        // neither fails the phrase nor reaches its string, and the words
+        // keep it.
+        for bad in [
+            0xD800_u32,
+            0xDFFF,
+            0x11_0000,
+            0x7FFF_FFFF,
+            0x8000_0000,
+            u32::MAX,
+        ] {
+            let stored = [0x4FC4_u32, 0, bad, 0x7FFF_FFFF];
+            assert_item(&stored);
+            let bytes = item_bytes(&stored);
+            let item = PhraseItemView { bytes: &bytes };
+            assert_eq!(item.phrase_string().expect("readable"), "\u{4fc4}");
+            assert_eq!(
+                item.phrase_words()
+                    .expect("readable")
+                    .words()
+                    .collect::<Vec<_>>(),
+                stored
+            );
+        }
+    }
+
+    #[test]
+    fn many_nonscalar_words_after_zero_keep_the_same_text() {
+        let mut words = vec![0];
+        words.extend(
+            [0xD800, 0x11_0000, 0x8000_0000]
+                .into_iter()
+                .cycle()
+                .take(254),
+        );
+        assert_item(&words);
+        let bytes = item_bytes(&words);
+        let item = PhraseItemView { bytes: &bytes };
+        assert_eq!(item.phrase_string().expect("readable"), "");
+        assert_eq!(
+            item.phrase_words()
+                .expect("words")
+                .words()
+                .collect::<Vec<_>>(),
+            words
+        );
+    }
+
+    #[test]
+    fn a_word_in_front_of_the_first_zero_that_is_no_scalar_value_makes_bytes_or_null() {
+        // The pin hands out what GLib makes (`glib/gutf8.c:549-599`): bytes
+        // that are not UTF-8 up to 0x7FFFFFFF, NULL from 0x80000000 on.
+        for (word, expected) in [
+            (0xD800_u32, Some(vec![0xed, 0xa0, 0x80])),
+            (0xDFFF, Some(vec![0xed, 0xbf, 0xbf])),
+            (0x11_0000, Some(vec![0xf4, 0x90, 0x80, 0x80])),
+            (0x7FFF_FFFF, Some(vec![0xfd, 0xbf, 0xbf, 0xbf, 0xbf, 0xbf])),
+            (0x8000_0000, None),
+            (u32::MAX, None),
+        ] {
+            for stored in [
+                vec![0x4FC4, word, 0x4FC4],
+                vec![0x4FC4, word, 0],
+                vec![word],
+            ] {
+                assert_item(&stored);
+                let bytes = item_bytes(&stored);
+                let item = PhraseItemView { bytes: &bytes };
+                let string = item.phrase_string().expect("readable");
+                assert_eq!(string.is_null(), expected.is_none(), "{stored:x?}");
+                if let Some(encoded) = &expected {
+                    let mut want = Vec::new();
+                    if stored.first() == Some(&0x4FC4) {
+                        want.extend_from_slice("\u{4fc4}".as_bytes());
+                    }
+                    want.extend_from_slice(encoded);
+                    if stored.get(2) == Some(&0x4FC4) {
+                        want.extend_from_slice("\u{4fc4}".as_bytes());
+                    }
+                    assert_eq!(string.as_bytes(), Some(want.as_slice()), "{stored:x?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_sequence_of_up_to_four_words_reads_as_the_core_functions_make_it() {
+        // The interesting values: a scalar of each width, the zero, both
+        // ends of the surrogates, the first value above U+10FFFF, the last
+        // of the 31 bits, the first past them and the largest.
         let pool = [
             0x41_u32,
             0x4f60,
@@ -1151,182 +1153,43 @@ mod phrase_text_into_tests {
                     sequence.push(pool[n % pool.len()]);
                     n /= pool.len();
                 }
-                let bytes = item_bytes(&sequence);
-                let item = PhraseItemView { bytes: &bytes };
-                let by_rule: Vec<Option<char>> =
-                    oxpinyin_core::ucs4_phrase_chars(sequence.iter().copied()).collect();
-                assert_eq!(
-                    item.phrase_chars().collect::<Vec<_>>(),
-                    by_rule,
-                    "{sequence:x?}"
-                );
-                let text: Option<String> = by_rule.iter().copied().collect();
-                let mut buf = [0_u8; PHRASE_TEXT_STACK_BYTES];
-                let into = item.phrase_text_into(&mut buf);
-                assert_eq!(
-                    into.as_ref().map(|(text, _)| text.as_ref()),
-                    text.as_deref(),
-                    "{sequence:x?}"
-                );
-                if let Some((text, zero)) = into {
-                    assert_eq!(zero, oxpinyin_core::holds_zero(&text), "{sequence:x?}");
-                }
+                assert_item(&sequence);
             }
         }
     }
 
     #[test]
-    fn the_decoder_reports_a_zero_without_the_text_being_scanned() {
-        // On the stack, past the fallback point, behind an earlier zero, and
-        // on an item with none (`both` checks the flag against `holds_zero`
-        // of the written text; the values are pinned here).
-        let han = codes("中华人民共和国万岁大家一起来");
-        let flag = |codes: &[u32]| {
-            let bytes = item_bytes(codes);
-            let item = PhraseItemView { bytes: &bytes };
-            let mut buf = [0_u8; PHRASE_TEXT_STACK_BYTES];
-            item.phrase_text_into(&mut buf).map(|(_, zero)| zero)
-        };
-        assert_eq!(flag(&[]), Some(false));
-        assert_eq!(flag(&han[..3]), Some(false));
-        assert_eq!(flag(&han), Some(false));
-        for position in [0_usize, 1, 2, 9, 10, 11, 13] {
-            let mut stored = han.clone();
-            stored[position] = 0;
-            assert_eq!(flag(&stored), Some(true), "zero at {position}");
-            // A word no scalar value behind it changes nothing.
-            if position + 1 < stored.len() {
-                stored[position + 1] = 0x8000_0000;
-                assert_eq!(flag(&stored), Some(true), "zero at {position}, bad behind");
-            }
-        }
-        // Refused phrases answer nothing, zero or not.
-        assert_eq!(flag(&[0x4fc4, 0x8000_0000, 0]), None);
+    fn longer_phrases_than_the_inline_text_read_whole() {
+        // 13 Han (39 bytes) outgrow the 24 bytes of inline text.
+        let mut stored = codes("中华人民共和国万岁大家一起来");
+        assert_item(&stored);
+        stored[12] = 0xD800;
+        assert_item(&stored);
+        stored[3] = 0;
+        assert_item(&stored);
     }
 
     #[test]
-    fn a_word_behind_the_first_zero_is_never_read() {
-        // `g_ucs4_to_utf8` breaks out of its loop at the zero
-        // (`glib/gutf8.c:1037-1038`): a word behind it that is no scalar
-        // value neither refuses the phrase nor reaches its string. Both
-        // decoders keep it as a character, U+FFFD, so the length stays.
-        for bad in [
-            0xD800_u32,
-            0xDFFF,
-            0x11_0000,
-            0x7FFF_FFFF,
-            0x8000_0000,
-            u32::MAX,
-        ] {
-            let stored = [0x4FC4_u32, 0, bad, 0x7FFF_FFFF];
-            let bytes = item_bytes(&stored);
-            let (old, new, borrowed) = both(&bytes);
-            let expected = "\u{4fc4}\0\u{fffd}\u{fffd}";
-            assert_eq!(old.as_deref(), Some(expected), "phrase_text, {bad:#x}");
-            assert_eq!(new.as_deref(), Some(expected), "phrase_text_into, {bad:#x}");
-            assert_eq!(borrowed, Some(true));
-            let item = PhraseItemView { bytes: &bytes };
-            assert_eq!(item.phrase_chars().count(), stored.len());
-            // The same word in front of the zero refuses the phrase.
-            let before = [0x4FC4_u32, bad, 0];
-            let (old, new, _) = both(&item_bytes(&before));
-            assert_eq!((old, new), (None, None), "{bad:#x} before the zero");
-        }
-    }
-
-    #[test]
-    fn a_word_behind_the_zero_after_the_fallback_point_is_still_read_leniently() {
-        // Eleven Han overflow the stack buffer at the eleventh; put the zero
-        // before that point and an invalid word behind it, then the zero past
-        // the point with the invalid word behind that: the owned tail
-        // follows the same rule.
-        let mut early = codes("中华人民共和国万岁大家一起来");
-        early[3] = 0;
-        early[12] = 0xD800;
-        let (old, new, borrowed) = both(&item_bytes(&early));
-        assert_eq!(old, new);
-        assert_eq!(borrowed, Some(false));
-        assert_eq!(old.expect("readable").chars().count(), early.len());
-        let mut late = codes("中华人民共和国万岁大家一起来");
-        late[11] = 0;
-        late[12] = 0x8000_0000;
-        let (old, new, borrowed) = both(&item_bytes(&late));
-        assert_eq!(old, new);
-        assert_eq!(borrowed, Some(false));
-        assert_eq!(old.expect("readable").chars().count(), late.len());
-    }
-
-    #[test]
-    fn many_nonscalar_words_after_zero_keep_the_same_text() {
-        let mut words = vec![0];
-        words.extend(
-            [0xD800, 0x11_0000, 0x8000_0000]
-                .into_iter()
-                .cycle()
-                .take(254),
-        );
-        let expected = format!("\0{}", "\u{fffd}".repeat(254));
-        let (old, new, borrowed) = both(&item_bytes(&words));
-        assert_eq!(old.as_deref(), Some(expected.as_str()));
-        assert_eq!(new, old);
-        assert_eq!(borrowed, Some(false));
-    }
-
-    #[test]
-    fn invalid_ucs4_is_none_wherever_it_sits() {
-        let han = codes("中华人民共和国万岁大家一起来");
-        for bad in [
-            0xD800_u32,
-            0xDBFF,
-            0xDC00,
-            0xDFFF,
-            0x11_0000,
-            0x7FFF_FFFF,
-            0xFFFF_FFFF,
-        ] {
-            for len in [1_usize, 2, 8, 12] {
-                for position in [0_usize, len / 2, len - 1] {
-                    let mut text: Vec<u32> = han[..len].to_vec();
-                    text[position] = bad;
-                    let (old, new, _) = both(&item_bytes(&text));
-                    assert_eq!(old, None, "phrase_text {bad:#x} at {position} of {len}");
-                    assert_eq!(
-                        new, None,
-                        "phrase_text_into {bad:#x} at {position} of {len}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn invalid_scalar_after_the_fallback_point_is_still_none() {
-        // 11 Han (33 bytes) overflows the buffer at the 11th; make the
-        // 12th invalid so the owned tail is what refuses.
-        let mut text = codes("中华人民共和国万岁大家一");
-        text.push(0xD800);
-        let (old, new, _) = both(&item_bytes(&text));
-        assert_eq!(old, None);
-        assert_eq!(new, None);
-    }
-
-    #[test]
-    fn truncated_items_are_none_for_both() {
+    fn truncated_items_read_as_none() {
         let full = item_bytes(&codes("中华人"));
         // Whole missing character, then a character cut mid-word, then a
         // header with no text at all, then nothing but one length byte.
         for cut in [full.len() - 4, full.len() - 1, 6, 1] {
-            let (old, new, _) = both(&full[..cut]);
-            assert_eq!(old, None, "cut at {cut}");
-            assert_eq!(new, None, "cut at {cut}");
+            let item = PhraseItemView {
+                bytes: &full[..cut],
+            };
+            assert_eq!(item.phrase_string(), None, "cut at {cut}");
+            assert_eq!(item.phrase_words(), None, "cut at {cut}");
+            assert_eq!(item.checked_length(), None, "cut at {cut}");
         }
-        // An item whose header claims more characters than the buffer
-        // holds, cut after the buffer would have filled: the fallback
-        // path meets the truncation.
-        let long = item_bytes(&codes("中华人民共和国万岁大家一起来学习"));
-        let (old, new, _) = both(&long[..long.len() - 3]);
-        assert_eq!(old, None);
-        assert_eq!(new, None);
+        // A cut behind a zero word is a cut all the same: the item does not
+        // hold the words its header names.
+        let behind = item_bytes(&[0x4fc4, 0, 0x4f1a]);
+        let item = PhraseItemView {
+            bytes: &behind[..behind.len() - 2],
+        };
+        assert_eq!(item.phrase_string(), None);
+        assert_eq!(item.phrase_words(), None);
     }
 
     #[test]
@@ -1335,16 +1198,16 @@ mod phrase_text_into_tests {
         // pronunciations, not the text.
         let mut bytes = item_bytes(&[]);
         bytes.extend_from_slice(&[0x11, 0x22, 0x33, 0x44]);
-        let (old, new, borrowed) = both(&bytes);
-        assert_eq!(old.as_deref(), Some(""));
-        assert_eq!(new.as_deref(), Some(""));
-        assert_eq!(borrowed, Some(true));
+        let item = PhraseItemView { bytes: &bytes };
+        assert_eq!(item.phrase_string().expect("readable"), "");
+        assert_eq!(item.phrase_words().expect("readable").len(), 0);
+        assert_eq!(item.checked_length(), Some(0));
     }
 
     #[test]
     fn generated_valid_scalar_sequences_agree() {
         // A deterministic walk over scalar values of every width and
-        // lengths across both sides of the buffer boundary.
+        // lengths across the inline boundary.
         let pool: [char; 7] = [
             'a',
             '\u{7f}',
@@ -1363,7 +1226,7 @@ mod phrase_text_into_tests {
                         pool[(state >> 29) as usize % pool.len()]
                     })
                     .collect();
-                assert_same(&text, text.len() <= PHRASE_TEXT_STACK_BYTES);
+                assert_text(&text);
             }
         }
     }

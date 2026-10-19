@@ -141,10 +141,10 @@ where
         token_override: Option<PhraseToken>,
     ) -> Result<Selection, EngineError> {
         // What the composition shows is the pin's string; the forced run keeps
-        // the phrase as stored, whose character count is the item's length
-        // (`still_spells`, `training_readings`).
-        let text = candidate.text().to_owned();
-        let phrase_text = candidate.phrase_text();
+        // the phrase's length in words as well, which is the item's length
+        // and not the string's (`still_spells`, `training_readings`).
+        let string = candidate.string().clone();
+        let phrase_len = candidate.phrase_length();
         let advance = candidate.consumed_bytes();
         let token = token_override.or_else(|| candidate.token());
         // The chosen span in the store's coordinates — upstream's
@@ -176,7 +176,7 @@ where
         // the record follows the store, moving back to it. An n-best row
         // is a whole-composition hypothesis and takes the row path below.
         if span_start < self.record.consumed() && candidate.nbest_row().is_none() {
-            return self.select_behind(constraint_start, constraint_end, token, phrase_text);
+            return self.select_behind(constraint_start, constraint_end, token, string, phrase_len);
         }
         // The raw bytes between the composition offset and the span start
         // were typed without being selected. For a re-anchored selection
@@ -202,9 +202,9 @@ where
             // row's sentence text, pinyin_choose_candidate's NBEST branch
             // returning matrix.size() - 1). The composition-anchored path
             // has an empty gap either way.
-            self.record.set_selected(&text);
+            self.record.set_selected(&string);
         } else {
-            self.record.append_selected(gap, &text);
+            self.record.append_selected(gap, &string);
         }
         if let Some(token) = token {
             self.record.push_token(token);
@@ -254,12 +254,8 @@ where
             }
         } else if let Some(token) = token {
             self.constraints.resize(self.input.len() + 1);
-            self.constraints.add(
-                constraint_start,
-                constraint_end,
-                token,
-                compact_str::CompactString::from(phrase_text),
-            );
+            self.constraints
+                .add(constraint_start, constraint_end, token, string, phrase_len);
         }
         self.record.set_consumed(constraint_end);
         self.record
@@ -284,7 +280,8 @@ where
         start: usize,
         end: usize,
         token: Option<PhraseToken>,
-        text: &str,
+        string: PhraseString,
+        len: usize,
     ) -> Result<Selection, EngineError> {
         let Some(token) = token else {
             return Err(EngineError::SelectionAnchorBeforeComposition {
@@ -293,8 +290,7 @@ where
             });
         };
         self.constraints.resize(self.input.len() + 1);
-        self.constraints
-            .add(start, end, token, compact_str::CompactString::from(text));
+        self.constraints.add(start, end, token, string, len);
         self.rebuild_selection_from_constraints();
         self.refresh()?;
         Ok(self.selection_outcome())
@@ -514,13 +510,8 @@ where
         for (index, span) in spans.iter().enumerate() {
             if let Some(end) = ends[index] {
                 // :923-927 trains every matching path of this span.
-                let mut readings = training_readings(
-                    matrix,
-                    self.input.as_bytes(),
-                    span.start,
-                    end,
-                    span.text.chars().count(),
-                );
+                let mut readings =
+                    training_readings(matrix, self.input.as_bytes(), span.start, end, span.len);
                 user.observe_with_keys(&context, &span.token, &mut readings)
                     .map_err(|error| EngineError::UserModel(error.to_string()))?;
             }
@@ -606,7 +597,7 @@ where
     ///
     /// Returns [`EngineError`] when a backend fails while the session resets.
     pub fn commit(&mut self) -> Result<String, EngineError> {
-        let mut text = self.record.take_selected();
+        let mut text = self.record.take_selected_text();
         text.push_str(&self.input.as_str()[self.record.consumed()..]);
         self.reset();
         Ok(text)

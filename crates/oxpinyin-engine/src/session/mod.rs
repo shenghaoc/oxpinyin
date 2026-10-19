@@ -18,7 +18,7 @@ use oxpinyin_core::kbest::{DecodedPath, k_best};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
 use oxpinyin_core::{
     Completeness, Cost, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry,
-    PhraseToken, SyllableKey, UserModel, phrase_c_string,
+    PhraseString, PhraseStringJoin, PhraseToken, PhraseWords, SyllableKey, UserModel,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
@@ -916,7 +916,7 @@ fn dynamic_adjust_bigram_possibility(
 /// keeps collection order exactly when all three tie.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RankKey {
-    /// Unicode scalar count of the candidate text.
+    /// The phrase's length in words: the item header's length.
     phrase_length: usize,
     /// Bytes of the raw input the candidate covers.
     pinyin_span: usize,
@@ -1019,22 +1019,28 @@ impl RankKey {
     }
 }
 
-/// Keeps the first occurrence of every distinct candidate text, in order.
+/// Keeps the first occurrence of every distinct candidate string, in order.
 ///
-/// Full dedup rather than the adjacent-only `Vec::dedup_by`: the same text can
+/// Full dedup rather than the adjacent-only `Vec::dedup_by`: the same string can
 /// be reached through different spans or segmentations, and after the
 /// three-key sort two copies need not be adjacent. Two-pass so the seen-set
-/// can hold `&str` into the live candidates instead of cloning each kept
-/// text.
+/// can hold `&[u8]` into the live candidates instead of cloning each kept
+/// string.
+///
+/// A NULL string is nobody's duplicate, not even another NULL's: the pin's
+/// `strcmp` dies on it (`pinyin.cpp:2053`, `:2082`) and the list is refused
+/// whole (class (b), [`CandidateList::strcmp_would_die`]), so nothing may
+/// hide behind a merge.
 fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
     let mut keep = Vec::with_capacity(candidates.len());
     {
-        let mut seen: HashSet<&str> = HashSet::with_capacity(candidates.len());
-        keep.extend(
-            candidates
-                .iter()
-                .map(|candidate| seen.insert(candidate.text())),
-        );
+        let mut seen: HashSet<&[u8]> = HashSet::with_capacity(candidates.len());
+        keep.extend(candidates.iter().map(|candidate| {
+            candidate
+                .string()
+                .as_bytes()
+                .is_none_or(|bytes| seen.insert(bytes))
+        }));
     }
     let mut index = 0;
     candidates.retain(|_| {

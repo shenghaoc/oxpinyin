@@ -37,7 +37,7 @@ fn imported_user_phrase_surfaces_as_a_user_candidate() {
     let found = inst
         .candidates
         .iter()
-        .find(|c| c.text.as_bytes() == "测测".as_bytes());
+        .find(|c| c.cstr().to_bytes() == "测测".as_bytes());
     let found = found.expect("imported user phrase must surface");
     assert!(
         found
@@ -108,8 +108,8 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
     assert!(
         inst.candidates.iter().any(|c| {
             c.candidate_type == lookup_candidate_type_t::ADDON_CANDIDATE
-                && (c.text.as_bytes() == "二簧".as_bytes()
-                    || c.text.as_bytes() == "二黄".as_bytes())
+                && (c.cstr().to_bytes() == "二簧".as_bytes()
+                    || c.cstr().to_bytes() == "二黄".as_bytes())
         }),
         "loaded art addon must offer 二簧/二黄 for erhuang"
     );
@@ -149,7 +149,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
             .enumerate()
             .find(|(_, c)| c.candidate_type == lookup_candidate_type_t::ADDON_CANDIDATE)
             .expect("art addon offers an ADDON candidate for erhuang");
-        (index, cand.text.to_str().expect("UTF-8 text").to_owned())
+        (index, cand.cstr().to_str().expect("UTF-8 text").to_owned())
     };
 
     // Choose it through the C ABI: this must promote it into default nibble 5.
@@ -201,7 +201,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
         .phrase(promoted)
         .expect("store read")
         .expect("promoted phrase exists");
-    assert_eq!(phrase.text(), text);
+    assert_eq!(*phrase.words(), text);
     let reading = phrase
         .pronunciations()
         .first()
@@ -218,7 +218,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
         lookup
             .lookup(&keys)
             .iter()
-            .any(|entry| entry.token().value() == promoted && entry.text() == text),
+            .any(|entry| entry.token().value() == promoted && *entry.string() == text),
         "promoted phrase is found through the default-facade lookup"
     );
 
@@ -286,7 +286,7 @@ fn predicted_candidates_prepend_punctuation_for_hao() {
         .candidates
         .iter()
         .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
-        .map(|c| c.text.to_str().unwrap_or(""))
+        .map(|c| c.cstr().to_str().unwrap_or(""))
         .collect();
     assert_eq!(puncts, ["，", "。"]);
     assert_eq!(
@@ -315,7 +315,7 @@ fn predicted_punctuation_uses_shortest_suffix_first_and_dedups() {
         .candidates
         .iter()
         .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
-        .map(|c| c.text.to_str().unwrap_or(""))
+        .map(|c| c.cstr().to_str().unwrap_or(""))
         .collect();
     // last-1 国 (，) then last-2 中国 (none). 中 is not a suffix.
     assert_eq!(puncts, ["，"]);
@@ -374,7 +374,7 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
         .candidates
         .iter()
         .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE)
-        .map(|c| c.text.to_str().unwrap_or(""))
+        .map(|c| c.cstr().to_str().unwrap_or(""))
         .collect();
     assert!(
         !bigrams.contains(&"甲甲"),
@@ -410,7 +410,7 @@ fn predicted_prefix_candidates_slice_the_prefix_from_the_text() {
         .candidates
         .iter()
         .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
-        .map(|c| c.text.to_str().unwrap_or(""))
+        .map(|c| c.cstr().to_str().unwrap_or(""))
         .collect();
     assert_eq!(
         suggestions,
@@ -465,7 +465,7 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
     let before: Vec<String> = inst
         .candidates
         .iter()
-        .map(|row| row.text.to_string_lossy().into_owned())
+        .map(|row| row.cstr().to_string_lossy().into_owned())
         .collect();
     let leader_before = before[0].clone();
     let trailing_token = inst
@@ -491,7 +491,7 @@ fn tier_c_overlay_delta_flips_predicted_order_on_fixture_scale() {
     let after: Vec<String> = inst
         .candidates
         .iter()
-        .map(|row| row.text.to_string_lossy().into_owned())
+        .map(|row| row.cstr().to_string_lossy().into_owned())
         .collect();
     assert_ne!(
         after[0], leader_before,

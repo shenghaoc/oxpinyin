@@ -19,21 +19,20 @@
 //! surviving token through its library — a token whose library is not
 //! loaded is invisible, upstream's `NULL == head` skip.
 
-use std::borrow::Cow;
 use std::fmt;
 use std::path::Path;
 use std::sync::Arc;
 
 use oxpinyin_core::{
-    ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseToken,
-    SyllableKey, TrellisItem,
+    ChewingKey, Dictionary, PhraseEntry, PhraseIndexRanges, PhraseItemRead, PhraseString,
+    PhraseToken, PhraseWords, SyllableKey, TrellisItem,
 };
 use oxpinyin_store::{DefaultStore, ReadStore};
 
 use crate::chewing_table::{ChewingTable, PinyinIndexItem, RawChewingDbm, prefix_keys_match};
 use crate::phrase_libraries::PhraseLibraries;
 use crate::phrase_library::LibraryError;
-use crate::phrase_library::{PHRASE_TEXT_STACK_BYTES, RowFault};
+use crate::phrase_library::RowFault;
 use crate::phrase_table::PhraseTable;
 use crate::system_files::{SYSTEM_LIBRARY_FILES, SystemDbm};
 use crate::table::TableError;
@@ -104,14 +103,15 @@ fn open_phrase_table(path: &Path) -> Result<PhraseTable, DictError> {
 }
 
 /// Resolves the surviving records of one search through `libraries`:
-/// text from the chunk item, possibility over its pronunciations. A token
+/// string from the chunk item, possibility over its pronunciations. A token
 /// without a loaded item is dropped (upstream's `NULL == head` skip).
 ///
 /// Answers whether the search met a token whose library is loaded (a system
 /// chunk, or one of the `user_nibbles` `table.conf` types `USER_FILE`) but
-/// whose item cannot be read — the slot is past the chunk, or the text does
-/// not decode: `_token_get_phrase` fails for it (`pinyin.cpp:1635-1637`) and
-/// the pin's candidate listing goes on to compare the string it never set.
+/// whose item cannot be read — the slot is past the chunk, or the item holds
+/// fewer words than its header says: `_token_get_phrase` fails for it
+/// (`pinyin.cpp:1635-1637`) and the pin's candidate listing goes on to
+/// compare the string it never set.
 fn resolve_items(
     libraries: &PhraseLibraries,
     keys: &[ChewingKey],
@@ -130,17 +130,15 @@ fn resolve_items(
     unreadable
 }
 
-/// `token`'s entry: its text, priced against `keys`; `None` when the
+/// `token`'s entry: its string, priced against `keys`; `None` when the
 /// library is unloaded or the item cannot be read.
 ///
-/// The text is `PhraseItem::get_phrase_string` then `g_ucs4_to_utf8`
-/// (`_token_get_phrase`, `pinyin.cpp:1627-1647` at 074a2219), decoded
-/// here into a stack buffer and handed to the entry as `&str`, so a hit
-/// of ordinary length costs no heap allocation; a longer text takes the
-/// one owned `String` it needs ([`PhraseItemView::phrase_text_into`]).
-/// The decoder also says whether the text holds a U+0000, where the
-/// pin's string ends; the entry keeps that, so no reader of the string
-/// scans the text for it.
+/// The string is `PhraseItem::get_phrase_string` then `g_ucs4_to_utf8`
+/// (`_token_get_phrase`, `pinyin.cpp:1627-1647` at 074a2219), made by
+/// [`PhraseItemView::phrase_string`]: a hit of ordinary length costs no heap
+/// allocation. It ends at the phrase's first zero word, and it is bytes that
+/// are not UTF-8, or NULL, for a word the pin converts that is no scalar
+/// value. The entry keeps the item header's length apart from it.
 fn resolve_item(
     libraries: &PhraseLibraries,
     keys: &[ChewingKey],
@@ -148,12 +146,8 @@ fn resolve_item(
 ) -> Option<PhraseEntry> {
     let library = libraries.library(token)?;
     let item = library.item(token)?;
-    let mut buf = [0_u8; PHRASE_TEXT_STACK_BYTES];
-    let (text, zero) = item.phrase_text_into(&mut buf)?;
-    let mut entry = match text {
-        Cow::Borrowed(text) => PhraseEntry::decoded(PhraseToken::new(token), text, zero),
-        Cow::Owned(text) => PhraseEntry::decoded(PhraseToken::new(token), text, zero),
-    };
+    let string = item.phrase_string()?;
+    let mut entry = PhraseEntry::from_string(PhraseToken::new(token), string, item.phrase_length());
     if let Some((matched, total)) = libraries.pronunciation_possibility(token, keys) {
         entry = entry.with_pronunciation_possibility(matched, total);
     }
@@ -169,7 +163,7 @@ fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) ->
             .is_some_and(|bit| user_nibbles & bit != 0)
 }
 
-/// `search_suggestion` tokens resolved to `(token, text)` rows in the
+/// `search_suggestion` tokens resolved to `(token, words)` rows in the
 /// order upstream hands them to `_compute_predicted_prefix_candidates`:
 /// `search_suggestion` files each token into its library's array
 /// (`PhraseTableEntry::search`'s `tokens[PHRASE_INDEX_LIBRARY_INDEX]`)
@@ -178,10 +172,10 @@ fn library_loaded(libraries: &PhraseLibraries, user_nibbles: u32, token: u32) ->
 /// it is the DBM's cursor order — byte-lexical over the UCS-4 keys, the
 /// order [`PhraseTable::search_suggestion`] already yields. A stable sort
 /// by nibble over the walk is exactly that.
-fn resolve_suggestions(libraries: &PhraseLibraries, tokens: Vec<u32>) -> Vec<(u32, String)> {
-    let mut rows: Vec<(u32, String)> = tokens
+fn resolve_suggestions(libraries: &PhraseLibraries, tokens: Vec<u32>) -> Vec<(u32, PhraseWords)> {
+    let mut rows: Vec<(u32, PhraseWords)> = tokens
         .into_iter()
-        .filter_map(|token| Some((token, libraries.phrase_text(token)?)))
+        .filter_map(|token| Some((token, libraries.phrase_words(token)?)))
         .collect();
     rows.sort_by_key(|(token, _)| token >> 24);
     rows
@@ -328,10 +322,11 @@ impl SystemDictionary {
         &self.libraries
     }
 
-    /// Phrase text for `token`, if its library is loaded and owns it.
+    /// The stored words of the phrase behind `token`, if its library is
+    /// loaded and owns it.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<String> {
-        self.libraries.phrase_text(token)
+    pub fn phrase_words(&self, token: u32) -> Option<PhraseWords> {
+        self.libraries.phrase_words(token)
     }
 
     /// `PhraseItem::get_unigram_frequency` for `token` — the stored field
@@ -385,13 +380,13 @@ impl SystemDictionary {
 
     /// Tokens whose phrase text starts with `prefix` and is longer, when
     /// `prefix` itself is a stored key — `PhraseLargeTable3::search_suggestion`
-    /// resolved to `(token, text)` rows, tokens without a loaded item
+    /// resolved to `(token, words)` rows, tokens without a loaded item
     /// dropped, in upstream's order (library groups, cursor order inside).
     ///
     /// # Errors
     ///
     /// Returns [`DictError`] when the DBM walk or a value decode fails.
-    pub fn suggest_after(&self, prefix: &str) -> Result<Vec<(u32, String)>, DictError> {
+    pub fn suggest_after(&self, prefix: &str) -> Result<Vec<(u32, PhraseWords)>, DictError> {
         let tokens = self.phrase.search_suggestion(prefix)?;
         Ok(resolve_suggestions(&self.libraries, tokens))
     }
@@ -689,11 +684,11 @@ impl Dictionary for SystemDictionary {
         syllables: &[SyllableKey],
         _tones: &[u8],
         token: u32,
-    ) -> Result<Option<String>, DictError> {
+    ) -> Result<Option<PhraseString>, DictError> {
         if syllables_to_chewing_keys(syllables).is_none() {
             return Ok(None);
         }
-        Ok(self.libraries.phrase_text(token))
+        Ok(self.libraries.phrase_string(token))
     }
 
     fn lookup_into(
@@ -761,9 +756,9 @@ impl Dictionary for SystemDictionary {
             .map(|tokens| tokens.into_iter().map(PhraseToken::new).collect()))
     }
 
-    /// `_token_get_phrase`'s system half: the loaded library item's text.
-    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
-        self.libraries.phrase_text(token)
+    /// `_token_get_phrase`'s system half: the loaded library item's words.
+    fn phrase_words_for_token(&self, token: u32) -> Option<PhraseWords> {
+        self.libraries.phrase_words(token)
     }
 
     fn overlong_extension_gate(&self, syllables: &[SyllableKey]) -> bool {
@@ -793,8 +788,8 @@ impl Dictionary for SystemDictionary {
 /// One addon phrase item, the `get_phrase_item` half of the
 /// choose-promotion path (`pinyin.cpp:2534-2549`).
 pub struct AddonPhraseItem {
-    /// Phrase text.
-    pub text: String,
+    /// The item's stored words.
+    pub words: PhraseWords,
     /// Pronunciations as `(spelling, count)` pairs, in stored order.
     pub pronunciations: Vec<(String, u64)>,
     /// The item's stored unigram frequency.
@@ -990,19 +985,19 @@ impl AddonDictionary {
         Some(u64::from(self.libraries.unigram_total()))
     }
 
-    /// Phrase text for `token`, if its addon library is loaded.
+    /// The stored words of the phrase behind `token`, if its addon library
+    /// is loaded.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<String> {
-        self.libraries.phrase_text(token)
+    pub fn phrase_words(&self, token: u32) -> Option<PhraseWords> {
+        self.libraries.phrase_words(token)
     }
 
     /// The addon item behind `token`, for the choose-promotion path that
-    /// copies it into the user store: its text is the item's own words, so an
-    /// item with a word that is no scalar value is not carried (the pin's
-    /// string conversion would stand a word behind a zero for U+FFFD).
+    /// copies it into the user store: its words are the item's own, whatever
+    /// they are (`add_phrase_item` copies the `ucs4_t` array).
     #[must_use]
     pub fn phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        let text = self.libraries.scalar_text(token)?;
+        let words = self.libraries.phrase_words(token)?;
         let pronunciations = self
             .libraries
             .pronunciations(token)?
@@ -1011,7 +1006,7 @@ impl AddonDictionary {
             .collect();
         let unigram = self.libraries.unigram_count(token).unwrap_or(0);
         Some(AddonPhraseItem {
-            text,
+            words,
             pronunciations,
             unigram,
         })

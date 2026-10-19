@@ -7,12 +7,14 @@
 //! over the context's user store and optional runtime — no C types cross
 //! this boundary.
 
-use oxpinyin_core::{ChewingKey, SyllableKey, phrase_c_string, ucs4_phrase_chars};
+use oxpinyin_core::{
+    ChewingKey, PhraseString, PhraseWords, SyllableKey, pin_string_len, write_pin_string,
+};
 use oxpinyin_runtime::{PhraseItemView, RuntimeDict};
 use oxpinyin_user::{
-    ADDON_DICTIONARY, ExportedPhrase, MAX_KEY_TONE, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START,
-    USER_DICTIONARY, UserPhrase, UserPronunciation, UserStore, UserStoreError, is_user_file_token,
-    key_syllable, key_tone,
+    ADDON_DICTIONARY, MAX_KEY_TONE, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START, USER_DICTIONARY,
+    UserPhrase, UserPronunciation, UserStore, UserStoreError, is_user_file_token, key_syllable,
+    key_tone,
 };
 
 use std::collections::{HashMap, VecDeque};
@@ -161,6 +163,20 @@ fn assert_for(error: &UserStoreError) -> Option<ExportAssert> {
     }
 }
 
+/// One row of the phrase export as the C iterator hands it out: the phrase's
+/// string (NULL where the pin's conversion answers NULL), one pronunciation's
+/// `'`-joined pinyin spelling and that pronunciation's stored count.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExportedRow {
+    /// The phrase, as `pinyin_iterator_get_next_phrase` yields it
+    /// (`pinyin.cpp:715`).
+    pub string: PhraseString,
+    /// One pronunciation, syllables joined by `'`.
+    pub pinyin: String,
+    /// The pronunciation's stored count.
+    pub count: u64,
+}
+
 /// One row the cursor is reading, borrowed from its item: the phrase, one
 /// pronunciation and that pronunciation's count, as
 /// `pinyin_iterator_get_next_phrase` renders them (`pinyin.cpp:712-739`).
@@ -184,7 +200,7 @@ enum RowSource<'a> {
     },
     /// A `USER_FILE` item.
     User {
-        text: &'a str,
+        words: &'a PhraseWords,
         keys: &'a [PinyinKey],
         count: u64,
     },
@@ -254,28 +270,6 @@ fn user_key_assert(key: PinyinKey) -> Option<ExportAssert> {
     None
 }
 
-/// The characters `g_ucs4_to_utf8` converts of a stored phrase read with
-/// [`oxpinyin_core::ucs4_phrase_char`]: those before its first zero code
-/// point, where the conversion ends (`glib/gutf8.c:1037-1038`).
-fn converted(chars: impl Iterator<Item = Option<char>>) -> impl Iterator<Item = Option<char>> {
-    chars.take_while(|char| *char != Some('\0'))
-}
-
-/// Writes `chars` as UTF-8 to the front of `out`, stopping before a
-/// character that would not fit; returns the bytes written.
-fn write_chars(chars: impl Iterator<Item = char>, out: &mut [u8]) -> usize {
-    let mut at = 0;
-    for c in chars {
-        let width = c.len_utf8();
-        let Some(slot) = out.get_mut(at..at + width) else {
-            break;
-        };
-        c.encode_utf8(slot);
-        at += width;
-    }
-    at
-}
-
 /// The length of `syllables` joined with `'`.
 fn joined_len(syllables: Syllables<'_>) -> usize {
     let mut len = 0;
@@ -316,28 +310,25 @@ fn write_joined(syllables: Syllables<'_>, out: &mut [u8]) -> usize {
 }
 
 impl ExportRow<'_> {
-    /// The phrase's UTF-8 length in bytes, or `None` when a code point the
-    /// conversion reads is not a Unicode scalar value: the pin's
-    /// `g_ucs4_to_utf8` runs with no error slot and hands the caller a NULL
-    /// phrase for such an item (`pinyin.cpp:715-716`), the row's other fields
-    /// intact. The conversion stops at the first zero code point
-    /// (`glib/gutf8.c:1037-1038`): the text is what comes before it, and a
-    /// word behind it is never read. (The pin's NULL is for a value of
-    /// 0x80000000 or more; a surrogate or a value up to 0x7FFFFFFF it hands
-    /// out as bytes that are not UTF-8, which a `str` cannot hold: #894.)
+    /// Hands the phrase's stored words, in order, to `read`.
+    fn with_words<R>(&self, read: impl FnOnce(&mut dyn Iterator<Item = u32>) -> R) -> R {
+        match &self.0 {
+            RowSource::Mapped { item, .. } => read(&mut item.word_values().into_iter().flatten()),
+            RowSource::Override { phrase, .. } => read(&mut phrase.iter().copied()),
+            RowSource::User { words, .. } => read(&mut words.words()),
+        }
+    }
+
+    /// The phrase's length in bytes, or `None` when the pin hands the caller
+    /// a NULL phrase: its `g_ucs4_to_utf8` runs with no error slot
+    /// (`pinyin.cpp:715-716`) and answers NULL for a word of 0x80000000 or more
+    /// before a zero, the row's other fields intact. The string is made of the
+    /// words up to the first zero word (`glib/gutf8.c:1037-1038`, a word behind
+    /// it is never read), each written as `g_unichar_to_utf8` writes it: bytes
+    /// that are not UTF-8 for a surrogate or a value above U+10FFFF.
     #[must_use]
     pub fn text_len(&self) -> Option<usize> {
-        match &self.0 {
-            RowSource::Mapped { item, .. } => converted(item.phrase_chars())
-                .map(|c| c.map(char::len_utf8))
-                .sum::<Option<usize>>(),
-            RowSource::Override { phrase, .. } => {
-                converted(ucs4_phrase_chars(phrase.iter().copied()))
-                    .map(|c| c.map(char::len_utf8))
-                    .sum::<Option<usize>>()
-            }
-            RowSource::User { text, .. } => Some(phrase_c_string(text).len()),
-        }
+        self.with_words(|words| pin_string_len(words))
     }
 
     /// The `get_pinyin_string` assert the pin dies at while rendering this
@@ -353,24 +344,10 @@ impl ExportRow<'_> {
         }
     }
 
-    /// Writes the phrase's UTF-8 bytes to the front of `out`, which holds
-    /// at least [`Self::text_len`] bytes, and returns how many it wrote.
+    /// Writes the phrase's bytes ([`Self::text_len`]) to the front of `out`,
+    /// which holds at least that many, and returns how many it wrote.
     pub fn write_text(&self, out: &mut [u8]) -> usize {
-        match &self.0 {
-            RowSource::Mapped { item, .. } => {
-                write_chars(converted(item.phrase_chars()).flatten(), out)
-            }
-            RowSource::Override { phrase, .. } => write_chars(
-                converted(ucs4_phrase_chars(phrase.iter().copied())).flatten(),
-                out,
-            ),
-            RowSource::User { text, .. } => {
-                let text = phrase_c_string(text);
-                let width = text.len().min(out.len());
-                out[..width].copy_from_slice(&text.as_bytes()[..width]);
-                width
-            }
-        }
+        self.with_words(|words| write_pin_string(words, out))
     }
 
     /// The `'`-joined pinyin's length in bytes.
@@ -397,19 +374,17 @@ impl ExportRow<'_> {
         }
     }
 
-    /// The phrase as an owned string, allocated once; `None` where the pin
+    /// The phrase as an owned string, allocated once; NULL where the pin
     /// hands out a NULL phrase ([`Self::text_len`]).
     #[must_use]
-    pub fn text_string(&self) -> Option<String> {
-        let mut out = String::with_capacity(self.text_len()?);
-        match &self.0 {
-            RowSource::Mapped { item, .. } => out.extend(converted(item.phrase_chars()).flatten()),
-            RowSource::Override { phrase, .. } => {
-                out.extend(converted(ucs4_phrase_chars(phrase.iter().copied())).flatten());
-            }
-            RowSource::User { text, .. } => out.push_str(phrase_c_string(text)),
-        }
-        Some(out)
+    pub fn string(&self) -> PhraseString {
+        let Some(length) = self.text_len() else {
+            return PhraseString::NULL;
+        };
+        let mut bytes = vec![0_u8; length];
+        let written = self.write_text(&mut bytes);
+        bytes.truncate(written);
+        PhraseString::from_bytes(bytes)
     }
 
     /// The `'`-joined pinyin as an owned string, allocated once.
@@ -494,7 +469,7 @@ impl ItemRef<'_> {
             Self::User(phrase) => {
                 let pronunciation = phrase.pronunciations().get(nth)?;
                 RowSource::User {
-                    text: phrase.text(),
+                    words: phrase.words(),
                     keys: pronunciation.keys(),
                     count: pronunciation.count(),
                 }
@@ -566,23 +541,20 @@ impl PhraseExportCursor {
 
     /// Every row the cursor still yields, driven as a consumer drives the C
     /// iterator (`while has_next { get_next }`). `None` when the store
-    /// cannot be read, when the pin would die at an assert site, or when it
-    /// would hand out a NULL phrase: its export of this sub-index does not
-    /// complete, so neither does this one.
+    /// cannot be read or when the pin would die at an assert site: its
+    /// export of this sub-index does not complete, so neither does this one.
     #[must_use]
-    pub fn collect_rows(&mut self) -> Option<Vec<ExportedPhrase>> {
+    pub fn collect_rows(&mut self) -> Option<Vec<ExportedRow>> {
         let mut rows = Vec::new();
         while self.has_next() {
-            let step = self.get_next_with(|row| {
-                row.text_string().map(|text| ExportedPhrase {
-                    text,
-                    pinyin: row.pinyin_string(),
-                    count: row.count(),
-                })
+            let step = self.get_next_with(|row| ExportedRow {
+                string: row.string(),
+                pinyin: row.pinyin_string(),
+                count: row.count(),
             });
             match step {
-                Ok(ExportStep::Row(Some(row))) => rows.push(row),
-                Ok(ExportStep::Row(None) | ExportStep::Assert(_)) | Err(_) => return None,
+                Ok(ExportStep::Row(row)) => rows.push(row),
+                Ok(ExportStep::Assert(_)) | Err(_) => return None,
             }
         }
         Some(rows)
@@ -823,10 +795,10 @@ impl ContextCore {
     /// `None` without a user store for a `USER_FILE` library, when the store
     /// cannot be read (at the begin probe or at any later read), or when the
     /// pin's iterator would not complete the walk: an item it dies at
-    /// ([`ExportAssert`]) or a NULL phrase ([`ExportRow::text_len`]). A
-    /// failed snapshot is never a partial one.
+    /// ([`ExportAssert`]). A failed snapshot is never a partial one. A NULL
+    /// phrase ([`ExportRow::text_len`]) is a row, as it is at the pin.
     #[must_use]
-    pub fn export_phrases(&self, index: u32) -> Option<Vec<ExportedPhrase>> {
+    pub fn export_phrases(&self, index: u32) -> Option<Vec<ExportedRow>> {
         let [index, ..] = index.to_le_bytes();
         match index {
             GB_DICTIONARY..=MERGED_DICTIONARY => self
@@ -961,10 +933,11 @@ impl ExportSource {
             .collect()
     }
 
-    /// `(text, pinyin spellings)` for a token: user tokens render from the
-    /// user store's phrase/pronunciation tables, system tokens from the
-    /// system phrase index and the pinyin index (reverse-scanned).
-    fn render(&self, token: u32) -> Option<(String, Vec<String>)> {
+    /// `(string, pinyin spellings)` for a token, the string being what
+    /// `g_ucs4_to_utf8` makes of the item (`pinyin.cpp:822-830`): user tokens
+    /// render from the user store's phrase/pronunciation tables, system tokens
+    /// from the system phrase index and the pinyin index (reverse-scanned).
+    fn render(&self, token: u32) -> Option<(PhraseString, Vec<String>)> {
         if is_user_file_token(token) {
             let phrase = self.user.phrase(token).ok().flatten()?;
             // Render each reading through the shared `render_pinyin` helper,
@@ -978,10 +951,10 @@ impl ExportSource {
             if pinyins.is_empty() {
                 return None;
             }
-            Some((phrase.text().to_owned(), pinyins))
+            Some((phrase.words().string(), pinyins))
         } else {
             let dict = self.dict.as_ref()?;
-            let text = dict.system().phrase_text(token)?;
+            let string = dict.system().phrase_words(token)?.string();
             let pinyins: Vec<String> = dict
                 .system()
                 .pronunciations(token)
@@ -991,16 +964,19 @@ impl ExportSource {
             if pinyins.is_empty() {
                 return None;
             }
-            Some((text, pinyins))
+            Some((string, pinyins))
         }
     }
 }
-/// One rendered §9 bigram-export row: concatenated phrase text, the
+/// One rendered §9 bigram-export row: concatenated phrase strings, the
 /// `'`-joined pronunciation of the pair, and the scaled count.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportedBigramRow {
-    /// Concatenated predecessor + successor phrase text.
-    pub phrase: String,
+    /// Concatenated predecessor + successor phrase strings
+    /// (`g_strconcat`, `pinyin.cpp:830`): NULL when the predecessor's string
+    /// is NULL (`g_strconcat (NULL, …)` answers NULL), and a successor whose
+    /// string is NULL adds nothing (it ends the argument list).
+    pub phrase: PhraseString,
     /// The `'`-joined pronunciation of the pair.
     pub pinyin: String,
     /// The rendered bigram count (`stored × 2`).
@@ -1030,7 +1006,9 @@ pub struct BigramExportWalk {
     items: VecDeque<u32>,
     index_token: u32,
     phrase_tokens: VecDeque<(u32, u32)>,
-    phrase: Option<String>,
+    /// `m_phrase`: `None` before any row was loaded; a loaded row's string
+    /// may itself be NULL.
+    phrase: Option<PhraseString>,
     pinyins: Vec<String>,
     pinyin_index: usize,
     count: u32,
@@ -1041,7 +1019,7 @@ pub struct BigramExportWalk {
     grams: HashMap<u32, Vec<(u32, u32)>>,
     /// Every token rendered so far: `render` is an O(pinyin-index) scan
     /// and a token recurs across many grams.
-    rendered: HashMap<u32, Option<(String, Vec<String>)>>,
+    rendered: HashMap<u32, Option<(PhraseString, Vec<String>)>>,
 }
 
 impl std::fmt::Debug for BigramExportWalk {
@@ -1073,7 +1051,9 @@ pub enum BigramStep {
 impl BigramExportWalk {
     /// `pinyin_bigram_iterator_has_next_phrase` (`pinyin.cpp:790-893`).
     pub fn has_next(&mut self) -> bool {
-        if self.phrase.is_some() && self.pinyin_index < self.pinyins.len() {
+        if self.phrase.as_ref().is_some_and(|phrase| !phrase.is_null())
+            && self.pinyin_index < self.pinyins.len()
+        {
             return true;
         }
         // Clean up old values.
@@ -1152,25 +1132,29 @@ impl BigramExportWalk {
     fn load_row(&mut self, token: u32, count: u32) {
         self.render(self.index_token);
         self.render(token);
-        let empty = (String::new(), Vec::new());
-        let (first_text, first_pinyins) = self
+        let empty = (PhraseString::default(), Vec::new());
+        let (first_string, first_pinyins) = self
             .rendered
             .get(&self.index_token)
             .and_then(Option::as_ref)
             .unwrap_or(&empty);
-        let (second_text, second_pinyins) = self
+        let (second_string, second_pinyins) = self
             .rendered
             .get(&token)
             .and_then(Option::as_ref)
             .unwrap_or(&empty);
-        // Each text is the string `g_ucs4_to_utf8` makes of its item, ending at
-        // its first zero code point, before `g_strconcat` joins them
-        // (`pinyin.cpp:822-830`).
-        self.phrase = Some(format!(
-            "{}{}",
-            phrase_c_string(first_text),
-            phrase_c_string(second_text)
-        ));
+        // Each string is what `g_ucs4_to_utf8` makes of its item, before
+        // `g_strconcat` joins them (`pinyin.cpp:822-830`): a NULL first string
+        // makes the result NULL (`gstrfuncs.c:576-577`), and a NULL second
+        // string ends the argument list (`:581-587`).
+        self.phrase = Some(match first_string.as_bytes() {
+            None => PhraseString::NULL,
+            Some(first) => {
+                let mut bytes = first.to_vec();
+                bytes.extend_from_slice(second_string.as_bytes().unwrap_or_default());
+                PhraseString::from_bytes(bytes)
+            }
+        });
         self.count = count;
         self.pinyins = first_pinyins
             .iter()
@@ -1186,6 +1170,7 @@ impl BigramExportWalk {
 #[cfg(test)]
 mod tests {
     use super::{BigramExportWalk, BigramStep, ExportedBigramRow, SENTENCE_START};
+    use oxpinyin_core::PhraseWords;
 
     fn walk(items: &[u32], grams: &[(u32, &[(u32, u32)])]) -> BigramExportWalk {
         let mut walk = BigramExportWalk {
@@ -1202,7 +1187,7 @@ mod tests {
             (0x0100_0004, "爱", "ai"),
         ] {
             walk.rendered
-                .insert(token, Some((text.to_owned(), vec![pinyin.to_owned()])));
+                .insert(token, Some((text.into(), vec![pinyin.to_owned()])));
         }
         walk
     }
@@ -1215,7 +1200,7 @@ mod tests {
             let BigramStep::Row(ExportedBigramRow { phrase, .. }, next) = walk.get_next() else {
                 break;
             };
-            rows.push((phrase, next));
+            rows.push((phrase.to_string_lossy().into_owned(), next));
             more = next;
         }
         rows
@@ -1229,7 +1214,7 @@ mod tests {
             let BigramStep::Row(ExportedBigramRow { phrase, .. }, next) = walk.get_next() else {
                 break;
             };
-            rows.push((phrase, next));
+            rows.push((phrase.to_string_lossy().into_owned(), next));
         }
         rows
     }
@@ -1252,11 +1237,17 @@ mod tests {
         let mut walk = scenario();
         walk.rendered.insert(
             0x0100_0001,
-            Some(("\u{4f60}\0\u{597d}".to_owned(), vec!["ni".to_owned()])),
+            Some((
+                PhraseWords::from_text("\u{4f60}\0\u{597d}").string(),
+                vec!["ni".to_owned()],
+            )),
         );
         walk.rendered.insert(
             0x0100_0003,
-            Some(("\0\u{6211}".to_owned(), vec!["wo".to_owned()])),
+            Some((
+                PhraseWords::from_text("\0\u{6211}").string(),
+                vec!["wo".to_owned()],
+            )),
         );
         assert_eq!(
             drain_by_return(&mut walk),
@@ -1285,7 +1276,7 @@ mod tests {
             walk.get_next(),
             BigramStep::Row(
                 ExportedBigramRow {
-                    phrase: "我爱".to_owned(),
+                    phrase: "我爱".into(),
                     pinyin: "wo'ai".to_owned(),
                     count: 138,
                 },
@@ -1320,11 +1311,13 @@ mod tests {
 
 #[cfg(test)]
 mod phrase_cursor_tests {
-    use super::{ContextCore, ExportAssert, ExportStep, PhraseExportCursor, assert_for};
+    use super::{
+        ContextCore, ExportAssert, ExportStep, ExportedRow, PhraseExportCursor, assert_for,
+    };
     use oxpinyin_core::{ChewingKey, SyllableKey};
     use oxpinyin_user::{
-        ExportedPhrase, KEY_SYLLABLE_MASK, KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY,
-        UserConfLaw, UserStoreError, toned_key,
+        KEY_SYLLABLE_MASK, KEY_TONE_SHIFT, MAX_KEY_TONE, USER_DICTIONARY, UserConfLaw,
+        UserStoreError, toned_key,
     };
 
     /// A transient context over the committed mini tables of whichever
@@ -1358,24 +1351,22 @@ mod phrase_cursor_tests {
             .collect()
     }
 
-    fn row(text: &str, pinyin: &str, count: u64) -> ExportedPhrase {
-        ExportedPhrase {
-            text: text.to_owned(),
+    fn row(text: &str, pinyin: &str, count: u64) -> ExportedRow {
+        ExportedRow {
+            string: text.into(),
             pinyin: pinyin.to_owned(),
             count,
         }
     }
 
     /// One `get_next`, read as the materialization reads it.
-    fn next_row(cursor: &mut PhraseExportCursor) -> Option<ExportedPhrase> {
-        match cursor.get_next_with(|row| {
-            row.text_string().map(|text| ExportedPhrase {
-                text,
-                pinyin: row.pinyin_string(),
-                count: row.count(),
-            })
+    fn next_row(cursor: &mut PhraseExportCursor) -> Option<ExportedRow> {
+        match cursor.get_next_with(|row| ExportedRow {
+            string: row.string(),
+            pinyin: row.pinyin_string(),
+            count: row.count(),
         }) {
-            Ok(ExportStep::Row(row)) => row,
+            Ok(ExportStep::Row(row)) => Some(row),
             Ok(ExportStep::Assert(_)) | Err(_) => None,
         }
     }
@@ -1490,7 +1481,13 @@ mod phrase_cursor_tests {
             "the next token's first reading"
         );
         let dict = ctx.runtime.as_ref().unwrap().dict();
-        let text = dict.system().phrase_text(next).expect("text");
+        let text = dict
+            .system()
+            .phrase_words(next)
+            .expect("words")
+            .as_text()
+            .expect("a shipped item is text")
+            .to_owned();
         let library = dict.system().libraries().library(next).expect("library");
         let item = library.item(next).expect("item");
         let pronunciation = item.pronunciation(0).expect("reading");

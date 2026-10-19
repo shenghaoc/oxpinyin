@@ -5,8 +5,9 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use oxpinyin_facade::ExportedBigramRow;
-use oxpinyin_user::{ExportedPhrase, USER_DICTIONARY};
+use oxpinyin_core::PhraseString;
+use oxpinyin_facade::{ExportedBigramRow, ExportedRow};
+use oxpinyin_user::USER_DICTIONARY;
 
 use crate::context::UserImportContext;
 
@@ -49,28 +50,42 @@ impl std::error::Error for ExportError {
 }
 
 /// Write one classic row: 2 fields when count is zero (`dictool-format.md`
-/// §4), otherwise 3 fields.
-fn write_row<W: Write>(out: &mut W, phrase: &str, pinyin: &str, count: i64) -> io::Result<()> {
+/// §4), otherwise 3 fields. The phrase is written as the bytes the pin's
+/// export hands out, which are UTF-8 unless a stored word is no scalar value;
+/// a row with a NULL phrase has none to write ([`run`] refuses the export
+/// before it writes one).
+fn write_row<W: Write>(
+    out: &mut W,
+    phrase: &PhraseString,
+    pinyin: &str,
+    count: i64,
+) -> io::Result<()> {
+    out.write_all(phrase.as_bytes().unwrap_or_default())?;
     if count == 0 {
-        writeln!(out, "{phrase} {pinyin}")
+        writeln!(out, " {pinyin}")
     } else {
-        writeln!(out, "{phrase} {pinyin} {count}")
+        writeln!(out, " {pinyin} {count}")
     }
 }
 
 /// Write the classic file body: phrase rows then bigram rows.
 fn write_rows<W: Write>(
     out: &mut W,
-    phrases: &[ExportedPhrase],
+    phrases: &[ExportedRow],
     bigrams: &[ExportedBigramRow],
 ) -> io::Result<()> {
-    for ExportedPhrase {
-        text,
+    for ExportedRow {
+        string,
         pinyin,
         count,
     } in phrases
     {
-        write_row(out, text, pinyin, i64::try_from(*count).unwrap_or(i64::MAX))?;
+        write_row(
+            out,
+            string,
+            pinyin,
+            i64::try_from(*count).unwrap_or(i64::MAX),
+        )?;
     }
     for ExportedBigramRow {
         phrase,
@@ -95,6 +110,11 @@ pub fn run(user_dir: &Path, output: Option<&Path>) -> Result<(), ExportError> {
         .core()
         .export_phrases(u32::from(USER_DICTIONARY))
         .ok_or(ExportError::PhraseSnapshot)?;
+    // The classic file has no text for a NULL phrase: the export of this
+    // sub-index does not complete.
+    if phrases.iter().any(|row| row.string.is_null()) {
+        return Err(ExportError::PhraseSnapshot);
+    }
     // The §9 bigram snapshot refuses rather than skip rows whose rendering
     // needs system tables this user-store-only context does not carry.
     if !context.core().can_render_export_bigrams() {
@@ -104,6 +124,9 @@ pub fn run(user_dir: &Path, output: Option<&Path>) -> Result<(), ExportError> {
         .core()
         .export_bigram_rows()
         .ok_or(ExportError::BigramSnapshot)?;
+    if bigrams.iter().any(|row| row.phrase.is_null()) {
+        return Err(ExportError::BigramSnapshot);
+    }
 
     if let Some(path) = output {
         let mut file = fs::File::create(path).map_err(ExportError::Write)?;
@@ -125,13 +148,13 @@ mod tests {
         let mut out = Vec::new();
         write_rows(
             &mut out,
-            &[ExportedPhrase {
-                text: "词".to_owned(),
+            &[ExportedRow {
+                string: "词".into(),
                 pinyin: "ci".to_owned(),
                 count: 0,
             }],
             &[ExportedBigramRow {
-                phrase: "你好".to_owned(),
+                phrase: "你好".into(),
                 pinyin: "ni'hao".to_owned(),
                 count: 138,
             }],

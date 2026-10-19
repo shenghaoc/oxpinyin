@@ -231,15 +231,14 @@ impl SystemLibrary {
     }
 
     /// Whether [`Self::item`] would answer `Some` for `slot`, without building
-    /// the item: an inline item, or a mapped one whose words are all scalar
-    /// values.
+    /// the item: an inline item, or a mapped one that holds every word its
+    /// header names.
     pub(crate) fn is_readable(&self, slot: u32) -> bool {
         self.items.contains_key(&slot)
             || self.mapped.as_ref().is_some_and(|library| {
-                library.item(slot).is_some_and(|view| {
-                    view.phrase_words()
-                        .all(|word| word.is_some_and(|word| char::from_u32(word).is_some()))
-                })
+                library
+                    .item(slot)
+                    .is_some_and(|view| view.checked_length().is_some())
             })
     }
 
@@ -257,15 +256,12 @@ impl SystemLibrary {
 }
 
 /// A mapped item's phrase as the words it stores, for the profile that
-/// carries the item on: `None` unless the item holds every word and each is a
-/// Unicode scalar value. The item travels as its own words, not through the
-/// string the pin's conversion makes of it (that stops at the first zero and
-/// never reads the words behind it, so a word it skips would come back
-/// altered).
+/// carries the item on: `None` unless the item holds every word. The item
+/// travels as its own words, whatever they are, not through the string the
+/// pin's conversion makes of it (that stops at the first zero and never reads
+/// the words behind it, so a word it skips would come back altered).
 fn carried_words(view: &oxpinyin_data::phrase_library::PhraseItemView<'_>) -> Option<Vec<u32>> {
-    view.phrase_words()
-        .map(|word| word.filter(|&word| char::from_u32(word).is_some()))
-        .collect()
+    Some(view.phrase_words()?.words().collect())
 }
 
 /// The `SYSTEM_FILE` libraries' originals together with the user dir's
@@ -3297,8 +3293,8 @@ mod tests {
             (3, item(&[0xd800], 4, &[(vec![1], 2)])),
             (4, item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(1), 8)])),
             // A zero ends the pin's string, but the item still holds its words:
-            // one behind the zero that is no scalar value keeps the item out,
-            // and scalar ones (the zero too) travel as stored.
+            // they all travel as stored, the zero and a word behind it that is
+            // no scalar value too.
             (5, item(&[0x4f60, 0, 0xd800], 4, &[(vec![1, 2, 3], 2)])),
             (6, item(&[0x4f60, 0, 0x4f1a], 4, &[(vec![1, 2, 3], 2)])),
         ];
@@ -3325,12 +3321,17 @@ mod tests {
             library.item(6).map(|item| item.phrase),
             Some(vec![0x4f60, 0, 0x4f1a])
         );
-        // Slot 5 holds a word behind the zero that is no scalar value: the
-        // pin's string never reads it, but carrying it would alter it, so
-        // the item stays out (as an item with such a word anywhere always
-        // has).
-        assert!(!library.is_readable(5));
-        assert_eq!(library.item(5), None);
+        // Slot 5 holds a word behind the zero that is no scalar value, and
+        // slot 3 a surrogate: the pin's string never reads the first and
+        // writes bytes that are not UTF-8 for the second, but both items are
+        // the words they store.
+        assert!(library.is_readable(5));
+        assert_eq!(
+            library.item(5).map(|item| item.phrase),
+            Some(vec![0x4f60, 0, 0xd800])
+        );
+        assert!(library.is_readable(3));
+        assert_eq!(library.item(3).map(|item| item.phrase), Some(vec![0xd800]));
     }
 
     #[test]
@@ -3355,7 +3356,7 @@ mod tests {
             item(&[0x1234], 3, &[(vec![7], 12), (vec![7], 11)]),
             item(&[], 0, &[]),
         ];
-        // Present, inline, unreadable text, and absent slots alike.
+        // Present, inline, non-scalar and absent slots alike.
         for slot in [0_u32, 1, 2, 3, 4, 5, 6, 7, 9, 1000] {
             let materialized = library.item(slot);
             assert_eq!(

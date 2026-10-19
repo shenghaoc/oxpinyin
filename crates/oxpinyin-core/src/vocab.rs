@@ -15,6 +15,7 @@ use crate::options::{
     PINYIN_AMB_G_K, PINYIN_AMB_IN_ING, PINYIN_AMB_L_N, PINYIN_AMB_L_R, PINYIN_AMB_S_SH,
     PINYIN_AMB_Z_ZH,
 };
+use crate::phrase_text::{PhraseString, PhraseWords};
 use crate::syllables::{
     FULL_PINYIN_SYLLABLE_MAP, INCOMPLETE_PINYIN_KEY_MAP, OPTION_ONLY_COMPLETE_SYLLABLE_MAP,
     ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP,
@@ -314,12 +315,19 @@ impl fmt::Display for PhraseToken {
 
 /// One dictionary hit: a phrase and the token that scores it.
 ///
+/// The entry holds the phrase as the pin hands it out: the string
+/// ([`PhraseString`], which ends at the phrase's first zero word and may be
+/// NULL) and the length the item header holds. The two differ for a phrase
+/// with a zero word, so the length is kept apart.
+///
 /// The entry does not restate how many keys it covers. A lookup is made for an
 /// exact key slice, so the caller already knows.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct PhraseEntry {
     token: PhraseToken,
-    text: CompactString,
+    string: PhraseString,
+    /// The phrase's length in words: `PhraseItem::get_phrase_length`.
+    len: u32,
     /// Pronunciation possibility `(matched, total)` over the phrase item's
     /// stored pronunciations (W14's polyphone discount): the fraction of
     /// the item's pronunciation frequency that spells the looked-up key
@@ -327,44 +335,37 @@ pub struct PhraseEntry {
     /// counts (the candidate scan never reads it; only the sentence
     /// trellis does).
     pronunciation: Option<(u64, u64)>,
-    /// Whether `text` holds a U+0000 (see [`crate::holds_zero`]).
-    zero: bool,
 }
 
 impl PhraseEntry {
-    /// Builds an entry.
+    /// Builds an entry from phrase text, one word per character.
     ///
     /// Phrase text is a [`CompactString`]: typical hits are one to four CJK
     /// scalars and stay inline (no heap). Callers may pass a [`String`],
-    /// `&str`, or [`CompactString`].
+    /// `&str`, or [`CompactString`]. The string is the text up to its first
+    /// U+0000, as the pin's conversion makes it; the length counts them all.
     #[must_use]
     pub fn new(token: PhraseToken, text: impl Into<CompactString>) -> Self {
         let text = text.into();
-        let zero = crate::holds_zero(&text);
-        Self {
-            token,
-            text,
-            pronunciation: None,
-            zero,
-        }
+        let len = text.chars().count().try_into().unwrap_or(u32::MAX);
+        Self::from_string(token, PhraseString::from_text(text), len as usize)
     }
 
-    /// Builds an entry from a text whose reader already knows whether it
-    /// holds a U+0000, as the dictionary-hit decoder does while it walks the
-    /// stored words ([`crate::ucs4_phrase_char`]); [`PhraseEntry::new`]
-    /// looks for itself.
-    ///
-    /// `zero` must be [`crate::holds_zero`] of `text`: a wrong answer makes
-    /// the entry's string end in the wrong place or not at all.
+    /// Builds an entry from the words of a stored phrase.
     #[must_use]
-    pub fn decoded(token: PhraseToken, text: impl Into<CompactString>, zero: bool) -> Self {
-        let text = text.into();
-        debug_assert_eq!(zero, crate::holds_zero(&text), "{text:?}");
+    pub fn from_words(token: PhraseToken, words: &PhraseWords) -> Self {
+        Self::from_string(token, words.string(), words.len())
+    }
+
+    /// Builds an entry from the string the pin makes of a phrase and the
+    /// phrase's length, as the dictionary decoder knows them.
+    #[must_use]
+    pub fn from_string(token: PhraseToken, string: PhraseString, len: usize) -> Self {
         Self {
             token,
-            text,
+            string,
+            len: len.try_into().unwrap_or(u32::MAX),
             pronunciation: None,
-            zero,
         }
     }
 
@@ -374,17 +375,23 @@ impl PhraseEntry {
         self.token
     }
 
-    /// The phrase text.
+    /// The phrase's string, as the pin hands it out.
     #[must_use]
-    pub fn text(&self) -> &str {
-        &self.text
+    pub const fn string(&self) -> &PhraseString {
+        &self.string
     }
 
-    /// Whether the text holds a U+0000, where the pin's string for the
-    /// phrase ends ([`crate::phrase_c_string`]).
+    /// The phrase's length in words: the item header's length, which is not
+    /// the string's length when the phrase has a zero word.
     #[must_use]
-    pub const fn holds_zero(&self) -> bool {
-        self.zero
+    pub const fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// Whether the phrase has no word.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     /// The pronunciation possibility `(matched, total)`, when the backend
@@ -407,10 +414,10 @@ impl PhraseEntry {
         self
     }
 
-    /// Consumes the entry and returns its phrase text.
+    /// Consumes the entry and returns its string.
     #[must_use]
-    pub fn into_text(self) -> CompactString {
-        self.text
+    pub fn into_string(self) -> PhraseString {
+        self.string
     }
 }
 
@@ -517,33 +524,48 @@ mod tests {
     }
 
     #[test]
-    fn phrase_entries_carry_a_token_and_text() {
+    fn phrase_entries_carry_a_token_and_a_string() {
         let entry = PhraseEntry::new(PhraseToken::new(7), "\u{4f60}\u{597d}".to_owned());
         assert_eq!(entry.token().value(), 7);
-        assert_eq!(entry.text(), "\u{4f60}\u{597d}");
-        assert_eq!(entry.clone().into_text().as_str(), "\u{4f60}\u{597d}");
+        assert_eq!(*entry.string(), "\u{4f60}\u{597d}");
+        assert_eq!(entry.len(), 2);
+        assert_eq!(
+            entry.clone().into_string().as_str(),
+            Some("\u{4f60}\u{597d}")
+        );
         assert_eq!(entry.token().to_string(), "7");
     }
 
     #[test]
-    fn an_entry_knows_whether_its_text_holds_a_zero() {
-        // `new` looks for itself; `decoded` takes the decoder's word for it,
-        // and the two make equal entries.
-        for (text, zero) in [
-            ("", false),
-            ("\u{4f60}\u{597d}", false),
-            ("\u{59d4}\0\u{4f1a}", true),
-            ("\0\u{52a1}\u{9662}", true),
-            ("\u{529e}\u{516c}\0", true),
-            ("\0", true),
+    fn an_entry_keeps_the_header_length_apart_from_its_string() {
+        use crate::PhraseString;
+        // The string ends at the first zero word; the length counts them all.
+        for (text, string, len) in [
+            ("", "", 0),
+            ("\u{4f60}\u{597d}", "\u{4f60}\u{597d}", 2),
+            ("\u{59d4}\0\u{4f1a}", "\u{59d4}", 3),
+            ("\0\u{52a1}\u{9662}", "", 3),
+            ("\u{529e}\u{516c}\0", "\u{529e}\u{516c}", 3),
+            ("\0", "", 1),
         ] {
-            let found = PhraseEntry::new(PhraseToken::new(1), text);
-            assert_eq!(found.holds_zero(), zero, "{text:?}");
-            assert_eq!(
-                PhraseEntry::decoded(PhraseToken::new(1), text, zero),
-                found,
-                "{text:?}"
-            );
+            let entry = PhraseEntry::new(PhraseToken::new(1), text);
+            assert_eq!(*entry.string(), string, "{text:?}");
+            assert_eq!(entry.len(), len, "{text:?}");
+            assert_eq!(entry.is_empty(), len == 0, "{text:?}");
         }
+        // An entry of raw words: bytes that are not UTF-8, or NULL.
+        let surrogate = PhraseEntry::from_words(
+            PhraseToken::new(2),
+            &crate::PhraseWords::from_words([0x51fa, 0xd800, 0x793e]),
+        );
+        assert_eq!(surrogate.len(), 3);
+        assert_eq!(surrogate.string().as_str(), None);
+        assert!(surrogate.string().as_bytes().is_some());
+        let null = PhraseEntry::from_words(
+            PhraseToken::new(3),
+            &crate::PhraseWords::from_words([0x8ba1, 0x8000_0000, 0x673a]),
+        );
+        assert_eq!(null.len(), 3);
+        assert_eq!(*null.string(), PhraseString::NULL);
     }
 }

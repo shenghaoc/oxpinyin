@@ -137,9 +137,13 @@ pub extern "C" fn pinyin_get_candidate_string(
     let cand = unsafe { candidate_ref(candidate) };
     if !utf8_str.is_null() {
         // SAFETY: Null-checked above. Pointer borrows into the
-        // CapiCandidate's CString, valid until candidates are rebuilt.
+        // CapiCandidate's CString, valid until candidates are rebuilt; the
+        // pin's NULL string is a NULL pointer (`pinyin.cpp:2873-2878`).
         unsafe {
-            *utf8_str = cand.text.as_ptr();
+            *utf8_str = cand
+                .text
+                .as_ref()
+                .map_or(std::ptr::null(), |text| text.as_ptr());
         }
     }
     true
@@ -575,7 +579,7 @@ fn try_promote_addon(inst: &mut CapiInstance, index: usize) -> Option<PhraseToke
         .core
         .user
         .as_mut()?
-        .promote_addon_phrase(&item.text, &item.readings, item.unigram)
+        .promote_addon_phrase(&item.words, &item.readings, item.unigram)
         .ok()?;
     let promoted = PhraseToken::new(promoted);
     let snapshot = &mut inst.candidates[index];
@@ -700,10 +704,10 @@ fn previous_token(inst: &CapiInstance) -> u32 {
         if !inst.core.dict.library_visible_token(token) {
             continue;
         }
-        let Some(text) = crate::predict::phrase_text(&inst.core.dict, store, token) else {
+        let Some(words) = crate::predict::phrase_words(&inst.core.dict, store, token) else {
             continue;
         };
-        let length = text.chars().count();
+        let length = words.len();
         if length > longest {
             previous = token;
             longest = length;
