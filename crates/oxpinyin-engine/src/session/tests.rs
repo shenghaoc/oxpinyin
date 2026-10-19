@@ -658,8 +658,8 @@ impl Dictionary for Flaky {
         self.inner.suggest_extension_tokens(syllables)
     }
 
-    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
-        self.inner.phrase_text_for_token(token)
+    fn phrase_words_for_token(&self, token: u32) -> Option<oxpinyin_core::PhraseWords> {
+        self.inner.phrase_words_for_token(token)
     }
 }
 
@@ -1000,21 +1000,23 @@ fn train_reports_the_earlier_bounds_fault_before_a_later_token_fault() {
     session.constraints.resize(6);
     session
         .constraints
-        .add(0, 2, PhraseToken::new(1), "你".into());
+        .add(0, 2, PhraseToken::new(1), "你".into(), 1);
     // The later forcing's token differs from the decoded span's token.
     session
         .constraints
-        .add(4, 6, PhraseToken::new(9), "X".into());
+        .add(4, 6, PhraseToken::new(9), "X".into(), 1);
     let spans = vec![
         PhraseSpan {
             start: 0,
             token: PhraseToken::new(1),
-            text: "你".into(),
+            string: "你".into(),
+            len: 1,
         },
         PhraseSpan {
             start: 4,
             token: PhraseToken::new(1),
-            text: "X".into(),
+            string: "X".into(),
+            len: 1,
         },
     ];
     let mut recorder = Recorder {
@@ -1098,7 +1100,7 @@ fn a_fallback_sentence_never_records_row_tokens() {
     // fallback list also offers, so a fallback sentence candidate sits
     // beyond the row at a known place.
     session.sentence.rows = vec![NbestRow {
-        text: "\u{884}".into(),
+        string: "\u{884}".into(),
         tokens: vec![PhraseToken::new(9)],
         spans: Vec::new(),
         keys: 1,
@@ -1124,7 +1126,7 @@ fn a_fallback_sentence_never_records_row_tokens() {
     session.reset();
     session.type_pinyin("nihao").expect("typing cannot fail");
     session.sentence.rows = vec![NbestRow {
-        text: "\u{884}".into(),
+        string: "\u{884}".into(),
         tokens: vec![PhraseToken::new(9)],
         spans: Vec::new(),
         keys: 1,
@@ -1161,7 +1163,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
     // (the 你→浩 training divergence, `sentence-surface.md` §8).
     session.sentence.rows = vec![
         NbestRow {
-            text: "\u{597d}".into(),
+            string: "\u{597d}".into(),
             tokens: vec![PhraseToken::new(0x100)],
             spans: Vec::new(),
             keys: 1,
@@ -1169,7 +1171,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             cost: 10,
         },
         NbestRow {
-            text: "\u{597d}".into(),
+            string: "\u{597d}".into(),
             tokens: vec![PhraseToken::new(0x101)],
             spans: Vec::new(),
             keys: 1,
@@ -1177,7 +1179,7 @@ fn a_shifted_row_records_its_own_rank_not_its_position() {
             cost: 20,
         },
         NbestRow {
-            text: "\u{6d69}".into(),
+            string: "\u{6d69}".into(),
             tokens: vec![PhraseToken::new(0x102)],
             spans: Vec::new(),
             keys: 1,
@@ -1217,7 +1219,7 @@ fn an_nbest_row_chosen_from_a_reanchored_window_commits_only_its_text() {
     // the row's text alone — never the typed-but-unselected gap (which
     // would duplicate the raw prefix).
     session.sentence.rows = vec![NbestRow {
-        text: "你好".into(),
+        string: "你好".into(),
         tokens: vec![PhraseToken::new(0x100), PhraseToken::new(0x101)],
         spans: Vec::new(),
         keys: 2,
@@ -2667,24 +2669,26 @@ fn a_fresh_composition_row_choose_records_its_forcing() {
     // the shifted-row shape (`sentence-surface.md` §8).
     session.sentence.rows = vec![
         crate::nbest::NbestRow {
-            text: "\u{597d}".into(),
+            string: "\u{597d}".into(),
             tokens: vec![PhraseToken::new(0x100)],
             spans: vec![crate::constraint::PhraseSpan {
                 start: 0,
                 token: PhraseToken::new(0x100),
-                text: "\u{597d}".into(),
+                string: "\u{597d}".into(),
+                len: 1,
             }],
             keys: 1,
             span: 3,
             cost: 10,
         },
         crate::nbest::NbestRow {
-            text: "\u{6d69}".into(),
+            string: "\u{6d69}".into(),
             tokens: vec![PhraseToken::new(0x102)],
             spans: vec![crate::constraint::PhraseSpan {
                 start: 0,
                 token: PhraseToken::new(0x102),
-                text: "\u{6d69}".into(),
+                string: "\u{6d69}".into(),
+                len: 1,
             }],
             keys: 1,
             span: 3,
@@ -2718,10 +2722,10 @@ fn a_record_rebuild_keeps_the_gap_text_between_forcings() {
     session.constraints.resize(12);
     session
         .constraints
-        .add(0, 2, PhraseToken::new(1), "\u{4f60}".into());
+        .add(0, 2, PhraseToken::new(1), "\u{4f60}".into(), 8);
     session
         .constraints
-        .add(5, 10, PhraseToken::new(2), "\u{4e16}\u{754c}".into());
+        .add(5, 10, PhraseToken::new(2), "\u{4e16}\u{754c}".into(), 16);
     session.rebuild_selection_from_constraints();
     let preedit = session.preedit();
     assert!(
@@ -2883,7 +2887,7 @@ fn candidates_at_mid_syllable_keeps_the_prepended_nbest_rows() {
         .type_pinyin("nihaoshijie")
         .expect("typing cannot fail");
     session.sentence.rows = vec![NbestRow {
-        text: "你好世界".into(),
+        string: "你好世界".into(),
         tokens: vec![
             PhraseToken::new(0x100),
             PhraseToken::new(0x101),
@@ -2919,7 +2923,7 @@ fn the_zhuyin_display_law_prepends_only_the_one_best_row() {
     use crate::nbest::NbestRow;
 
     let row = |text: &str, cost: i64| NbestRow {
-        text: text.into(),
+        string: text.into(),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),
         keys: 2,
@@ -3015,7 +3019,7 @@ fn choosing_a_before_cursor_row_constrains_its_own_span() {
     let runs = session.constraints.runs();
     assert_eq!(runs.len(), 1, "one forcing: {runs:?}");
     assert_eq!(
-        (runs[0].0, runs[0].1, runs[0].3.as_str()),
+        (runs[0].0, runs[0].1, runs[0].3.as_str().unwrap_or_default()),
         (2, 5, "好"),
         "the constraint is the row's own span, not [0, offset)"
     );
@@ -3059,7 +3063,7 @@ fn candidates_ending_at_walks_the_spans_that_end_there() {
 
     // A guessed sentence rides the prepend at any offset.
     session.sentence.rows = vec![NbestRow {
-        text: "你好".into(),
+        string: "你好".into(),
         tokens: vec![PhraseToken::new(0x100)],
         spans: Vec::new(),
         keys: 2,
@@ -3655,7 +3659,10 @@ fn choosing_behind_the_composition_moves_the_record_back() {
     assert_eq!(session.composition_offset(), 2, "the record moves back");
     let runs = session.constraints.runs();
     assert_eq!(runs.len(), 1, "你好 was overlapped and cleared: {runs:?}");
-    assert_eq!((runs[0].0, runs[0].1, runs[0].3.as_str()), (0, 2, "你"));
+    assert_eq!(
+        (runs[0].0, runs[0].1, runs[0].3.as_str().unwrap_or_default()),
+        (0, 2, "你")
+    );
     assert_eq!(session.preedit().text(), "你hao");
 }
 
@@ -4239,7 +4246,7 @@ fn wide_abbreviation_session(
     assert_eq!(
         session
             .constraints
-            .add(0, 5, PhraseToken::new(7), "中华人民".into()),
+            .add(0, 5, PhraseToken::new(7), "中华人民".into(), 4),
         5
     );
     session.rebuild_selection_from_constraints();

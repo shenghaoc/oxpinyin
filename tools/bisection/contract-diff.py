@@ -7589,20 +7589,19 @@ def ucs4_predicted(k, prefix):
     return {'guess': guessed, 'rows': ucs4_candidate_rows(k, inst)}
 
 
-def ucs4_predicted_probe(name, shallow=False):
+def ucs4_predicted_probe(name):
     """The predicted candidates after each prefix of the item, which show the
     phrase from the prefix on (`_token_get_phrase` with `begin`,
     `pinyin.cpp:1644`): a zero inside the skipped prefix ends nothing, and
     the NULL string of a word after it counts again. The string comes from the
     words of the item, not from the key of the phrase index: the fixture
-    rewrites the words only. With `shallow`, the case stops at the first
-    prefix."""
+    rewrites the words only."""
     phrase, _reading, _patch = UCS4_ITEMS[name]
 
     def run(k):
         _token, codes = ucs4_place(k, name)
         out = {'~glib': {}}
-        for length in (1,) if shallow else range(1, len(phrase)):
+        for length in range(1, len(phrase)):
             out[phrase[:length]] = ucs4_predicted(k, phrase[:length])
             out['~glib'][phrase[:length]] = hex_of(glib_ucs4_to_utf8(codes[length:]))
         return out
@@ -7748,11 +7747,7 @@ def ucs4_case(name, **kwargs):
 # difference 2: the string ends at the first zero. The byte classes are
 # difference 1 (a code point that is not a Unicode scalar value). The pin gives
 # the bytes of `g_unichar_to_utf8`, which are not UTF-8, and NULL from 0x80000000
-# on. A Rust `str` cannot carry these bytes through the engine, so the byte
-# classes, the three corners and the NULL strings of the predicted list differ
-# from the pin until the engine carries a byte string. They register only with
-# CONTRACT_DIFF_PENDING_RULING=1. The NULL candidate list and the NULL export
-# match already, and they always register.
+# on.
 #
 # A NULL string stops the pin in `strcmp` when a candidate list holds two
 # candidates (`pinyin.cpp:2053`, `:2082`; `:2451` for the predicted list). This
@@ -7766,35 +7761,26 @@ def ucs4_case(name, **kwargs):
 UCS4_PLAIN = ('plain',)
 UCS4_ZERO = ('nul-mid', 'nul-first', 'nul-last', 'nul-then-null')
 UCS4_BYTES = ('surrogate', 'above-unicode', 'six-byte', 'null', 'null-all-ones')
-UCS4_PENDING = os.environ.get('CONTRACT_DIFF_PENDING_RULING') == '1'
 
 
 def ucs4_register(name, control=False):
     phrase, _reading, _patch = UCS4_ITEMS[name]
     codes = ucs4_codes(name)
     null = glib_ucs4_to_utf8(codes) is None
-    bytes_class = name in UCS4_BYTES
     # The first prefix after which the pin reads a NULL string. The list of the
     # predicted candidates holds a longer phrase too, so the pin stops there.
     dies = next((phrase[:n] for n in range(1, len(phrase)) if glib_ucs4_to_utf8(codes[n:]) is None), None)
-    # `nul-then-null` is no byte class, but its second prefix reads a NULL string:
-    # until the fix, its case stops at the first prefix.
-    shallow = dies is not None and not bytes_class and not UCS4_PENDING
     for mode in ('pinyin', 'zhuyin'):
-        if not bytes_class or UCS4_PENDING:
-            ucs4_case('ucs4-text-token-%s-%s' % (name, mode), mode=mode, control=control)(ucs4_token_probe(name))
-            ucs4_case('ucs4-text-sentence-%s-%s' % (name, mode), mode=mode, control=control)(
-                ucs4_sentence_probe(name))
-        if not bytes_class or UCS4_PENDING or null:
-            ucs4_case('ucs4-text-candidates-%s-%s' % (name, mode), mode=mode, control=control or null,
-                 **({'crash': {'whole': {'guess': False, 'rows': []}}} if null else {}))(
-                ucs4_candidates_probe(name))
-    if not bytes_class or UCS4_PENDING:
-        # A zero inside the skipped prefix ends nothing, so `nul-first` holds on the
-        # parent too.
-        ucs4_case('ucs4-text-predicted-%s-pinyin' % name, control=control and (dies is None or shallow),
-             **({'crash': {dies: {'guess': False, 'rows': []}}} if dies and not shallow else {}))(
-            ucs4_predicted_probe(name, shallow))
+        ucs4_case('ucs4-text-token-%s-%s' % (name, mode), mode=mode, control=control)(ucs4_token_probe(name))
+        ucs4_case('ucs4-text-sentence-%s-%s' % (name, mode), mode=mode, control=control)(ucs4_sentence_probe(name))
+        ucs4_case('ucs4-text-candidates-%s-%s' % (name, mode), mode=mode, control=control or null,
+             **({'crash': {'whole': {'guess': False, 'rows': []}}} if null else {}))(
+            ucs4_candidates_probe(name))
+    # A zero inside the skipped prefix ends nothing, so `nul-first` holds on the
+    # parent too.
+    ucs4_case('ucs4-text-predicted-%s-pinyin' % name, control=control and dies is None,
+         **({'crash': {dies: {'guess': False, 'rows': []}}} if dies else {}))(
+        ucs4_predicted_probe(name))
 
 
 def ucs4_register_export(name, control=False):
@@ -7807,21 +7793,19 @@ for _name in UCS4_BYTES:
     ucs4_register(_name)
 for _name in UCS4_EXPORTED:
     # Row 62 sends a NULL phrase for a value of 0x80000000 or more, as the pin does.
-    if _name in UCS4_PLAIN + UCS4_ZERO or _name == 'null' or UCS4_PENDING:
-        ucs4_register_export(_name, control=_name in UCS4_PLAIN + UCS4_ZERO or _name == 'null')
-if UCS4_PENDING:
-    for _name in UCS4_STORED:
-        for _mode in ('pinyin', 'zhuyin'):
-            ucs4_case('ucs4-text-user-%s-%s' % (_name, _mode), mode=_mode, control=_name == 'plain')(
-                ucs4_user_probe(_name))
-            # The other two user libraries load the same way: one case for a byte
-            # string and one for NULL each.
-            if _name in ('plain', 'surrogate', 'null'):
-                for _kind, _library in (('network', 6), ('addonbin', 5)):
-                    ucs4_case('ucs4-text-%s-%s-%s' % (_kind, _name, _mode), mode=_mode, control=_name == 'plain')(
-                        ucs4_user_probe(_name, _library))
-        if _name != 'null':
-            ucs4_case('ucs4-text-addon-%s-pinyin' % _name, control=_name == 'plain')(ucs4_addon_probe(_name))
+    ucs4_register_export(_name, control=_name in UCS4_PLAIN + UCS4_ZERO or _name == 'null')
+for _name in UCS4_STORED:
+    for _mode in ('pinyin', 'zhuyin'):
+        ucs4_case('ucs4-text-user-%s-%s' % (_name, _mode), mode=_mode, control=_name == 'plain')(
+            ucs4_user_probe(_name))
+        # The other two user libraries load the same way: one case for a byte
+        # string and one for NULL each.
+        if _name in ('plain', 'surrogate', 'null'):
+            for _kind, _library in (('network', 6), ('addonbin', 5)):
+                ucs4_case('ucs4-text-%s-%s-%s' % (_kind, _name, _mode), mode=_mode, control=_name == 'plain')(
+                    ucs4_user_probe(_name, _library))
+    if _name != 'null':
+        ucs4_case('ucs4-text-addon-%s-pinyin' % _name, control=_name == 'plain')(ucs4_addon_probe(_name))
 
 
 def unigram_null_user_save(k):

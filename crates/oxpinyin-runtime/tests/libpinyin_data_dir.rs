@@ -72,12 +72,14 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     // Dictionary lookups through the pinyin DBM + chunk files.
     let nihao = dict.lookup(&syllables("ni'hao")).expect("lookup");
     assert!(
-        nihao.iter().any(|entry| entry.text() == "你好"),
+        nihao
+            .iter()
+            .any(|entry| entry.string().as_str() == Some("你好")),
         "{nihao:?}"
     );
     let entry = nihao
         .iter()
-        .find(|entry| entry.text() == "你好")
+        .find(|entry| entry.string().as_str() == Some("你好"))
         .expect("你好");
     assert!(
         entry
@@ -99,7 +101,10 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     assert!(!tokens.is_empty());
     for token in &tokens {
         assert_eq!(
-            dict.system().phrase_text(token.value()).as_deref(),
+            dict.system()
+                .phrase_words(token.value())
+                .and_then(|words| words.as_text().map(str::to_owned))
+                .as_deref(),
             Some("中国")
         );
         assert!(
@@ -131,7 +136,11 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
     let art = dict
         .lookup_addon(&syllables("er'huang"))
         .expect("addon lookup");
-    assert!(art.iter().any(|entry| entry.text() == "二簧"), "{art:?}");
+    assert!(
+        art.iter()
+            .any(|entry| entry.string().as_str() == Some("二簧")),
+        "{art:?}"
+    );
 
     // A session decodes over the same handles.
     let mut session = runtime.new_session(&EmptyConfigSource).expect("session");
@@ -143,10 +152,14 @@ fn an_unmodified_libpinyin_data_directory_opens_and_decodes() {
         .candidates()
         .get(0)
         .expect("candidates")
-        .text()
-        .to_owned();
+        .string()
+        .to_string_lossy()
+        .into_owned();
     assert_eq!(first, "你好");
     session.guess_sentence().expect("sentence");
-    assert_eq!(session.sentence_text(0).expect("row 0"), "你好");
+    assert_eq!(
+        session.sentence_string(0).expect("row 0").as_str(),
+        Some("你好")
+    );
     let _ = PhraseToken::new(0);
 }

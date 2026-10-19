@@ -228,7 +228,9 @@ impl CapiContext {
 /// One snapshotted candidate, stored inside `CapiInstance` so that
 /// `lookup_candidate_t *` can borrow into it across C calls.
 pub struct CapiCandidate {
-    pub(crate) text: CString,
+    /// The string the pin hands out for the candidate; `None` is its NULL
+    /// (`g_ucs4_to_utf8` of a word of 0x80000000 or more).
+    pub(crate) text: Option<CString>,
     pub(crate) kind: CandidateKind,
     pub(crate) candidate_type: crate::types::lookup_candidate_type_t,
     pub(crate) nbest_index: u8,
@@ -256,6 +258,23 @@ pub struct CapiCandidate {
     /// position in the window; `pinyin_choose_candidate` must select by
     /// THIS index, which is the one `Session::select[_anchored]` indexes.
     pub(crate) source_index: usize,
+}
+
+impl CapiCandidate {
+    /// The candidate's string as a C string, for a test that reads a
+    /// candidate made of text.
+    #[cfg(test)]
+    pub(crate) fn cstr(&self) -> &std::ffi::CStr {
+        self.text.as_deref().expect("a candidate made of text")
+    }
+}
+
+/// Whether the pin's duplicate removal dies on this candidate list: it sorts
+/// and compares the candidates' strings with `strcmp` (`pinyin.cpp:2053`,
+/// `:2082`), which reads through a NULL string as soon as a second candidate
+/// is there to be compared with it (SIGSEGV; class (b)).
+pub(crate) fn strcmp_would_die(candidates: &[CapiCandidate]) -> bool {
+    candidates.len() >= 2 && candidates.iter().any(|candidate| candidate.text.is_none())
 }
 
 /// State behind `pinyin_instance_t *`.

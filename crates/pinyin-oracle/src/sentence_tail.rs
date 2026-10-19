@@ -157,9 +157,10 @@ fn observe_port(session: &mut PortSession, input: &str) -> Result<PortSurface, S
         .min(MAX_INDEX);
     let sentences: Vec<String> = (0..=proven)
         .map(|index| {
-            session
-                .sentence_text(index)
-                .map_or_else(|| "-".to_owned(), str::to_owned)
+            session.sentence_string(index).map_or_else(
+                || "-".to_owned(),
+                |string| string.to_string_lossy().into_owned(),
+            )
         })
         .collect();
 
@@ -192,7 +193,7 @@ fn render_row(cand: &Candidate) -> String {
             .map_or_else(|| "-".to_owned(), |rank| rank.to_string()),
         _ => "-".to_owned(),
     };
-    format!("{letter}/{nbest}/{}", cand.text())
+    format!("{letter}/{nbest}/{}", cand.string().to_string_lossy())
 }
 
 /// A sorted multiset key, so "same set, different order" is detectable.

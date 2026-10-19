@@ -18,15 +18,18 @@
 //! would otherwise leave a stale `committed` set — and the next compatible
 //! re-parse would start fresh and silently drop it.
 
-use compact_str::CompactString;
+use std::borrow::Cow;
 
-use oxpinyin_core::PhraseToken;
+use oxpinyin_core::{PhraseString, PhraseStringJoin, PhraseToken};
 
 /// The user's selections in this composition.
 #[derive(Clone, Debug, Default)]
 pub(super) struct SelectionRecord {
-    /// The text chosen so far — the selected span of the preedit.
-    selected: String,
+    /// The text chosen so far — the selected span of the preedit — joined as
+    /// `convert_to_utf8` joins the strings of a sentence's phrases
+    /// (`lookup.cpp:61-67`): bytes, which are not UTF-8 for a phrase whose
+    /// string is not, and nothing for a NULL string.
+    selected: PhraseStringJoin,
     /// Bytes of the raw input the selections consumed: the composition
     /// offset the candidate lookup is anchored at and the store's
     /// coordinate origin. Never past the raw input's length.
@@ -46,15 +49,30 @@ impl SelectionRecord {
         self.consumed
     }
 
-    /// The text chosen so far.
-    pub(super) fn selected(&self) -> &str {
+    /// The text chosen so far, as the join the n-best rows are prefixed with.
+    pub(super) const fn selected(&self) -> &PhraseStringJoin {
         &self.selected
     }
 
-    /// Moves the chosen text out, leaving it empty — the commit path, which
-    /// resets the whole record immediately after.
-    pub(super) fn take_selected(&mut self) -> String {
-        core::mem::take(&mut self.selected)
+    /// Whether the chosen text has any byte: nothing chosen, and a choice
+    /// whose strings are all empty or NULL, both leave nothing to show.
+    pub(super) fn has_text(&self) -> bool {
+        !self.selected.bytes().is_empty()
+    }
+
+    /// The chosen text for a shell that shows it: the bytes with U+FFFD for
+    /// each run that is not UTF-8.
+    pub(super) fn selected_text(&self) -> Cow<'_, str> {
+        String::from_utf8_lossy(self.selected.bytes())
+    }
+
+    /// Moves the chosen text out as a shell shows it, leaving the record's
+    /// empty — the commit path, which resets the whole record immediately
+    /// after.
+    pub(super) fn take_selected_text(&mut self) -> String {
+        let text = self.selected_text().into_owned();
+        self.selected.clear();
+        text
     }
 
     /// The pinned tokens in selection order.
@@ -90,18 +108,18 @@ impl SelectionRecord {
     }
 
     /// Extends the text chosen so far with a typed-but-unselected `gap`
-    /// then the chosen `text` — the ordinary selection, whose gap is
+    /// then the chosen `string` — the ordinary selection, whose gap is
     /// empty on the composition-anchored path.
-    pub(super) fn append_selected(&mut self, gap: &str, text: &str) {
+    pub(super) fn append_selected(&mut self, gap: &str, string: &PhraseString) {
         self.selected.push_str(gap);
-        self.selected.push_str(text);
+        self.selected.push(string);
     }
 
-    /// Replaces the text chosen so far with `text` — an n-best row, whose
-    /// text already covers the whole composition, so no gap is prepended.
-    pub(super) fn set_selected(&mut self, text: &str) {
+    /// Replaces the text chosen so far with `string` — an n-best row, whose
+    /// string already covers the whole composition, so no gap is prepended.
+    pub(super) fn set_selected(&mut self, string: &PhraseString) {
         self.selected.clear();
-        self.selected.push_str(text);
+        self.selected.push(string);
     }
 
     /// Appends one token to the record.
@@ -141,22 +159,22 @@ impl SelectionRecord {
     pub(super) fn rebuild_from_constraints(
         &mut self,
         raw: &str,
-        runs: &[(usize, usize, PhraseToken, CompactString)],
+        runs: &[(usize, usize, PhraseToken, PhraseString)],
     ) {
         if runs.is_empty() {
             self.clear();
             return;
         }
-        let mut selected = String::new();
+        let mut selected = PhraseStringJoin::new();
         let mut cursor = 0_usize;
         let mut history = Vec::with_capacity(runs.len());
-        for (start, end, token, text) in runs {
+        for (start, end, token, string) in runs {
             if *start > cursor
                 && let Some(gap) = raw.get(cursor..*start)
             {
                 selected.push_str(gap);
             }
-            selected.push_str(text);
+            selected.push(string);
             history.push(*token);
             cursor = *end;
         }

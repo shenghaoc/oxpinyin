@@ -7,7 +7,7 @@
 //! This module names those constants and the value types the store records;
 //! it does not talk to the store.
 
-use oxpinyin_core::SyllableKey;
+use oxpinyin_core::{PhraseWords, SyllableKey};
 
 use crate::store::Token;
 
@@ -276,14 +276,14 @@ impl UserPronunciation {
     }
 }
 
-/// A user phrase: its token, text, and pronunciations.
+/// A user phrase: its token, words, and pronunciations.
 ///
 /// This is the lookup surface T3 needs to resolve a user token. T2 does not
 /// wire it into Session or the C ABI.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UserPhrase {
     token: Token,
-    text: String,
+    words: PhraseWords,
     pronunciations: Vec<UserPronunciation>,
 }
 
@@ -309,11 +309,12 @@ impl UserPhrase {
         self.token
     }
 
-    /// Phrase text as stored (UTF-8; Unicode scalar length is the phrase
-    /// length).
+    /// The phrase's words as stored: text while every word is a Unicode
+    /// scalar value, the raw words otherwise (a profile file can hold a word
+    /// that is not).
     #[must_use]
-    pub fn text(&self) -> &str {
-        &self.text
+    pub const fn words(&self) -> &PhraseWords {
+        &self.words
     }
 
     /// Pronunciations in insertion order — `add_pronunciation` appends
@@ -325,12 +326,12 @@ impl UserPhrase {
 
     pub(crate) const fn new(
         token: Token,
-        text: String,
+        words: PhraseWords,
         pronunciations: Vec<UserPronunciation>,
     ) -> Self {
         Self {
             token,
-            text,
+            words,
             pronunciations,
         }
     }
@@ -346,7 +347,12 @@ pub(crate) fn phrase_len(phrase: &str) -> usize {
 /// shorter than [`MAX_PHRASE_LENGTH`], and the same length.
 #[must_use]
 pub(crate) fn phrase_and_keys_valid(phrase: &str, keys: &[PinyinKey]) -> bool {
-    let len = phrase_len(phrase);
+    length_and_keys_valid(phrase_len(phrase), keys)
+}
+
+/// [`phrase_and_keys_valid`] for a phrase of `len` words.
+#[must_use]
+pub(crate) fn length_and_keys_valid(len: usize, keys: &[PinyinKey]) -> bool {
     len > 0 && len < MAX_PHRASE_LENGTH && len == keys.len()
 }
 

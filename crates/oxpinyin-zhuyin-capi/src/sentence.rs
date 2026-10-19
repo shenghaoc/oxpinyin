@@ -139,16 +139,19 @@ pub extern "C" fn zhuyin_get_sentence(
     if !inst.core.session.sentence_lookup_active() {
         return false;
     }
-    match inst.core.session.sentence_text(0) {
-        Some(decoded) => write_owned_sentence(decoded, sentence),
+    match inst.core.session.sentence_string(0) {
+        // True with whatever `convert_to_utf8` made (`zhuyin.cpp:994-999`):
+        // bytes that are not UTF-8 for a phrase with a word that is no scalar
+        // value, NULL when every phrase's string is NULL.
+        Some(decoded) => write_owned_sentence(decoded.as_bytes(), sentence),
         None => false,
     }
 }
 
 // The `char **`-out sentence writer, stamped from the shared marshalling
-// macro (byte-identical to the pinyin facade's). `crate::ffi::owned_cstr` is
+// macro (byte-identical to the pinyin facade's). `crate::ffi::owned_cstr_bytes` is
 // this facade's libc-`malloc` duplicator — the per-facade allocator edge.
-oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::owned_cstr);
+oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::owned_cstr_bytes);
 
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///
@@ -449,6 +452,17 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     {
         crate::ffi::log_warning("zhuyin_guess_candidates: assertion '0 < total_freq' failed");
         inst.candidates.clear();
+        return false;
+    }
+    // Class (b), `zhuyin.cpp:1096` / `:1370`: the pin's duplicate removal
+    // sorts and compares the candidates' strings with `strcmp`, which reads
+    // through a NULL string as soon as a second candidate is there to be
+    // compared (SIGSEGV). The call fails, once, as it does for an item that
+    // cannot be read.
+    if inst.candidates.len() >= 2 && inst.candidates.iter().any(|c| c.text.is_none()) {
+        inst.core.anchored_window = None;
+        inst.candidates.clear();
+        crate::ffi::log_warning("zhuyin_guess_candidates: a candidate's phrase string is NULL");
         return false;
     }
     // The pin answers `true` for a valid lookup into a non-empty matrix

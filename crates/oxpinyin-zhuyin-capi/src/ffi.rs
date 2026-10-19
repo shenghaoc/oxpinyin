@@ -121,6 +121,14 @@ unsafe extern "C" {
 /// (which `g_free`/`free` can release). Returns null on an interior NUL byte
 /// or allocation failure.
 pub fn owned_cstr(s: &str) -> *mut c_char {
+    owned_cstr_bytes(s.as_bytes())
+}
+
+/// [`owned_cstr`] for bytes that need not be UTF-8: the strings the pin's
+/// `g_ucs4_to_utf8` makes of a phrase whose words are not all Unicode scalar
+/// values (`glib/gutf8.c:1023-1070`). Returns null on an interior NUL byte
+/// or allocation failure.
+pub fn owned_cstr_bytes(s: &[u8]) -> *mut c_char {
     let Ok(cstr) = CString::new(s) else {
         return ptr::null_mut::<c_char>();
     };

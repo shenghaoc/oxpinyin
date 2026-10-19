@@ -25,7 +25,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta, single_gram};
+use oxpinyin_core::{
+    ChewingKey, Completeness, PhraseWords, SyllableKey, UserCountDelta, single_gram,
+};
 use oxpinyin_data::user_files::{LogRecord, decode_log_records_partial, read_chunk_payload};
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn,
@@ -66,16 +68,18 @@ pub struct SaveReport {
     pub user_conf_write_failed: Option<PathBuf>,
 }
 
-/// One §9 export row for a user phrase: the phrase text, one pronunciation's
-/// `'`-joined pinyin spelling, and that pronunciation's stored count.
+/// One §9 export row for a user phrase: the phrase's words, one
+/// pronunciation's `'`-joined pinyin spelling, and that pronunciation's
+/// stored count.
 ///
 /// This is the `(phrase, pinyin, count)` triple
 /// `pinyin_iterator_get_next_phrase` yields upstream
 /// (`docs/findings/user-store.md` §9).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExportedPhrase {
-    /// Phrase text (UTF-8).
-    pub text: String,
+    /// The phrase's words as stored; [`PhraseWords::string`] is the string
+    /// the pin's export hands out for them.
+    pub words: PhraseWords,
     /// One pronunciation, syllables joined by `'` (e.g. `ni'hao`).
     pub pinyin: String,
     /// The pronunciation's stored count.
@@ -1218,17 +1222,27 @@ fn predicted_gram(row: Option<Vec<u8>>, cur: Token) -> Result<Vec<u8>, UserStore
     Ok(gram)
 }
 
+/// The words a PHRASE row holds. The row's owned buffer is validated as UTF-8
+/// in place, so the common phrase is not copied a second time; the bytes of a
+/// word that is no scalar value ([`PhraseWords::to_store_bytes`]) decode
+/// through the slower path. `None` for bytes that are neither.
+fn words_of_row(bytes: Vec<u8>) -> Option<PhraseWords> {
+    match String::from_utf8(bytes) {
+        Ok(text) => Some(PhraseWords::from_text(text)),
+        Err(error) => PhraseWords::from_store_bytes(error.as_bytes()),
+    }
+}
+
 fn mask_phrase_rows(txn: &mut impl WriteTxn, mask: Token, value: Token) -> Result<(), StoreError> {
     // User phrases: text, reverse lookup, and pronunciations.
-    let mut matched: Vec<(Token, String)> = Vec::new();
+    let mut matched: Vec<(Token, Vec<u8>)> = Vec::new();
     txn.for_each(PHRASE, |k, v| {
         let token = codec::decode_token(k)
             .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
         if (token & mask) == value {
-            let text = codec::decode_str(v)
-                .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?
-                .to_owned();
-            matched.push((token, text));
+            codec::decode_words(v)
+                .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
+            matched.push((token, v.to_vec()));
         }
         Ok(())
     })?;
@@ -1241,11 +1255,11 @@ fn mask_phrase_rows(txn: &mut impl WriteTxn, mask: Token, value: Token) -> Resul
     for (token, text) in matched {
         txn.remove(PHRASE, &codec::encode_token(token))?;
         if phrase_index_library_index(token) == USER_DICTIONARY {
-            txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+            txn.remove(PHRASE_BY_TEXT, &text)?;
         }
         txn.remove(
             PHRASE_BY_LIB_TEXT,
-            &codec::encode_u8_str(phrase_index_library_index(token), &text),
+            &codec::encode_u8_bytes(phrase_index_library_index(token), &text),
         )?;
     }
     for (token, key_bytes) in pron_keys {
@@ -1351,9 +1365,9 @@ fn remove_reloaded_rows(
         let token = codec::decode_token(key)
             .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
         if reloaded(token) {
-            let text = codec::decode_str(value)
+            codec::decode_words(value)
                 .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
-            phrases.push((token, text.to_owned()));
+            phrases.push((token, value.to_vec()));
         }
         Ok(())
     })?;
@@ -1361,10 +1375,10 @@ fn remove_reloaded_rows(
         txn.remove(PHRASE, &codec::encode_token(token))?;
         txn.remove(
             PHRASE_BY_LIB_TEXT,
-            &codec::encode_u8_str(phrase_index_library_index(token), &text),
+            &codec::encode_u8_bytes(phrase_index_library_index(token), &text),
         )?;
         if phrase_index_library_index(token) == USER_DICTIONARY {
-            txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+            txn.remove(PHRASE_BY_TEXT, &text)?;
         }
     }
     let mut deltas = Vec::new();
@@ -2923,13 +2937,13 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Returns [`UserStoreError`] when the promotion cannot be written.
     pub fn promote_addon_phrase(
         &mut self,
-        phrase: &str,
+        phrase: &PhraseWords,
         readings: &[(Vec<PinyinKey>, u64)],
         unigram: u64,
     ) -> Result<Token, UserStoreError> {
         let valid: Vec<&(Vec<PinyinKey>, u64)> = readings
             .iter()
-            .filter(|(keys, _)| phrase::phrase_and_keys_valid(phrase, keys))
+            .filter(|(keys, _)| phrase::length_and_keys_valid(phrase.len(), keys))
             .collect();
         if valid.is_empty() {
             return Err(UserStoreError::InvalidPhrase);
@@ -2937,8 +2951,9 @@ impl<S: WriteStore> GenericUserStore<S> {
 
         let db = self.database();
         let indexed = std::cell::RefCell::new(Vec::new());
+        let text = phrase.to_store_bytes();
         let token = db.write(|txn| {
-            let lib_key = codec::encode_u8_str(ADDON_DICTIONARY, phrase);
+            let lib_key = codec::encode_u8_bytes(ADDON_DICTIONARY, &text);
             let existing = match txn.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
                 Some(bytes) => Some(
                     codec::decode_token(&bytes)
@@ -2967,13 +2982,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                 };
                 txn.put(ALLOC, &lib_alloc_key, &codec::encode_token(next))?;
 
-                txn.put(
-                    PHRASE,
-                    &codec::encode_token(token),
-                    codec::encode_str(phrase),
-                )?;
+                txn.put(PHRASE, &codec::encode_token(token), &text)?;
                 txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
-                phrase_table::add_index(txn, phrase, token)?;
+                phrase_table::add_index_words(txn, phrase, token)?;
 
                 let uni_key = codec::encode_token(token);
                 let prev = txn_get_u64_or(txn, UNIGRAM, &uni_key, 0)?;
@@ -3018,11 +3029,13 @@ impl<S: WriteStore> GenericUserStore<S> {
         Ok(token)
     }
 
-    /// Phrase text and pronunciations for `token`, if this store owns it.
+    /// Phrase words and pronunciations for `token`, if this store owns it.
     ///
     /// # Errors
     ///
-    /// [`UserStoreError::Decode`] when the stored text is not UTF-8,
+    /// [`UserStoreError::Decode`] when the stored text is neither UTF-8 nor
+    /// the bytes a word that is no scalar value is stored as
+    /// ([`PhraseWords::to_store_bytes`]),
     /// [`UserStoreError::DecodePronunciation`] when one of its pronunciation
     /// rows does not decode, otherwise the backend's own error: the two
     /// decode failures name a present item that is malformed, the rest a
@@ -3033,11 +3046,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         let Some(text_bytes) = db.get(PHRASE, &token_key)? else {
             return Ok(None);
         };
-        // The get already handed over an owned buffer: validate it as UTF-8
-        // in place instead of decoding to `&str` and copying a second time.
-        let text = String::from_utf8(text_bytes).map_err(|_| UserStoreError::Decode)?;
+        let words = words_of_row(text_bytes).ok_or(UserStoreError::Decode)?;
         let pronunciations = collect_pronunciations_from_store(&*db, token)?;
-        Ok(Some(UserPhrase::new(token, text, pronunciations)))
+        Ok(Some(UserPhrase::new(token, words, pronunciations)))
     }
 
     /// Token already allocated for `phrase` in the user sub-index, if any.
@@ -3160,24 +3171,24 @@ impl<S: WriteStore> GenericUserStore<S> {
             if phrase_index_library_index(token) != library {
                 return Ok(());
             }
-            let text = codec::decode_str(v)
+            let words = codec::decode_words(v)
                 .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
             // Buffer rows so pronunciations are collected after iteration,
             // when the store is no longer borrowed by this callback.
-            rows.push((token, text.to_owned()));
+            rows.push((token, words));
             Ok(())
         })?;
         let tokens: std::collections::HashSet<Token> =
             rows.iter().map(|(token, _)| *token).collect();
         let pronunciations = collect_pronunciations_for_tokens(&*db, &tokens)?;
         let mut out = Vec::new();
-        for (token, text) in rows {
+        for (token, words) in rows {
             for pronunciation in pronunciations.get(&token).into_iter().flatten() {
                 let Some(pinyin) = pronunciation.render_pinyin() else {
                     continue;
                 };
                 out.push(ExportedPhrase {
-                    text: text.clone(),
+                    words: words.clone(),
                     pinyin,
                     count: pronunciation.count(),
                 });
@@ -3197,19 +3208,18 @@ impl<S: WriteStore> GenericUserStore<S> {
         db.for_each(PHRASE, |k, v| {
             let token = codec::decode_token(k)
                 .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-            let text = codec::decode_str(v)
-                .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?
-                .to_owned();
-            tokens_and_texts.push((token, text));
+            let words = codec::decode_words(v)
+                .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
+            tokens_and_texts.push((token, words));
             Ok(())
         })?;
         let tokens: std::collections::HashSet<Token> =
             tokens_and_texts.iter().map(|(token, _)| *token).collect();
         let pronunciations = collect_pronunciations_for_tokens(&*db, &tokens)?;
         let mut out = Vec::new();
-        for (token, text) in tokens_and_texts {
+        for (token, words) in tokens_and_texts {
             let pronunciations = pronunciations.get(&token).cloned().unwrap_or_default();
-            out.push(UserPhrase::new(token, text, pronunciations));
+            out.push(UserPhrase::new(token, words, pronunciations));
         }
         Ok(out)
     }
@@ -3896,8 +3906,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                 };
                 // As in `phrase`: the get hands over an owned buffer, so
                 // validate it in place rather than copying it a second time.
-                let text = String::from_utf8(text_bytes)
-                    .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
+                let words = words_of_row(text_bytes)
+                    .ok_or_else(|| StoreError::Backend("corrupt phrase text".into()))?;
+                let text = words.to_store_bytes();
 
                 // `pinyin_table->remove_index` for every reading
                 // (`pinyin.cpp:3759`): a reading merged into an existing
@@ -3910,7 +3921,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 // Validate the known abort case before publishing any table
                 // mutation, preserving this API's failed-call behavior.
                 // pinyin.cpp:3750 removes only the first matching stored token.
-                if phrase_table::remove_index(txn, &text, token)? != phrase_table::ERROR_OK {
+                if phrase_table::remove_index_words(txn, &words, token)? != phrase_table::ERROR_OK {
                     return Ok(None);
                 }
 
@@ -3920,11 +3931,11 @@ impl<S: WriteStore> GenericUserStore<S> {
 
                 txn.remove(PHRASE, &token_key)?;
                 if phrase_index_library_index(token) == USER_DICTIONARY {
-                    txn.remove(PHRASE_BY_TEXT, codec::encode_str(&text))?;
+                    txn.remove(PHRASE_BY_TEXT, &text)?;
                 }
                 txn.remove(
                     PHRASE_BY_LIB_TEXT,
-                    &codec::encode_u8_str(phrase_index_library_index(token), &text),
+                    &codec::encode_u8_bytes(phrase_index_library_index(token), &text),
                 )?;
                 remove_pronunciations(txn, token)?;
 
@@ -4800,7 +4811,7 @@ mod tests {
                         .phrase(FIRST_USER_TOKEN)
                         .unwrap()
                         .expect("phrase stored");
-                    assert_eq!(phrase.text(), "你好");
+                    assert_eq!(*phrase.words(), "你好");
                     assert_eq!(phrase.pronunciations()[0].keys(), &[10, 20]);
                     assert_eq!(phrase.pronunciations()[0].count(), 5);
 
@@ -4955,7 +4966,7 @@ mod tests {
                     assert_eq!(store.unigram_delta(first).unwrap(), 15);
 
                     let got = store.phrase(first).unwrap().unwrap();
-                    assert_eq!(got.text(), "你好");
+                    assert_eq!(*got.words(), "你好");
                     assert_eq!(got.pronunciations().len(), 2);
                     assert_eq!(got.pronunciations()[0].keys(), &[10, 20]);
                     assert_eq!(got.pronunciations()[0].count(), 5);
@@ -5115,7 +5126,7 @@ mod tests {
                     assert_eq!(next, FIRST_USER_TOKEN + 2);
 
                     let p1 = store.phrase(t1).unwrap().unwrap();
-                    assert_eq!(p1.text(), "你好");
+                    assert_eq!(*p1.words(), "你好");
                     assert_eq!(p1.pronunciations().len(), 2);
                     assert_eq!(p1.pronunciations()[0].keys(), &[10, 20]);
                     assert_eq!(p1.pronunciations()[0].count(), 5);
@@ -5125,7 +5136,7 @@ mod tests {
                     assert_eq!(store.unigram_total().unwrap(), 15 + 27);
 
                     let p2 = store.phrase(t2).unwrap().unwrap();
-                    assert_eq!(p2.text(), "世界");
+                    assert_eq!(*p2.words(), "世界");
                     assert_eq!(p2.pronunciations()[0].keys(), &[30, 40]);
                     assert_eq!(p2.pronunciations()[0].count(), 9);
                     assert_eq!(store.unigram_delta(t2).unwrap(), 27);
@@ -5192,12 +5203,12 @@ mod tests {
                         store.export_phrases().unwrap(),
                         vec![
                             ExportedPhrase {
-                                text: "你好".to_owned(),
+                                words: "你好".into(),
                                 pinyin: "ni'hao".to_owned(),
                                 count: 12,
                             },
                             ExportedPhrase {
-                                text: "世界".to_owned(),
+                                words: "世界".into(),
                                 pinyin: "shi'jie".to_owned(),
                                 count: 3,
                             },
@@ -5541,7 +5552,7 @@ mod tests {
                         .unwrap();
                     }
                     let err = store
-                        .promote_addon_phrase("二簧", &[(vec![1, 2], 100)], 100)
+                        .promote_addon_phrase(&"二簧".into(), &[(vec![1, 2], 100)], 100)
                         .unwrap_err();
                     assert!(matches!(err, UserStoreError::TokenSpaceExhausted));
                     cleanup(&path);
@@ -5554,7 +5565,7 @@ mod tests {
                     let keys = [key("er"), key("huang")];
 
                     let token = store
-                        .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
+                        .promote_addon_phrase(&"二簧".into(), &[(keys.to_vec(), 100)], 100)
                         .unwrap();
                     assert_eq!(
                         phrase_index_library_index(token),
@@ -5569,13 +5580,13 @@ mod tests {
                         Some(token)
                     );
                     let phrase = store.phrase(token).unwrap().unwrap();
-                    assert_eq!(phrase.text(), "二簧");
+                    assert_eq!(*phrase.words(), "二簧");
                     assert_eq!(phrase.pronunciations().len(), 1);
                     assert_eq!(phrase.pronunciations()[0].keys(), keys);
                     assert_eq!(phrase.pronunciations()[0].count(), 100);
 
                     let again = store
-                        .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
+                        .promote_addon_phrase(&"二簧".into(), &[(keys.to_vec(), 100)], 100)
                         .unwrap();
                     assert_eq!(again, token, "re-promotion reuses the nibble-5 token");
                     assert_eq!(store.unigram_delta(token).unwrap(), 100);
@@ -5593,10 +5604,58 @@ mod tests {
                     let path = temp_path("promote-addon-invalid");
                     let mut store = Store::create_standalone(&path).unwrap();
                     let err = store
-                        .promote_addon_phrase("二簧", &[(vec![key("er")], 100)], 100)
+                        .promote_addon_phrase(&"二簧".into(), &[(vec![key("er")], 100)], 100)
                         .unwrap_err();
                     assert!(matches!(err, UserStoreError::InvalidPhrase));
                     assert!(!store.has_user_data());
+                    cleanup(&path);
+                }
+
+                /// A chosen addon item is copied as the words it holds
+                /// (`add_phrase_item` copies the `ucs4_t` array): a surrogate
+                /// or a value of 0x80000000 or more is no reason to refuse it.
+                /// The phrase table indexes it by those words, and the item
+                /// can be taken out again.
+                #[test]
+                fn promote_addon_phrase_keeps_words_that_are_no_scalar_values() {
+                    let path = temp_path("promote-addon-words");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    let two = vec![key("er"), key("huang")];
+                    let three = vec![key("er"), key("huang"), key("huang")];
+                    for (words, keys) in [
+                        (PhraseWords::from_words([0x4e8c, 0xd800]), two.clone()),
+                        (PhraseWords::from_words([0x8000_0000, 0x7fff_ffff]), two),
+                        // A word behind the first zero is stored as it is.
+                        (PhraseWords::from_words([0x4e8c, 0, 0x11_0000]), three),
+                    ] {
+                        let readings = vec![(keys, 100)];
+                        let token = store.promote_addon_phrase(&words, &readings, 100).unwrap();
+                        assert_eq!(
+                            phrase_index_library_index(token),
+                            ADDON_DICTIONARY,
+                            "{words:?}"
+                        );
+                        let phrase = store.phrase(token).unwrap().expect("stored");
+                        assert_eq!(*phrase.words(), words, "{words:?} reads back as stored");
+                        // The phrase table is keyed on the words.
+                        let key_bytes = phrase_table::key_words(&words);
+                        let record = store
+                            .database()
+                            .get(phrase_table::TABLE, &key_bytes)
+                            .unwrap()
+                            .expect("the words are a key");
+                        let mut tokens = Vec::new();
+                        phrase_table::PhraseTableEntry::from_bytes(record)
+                            .unwrap()
+                            .search(&mut tokens, |_| true);
+                        assert_eq!(tokens, [token], "{words:?}");
+                        // Promoting it again reuses the token.
+                        let again = store.promote_addon_phrase(&words, &readings, 100).unwrap();
+                        assert_eq!(again, token, "{words:?}");
+                        // And the item can be removed by the words it holds.
+                        assert!(store.remove_user_phrase(token).unwrap(), "{words:?}");
+                        assert!(store.phrase(token).unwrap().is_none(), "{words:?}");
+                    }
                     cleanup(&path);
                 }
 

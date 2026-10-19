@@ -264,7 +264,7 @@ fn a_short_start_gram_refuses_the_guess_before_any_training() {
     let list = inst.session.candidates_at(0).expect("candidates");
     let index = list
         .iter()
-        .position(|candidate| candidate.text() == "你")
+        .position(|candidate| candidate.string() == "你")
         .expect("你 is a candidate");
     inst.session.select(index).expect("choose 你");
     let generation = store.generation();
@@ -303,7 +303,7 @@ fn training_that_would_miss_its_inserted_item_refuses_and_observes_nothing() {
         assert_eq!(inst.parse_full_more("nihao"), 5);
         let list = inst.session.candidates_at(0).expect("candidates");
         list.iter()
-            .find(|candidate| candidate.text() == "你")
+            .find(|candidate| candidate.string() == "你")
             .and_then(oxpinyin_engine::Candidate::token)
             .expect("你 has a token")
             .value()
@@ -331,7 +331,7 @@ fn training_that_would_miss_its_inserted_item_refuses_and_observes_nothing() {
     let list = inst.session.candidates_at(0).expect("candidates");
     let index = list
         .iter()
-        .position(|candidate| candidate.text() == "你")
+        .position(|candidate| candidate.string() == "你")
         .expect("你 is a candidate");
     inst.session.select(index).expect("choose 你");
     assert!(inst.session.guess_sentence().expect("guess"));
@@ -365,7 +365,7 @@ fn ni_and_hao(system: &std::path::Path) -> (u32, u32) {
     let token = |inst: &mut InstanceCore, offset: usize, text: &str| {
         let list = inst.session.candidates_at(offset).expect("candidates");
         list.iter()
-            .find(|candidate| candidate.text() == text)
+            .find(|candidate| candidate.string() == text)
             .and_then(oxpinyin_engine::Candidate::token)
             .expect("the fixture phrase has a token")
             .value()
@@ -411,7 +411,7 @@ fn train_two_steps(
     let list = inst.session.candidates_at(0).expect("candidates");
     let index = list
         .iter()
-        .position(|candidate| candidate.text() == "你")
+        .position(|candidate| candidate.string() == "你")
         .expect("你 is a candidate");
     inst.session.select(index).expect("choose 你");
     let generation = store.generation();

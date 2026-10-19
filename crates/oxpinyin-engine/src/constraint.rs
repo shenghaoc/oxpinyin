@@ -13,14 +13,13 @@
 //! every keystroke, and only `pinyin_reset` clears upstream's
 //! `m_constraints`) — see `Session::reset_composition` for the split.
 //!
-//! `OneStep` carries the chosen phrase's display text: upstream
-//! re-fetches it from the phrase index by token, the engine carries it
-//! from the candidate so the selection record can be rebuilt from the
-//! store alone (promoted addon phrases included) without a by-token
+//! `OneStep` carries the chosen phrase's string and its length in words:
+//! upstream re-fetches them from the phrase index by token, the engine
+//! carries them from the candidate so the selection record can be rebuilt
+//! from the store alone (promoted addon phrases included) without a by-token
 //! dictionary lookup.
 
-use compact_str::CompactString;
-use oxpinyin_core::{PhraseToken, phrase_c_string};
+use oxpinyin_core::{PhraseString, PhraseToken};
 
 use crate::error::EngineError;
 
@@ -31,12 +30,14 @@ pub enum Cell {
     /// `NO_CONSTRAINT` — a free step.
     None,
     /// `CONSTRAINT_ONESTEP` — `token` is forced over `[start, end)`;
-    /// `end` is the cell's own index plus the span, `text` the chosen
-    /// phrase's display form.
+    /// `end` is the cell's own index plus the span, `string` the string the
+    /// pin makes of the chosen phrase and `len` the phrase's length in words
+    /// (the item header's, which is not the string's length).
     OneStep {
         token: PhraseToken,
         end: usize,
-        text: CompactString,
+        string: PhraseString,
+        len: usize,
     },
     /// `CONSTRAINT_NOSEARCH` — interior of a forced run; `start` points
     /// back at the run's `OneStep` cell.
@@ -50,7 +51,8 @@ pub enum Cell {
 pub struct PhraseSpan {
     pub(crate) start: usize,
     pub(crate) token: PhraseToken,
-    pub(crate) text: CompactString,
+    pub(crate) string: PhraseString,
+    pub(crate) len: usize,
 }
 
 /// The constraint array (`ForwardPhoneticConstraints`).
@@ -115,7 +117,8 @@ impl ConstraintStore {
         start: usize,
         end: usize,
         token: PhraseToken,
-        text: CompactString,
+        string: PhraseString,
+        len: usize,
     ) -> usize {
         if end > self.cells.len() || start >= end {
             return 0;
@@ -123,7 +126,12 @@ impl ConstraintStore {
         for index in start..end {
             self.clear_by_offset(index);
         }
-        self.cells[start] = Cell::OneStep { token, end, text };
+        self.cells[start] = Cell::OneStep {
+            token,
+            end,
+            string,
+            len,
+        };
         for index in start + 1..end {
             self.cells[index] = Cell::NoSearch { start };
         }
@@ -157,7 +165,7 @@ impl ConstraintStore {
     /// possibility `< FLT_EPSILON`, which `still_spells` decides from the
     /// token's stored pronunciations against the matrix
     /// ([`crate::nbest::ConstraintSpelling::spells`]); it is handed the
-    /// run's start, end, token and the forced text's character count.
+    /// run's start, end, token and the forced phrase's length in words.
     /// Returns whether anything dropped.
     ///
     /// The overrun boundary is `end >= len`, mirroring upstream verbatim,
@@ -187,14 +195,14 @@ impl ConstraintStore {
             .iter()
             .enumerate()
             .filter_map(|(index, cell)| match cell {
-                Cell::OneStep { token, end, text } => {
-                    Some((index, *token, *end, text.chars().count()))
-                }
+                Cell::OneStep {
+                    token, end, len, ..
+                } => Some((index, *token, *end, *len)),
                 _ => None,
             })
             .collect();
         let mut dropped = false;
-        for (index, token, end, text_len) in forcings {
+        for (index, token, end, len) in forcings {
             // The spelling probe runs first even for a run that overruns: the
             // pin reads the forced token's item before its overrun test
             // (`phonetic_lookup.cpp:152-154`), and a later forcing whose item
@@ -202,7 +210,7 @@ impl ConstraintStore {
             // for an overrunning run leaves the carried item as it was, as
             // the pin's failed `get_phrase_item` leaves `item`
             // (`:141-154`), and the run is cleared all the same.
-            let spells = still_spells(index, end, token, text_len);
+            let spells = still_spells(index, end, token, len);
             let overruns = end >= self.cells.len();
             if overruns || !spells? {
                 // The run's interior cells go with it (`clear_constraint`).
@@ -240,30 +248,32 @@ impl ConstraintStore {
             // Only a written run counts: `add` refuses an overrunning
             // span, and a refused write must not be reported as a
             // constraint.
-            changed = self.add(span.start, next_pos, span.token, span.text.clone()) > 0 || changed;
+            changed = self.add(
+                span.start,
+                next_pos,
+                span.token,
+                span.string.clone(),
+                span.len,
+            ) > 0
+                || changed;
         }
         changed
     }
 
-    /// The surviving forcings as `(start, end, token, text)` runs, left
+    /// The surviving forcings as `(start, end, token, string)` runs, left
     /// to right — the record-rebuild input. Gaps between runs are free
     /// spans (`diff_result` forces only the differing phrases); the
     /// caller supplies their text from the current buffer, so the rebuilt
-    /// record never drops raw input the forcings skip over. The text is
-    /// what the composition shows: the pin's string for the phrase, which
-    /// ends at its first U+0000 (the cell keeps the stored phrase, whose
-    /// length `validate` reads).
-    pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken, CompactString)> {
+    /// record never drops raw input the forcings skip over. The string is
+    /// what the pin makes of the phrase.
+    pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken, PhraseString)> {
         self.cells
             .iter()
             .enumerate()
             .filter_map(|(start, cell)| match cell {
-                Cell::OneStep { token, end, text } => Some((
-                    start,
-                    *end,
-                    *token,
-                    CompactString::from(phrase_c_string(text)),
-                )),
+                Cell::OneStep {
+                    token, end, string, ..
+                } => Some((start, *end, *token, string.clone())),
                 _ => None,
             })
             .collect()
@@ -282,7 +292,8 @@ mod tests {
         PhraseSpan {
             start,
             token: token(value),
-            text: text.into(),
+            string: text.into(),
+            len: text.chars().count(),
         }
     }
 
@@ -290,13 +301,14 @@ mod tests {
     fn add_writes_the_run_and_clear_walks_it_back() {
         let mut store = ConstraintStore::default();
         store.resize(6);
-        assert_eq!(store.add(0, 2, token(7), "你".into()), 2);
+        assert_eq!(store.add(0, 2, token(7), "你".into(), 1), 2);
         assert_eq!(
             store.cell(0),
             Some(&Cell::OneStep {
                 token: token(7),
                 end: 2,
-                text: "你".into()
+                string: "你".into(),
+                len: 1,
             })
         );
         assert_eq!(store.cell(1), Some(&Cell::NoSearch { start: 0 }));
@@ -313,7 +325,7 @@ mod tests {
     fn add_refuses_an_overrunning_span() {
         let mut store = ConstraintStore::default();
         store.resize(2);
-        assert_eq!(store.add(0, 3, token(7), "你".into()), 0);
+        assert_eq!(store.add(0, 3, token(7), "你".into(), 1), 0);
         assert!(!store.is_active());
     }
 
@@ -328,8 +340,8 @@ mod tests {
     fn validate_drops_a_run_that_overruns_or_stops_spelling() {
         let mut store = ConstraintStore::default();
         store.resize(6);
-        store.add(0, 2, token(7), "你".into());
-        store.add(3, 5, token(8), "好".into());
+        store.add(0, 2, token(7), "你".into(), 1);
+        store.add(3, 5, token(8), "好".into(), 1);
 
         // Shrink below the second run's end: the second run drops, the
         // first survives (growing never drops).
@@ -352,7 +364,7 @@ mod tests {
     fn validate_grows_with_free_cells() {
         let mut store = ConstraintStore::default();
         store.resize(3);
-        store.add(0, 2, token(7), "你".into());
+        store.add(0, 2, token(7), "你".into(), 1);
         let dropped = store
             .validate(8, |_, _, _, _| Ok(true))
             .expect("probe cannot fail");
@@ -369,8 +381,8 @@ mod tests {
     fn add_clears_a_partly_overlapped_run_whole() {
         let mut store = ConstraintStore::default();
         store.resize(8);
-        store.add(0, 4, token(7), "你好".into());
-        assert_eq!(store.add(2, 6, token(8), "好事".into()), 4);
+        store.add(0, 4, token(7), "你好".into(), 2);
+        assert_eq!(store.add(2, 6, token(8), "好事".into(), 2), 4);
         assert_eq!(store.cell(0), Some(&Cell::None));
         assert_eq!(store.cell(1), Some(&Cell::None));
         assert!(store.is_one_step_at(2));
@@ -409,8 +421,8 @@ mod tests {
     fn runs_report_start_and_end_with_gaps_between() {
         let mut store = ConstraintStore::default();
         store.resize(8);
-        store.add(0, 2, token(7), "你".into());
-        store.add(4, 7, token(9), "浩".into());
+        store.add(0, 2, token(7), "你".into(), 1);
+        store.add(4, 7, token(9), "浩".into(), 1);
         // diff_result's shape: a free gap [2, 4) between the forcings —
         // the caller fills it from the buffer, the store only reports
         // the runs' own coordinates.
@@ -434,7 +446,7 @@ mod tests {
         store.resize(4);
         // end == len - 1: a run ending at the last real byte — the
         // exact-buffer-end forcing — survives validation.
-        store.add(0, 3, token(7), "你".into());
+        store.add(0, 3, token(7), "你".into(), 1);
         let dropped = store.validate(4, |_, _, _, _| Ok(true)).expect("probe ok");
         assert!(!dropped);
         assert!(store.is_one_step_at(0));
@@ -444,7 +456,7 @@ mod tests {
         // slot, one past the last real column.
         let mut store = ConstraintStore::default();
         store.resize(4);
-        assert_eq!(store.add(0, 4, token(7), "你".into()), 4);
+        assert_eq!(store.add(0, 4, token(7), "你".into(), 1), 4);
         let dropped = store.validate(4, |_, _, _, _| Ok(true)).expect("probe ok");
         assert!(dropped);
         assert!(!store.is_active());

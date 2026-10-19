@@ -29,14 +29,13 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::hash::{BuildHasherDefault, Hasher};
 
-use compact_str::CompactString;
 use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_INPUT};
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry,
-    PhraseIndexRanges, PhraseItemRead, PhraseToken, PronunciationRows, SyllableKey,
-    phrase_c_string,
+    PhraseIndexRanges, PhraseItemRead, PhraseString, PhraseStringJoin, PhraseToken,
+    PronunciationRows, SyllableKey,
 };
 use smallvec::SmallVec;
 
@@ -113,8 +112,9 @@ pub const SENTENCE_START: u32 = 1;
 /// One decoded sentence row, in tail order (index 0 is the 1-best).
 #[derive(Clone, Debug)]
 pub struct NbestRow {
-    /// Concatenated phrase texts.
-    pub(crate) text: CompactString,
+    /// The sentence's string: the phrases' strings joined as the pin's
+    /// `convert_to_utf8` joins them. NULL when every phrase's string is.
+    pub(crate) string: PhraseString,
     /// The phrase tokens in order — the selection record a chosen row
     /// contributes (upstream keeps the whole `MatchResult` on the
     /// instance; the engine records tokens instead).
@@ -436,9 +436,10 @@ struct Trellis {
     /// One [`Step`] per byte position of the remaining input.
     steps: Vec<Step>,
     /// Token → the key path its first step priced it over, as an offset
-    /// and length into `text_keys`/`text_tones`; the phrase text is read
-    /// through the dictionary when a result is emitted.
-    texts: TokenMap<(u32, u32)>,
+    /// and length into `text_keys`/`text_tones`, and the phrase's length in
+    /// words; the phrase string is read through the dictionary when a result
+    /// is emitted.
+    texts: TokenMap<(u32, u32, u32)>,
     text_keys: Vec<SyllableKey>,
     text_tones: Vec<u8>,
 }
@@ -561,23 +562,24 @@ impl Trellis {
         spans
     }
 
-    /// The phrase text of `token`, read once per call through `cache`;
-    /// `None` where the dictionary has no text for it.
-    fn token_text<D>(
+    /// The phrase string of `token`, read once per call through `cache`;
+    /// `None` where the dictionary has no string for it. A NULL string is a
+    /// string (`Some`), as it is at the pin.
+    fn token_string<D>(
         &self,
         dictionary: &D,
-        cache: &mut TokenMap<Option<CompactString>>,
+        cache: &mut TokenMap<Option<PhraseString>>,
         token: u32,
-    ) -> Result<Option<CompactString>, EngineError>
+    ) -> Result<Option<PhraseString>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
         D::Error: core::fmt::Display,
     {
-        if let Some(text) = cache.get(&token) {
-            return Ok(text.clone());
+        if let Some(string) = cache.get(&token) {
+            return Ok(string.clone());
         }
-        let text = match self.texts.get(&token) {
-            Some(&(offset, len)) => {
+        let string = match self.texts.get(&token) {
+            Some(&(offset, len, _)) => {
                 let range = offset as usize..offset as usize + len as usize;
                 match (
                     self.text_keys.get(range.clone()),
@@ -587,38 +589,45 @@ impl Trellis {
                         .trellis_text(keys, tones, token)
                         .map_err(|error| {
                             EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
-                        })?
-                        .map(CompactString::from),
+                        })?,
                     _ => None,
                 }
             }
             None => None,
         };
-        cache.insert(token, text.clone());
-        Ok(text)
+        cache.insert(token, string.clone());
+        Ok(string)
     }
 
-    fn text<D>(
+    /// The sentence string of `spans`: `convert_to_utf8` over the phrases'
+    /// strings (`lookup.cpp:58-67`). A phrase with no readable string
+    /// leaves the sentence with none (`None`); a NULL string adds nothing,
+    /// and the sentence is NULL while no phrase added a string.
+    fn sentence_string<D>(
         &self,
         dictionary: &D,
-        cache: &mut TokenMap<Option<CompactString>>,
+        cache: &mut TokenMap<Option<PhraseString>>,
         spans: &[(usize, u32)],
-    ) -> Result<Option<CompactString>, EngineError>
+    ) -> Result<Option<PhraseString>, EngineError>
     where
         D: Dictionary<Syllable = SyllableKey, Entry = PhraseEntry>,
         D::Error: core::fmt::Display,
     {
-        let mut text = CompactString::const_new("");
+        let mut join = PhraseStringJoin::new();
         for (_, token) in spans {
-            let Some(part) = self.token_text(dictionary, cache, *token)? else {
+            let Some(part) = self.token_string(dictionary, cache, *token)? else {
                 return Ok(None);
             };
-            // `convert_to_utf8` joins the per-token strings (`lookup.cpp:58`),
-            // each of which ends at its phrase's first U+0000; `part` keeps
-            // the phrase as stored for its length.
-            text.push_str(phrase_c_string(&part));
+            join.push(&part);
         }
-        Ok(Some(text))
+        Ok(Some(join.string()))
+    }
+
+    /// The length in words of the phrase `token` was priced as.
+    fn token_len(&self, token: u32) -> usize {
+        self.texts
+            .get(&token)
+            .map_or(0, |&(_, _, words)| words as usize)
     }
 }
 
@@ -989,13 +998,14 @@ where
     let mut texts = TokenMap::default();
     for tail in trellis.tails() {
         let spans = trellis.extract(&tail);
-        let Some(text) = trellis.text(dictionary, &mut texts, &spans)? else {
+        let Some(string) = trellis.sentence_string(dictionary, &mut texts, &spans)? else {
             continue;
         };
         // A result with no phrase is no row. A result whose phrases all make
         // the empty string is one: `convert_to_utf8` joins their strings
         // into "" and `pinyin_get_sentence` answers it (`lookup.cpp:58-63`,
-        // `pinyin.cpp:1477`) — a phrase whose first code point is zero.
+        // `pinyin.cpp:1477`) — a phrase whose first code point is zero. So is
+        // a result whose phrases all make NULL: the sentence is NULL.
         if spans.is_empty() {
             continue;
         }
@@ -1004,12 +1014,13 @@ where
             .map(|(start, token)| PhraseSpan {
                 start: *start,
                 token: PhraseToken::new(*token),
-                text: texts.get(token).cloned().flatten().unwrap_or_default(),
+                string: texts.get(token).cloned().flatten().unwrap_or_default(),
+                len: trellis.token_len(*token),
             })
             .collect();
         let tokens = phrase_spans.iter().map(|span| span.token).collect();
         rows.push(NbestRow {
-            text,
+            string,
             tokens,
             spans: phrase_spans,
             keys: tail.keys as usize,
@@ -1636,7 +1647,11 @@ where
         let offset = u32::try_from(trellis.text_keys.len()).unwrap_or(u32::MAX);
         trellis.text_keys.extend_from_slice(keys);
         trellis.text_tones.extend_from_slice(tones);
-        slot.insert((offset, u32::try_from(keys.len()).unwrap_or(u32::MAX)));
+        slot.insert((
+            offset,
+            u32::try_from(keys.len()).unwrap_or(u32::MAX),
+            entry.chars,
+        ));
     }
     // `m_last_step` is a `gint32` step; a graph's positions all fit.
     let from = u32::try_from(span.start)
@@ -2246,7 +2261,7 @@ mod tests {
             nbest_sentences(&matrix, bound, &dict, &model, &[], None, NbestShape::PINYIN)
                 .expect("the trellis cannot fail here");
         assert!(!rows.is_empty());
-        assert_eq!(rows[0].text.as_str(), "你好");
+        assert_eq!(rows[0].string, "你好");
         assert_eq!(rows[0].span, bound);
         assert_eq!(rows[0].keys, 2);
     }
@@ -2279,15 +2294,15 @@ mod tests {
             1,
             "libzhuyin's shape extracts one tail: {zhuyin:?}"
         );
-        assert_eq!(pinyin[0].text, "你好");
-        assert_eq!(zhuyin[0].text, "尼好", "one-store heap tie order");
+        assert_eq!(pinyin[0].string, "你好");
+        assert_eq!(zhuyin[0].string, "尼好", "one-store heap tie order");
         assert_eq!(NbestShape::default(), NbestShape::PINYIN);
     }
 
     #[test]
     fn nbest_row_reports_its_span() {
         let row = NbestRow {
-            text: "你好".into(),
+            string: "你好".into(),
             tokens: vec![PhraseToken::new(7)],
             spans: Vec::new(),
             keys: 2,

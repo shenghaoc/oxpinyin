@@ -7,7 +7,7 @@ use oxpinyin_core::Dictionary;
 
 use glib_sys::{g_array_append_vals, g_array_set_size};
 
-use crate::ffi::{cstr_to_string, owned_cstr};
+use crate::ffi::{cstr_to_string, owned_cstr_bytes};
 use crate::state::instance_ref;
 use crate::types::{GArray, GChar, GUint, PhraseTokenT, ZhuyinInstance};
 
@@ -92,19 +92,24 @@ pub extern "C" fn zhuyin_token_get_phrase(
     if !len.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *len = GUint::try_from(intro.text.chars().count()).unwrap_or(GUint::MAX);
+            *len = GUint::try_from(intro.words.len()).unwrap_or(GUint::MAX);
         }
     }
     if !utf8_str.is_null() {
-        // `_token_get_phrase` hands out `g_ucs4_to_utf8` of the stored phrase, which
-        // ends at its first zero code point; `*len` above is the stored length
-        // (`zhuyin.cpp:1107-1112`).
-        let rendered = owned_cstr(oxpinyin_core::phrase_c_string(&intro.text));
+        // `_token_get_phrase` hands out `g_ucs4_to_utf8` of the stored phrase:
+        // the bytes of its words up to the first zero (bytes that are not UTF-8
+        // for a surrogate or a value above U+10FFFF), or NULL, with the call
+        // still true, for a word of 0x80000000 or more met before a zero;
+        // `*len` above is the stored length (`zhuyin.cpp:1107-1112`).
+        let string = intro.words.string();
+        let rendered = string
+            .as_bytes()
+            .map_or(std::ptr::null_mut(), owned_cstr_bytes);
         // SAFETY: Null-checked above.
         unsafe {
             *utf8_str = rendered;
         }
-        if rendered.is_null() {
+        if rendered.is_null() && !string.is_null() {
             return false;
         }
     }
@@ -185,7 +190,7 @@ pub extern "C" fn zhuyin_token_get_nth_pronunciation(
     let Some((keys_list, _count)) = intro.pronunciations.get(nth as usize) else {
         // Past the last reading: `phrase_length` keys of indeterminate
         // content at the pin; zeroed here (class (b) for the content).
-        let zeroed = vec![0_u16; intro.text.chars().count()];
+        let zeroed = vec![0_u16; intro.words.len()];
         // SAFETY: Null-checked above; the caller creates the keys array
         // with element_size = sizeof(u16), as for the in-range path.
         unsafe {

@@ -292,7 +292,10 @@ where
                 // caller asks per key-prefix, so `ranked` stays short. A hash
                 // set here would also have to be ordered to keep ranking
                 // deterministic.
-                if ranked.iter().any(|(seen, _)| seen.text() == entry.text()) {
+                if ranked
+                    .iter()
+                    .any(|(seen, _)| seen.string() == entry.string())
+                {
                     continue;
                 }
                 ranked.push((entry, cost));

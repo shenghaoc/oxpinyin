@@ -17,6 +17,9 @@ use oxpinyin_core::OptionBits;
 use oxpinyin_engine::{EmptyConfigSource, KeyOutcome, Selection, Session, StoragePaths};
 use oxpinyin_testsupport::{FixtureDictionary, FixtureLanguageModel};
 
+mod support;
+use support::CandidateText;
+
 const VOCAB: &str = include_str!("../../../fixtures/w4/mini-vocab.txt");
 const BIGRAM: &str = include_str!("../../../fixtures/w4/mini-bigram.txt");
 

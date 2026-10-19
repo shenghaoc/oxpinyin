@@ -115,12 +115,12 @@ fn the_compiled_backend_reads_back_through_the_runtime_reader() {
     );
     let nihao = dict.lookup(&syllables("ni'hao")).unwrap();
     assert!(
-        nihao.iter().any(|entry| entry.text() == "你好"),
+        nihao.iter().any(|entry| entry.string() == "你好"),
         "ni'hao must find 你好: {nihao:?}"
     );
     let xian = dict.lookup(&syllables("xi'an")).unwrap();
     assert!(
-        xian.iter().any(|entry| entry.text() == "西安"),
+        xian.iter().any(|entry| entry.string() == "西安"),
         "xi'an must find 西安"
     );
     assert!(dict.phrase_prefix_exists(&syllables("zhong")).unwrap());
@@ -129,9 +129,9 @@ fn the_compiled_backend_reads_back_through_the_runtime_reader() {
     // `system_dictionary.rs`'s `empty_and_unknown_lookups_answer_empty`.
     let tokens = dict.tokens_for_text("你好").unwrap();
     assert!(
-        tokens
-            .iter()
-            .all(|token| dict.phrase_text(*token).as_deref() == Some("你好")),
+        tokens.iter().all(|token| dict
+            .phrase_words(*token)
+            .is_some_and(|words| words == "你好")),
         "phrase DBM and chunk files agree on 你好: {tokens:?}"
     );
     let _ = std::fs::remove_dir_all(&out);

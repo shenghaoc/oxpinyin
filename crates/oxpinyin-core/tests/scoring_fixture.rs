@@ -160,7 +160,7 @@ fn the_scorer_agrees_with_the_pin_where_the_fixture_covers_it() {
             if let Some((entry, cost)) = ranked.first()
                 && best.as_ref().is_none_or(|(_, seen)| cost < seen)
             {
-                best = Some((entry.text().to_owned(), *cost));
+                best = Some((entry.string().to_string_lossy().into_owned(), *cost));
             }
         }
 

@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::ffi::CString;
 use std::os::raw::c_char;
 
-use oxpinyin_core::{phrase_c_string, single_gram};
+use oxpinyin_core::{PhraseString, PhraseWords, single_gram};
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
@@ -28,21 +28,18 @@ const BIGRAM_FILTER: u32 = 10;
 
 /// One predicted item before sort/dedup.
 struct Predicted {
-    /// The phrase as stored, one character per `ucs4_t`, from the prefix on:
-    /// its character count is the phrase length the sort reads.
-    text: String,
+    /// The row's string, which the dedup compares and the caller reads: the
+    /// pin's `g_ucs4_to_utf8` of the phrase's words from `m_begin` on
+    /// (`_token_get_phrase`, `pinyin.cpp:1644`). It ends at the first zero
+    /// word past `m_begin`, is bytes that are not UTF-8 for a word that is no
+    /// scalar value, and is NULL for a word of 0x80000000 or more.
+    string: PhraseString,
+    /// The phrase length the sort reads (`pinyin.cpp:1953-1993`): the item
+    /// header's length, less `m_begin` for a prefix row.
+    len: usize,
     token: u32,
     candidate_type: lookup_candidate_type_t,
     frequency: u64,
-}
-
-impl Predicted {
-    /// The row's string, which the dedup compares and the caller reads: the
-    /// pin's `g_ucs4_to_utf8` of the phrase from `m_begin` on ends at the
-    /// first zero code point past it (`pinyin.cpp:1644`).
-    fn string(&self) -> &str {
-        phrase_c_string(&self.text)
-    }
 }
 
 /// Fills `inst.candidates` with predicted phrases for `prefix`.
@@ -160,22 +157,43 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
 
     sort_predicted(&mut items);
 
+    // Class (b), `pinyin.cpp:2053` / `:2082`: the pin sorts and compares the
+    // rows' strings with `strcmp`, which dies on a NULL string as soon as a
+    // second row is there to be compared with it. One warning and `false`,
+    // with the candidate list left empty in both APIs, as for the other stops.
+    if items.len() >= 2 && items.iter().any(|item| item.string.is_null()) {
+        crate::ffi::log_warning(
+            "pinyin_guess_predicted_candidates: a candidate's phrase string is NULL",
+        );
+        return Err(());
+    }
+
     // Dedup retains the numerically higher score even if the pin's signed
     // comparator put it later (`pinyin.cpp:2128-2136`). Equal scores keep
     // the first row. The winner remains at its original sorted position.
-    let mut winners = std::collections::HashMap::new();
+    // A NULL string (a lone row; two die above) has no duplicate.
+    let mut winners: std::collections::HashMap<Vec<u8>, usize> = std::collections::HashMap::new();
     for (index, item) in items.iter().enumerate() {
-        let winner = winners.entry(item.string().to_owned()).or_insert(index);
+        let Some(bytes) = item.string.as_bytes() else {
+            continue;
+        };
+        let winner = winners.entry(bytes.to_vec()).or_insert(index);
         if item.frequency > items[*winner].frequency {
             *winner = index;
         }
     }
     for (index, item) in items.into_iter().enumerate() {
-        if winners.get(item.string()) != Some(&index) {
-            continue;
-        }
-        let Ok(text) = CString::new(item.string()) else {
-            continue;
+        let text = match item.string.as_bytes() {
+            None => None,
+            Some(bytes) => {
+                if winners.get(bytes) != Some(&index) {
+                    continue;
+                }
+                let Ok(text) = CString::new(bytes) else {
+                    continue;
+                };
+                Some(text)
+            }
         };
         inst.candidates.push(CapiCandidate {
             text,
@@ -218,8 +236,7 @@ fn sort_predicted(items: &mut [Predicted]) {
             } else {
                 let left = &items[order[lhs]];
                 let right = &items[order[rhs]];
-                let left_len = left.text.chars().count();
-                let right_len = right.text.chars().count();
+                let (left_len, right_len) = (left.len, right.len);
                 if left_len != right_len {
                     left_len > right_len
                 } else {
@@ -284,11 +301,12 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
     // `_compute_prefixes` reads it (pinyin.cpp:1340, :2420-2427). #542's
     // ruling preserves its stable false by identity, without reading freed
     // storage. The pin still empties the candidates and prediction prefixes.
-    if inst
-        .candidates
-        .iter()
-        .any(|candidate| std::ptr::eq(candidate.text.as_ptr(), prefix))
-    {
+    if inst.candidates.iter().any(|candidate| {
+        candidate
+            .text
+            .as_ref()
+            .is_some_and(|text| std::ptr::eq(text.as_ptr(), prefix))
+    }) {
         inst.candidates.clear();
         inst.prefixes.clear();
         return false;
@@ -335,7 +353,7 @@ fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
             continue;
         };
         inst.candidates.push(CapiCandidate {
-            text,
+            text: Some(text),
             kind: CandidateKind::Phrase,
             candidate_type: lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE,
             nbest_index: 0,
@@ -371,17 +389,18 @@ fn append_predicted_bigrams(
             if !dict.library_visible_token(*token) {
                 continue;
             }
-            let Some(text) = phrase_text(dict, store, *token) else {
+            let Some(words) = phrase_words(dict, store, *token) else {
                 continue;
             };
-            if text.chars().count() != length {
+            if words.len() != length {
                 continue;
             }
             into.push(Predicted {
                 // The caller passes null_token to the scorer, so the bigram
                 // term is zero even with DYNAMIC_ADJUST (`pinyin.cpp:2418,2438`).
                 frequency: predicted_frequency(dict, Some(store), *token, total, lambda),
-                text,
+                string: words.string(),
+                len: length,
                 token: *token,
                 candidate_type: lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE,
             });
@@ -407,37 +426,30 @@ fn append_predicted_prefix(
     // preserves this collection order on ties, including user/system ties.
     let suggestions = oxpinyin_facade::merged_suggestions(dict, user, prefix);
     let total = predicted_total(lm);
-    for (token, text) in suggestions {
+    for (token, words) in suggestions {
         // The length gate stays on the FULL phrase: the pin checks
         // `get_phrase_length()` against `prefix_len * 2 + 1` before any
         // slicing (`pinyin.cpp:2392-2395`).
-        if text.chars().count() > limit {
+        if words.len() > limit {
             continue;
         }
         // The prefix subtraction the pin applies twice (`pinyin.cpp:1976-1980`):
-        // the display string is sliced from `m_begin` (`:2018-2023`) and the
-        // phrase-length sort key subtracts it. Storing the sliced text here
-        // drives both — the sort counts `text.chars()`, the dedup and the
-        // emitted candidate reuse the same string, matching upstream's
+        // the string is made from word `m_begin` on (`:2018-2023`) and the
+        // phrase-length sort key subtracts it. The conversion starts there, so
+        // a zero word in front of `m_begin` does not stop it, and the words it
+        // reads are the item's own, whatever they are: bytes that are not
+        // UTF-8 for a surrogate, NULL for a word of 0x80000000 or more
+        // ([`PhraseWords::string_from`]). The dedup and the emitted candidate
+        // reuse this string, matching upstream's
         // `_remove_duplicated_items_by_phrase_string` on the final string.
-        //
-        // The user's prefix (a C string, so no zero in it) matches the phrase
-        // table key's first words, which are the item's own, so no zero stands
-        // in the part sliced off, and a U+FFFD that the string reader stands
-        // for a word it never reads (one behind the item's first zero) lies
-        // behind a zero in `display` and is cut with it
-        // ([`Predicted::string`]). A key that disagrees with its item's words
-        // (a hand-built fixture) can break that: the pin starts converting at
-        // `m_begin`, reads the word past a zero in the sliced part, and hands
-        // out bytes or NULL there (#894, difference 1).
-        let display: String = text.chars().skip(prefix_len).collect();
         // The sort key is the amplified law, not the raw count: the pin's
         // PREDICTED_PREFIX branch computes `(1−λ)·unigram/total·2²⁴`
         // truncated (`pinyin.cpp:1811-1824`), the same law the normal
         // candidate path pins.
         into.push(Predicted {
             frequency: predicted_frequency(dict, user, token, total, lambda),
-            text: display,
+            string: words.string_from(prefix_len),
+            len: words.len().saturating_sub(prefix_len),
             token,
             candidate_type: lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE,
         });
@@ -503,11 +515,15 @@ fn amplified_frequency(unigram: u64, total: u64, lambda: f32) -> u64 {
     u64::from(score as i64 as u32)
 }
 
-pub(crate) fn phrase_text(dict: &SharedDict, store: &UserStore, token: u32) -> Option<String> {
+pub(crate) fn phrase_words(
+    dict: &SharedDict,
+    store: &UserStore,
+    token: u32,
+) -> Option<PhraseWords> {
     if let Ok(Some(phrase)) = store.phrase(token) {
-        return Some(phrase.text().to_owned());
+        return Some(phrase.words().clone());
     }
-    dict.system().phrase_text(token)
+    dict.system().phrase_words(token)
 }
 
 #[cfg(test)]

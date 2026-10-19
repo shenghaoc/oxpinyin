@@ -23,7 +23,9 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use oxpinyin_core::cost::{self, UNKNOWN_COST};
-use oxpinyin_core::{Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SyllableKey};
+use oxpinyin_core::{
+    Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, PhraseWords, SyllableKey,
+};
 
 /// Weight of the bigram term in the interpolated estimate, as a fraction.
 ///
@@ -285,13 +287,14 @@ impl Dictionary for FixtureDictionary {
             .collect())
     }
 
-    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
+    fn phrase_words_for_token(&self, token: u32) -> Option<PhraseWords> {
         let token = PhraseToken::new(token);
         self.entries
             .values()
             .flatten()
             .find(|entry| entry.token() == token)
-            .map(|entry| entry.text().to_owned())
+            .and_then(|entry| entry.string().as_str())
+            .map(PhraseWords::from_text)
     }
 }
 
@@ -575,7 +578,7 @@ mod tests {
         let entries = dictionary.lookup(&keys("ni")).expect("lookup cannot fail");
         let texts: Vec<&str> = entries
             .iter()
-            .map(oxpinyin_core::PhraseEntry::text)
+            .filter_map(|entry| entry.string().as_str())
             .collect();
         assert_eq!(
             texts,
@@ -584,7 +587,7 @@ mod tests {
 
         let phrase = dictionary.lookup(&keys("zhong,guo,ren")).expect("lookup");
         assert_eq!(phrase.len(), 1);
-        assert_eq!(phrase[0].text(), "中国人");
+        assert_eq!(*phrase[0].string(), "中国人");
     }
 
     #[test]
@@ -628,8 +631,8 @@ mod tests {
             if let Some(previous) = previous {
                 assert!(
                     cost >= previous,
-                    "{} scored better than a higher-ranked phrase",
-                    entry.text()
+                    "{:?} scored better than a higher-ranked phrase",
+                    entry.string()
                 );
             }
             previous = Some(cost);

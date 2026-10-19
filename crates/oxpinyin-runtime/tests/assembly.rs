@@ -48,7 +48,7 @@ fn trellis_records_filter_user_tones_and_refresh_after_import() {
             .trellis_records(&syllables, &[3, 3])
             .unwrap()
             .iter()
-            .any(|entry| entry.text() == "你鎄")
+            .any(|entry| entry.string() == "你鎄")
     );
     let keys: Vec<_> = syllables
         .iter()
@@ -103,12 +103,12 @@ fn opens_the_w3_fixture_and_decodes_nihao() {
         .candidates()
         .get(0)
         .expect("nihao has candidates in the fixture")
-        .text()
+        .string()
         .to_owned();
     assert_eq!(first, "你好");
 
     session.guess_sentence().expect("sentence guess");
-    let best = session.sentence_text(0).expect("n-best row 0");
+    let best = session.sentence_string(0).expect("n-best row 0");
     assert_eq!(best, "你好");
 }
 
@@ -178,7 +178,7 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     let phrase = "你鎄";
     let merged = || runtime.dict().lookup(&syllables).expect("merged lookup");
     assert!(
-        !merged().iter().any(|entry| entry.text() == phrase),
+        !merged().iter().any(|entry| entry.string() == phrase),
         "fixture already carries the probe phrase"
     );
 
@@ -187,11 +187,11 @@ fn usable_user_dir_feeds_the_merged_lookup_and_overlay() {
     // Dictionary seam: the merged lookup returns the learned phrase.
     let entries = merged();
     assert!(
-        entries.iter().any(|entry| entry.text() == phrase),
+        entries.iter().any(|entry| entry.string() == phrase),
         "learned phrase missing from merged lookup: {:?}",
         entries
             .iter()
-            .map(|e| e.text().to_owned())
+            .map(|e| e.string().to_owned())
             .collect::<Vec<_>>()
     );
 
@@ -662,7 +662,7 @@ fn a_store_write_between_guesses_reaches_the_second_guess() {
     session.type_pinyin("nihao").unwrap();
     let mut guess = || {
         session.guess_sentence().unwrap();
-        session.sentence_text(0).unwrap().to_owned()
+        session.sentence_string(0).unwrap().to_owned()
     };
     assert_eq!(guess(), "你好");
 

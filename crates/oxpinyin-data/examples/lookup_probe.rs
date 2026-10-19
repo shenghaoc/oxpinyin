@@ -36,9 +36,9 @@ fn main() {
         for entry in entries.iter().take(12) {
             let token = entry.token();
             println!(
-                "  {:#010x} {} poss={:?} unigram={:?} prons={:?}",
+                "  {:#010x} {:?} poss={:?} unigram={:?} prons={:?}",
                 token.value(),
-                entry.text(),
+                entry.string(),
                 entry.pronunciation_possibility(),
                 LanguageModel::unigram_freq(&lm, &PhraseToken::new(token.value()))
                     .ok()

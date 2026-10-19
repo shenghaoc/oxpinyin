@@ -310,12 +310,15 @@ where
                 self.collect_sentence(&graph, &scorer, path, &mut collected)?;
             }
             collected.sort_by_key(Candidate::cost);
-            collected.dedup_by(|left, right| left.text() == right.text());
+            collected.dedup_by(|left, right| {
+                left.string().as_bytes().is_some()
+                    && left.string().as_bytes() == right.string().as_bytes()
+            });
         }
 
         if collected.is_empty() {
             collected.push(Candidate::new(
-                compact_str::CompactString::from(remaining),
+                remaining,
                 CandidateKind::Fallback,
                 0,
                 remaining.len(),
@@ -500,7 +503,7 @@ where
         let mut path: SmallVec<[SyllableKey; 16]> = SmallVec::new();
         self.collect_suggestion_paths(&matrix, 0, end, max_keys, &mut path, &mut paths);
 
-        let mut winner: Option<(PhraseToken, u64, String)> = None;
+        let mut winner: Option<(PhraseToken, u64, PhraseWords)> = None;
         for keys in &paths {
             // The pin's `search_suggestion` gate: the walk reaches a user
             // index key past `MAX_PHRASE_LENGTH` syllables that extends this
@@ -530,10 +533,10 @@ where
                 // `get_phrase_item` + the char-length cap: a phrase longer
                 // than `prefix_len * 2 + 1` characters is skipped
                 // (`pinyin.cpp:1899-1902`).
-                let Some(text) = self.dictionary.phrase_text_for_token(token.value()) else {
+                let Some(words) = self.dictionary.phrase_words_for_token(token.value()) else {
                     continue;
                 };
-                let phrase_length = text.chars().count();
+                let phrase_length = words.len();
                 if phrase_length > prefix_len * 2 + 1 {
                     continue;
                 }
@@ -551,11 +554,11 @@ where
                     })?
                     .unwrap_or(0);
                 if winner.as_ref().is_none_or(|(_, best, _)| unigram > *best) {
-                    winner = Some((token, unigram, text));
+                    winner = Some((token, unigram, words));
                 }
             }
         }
-        let Some((token, _unigram, text)) = winner else {
+        let Some((token, _unigram, words)) = winner else {
             return Ok(None);
         };
         // The row's amplified frequency exists only inside the pin's sort
@@ -570,14 +573,11 @@ where
         // (LONGER vs a same-text NORMAL whose amplified frequency is
         // strictly greater under DYNAMIC_ADJUST) is unreachable under the
         // parity word, which leaves that bit clear.
-        Ok(Some(Candidate::new(
-            compact_str::CompactString::from(text),
+        Ok(Some(Candidate::from_entry(
+            PhraseEntry::from_words(token, &words),
             CandidateKind::Phrase,
             0,
             0,
-            0,
-            Some(token),
-            None,
         )))
     }
 
@@ -667,7 +667,7 @@ where
         let mut items = Vec::new();
         if offset < self.input.len() && !self.spans_a_matrix_key(offset)? {
             items.push(Candidate::new(
-                compact_str::CompactString::from(&self.input.as_str()[offset..]),
+                &self.input.as_str()[offset..],
                 CandidateKind::Fallback,
                 0,
                 self.input.len() - offset,
@@ -953,7 +953,7 @@ where
         let nbest_n = rows.len();
         collected.extend(rows.iter().enumerate().map(|(index, row)| {
             Candidate::new(
-                row.text.clone(),
+                row.string.clone(),
                 CandidateKind::Sentence,
                 row.keys,
                 row.span,
@@ -1164,16 +1164,10 @@ where
             let ranked =
                 scorer.rank_phrases(self.record.history(), &keys[..length], &kinds[..length])?;
             for (entry, cost) in ranked {
-                let token = entry.token();
-                into.push(Candidate::new(
-                    entry.into_text(),
-                    CandidateKind::Phrase,
-                    length,
-                    ends[length - 1],
-                    cost,
-                    Some(token),
-                    None,
-                ));
+                into.push(
+                    Candidate::from_entry(entry, CandidateKind::Phrase, length, ends[length - 1])
+                        .with_cost(cost),
+                );
             }
         }
         Ok(())
@@ -1212,8 +1206,9 @@ where
         }
 
         // best[i] is the cheapest way to spell keys[..i].
-        let mut best: Vec<Option<(Cost, String, Vec<PhraseToken>)>> = vec![None; keys.len() + 1];
-        best[0] = Some((0, String::new(), self.record.history().to_vec()));
+        let mut best: Vec<Option<(Cost, PhraseStringJoin, Vec<PhraseToken>)>> =
+            vec![None; keys.len() + 1];
+        best[0] = Some((0, PhraseStringJoin::new(), self.record.history().to_vec()));
 
         for end in 1..=keys.len() {
             let first = end.saturating_sub(MAX_PHRASE_KEYS);
@@ -1224,7 +1219,7 @@ where
             let (settled, open) = best.split_at_mut(end);
             let cell = &mut open[0];
             for (start, prefix) in settled.iter().enumerate().skip(first) {
-                let Some((prefix_cost, prefix_text, prefix_history)) = prefix.as_ref() else {
+                let Some((prefix_cost, prefix_join, prefix_history)) = prefix.as_ref() else {
                     continue;
                 };
                 let ranked =
@@ -1235,27 +1230,24 @@ where
 
                 let total = prefix_cost.saturating_add(*cost);
                 if cell.as_ref().is_none_or(|(seen, ..)| total < *seen) {
-                    // The pin joins each phrase's string, which ends at its first zero
-                    // code point (`lookup.cpp:58`).
-                    let phrase = phrase_c_string(entry.text());
-                    let mut text = String::with_capacity(prefix_text.len() + phrase.len());
-                    text.push_str(prefix_text);
-                    text.push_str(phrase);
+                    // The pin joins each phrase's string (`lookup.cpp:58`).
+                    let mut join = prefix_join.clone();
+                    join.push(entry.string());
                     let mut history = Vec::with_capacity(prefix_history.len() + 1);
                     history.extend_from_slice(prefix_history);
                     history.push(entry.token());
-                    *cell = Some((total, text, history));
+                    *cell = Some((total, join, history));
                 }
             }
         }
 
-        if let Some((cost, text, tokens)) = best.pop().flatten()
-            && !text.is_empty()
+        if let Some((cost, join, tokens)) = best.pop().flatten()
+            && !join.bytes().is_empty()
         {
             let tokens = tokens[self.record.history().len()..].to_vec();
             return Ok(vec![(
                 Candidate::new(
-                    text,
+                    join.string(),
                     CandidateKind::Sentence,
                     keys.len(),
                     ends[keys.len() - 1],

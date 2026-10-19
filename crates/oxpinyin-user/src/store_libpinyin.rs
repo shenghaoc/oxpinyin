@@ -51,6 +51,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use oxpinyin_core::PhraseWords;
 use oxpinyin_data::chunk_write::ChunkItem;
 use oxpinyin_data::pin_stderr;
 use oxpinyin_data::user_files::SystemVersions;
@@ -604,26 +605,19 @@ pub(crate) fn seed_txn(
     for (&nibble, items) in &libraries {
         for (&slot, item) in items {
             let token = (u32::from(nibble) << 24) | slot;
-            let Some(text) = ucs4_to_string(&item.phrase) else {
-                continue; // a phrase that is not UTF-32 text cannot be a
-                // user phrase in this engine; leave it unseeded
-            };
-            txn.put(
-                PHRASE,
-                &codec::encode_token(token),
-                codec::encode_str(&text),
-            )?;
+            // The item is the words it holds, whatever they are: a word that is
+            // no scalar value (the file format has none of that rule) is kept
+            // as the bytes `g_unichar_to_utf8` writes for it.
+            let words = PhraseWords::from_words(item.phrase.iter().copied());
+            let text = words.to_store_bytes();
+            txn.put(PHRASE, &codec::encode_token(token), &text)?;
             txn.put(
                 PHRASE_BY_LIB_TEXT,
-                &codec::encode_u8_str(nibble, &text),
+                &codec::encode_u8_bytes(nibble, &text),
                 &codec::encode_token(token),
             )?;
             if nibble == crate::phrase::USER_DICTIONARY {
-                txn.put(
-                    PHRASE_BY_TEXT,
-                    codec::encode_str(&text),
-                    &codec::encode_token(token),
-                )?;
+                txn.put(PHRASE_BY_TEXT, &text, &codec::encode_token(token))?;
             }
             for (seq, (keys, freq)) in (0_u32..).zip(&item.prons) {
                 // The store's pronunciation table keys on the dense
@@ -759,9 +753,9 @@ pub fn export_state<S: WriteStore>(
     db.for_each(PHRASE, |key, value| {
         let token = codec::decode_token(key)
             .map_err(|_| StoreError::Backend("corrupt phrase token".into()))?;
-        let text = codec::decode_str(value)
+        let words = codec::decode_words(value)
             .map_err(|_| StoreError::Backend("corrupt phrase text".into()))?;
-        phrase_text.insert(token, text.chars().map(u32::from).collect());
+        phrase_text.insert(token, words.words().collect());
         Ok(())
     })?;
 
@@ -912,11 +906,6 @@ pub fn export_state<S: WriteStore>(
 /// One stored reading on its way to the file: insertion sequence, packed
 /// `ChewingKey` words, count, and whether the user pinyin index carries it.
 type StoredReading = (u32, Vec<u16>, u64, bool);
-
-/// UCS-4 code points as text; `None` when any scalar is invalid.
-fn ucs4_to_string(codes: &[u32]) -> Option<String> {
-    codes.iter().copied().map(char::from_u32).collect()
-}
 
 /// The store's dense syllable ids for a reading's packed `ChewingKey`
 /// words; `None` when any word names no syllable in the frozen
@@ -2425,7 +2414,7 @@ mod tests {
                 .expect("token")
                 .expect("present");
             let phrase = store.phrase(token).expect("phrase").expect("row");
-            assert_eq!(phrase.text(), "你好");
+            assert_eq!(*phrase.words(), "你好");
             let pron = &phrase.pronunciations()[0];
             assert_eq!(pron.count(), crate::phrase::DEFAULT_PHRASE_COUNT);
             assert_eq!(
@@ -2609,6 +2598,113 @@ mod tests {
         assert_eq!(seed, 138); // max(prev 69, 69) * 2
         assert_eq!(store.bigram_count(1, 0x0700_0001).expect("count"), 69 + 138);
 
+        std::fs::remove_dir_all(&dir).expect("cleanup");
+    }
+
+    /// A user library is a `ucs4_t` array whatever its values, so the pin keeps
+    /// an item whose words are no scalar values: it lists the item, hands out
+    /// its string (`g_ucs4_to_utf8`) and writes it back unchanged. The words
+    /// are carried as they are, not dropped on load. The three user libraries
+    /// (`addon.bin`, `network.bin` and `user.bin`) load the same way.
+    #[test]
+    fn a_user_library_item_with_words_that_are_no_scalar_values_is_kept() {
+        const LIBRARIES: [u8; 3] = [5, 6, 7];
+        let dir = tempdir("non-scalar");
+        let keys = vec![
+            ChewingKey::from_pinyin("ni").expect("syllable").to_packed(),
+            ChewingKey::from_pinyin("hao")
+                .expect("syllable")
+                .to_packed(),
+        ];
+        let phrases: [(u32, [u32; 2]); 4] = [
+            (1, [0x4f60, 0xd800]),
+            (2, [0x51fa, 0x8000_0000]),
+            (3, [0x4f1a, 0]),
+            (4, [0x11_0000, 0x7fff_ffff]),
+        ];
+        let items = || -> BTreeMap<u32, ChunkItem> {
+            phrases
+                .iter()
+                .map(|&(slot, words)| {
+                    (
+                        slot,
+                        ChunkItem {
+                            phrase: words.to_vec(),
+                            unigram: 15,
+                            prons: vec![(keys.clone(), 15)],
+                        },
+                    )
+                })
+                .collect()
+        };
+        let state = UserState {
+            bigram: Vec::new(),
+            libraries: LIBRARIES.iter().map(|&nibble| (nibble, items())).collect(),
+            phrase_table: BTreeMap::new(),
+            system_overrides: BTreeMap::new(),
+            indexed: std::collections::BTreeSet::new(),
+        }
+        .index_every_reading();
+        persistence::save(&dir, &state, &originals(), &versions(), 1).expect("save");
+
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        for nibble in LIBRARIES {
+            for &(slot, words) in &phrases {
+                let token = (u32::from(nibble) << 24) | slot;
+                let phrase = store.phrase(token).expect("read").expect("item kept");
+                assert_eq!(
+                    phrase.words().words().collect::<Vec<_>>(),
+                    words,
+                    "library {nibble} slot {slot}"
+                );
+                assert_eq!(
+                    store.unigram_delta(token).expect("delta"),
+                    15,
+                    "library {nibble} slot {slot}"
+                );
+            }
+        }
+        assert_eq!(
+            store.phrases().expect("phrases").len(),
+            phrases.len() * LIBRARIES.len()
+        );
+        for nibble in LIBRARIES {
+            let exported = store.export_phrases_in(nibble).expect("export");
+            assert_eq!(exported.len(), phrases.len(), "library {nibble}");
+            // The string the pin's export hands out for each: the words up to
+            // a zero, bytes that are not UTF-8 for a surrogate, NULL for
+            // 0x80000000.
+            let strings: Vec<_> = exported.iter().map(|row| row.words.string()).collect();
+            assert_eq!(
+                strings[0].as_bytes(),
+                Some(&[0xe4, 0xbd, 0xa0, 0xed, 0xa0, 0x80][..])
+            );
+            assert!(strings[1].is_null());
+            assert_eq!(strings[2], "\u{4f1a}");
+            assert_eq!(
+                strings[3].as_bytes(),
+                Some(&[0xf4, 0x90, 0x80, 0x80, 0xfd, 0xbf, 0xbf, 0xbf, 0xbf, 0xbf][..])
+            );
+        }
+
+        // Saved again, the items are the same words.
+        store.mark_modified();
+        assert!(store.save().expect("save"));
+        drop(store);
+        let loaded =
+            persistence::load(&dir, &originals(), &versions(), UserConfLaw::Pinyin).expect("load");
+        for nibble in LIBRARIES {
+            let library = loaded.state.libraries.get(&nibble).expect("library");
+            for &(slot, words) in &phrases {
+                assert_eq!(
+                    library.get(&slot).map(|item| item.phrase.clone()),
+                    Some(words.to_vec()),
+                    "library {nibble} slot {slot}"
+                );
+            }
+        }
         std::fs::remove_dir_all(&dir).expect("cleanup");
     }
 

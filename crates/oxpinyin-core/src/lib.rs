@@ -45,7 +45,10 @@ pub use oxpinyin_chewing::{CHEWING_ZERO_TONE, ChewingKey};
 pub use parser::{
     Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
 };
-pub use phrase_text::{holds_zero, phrase_c_string, ucs4_phrase_char, ucs4_phrase_chars};
+pub use phrase_text::{
+    PhraseString, PhraseStringJoin, PhraseWords, encode_unichar, phrase_c_string, pin_string,
+    pin_string_len, push_unichar, unichar_len, write_pin_string,
+};
 pub use scheme::{
     DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme,
     ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme, parse_zhuyin_direct,
@@ -259,7 +262,7 @@ pub trait Dictionary {
         self.trellis_item(syllables, tones, token)
     }
 
-    /// The phrase text [`Self::trellis_item`] priced, read when a result
+    /// The phrase string [`Self::trellis_item`] priced, read when a result
     /// is emitted (`convert_to_utf8`); `None` where that item is `None`.
     ///
     /// # Errors
@@ -270,7 +273,7 @@ pub trait Dictionary {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-    ) -> Result<Option<String>, Self::Error>
+    ) -> Result<Option<PhraseString>, Self::Error>
     where
         Self::Entry: PhraseIndexToken,
     {
@@ -510,15 +513,14 @@ pub trait Dictionary {
         }
     }
 
-    /// The phrase text a token owns, for rows the candidate surface must
-    /// render from the token alone — `_token_get_phrase`
+    /// The words of the phrase a token owns, for rows the candidate surface
+    /// must render from the token alone — `_token_get_phrase`
     /// (`pinyin.cpp:1994-2050` at the pin), which fills a LONGER
     /// candidate's string from the phrase index item.
     ///
-    /// Defaulted to `None` so existing implementors compile unchanged;
-    /// a dictionary that does not override it cannot back a LONGER row's
-    /// text (the row is then not built).
-    fn phrase_text_for_token(&self, _token: u32) -> Option<String> {
+    /// Defaulted to `None`; a dictionary that does not override it cannot
+    /// back a LONGER row's string (the row is then not built).
+    fn phrase_words_for_token(&self, _token: u32) -> Option<PhraseWords> {
         None
     }
 
@@ -633,7 +635,7 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         syllables: &[Self::Syllable],
         tones: &[u8],
         token: u32,
-    ) -> Result<Option<String>, Self::Error>
+    ) -> Result<Option<PhraseString>, Self::Error>
     where
         Self::Entry: PhraseIndexToken,
     {
@@ -705,8 +707,8 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         (**self).checked_extension_tokens(syllables)
     }
 
-    fn phrase_text_for_token(&self, token: u32) -> Option<String> {
-        (**self).phrase_text_for_token(token)
+    fn phrase_words_for_token(&self, token: u32) -> Option<PhraseWords> {
+        (**self).phrase_words_for_token(token)
     }
 
     fn overlong_extension_gate(&self, syllables: &[Self::Syllable]) -> bool {
@@ -800,8 +802,8 @@ pub trait PhraseIndexToken {
     /// The entry's [`TrellisItem`].
     fn phrase_index_item(&self) -> TrellisItem;
 
-    /// The entry's phrase text.
-    fn phrase_index_text(&self) -> String;
+    /// The entry's phrase string.
+    fn phrase_index_text(&self) -> PhraseString;
 }
 
 impl PhraseIndexToken for PhraseEntry {
@@ -811,13 +813,13 @@ impl PhraseIndexToken for PhraseEntry {
 
     fn phrase_index_item(&self) -> TrellisItem {
         TrellisItem {
-            chars: self.text().chars().count().try_into().unwrap_or(u32::MAX),
+            chars: self.len().try_into().unwrap_or(u32::MAX),
             pronunciation: self.pronunciation_possibility(),
         }
     }
 
-    fn phrase_index_text(&self) -> String {
-        self.text().to_owned()
+    fn phrase_index_text(&self) -> PhraseString {
+        self.string().clone()
     }
 }
 

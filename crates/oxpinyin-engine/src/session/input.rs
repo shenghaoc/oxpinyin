@@ -119,7 +119,7 @@ where
             self.refresh()?;
             return Ok(KeyOutcome::Consumed);
         }
-        if !self.record.selected().is_empty() {
+        if self.record.has_text() {
             // The all-or-nothing un-select: the store goes with the
             // record, or a forcing would outlive its own selection.
             self.record.clear();
