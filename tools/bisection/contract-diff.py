@@ -11703,12 +11703,129 @@ def per_call_ir(stderr):
     return value
 
 
-def per_call_run(mode, so, data, name, helper, metric, operations, scratch, cpu):
+def per_call_profile(stderr):
+    """Read exclusive function costs and inclusive call edges, in memory.
+    Callgrind name IDs share object/file/function namespaces with their
+    callee forms. Position columns can use relative compression; this reader
+    needs their width, not their values. Costs stay raw and additive only
+    within the exclusive function table.
+    """
+    total = per_call_ir(stderr)
+    aliases = {'ob': 'ob', 'cob': 'ob', 'fn': 'fn', 'cfn': 'fn',
+               'fl': 'fl', 'fi': 'fl', 'fe': 'fl', 'cfi': 'fl', 'cfl': 'fl'}
+    names = {key: {} for key in ('ob', 'fn', 'fl')}
+    lines = stderr.splitlines()
+    for line in lines:
+        match = re.match(r'^(\w+)=(.*)$', line)
+        if match and match[1] in aliases:
+            compressed = re.fullmatch(r'\((\d+)\)(?: (.*))?', match[2])
+            if compressed and compressed[2] is not None:
+                table = names[aliases[match[1]]]
+                if compressed[1] in table and table[compressed[1]] != compressed[2]:
+                    raise ValueError('conflicting Callgrind name ID')
+                table[compressed[1]] = compressed[2]
+
+    def resolve(kind, value):
+        compressed = re.fullmatch(r'\((\d+)\)(?: (.*))?', value)
+        if not compressed:
+            return value
+        try:
+            return names[aliases[kind]][compressed[1]]
+        except KeyError:
+            raise ValueError('unresolved Callgrind name ID: ' + kind + '=' + value) from None
+
+    positions = 1
+    obj, function = '???', '???'
+    next_callee_obj, callee = None, None
+    pending = None
+    exclusive, edges = {}, {}
+    for line in lines:
+        if line.startswith('positions:'):
+            positions = len(line.split(':', 1)[1].split())
+            if not 1 <= positions <= 2:
+                raise ValueError('unsupported Callgrind position columns')
+        match = re.match(r'^(\w+)=(.*)$', line)
+        if match and match[1] in aliases:
+            kind, value = match[1], resolve(match[1], match[2])
+            if kind == 'ob':
+                obj = value
+            elif kind == 'fn':
+                function, next_callee_obj, callee = value, None, None
+            elif kind == 'cob':
+                next_callee_obj = value
+            elif kind == 'cfn':
+                callee = (next_callee_obj if next_callee_obj is not None else obj, value)
+                next_callee_obj = None
+            continue
+        if line.startswith('calls='):
+            fields = line.removeprefix('calls=').split()
+            if pending is not None or callee is None or not fields or not fields[0].isdigit():
+                raise ValueError('invalid Callgrind call association')
+            pending = ((obj, function), callee, int(fields[0]))
+            continue
+        if line.startswith(('jump=', 'jcnd=')):
+            raise ValueError('jump associations are not supported by per-call attribution')
+        if not re.match(r'^(?:0x[0-9a-fA-F]+|\d+|[+\-]\d+|\*)(?:\s|$)', line):
+            continue
+        fields = line.split()
+        costs = fields[positions:]
+        if len(fields) < positions or len(costs) > 1 or (costs and not costs[0].isdigit()):
+            raise ValueError('invalid Callgrind Ir cost line')
+        cost = int(costs[0]) if costs else 0
+        if pending is None:
+            key = (obj, function)
+            exclusive[key] = exclusive.get(key, 0) + cost
+        else:
+            caller, target, count = pending
+            old_cost, old_count = edges.get((caller, target), (0, 0))
+            edges[caller, target] = (old_cost + cost, old_count + count)
+            pending = None
+    if pending is not None or sum(exclusive.values()) != total:
+        raise ValueError('Callgrind exclusive costs do not reconcile with totals')
+    return dict(total=total, exclusive=exclusive, edges=edges)
+
+
+def per_call_attribution(profile, calls, limit):
+    """Named roots are evidence, not an invented partition of an inlined API.
+    Inclusive edges can overlap. Never sum them as exclusive phase costs.
+    """
+    def identity(key):
+        return dict(object=key[0], function=key[1])
+    functions = [dict(**identity(key), ir_per_call=value / calls)
+                 for key, value in sorted(profile['exclusive'].items(), key=lambda item: (-item[1], item[0]))
+                 if value]
+    edges = [dict(caller=identity(caller), callee=identity(callee), inclusive_ir_per_call=value / calls,
+                  callgrind_calls_per_selected_call=count / calls)
+             for (caller, callee), (value, count) in sorted(profile['edges'].items(),
+                                                         key=lambda item: (-item[1][0], item[0])) if value]
+    # These roots follow the current add path in both iterators.rs files.
+    # A source boundary may disappear under LTO, so absence is unresolved.
+    patterns = dict(lookup=r'phrase_table_tokens|SystemDictionary.*tokens_for_text',
+                    validation=r'RuntimeDict.*token_introspection|GenericUserStore.*::phrase$',
+                    store_merge=r'GenericUserStore.*::add_(?:system_)?phrase_in$')
+    candidates = {}
+    for phase, pattern in patterns.items():
+        selected = [edge for edge in edges if re.search(pattern, edge['callee']['function'])]
+        candidates[phase] = dict(status='named_roots_only' if selected else 'unresolved',
+                                 inclusive_edges=selected)
+    return dict(basis='raw_collected_Ir', raw_ir_per_call=profile['total'] / calls,
+                exclusive_sum_ir_per_call=sum(profile['exclusive'].values()) / calls,
+                inclusive_edges_overlap=True, phase_partition='not_established',
+                edge_call_counts='Callgrind records; can include calls outside collection',
+                named_phase_candidates=candidates, functions=functions[:limit] if limit else functions,
+                call_edges=edges[:limit] if limit else edges,
+                omitted_functions=max(0, len(functions) - limit) if limit else 0,
+                omitted_call_edges=max(0, len(edges) - limit) if limit else 0)
+
+
+def per_call_run(mode, so, data, name, helper, metric, operations, scratch, cpu, attribution=False):
     with tempfile.TemporaryDirectory(prefix='sample-', dir=scratch) as sample:
         command = ['taskset', '-c', str(cpu)]
         if metric == 'ir':
             command += ['valgrind', '--tool=callgrind', '--instr-atstart=no', '--collect-atstart=no',
                         '--cache-sim=no', '--branch-sim=no', '--callgrind-out-file=/dev/stderr']
+            if attribution:
+                command += ['--read-inline-info=yes', '--demangle=yes']
         command += [sys.executable, __file__, '--per-call-worker', mode, str(so), str(data), name,
                     str(helper), metric, operations]
         env = dict(os.environ, TMPDIR=sample)
@@ -11743,7 +11860,8 @@ def per_call_run(mode, so, data, name, helper, metric, operations, scratch, cpu)
         observation = dict(exit=0, result=document['observation'], stderr=stderr,
                            stderr_lines=len(stderr.splitlines()), userfiles=user_dir_listing(sample, set()))
         return dict(observation=observation, stats=document['stats'],
-                    ir=per_call_ir(stderr) if metric == 'ir' else None)
+                    ir=per_call_ir(stderr) if metric == 'ir' else None,
+                    profile=per_call_profile(stderr) if metric == 'ir' and attribution else None)
 
 
 def per_call_checked(spec, reference, sample, operations):
@@ -11766,7 +11884,14 @@ def run_per_call(args, parser):
     if args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or \
             args.regenerate_sentence_ties or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
         parser.error('--per-call cannot be combined with contract selectors, captures or other modes')
-    operations = PER_CALL_OPS if args.per_call == 'wrap' else ('lookup',)
+    operations = tuple(args.per_call_operations.split(',')) if args.per_call_operations else (
+        PER_CALL_OPS if args.per_call == 'wrap' else ('lookup',))
+    if not operations or len(set(operations)) != len(operations) or any(op not in PER_CALL_OPS for op in operations):
+        parser.error('--per-call-operations needs unique add,count,lookup names')
+    if args.per_call == 'lookup-only' and operations != ('lookup',):
+        parser.error('lookup-only measures lookup only')
+    if args.per_call_attribution_limit < 0:
+        parser.error('--per-call-attribution-limit must be nonnegative')
     modes = ('pinyin', 'zhuyin') if args.per_call_facades == 'both' else (args.per_call_facades,)
     sides = {'pin': {'pinyin': args.prefix / 'lib/libpinyin.so', 'zhuyin': args.prefix / 'lib/libzhuyin.so'},
              'subject': {'pinyin': args.pinyin_so, 'zhuyin': args.zhuyin_so}}
@@ -11812,21 +11937,30 @@ def run_per_call(args, parser):
                         counts[op] = sample['stats'][op]['calls']
                         walls[side][op].append(sample['stats'][op]['ns'] / counts[op])
             irs = {side: {} for side in sides}
+            profiles = {side: {} for side in sides}
             for side in sides:
                 for op in operations:
                     print('per-call: %s Ir %s %s' % (mode, side, op), file=sys.stderr, flush=True)
-                    sample = per_call_run(mode, sides[side][mode], data, name, helper, 'ir', op, scratch, cpu)
+                    sample = per_call_run(mode, sides[side][mode], data, name, helper, 'ir', op, scratch, cpu,
+                                          attribution=args.per_call_attribution)
                     per_call_checked(spec, reference, sample, (op,))
                     value = sample['ir'] / counts[op] - calibration[op]
                     if value <= 0:
                         raise ValueError('nonpositive calibrated Ir for ' + op)
                     irs[side][op] = value
+                    if args.per_call_attribution:
+                        profiles[side][op] = per_call_attribution(
+                            sample['profile'], counts[op], args.per_call_attribution_limit)
             for op in operations:
                 pin_ns = statistics.median(walls['pin'][op])
                 pin_ir = irs['pin'][op]
                 for side in sides:
                     ns = statistics.median(walls[side][op])
                     ir = irs[side][op]
+                    if args.per_call_attribution:
+                        print(json.dumps(dict(per_call='attribution', facade=mode, operation=op, side=side,
+                                              wrapper_ir_per_call=calibration[op],
+                                              **profiles[side][op])), flush=True)
                     print(json.dumps(dict(per_call='result', workload=args.per_call, facade=mode, operation=op,
                                           side=side, calls=counts[op], wall_ns_per_call=ns, ir_per_call=ir,
                                           wall_ratio=ns / pin_ns, ir_ratio=ir / pin_ir,
@@ -11846,6 +11980,9 @@ def run_main():
     parser.add_argument('--per-call', choices=['wrap', 'lookup-only'])
     parser.add_argument('--per-call-facades', choices=['pinyin', 'zhuyin', 'both'], default='both')
     parser.add_argument('--per-call-cpu', type=int)
+    parser.add_argument('--per-call-operations', help='comma-separated add,count,lookup (default: all)')
+    parser.add_argument('--per-call-attribution', action='store_true')
+    parser.add_argument('--per-call-attribution-limit', type=int, default=25, help='top functions and edges; 0 emits all')
     parser.add_argument('--base-pinyin-so', type=Path)
     parser.add_argument('--base-zhuyin-so', type=Path)
     parser.add_argument('--cases', default='')
@@ -11894,8 +12031,8 @@ def run_main():
     assert '+dbm-' + args.cell + '\n' in manifest
     if args.per_call:
         return run_per_call(args, parser)
-    if args.base_pinyin_so or args.base_zhuyin_so:
-        parser.error('--base-pinyin-so/--base-zhuyin-so require --per-call')
+    if args.base_pinyin_so or args.base_zhuyin_so or args.per_call_attribution or args.per_call_operations:
+        parser.error('base paths, attribution and operation selection require --per-call')
     if args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
         assert not (args.observations or args.cases or args.expect_parent or args.regenerate_sentence_ties), \
             'axis C replacement cannot be combined with capture, regeneration or parent modes'

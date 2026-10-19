@@ -726,6 +726,89 @@ class PerCallTests(unittest.TestCase):
         self.assertFalse(kit.active)
         kit.native.pc_start.assert_called_once_with()
 
+    def test_profile_keeps_exclusive_costs_apart_from_call_edges(self):
+        profile = contract['per_call_profile']("""events: Ir
+positions: instr line
+ob=(1) /object.so
+fl=(1) caller.rs
+fn=(1) add
+0x10 10 10
+cfi=(2) runtime.rs
+cfn=(2) oxpinyin_runtime::RuntimeDict::token_introspection
+calls=5 0x20 20
+* * 50
+fn=(2)
+fi=(2)
+0x20 20 20
+cob=(1)
+cfl=(1)
+cfn=(3) decode
+calls=5 0x30 30
++1 +1 30
+fn=(3)
+0x30 30 30
+totals: 60
+""")
+        self.assertEqual(profile['total'], 60)
+        self.assertEqual(sum(profile['exclusive'].values()), 60)
+        self.assertEqual(sum(value[0] for value in profile['edges'].values()), 80)
+        shown = contract['per_call_attribution'](profile, 5, 1)
+        self.assertEqual(shown['exclusive_sum_ir_per_call'], 12)
+        self.assertEqual(shown['functions'][0]['ir_per_call'], 6)
+        self.assertEqual(shown['omitted_functions'], 2)
+        self.assertEqual(shown['phase_partition'], 'not_established')
+        self.assertEqual(shown['named_phase_candidates']['validation']['status'], 'named_roots_only')
+        self.assertEqual(shown['named_phase_candidates']['validation']['inclusive_edges'][0]['inclusive_ir_per_call'], 10)
+        self.assertEqual(shown['named_phase_candidates']['lookup']['status'], 'unresolved')
+        self.assertEqual(len(contract['per_call_attribution'](profile, 5, 0)['functions']), 3)
+
+    def test_profile_sums_repeated_costs_and_edges(self):
+        text = """events: Ir
+fn=(1) caller
+1 2
+cfn=(2) target
+calls=1 2
+1 3
+cfn=(2)
+calls=2 2
+1 6
+fn=(2)
+2 4
++1 5
+totals: 11
+"""
+        profile = contract['per_call_profile'](text)
+        self.assertEqual(profile['exclusive']['???', 'target'], 9)
+        self.assertEqual(profile['edges'][('???', 'caller'), ('???', 'target')], (9, 3))
+
+    def test_callee_object_applies_only_to_next_function(self):
+        profile = contract['per_call_profile']("""events: Ir
+ob=(1) /subject.so
+fn=caller
+1 5
+cob=(2) /libc.so
+cfn=external
+calls=1 2
+1 7
+calls=2 2
+1 14
+cfn=internal
+calls=1 3
+1 9
+totals: 5
+""")
+        edges = profile['edges']
+        self.assertEqual(edges[(('/subject.so', 'caller'), ('/libc.so', 'external'))], (21, 3))
+        self.assertEqual(edges[(('/subject.so', 'caller'), ('/subject.so', 'internal'))], (9, 1))
+
+    def test_profile_refuses_unresolved_ids_and_unreconciled_costs(self):
+        for text in ('events: Ir\nfn=(7)\n1 9\ntotals: 9',
+                     'events: Ir\nfn=x\n1 8\ntotals: 9',
+                     'events: Ir\nfn=x\ncfn=y\ncalls=1 1\ntotals: 9',
+                     'events: Ir\nfn=(1) x\nfn=(1) y\n1 9\ntotals: 9'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                contract['per_call_profile'](text)
+
     def test_only_calls_inside_step_use_native_wrapper(self):
         from unittest.mock import Mock
         kit = object.__new__(contract['PerCallKit'])
@@ -749,7 +832,7 @@ class PerCallTests(unittest.TestCase):
         from argparse import Namespace
         globals_ = contract['run_per_call'].__globals__
         calls = []
-        def run(mode, so, data, name, helper, metric, operations, scratch, cpu):
+        def run(mode, so, data, name, helper, metric, operations, scratch, cpu, **kwargs):
             calls.append((so.name, metric, name, operations))
             sample = self.sample()
             if name == 'calibrate':
@@ -765,6 +848,7 @@ class PerCallTests(unittest.TestCase):
                              plan_only=False, regenerate_sentence_ties=None, axis_c_replacement=None,
                              axis_c_mutation=None, axis_c_snapshot_check=False, per_call='wrap',
                              per_call_facades='pinyin', per_call_cpu=None, prefix=root,
+                             per_call_operations=None, per_call_attribution=False, per_call_attribution_limit=25,
                              pinyin_so=root / 'subject.so', zhuyin_so=None,
                              base_pinyin_so=root / 'base.so', base_zhuyin_so=None)
             import contextlib, io
