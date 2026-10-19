@@ -161,7 +161,7 @@ fn remember_user_input_indexes_without_training(instance: *mut PinyinInstance) {
         assert_eq!(store.bigram_count(SENTENCE_START, user_token).unwrap(), 0);
         assert_eq!(store.bigram_total(user_token).unwrap(), 0);
         let phrase = store.phrase(user_token).unwrap().expect("phrase stored");
-        assert_eq!(phrase.text(), "你好");
+        assert_eq!(*phrase.words(), "你好");
         assert_eq!(phrase.pronunciations().len(), 1);
         // The current composition "nihao" supplies the pronunciation keys.
         let ni = u16::try_from(
@@ -806,7 +806,7 @@ fn phrase_snapshot(instance: *mut PinyinInstance) -> Vec<(u32, String, i64)> {
         .filter_map(|candidate| {
             Some((
                 candidate.token()?.value(),
-                candidate.text().to_owned(),
+                candidate.string().to_string_lossy().into_owned(),
                 candidate.cost(),
             ))
         })
@@ -1334,7 +1334,7 @@ fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
         let index = inst
             .candidates
             .iter()
-            .position(|c| c.text.as_bytes() == "你".as_bytes())
+            .position(|c| c.cstr().to_bytes() == "你".as_bytes())
             .expect("你 is offered for ni");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(
@@ -1362,7 +1362,7 @@ fn train_one_multiphrase_sentence(instance: *mut PinyinInstance) {
         let index = inst
             .candidates
             .iter()
-            .position(|c| c.text.as_bytes() == "好".as_bytes())
+            .position(|c| c.cstr().to_bytes() == "好".as_bytes())
             .expect("好 is offered for hao");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(
@@ -1445,7 +1445,7 @@ fn export_iterators_walk_the_stored_triples() {
     assert_eq!(
         rows,
         vec![crate::ExportedBigramRow {
-            phrase: "你好".to_owned(),
+            phrase: "你好".into(),
             pinyin: "ni'hao".to_owned(),
             count: 138,
         }]
@@ -1639,7 +1639,7 @@ fn offset_decode_rows_carry_prefix_context() {
         let index = inst
             .candidates
             .iter()
-            .position(|c| c.text.as_bytes() == "\u{4f60}".as_bytes())
+            .position(|c| c.cstr().to_bytes() == "\u{4f60}".as_bytes())
             .expect("\u{4f60} is offered for nihao");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(
@@ -1681,7 +1681,7 @@ fn offset_decode_rows_carry_prefix_context() {
             "n-best row candidates should be present after offset decode"
         );
         for cand in &nbest {
-            let text = cand.text.to_str().expect("UTF-8 candidate");
+            let text = cand.cstr().to_str().expect("UTF-8 candidate");
             assert!(
                 text.starts_with("\u{4f60}"),
                 "n-best candidate at offset should carry prefix: got {text:?}"
@@ -1715,7 +1715,7 @@ fn the_forcing_survives_the_reparse_and_clears_by_offset() {
         let index = inst
             .candidates
             .iter()
-            .position(|c| c.text.as_bytes() == "\u{4f60}".as_bytes())
+            .position(|c| c.cstr().to_bytes() == "\u{4f60}".as_bytes())
             .expect("\u{4f60} is offered for nihao");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(
@@ -1798,7 +1798,7 @@ fn the_forcing_survives_a_shrinking_reparse_and_the_retype() {
         let index = inst
             .candidates
             .iter()
-            .position(|c| c.text.as_bytes() == "\u{4f60}".as_bytes())
+            .position(|c| c.cstr().to_bytes() == "\u{4f60}".as_bytes())
             .expect("\u{4f60} is offered");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(
@@ -1875,7 +1875,7 @@ fn a_selection_committed_composition_reparses_with_its_store() {
         let index = inst
             .candidates
             .iter()
-            .position(|c| c.text.as_bytes() == "\u{4f60}\u{597d}".as_bytes())
+            .position(|c| c.cstr().to_bytes() == "\u{4f60}\u{597d}".as_bytes())
             .expect("\u{4f60}\u{597d} is offered");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(
@@ -1912,7 +1912,7 @@ fn a_selection_committed_composition_reparses_with_its_store() {
         assert!(
             inst.candidates
                 .iter()
-                .any(|c| c.text.as_bytes() == "\u{4f60}".as_bytes()),
+                .any(|c| c.cstr().to_bytes() == "\u{4f60}".as_bytes()),
             "the re-opened composition offers \u{4f60} at offset 0"
         );
     }
@@ -1948,7 +1948,7 @@ fn a_shrinking_reparse_reconciles_the_committed_selection() {
         let index = inst
             .candidates
             .iter()
-            .position(|c| c.text.as_bytes() == "\u{4f60}\u{597d}".as_bytes())
+            .position(|c| c.cstr().to_bytes() == "\u{4f60}\u{597d}".as_bytes())
             .expect("\u{4f60}\u{597d} is offered");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(
@@ -2076,8 +2076,11 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
                         .unwrap_or(0)
             });
             (
-                c.text.to_str().expect("candidate text is UTF-8").to_owned(),
-                c.text
+                c.cstr()
+                    .to_str()
+                    .expect("candidate text is UTF-8")
+                    .to_owned(),
+                c.cstr()
                     .to_str()
                     .expect("candidate text is UTF-8")
                     .chars()
@@ -2138,7 +2141,7 @@ fn choosing_behind_the_composition_answers_the_chosen_span() {
         let index = inst
             .candidates
             .iter()
-            .position(|cd| cd.text.as_bytes() == text.as_bytes())
+            .position(|cd| cd.cstr().to_bytes() == text.as_bytes())
             .unwrap_or_else(|| panic!("{text} is offered"));
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(
@@ -2190,7 +2193,7 @@ fn choosing_behind_the_composition_under_double_pinyin_answers_the_chosen_span()
         let index = inst
             .candidates
             .iter()
-            .position(|cd| cd.text.as_bytes() == text.as_bytes())
+            .position(|cd| cd.cstr().to_bytes() == text.as_bytes())
             .unwrap_or_else(|| panic!("{text} is offered"));
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(
@@ -2283,7 +2286,7 @@ fn choosing_from_a_reanchored_window_uses_the_anchored_span() {
         let index = inst
             .candidates
             .iter()
-            .position(|cd| cd.text.as_bytes() == "好".as_bytes())
+            .position(|cd| cd.cstr().to_bytes() == "好".as_bytes())
             .expect("好 is offered at offset 2");
         let mut cand: *mut LookupCandidate = ptr::null_mut();
         assert!(pinyin_get_candidate(

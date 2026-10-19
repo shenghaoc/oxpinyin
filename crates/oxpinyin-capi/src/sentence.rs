@@ -6,7 +6,7 @@ use std::os::raw::c_char;
 use oxpinyin_core::{Dictionary as _, LanguageModel as _};
 
 use crate::ffi::{cstr_to_strict, cstr_to_string};
-use crate::state::{CapiCandidate, instance_mut, instance_ref};
+use crate::state::{CapiCandidate, instance_mut, instance_ref, strcmp_would_die};
 use crate::types::{GUint, PinyinInstance, lookup_candidate_type_t};
 
 /// Guess a sentence from saved pinyin keys.
@@ -260,13 +260,17 @@ pub extern "C" fn pinyin_get_sentence(
     if !inst.core.session.sentence_lookup_active() {
         return false;
     }
-    match inst.core.session.sentence_text(index) {
-        Some(decoded) => write_owned_sentence(decoded, sentence),
+    match inst.core.session.sentence_string(index) {
+        // The pin answers true with whatever `convert_to_utf8` made
+        // (`pinyin.cpp:1477-1482`): bytes that are not UTF-8 for a phrase
+        // with a word that is no scalar value, and NULL when every phrase's
+        // string is NULL.
+        Some(decoded) => write_owned_sentence(decoded.as_bytes(), sentence),
         None => {
             // Class (c), `pinyin.cpp:1474`: with rows present, an index past
             // them is `assert(index < results.size())`. No rows at all is the
             // pin's own graceful `false` (`:1470-1471`), silent.
-            if index > 0 && inst.core.session.sentence_text(0).is_some() {
+            if index > 0 && inst.core.session.sentence_string(0).is_some() {
                 crate::ffi::log_warning(
                     "pinyin_get_sentence: assertion 'index < results.size()' failed",
                 );
@@ -279,7 +283,7 @@ pub extern "C" fn pinyin_get_sentence(
 // The `char **`-out sentence writer, stamped from the shared marshalling
 // macro (byte-identical to the zhuyin facade's). `crate::ffi::owned_cstr` is
 // this facade's libc-`malloc` duplicator — the per-facade allocator edge.
-oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::owned_cstr);
+oxpinyin_capi_marshal::write_owned_sentence!(crate::ffi::owned_cstr_bytes);
 
 /// Get the character offset within `phrase` for a lookup byte offset.
 ///
@@ -532,7 +536,9 @@ pub extern "C" fn pinyin_guess_candidates(
     // library whose item cannot be read leaves `m_phrase_string` unset, and
     // the pin's duplicate removal compares it (a NULL or wild read, SIGSEGV).
     // Only a `table.conf` that points a library at another file (or at
-    // none) gets here. The call fails, once.
+    // none) gets here. The call fails, once. (A string that is NULL because
+    // the item holds a word of 0x80000000 or more is the same stop; it is
+    // answered below, once the list is known.)
     if inst
         .core
         .anchored_window
@@ -599,8 +605,16 @@ pub extern "C" fn pinyin_guess_candidates(
         {
             continue;
         }
-        let Ok(text) = CString::new(cand.text().as_bytes()) else {
-            continue;
+        // The pin's string, which is NULL for a word of 0x80000000 or more
+        // (`g_ucs4_to_utf8`, `glib/gutf8.c:1040-1045`) and bytes that need
+        // not be UTF-8 otherwise. The cut at the first zero word means the
+        // bytes never hold a NUL.
+        let text = match cand.string().as_bytes() {
+            None => None,
+            Some(bytes) => match CString::new(bytes) {
+                Ok(text) => Some(text),
+                Err(_) => continue,
+            },
         };
         let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
             || {
@@ -653,6 +667,17 @@ pub extern "C" fn pinyin_guess_candidates(
     {
         crate::ffi::log_warning("pinyin_guess_candidates: assertion '0 < total_freq' failed");
         inst.candidates.clear();
+        return false;
+    }
+    // Class (b), `pinyin.cpp:2053` / `:2082`: the pin's duplicate removal
+    // sorts and compares the candidates' strings with `strcmp`, which reads
+    // through a NULL string as soon as a second candidate is there to be
+    // compared (SIGSEGV). The call fails, once, as it does for an item that
+    // cannot be read.
+    if strcmp_would_die(&inst.candidates) {
+        inst.core.anchored_window = None;
+        inst.candidates.clear();
+        crate::ffi::log_warning("pinyin_guess_candidates: a candidate's phrase string is NULL");
         return false;
     }
     // The pin's empty-matrix early return (`pinyin.cpp:2193`): a

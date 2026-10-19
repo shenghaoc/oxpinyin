@@ -8,11 +8,13 @@ use std::os::raw::{c_char, c_int};
 use std::ptr;
 
 use oxpinyin_core::graph::SegmentGraph;
-use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, USE_TONE};
+use oxpinyin_core::{OptionBits, PINYIN_CORRECT_ALL, PhraseWords, USE_TONE};
 use oxpinyin_facade::{BigramExportWalk, BigramStep, ExportStep};
 use oxpinyin_user::{MAX_PHRASE_LENGTH, PinyinKey, UserStore, is_user_file_library, toned_key};
 
-use crate::ffi::{cstr_to_owned_lossy, cstr_to_parsed_prefix, malloc_cstr_with, owned_cstr};
+use crate::ffi::{
+    cstr_to_owned_lossy, cstr_to_parsed_prefix, malloc_cstr_with, owned_cstr, owned_cstr_bytes,
+};
 use crate::state::context_ref;
 use crate::types::{
     BigramExportIterator, ExportIterator, GChar, GUint, ImportIterator, PinyinContext,
@@ -195,21 +197,23 @@ pub extern "C" fn pinyin_iterator_add_phrase(
         return false;
     }
     if let Some(&token) = same_library.first() {
-        let item_text = if let Some(dict) = handle.dict.as_ref() {
-            dict.token_introspection(token).map(|item| item.text)
+        // The `memcmp` compares the `ucs4_t` arrays, so the item's words are
+        // read as stored, not as the string the pin makes of them.
+        let item_words = if let Some(dict) = handle.dict.as_ref() {
+            dict.token_introspection(token).map(|item| item.words)
         } else {
             user.phrase(token)
                 .ok()
                 .flatten()
-                .map(|item| item.text().to_owned())
+                .map(|item| item.words().clone())
         };
         // A missing item leaves the pin's PhraseItem at length zero;
         // :568 then asserts before any import mutation.
-        if item_text.as_deref() != Some(phrase.as_str()) {
+        if item_words.as_ref() != Some(&PhraseWords::from_text(phrase.as_str())) {
             crate::ffi::log_warning(
-                if item_text
+                if item_words
                     .as_ref()
-                    .is_some_and(|text| text.chars().count() == length)
+                    .is_some_and(|words| words.len() == length)
                 {
                     "pinyin_iterator_add_phrase: assertion \
              '0 == memcmp(phrase, tmp_phrase, sizeof(ucs4_t) * phrase_length)' failed"
@@ -386,8 +390,10 @@ pub extern "C" fn pinyin_iterator_has_next_phrase(iter: *mut ExportIterator) -> 
 /// exported. Out-params `phrase` and `pinyin` are caller-owned (`g_free`
 /// each), one allocation apiece as the pin's `g_ucs4_to_utf8` and
 /// `g_strjoinv` results are; `phrase` is NULL where the pin's
-/// `g_ucs4_to_utf8` hands one out (`:715-716`, a stored code point that is
-/// no scalar value). Returns `false` once the iterator is exhausted, at
+/// `g_ucs4_to_utf8` hands one out (`:715-716`, a stored code point of
+/// 0x80000000 or more met before a zero); a surrogate or a value up to
+/// 0x7FFFFFFF is handed out as the bytes `g_unichar_to_utf8` writes for it.
+/// Returns `false` once the iterator is exhausted, at
 /// one of the pin's assert sites (one warning naming the expression), or
 /// when the store cannot be read (one warning, no pin counterpart).
 #[unsafe(no_mangle)]
@@ -630,7 +636,12 @@ pub extern "C" fn pinyin_bigram_iterator_get_next_phrase(
     if !phrase.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *phrase = owned_cstr(&row.phrase);
+            // `g_strdup` of the pin's `m_phrase`, which is NULL where the
+            // first phrase's string is.
+            *phrase = row
+                .phrase
+                .as_bytes()
+                .map_or(ptr::null_mut(), owned_cstr_bytes);
         }
     }
     if !pinyin.is_null() {

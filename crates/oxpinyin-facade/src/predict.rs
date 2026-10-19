@@ -2,6 +2,7 @@
 //! `guess_sentence_with_prefix`, and the merged suggestion rows
 //! `_compute_predicted_prefix_candidates` ranks.
 
+use oxpinyin_core::PhraseWords;
 use oxpinyin_runtime::RuntimeDict;
 use oxpinyin_user::{UserLookup, UserStore};
 
@@ -52,8 +53,8 @@ pub fn merged_suggestions(
     dict: &RuntimeDict,
     user: Option<&UserStore>,
     prefix: &str,
-) -> Vec<(u32, String)> {
-    let system: Vec<(u32, String)> = dict
+) -> Vec<(u32, PhraseWords)> {
+    let system: Vec<(u32, PhraseWords)> = dict
         .system()
         .suggest_after(prefix)
         .unwrap_or_default()
@@ -70,18 +71,16 @@ pub fn merged_suggestions(
     // PhraseTableEntry::search skips disabled library arrays
     // (074a2219 phrase_large_table3.cpp:40-42) in both tables.
     user_rows.retain(|(token, _)| dict.phrase_table_token_enabled(*token));
-    // Search visits raw keys; the candidate's text comes from its live item
-    // (074a2219 pinyin.cpp:2391-2395, 2018-2022), including keys containing
-    // UCS-4 values that cannot be represented by a Rust String.
+    // Search visits raw keys; the candidate's words come from its live item
+    // (074a2219 pinyin.cpp:2391-2395, 2018-2022), whatever the key holds: the
+    // key's own words stand in only when the live item is absent.
     oxpinyin_runtime::merge_suggestion_rows(&system, &user_rows)
         .into_iter()
-        .filter_map(|(token, fallback)| {
-            dict.token_introspection(token)
-                .map(|item| item.text)
-                // Preserve the established valid-key fallback when the live
-                // item is absent; raw-key traversal adds no new missing-item policy.
-                .or(fallback)
-                .map(|text| (token, text))
+        .map(|(token, key_words)| {
+            let words = dict
+                .token_introspection(token)
+                .map_or(key_words, |item| item.words);
+            (token, words)
         })
         .collect()
 }

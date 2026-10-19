@@ -8,6 +8,8 @@
 //! fixed-width prefix with the variable tail — no length prefix needed
 //! because the fixed half exactly delimits the split point.
 
+use oxpinyin_core::PhraseWords;
+
 use crate::store::Token;
 
 /// Error returned when stored codec bytes cannot be decoded.
@@ -116,6 +118,19 @@ pub fn decode_str(bytes: &[u8]) -> Result<&str, DecodeError> {
     std::str::from_utf8(bytes).map_err(|_| DecodeError::InvalidUtf8)
 }
 
+/// Decode a phrase's words from the bytes the store keeps in its text
+/// columns: the UTF-8 of the text while every word is a Unicode scalar
+/// value, and each word written as `g_unichar_to_utf8` writes it otherwise
+/// ([`PhraseWords::to_store_bytes`]).
+///
+/// # Errors
+///
+/// Returns [`DecodeError`] when the bytes are neither: a truncated or
+/// overlong sequence.
+pub fn decode_words(bytes: &[u8]) -> Result<PhraseWords, DecodeError> {
+    PhraseWords::from_store_bytes(bytes).ok_or(DecodeError::InvalidUtf8)
+}
+
 /// Encode `&[u8]` (identity — returns the same slice).
 #[must_use]
 pub const fn encode_bytes(b: &[u8]) -> &[u8] {
@@ -173,6 +188,16 @@ pub fn decode_u8_str(bytes: &[u8]) -> Result<(u8, &str), DecodeError> {
     })?;
     let s = std::str::from_utf8(tail).map_err(|_| DecodeError::InvalidUtf8)?;
     Ok((v, s))
+}
+
+/// Encode a `(u8, bytes)` key: one byte prefix, then the raw tail (the store
+/// bytes of a phrase's words, [`PhraseWords::to_store_bytes`]).
+#[must_use]
+pub fn encode_u8_bytes(v: u8, tail: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(1 + tail.len());
+    out.push(v);
+    out.extend_from_slice(tail);
+    out
 }
 
 /// Encode a `(Token, &[u8])` key: 4 BE bytes, then raw tail.

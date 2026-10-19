@@ -165,14 +165,14 @@ fn reads_items_texts_and_pronunciations() {
     assert_eq!(item.phrase_length(), 1);
     assert_eq!(item.n_pronunciations(), 1);
     assert_eq!(item.unigram(), 5);
-    assert_eq!(item.phrase_text().as_deref(), Some("你"));
+    assert_eq!(item.phrase_string().expect("readable"), "你");
     let pronunciations: Vec<_> = item.pronunciations().collect();
     assert_eq!(pronunciations.len(), 1);
     assert_eq!(pronunciations[0].keys, &[0x12, 0x34]);
     assert_eq!(pronunciations[0].freq, 5);
 
     let item = library.item_at_slot(9).expect("item at slot 9");
-    assert_eq!(item.phrase_text().as_deref(), Some("你好"));
+    assert_eq!(item.phrase_string().expect("readable"), "你好");
     let pronunciations: Vec<_> = item.pronunciations().collect();
     assert_eq!(pronunciations.len(), 2);
     assert_eq!(pronunciations[1].keys, &[0xAA, 0xBB, 0xCC, 0xDD]);
@@ -347,7 +347,8 @@ fn item_damage_answers_no_item_never_panics() {
     );
     let _ = std::fs::remove_file(&path);
 
-    // An invalid UCS-4 scalar in the text degrades to None text.
+    // A word that is no scalar value is read: the string holds the bytes GLib
+    // writes for it, and the words keep the value.
     let mut builder = ChunkBuilder::new(1);
     builder.add(1, 1, "\u{1}\u{2}", vec![(vec![0; 4], 1)]);
     let mut bytes = builder.build();
@@ -361,22 +362,33 @@ fn item_damage_answers_no_item_never_panics() {
     let library = PhraseLibrary::open(&path).expect("layout still validates");
     let item = library.item_at_slot(1).expect("item present");
     assert_eq!(item.phrase_length(), 2);
-    assert!(item.phrase_text().is_none(), "surrogate is not a char");
+    assert_eq!(
+        item.phrase_string().expect("readable").as_bytes(),
+        Some([0x01, 0xed, 0xa0, 0x80].as_slice()),
+        "a surrogate is the three bytes GLib writes"
+    );
+    let words = item.phrase_words().expect("readable");
+    assert_eq!(words.as_text(), None, "a surrogate is not a char");
+    assert_eq!(words.words().collect::<Vec<_>>(), [1, 0xD800]);
     let _ = std::fs::remove_file(&path);
 }
 
 #[test]
 fn a_zero_ends_the_words_the_pin_converts() {
     // `g_ucs4_to_utf8` stops at the first zero (`glib/gutf8.c:1037-1038` at
-    // GLib 2.89.4): a word behind it is never read, so it keeps its place in
-    // the length and cannot refuse the text; before it, it does.
-    for (words, text) in [
-        ([0x4F60_u32, 0, 0xD800], Some("\u{4f60}\0\u{fffd}")),
-        ([0x4F60_u32, 0, 0x8000_0000], Some("\u{4f60}\0\u{fffd}")),
-        ([0_u32, 0x11_0000, 0xFFFF_FFFF], Some("\0\u{fffd}\u{fffd}")),
-        ([0x4F60_u32, 0xD800, 0], None),
-        ([0xD800_u32, 0, 0x597D], None),
-        ([0x4F60_u32, 0, 0x597D], Some("\u{4f60}\0\u{597d}")),
+    // GLib 2.89.4): a word behind it is never read, so the string ends there
+    // whatever the word is. A word in front of it that is no scalar value
+    // makes bytes that are not UTF-8 (`:549-599`). The words keep every value.
+    for (words, string) in [
+        ([0x4F60_u32, 0, 0xD800], "\u{4f60}".as_bytes()),
+        ([0x4F60_u32, 0, 0x8000_0000], "\u{4f60}".as_bytes()),
+        ([0_u32, 0x11_0000, 0xFFFF_FFFF], "".as_bytes()),
+        (
+            [0x4F60_u32, 0xD800, 0],
+            [0xe4, 0xbd, 0xa0, 0xed, 0xa0, 0x80].as_slice(),
+        ),
+        ([0xD800_u32, 0, 0x597D], [0xed, 0xa0, 0x80].as_slice()),
+        ([0x4F60_u32, 0, 0x597D], "\u{4f60}".as_bytes()),
     ] {
         let mut builder = ChunkBuilder::new(1);
         builder.add(1, 1, "\u{1}\u{2}\u{3}", vec![(vec![0; 6], 1)]);
@@ -393,26 +405,20 @@ fn a_zero_ends_the_words_the_pin_converts() {
         let library = PhraseLibrary::open(&path).expect("layout still validates");
         let item = library.item_at_slot(1).expect("item present");
         assert_eq!(item.phrase_length(), 3, "{words:x?}");
-        assert_eq!(item.phrase_text().as_deref(), text, "{words:x?}");
-        assert_eq!(item.phrase_chars().count(), 3, "{words:x?}");
-        // A reader that carries the item on holds the words as stored: the
-        // stand-in U+FFFD for a word the conversion never reads is no word of
-        // the item, so it gets text only when every word is a scalar value.
         assert_eq!(
-            item.phrase_words().collect::<Option<Vec<u32>>>().as_deref(),
-            Some(&words[..]),
+            item.phrase_string().expect("readable").as_bytes(),
+            Some(string),
             "{words:x?}"
         );
-        let scalar = words
-            .iter()
-            .all(|&word| char::from_u32(word).is_some())
-            .then(|| {
-                words
-                    .iter()
-                    .filter_map(|&word| char::from_u32(word))
-                    .collect::<String>()
-            });
-        assert_eq!(item.scalar_text(), scalar, "{words:x?}");
+        // A reader that carries the item on holds the words as stored.
+        assert_eq!(
+            item.phrase_words()
+                .expect("readable")
+                .words()
+                .collect::<Vec<_>>(),
+            words,
+            "{words:x?}"
+        );
         let _ = std::fs::remove_file(&path);
     }
 }
@@ -587,12 +593,10 @@ fn addon_load_keeps_its_answer_and_reports_the_refusal() {
 
 #[test]
 fn an_addon_item_is_promoted_only_as_the_words_it_stores() {
-    // The choose-promotion path copies the addon item into the user store as
-    // text. The pin's string conversion stops at a zero and never reads a
-    // word behind it, so the text it reads for such an item stands U+FFFD for
-    // a word that is no scalar value; promoting that would store a word the
-    // item does not hold. The item stays out (as it always has); an item
-    // whose words are all scalar values, a zero among them, goes as stored.
+    // The choose-promotion path copies the addon item into the user store
+    // with its words as the item holds them (`add_phrase_item` copies the
+    // `ucs4_t` array). A word behind a zero, which the pin's string never
+    // reads, and a word that is no scalar value both go as stored.
     let mut builder = ChunkBuilder::new(9);
     builder.add(
         1,
@@ -631,26 +635,18 @@ fn an_addon_item_is_promoted_only_as_the_words_it_stores() {
     let mut addons = AddonDictionary::empty();
     assert!(addons.load(4, &dir));
     let token = |slot: u32| (4_u32 << 24) | slot;
-    // The text the pin's conversion reads exists for the first item, and the
-    // promotion still refuses it.
-    assert_eq!(
-        addons.phrase_text(token(1)).as_deref(),
-        Some("\u{4f60}\0\u{fffd}")
-    );
-    assert!(addons.phrase_item(token(1)).is_none());
-    assert_eq!(
+    let words = |slot: u32| {
         addons
-            .phrase_item(token(2))
-            .map(|item| item.text)
-            .as_deref(),
-        Some("\u{4f60}\0\u{597d}")
-    );
+            .phrase_item(token(slot))
+            .map(|item| item.words.words().collect::<Vec<_>>())
+    };
+    assert_eq!(words(1), Some(vec![0x4F60, 0, 0xD800]));
+    assert_eq!(words(2), Some(vec![0x4F60, 0, 0x597D]));
+    assert_eq!(words(3), Some(vec![0x4F60, 0x597D]));
+    // The string the pin makes of the first item ends at the zero.
     assert_eq!(
-        addons
-            .phrase_item(token(3))
-            .map(|item| item.text)
-            .as_deref(),
-        Some("\u{4f60}\u{597d}")
+        addons.phrase_words(token(1)).map(|words| words.string()),
+        Some(oxpinyin_core::PhraseString::from_text("\u{4f60}"))
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -704,7 +700,7 @@ fn reads_a_real_libpinyin_installation() {
     let item = gb
         .item(0x0100_05DB)
         .unwrap_or_else(|| panic!("的 missing from gb_char"));
-    assert_eq!(item.phrase_text().as_deref(), Some("的"));
+    assert_eq!(item.phrase_string().expect("readable"), "的");
     assert_eq!(item.n_pronunciations(), 2);
     let mut freqs: Vec<u32> = item
         .pronunciations()
@@ -719,7 +715,7 @@ fn reads_a_real_libpinyin_installation() {
 
     // A single-reading cross-check: 锕, token 0x01000001, `a 锕 … 7`.
     let item = gb.item(0x0100_0001).expect("锕 present");
-    assert_eq!(item.phrase_text().as_deref(), Some("锕"));
+    assert_eq!(item.phrase_string().expect("readable"), "锕");
     assert_eq!(item.n_pronunciations(), 1);
     assert_eq!(
         item.pronunciations()

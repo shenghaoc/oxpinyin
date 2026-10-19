@@ -147,7 +147,7 @@ fn snapshot(env: &mut TailEnv, input: &str, options: OptionBits) -> Result<Snaps
         .session
         .candidates()
         .iter()
-        .map(|candidate| candidate.text().to_owned())
+        .map(|candidate| candidate.string().to_string_lossy().into_owned())
         .collect();
     Ok(Snapshot {
         parse,
@@ -301,7 +301,7 @@ fn run(env: &mut TailEnv) -> Result<(), String> {
             .session
             .candidates()
             .iter()
-            .map(|c| c.text().to_owned())
+            .map(|c| c.string().to_string_lossy().into_owned())
             .collect();
         let oracle_top = &oracle_cands[0];
 

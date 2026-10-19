@@ -7,7 +7,8 @@ use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 
 use oxpinyin_core::graph::FewestKeys;
-use oxpinyin_user::{DEFAULT_PHRASE_COUNT, ExportedPhrase, PinyinKey, USER_DICTIONARY, UserStore};
+use oxpinyin_facade::ExportedRow;
+use oxpinyin_user::{DEFAULT_PHRASE_COUNT, PinyinKey, USER_DICTIONARY, UserStore};
 
 use crate::context::UserImportContext;
 
@@ -142,12 +143,13 @@ pub fn run(user_dir: &Path, path: &Path) -> Result<(), ImportError> {
         .export_phrases(u32::from(USER_DICTIONARY))
         .ok_or(ImportError::Snapshot)?
         .into_iter()
-        .map(
-            |ExportedPhrase {
-                 text,
+        // A phrase that is no text matches no record of the file.
+        .filter_map(
+            |ExportedRow {
+                 string,
                  pinyin,
                  count,
-             }| ((text, pinyin), count),
+             }| Some(((string.as_str()?.to_owned(), pinyin), count)),
         )
         .collect();
 
@@ -208,7 +210,7 @@ mod tests {
         fs::write(file, text).expect("write fixture");
     }
 
-    fn exported(user_dir: &Path) -> Vec<ExportedPhrase> {
+    fn exported(user_dir: &Path) -> Vec<ExportedRow> {
         let context = UserImportContext::open(user_dir).expect("reopen user store");
         context
             .core()
@@ -228,18 +230,18 @@ mod tests {
         assert_eq!(
             first,
             vec![
-                ExportedPhrase {
-                    text: "你好".to_owned(),
+                ExportedRow {
+                    string: "你好".into(),
                     pinyin: "ni'hao".to_owned(),
                     count: 3,
                 },
-                ExportedPhrase {
-                    text: "世界".to_owned(),
+                ExportedRow {
+                    string: "世界".into(),
                     pinyin: "shi'jie".to_owned(),
                     count: 7,
                 },
-                ExportedPhrase {
-                    text: "词".to_owned(),
+                ExportedRow {
+                    string: "词".into(),
                     pinyin: "ci".to_owned(),
                     count: 1,
                 },
@@ -279,8 +281,8 @@ mod tests {
 
         assert_eq!(
             exported(&dir.join("user")),
-            vec![ExportedPhrase {
-                text: "词".to_owned(),
+            vec![ExportedRow {
+                string: "词".into(),
                 pinyin: "ci".to_owned(),
                 count: 5,
             }]
@@ -303,8 +305,8 @@ mod tests {
 
         assert_eq!(
             exported(&dir.join("user")),
-            vec![ExportedPhrase {
-                text: "词".to_owned(),
+            vec![ExportedRow {
+                string: "词".into(),
                 pinyin: "ci".to_owned(),
                 count: 5,
             }]
@@ -338,13 +340,13 @@ mod tests {
         assert_eq!(
             exported(&dir.join("user")),
             vec![
-                ExportedPhrase {
-                    text: "行".to_owned(),
+                ExportedRow {
+                    string: "行".into(),
                     pinyin: "xing".to_owned(),
                     count: 4,
                 },
-                ExportedPhrase {
-                    text: "行".to_owned(),
+                ExportedRow {
+                    string: "行".into(),
                     pinyin: "hang".to_owned(),
                     count: 2,
                 },
@@ -364,8 +366,8 @@ mod tests {
 
         assert_eq!(
             exported(&dir.join("user")),
-            vec![ExportedPhrase {
-                text: "你好".to_owned(),
+            vec![ExportedRow {
+                string: "你好".into(),
                 pinyin: "ni'hao".to_owned(),
                 count: 3,
             }]

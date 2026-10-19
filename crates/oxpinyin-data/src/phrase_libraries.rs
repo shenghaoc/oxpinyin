@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 
-use oxpinyin_core::{ChewingKey, TrellisItem};
+use oxpinyin_core::{ChewingKey, PhraseString, PhraseWords, TrellisItem};
 
 use crate::chewing_table::key_matches;
 use crate::phrase_library::{
@@ -433,29 +433,27 @@ impl PhraseLibraries {
         Some((loaded.path.clone(), loaded.library.clone()))
     }
 
-    /// `FacadePhraseIndex::get_phrase_item`'s text half: the phrase
-    /// behind `token`, if its library is loaded and owns the token.
+    /// `FacadePhraseIndex::get_phrase_item`'s words half: the stored words
+    /// of the phrase behind `token`, if its library is loaded and owns the
+    /// token, and the item holds all the words its header names.
     #[must_use]
-    pub fn phrase_text(&self, token: u32) -> Option<String> {
-        self.library(token)?.item(token)?.phrase_text()
+    pub fn phrase_words(&self, token: u32) -> Option<PhraseWords> {
+        self.library(token)?.item(token)?.phrase_words()
     }
 
-    /// [`PhraseItemView::scalar_text`] of `token`'s item: its text for a
-    /// reader that carries the item on, `None` unless every stored word is a
-    /// Unicode scalar value.
+    /// The string the pin makes of the phrase behind `token`
+    /// ([`PhraseItemView::phrase_string`]).
     #[must_use]
-    pub fn scalar_text(&self, token: u32) -> Option<String> {
-        self.library(token)?.item(token)?.scalar_text()
+    pub fn phrase_string(&self, token: u32) -> Option<PhraseString> {
+        self.library(token)?.item(token)?.phrase_string()
     }
 
-    /// The character count of [`Self::phrase_text`], read without
-    /// building the string; `None` where that text is `None`.
+    /// The length of the phrase behind `token` in words, read without
+    /// building the string; `None` where [`Self::phrase_words`] is.
     #[must_use]
     pub fn phrase_char_count(&self, token: u32) -> Option<u32> {
-        self.library(token)?
-            .item(token)?
-            .phrase_chars()
-            .try_fold(0_u32, |count, char| char.map(|_| count.saturating_add(1)))
+        let length = self.library(token)?.item(token)?.checked_length()?;
+        Some(u32::try_from(length).unwrap_or(u32::MAX))
     }
 
     /// `PhraseItem::get_unigram_frequency` for `token` — the stored
@@ -583,9 +581,7 @@ impl PhraseLibraries {
     pub fn trellis_item(&self, token: u32, query: &[ChewingKey]) -> Option<TrellisItem> {
         let library = self.library(token)?;
         let item = library.item(token)?;
-        let chars = item
-            .phrase_chars()
-            .try_fold(0_u32, |count, char| char.map(|_| count.saturating_add(1)))?;
+        let chars = u32::try_from(item.checked_length()?).unwrap_or(u32::MAX);
         Some(TrellisItem {
             chars,
             pronunciation: Some(item_possibility(&item, query)),
@@ -695,7 +691,7 @@ mod tests {
             .unwrap();
         let mut libs = PhraseLibraries::open(dir.path(), SYSTEM_LIBRARY_STEMS).unwrap();
         assert!(libs.is_empty());
-        assert!(libs.phrase_text(0x0100_0001).is_none());
+        assert!(libs.phrase_words(0x0100_0001).is_none());
         assert_eq!(libs.unigram_total(), 0);
         assert_eq!(libs.item_count(), 0);
         assert!(!libs.is_loaded(1));
@@ -755,7 +751,7 @@ mod tests {
         assert!(verify_chunk(&path).is_ok(), "the pin's mmap accepts it");
         let libs = PhraseLibraries::open(dir.path(), &[(4_u8, "merged.bin")]).unwrap();
         assert!(libs.is_loaded(4));
-        assert!(libs.phrase_text(0x0400_0001).is_none());
+        assert!(libs.phrase_words(0x0400_0001).is_none());
         assert_eq!(libs.item_count(), 0);
         assert_eq!(libs.unigram_total(), 0);
         let library = libs.library(0x0400_0000).expect("loaded");

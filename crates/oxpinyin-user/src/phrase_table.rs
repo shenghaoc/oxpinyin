@@ -7,6 +7,7 @@
 
 use std::ops::Bound;
 
+use oxpinyin_core::PhraseWords;
 use oxpinyin_store::{ReadStore, StoreError, WriteTxn};
 
 /// Internal table containing the pin's phrase records.
@@ -41,6 +42,14 @@ pub fn key(text: &str) -> Vec<u8> {
     text.chars()
         .flat_map(|ch| u32::from(ch).to_le_bytes())
         .collect()
+}
+
+/// Encode a phrase's words as the pin's little-endian UCS-4 key: the key of
+/// [`key`] for text, and the words as stored for a phrase that holds a word
+/// that is no scalar value.
+#[must_use]
+pub fn key_words(words: &PhraseWords) -> Vec<u8> {
+    words.words().flat_map(|word| word.to_le_bytes()).collect()
 }
 
 /// A raw token-array entry, without sorting or deduplication.
@@ -219,7 +228,22 @@ pub fn search_suggestion(db: &impl ReadStore, text: &str) -> Result<SearchResult
 /// result and retain earlier changes (`pinyin.cpp:596-606`); it is not a
 /// transaction rollback request.
 pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
-    let key = key(text);
+    add_index_at(txn, key(text), token)
+}
+
+/// [`add_index`] for a phrase given as its words.
+///
+/// # Errors
+/// As [`add_index`].
+pub fn add_index_words(
+    txn: &mut impl WriteTxn,
+    words: &PhraseWords,
+    token: u32,
+) -> Result<i32, StoreError> {
+    add_index_at(txn, key_words(words), token)
+}
+
+fn add_index_at(txn: &mut impl WriteTxn, key: Vec<u8>, token: u32) -> Result<i32, StoreError> {
     if key.is_empty() {
         return Err(StoreError::InvalidInput("phrase table text is empty"));
     }
@@ -257,13 +281,28 @@ pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32,
 /// `phrase_large_table3_kyotodb.cpp:324-343`, tkrzw
 /// `phrase_large_table3_tkrzwdb.cpp:253-272`, pin 074a2219).
 pub fn remove_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
-    let key = key(text);
-    let Ok(Some(bytes)) = txn.get(TABLE, &key) else {
+    remove_index_at(txn, &key(text), token)
+}
+
+/// [`remove_index`] for a phrase given as its words.
+///
+/// # Errors
+/// As [`remove_index`].
+pub fn remove_index_words(
+    txn: &mut impl WriteTxn,
+    words: &PhraseWords,
+    token: u32,
+) -> Result<i32, StoreError> {
+    remove_index_at(txn, &key_words(words), token)
+}
+
+fn remove_index_at(txn: &mut impl WriteTxn, key: &[u8], token: u32) -> Result<i32, StoreError> {
+    let Ok(Some(bytes)) = txn.get(TABLE, key) else {
         return Ok(ERROR_REMOVE_ITEM_DONOT_EXISTS);
     };
     let mut entry = PhraseTableEntry::from_bytes(bytes)?;
     let result = entry.remove_index(token);
-    if result == ERROR_OK && txn.put(TABLE, &key, entry.as_bytes()).is_err() {
+    if result == ERROR_OK && txn.put(TABLE, key, entry.as_bytes()).is_err() {
         return Ok(ERROR_FILE_CORRUPTION);
     }
     Ok(result)

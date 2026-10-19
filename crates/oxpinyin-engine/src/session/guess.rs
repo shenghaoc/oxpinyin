@@ -262,13 +262,19 @@ where
                 sentences.extend(self.collect_sentences_with_tokens(&graph, &scorer, path)?);
             }
             sentences.sort_by_key(|(candidate, _)| candidate.cost());
-            let mut seen: HashSet<compact_str::CompactString> = HashSet::new();
+            // A NULL sentence is nobody's duplicate (`pinyin.cpp:2053`).
+            let mut seen: HashSet<Vec<u8>> = HashSet::new();
             sentences
                 .into_iter()
-                .filter(|(candidate, _)| seen.insert(candidate.text().into()))
+                .filter(|(candidate, _)| {
+                    candidate
+                        .string()
+                        .as_bytes()
+                        .is_none_or(|bytes| seen.insert(bytes.to_vec()))
+                })
                 .take(self.nbest_shape.nbest())
                 .map(|(candidate, tokens)| crate::nbest::NbestRow {
-                    text: candidate.text().into(),
+                    string: candidate.string().clone(),
                     tokens,
                     spans: Vec::new(),
                     keys: candidate.consumed_keys(),
@@ -298,10 +304,13 @@ where
             .map_or_else(Vec::new, |row| row.spans.clone());
 
         if !self.record.selected().is_empty() {
+            // The chosen phrases come first in the sentence the pin joins
+            // (`convert_to_utf8`, `lookup.cpp:61-67`): a NULL string adds
+            // nothing on either side of the join.
             for row in &mut self.sentence.rows {
-                let mut full = compact_str::CompactString::from(self.record.selected());
-                full.push_str(&row.text);
-                row.text = full;
+                let mut full = self.record.selected().clone();
+                full.push(&row.string);
+                row.string = full.string();
             }
         }
 

@@ -483,7 +483,7 @@ mod tests {
         assert_eq!(lib.total_freq(), 9);
         assert!(lib.has_items());
         let item = lib.item(0x0000_0001).expect("item");
-        assert_eq!(item.phrase_text().as_deref(), Some("你好"));
+        assert_eq!(item.phrase_string().expect("readable"), "你好");
         assert_eq!(item.unigram(), 9);
         let pron = item.pronunciation(0).expect("pronunciation");
         assert_eq!(pron.keys, &[0x11_u8, 0x00, 0x22, 0x00]);

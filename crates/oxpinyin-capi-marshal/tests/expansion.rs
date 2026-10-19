@@ -171,11 +171,11 @@ fn candidate_ptr_into_vec() {
 
 // ── Fixture for `write_owned_sentence!` ────────────────────────────────
 
-/// A test stand-in for `crate::ffi::owned_cstr`: allocates a `CString`
+/// A test stand-in for `crate::ffi::owned_cstr_bytes`: allocates a `CString`
 /// copy via `Box` (not libc `malloc`, since the test frees with
 /// `CString::from_raw` rather than `g_free`). Returns null on an interior
 /// NUL byte, mirroring the real function's contract.
-fn test_owned_cstr(s: &str) -> *mut c_char {
+fn test_owned_cstr(s: &[u8]) -> *mut c_char {
     match std::ffi::CString::new(s) {
         Ok(cstr) => {
             // Leak into a raw pointer the caller owns.
@@ -196,7 +196,7 @@ fn sentence_empty_text_writes_an_empty_string() {
     // zero, `convert_to_utf8` returns it and `pinyin_get_sentence` answers
     // true with it.
     let mut out: *mut c_char = std::ptr::dangling_mut::<c_char>();
-    let ok = write_owned_sentence("", &mut out);
+    let ok = write_owned_sentence(Some(b""), &mut out);
     assert!(ok);
     assert!(!out.is_null(), "an empty string is not NULL");
 
@@ -208,14 +208,14 @@ fn sentence_empty_text_writes_an_empty_string() {
 #[test]
 fn sentence_empty_text_null_out_param() {
     // Null sentence pointer with empty text: must not crash.
-    let ok = write_owned_sentence("", ptr::null_mut());
+    let ok = write_owned_sentence(Some(b""), ptr::null_mut());
     assert!(ok);
 }
 
 #[test]
 fn sentence_valid_text_writes_through() {
     let mut out: *mut c_char = ptr::null_mut();
-    let ok = write_owned_sentence("hello", &mut out);
+    let ok = write_owned_sentence(Some(b"hello"), &mut out);
     assert!(ok);
     assert!(!out.is_null());
 
@@ -228,14 +228,14 @@ fn sentence_valid_text_writes_through() {
 #[test]
 fn sentence_valid_text_null_out_param() {
     // Null sentence pointer with valid text: returns true, no crash.
-    let ok = write_owned_sentence("hello", ptr::null_mut());
+    let ok = write_owned_sentence(Some(b"hello"), ptr::null_mut());
     assert!(ok);
 }
 
 #[test]
 fn sentence_interior_nul_returns_false() {
     let mut out: *mut c_char = std::ptr::dangling_mut::<c_char>();
-    let ok = write_owned_sentence("hel\0lo", &mut out);
+    let ok = write_owned_sentence(Some(b"hel\0lo"), &mut out);
     assert!(!ok);
     assert!(out.is_null(), "out-param must be nulled on interior NUL");
 }
@@ -243,7 +243,7 @@ fn sentence_interior_nul_returns_false() {
 #[test]
 fn sentence_unicode_text() {
     let mut out: *mut c_char = ptr::null_mut();
-    let ok = write_owned_sentence("nihao", &mut out);
+    let ok = write_owned_sentence(Some(b"nihao"), &mut out);
     assert!(ok);
 
     // SAFETY: produced by `CString::into_raw`.
@@ -254,7 +254,7 @@ fn sentence_unicode_text() {
 #[test]
 fn sentence_cjk_text() {
     let mut out: *mut c_char = ptr::null_mut();
-    let ok = write_owned_sentence("\u{4f60}\u{597d}", &mut out);
+    let ok = write_owned_sentence(Some("\u{4f60}\u{597d}".as_bytes()), &mut out);
     assert!(ok);
     assert!(!out.is_null());
 
@@ -265,9 +265,35 @@ fn sentence_cjk_text() {
 #[test]
 fn sentence_single_byte_text() {
     let mut out: *mut c_char = ptr::null_mut();
-    let ok = write_owned_sentence("x", &mut out);
+    let ok = write_owned_sentence(Some(b"x"), &mut out);
     assert!(ok);
 
     let cstr = unsafe { std::ffi::CString::from_raw(out) };
     assert_eq!(cstr.to_str().unwrap(), "x");
+}
+
+#[test]
+fn sentence_that_is_not_utf8_writes_its_bytes() {
+    // The pin hands out the bytes `g_unichar_to_utf8` writes for a surrogate:
+    // `convert_to_utf8` joins them, and `pinyin_get_sentence` answers them.
+    let bytes = b"\xe5\x87\xba\xed\xa0\x80\xe7\xa4\xbe";
+    let mut out: *mut c_char = ptr::null_mut();
+    let ok = write_owned_sentence(Some(bytes), &mut out);
+    assert!(ok);
+    // SAFETY: produced by `CString::into_raw`.
+    let cstr = unsafe { std::ffi::CString::from_raw(out) };
+    assert_eq!(cstr.to_bytes(), bytes);
+    assert!(std::str::from_utf8(cstr.to_bytes()).is_err());
+}
+
+#[test]
+fn the_null_sentence_is_an_answer_with_a_null_out_param() {
+    // Every phrase's string NULL makes `convert_to_utf8` leave the sentence
+    // NULL; `pinyin_get_sentence` still returns true.
+    let mut out: *mut c_char = std::ptr::dangling_mut::<c_char>();
+    let ok = write_owned_sentence(None, &mut out);
+    assert!(ok);
+    assert!(out.is_null(), "the out-param is NULL, not an empty string");
+    // A NULL out-param with the NULL sentence is true too.
+    assert!(write_owned_sentence(None, ptr::null_mut()));
 }

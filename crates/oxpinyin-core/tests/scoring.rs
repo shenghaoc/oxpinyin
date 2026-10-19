@@ -78,8 +78,8 @@ fn worked_example_a_longer_phrase_beats_its_first_syllable() {
     let first = scorer
         .rank_phrases(&[], &keys("ni"), &[EdgeKind::Exact])
         .expect("ranking cannot fail here");
-    assert_eq!(whole[0].0.text(), "你好");
-    assert_eq!(first[0].0.text(), "你");
+    assert_eq!(whole[0].0.string(), "你好");
+    assert_eq!(first[0].0.string(), "你");
     assert!(
         whole[0].1 < first[0].1,
         "你好 covers two keys and must outrank 你"
@@ -91,7 +91,7 @@ fn worked_example_a_longer_phrase_beats_its_first_syllable() {
     let two = scorer
         .rank_phrases(&[], &keys("zhong,guo"), &[EdgeKind::Exact; 2])
         .expect("ranking cannot fail here");
-    assert_eq!(three[0].0.text(), "中国人");
+    assert_eq!(three[0].0.string(), "中国人");
     assert!(three[0].1 < two[0].1);
 }
 
@@ -113,8 +113,8 @@ fn worked_example_the_segmentation_penalty_orders_fangan() {
         )
         .expect("ranking cannot fail here");
 
-    assert_eq!(fangan[0].0.text(), "方案");
-    assert_eq!(fangan_alt[0].0.text(), "反感");
+    assert_eq!(fangan[0].0.string(), "方案");
+    assert_eq!(fangan_alt[0].0.string(), "反感");
     assert!(
         fangan[0].1 < fangan_alt[0].1,
         "方案 {} must beat 反感 {}",
@@ -133,7 +133,10 @@ fn worked_example_an_incomplete_key_reaches_the_pins_phrases() {
     let ranked = scorer
         .rank_phrases(&[], &keys("ni,h"), &[EdgeKind::Exact, EdgeKind::Incomplete])
         .expect("ranking cannot fail here");
-    let texts: Vec<&str> = ranked.iter().map(|(entry, _)| entry.text()).collect();
+    let texts: Vec<&str> = ranked
+        .iter()
+        .filter_map(|(entry, _)| entry.string().as_str())
+        .collect();
 
     assert_eq!(texts[0], "你好");
     for wanted in ["霓虹", "拟合", "你和", "你很", "你会"] {
@@ -157,8 +160,8 @@ fn a_bigram_context_changes_the_cost() {
         )
         .expect("ranking cannot fail here");
 
-    assert_eq!(alone[0].0.text(), "中国");
-    assert_eq!(after[0].0.text(), "中国");
+    assert_eq!(alone[0].0.string(), "中国");
+    assert_eq!(after[0].0.string(), "中国");
     assert!(after[0].1 < alone[0].1, "你好 -> 中国 is a known bigram");
 }
 

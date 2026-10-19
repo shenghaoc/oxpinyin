@@ -124,7 +124,9 @@ impl CapiContext {
 /// One snapshotted candidate, stored inside `CapiInstance` so that
 /// `lookup_candidate_t *` can borrow into it across C calls.
 pub struct CapiCandidate {
-    pub(crate) text: std::ffi::CString,
+    /// The string the pin hands out for the candidate; `None` is its NULL
+    /// (`g_ucs4_to_utf8` of a word of 0x80000000 or more).
+    pub(crate) text: Option<std::ffi::CString>,
     /// The four fields below are snapshotted exactly as the pinyin facade
     /// snapshots them, but this facade's display law reads only `text`,
     /// `candidate_type` and `source_index` today.
@@ -160,6 +162,15 @@ pub struct CapiCandidate {
     /// upstream's `m_begin`, which `zhuyin_choose_candidate` answers as the
     /// new cursor for a before-cursor row (`zhuyin.cpp:1660` at the pin).
     pub(crate) span_begin: usize,
+}
+
+impl CapiCandidate {
+    /// The candidate's string as a C string, for a test that reads a
+    /// candidate made of text.
+    #[cfg(test)]
+    pub(crate) fn cstr(&self) -> &std::ffi::CStr {
+        self.text.as_deref().expect("a candidate made of text")
+    }
 }
 
 /// State behind `zhuyin_instance_t *`.

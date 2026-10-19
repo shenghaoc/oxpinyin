@@ -7,8 +7,7 @@
 
 use core::slice;
 
-use compact_str::CompactString;
-use oxpinyin_core::{Cost, PhraseEntry, PhraseToken, holds_zero, phrase_c_string};
+use oxpinyin_core::{Cost, PhraseEntry, PhraseString, PhraseToken};
 
 /// Where a candidate came from.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -27,7 +26,15 @@ pub enum CandidateKind {
 /// One offered conversion.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Candidate {
-    text: CompactString,
+    /// The string the pin hands out for the candidate: for a phrase it ends at
+    /// the phrase's first zero word, it is bytes that are not UTF-8 for a word
+    /// that is no scalar value, and it is NULL for a word of 0x80000000 or
+    /// more (`g_ucs4_to_utf8`, `glib/gutf8.c:1023-1070`).
+    string: PhraseString,
+    /// The phrase's length in words: the item header's `get_phrase_length()`,
+    /// which the pin reads from the header and not from the string. For a
+    /// sentence or the raw input it is the length of the text in characters.
+    len: u32,
     kind: CandidateKind,
     consumed_keys: usize,
     consumed_bytes: usize,
@@ -49,16 +56,13 @@ pub struct Candidate {
     /// so its rows carry each span's absolute start. Sentence rows and
     /// fallbacks carry 0.
     span_start: usize,
-    /// Whether `text` holds a U+0000, where the pin's string for the phrase
-    /// ends ([`Self::text`]). Settled once, where the text is made, so the
-    /// readers of the string (a dictionary hit is read at least once per
-    /// refresh) do not scan for it.
-    zero: bool,
 }
 
 impl Candidate {
+    /// A candidate that is not a dictionary hit: a sentence, the raw input,
+    /// or a text the caller made. Its length is the text's characters.
     pub(crate) fn new(
-        text: impl Into<CompactString>,
+        string: impl Into<PhraseString>,
         kind: CandidateKind,
         consumed_keys: usize,
         consumed_bytes: usize,
@@ -66,10 +70,13 @@ impl Candidate {
         token: Option<PhraseToken>,
         nbest_index: Option<u8>,
     ) -> Self {
-        let text = text.into();
-        let zero = holds_zero(&text);
+        let string = string.into();
+        let len = string.as_str().map_or(0, |text| {
+            text.chars().count().try_into().unwrap_or(u32::MAX)
+        });
         Self {
-            text,
+            string,
+            len,
             kind,
             consumed_keys,
             consumed_bytes,
@@ -77,13 +84,11 @@ impl Candidate {
             token,
             nbest_index,
             span_start: 0,
-            zero,
         }
     }
 
-    /// A dictionary hit as a candidate, with the entry's own answer to
-    /// whether its text holds a U+0000 (the dictionary decoder learns it
-    /// while it reads the stored words).
+    /// A dictionary hit as a candidate: the string and the length the
+    /// dictionary decoder made of the item.
     pub(crate) fn from_entry(
         entry: PhraseEntry,
         kind: CandidateKind,
@@ -91,9 +96,10 @@ impl Candidate {
         consumed_bytes: usize,
     ) -> Self {
         let token = entry.token();
-        let zero = entry.holds_zero();
+        let len = entry.len().try_into().unwrap_or(u32::MAX);
         Self {
-            text: entry.into_text(),
+            string: entry.into_string(),
+            len,
             kind,
             consumed_keys,
             consumed_bytes,
@@ -101,8 +107,13 @@ impl Candidate {
             token: Some(token),
             nbest_index: None,
             span_start: 0,
-            zero,
         }
+    }
+
+    /// This candidate with the decoder cost that ranked it.
+    pub(crate) const fn with_cost(mut self, cost: Cost) -> Self {
+        self.cost = cost;
+        self
     }
 
     /// Records where this candidate's span starts (see [`Self::span_start`]).
@@ -126,30 +137,26 @@ impl Candidate {
         self.span_start
     }
 
-    /// The text this candidate would insert: the string the pin hands out for
-    /// it, which ends at the phrase's first U+0000
-    /// ([`oxpinyin_core::phrase_c_string`]).
+    /// The string this candidate would insert: the one the pin hands out for
+    /// it ([`PhraseString`]). It is NULL where the pin's conversion answers
+    /// NULL, and then the pin hands out the NULL as the candidate's string.
     #[must_use]
-    pub fn text(&self) -> &str {
-        if self.zero {
-            phrase_c_string(&self.text)
-        } else {
-            &self.text
-        }
+    pub const fn string(&self) -> &PhraseString {
+        &self.string
     }
 
-    /// The phrase as stored, one character per `ucs4_t` — a U+0000 and what
-    /// follows it included. Its character count is the item's
-    /// `get_phrase_length()`, which the pin reads from the header and not
-    /// from the string ([`Self::text`]).
-    pub(crate) fn phrase_text(&self) -> &str {
-        &self.text
+    /// [`Self::string`] as text, for a test that reads a candidate made of
+    /// text.
+    #[cfg(test)]
+    pub(crate) fn text(&self) -> &str {
+        self.string.as_str().expect("a candidate made of text")
     }
 
-    /// The phrase's stored length in characters: the sort key's `m_phrase_length`
-    /// (`pinyin.cpp:1953-1993`).
-    pub(crate) fn phrase_length(&self) -> usize {
-        self.text.chars().count()
+    /// The phrase's length in words: the sort key's `m_phrase_length`
+    /// (`pinyin.cpp:1953-1993`), which is the item's `get_phrase_length()`
+    /// and not the length of the string.
+    pub(crate) const fn phrase_length(&self) -> usize {
+        self.len as usize
     }
 
     /// Where the candidate came from.
@@ -244,6 +251,20 @@ impl CandidateList {
         self.unreadable_item
     }
 
+    /// Whether the pin's string comparison dies on this list: it sorts and
+    /// compares the candidates' strings with `strcmp` (`pinyin.cpp:2053`,
+    /// `:2082`), which reads through a NULL string once there is a second
+    /// candidate to compare it with. The C ABIs answer such a list as the
+    /// pin's stop (class (b)): a failed call, with a warning.
+    #[must_use]
+    pub fn strcmp_would_die(&self) -> bool {
+        self.items.len() >= 2
+            && self
+                .items
+                .iter()
+                .any(|candidate| candidate.string().is_null())
+    }
+
     /// Swap the live list with `items`, returning the previous buffer so
     /// the session can keep its capacity across keystrokes.
     pub(crate) const fn swap_items(&mut self, items: &mut Vec<Candidate>) {
@@ -285,7 +306,7 @@ impl<'a> IntoIterator for &'a CandidateList {
 
 #[cfg(test)]
 mod tests {
-    use oxpinyin_core::{PhraseEntry, PhraseToken};
+    use oxpinyin_core::{PhraseEntry, PhraseString, PhraseToken, PhraseWords};
 
     use super::{Candidate, CandidateKind, CandidateList};
 
@@ -313,41 +334,67 @@ mod tests {
     }
 
     #[test]
-    fn a_zero_ends_the_string_and_not_the_stored_length() {
-        // The pin's candidate string is `g_ucs4_to_utf8` of the phrase, which
-        // stops at the first zero code point; the sort key reads the length
-        // from the item header (`pinyin.cpp:1953-1993`).
-        for (stored, string, length) in [
-            ("\u{59d4}\0\u{4f1a}", "\u{59d4}", 3),
-            ("\0\u{52a1}\u{9662}", "", 3),
-            ("\u{529e}\u{516c}\0", "\u{529e}\u{516c}", 3),
-            ("\u{4f60}\u{597d}", "\u{4f60}\u{597d}", 2),
-            ("", "", 0),
-        ] {
-            let candidate = Candidate::new(
-                stored.to_owned(),
-                CandidateKind::Phrase,
-                length,
-                length,
-                0,
-                Some(PhraseToken::new(1)),
-                None,
-            );
-            assert_eq!(candidate.text(), string, "{stored:?}");
-            assert_eq!(candidate.phrase_text(), stored, "{stored:?}");
-            assert_eq!(candidate.phrase_length(), length, "{stored:?}");
-            // A dictionary hit takes the decoder's answer instead of
-            // looking for a zero, and reads the same.
-            let zero = stored.contains('\0');
+    fn a_hit_carries_the_pins_string_and_the_headers_length() {
+        // The pin's candidate string is `g_ucs4_to_utf8` of the phrase; the
+        // sort key reads the length from the item header
+        // (`pinyin.cpp:1953-1993`).
+        let cases: [(&[u32], Option<&[u8]>); 8] = [
+            (&[0x59d4, 0, 0x4f1a], Some("\u{59d4}".as_bytes())),
+            (&[0, 0x52a1, 0x9662], Some(b"")),
+            (&[0x529e, 0x516c, 0], Some("\u{529e}\u{516c}".as_bytes())),
+            (&[0x4f60, 0x597d], Some("\u{4f60}\u{597d}".as_bytes())),
+            (&[], Some(b"")),
+            // A surrogate is written as the three bytes `g_unichar_to_utf8`
+            // gives it, a value above U+10FFFF as four to six.
+            (
+                &[0x51fa, 0xd800, 0x793e],
+                Some(b"\xe5\x87\xba\xed\xa0\x80\xe7\xa4\xbe"),
+            ),
+            (&[0x535a, 0x11_0000], Some(b"\xe5\x8d\x9a\xf4\x90\x80\x80")),
+            // A word of 0x80000000 or more before a zero makes the string NULL.
+            (&[0x8ba1, 0x8000_0000, 0x673a], None),
+        ];
+        for (words, string) in cases {
+            // The length is the header's, so it counts the zero and what
+            // follows it.
+            let length = words.len();
+            let phrase = PhraseWords::from_words(words.iter().copied());
             let hit = Candidate::from_entry(
-                PhraseEntry::decoded(PhraseToken::new(1), stored, zero),
+                PhraseEntry::from_words(PhraseToken::new(1), &phrase),
                 CandidateKind::Phrase,
                 length,
                 length,
             );
-            assert_eq!(hit, candidate, "{stored:?}");
-            assert_eq!(hit.text(), string, "{stored:?}");
+            assert_eq!(hit.string().as_bytes(), string, "{words:x?}");
+            assert_eq!(hit.phrase_length(), length, "{words:x?}");
         }
+    }
+
+    #[test]
+    fn a_candidate_made_from_text_counts_its_characters() {
+        let candidate = Candidate::new(
+            "\u{4f60}\u{597d}",
+            CandidateKind::Sentence,
+            2,
+            6,
+            0,
+            None,
+            None,
+        );
+        assert_eq!(candidate.phrase_length(), 2);
+        assert_eq!(*candidate.string(), "\u{4f60}\u{597d}");
+        // A string that is not text has no characters to count.
+        let null = Candidate::new(
+            PhraseString::NULL,
+            CandidateKind::Sentence,
+            0,
+            0,
+            0,
+            None,
+            None,
+        );
+        assert!(null.string().is_null());
+        assert_eq!(null.phrase_length(), 0);
     }
 
     #[test]
@@ -363,10 +410,16 @@ mod tests {
     #[test]
     fn iteration_preserves_rank_order() {
         let candidates = list();
-        let texts: Vec<&str> = candidates.iter().map(Candidate::text).collect();
+        let texts: Vec<&str> = candidates
+            .iter()
+            .map(|candidate| candidate.string().as_str().unwrap_or_default())
+            .collect();
         assert_eq!(texts, ["\u{4f60}\u{597d}", "\u{4f60}"]);
 
-        let by_ref: Vec<&str> = (&candidates).into_iter().map(Candidate::text).collect();
+        let by_ref: Vec<&str> = (&candidates)
+            .into_iter()
+            .map(|candidate| candidate.string().as_str().unwrap_or_default())
+            .collect();
         assert_eq!(by_ref, texts);
     }
 
