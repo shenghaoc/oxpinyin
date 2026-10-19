@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from . import check, doctor, host, registry, slot
+from . import check, doctor, host, registry, slot, test_runner
 
 
 def _names(value):
@@ -21,6 +21,14 @@ def host_command(args):
 
 def check_command(args):
     return check.run(args.backend)
+
+
+def test_command(args):
+    return test_runner.run(args.args, args.profile)
+
+
+def test_doc_command(args):
+    return test_runner.run_doc(args.args)
 
 
 def list_command(args):
@@ -77,6 +85,15 @@ def build_parser():
     p.add_argument('backend', nargs='?', default='bdb')
     p.set_defaults(func=check_command)
 
+    p = sub.add_parser('test', help='run cargo nextest through the heavy slot')
+    p.add_argument('--profile')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=test_command)
+
+    p = sub.add_parser('test-doc', help='run cargo test --doc through the heavy slot')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=test_doc_command)
+
     p = sub.add_parser('list', help='list the registry, read-only')
     p.add_argument('--heavy', action='store_true', help='only rows marked heavy')
     p.set_defaults(func=list_command)
@@ -96,5 +113,10 @@ def build_parser():
 
 
 def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ['test'] and argv[1:2] not in (['-h'], ['--help']):
+        return test_runner.run(argv[1:])
+    if argv[:1] == ['test-doc'] and argv[1:2] not in (['-h'], ['--help']):
+        return test_runner.run_doc(argv[1:])
     args = build_parser().parse_args(argv)
     return args.func(args)

@@ -26,3 +26,21 @@ heavy *args:
 [windows]
 heavy *args:
     @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev slot run @args; exit $LASTEXITCODE
+
+# Run the native Rust tests through nextest and the heavy slot.
+[unix]
+test *args:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev test "$@"
+
+[windows]
+test *args:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev test @args; exit $LASTEXITCODE
+
+# Run doctests separately; nextest does not run them.
+[unix]
+test-doc *args:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev test-doc "$@"
+
+[windows]
+test-doc *args:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev test-doc @args; exit $LASTEXITCODE

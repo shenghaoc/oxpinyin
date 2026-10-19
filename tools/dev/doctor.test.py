@@ -47,6 +47,35 @@ class DoctorTests(unittest.TestCase):
         with self.assertRaisesRegex(doctor.DoctorError, 'missing uv 0.13.1'):
             doctor.uv_version({'PATH': '/nonexistent'})
 
+    def test_nextest_minimum_version(self):
+        for version, accepted in (('0.9.114', False), ('0.9.115', True), ('0.10.0', True)):
+            result = mock.Mock(returncode=0, stdout=f'cargo-nextest {version} (build)', stderr='')
+            with self.subTest(version=version), \
+                    mock.patch.object(doctor.shutil, 'which', return_value='/tools/cargo-nextest'), \
+                    mock.patch.object(doctor, '_run', return_value=result):
+                if accepted:
+                    self.assertEqual(doctor.nextest_version({'PATH': '/tools'}), result.stdout)
+                else:
+                    with self.assertRaisesRegex(doctor.DoctorError, '0.9.115 or later required'):
+                        doctor.nextest_version({'PATH': '/tools'})
+
+    def test_missing_nextest_stays_optional(self):
+        with mock.patch.object(doctor.shutil, 'which', return_value=None), \
+                mock.patch.object(doctor, '_run') as run:
+            self.assertIsNone(doctor.nextest_version({'PATH': '/tools'}))
+        run.assert_not_called()
+
+    def test_collect_reports_an_unsupported_nextest(self):
+        info = dict(uv='uv 0.13.1', implementation='cpython', version='3.15.0',
+                    managed=True, gil_enabled=True, executable='/managed/python')
+        error = doctor.DoctorError('cargo-nextest 0.9.115 or later required; found 0.9.114')
+        with mock.patch.object(doctor, 'host_lines', return_value=[]), \
+                mock.patch.object(doctor, 'identity', return_value=info), \
+                mock.patch.object(doctor, 'nextest_version', side_effect=error):
+            lines, status = doctor.collect()
+        self.assertEqual(status, 1)
+        self.assertIn('FAIL: ' + str(error), lines)
+
 
 if __name__ == '__main__':
     unittest.main()
