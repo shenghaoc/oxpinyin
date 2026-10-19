@@ -1093,6 +1093,39 @@ impl RuntimeDict {
                         .is_some_and(|store| store.has_user_library(token.to_be_bytes()[0]))))
     }
 
+    /// Read the live item's stored pronunciation count.
+    /// The pin reads only its offset and two header bytes (074a2219
+    /// `phrase_index.cpp:180-205`, `pinyin.cpp:2786-2798`,
+    /// `zhuyin.cpp:1778-1790`). No introspection view is built.
+    #[must_use]
+    pub fn token_pronunciation_count(&self, token: u32) -> Option<u32> {
+        match token >> 24 {
+            1..=4 => {
+                if !self.library_visible_token(token) {
+                    return None;
+                }
+                self.user
+                    .as_ref()
+                    .and_then(|store| {
+                        store.with_effective_system_item(token, |item| item.prons.len() as u32)
+                    })
+                    .or_else(|| {
+                        self.system
+                            .libraries()
+                            .library(token)?
+                            .pronunciation_count(token)
+                    })
+            }
+            5..=7 => {
+                if !self.library_visible(token >> 24) {
+                    return None;
+                }
+                self.user.as_ref()?.user_pronunciation_count(token)
+            }
+            _ => None,
+        }
+    }
+
     /// `FacadePhraseIndex::get_phrase_item`'s dispatch by library
     /// nibble, for the token-introspection surface. `None` when the
     /// library is missing/unloaded (`ERROR_NO_SUB_PHRASE_INDEX`) or the

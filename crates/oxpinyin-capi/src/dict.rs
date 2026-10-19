@@ -179,13 +179,13 @@ pub extern "C" fn pinyin_token_get_n_pronunciation(
             *num = 0;
         }
     }
-    let Some(intro) = inst.core.dict.token_introspection(token) else {
+    let Some(count) = inst.core.dict.token_pronunciation_count(token) else {
         return false;
     };
     if !num.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
-            *num = GUint::try_from(intro.pronunciations.len()).unwrap_or(GUint::MAX);
+            *num = count;
         }
     }
     true

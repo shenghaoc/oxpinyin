@@ -76,6 +76,40 @@ use crate::store::{
 /// reading backs, by the token's library nibble ([`Target::kept_index`]).
 pub(crate) type KeptIndex = std::collections::BTreeMap<u8, BTreeSet<(u32, Vec<u16>)>>;
 
+/// Keep the stored count even when an item body cannot be decoded. The pin's
+/// count getter checks only the two header bytes, not the text or keys.
+pub(crate) fn loaded_pronunciation_counts(
+    state: &UserState,
+    dir: Option<&Path>,
+    layout: &oxpinyin_data::user_files::UserFileLayout,
+    only: Option<u8>,
+) -> BTreeMap<Token, u32> {
+    let mut counts = BTreeMap::new();
+    for (library, file) in layout.user_libraries() {
+        let library = *library;
+        if only.is_some_and(|only| only != library) {
+            continue;
+        }
+        if let Some(items) = state.libraries.get(&library) {
+            counts.extend(
+                items.iter().map(|(&slot, item)| {
+                    ((u32::from(library) << 24) | slot, item.prons.len() as u32)
+                }),
+            );
+        } else if let Some(chunk) = dir.and_then(|dir| {
+            oxpinyin_data::phrase_library::PhraseLibrary::open(&file.under(dir)).ok()
+        }) {
+            // The value loader can reject a body the pin never reads here.
+            for slot in 0..chunk.token_range().end {
+                if let Some(count) = chunk.pronunciation_count(slot) {
+                    counts.insert((u32::from(library) << 24) | slot, count);
+                }
+            }
+        }
+    }
+    counts
+}
+
 /// The persistence target a session store carries: the user dir, the
 /// original system chunks (the `.dbin` diff base), the conformance
 /// triple, and the `user.conf` law and open counter the session's saves
@@ -86,6 +120,8 @@ pub struct Target {
     pub(crate) dir: Option<PathBuf>,
     /// The system libraries by nibble, refreshed when mask_out reloads them.
     pub(crate) originals: std::sync::RwLock<SystemOriginals>,
+    /// The live USER_FILE items' stored counts. Writers publish after commit.
+    pub(crate) pronunciation_counts: std::sync::Mutex<BTreeMap<Token, u32>>,
     /// This build's identity triple.
     pub(crate) versions: SystemVersions,
     /// Whose `user.conf` lifecycle the profile follows.
@@ -403,9 +439,12 @@ impl GenericUserStore<DefaultStore> {
         // fails from here on drops it and lowers the counter again, so a
         // failed open reads as a finished session, not a crash.
         let kept_index = unbacked_index(&loaded.state, &originals);
+        let pronunciation_counts =
+            loaded_pronunciation_counts(&loaded.state, user_dir, originals.layout(), None);
         let target = Arc::new(Target {
             dir: user_dir.map(Path::to_path_buf),
             originals: std::sync::RwLock::new(originals),
+            pronunciation_counts: std::sync::Mutex::new(pronunciation_counts),
             versions,
             law,
             open_counter: loaded.open_counter,
@@ -1841,6 +1880,67 @@ mod tests {
             .load_system_libraries(base)
             .expect("reload after unload");
         assert_eq!(counts(&store).len(), 2);
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
+    fn stored_pronunciation_counts_follow_committed_item_changes() {
+        let dir = tempdir("stored-pronunciation-counts");
+        let readings = distinct_readings();
+        let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
+        let token;
+        {
+            let mut store =
+                UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            token = store
+                .add_phrase_in(7, "龘", &dense(readings[0]), Some(1))
+                .expect("add");
+            assert_eq!(store.user_pronunciation_count(token), Some(1));
+            store
+                .add_phrase_in(7, "龘", &dense(readings[0]), Some(9))
+                .expect("merge");
+            assert_eq!(store.user_pronunciation_count(token), Some(1));
+            for (index, &reading) in readings[1..255].iter().enumerate() {
+                store
+                    .add_phrase_in(7, "龘", &dense(reading), Some(1))
+                    .expect("append");
+                assert_eq!(
+                    store.user_pronunciation_count(token),
+                    Some(index as u32 + 2)
+                );
+            }
+            store
+                .add_phrase_in(7, "龘", &dense(readings[255]), Some(1))
+                .expect("wrap");
+            assert_eq!(store.user_pronunciation_count(token), Some(0));
+            store
+                .add_phrase_in(7, "龘", &dense(readings[256]), Some(1))
+                .expect("257th");
+            assert_eq!(store.user_pronunciation_count(token), Some(1));
+            store.mark_modified();
+            assert!(store.save().expect("save"));
+            store.fail_next_replace();
+            assert!(store.unload_user_library(7).is_err());
+            assert_eq!(store.user_pronunciation_count(token), Some(1));
+            store.unload_user_library(7).expect("unload");
+            assert_eq!(store.user_pronunciation_count(token), None);
+            store.load_user_library(7).expect("reload");
+            assert_eq!(store.user_pronunciation_count(token), Some(1));
+        }
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("reopen");
+        assert_eq!(store.user_pronunciation_count(token), Some(1));
+        store.mask_out(0xffff_ffff, token).expect("mask");
+        assert_eq!(store.user_pronunciation_count(token), None);
+        let other = store
+            .add_phrase_in(7, "龖", &dense(readings[0]), Some(1))
+            .expect("new");
+        assert_eq!(store.user_pronunciation_count(other), Some(1));
+        assert!(store.remove_user_phrase(other).expect("remove"));
+        assert_eq!(store.user_pronunciation_count(other), None);
         drop(store);
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
