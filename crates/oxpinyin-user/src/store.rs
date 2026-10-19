@@ -4987,9 +4987,9 @@ mod tests {
                     assert_eq!(store.phrase_table_generation(), 1);
 
                     let mut writer = store.clone();
-                    writer.add_phrase("中国", &[30, 40], None).unwrap();
+                    let second = writer.add_phrase("中国", &[30, 40], None).unwrap();
                     assert_eq!(store.phrase_table_generation(), 2);
-                    assert!(writer.remove_user_phrase(token).unwrap());
+                    assert!(writer.remove_user_phrase(second).unwrap());
                     assert_eq!(store.phrase_table_generation(), 3);
                     cleanup(&path);
                 }
