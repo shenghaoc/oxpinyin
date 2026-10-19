@@ -93,6 +93,15 @@ host route: `brew install just` on macOS, the distribution package on Linux,
 or `cargo install just --version 1.59.0 --locked`. The root `justfile`
 enforces the minimum version.
 
+The native Rust test entry point uses cargo-nextest 0.9.115 or later. Install
+it with `cargo install cargo-nextest --locked` (or the prebuilt release) and
+check `cargo-nextest --version`. [Profile inheritance](https://nexte.st/docs/configuration/#profile-inheritance)
+requires this minimum. `just test` calls `slot.run_command` directly through
+`tools.dev.test_runner` with the local profile. Pass the same crate and
+feature selection as cargo test (the default workspace feature is Berkeley
+DB). Set `NEXTEST_PROFILE=ci` for the CI limits. `just test-doc` runs
+`cargo test --doc` through `just heavy`.
+
 Use your system's official package documentation if names or enabled
 repositories differ. The native check below prints the actual Berkeley DB
 header version and rejects unsupported versions during the build; do not

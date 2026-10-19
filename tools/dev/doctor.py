@@ -6,6 +6,7 @@ build, and it names the installation step for optional tools it cannot find.
 """
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -24,6 +25,7 @@ OVERRIDES = (
     'PYTHONPATH',
 )
 MANAGED_REQUEST = 'cpython@3.15.0+gil'
+NEXTEST_MINIMUM = '0.9.115'
 
 
 class DoctorError(RuntimeError):
@@ -94,6 +96,23 @@ def _first_line(result):
     return text.splitlines()[0] if text else None
 
 
+def nextest_version(environ=None):
+    """Check an installed nextest; keep a missing optional tool report-only."""
+    environ = os.environ if environ is None else environ
+    executable = shutil.which('cargo-nextest', path=environ.get('PATH'))
+    if executable is None:
+        return None
+    result = _run([executable, '--version'], environ)
+    text = _first_line(result)
+    version = re.match(r'^cargo-nextest (\d+)\.(\d+)\.(\d+)(?:\s|$)', text or '')
+    minimum = tuple(map(int, NEXTEST_MINIMUM.split('.')))
+    if (result is None or result.returncode != 0 or version is None
+            or tuple(map(int, version.groups())) < minimum):
+        raise DoctorError(f'cargo-nextest {NEXTEST_MINIMUM} or later required; '
+                          f'found {text or "unreadable version"}')
+    return text
+
+
 def host_lines(environ=None):
     environ = os.environ if environ is None else environ
     lines = [f'os: {platform.system()} {platform.release()}',
@@ -114,8 +133,9 @@ def host_lines(environ=None):
     lines.append('native backend utilities: ' + ', '.join(found))
     just = shutil.which('just')
     lines.append('just: ' + (just if just else 'missing (install: cargo install just --locked)'))
-    nextest = shutil.which('cargo-nextest')
-    lines.append('cargo-nextest: ' + (nextest if nextest else 'missing (install: cargo install cargo-nextest --locked)'))
+    nextest = shutil.which('cargo-nextest', path=environ.get('PATH'))
+    lines.append('cargo-nextest: ' + (nextest if nextest else
+                 f'missing (requires {NEXTEST_MINIMUM} or later; install: cargo install cargo-nextest --locked)'))
     runtimes = [name for name in ('container', 'podman', 'docker', 'wslc') if shutil.which(name)]
     lines.append('container runtime: ' + (', '.join(runtimes) if runtimes else 'none present'))
     if sys.platform.startswith('linux'):
@@ -138,6 +158,13 @@ def collect(environ=None):
             f'gil: {"enabled" if info["gil_enabled"] else "disabled"}',
             f'executable: {info["executable"]}',
         ])
+    except DoctorError as exc:
+        lines.append(f'FAIL: {exc}')
+        status = 1
+    try:
+        version = nextest_version(environ)
+        if version is not None:
+            lines.append(f'cargo-nextest version: {version}')
     except DoctorError as exc:
         lines.append(f'FAIL: {exc}')
         status = 1

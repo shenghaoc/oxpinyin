@@ -617,12 +617,15 @@ def run_admitted(jobs, workers, run):
     return results
 
 
-def run_command(command, env=None, out=sys.stderr, poll=0.5):
+def run_command(command, env=None, out=sys.stderr, poll=0.5, *,
+                prepare_heavy_env=None, on_admitted=None):
     """Run COMMAND under one heavy slot, for the tools.dev slot command."""
     command = list(command)
     with cancellation_handlers():
         with HeavyAdmission(' '.join(command), dict(os.environ if env is None else env), out=out,
-                            poll=poll) as admission:
+                            poll=poll, prepare_heavy_env=prepare_heavy_env) as admission:
+            if on_admitted is not None:
+                on_admitted(admission.env)
             if sys.platform == 'win32':
                 import ctypes
                 from ctypes import wintypes

@@ -7,12 +7,12 @@ It adds no nextest installation, configuration, code or workflow change.
 ## 1. Test entry point
 
 Use cargo-nextest as the native Rust test orchestrator.
-`just test` runs `cargo nextest run` inside `just heavy`.
+`just test` runs `cargo nextest run` under the shared heavy slot.
 Keep the recipe thin. The `tools.dev` test command selects the native profile
-and forwards arguments through the heavy wrapper. The process path is:
+and calls `slot.run_command` directly. The process path is:
 
 ```text
-just test -> tools.dev test -> just heavy -- cargo nextest run --profile local <args>
+just test -> tools.dev test -> slot.run_command -> cargo nextest run --profile local <args>
 ```
 
 Use `--no-fail-fast` for complete selected-run feedback.
@@ -21,9 +21,10 @@ host toolchain. They load no oracle or pin installation and start no container.
 Pin-dependent Rust tests belong to Layer 4's separate environment.
 
 Cargo-nextest and `just` are approved host-tool choices in this plan.
-Require cargo-nextest 0.9.76 or later. That release shortened `ignored-only`
-to `only` and kept the old value as an alias. Keep `--run-ignored=only` below.
-See the [0.9.76 release notes](https://github.com/nextest-rs/nextest/releases/tag/cargo-nextest-0.9.76).
+Require cargo-nextest 0.9.115 or later for the `inherits` key.
+See the [profile inheritance documentation](https://nexte.st/docs/configuration/#profile-inheritance).
+Set `nextest-version = "0.9.115"` in `.config/nextest.toml`.
+Keep `--run-ignored=only` for ignored-only selections.
 The implementation records compatible versions and provisioning commands.
 Do not install them in this docs-only stack. Keep `rust-toolchain.toml`
 as the Rust toolchain authority.

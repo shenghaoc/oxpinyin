@@ -1,0 +1,34 @@
+nextest-version = "0.9.115"
+
+# Native nextest configuration. Profiles are explicit; local and CI share
+# the base behaviour and differ only in the measured process budget.
+[profile.default]
+retries = 0
+fail-fast = false
+test-threads = "num-cpus"
+
+[profile.local]
+inherits = "default"
+test-threads = "num-cpus"
+
+[profile.ci]
+inherits = "default"
+# GitHub-hosted native jobs expose four vCPUs. Keep this explicit rather
+# than copying the local machine's CPU count into CI.
+test-threads = 4
+
+# Storage integration cases create, reopen and recover real backend files.
+# Serialize that subset; independent unit tests stay in the default pool.
+[test-groups.store-backend]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'binary(bdb_libpinyin_files) | binary(trait_laws) | binary(user_store_acid) | binary(user_store_semantics) | binary(assembly) | binary(empty_user_dir) | binary(libpinyin_data_dir) | binary(user_dir_round_trip)'
+test-group = 'store-backend'
+
+# Cases that read a real libpinyin data tree, the pin-built user profile, or
+# both take the whole invocation's test budget when they are selected.
+[[profile.default.overrides]]
+filter = 'binary(bdb_libpinyin_files) | binary(libpinyin_data_dir) | binary(user_dir_round_trip)'
+test-group = 'store-backend'
+threads-required = "num-test-threads"
