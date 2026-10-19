@@ -220,7 +220,9 @@ class DriverInvalidTests(unittest.TestCase):
                     patch.dict(contract['main'].__globals__, run_worker=lambda *a, **k: workers.pop(0)), \
                     contextlib.redirect_stdout(output):
                 status = contract['main']()
-        rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
+        # The case rows; the run's trailing timing line is not one.
+        rows = [row for row in (json.loads(line) for line in output.getvalue().splitlines()
+                                if line.startswith('{')) if 'case' in row]
         return status, rows
 
     def test_two_failed_workers_fail_under_expect_parent(self):
@@ -266,6 +268,107 @@ class WorkerEntryTests(unittest.TestCase):
         self.assertEqual(module.worker.__code__.co_code, contract['worker'].__code__.co_code)
         source = entry.read_text()
         self.assertIn("_module.worker(*sys.argv[1:])", source)
+
+
+class SelectionTests(unittest.TestCase):
+    """--cases, --issue and --family resolve to exact case IDs; nothing falls
+    back to the default suite."""
+
+    def test_tags_normalise(self):
+        for tag in ('#640', '640', ' 640 '):
+            self.assertEqual(contract['normal_tag'](tag), '640')
+        for tag in ('row:54', 'Row 54', 'row54', 'ROW:54'):
+            self.assertEqual(contract['normal_tag'](tag), 'row:54')
+        self.assertEqual(contract['normal_tag']('W11'), 'w11')
+
+    def test_issue_selects_registered_cases_only(self):
+        names, reasons = contract['select_cases'](issues=['#532'])
+        self.assertEqual(names, ['default-option-parse', 'default-option-single-key',
+                                 'explicit-incomplete-parse', 'explicit-use-tone-parse'])
+        self.assertEqual(reasons['default-option-parse'], ['issue 532'])
+        for name in names:
+            self.assertIn('532', contract['CASES'][name]['issues'])
+        self.assertFalse(any(name.startswith('axis-c-') for name in contract['tag_index']().get('640', [])))
+
+    def test_family_selects_by_id_prefix(self):
+        names, reasons = contract['select_cases'](families=['zero-key'])
+        self.assertTrue(names and all(name.startswith('zero-key/') for name in names))
+        self.assertEqual(set(names), {n for n in contract['CASES'] if n.startswith('zero-key/')})
+        self.assertEqual(reasons[names[0]], ['family zero-key'])
+
+    def test_explicit_cases_keep_their_order_and_combine(self):
+        names, reasons = contract['select_cases']('fini-twice,default-option-parse', issues=['532'])
+        self.assertEqual(names[:2], ['fini-twice', 'default-option-parse'])
+        self.assertEqual(reasons['default-option-parse'], ['--cases', 'issue 532'])
+
+    def test_unknown_or_empty_selection_is_an_error_naming_what_exists(self):
+        with self.assertRaises(contract['SelectionError']) as caught:
+            contract['select_cases'](issues=['9999'])
+        self.assertIn('registered tags: 525', str(caught.exception))
+        self.assertNotIn('family/', str(caught.exception))
+        with self.assertRaises(contract['SelectionError']) as caught:
+            contract['select_cases'](families=['nope'])
+        self.assertIn('registered families: allocator-zero', str(caught.exception))
+        with self.assertRaises(contract['SelectionError']):
+            contract['select_cases']('nope')
+        with self.assertRaises(contract['SelectionError']):
+            contract['select_cases'](',')
+
+    def test_default_suite_only_without_selectors(self):
+        names, reasons = contract['select_cases']()
+        self.assertEqual(names, sorted(n for n in contract['CASES'] if not n.startswith('axis-c-')))
+        self.assertEqual(set(map(tuple, reasons.values())), {('default suite',)})
+
+    def test_plan_lists_ids_reasons_facades_and_artifacts(self):
+        names, reasons = contract['select_cases'](issues=['532'], families=['zero-key'])
+        lines = contract['plan_lines'](names, reasons, Path('/s/libpinyin_capi.so'), Path('/s/libzhuyin_capi.so'),
+                                       Path('/pin'), 'bdb')
+        self.assertTrue(lines[0].startswith('plan: %d cases; cell bdb; facades: pinyin ' % len(names)))
+        self.assertIn('zhuyin ', lines[0])
+        self.assertIn('subject /s/libzhuyin_capi.so', lines[1])
+        self.assertIn('pin /pin/lib/libzhuyin.so', lines[1])
+        body = lines[2:]
+        self.assertEqual(len(body), len(names))
+        self.assertTrue(any(line.split()[0] == 'default-option-parse' and 'issue 532' in line for line in body))
+        self.assertTrue(any(line.split()[0].startswith('zero-key/') and 'family zero-key' in line for line in body))
+        default_lines = contract['plan_lines'](*contract['select_cases'](), Path('/s'), None, Path('/pin'), 'bdb')
+        self.assertIn('default suite', default_lines[0])
+        # A count, the artifacts and at most the skip line: no per-case lines.
+        self.assertLessEqual(len(default_lines), 3)
+        self.assertFalse(any(line.startswith('  ') and ' pinyin ' in line for line in default_lines))
+
+
+class TimingTests(unittest.TestCase):
+    """The worker's `T` line feeds TIMINGS and never the observation."""
+
+    def test_timing_line_is_kept_apart_from_the_observation(self):
+        stdout = b'T {"startup": 0.1, "load": 0.2, "fixture": 0.3, "execute": 0.4}\n{"ret": true}\n'
+        process = SimpleNamespace(returncode=0, stdout=stdout, stderr=b'')
+        before = len(contract['TIMINGS'])
+        with tempfile.TemporaryDirectory() as scratch, \
+                patch.object(contract['subprocess'], 'run', return_value=process) as run:
+            value = contract['run_worker']('pinyin', '/so', '/data', 'case', scratch)
+        self.assertEqual(value['result'], {'ret': True})
+        self.assertNotIn('timing', value)
+        self.assertIn('CONTRACT_DIFF_SPAWNED', run.call_args.kwargs['env'])
+        timing = contract['TIMINGS'][before]
+        self.assertEqual((timing['case'], timing['startup'], timing['execute']), ('case', 0.1, 0.4))
+        self.assertIn('wall', timing)
+        self.assertAlmostEqual(timing['teardown'], timing['wall'] - 1.0)
+        del contract['TIMINGS'][before:]
+
+    def test_summary_splits_pin_and_subject_execution(self):
+        saved = list(contract['TIMINGS'])
+        contract['TIMINGS'][:] = [dict(startup=1, load=2, fixture=3, execute=4, teardown=5),
+                                  dict(startup=1, load=2, fixture=3, execute=6, teardown=5)]
+        try:
+            summary = contract['timing_summary'](['a'], 0.5, 30.0)
+        finally:
+            contract['TIMINGS'][:] = saved
+        self.assertEqual(summary['cases'], 1)
+        self.assertEqual(summary['workers'], 2)
+        self.assertEqual(summary['seconds'], dict(startup=2, load=4, fixture=6, pin_execute=4, subject_execute=6,
+                                                   teardown=10, compare=0.5, total=30.0))
 
 
 if __name__ == '__main__':

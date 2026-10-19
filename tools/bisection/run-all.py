@@ -78,6 +78,71 @@ def reason_for(rc, output, timeout, expired=False):
     return (important[-1] if important else (lines[-1] if lines else f'exit {rc}'))[:400]
 
 
+def normal_tag(tag):
+    """`#640`, `640`, `W11`, `row:54` and `Row 54` are the same selector (as contract-diff.py)."""
+    tag = str(tag).strip().lstrip('#').lower()
+    return re.sub(r'^row[ :]*', 'row:', tag)
+
+
+def contract_tag_index():
+    """contract-diff.py's tag index: {'tags': {tag: [case IDs]}, 'modes': {case ID: facade}}."""
+    command = [sys.executable, str(HERE / 'contract-diff.py'), '--list-tags']
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True)
+    if result.returncode:
+        raise ValueError(result.stderr.strip() or 'contract-diff.py --list-tags failed')
+    return json.loads(result.stdout)
+
+
+def contract_cases_for(requested, index):
+    """The contract case IDs the requested tags select, in registration order,
+    with the tag(s) that selected each: {case ID: [tag, ...]}."""
+    chosen = {}
+    for tag in sorted(requested):
+        for name in index['tags'].get(tag, []):
+            chosen.setdefault(name, []).append(tag)
+    return chosen
+
+
+def timing_of(output):
+    """The phase split a runner reports: its last stdout line that is a JSON
+    object with a `timing` key (contract-diff.py prints one), else None."""
+    for line in reversed(output.splitlines()):
+        if line.startswith('{"timing"') or line.startswith('{"timing":'):
+            try:
+                return json.loads(line)['timing']
+            except (ValueError, KeyError):
+                return None
+    return None
+
+
+def plan_lines(cell, jobs, contract_cases, reasons, index):
+    """The selection plan for one cell: each runner, why it runs, the inputs
+    it needs and whether it needs the oracle; for a tag-selected contract
+    run, the case IDs, why each was selected and their facades."""
+    lines = [f'plan ({cell}): {len(jobs)} runner{"" if len(jobs) == 1 else "s"}']
+    for row, _, _, substitutions in jobs:
+        inputs = [item.format_map(substitutions) for item in row.get('input_paths', [])] or ['none']
+        lines.append(f"  {row['name']}: {reasons[row['name']]}; oracle: "
+                     f"{'yes' if row.get('oracle', True) else 'no'}; inputs: {', '.join(inputs)}")
+        if row['name'] == 'contract-diff' and contract_cases:
+            modes = {}
+            for name in contract_cases:
+                mode = index['modes'].get(name, '?')
+                modes[mode] = modes.get(mode, 0) + 1
+            lines.append('    %d contract case%s; facades: %s' % (
+                len(contract_cases), '' if len(contract_cases) == 1 else 's',
+                ', '.join('%s %d' % item for item in sorted(modes.items()))))
+            names = list(contract_cases)
+            shown = names if len(names) <= 50 else names[:3]
+            width = max(len(name) for name in shown)
+            for name in shown:
+                lines.append('    %-*s  %-7s issue %s' % (width, name, index['modes'].get(name, '?'),
+                                                        ', '.join(contract_cases[name])))
+            if len(names) > 50:
+                lines.append('    ... %d more (contract-diff.py --list-tags lists them)' % (len(names) - 3))
+    return lines
+
+
 def cell_config(cell, target_root, env):
     configured = env.copy()
     configured['PINYIN_ORACLE_DBM'] = cell
@@ -102,7 +167,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runners', help='comma-separated registry names (default: every gate)')
     parser.add_argument('--cells', default='bdb', help='comma-separated bdb,kc,tkrzw')
-    parser.add_argument('--issue', action='append', default=[], help='issue number, W tag, or row:N')
+    parser.add_argument('--issue', action='append', default=[],
+                        help='issue number, W tag, or row:N; selects the runners and the exact '
+                             'contract-diff cases registered under it')
     parser.add_argument('--list', action='store_true', help='list gate and not-a-gate metadata; do not build')
     parser.add_argument('--jobs', type=positive, default=2)
     parser.add_argument('--timeout', type=positive, help='override the registry default for every runner')
@@ -133,12 +200,38 @@ def main():
     cells = list(dict.fromkeys(args.cells.split(',')))
     if not cells or set(cells) - set(CELLS):
         parser.error('--cells must select bdb,kc,tkrzw')
-    requested_issues = {item.lower().lstrip('#') for item in args.issue}
+    requested_issues = {normal_tag(item) for item in args.issue}
     rows = [row for row in registry if row['name'] in selected and
             (not requested_issues or requested_issues.intersection(
-                tag.lower().lstrip('#') for tag in row['issues']))]
+                normal_tag(tag) for tag in row['issues']))]
+    reasons = {row['name']: ('--issue ' + ', '.join(sorted(requested_issues.intersection(
+        normal_tag(tag) for tag in row['issues']))) if requested_issues else
+        '--runners' if args.runners else 'default gate set') for row in rows}
+    # An issue tag also resolves to the exact contract cases registered under
+    # it; those run through the contract-diff runner with --cases. Nothing
+    # matching anywhere is an error that names what exists, never the suite.
+    contract_cases, index = {}, None
+    if requested_issues and 'contract-diff' in selected:
+        index = contract_tag_index()
+        contract_cases = contract_cases_for(requested_issues, index)
+        if contract_cases and all(row['name'] != 'contract-diff' for row in rows):
+            rows.append(next(row for row in registry if row['name'] == 'contract-diff'))
+            reasons['contract-diff'] = '--issue %s: %d contract case%s' % (
+                ', '.join(sorted({tag for tags in contract_cases.values() for tag in tags})),
+                len(contract_cases), '' if len(contract_cases) == 1 else 's')
+        elif contract_cases:
+            reasons['contract-diff'] += '; %d contract case%s' % (
+                len(contract_cases), '' if len(contract_cases) == 1 else 's')
     if not rows:
-        parser.error('selection contains no runners')
+        runner_tags = sorted({normal_tag(tag) for row in registry for tag in row['issues']})
+        contract_tags = sorted(tag for tag in (index or contract_tag_index())['tags']
+                               if not tag.startswith('family/'))
+        parser.error('no runner or contract case carries issue tag(s) %s; runner tags: %s; '
+                     'contract tags: %s' % (', '.join(sorted(requested_issues)),
+                                            ', '.join(runner_tags), ', '.join(contract_tags)))
+    if contract_cases:
+        rows = [dict(row, command=row['command'] + ['--', '--cases', ','.join(contract_cases)])
+                if row['name'] == 'contract-diff' else row for row in rows]
     if args.list:
         for row in rows:
             print(json.dumps(row, ensure_ascii=False))
@@ -177,6 +270,7 @@ def main():
         parser.error('CARGO_TARGET_DIR is a single-cell override; use --target-root for multiple cells')
     targets = args.target_root.resolve()
     results, jobs = [], []
+    build_seconds = {}
     # Locks live beside the checkout rather than in per-cell or per-invocation
     # directories. This protects fixed native outputs across concurrent invocations.
     lock_root = ROOT / 'target/runner-locks'
@@ -216,6 +310,7 @@ def main():
                 oracle = oracle_configs[variant]
                 runner_prefix = Path(oracle['PINYIN_ORACLE_PREFIX'])
                 result = dict(runner=row['name'], cell=cell, status='SKIPPED', seconds=0.0,
+                              build_seconds=0.0, lock_wait_seconds=0.0, phases=None,
                               pin_ref=oracle['EXPECTED_ORACLE_PIN_REF'].removeprefix('pin_ref='), reason='')
                 if cell not in row['cells']:
                     result['reason'] = 'unsupported cell'
@@ -237,20 +332,25 @@ def main():
                     build_candidates.append((row, result, runner_prefix))
             if not build_candidates:
                 continue
+            cell_jobs = []
+            for row, result, runner_prefix in build_candidates:
+                runner_env = dict(env, PINYIN_ORACLE_PREFIX=str(runner_prefix))
+                runner_substitutions = dict(substitutions, prefix=str(runner_prefix))
+                cell_jobs.append((row, result, runner_env, runner_substitutions))
+            for line in plan_lines(cell, cell_jobs, contract_cases, reasons, index):
+                print(line, file=sys.stderr, flush=True)
             if not args.no_build:
                 print(f'Building dev opt-level 1 artifacts: {cell}', file=sys.stderr, flush=True)
                 rc, seconds, output, expired = execute(['bash', str(HERE / 'cell-artifacts.sh')], env, ROOT,
                                                        args.build_timeout, scratch / f'build-{cell}.log')
+                build_seconds[cell] = round(seconds, 3)
                 if rc or expired:
                     for _, result, _ in build_candidates:
-                        result.update(status='FAIL', seconds=round(seconds, 3),
+                        result.update(status='FAIL', seconds=round(seconds, 3), build_seconds=build_seconds[cell],
                                       reason='cell build: ' + reason_for(rc, output, args.build_timeout, expired))
                         results.append(result)
                     continue
-            for row, result, runner_prefix in build_candidates:
-                runner_env = dict(env, PINYIN_ORACLE_PREFIX=str(runner_prefix))
-                runner_substitutions = dict(substitutions, prefix=str(runner_prefix))
-                jobs.append((row, result, runner_env, runner_substitutions))
+            jobs.extend(cell_jobs)
 
         def run(job):
             row, result, base, substitutions = job
@@ -274,9 +374,11 @@ def main():
                               else 'SKIPPED', reason='missing required input: ' + ', '.join(missing))
                 return result
             with contextlib.ExitStack() as stack:
+                waiting = time.monotonic()
                 for resource in sorted(row['exclusive_resources']):
                     lock = stack.enter_context((lock_root / resource).open('a'))
                     fcntl.flock(lock, fcntl.LOCK_EX)
+                lock_wait = time.monotonic() - waiting
                 rc, seconds, output, expired = execute(command, env, ROOT, timeout, work / 'runner.log')
             # Legacy CI behavior is preserved in the direct live-typing runner;
             # aggregate skips cannot silently turn into passes.
@@ -285,7 +387,9 @@ def main():
             if rc == 0 and required_skips and not expired:
                 rc, output = 77, '\n'.join(required_skips)
             result.update(status='FAIL' if expired else 'PASS' if rc == 0 else 'SKIPPED' if rc == 77 else 'FAIL',
-                          seconds=round(seconds, 3), reason=reason_for(rc, output, timeout, expired))
+                          seconds=round(seconds, 3), build_seconds=build_seconds.get(result['cell'], 0.0),
+                          lock_wait_seconds=round(lock_wait, 3), phases=timing_of(output),
+                          reason=reason_for(rc, output, timeout, expired))
             print(f"Completed {result['runner']} / {result['cell']}: {result['status']}",
                   file=sys.stderr, flush=True)
             return result
@@ -294,11 +398,13 @@ def main():
             results.extend(pool.map(run, jobs))
     order = {row['name']: index for index, row in enumerate(rows)}
     results.sort(key=lambda row: (order[row['runner']], cells.index(row['cell'])))
-    print('runner | cell | status | seconds | pin_ref | reason')
-    print('--- | --- | --- | ---: | --- | ---')
+    # build_seconds is the cell's one build, shared by every row of that cell.
+    print('runner | cell | status | seconds | build_seconds | lock_wait_seconds | pin_ref | reason')
+    print('--- | --- | --- | ---: | ---: | ---: | --- | ---')
     for row in results:
         print(' | '.join(str(row[key]).replace('|', '/').replace('\n', ' ') for key in
-                         ('runner', 'cell', 'status', 'seconds', 'pin_ref', 'reason')))
+                         ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds',
+                          'pin_ref', 'reason')))
     if args.json:
         args.json.write_text(json.dumps(results, indent=2, ensure_ascii=False) + '\n')
     def allowed(row):
