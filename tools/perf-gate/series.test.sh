@@ -19,7 +19,7 @@ fail=0
 
 # write_snap <file> <python patch over `d`>
 write_snap() {
-	python3 - "$1" "$2" <<'PY'
+	uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$1" "$2" <<'PY'
 import json, sys
 path, expr = sys.argv[1], sys.argv[2]
 d = {

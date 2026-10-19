@@ -218,7 +218,7 @@ It is a disposable workload input, not a committed fixture or profile
 capture:
 
 ```sh
-python3 - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
 import hashlib
 import subprocess
 import sys
@@ -593,7 +593,9 @@ with `tools/packaging/install.sh`. Use one target directory per worktree.
 Run this command under the shared host admission wrapper:
 
 ```sh
-tools/bisection/run-all.py --heavy-slot -- python3 tools/bisection/contract-diff.py \
+tools/bisection/run-all.py --heavy-slot -- \
+  uv run --no-project --managed-python --python cpython@3.15.0+gil \
+  python -X lazy_imports=normal tools/bisection/contract-diff.py \
   bdb "$PINYIN_ORACLE_PREFIX" "$SUBJECT_PREFIX/lib/libpinyin.so" \
   --zhuyin-so "$SUBJECT_PREFIX/lib/libzhuyin.so" \
   --base-pinyin-so "$BASE_PREFIX/lib/libpinyin.so" \

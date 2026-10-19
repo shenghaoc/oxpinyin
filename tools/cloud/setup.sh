@@ -6,6 +6,7 @@ set -euo pipefail
 # (issue #818). Idempotent: each step checks
 # its result and skips when it already holds.
 #
+#   0a. install uv 0.13.1 and its managed CPython 3.15.0 GIL build
 #   0b. require the backend dump utilities the stateful differentials call:
 #      db5.3_dump (bdb) and kchashmgr (kc); install them with apt-get when
 #      root, otherwise print the apt-get line and exit 1 (never sudo)
@@ -121,6 +122,61 @@ die() {
 	exit 1
 }
 pinval() { sed -n "s/^$1=//p" "$pin"; }
+
+# ---- 0a. uv and the managed interpreter ---------------------------------
+# Every repository-owned Python call uses this interpreter. The plain 3.15.0
+# build is the GIL-enabled one; uv 0.13.1 has no separate +gil archive.
+for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
+	if [[ -n ${!name:-} ]]; then
+		die "$name is not supported; unset it before running repository Python"
+	fi
+done
+
+uv_install_dir=${UV_INSTALL_DIR:-$HOME/.local/bin}
+if ! command -v uv >/dev/null 2>&1 || [[ $(uv --version 2>/dev/null) != 'uv 0.13.1 '* ]] ||
+	[[ -n ${UV_INSTALL_DIR:-} && $(command -v uv) != "$uv_install_dir/uv" ]]; then
+	log 'installing uv 0.13.1'
+	(
+		[[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
+		uv_target=x86_64-unknown-linux-gnu
+		# Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+		uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
+		# Keep the archive in memory. Write only its verified executables.
+		uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
+		uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
+		[[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
+		uv_tmp=$(mktemp -d)
+		trap 'rm -rf "$uv_tmp"' EXIT
+		trap 'exit 1' HUP INT TERM
+		printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
+		mkdir -p "$uv_install_dir"
+		install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
+		printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
+	)
+	export PATH="$uv_install_dir:$PATH"
+	hash -r
+else
+	log "using $(uv --version)"
+fi
+[[ $(uv --version 2>/dev/null) == 'uv 0.13.1 '* ]] ||
+	die "uv 0.13.1 required; found: $(uv --version 2>/dev/null || echo missing)"
+uv_dir=$(dirname "$(command -v uv)")
+uv python install cpython@3.15.0
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PYTHON'
+from pathlib import Path
+import subprocess
+import sys
+import sysconfig
+assert sys.implementation.name == "cpython"
+assert sys.version_info[:3] == (3, 15, 0)
+assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+assert sys._is_gil_enabled()
+managed = subprocess.check_output(
+    ["uv", "python", "find", "--managed-python", "cpython@3.15.0+gil"],
+    text=True).strip()
+assert Path(sys.executable).resolve() == Path(managed).resolve()
+print("Verified managed CPython 3.15.0 GIL build:", Path(managed).resolve())
+PYTHON
 
 # retry CMD...: registries answer 429 to anonymous pulls from a shared
 # egress address; back off 2, 4, 8, 16 s before giving up.
@@ -566,6 +622,7 @@ for dbm in "${cells[@]}"; do [[ $dbm == bdb ]] && default_cell=bdb; done
 	printf '# Written by tools/cloud/setup.sh; source it, do not edit it.\n'
 	printf '_oxp_provisioned=%q\n' " ${cells[*]} "
 	printf 'export PINYIN_MODEL_DIR=%q\n' "$model_cache/extracted"
+	printf 'export PATH=%s\n' "$(printf '%q' "$uv_dir"):\$PATH"
 	if ((tkrzw_local)); then
 		printf 'export PKG_CONFIG_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib/pkgconfig")\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
 		printf 'export LD_LIBRARY_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib")\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"

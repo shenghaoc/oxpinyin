@@ -76,8 +76,8 @@ source (including uncommitted edits), not the host `.git` pointer. It never
 mounts another worktree or your whole home. Ignored files, model data and
 native `target/` outputs do not enter the source snapshot.
 
-Discover existing check names on Linux/macOS/WSL (Python 3 is needed only for
-this local listing):
+Discover existing check names on Linux/macOS/WSL (uv 0.13.1 and its managed
+CPython 3.15.0+gil are needed only for this local listing):
 
 ```bash
 bash tools/oracle/compat.sh --list

@@ -98,7 +98,7 @@ gcc -std=gnu11 -O2 -o "$BISECT" tools/bisection/bisect.c -ldl
 # offset, not the size. It would have returned a plausible-looking wrong number
 # wherever gawk happened to be installed.
 section_sum() {
-	readelf -S -W "$1" | python3 -c '
+	readelf -S -W "$1" | uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c '
 import re, sys
 WANT = {".text", ".rodata", ".data.rel.ro", ".rela.dyn",
         ".eh_frame", ".eh_frame_hdr", ".gcc_except_table"}
@@ -122,7 +122,7 @@ print(total)
 alloc_json() {
 	"${TASKSET[@]}" env PERF_BACKEND=gate PERF_MODE=speed PERF_CYCLES="$CYCLES" \
 		"$BISECT" --perf "$ALLOC_SO" "$DATA" 2>/dev/null |
-		python3 -c '
+		uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c '
 import json, sys
 row = json.loads(sys.stdin.readline())
 n = row.get("steady_alloc_cycles", 0)
@@ -145,7 +145,7 @@ rss_json() {
 	for ((i = 0; i < RSS_PROCESSES; i++)); do
 		"${TASKSET[@]}" env PERF_BACKEND=gate PERF_MODE=speed PERF_CYCLES="$CYCLES" \
 			"$BISECT" --perf "$SHIPPED" "$DATA" 2>/dev/null
-	done | python3 -c '
+	done | uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c '
 import json, statistics, sys
 rows = [json.loads(l) for l in sys.stdin if l.strip()]
 def med(tag, key):
@@ -177,7 +177,7 @@ ir_json() {
 		return
 	}
 	local ir
-	ir=$(python3 "$PWD/tools/perf-gate/callgrind-ir.py" "$cg" libpinyin)
+	ir=$(uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$PWD/tools/perf-gate/callgrind-ir.py" "$cg" libpinyin)
 	printf '{"ir_oxpinyin_object": %s}\n' "$ir"
 }
 
@@ -188,7 +188,7 @@ ALLOC=$(alloc_json)
 RSS=$(rss_json)
 IR=$(ir_json)
 
-python3 - "$OUT" "$SHIPPED" "$DATA" "$ALLOC_RECIPE" <<PY
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$OUT" "$SHIPPED" "$DATA" "$ALLOC_RECIPE" <<PY
 import hashlib, json, os, pathlib, subprocess, sys
 
 out, shipped, data, alloc_recipe = sys.argv[1:5]

@@ -17,7 +17,7 @@ Options:
   --jobs N                          Build/runner concurrency (default 2)
   --timeout N                       Existing registry runner timeout override
   --runner-timeout NAME=SECONDS     Existing per-runner override
-  --list                            Existing registry listing; needs Python 3, no build
+  --list                            Existing registry listing; needs uv 0.13.1 and CPython 3.15.0+gil, no build
   --help                            No runtime or build required
 Needs Bash, Git, tar, SHA-256 utility, and a working runtime. macOS/WSL/Linux
 hosts need no Rust, native DBM or libpinyin for compatibility execution.
@@ -32,7 +32,18 @@ selection=() selected=0
 while (($#)); do
 	case $1 in
 	--help|-h) usage; exit 0 ;;
-	--list) exec python3 tools/bisection/run-all.py --list ;;
+	--list)
+		for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
+			if [[ -n ${!name:-} ]]; then
+				printf 'FAIL: %s is not supported; unset it before running repository Python\n' "$name" >&2
+				exit 2
+			fi
+		done
+		command -v uv >/dev/null 2>&1 || {
+			printf 'missing uv 0.13.1; install it and managed CPython 3.15.0+gil (docs/runbooks/setup.md)\n' >&2
+			exit 127
+		}
+		exec uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/bisection/run-all.py --list ;;
 	--runners=*|--issue=*) set -- "${1%%=*}" "${1#*=}" "${@:2}"; continue ;;
 	--runtime|--cell|--archive|--jobs|--runners|--issue|--timeout|--runner-timeout)
 		(($# >= 2)) || { usage >&2; exit 2; }

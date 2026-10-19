@@ -15,6 +15,30 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     apt-get "$@" install -y --no-install-recommends \
       libclang-dev db5.3-util kyotocabinet-utils tkrzw-utils; \
     rm -rf /var/lib/apt/lists/*
+# uv 0.13.1 and its managed GIL-enabled CPython. The +gil request selects the
+# plain 3.15.0 build; uv 0.13.1 has no separate +gil archive.
+# Archive digest: https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+ENV UV_INSTALL_DIR=/opt/uv/bin UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
+RUN set -eu; \
+    [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; \
+    uv_target=x86_64-unknown-linux-gnu; \
+    uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220; \
+    uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64); \
+    uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum); \
+    [ "${uv_actual%% *}" = "$uv_sha256" ] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }; \
+    uv_tmp=$(mktemp -d); \
+    trap 'rm -rf "$uv_tmp"' EXIT; \
+    trap 'exit 1' HUP INT TERM; \
+    printf '%s' "$uv_payload" | base64 -d | tar -xz -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"; \
+    mkdir -p /opt/uv/bin; \
+    install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" /opt/uv/bin/; \
+    unset uv_payload; \
+    export PATH="/opt/uv/bin:$PATH"; \
+    /opt/uv/bin/uv --version | grep -q '^uv 0\.13\.1 '; \
+    /opt/uv/bin/uv python install cpython@3.15.0; \
+    /opt/uv/bin/uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+      -c 'from pathlib import Path; import subprocess, sys, sysconfig; assert sys.implementation.name == "cpython"; assert sys.version_info[:3] == (3, 15, 0); assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0; assert sys._is_gil_enabled(); managed = subprocess.check_output(["uv", "python", "find", "--managed-python", "cpython@3.15.0+gil"], text=True).strip(); assert Path(sys.executable).resolve() == Path(managed).resolve()'
+ENV PATH=/opt/uv/bin:$PATH
 COPY --from=reference /opt/pinyin-oracle /opt/reference
 COPY rust-toolchain.toml /tmp/toolchain/rust-toolchain.toml
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH

@@ -173,7 +173,7 @@ for n in $SIZES; do
                     "$Z_LABEL:$L_LABEL" "$S_LABEL:$L_LABEL" \
                     "$S_LABEL:$Z_LABEL"; do
             num=${pair%%:*}; den=${pair#*:}
-            python3 "$CTLTOOLS/bisection/perf-ratio.py" "$SPEED" \
+            uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-ratio.py" "$SPEED" \
                 --numerator "$num" --denominator "$den" \
                 --repeats "$n" --format md
         done
@@ -182,7 +182,7 @@ done
 
 # ── decomposition: paired round bootstrap ───────────────────────────
 for n in $SIZES; do
-    python3 "$CTLTOOLS/bisection/perf-decomp.py" "$SPEED" --repeats "$n" \
+    uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-decomp.py" "$SPEED" --repeats "$n" \
         --l "$L_LABEL" --x "$X_LABEL" --y "$Y_LABEL" --z "$Z_LABEL" \
         --format md > "$OUT/decomp-n$n.md"
 done

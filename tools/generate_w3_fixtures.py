@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
 """Generate mini fixture tables for W3 loader development.
 
 Reads the pinned oracle's installed content files and truncates each to
@@ -6,7 +6,7 @@ a small number of records, producing portable test fixtures under
 fixtures/w3/.  Run twice, identical output (reproducible).
 
 Usage:
-  python3 tools/generate_w3_fixtures.py [--data-dir PATH] [--max-records N]
+  uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/generate_w3_fixtures.py [--data-dir PATH] [--max-records N]
 """
 
 import argparse

@@ -44,7 +44,13 @@ separate verified change.
 On Linux and macOS, install uv through its documented host route.
 On Windows, use a native uv executable from PowerShell or the native installer.
 Neither route needs an older Python first.
-Then run `uv python install cpython@3.15.0+gil`.
+Then run `uv python install cpython@3.15.0`.
+uv 0.13.1 has no separate `+gil` download. Installation uses the plain
+3.15.0 distribution. Execution keeps `cpython@3.15.0+gil`.
+Check `Py_GIL_DISABLED == 0` and the enabled runtime GIL. Check CPython
+3.15.0 and the resolved executable against
+`uv python find --managed-python cpython@3.15.0+gil`.
+These checks enforce the managed GIL build after installation.
 Keep the managed interpreter and uv cache on persistent native storage.
 The later implementation enforces uv 0.13.1 and records the provisioning route.
 See uv's [Python guide](https://docs.astral.sh/uv/concepts/python-versions/)
