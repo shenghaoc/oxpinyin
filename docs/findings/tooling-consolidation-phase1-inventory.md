@@ -11,6 +11,13 @@
 > test harness, and CI jobs were later retired; their references here are
 > archival and do not describe current requirements.
 
+> **Destinations amended 2026-10-18 UTC.** The 290 records, their IDs and
+> their factual content are unchanged. The destination column is re-read under
+> [`tooling-consolidation-python-just.md`](tooling-consolidation-python-just.md):
+> "Absorb" means the shared Python core or a Python scenario family, and the
+> Rust ABI foundation is not a required component. See the legend change in
+> `tooling-consolidation-phase1-summary-table.md`.
+
 
 Record format: one table per unit with the ten required fields; IDs are stable. Produced by nine full-file reading passes over a detached worktree; counts in the main report were re-verified directly. Three units appear twice (TLS-36≡CI-27, TLS-37≡CI-28, ORC-18≡CI-11).
 

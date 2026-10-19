@@ -5,20 +5,34 @@
 > test harness, and CI jobs were later retired; their references here are
 > archival and do not describe current requirements.
 
+> **Architecture amended 2026-10-18 UTC — read this first.** The maintainer
+> adopted Python 3 for developer-tool orchestration and `just` as the
+> cross-platform task interface. The architecture in section C, decisions
+> D1–D11 in section E and the migration stages in section D are superseded by
+> [`tooling-consolidation-python-just.md`](tooling-consolidation-python-just.md)
+> (Amendment 1). The unmerged Rust ABI foundation and the standalone Rust
+> initbench are **not** required components. The inventory, findings and
+> historical measurements in this report remain valid; its Rust destinations
+> and Stage 1–13 plan are not. Amendment 1's new Stage 1 retains its separate
+> authorisation. New Stage 2 and later stages require the review and explicit
+> maintainer approval that Amendment 1 describes.
+
 
 Dates (captured with `date -u` on the executing host, never hand-written):
 tree inspected and inventory recorded 2026-10-16 UTC (reading passes ran
-between roughly 15:40 and 17:00 UTC); maintainer ruling received and this
-revision written 2026-10-16 UTC.
+between roughly 15:40 and 17:00 UTC); maintainer ruling received and the original
+Phase 1 revision written 2026-10-16 UTC. Amendment 1 is dated 2026-10-18 UTC.
 
-Status: **Stage 0 of the roadmap (this documentation) is authorised and
-landed by the maintainer's ruling of 2026-10-16 UTC; Stage 1 (the shared
-Rust ABI foundation) is authorised only after Stage 0 is accepted and only
-within the corrections recorded in section 0; Stages 2–13 are not
-authorised; no legacy tool is authorised for deletion.** The ruling and the
-three architecture corrections it requires are recorded in section 0 and
-applied throughout; where an earlier draft of this document said otherwise,
-the ruling wins.
+Status at the time of Phase 1 (historical): **Stage 0 of the roadmap (this
+documentation) is authorised and landed by the maintainer's ruling of
+2026-10-16 UTC; Stage 1 (the shared Rust ABI foundation) is authorised only
+after Stage 0 is accepted and only within the corrections recorded in
+section 0; Stages 2–13 are not authorised; no legacy tool is authorised for
+deletion.** The ruling and the three architecture corrections it requires are
+recorded in section 0 and applied throughout; where an earlier draft of this
+document said otherwise, the ruling wins. **Amendment 1 superseded the old
+Stage 1 authorisation and Rust architecture on 2026-10-18 UTC. New Stage 1 retains its separate authorisation. The review
+gate starts at new Stage 2.**
 
 Tree inspected: `origin/main` at `e67f19d1` (a worktree detached from the
 shared checkout, which stayed on `main` untouched). The branch carrying this
@@ -34,6 +48,10 @@ Companion files (same directory):
 | `tooling-consolidation-phase1-inventory.md` | Appendix A: every inventory record (the ten-field table per tool), 290 records — the migration ledger |
 | `tooling-consolidation-phase1-summary-table.md` | Appendix A1: one row per record — ID, path, language, platform, purpose, destination |
 | `tooling-consolidation-phase1-upstream-survey.md` | Appendix F: the four upstream projects, observation/interpretation labelled |
+| `tooling-consolidation-python-just.md` | Amendment 1: Python 3 orchestration and `just`; the current architecture, decisions and stages |
+| `superseded-tooling-prs.md` | Retirement record for #836, #837 and #842: exact revisions, recovered requirements and findings |
+| `startup-initialization-audit.md` | Recovered initialization-path audit from #842 |
+| `../perf/startup-baseline-2026-10.md` | Recovered startup baseline from #842 |
 
 Method. Every first-party tool file was read in full (not inferred from
 names) by nine reading passes over the detached tree, each producing records
@@ -48,6 +66,10 @@ check wins and is noted.
 ---
 
 ## 0. Maintainer ruling (2026-10-16 UTC) and the corrections it requires
+
+> **Historical decision record.** D1–D11 and the three corrections below were
+> written for the Rust architecture. Amendment 1 replaces the decisions and
+> the stages; the rulings are kept as the record of what was asked.
 
 The ruling approves Stage 0 now, authorises Stage 1 after Stage 0 is
 accepted, leaves Stages 2–13 unauthorised, and approves no deletion. It is
@@ -410,7 +432,17 @@ pin behind), the `/tmp/oxpinyin-export` legacy path, the `pinyin-oracle`
 
 ## C. Proposed unified architecture
 
+> **Superseded architecture.** The units below (`libpinyin-abi`,
+> `oxpinyin-devtool`) are not adopted. Amendment 1 places the same
+> responsibilities in a Python 3 package driven by `just`, with native C
+> instruments/workers retained where measurement fidelity requires them.
+> Sections C.1–C.6 remain the historical design record.
+
 ### C.1 Units and dependency direction (corrected per ruling)
+
+> **Superseded:** there is no `libpinyin-abi` crate and no
+> `oxpinyin-devtool` binary in the amended architecture. See Amendment 1
+> sections 3 and 9.
 
 | Unit | Kind | Depends on | Ships | Platform |
 | --- | --- | --- | --- | --- |
@@ -579,6 +611,9 @@ profile; `check-exports` already handles macOS `nm` for local runs.
 
 ## D. Migration roadmap
 
+> **Superseded roadmap.** Amendment 1 section 10 replaces Stages 1–13 with a
+> Python + `just` sequence (Stages 1–14). No stage below is authorised.
+
 Authorisation state (ruling of 2026-10-16 UTC): Stage 0 authorised and
 landed by this document; Stage 1 authorised after Stage 0 is accepted,
 within section 0's corrections; Stages 2–13 not authorised and each needs
@@ -635,6 +670,9 @@ decision, not done.
 ---
 
 ## E. Decisions — alternatives, evidence and the recommendation put to the maintainer
+
+> **Historical recommendations.** Amendment 1 section 9 replaces D1–D11
+> (and adds D12–D13). The text below is kept as the record of what was asked.
 
 Each item states the alternatives, the evidence, and the recommendation as
 submitted. **The rulings are in section 0 and supersede the
@@ -796,6 +834,9 @@ and `goldens-and-pins.md` disagree with the test's 500/500/500 counts;
 
 ---
 
-*Phase 1 ends here. Stage 0 is this document; Stage 1 is authorised after
-Stage 0 is accepted, within section 0; every later stage and every
-retirement needs a new maintainer ruling.*
+*Phase 1 ends here as a historical record. Its architecture, decisions and
+stages are amended by [`tooling-consolidation-python-just.md`](tooling-consolidation-python-just.md);
+Stage 0 of the amended plan covers documentation only. New Stage 1 retains
+its separate authorisation. New Stage 2 and later stages require the review
+and explicit maintainer approval described there. Every retirement still needs
+its own ruling.*
