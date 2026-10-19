@@ -38,3 +38,4 @@ recipe, per artifact".
 | [`perf-init-typed-map-2026-08`](perf-init-typed-map-2026-08.md) | Stage-2 leftover: init typed-map insert (2026-08-21) |
 | [`perf-so-size-2026-09`](perf-so-size-2026-09.md) | `.so` size — fat LTO + single codegen unit (2026-09) |
 | [`perf-stage2-harness-2026-08`](perf-stage2-harness-2026-08.md) | Stage-2 measurement harness (continues the W8 baseline) |
+| [`startup-baseline-2026-10`](startup-baseline-2026-10.md) | Startup/initialization baseline — pin vs oxpinyin, Linux/BDB, one host (recovered from PR #842; historical) |

@@ -6,6 +6,14 @@ ABI or dependency change. The benchmark instrument is the independent
 `oxpinyin-initbench` of PR #842, built from a separate checkout; nothing in
 this change depends on it.
 
+> **Note (2026-10-18 UTC).** PR #842 was later closed unmerged under the
+> Python 3 + `just` decision. Its exact revision is preserved at
+> `a204f9c0e6874eee9d08795fe77a42b7a25da1d6`; the figures here remain valid
+> for the artifact that revision timed and are not reattributed. The recovered
+> capability is specified in
+> [`../findings/tooling-consolidation-python-just.md`](../findings/tooling-consolidation-python-just.md)
+> section 7.
+
 ## Problem
 
 On a profile whose `.dbin` journals modify many system phrases, `*_init` is
