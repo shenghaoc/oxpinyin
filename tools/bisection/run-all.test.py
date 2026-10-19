@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regressions for run-all.py's issue resolution and runner timing."""
+"""Regressions for run-all.py's issue resolution, runner timing and artifact selection."""
 import json
 from pathlib import Path
 import runpy
@@ -59,6 +59,36 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(run_all['timing_of'](output), dict(cases=1, seconds={}))
         self.assertIsNone(run_all['timing_of']('pc-version: ok\n'))
         self.assertIsNone(run_all['timing_of']('{"timing": nonsense\n'))
+class ArtifactUnionTests(unittest.TestCase):
+    def test_union_is_ordered_and_deduplicated(self):
+        rows = [dict(name='a', artifacts=['zhuyin-capi', 'pinyin-capi']), dict(name='b', artifacts=['pinyin-capi', 'dictool']),
+                dict(name='c', artifacts=[])]
+        self.assertEqual(run_all['artifact_union'](rows), ['pinyin-capi', 'zhuyin-capi', 'dictool'])
+
+    def test_a_subjectless_selection_needs_no_build(self):
+        self.assertEqual(run_all['artifact_union']([dict(name='pc-version', artifacts=[])]), [])
+
+    def test_a_row_without_a_declaration_is_a_registry_error(self):
+        with self.assertRaises(ValueError):
+            run_all['artifact_union']([dict(name='x')])
+        with self.assertRaises(ValueError):
+            run_all['artifact_union']([dict(name='x', artifacts=['libfoo'])])
+
+    def test_every_registered_gate_declares_its_set(self):
+        rows = json.loads((Path(__file__).with_name('runners.json')).read_text())
+        for row in rows:
+            with self.subTest(runner=row['name']):
+                self.assertIsInstance(row.get('artifacts'), list)
+                self.assertFalse(set(row['artifacts']) - set(run_all['ARTIFACTS']))
+                blob = json.dumps(row['command']) + json.dumps(row.get('input_paths', []))
+                if '{capi}' in blob:
+                    self.assertIn('pinyin-capi', row['artifacts'])
+                if '{zhuyin}' in blob:
+                    self.assertIn('zhuyin-capi', row['artifacts'])
+        self.assertEqual(next(r for r in rows if r['name'] == 'pc-version')['artifacts'], [])
+        self.assertEqual(next(r for r in rows if r['name'] == 'user-dir-round-trip')['artifacts'],
+                         ['pinyin-capi', 'user-rt-test'])
+        self.assertEqual(next(r for r in rows if r['name'] == 'import-diff')['artifacts'], ['pinyin-capi', 'dictool'])
 
 
 if __name__ == '__main__':

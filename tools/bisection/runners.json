@@ -14,6 +14,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -44,6 +47,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -76,6 +82,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -111,6 +120,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -150,6 +162,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites"
@@ -174,6 +187,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -209,6 +226,10 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "python3 and libglib-2.0.so.0",
@@ -243,6 +264,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "prebuilt dev libpinyin",
       "committed per-cell W3 fixture",
@@ -270,6 +294,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -304,6 +331,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -332,6 +362,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -363,6 +396,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "dictool"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -400,6 +437,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -430,6 +470,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -464,6 +507,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -496,6 +542,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -532,6 +582,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -570,6 +624,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -603,6 +660,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -640,6 +701,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -672,6 +736,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites"
@@ -697,6 +762,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites"
@@ -722,6 +788,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites"
@@ -748,6 +815,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -782,6 +852,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -814,6 +887,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -843,6 +919,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -877,6 +956,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -913,6 +995,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -944,6 +1029,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites"
@@ -970,6 +1056,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -1003,6 +1092,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -1034,6 +1126,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -1068,6 +1164,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites"
@@ -1093,6 +1190,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites"
@@ -1117,6 +1215,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -1150,6 +1251,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -1180,6 +1284,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -1212,6 +1319,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites"
@@ -1237,6 +1345,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -1273,6 +1385,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -1303,6 +1418,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -1335,6 +1453,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -1364,6 +1485,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -1399,6 +1524,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -1436,6 +1564,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
@@ -1476,6 +1608,10 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -1510,6 +1646,9 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "zhuyin-capi"
+    ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
       "native compiler and runner prerequisites",
@@ -1543,6 +1682,10 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
+    ],
     "required_inputs": [
       "cell oracle and prebuilt libraries",
       "Python 3",
@@ -1574,6 +1717,9 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi"
     ],
     "required_inputs": [
       "cell oracle and prebuilt libraries",
@@ -1612,6 +1758,10 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
+    ],
     "oracle": false,
     "required_inputs": [
       "registered headers and version scripts",
@@ -1640,6 +1790,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "zhuyin-capi"
     ],
     "oracle": false,
     "required_inputs": [
@@ -1670,6 +1824,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "oracle": false,
     "required_inputs": [
       "registered headers and version scripts",
@@ -1695,6 +1850,7 @@
       "kc",
       "tkrzw"
     ],
+    "artifacts": [],
     "oracle": true,
     "required_inputs": [
       "registered headers and version scripts",
@@ -1732,6 +1888,10 @@
       "bdb",
       "kc",
       "tkrzw"
+    ],
+    "artifacts": [
+      "pinyin-capi",
+      "user-rt-test"
     ],
     "oracle": true,
     "required_inputs": [

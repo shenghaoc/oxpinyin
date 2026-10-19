@@ -162,6 +162,23 @@ def plan_lines(cell, jobs, contract_cases, reasons, index):
             if len(names) > 50:
                 lines.append('    ... %d more (contract-diff.py --list-tags lists them)' % (len(names) - 3))
     return lines
+ARTIFACTS = ('pinyin-capi', 'zhuyin-capi', 'dictool', 'user-rt-test')
+
+
+def artifact_union(rows):
+    """The artifacts the selected runners need, in ARTIFACTS order: the one
+    build a cell runs. Every row declares its set; a row without one is a
+    registry error, not a request for everything."""
+    needed = set()
+    for row in rows:
+        declared = row.get('artifacts')
+        if declared is None:
+            raise ValueError(f"runners.json: {row['name']} declares no artifacts list")
+        unknown = set(declared) - set(ARTIFACTS)
+        if unknown:
+            raise ValueError(f"runners.json: {row['name']} names unknown artifacts: {', '.join(sorted(unknown))}")
+        needed.update(declared)
+    return [artifact for artifact in ARTIFACTS if artifact in needed]
 
 
 def cell_config(cell, target_root, env):
@@ -314,7 +331,6 @@ def main():
                        OXPINYIN_DICTOOL=str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/oxpinyin-dictool'))
             env.update(extra_env[cell])
             env['OXPINYIN_USER_RT_TEST'] = str(Path(cfg['CARGO_TARGET_DIR']) / 'debug/user-dir-round-trip-test')
-            env['OXPINYIN_BUILD_USER_RT'] = '1' if any(row['name'] == 'user-dir-round-trip' for row in rows) else '0'
             env['PINYIN_IBUS_PREFIX'] = str(prefix)
             if cell in ibus_builds:
                 env['PINYIN_IBUS_BUILD_DIR'] = str(Path(ibus_builds[cell]).resolve())
@@ -360,9 +376,16 @@ def main():
                 cell_jobs.append((row, result, runner_env, runner_substitutions))
             for line in plan_lines(cell, cell_jobs, contract_cases, reasons, index):
                 print(line, file=sys.stderr, flush=True)
-            if not args.no_build:
-                print(f'Building dev opt-level 1 artifacts: {cell}', file=sys.stderr, flush=True)
-                rc, seconds, output, expired = execute(['bash', str(HERE / 'cell-artifacts.sh')], env, ROOT,
+            # Build the union of what the selected runners declare, once per
+            # cell; a selection that needs no subject (pc-version) builds nothing.
+            artifacts = artifact_union(row for row, _, _ in build_candidates)
+            if not artifacts:
+                print(f'No subject artifacts needed: {cell} (no build)', file=sys.stderr, flush=True)
+            elif not args.no_build:
+                print(f'Building dev opt-level 1 artifacts: {cell}: {", ".join(artifacts)}',
+                      file=sys.stderr, flush=True)
+                rc, seconds, output, expired = execute(['bash', str(HERE / 'cell-artifacts.sh'),
+                                                        '--artifacts', ','.join(artifacts)], env, ROOT,
                                                        args.build_timeout, scratch / f'build-{cell}.log')
                 build_seconds[cell] = round(seconds, 3)
                 if rc or expired:
