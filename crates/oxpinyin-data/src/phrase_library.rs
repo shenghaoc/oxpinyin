@@ -837,6 +837,20 @@ impl PhraseLibrary {
         self.item_at_slot((token & PHRASE_MASK) as usize)
     }
 
+    /// Read the count byte after the pin's offset and header checks.
+    /// The pin does not read the item body here (074a2219
+    /// `phrase_index.cpp:180-205`, `phrase_index.h:112-115`).
+    #[must_use]
+    pub fn pronunciation_count(&self, token: u32) -> Option<u32> {
+        let offset = self.slot_offset((token & PHRASE_MASK) as usize)? as usize;
+        if offset == 0 {
+            return None;
+        }
+        let content = &self.payload()[self.content.clone()];
+        content.get(offset)?;
+        content.get(offset.checked_add(1)?).copied().map(u32::from)
+    }
+
     /// The item behind a raw library-local slot.
     #[must_use]
     pub fn item_at_slot(&self, slot: usize) -> Option<PhraseItemView<'_>> {
@@ -930,6 +944,42 @@ mod sparse_mapping_tests {
             8,
             "the sparse map is the chunk extent"
         );
+    }
+}
+
+#[cfg(test)]
+mod pronunciation_count_tests {
+    use super::PhraseLibrary;
+
+    #[test]
+    fn count_checks_offset_and_two_header_bytes_only() {
+        let mut payload = Vec::new();
+        let content = [vec![0; 8], vec![255, 17]].concat();
+        let offsets = [0_u32, 8, 9, 10, 0];
+        let index_two = 17 + offsets.len() as u32 * 4 + 1;
+        for value in [0, 17, index_two, index_two + content.len() as u32 + 1] {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        payload.push(b'#');
+        for offset in offsets {
+            payload.extend_from_slice(&offset.to_le_bytes());
+        }
+        payload.push(b'#');
+        payload.extend_from_slice(&content);
+        payload.push(b'#');
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("counts.bin");
+        std::fs::write(
+            &path,
+            crate::chunk_format::build_memory_chunk(&payload).expect("frame"),
+        )
+        .expect("write");
+        let library = PhraseLibrary::open(&path).expect("open");
+        assert_eq!(library.pronunciation_count(1), Some(17));
+        assert!(library.item(1).is_none(), "the body is truncated");
+        for token in [0, 2, 3, 4, 5, u32::MAX] {
+            assert_eq!(library.pronunciation_count(token), None, "token {token}");
+        }
     }
 }
 

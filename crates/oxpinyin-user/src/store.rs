@@ -626,6 +626,7 @@ fn sync_system_rows<S: WriteStore>(
                 reading.delta,
                 false,
             )
+            .map(|_| ())
         })?;
     }
     Ok(())
@@ -673,7 +674,7 @@ fn add_pronunciation(
     key_bytes: &[u8],
     delta: u32,
     indexed: bool,
-) -> Result<(), StoreError> {
+) -> Result<usize, StoreError> {
     let rows = collect_pronunciations_from_txn(txn, token)?;
     let mut total_freq: u32 = 0;
     for row in &rows {
@@ -682,7 +683,7 @@ fn add_pronunciation(
         total_freq = total_freq.wrapping_add(freq);
         if row.key_bytes == key_bytes {
             if delta > 0 && total_freq.checked_add(delta).is_none() {
-                return Ok(());
+                return Ok(rows.len());
             }
             let value = PronValue {
                 count: u64::from(freq.wrapping_add(delta)),
@@ -693,11 +694,12 @@ fn add_pronunciation(
                 &codec::encode_token_bytes(token, key_bytes),
                 &value.encode(),
             )?;
-            return Ok(());
+            return Ok(rows.len());
         }
     }
     if rows.len() == usize::from(u8::MAX) {
-        return clear_pronunciations(txn, &rows, token);
+        clear_pronunciations(txn, &rows, token)?;
+        return Ok(0);
     }
     let value = PronValue {
         count: u64::from(delta),
@@ -708,7 +710,8 @@ fn add_pronunciation(
         PRONUNCIATION,
         &codec::encode_token_bytes(token, key_bytes),
         &value.encode(),
-    )
+    )?;
+    Ok(rows.len() + 1)
 }
 
 /// `FacadePhraseIndex::add_unigram_frequency` (`phrase_index.h:628-635`)
@@ -2822,7 +2825,7 @@ impl<S: WriteStore> GenericUserStore<S> {
 
         let db = self.database();
         let indexed_new = std::cell::Cell::new(false);
-        let token = db.write(|txn| {
+        let (token, count) = db.write(|txn| {
             let lib_key = codec::encode_u8_str(library, phrase);
             // _add_phrase selects existing items from the phrase table,
             // not the live item's reverse index (074a2219 pinyin.cpp:533-562).
@@ -2848,8 +2851,8 @@ impl<S: WriteStore> GenericUserStore<S> {
                 // reading is merged into the item — no unigram, and no
                 // `add_index`, so a reading this adds stays out of the
                 // user pinyin index.
-                add_pronunciation(txn, token, &key_bytes, delta, false)?;
-                Ok(Ok(token))
+                let count = add_pronunciation(txn, token, &key_bytes, delta, false)?;
+                Ok(Ok((token, count)))
             } else {
                 let alloc_key = codec::encode_u8(ALLOC_CURSOR);
                 let lib_alloc_key = codec::encode_u8(library);
@@ -2911,13 +2914,14 @@ impl<S: WriteStore> GenericUserStore<S> {
 
                 let unigram = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
                 add_unigram_frequency(txn, library, token, unigram)?;
-                Ok(Ok(token))
+                Ok(Ok((token, 1)))
             }
         })??;
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         if indexed_new.get() {
             self.note_index_add(keys, token, false);
         }
+        self.set_user_pronunciation_count(token, count);
         if indexed_new.get() {
             self.mark_committed_phrase_write(db, true);
         } else {
@@ -2949,7 +2953,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         let db = self.database();
         let indexed = std::cell::RefCell::new(Vec::new());
         let inserted = std::cell::Cell::new(false);
-        let token = db.write(|txn| {
+        let (token, count) = db.write(|txn| {
             let lib_key = codec::encode_u8_str(ADDON_DICTIONARY, phrase);
             let existing = match txn.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
                 Some(bytes) => Some(
@@ -2999,6 +3003,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 token
             };
 
+            let mut n_prons = 0;
             for (keys, count) in valid {
                 let key_bytes = phrase::encode_keys(keys);
                 let pron_key = codec::encode_token_bytes(token, &key_bytes);
@@ -3008,6 +3013,8 @@ impl<S: WriteStore> GenericUserStore<S> {
                     rows.iter()
                         .any(|row| row.key_bytes == key_bytes && row.value.indexed),
                 ));
+                n_prons =
+                    rows.len() + usize::from(!rows.iter().any(|row| row.key_bytes == key_bytes));
                 let value = match rows.iter().find(|row| row.key_bytes == key_bytes) {
                     Some(row) => PronValue {
                         count: row.value.count.saturating_add(*count),
@@ -3021,18 +3028,43 @@ impl<S: WriteStore> GenericUserStore<S> {
                 };
                 txn.put(PRONUNCIATION, &pron_key, &value.encode())?;
             }
-            Ok(Ok(token))
+            Ok(Ok((token, n_prons)))
         })??;
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         for (keys, exists) in indexed.into_inner() {
             self.note_index_add(keys, token, exists);
         }
+        self.set_user_pronunciation_count(token, count);
         if inserted.get() {
             self.mark_committed_phrase_write(db, true);
         } else {
             self.mark_committed_reading_write(db, true);
         }
         Ok(token)
+    }
+
+    fn set_user_pronunciation_count(&self, token: Token, count: usize) {
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            target
+                .pronunciation_counts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(token, u32::try_from(count).unwrap_or(u32::MAX));
+        }
+    }
+
+    /// Read the stored count of a live USER_FILE item in this session.
+    /// No phrase text or pronunciation record is decoded.
+    #[must_use]
+    pub fn user_pronunciation_count(&self, token: Token) -> Option<u32> {
+        self.inner
+            .libpinyin
+            .as_ref()?
+            .pronunciation_counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&token)
+            .copied()
     }
 
     /// Phrase text and pronunciations for `token`, if this store owns it.
@@ -3737,6 +3769,21 @@ impl<S: WriteStore> GenericUserStore<S> {
                 pending,
             ))
         })?;
+        if let Some(library) = user_library {
+            let mut counts = target
+                .pronunciation_counts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            counts.retain(|&token, _| phrase_index_library_index(token) != library);
+            if matches!(change, LibraryChange::UserLoad(_)) {
+                counts.extend(crate::store_libpinyin::loaded_pronunciation_counts(
+                    state,
+                    target.dir.as_deref(),
+                    originals.layout(),
+                    Some(library),
+                ));
+            }
+        }
         // The write took: now the index entries it set aside are kept.
         if let Some((library, entries)) = pending {
             target
@@ -3886,6 +3933,13 @@ impl<S: WriteStore> GenericUserStore<S> {
         // Commit succeeded: discard matched in-memory system payloads too.
         // Dropping an original's override restores it; dropping an appended
         // item removes its only payload. Do this before publishing the epoch.
+        if let Some(target) = self.inner.libpinyin.as_ref() {
+            target
+                .pronunciation_counts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .retain(|&token, _| (token & mask) != value);
+        }
         self.clear_masked_system_items(mask, value);
         self.clear_masked_kept_index(mask, value);
         let grams_left = self.mask_container(mask, value)?;
@@ -3994,6 +4048,13 @@ impl<S: WriteStore> GenericUserStore<S> {
                 #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
                 for keys in index_rows.readings() {
                     self.note_index_remove(keys, token);
+                }
+                if let Some(target) = self.inner.libpinyin.as_ref() {
+                    target
+                        .pronunciation_counts
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .remove(&token);
                 }
                 let grams_left =
                     self.mask_container(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)?;
