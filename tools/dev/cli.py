@@ -2,7 +2,7 @@
 import argparse
 import sys
 
-from . import doctor, host, registry, slot
+from . import check, doctor, host, registry, slot
 
 
 def _names(value):
@@ -17,6 +17,10 @@ def host_command(args):
     for line in doctor.host_lines():
         print(line)
     return 0
+
+
+def check_command(args):
+    return check.run(args.backend)
 
 
 def list_command(args):
@@ -68,6 +72,10 @@ def build_parser():
 
     p = sub.add_parser('host', help='report host capabilities only')
     p.set_defaults(func=host_command)
+
+    p = sub.add_parser('check', help='run one native setup check')
+    p.add_argument('backend', nargs='?', default='bdb')
+    p.set_defaults(func=check_command)
 
     p = sub.add_parser('list', help='list the registry, read-only')
     p.add_argument('--heavy', action='store_true', help='only rows marked heavy')

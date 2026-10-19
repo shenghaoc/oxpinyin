@@ -88,6 +88,11 @@ uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_
   tools/generate_w3_fixtures.py
 ```
 
+The native command interface uses just 1.59.0 or newer. Install it through the
+host route: `brew install just` on macOS, the distribution package on Linux,
+or `cargo install just --version 1.59.0 --locked`. The root `justfile`
+enforces the minimum version.
+
 Use your system's official package documentation if names or enabled
 repositories differ. The native check below prints the actual Berkeley DB
 header version and rejects unsupported versions during the build; do not
@@ -133,10 +138,10 @@ installation:
 . "$HOME/.cargo/env"
 rustup show
 cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
-bash tools/dev/check.sh bdb
+just check bdb
 ```
 
-The `cargo test` command tests native Rust packages; `check.sh bdb` additionally links
+The `cargo test` command tests native Rust packages; `just check bdb` additionally links
 and executes storage and C-library tests against Berkeley DB 5.3. Headers
 are the native library declarations used by the compiler; libclang reads
 them, and pkg-config locates native library installations. The check prints
@@ -152,7 +157,7 @@ In a fresh Bash terminal, use your actual checkout directory if different:
 ```bash
 cd ~/src/oxpinyin
 . "$HOME/.cargo/env"
-bash tools/dev/check.sh bdb
+just check bdb
 ```
 
 Cargo reuses downloaded dependencies and that checkout's `target/` outputs.
@@ -184,7 +189,7 @@ rustup show
 cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
 export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
 export CARGO_TARGET_DIR=target/tkrzw
-bash tools/dev/check.sh tkrzw
+just check tkrzw
 ```
 
 `export` sets a setting inherited by commands in this terminal. The library
