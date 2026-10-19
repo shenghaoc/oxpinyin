@@ -484,10 +484,21 @@ every machine.
 Every measurement report states the Valgrind version it used, as printed by
 `valgrind --version`, next to the figures. Callgrind `Ir` and Massif heap
 peaks move with the Valgrind release as well as the CPU, so a report
-without the version cannot be compared with another run. In a cloud session
-`tools/cloud/setup.sh` installs Valgrind from the distribution archive when
-it is missing and prints the version in its summary
-(`docs/runbooks/cloud.md`).
+without the version cannot be compared with another run. Normal cloud
+provisioning (`tools/cloud/setup.sh`) installs it idempotently and prints the
+version. Ordinary native setup and `--in-container` behavioural checks do not
+require it. On other measurement hosts, install it explicitly.
+On Debian/Ubuntu, `sudo` installs the distribution package:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y valgrind
+valgrind --version
+```
+
+In a root development container omit `sudo`; Fedora/RHEL use the available
+`valgrind` package via `dnf`. Do not install measurement tools for ordinary
+contributions.
 
 ### State the build recipe, per artifact
 
