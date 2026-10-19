@@ -168,7 +168,7 @@ pin's coupling while preserving its behaviour.
 | Facade phrase index | `FacadePhraseIndex` (`storage/phrase_index.h:438`): 16 `SubPhraseIndex*` and a running `m_total_freq` | `PhraseLibraries` (`oxpinyin-data/src/phrase_libraries.rs`): 16 lock-guarded slots; system total read from the chunk header, user total a separate row | different / unverified |
 | Pinyin key → tokens | `ChewingLargeTable2` per backend (`storage/chewing_large_table2_bdb.h:34` and peers): DBM keyed by packed `ChewingKey[len]`, values `PinyinIndexItem2` arrays (`storage/pinyin_phrase3.h:181`), per-length `ChewingTableEntry` objects with a reused buffer (`storage/chewing_large_table2.h:74`); results compressed to token ranges by `convert` (`:90`) | `ChewingTable` (`oxpinyin-data/src/chewing_table.rs`) over the same file and keys; each lookup decodes rows into a fresh `Vec`; range compression ported as `PhraseIndexRanges::convert` (`oxpinyin-core/src/lib.rs`) | different / unverified; one heap allocation per record per lookup where the pin reuses a buffer |
 | User pinyin table | the user DBM loaded into an in-memory DB (`storage/facade_chewing_table2.h:87`, `load_db`) and searched like the system table | `UserLookup` (`oxpinyin-user/src/lookup.rs`): text-keyed ordered maps plus an initials map, rebuilt in full when the phrase generation changes; the pin's file format is written back at save | different / unverified |
-| Phrase string → tokens | `PhraseLargeTable3` per backend; system `attach`, user `load_db` (`storage/facade_phrase_table3.h:81`, `:86`) | system: `PhraseTable` (`oxpinyin-data/src/phrase_table.rs`); exact user lookup: `UserStore::phrase_table_tokens_for_text` (`oxpinyin-user/src/store.rs`), a point read of the stored row | same / follows (exact lookup); suggestions retain the user snapshot |
+| Phrase string → tokens | `PhraseLargeTable3` per backend; system `attach`, user `load_db` (`storage/facade_phrase_table3.h:81`, `:86`) | system: `PhraseTable` (`oxpinyin-data/src/phrase_table.rs`); exact user lookup: `UserStore::phrase_table_tokens_for_text` (`oxpinyin-user/src/store.rs`), with one queried row cached by `RuntimeDict::tokens_for_text` | different / argued (exact lookup, below); suggestions retain the user snapshot |
 | Bigram row | `SingleGram` (`storage/ngram.h:59`): `MemoryChunk` of `{u32 total}` then sorted `SingleGramItem {token, freq}` (`storage/ngram.cpp:31`) | free functions over the same bytes in `oxpinyin-core/src/single_gram.rs` (`lower_bound`, `insert_freq`, `mask_out`, `merge_single_gram`) | same / follows |
 | System bigram | `Bigram::attach` read-only on the DBM (`storage/ngram_bdb.h:88`), one `load` per row | `BigramTable::load_raw_successors` (`oxpinyin-data/src/bigram_table.rs`) | same / follows |
 | User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`oxpinyin-store/src/lib.rs`): the pin's container per backend through the real library | same / follows |
@@ -187,10 +187,16 @@ both tables (`storage/facade_phrase_table3.h:120-126`) and appends enabled
 tokens (`storage/phrase_large_table3.cpp:29-51`). These sources were read
 with `git show 074a2219:<path>` in `/home/sheng/repos/libpinyin`.
 The BDB search makes one keyed get (`storage/phrase_large_table3_bdb.cpp:196-205`).
-The Rust user query also makes one keyed get. It allocates only the query
-key and matching tokens. It scans no other phrases or pronunciations.
-Its temporary space is O(query length + matches), as is the pin's.
-Adds, imports and deletes need no cache invalidation on this path.
+The Rust user query caches one text and its matching tokens. A different
+query or a phrase-table generation change triggers one keyed get. It scans
+no other phrases or pronunciations. The cached space is O(query length +
+matches). The pin also retains its last entry's buffer. New tokens, deletes,
+masks and library replacement move the shared generation. Reading merges
+keep it: the pin edits the item without calling `add_index`
+(`pinyin.cpp:563-582`), while a new token calls it (`:596-599`).
+`UserStore` advances the generation while it holds the database guard.
+Another store handle therefore invalidates the row after a token edit.
+Library visibility filters the cached raw tokens on every query.
 
 ## 2. Parsing
 

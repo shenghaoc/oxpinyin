@@ -1907,12 +1907,18 @@ impl<S: WriteStore> GenericUserStore<S> {
         *self.count_cache() = None;
     }
 
-    /// [`Self::mark_committed_write`] for a write that changed the phrase
-    /// or pronunciation tables: also moves the phrase generation, which
-    /// is what [`UserLookup`] watches. Count-only writes (training,
-    /// bigram seeding) take the plain form, so a keystroke that trains
-    /// never pays for an index rebuild.
+    /// A phrase-table edit invalidates exact-text rows and phonetic
+    /// lookups. Count-only writes take [`Self::mark_committed_write`].
     fn mark_committed_phrase_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
+        self.inner
+            .phrase_table_generation
+            .fetch_add(1, Ordering::AcqRel);
+        self.mark_committed_reading_write(db, has_user_data);
+    }
+
+    /// A pronunciation merge changes the phonetic lookup, but keeps the
+    /// phrase table's text-to-token rows (074a2219 pinyin.cpp:563-582).
+    fn mark_committed_reading_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
         self.inner.phrase_generation.fetch_add(1, Ordering::AcqRel);
         self.mark_committed_write(db, has_user_data);
     }
@@ -2058,6 +2064,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             dirty: AtomicBool::new(false),
             write_generation: AtomicU64::new(0),
             phrase_generation: AtomicU64::new(0),
+            phrase_table_generation: AtomicU64::new(0),
             #[cfg(test)]
             fail_replace: AtomicBool::new(false),
             has_user_data: AtomicBool::new(has_user_data),
@@ -2911,7 +2918,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         if indexed_new.get() {
             self.note_index_add(keys, token, false);
         }
-        self.mark_committed_phrase_write(db, true);
+        if indexed_new.get() {
+            self.mark_committed_phrase_write(db, true);
+        } else {
+            self.mark_committed_reading_write(db, true);
+        }
         Ok(token)
     }
 
@@ -2937,6 +2948,7 @@ impl<S: WriteStore> GenericUserStore<S> {
 
         let db = self.database();
         let indexed = std::cell::RefCell::new(Vec::new());
+        let inserted = std::cell::Cell::new(false);
         let token = db.write(|txn| {
             let lib_key = codec::encode_u8_str(ADDON_DICTIONARY, phrase);
             let existing = match txn.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
@@ -2974,6 +2986,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 )?;
                 txn.put(PHRASE_BY_LIB_TEXT, &lib_key, &codec::encode_token(token))?;
                 phrase_table::add_index(txn, phrase, token)?;
+                inserted.set(true);
 
                 let uni_key = codec::encode_token(token);
                 let prev = txn_get_u64_or(txn, UNIGRAM, &uni_key, 0)?;
@@ -3014,7 +3027,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         for (keys, exists) in indexed.into_inner() {
             self.note_index_add(keys, token, exists);
         }
-        self.mark_committed_phrase_write(db, true);
+        if inserted.get() {
+            self.mark_committed_phrase_write(db, true);
+        } else {
+            self.mark_committed_reading_write(db, true);
+        }
         Ok(token)
     }
 
@@ -3110,6 +3127,13 @@ impl<S: WriteStore> GenericUserStore<S> {
     #[must_use]
     pub fn phrase_generation(&self) -> u64 {
         self.inner.phrase_generation.load(Ordering::Acquire)
+    }
+
+    /// Current exact-text row generation. New tokens, removals, masks and
+    /// library replacements move it. Pronunciation-only writes do not.
+    #[must_use]
+    pub fn phrase_table_generation(&self) -> u64 {
+        self.inner.phrase_table_generation.load(Ordering::Acquire)
     }
 
     /// Next token the store will allocate.
@@ -4445,7 +4469,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         drop(system_items);
         self.revive_system_item(token);
         self.inner.has_system_items.store(true, Ordering::Relaxed);
-        self.mark_committed_phrase_write(db, true);
+        if existing.is_none() {
+            self.mark_committed_phrase_write(db, true);
+        } else {
+            self.mark_committed_reading_write(db, true);
+        }
         Ok(token)
     }
 }
@@ -4941,6 +4969,28 @@ mod tests {
                         before + 1,
                         "removal is a phrase write"
                     );
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn phrase_table_generation_keeps_readings_but_tracks_shared_token_edits() {
+                    let path = temp_path("phrase-table-gen");
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    assert_eq!(store.phrase_table_generation(), 0);
+                    let token = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    assert_eq!(store.phrase_table_generation(), 1);
+                    let phrase_before = store.phrase_generation();
+                    assert_eq!(store.add_phrase("你好", &[11, 20], None).unwrap(), token);
+                    assert_eq!(store.phrase_generation(), phrase_before + 1);
+                    assert_eq!(store.phrase_table_generation(), 1);
+                    store.observe_selection(SENTENCE_START, token).unwrap();
+                    assert_eq!(store.phrase_table_generation(), 1);
+
+                    let mut writer = store.clone();
+                    writer.add_phrase("中国", &[30, 40], None).unwrap();
+                    assert_eq!(store.phrase_table_generation(), 2);
+                    assert!(writer.remove_user_phrase(token).unwrap());
+                    assert_eq!(store.phrase_table_generation(), 3);
                     cleanup(&path);
                 }
 
