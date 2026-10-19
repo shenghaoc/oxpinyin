@@ -110,6 +110,7 @@
   },
   {
     "name": "bisect",
+    "heavy": true,
     "kind": "gate",
     "issues": [
       "coverage:20",
@@ -237,6 +238,7 @@
       "matching PREFIX/oracle-pin.txt and pin-built pinyin/zhuyin system tables"
     ],
     "timeout": 900,
+    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "bash",
@@ -673,6 +675,7 @@
       "pin-built libzhuyin and prebuilt dev libzhuyin for the cell"
     ],
     "timeout": 1800,
+    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "bash",
@@ -1727,6 +1730,7 @@
       "committed transformed-options input and word files"
     ],
     "timeout": 3600,
+    "heavy": true,
     "exclusive_resources": [],
     "command": [
       "python3",
