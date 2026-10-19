@@ -365,6 +365,58 @@ fn item_damage_answers_no_item_never_panics() {
     let _ = std::fs::remove_file(&path);
 }
 
+#[test]
+fn a_zero_ends_the_words_the_pin_converts() {
+    // `g_ucs4_to_utf8` stops at the first zero (`glib/gutf8.c:1037-1038` at
+    // GLib 2.89.4): a word behind it is never read, so it keeps its place in
+    // the length and cannot refuse the text; before it, it does.
+    for (words, text) in [
+        ([0x4F60_u32, 0, 0xD800], Some("\u{4f60}\0\u{fffd}")),
+        ([0x4F60_u32, 0, 0x8000_0000], Some("\u{4f60}\0\u{fffd}")),
+        ([0_u32, 0x11_0000, 0xFFFF_FFFF], Some("\0\u{fffd}\u{fffd}")),
+        ([0x4F60_u32, 0xD800, 0], None),
+        ([0xD800_u32, 0, 0x597D], None),
+        ([0x4F60_u32, 0, 0x597D], Some("\u{4f60}\0\u{597d}")),
+    ] {
+        let mut builder = ChunkBuilder::new(1);
+        builder.add(1, 1, "\u{1}\u{2}\u{3}", vec![(vec![0; 6], 1)]);
+        let mut bytes = builder.build();
+        let index_two = u32_at(&bytes[16..20]);
+        let content_start = 8 + index_two as usize;
+        let text_start = content_start + 8 + 6; // reserved 8 + item header 6
+        for (position, word) in words.into_iter().enumerate() {
+            let at = text_start + 4 * position;
+            bytes[at..at + 4].copy_from_slice(&word.to_le_bytes());
+        }
+        fix_checksum(&mut bytes);
+        let path = write_temp("zero-ends-conversion", &bytes);
+        let library = PhraseLibrary::open(&path).expect("layout still validates");
+        let item = library.item_at_slot(1).expect("item present");
+        assert_eq!(item.phrase_length(), 3, "{words:x?}");
+        assert_eq!(item.phrase_text().as_deref(), text, "{words:x?}");
+        assert_eq!(item.phrase_chars().count(), 3, "{words:x?}");
+        // A reader that carries the item on holds the words as stored: the
+        // stand-in U+FFFD for a word the conversion never reads is no word of
+        // the item, so it gets text only when every word is a scalar value.
+        assert_eq!(
+            item.phrase_words().collect::<Option<Vec<u32>>>().as_deref(),
+            Some(&words[..]),
+            "{words:x?}"
+        );
+        let scalar = words
+            .iter()
+            .all(|&word| char::from_u32(word).is_some())
+            .then(|| {
+                words
+                    .iter()
+                    .filter_map(|&word| char::from_u32(word))
+                    .collect::<String>()
+            });
+        assert_eq!(item.scalar_text(), scalar, "{words:x?}");
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
 fn u32_at(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
@@ -530,6 +582,76 @@ fn addon_load_keeps_its_answer_and_reports_the_refusal() {
     assert!(matches!(addons.load_reporting(4, &dir), Ok(false)));
     // An index that names no addon library is `false`, not a refusal.
     assert!(matches!(addons.load_reporting(3, &dir), Ok(false)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_addon_item_is_promoted_only_as_the_words_it_stores() {
+    // The choose-promotion path copies the addon item into the user store as
+    // text. The pin's string conversion stops at a zero and never reads a
+    // word behind it, so the text it reads for such an item stands U+FFFD for
+    // a word that is no scalar value; promoting that would store a word the
+    // item does not hold. The item stays out (as it always has); an item
+    // whose words are all scalar values, a zero among them, goes as stored.
+    let mut builder = ChunkBuilder::new(9);
+    builder.add(
+        1,
+        1,
+        "\u{1}\u{2}\u{3}",
+        vec![(vec![0x12, 0x34, 0x12, 0x34, 0x12, 0x34], 1)],
+    );
+    builder.add(
+        2,
+        1,
+        "\u{1}\u{2}\u{3}",
+        vec![(vec![0x12, 0x34, 0x12, 0x34, 0x12, 0x34], 1)],
+    );
+    builder.add(
+        3,
+        1,
+        "\u{4f60}\u{597d}",
+        vec![(vec![0x12, 0x34, 0x56, 0x78], 1)],
+    );
+    let mut bytes = builder.build();
+    let index_one = u32_at(&bytes[12..16]) as usize;
+    let index_two = u32_at(&bytes[16..20]) as usize;
+    let item_words = |bytes: &[u8], slot: usize| {
+        let offset = u32_at(&bytes[8 + index_one + 4 * slot..]) as usize;
+        8 + index_two + offset + 6
+    };
+    for (slot, words) in [(1_usize, [0x4F60_u32, 0, 0xD800]), (2, [0x4F60, 0, 0x597D])] {
+        let at = item_words(&bytes, slot);
+        for (position, word) in words.into_iter().enumerate() {
+            bytes[at + 4 * position..at + 4 * position + 4].copy_from_slice(&word.to_le_bytes());
+        }
+    }
+    fix_checksum(&mut bytes);
+    let dir = temp_dir("addon-promotion");
+    std::fs::write(dir.join("art.bin"), bytes).expect("write art.bin");
+    let mut addons = AddonDictionary::empty();
+    assert!(addons.load(4, &dir));
+    let token = |slot: u32| (4_u32 << 24) | slot;
+    // The text the pin's conversion reads exists for the first item, and the
+    // promotion still refuses it.
+    assert_eq!(
+        addons.phrase_text(token(1)).as_deref(),
+        Some("\u{4f60}\0\u{fffd}")
+    );
+    assert!(addons.phrase_item(token(1)).is_none());
+    assert_eq!(
+        addons
+            .phrase_item(token(2))
+            .map(|item| item.text)
+            .as_deref(),
+        Some("\u{4f60}\0\u{597d}")
+    );
+    assert_eq!(
+        addons
+            .phrase_item(token(3))
+            .map(|item| item.text)
+            .as_deref(),
+        Some("\u{4f60}\u{597d}")
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

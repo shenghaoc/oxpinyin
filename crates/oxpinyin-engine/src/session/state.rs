@@ -594,14 +594,14 @@ where
     }
 
     /// The decoded text of n-best row `index`, best-first
-    /// (`pinyin_get_sentence`'s payload). `None` when fewer rows exist.
+    /// (`pinyin_get_sentence`'s payload). `None` when fewer rows exist. A row
+    /// of phrases that all make the empty string has the empty text.
     #[must_use]
     pub fn sentence_text(&self, index: u8) -> Option<&str> {
         self.sentence
             .rows
             .get(usize::from(index))
             .map(|row| row.text.as_str())
-            .filter(|text| !text.is_empty())
     }
 
     /// The raw input typed so far.

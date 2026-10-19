@@ -18,7 +18,7 @@ use oxpinyin_core::kbest::{DecodedPath, k_best};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
 use oxpinyin_core::{
     Completeness, Cost, Dictionary, LanguageModel, MergedGram, OptionBits, PhraseEntry,
-    PhraseToken, SyllableKey, UserModel,
+    PhraseToken, SyllableKey, UserModel, phrase_c_string,
 };
 
 use crate::candidate::{Candidate, CandidateKind, CandidateList};
@@ -326,18 +326,11 @@ fn append_scan_entries(
     kind: CandidateKind,
     into: &mut Vec<Candidate>,
 ) {
-    for entry in entries {
-        let token = entry.token();
-        into.push(Candidate::new(
-            entry.into_text(),
-            kind,
-            keys,
-            end,
-            0,
-            Some(token),
-            None,
-        ));
-    }
+    into.extend(
+        entries
+            .into_iter()
+            .map(|entry| Candidate::from_entry(entry, kind, keys, end)),
+    );
 }
 
 /// Flushes one window's facade batch in the pin's array order.

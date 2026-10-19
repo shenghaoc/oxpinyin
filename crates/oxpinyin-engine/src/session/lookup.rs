@@ -281,7 +281,7 @@ where
                         // a disabled field makes every candidate equal on
                         // it, which is that comparator exactly.
                         let key = RankKey::for_sort_word(
-                            candidate.text().chars().count(),
+                            candidate.phrase_length(),
                             candidate.consumed_bytes(),
                             frequency,
                             self.lookup.sort_word,
@@ -840,7 +840,7 @@ where
                     .zip(frequencies)
                     .map(|(candidate, frequency)| {
                         let key = RankKey {
-                            phrase_length: candidate.text().chars().count(),
+                            phrase_length: candidate.phrase_length(),
                             pinyin_span: candidate.consumed_bytes(),
                             frequency,
                         };
@@ -1235,9 +1235,12 @@ where
 
                 let total = prefix_cost.saturating_add(*cost);
                 if cell.as_ref().is_none_or(|(seen, ..)| total < *seen) {
-                    let mut text = String::with_capacity(prefix_text.len() + entry.text().len());
+                    // The pin joins each phrase's string, which ends at its first zero
+                    // code point (`lookup.cpp:58`).
+                    let phrase = phrase_c_string(entry.text());
+                    let mut text = String::with_capacity(prefix_text.len() + phrase.len());
                     text.push_str(prefix_text);
-                    text.push_str(entry.text());
+                    text.push_str(phrase);
                     let mut history = Vec::with_capacity(prefix_history.len() + 1);
                     history.extend_from_slice(prefix_history);
                     history.push(entry.token());

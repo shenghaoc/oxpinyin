@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::ffi::CString;
 use std::os::raw::c_char;
 
-use oxpinyin_core::single_gram;
+use oxpinyin_core::{phrase_c_string, single_gram};
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
 
@@ -28,10 +28,21 @@ const BIGRAM_FILTER: u32 = 10;
 
 /// One predicted item before sort/dedup.
 struct Predicted {
+    /// The phrase as stored, one character per `ucs4_t`, from the prefix on:
+    /// its character count is the phrase length the sort reads.
     text: String,
     token: u32,
     candidate_type: lookup_candidate_type_t,
     frequency: u64,
+}
+
+impl Predicted {
+    /// The row's string, which the dedup compares and the caller reads: the
+    /// pin's `g_ucs4_to_utf8` of the phrase from `m_begin` on ends at the
+    /// first zero code point past it (`pinyin.cpp:1644`).
+    fn string(&self) -> &str {
+        phrase_c_string(&self.text)
+    }
 }
 
 /// Fills `inst.candidates` with predicted phrases for `prefix`.
@@ -154,16 +165,16 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
     // the first row. The winner remains at its original sorted position.
     let mut winners = std::collections::HashMap::new();
     for (index, item) in items.iter().enumerate() {
-        let winner = winners.entry(item.text.clone()).or_insert(index);
+        let winner = winners.entry(item.string().to_owned()).or_insert(index);
         if item.frequency > items[*winner].frequency {
             *winner = index;
         }
     }
     for (index, item) in items.into_iter().enumerate() {
-        if winners.get(&item.text) != Some(&index) {
+        if winners.get(item.string()) != Some(&index) {
             continue;
         }
-        let Ok(text) = CString::new(item.text) else {
+        let Ok(text) = CString::new(item.string()) else {
             continue;
         };
         inst.candidates.push(CapiCandidate {
@@ -409,6 +420,16 @@ fn append_predicted_prefix(
         // drives both — the sort counts `text.chars()`, the dedup and the
         // emitted candidate reuse the same string, matching upstream's
         // `_remove_duplicated_items_by_phrase_string` on the final string.
+        //
+        // The user's prefix (a C string, so no zero in it) matches the phrase
+        // table key's first words, which are the item's own, so no zero stands
+        // in the part sliced off, and a U+FFFD that the string reader stands
+        // for a word it never reads (one behind the item's first zero) lies
+        // behind a zero in `display` and is cut with it
+        // ([`Predicted::string`]). A key that disagrees with its item's words
+        // (a hand-built fixture) can break that: the pin starts converting at
+        // `m_begin`, reads the word past a zero in the sliced part, and hands
+        // out bytes or NULL there (#894, difference 1).
         let display: String = text.chars().skip(prefix_len).collect();
         // The sort key is the amplified law, not the raw count: the pin's
         // PREDICTED_PREFIX branch computes `(1−λ)·unigram/total·2²⁴`

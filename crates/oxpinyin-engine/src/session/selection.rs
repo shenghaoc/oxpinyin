@@ -140,7 +140,11 @@ where
         candidate: &Candidate,
         token_override: Option<PhraseToken>,
     ) -> Result<Selection, EngineError> {
+        // What the composition shows is the pin's string; the forced run keeps
+        // the phrase as stored, whose character count is the item's length
+        // (`still_spells`, `training_readings`).
         let text = candidate.text().to_owned();
+        let phrase_text = candidate.phrase_text();
         let advance = candidate.consumed_bytes();
         let token = token_override.or_else(|| candidate.token());
         // The chosen span in the store's coordinates — upstream's
@@ -172,7 +176,7 @@ where
         // the record follows the store, moving back to it. An n-best row
         // is a whole-composition hypothesis and takes the row path below.
         if span_start < self.record.consumed() && candidate.nbest_row().is_none() {
-            return self.select_behind(constraint_start, constraint_end, token, &text);
+            return self.select_behind(constraint_start, constraint_end, token, phrase_text);
         }
         // The raw bytes between the composition offset and the span start
         // were typed without being selected. For a re-anchored selection
@@ -254,7 +258,7 @@ where
                 constraint_start,
                 constraint_end,
                 token,
-                compact_str::CompactString::from(text.as_str()),
+                compact_str::CompactString::from(phrase_text),
             );
         }
         self.record.set_consumed(constraint_end);

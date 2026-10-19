@@ -138,7 +138,10 @@ pub extern "C" fn pinyin_token_get_phrase(
         }
     }
     if !utf8_str.is_null() {
-        let rendered = owned_cstr(&intro.text);
+        // `_token_get_phrase` hands out `g_ucs4_to_utf8` of the stored phrase, which
+        // ends at its first zero code point; `*len` above is the stored length
+        // (`pinyin.cpp:1639-1644`).
+        let rendered = owned_cstr(oxpinyin_core::phrase_c_string(&intro.text));
         // SAFETY: Null-checked above.
         unsafe {
             *utf8_str = rendered;

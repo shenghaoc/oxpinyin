@@ -36,6 +36,7 @@ use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry,
     PhraseIndexRanges, PhraseItemRead, PhraseToken, PronunciationRows, SyllableKey,
+    phrase_c_string,
 };
 use smallvec::SmallVec;
 
@@ -612,7 +613,10 @@ impl Trellis {
             let Some(part) = self.token_text(dictionary, cache, *token)? else {
                 return Ok(None);
             };
-            text.push_str(&part);
+            // `convert_to_utf8` joins the per-token strings (`lookup.cpp:58`),
+            // each of which ends at its phrase's first U+0000; `part` keeps
+            // the phrase as stored for its length.
+            text.push_str(phrase_c_string(&part));
         }
         Ok(Some(text))
     }
@@ -988,7 +992,11 @@ where
         let Some(text) = trellis.text(dictionary, &mut texts, &spans)? else {
             continue;
         };
-        if text.is_empty() {
+        // A result with no phrase is no row. A result whose phrases all make
+        // the empty string is one: `convert_to_utf8` joins their strings
+        // into "" and `pinyin_get_sentence` answers it (`lookup.cpp:58-63`,
+        // `pinyin.cpp:1477`) — a phrase whose first code point is zero.
+        if spans.is_empty() {
             continue;
         }
         let phrase_spans: Vec<PhraseSpan> = spans
