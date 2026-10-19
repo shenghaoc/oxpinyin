@@ -238,5 +238,35 @@ class DriverInvalidTests(unittest.TestCase):
         self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (0, 'DIFFER', True))
 
 
+class WorkerEntryTests(unittest.TestCase):
+    """Workers start from contract-worker.py, which loads the same driver."""
+
+    def test_run_worker_starts_the_cached_entry(self):
+        process = SimpleNamespace(returncode=0, stdout=b'{}\n', stderr=b'')
+        with tempfile.TemporaryDirectory() as scratch, \
+                patch.object(contract['subprocess'], 'run', return_value=process) as run:
+            contract['run_worker']('pinyin', '/so', '/data', 'case', scratch)
+        command = run.call_args.args[0]
+        self.assertEqual(command[1:], [str(contract['WORKER']), 'pinyin', '/so', '/data', 'case'])
+        self.assertEqual(Path(command[1]).name, 'contract-worker.py')
+        self.assertTrue(Path(command[1]).is_file())
+
+    def test_cached_entry_loads_the_same_registry(self):
+        import importlib.util
+        entry = Path(__file__).with_name('contract-worker.py')
+        spec = importlib.util.spec_from_file_location(
+            'contract_diff', entry.with_name('contract-diff.py'))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(sorted(module.CASES), sorted(contract['CASES']))
+        self.assertEqual({n: {k: v for k, v in s.items() if k != 'fn'} for n, s in module.CASES.items()},
+                         {n: {k: v for k, v in s.items() if k != 'fn' and k != 'abort'} | (
+                             {'abort': s['abort']} if s['abort'] is not contract['NO_ABORT'] else {'abort': module.NO_ABORT})
+                          for n, s in contract['CASES'].items()})
+        self.assertEqual(module.worker.__code__.co_code, contract['worker'].__code__.co_code)
+        source = entry.read_text()
+        self.assertIn("_module.worker(*sys.argv[1:])", source)
+
+
 if __name__ == '__main__':
     unittest.main()

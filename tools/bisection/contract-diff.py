@@ -10,9 +10,10 @@ Each case is a short function that drives one facade through the C ABI and
 returns the observations: return values, out-params (an untouched out-param
 keeps its sentinel), bytes consumed and the GLib log records. Every case runs
 in a fresh worker process per side (pin, subject) with a fresh user dir, so a
-crash is a result: an exit code or a signal. The two JSON documents must be
-identical, byte for byte. A key that starts with "~" is recorded but left out
-of the comparison (an indeterminate value at the pin).
+crash is a result: an exit code or a signal. Workers start from
+contract-worker.py, which imports this file with its bytecode cached. The two
+JSON documents must be identical, byte for byte. A key that starts with "~" is
+recorded but left out of the comparison (an indeterminate value at the pin).
 
 The raw `fprintf(stderr)` text of the pin is compared only by the cases
 that ask for it (`stderr=True`, below); every other case counts the lines.
@@ -66,6 +67,11 @@ UNTOUCHED = 0xABCDEF  # out-param sentinel
 CELL = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
 
 CASES = {}
+
+# Every worker is a fresh process started from this stub, which loads this
+# file through the import system so its bytecode is cached between workers
+# (a script run as __main__ is recompiled on every start).
+WORKER = Path(__file__).resolve().with_name('contract-worker.py')
 
 
 NO_ABORT = object()
@@ -5191,7 +5197,7 @@ def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
     env = dict(os.environ, TMPDIR=str(scratch))
     env.update(extra_env or {})
     before = set(os.listdir(scratch))
-    proc = subprocess.run([sys.executable, __file__, '--worker', mode, str(so), str(data), name],
+    proc = subprocess.run([sys.executable, str(WORKER), mode, str(so), str(data), name],
                           capture_output=True, env=env, timeout=timeout)
     stdout = proc.stdout.decode('utf-8', 'replace')
     # stderr keeps invalid UTF-8 apart from a real U+FFFD (`surrogateescape`),
@@ -10670,7 +10676,7 @@ def axis_c_import(k, operation, text):
     # through the same side's libpinyin export API in a fresh worker process.
     env = dict(os.environ, AXIS_C_REOPEN_USER=k.user)
     side = os.environ['AXIS_C_COMPANION_PINYIN']
-    proc = subprocess.run([sys.executable, __file__, '--worker', 'pinyin', side,
+    proc = subprocess.run([sys.executable, str(WORKER), 'pinyin', side,
                            k.data, 'axis-c-export-user'], capture_output=True, env=env)
     out['reopen_exit'] = proc.returncode
     out['reopen_stderr'] = proc.stderr.decode('utf-8', 'surrogateescape').replace(k.user, 'USER')
@@ -11240,6 +11246,7 @@ def main():
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == '--worker':
+        # The uncached entry; the driver starts its workers through WORKER.
         worker(*sys.argv[2:])
     else:
         sys.exit(main())
