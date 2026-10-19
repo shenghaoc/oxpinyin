@@ -94,6 +94,9 @@ pub struct StoreInner<S: WriteStore> {
     /// tables; the reverse index keys its cache on this, so count-only
     /// training writes never trigger a rebuild.
     pub(crate) phrase_generation: AtomicU64,
+    /// Exact text-to-token rows changed. Pronunciation-only merges leave
+    /// this stamp alone, so repeated text queries can retain their row.
+    pub(crate) phrase_table_generation: AtomicU64,
     /// Test only: the next library replacement's transaction fails after it
     /// has seeded, as a refused store write would.
     #[cfg(test)]

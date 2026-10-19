@@ -476,6 +476,7 @@ impl GenericUserStore<DefaultStore> {
             dirty: std::sync::atomic::AtomicBool::new(false),
             write_generation: std::sync::atomic::AtomicU64::new(0),
             phrase_generation: std::sync::atomic::AtomicU64::new(0),
+            phrase_table_generation: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             fail_replace: std::sync::atomic::AtomicBool::new(false),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),

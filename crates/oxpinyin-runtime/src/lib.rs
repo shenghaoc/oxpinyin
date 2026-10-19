@@ -332,6 +332,15 @@ fn chewing_query(syllables: &[SyllableKey]) -> Option<Vec<oxpinyin_core::Chewing
 /// The generation-stamped user-phrase lookup cache shared by clones.
 type LookupCache = Arc<Mutex<Option<(u64, Arc<UserLookup>)>>>;
 
+/// One exact-text row. Its size follows the query and its matches.
+struct TextTokens {
+    generation: u64,
+    text: Box<str>,
+    tokens: Vec<u32>,
+}
+
+type TextLookupCache = Arc<Mutex<Option<TextTokens>>>;
+
 // Only the trellis consumes this unreduced index. Ordinary UserLookup stays
 // unchanged. The initial projection bounds partial and complete queries alike.
 type TrellisBucket = Vec<(Vec<oxpinyin_core::ChewingKey>, PhraseEntry)>;
@@ -407,6 +416,7 @@ pub struct RuntimeDict {
     system: Arc<SystemDictionary>,
     user: Option<UserStore>,
     user_lookup_cache: LookupCache,
+    text_lookup_cache: TextLookupCache,
     trellis_cache: TrellisCache,
     addons: Arc<RwLock<AddonSet>>,
     punct: Arc<PunctTable>,
@@ -1419,13 +1429,27 @@ impl Dictionary for RuntimeDict {
         // Read only this text's row. A phrase write must not make this
         // query rebuild the full pronunciation and phrase indices.
         if let Some(store) = self.user.as_ref() {
-            tokens.extend(
-                store
+            let mut cache = self
+                .text_lookup_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let generation = store.phrase_table_generation();
+            if cache
+                .as_ref()
+                .is_none_or(|row| row.generation != generation || row.text.as_ref() != text)
+            {
+                *cache = store
                     .phrase_table_tokens_for_text(text)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(PhraseToken::new),
-            );
+                    .ok()
+                    .map(|tokens| TextTokens {
+                        generation,
+                        text: text.into(),
+                        tokens,
+                    });
+            }
+            if let Some(row) = cache.as_ref() {
+                tokens.extend(row.tokens.iter().copied().map(PhraseToken::new));
+            }
         }
         tokens.retain(|token| self.phrase_table_token_enabled(token.value()));
         // reduce_tokens groups the system and user table results by library.
@@ -2115,6 +2139,7 @@ impl Runtime {
             system: Arc::new(dict),
             user: user.clone(),
             user_lookup_cache: LookupCache::default(),
+            text_lookup_cache: TextLookupCache::default(),
             trellis_cache: TrellisCache::default(),
             addons: Arc::clone(&addons),
             punct: Arc::new(punct),
@@ -2589,6 +2614,39 @@ mod tests {
         let mut store = runtime.user_store().unwrap();
         let token = store.add_phrase(phrase, &keys, None).unwrap();
         assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(token)]);
+        let row_generation = store.phrase_table_generation();
+        let row_tokens = dict
+            .text_lookup_cache
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .tokens
+            .as_ptr();
+        let mut reading = keys.clone();
+        reading[0] = oxpinyin_user::toned_key(usize::from(keys[0]), 2).unwrap();
+        assert_eq!(store.add_phrase(phrase, &reading, None).unwrap(), token);
+        assert_eq!(store.phrase_table_generation(), row_generation);
+        assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(token)]);
+        assert_eq!(
+            dict.text_lookup_cache
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .generation,
+            row_generation
+        );
+        assert_eq!(
+            dict.text_lookup_cache
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .tokens
+                .as_ptr(),
+            row_tokens
+        );
         assert!(store.remove_user_phrase(token).unwrap());
         assert!(dict.tokens_for_text(phrase).is_empty());
 
@@ -2601,6 +2659,32 @@ mod tests {
         assert!(dict.tokens_for_text(phrase).is_empty());
         let cache = dict.user_lookup_cache.lock().unwrap();
         assert!(Arc::ptr_eq(&snapshot, &cache.as_ref().unwrap().1));
+    }
+
+    #[test]
+    fn tokens_for_text_retains_the_row_after_a_system_reading_merge() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
+        let dict = runtime.dict();
+        let tokens = dict.tokens_for_text("你好");
+        let token = tokens[0].value();
+        let library = u8::try_from(token >> 24).unwrap();
+        let keys: Vec<_> = ["ni", "hao"]
+            .into_iter()
+            .map(|text| PinyinKey::try_from(SyllableKey::from_text(text).unwrap().index()).unwrap())
+            .collect();
+        let mut store = runtime.user_store().unwrap();
+        let generation = store.phrase_table_generation();
+        store
+            .add_system_phrase_in(library, Some(token), "你好", &keys, Some(5))
+            .unwrap();
+        assert_eq!(store.phrase_table_generation(), generation);
+        assert_eq!(dict.tokens_for_text("你好"), tokens);
+        let added = store
+            .add_system_phrase_in(library, None, "你鎄", &keys, Some(5))
+            .unwrap();
+        assert!(store.phrase_table_generation() > generation);
+        assert_eq!(dict.tokens_for_text("你鎄"), [PhraseToken::new(added)]);
     }
 
     // `new_session`'s own gate, pinned. The engine gate has
