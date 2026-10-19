@@ -540,7 +540,7 @@ class CancellationTests(unittest.TestCase):
         except FileNotFoundError:
             return False
 
-    def cancel(self, signum, through_runner=False, leader_exits=False):
+    def cancel(self, signum, through_runner=False, leader_exits=False, per_call=False):
         with tempfile.TemporaryDirectory() as scratch:
             prefix = Path(scratch)
             (prefix / 'lib/libpinyin/data').mkdir(parents=True)
@@ -555,14 +555,22 @@ class CancellationTests(unittest.TestCase):
                               f'if child and {leader_exits!r}:\n'
                               '    signal.signal(signal.SIGTERM, signal.SIG_DFL)\n'
                               'time.sleep(60)\n')
+            setup = "module.WORKER = pathlib.Path(sys.argv.pop(2)); "
+            if per_call:
+                # Keep this process-group test independent of compiler and profiler tools.
+                setup = ("module.__file__ = sys.argv.pop(2); "
+                         "module.per_call_helper = lambda scratch: pathlib.Path('/unused'); "
+                         "run = module.per_call_run; "
+                         "module.per_call_run = lambda *a, **kw: run(*(*a[:5], 'wall', *a[6:]), **kw); ")
             code = ("import importlib.util, pathlib, sys; "
                     "spec = importlib.util.spec_from_file_location('contract', sys.argv[1]); "
                     "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
-                    "module.WORKER = pathlib.Path(sys.argv.pop(2)); sys.argv.pop(0); "
+                    + setup + "sys.argv.pop(0); "
                     "sys.exit(module.main())")
             command = [sys.executable, '-c', code, str(Path(driver.__file__).resolve()),
                        str(worker), 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
-                       '--cases', 'default-option-parse']
+                       *(['--per-call', 'lookup-only', '--per-call-facades', 'pinyin'] if per_call else
+                         ['--cases', 'default-option-parse'])]
             if through_runner:
                 command = [sys.executable, str(Path(__file__).with_name('run-all.py')),
                            '--heavy-slot', '--', *command]
@@ -621,6 +629,11 @@ class CancellationTests(unittest.TestCase):
     def test_sigterm_through_run_all(self):
         self.cancel(signal.SIGTERM, through_runner=True)
 
+    def test_per_call_sigterm(self):
+        for leader_exits in (False, True):
+            with self.subTest(leader_exits=leader_exits):
+                self.cancel(signal.SIGTERM, leader_exits=leader_exits, per_call=True)
+
     def test_exception_and_keyboard_interrupt_stop_group_and_reap(self):
         for error in (KeyboardInterrupt(), RuntimeError('wait failed')):
             with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as scratch:
@@ -632,6 +645,139 @@ class CancellationTests(unittest.TestCase):
                 self.assertEqual([call.args for call in kill.call_args_list],
                                  [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)])
                 self.assertEqual(process.wait.call_count, 2)
+
+
+class PerCallTests(unittest.TestCase):
+    def test_wait_errors_stop_and_reap_the_per_call_group(self):
+        for error in (KeyboardInterrupt(), RuntimeError('wait failed')):
+            with self.subTest(error=type(error).__name__), tempfile.TemporaryDirectory() as scratch:
+                process = worker_process()
+                process.__enter__.return_value = process
+                process.communicate.side_effect = error
+                with patch.object(driver, 'CANCELLED', False), \
+                        patch.object(driver.subprocess, 'Popen', return_value=process), \
+                        patch.object(driver.os, 'killpg') as kill, self.assertRaises(type(error)):
+                    driver.per_call_run('pinyin', '/so', '/data', 'case', '/helper',
+                                        'wall', 'count', scratch, 0)
+                self.assertEqual([call.args for call in kill.call_args_list],
+                                 [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)])
+                self.assertEqual(process.wait.call_count, 2)
+
+    def test_deadline_stops_and_reaps_the_per_call_group(self):
+        process = worker_process()
+        process.__enter__.return_value = process
+        with tempfile.TemporaryDirectory() as scratch, patch.object(driver, 'CANCELLED', False), \
+                patch.object(driver.time, 'monotonic', side_effect=[0, 901]), \
+                patch.object(driver.subprocess, 'Popen', return_value=process), \
+                patch.object(driver.os, 'killpg') as kill, self.assertRaises(subprocess.TimeoutExpired):
+            driver.per_call_run('pinyin', '/so', '/data', 'case', '/helper',
+                                'wall', 'count', scratch, 0)
+        self.assertEqual([call.args for call in kill.call_args_list],
+                         [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)])
+        self.assertEqual(process.wait.call_count, 2)
+
+    def test_ir_parser_requires_one_nonzero_ir_total(self):
+        self.assertEqual(contract['per_call_ir']('noise\nevents: Ir\ntotals: 24000\n'), 24000)
+        for text in ('', 'events: Ir\ntotals: 0', 'events: Dr\ntotals: 25',
+                     'events: Ir Dr\ntotals: 25 1', 'events: Ir\ntotals: 25\ntotals: 26'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                contract['per_call_ir'](text)
+
+    def test_calibration_subtracts_only_three_instruction_callee(self):
+        for total, expected in ((25000, 22), (24000, 21), (31000, 28)):
+            self.assertEqual(contract['per_call_calibration'](total), expected)
+        for total in (0, 3000, 24001):
+            with self.assertRaises(ValueError):
+                contract['per_call_calibration'](total)
+        with self.assertRaises(ValueError):
+            contract['per_call_calibration'](24000, 999)
+
+    def sample(self, result=None, calls=7):
+        return dict(observation=observation(result=result or {'ret': True, 'logs': []}),
+                    stats={op: dict(calls=calls, ns=70) for op in contract['PER_CALL_OPS']}, ir=3500)
+
+    def test_samples_keep_strict_verdict_and_attempt_counts(self):
+        spec = contract['CASES']['wrap-256th-reading']
+        good = self.sample()
+        contract['per_call_checked'](spec, good, good, ('count',))
+        for sample in (self.sample({'ret': False}), self.sample(calls=8), self.sample(calls=0)):
+            with self.assertRaises(ValueError):
+                contract['per_call_checked'](spec, good, sample, ('count',))
+        dead = self.sample()
+        dead['observation']['exit'] = -signal.SIGSEGV
+        with self.assertRaisesRegex(ValueError, 'INVALID'):
+            contract['per_call_checked'](spec, dead, dead, ('count',))
+
+    def test_default_step_scope_has_no_side_effect(self):
+        kit = object.__new__(contract['Kit'])
+        with kit.per_call_step():
+            pass
+        self.assertEqual(vars(kit), {})
+
+    def test_measurement_scope_resets_after_error(self):
+        kit = object.__new__(contract['PerCallKit'])
+        kit.active = False
+        from unittest.mock import Mock
+        kit.native = Mock()
+        with self.assertRaises(RuntimeError):
+            with kit.per_call_step():
+                self.assertTrue(kit.active)
+                raise RuntimeError('fixture failed')
+        self.assertFalse(kit.active)
+        kit.native.pc_start.assert_called_once_with()
+
+    def test_only_calls_inside_step_use_native_wrapper(self):
+        from unittest.mock import Mock
+        kit = object.__new__(contract['PerCallKit'])
+        kit.native, kit.active, kit.operations = Mock(), False, ('count',)
+        original = contract['C'].CFUNCTYPE(contract['B'], contract['P'], contract['U'],
+                                         contract['C'].POINTER(contract['U']))(lambda *args: True)
+        with patch.object(contract['Kit'], 'fn', return_value=original):
+            counted = kit.fn('token_get_n_pronunciation', contract['B'])
+        num = contract['U'](123)
+        # Preparation and item reads use the original function even when the
+        # callable was bound before a measured step.
+        self.assertTrue(counted(None, 7, contract['C'].byref(num)))
+        kit.native.pc_count.assert_not_called()
+        with kit.per_call_step():
+            counted(None, 7, contract['C'].byref(num))
+        kit.native.pc_count.assert_called_once()
+        counted(None, 7, contract['C'].byref(num))
+        kit.native.pc_count.assert_called_once()
+
+    def test_native_rounds_interleave_and_profile_each_side(self):
+        from argparse import Namespace
+        globals_ = contract['run_per_call'].__globals__
+        calls = []
+        def run(mode, so, data, name, helper, metric, operations, scratch, cpu):
+            calls.append((so.name, metric, name, operations))
+            sample = self.sample()
+            if name == 'calibrate':
+                sample['ir'] = 24000
+                sample['stats'][operations]['calls'] = 1000
+            return sample
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch)
+            (root / 'lib').mkdir()
+            for name in ('lib/libpinyin.so', 'base.so', 'subject.so'):
+                (root / name).touch()
+            args = Namespace(cases='', issue=[], family=[], expect_parent=False, observations=None,
+                             plan_only=False, regenerate_sentence_ties=None, axis_c_replacement=None,
+                             axis_c_mutation=None, axis_c_snapshot_check=False, per_call='wrap',
+                             per_call_facades='pinyin', per_call_cpu=None, prefix=root,
+                             pinyin_so=root / 'subject.so', zhuyin_so=None,
+                             base_pinyin_so=root / 'base.so', base_zhuyin_so=None)
+            import contextlib, io
+            with patch.dict(globals_, per_call_helper=lambda scratch: root / 'helper.so', per_call_run=run), \
+                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(contract['run_per_call'](args, None), 0)
+        native = [name for name, metric, _, _ in calls if metric == 'wall']
+        self.assertEqual(native, ['libpinyin.so', 'base.so', 'subject.so',
+                                  'base.so', 'subject.so', 'libpinyin.so',
+                                  'subject.so', 'libpinyin.so', 'base.so'])
+        profiled = [(name, op) for name, metric, case, op in calls if metric == 'ir' and case != 'calibrate']
+        self.assertEqual(profiled, [(side, op) for side in ('libpinyin.so', 'base.so', 'subject.so')
+                                    for op in ('add', 'count', 'lookup')])
 
 
 if __name__ == '__main__':

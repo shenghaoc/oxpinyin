@@ -584,3 +584,59 @@ The line is bulk machine output, not evidence as such.
 Derived readers stay in `tools/bisection/` (`rss-smaps.py`,
 `cg-calls.py`): they are tools, not evidence, and they are what makes the
 pipeline reproducible for anyone holding the bundle.
+
+
+## Per-call C-API costs
+
+Use the contract driver for #882, #883 and #884. Build base and subject
+with `tools/packaging/install.sh`. Use one target directory per worktree.
+Run this command under the shared host admission wrapper:
+
+```sh
+tools/bisection/run-all.py --heavy-slot -- python3 tools/bisection/contract-diff.py \
+  bdb "$PINYIN_ORACLE_PREFIX" "$SUBJECT_PREFIX/lib/libpinyin.so" \
+  --zhuyin-so "$SUBJECT_PREFIX/lib/libzhuyin.so" \
+  --base-pinyin-so "$BASE_PREFIX/lib/libpinyin.so" \
+  --base-zhuyin-so "$BASE_PREFIX/lib/libzhuyin.so" \
+  --per-call wrap --per-call-cpu 2
+```
+
+The host needs an x86-64 Linux CPU, a C compiler, binutils, Valgrind and
+its client headers. Select an allowed CPU. The driver uses the lowest
+allowed CPU when `--per-call-cpu` is absent. `--per-call-facades pinyin`
+or `zhuyin` restricts a smoke test. Omit both base paths for a two-side run.
+Use `--per-call lookup-only` for 10,000 native lookup calls with no adds.
+That loop reuses one GArray and looks up `你好` in a fresh context.
+It measures a stable store. The wrap workload measures lookup after each add.
+
+The wrap workload runs the existing `wrap-256th-reading` cases on both
+facades. It selects only calls inside `step`, including merges and the
+256th and 257th attempts. It excludes reading preparation and item reads.
+The fixture, frequencies and observation fields stay the same. Every
+sample must pass the existing strict verdict predicate. Attempt counts
+must agree. A crash, missing result or changed observation fails the run.
+
+Wall time is the median of three interleaved rounds per side and facade.
+Each round has a fresh process and user directory. The side order rotates.
+Native timestamps bracket the function-pointer call. Python work, fixture
+setup and teardown are outside that interval. Results use ns/call and
+include the native clock boundary cost. Wall time has no subtraction.
+This boundary differs from #880's Python wall boundary; do not compare
+absolute times between those campaigns.
+
+Callgrind client requests bracket only the selected C call. Collection
+stays off elsewhere. A separate pass measures each operation and side.
+The helper calibrates each wrapper with 1,000 calls to a three-instruction
+callee. It checks the callee's disassembly. It subtracts those three
+instructions from gross wrapper Ir, then subtracts the resulting wrapper
+cost from each real call. Calibration runs in the same campaign; it does
+not reuse #880's constants. Results use Ir/call. Ratios use this run's pin.
+The output also gives library hashes, native round values and the digest
+of the compared observations.
+
+The driver compiles a temporary helper from source embedded in the driver.
+This helper is not a second driver. It writes profiler output to
+`/dev/stderr`, parses it in memory and saves no capture. Temporary helper
+and fixture files are removed at exit. Measurement mode rejects capture,
+parent and fixture-regeneration modes. The ordinary contract runner keeps
+its existing selection and verdict rules.
