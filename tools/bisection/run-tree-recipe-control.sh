@@ -40,6 +40,7 @@
 # Captures are written to /out and are not committed.
 
 set -euo pipefail
+HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 
 SRC_OLD=${SRC_OLD:-/src-old}
 SRC_CURR=${SRC_CURR:-/src-curr}
@@ -88,7 +89,7 @@ L_SO=$(find /opt/libpinyin-tkrzw -name 'libpinyin.so' \( -type f -o -type l \) -
 build_cargo() { # <src> <out>
     local src=$1 out=$2 target
     target=$(mktemp -d)
-    cargo build --locked --release -p oxpinyin-capi \
+    "$HEAVY_RUNNER" --heavy-slot -- cargo build --locked --release -p oxpinyin-capi \
         --no-default-features --features tkrzw \
         --manifest-path "$src/Cargo.toml" \
         --target-dir "$target" >&2
@@ -99,7 +100,7 @@ build_cargo() { # <src> <out>
 build_cinstall() { # <src> <out> <features>
     local src=$1 out=$2 feats=$3 target stage
     target=$(mktemp -d); stage=$(mktemp -d)
-    cargo cinstall --locked --release -p oxpinyin-capi \
+    "$HEAVY_RUNNER" --heavy-slot -- cargo cinstall --locked --release -p oxpinyin-capi \
         --no-default-features --features "$feats" \
         --manifest-path "$src/Cargo.toml" \
         --target-dir "$target" --destdir "$stage" --prefix /usr >&2

@@ -91,7 +91,7 @@ oracle_cell_artifact() {
     local variable=$1 filename=$2 package=$3 artifact
     artifact=${!variable:-}
     if [[ -z $artifact ]]; then
-        cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+        "$REPO_ROOT/tools/bisection/run-all.py" --heavy-slot -- cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
             -p "$package" --no-default-features --features "$CAPI_FEATURE" >&2 || return 1
         artifact=$CARGO_TARGET_DIR/debug/$filename
     else
