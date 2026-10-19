@@ -8,7 +8,7 @@
 use core::slice;
 
 use compact_str::CompactString;
-use oxpinyin_core::{Cost, PhraseToken};
+use oxpinyin_core::{Cost, PhraseEntry, PhraseToken, holds_zero, phrase_c_string};
 
 /// Where a candidate came from.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -49,6 +49,11 @@ pub struct Candidate {
     /// so its rows carry each span's absolute start. Sentence rows and
     /// fallbacks carry 0.
     span_start: usize,
+    /// Whether `text` holds a U+0000, where the pin's string for the phrase
+    /// ends ([`Self::text`]). Settled once, where the text is made, so the
+    /// readers of the string (a dictionary hit is read at least once per
+    /// refresh) do not scan for it.
+    zero: bool,
 }
 
 impl Candidate {
@@ -61,8 +66,10 @@ impl Candidate {
         token: Option<PhraseToken>,
         nbest_index: Option<u8>,
     ) -> Self {
+        let text = text.into();
+        let zero = holds_zero(&text);
         Self {
-            text: text.into(),
+            text,
             kind,
             consumed_keys,
             consumed_bytes,
@@ -70,6 +77,31 @@ impl Candidate {
             token,
             nbest_index,
             span_start: 0,
+            zero,
+        }
+    }
+
+    /// A dictionary hit as a candidate, with the entry's own answer to
+    /// whether its text holds a U+0000 (the dictionary decoder learns it
+    /// while it reads the stored words).
+    pub(crate) fn from_entry(
+        entry: PhraseEntry,
+        kind: CandidateKind,
+        consumed_keys: usize,
+        consumed_bytes: usize,
+    ) -> Self {
+        let token = entry.token();
+        let zero = entry.holds_zero();
+        Self {
+            text: entry.into_text(),
+            kind,
+            consumed_keys,
+            consumed_bytes,
+            cost: 0,
+            token: Some(token),
+            nbest_index: None,
+            span_start: 0,
+            zero,
         }
     }
 
@@ -94,10 +126,30 @@ impl Candidate {
         self.span_start
     }
 
-    /// The text this candidate would insert.
+    /// The text this candidate would insert: the string the pin hands out for
+    /// it, which ends at the phrase's first U+0000
+    /// ([`oxpinyin_core::phrase_c_string`]).
     #[must_use]
     pub fn text(&self) -> &str {
+        if self.zero {
+            phrase_c_string(&self.text)
+        } else {
+            &self.text
+        }
+    }
+
+    /// The phrase as stored, one character per `ucs4_t` — a U+0000 and what
+    /// follows it included. Its character count is the item's
+    /// `get_phrase_length()`, which the pin reads from the header and not
+    /// from the string ([`Self::text`]).
+    pub(crate) fn phrase_text(&self) -> &str {
         &self.text
+    }
+
+    /// The phrase's stored length in characters: the sort key's `m_phrase_length`
+    /// (`pinyin.cpp:1953-1993`).
+    pub(crate) fn phrase_length(&self) -> usize {
+        self.text.chars().count()
     }
 
     /// Where the candidate came from.
@@ -233,7 +285,7 @@ impl<'a> IntoIterator for &'a CandidateList {
 
 #[cfg(test)]
 mod tests {
-    use oxpinyin_core::PhraseToken;
+    use oxpinyin_core::{PhraseEntry, PhraseToken};
 
     use super::{Candidate, CandidateKind, CandidateList};
 
@@ -258,6 +310,44 @@ mod tests {
                 None,
             ),
         ])
+    }
+
+    #[test]
+    fn a_zero_ends_the_string_and_not_the_stored_length() {
+        // The pin's candidate string is `g_ucs4_to_utf8` of the phrase, which
+        // stops at the first zero code point; the sort key reads the length
+        // from the item header (`pinyin.cpp:1953-1993`).
+        for (stored, string, length) in [
+            ("\u{59d4}\0\u{4f1a}", "\u{59d4}", 3),
+            ("\0\u{52a1}\u{9662}", "", 3),
+            ("\u{529e}\u{516c}\0", "\u{529e}\u{516c}", 3),
+            ("\u{4f60}\u{597d}", "\u{4f60}\u{597d}", 2),
+            ("", "", 0),
+        ] {
+            let candidate = Candidate::new(
+                stored.to_owned(),
+                CandidateKind::Phrase,
+                length,
+                length,
+                0,
+                Some(PhraseToken::new(1)),
+                None,
+            );
+            assert_eq!(candidate.text(), string, "{stored:?}");
+            assert_eq!(candidate.phrase_text(), stored, "{stored:?}");
+            assert_eq!(candidate.phrase_length(), length, "{stored:?}");
+            // A dictionary hit takes the decoder's answer instead of
+            // looking for a zero, and reads the same.
+            let zero = stored.contains('\0');
+            let hit = Candidate::from_entry(
+                PhraseEntry::decoded(PhraseToken::new(1), stored, zero),
+                CandidateKind::Phrase,
+                length,
+                length,
+            );
+            assert_eq!(hit, candidate, "{stored:?}");
+            assert_eq!(hit.text(), string, "{stored:?}");
+        }
     }
 
     #[test]

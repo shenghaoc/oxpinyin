@@ -191,18 +191,25 @@ oxpinyin_capi_marshal::write_owned_sentence!(test_owned_cstr);
 // ── write_owned_sentence tests ─────────────────────────────────────────
 
 #[test]
-fn sentence_empty_text_returns_false_and_nulls_out() {
+fn sentence_empty_text_writes_an_empty_string() {
+    // `g_ucs4_to_utf8` allocates "" for a phrase whose first code point is
+    // zero, `convert_to_utf8` returns it and `pinyin_get_sentence` answers
+    // true with it.
     let mut out: *mut c_char = std::ptr::dangling_mut::<c_char>();
     let ok = write_owned_sentence("", &mut out);
-    assert!(!ok);
-    assert!(out.is_null(), "out-param must be nulled on empty text");
+    assert!(ok);
+    assert!(!out.is_null(), "an empty string is not NULL");
+
+    // SAFETY: `out` was produced by `test_owned_cstr` (a `CString::into_raw`).
+    let cstr = unsafe { std::ffi::CString::from_raw(out) };
+    assert_eq!(cstr.to_bytes(), b"");
 }
 
 #[test]
 fn sentence_empty_text_null_out_param() {
     // Null sentence pointer with empty text: must not crash.
     let ok = write_owned_sentence("", ptr::null_mut());
-    assert!(!ok);
+    assert!(ok);
 }
 
 #[test]

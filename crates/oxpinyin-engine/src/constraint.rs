@@ -20,7 +20,7 @@
 //! dictionary lookup.
 
 use compact_str::CompactString;
-use oxpinyin_core::PhraseToken;
+use oxpinyin_core::{PhraseToken, phrase_c_string};
 
 use crate::error::EngineError;
 
@@ -249,13 +249,21 @@ impl ConstraintStore {
     /// to right — the record-rebuild input. Gaps between runs are free
     /// spans (`diff_result` forces only the differing phrases); the
     /// caller supplies their text from the current buffer, so the rebuilt
-    /// record never drops raw input the forcings skip over.
+    /// record never drops raw input the forcings skip over. The text is
+    /// what the composition shows: the pin's string for the phrase, which
+    /// ends at its first U+0000 (the cell keeps the stored phrase, whose
+    /// length `validate` reads).
     pub(crate) fn runs(&self) -> Vec<(usize, usize, PhraseToken, CompactString)> {
         self.cells
             .iter()
             .enumerate()
             .filter_map(|(start, cell)| match cell {
-                Cell::OneStep { token, end, text } => Some((start, *end, *token, text.clone())),
+                Cell::OneStep { token, end, text } => Some((
+                    start,
+                    *end,
+                    *token,
+                    CompactString::from(phrase_c_string(text)),
+                )),
                 _ => None,
             })
             .collect()

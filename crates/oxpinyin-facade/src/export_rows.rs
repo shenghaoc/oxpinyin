@@ -7,7 +7,7 @@
 //! over the context's user store and optional runtime — no C types cross
 //! this boundary.
 
-use oxpinyin_core::{ChewingKey, SyllableKey};
+use oxpinyin_core::{ChewingKey, SyllableKey, phrase_c_string, ucs4_phrase_chars};
 use oxpinyin_runtime::{PhraseItemView, RuntimeDict};
 use oxpinyin_user::{
     ADDON_DICTIONARY, ExportedPhrase, MAX_KEY_TONE, NETWORK_DICTIONARY, PinyinKey, SENTENCE_START,
@@ -254,6 +254,13 @@ fn user_key_assert(key: PinyinKey) -> Option<ExportAssert> {
     None
 }
 
+/// The characters `g_ucs4_to_utf8` converts of a stored phrase read with
+/// [`oxpinyin_core::ucs4_phrase_char`]: those before its first zero code
+/// point, where the conversion ends (`glib/gutf8.c:1037-1038`).
+fn converted(chars: impl Iterator<Item = Option<char>>) -> impl Iterator<Item = Option<char>> {
+    chars.take_while(|char| *char != Some('\0'))
+}
+
 /// Writes `chars` as UTF-8 to the front of `out`, stopping before a
 /// character that would not fit; returns the bytes written.
 fn write_chars(chars: impl Iterator<Item = char>, out: &mut [u8]) -> usize {
@@ -309,22 +316,27 @@ fn write_joined(syllables: Syllables<'_>, out: &mut [u8]) -> usize {
 }
 
 impl ExportRow<'_> {
-    /// The phrase's UTF-8 length in bytes, or `None` when a stored code
-    /// point is not a Unicode scalar value: the pin's `g_ucs4_to_utf8` runs
-    /// with no error slot and hands the caller a NULL phrase for such an
-    /// item (`pinyin.cpp:715-716`), the row's other fields intact.
+    /// The phrase's UTF-8 length in bytes, or `None` when a code point the
+    /// conversion reads is not a Unicode scalar value: the pin's
+    /// `g_ucs4_to_utf8` runs with no error slot and hands the caller a NULL
+    /// phrase for such an item (`pinyin.cpp:715-716`), the row's other fields
+    /// intact. The conversion stops at the first zero code point
+    /// (`glib/gutf8.c:1037-1038`): the text is what comes before it, and a
+    /// word behind it is never read. (The pin's NULL is for a value of
+    /// 0x80000000 or more; a surrogate or a value up to 0x7FFFFFFF it hands
+    /// out as bytes that are not UTF-8, which a `str` cannot hold: #894.)
     #[must_use]
     pub fn text_len(&self) -> Option<usize> {
         match &self.0 {
-            RowSource::Mapped { item, .. } => item
-                .phrase_chars()
+            RowSource::Mapped { item, .. } => converted(item.phrase_chars())
                 .map(|c| c.map(char::len_utf8))
                 .sum::<Option<usize>>(),
-            RowSource::Override { phrase, .. } => phrase
-                .iter()
-                .map(|&code| char::from_u32(code).map(char::len_utf8))
-                .sum::<Option<usize>>(),
-            RowSource::User { text, .. } => Some(text.len()),
+            RowSource::Override { phrase, .. } => {
+                converted(ucs4_phrase_chars(phrase.iter().copied()))
+                    .map(|c| c.map(char::len_utf8))
+                    .sum::<Option<usize>>()
+            }
+            RowSource::User { text, .. } => Some(phrase_c_string(text).len()),
         }
     }
 
@@ -345,11 +357,15 @@ impl ExportRow<'_> {
     /// at least [`Self::text_len`] bytes, and returns how many it wrote.
     pub fn write_text(&self, out: &mut [u8]) -> usize {
         match &self.0 {
-            RowSource::Mapped { item, .. } => write_chars(item.phrase_chars().flatten(), out),
-            RowSource::Override { phrase, .. } => {
-                write_chars(phrase.iter().filter_map(|&code| char::from_u32(code)), out)
+            RowSource::Mapped { item, .. } => {
+                write_chars(converted(item.phrase_chars()).flatten(), out)
             }
+            RowSource::Override { phrase, .. } => write_chars(
+                converted(ucs4_phrase_chars(phrase.iter().copied())).flatten(),
+                out,
+            ),
             RowSource::User { text, .. } => {
+                let text = phrase_c_string(text);
                 let width = text.len().min(out.len());
                 out[..width].copy_from_slice(&text.as_bytes()[..width]);
                 width
@@ -387,11 +403,11 @@ impl ExportRow<'_> {
     pub fn text_string(&self) -> Option<String> {
         let mut out = String::with_capacity(self.text_len()?);
         match &self.0 {
-            RowSource::Mapped { item, .. } => out.extend(item.phrase_chars().flatten()),
+            RowSource::Mapped { item, .. } => out.extend(converted(item.phrase_chars()).flatten()),
             RowSource::Override { phrase, .. } => {
-                out.extend(phrase.iter().filter_map(|&code| char::from_u32(code)));
+                out.extend(converted(ucs4_phrase_chars(phrase.iter().copied())).flatten());
             }
-            RowSource::User { text, .. } => out.push_str(text),
+            RowSource::User { text, .. } => out.push_str(phrase_c_string(text)),
         }
         Some(out)
     }
@@ -1147,7 +1163,14 @@ impl BigramExportWalk {
             .get(&token)
             .and_then(Option::as_ref)
             .unwrap_or(&empty);
-        self.phrase = Some(format!("{first_text}{second_text}"));
+        // Each text is the string `g_ucs4_to_utf8` makes of its item, ending at
+        // its first zero code point, before `g_strconcat` joins them
+        // (`pinyin.cpp:822-830`).
+        self.phrase = Some(format!(
+            "{}{}",
+            phrase_c_string(first_text),
+            phrase_c_string(second_text)
+        ));
         self.count = count;
         self.pinyins = first_pinyins
             .iter()
@@ -1220,6 +1243,28 @@ mod tests {
                 (0x0100_0003, &[(0x0100_0004, 69)]),
             ],
         )
+    }
+
+    /// `pinyin.cpp:822-830`: each item's `g_ucs4_to_utf8` string ends at its
+    /// first zero code point, and `g_strconcat` joins the two strings.
+    #[test]
+    fn each_text_of_a_bigram_row_ends_at_its_first_zero() {
+        let mut walk = scenario();
+        walk.rendered.insert(
+            0x0100_0001,
+            Some(("\u{4f60}\0\u{597d}".to_owned(), vec!["ni".to_owned()])),
+        );
+        walk.rendered.insert(
+            0x0100_0003,
+            Some(("\0\u{6211}".to_owned(), vec!["wo".to_owned()])),
+        );
+        assert_eq!(
+            drain_by_return(&mut walk),
+            vec![
+                ("\u{4f60}".to_owned(), true),
+                ("\u{4f60}\u{597d}".to_owned(), false)
+            ]
+        );
     }
 
     /// Register row 36 and the pin's walk (`pinyin.cpp:790-911`):

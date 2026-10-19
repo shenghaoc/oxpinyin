@@ -7601,9 +7601,7 @@ def ucs4_case(name, **kwargs):
 # engine, so they differ from the pin until a maintainer rules on #894. They are
 # registered only with CONTRACT_DIFF_PENDING_RULING=1; the NULL candidate list
 # (the pin's `strcmp` dies, class (b)) and the NULL export (register row 62)
-# already match and are always registered. The zero classes differ from the pin
-# until the fix for difference 2 lands, so they are registered only with
-# CONTRACT_DIFF_PENDING_FIX=1.
+# already match and are always registered.
 #
 # `--expect-parent` on the parent build: the controls match there (`plain`, the
 # NULL candidate list and export, `nul-first`'s predicted rows, whose zero sits
@@ -7612,7 +7610,6 @@ UCS4_PLAIN = ('plain',)
 UCS4_ZERO = ('nul-mid', 'nul-first', 'nul-last', 'nul-then-null')
 UCS4_RULING = ('surrogate', 'above-unicode', 'six-byte', 'null', 'null-all-ones')
 UCS4_PENDING = os.environ.get('CONTRACT_DIFF_PENDING_RULING') == '1'
-UCS4_PENDING_FIX = os.environ.get('CONTRACT_DIFF_PENDING_FIX') == '1'
 
 
 def ucs4_register(name, control=False):
@@ -7650,14 +7647,13 @@ for _name in UCS4_PLAIN:
     ucs4_register(_name, control=True)
     ucs4_register_export(_name, control=True)
 for _name in UCS4_ZERO:
-    if UCS4_PENDING_FIX:
-        ucs4_register(_name)
+    ucs4_register(_name)
 for _name in UCS4_EXPORTED:
     if _name in UCS4_PLAIN:
         continue
     # Row 62 sends a NULL phrase for a value of 0x80000000 or more, which the
     # pin does too (a control); any other value is bytes at the pin (difference 1).
-    if (_name in UCS4_ZERO and UCS4_PENDING_FIX) or _name == 'null' or UCS4_PENDING:
+    if _name in UCS4_ZERO or _name == 'null' or UCS4_PENDING:
         ucs4_register_export(_name, control=_name == 'null')
 for _name in UCS4_RULING:
     ucs4_register(_name)
