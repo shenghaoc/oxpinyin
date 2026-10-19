@@ -32,6 +32,14 @@ reproduced.
 --expect-parent runs the same cases against a parent build: a case marked
 `control` must still match, every other case must differ.
 
+A difference counts only between two valid observations. For an ordinary
+case (no `abort=`, `crash=` or `both_abort=`), each side must have exited
+normally with a result document; a side that died, timed out or printed no
+result is INVALID, and the case fails in both modes — two failed workers are
+not a MATCH, and they are not the expected DIFFER of a parent build either.
+For a case whose spec registers how the pin dies, the matcher's own exit
+conditions stand unchanged.
+
 Missing inputs and an empty case list fail. Scratch lives under TMPDIR and is
 removed even on failure.
 """
@@ -11046,6 +11054,34 @@ def fatal_stderr(text):
     return _FATAL_GLIB_PREFIX.sub(r'** \1 **: ', text)
 
 
+def registered_termination(spec):
+    """Whether the spec says how the pin dies (`abort=`, `crash=`,
+    `both_abort=`, with or without `either=`): then `matches` owns the exit
+    conditions of both sides and no validity check is layered on top."""
+    return spec['abort'] is not NO_ABORT or spec['crash'] is not None or spec['both_abort']
+
+
+def valid_observation(spec, side):
+    """An ordinary case observed something only when the worker exited
+    normally and printed its result document; a signal, a non-zero exit, a
+    timeout or an empty stdout observed nothing."""
+    return registered_termination(spec) or (side['exit'] == 0 and side['result'] is not None)
+
+
+def verdict_for(spec, pin, subject, expect_parent):
+    """The driver's decision for one case: (verdict, expected_ok, same).
+
+    INVALID when either side of an ordinary case produced no valid
+    observation; it is never expected, in either mode. Otherwise MATCH or
+    DIFFER by `matches`, and expected when it is what the mode asks for: a
+    MATCH, or under --expect-parent a DIFFER from a non-control case."""
+    same = matches(spec, pin, subject)
+    if not all(valid_observation(spec, side) for side in (pin, subject)):
+        return 'INVALID', False, same
+    expected = same if (not expect_parent or spec['control']) else not same
+    return ('MATCH' if same else 'DIFFER'), expected, same
+
+
 def matches(spec, pin, subject):
     """The verdict predicate shared by the driver and gcov measurement tier."""
     as_abort = spec['abort'] is not NO_ABORT and (not spec['either'] or pin['exit'] == -6)
@@ -11176,10 +11212,8 @@ def main():
             if args.observations:
                 with args.observations.open('a') as capture:
                     capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
-            same = matches(spec, pin, subject)
-            expected = same if (not args.expect_parent or spec['control']) else not same
-            verdict = 'MATCH' if same else 'DIFFER'
-            host_dependent = (not same and not args.expect_parent
+            verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
+            host_dependent = (verdict == 'DIFFER' and not args.expect_parent
                               and any(map(host_scanf_accepts, spec['host_scanf']))
                               and pin_loaded_subject_refused_table_conf(pin, subject))
             if host_dependent:

@@ -113,5 +113,130 @@ class DiagnosticPathTests(unittest.TestCase):
             self.assertNotEqual(first['result'][field], second['result'][field])
 
 
+def observation(exit=0, result=None, stderr='', userfiles=None):
+    return dict(exit=exit, result=result, stderr=stderr, stderr_lines=len(stderr.splitlines()),
+                userfiles=userfiles if userfiles is not None else {})
+
+
+class VerdictTests(unittest.TestCase):
+    """verdict_for: a difference needs two valid observations; a registered
+    termination keeps the matcher's own semantics."""
+
+    def plain(self, control=False):
+        return dict(contract['CASES']['default-option-parse'], control=control)
+
+    def decide(self, spec, pin, subject, parent):
+        return contract['verdict_for'](spec, pin, subject, parent)
+
+    def test_valid_equal(self):
+        pin, subject = observation(result={'ret': 1}), observation(result={'ret': 1})
+        self.assertEqual(self.decide(self.plain(), pin, subject, False), ('MATCH', True, True))
+        self.assertEqual(self.decide(self.plain(), pin, subject, True), ('MATCH', False, True))
+        self.assertEqual(self.decide(self.plain(control=True), pin, subject, True), ('MATCH', True, True))
+
+    def test_valid_different(self):
+        pin, subject = observation(result={'ret': 1}), observation(result={'ret': 2})
+        self.assertEqual(self.decide(self.plain(), pin, subject, False), ('DIFFER', False, False))
+        self.assertEqual(self.decide(self.plain(), pin, subject, True), ('DIFFER', True, False))
+        self.assertEqual(self.decide(self.plain(control=True), pin, subject, True), ('DIFFER', False, False))
+
+    def test_invalid_either_side_fails_in_both_modes(self):
+        good = observation(result={'ret': 1})
+        for bad in (observation(exit=1), observation(exit=-signal.SIGSEGV), observation(exit=0, result=None),
+                    observation(exit='TIMEOUT'), observation(exit=1, result={'ret': 1})):
+            for pin, subject in ((bad, good), (good, bad), (bad, bad)):
+                for parent in (False, True):
+                    for control in (False, True):
+                        with self.subTest(bad=bad['exit'], pin=pin is bad, parent=parent, control=control):
+                            verdict, expected, same = self.decide(self.plain(control), pin, subject, parent)
+                            self.assertEqual((verdict, expected, same), ('INVALID', False, False))
+
+    def test_two_identical_failures_are_not_an_expected_difference(self):
+        dead = observation(exit=-signal.SIGABRT)
+        self.assertEqual(self.decide(self.plain(), dead, copy.deepcopy(dead), True), ('INVALID', False, False))
+
+    def abort_spec(self, **overrides):
+        spec = dict(self.plain(), abort=False, **overrides)
+        return spec
+
+    def test_abort_semantics_unchanged(self):
+        spec = self.abort_spec()
+        pin = observation(exit=-signal.SIGABRT)
+        subject = observation(result={'ret': False, 'logs': [['libpinyin', 16]]})
+        self.assertEqual(self.decide(spec, pin, subject, False), ('MATCH', True, True))
+        # A parent that still aborts like the pin is the expected difference.
+        parent = observation(exit=-signal.SIGABRT)
+        self.assertEqual(self.decide(spec, pin, parent, True), ('DIFFER', True, False))
+        self.assertEqual(self.decide(spec, pin, parent, False), ('DIFFER', False, False))
+        # The subject surviving with the wrong value is a plain DIFFER.
+        wrong = observation(result={'ret': True, 'logs': [['libpinyin', 16]]})
+        self.assertEqual(self.decide(spec, pin, wrong, False), ('DIFFER', False, False))
+
+    def test_crash_semantics_unchanged(self):
+        spec = dict(self.plain(), crash={'ret': False}, stderr=True)
+        pin = observation(exit=-signal.SIGSEGV, stderr='x\n')
+        subject = observation(result={'ret': False}, stderr='x\n')
+        self.assertEqual(self.decide(spec, pin, subject, False), ('MATCH', True, True))
+        crashed_parent = observation(exit=-signal.SIGSEGV, stderr='x\n')
+        self.assertEqual(self.decide(spec, pin, crashed_parent, True), ('DIFFER', True, False))
+        self.assertEqual(self.decide(spec, pin, crashed_parent, False), ('DIFFER', False, False))
+
+    def test_either_semantics_unchanged(self):
+        spec = dict(self.plain(), abort=False, crash={'ret': False}, either=True, stderr=True)
+        subject = observation(result={'ret': False, 'logs': [['libpinyin', 16]]}, stderr='')
+        self.assertEqual(self.decide(spec, observation(exit=-signal.SIGABRT), subject, False)[0], 'MATCH')
+        crash_subject = observation(result={'ret': False}, stderr='x\n')
+        self.assertEqual(self.decide(spec, observation(exit=-signal.SIGSEGV, stderr='x\n'), crash_subject, False)[0],
+                         'MATCH')
+
+    def test_both_abort_semantics_unchanged(self):
+        spec = contract['CASES']['save-fatal-valid-to-invalid']
+        stderr = 'open SCRATCH/user-X/user.conf failed.\n** (process:1): CRITICAL **: 00:00:00.000: boom\n'
+        pin = observation(exit=-signal.SIGTRAP, stderr=stderr, userfiles={'a': [1, 'd']})
+        subject = observation(exit=-signal.SIGTRAP, stderr=stderr.replace(':1)', ':2)'), userfiles={'a': [1, 'd']})
+        self.assertEqual(self.decide(spec, pin, subject, False), ('MATCH', True, True))
+        survivor = observation(result={'ret': True}, stderr=stderr, userfiles={'a': [1, 'd']})
+        self.assertEqual(self.decide(spec, pin, survivor, True), ('DIFFER', True, False))
+        self.assertEqual(self.decide(spec, pin, survivor, False), ('DIFFER', False, False))
+
+
+class DriverInvalidTests(unittest.TestCase):
+    """main(): two failed workers under --expect-parent exit 1 with INVALID."""
+
+    def invoke(self, parent, workers):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as scratch:
+            prefix = Path(scratch)
+            (prefix / 'lib/libpinyin/data').mkdir(parents=True)
+            (prefix / 'lib/libpinyin.so').touch()
+            (prefix / 'lib/libpinyin/data/bigram.db').touch()
+            (prefix / 'oracle-pin.txt').write_text(
+                'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+            argv = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
+                    '--cases', 'default-option-parse'] + (['--expect-parent'] if parent else [])
+            output = io.StringIO()
+            with patch.object(contract['sys'], 'argv', argv), \
+                    patch.dict(contract['main'].__globals__, run_worker=lambda *a, **k: workers.pop(0)), \
+                    contextlib.redirect_stdout(output):
+                status = contract['main']()
+        rows = [json.loads(line) for line in output.getvalue().splitlines() if line.startswith('{')]
+        return status, rows
+
+    def test_two_failed_workers_fail_under_expect_parent(self):
+        status, rows = self.invoke(True, [observation(exit=1), observation(exit=1)])
+        self.assertEqual(status, 1)
+        self.assertEqual([(r['verdict'], r['expected_ok'], r['exit']) for r in rows], [('INVALID', False, [1, 1])])
+
+    def test_two_failed_workers_fail_in_normal_mode(self):
+        status, rows = self.invoke(False, [observation(exit=-signal.SIGSEGV), observation(exit=0)])
+        self.assertEqual(status, 1)
+        self.assertEqual(rows[0]['verdict'], 'INVALID')
+
+    def test_valid_parent_difference_still_passes(self):
+        status, rows = self.invoke(True, [observation(result={'a': 1}), observation(result={'a': 2})])
+        self.assertEqual((status, rows[0]['verdict'], rows[0]['expected_ok']), (0, 'DIFFER', True))
+
+
 if __name__ == '__main__':
     unittest.main()
