@@ -2653,7 +2653,7 @@ mod tests {
         let mut other = runtime.user_store().unwrap();
         let imported = other.add_phrase_in(7, phrase, &keys, Some(5)).unwrap();
         assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(imported)]);
-        assert!(other.remove_user_phrase(imported).unwrap());
+        other.mask_out(u32::MAX, imported).unwrap();
         assert!(dict.tokens_for_text(phrase).is_empty());
         let cache = dict.user_lookup_cache.lock().unwrap();
         assert!(Arc::ptr_eq(&snapshot, &cache.as_ref().unwrap().1));
