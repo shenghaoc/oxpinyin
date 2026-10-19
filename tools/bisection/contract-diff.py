@@ -2,7 +2,9 @@
 """Case-driven pin-against-subject contract differential (lane C).
 
 Usage: contract-diff.py CELL PREFIX PINYIN_SO [--zhuyin-so PATH]
-                        [--cases a,b,...] [--expect-parent]
+                        [--cases a,b,...] [--issue N]... [--family F]...
+                        [--expect-parent] [--plan-only]
+       contract-diff.py --list-tags
        contract-diff.py bdb PREFIX PREFIX/lib/libpinyin.so
                         --regenerate-sentence-ties FIXTURE
 
@@ -43,6 +45,26 @@ conditions stand unchanged.
 
 Missing inputs and an empty case list fail. Scratch lives under TMPDIR and is
 removed even on failure.
+
+Selection. --cases names case IDs. --issue N (repeatable; `#N`, `W11` and
+`row:54` forms as the registry uses them) selects every case registered with
+that tag in its `case(..., issues=(...))` call, and --family F every case
+whose ID starts with `F/` (separator, before-cursor, zero-key, ...). An
+unknown tag, or a selection that matches nothing, is an error that lists the
+registered tags; it never falls back to the default suite. --list-tags
+prints the tag index as JSON (`tags`: tag to case IDs, with `family/<F>`
+entries; `modes`: case ID to facade). Before running, the plan goes to stderr: the
+selected IDs and why each was selected, the facades and the artifacts the
+selection needs; --plan-only stops there. Axis C cases carry no tags and are
+never selected by tag; they run through --axis-c-replacement.
+
+Timing. The last stdout line is `{"timing": ...}`: the number of cases and
+workers and the seconds spent in each phase, summed over the run — worker
+startup (spawn to the first statement of the entry; for a script started by
+path this includes compiling it), load (the module body, which registers
+the cases), fixture (library load, user dir, the facade `init` calls),
+pin and subject execution, teardown (worker exit and the user-dir
+listing) and comparison. The verdict rows are unchanged.
 """
 import argparse
 import copy
@@ -59,6 +81,8 @@ import subprocess
 import sys
 import tempfile
 import time
+
+_ENTERED = time.monotonic()  # the module body starts here: worker startup ends, load begins
 
 P, U, I, S, B, Z = C.c_void_p, C.c_uint, C.c_int, C.c_char_p, C.c_bool, C.c_size_t
 UNTOUCHED = 0xABCDEF  # out-param sentinel
@@ -82,7 +106,7 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
          cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), stderr_varies=False, abort_logs=None,
-         fatal=False, both_abort=False):
+         fatal=False, both_abort=False, issues=()):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -119,16 +143,106 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     the pin loads what the subject refuses. Only that difference (the pin
     created its context; the subject refused `table.conf`) prints
     `HOST-DEPENDENT` instead of `DIFFER` and is not a failure; any other
-    difference stays a DIFFER. A MATCH is reported as such on any host."""
+    difference stays a DIFFER. A MATCH is reported as such on any host.
+    `issues=<tags>` names the issues, register rows or lane tags the case
+    guards (`'640'`, `'row:54'`, `'W11'`), the selectors of `--issue`; a
+    case's family for `--family` is the text before the first `/` of its
+    ID, when it has one."""
     def register(fn):
         assert not either or (abort is not NO_ABORT and crash is not None), name
         assert not both_abort or fatal, name
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
                            crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
                            stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
-                           both_abort=both_abort)
+                           both_abort=both_abort, issues=tuple(normal_tag(tag) for tag in issues))
         return fn
     return register
+
+
+def normal_tag(tag):
+    """`#640`, `640`, `W11`, `row:54` and `Row 54` are the same selector."""
+    tag = str(tag).strip().lstrip('#').lower()
+    return re.sub(r'^row[ :]*', 'row:', tag)
+
+
+def family_of(name):
+    return name.split('/', 1)[0] if '/' in name else None
+
+
+def tag_index():
+    """issue tag -> sorted case IDs, and 'family/<F>' -> IDs; axis C excluded."""
+    index = {}
+    for name, spec in CASES.items():
+        if name.startswith('axis-c-'):
+            continue
+        for tag in spec['issues']:
+            index.setdefault(tag, []).append(name)
+        family = family_of(name)
+        if family:
+            index.setdefault('family/' + family, []).append(name)
+    return {tag: sorted(names) for tag, names in sorted(index.items())}
+
+
+class SelectionError(ValueError):
+    pass
+
+
+def select_cases(cases='', issues=(), families=()):
+    """The selected case IDs in run order and, per ID, why it was selected.
+    Raises SelectionError, naming what is registered, for an unknown ID, an
+    unknown tag or a selection that matches nothing."""
+    index = tag_index()
+    chosen = {}
+    for name in (n for n in cases.split(',') if n) if cases else ():
+        if name not in CASES:
+            raise SelectionError('unknown case: %s' % name)
+        chosen.setdefault(name, []).append('--cases')
+    for issue in issues:
+        tag = normal_tag(issue)
+        if tag not in index or tag.startswith('family/'):
+            known = ', '.join(t for t in index if not t.startswith('family/'))
+            raise SelectionError('unknown issue tag %r; registered tags: %s' % (issue, known))
+        for name in index[tag]:
+            chosen.setdefault(name, []).append('issue ' + tag)
+    for family in families:
+        key = 'family/' + family
+        if key not in index:
+            known = ', '.join(t[len('family/'):] for t in index if t.startswith('family/'))
+            raise SelectionError('unknown family %r; registered families: %s' % (family, known))
+        for name in index[key]:
+            chosen.setdefault(name, []).append('family ' + family)
+    if not (cases or issues or families):
+        chosen = {n: ['default suite'] for n in sorted(n for n in CASES if not n.startswith('axis-c-'))}
+    if not chosen:
+        raise SelectionError('no cases selected')
+    return list(chosen), chosen
+
+
+def plan_lines(names, reasons, pinyin_so, zhuyin_so, prefix, cell):
+    """The selection plan: IDs and reasons (one line each for an explicit
+    selection; a count for the default suite), facades and artifacts."""
+    modes = {}
+    for name in names:
+        modes[CASES[name]['mode']] = modes.get(CASES[name]['mode'], 0) + 1
+    skipped = sum(1 for name in names if cell not in CASES[name]['cells'])
+    explicit = any(reason != ['default suite'] for reason in reasons.values())
+    lines = ['plan: %d case%s%s; cell %s; facades: %s' % (
+        len(names), '' if len(names) == 1 else 's',
+        '' if explicit else ' (default suite: every registered non-axis-C case)', cell,
+        ', '.join('%s %d' % item for item in sorted(modes.items())))]
+    if skipped:
+        lines.append('  %d case%s skip on this cell (fixture in another backend\'s format)' % (
+            skipped, '' if skipped == 1 else 's'))
+    artifacts = ['subject %s' % pinyin_so, 'pin %s' % (prefix / 'lib/libpinyin.so'),
+                 'system tables %s' % (prefix / 'lib/libpinyin/data')]
+    if 'zhuyin' in modes:
+        artifacts += ['subject %s' % (zhuyin_so or '--zhuyin-so (missing)'), 'pin %s' % (prefix / 'lib/libzhuyin.so')]
+    lines.append('  artifacts: ' + '; '.join(artifacts))
+    if explicit:
+        width = max(len(name) for name in names)
+        for name in names:
+            lines.append('  %-*s  %-7s %s' % (width, name, CASES[name]['mode'], ', '.join(reasons[name])))
+    return lines
 
 
 def host_scanf_accepts(spelling):
@@ -177,6 +291,7 @@ class Kit:
         self._ctx = None
         self._inst = None
         self.user = tempfile.mkdtemp(prefix='user-', dir=scratch)
+        self.init_seconds = 0.0  # the facade `init` calls: fixture, not case work
 
     def fn(self, name, res, *args):
         f = getattr(self.lib, self.mode + '_' + name)
@@ -189,7 +304,11 @@ class Kit:
             return value if value is None or isinstance(value, bytes) else value.encode()
         if not literal:
             system, user = system or self.data, user or self.user
-        return self.fn('init', P, S, S)(raw(system), raw(user))
+        started = time.monotonic()
+        try:
+            return self.fn('init', P, S, S)(raw(system), raw(user))
+        finally:
+            self.init_seconds += time.monotonic() - started
 
     @property
     def ctx(self):
@@ -219,6 +338,10 @@ class Kit:
 
 
 def worker(mode, so, data, name):
+    # The driver's spawn time, popped so a nested worker (axis C's reopen)
+    # neither inherits it nor prints a timing line into a parsed stdout.
+    spawned = os.environ.pop('CONTRACT_DIFF_SPAWNED', None)
+    entered = time.monotonic()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     if name.startswith('axis-c-'):
         # Fedora's pipe core_pattern can invoke systemd-coredump even when
@@ -229,10 +352,18 @@ def worker(mode, so, data, name):
         assert libc.prctl(4, 0, 0, 0, 0) == 0, ('PR_SET_DUMPABLE failed', C.get_errno())
     scratch = os.environ['TMPDIR']
     kit = Kit(mode, so, data, scratch)
+    built = time.monotonic()
     result = CASES[name]['fn'](kit)
+    finished = time.monotonic()
     result['logs'] = kit.logs
     if name.startswith('axis-c-'):
         result['log_messages'] = kit.log_messages
+    if spawned is not None:
+        # One line the driver reads and nothing compares: `run_worker` keeps
+        # only `{`-lines as results and this is not part of the observation.
+        print('T ' + json.dumps(dict(startup=_ENTERED - float(spawned), load=entered - _ENTERED,
+                                     fixture=built - entered + kit.init_seconds,
+                                     execute=finished - built - kit.init_seconds)), flush=True)
     print(json.dumps(result, sort_keys=True, ensure_ascii=False), flush=True)
     os._exit(0)  # no atexit: a case never shares teardown with the next
 
@@ -258,25 +389,25 @@ def key_out(kit, text):
 
 
 # lane C, #532: the option word `pinyin_init` seeds is USE_TONE.
-@case('default-option-parse')
+@case('default-option-parse', issues=('532',))
 def _(k):
     return {t.decode(): consumed(k, 'parse_more_full_pinyins', t)
             for t in (b'su3cl3', b'ni2hao', b'n', b'zzz', b'nihao', b'ni3')}
 
 
-@case('default-option-single-key')
+@case('default-option-single-key', issues=('532',))
 def _(k):
     return {t.decode(): key_out(k, t) for t in (b'n', b'ni3', b'ni', b'a1', b'zhang', b'zzz')}
 
 
-@case('explicit-use-tone-parse', control=True)
+@case('explicit-use-tone-parse', control=True, issues=('532',))
 def _(k):
     k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
     return {t.decode(): consumed(k, 'parse_more_full_pinyins', t)
             for t in (b'su3cl3', b'ni2hao', b'n', b'zzz', b'nihao')}
 
 
-@case('explicit-incomplete-parse', control=True)
+@case('explicit-incomplete-parse', control=True, issues=('532',))
 def _(k):
     k.fn('set_options', B, P, U)(k.ctx, 1 << 3)
     return {t.decode(): consumed(k, 'parse_more_full_pinyins', t)
@@ -284,25 +415,25 @@ def _(k):
 
 
 # lane C, #587: valid pinyin followed by invalid UTF-8 keeps the prefix.
-@case('bytes-parse-more-full')
+@case('bytes-parse-more-full', issues=('587',))
 def _(k):
     return {repr(t): consumed(k, 'parse_more_full_pinyins', t)
             for t in (b'ni\xffhao', b'nihao\xff', b'\xffnihao', b'ni\xe4\xbd', b'ni\xc0\x80hao')}
 
 
-@case('bytes-parse-more-double')
+@case('bytes-parse-more-double', issues=('587',))
 def _(k):
     return {repr(t): consumed(k, 'parse_more_double_pinyins', t)
             for t in (b'ni\xffhk', b'nihk\xff', b'\xffnihk')}
 
 
-@case('bytes-parse-more-chewing')
+@case('bytes-parse-more-chewing', issues=('587',))
 def _(k):
     return {repr(t): consumed(k, 'parse_more_chewings', t)
             for t in (b'su\xff3', b'su3\xff', b'\xffsu3')}
 
 
-@case('bytes-add-phrase-pinyin')
+@case('bytes-add-phrase-pinyin', issues=('587',))
 def _(k):
     rows = []
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
@@ -319,7 +450,7 @@ def _(k):
     return dict(added=ret, rows=rows)
 
 
-@case('bytes-whole-argument', control=True)
+@case('bytes-whole-argument', control=True, issues=('587',))
 def _(k):
     # Entries that hand the whole argument to the pin keep refusing it.
     out = {'parse_full_pinyin': key_out(k, b'ni\xff')}
@@ -337,7 +468,7 @@ def _(k):
     return out
 
 
-@case('bytes-zhuyin-parse-more', mode='zhuyin')
+@case('bytes-zhuyin-parse-more', mode='zhuyin', issues=('587',))
 def _(k):
     out = {}
     for name, texts in (('parse_more_full_pinyins', (b'ni3\xffhao3', b'ni3hao3\xff', b'\xffni3')),
@@ -349,7 +480,7 @@ def _(k):
 
 # The zhuyin direct parser splits on spaces and apostrophes, so a reading
 # with an invalid byte in its last token is refused whole: unchanged.
-@case('bytes-zhuyin-add-phrase', mode='zhuyin', control=True)
+@case('bytes-zhuyin-add-phrase', mode='zhuyin', control=True, issues=('587',))
 def _(k):
     out = {}
     for label, reading in (('whole', 'ㄋㄧˇ ㄏㄠˇ'.encode()), ('tail-invalid', 'ㄋㄧˇ ㄏㄠˇ'.encode() + b'\xff'),
@@ -369,7 +500,7 @@ def sentence_out(k, inst, index):
 
 
 # lane C, #542 rows 2, 6, 7, 20: out-params the pin leaves alone, or writes.
-@case('empty-parse-sentence')
+@case('empty-parse-sentence', issues=('542',))
 def _(k):
     out = {}
     for t in (b'', b'!'):
@@ -382,7 +513,7 @@ def _(k):
     return out
 
 
-@case('character-offset-out')
+@case('character-offset-out', issues=('542',))
 def _(k):
     fn = k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))
     out = {}
@@ -401,7 +532,7 @@ def _(k):
     return out
 
 
-@case('token-get-phrase-out')
+@case('token-get-phrase-out', issues=('542',))
 def _(k):
     out = {}
     for token in (0xFFFFFFFF, 0x0DEADBEE, 0x01000000):
@@ -426,7 +557,7 @@ def tokens_of(k, phrase):
     return C.cast(view.data, C.POINTER(U))[:view.len]
 
 
-@case('nth-pronunciation-range')
+@case('nth-pronunciation-range', issues=('542',))
 def _(k):
     token = tokens_of(k, '你好')[0]
     new = k.glib.g_array_new
@@ -456,7 +587,7 @@ def _(k):
 
 
 # lane C, #542 rows 14 and 19: the pin's function-static slots and u16 length.
-@case('static-key-slots')
+@case('static-key-slots', issues=('542',))
 def _(k):
     first, second = k.alloc(), k.alloc()
     k.fn('parse_more_full_pinyins', Z, P, S)(first, b'ni')
@@ -480,7 +611,7 @@ class Rest(C.Structure):
     _fields_ = [('begin', C.c_ushort), ('end', C.c_ushort)]
 
 
-@case('key-rest-length')
+@case('key-rest-length', issues=('542',))
 def _(k):
     fn = k.fn('get_pinyin_key_rest_length', B, P, C.POINTER(Rest), C.POINTER(C.c_ushort))
     out = {}
@@ -492,7 +623,7 @@ def _(k):
 
 
 # lane C, #542 rows 1, 3, 10, 21: return values of sentence and unload.
-@case('sentence-before-guess')
+@case('sentence-before-guess', issues=('542',))
 def _(k):
     out = {}
     inst = k.alloc()
@@ -512,7 +643,7 @@ def _(k):
     return out
 
 
-@case('sentence-before-guess-schemes')
+@case('sentence-before-guess-schemes', issues=('542',))
 def _(k):
     out = {}
     inst = k.alloc()
@@ -524,7 +655,7 @@ def _(k):
     return out
 
 
-@case('guess-sentence-keyless')
+@case('guess-sentence-keyless', issues=('542',))
 def _(k):
     out = {}
     for t in (b"'", b"''", b'', b'!', b"nihao'"):
@@ -547,7 +678,7 @@ def _(k):
     return out
 
 
-@case('guess-candidates-keyless')
+@case('guess-candidates-keyless', issues=('542',))
 def _(k):
     # `0 == matrix.size()`: the candidates are freed and the answer is
     # false, whatever sentence rows an earlier guess left.
@@ -566,13 +697,13 @@ def _(k):
     return out
 
 
-@case('unload-phrase-library-repeat')
+@case('unload-phrase-library-repeat', issues=('542',))
 def _(k):
     unload = k.fn('unload_phrase_library', B, P, U)
     return {'unload': [unload(k.ctx, i) for i in (2, 2, 2, 1, 3, 15, 2)]}
 
 
-@case('sentence-with-prefix-bytes')
+@case('sentence-with-prefix-bytes', issues=('542',))
 def _(k):
     out = {}
     for label, prefix in (('invalid', b'\xff\xfe'), ('valid', '你'.encode()), ('empty', b''),
@@ -597,29 +728,29 @@ def aux_matrix(k, parse_name, text, cursors):
     return out
 
 
-@case('aux-text-full-parse')
+@case('aux-text-full-parse', issues=('542',))
 def _(k):
     # Mid-key cursors stay at one or two bytes into a key: the pin aborts on
     # a longer mid-key cursor of the double-pinyin renderer.
     return aux_matrix(k, 'parse_more_full_pinyins', b'nihao', (0, 1, 2, 3, 4, 5, 9))
 
 
-@case('aux-text-full-parse-apostrophe')
+@case('aux-text-full-parse-apostrophe', issues=('542',))
 def _(k):
     return aux_matrix(k, 'parse_more_full_pinyins', b"xi'an", (0, 1, 2, 4, 5))
 
 
-@case('aux-text-double-parse')
+@case('aux-text-double-parse', issues=('542',))
 def _(k):
     return aux_matrix(k, 'parse_more_double_pinyins', b'nihk', (0, 1, 2, 3, 4, 9))
 
 
-@case('aux-text-chewing-parse')
+@case('aux-text-chewing-parse', issues=('542',))
 def _(k):
     return aux_matrix(k, 'parse_more_chewings', b'su3cl3', (0, 1, 2, 3, 4, 5, 6, 9))
 
 
-@case('aux-text-tones')
+@case('aux-text-tones', issues=('542',))
 def _(k):
     # Tone digits ride the keys: the pinyin spelling appends them, the double
     # renderer appends them after a cut key, the zhuyin spelling marks them.
@@ -660,27 +791,27 @@ def aux_options(k, word, texts):
 
 # Several keys can begin at one byte under the divided, resplit and fuzzy
 # options; the pin's renderers read the first (`get_item(column, 0)`).
-@case('aux-text-divided-table')
+@case('aux-text-divided-table', issues=('542',))
 def _(k):
     return aux_options(k, (1 << 5) | (1 << 7), (b'xian', b'jiangnan', b'xianan', b'tiananmen'))
 
 
-@case('aux-text-resplit-table')
+@case('aux-text-resplit-table', issues=('542',))
 def _(k):
     return aux_options(k, (1 << 5) | (1 << 8), (b'zhengfu', b'xianan', b'dianxin', b'changan'))
 
 
-@case('aux-text-divided-and-resplit')
+@case('aux-text-divided-and-resplit', issues=('542',))
 def _(k):
     return aux_options(k, (1 << 5) | (1 << 7) | (1 << 8), (b'xian', b'zhengfu', b'xianan'))
 
 
-@case('aux-text-fuzzy-keys')
+@case('aux-text-fuzzy-keys', issues=('542',))
 def _(k):
     return aux_options(k, (1 << 5) | (1 << 12) | (1 << 15) | (1 << 17), (b'zongguo', b'nan', b'lan', b'zi', b'banggan'))
 
 
-@case('aux-text-no-parse', control=True)
+@case('aux-text-no-parse', control=True, issues=('542',))
 def _(k):
     out = {}
     for fname in ('full_pinyin', 'double_pinyin', 'chewing'):
@@ -691,7 +822,7 @@ def _(k):
     return out
 
 
-@case('aux-text-mixed-parses')
+@case('aux-text-mixed-parses', issues=('542',))
 def _(k):
     # The matrix is the last parse, whatever mode made it.
     out = {}
@@ -800,9 +931,9 @@ def zhuyin_only_readings(k, libraries):
 
 for _mode in ('pinyin', 'zhuyin'):
     _prefix = 'zhuyin-' if _mode == 'zhuyin' else ''
-    case(_prefix + 'system-zhuyin-only-readings', mode=_mode)(
+    case(_prefix + 'system-zhuyin-only-readings', mode=_mode, issues=('809',))(
         lambda k: zhuyin_only_readings(k, (1, 2, 3, 4)))
-    case(_prefix + 'user-zhuyin-only-readings', mode=_mode, control=True)(
+    case(_prefix + 'user-zhuyin-only-readings', mode=_mode, control=True, issues=('809',))(
         lambda k: zhuyin_only_readings(k, (5, 6, 7)))
 
 
@@ -906,17 +1037,17 @@ def token_unigram_trained(k):
 
 for _mode in ('pinyin', 'zhuyin'):
     _prefix = 'zhuyin-' if _mode == 'zhuyin' else ''
-    case(_prefix + 'token-unigram-system', mode=_mode, control=_mode == 'pinyin')(
+    case(_prefix + 'token-unigram-system', mode=_mode, control=_mode == 'pinyin', issues=('808',))(
         token_unigram_system)
-    case(_prefix + 'token-unigram-user', mode=_mode, control=_mode == 'pinyin')(
+    case(_prefix + 'token-unigram-user', mode=_mode, control=_mode == 'pinyin', issues=('808',))(
         token_unigram_user)
-    case(_prefix + 'token-unigram-trained', mode=_mode, control=_mode == 'pinyin')(
+    case(_prefix + 'token-unigram-trained', mode=_mode, control=_mode == 'pinyin', issues=('808',))(
         token_unigram_trained)
-    case(_prefix + 'token-unigram-user-libraries', mode=_mode, control=_mode == 'zhuyin')(
+    case(_prefix + 'token-unigram-user-libraries', mode=_mode, control=_mode == 'zhuyin', issues=('808',))(
         token_unigram_user_libraries)
 
 
-@case('train-unigram-total')
+@case('train-unigram-total', issues=('540',))
 def _(k):
     # Once the library's guint32 total would overflow the item stops growing:
     # at the pin 你 freezes at 2122897296 after about 20000 trainings.
@@ -936,7 +1067,7 @@ def _(k):
     return out
 
 
-@case('predicted-unigram-overflow')
+@case('predicted-unigram-overflow', issues=('540',))
 def _(k):
     # Training 你 and 好 fills library 1 to within one seed of its guint32
     # total; accepted predicted candidates (483 each) then run it out, and
@@ -1004,7 +1135,7 @@ def choose_predicted_of(k, inst, want_kind, skip=0):
     return None
 
 
-@case('choose-predicted-types')
+@case('choose-predicted-types', issues=('542', '540'))
 def _(k):
     # The return table: a punctuation row has no frequency and answers true,
     # a prefix row answers true. (The prefix row's bigram is not compared:
@@ -1043,7 +1174,7 @@ case('remember-count-seven', control=True)(remember_negative(7))
 
 
 # batch2 group 9: the input length cap (PR 9, #540)
-@case('input-length-cap')
+@case('input-length-cap', issues=('540',))
 def _(k):
     out = {}
     for length in (4096, 4097, 32766, 32767, 32768, 65537):
@@ -1054,7 +1185,7 @@ def _(k):
     return out
 
 
-@case('long-input-sentence')
+@case('long-input-sentence', issues=('540',))
 def _(k):
     # A decode past the old cap: the sentence is as long as the pin's.
     inst = k.alloc()
@@ -1067,7 +1198,7 @@ def _(k):
 
 
 # batch2 group 10: pinyin_alloc_instance on a finalised context (PR 10, #528)
-@case('alloc-instance-after-fini')
+@case('alloc-instance-after-fini', issues=('528',))
 def _(k):
     # The pin reads the freed context (pinyin.cpp:1322) and survives by
     # chance; the ruled answer here is NULL (class (b)), so the answer itself
@@ -1094,8 +1225,8 @@ def fini_twice(k):
     return {'second fini returned': True}
 
 
-case('fini-twice', crash={'second fini returned': True}, stderr_varies=True)(fini_twice)
-case('zhuyin-fini-twice', mode='zhuyin', crash={'second fini returned': True}, stderr_varies=True)(fini_twice)
+case('fini-twice', crash={'second fini returned': True}, stderr_varies=True, issues=('573',))(fini_twice)
+case('zhuyin-fini-twice', mode='zhuyin', crash={'second fini returned': True}, stderr_varies=True, issues=('573',))(fini_twice)
 
 
 # batch2 group 11: the facade unigram total wraps like the pin's (PR 11, #540)
@@ -1123,10 +1254,10 @@ for _label, _offset, _sort in (('end-sort-3', 5, 3), ('mid-key-sort-3', 3, 3), (
             k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
             return {'ret': ret, 'rows': count.value}
         return run
-    case('facade-total-zero-ranks-nothing-' + _label, control=True)(_no_rank(_offset, _sort))
+    case('facade-total-zero-ranks-nothing-' + _label, control=True, issues=('540',))(_no_rank(_offset, _sort))
 
 
-@case('facade-total-zero', abort=False)
+@case('facade-total-zero', abort=False, issues=('540',))
 def _(k):
     # `assert(0 < total_freq)` while ranking a candidate (pinyin.cpp:1859).
     inst = k.inst
@@ -1153,10 +1284,10 @@ for _name, _call in (
         ('load-phrase-library-8', ctx_call('load_phrase_library', B, (C.c_ubyte, 8))),
         ('unload-phrase-library-16', ctx_call('unload_phrase_library', B, (C.c_ubyte, 16))),
         ('unload-addon-phrase-library-16', ctx_call('unload_addon_phrase_library', B, (C.c_ubyte, 16)))):
-    case('abort-' + _name, abort=False)(_call)
+    case('abort-' + _name, abort=False, issues=('525',))(_call)
 
 
-@case('abort-iterator-get-next-phrase', abort=False)
+@case('abort-iterator-get-next-phrase', abort=False, issues=('525',))
 def _(k):
     # An empty user dictionary: the begin probes no next token.
     it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
@@ -1170,7 +1301,7 @@ def _(k):
 # so the iterator's predecessor is still null_token and the pin asserts
 # (`pinyin.cpp:902`) before it writes anything. A control: the parent build
 # already answers this way; the case registers behaviour, it changes none.
-@case('abort-bigram-iterator-get-next-phrase', control=True, abort=False)
+@case('abort-bigram-iterator-get-next-phrase', control=True, abort=False, issues=('681', 'row:62'))
 def _(k):
     it = k.fn('begin_get_bigram_phrases', P, P)(k.ctx)
     phrase, pinyin, count = P(UNTOUCHED), P(UNTOUCHED), I(UNTOUCHED)
@@ -1184,7 +1315,7 @@ def _(k):
 
 
 # The in-range neighbours answer without a warning, as at the pin.
-@case('scheme-and-library-neighbours', control=True)
+@case('scheme-and-library-neighbours', control=True, issues=('525',))
 def _(k):
     out = {}
     for label, name, res, arg in (
@@ -1207,35 +1338,35 @@ def full_inst(k, text):
     return inst
 
 
-@case('abort-get-sentence-past-rows', abort=False)
+@case('abort-get-sentence-past-rows', abort=False, issues=('525',))
 def _(k):
     inst = full_inst(k, b'nihao')
     k.fn('guess_sentence', B, P)(inst)
     return {'ret': sentence_out(k, inst, 5)[0]}
 
 
-@case('abort-get-left-pinyin-offset-after-separator', abort=False)
+@case('abort-get-left-pinyin-offset-after-separator', abort=False, issues=('525',))
 def _(k):
     inst = full_inst(k, b"ni'hao")
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_left_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 3, C.byref(out))}
 
 
-@case('abort-get-right-pinyin-offset-after-separator', abort=False)
+@case('abort-get-right-pinyin-offset-after-separator', abort=False, issues=('525',))
 def _(k):
     inst = full_inst(k, b"ni'hao")
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 3, C.byref(out))}
 
 
-@case('abort-get-right-pinyin-offset-nihao-5', abort=False)
+@case('abort-get-right-pinyin-offset-nihao-5', abort=False, issues=('525',))
 def _(k):
     inst = full_inst(k, b'nihao')
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 5, C.byref(out))}
 
 
-@case('abort-get-character-offset-past-matrix', abort=False)
+@case('abort-get-character-offset-past-matrix', abort=False, issues=('525',))
 def _(k):
     inst = full_inst(k, b'nihao')
     out = Z(UNTOUCHED)
@@ -1243,7 +1374,7 @@ def _(k):
         inst, '你好'.encode(), 99, C.byref(out))}
 
 
-@case('abort-get-character-offset-after-separator', abort=False)
+@case('abort-get-character-offset-after-separator', abort=False, issues=('525',))
 def _(k):
     inst = full_inst(k, b"ni'hao")
     out = Z(UNTOUCHED)
@@ -1251,26 +1382,26 @@ def _(k):
         inst, '你好'.encode(), 3, C.byref(out))}
 
 
-@case('abort-parse-full-pinyin-apostrophe', abort=False)
+@case('abort-parse-full-pinyin-apostrophe', abort=False, issues=('525',))
 def _(k):
     key = C.c_uint16(UNTOUCHED & 0xFFFF)
     return {'ret': k.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_uint16))(
         k.inst, b"n'i", C.byref(key))}
 
 
-@case('abort-get-pinyin-key-empty-matrix', abort=False)
+@case('abort-get-pinyin-key-empty-matrix', abort=False, issues=('525',))
 def _(k):
     out = P(UNTOUCHED)
     return {'ret': k.fn('get_pinyin_key', B, P, Z, C.POINTER(P))(k.alloc(), 0, C.byref(out))}
 
 
-@case('abort-get-pinyin-key-rest-empty-matrix', abort=False)
+@case('abort-get-pinyin-key-rest-empty-matrix', abort=False, issues=('525',))
 def _(k):
     out = P(UNTOUCHED)
     return {'ret': k.fn('get_pinyin_key_rest', B, P, Z, C.POINTER(P))(k.alloc(), 0, C.byref(out))}
 
 
-@case('abort-double-auxiliary-text-cut-three-bytes-in', abort=False)
+@case('abort-double-auxiliary-text-cut-three-bytes-in', abort=False, issues=('525',))
 def _(k):
     inst = full_inst(k, b'zhong')
     aux = P(UNTOUCHED)
@@ -1288,14 +1419,14 @@ def leading_apostrophe_aux(fname, text=b"'nihao"):
 
 
 for _fname in ('full_pinyin', 'double_pinyin', 'chewing'):
-    case('abort-%s-auxiliary-text-leading-apostrophe' % _fname.replace('_', '-'), abort=False)(
+    case('abort-%s-auxiliary-text-leading-apostrophe' % _fname.replace('_', '-'), abort=False, issues=('525',))(
         leading_apostrophe_aux(_fname))
-case('abort-full-pinyin-auxiliary-text-doubled-leading-apostrophe', abort=False)(
+case('abort-full-pinyin-auxiliary-text-doubled-leading-apostrophe', abort=False, issues=('525',))(
     leading_apostrophe_aux('full_pinyin', b"''ni"))
 
 
 # The graceful neighbours of the sites above answer without a warning.
-@case('cursor-and-sentence-neighbours', control=True)
+@case('cursor-and-sentence-neighbours', control=True, issues=('525',))
 def _(k):
     out = {}
     inst = full_inst(k, b'nihao')
@@ -1349,7 +1480,7 @@ def predicted(k, prefix='我'):
     return inst
 
 
-@case('abort-get-candidate-nbest-index-normal-row', abort=False)
+@case('abort-get-candidate-nbest-index-normal-row', abort=False, issues=('525',))
 def _(k):
     inst = guessed(k)
     out = C.c_ubyte(0xAB)
@@ -1359,13 +1490,13 @@ def _(k):
     return {'ret': ret, 'untouched index': out.value == 0xAB}
 
 
-@case('abort-remove-user-candidate-normal-system-token', abort=False)
+@case('abort-remove-user-candidate-normal-system-token', abort=False, issues=('525',))
 def _(k):
     inst = guessed(k)
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, row_of(k, inst, 2))}
 
 
-@case('abort-remove-user-candidate-sentence-row', abort=False)
+@case('abort-remove-user-candidate-sentence-row', abort=False, issues=('525',))
 def _(k):
     inst = guessed(k)
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, row_of(k, inst, 1))}
@@ -1408,7 +1539,7 @@ def _guessed_user_phrase(k, text, readings, parse=b'dada'):
     return inst, rows
 
 
-@case('abort-remove-user-candidate-twice', abort=False)
+@case('abort-remove-user-candidate-twice', abort=False, issues=('525',))
 def _(k):
     inst, rows = _guessed_user_phrase(k, '龘龘', [b"da2'da2"])
     first = k.fn('remove_user_candidate', B, P, P)(inst, rows[0])
@@ -1419,7 +1550,7 @@ def _(k):
     return {'first': first, 'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
 
 
-@case('abort-remove-user-candidate-missing-phrase-table', abort=False)
+@case('abort-remove-user-candidate-missing-phrase-table', abort=False, issues=('525',))
 def _(k):
     _add_user_phrase(k, '龘龘', [b"da2'da2"])
     assert k.fn('save', B, P)(k.ctx)
@@ -1438,7 +1569,7 @@ def _(k):
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, rows[0])}
 
 
-@case('abort-remove-user-candidate-multi-pron', abort=False)
+@case('abort-remove-user-candidate-multi-pron', abort=False, issues=('525',))
 def _(k):
     # Two readings for one phrase: the second is merged without a pinyin
     # index entry, so :3759 fires when the phrase is removed.
@@ -1481,21 +1612,21 @@ def _removable_user_bigram_context(k, rows_for):
     return inst, candidates[0]
 
 
-@case('abort-remove-user-candidate-short-bigram-value', abort=False)
+@case('abort-remove-user-candidate-short-bigram-value', abort=False, issues=('525',))
 def _(k):
     inst, cand = _removable_user_bigram_context(
         k, lambda _token: [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
 
 
-@case('abort-remove-user-candidate-non-token-bigram-key', abort=False)
+@case('abort-remove-user-candidate-non-token-bigram-key', abort=False, issues=('525',))
 def _(k):
     inst, cand = _removable_user_bigram_context(
         k, lambda _token: [(b'\x00\x01', b'\x07\x00\x00\x00')])
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
 
 
-@case('abort-remove-user-candidate-residual-bigram-gram', abort=False)
+@case('abort-remove-user-candidate-residual-bigram-gram', abort=False, issues=('525',))
 def _(k):
     # `total_freq` 7 with one item of the removed token and frequency 3:
     # `SingleGram::mask_out` drops the item and leaves 4, so the pin's
@@ -1508,19 +1639,19 @@ def _(k):
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
 
 
-@case('abort-choose-candidate-predicted-prefix-row', abort=0)
+@case('abort-choose-candidate-predicted-prefix-row', abort=0, issues=('525',))
 def _(k):
     inst = predicted(k)
     return {'ret': k.fn('choose_candidate', I, P, Z, P)(inst, 0, row_of(k, inst, 5))}
 
 
-@case('abort-choose-predicted-candidate-normal-row', abort=False)
+@case('abort-choose-predicted-candidate-normal-row', abort=False, issues=('525',))
 def _(k):
     inst = guessed(k)
     return {'ret': k.fn('choose_predicted_candidate', B, P, P)(inst, row_of(k, inst, 2))}
 
 
-@case('abort-choose-predicted-candidate-sentence-row', abort=False)
+@case('abort-choose-predicted-candidate-sentence-row', abort=False, issues=('525',))
 def _(k):
     inst = guessed(k)
     return {'ret': k.fn('choose_predicted_candidate', B, P, P)(inst, row_of(k, inst, 1))}
@@ -1536,19 +1667,19 @@ def choose_without_sentence(k, offset):
     return {'ret': k.fn('choose_candidate', I, P, Z, P)(inst, offset, row)}
 
 
-@case('abort-choose-candidate-without-sentence-offset-1', abort=0)
+@case('abort-choose-candidate-without-sentence-offset-1', abort=0, issues=('525',))
 def _(k):
     return choose_without_sentence(k, 1)
 
 
 # At offset 0 the leg trains the unigram and answers 1 on both sides.
-@case('choose-candidate-without-sentence-offset-0', control=True)
+@case('choose-candidate-without-sentence-offset-0', control=True, issues=('525',))
 def _(k):
     return choose_without_sentence(k, 0)
 
 
 # The rows the guards leave alone answer without a warning.
-@case('candidate-type-neighbours', control=True)
+@case('candidate-type-neighbours', control=True, issues=('525',))
 def _(k):
     out = {}
     inst = guessed(k)
@@ -1589,7 +1720,7 @@ def forced_sentence(k, relook):
     return inst, chosen
 
 
-@case('abort-zhuyin-train-stale-forcing', mode='zhuyin', abort=False)
+@case('abort-zhuyin-train-stale-forcing', mode='zhuyin', abort=False, issues=('525', 'row:6'))
 def _(k):
     # The same walk through libzhuyin: a forcing added after the last
     # sentence lookup (`phonetic_lookup.h:868`).
@@ -1611,7 +1742,7 @@ def _(k):
     return {'ret': k.fn('train', B, P)(inst)}
 
 
-@case('abort-train-stale-forcing', abort=False)
+@case('abort-train-stale-forcing', abort=False, issues=('525', 'row:6'))
 def _(k):
     inst, _chosen = forced_sentence(k, False)
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
@@ -1621,14 +1752,14 @@ def _(k):
 # gate passes and `assert(index < results.size())` fails (`pinyin.cpp:2684`).
 # `null-user-session-pinyin` trains with a NULL user directory and so stops
 # at the earlier gate.
-@case('abort-train-index-past-results', abort=False, userdir=True)
+@case('abort-train-index-past-results', abort=False, userdir=True, issues=('525', 'row:6'))
 def _(k):
     inst = full_inst(k, b'nihao')
     assert k.fn('guess_sentence', B, P)(inst), 'no sentence to train'
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 255)}
 
 
-@case('train-forcing-after-lookup', control=True)
+@case('train-forcing-after-lookup', control=True, issues=('525', 'row:6'))
 def _(k):
     inst, chosen = forced_sentence(k, True)
     return {'chosen': chosen, 'train': k.fn('train', B, P, C.c_ubyte)(inst, 0),
@@ -1720,7 +1851,7 @@ for _parse, _product, _phrases in (
         (b'zhonghrm', '5054', CONSTRAINT_PHRASES),
         (b'zhhrm', '96026', CONSTRAINT_PHRASES),
         (b'zhhrmghg', 'over 96026', CONSTRAINT_PHRASES_LONG)):
-    case('constraint-survives-' + _parse.decode(), control=_product in ('none', '266', '361'))(
+    case('constraint-survives-' + _parse.decode(), control=_product in ('none', '266', '361'), issues=('825',))(
         lambda k, _p=_parse, _ph=_phrases: constraint_survives(k, _ph, _p))
 
 
@@ -1749,7 +1880,7 @@ def constraint_survives_reconcile(parse, replacement):
 
 for _parse, _replacement, _product in (
         (b'juezhonghuarm', b'jvezhonghuarm', 266), (b'juezhhrm', b'jvezhhrm', 96026)):
-    case('constraint-survives-reconcile-' + _parse.decode(), control=_product < 4096)(
+    case('constraint-survives-reconcile-' + _parse.decode(), control=_product < 4096, issues=('825',))(
         constraint_survives_reconcile(_parse, _replacement))
 
 
@@ -1779,8 +1910,8 @@ def constraint_stale_item(first, second, parse):
     return run
 
 
-case('constraint-stale-item-keeps-nini')(constraint_stale_item('你', '抳', b'nini'))
-case('constraint-stale-item-drops-nihao', control=True)(constraint_stale_item('你', '晧', b'nihao'))
+case('constraint-stale-item-keeps-nini', issues=('825',))(constraint_stale_item('你', '抳', b'nini'))
+case('constraint-stale-item-drops-nihao', control=True, issues=('825',))(constraint_stale_item('你', '晧', b'nihao'))
 
 
 # batch G: a stored forcing outlives a re-parse that shortened the input
@@ -1805,7 +1936,7 @@ def reparse_after_choose(k, shrink):
     return inst
 
 
-@case('abort-train-after-reparse-past-matrix-end', abort=False)
+@case('abort-train-after-reparse-past-matrix-end', abort=False, issues=('525', 'row:82'))
 def _(k):
     inst = reparse_after_choose(k, b'ni')
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
@@ -1814,7 +1945,7 @@ def _(k):
 # The `'ni` twin walks the same clamp into a matrix whose column 0 the
 # leading apostrophe left empty (`:663`): reproduced, SIGABRT at
 # `phonetic_key_matrix.cpp:663` under the `__assert_fail` wrapper.
-@case('abort-train-after-reparse-empty-start-column', abort=False)
+@case('abort-train-after-reparse-empty-start-column', abort=False, issues=('525', 'row:82'))
 def _(k):
     inst = reparse_after_choose(k, b"'ni")
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
@@ -1826,7 +1957,7 @@ def _(k):
 # completes when the stale span's end lands on a key column. After a
 # re-parse to `ni'ha`, the stale second span starts on the apostrophe
 # column and the pin trains; the engine accepts the zero-key column too.
-@case('train-after-reparse-internal-zero-key', control=True)
+@case('train-after-reparse-internal-zero-key', control=True, issues=('525', 'row:82'))
 def _(k):
     inst = reparse_after_choose(k, b"ni'ha")
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
@@ -1836,7 +1967,7 @@ def _(k):
 # `ni'hao`, the pin passes `:663` (the apostrophe column holds a zero key)
 # and aborts at `:664` (`get_column_size(end) > 0`). The engine refuses with
 # the same fault.
-@case('abort-train-after-reparse-empty-end-column', abort=False)
+@case('abort-train-after-reparse-empty-end-column', abort=False, issues=('525', 'row:82'))
 def _(k):
     inst = reparse_after_choose(k, b"ni'hao")
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
@@ -1848,7 +1979,7 @@ def _(k):
 
 # The keys the :661/:663 guard leaves alone: the same choose-and-look-up
 # with no shortening re-parse, and a re-parse that repeats the input.
-@case('train-after-choose-lookup-control', control=True)
+@case('train-after-choose-lookup-control', control=True, issues=('525', 'row:82'))
 def _(k):
     def choose_and_relook(inst):
         k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
@@ -2087,13 +2218,13 @@ def overlong_index_context(k, parse=None, rows=None, options=None):
     return ctx
 
 
-@case('abort-mask-out-overlong-index-key', abort=False)
+@case('abort-mask-out-overlong-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
     ctx = overlong_index_context(k)
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-zhuyin-mask-out-overlong-index-key', mode='zhuyin', abort=False)
+@case('abort-zhuyin-mask-out-overlong-index-key', mode='zhuyin', abort=False, issues=('525', 'row:84'))
 def _(k):
     # libzhuyin masks `m_pinyin_table` too (`zhuyin.cpp:763`), the same user
     # chewing table, so the same :529 walk aborts there.
@@ -2101,7 +2232,7 @@ def _(k):
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-guess-candidates-overlong-index-key', abort=False)
+@case('abort-guess-candidates-overlong-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
     ctx = overlong_index_context(k, parse=b'ni')
     inst = k.fn('alloc_instance', P, P)(ctx)
@@ -2111,7 +2242,7 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('abort-guess-candidates-overlong-odd-index-key', abort=False)
+@case('abort-guess-candidates-overlong-odd-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
     # A 35-byte key is not one upstream writes, but `phrase_length =
     # db_key.size / sizeof(ChewingKey)` is integer division
@@ -2125,7 +2256,7 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('abort-mask-out-overlong-odd-index-key', abort=False)
+@case('abort-mask-out-overlong-odd-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
     ctx = overlong_index_context(
         k, rows=lambda first: [first, first * 17 + b'\x07'])
@@ -2135,19 +2266,19 @@ def _(k):
 # A key of no whole word (empty, or one byte) reads as `size / 2 == 0` words
 # and `mask_out`'s `switch` has no such case: `default: abort()`
 # (`chewing_large_table2_bdb.cpp:529`, the KC twin :499, tkrzw :466).
-@case('abort-mask-out-empty-index-key', abort=False, userdir=True)
+@case('abort-mask-out-empty-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
     ctx = overlong_index_context(k, rows=lambda first: [b'', first])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-mask-out-one-byte-index-key', abort=False, userdir=True)
+@case('abort-mask-out-one-byte-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
     ctx = overlong_index_context(k, rows=lambda first: [first, b'\x07'])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
-@case('abort-zhuyin-mask-out-empty-index-key', mode='zhuyin', abort=False, userdir=True)
+@case('abort-zhuyin-mask-out-empty-index-key', mode='zhuyin', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
     ctx = overlong_index_context(k, rows=lambda first: [b'', first])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
@@ -2179,7 +2310,7 @@ def system_overlong_index_context(k, trailing=b''):
     return ctx
 
 
-@case('abort-guess-candidates-overlong-system-index-key', abort=False, userdir=True)
+@case('abort-guess-candidates-overlong-system-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
     ctx = system_overlong_index_context(k)
     inst = k.fn('alloc_instance', P, P)(ctx)
@@ -2187,7 +2318,7 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('abort-guess-candidates-overlong-odd-system-index-key', abort=False, userdir=True)
+@case('abort-guess-candidates-overlong-odd-system-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
     ctx = system_overlong_index_context(k, trailing=b'\x07')
     inst = k.fn('alloc_instance', P, P)(ctx)
@@ -2195,7 +2326,7 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('guess-after-overlong-index-key-without-prefix-answers-true')
+@case('guess-after-overlong-index-key-without-prefix-answers-true', issues=('525', 'row:84'))
 def _(k):
     # The pin's `search_suggestion` probes the exact query key first
     # (`cursorp->c_get(..., DB_SET)`, `chewing_large_table2_bdb.cpp:576`) and
@@ -2207,7 +2338,7 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('reparse-after-guess-ignores-overlong-index-key')
+@case('reparse-after-guess-ignores-overlong-index-key', issues=('525', 'row:84'))
 def _(k):
     # `_prepend_longer_candidates` runs only from `pinyin_guess_candidates`
     # (`pinyin.cpp:2292-2293`); a parse refreshes the cached list without it,
@@ -2220,7 +2351,7 @@ def _(k):
     return {'guess_hao': guessed, 'reparse_ni': reparsed}
 
 
-@case('abort-guess-candidates-overlong-incomplete-index-key', abort=False)
+@case('abort-guess-candidates-overlong-incomplete-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
     # `compute_incomplete_chewing_index` sets only `m_initial`, so the partial
     # `n` projects to its initial and the vowel-initial `an` to the zero
@@ -2441,7 +2572,7 @@ def issue677_sequence(k):
 
 
 for _issue677_mode in ('pinyin', 'zhuyin'):
-    case('issue677-mask-save-sequence-' + _issue677_mode, mode=_issue677_mode)(issue677_sequence)
+    case('issue677-mask-save-sequence-' + _issue677_mode, mode=_issue677_mode, issues=('677',))(issue677_sequence)
 
 
 # #762: the pin hands a new user phrase `range.m_range_end` of the user
@@ -2654,11 +2785,11 @@ TOKEN_REUSE_BIGRAM_ROWS = [
 ]
 for _mode in ('pinyin', 'zhuyin'):
     for _name, (_control, _steps) in TOKEN_REUSE_SEQUENCES.items():
-        case('issue762-token-reuse-%s-%s' % (_name, _mode), mode=_mode, control=_control)(
+        case('issue762-token-reuse-%s-%s' % (_name, _mode), mode=_mode, control=_control, issues=('762',))(
             lambda k, steps=_steps: token_reuse_sequence(k, steps))
-    case('issue762-token-reuse-stale-bigram-%s' % _mode, mode=_mode, cells=('bdb',))(
+    case('issue762-token-reuse-stale-bigram-%s' % _mode, mode=_mode, cells=('bdb',), issues=('762',))(
         lambda k: token_reuse_sequence(k, TOKEN_REUSE_SEQUENCES['mask-all'][1], TOKEN_REUSE_BIGRAM_ROWS))
-    case('issue762-token-reuse-stale-bigram-no-mask-%s' % _mode, mode=_mode, control=True, cells=('bdb',))(
+    case('issue762-token-reuse-stale-bigram-no-mask-%s' % _mode, mode=_mode, control=True, cells=('bdb',), issues=('762',))(
         lambda k: token_reuse_sequence(k, TOKEN_REUSE_SEQUENCES['no-mask'][1], TOKEN_REUSE_BIGRAM_ROWS))
 
 
@@ -2676,7 +2807,7 @@ ADDON_IMPORT_SEQUENCES = {
 }
 for _mode in ('pinyin', 'zhuyin'):
     for _name, (_control, _steps) in ADDON_IMPORT_SEQUENCES.items():
-        case('issue762-addon-import-%s-%s' % (_name, _mode), mode=_mode, control=_control)(
+        case('issue762-addon-import-%s-%s' % (_name, _mode), mode=_mode, control=_control, issues=('762',))(
             lambda k, steps=_steps: token_reuse_sequence(k, steps, library=5))
 
 ADDON_PROMOTE_INPUTS = (('shuxue', '书学'), ('wuji', '武技'), ('wusheng', '武生'), ('wuxi', '武戏'))
@@ -2728,9 +2859,9 @@ def addon_promote_sequence(k, mask_value):
     return {'steps': out, 'files': token_reuse_files(k)}
 
 
-case('issue762-addon-promote-no-mask', control=True)(lambda k: addon_promote_sequence(k, None))
-case('issue762-addon-promote-mask-highest')(lambda k: addon_promote_sequence(k, 0x05000003))
-case('issue762-addon-promote-mask-middle', control=True)(lambda k: addon_promote_sequence(k, 0x05000002))
+case('issue762-addon-promote-no-mask', control=True, issues=('762',))(lambda k: addon_promote_sequence(k, None))
+case('issue762-addon-promote-mask-highest', issues=('762',))(lambda k: addon_promote_sequence(k, 0x05000003))
+case('issue762-addon-promote-mask-middle', control=True, issues=('762',))(lambda k: addon_promote_sequence(k, 0x05000002))
 
 
 # #784: the pin never deletes a key from its user index tables. `mask_out`
@@ -2869,7 +3000,7 @@ INDEX_KEY_SEQUENCES = {
 }
 for _mode in ('pinyin', 'zhuyin'):
     for _name, (_control, _steps) in INDEX_KEY_SEQUENCES.items():
-        case('issue784-index-keys-%s-%s' % (_name, _mode), mode=_mode, control=_control)(
+        case('issue784-index-keys-%s-%s' % (_name, _mode), mode=_mode, control=_control, issues=('784',))(
             lambda k, steps=_steps: index_key_sequence(k, steps))
 # `pinyin_remove_user_candidate` (the zhuyin facade has none).
 REMOVE_SEQUENCES = {
@@ -2883,7 +3014,7 @@ REMOVE_SEQUENCES = {
                                      ('reopen',), ('lookup', 1), ('lookup', 0)]),
 }
 for _name, (_control, _steps) in REMOVE_SEQUENCES.items():
-    case('issue784-index-keys-%s' % _name, control=_control)(
+    case('issue784-index-keys-%s' % _name, control=_control, issues=('784',))(
         lambda k, steps=_steps: index_key_sequence(k, steps))
 
 
@@ -2947,7 +3078,7 @@ for _mode in ('pinyin', 'zhuyin'):
     for _name, _steps in TAIL_SEQUENCES.items():
         if _mode == 'zhuyin' and _name.startswith('remove'):
             continue  # the zhuyin facade has no `remove_user_candidate`
-        case('issue785-pinyin-tails-%s-%s' % (_name, _mode), mode=_mode, control=_name in TAIL_CONTROLS)(
+        case('issue785-pinyin-tails-%s-%s' % (_name, _mode), mode=_mode, control=_name in TAIL_CONTROLS, issues=('785',))(
             lambda k, steps=_steps: index_key_sequence(k, steps, TAIL_PHRASES, TAIL_READINGS))
 
 
@@ -2956,7 +3087,7 @@ for _mode in ('pinyin', 'zhuyin'):
 # them in the `da da` record (two items, a tail in the mask walk), and the
 # mask removes an entry no item reading backs. The zhuyin facade only: the
 # pinyin facade never unloads library 7.
-case('issue785-pinyin-tails-kept-entry-zhuyin', mode='zhuyin', cells=('kc', 'tkrzw'))(
+case('issue785-pinyin-tails-kept-entry-zhuyin', mode='zhuyin', cells=('kc', 'tkrzw'), issues=('785', '814'))(
     lambda k: index_key_sequence(
         k, SHARED + [DD, ('unload',), ('load',), ('add', 5), MASK_DA2, ('save',)],
         TAIL_PHRASES, TAIL_READINGS))
@@ -3010,7 +3141,7 @@ def toned_initial(k, text=b'n4'):
     return inst, k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
 
 
-@case('abort-is-incomplete-toned-initial', abort=False)
+@case('abort-is-incomplete-toned-initial', abort=False, issues=('525', 'row:4'))
 def _(k):
     k.fn('set_options', B, P, U)(k.ctx, TONE_INCOMPLETE)
     inst = k.alloc()
@@ -3019,7 +3150,7 @@ def _(k):
     return {'ret': k.fn('get_pinyin_is_incomplete', B, P, C.POINTER(C.c_uint16))(inst, C.byref(key))}
 
 
-@case('abort-guess-candidates-toned-initial-before-offset', abort=False)
+@case('abort-guess-candidates-toned-initial-before-offset', abort=False, issues=('525', 'row:4', '662'))
 def _(k):
     # The toned key sits before the lookup offset, outside the window the
     # search walks: the pin dies all the same (review of #662 expected it not
@@ -3028,26 +3159,26 @@ def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 2, 0)}
 
 
-@case('abort-guess-candidates-toned-initial', abort=False)
+@case('abort-guess-candidates-toned-initial', abort=False, issues=('525', 'row:4'))
 def _(k):
     inst, _ = toned_initial(k)
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
-@case('abort-guess-sentence-toned-initial', abort=False)
+@case('abort-guess-sentence-toned-initial', abort=False, issues=('525', 'row:4'))
 def _(k):
     inst, _ = toned_initial(k)
     return {'ret': k.fn('guess_sentence', B, P)(inst)}
 
 
-@case('abort-guess-sentence-toned-initial-after-key', abort=False)
+@case('abort-guess-sentence-toned-initial-after-key', abort=False, issues=('525', 'row:4'))
 def _(k):
     inst, _ = toned_initial(k, b'nihaon4')
     return {'ret': k.fn('guess_sentence', B, P)(inst)}
 
 
 # The keys the guard leaves alone: a toned complete key, an untoned initial.
-@case('toned-initial-neighbours', control=True)
+@case('toned-initial-neighbours', control=True, issues=('525', 'row:4'))
 def _(k):
     out = {}
     k.fn('set_options', B, P, U)(k.ctx, TONE_INCOMPLETE)
@@ -3077,7 +3208,7 @@ for _name, _call in (
         ('load-phrase-library-8', ctx_call('load_phrase_library', B, (C.c_ubyte, 8))),
         ('unload-phrase-library-16', ctx_call('unload_phrase_library', B, (C.c_ubyte, 16))),
         ('unload-phrase-library-255', ctx_call('unload_phrase_library', B, (C.c_ubyte, 255)))):
-    case('abort-zhuyin-' + _name, mode='zhuyin', abort=False)(_call)
+    case('abort-zhuyin-' + _name, mode='zhuyin', abort=False, issues=('525',))(_call)
 
 
 def zhuyin_chewing(k, text=b'su3cl3'):
@@ -3116,24 +3247,24 @@ def char_offset_call(offset):
     return run
 
 
-case('abort-zhuyin-get-left-zhuyin-offset-past-matrix', mode='zhuyin', abort=False)(
+case('abort-zhuyin-get-left-zhuyin-offset-past-matrix', mode='zhuyin', abort=False, issues=('525',))(
     offset_call('get_left_zhuyin_offset', False, 99))
-case('abort-zhuyin-get-right-zhuyin-offset-past-matrix', mode='zhuyin', abort=False)(
+case('abort-zhuyin-get-right-zhuyin-offset-past-matrix', mode='zhuyin', abort=False, issues=('525',))(
     offset_call('get_right_zhuyin_offset', False, 99))
-case('abort-zhuyin-get-right-zhuyin-offset-empty-matrix', mode='zhuyin', abort=False)(
+case('abort-zhuyin-get-right-zhuyin-offset-empty-matrix', mode='zhuyin', abort=False, issues=('525',))(
     offset_call('get_right_zhuyin_offset', True, 0))
-case('abort-zhuyin-guess-candidates-after-cursor-past-matrix', mode='zhuyin', abort=False)(
+case('abort-zhuyin-guess-candidates-after-cursor-past-matrix', mode='zhuyin', abort=False, issues=('525',))(
     guess_call('guess_candidates_after_cursor', 99))
-case('abort-zhuyin-guess-candidates-before-cursor-past-matrix', mode='zhuyin', abort=False)(
+case('abort-zhuyin-guess-candidates-before-cursor-past-matrix', mode='zhuyin', abort=False, issues=('525',))(
     guess_call('guess_candidates_before_cursor', 99))
-case('abort-zhuyin-guess-candidates-after-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False)(
+case('abort-zhuyin-guess-candidates-after-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False, issues=('525',))(
     guess_call('guess_candidates_after_cursor', 7))
-case('abort-zhuyin-guess-candidates-before-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False)(
+case('abort-zhuyin-guess-candidates-before-cursor-reserved-slot-plus-one', mode='zhuyin', abort=False, issues=('525',))(
     guess_call('guess_candidates_before_cursor', 7))
-case('abort-zhuyin-get-character-offset-past-matrix', mode='zhuyin', abort=False)(char_offset_call(99))
-case('abort-zhuyin-get-zhuyin-key-empty-matrix', mode='zhuyin', abort=False)(
+case('abort-zhuyin-get-character-offset-past-matrix', mode='zhuyin', abort=False, issues=('525',))(char_offset_call(99))
+case('abort-zhuyin-get-zhuyin-key-empty-matrix', mode='zhuyin', abort=False, issues=('525',))(
     key_call('get_zhuyin_key', True, 0))
-case('abort-zhuyin-get-zhuyin-key-rest-empty-matrix', mode='zhuyin', abort=False)(
+case('abort-zhuyin-get-zhuyin-key-rest-empty-matrix', mode='zhuyin', abort=False, issues=('525',))(
     key_call('get_zhuyin_key_rest', True, 0))
 
 
@@ -3150,18 +3281,18 @@ for _name, _offset in (('after_cursor', 6), ('before_cursor', 0)):
             k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
             return {'ret': ret, 'rows': count.value}
         return run
-    case('zhuyin-total-zero-ranks-nothing-' + _name.replace('_', '-'), mode='zhuyin', control=True)(
+    case('zhuyin-total-zero-ranks-nothing-' + _name.replace('_', '-'), mode='zhuyin', control=True, issues=('525',))(
         _no_rank_z(_name, _offset))
 
 
-@case('abort-zhuyin-parse-full-pinyin-apostrophe', mode='zhuyin', abort=False)
+@case('abort-zhuyin-parse-full-pinyin-apostrophe', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
     key = C.c_uint16(UNTOUCHED & 0xFFFF)
     ret = k.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_uint16))(k.inst, b"n'i", C.byref(key))
     return {'ret': ret, 'untouched key': key.value == UNTOUCHED & 0xFFFF}
 
 
-@case('abort-zhuyin-guess-candidates-total-zero', mode='zhuyin', abort=False)
+@case('abort-zhuyin-guess-candidates-total-zero', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
     inst = zhuyin_chewing(k)
     k.fn('token_add_unigram_frequency', B, P, U, U)(inst, (1 << 24) | 1, (2 ** 32 - FACADE_TOTAL) % 2 ** 32)
@@ -3169,7 +3300,7 @@ def _(k):
 
 
 # The zhuyin sites' graceful neighbours answer without a warning.
-@case('zhuyin-cursor-neighbours', mode='zhuyin', control=True)
+@case('zhuyin-cursor-neighbours', mode='zhuyin', control=True, issues=('525',))
 def _(k):
     out = {}
     inst = zhuyin_chewing(k)
@@ -3193,7 +3324,7 @@ def _(k):
     return out
 
 
-@case('zhuyin-scheme-and-library-neighbours', mode='zhuyin', control=True)
+@case('zhuyin-scheme-and-library-neighbours', mode='zhuyin', control=True, issues=('525',))
 def _(k):
     out = {}
     for label, name, arg in (('chewing 1', 'set_chewing_scheme', 1), ('chewing 6', 'set_chewing_scheme', 6),
@@ -3208,13 +3339,13 @@ def _(k):
 
 
 # The pinyin sites the offset probes of this group found still silent.
-@case('abort-get-right-pinyin-offset-empty-matrix', abort=False)
+@case('abort-get-right-pinyin-offset-empty-matrix', abort=False, issues=('525',))
 def _(k):
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(k.alloc(), 0, C.byref(out))}
 
 
-@case('abort-guess-candidates-past-matrix', abort=False)
+@case('abort-guess-candidates-past-matrix', abort=False, issues=('525',))
 def _(k):
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(full_inst(k, b'nihao'), 99, 0)}
 
@@ -3272,7 +3403,7 @@ GUESS_CANDIDATE_INPUTS = (b'ni', b'n', b'nihao', b'nih', b"ni'hao",
 GUESS_CANDIDATE_SORTS = (0, 0x1c, 0x1e)
 
 
-@case('guess-candidates-lookup-offset')
+@case('guess-candidates-lookup-offset', issues=('696', 'row:65'))
 def _(k):
     out = {}
     for text in GUESS_CANDIDATE_INPUTS:
@@ -3300,7 +3431,7 @@ GUESS_CANDIDATE_ZHUYIN_INPUTS = (b'su3', b'su', b'su3cl3', b'su3cl',
                                  b'zhong1', b'xian1')
 
 
-@case('guess-candidates-lookup-offset-zhuyin', mode='zhuyin', control=True)
+@case('guess-candidates-lookup-offset-zhuyin', mode='zhuyin', control=True, issues=('696', 'row:65'))
 def _(k):
     out = {}
     for text in GUESS_CANDIDATE_ZHUYIN_INPUTS:
@@ -3318,7 +3449,7 @@ def _(k):
 # One past the reserved slot is an ordinary lookup that finds nothing —
 # except the LONGER row, which the pin still lists there (row 65). The full
 # list is compared, not the return alone.
-@case('guess-candidates-past-the-reserved-slot')
+@case('guess-candidates-past-the-reserved-slot', issues=('696', 'row:65'))
 def _(k):
     out = {}
     inst = full_inst(k, b'nihao')
@@ -3351,11 +3482,11 @@ def non_utf8_dirs(k, bad_system, bad_user):
 
 
 for _label, _system, _user in (('system', True, False), ('user', False, True), ('both', True, True)):
-    case('non-utf8-directory-' + _label)(
+    case('non-utf8-directory-' + _label, issues=('587',))(
         lambda k, system=_system, user=_user: non_utf8_dirs(k, system, user))
 
 
-@case('non-utf8-directory-zhuyin-both', mode='zhuyin')
+@case('non-utf8-directory-zhuyin-both', mode='zhuyin', issues=('587',))
 def _(k):
     tag = str(os.getpid()).encode()
     scratch = os.fsencode(k.scratch)
@@ -3414,8 +3545,8 @@ def user_library_token_unload(k):
     return out
 
 
-case('user-library-token-unload-pinyin', control=True)(user_library_token_unload)
-case('user-library-token-unload-zhuyin', mode='zhuyin')(user_library_token_unload)
+case('user-library-token-unload-pinyin', control=True, issues=('542',))(user_library_token_unload)
+case('user-library-token-unload-zhuyin', mode='zhuyin', issues=('542',))(user_library_token_unload)
 
 
 def zhuyin_sentence_out(k, inst):
@@ -3426,7 +3557,7 @@ def zhuyin_sentence_out(k, inst):
     return [ret, k.text(out.value)]
 
 
-@case('zhuyin-sentence-before-guess', mode='zhuyin')
+@case('zhuyin-sentence-before-guess', mode='zhuyin', issues=('542',))
 def _(k):
     out = {}
     inst = k.alloc()
@@ -3443,7 +3574,7 @@ def _(k):
     return out
 
 
-@case('zhuyin-character-offset-out', mode='zhuyin')
+@case('zhuyin-character-offset-out', mode='zhuyin', issues=('542',))
 def _(k):
     fn = k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))
     out = {}
@@ -3459,7 +3590,7 @@ def _(k):
     return out
 
 
-@case('zhuyin-token-get-phrase-out', mode='zhuyin')
+@case('zhuyin-token-get-phrase-out', mode='zhuyin', issues=('542',))
 def _(k):
     out = {}
     for token in (0xFFFFFFFF, 0x0DEADBEE, 0x01000000):
@@ -3471,7 +3602,7 @@ def _(k):
     return out
 
 
-@case('zhuyin-nth-pronunciation-range', mode='zhuyin')
+@case('zhuyin-nth-pronunciation-range', mode='zhuyin', issues=('542',))
 def _(k):
     new = k.glib.g_array_new
     new.restype, new.argtypes = P, [I, I, U]
@@ -3500,7 +3631,7 @@ def _(k):
     return out
 
 
-@case('zhuyin-static-key-slots', mode='zhuyin')
+@case('zhuyin-static-key-slots', mode='zhuyin', issues=('542',))
 def _(k):
     first, second = k.alloc(), k.alloc()
     k.fn('parse_more_chewings', Z, P, S)(first, b'su3')
@@ -3520,7 +3651,7 @@ def _(k):
     return out
 
 
-@case('zhuyin-key-rest-length', mode='zhuyin')
+@case('zhuyin-key-rest-length', mode='zhuyin', issues=('542',))
 def _(k):
     fn = k.fn('get_zhuyin_key_rest_length', B, P, C.POINTER(Rest), C.POINTER(C.c_ushort))
     out = {}
@@ -3531,7 +3662,7 @@ def _(k):
     return out
 
 
-@case('zhuyin-unload-phrase-library-repeat', mode='zhuyin')
+@case('zhuyin-unload-phrase-library-repeat', mode='zhuyin', issues=('542',))
 def _(k):
     unload = k.fn('unload_phrase_library', B, P, U)
     return {'unload': [unload(k.ctx, i) for i in range(0, 16)] + [unload(k.ctx, i) for i in (2, 2)]}
@@ -3545,7 +3676,7 @@ def zhuyin_candidates_at_start(k):
     return count.value
 
 
-@case('zhuyin-unload-phrase-library-effect', mode='zhuyin')
+@case('zhuyin-unload-phrase-library-effect', mode='zhuyin', issues=('542',))
 def _(k):
     unload = k.fn('unload_phrase_library', B, P, C.c_ubyte)
     load = k.fn('load_phrase_library', B, P, C.c_ubyte)
@@ -3557,7 +3688,7 @@ def _(k):
     return out
 
 
-@case('zhuyin-alloc-instance-after-fini', mode='zhuyin')
+@case('zhuyin-alloc-instance-after-fini', mode='zhuyin', issues=('542',))
 def _(k):
     # As the pinyin case: the pin reads the freed context and survives by
     # chance, the ruled answer is NULL (class (b)); the case holds the exit
@@ -3619,17 +3750,17 @@ def blocked_save(k, blocked, parse='parse_more_full_pinyins', text=b'nihao', tra
 # The pin writes and renames file by file (`pinyin.cpp:940-1130`): with one
 # path blocked every other file is updated, one line is printed and the
 # profile mixes two saves.
-@case('stderr-save-one-tmp-blocked', stderr=True)
+@case('stderr-save-one-tmp-blocked', stderr=True, issues=('545',))
 def _(k):
     return blocked_save(k, 'user_pinyin_index.bin.tmp')
 
 
-@case('stderr-save-one-final-blocked', stderr=True)
+@case('stderr-save-one-final-blocked', stderr=True, issues=('545',))
 def _(k):
     return blocked_save(k, 'user_phrase_index.bin')
 
 
-@case('stderr-save-one-tmp-blocked-zhuyin', mode='zhuyin', stderr=True)
+@case('stderr-save-one-tmp-blocked-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
     return blocked_save(k, 'user_pinyin_index.bin.tmp', 'parse_more_chewings', b'su3cl3', ())
 
@@ -3668,67 +3799,67 @@ def save_header_rlimit(k, parse='parse_more_full_pinyins', text=b'nihao', train_
     return {'ret': k.fn('save', B, P)(ctx)}
 
 
-@case('abort-save-chunk-header-length', abort=False)
+@case('abort-save-chunk-header-length', abort=False, issues=('525',))
 def _(k):
     return save_header_dev_full(k)
 
 
-@case('abort-save-chunk-header-checksum', abort=False)
+@case('abort-save-chunk-header-checksum', abort=False, issues=('525',))
 def _(k):
     return save_header_rlimit(k)
 
 
-@case('abort-zhuyin-save-chunk-header-length', mode='zhuyin', abort=False)
+@case('abort-zhuyin-save-chunk-header-length', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
     return save_header_dev_full(k, 'parse_more_chewings', b'su3cl3', ())
 
 
-@case('abort-zhuyin-save-chunk-header-checksum', mode='zhuyin', abort=False)
+@case('abort-zhuyin-save-chunk-header-checksum', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
     return save_header_rlimit(k, 'parse_more_chewings', b'su3cl3', ())
 
 
-@case('stderr-fresh-user-dir', stderr=True)
+@case('stderr-fresh-user-dir', stderr=True, issues=('545',))
 def _(k):
     ctx = k.ctx
     k.fn('fini', None, P)(ctx)
     return {'init': bool(ctx)}
 
 
-@case('stderr-fresh-user-dir-zhuyin', mode='zhuyin', stderr=True)
+@case('stderr-fresh-user-dir-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
     ctx = k.ctx
     k.fn('fini', None, P)(ctx)
     return {'init': bool(ctx)}
 
 
-@case('stderr-init-missing-system-dir', stderr=True)
+@case('stderr-init-missing-system-dir', stderr=True, issues=('545',))
 def _(k):
     return {'ctx': bool(k.init(system='/nonexistent-system-dir'))}
 
 
-@case('stderr-init-missing-system-dir-zhuyin', mode='zhuyin', stderr=True)
+@case('stderr-init-missing-system-dir-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
     return {'ctx': bool(k.init(system='/nonexistent-system-dir'))}
 
 
-@case('stderr-init-system-dir-without-table-conf', stderr=True)
+@case('stderr-init-system-dir-without-table-conf', stderr=True, issues=('545',))
 def _(k):
     empty = tempfile.mkdtemp(prefix='sys-', dir=k.scratch)
     return {'ctx': bool(k.init(system=empty + '//'))}
 
 
-@case('stderr-save-dir-removed', stderr=True)
+@case('stderr-save-dir-removed', stderr=True, issues=('545',))
 def _(k):
     return save_after_training(k, True)
 
 
-@case('stderr-save-dir-removed-zhuyin', mode='zhuyin', stderr=True)
+@case('stderr-save-dir-removed-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
     return save_after_training(k, True, 'parse_more_chewings', b'su3cl3', ())
 
 
-@case('stderr-fini-dir-removed', stderr=True)
+@case('stderr-fini-dir-removed', stderr=True, issues=('545',))
 def _(k):
     ctx = k.ctx
     shutil.rmtree(k.user)
@@ -3736,7 +3867,7 @@ def _(k):
     return {}
 
 
-@case('stderr-fini-dir-removed-zhuyin', mode='zhuyin', stderr=True)
+@case('stderr-fini-dir-removed-zhuyin', mode='zhuyin', stderr=True, issues=('545',))
 def _(k):
     ctx = k.ctx
     shutil.rmtree(k.user)
@@ -3747,7 +3878,7 @@ def _(k):
 # The paths that stay quiet at the pin: a save that has nothing to save, a
 # save that works, a reopen of the profile it wrote.
 # Paths in the pin's lines are the caller's bytes, not text.
-@case('stderr-non-utf8-user-dir', stderr=True)
+@case('stderr-non-utf8-user-dir', stderr=True, issues=('545',))
 def _(k):
     user = os.path.join(os.fsencode(k.scratch), b'user-\xff' + os.path.basename(k.user.encode())[5:])
     os.mkdir(user)
@@ -3762,7 +3893,7 @@ def _(k):
     return out
 
 
-@case('stderr-quiet-saves', stderr=True)
+@case('stderr-quiet-saves', stderr=True, issues=('545',))
 def _(k):
     ctx = k.ctx
     out = {'unmodified save': k.fn('save', B, P)(ctx)}
@@ -3775,7 +3906,7 @@ def _(k):
     return out
 
 
-@case('stderr-unmodified-save-dir-removed', stderr=True)
+@case('stderr-unmodified-save-dir-removed', stderr=True, issues=('545',))
 def _(k):
     ctx = k.ctx
     shutil.rmtree(k.user)
@@ -3998,11 +4129,11 @@ for _mode in ('pinyin', 'zhuyin'):
     for _how in LIBRARY_BREAKS:
         for _site in ('init', 'load', 'save', 'mask-out') + (('addon',) if _mode == 'pinyin' else ()):
             case(f'stderr-library-{_site}-{_how}' + _suffix, mode=_mode,
-                 crash=library_expected(_site, _how, _mode))(library_probe(_site, _how))
+                 crash=library_expected(_site, _how, _mode), issues=('545',))(library_probe(_site, _how))
         # Both lines in the pin's order: the profile's, then the library's.
         for _site, _label in (('init-fresh', 'fresh-user-dir'), ('init-nonconform', 'nonconforming-user-dir')):
             case(f'stderr-library-init-{_label}-{_how}' + _suffix, mode=_mode,
-                 crash=library_expected(_site, _how, _mode))(library_probe(_site, _how))
+                 crash=library_expected(_site, _how, _mode), issues=('545',))(library_probe(_site, _how))
 
 
 # A directory where a system library should be (register row 96). A size of
@@ -4031,9 +4162,9 @@ for _mode in ('pinyin', 'zhuyin'):
     # The zhuyin facade has no addon entry point.
     for _site in (s for s in LIBRARY_FINAL if s != 'addon' or _mode == 'pinyin'):
         case(f'abort-library-directory-long-entry-{_site}' + _suffix, mode=_mode,
-             abort=False, crash=library_expected(_site, 'short', _mode), either=True)(library_directory_probe(_site, 'dir-long'))
+             abort=False, crash=library_expected(_site, 'short', _mode), either=True, issues=('545',))(library_directory_probe(_site, 'dir-long'))
         case(f'library-directory-one-entry-{_site}' + _suffix, mode=_mode, abort=False,
-             crash=library_expected(_site, 'short', _mode), either=True)(library_directory_probe(_site, 'dir-short'))
+             crash=library_expected(_site, 'short', _mode), either=True, issues=('545',))(library_directory_probe(_site, 'dir-short'))
 
 
 def library_directory_guard(site, guard):
@@ -4068,7 +4199,7 @@ for _mode in ('pinyin', 'zhuyin'):
     for _guard in ('reserved', 'unloaded'):
         for _site in ('save', 'mask-out'):
             case(f'library-directory-guard-{_guard}-{_site}' + ('-zhuyin' if _mode == 'zhuyin' else ''),
-                 mode=_mode, control=True)(library_directory_guard(_site, _guard))
+                 mode=_mode, control=True, issues=('545',))(library_directory_guard(_site, _guard))
 
 
 # The guards that keep the pin silent with the same broken library: the
@@ -4116,7 +4247,7 @@ for _mode in ('pinyin', 'zhuyin'):
     for _site in ('load-already-loaded', 'load-whole', 'save-unmodified', 'save-unloaded', 'mask-out-unloaded') + \
             (('addon-already-loaded',) if _mode == 'pinyin' else ()):
         case(f'stderr-library-control-{_site}' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode,
-             control=True, stderr=True)(library_control(_site))
+             control=True, stderr=True, issues=('545',))(library_control(_site))
 
 
 # The pin's ignored `SubPhraseIndex::load` failure. `MemoryChunk::mmap`
@@ -4671,7 +4802,7 @@ def init_system_argument(k, form):
 for _mode in ('pinyin', 'zhuyin'):
     for _form in ('empty', 'empty-missing', 'null', 'dot', 'absolute'):
         case('init-system-' + _form + '-' + _mode, mode=_mode,
-             control=_form in ('empty-missing', 'dot', 'absolute'), stderr=True)(
+             control=_form in ('empty-missing', 'dot', 'absolute'), stderr=True, issues=('643',))(
                  lambda k, form=_form: init_system_argument(k, form))
 
 
@@ -4791,7 +4922,7 @@ def null_user_session(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('null-user-session-' + _mode, mode=_mode, stderr=True)(null_user_session)
+    case('null-user-session-' + _mode, mode=_mode, stderr=True, issues=('642',))(null_user_session)
 
 
 def transient_library(k,library,null):
@@ -4814,7 +4945,7 @@ for _mode in ('pinyin', 'zhuyin'):
     for _library in range(1, 8):
         for _null in (False, True):
             case('user-library-' + str(_library) + ('-null-' if _null else '-ordinary-') + _mode,
-                 mode=_mode, control=not _null, stderr=True)(
+                 mode=_mode, control=not _null, stderr=True, issues=('642',))(
                 lambda k, library=_library, null=_null: transient_library(k, library, null))
 
 
@@ -4924,10 +5055,10 @@ def issue790_export(k, action='train'):
     return out
 
 
-case('issue790-export-after-train-system')(issue790_export)
+case('issue790-export-after-train-system', issues=('790',))(issue790_export)
 for _action in ('no-train', 'unconstrained', 'open-before', 'save-reopen', 'replayed-train'):
     case('issue790-export-' + _action + '-system',
-         control=_action in ('no-train', 'unconstrained', 'save-reopen'))(
+         control=_action in ('no-train', 'unconstrained', 'save-reopen'), issues=('790',))(
              lambda k, action=_action: issue790_export(k, action))
 
 
@@ -4968,9 +5099,9 @@ def issue790_bounded_counts(k, count):
     return out
 
 
-case('issue790-export-zero-and-signed-system')(
+case('issue790-export-zero-and-signed-system', issues=('790',))(
     lambda k: issue790_bounded_counts(k, (1 << 31) - 69))
-case('issue790-export-prefix-overflow-system')(
+case('issue790-export-prefix-overflow-system', issues=('790',))(
     lambda k: issue790_bounded_counts(k, (1 << 32) - 76))
 
 
@@ -4985,11 +5116,11 @@ def issue790_imported(k, appended=False):
     return out
 
 
-case('issue790-export-override-only-system')(issue790_imported)
-case('issue790-export-appended-system')(lambda k: issue790_imported(k, appended=True))
+case('issue790-export-override-only-system', issues=('790',))(issue790_imported)
+case('issue790-export-appended-system', issues=('790',))(lambda k: issue790_imported(k, appended=True))
 
 
-@case('issue790-guess-after-train-system')
+@case('issue790-guess-after-train-system', issues=('790',))
 def _(k):
     # The first ni reading has 1/100 of 尼's pronunciation mass. A large
     # unrelated start-row total makes the new bigram too small to explain
@@ -5005,7 +5136,7 @@ def _(k):
     return out
 
 
-@case('issue790-character-offset-after-train-system')
+@case('issue790-character-offset-after-train-system', issues=('790',))
 def _(k):
     # Both readings have shipped index entries. An incomplete n path
     # trains na (initially zero) and nei; the public offset call then tests
@@ -5026,8 +5157,8 @@ def _(k):
     return out
 
 
-case('issue759-export-open-across-import-system')(export_open_across_import_system)
-case('issue759-export-open-across-import-user')(export_open_across_import_user)
+case('issue759-export-open-across-import-system', issues=('759',))(export_open_across_import_system)
+case('issue759-export-open-across-import-user', issues=('759',))(export_open_across_import_user)
 
 
 # #525: reduce_tokens asserts on the sixth add, with five existing tokens.
@@ -5063,8 +5194,8 @@ def combined_import_bound(k, guard=True):
     return out
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('combined-library-sixth-add-' + _mode, mode=_mode, abort=False)(combined_import_bound)
-    case('combined-library-fifth-add-' + _mode, mode=_mode, control=True)(
+    case('combined-library-sixth-add-' + _mode, mode=_mode, abort=False, issues=('525',))(combined_import_bound)
+    case('combined-library-fifth-add-' + _mode, mode=_mode, control=True, issues=('525',))(
         lambda k: combined_import_bound(k, guard=False))
 
 
@@ -5081,8 +5212,8 @@ def import_review(k, invalid=False):
     return out
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('combined-library-invalid-reading-' + _mode, mode=_mode, control=True)(lambda k: import_review(k, True))
-    case('combined-library-unused-index-' + _mode, mode=_mode, abort=False)(import_review)
+    case('combined-library-invalid-reading-' + _mode, mode=_mode, control=True, issues=('525',))(lambda k: import_review(k, True))
+    case('combined-library-unused-index-' + _mode, mode=_mode, abort=False, issues=('525',))(import_review)
 
 
 # #757 PR 0: two user phrases with equal counts whose user-table order
@@ -5121,7 +5252,7 @@ def nbest_user_table_order(k):
 # Controls: the parent build already met the user items in this order, so
 # PR 0 preserves the output here.
 for _mode in ('pinyin', 'zhuyin'):
-    case('nbest-user-table-order-' + _mode, mode=_mode, control=True)(nbest_user_table_order)
+    case('nbest-user-table-order-' + _mode, mode=_mode, control=True, issues=('757',))(nbest_user_table_order)
 
 
 def user_dir_listing(scratch, before):
@@ -5193,13 +5324,23 @@ for _j_mode in ('pinyin', 'zhuyin'):
              control=True)(j_multi_chewing(_j_scheme))
 
 
+# Phase timings of the workers the driver ran, in order (`T` lines plus the
+# driver's own wall and teardown), kept apart from the observations so a
+# captured observation is the same bytes from run to run.
+TIMINGS = []
+
+
 def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
     env = dict(os.environ, TMPDIR=str(scratch))
     env.update(extra_env or {})
     before = set(os.listdir(scratch))
+    spawned = time.monotonic()
+    env['CONTRACT_DIFF_SPAWNED'] = repr(spawned)
     proc = subprocess.run([sys.executable, str(WORKER), mode, str(so), str(data), name],
                           capture_output=True, env=env, timeout=timeout)
     stdout = proc.stdout.decode('utf-8', 'replace')
+    phases = [json.loads(line[2:]) for line in stdout.splitlines() if line.startswith('T {')]
+    timing = dict(case=name, so=str(so), **(phases[-1] if phases else {}))
     # stderr keeps invalid UTF-8 apart from a real U+FFFD (`surrogateescape`),
     # since the pin writes paths as their bytes.
     stderr = proc.stderr.decode('utf-8', 'surrogateescape')
@@ -5208,13 +5349,17 @@ def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
     # directories from axis_c_normalize_diagnostics's literal path replace.
     stderr = stderr.replace(str(scratch), 'SCRATCH')
     lines = [json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
-    return dict(exit=proc.returncode, result=lines[-1] if lines else None,
-                userfiles=user_dir_listing(scratch, before),
-                measurement_roots=[line.removeprefix('J-ROOT ') for line in stdout.splitlines() if line.startswith('J-ROOT ')],
-                measurement_abort_flush=('J-GCOV-ABORT-BEGIN' in stdout.splitlines()
-                                         and 'J-GCOV-ABORT-END' in stdout.splitlines()),
-                stderr_lines=len(stderr.splitlines()),
-                stderr=re.sub(r'(user|sys)-(\udcff)?[A-Za-z0-9_]+', r'\1-\2X', stderr))
+    observation = dict(exit=proc.returncode, result=lines[-1] if lines else None,
+                       userfiles=user_dir_listing(scratch, before),
+                       measurement_roots=[line.removeprefix('J-ROOT ') for line in stdout.splitlines() if line.startswith('J-ROOT ')],
+                       measurement_abort_flush=('J-GCOV-ABORT-BEGIN' in stdout.splitlines()
+                                                and 'J-GCOV-ABORT-END' in stdout.splitlines()),
+                       stderr_lines=len(stderr.splitlines()),
+                       stderr=re.sub(r'(user|sys)-(\udcff)?[A-Za-z0-9_]+', r'\1-\2X', stderr))
+    timing['wall'] = time.monotonic() - spawned
+    timing['teardown'] = timing['wall'] - sum(timing.get(k, 0.0) for k in ('startup', 'load', 'fixture', 'execute'))
+    TIMINGS.append(timing)
+    return observation
 
 
 # #640 leading separators, #698 retained before-cursor windows, #681 zero keys.
@@ -5441,7 +5586,7 @@ for mode in ('pinyin','zhuyin'):
                 kwargs={'mode':mode,'control':offset in SEPARATOR_CONTROLS.get(f'{mode}/{index}/{op}', ())}
                 if offset in SEPARATOR_ABORTS.get(f"{mode}/{index}/{op}", ()):
                     kwargs['abort']=False
-                case('separator/'+identity,**kwargs)(separator_case(text,op,offset))
+                case('separator/'+identity,**kwargs, issues=('640',))(separator_case(text,op,offset))
 BEFORE_CURSOR_INPUTS=('ni','hao','wo','shi','zhong','guo','xian','tian',
     'nihao','zhongguo','beijing','shanghai','renmin','nihaoshijie',
     'zhonghuarenmin','beijingdaxue','shijieheping','nih','zhongg',
@@ -5451,11 +5596,11 @@ for text in BEFORE_CURSOR_INPUTS:
     options=0x1aa if any(char.isdigit() for char in text) else 0x18a
     for offset in range(len(text)+1):
         case(f'before-cursor/{text}/{offset}',mode='zhuyin',
-             control=(text,offset) in BEFORE_CURSOR_CONTROLS)(separator_case(text,'before',offset,options))
+             control=(text,offset) in BEFORE_CURSOR_CONTROLS, issues=('698',))(separator_case(text,'before',offset,options))
         for op in ('candidates','key','rest'):
-            case(f'separator-free-control/{text}/{op}/{offset}',control=True)(
+            case(f'separator-free-control/{text}/{op}/{offset}',control=True, issues=('640', '698'))(
                 separator_case(text,op,offset,options))
-    case(f'separator-free-control/{text}/sentence',control=True)(
+    case(f'separator-free-control/{text}/sentence',control=True, issues=('640', '698'))(
         separator_case(text,'sentence',0,options))
 for mode in ('pinyin','zhuyin'):
     for text in ("ni'","ni'hao","ni''hao","ni'hao'"):
@@ -5467,14 +5612,14 @@ for mode in ('pinyin','zhuyin'):
                 kwargs={'mode':mode,'control':not (tail_zero if mode=='pinyin' else is_zero) and not (mode=='zhuyin' and previous_zero and offset<len(text))}
                 if mode=='zhuyin' and previous_zero and offset<len(text):
                     kwargs['abort']=False
-                case(f'zero-key/{mode}/{text}/{op}/{offset}',**kwargs)(separator_case(text,op,offset))
+                case(f'zero-key/{mode}/{text}/{op}/{offset}',**kwargs, issues=('681',))(separator_case(text,op,offset))
 for mode,text,offset in (('pinyin',"xi'",2),('pinyin',"xi''",2),
                          ('pinyin',"xi''",3),('zhuyin',"xi1'an1",3),
                          ('zhuyin',"xi1'",3)):
     for op in ('key','rest','render'):
-        case(f'allocator-zero/{mode}/{text}/{op}/{offset}',mode=mode)(
+        case(f'allocator-zero/{mode}/{text}/{op}/{offset}',mode=mode, issues=('681',))(
             separator_case(text,op,offset,0x1aa))
-case("allocator-zero/zhuyin/xi1'an1/key/4",mode='zhuyin',abort=False)(
+case("allocator-zero/zhuyin/xi1'an1/key/4",mode='zhuyin',abort=False, issues=('681',))(
     separator_case("xi1'an1",'key',4,0x1aa))
 
 
@@ -5512,9 +5657,9 @@ for _mode, _text, _zero, _real, _names in (
         ('pinyin', "xi'", 2, 0, ('pinyin', 'zhuyin', 'luoma_pinyin', 'secondary_zhuyin', 'strings')),
         ('zhuyin', "xi1'", 3, 0, ('zhuyin', 'pinyin'))):
     for _name in _names:
-        case(f'alloc-register-{_mode}_get_{_name}-zero-key', mode=_mode, control=True)(
+        case(f'alloc-register-{_mode}_get_{_name}-zero-key', mode=_mode, control=True, issues=('681',))(
             alloc_register_case(_mode, _text, _zero, _name))
-        case(f'alloc-register-{_mode}_get_{_name}-real-key', mode=_mode, control=True)(
+        case(f'alloc-register-{_mode}_get_{_name}-real-key', mode=_mode, control=True, issues=('681',))(
             alloc_register_case(_mode, _text, _real, _name))
 
 
@@ -5569,13 +5714,13 @@ def row54_unload(direction, reparse):
 
 for _mode in ('pinyin', 'zhuyin'):
     for _parser, _text in (('full_pinyins', b'nihao'), ('chewings', b'su3cl3')):
-        case(f'row54-empty-{_mode}-{_parser}', mode=_mode)(
+        case(f'row54-empty-{_mode}-{_parser}', mode=_mode, issues=('695', 'row:54'))(
             row54_empty('parse_more_' + _parser, _text))
     for _reparse in (False, True):
         case(f'row54-unload-{_mode}' + ('-reparse' if _reparse else ''),
-             mode=_mode, control=_reparse)(row54_unload('after', _reparse))
-case('row54-empty-pinyin-double')(row54_empty('parse_more_double_pinyins', b'nihk'))
-case('row54-unload-zhuyin-before', mode='zhuyin', control=True)(row54_unload('before', False))
+             mode=_mode, control=_reparse, issues=('695', 'row:54'))(row54_unload('after', _reparse))
+case('row54-empty-pinyin-double', issues=('695', 'row:54'))(row54_empty('parse_more_double_pinyins', b'nihk'))
+case('row54-unload-zhuyin-before', mode='zhuyin', control=True, issues=('695', 'row:54'))(row54_unload('before', False))
 
 
 
@@ -5629,7 +5774,7 @@ def row54_forcing(sequence, restored=b'nihao'):
 for _mode in ('pinyin', 'zhuyin'):
     for _sequence in ('empty', 'empty-guess', 'no-empty'):
         case(f'row54-forcing-{_mode}-{_sequence}', mode=_mode,
-             control=_sequence != 'empty')(row54_forcing(_sequence))
+             control=_sequence != 'empty', issues=('709', '695', 'row:54'))(row54_forcing(_sequence))
 
 
 # #710, row 53 item 2: every zero-consumption parse leaves an empty
@@ -5673,7 +5818,7 @@ for _mode in ('pinyin', 'zhuyin'):
             for _prefix in (False, True):
                 _label = _text.decode() or 'empty'
                 case(f'zero-consumption-{_mode}-{_parser}-{_label}' + ('-prefix' if _prefix else ''),
-                     mode=_mode, control=_mode == 'pinyin')(
+                     mode=_mode, control=_mode == 'pinyin', issues=('710', 'row:53'))(
                     zero_consumption_sentence(_parser, _text, _prefix))
 
 
@@ -5752,7 +5897,7 @@ for _mode in ('pinyin', 'zhuyin'):
             ('two-choices', 'nihao', ((0, '泥'), (2, '浩')), 'nihai', False)):
         for _sequence in ('direct', 'guess', 'empty', 'empty-guess'):
             case(f'parse-constraints-{_mode}-{_name}-{_sequence}', mode=_mode,
-                 control=_control or _sequence == 'empty-guess')(
+                 control=_control or _sequence == 'empty-guess', issues=('710',))(
                 changed_parse_constraints(_initial, _choices, _replacement, _sequence))
     # A temporary mismatch or truncation must not destroy a choice until
     # something validates that intermediate matrix.
@@ -5761,7 +5906,7 @@ for _mode in ('pinyin', 'zhuyin'):
         for _sequence in ('direct', 'intermediate-guess'):
             case(f'parse-constraints-{_mode}-{_name}-{_sequence}', mode=_mode,
                  control=_sequence == 'intermediate-guess' and not (
-                     _mode == 'zhuyin' and _name == 'temporary-shorter'))(
+                     _mode == 'zhuyin' and _name == 'temporary-shorter'), issues=('710',))(
                 changed_parse_constraints('nihao', ((0, '泥'),), 'nihai',
                                           _sequence, _intermediate))
 
@@ -5812,7 +5957,7 @@ def row58_scoring(dynamic):
 
 
 for _dynamic in (False, True):
-    case('row58-bigram-scoring-' + ('on' if _dynamic else 'off'))(row58_scoring(_dynamic))
+    case('row58-bigram-scoring-' + ('on' if _dynamic else 'off'), issues=('697', 'row:58'))(row58_scoring(_dynamic))
 
 
 def row58_choose(k, kind, text, times):
@@ -5903,11 +6048,11 @@ def row58_lambda(dynamic):
 
 for _dynamic in (False, True):
     _state = 'on' if _dynamic else 'off'
-    case('row58-prefix-no-bigram-' + _state)(row58_prefix(_dynamic, '是', 1))
-    case('row58-prefix-live-21-' + _state)(row58_prefix(_dynamic, '是谁', 21))
-    case('row58-bigram-choices-' + _state)(row58_bigram_choices(_dynamic))
-    case('row58-conversions-' + _state)(row58_conversion(_dynamic))
-    case('row58-lambda-ties-' + _state)(row58_lambda(_dynamic))
+    case('row58-prefix-no-bigram-' + _state, issues=('697', 'row:58'))(row58_prefix(_dynamic, '是', 1))
+    case('row58-prefix-live-21-' + _state, issues=('697', 'row:58'))(row58_prefix(_dynamic, '是谁', 21))
+    case('row58-bigram-choices-' + _state, issues=('697', 'row:58'))(row58_bigram_choices(_dynamic))
+    case('row58-conversions-' + _state, issues=('697', 'row:58'))(row58_conversion(_dynamic))
+    case('row58-lambda-ties-' + _state, issues=('697', 'row:58'))(row58_lambda(_dynamic))
 
 
 def row58_prefix_overflow(dynamic):
@@ -5929,7 +6074,7 @@ def row58_prefix_overflow(dynamic):
 
 
 for _dynamic in (False, True):
-    case('row58-prefix-overflow-' + ('on' if _dynamic else 'off'))(row58_prefix_overflow(_dynamic))
+    case('row58-prefix-overflow-' + ('on' if _dynamic else 'off'), issues=('697', 'row:58'))(row58_prefix_overflow(_dynamic))
 
 
 def row58_signed_score(dynamic, duplicate=False, denominator=20000000):
@@ -5950,9 +6095,9 @@ def row58_signed_score(dynamic, duplicate=False, denominator=20000000):
 
 for _dynamic in (False, True):
     _state = 'on' if _dynamic else 'off'
-    case('row58-signed-score-' + _state)(row58_signed_score(_dynamic))
-    case('row58-signed-duplicate-' + _state)(row58_signed_score(_dynamic, True))
-    case('row58-unsigned-score-' + _state)(row58_signed_score(_dynamic, denominator=10000000))
+    case('row58-signed-score-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic))
+    case('row58-signed-duplicate-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic, True))
+    case('row58-unsigned-score-' + _state, issues=('697', 'row:58'))(row58_signed_score(_dynamic, denominator=10000000))
 
 
 def row58_zero_total(dynamic, punct=False):
@@ -5980,7 +6125,7 @@ def row58_zero_total(dynamic, punct=False):
 for _dynamic in (False, True):
     for _punct in (False, True):
         name = 'row58-total-zero-' + ('punct-' if _punct else '') + ('on' if _dynamic else 'off')
-        case(name, abort=False)(row58_zero_total(_dynamic, _punct))
+        case(name, abort=False, issues=('697', 'row:58'))(row58_zero_total(_dynamic, _punct))
 
 
 def row58_prefix_zero_total(dynamic):
@@ -5994,7 +6139,7 @@ def row58_prefix_zero_total(dynamic):
 
 
 for _dynamic in (False, True):
-    case('row58-prefix-zero-total-' + ('on' if _dynamic else 'off'), control=True)(
+    case('row58-prefix-zero-total-' + ('on' if _dynamic else 'off'), control=True, issues=('697', 'row:58'))(
         row58_prefix_zero_total(_dynamic))
 
 
@@ -6018,7 +6163,7 @@ def row58_lambda_rounding(dynamic):
 
 
 for _dynamic in (False, True):
-    case('row58-lambda-rounding-' + ('on' if _dynamic else 'off'))(row58_lambda_rounding(_dynamic))
+    case('row58-lambda-rounding-' + ('on' if _dynamic else 'off'), issues=('697', 'row:58'))(row58_lambda_rounding(_dynamic))
 
 
 
@@ -6071,15 +6216,15 @@ def row58_system_import(library, dynamic=False, existing=False):
 
 for _library in range(1, 5):
     for _dynamic in (False, True):
-        case('row58-system-import-%d-%s' % (_library, 'on' if _dynamic else 'off'))(
+        case('row58-system-import-%d-%s' % (_library, 'on' if _dynamic else 'off'), issues=('712', '697', 'row:58'))(
             row58_system_import(_library, _dynamic))
     # The import/count twin exists; libzhuyin has no predicted API twin.
-    case('row58-system-import-zhuyin-%d' % _library, mode='zhuyin', control=True)(
+    case('row58-system-import-zhuyin-%d' % _library, mode='zhuyin', control=True, issues=('712', '697', 'row:58'))(
         row58_system_import(_library))
 for _dynamic in (False, True):
-    case('row58-system-existing-' + ('on' if _dynamic else 'off'), control=True)(
+    case('row58-system-existing-' + ('on' if _dynamic else 'off'), control=True, issues=('712', '697', 'row:58'))(
         row58_system_import(4, _dynamic, existing=True))
-case('row58-system-existing-zhuyin', mode='zhuyin', control=True)(
+case('row58-system-existing-zhuyin', mode='zhuyin', control=True, issues=('712', '697', 'row:58'))(
     row58_system_import(4, existing=True))
 
 
@@ -6121,7 +6266,7 @@ for _mode in ('pinyin', 'zhuyin'):
                     _mode, _text, 'tables' if _tables else 'plain',
                     'fuzzy' if _fuzzy else 'exact'), mode=_mode,
                     control=not _tables or _text in ('baguanangang', 'chenanengang')
-                    or (_mode == 'pinyin' and _text in ('lian', 'xian')))(
+                    or (_mode == 'pinyin' and _text in ('lian', 'xian')), issues=('682', '683'))(
                         matrix_resplit_windows(_text, _options))
 
 # --------------------------------------------------------------------------
@@ -6273,7 +6418,7 @@ def conf_case(name, *edits, modes=('pinyin', 'zhuyin'), session=conf_session, **
             return session(k, conf_system(k, *edits))
         control = name in CONF_CONTROLS and not (mode == 'zhuyin' and name in CONF_ZHUYIN_CHANGED)
         case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
-             **{'control': control, **options})(probe)
+             **{'control': control, **options}, issues=('694', '525'))(probe)
 
 
 # Valid files that are not the stock one: the pin follows the rows.
@@ -6347,7 +6492,7 @@ def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin
                 return {'ret': k.fn('load_phrase_library', B, P, C.c_ubyte)(ctx, index)}
             return {'ret': k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, index)}
         case('table-conf-abort-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
-             abort=ret, userdir=userdir)(probe)
+             abort=ret, userdir=userdir, issues=('694', '525'))(probe)
 
 
 # `table_info.cpp` aborts inside `SystemTableInfo2::load`, before
@@ -6364,7 +6509,7 @@ conf_abort('addon-index-negative', ('+', 'addon -1 x.table x.bin NULL DICTIONARY
 # `user.conf` and aborts on one it does not know (`table_info.cpp:132`,
 # reached from `check_format`); the system `table.conf` reaches the same
 # converter above.
-@case('user-conf-abort-database-format-unknown', abort=False, userdir=True)
+@case('user-conf-abort-database-format-unknown', abort=False, userdir=True, issues=('694', '525'))
 def _(k):
     _write_user_conf(k)
     path = os.path.join(k.user, 'user.conf')
@@ -6421,7 +6566,7 @@ def header_probe(*edits):
 for _mode in ('pinyin', 'zhuyin'):
     _suffix = '-zhuyin' if _mode == 'zhuyin' else ''
     case('table-conf-lambda-line-missing' + _suffix, mode=_mode,
-         stderr=True)(header_probe(('-', 'lambda parameter')))
+         stderr=True, issues=('694', '525'))(header_probe(('-', 'lambda parameter')))
     # glibc's scanner does not back up: an exponent mark with no digit after
     # it, a `0x` with no hex digit and `infin` fail the `%f` conversion.
     for _name, _spelling in (('exponent-without-digits', '1e'), ('hex-without-digits', '0x'),
@@ -6429,7 +6574,7 @@ for _mode in ('pinyin', 'zhuyin'):
         # The oracle image's glibc rejects `1e` and `0x1p` (2.43); Ubuntu's
         # 2.39 accepts them, and the pin follows the host libc.
         case('table-conf-lambda-' + _name + _suffix, mode=_mode, stderr=True,
-             host_scanf=(_spelling,) if _name.endswith('exponent-without-digits') else ())(header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
+             host_scanf=(_spelling,) if _name.endswith('exponent-without-digits') else (), issues=('694', '525'))(header_probe(('lambda parameter:0.312699', 'lambda parameter:' + _spelling)))
 
 
 # Every spelling glibc's `%f` accepts, hexadecimal floats included.
@@ -6451,7 +6596,7 @@ def absolute_user_file(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('table-conf-user-file-absolute' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode)(absolute_user_file)
+    case('table-conf-user-file-absolute' + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode, issues=('694', '525'))(absolute_user_file)
 
 # The `strtol` behind `%d` and `atoi` saturates at LONG_MIN on a negative
 # overflow, which the stores into an `int` and a `guint8` cut to 0.
@@ -6471,7 +6616,7 @@ def stderr_conf_case(name, *edits):
     for mode in ('pinyin', 'zhuyin'):
         def probe(k, edits=edits):
             return conf_session(k, conf_system(k, *edits))
-        case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode, stderr=True)(probe)
+        case('table-conf-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode, stderr=True, issues=('694', '525'))(probe)
 
 
 stderr_conf_case('colliding-library-files', ('network.bin USER_FILE', 'shared.bin USER_FILE'),
@@ -6505,7 +6650,7 @@ for _mode in ('pinyin', 'zhuyin'):
             ('library-as-user-file', (('default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE',
                                        'default GB_DICTIONARY NULL NULL gb_char.dbin USER_FILE'),))):
         case('table-conf-candidates-' + _name + ('-zhuyin' if _mode == 'zhuyin' else ''), mode=_mode,
-             crash={'ret': False, 'logs': [[_domain, 16]]})(candidates_probe(*_edits))
+             crash={'ret': False, 'logs': [[_domain, 16]]}, issues=('694', '525'))(candidates_probe(*_edits))
 
 
 
@@ -6596,8 +6741,8 @@ for _mode in ('pinyin', 'zhuyin'):
     for _options in (1 << 5, (1 << 5) | (1 << 3)):
         for _text in FINAL_STEP_INPUTS:
             case('final-step-%s-%s-%x' % (_mode, _text, _options),
-                 mode=_mode, control=True)(final_step_surface(_text, _options))
-    case('final-step-%s-import-ba-kua' % _mode, mode=_mode, control=True)(
+                 mode=_mode, control=True, issues=('594',))(final_step_surface(_text, _options))
+    case('final-step-%s-import-ba-kua' % _mode, mode=_mode, control=True, issues=('594',))(
         final_step_surface("ba'kua", 1 << 5, imported=True))
 
 
@@ -6678,19 +6823,19 @@ def mask_out_system_reload(k, saved, mask=0xFFFFFFFF, selected=False, atomic=Fal
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('mask-out-system-unsaved-' + _mode, mode=_mode)(
+    case('mask-out-system-unsaved-' + _mode, mode=_mode, issues=('728',))(
         lambda k: mask_out_system_reload(k, False))
-    case('mask-out-system-saved-' + _mode, mode=_mode)(
+    case('mask-out-system-saved-' + _mode, mode=_mode, issues=('728',))(
         lambda k: mask_out_system_reload(k, True))
-    case('abort-mask-out-surviving-add-' + _mode, mode=_mode, abort=False)(
+    case('abort-mask-out-surviving-add-' + _mode, mode=_mode, abort=False, issues=('728',))(
         lambda k: mask_out_system_reload(k, True, 0x00FFFFFF, atomic=True))
-    case('mask-out-system-selected-add-' + _mode, mode=_mode, control=True)(
+    case('mask-out-system-selected-add-' + _mode, mode=_mode, control=True, issues=('728',))(
         lambda k: mask_out_system_reload(k, True, 0x00FFFFFF, selected=True))
-    case('mask-out-system-headerless-add-' + _mode, mode=_mode)(
+    case('mask-out-system-headerless-add-' + _mode, mode=_mode, issues=('728',))(
         lambda k: mask_out_system_reload(k, True, 0x00FFFFFF, headerless=True))
-    case('mask-out-dropped-add-full-' + _mode, mode=_mode)(
+    case('mask-out-dropped-add-full-' + _mode, mode=_mode, issues=('728',))(
         lambda k: mask_out_system_reload(k, True, dropped=True))
-    case('mask-out-dropped-add-headerless-' + _mode, mode=_mode)(
+    case('mask-out-dropped-add-headerless-' + _mode, mode=_mode, issues=('728',))(
         lambda k: mask_out_system_reload(k, True, 0x00FFFFFF, headerless=True, dropped=True))
 
 
@@ -6729,12 +6874,12 @@ def mask_out_system_modify(k, header=True, disk=False):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('mask-out-system-modify-' + _mode, mode=_mode)(mask_out_system_modify)
+    case('mask-out-system-modify-' + _mode, mode=_mode, issues=('728',))(mask_out_system_modify)
     # Without MODIFY_HEADER the pin returns an empty logger, so even a
     # valid MODIFY record is not merged (phrase_index.cpp:855-856).
-    case('mask-out-system-no-header-' + _mode, mode=_mode, control=True)(
+    case('mask-out-system-no-header-' + _mode, mode=_mode, control=True, issues=('728',))(
         lambda k: mask_out_system_modify(k, False))
-    case('mask-out-system-disk-replacement-' + _mode, mode=_mode)(
+    case('mask-out-system-disk-replacement-' + _mode, mode=_mode, issues=('728',))(
         lambda k: mask_out_system_modify(k, disk=True))
 
 
@@ -6846,34 +6991,34 @@ _TWO_HEADERS_BAD_TAIL = _TWO_HEADERS + _BAD_TAIL
 _ONE_HEADER_BAD_TAIL = _modify_header(0, 1, 2) + _BAD_TAIL
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('abort-init-log-header-token-' + _mode, mode=_mode, abort=False)(
+    case('abort-init-log-header-token-' + _mode, mode=_mode, abort=False, issues=('525',))(
         lambda k: logger_init_probe(k, _HEADER_TOKEN))
-    case('abort-mask-out-log-header-token-' + _mode, mode=_mode, abort=False)(
+    case('abort-mask-out-log-header-token-' + _mode, mode=_mode, abort=False, issues=('525',))(
         lambda k: logger_mask_out_probe(k, _HEADER_TOKEN))
-    case('abort-mask-out-multiple-log-headers-' + _mode, mode=_mode, abort=False)(
+    case('abort-mask-out-multiple-log-headers-' + _mode, mode=_mode, abort=False, issues=('525',))(
         lambda k: logger_mask_out_probe(k, _TWO_HEADERS))
     # `_peek_header` counts the headers it read before the malformed tail
     # ends the walk and asserts on the total (`phrase_index.cpp:721-746`),
     # so two headers followed by an invalid record still abort there; the
     # pre-fix Err branch discarded the count and let the mask through.
-    case('abort-mask-out-multiple-log-headers-bad-tail-' + _mode, mode=_mode, abort=False)(
+    case('abort-mask-out-multiple-log-headers-bad-tail-' + _mode, mode=_mode, abort=False, issues=('525',))(
         lambda k: logger_mask_out_probe(k, _TWO_HEADERS_BAD_TAIL))
-    case('abort-mask-out-log-header-untouched-' + _mode, mode=_mode, abort=False)(
+    case('abort-mask-out-log-header-untouched-' + _mode, mode=_mode, abort=False, issues=('525',))(
         lambda k: logger_mask_out_untouched(k, _TWO_HEADERS))
     # The mask loop skips a library the call unloaded, so its corrupt
     # `.dbin` is never merged and the mask completes. The parent (batch D)
     # had no log validation at all, so it also completed here: a control,
     # held against a future `validate_system_logs` that drops the filter.
-    case('mask-out-unloaded-library-log-' + _mode, mode=_mode, control=True)(
+    case('mask-out-unloaded-library-log-' + _mode, mode=_mode, control=True, issues=('525',))(
         lambda k: logger_mask_out_unloaded_probe(k, _TWO_HEADERS))
     # The pin applies every header at init's `merge` (it only peeks at
     # mask-out time), so a two-header `.dbin` loads cleanly: a control.
-    case('init-multiple-log-headers-' + _mode, mode=_mode, control=True)(
+    case('init-multiple-log-headers-' + _mode, mode=_mode, control=True, issues=('525',))(
         lambda k: logger_init_probe(k, _TWO_HEADERS))
     # One header before the same tail passes `1 >= header_count`, so the
     # pin and the pre-fix subject both complete: a control that holds the
     # boundary the count-before-error fix must not cross.
-    case('mask-out-log-header-bad-tail-' + _mode, mode=_mode, control=True)(
+    case('mask-out-log-header-bad-tail-' + _mode, mode=_mode, control=True, issues=('525',))(
         lambda k: logger_mask_out_probe(k, _ONE_HEADER_BAD_TAIL))
 
 
@@ -7007,7 +7152,7 @@ def system_replay(k, build, reopen=False, unigram_add=True, observe_add=False):
 
 def _replay_case(name, build, reopen=False, unigram_add=True, observe_add=False, **options):
     for mode in ('pinyin', 'zhuyin'):
-        case('replay-' + name + '-' + mode, mode=mode, stderr=True, **options)(
+        case('replay-' + name + '-' + mode, mode=mode, stderr=True, **options, issues=('851',))(
             lambda k, build=build: system_replay(k, build, reopen, unigram_add, observe_add))
 
 
@@ -7133,7 +7278,7 @@ for _mode in ('pinyin', 'zhuyin'):
     for _variant in ('repeat', 'replacement', 'wrap', 'overflow', 'missing', 'removed',
                      'reload', 'mask', 'training', 'timing', 'import-system'):
         case('unigram-lifecycle-' + _variant + '-' + _mode, mode=_mode, stderr=True,
-             control=_variant in ('overflow', 'missing', 'removed', 'reload', 'mask'))(
+             control=_variant in ('overflow', 'missing', 'removed', 'reload', 'mask'), issues=('853',))(
             lambda k, variant=_variant: unigram_lifecycle(k, variant))
 
 
@@ -7163,7 +7308,7 @@ def unigram_null_user_save(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('unigram-null-user-save-' + _mode, mode=_mode, control=True, stderr=True)(
+    case('unigram-null-user-save-' + _mode, mode=_mode, control=True, stderr=True, issues=('853',))(
         unigram_null_user_save)
 
 
@@ -7446,7 +7591,7 @@ for _name, _payload in (('one-byte', b'\x01'), ('five-bytes', bytes((1, 1, 7, 0,
     for _mode in ('pinyin', 'zhuyin'):
         _suffix = '-zhuyin' if _mode == 'zhuyin' else '-pinyin'
         case('replay-short-add-' + _name + _suffix,
-             mode=_mode, abort=True, stderr=True)(_short_add(_payload))
+             mode=_mode, abort=True, stderr=True, issues=('850',))(_short_add(_payload))
 
 
 # #871: the pronunciation counts of a replayed system item. A MODIFY record
@@ -7591,13 +7736,13 @@ _PRON_SHAPES = {
     'other-first': ([(_PRON_OTHER_KEYS, 130), (None, 250)], None),
 }
 for _mode in ('pinyin', 'zhuyin'):
-    case('replay-pron-unigram-combined-' + _mode, mode=_mode, stderr=True)(
+    case('replay-pron-unigram-combined-' + _mode, mode=_mode, stderr=True, issues=('871',))(
         lambda k: pron_lifecycle(k, _pron_shape([(None, 160), (None, 220)]), 'unigram'))
 
 for _shape, (_entries, _unigram) in _PRON_SHAPES.items():
     for _steps in ('train', 'import', 'mask'):
         for _mode in ('pinyin', 'zhuyin'):
-            case('replay-pron-' + _steps + '-' + _shape + '-' + _mode, mode=_mode, stderr=True)(
+            case('replay-pron-' + _steps + '-' + _shape + '-' + _mode, mode=_mode, stderr=True, issues=('871',))(
                 lambda k, e=_entries, u=_unigram, st=_steps: pron_lifecycle(k, _pron_shape(e, u), st))
 
 
@@ -7663,7 +7808,7 @@ def pron_mixed(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('replay-pron-mixed-' + _mode, mode=_mode, stderr=True)(pron_mixed)
+    case('replay-pron-mixed-' + _mode, mode=_mode, stderr=True, issues=('871',))(pron_mixed)
 
 
 # A removed item and the prefix it extends. `SEARCH_CONTINUED` comes from the
@@ -7771,10 +7916,10 @@ def _removed_candidate(k, before=False):
 for _mode in ('pinyin', 'zhuyin'):
     case('removed-candidate-' + _mode, mode=_mode, stderr=True, crash={
         'removed': [False, 0, None], 'exact-guessed': True, 'exact-candidates-ret': True,
-    })(_removed_candidate)
+    }, issues=('row:102',))(_removed_candidate)
 case('removed-candidate-before-cursor-zhuyin', mode='zhuyin', stderr=True, crash={
     'removed': [False, 0, None], 'exact-guessed': True, 'exact-candidates-ret': True,
-})(lambda k: _removed_candidate(k, before=True))
+}, issues=('row:102',))(lambda k: _removed_candidate(k, before=True))
 
 
 # Batch F (#525): `zhuyin.cpp`'s phrase-table walk in `_add_phrase`. A token
@@ -7790,7 +7935,7 @@ def _ucs4_key(text):
     return b''.join(ord(character).to_bytes(4, 'little') for character in text)
 
 
-@case('abort-zhuyin-add-phrase-duplicate-library-token', mode='zhuyin', abort=False)
+@case('abort-zhuyin-add-phrase-duplicate-library-token', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
     # Two tokens for 你好, both in library 7 (the target): the pin's second
     # in-index candidate asserts at `:440`.
@@ -7807,7 +7952,7 @@ def _(k):
         it, '你好'.encode(), 'ㄋㄧˇ ㄏㄠˇ'.encode(), 1)}
 
 
-@case('abort-zhuyin-add-phrase-index-text-mismatch', mode='zhuyin', abort=False)
+@case('abort-zhuyin-add-phrase-index-text-mismatch', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
     # Persist 你們, then point 你好's phrase-table row at 你們's token: the
     # lone in-library match names an item whose text differs, `:457`.
@@ -7864,7 +8009,7 @@ def _add_pinyin_phrase_after_index(k, value):
     return {'ret': k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), b"ni'hao", 1)}
 
 
-@case('abort-add-phrase-duplicate-library-token', abort=False, userdir=True, cells=('bdb',))
+@case('abort-add-phrase-duplicate-library-token', abort=False, userdir=True, cells=('bdb',), issues=('525',))
 def _(k):
     ctx = k.init()
     assert ctx, 'the first init failed'
@@ -7873,13 +8018,13 @@ def _(k):
     return _add_pinyin_phrase_after_index(k, value)
 
 
-@case('abort-add-phrase-index-length-mismatch', abort=False, userdir=True, cells=('bdb',))
+@case('abort-add-phrase-index-length-mismatch', abort=False, userdir=True, cells=('bdb',), issues=('525',))
 def _(k):
     token = _persist_pinyin_phrase(k, '你好嗷', "ni'hao'ao")
     return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
 
 
-@case('abort-add-phrase-index-item-missing', abort=False, userdir=True, cells=('bdb',))
+@case('abort-add-phrase-index-item-missing', abort=False, userdir=True, cells=('bdb',), issues=('525',))
 def _(k):
     # The phrase table names library 7's token, but user.bin has no item:
     # get_phrase_item leaves a zero-length PhraseItem, so :568 asserts.
@@ -7889,7 +8034,7 @@ def _(k):
     return _add_pinyin_phrase_after_index(k, (0x07000001).to_bytes(4, 'little'))
 
 
-@case('abort-add-phrase-index-text-mismatch', abort=False, userdir=True, cells=('bdb',))
+@case('abort-add-phrase-index-text-mismatch', abort=False, userdir=True, cells=('bdb',), issues=('525',))
 def _(k):
     token = _persist_pinyin_phrase(k, '你們', "ni'men")
     return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
@@ -7964,17 +8109,17 @@ def phrase_table_mask_records(duplicates, remove_middle=False):
 # bdb controls the absence of shared-scratch tails. Both cases also detect
 # reconstruction from phrase items when saving: these raw records, including
 # their key/token associations, must survive without being derived anew.
-case('phrase-table-mask-long-short')(
+case('phrase-table-mask-long-short', issues=('759', '785'))(
     phrase_table_mask_records(False))
-case('phrase-table-mask-duplicate-long-short')(phrase_table_mask_records(True))
+case('phrase-table-mask-duplicate-long-short', issues=('759', '785'))(phrase_table_mask_records(True))
 # Removing the middle token shrinks the scratch entry before the short row.
 # Carry its post-mask length, not the maximum length previously encountered;
 # retaining the old maximum would duplicate the surviving final token.
-case('phrase-table-mask-post-removal-shrink')(
+case('phrase-table-mask-post-removal-shrink', issues=('759', '785'))(
     phrase_table_mask_records(False, remove_middle=True))
 
 
-@case('phrase-table-add-search-remove-roundtrip', control=True)
+@case('phrase-table-add-search-remove-roundtrip', control=True, issues=('759', '785'))
 def _(k):
     text, reading = '龘龘', b"da2'da2"
     out = {'absent': phrase_table_lookup(k, text)}
@@ -8003,7 +8148,7 @@ def _(k):
 # #799 review: prepare_tokens only enables instantiated sub-indices
 # (074a2219 storage/phrase_index.h:762-772); PhraseTableEntry::search skips
 # NULL arrays (storage/phrase_large_table3.cpp:40-42).
-@case('phrase-table-never-loaded-library-filter')
+@case('phrase-table-never-loaded-library-filter', issues=('799',))
 def _(k):
     token = (15 << 24) | 1  # No library 15 is loaded by this fixture.
     value = token.to_bytes(4, 'little')
@@ -8074,10 +8219,10 @@ def d18_remember(deltas):
     return probe
 
 
-case('d18-remember-reported', control=True)(d18_remember((-1, 0, 0x7fffffff)))
-case('d18-remember-signed-boundary', control=True)(d18_remember((0x7ffffffe, 1, 1, 0x7fffffff, 1)))
+case('d18-remember-reported', control=True, issues=('540',))(d18_remember((-1, 0, 0x7fffffff)))
+case('d18-remember-signed-boundary', control=True, issues=('540',))(d18_remember((0x7ffffffe, 1, 1, 0x7fffffff, 1)))
 for _count in (715827882, 715827883, 1431655765, 1431655766):
-    case(f'd18-remember-multiply-{_count}', control=True)(d18_remember((_count,)))
+    case(f'd18-remember-multiply-{_count}', control=True, issues=('540',))(d18_remember((_count,)))
 
 
 # #752: reuse the preregistered full-pinyin NUL-middle case below,
@@ -8100,11 +8245,11 @@ def remember_nul(parse_name, input_text, phrase):
     return probe
 
 
-case('remember-nul-double-pinyin', stderr=True)(
+case('remember-nul-double-pinyin', stderr=True, issues=('752',))(
     remember_nul('parse_more_double_pinyins', b'nihk', b'ni\0hao'))
-case('remember-nul-chewing-pinyin', stderr=True)(
+case('remember-nul-chewing-pinyin', stderr=True, issues=('752',))(
     remember_nul('parse_more_chewings', b'su3cl3', b'ni\0hao'))
-case('remember-known-nul-suffix-pinyin', control=True, stderr=True)(
+case('remember-known-nul-suffix-pinyin', control=True, stderr=True, issues=('752',))(
     remember_nul('parse_more_full_pinyins', b'nihao', '你好'.encode() + b'\0ignored'))
 
 
@@ -8365,9 +8510,9 @@ def d18_bigram_update(count, predicted=False, user_only=False):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('d18-unigram-max-' + _mode, mode=_mode, control=True)(d18_unigram(False))
-    case('d18-unigram-total-boundary-' + _mode, mode=_mode, control=True)(d18_unigram(True))
-    case('d18-input-boundaries-' + _mode, mode=_mode, control=True)(d18_input)
+    case('d18-unigram-max-' + _mode, mode=_mode, control=True, issues=('540',))(d18_unigram(False))
+    case('d18-unigram-total-boundary-' + _mode, mode=_mode, control=True, issues=('540',))(d18_unigram(True))
+    case('d18-input-boundaries-' + _mode, mode=_mode, control=True, issues=('540',))(d18_input)
     for _label, _system, _user, _control in (
             ('total-before', (1, 1), (0xfffffffe, 1), True),
             ('total-zero', (1, 1), (0xffffffff, 1), False),
@@ -8375,32 +8520,32 @@ for _mode in ('pinyin', 'zhuyin'):
             ('count-before', (0x80000000, 1), (0xffffffff, 0xfffffffe), True),
             ('count-zero', (0x80000000, 1), (0xffffffff, 0xffffffff), False),
             ('count-after', (0x80000000, 2), (0xffffffff, 0xffffffff), False)):
-        case(f'd18-merge-{_label}-{_mode}', mode=_mode, control=_control)(
+        case(f'd18-merge-{_label}-{_mode}', mode=_mode, control=_control, issues=('540',))(
             d18_merge(_system, _user, current='嚎' if _label.startswith('count-') else '号'))
     for _label, _count, _control in (
             ('stored-zero', 0, False), ('seed-before', 0x7fffffff, True), ('seed-zero', 0x80000000, False),
             ('seed-after', 0x80000001, False), ('total-max', 0xffffffff - 22080, True),
             ('total-overflow', 0xffffffff - 22080 + 1, False)):
-        case(f'd18-train-{_label}-{_mode}', mode=_mode, control=_control)(d18_bigram_update(_count))
+        case(f'd18-train-{_label}-{_mode}', mode=_mode, control=_control, issues=('540',))(d18_bigram_update(_count))
 for _label, _count, _control in (('max', 0xffffffff - 69, True),
                                 ('zero', 0xffffffff - 68, False), ('after', 0xffffffff - 67, False)):
-    case('d18-predicted-total-' + _label, control=_control)(d18_bigram_update(_count, predicted=True))
+    case('d18-predicted-total-' + _label, control=_control, issues=('540',))(d18_bigram_update(_count, predicted=True))
 for _count in (0x3fffffff, 0x40000000, 0x7fffffff, 0x80000000, 0x80000001, 0xffffffff):
-    case(f'd18-bigram-export-{_count:x}', control=True)(d18_bigram_export(_count))
+    case(f'd18-bigram-export-{_count:x}', control=True, issues=('540',))(d18_bigram_export(_count))
 
 # Review regressions: row/record presence survives a wrapped zero total/count
 # (074a2219 ngram.cpp:135-175,277-358; phonetic_lookup.h:600-640).
 for _mode in ('pinyin', 'zhuyin'):
-    case('d18-review-user-only-zero-total-' + _mode, mode=_mode)(
+    case('d18-review-user-only-zero-total-' + _mode, mode=_mode, issues=('540',))(
         d18_merge(None, (0, 0xffffffff), current='嚎', empty_system=True, extra_successor=True))
     for _label, _lam in (('default', None), ('half', '0.5'), ('zero-lambda', '0')):
         case(f'd18-review-zero-count-zero-total-{_label}-{_mode}', mode=_mode,
-             control=_label != 'default' or _mode == 'pinyin')(
+             control=_label != 'default' or _mode == 'pinyin', issues=('540',))(
             d18_merge((1, 1), (0xffffffff, 0xffffffff),
                       current='好' if _label == 'default' else '嚎', lam=_lam))
-    case('d18-review-unigram-library-two-' + _mode, mode=_mode, control=True)(
+    case('d18-review-unigram-library-two-' + _mode, mode=_mode, control=True, issues=('540',))(
         d18_unigram(True, text='丠'))
-case('d18-review-predicted-user-only-zero-total')(
+case('d18-review-predicted-user-only-zero-total', issues=('540',))(
     d18_bigram_update(0xffffffff - 69, predicted=True, user_only=True))
 
 
@@ -8449,7 +8594,7 @@ def stale_index_tmp(k, index):
 for _mode in ('pinyin', 'zhuyin'):
     for _index in ('user_pinyin_index.bin', 'user_phrase_index.bin'):
         case(f'issue542-stale-{_index}-{_mode}', mode=_mode, stderr=True,
-             control=_mode == 'pinyin', cells=('bdb',))(
+             control=_mode == 'pinyin', cells=('bdb',), issues=('542',))(
             lambda k, index=_index: stale_index_tmp(k, index))
 
 
@@ -8474,13 +8619,13 @@ def train_no_choose_save(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('issue542-phrase-segment-invalid-utf8-' + _mode, mode=_mode)(phrase_segment_invalid_utf8)
-    case('issue542-train-no-choose-save-' + _mode, mode=_mode, control=True)(train_no_choose_save)
-    case('issue542-parse-full-one-values-' + _mode, mode=_mode, control=True)(
+    case('issue542-phrase-segment-invalid-utf8-' + _mode, mode=_mode, issues=('542',))(phrase_segment_invalid_utf8)
+    case('issue542-train-no-choose-save-' + _mode, mode=_mode, control=True, issues=('542',))(train_no_choose_save)
+    case('issue542-parse-full-one-values-' + _mode, mode=_mode, control=True, issues=('542',))(
         lambda k: {t.decode(): key_out(k, t) for t in (b'n', b'ni3')})
 
 
-@case('issue542-alias-prefix-borrowed')
+@case('issue542-alias-prefix-borrowed', issues=('542',))
 def _(k):
     out = {}
     for predicted_call in (False, True):
@@ -8580,11 +8725,11 @@ for _mode, _operation in (('pinyin', 'mask-out'), ('pinyin', 'remove-candidate')
             ('wrap-after', 1, (2, 3), 0xffffffff),
             ('ordinary', 9, (2, 3), 4)):
         case(f'removal-bigram-{_label}-{_operation}-{_mode}', mode=_mode,
-             control=_label == 'ordinary')(
+             control=_label == 'ordinary', issues=('740',))(
             removal_bigram(_total, _survivors, _removed, _operation,
                           unchanged_total=2 if _label == 'ordinary' else 17))
     if _operation == 'mask-out':
-        case(f'removal-bigram-multiple-{_mode}', mode=_mode)(
+        case(f'removal-bigram-multiple-{_mode}', mode=_mode, issues=('740',))(
             removal_bigram(1, (0xffffffff, 0), 1, _operation, multiple=True))
 
 
@@ -8761,11 +8906,11 @@ def user_gram_predicted(kind):
 for _kind in ('unsorted', 'duplicate'):
     for _mode in ('pinyin', 'zhuyin'):
         for _operation in ('train-save', 'mask-save'):
-            case(f'user-gram-{_kind}-{_operation}-{_mode}', mode=_mode)(
+            case(f'user-gram-{_kind}-{_operation}-{_mode}', mode=_mode, issues=('757',))(
                 user_gram_layout(_kind, _operation))
-    case(f'user-gram-{_kind}-remove-candidate-save')(user_gram_layout(_kind, 'remove-candidate-save'))
-    case(f'user-gram-{_kind}-export')(user_gram_layout(_kind, 'export'))
-    case(f'user-gram-{_kind}-predicted')(user_gram_predicted(_kind))
+    case(f'user-gram-{_kind}-remove-candidate-save', issues=('757',))(user_gram_layout(_kind, 'remove-candidate-save'))
+    case(f'user-gram-{_kind}-export', issues=('757',))(user_gram_layout(_kind, 'export'))
+    case(f'user-gram-{_kind}-predicted', issues=('757',))(user_gram_predicted(_kind))
 
 
 # Q1's abort (register row 85): training 你 after the sentence start finds
@@ -8798,7 +8943,7 @@ def train_unsorted_set_freq_miss(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case(f'abort-train-unsorted-set-freq-miss-{_mode}', mode=_mode, abort=False)(
+    case(f'abort-train-unsorted-set-freq-miss-{_mode}', mode=_mode, abort=False, issues=('757',))(
         train_unsorted_set_freq_miss)
 
 
@@ -8836,7 +8981,7 @@ for _name, _operation, _mode in (('pinyin', 'mask-out', 'pinyin'),
                                  ('zhuyin', 'mask-out', 'zhuyin'),
                                  ('remove-candidate', 'remove-candidate', 'pinyin')):
     for _label, _total in (('total-zero', 0), ('total-nonzero', 17)):
-        case(f'mask-out-itemless-gram-untouched-{_name}-{_label}', mode=_mode)(
+        case(f'mask-out-itemless-gram-untouched-{_name}-{_label}', mode=_mode, issues=('757',))(
             itemless_gram_untouched(_operation, _total))
 
 
@@ -8888,9 +9033,9 @@ def itemless_user_total(operation, texts=(b'nihaoshijie', b'womenshizhongguoren'
     return probe
 
 
-case('itemless-user-total-phrase-segment')(itemless_user_total('phrase-segment'))
+case('itemless-user-total-phrase-segment', issues=('757',))(itemless_user_total('phrase-segment'))
 
-case('itemless-user-total-guess', control=True)(itemless_user_total('guess'))
+case('itemless-user-total-guess', control=True, issues=('757',))(itemless_user_total('guess'))
 
 
 # #791: with the sentence start's merged total wrapped to 1, bigram_poss is
@@ -8903,10 +9048,10 @@ case('itemless-user-total-guess', control=True)(itemless_user_total('guess'))
 # rows are 研究生命起源 twice, then 研究生名气元. A blend clamped at certainty
 # moved the head, so that copy was never stored. The control is the same input
 # with no planted record, where both sides already store both copies.
-case('itemless-user-total-guess-above-one')(
+case('itemless-user-total-guess-above-one', issues=('791',))(
     itemless_user_total('guess', texts=(b'yanjiushengmingqiyuan',)))
 
-case('itemless-user-total-guess-above-one-control', control=True)(
+case('itemless-user-total-guess-above-one-control', control=True, issues=('791',))(
     itemless_user_total('guess', texts=(b'yanjiushengmingqiyuan',), plant=False))
 
 
@@ -8932,14 +9077,14 @@ def import_facade_total(total):
 
 # The count #798 names: the total wraps to 51050831. The pin's third n-best
 # row is 你好 again; a total that did not wrap ranks 拟好 there.
-case('import-wrapped-facade-total-guess')(import_facade_total(2 ** 32 + 51050831))
+case('import-wrapped-facade-total-guess', issues=('798',))(import_facade_total(2 ** 32 + 51050831))
 
 # A total that wraps to 2000000 also moves the phrase segment: the pin splits
 # 你好 into 你 and 好, a total that did not wrap keeps the phrase.
-case('import-wrapped-facade-total-segment')(import_facade_total(2 ** 32 + 2000000))
+case('import-wrapped-facade-total-segment', issues=('798',))(import_facade_total(2 ** 32 + 2000000))
 
 # Just under the boundary: the total is 2^32 - 1 and nothing wraps.
-case('import-facade-total-below-wrap', control=True)(import_facade_total(2 ** 32 - 1))
+case('import-facade-total-below-wrap', control=True, issues=('798',))(import_facade_total(2 ** 32 - 1))
 
 
 # A library's total is the one its file stores (074a2219 phrase_index.cpp:345),
@@ -9025,7 +9170,7 @@ def bumped_item_guess(k):
     return out
 
 
-case('token-add-unigram-numerator-guess')(bumped_item_guess)
+case('token-add-unigram-numerator-guess', issues=('801',))(bumped_item_guess)
 
 
 # Choosing a LONGER row trains its token through the same add, 69 * 7 = 483
@@ -9053,7 +9198,7 @@ def longer_choices_guess(k):
     return out
 
 
-case('longer-choices-numerator-guess')(longer_choices_guess)
+case('longer-choices-numerator-guess', issues=('801',))(longer_choices_guess)
 
 
 # Unloading a library takes its sub-index's whole total out of the facade,
@@ -9076,7 +9221,7 @@ def unload_accepted_bump(k):
     return out
 
 
-case('unload-drops-accepted-bump')(unload_accepted_bump)
+case('unload-drops-accepted-bump', issues=('801',))(unload_accepted_bump)
 
 
 # #805: `pinyin_load_phrase_library` / `zhuyin_load_phrase_library` map a
@@ -9205,10 +9350,10 @@ for _mode, _table in (('pinyin', _RELOAD_PINYIN), ('zhuyin', _RELOAD_ZHUYIN)):
         if _library == 1:
             # The facade refuses to unload library 1: both calls answer false
             # and the session's change stays.
-            case('reload-refused-%s' % _tag, mode=_mode, control=True)(_reload_probe(_change, _library, False))
+            case('reload-refused-%s' % _tag, mode=_mode, control=True, issues=('805',))(_reload_probe(_change, _library, False))
             continue
-        case('reload-drops-session-%s' % _tag, mode=_mode)(_reload_probe(_change, _library, False))
-        case('reload-keeps-saved-%s' % _tag, mode=_mode, control=True)(_reload_probe(_change, _library, True))
+        case('reload-drops-session-%s' % _tag, mode=_mode, issues=('805',))(_reload_probe(_change, _library, False))
+        case('reload-keeps-saved-%s' % _tag, mode=_mode, control=True, issues=('805',))(_reload_probe(_change, _library, True))
 
 
 # Library 7 is the USER_FILE library: `unload` deletes its sub-index and the
@@ -9260,9 +9405,9 @@ for _mode, (_readings, _input) in _RELOAD_USER.items():
         if _mode == 'pinyin':
             # The pinyin facade refuses to unload library 7: both calls answer
             # false and the session's change stays.
-            case('reload-refused-user-%s' % _tag, mode=_mode, control=True)(_probe)
+            case('reload-refused-user-%s' % _tag, mode=_mode, control=True, issues=('805',))(_probe)
         else:
-            case('reload-user-%s' % _tag, mode=_mode, control=_control)(_probe)
+            case('reload-user-%s' % _tag, mode=_mode, control=_control, issues=('805',))(_probe)
 
 
 # After the reload the phrase table and the user pinyin index still hold the
@@ -9279,7 +9424,7 @@ def _reload_reuse_setup(k):
     return out
 
 
-@case('reload-user-zhuyin-reuse-other', mode='zhuyin')
+@case('reload-user-zhuyin-reuse-other', mode='zhuyin', issues=('805',))
 def _(k):
     out = _reload_reuse_setup(k)
     out['again'] = import_rows(k, 7, [('你好', 'ㄋㄧˇ ㄏㄠˇ', 50)])
@@ -9295,7 +9440,7 @@ def _(k):
 _REUSE_INPUTS = [b'cl3su3', b'su3cl3', b'cl3cl3']
 
 
-@case('reload-user-zhuyin-reuse-other-save-reopen', mode='zhuyin')
+@case('reload-user-zhuyin-reuse-other-save-reopen', mode='zhuyin', issues=('805',))
 def _(k):
     out = _reload_reuse_setup(k)
     out['again'] = import_rows(k, 7, [('你好', 'ㄋㄧˇ ㄏㄠˇ', 50)])
@@ -9307,7 +9452,7 @@ def _(k):
     return out
 
 
-@case('reload-user-zhuyin-reuse-other-mask', mode='zhuyin')
+@case('reload-user-zhuyin-reuse-other-mask', mode='zhuyin', issues=('805',))
 def _(k):
     out = _reload_reuse_setup(k)
     out['again'] = import_rows(k, 7, [('你好', 'ㄋㄧˇ ㄏㄠˇ', 50)])
@@ -9322,7 +9467,7 @@ def _(k):
 # finds no item, and `assert(phrase_length == item.get_phrase_length())`
 # (zhuyin.cpp:454) aborts the pin: class (c), the site the import iterator's
 # other two asserts (`:440`, `:457`) already answer.
-@case('reload-user-zhuyin-reuse-same', mode='zhuyin', abort=False)
+@case('reload-user-zhuyin-reuse-same', mode='zhuyin', abort=False, issues=('805',))
 def _(k):
     _reload_reuse_setup(k)
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
@@ -9349,9 +9494,9 @@ def _reload_dangling(walk, reading):
 
 _RELOAD_DANGLING = {'tokens': ['0x2003cfd'], 'unigram': [False, 0], 'readings': [False, 0],
                     'candidates': [88, [['大大', 2], ['鞑靼', 2], ['达达', 2]], {}]}
-case('reload-dangling-token-candidates', crash=_RELOAD_DANGLING)(_reload_dangling(b'dada', "da3'da3"))
+case('reload-dangling-token-candidates', crash=_RELOAD_DANGLING, issues=('805',))(_reload_dangling(b'dada', "da3'da3"))
 case('reload-dangling-token-candidates-zhuyin', mode='zhuyin',
-     crash=_RELOAD_DANGLING)(_reload_dangling(b'283283', 'ㄉㄚˇ ㄉㄚˇ'))
+     crash=_RELOAD_DANGLING, issues=('805',))(_reload_dangling(b'283283', 'ㄉㄚˇ ㄉㄚˇ'))
 
 
 # `unload` takes the library's total out of the facade, an unsaved import's
@@ -9381,7 +9526,7 @@ def _reload_total_window(k):
     return out
 
 
-case('reload-total-while-unloaded')(_reload_total_window)
+case('reload-total-while-unloaded', issues=('805',))(_reload_total_window)
 
 
 # A system-library import reloaded from its .dbin is counted twice by the
@@ -9413,8 +9558,8 @@ def mask_out_reload(compact):
     return probe
 
 
-case('mask-out-replaces-reload-offset', control=True)(mask_out_reload(False))
-case('mask-out-after-compact-keeps-reload-offset')(mask_out_reload(True))
+case('mask-out-replaces-reload-offset', control=True, issues=('805',))(mask_out_reload(False))
+case('mask-out-after-compact-keeps-reload-offset', issues=('805',))(mask_out_reload(True))
 
 
 # #802. SubPhraseIndex::add_unigram_frequency refuses when m_total_freq +
@@ -9460,10 +9605,10 @@ def stored_total_overflow(refused, after_save):
     return probe
 
 
-case('stored-total-overflow-below', control=True)(stored_total_overflow(False, False))
-case('stored-total-overflow-above')(stored_total_overflow(True, False))
-case('stored-total-overflow-above-saved')(stored_total_overflow(True, True))
-case('stored-total-overflow-below-saved', control=True)(stored_total_overflow(False, True))
+case('stored-total-overflow-below', control=True, issues=('802',))(stored_total_overflow(False, False))
+case('stored-total-overflow-above', issues=('802',))(stored_total_overflow(True, False))
+case('stored-total-overflow-above-saved', issues=('802',))(stored_total_overflow(True, True))
+case('stored-total-overflow-below-saved', control=True, issues=('802',))(stored_total_overflow(False, True))
 
 
 # Each MODIFY_HEADER must land on the merge's running total, or the merge
@@ -9654,7 +9799,7 @@ for _kind in ('unsorted', 'duplicate'):
         # merge sums the first duplicate with the system item and appends
         # the second after it, so get_freq meets the same first match.
         control = (_kind, _operation) == ('duplicate', 'phrase-segment')
-        case(f'user-gram-{_kind}-{_operation}', control=control)(
+        case(f'user-gram-{_kind}-{_operation}', control=control, issues=('757',))(
             user_gram_lookup(_kind, _operation))
 
 
@@ -9665,7 +9810,7 @@ for _kind in ('unsorted', 'duplicate'):
 # 你's range yields both T items, below that range, and the pin steps T
 # with each (phonetic_lookup.h:625-629). The two T counts wrap to 1 when
 # summed, so a reader that sorts and sums the gram does not boost T.
-@case('user-gram-unsorted-range-boundary')
+@case('user-gram-unsorted-range-boundary', issues=('757',))
 def _(k):
     ni = tokens_of(k, '你')[0]
     below = next(token for token in (tokens_of(k, text)[0] for text in '泥拟逆腻妮倪匿溺尼')
@@ -9689,7 +9834,7 @@ def system_gram_lookup(kind):
 
 
 for _kind in ('unsorted', 'duplicate'):
-    case(f'system-gram-{_kind}-guess')(system_gram_lookup(_kind))
+    case(f'system-gram-{_kind}-guess', issues=('757',))(system_gram_lookup(_kind))
 
 
 # A stored zero count is an item. The n-best step takes a bigram step for
@@ -9700,7 +9845,7 @@ for _kind in ('unsorted', 'duplicate'):
 # its user gram holds the best sentence's phrase at count 0: the pin's
 # merged row holds that item, so the sentence comes twice. A reader that
 # drops zero counts answers it once.
-@case('user-gram-zero-count-guess')
+@case('user-gram-zero-count-guess', issues=('757',))
 def _(k):
     _replace_system_start_row(k, _gram_bytes(1, [(_PAST_RANGES, 1)]))
     best = _guess_out(k, b'a')['sentences'][0]
@@ -9723,11 +9868,11 @@ def short_start_guess(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case(f'abort-guess-sentence-short-user-gram-system-row-{_mode}', mode=_mode, abort=False)(
+    case(f'abort-guess-sentence-short-user-gram-system-row-{_mode}', mode=_mode, abort=False, issues=('757',))(
         short_start_guess)
 
 
-@case('abort-guess-sentence-short-user-gram-no-system-row', abort=False)
+@case('abort-guess-sentence-short-user-gram-no-system-row', abort=False, issues=('757',))
 def _(k):
     def grams(system, users):
         return [(users[0], _SHORT)]
@@ -9744,7 +9889,7 @@ def short_start_dynamic_adjust(k):
 
 for _mode in ('pinyin', 'zhuyin'):
     case(f'abort-guess-candidates-dynamic-adjust-short-user-gram-{_mode}', mode=_mode,
-         abort=False)(short_start_dynamic_adjust)
+         abort=False, issues=('757',))(short_start_dynamic_adjust)
 
 
 # The same gram under DYNAMIC_ADJUST, parsed and never guessed: the pin's
@@ -9759,11 +9904,11 @@ def short_start_dynamic_adjust_parse(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case(f'parse-dynamic-adjust-short-user-gram-{_mode}', mode=_mode)(
+    case(f'parse-dynamic-adjust-short-user-gram-{_mode}', mode=_mode, issues=('757',))(
         short_start_dynamic_adjust_parse)
 
 
-@case('abort-phrase-segment-short-user-gram', abort=False)
+@case('abort-phrase-segment-short-user-gram', abort=False, issues=('757',))
 def _(k):
     _replace_user_bigram(k, [(1, _SHORT)])
     return {'ret': k.fn('phrase_segment', B, P, S)(k.inst, '今天天气很好'.encode())}
@@ -9772,13 +9917,13 @@ def _(k):
 # Controls: a short gram the lookup never loads. 我 never precedes a phrase
 # of `nihao`; with DYNAMIC_ADJUST clear the candidate list merges nothing
 # (pinyin.cpp:2207-2216).
-@case('guess-unrelated-short-user-gram', control=True)
+@case('guess-unrelated-short-user-gram', control=True, issues=('757',))
 def _(k):
     _replace_user_bigram(k, [(tokens_of(k, '我')[0], _SHORT)])
     return _guess_out(k)
 
 
-@case('guess-candidates-short-user-gram-dynamic-adjust-off', control=True)
+@case('guess-candidates-short-user-gram-dynamic-adjust-off', control=True, issues=('757',))
 def _(k):
     _replace_user_bigram(k, [(1, _SHORT)])
     assert k.fn('set_options', B, P, U)(k.ctx, 0x18a)
@@ -9838,7 +9983,7 @@ def parse_chewing_probe(schemes, texts):
 # `zhuyin_index`; `*onekey` is written only on success. `su3cl3` holds two
 # keys and is refused as one; the empty string and a tone-only byte are
 # refused; every implemented scheme is probed.
-case('zhuyin-parse-chewing-key', mode='zhuyin', control=True)(
+case('zhuyin-parse-chewing-key', mode='zhuyin', control=True, issues=('563',))(
     parse_chewing_probe((None, 1, 2, 3, 4, 5, 6, 8, 9),
                         (b'su3', b'cl3', b'su', b'', b'zzz', b'su3cl3', b'su3x', b'1', b'3', b'ni')))
 
@@ -9862,12 +10007,12 @@ def in_chewing_probe(scheme, options, keys):
 # `in_chewing_scheme` fixes `*symbols = NULL` first and fills it only when
 # the byte maps (Simple `zhuyin_parser2.cpp:301-335`, Discrete `:496-540`,
 # DaChen `:798-846`); the tone table is consulted only under `USE_TONE`.
-case('zhuyin-in-chewing-keyboard-key', mode='zhuyin', control=True)(
+case('zhuyin-in-chewing-keyboard-key', mode='zhuyin', control=True, issues=('563',))(
     in_chewing_probe(None, None, (b's', b'u', b'3', b'1', b'a', b'z', b'q', b'!', b'~', b'\x80', b'\x00', b'i')))
-case('zhuyin-in-chewing-keyboard-no-tone', mode='zhuyin', control=True)(
+case('zhuyin-in-chewing-keyboard-no-tone', mode='zhuyin', control=True, issues=('563',))(
     in_chewing_probe(None, 0, (b's', b'3', b'1')))
 for _zyscheme in (2, 3, 4, 5, 6, 8, 9):
-    case(f'zhuyin-in-chewing-keyboard-scheme-{_zyscheme}', mode='zhuyin', control=True)(
+    case(f'zhuyin-in-chewing-keyboard-scheme-{_zyscheme}', mode='zhuyin', control=True, issues=('563',))(
         in_chewing_probe(_zyscheme, None, (b's', b'u', b'i', b'3')))
 
 
@@ -9904,7 +10049,7 @@ def key_rest_positions_probe(text, offsets):
     return probe
 
 
-case('zhuyin-key-rest-positions-out', mode='zhuyin', control=True)(
+case('zhuyin-key-rest-positions-out', mode='zhuyin', control=True, issues=('563',))(
     key_rest_positions_probe('su3cl3', (0, 1, 2)))
 
 
@@ -9945,7 +10090,7 @@ def phrase_tokens_probe(texts):
 # (`zhuyin.cpp:2227-2231`); `zhuyin_get_phrase_token` writes the null token
 # before its range check, so a refused index still writes 0 (`:2233-2244`).
 # `phrase_segment` fills the array, `reset` empties it (`:1723-1729`).
-case('zhuyin-phrase-result-tokens', mode='zhuyin', control=True)(
+case('zhuyin-phrase-result-tokens', mode='zhuyin', control=True, issues=('563',))(
     phrase_tokens_probe(('你好'.encode(), b'', b'123', '你好世界'.encode())))
 
 
@@ -9955,7 +10100,7 @@ case('zhuyin-phrase-result-tokens', mode='zhuyin', control=True)(
 # dispatches (`FULL_PINYIN_HANYU` 1, `LUOMA` 2, `SECONDARY_ZHUYIN` 3). Both
 # NULL the out-param before the `get_table_index() == 0` refusal, so a
 # refused zero key leaves NULL, not the caller's sentinel.
-@case('zhuyin-string-getters', mode='zhuyin', control=True)
+@case('zhuyin-string-getters', mode='zhuyin', control=True, issues=('563',))
 def _(k):
     inst = k.inst
     key = C.c_ushort(0)
@@ -9980,7 +10125,7 @@ def _(k):
 # `zhuyin_get_zhuyin_offset` in range: the cursor is clamped to the parse end
 # and walked back over empty columns to the first key (`zhuyin.cpp:1973-1992`).
 # The past-matrix cursor lives in `zhuyin-cursor-neighbours`.
-@case('zhuyin-cursor-offset-range', mode='zhuyin', control=True)
+@case('zhuyin-cursor-offset-range', mode='zhuyin', control=True, issues=('563',))
 def _(k):
     inst = zhuyin_chewing(k)
     fn = k.fn('get_zhuyin_offset', B, P, Z, C.POINTER(Z))
@@ -9999,7 +10144,7 @@ def _(k):
 # `zhuyin_get_zhuyin_key_rest_positions` (`:1930-1941`) and
 # `zhuyin_get_zhuyin_key_rest_length` (`:1942-1946`). A NULL instance is a
 # defined call there, so the subject answers what the pin answers.
-@case('zhuyin-null-instance-defined-getters', mode='zhuyin')
+@case('zhuyin-null-instance-defined-getters', mode='zhuyin', issues=('563',))
 def _(k):
     inst = k.inst
     k.fn('parse_more_chewings', Z, P, S)(inst, b'su3cl3')
@@ -10036,7 +10181,7 @@ def _(k):
 # writes `*len` and `*utf8_str` only when their pointer is non-NULL, so all
 # four combinations are defined calls — on a token that resolves and on one
 # that is refused before either write.
-@case('zhuyin-token-get-phrase-optional-out', mode='zhuyin')
+@case('zhuyin-token-get-phrase-optional-out', mode='zhuyin', issues=('563',))
 def _(k):
     fn = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))
     out = {}
@@ -10219,22 +10364,22 @@ def wrap_256th_reading(k, readings, same_iterator):
     return out
 
 
-@case('wrap-256th-reading')
+@case('wrap-256th-reading', issues=('804',))
 def _(k):
     return wrap_256th_reading(k, _wrap_pinyin_readings(), same_iterator=False)
 
 
-@case('wrap-256th-reading-same-iterator')
+@case('wrap-256th-reading-same-iterator', issues=('804',))
 def _(k):
     return wrap_256th_reading(k, _wrap_pinyin_readings(), same_iterator=True)
 
 
-@case('wrap-256th-reading-zhuyin', mode='zhuyin')
+@case('wrap-256th-reading-zhuyin', mode='zhuyin', issues=('804',))
 def _(k):
     return wrap_256th_reading(k, _wrap_zhuyin_readings(), same_iterator=False)
 
 
-@case('wrap-256th-reading-zhuyin-same-iterator', mode='zhuyin')
+@case('wrap-256th-reading-zhuyin-same-iterator', mode='zhuyin', issues=('804',))
 def _(k):
     return wrap_256th_reading(k, _wrap_zhuyin_readings(), same_iterator=True)
 
@@ -10386,7 +10531,7 @@ def zy_import_index_out_of_range(k):
     return out
 
 
-case('zhuyin-add-phrase-library-16', mode='zhuyin', control=True, crash={'ret': False})(
+case('zhuyin-add-phrase-library-16', mode='zhuyin', control=True, crash={'ret': False}, issues=('563', 'row:41'))(
     null_argument_case(zy_import_index_out_of_range))
 
 
@@ -10410,7 +10555,7 @@ for _zyname, _zycall, _zyanswer in (
         ('null-out-get-n-phrase', zy_n_phrase_null_out, _ZY_NULL_TRUE),
         ('null-instance-get-phrase-token', zy_phrase_token_null_instance, _ZY_NULL_FALSE),
         ('null-out-get-phrase-token', zy_phrase_token_null_out, _ZY_NULL_FALSE)):
-    case('zhuyin-' + _zyname, mode='zhuyin', control=True, crash=_zyanswer)(
+    case('zhuyin-' + _zyname, mode='zhuyin', control=True, crash=_zyanswer, issues=('563', 'row:41'))(
         null_argument_case(_zycall))
 
 
@@ -11131,11 +11276,17 @@ def matches(spec, pin, subject):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('cell', choices=['bdb', 'kc', 'tkrzw'])
-    parser.add_argument('prefix', type=Path)
-    parser.add_argument('pinyin_so', type=Path)
+    parser.add_argument('cell', nargs='?', choices=['bdb', 'kc', 'tkrzw'])
+    parser.add_argument('prefix', nargs='?', type=Path)
+    parser.add_argument('pinyin_so', nargs='?', type=Path)
     parser.add_argument('--zhuyin-so', type=Path)
     parser.add_argument('--cases', default='')
+    parser.add_argument('--issue', action='append', default=[], metavar='TAG',
+                        help='select every case registered with this issue, row or lane tag')
+    parser.add_argument('--family', action='append', default=[], metavar='F',
+                        help='select every case whose ID starts with F/')
+    parser.add_argument('--list-tags', action='store_true', help='print the tag index as JSON and exit')
+    parser.add_argument('--plan-only', action='store_true', help='print the selection plan and exit')
     parser.add_argument('--expect-parent', action='store_true')
     parser.add_argument('--regenerate-sentence-ties', type=Path,
                         help='regenerate pin expectations in the supplementary #747 source fixture')
@@ -11148,8 +11299,18 @@ def main():
     parser.add_argument('--axis-c-mutant-pinyin-so', type=Path)
     parser.add_argument('--axis-c-mutant-zhuyin-so', type=Path)
     args = parser.parse_args()
+    if args.list_tags:
+        print(json.dumps(dict(tags=tag_index(), modes={name: spec['mode'] for name, spec in CASES.items()
+                                                       if not name.startswith('axis-c-')}), indent=1))
+        return 0
+    if not (args.cell and args.prefix and args.pinyin_so):
+        parser.error('CELL, PREFIX and PINYIN_SO are required')
     if (args.axis_c_mutant_pinyin_so or args.axis_c_mutant_zhuyin_so) and not args.axis_c_mutation:
         parser.error('--axis-c-mutant-pinyin-so/--axis-c-mutant-zhuyin-so require --axis-c-mutation')
+    if (args.issue or args.family or args.plan_only) and (
+            args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or
+            args.regenerate_sentence_ties):
+        parser.error('--issue/--family/--plan-only select ordinary cases only')
     os.environ['CONTRACT_DIFF_CELL'] = args.cell
     lib = args.prefix / 'lib'
     data = lib / 'libpinyin/data'
@@ -11184,12 +11345,19 @@ def main():
             'fixture regeneration cannot be combined with differential or capture modes'
         regenerate_sentence_ties(args.prefix, args.regenerate_sentence_ties)
         return 0
-    # The whole set only when --cases is omitted: an explicit list that
-    # names nothing (`--cases ,`) is an error, not a request for everything.
-    names = [n for n in args.cases.split(',') if n] if args.cases else sorted(n for n in CASES if not n.startswith('axis-c-'))
-    assert names, 'no cases selected'
-    for n in names:
-        assert n in CASES, 'unknown case: %s' % n
+    # The whole set only when no selector is given: an explicit list that
+    # names nothing (`--cases ,`), an unknown tag or a tag that matches
+    # nothing is an error, never a request for everything.
+    try:
+        names, reasons = select_cases(args.cases, args.issue, args.family)
+    except SelectionError as error:
+        parser.error(str(error))
+    for line in plan_lines(names, reasons, args.pinyin_so, args.zhuyin_so, args.prefix, args.cell):
+        print(line, file=sys.stderr, flush=True)
+    if args.plan_only:
+        return 0
+    started = time.monotonic()
+    compare_seconds = 0.0
     failures = 0
     if args.observations:
         args.observations.write_text('')
@@ -11218,7 +11386,9 @@ def main():
             if args.observations:
                 with args.observations.open('a') as capture:
                     capture.write(json.dumps(dict(cell=args.cell,case=n,pin=pin,subject=subject),ensure_ascii=True)+'\n')
+            compared = time.monotonic()
             verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
+            compare_seconds += time.monotonic() - compared
             host_dependent = (verdict == 'DIFFER' and not args.expect_parent
                               and any(map(host_scanf_accepts, spec['host_scanf']))
                               and pin_loaded_subject_refused_table_conf(pin, subject))
@@ -11241,7 +11411,22 @@ def main():
                             print('  %s userfiles=%s' % (side, json.dumps(r['userfiles'], sort_keys=True)))
                         if spec['stderr']:
                             print('  %s stderr=%r' % (side, r['stderr']))
+    print(json.dumps(dict(timing=timing_summary(names, compare_seconds, time.monotonic() - started)),
+                     sort_keys=True), flush=True)
     return 1 if failures else 0
+
+
+def timing_summary(names, compare_seconds, total):
+    """Seconds per phase summed over the workers the driver ran; pin and
+    subject execution apart (the pin's worker is the first of each pair)."""
+    seconds = dict(startup=0.0, load=0.0, fixture=0.0, pin_execute=0.0, subject_execute=0.0,
+                   teardown=0.0, compare=compare_seconds, total=total)
+    for index, timing in enumerate(TIMINGS):
+        for phase in ('startup', 'load', 'fixture', 'teardown'):
+            seconds[phase] += timing.get(phase, 0.0)
+        seconds['pin_execute' if index % 2 == 0 else 'subject_execute'] += timing.get('execute', 0.0)
+    return dict(cases=len(names), workers=len(TIMINGS),
+                seconds={phase: round(value, 4) for phase, value in seconds.items()})
 
 
 if __name__ == '__main__':
