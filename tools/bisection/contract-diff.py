@@ -7282,6 +7282,387 @@ for _mode in ('pinyin', 'zhuyin'):
             lambda k, variant=_variant: unigram_lifecycle(k, variant))
 
 
+# #894: a stored phrase whose `ucs4_t` text `g_ucs4_to_utf8` does not turn into
+# plain UTF-8. The pin converts the stored text with no error slot in
+# `_token_get_phrase` (`pinyin.cpp:1644`, `zhuyin.cpp:1112`: the candidate string
+# and `*_token_get_phrase`), in `convert_to_utf8` (`lookup.cpp:58`: the
+# sentence) and in the export iterators (`pinyin.cpp:715`, `:822`, `:828`).
+# GLib 2.89.4, the GLib of the pinned oracle image
+# (`docs/testing/oracle-environment.md`), `g_ucs4_to_utf8`
+# (`glib/gutf8.c:1023-1070`). GLib 2.80.0 (a cloud host) has the same code in
+# it and in `g_unichar_to_utf8`; only the integer types of locals differ.
+#   - stops at the first zero code point (`:1037-1038`): a stored text
+#     "a, 0, b" is "a", and the code points after the zero are never read;
+#   - encodes a surrogate and a value from U+110000 to 0x7FFFFFFF as the 3- to
+#     6-byte sequences `g_unichar_to_utf8` writes (`:549-599`), which are not
+#     UTF-8;
+#   - answers NULL for a value of 0x80000000 or more met before any zero
+#     (`:1040-1045`; `g_set_error_literal` with a NULL error does nothing,
+#     `gerror.c:523-524`), whatever valid prefix came before it.
+# `_token_get_phrase` stores the result and answers true even for NULL. The
+# candidate list then sorts and compares its strings with `strcmp`
+# (`pinyin.cpp:2053`, `:2082`), which dies on a NULL string once the list holds
+# two candidates. `convert_to_utf8` appends a NULL phrase as nothing
+# (`g_strdup(NULL)` is NULL, `gstrfuncs.c:320-327`; `g_strconcat` ends its list
+# at the first NULL, `:581-587`), so a sentence of NULL phrases alone is NULL.
+# The `"%d %s"` branch (`lookup.cpp:53-56`) is reached only with `show_tokens`,
+# which the two library callers (`pinyin.cpp:1477`, `zhuyin.cpp:994`) pass as
+# false, so no export prints it. The bigram export shares the rule
+# (`pinyin.cpp:822-830`), but its pronunciation vector is unterminated
+# (`:844-850`, register row 1): the pin reads past it, so no differential can
+# hold it. `BigramExportWalk`'s unit tests carry the rule there.
+#
+# The fixture rewrites the code points of shipped items in a private system
+# directory (same sizes, checksum recomputed), so the phrase index, the pinyin
+# index and the model still find the token by its reading. Every observation
+# carries the string as hex bytes (None for NULL): the pin's strings need not be
+# UTF-8. `~glib` is the reading of the GLib source above, kept out of the
+# comparison.
+def _unichar_to_utf8(code):
+    """`g_unichar_to_utf8` (`gutf8.c:549-599`): 1 to 6 bytes, no validity check."""
+    for limit, first, length in ((0x80, 0x00, 1), (0x800, 0xc0, 2), (0x10000, 0xe0, 3),
+                                 (0x200000, 0xf0, 4), (0x4000000, 0xf8, 5), (1 << 32, 0xfc, 6)):
+        if code < limit:
+            break
+    out = bytearray(length)
+    for index in range(length - 1, 0, -1):
+        out[index] = (code & 0x3f) | 0x80
+        code >>= 6
+    out[0] = code | first
+    return bytes(out)
+
+
+def glib_ucs4_to_utf8(codes):
+    """`g_ucs4_to_utf8(codes, len(codes), NULL, NULL, NULL)` (`gutf8.c:1023-1070`):
+    the bytes, or None for the NULL it answers at 0x80000000 or more."""
+    out = bytearray()
+    for code in codes:
+        if code == 0:
+            break
+        if code >= 0x80000000:
+            return None
+        out += _unichar_to_utf8(code)
+    return bytes(out)
+
+
+def glib_convert_to_utf8(parts):
+    """`convert_to_utf8` with no delimiter and `show_tokens` false
+    (`lookup.cpp:61-67`) over the per-token strings: None while every phrase so
+    far is NULL, and a NULL phrase adds nothing."""
+    result = None
+    for phrase in parts:
+        result = phrase if result is None else result + (phrase or b'')
+    return result
+
+
+def raw_cstr(k, pointer, free=True):
+    """A `char *` as hex bytes: None for NULL, 'untouched' for the out-param
+    sentinel. `free` releases a caller-owned string; a borrowed one stays."""
+    if pointer == UNTOUCHED:
+        return 'untouched'
+    if not pointer:
+        return None
+    value = C.string_at(pointer)
+    if free:
+        k.glib.g_free(pointer)
+    return value.hex()
+
+
+def hex_of(value):
+    return None if value is None else value.hex()
+
+
+# The shipped chunk of each library and its number in `table.conf`.
+UCS4_LIBRARIES = {'gb_char.bin': 1, 'gbk_char.bin': 2, 'opengram.bin': 3, 'merged.bin': 4}
+
+# name -> (shipped phrase, its reading, {index: replacement code point}), all in
+# `gb_char.bin`. The reading is toned pinyin, which both facades take (the
+# zhuyin facade forces tones).
+UCS4_ITEMS = {
+    'plain': ('委员会', b'wei3yuan2hui4', {}),
+    'nul-mid': ('委员会', b'wei3yuan2hui4', {1: 0x0}),
+    'surrogate': ('出版社', b'chu1ban3she4', {1: 0xd800}),
+    'above-unicode': ('博物馆', b'bo2wu4guan3', {1: 0x110000}),
+    'six-byte': ('意大利', b'yi4da4li4', {1: 0x7fffffff}),
+    'null': ('计算机', b'ji4suan4ji1', {1: 0x80000000}),
+    'null-all-ones': ('电视台', b'dian4shi4tai2', {1: 0xffffffff}),
+    'nul-first': ('国务院', b'guo2wu4yuan4', {0: 0x0}),
+    'nul-then-null': ('俄罗斯', b'e2luo2si1', {1: 0x0, 2: 0x80000000}),
+    'nul-last': ('办公室', b'ban4gong1shi4', {2: 0x0}),
+}
+
+
+def ucs4_codes(name):
+    """The code points the fixture stores for `name`."""
+    phrase, _reading, patch = UCS4_ITEMS[name]
+    return [patch.get(index, ord(char)) for index, char in enumerate(phrase)]
+
+
+# An ordinary phrase to put before an item in a sentence.
+UCS4_NEIGHBOUR = ('北京市', b'bei3jing1shi4')
+# The items the export iterates: `merged.bin`, library 4, holds 1001 of them.
+UCS4_EXPORTED = {
+    'plain': ('不存在', {}),
+    'nul-mid': ('不存在', {1: 0x0}),
+    'nul-first': ('不超过', {0: 0x0}),
+    'nul-last': ('保持着', {2: 0x0}),
+    'null': ('颁发的', {1: 0x80000000}),
+    'surrogate': ('保护的', {1: 0xd800}),
+}
+
+
+def ucs4_fixture(k, patches):
+    """Points `k.data` at a private copy of the system directory whose chunks
+    have the given items' code points rewritten. `patches` is a list of
+    `(chunk file, phrase, {index: code point})`; the answer is the list of
+    `(token, stored code points)` in the same order."""
+    readings = {}
+    for library in {file for file, _phrase, _patch in patches}:
+        _total, items, offsets = _system_items(k, library)
+        by_text = {}
+        for slot, item in items.items():
+            by_text.setdefault(_item_text(item), []).append(slot)
+        readings[library] = (by_text, offsets)
+    system = private_system(k)
+    payloads = {}
+    placed = []
+    for library, phrase, patch in patches:
+        by_text, offsets = readings[library]
+        assert len(by_text[phrase]) == 1, (phrase, by_text[phrase])
+        slot = by_text[phrase][0]
+        if library not in payloads:
+            payloads[library] = bytearray(Path(system, library).read_bytes()[8:])
+        payload = payloads[library]
+        content = int.from_bytes(payload[8:12], 'little')
+        codes = [ord(char) for char in phrase]
+        for index, code in patch.items():
+            codes[index] = code
+            start = content + offsets[slot] + 6 + 4 * index
+            payload[start:start + 4] = code.to_bytes(4, 'little')
+        placed.append(((UCS4_LIBRARIES[library] << 24) | slot, codes))
+    for library, payload in payloads.items():
+        path = Path(system, library)
+        path.unlink()  # a private symlink; never write the oracle's data
+        path.write_bytes(_chunk(bytes(payload)))
+    k.data = system
+    return placed
+
+
+def ucs4_place(k, name):
+    """`ucs4_fixture` for one item of `UCS4_ITEMS`: its token and stored code points."""
+    phrase, _reading, patch = UCS4_ITEMS[name]
+    return ucs4_fixture(k, [('gb_char.bin', phrase, patch)])[0]
+
+
+def ucs4_sentence(k, reading):
+    """The best sentence of `reading` as `[guess, get, hex]`."""
+    inst = k.alloc()
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, reading)
+    guessed = k.fn('guess_sentence', B, P)(inst)
+    out = P(UNTOUCHED)
+    if k.mode == 'pinyin':
+        got = k.fn('get_sentence', B, P, C.c_ubyte, C.POINTER(P))(inst, 0, C.byref(out))
+    else:
+        got = k.fn('get_sentence', B, P, C.POINTER(P))(inst, C.byref(out))
+    text = raw_cstr(k, out.value)
+    k.fn('free_instance', None, P)(inst)
+    return [guessed, got, text]
+
+
+def ucs4_candidate_rows(k, inst):
+    """The full candidate list as `[type, hex]` rows (the strings are borrowed)."""
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    rows = []
+    for index in range(count.value):
+        candidate, kind, text = P(), I(), P()
+        if k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(candidate)):
+            k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, candidate, C.byref(kind))
+            k.fn('get_candidate_string', B, P, P, C.POINTER(P))(inst, candidate, C.byref(text))
+            rows.append([kind.value, raw_cstr(k, text.value, free=False)])
+        else:
+            rows.append(None)
+    return rows
+
+
+def ucs4_guess(k, reading, sentence_first=True):
+    """The candidate list of `reading` from offset 0: `{'guess', 'rows'}`."""
+    inst = k.alloc()
+    k.fn('parse_more_full_pinyins', Z, P, S)(inst, reading)
+    if sentence_first:
+        k.fn('guess_sentence', B, P)(inst)
+    if k.mode == 'pinyin':
+        guessed = k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1c)
+    else:
+        guessed = k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)
+    return {'guess': guessed, 'rows': ucs4_candidate_rows(k, inst)}
+
+
+def ucs4_token_probe(name):
+    def run(k):
+        token, codes = ucs4_place(k, name)
+        length, text = U(UNTOUCHED), P(UNTOUCHED)
+        ret = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
+            k.inst, token, C.byref(length), C.byref(text))
+        return {'token': hex(token), 'stored': codes, 'get': ret,
+                'len': 'untouched' if length.value == UNTOUCHED else length.value,
+                'str': raw_cstr(k, text.value),
+                '~glib': hex_of(glib_ucs4_to_utf8(codes))}
+    return run
+
+
+def ucs4_sentence_probe(name):
+    """The item alone, and after an ordinary phrase. The case first reads the
+    shipped sentences, which must be the phrases themselves, so the item is
+    certain to be on the best path."""
+    phrase, reading, _patch = UCS4_ITEMS[name]
+    neighbour, neighbour_reading = UCS4_NEIGHBOUR
+
+    def run(k):
+        ctx = k.ctx
+        shipped = {label: ucs4_sentence(k, text)[2] for label, text in (
+            ('alone', reading), ('after-plain', neighbour_reading + reading))}
+        assert shipped == {'alone': phrase.encode().hex(),
+                           'after-plain': (neighbour + phrase).encode().hex()}, shipped
+        k.fn('fini', None, P)(ctx)
+        k._ctx = k._inst = None
+        _token, codes = ucs4_place(k, name)
+        cut = glib_ucs4_to_utf8(codes)
+        return {'alone': ucs4_sentence(k, reading),
+                'after-plain': ucs4_sentence(k, neighbour_reading + reading),
+                '~glib': [hex_of(glib_convert_to_utf8([cut])),
+                          hex_of(glib_convert_to_utf8([neighbour.encode(), cut]))]}
+    return run
+
+
+def ucs4_candidates_probe(name):
+    """Every candidate of the item's reading, with the n-best rows prepended; and
+    of its first two syllables, whose longer row is the item itself (the most
+    frequent phrase that extends them)."""
+    _phrase, reading, _patch = UCS4_ITEMS[name]
+    short = b''.join(re.findall(rb'\D+\d', reading)[:2])
+
+    def run(k):
+        _token, codes = ucs4_place(k, name)
+        return {'whole': ucs4_guess(k, reading), 'two-syllables': ucs4_guess(k, short),
+                'no-sentence': ucs4_guess(k, reading, sentence_first=False),
+                '~glib': hex_of(glib_ucs4_to_utf8(codes))}
+    return run
+
+
+def ucs4_predicted_probe(name):
+    """The predicted candidates after a prefix of the item, which show the
+    phrase from the prefix on (`_token_get_phrase` with `begin`,
+    `pinyin.cpp:1644`): a zero inside the skipped prefix ends nothing."""
+    phrase, _reading, _patch = UCS4_ITEMS[name]
+    # `nul-then-null` stops at one: from two on the pin converts the word
+    # 0x80000000 that follows the zero, which is the NULL string.
+    lengths = (1,) if name == 'nul-then-null' else range(1, len(phrase))
+
+    def run(k):
+        _token, codes = ucs4_place(k, name)
+        out = {'~glib': {}}
+        for length in lengths:
+            inst = k.alloc()
+            guessed = k.fn('guess_predicted_candidates', B, P, S)(inst, phrase[:length].encode())
+            out[phrase[:length]] = {'guess': guessed, 'rows': ucs4_candidate_rows(k, inst)}
+            out['~glib'][phrase[:length]] = hex_of(glib_ucs4_to_utf8(codes[length:]))
+        return out
+    return run
+
+
+def ucs4_export_probe(name):
+    """Library 4 exported row by row, one item of it rewritten."""
+    phrase, patch = UCS4_EXPORTED[name]
+
+    def run(k):
+        _token, codes = ucs4_fixture(k, [('merged.bin', phrase, patch)])[0]
+        it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 4)
+        rows = []
+        while k.fn('iterator_has_next_phrase', B, P)(it):
+            ph, py, n = P(UNTOUCHED), P(UNTOUCHED), I(UNTOUCHED)
+            ret = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
+                it, C.byref(ph), C.byref(py), C.byref(n))
+            rows.append([ret, raw_cstr(k, ph.value), raw_cstr(k, py.value), n.value])
+        k.fn('end_get_phrases', None, P)(it)
+        return {'rows': rows, '~glib': hex_of(glib_ucs4_to_utf8(codes))}
+    return run
+
+
+def ucs4_case(name, **kwargs):
+    """`case` with the tag of #894: `--issue 894` selects these cases."""
+    return case(name, issues=('894',), **kwargs)
+
+
+# What each class is. The zero classes are the embedded U+0000 of #894
+# difference 2: the string ends at the first zero. The ruling classes are
+# difference 1 (a code point that is no scalar value): the pin hands out bytes
+# that are not UTF-8, or NULL, which a Rust `str` cannot carry through the
+# engine, so they differ from the pin until a maintainer rules on #894. They are
+# registered only with CONTRACT_DIFF_PENDING_RULING=1; the NULL candidate list
+# (the pin's `strcmp` dies, class (b)) and the NULL export (register row 62)
+# already match and are always registered. The zero classes differ from the pin
+# until the fix for difference 2 lands, so they are registered only with
+# CONTRACT_DIFF_PENDING_FIX=1.
+#
+# `--expect-parent` on the parent build: the controls match there (`plain`, the
+# NULL candidate list and export, `nul-first`'s predicted rows, whose zero sits
+# in the skipped prefix) and every other case differs.
+UCS4_PLAIN = ('plain',)
+UCS4_ZERO = ('nul-mid', 'nul-first', 'nul-last', 'nul-then-null')
+UCS4_RULING = ('surrogate', 'above-unicode', 'six-byte', 'null', 'null-all-ones')
+UCS4_PENDING = os.environ.get('CONTRACT_DIFF_PENDING_RULING') == '1'
+UCS4_PENDING_FIX = os.environ.get('CONTRACT_DIFF_PENDING_FIX') == '1'
+
+
+def ucs4_register(name, control=False):
+    null = glib_ucs4_to_utf8(ucs4_codes(name)) is None
+    ruling = name in UCS4_RULING
+    for mode in ('pinyin', 'zhuyin'):
+        if not ruling or UCS4_PENDING:
+            ucs4_case('ucs4-text-token-%s-%s' % (name, mode), mode=mode, control=control)(ucs4_token_probe(name))
+            ucs4_case('ucs4-text-sentence-%s-%s' % (name, mode), mode=mode, control=control)(
+                ucs4_sentence_probe(name))
+        # A NULL candidate string dies in the pin's `strcmp` when the list holds a
+        # second candidate (`pinyin.cpp:2053`): the class (b) crash, which the
+        # subject answers with a failed call. It does so on the parent build too.
+        if not ruling or UCS4_PENDING or null:
+            ucs4_case('ucs4-text-candidates-%s-%s' % (name, mode), mode=mode, control=control or null,
+                 **({'crash': {'whole': {'guess': False, 'rows': []}}} if null else {}))(
+                ucs4_candidates_probe(name))
+    if not ruling or UCS4_PENDING:
+        # A zero inside the skipped prefix ends nothing, so `nul-first` holds on the
+        # parent build too. The predicted list sorts its strings with the same
+        # `strcmp` (`pinyin.cpp:2451`, `:2053`): the pin dies at the first prefix of
+        # a NULL item, whose list holds a second candidate. The crash is registered,
+        # so that the case is a valid observation (class (b)); the subject must
+        # answer a failed call, and does so only once it carries the NULL string.
+        ucs4_case('ucs4-text-predicted-%s-pinyin' % name, control=control or name == 'nul-first',
+             **({'crash': {UCS4_ITEMS[name][0][:1]: {'guess': False, 'rows': []}}} if null else {}))(
+            ucs4_predicted_probe(name))
+
+
+def ucs4_register_export(name, control=False):
+    ucs4_case('ucs4-text-export-%s-pinyin' % name, control=control)(ucs4_export_probe(name))
+
+
+for _name in UCS4_PLAIN:
+    ucs4_register(_name, control=True)
+    ucs4_register_export(_name, control=True)
+for _name in UCS4_ZERO:
+    if UCS4_PENDING_FIX:
+        ucs4_register(_name)
+for _name in UCS4_EXPORTED:
+    if _name in UCS4_PLAIN:
+        continue
+    # Row 62 sends a NULL phrase for a value of 0x80000000 or more, which the
+    # pin does too (a control); any other value is bytes at the pin (difference 1).
+    if (_name in UCS4_ZERO and UCS4_PENDING_FIX) or _name == 'null' or UCS4_PENDING:
+        ucs4_register_export(_name, control=_name == 'null')
+for _name in UCS4_RULING:
+    ucs4_register(_name)
+
+
 def unigram_null_user_save(k):
     # The pin's save guards precede compact (pinyin.cpp:1132-1145,
     # zhuyin.cpp:547-554). Both C facades already enforce those guards;
