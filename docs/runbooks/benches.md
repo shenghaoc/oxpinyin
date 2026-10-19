@@ -640,3 +640,34 @@ This helper is not a second driver. It writes profiler output to
 and fixture files are removed at exit. Measurement mode rejects capture,
 parent and fixture-regeneration modes. The ordinary contract runner keeps
 its existing selection and verdict rules.
+
+
+### Internal call attribution
+
+Add `--per-call-attribution` to emit function and call-edge Ir from the
+same instruction pass. `--per-call-operations add` selects only add calls.
+It leaves the fixture and three native wall rounds unchanged. The default
+still measures add, count and lookup. Use `--per-call-attribution-limit 0`
+to emit every function and edge; the default shows the largest 25 of each.
+
+The parser reads compressed object, file and function names. It reads
+call associations and compressed position columns. Exclusive function
+costs must sum to the raw collected Ir. The output keeps raw costs apart
+from the calibrated aggregate and reports the wrapper cost separately.
+It saves no profiler file. The [Callgrind format specification](https://valgrind.org/docs/manual/cl-format.html)
+defines these records.
+
+`functions` gives exclusive Ir/call. These costs are additive.
+`call_edges` gives inclusive Ir/call and Callgrind calls per selected call.
+Inclusive edges can overlap; do not sum them as a phase partition.
+Uncollected ancestors can carry the selected costs on inclusive edges.
+Their presence adds no Python cost. Callgrind call counts can include
+calls outside collection; they are not selected-call attempt counts.
+`named_phase_candidates` reports roots for phrase-table lookup, item
+introspection used for text validation, and store add/merge. These are
+named call boundaries, not a fitted split. LTO and inlining can hide a
+boundary. A missing boundary reports `unresolved`, not zero. Inspect the
+function and edge identities before assigning a semantic phase. The
+mode reports `phase_partition: not_established`; it does not claim that
+these roots cover every instruction or form disjoint phases. Aggregate
+Ir calibration and native wall timing keep their existing definitions.
