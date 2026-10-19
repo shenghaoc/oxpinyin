@@ -10487,6 +10487,10 @@ def stored_count_headers(user):
             number = U(UNTOUCHED)
             ret = count(inst, (library << 24) | slot, C.byref(number))
             out[str(slot)] = [ret, number.value]
+        for tag in (0x10000000, 0xf0000000):
+            number = U(UNTOUCHED)
+            token = tag | (library << 24) | 1
+            out['tag ' + hex(tag)] = [count(inst, token, C.byref(number)), number.value]
         number = U(UNTOUCHED)
         out['no sub-index'] = [count(inst, 0x0f000001, C.byref(number)), number.value]
         k.fn('free_instance', None, P)(inst)
