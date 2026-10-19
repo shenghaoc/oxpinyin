@@ -1,15 +1,12 @@
 #!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
 """Execute the live parity registry. Standard library only; never cache the oracle."""
 import argparse
-import concurrent.futures
 import contextlib
-import errno
 try:
     import fcntl
 except ImportError:
     fcntl = None
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -18,218 +15,75 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
-
-# Heavy work needs a slot and a memory budget. Read resources after taking
-# the slot. Keep explicit child settings. Choose only unset settings.
-# These estimates use the existing Step 0 peaks from 2026-10-19 UTC.
-RUSTC_PEAK_MIB = 600        # rustc 555 MiB (test build), 492 (cold cell build), 470 (incremental)
-TEST_THREAD_PEAK_MIB = 64   # the crates' test binaries peak at 6-11 MiB; rustdoc beside them 91 MiB
-RUNNER_PEAK_MIB = 1024      # one gate-set runner job (contract-diff worker pairs and their fixtures)
-HEADROOM_MIB = 2048         # left to the desktop: the browser, the editor, the page cache
-
-
-def memory_available_mib():
-    """Memory the host can give new processes now, in MiB, or None.
-    Linux: MemAvailable from /proc/meminfo. macOS: free + inactive +
-    speculative pages from vm_stat. Windows: GlobalMemoryStatusEx.ullAvailPhys."""
-    try:
-        if sys.platform.startswith('linux'):
-            for line in Path('/proc/meminfo').read_text().splitlines():
-                if line.startswith('MemAvailable:'):
-                    return int(line.split()[1]) // 1024
-        elif sys.platform == 'darwin':
-            out = subprocess.run(['vm_stat'], capture_output=True, text=True, check=True).stdout
-            page = int(re.search(r'page size of (\d+) bytes', out).group(1))
-            pages = 0
-            for key in ('Pages free', 'Pages inactive', 'Pages speculative'):
-                match = re.search(key + r':\s+(\d+)', out)
-                pages += int(match.group(1)) if match else 0
-            return pages * page // (1024 * 1024)
-        elif sys.platform == 'win32':
-            import ctypes
-            class Status(ctypes.Structure):
-                _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
-                            ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
-                            ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
-                            ('ullTotalVirtual', ctypes.c_ulonglong), ('ullAvailVirtual', ctypes.c_ulonglong),
-                            ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
-            status = Status(dwLength=ctypes.sizeof(Status))
-            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                return int(status.ullAvailPhys) // (1024 * 1024)
-    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
-        return None
-    return None
-
-
-def linux_cgroup_dirs(proc=Path('/proc'), root=Path('/sys/fs/cgroup')):
-    """Find the current cgroup and its visible ancestors."""
-    entry = next(line[3:] for line in (proc / 'self/cgroup').read_text().splitlines()
-                 if line.startswith('0::'))
-    relative = Path(entry)
-    if not relative.is_absolute() or '..' in relative.parts:
-        raise ValueError('invalid cgroup path')
-    current = root / entry.lstrip('/')
-    return [current, *list(current.parents)[:len(current.relative_to(root).parts)]]
-
-
-def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
-    """Read known limits. Report each unreadable limit as unknown."""
-    notes, memories, cpus = [], [], []
-    if sys.platform.startswith('linux'):
-        try:
-            line = next(line for line in (proc / 'meminfo').read_text().splitlines()
-                        if line.startswith('MemAvailable:'))
-            memory = int(line.split()[1]) // 1024
-            if memory < 0:
-                raise ValueError('negative memory')
-            memories.append(memory)
-            notes.append(f'MemAvailable={memory} MiB')
-        except (OSError, ValueError, IndexError, StopIteration):
-            notes.append('MemAvailable=unknown')
-        try:
-            affinity = len(os.sched_getaffinity(0))
-            if not affinity:
-                raise ValueError('empty CPU affinity')
-            cpus.append(affinity)
-            notes.append(f'CPU affinity={affinity}')
-        except (OSError, ValueError, AttributeError):
-            notes.append('CPU affinity=unknown')
-            count = os.cpu_count()
-            if count:
-                cpus.append(count)
-                notes.append(f'CPU count={count}')
-        try:
-            directories = linux_cgroup_dirs(proc, cgroup_root)
-        except (OSError, ValueError, StopIteration):
-            directories = []
-            notes.append('cgroup v2 memory and CPU limits=unknown')
-        for directory in directories:
-            label = '/' if directory == cgroup_root else '/' + str(directory.relative_to(cgroup_root))
-            try:
-                maximum = (directory / 'memory.max').read_text().strip()
-                if maximum == 'max':
-                    notes.append(f'cgroup {label} memory.max=max')
-                else:
-                    maximum = int(maximum)
-                    current = int((directory / 'memory.current').read_text().strip())
-                    if maximum < 0 or current < 0:
-                        raise ValueError('negative memory')
-                    room = max(0, maximum - current) // (1024 * 1024)
-                    memories.append(room)
-                    notes.append(f'cgroup {label} memory room={room} MiB')
-            except (OSError, ValueError):
-                notes.append(f'cgroup {label} memory room=unknown')
-            try:
-                quota, period = (directory / 'cpu.max').read_text().split()
-                period = int(period)
-                if period <= 0:
-                    raise ValueError('invalid CPU period')
-                if quota == 'max':
-                    notes.append(f'cgroup {label} cpu.max=max')
-                else:
-                    quota = int(quota)
-                    if quota <= 0:
-                        raise ValueError('invalid CPU quota')
-                    cpus.append(quota / period)
-                    notes.append(f'cgroup {label} CPU quota={quota}/{period}')
-            except (OSError, ValueError):
-                notes.append(f'cgroup {label} CPU quota=unknown')
-    else:
-        memory = memory_available_mib()
-        if memory is not None:
-            memories.append(memory)
-        notes.append(f'available memory={memory if memory is not None else "unknown"} MiB')
-    if not cpus:
-        count = os.cpu_count()
-        notes.append(f'CPU count={count if count is not None else "unknown; fallback 1"}')
-        cpus.append(count or 1)
-    return dict(available_mib=min(memories) if memories else None,
-                cpus=max(1, math.floor(min(cpus))),
-                cargo_cpus=max(1, math.ceil(min(cpus))), notes=notes)
-
-
-def fit(available_mib, per_process_mib, ceiling):
-    """Return zero when no process fits after the headroom."""
-    return max(0, min(ceiling, (available_mib - HEADROOM_MIB) // per_process_mib))
-
-
-READ_HOST = object()
-
-
-def validate_settings(env):
-    build = env.get('CARGO_BUILD_JOBS')
-    if build is not None and build != 'default':
-        if not re.fullmatch(r'[+-]?[0-9]+', build) or int(build) == 0 or not -(2**31) <= int(build) < 2**31:
-            raise ValueError('Invalid CARGO_BUILD_JOBS: use a nonzero integer or default')
-    threads = env.get('RUST_TEST_THREADS')
-    if threads is not None and (not re.fullmatch(r'[+]?[0-9]+', threads) or int(threads) <= 0):
-        raise ValueError('Invalid RUST_TEST_THREADS: use a positive integer')
-
-
-def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST):
-    """Keep caller values. Choose only unset values from current resources."""
-    validate_settings(env)
-    if available_mib is READ_HOST:
-        resources = resource_snapshot()
-        available_mib = resources['available_mib']
-        cpus = cpus or resources['cpus']
-    cpus = cpus or os.cpu_count() or 1
-    chosen = {}
-    def choose(name, explicit, per_process, ceiling, unit):
-        if explicit is not None:
-            chosen[name] = (explicit, 'set by the caller', True)
-        elif available_mib is None:
-            chosen[name] = (0, 'available memory unknown; no capacity admitted', False)
-        else:
-            value = fit(available_mib, per_process, ceiling)
-            chosen[name] = (value, f'{available_mib} MiB available - {HEADROOM_MIB} MiB headroom, '
-                                   f'{per_process} MiB per {unit}, at most {ceiling}', False)
-    choose('CARGO_BUILD_JOBS', env.get('CARGO_BUILD_JOBS'), RUSTC_PEAK_MIB,
-           cpus, 'rustc')
-    choose('RUST_TEST_THREADS', env.get('RUST_TEST_THREADS'), TEST_THREAD_PEAK_MIB,
-           cpus, 'test thread')
-    choose('--jobs', explicit_jobs, RUNNER_PEAK_MIB, 2, 'runner job')
-    return chosen
-
-
-def plan_defaults(chosen, out=sys.stderr, phase='defaults'):
-    for name, (value, reason, explicit) in chosen.items():
-        print(f"{phase}: {name}={value} ({'explicit: ' if explicit else ''}{reason})", file=out, flush=True)
-
-
-def prepare_heavy_env(env, resources, *, runner=False):
-    """Prepare one child environment and its admission estimate."""
-    chosen = memory_defaults(env, None, cpus=resources['cpus'], available_mib=resources['available_mib'])
-    chosen.pop('--jobs')
-    child = dict(env, **{name: str(value[0]) for name, value in chosen.items()})
-    build = child['CARGO_BUILD_JOBS']
-    count = resources['cargo_cpus'] if build == 'default' else int(build)
-    if count < 0:
-        count = max(1, resources['cargo_cpus'] + count)
-    estimate = max(RUNNER_PEAK_MIB if runner else RUSTC_PEAK_MIB, count * RUSTC_PEAK_MIB,
-                   int(child['RUST_TEST_THREADS']) * TEST_THREAD_PEAK_MIB)
-    return child, chosen, estimate
-
-
-def resource_wait_limit(env):
-    try:
-        limit = float(env.get('OXPINYIN_RESOURCE_WAIT_SECONDS', '1800'))
-        if not math.isfinite(limit) or limit < 0:
-            raise ValueError('invalid wait')
-        return limit
-    except ValueError as exc:
-        raise ValueError('Invalid OXPINYIN_RESOURCE_WAIT_SECONDS: use finite nonnegative seconds') from exc
-
-
-class ResourceBlocked(ValueError):
-    pass
-
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools.dev import host as _host
+from tools.dev import registry as _registry
+from tools.dev import slot as _slot
+
+RUSTC_PEAK_MIB = _host.RUSTC_PEAK_MIB
+TEST_THREAD_PEAK_MIB = _host.TEST_THREAD_PEAK_MIB
+RUNNER_PEAK_MIB = _host.RUNNER_PEAK_MIB
+HEADROOM_MIB = _host.HEADROOM_MIB
+memory_available_mib = _host.memory_available_mib
+linux_cgroup_dirs = _host.linux_cgroup_dirs
+resource_snapshot = _host.resource_snapshot
+fit = _host.fit
+validate_settings = _host.validate_settings
+memory_defaults = _host.memory_defaults
+plan_defaults = _host.plan_defaults
+prepare_heavy_env = _host.prepare_heavy_env
+resource_wait_limit = _host.resource_wait_limit
+ResourceBlocked = _host.ResourceBlocked
+host_lock_dir = _host.host_lock_dir
+heavy_slot_count = _host.heavy_slot_count
+pid_alive = _host.pid_alive
+read_holder = _host.read_holder
+describe_holder = _host.describe_holder
+write_holder = _host.write_holder
+process_parent = _host.process_parent
+is_ancestor = _host.is_ancestor
+is_heavy = _registry.is_heavy
+HEAVY_SLOT = _slot.HEAVY_SLOT
+HEAVY_SLOT_HELD = _slot.HEAVY_SLOT_HELD
+lock_file = _slot.lock_file
+admission_lock = _slot.admission_lock
+CANCELLED = _slot.CANCELLED
+Cancelled = _slot.Cancelled
+check_cancelled = _slot.check_cancelled
+cancellation_handlers = _slot.cancellation_handlers
+terminate_group = _slot.terminate_group
+wait_child = _slot.wait_child
+HeavySlot = _slot.HeavySlot
+other_reservations = _slot.other_reservations
+reserve_heavy_env = _slot.reserve_heavy_env
+run_admitted = _slot.run_admitted
+
+
+class HeavyAdmission(_slot.HeavyAdmission):
+    """Adapter: resolve the resource reader through this module's globals."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault('resource_snapshot', lambda: resource_snapshot())
+        kwargs.setdefault('prepare_heavy_env',
+                          lambda *a, **k: prepare_heavy_env(*a, **k))
+        super().__init__(*args, **kwargs)
+
+
 CELLS = ('bdb', 'kc', 'tkrzw')
+# The results table. build_seconds is the cell's one build, shared by every row
+# of that cell; lock_wait_seconds is the runner's wait for its exclusive
+# resources (#899); slot_wait_seconds is the runner's wait for the heavy slot,
+# taken before its locks; build_slot_wait_seconds is the cell build's wait for
+# the heavy slot, shared by every row of that cell.
+# memory_wait_seconds adds the cell build and runner memory waits.
+COLUMNS = ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds',
+           'slot_wait_seconds', 'build_slot_wait_seconds', 'memory_wait_seconds', 'pin_ref', 'reason')
 
 
 @contextlib.contextmanager
@@ -243,66 +97,6 @@ def scratch_directory(log_dir):
                     dest = log_dir / log.relative_to(name)
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(log, dest)
-
-
-CANCELLED = threading.Event()
-
-
-class Cancelled(ValueError):
-    pass
-
-
-def check_cancelled():
-    if CANCELLED.is_set():
-        raise Cancelled('cancelled; child process groups terminated and reaped')
-
-
-@contextlib.contextmanager
-def cancellation_handlers():
-    CANCELLED.clear()
-    previous = {}
-    for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):
-        signum = getattr(signal, name, None)
-        if signum is not None:
-            previous[signum] = signal.signal(signum, lambda *_: CANCELLED.set())
-    try:
-        yield
-    finally:
-        for signum, handler in previous.items():
-            signal.signal(signum, handler)
-
-
-def terminate_group(process):
-    """Stop the group and reap its leader before the caller releases locks."""
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        pass
-    # The leader can exit while a descendant still runs.
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
-    process.wait()
-
-
-def wait_child(process, timeout=None):
-    deadline = None if timeout is None else time.monotonic() + timeout
-    try:
-        while True:
-            check_cancelled()
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
-                raise subprocess.TimeoutExpired(process.args, timeout)
-            try:
-                rc = process.wait(timeout=min(0.1, remaining) if remaining is not None else 0.1)
-                check_cancelled()
-                return rc
-            except subprocess.TimeoutExpired:
-                continue
-    except BaseException:
-        terminate_group(process)
-        raise
 
 
 def positive(value):
@@ -503,137 +297,6 @@ def check_identity(identity, root, cell, needed):
             raise ValueError(f'artifact {name} ({path}) changed after the recorded build '
                              f'(size/mtime {stat.st_size}/{stat.st_mtime_ns} vs {staged.get("size")}/{staged.get("mtime_ns")}): '
                              'a mixed target directory; rebuild it from this worktree')
-# ---------------------------------------------------------------------------
-# The host-wide heavy slot. Heavy work (a cell build, a full differential, a
-# campaign, a Valgrind run, a release/LTO build) takes one of a few slots
-# shared by every worktree and agent on the host, so concurrent heavy work
-# serialises instead of running the host out of memory; light work (fmt,
-# clippy on one crate, a small case selection, harness tests, the small
-# differentials) never waits. The slot is the existing exclusive-resource
-# mechanism (a flock on a lock file) at a host-wide location rather than
-# beside one checkout: the holder's identity is written into the file so
-# anyone waiting sees who holds it, and a file still naming a dead holder is
-# reclaimed with a message (the kernel released a dead holder's flock).
-# ---------------------------------------------------------------------------
-HEAVY_SLOT = 'heavy-slot'
-HEAVY_SLOT_HELD = 'OXPINYIN_HEAVY_SLOT_HELD'
-# The results table. build_seconds is the cell's one build, shared by every row
-# of that cell; lock_wait_seconds is the runner's wait for its exclusive
-# resources (#899); slot_wait_seconds is the runner's wait for the heavy slot,
-# taken before its locks; build_slot_wait_seconds is the cell build's wait for
-# the heavy slot, shared by every row of that cell.
-# memory_wait_seconds adds the cell build and runner memory waits.
-COLUMNS = ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds',
-           'slot_wait_seconds', 'build_slot_wait_seconds', 'memory_wait_seconds', 'pin_ref', 'reason')
-
-
-def host_lock_dir():
-    """Where the host-wide locks live: $OXPINYIN_LOCK_DIR, else
-    $XDG_CACHE_HOME/oxpinyin/locks, else ~/.cache/oxpinyin/locks (the cache
-    tools/cloud/setup.sh already uses). Shared by every worktree and agent."""
-    root = os.environ.get('OXPINYIN_LOCK_DIR')
-    if not root:
-        cache = os.environ.get('XDG_CACHE_HOME') or str(Path.home() / '.cache')
-        root = str(Path(cache) / 'oxpinyin/locks')
-    path = Path(root)
-    if os.environ.get('OXPINYIN_LOCK_DIR') and not path.is_absolute():
-        raise ValueError('OXPINYIN_LOCK_DIR must be an absolute path')
-    path = path.resolve()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
-def heavy_slot_count():
-    """How many heavy slots the host offers: $OXPINYIN_HEAVY_SLOTS, default 1."""
-    try:
-        return max(1, int(os.environ.get('OXPINYIN_HEAVY_SLOTS', '1')))
-    except ValueError:
-        return 1
-
-
-def pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def read_holder(path):
-    try:
-        return json.loads(path.read_text() or 'null')
-    except (OSError, ValueError):
-        return None
-
-
-def describe_holder(holder):
-    if not isinstance(holder, dict):
-        return 'no holder recorded'
-    return (f"pid {holder.get('pid')} in {holder.get('worktree')} since {holder.get('since')}: "
-            f"{holder.get('command')}")
-
-
-def is_heavy(row):
-    """A registry row is heavy when it says so (`"heavy": true`); the default
-    is light. The cell build is always heavy (cargo decides how much it
-    compiles; a no-op build holds the slot for a fraction of a second)."""
-    return bool(row.get('heavy'))
-
-
-def lock_file(file, operation):
-    """Retry interrupted locks. Keep other errors and the lock path."""
-    while True:
-        try:
-            fcntl.flock(file, operation)
-            return
-        except InterruptedError:
-            continue
-        except BlockingIOError:
-            raise
-        except OSError as exc:
-            if exc.errno == errno.EINTR:
-                continue
-            raise OSError(exc.errno, exc.strerror, file.name) from exc
-
-
-@contextlib.contextmanager
-def admission_lock(directory):
-    with (directory / 'heavy-admission').open('a+') as file:
-        lock_file(file, fcntl.LOCK_EX)
-        yield
-        # Closing this unshared descriptor releases the admission lock.
-
-
-def process_parent(pid):
-    try:
-        if sys.platform.startswith('linux'):
-            return int(Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[1])
-        result = subprocess.run(['ps', '-o', 'ppid=', '-p', str(pid)],
-                                capture_output=True, text=True, check=True)
-        return int(result.stdout.strip())
-    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
-        return None
-
-
-def is_ancestor(pid):
-    current, seen = os.getppid(), set()
-    while current and current not in seen:
-        if current == pid:
-            return True
-        seen.add(current)
-        current = process_parent(current)
-    return False
-
-
-def write_holder(file, holder):
-    file.seek(0)
-    file.truncate()
-    file.write(json.dumps(holder))
-    file.flush()
-
-
 def start_child(command, env, *, slot=None, **kwargs):
     """Transfer an acquired slot to the workload before it executes."""
     descriptors = ()
@@ -686,352 +349,6 @@ def heavy_child(fd, command):
             signal.signal(-rc, signal.SIG_DFL)
         os.kill(os.getpid(), -rc)
     return rc
-
-
-class HeavySlot:
-    """Hold one host-wide heavy slot for the duration of a `with` block.
-
-    Acquisition tries every slot without blocking, then waits, polling, and
-    prints who holds the slots once at the start of the wait and every 30 s;
-    the wait never fails or skips the work. `waited` is the seconds spent
-    waiting, for the caller's timing row. `reclaimed` names a dead holder
-    whose record this acquisition replaced, if any."""
-
-    def __init__(self, command, out=sys.stderr, poll=0.5):
-        self.command, self.out, self.poll = command, out, poll
-        self.waited, self.reclaimed, self.slot, self._file = 0.0, None, None, None
-        self.started, self.announced = None, None
-        self.inherited = False
-        self._handed_off = False
-        self.holder_pid, self.inherited_fd = None, None
-
-    def _try(self, index):
-        file = (self.lock_dir / f'{HEAVY_SLOT}-{index}').open('a+')
-        try:
-            lock_file(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            file.close()
-            return None
-        except BaseException:
-            file.close()
-            raise
-        return file
-
-    def _inherit(self):
-        self.lock_dir = host_lock_dir().resolve()
-        marker = os.environ.get(HEAVY_SLOT_HELD)
-        if marker is not None:
-            try:
-                held = json.loads(marker)
-                if (not isinstance(held, dict) or not {'lock_dir', 'slot', 'pid'} <= set(held)
-                        or set(held) - {'lock_dir', 'slot', 'pid', 'fd'}
-                        or not isinstance(held['lock_dir'], str)
-                        or not Path(held['lock_dir']).is_absolute()
-                        or type(held['slot']) is not int or held['slot'] < 0
-                        or type(held['pid']) is not int or held['pid'] <= 0
-                        or ('fd' in held and (type(held['fd']) is not int or held['fd'] < 0))):
-                    raise ValueError('invalid fields')
-                directory = Path(held['lock_dir']).resolve()
-            except (ValueError, OSError, RuntimeError) as exc:
-                raise ValueError(f'Invalid {HEAVY_SLOT_HELD}: expected a JSON object with '
-                                 'an absolute lock_dir, a nonnegative integer slot, and a positive holder pid') from exc
-            if directory == self.lock_dir:
-                path = directory / f"{HEAVY_SLOT}-{held['slot']}"
-                holder = read_holder(path)
-                if (isinstance(holder, dict) and holder.get('pid') == held['pid']
-                        and pid_alive(held['pid']) and is_ancestor(held['pid'])):
-                    self.slot, self.holder_pid = held['slot'], held['pid']
-                    self.inherited = True
-                    fd = held.get('fd')
-                    if fd is not None:
-                        try:
-                            if os.path.samestat(os.fstat(fd), path.stat()):
-                                self.inherited_fd = fd
-                        except OSError:
-                            pass
-                    print(f'heavy slot {self.slot} inherited from ancestor pid {self.holder_pid}: {self.command}',
-                          file=self.out, flush=True)
-                    return True
-                print(f'stale {HEAVY_SLOT_HELD}: pid {held["pid"]}, slot {held["slot"]}; '
-                      'acquire a slot normally', file=self.out, flush=True)
-            else:
-                print(f'stale {HEAVY_SLOT_HELD}: different lock directory; acquire a slot normally',
-                      file=self.out, flush=True)
-        return False
-
-    def try_acquire(self):
-        """Try once. Do not block a worker while the slot is busy."""
-        check_cancelled()
-        if self._file is not None or self.inherited:
-            return True
-        if self.started is None:
-            self.started = time.monotonic()
-            if self._inherit():
-                return True
-        slots = heavy_slot_count()
-        for index in range(slots):
-            file = self._try(index)
-            if file is not None:
-                self.slot, self._file = index, file
-                break
-        self.waited = time.monotonic() - self.started
-        if self._file is None:
-            now = time.monotonic()
-            if self.announced is None or now - self.announced >= 30:
-                holders = [describe_holder(read_holder(self.lock_dir / f'{HEAVY_SLOT}-{i}')) for i in range(slots)]
-                print(f'waiting for a heavy slot ({slots} on this host) for: {self.command}; held by: '
-                      + '; '.join(holders), file=self.out, flush=True)
-                self.announced = now
-            return False
-        path = Path(self._file.name)
-        previous = read_holder(path)
-        if isinstance(previous, dict) and previous.get('pid') and not pid_alive(int(previous['pid'])):
-            self.reclaimed = previous
-            print(f'reclaimed stale heavy slot {self.slot}: {describe_holder(previous)} (pid dead)',
-                  file=self.out, flush=True)
-        self.holder_pid = os.getpid()
-        holder = dict(pid=self.holder_pid, worktree=str(ROOT), command=self.command,
-                      since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
-        write_holder(self._file, holder)
-        if self.waited >= self.poll:
-            print(f'heavy slot {self.slot} acquired after {self.waited:.1f}s wait: {self.command}',
-                  file=self.out, flush=True)
-        return True
-
-    def __enter__(self):
-        while not self.try_acquire():
-            time.sleep(self.poll)
-        return self
-
-    def pass_fds(self):
-        fd = self.inherited_fd if self.inherited else self._file.fileno()
-        if fd is None:
-            return ()
-        os.set_inheritable(fd, True)
-        return (fd,)
-
-    def child_env(self, env):
-        """Copy the environment and mark the slot for this child."""
-        marker = dict(lock_dir=str(self.lock_dir), slot=self.slot, pid=self.holder_pid)
-        descriptors = self.pass_fds()
-        if descriptors:
-            marker['fd'] = descriptors[0]
-        return dict(env, OXPINYIN_LOCK_DIR=str(self.lock_dir), **{HEAVY_SLOT_HELD: json.dumps(marker)})
-
-    def handoff(self):
-        # The child shares this open file description. Never unlock it here.
-        # Keep our copy until the child is reaped. Descendants keep theirs.
-        self._handed_off = True
-
-    def __exit__(self, *exc):
-        if self._file is None:
-            return False
-        try:
-            if not self._handed_off:
-                self._file.seek(0)
-                self._file.truncate()
-                self._file.flush()
-        finally:
-            self._file.close()
-            self._file = None
-            self._handed_off = False
-        return False
-
-
-def other_reservations(directory, own_slot):
-    """Count live holders in other locked slots. Ignore dead records."""
-    reserved = 0
-    for path in directory.glob(f'{HEAVY_SLOT}-*'):
-        suffix = path.name.removeprefix(HEAVY_SLOT + '-')
-        if not suffix.isdigit() or int(suffix) == own_slot:
-            continue
-        holder = read_holder(path)
-        if not isinstance(holder, dict):
-            continue
-        pid, estimate = holder.get('pid'), holder.get('estimate_mib')
-        if type(pid) is not int or pid <= 0 or not pid_alive(pid):
-            continue
-        if type(estimate) is not int or estimate <= 0:
-            continue
-        with path.open('a+') as probe:
-            try:
-                lock_file(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                reserved += estimate
-            # Close only this probe. Never unlock a shared description.
-    return reserved
-
-
-def reserve_heavy_env(slot, env, *, runner=False):
-    """Serialize the resource read, reservation check, and holder update."""
-    with admission_lock(slot.lock_dir):
-        resources = resource_snapshot()
-        reserved = other_reservations(slot.lock_dir, slot.slot)
-        resources['notes'] = [*resources['notes'], f'other slot reservations={reserved} MiB']
-        if resources['available_mib'] is not None:
-            resources['available_mib'] = max(0, resources['available_mib'] - reserved)
-        child, chosen, estimate = prepare_heavy_env(env, resources, runner=runner)
-        admitted = resources['available_mib'] is not None and resources['available_mib'] - HEADROOM_MIB >= estimate
-        if admitted:
-            path = slot.lock_dir / f'{HEAVY_SLOT}-{slot.slot}'
-            with path.open('r+') as record:
-                holder = json.load(record)
-                previous = holder.get('estimate_mib', 0)
-                if type(previous) is not int or previous < 0:
-                    previous = 0
-                holder['estimate_mib'] = max(previous, estimate) if slot.inherited else estimate
-                write_holder(record, holder)
-        return resources, child, chosen, estimate, admitted
-
-
-class HeavyAdmission:
-    """Take the slot, then read resources before starting heavy work."""
-
-    def __init__(self, command, env, out=sys.stderr, poll=0.5, *, runner=False):
-        validate_settings(env)
-        self.command, self.out, self.poll = command, out, poll
-        self.runner = runner
-        self.base_env, self.env = env.copy(), None
-        self.limit = resource_wait_limit(env)
-        self.slot = HeavySlot(command, out=out, poll=poll)
-        self.started = None
-        self.slot_wait = self.memory_wait = 0.0
-        self.memory_since = None
-        self.retry_at = 0.0
-        self.announced = None
-        resources = resource_snapshot()
-        _, self.provisional, self.estimate = prepare_heavy_env(self.base_env, resources, runner=self.runner)
-        self.available = resources['available_mib']
-        print('resources (provisional): ' + '; '.join(resources['notes']), file=out, flush=True)
-        plan_defaults(self.provisional, out, 'provisional defaults')
-
-    def _blocked(self):
-        if self.available is None:
-            return ResourceBlocked('resource-blocked: available memory unknown')
-        available = max(0, self.available - HEADROOM_MIB)
-        inherited = 'inherited slot; ' if self.slot.inherited else ''
-        return ResourceBlocked(f'resource-blocked: {inherited}{self.estimate} MiB needed, {available} MiB available')
-
-    def _finish_memory_wait(self, now):
-        if self.memory_since is not None:
-            self.memory_wait += now - self.memory_since
-            self.memory_since = None
-
-    def try_acquire(self):
-        check_cancelled()
-        now = time.monotonic()
-        if self.started is None:
-            self.started = now
-        elif now - self.started >= self.limit:
-            self._finish_memory_wait(now)
-            self.close()
-            raise self._blocked()
-        if now < self.retry_at:
-            return False
-        self._finish_memory_wait(now)
-        if not self.slot.try_acquire():
-            return False
-        self.slot_wait += self.slot.waited
-        try:
-            resources, child, chosen, self.estimate, admitted = reserve_heavy_env(
-                self.slot, self.base_env, runner=self.runner)
-            self.available = resources['available_mib']
-            if not admitted:
-                if self.slot.inherited:
-                    raise self._blocked()
-                self.slot.__exit__()
-                if not self.slot.inherited:
-                    self.slot = HeavySlot(self.command, out=self.out, poll=self.poll)
-                now = time.monotonic()
-                self.memory_since, self.retry_at = now, now + self.poll
-                if self.announced is None or now - self.announced >= 30:
-                    print('resources: ' + '; '.join(resources['notes']), file=self.out, flush=True)
-                    available = 'unknown' if self.available is None else max(0, self.available - HEADROOM_MIB)
-                    print(f'waiting for memory: estimate {self.estimate} MiB, '
-                          f'{available} MiB available after headroom; '
-                          f'no process started: {self.command}', file=self.out, flush=True)
-                    self.announced = now
-                if now - self.started >= self.limit:
-                    raise self._blocked()
-                return False
-            print('resources (admitted): ' + '; '.join(resources['notes']), file=self.out, flush=True)
-            before = {key: value[0] for key, value in self.provisional.items()}
-            after = {key: value[0] for key, value in chosen.items()}
-            if before != after:
-                print(f'defaults changed after admission: {before} -> {after}', file=self.out, flush=True)
-            plan_defaults(chosen, self.out, 'effective defaults')
-            self.env = self.slot.child_env(child)
-            return True
-        except BaseException:
-            self.close()
-            raise
-
-    def record(self, result):
-        result['slot_wait_seconds'] = round(self.slot_wait + (self.slot.waited if self.env is None else 0), 3)
-        result['memory_wait_seconds'] = round(result.get('memory_wait_seconds', 0.0) + self.memory_wait, 3)
-
-    def __enter__(self):
-        try:
-            while not self.try_acquire():
-                remaining = max(0, self.limit - (time.monotonic() - self.started))
-                time.sleep(min(self.poll, remaining))
-        except BaseException:
-            self.close()
-            raise
-        return self
-
-    def close(self):
-        self.slot.__exit__()
-
-    def __exit__(self, *exc):
-        self.close()
-        return False
-
-
-def run_admitted(jobs, workers, run):
-    """Submit only admitted jobs. Keep the pool at the requested size."""
-    pending, active, results = list(jobs), {}, []
-    try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
-            while pending or active:
-                check_cancelled()
-                for future in list(active):
-                    if future.done():
-                        job = active.pop(future)
-                        try:
-                            result = future.result()
-                            if job['admission']:
-                                job['admission'].record(result)
-                            results.append(result)
-                        finally:
-                            if job['admission']:
-                                job['admission'].close()
-                for job in list(pending):
-                    if len(active) >= workers:
-                        break
-                    admission = job['admission']
-                    try:
-                        ready = admission is None or admission.try_acquire()
-                    except (OSError, ValueError) as exc:
-                        job['result'].update(status='FAIL', reason=str(exc))
-                        admission.record(job['result'])
-                        admission.close()
-                        results.append(job['result'])
-                        pending.remove(job)
-                        continue
-                    if ready:
-                        pending.remove(job)
-                        active[pool.submit(run, job)] = job
-                if active:
-                    concurrent.futures.wait(active, timeout=0.05,
-                                            return_when=concurrent.futures.FIRST_COMPLETED)
-                elif pending:
-                    time.sleep(0.05)
-    finally:
-        for job in jobs:
-            if job['admission']:
-                job['admission'].close()
-    return results
 
 
 def run_in_heavy_slot(command):
