@@ -134,24 +134,53 @@ registry, prefixes and `--no-build` artifacts in one container environment.
 Keep every current row field, including `runner`, `cell`, `status`, `seconds`,
 `build_seconds`, `lock_wait_seconds`, `slot_wait_seconds`,
 `build_slot_wait_seconds`, `memory_wait_seconds`, `phases`, `pin_ref` and `reason`.
-Ignore only `*_seconds` values and phase timing values for equivalence.
-Require identical field sets and phase structure. Every other field and value,
-including bare `seconds`, must be identical.
+Require the same field set, field names, types, units and meaning for every
+`seconds` and `*_seconds` field, including phase timing values. Every such
+value must be valid and non-negative. Their values need not match: `run-all.py`
+fills bare `seconds` from measured wall time. Timing values may differ
+between live runs. Test the timing calculation separately, with controlled
+inputs rather than a live-run comparison.
+Require identical values for every other field: `runner`, `cell`, `status`,
+`reason`, `pin_ref`, the `phases` structure, the selection and the verdicts.
 
-Tooling stage T5 moves the legacy slot and admission onto Layer 1's shared code.
-Keep one code implementation, with independent state in each environment.
-Until that handoff, `run-all.py` remains authoritative on Linux/macOS for its
-legacy semantics. This does not permit host-native pin execution under the
+Tooling stage T2N extracts the slot and admission core from `run-all.py` into
+Layer 1's `tools.dev.slot`, the one implementation. `run-all.py` imports it
+through an adapter and keeps its CLI, its rows, its environment variables and
+its cancellation semantics unchanged. Keep independent state in each
+environment. `run-all.py` remains authoritative on Linux/macOS for its legacy
+behaviour until T5. This does not permit host-native pin execution under the
 new plan. Use Layer 4's `just container run` interface for pin work.
 
 ### 5.3 Contract families
 
 Move `contract-diff.py` into `cases/contract` and `compare`, one family per PR.
 Keep decorators, probes, table loops, five comparison rules and Axis-C JSON.
-Require old/new `--observations` JSONL bytes to match for each library.
-Include `~` keys, userfile listings and normalized stderr. Keep verdict rows
-identical except separately proved intentional corrections such as #896.
-Use §10's cell policy. Keep both sides until that family's acceptance passes.
+Require old/new `--observations` JSONL bytes to match for every deterministic
+field. A field may differ between two runs of the same harness version only
+when its exact key is listed, the change is proved with a same-version control,
+and the comparison uses a stated invariant instead. Do not discard a field and
+do not widen an accepted difference. Every other byte must match, including
+every `~` key, userfile entry and stderr byte not named above.
+
+#898's same-version control (two runs of one harness version) records these
+keys:
+
+- `pin.result.~increment-ns` and `subject.result.~increment-ns`: present,
+  integer, non-negative. `contract-diff.py` writes it from
+  `time.perf_counter_ns()`.
+- `pin.result.~save-ns` and `subject.result.~save-ns`: present, integer,
+  non-negative, from `time.perf_counter_ns()`.
+- `pin.stderr` and `subject.stderr`: present. Compare after the harness's
+  existing normalization: strip only GLib's process id and timestamp for a
+  fatal run, and replace only a generated scratch directory name; a
+  `stderr_varies` site checks presence only.
+- `pin.userfiles` and `subject.userfiles`: present. Compare the same key set
+  and values after removing only the stale-index entry #898 names; the partial
+  `*.tmp` entry keeps its key and a `[size, sha256]` pair.
+
+No other observation key may differ. Keep verdict rows identical except
+separately proved intentional corrections such as #896. Use §10's cell policy.
+Keep both sides until that family's acceptance passes.
 
 ### 5.4 Drivers, instruments and probes
 
@@ -612,14 +641,14 @@ Do not retain an older supported interpreter while one scope waits.
 | T1C | Container | Improve expect-parent validity, exact issue/family selection, phase timing, worker registration and consumed-artifact builds. Check staged-artifact identity before execution. Prove #896 INVALID with old-driver failure/new-driver success. Preserve selected IDs, envelopes, valid verdicts and statuses. |
 | T1aN | Native | Deliver Layer 1's exact interpreter cutover, setup and identity acceptance. |
 | T1aC | Container | Deliver Layer 4's separate interpreter in the same atomic PR. Keep frozen oracle artifacts. Workflow edits need separate approval. |
-| T2N | Native | Deliver Layers 1–2: package, CLI, registry reader, bootstrap doctor, thin recipes and slot. Migrate check.sh with matching selection/status. Run native shell, inheritance, resource and argument acceptance. |
+| T2N | Native | Deliver Layers 1–2: package, CLI, registry reader, bootstrap doctor, thin recipes and slot. Extract the slot and admission core from run-all.py into tools.dev.slot, the one implementation; run-all.py imports it through an adapter and keeps its CLI, rows, environment variables and cancellation semantics unchanged. Migrate check.sh with matching selection/status. Run native shell, inheritance, resource and argument acceptance. |
 | T2C | Container | Keep legacy scripts authoritative. Apply Layer 4's separate namespaces and host budget contract before any pin handoff. Do not share native slot/cache state. |
 | T2T | Native | Deliver Layer 3 nextest after the native interface. Compare every current CI crate/feature scope, doctests and selected ignored tests. No workflow changes without approval. |
 | T3N | Native | Add conservative native verification records and invalidation. Keep original provenance on reused results. |
 | T3C | Container | Add separate records and an operational full BDB differential backstop with pin/model20. Validate its host and scheduling policy before narrowing mandatory local selection. |
 | T4N | Native | Test portable pure core functions without an oracle or pin installation. Use Layer 3 for Rust tests. |
 | T4C | Container | Deliver subject/observation/compare/capture/replay. Reproduce all §6 tests, both facades, ownership/abort/missing-symbol rules and fixture bytes. Retain C drivers and contract-diff. |
-| T5 | Container | Refactor runner/cli and adopt shared slot code with container-only state. Apply §5.2's full row/timing comparison. Run one full gate set under the cell rule. Retain run-all.py and run-all.sh. |
+| T5 | Container | Refactor runner/cli and carry the T2N slot and admission import through the adapter, with container-only state. Apply §5.2's full row/timing comparison. Run one full gate set under the cell rule. The refactored runner/cli takes legacy authority at T5; retain run-all.py and run-all.sh. |
 | T6 | Container | Deliver cell/systemdir/artifacts/pin and launch handoff. Require byte-equal describe JSON/env dumps, every exit-3 text and record/constant agreement. Apply Layer 4's full side-by-side container acceptance. Retain shims. |
 | T7 | Container | Unify runtime per-cell pin checks. Use BDB by default. Run original live tkrzw and kc-on-bdb rejection only when rule 2's path trigger fires. Keep EXPECTED_PIN_REF meanwhile. |
 | T8 | Container | Move observation families one per PR. Require four-way C/Python × pin/subject checks and original expectations. Keep wrappers and C drivers after acceptance until retirement approval. |
