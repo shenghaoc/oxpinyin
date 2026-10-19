@@ -235,11 +235,12 @@ where
         // When the model carries the phrase index's real unigram
         // frequencies, the pinned construction runs — the expanding-window
         // scan, the three-key order (text length, pinyin span, frequency),
-        // keep-first dedup, and only the raw-input fallback after an empty
-        // result. Without real frequencies the session reproduces its
+        // frequency-aware dedup, and a raw-input fallback for an empty
+        // scan. Without real frequencies the session reproduces its
         // pre-frequency behaviour exactly: k-best prefixes, sentence
         // candidates, cost order, adjacent dedup.
-        if self.model.has_real_unigrams() {
+        let mut empty_phrase_scan = false;
+        if real_unigrams {
             // Upstream's Gates 1 and 2 (`pinyin.cpp:2200-2216`,
             // `zhuyin.cpp:1474-1489`), before the search exactly as the pin
             // orders them and hoisted out of the candidate loop as it hoists
@@ -294,9 +295,18 @@ where
             // the collection order, which the scan now lays down in the
             // pin's array order (per window, token-ascending).
             glib_rank_sort(&mut ranked);
-            collected.extend(ranked.drain(..).map(|(_, candidate)| candidate));
 
-            dedup_by_text_keep_first(&mut collected);
+            // The pin prepends LONGER before the frequency dedup
+            // (`pinyin.cpp:2292-2300`). Keep its unigram-only `m_freq`:
+            // a same-text NORMAL row can have a larger bigram term.
+            empty_phrase_scan = ranked.is_empty();
+            if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
+                && let Some(row) = self.longer_candidate(gate)?
+            {
+                ranked.insert(0, row);
+            }
+            dedup_ranked_by_text(&mut ranked);
+            collected.extend(ranked.drain(..).map(|(_, candidate)| candidate));
         } else {
             let scorer = Scorer::with_key_costs(
                 self.scoring,
@@ -313,7 +323,7 @@ where
             collected.dedup_by(|left, right| left.text() == right.text());
         }
 
-        if collected.is_empty() {
+        if collected.is_empty() || empty_phrase_scan {
             collected.push(Candidate::new(
                 compact_str::CompactString::from(remaining),
                 CandidateKind::Fallback,
@@ -324,15 +334,6 @@ where
                 None,
             ));
         }
-
-        // §9: the LONGER row, prepended when the word leaves
-        // `SORT_WITHOUT_LONGER_CANDIDATE` clear (`pinyin.cpp:2292-2293`) —
-        // before the sentence prepend, so the n-best rows land above it
-        // exactly as the pin's two prepends order them. The row carries a
-        // zero span: upstream never sets `m_begin`/`m_end` for it
-        // (`_prepend_longer_candidates` leaves both zero), which is also
-        // the marker the C ABI reads back as `LONGER_CANDIDATE`.
-        self.prepend_longer_row(&mut collected, gate)?;
 
         // W14: prepend the stored n-best rows, head first, then drop every
         // later candidate with the same text — upstream prepends after the
@@ -427,7 +428,7 @@ where
         gate_overlong: bool,
     ) -> Result<(), EngineError> {
         if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
-            && let Some(candidate) = self.longer_candidate(gate_overlong)?
+            && let Some((_, candidate)) = self.longer_candidate(gate_overlong)?
         {
             out.insert(0, candidate);
         }
@@ -456,7 +457,7 @@ where
     pub(super) fn longer_candidate(
         &self,
         gate_overlong: bool,
-    ) -> Result<Option<Candidate>, EngineError> {
+    ) -> Result<Option<(RankKey, Candidate)>, EngineError> {
         if !self.model.has_real_unigrams() {
             // The pre-frequency construction never runs the pin's prepend:
             // its candidate rows carry no amplified frequency at all.
@@ -555,29 +556,34 @@ where
                 }
             }
         }
-        let Some((token, _unigram, text)) = winner else {
+        let Some((token, unigram, text)) = winner else {
             return Ok(None);
         };
-        // The row's amplified frequency exists only inside the pin's sort
-        // and dedup (`m_freq`); the pin's LONGER prepend runs after the
-        // sort, and the C ABI never reads a candidate's frequency. The
-        // observable surface needs the token (choose trains it), the text
-        // (the row's string and dedup key), and the zero span — carried
-        // here. The number itself would be
-        // `((1−λ)·unigram/total)·2²⁴` truncated ([`amplified_frequency`],
-        // bigram term exactly `0.0`); nothing downstream reads it, so it
-        // is not stored — a divergence in the freq-keyed dedup branch
-        // (LONGER vs a same-text NORMAL whose amplified frequency is
-        // strictly greater under DYNAMIC_ADJUST) is unreachable under the
-        // parity word, which leaves that bit clear.
-        Ok(Some(Candidate::new(
-            compact_str::CompactString::from(text),
-            CandidateKind::Phrase,
+        let total = self
+            .model
+            .unigram_total()
+            .map_err(|error| EngineError::Scoring(ScoringError::LanguageModel(error.to_string())))?
+            .unwrap_or(0);
+        // LONGER has no bigram term (`pinyin.cpp:1916-1927`). Its zero
+        // span marks the C-facing row as LONGER. The final dedup reads
+        // its frequency even when the sort word suppresses sentence rows.
+        let key = RankKey::for_sort_word(
+            text.chars().count(),
             0,
-            0,
-            0,
-            Some(token),
-            None,
+            amplified_frequency(unigram, total, self.model.amplification_lambda()),
+            self.lookup.sort_word,
+        );
+        Ok(Some((
+            key,
+            Candidate::new(
+                compact_str::CompactString::from(text),
+                CandidateKind::Phrase,
+                0,
+                0,
+                0,
+                Some(token),
+                None,
+            ),
         )))
     }
 
@@ -695,7 +701,7 @@ where
     /// fixed end, enumerated longest-span-first (start ascending — the pin's
     /// `len` loop), each span's slice ranked by the three-key order exactly
     /// like the after-cursor windows, the stored n-best rows prepended over
-    /// the whole set, then text dedup keep-first.
+    /// the whole set, then text dedup by frequency.
     ///
     /// Measured decomposition on the pin (su3u3, `before(5)`, the
     /// instrumented oracle at 0c5e80e1): span (0,5) yields 3 phrase
@@ -782,7 +788,9 @@ where
             mut window_addon,
         } = core::mem::take(&mut self.scratch);
         collected.clear();
+        ranked.clear();
         let mut group: Vec<Candidate> = Vec::new();
+        let mut slice_ranked = Vec::new();
         let mut unreadable = false;
 
         for start in 0..bound {
@@ -833,8 +841,8 @@ where
             let frequencies = self
                 .candidate_frequencies(&group, gram.as_ref().map(|(prev, row)| (*prev, row)), true)?
                 .unwrap_or_else(|| vec![0; group.len()]);
-            ranked.clear();
-            ranked.extend(
+            slice_ranked.clear();
+            slice_ranked.extend(
                 group
                     .drain(..)
                     .zip(frequencies)
@@ -842,17 +850,20 @@ where
                         let key = RankKey {
                             phrase_length: candidate.text().chars().count(),
                             pinyin_span: candidate.consumed_bytes(),
-                            frequency,
+                            frequency: frequency as u32,
+                            m_freq: frequency as u32,
                         };
                         (key, candidate)
                     }),
             );
-            glib_rank_sort(&mut ranked);
-            group.extend(ranked.drain(..).map(|(_, candidate)| candidate));
-            collected.append(&mut group);
+            glib_rank_sort(&mut slice_ranked);
+            ranked.append(&mut slice_ranked);
         }
 
-        out.append(&mut collected);
+        // Each slice keeps its own sort order. The final dedup compares
+        // `m_freq` across all slices (`zhuyin.cpp:1612,1626-1630`).
+        dedup_ranked_by_text(&mut ranked);
+        out.extend(ranked.drain(..).map(|(_, candidate)| candidate));
 
         self.scratch = Scratch {
             collected,
@@ -864,7 +875,6 @@ where
         };
 
         self.scan_unreadable = unreadable;
-        dedup_by_text_keep_first(out);
         self.prepend_nbest_rows(out);
         Ok(bound)
     }

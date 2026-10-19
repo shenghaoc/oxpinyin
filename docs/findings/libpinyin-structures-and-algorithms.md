@@ -225,7 +225,7 @@ in the pin's formats.
 | Frequency | `_compute_frequency_of_items` (`:1810`), `BIGRAM_FREQUENCY_DISCOUNT 0.1f` (`:33`), f32 expression truncated to `guint32` (`:1862`) | `candidate_frequencies` (`session/lookup.rs`), `amplified_frequency_with_bigram` (`session/mod.rs`) | same / follows, bit for bit |
 | Sort | `compare_item_with_sort_option` (`:1678`) under GLib's stable sort | `RankKey::pin_compare`, `glib_rank_sort` | same / follows |
 | Longer candidate | `_prepend_longer_candidates` (`:1870`) | `longer_candidate` (`session/lookup.rs`) | same / follows |
-| Dedup | `_remove_duplicated_items_by_phrase_string` (`:2058`) | `prepend_nbest_rows` (`session/lookup.rs`), `dedup_by_text_keep_first` (`session/mod.rs`) | different / unverified (§11) |
+| Dedup | `_remove_duplicated_items_by_phrase_string` (`:2058`, frequency rule `:2128-2138`); combined zhuyin slices (`zhuyin.cpp:1607-1630`) | `dedup_ranked_by_text` (`session/mod.rs`) includes LONGER and all before-cursor slices; `prepend_nbest_rows` keeps sentence precedence | same / follows for valid phrase text (#913); other text remains under #894/#927 |
 | Prediction | `pinyin_guess_predicted_candidates` (`:2413`), filter 10 (`:2313`) | `oxpinyin-capi/src/predict.rs` | same / follows |
 
 ## 6. Training and user phrases
@@ -455,8 +455,9 @@ covered.
 match, but the argument is not in this record:
 
 - matrix column dedup (`keep_first_in_column`) against the pin's bag;
-- candidate dedup (`dedup_by_text_keep_first`) against
-  `_remove_duplicated_items_by_phrase_string`;
+- candidate dedup for malformed phrase text remains under #894/#927;
+  the valid-text frequency rule is argued in
+  `addon-choose-promotion.md` section 5 (#913);
 - the constraint drop test: oxpinyin's integer zero test against the
   pin's `< FLT_EPSILON` is argued for model20 data in the
   `validate_constraint` entry of `upstream-divergences.md` (no per-token
