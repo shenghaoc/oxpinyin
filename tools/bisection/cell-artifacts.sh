@@ -11,7 +11,7 @@
 # built, plus user-rt-test when OXPINYIN_BUILD_USER_RT=1 (the pre-selection
 # behaviour, kept for direct callers).
 set -euo pipefail
-REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)  # physical path: the identity names one worktree
 # shellcheck source=tools/bisection/oracle-cell.sh
 source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
 export PINYIN_ORACLE_DBM=$ORACLE_DBM
@@ -56,6 +56,53 @@ for artifact in "${wanted[@]}"; do
 		;;
 	esac
 done
+# An empty selection builds nothing and claims nothing: the no-op stays a no-op.
+if [[ ${#packages[@]} -eq 0 && $build_user_rt == 0 ]]; then
+	exit 0
+fi
+# One target directory belongs to one worktree, one cell and one profile.
+# Claim it before cargo runs: write and flush a private file, then publish
+# it with a hard link that fails if the identity file exists. A later builder
+# reads the complete claim and must match its owner, so two worktrees racing
+# into one unclaimed directory cannot both enter cargo (#889: a target shared
+# between a baseline and a candidate worktree linked units of both into the candidate's
+# libraries, and the mixed objects were only noticed in DWARF). The full
+# record, with the staged artifacts, is written after the build; a failed
+# build leaves the claim or the previous record in place.
+identity=$CARGO_TARGET_DIR/oxpinyin-cell-identity.json
+mkdir -p "$CARGO_TARGET_DIR"
+python3 - "$identity" "$REPO_ROOT" "$ORACLE_DBM" "$CAPI_FEATURE" "${CARGO_PROFILE_DEV_OPT_LEVEL}" <<'PY'
+import datetime, json, os, sys, tempfile
+path, worktree, cell, feature, opt_level = sys.argv[1:]
+wanted = dict(worktree=worktree, cell=cell, feature=feature, profile='dev', opt_level=opt_level)
+fd, staged = tempfile.mkstemp(prefix='.oxpinyin-cell-claim-', dir=os.path.dirname(path))
+try:
+    with os.fdopen(fd, 'w') as f:
+        json.dump(dict(schema=1, **wanted, artifacts={},
+                       claimed_utc=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')),
+                  f, indent=1, sort_keys=True)
+        f.write('\n')
+        f.flush()
+    try:
+        os.link(staged, path)
+    except FileExistsError:
+        try:
+            with open(path, encoding='utf-8') as f:
+                owner = json.load(f)
+            if not isinstance(owner, dict):
+                raise ValueError('expected a JSON object')
+        except (OSError, ValueError, UnicodeError) as exc:
+            sys.exit('fatal: unreadable identity record %s: %s' % (path, exc))
+        claimed = {key: owner.get(key) for key in wanted}
+        if claimed != wanted:
+            print('fatal: target directory %s belongs to %s; this build is %s. One target directory per '
+                  '(worktree, cell, profile): use another --target-root/CARGO_TARGET_DIR, or remove the '
+                  'directory to start fresh.' % (path, json.dumps(claimed, sort_keys=True),
+                                                 json.dumps(wanted, sort_keys=True)), file=sys.stderr)
+            sys.exit(3)
+finally:
+    os.unlink(staged)
+PY
 if [[ ${#packages[@]} -gt 0 ]]; then
 	cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" "${packages[@]}" \
 		--no-default-features --features "$CAPI_FEATURE"
@@ -87,3 +134,32 @@ staged.symlink_to(executables[0])
 os.replace(staged, link)
 PY
 fi
+# Record the identity of what this directory now holds (written last, so a
+# failed build leaves the previous record, and atomically).
+python3 - "$identity" "$REPO_ROOT" "$ORACLE_DBM" "$CAPI_FEATURE" "${CARGO_PROFILE_DEV_OPT_LEVEL}" \
+	"$CARGO_TARGET_DIR" <<'PY'
+import datetime, hashlib, json, os, subprocess, sys
+path, worktree, cell, feature, opt_level, target = sys.argv[1:]
+def run(*command):
+    return subprocess.run(command, cwd=worktree, capture_output=True, text=True, check=True).stdout
+rustc = dict(line.split(': ', 1) for line in run('rustc', '-vV').splitlines() if ': ' in line)
+head = run('git', 'rev-parse', 'HEAD').strip()
+dirty = hashlib.sha256(run('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest()
+artifacts = {}
+for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'libzhuyin_capi.so'),
+                       ('dictool', 'oxpinyin-dictool'), ('user-rt-test', 'user-dir-round-trip-test')):
+    file = os.path.join(target, 'debug', filename)
+    if os.path.exists(file):
+        stat = os.stat(file)  # follows the user-rt-test symlink to the executable
+        artifacts[name] = dict(path=file, size=stat.st_size, mtime_ns=stat.st_mtime_ns)
+record = dict(schema=1, worktree=worktree, cell=cell, feature=feature, profile='dev', opt_level=opt_level,
+              toolchain=dict(release=rustc.get('release'), commit=rustc.get('commit-hash'), host=rustc.get('host')),
+              source=dict(head=head, tracked_diff_sha256=dirty),
+              built_utc=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+              artifacts=artifacts)
+staged = path + '.%d' % os.getpid()
+with open(staged, 'w') as f:
+    json.dump(record, f, indent=1, sort_keys=True)
+    f.write('\n')
+os.replace(staged, path)
+PY

@@ -179,6 +179,54 @@ def artifact_union(rows):
             raise ValueError(f"runners.json: {row['name']} names unknown artifacts: {', '.join(sorted(unknown))}")
         needed.update(declared)
     return [artifact for artifact in ARTIFACTS if artifact in needed]
+ARTIFACT_ENV = {'pinyin-capi': 'OXPINYIN_CAPI_SO', 'zhuyin-capi': 'OXPINYIN_ZHUYIN_SO',
+                'dictool': 'OXPINYIN_DICTOOL', 'user-rt-test': 'OXPINYIN_USER_RT_TEST'}
+
+
+def needed_artifacts(rows, env):
+    """The artifacts the selected rows execute, name -> path, from each row's
+    declared `artifacts` list: the same declarations that chose what the cell
+    built, so the identity check covers exactly what the runners load or run
+    (dictool for import-diff included, not only the {capi}/{zhuyin} paths)."""
+    needed = {}
+    for row in rows:
+        for name in row.get('artifacts', []):
+            needed[name] = env[ARTIFACT_ENV[name]]
+    return needed
+
+
+def identity_of(target_dir):
+    """The identity cell-artifacts.sh recorded for a target directory, or None."""
+    path = Path(target_dir) / 'oxpinyin-cell-identity.json'
+    return json.loads(path.read_text()) if path.is_file() else None
+
+
+def check_identity(identity, root, cell, needed):
+    """A hard error unless the target directory's identity is this worktree's,
+    this cell's, the dev profile's, and every artifact the run will execute
+    (`needed`: name -> path) is the file the record staged, unchanged since.
+    A missing record, another owner, or an artifact that changed or vanished
+    after the record is a mixed identity, never a run."""
+    if identity is None:
+        raise ValueError('no artifact identity recorded for this target directory: build it with '
+                         'tools/bisection/cell-artifacts.sh (drop --no-build) before running')
+    claimed = dict(worktree=identity.get('worktree'), cell=identity.get('cell'), profile=identity.get('profile'))
+    wanted = dict(worktree=str(Path(root).resolve()), cell=cell, profile='dev')
+    if claimed != wanted:
+        raise ValueError('target directory identity mismatch: built for %s, this run is %s' % (
+            json.dumps(claimed, sort_keys=True), json.dumps(wanted, sort_keys=True)))
+    recorded = identity.get('artifacts', {})
+    for name, path in needed.items():
+        staged = recorded.get(name)
+        if staged is None:
+            raise ValueError(f'artifact {name} ({path}) was not staged by the recorded build')
+        if not Path(path).exists():
+            raise ValueError(f'artifact {name} ({path}) is missing although the record stages it')
+        stat = Path(path).stat()
+        if (staged.get('path'), staged.get('size'), staged.get('mtime_ns')) != (str(path), stat.st_size, stat.st_mtime_ns):
+            raise ValueError(f'artifact {name} ({path}) changed after the recorded build '
+                             f'(size/mtime {stat.st_size}/{stat.st_mtime_ns} vs {staged.get("size")}/{staged.get("mtime_ns")}): '
+                             'a mixed target directory; rebuild it from this worktree')
 
 
 def cell_config(cell, target_root, env):
@@ -394,6 +442,18 @@ def main():
                                       reason='cell build: ' + reason_for(rc, output, args.build_timeout, expired))
                         results.append(result)
                     continue
+            # Execute only what this worktree staged into this cell's target.
+            needed = needed_artifacts((row for row, _, _ in build_candidates), env)
+            # A selection that executes nothing from the cell (pc-version) built
+            # nothing above and needs no record; everything else must match it.
+            if needed:
+                identity = identity_of(cfg['CARGO_TARGET_DIR'])
+                check_identity(identity, ROOT, cell, needed)
+                head = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT, capture_output=True, text=True).stdout.strip()
+                source = identity.get('source', {})
+                if source.get('head') != head:
+                    print(f"Note: {cell} artifacts were built from {source.get('head', '?')[:12]} at "
+                          f"{identity.get('built_utc', '?')}; this worktree is at {head[:12]}", file=sys.stderr, flush=True)
             jobs.extend(cell_jobs)
 
         def run(job):
