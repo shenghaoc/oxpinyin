@@ -1885,6 +1885,84 @@ mod tests {
     }
 
     #[test]
+    fn import_readings_refresh_after_another_handle_writes() {
+        let dir = tempdir("import-reading-memo");
+        let readings = distinct_readings();
+        let dense = |packed| packed_to_pinyin_keys(&[packed]).expect("dense");
+        let keys = dense(readings[0]);
+        let extra = dense(readings[1]);
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        let mut other = store.clone();
+        let user = store
+            .add_phrase_in(7, "龘", &keys, Some(5))
+            .expect("new user item");
+        other
+            .add_phrase_in(7, "龘", &keys, Some(7))
+            .expect("other user writer");
+        store
+            .add_phrase_in(7, "龘", &keys, Some(3))
+            .expect("refresh user memo");
+        assert_eq!(
+            store
+                .phrase(user)
+                .expect("phrase")
+                .expect("present")
+                .pronunciations()[0]
+                .count(),
+            15
+        );
+
+        let system = store
+            .add_system_phrase_in(1, None, "拟", &keys, Some(5))
+            .expect("new system item");
+        store
+            .add_system_phrase_in(1, Some(system), "拟", &extra, Some(7))
+            .expect("append cached row");
+        other
+            .add_system_phrase_in(1, Some(system), "拟", &extra, Some(11))
+            .expect("other system writer");
+        store
+            .add_system_phrase_in(1, Some(system), "拟", &extra, Some(3))
+            .expect("refresh system memo");
+        assert_eq!(
+            store.with_effective_system_item(system, |item| item.prons[1].1),
+            Some(21)
+        );
+        assert_eq!(
+            store
+                .phrase(system)
+                .expect("phrase")
+                .expect("present")
+                .pronunciations()[1]
+                .count(),
+            21
+        );
+        store.mark_modified();
+        assert!(store.save().expect("save"));
+        drop(other);
+        drop(store);
+        let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+            .expect("reopen");
+        assert_eq!(
+            store
+                .phrase(user)
+                .expect("user")
+                .expect("present")
+                .pronunciations()[0]
+                .count(),
+            15
+        );
+        assert_eq!(
+            store.with_effective_system_item(system, |item| item.prons[1].1),
+            Some(21)
+        );
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
+    #[test]
     fn stored_pronunciation_counts_follow_committed_item_changes() {
         let dir = tempdir("stored-pronunciation-counts");
         let readings = distinct_readings();

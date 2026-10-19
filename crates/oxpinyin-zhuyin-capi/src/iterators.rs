@@ -134,7 +134,7 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
     // `assert(phrase_length == item.get_phrase_length())` (`:454`), and one
     // of the same length with other text the `memcmp` assert (`:457`). The
     // phrase table is the `user_phrase_index` membership plus the system
-    // phrase index; the item text is the token introspection. Each refusal is
+    // phrase index; the item text is read without its pronunciation view. Each refusal is
     // one `libzhuyin` warning; a lookup that fails outright refuses before
     // either add call rather than reading an empty token list.
     let same_library: Vec<u32> = tokens
@@ -152,9 +152,7 @@ pub extern "C" fn zhuyin_iterator_add_phrase(
         // A missing item (a token a library reload left in the phrase
         // table) leaves the pin's `PhraseItem` at length zero: `:454` asserts
         // before any import mutation.
-        let item_text = dict
-            .token_introspection(token)
-            .map(|introspection| introspection.text);
+        let item_text = dict.token_text(token);
         if item_text.as_deref() != Some(phrase.as_str()) {
             crate::ffi::log_warning(
                 if item_text

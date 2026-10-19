@@ -475,6 +475,32 @@ pub(crate) struct PronRow {
     pub(crate) value: PronValue,
 }
 
+/// One import handle's last item, in the pin's stored reading order. The
+/// database remains authoritative: every write still commits there, and any
+/// write through another handle invalidates this bounded, one-item memo.
+struct ImportReadings {
+    token: Token,
+    generation: u64,
+    rows: Vec<PronRow>,
+}
+
+#[inline]
+fn discard_stale_import_readings(cache: &mut Option<ImportReadings>, generation: u64) {
+    if cache
+        .as_ref()
+        .is_some_and(|cached| cached.generation != generation)
+    {
+        *cache = None;
+    }
+}
+
+#[inline]
+fn note_import_commit(cache: &mut Option<ImportReadings>, generation: u64) {
+    if let Some(cached) = cache.as_mut() {
+        cached.generation = generation.wrapping_add(1);
+    }
+}
+
 /// Puts `rows` into insertion order: ascending sequence, the table's key
 /// order among equal sequences (the stable sort keeps it).
 fn sort_by_insertion<T>(rows: &mut [T], seq: impl Fn(&T) -> u32) {
@@ -545,28 +571,84 @@ fn append_system_token<S: WriteStore>(
 /// item: the overflow test uses the prefix total through the matching row, and
 /// `_add_phrase` ignores a refused increment and still returns true. An
 /// unmatched reading on an item holding 255 wraps the pin's `guint8` count to
-/// 0 (`:88`); the item keeps no readings at all (see `add_pronunciation`),
-/// and the next add starts it afresh. Returns whether the count wrapped.
-fn merge_system_reading(
-    item: &mut oxpinyin_data::chunk_write::ChunkItem,
+/// 0 (`:88`). Plan the change without touching the live item: a refused
+/// persistence write must leave it unchanged.
+#[derive(Clone, Copy)]
+enum SystemMerge {
+    Matched { position: usize, frequency: u32 },
+    Append,
+    Wrap,
+}
+
+fn plan_system_reading(
+    item: &oxpinyin_data::chunk_write::ChunkItem,
     reading: &SystemReading<'_>,
-) -> bool {
+) -> SystemMerge {
     let mut total = 0_u32;
-    for (stored, frequency) in &mut item.prons {
+    for (position, (stored, frequency)) in item.prons.iter().enumerate() {
         total = total.wrapping_add(*frequency);
         if stored.as_slice() == reading.packed {
-            if reading.delta == 0 || total <= total.wrapping_add(reading.delta) {
-                *frequency = frequency.wrapping_add(reading.delta);
-            }
-            return false;
+            let frequency = if reading.delta == 0 || total <= total.wrapping_add(reading.delta) {
+                frequency.wrapping_add(reading.delta)
+            } else {
+                *frequency
+            };
+            return SystemMerge::Matched {
+                position,
+                frequency,
+            };
         }
     }
     if item.prons.len() == usize::from(u8::MAX) {
-        item.prons.clear();
-        return true;
+        SystemMerge::Wrap
+    } else {
+        SystemMerge::Append
     }
-    item.prons.push((reading.packed.to_vec(), reading.delta));
-    false
+}
+
+fn apply_system_reading(
+    item: &mut oxpinyin_data::chunk_write::ChunkItem,
+    reading: &SystemReading<'_>,
+    change: SystemMerge,
+) {
+    match change {
+        SystemMerge::Matched {
+            position,
+            frequency,
+        } => {
+            if let Some((_, current)) = item.prons.get_mut(position) {
+                *current = frequency;
+            }
+        }
+        SystemMerge::Append => item.prons.push((reading.packed.to_vec(), reading.delta)),
+        SystemMerge::Wrap => item.prons.clear(),
+    }
+}
+
+/// Check the encoder's shape conditions without allocating a serialized
+/// copy. Malformed internal items still take the encoder's original error
+/// path, including its error text. Wrapping deliberately discards old rows.
+fn validate_system_merge(
+    item: &oxpinyin_data::chunk_write::ChunkItem,
+    reading: &SystemReading<'_>,
+    change: SystemMerge,
+) -> Result<(), StoreError> {
+    let length = item.phrase.len();
+    let wrapped = matches!(change, SystemMerge::Wrap);
+    let appended = matches!(change, SystemMerge::Append);
+    if length == 0
+        || length > usize::from(u8::MAX)
+        || (!wrapped
+            && (item.prons.len() + usize::from(appended) > usize::from(u8::MAX)
+                || item.prons.iter().any(|(keys, _)| keys.len() != length)
+                || (appended && reading.packed.len() != length)))
+    {
+        let mut candidate = item.clone();
+        apply_system_reading(&mut candidate, reading, change);
+        oxpinyin_data::chunk_write::encode_phrase_item(&candidate)
+            .map_err(|error| StoreError::Backend(error.to_string().into()))?;
+    }
+    Ok(())
 }
 
 /// Keeps a system token's persistence rows in step with its live `item`. An
@@ -577,14 +659,27 @@ fn sync_system_rows<S: WriteStore>(
     db: &S,
     original: &crate::persistence::SystemLibrary,
     token: Token,
-    item: &oxpinyin_data::chunk_write::ChunkItem,
+    current: u32,
     reading: &SystemReading<'_>,
     (untouched, wrapped): (bool, bool),
+    (generation, cache): (u64, &mut Option<ImportReadings>),
 ) -> Result<(), StoreError> {
     if wrapped {
         return db.write(|txn| {
-            let rows = collect_pronunciations_from_txn(txn, token)?;
-            clear_pronunciations(txn, &rows, token)
+            let mut rows = match cache.take() {
+                Some(cached) if cached.token == token && cached.generation == generation => {
+                    cached.rows
+                }
+                _ => collect_pronunciations_from_txn(txn, token)?,
+            };
+            clear_pronunciations(txn, &rows, token)?;
+            rows.clear();
+            *cache = Some(ImportReadings {
+                token,
+                generation,
+                rows,
+            });
+            Ok(())
         });
     }
     if untouched {
@@ -596,14 +691,10 @@ fn sync_system_rows<S: WriteStore>(
     } else {
         reading.keys
     };
-    let row_key = codec::encode_token_bytes(token, &phrase::encode_keys(row_keys));
+    let key_bytes = phrase::encode_keys(row_keys);
+    let row_key = codec::encode_token_bytes(token, &key_bytes);
     if let Some(bytes) = db.get(PRONUNCIATION, &row_key)? {
         let mut value = PronValue::decode(&bytes)?;
-        let current = item
-            .prons
-            .iter()
-            .find(|(stored, _)| stored.as_slice() == reading.packed)
-            .map_or(0, |(_, count)| *count);
         let base = original
             .item(token & PHRASE_MASK)
             .and_then(|item| {
@@ -617,14 +708,26 @@ fn sync_system_rows<S: WriteStore>(
             value.count = count;
             db.write(|txn| txn.put(PRONUNCIATION, &row_key, &value.encode()))?;
         }
+        if let Some(cached) = cache.as_mut() {
+            if let Some(row) = cached
+                .rows
+                .iter_mut()
+                .find(|row| row.key_bytes == key_bytes)
+            {
+                row.value = value;
+            } else {
+                *cache = None;
+            }
+        }
     } else if !has_original {
         db.write(|txn| {
-            add_pronunciation(
+            add_import_pronunciation(
                 txn,
                 token,
                 &phrase::encode_keys(reading.keys),
                 reading.delta,
-                false,
+                generation,
+                cache,
             )
             .map(|_| ())
         })?;
@@ -675,15 +778,48 @@ fn add_pronunciation(
     delta: u32,
     indexed: bool,
 ) -> Result<usize, StoreError> {
-    let rows = collect_pronunciations_from_txn(txn, token)?;
+    let mut rows = collect_pronunciations_from_txn(txn, token)?;
+    add_pronunciation_to_rows(txn, token, key_bytes, delta, indexed, &mut rows)
+}
+
+fn add_import_pronunciation(
+    txn: &mut impl WriteTxn,
+    token: Token,
+    key_bytes: &[u8],
+    delta: u32,
+    generation: u64,
+    cache: &mut Option<ImportReadings>,
+) -> Result<usize, StoreError> {
+    let mut rows = match cache.take() {
+        Some(cached) if cached.token == token && cached.generation == generation => cached.rows,
+        _ => collect_pronunciations_from_txn(txn, token)?,
+    };
+    let count = add_pronunciation_to_rows(txn, token, key_bytes, delta, false, &mut rows)?;
+    *cache = Some(ImportReadings {
+        token,
+        generation,
+        rows,
+    });
+    Ok(count)
+}
+
+fn add_pronunciation_to_rows(
+    txn: &mut impl WriteTxn,
+    token: Token,
+    key_bytes: &[u8],
+    delta: u32,
+    indexed: bool,
+    rows: &mut Vec<PronRow>,
+) -> Result<usize, StoreError> {
     let mut total_freq: u32 = 0;
-    for row in &rows {
+    let count = rows.len();
+    for row in rows.iter_mut() {
         // Stored counts are `guint32` fields upstream.
         let freq = u32::try_from(row.value.count).unwrap_or(u32::MAX);
         total_freq = total_freq.wrapping_add(freq);
         if row.key_bytes == key_bytes {
             if delta > 0 && total_freq.checked_add(delta).is_none() {
-                return Ok(rows.len());
+                return Ok(count);
             }
             let value = PronValue {
                 count: u64::from(freq.wrapping_add(delta)),
@@ -694,16 +830,19 @@ fn add_pronunciation(
                 &codec::encode_token_bytes(token, key_bytes),
                 &value.encode(),
             )?;
-            return Ok(rows.len());
+            row.value = value;
+            return Ok(count);
         }
     }
     if rows.len() == usize::from(u8::MAX) {
-        clear_pronunciations(txn, &rows, token)?;
+        clear_pronunciations(txn, rows, token)?;
+        rows.clear();
         return Ok(0);
     }
+    let compacted = rows.last().is_some_and(|row| row.value.seq == u32::MAX);
     let value = PronValue {
         count: u64::from(delta),
-        seq: next_pron_seq(txn, token, &rows)?,
+        seq: next_pron_seq(txn, token, rows)?,
         indexed,
     };
     txn.put(
@@ -711,7 +850,16 @@ fn add_pronunciation(
         &codec::encode_token_bytes(token, key_bytes),
         &value.encode(),
     )?;
-    Ok(rows.len() + 1)
+    if compacted {
+        for (seq, row) in rows.iter_mut().enumerate() {
+            row.value.seq = seq as u32;
+        }
+    }
+    rows.push(PronRow {
+        key_bytes: key_bytes.to_vec(),
+        value,
+    });
+    Ok(rows.len())
 }
 
 /// `FacadePhraseIndex::add_unigram_frequency` (`phrase_index.h:628-635`)
@@ -1487,6 +1635,8 @@ pub struct GenericUserStore<S: WriteStore> {
     _standalone_lease: Option<Arc<StandaloneLease>>,
     /// This handle's current training call's step checks.
     training: TrainingCheck,
+    /// Reused only by libpinyin sessions, whose raw rows have no outside writer.
+    import_readings: Option<ImportReadings>,
     /// Last field so [`RegistryLease`] drains after this handle's `Arc` dies.
     _lease: RegistryLease,
 }
@@ -1544,6 +1694,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             inner,
             _standalone_lease: lease,
             training: TrainingCheck::default(),
+            import_readings: None,
             _lease: RegistryLease,
         }
     }
@@ -1558,6 +1709,7 @@ impl<S: WriteStore> Clone for GenericUserStore<S> {
             inner: Arc::clone(&self.inner),
             _standalone_lease: self._standalone_lease.clone(),
             training: TrainingCheck::default(),
+            import_readings: None,
             _lease: RegistryLease,
         }
     }
@@ -1919,6 +2071,16 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.mark_committed_reading_write(db, has_user_data);
     }
 
+    // Keep the import memo's publication separate from whether this write
+    // changed the exact-text row; reading-only merges retain queried rows.
+    fn mark_committed_import_write(&self, db: MutexGuard<'_, S>, added_token: bool) {
+        if added_token {
+            self.mark_committed_phrase_write(db, true);
+        } else {
+            self.mark_committed_reading_write(db, true);
+        }
+    }
+
     /// A pronunciation merge changes the phonetic lookup, but keeps the
     /// phrase table's text-to-token rows (074a2219 pinyin.cpp:563-582).
     fn mark_committed_reading_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
@@ -2097,6 +2259,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             inner,
             _standalone_lease: Some(standalone_lease),
             training: TrainingCheck::default(),
+            import_readings: None,
             _lease: RegistryLease,
         })
     }
@@ -2823,7 +2986,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
         let key_bytes = phrase::encode_keys(keys);
 
+        let cache_enabled = self.inner.libpinyin.is_some();
+        let mut import_readings = self.import_readings.take();
         let db = self.database();
+        let generation = self.write_generation();
+        discard_stale_import_readings(&mut import_readings, generation);
         let indexed_new = std::cell::Cell::new(false);
         let (token, count) = db.write(|txn| {
             let lib_key = codec::encode_u8_str(library, phrase);
@@ -2851,7 +3018,18 @@ impl<S: WriteStore> GenericUserStore<S> {
                 // reading is merged into the item — no unigram, and no
                 // `add_index`, so a reading this adds stays out of the
                 // user pinyin index.
-                let count = add_pronunciation(txn, token, &key_bytes, delta, false)?;
+                let count = if cache_enabled {
+                    add_import_pronunciation(
+                        txn,
+                        token,
+                        &key_bytes,
+                        delta,
+                        generation,
+                        &mut import_readings,
+                    )?
+                } else {
+                    add_pronunciation(txn, token, &key_bytes, delta, false)?
+                };
                 Ok(Ok((token, count)))
             } else {
                 let alloc_key = codec::encode_u8(ALLOC_CURSOR);
@@ -2911,6 +3089,14 @@ impl<S: WriteStore> GenericUserStore<S> {
                 };
                 txn.put(PRONUNCIATION, &pron_key, &value.encode())?;
                 indexed_new.set(true);
+                import_readings = cache_enabled.then(|| ImportReadings {
+                    token,
+                    generation,
+                    rows: vec![PronRow {
+                        key_bytes: key_bytes.clone(),
+                        value,
+                    }],
+                });
 
                 let unigram = delta.wrapping_mul(ADD_PHRASE_UNIGRAM_FACTOR_U32);
                 add_unigram_frequency(txn, library, token, unigram)?;
@@ -2922,11 +3108,9 @@ impl<S: WriteStore> GenericUserStore<S> {
             self.note_index_add(keys, token, false);
         }
         self.set_user_pronunciation_count(token, count);
-        if indexed_new.get() {
-            self.mark_committed_phrase_write(db, true);
-        } else {
-            self.mark_committed_reading_write(db, true);
-        }
+        note_import_commit(&mut import_readings, generation);
+        self.mark_committed_import_write(db, indexed_new.get());
+        self.import_readings = import_readings;
         Ok(token)
     }
 
@@ -3065,6 +3249,17 @@ impl<S: WriteStore> GenericUserStore<S> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(&token)
             .copied()
+    }
+
+    /// The item's text, without decoding or collecting its readings.
+    ///
+    /// # Errors
+    /// Returns a backend error or [`UserStoreError::Decode`] for non-UTF-8 text.
+    pub fn phrase_text(&self, token: Token) -> Result<Option<String>, UserStoreError> {
+        self.database()
+            .get(PHRASE, &codec::encode_token(token))?
+            .map(|bytes| String::from_utf8(bytes).map_err(|_| UserStoreError::Decode))
+            .transpose()
     }
 
     /// Phrase text and pronunciations for `token`, if this store owns it.
@@ -4090,6 +4285,7 @@ impl GenericUserStore<DefaultStore> {
                 inner,
                 _standalone_lease: None,
                 training: TrainingCheck::default(),
+                import_readings: None,
                 _lease: RegistryLease,
             });
         }
@@ -4102,6 +4298,7 @@ impl GenericUserStore<DefaultStore> {
             inner,
             _standalone_lease: None,
             training: TrainingCheck::default(),
+            import_readings: None,
             _lease: RegistryLease,
         })
     }
@@ -4465,10 +4662,11 @@ impl<S: WriteStore> GenericUserStore<S> {
         count: Option<u64>,
     ) -> Result<Token, UserStoreError> {
         self.flush_system_unigrams()?;
-        use oxpinyin_data::chunk_write::{ChunkItem, encode_phrase_item};
+        use oxpinyin_data::chunk_write::ChunkItem;
         if !(1..=4).contains(&library) || !phrase::phrase_and_keys_valid(text, keys) {
             return Err(UserStoreError::InvalidPhrase);
         }
+        let mut import_readings = self.import_readings.take();
         let target = self
             .inner
             .libpinyin
@@ -4482,6 +4680,12 @@ impl<S: WriteStore> GenericUserStore<S> {
             .ok_or(UserStoreError::InvalidPhrase)?;
         let delta = u32::try_from(count.unwrap_or(DEFAULT_PHRASE_COUNT)).unwrap_or(u32::MAX);
         let db = self.database();
+        let generation = self.write_generation();
+        if import_readings.as_ref().is_some_and(|cached| {
+            cached.generation != generation || Some(cached.token) != original_token
+        }) {
+            import_readings = None;
+        }
         let mut system_items = self
             .inner
             .system_items
@@ -4500,41 +4704,70 @@ impl<S: WriteStore> GenericUserStore<S> {
         // its counts in its live item and writes no row at open. An untouched
         // original therefore has no row to reconcile, and the lookup below
         // can be skipped.
-        let live = existing.and_then(|token| system_items.get(&token).cloned());
-        let was_live = live.is_some();
-        let (token, mut item) = if let Some(token) = existing {
-            let item = live
-                .or_else(|| original.item(token & PHRASE_MASK))
-                .ok_or(UserStoreError::InvalidPhrase)?;
-            (token, item)
+        let (token, pending_item, was_live) = if let Some(token) = existing {
+            let was_live = system_items.contains_key(&token);
+            let pending = if was_live {
+                None
+            } else {
+                Some(
+                    original
+                        .item(token & PHRASE_MASK)
+                        .ok_or(UserStoreError::InvalidPhrase)?,
+                )
+            };
+            (token, pending, was_live)
         } else {
             let token = append_system_token(&*db, library, original.range_end, text, &reading)?;
             #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
             self.note_index_add(keys, token, false);
             (
                 token,
-                ChunkItem {
+                Some(ChunkItem {
                     phrase: text.chars().map(u32::from).collect(),
                     unigram: 0,
                     prons: Vec::new(),
-                },
+                }),
+                false,
             )
         };
-        let wrapped = merge_system_reading(&mut item, &reading);
-        // Validate the eventual packed payload before any row is written, so
-        // an unencodable item leaves no partial state.
-        encode_phrase_item(&item).map_err(|error| StoreError::Backend(error.to_string().into()))?;
+        let (change, current) = {
+            let item = system_items
+                .get(&token)
+                .or(pending_item.as_ref())
+                .ok_or(UserStoreError::InvalidPhrase)?;
+            let change = plan_system_reading(item, &reading);
+            validate_system_merge(item, &reading, change)?;
+            let current = match change {
+                SystemMerge::Matched { frequency, .. } => frequency,
+                SystemMerge::Append => reading.delta,
+                SystemMerge::Wrap => 0,
+            };
+            (change, current)
+        };
+        let wrapped = matches!(change, SystemMerge::Wrap);
         let untouched = !was_live && existing.is_some();
-        sync_system_rows(&*db, original, token, &item, &reading, (untouched, wrapped))?;
-        system_items.insert(token, item);
+        sync_system_rows(
+            &*db,
+            original,
+            token,
+            current,
+            &reading,
+            (untouched, wrapped),
+            (generation, &mut import_readings),
+        )?;
+        // No fallible work remains: publish only after the rows committed.
+        if let Some(mut item) = pending_item {
+            apply_system_reading(&mut item, &reading, change);
+            system_items.insert(token, item);
+        } else if let Some(item) = system_items.get_mut(&token) {
+            apply_system_reading(item, &reading, change);
+        }
         drop(system_items);
         self.revive_system_item(token);
         self.inner.has_system_items.store(true, Ordering::Relaxed);
-        if existing.is_none() {
-            self.mark_committed_phrase_write(db, true);
-        } else {
-            self.mark_committed_reading_write(db, true);
-        }
+        note_import_commit(&mut import_readings, generation);
+        self.mark_committed_import_write(db, existing.is_none());
+        self.import_readings = import_readings;
         Ok(token)
     }
 }
@@ -4543,6 +4776,32 @@ impl<S: WriteStore> GenericUserStore<S> {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn system_import_changes_the_first_match_and_guards_its_prefix() {
+        let mut item = oxpinyin_data::chunk_write::ChunkItem {
+            phrase: vec![0x4f60],
+            unigram: 0,
+            prons: vec![(vec![1], u32::MAX - 10), (vec![2], 3), (vec![2], 5)],
+        };
+        let mut reading = SystemReading {
+            keys: &[2],
+            packed: &[2],
+            delta: 7,
+        };
+        let change = plan_system_reading(&item, &reading);
+        validate_system_merge(&item, &reading, change).expect("valid item");
+        apply_system_reading(&mut item, &reading, change);
+        assert_eq!(
+            item.prons[1].1, 10,
+            "the prefix fits even though the whole total does not"
+        );
+        assert_eq!(item.prons[2].1, 5, "the later exact match stays untouched");
+        reading.delta = 1;
+        let change = plan_system_reading(&item, &reading);
+        apply_system_reading(&mut item, &reading, change);
+        assert_eq!(item.prons[1].1, 10, "overflow refuses the increment");
+    }
 
     macro_rules! user_store_tests {
         ($mod:ident, $backend:ty, $ext:literal) => {
@@ -5729,6 +5988,10 @@ mod tests {
                         .write(|txn| txn.put(PHRASE, &text_key, &[0xff, 0xfe]))
                         .unwrap();
                     assert!(matches!(store.phrase(token), Err(UserStoreError::Decode)));
+                    assert!(matches!(
+                        store.phrase_text(token),
+                        Err(UserStoreError::Decode)
+                    ));
                     // The text restored; a pronunciation value of a length the
                     // codec does not know.
                     store
@@ -5745,6 +6008,7 @@ mod tests {
                         store.phrase(token),
                         Err(UserStoreError::DecodePronunciation)
                     ));
+                    assert_eq!(store.phrase_text(token).unwrap().as_deref(), Some("甲"));
                     cleanup(&path);
                 }
             }

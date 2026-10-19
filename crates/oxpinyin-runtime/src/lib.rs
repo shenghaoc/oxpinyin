@@ -1129,6 +1129,39 @@ impl RuntimeDict {
         }
     }
 
+    /// The live item's text for `_add_phrase`'s length and content checks
+    /// (074a2219 pinyin.cpp:566-571; zhuyin.cpp:452-457). Reading spellings,
+    /// frequencies and the unigram do not participate in those checks.
+    #[must_use]
+    pub fn token_text(&self, token: u32) -> Option<String> {
+        match token >> 24 {
+            1..=4 => {
+                if !self.library_visible_token(token) {
+                    return None;
+                }
+                if let Some(text) = self.user.as_ref().and_then(|store| {
+                    store.with_effective_system_item(token, |item| {
+                        item.phrase
+                            .iter()
+                            .copied()
+                            .map(char::from_u32)
+                            .collect::<Option<String>>()
+                    })
+                }) {
+                    return text;
+                }
+                self.system.phrase_text(token)
+            }
+            5..=7 => {
+                if !self.library_visible(token >> 24) {
+                    return None;
+                }
+                self.user.as_ref()?.phrase_text(token).ok()?
+            }
+            _ => None,
+        }
+    }
+
     /// `FacadePhraseIndex::get_phrase_item`'s dispatch by library
     /// nibble, for the token-introspection surface. `None` when the
     /// library is missing/unloaded (`ERROR_NO_SUB_PHRASE_INDEX`) or the
