@@ -406,6 +406,21 @@ always".
      it that touch the same files.
    The report states which of these cases applied and why, so the
    maintainer can check the call.
+   Rules 5 and 7 describe the **completion gate** (maintainer ruling
+   2026-10-19 UTC): what runs when a coherent fix is ready, before a
+   push that asks for review. Between two such points, while a fix is
+   still taking shape, **iteration feedback** is enough: the named unit
+   tests of the touched crate (`cargo test -p <crate> <test name>`),
+   plus an explicit, small case selection of the differential that
+   reaches the changed behaviour — the defect's witness case and its
+   neighbours, named by case ID (`tools/bisection/run-contract-diff.sh
+   ... -- --cases default-option-parse,default-option-single-key`),
+   never the default suite.
+   Iteration feedback is not a gate result and is not reported as one:
+   the report names the completion gate that ran, and the intermediate
+   selections only when a DIFFER they found shaped the fix. A fix that
+   never reaches a completion gate is not ready to push for review;
+   a `wip/` checkpoint push does not need one.
 8. Differentials build debug, never release. Keep one target directory
    per cell and reuse it; do not delete target directories between
    issues. Clean once, at the end of the lane.
