@@ -2623,9 +2623,7 @@ mod tests {
             .unwrap()
             .tokens
             .as_ptr();
-        let mut reading = keys.clone();
-        reading[0] = oxpinyin_user::toned_key(usize::from(keys[0]), 2).unwrap();
-        assert_eq!(store.add_phrase(phrase, &reading, None).unwrap(), token);
+        assert_eq!(store.add_phrase(phrase, &keys, Some(5)).unwrap(), token);
         assert_eq!(store.phrase_table_generation(), row_generation);
         assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(token)]);
         assert_eq!(
