@@ -17,7 +17,8 @@ name: oracle-image
 # (docs/findings/model-provenance.md) and no job here fetches it. Lanes
 # regenerate lib/libpinyin/data locally (docs/runbooks/oracle.md). The job
 # builds and verifies on pull requests that touch the recipe, and pushes only
-# from main or a manual run.
+# only from a normal push to main. Compatibility-only inputs do not rebuild
+# the frozen libraries. The changes job selects the appropriate validation path.
 
 on:
   workflow_dispatch:
@@ -30,6 +31,12 @@ on:
       - tools/oracle/verify-oracle-image.sh
       - tools/oracle/image-tag.sh
       - .github/workflows/oracle-image.yml
+      - tools/oracle/Dockerfile.compat
+      - tools/oracle/compat.sh
+      - tools/oracle/compat-inside.sh
+      - tools/cloud/setup.sh
+      - tools/container/runtime.sh
+      - rust-toolchain.toml
   pull_request:
     branches: [main]
     paths:
@@ -39,6 +46,12 @@ on:
       - tools/oracle/verify-oracle-image.sh
       - tools/oracle/image-tag.sh
       - .github/workflows/oracle-image.yml
+      - tools/oracle/Dockerfile.compat
+      - tools/oracle/compat.sh
+      - tools/oracle/compat-inside.sh
+      - tools/cloud/setup.sh
+      - tools/container/runtime.sh
+      - rust-toolchain.toml
 
 permissions:
   contents: read
@@ -48,13 +61,40 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      oracle: ${{ steps.scope.outputs.oracle }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: scope
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          oracle=false
+          if [[ -z "$BASE" || "$BASE" =~ ^0+$ ]]; then
+            oracle=true
+          else
+            changed=$(git diff --name-only "$BASE" HEAD)
+            if grep -E '^(tools/oracle/(build-oracle.sh|Dockerfile.oracle|oracle-pin.txt|verify-oracle-image.sh|image-tag.sh)|.github/workflows/oracle-image.yml)$' <<< "$changed" >/dev/null; then
+              oracle=true
+            fi
+          fi
+          echo "oracle=$oracle" >> "$GITHUB_OUTPUT"
+
   oracle-image:
+    needs: changes
+    if: needs.changes.outputs.oracle == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
       contents: read
       packages: write
-    steps:
+    steps: &validation_steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -85,6 +125,7 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Build the oracle image
+        if: needs.changes.outputs.oracle == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: tools/oracle
@@ -96,10 +137,69 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
       - name: Verify the library hashes and the absence of model data
+        if: needs.changes.outputs.oracle == 'true'
         run: tools/oracle/verify-oracle-image.sh --engine docker oxpinyin-oracle:candidate
 
+      - name: Reuse the immutable reference for compatibility-only changes
+        if: needs.changes.outputs.oracle != 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          docker pull "ghcr.io/shenghaoc/oxpinyin-oracle:$TAG"
+          docker tag "ghcr.io/shenghaoc/oxpinyin-oracle:$TAG" oxpinyin-oracle:candidate
+          tools/oracle/verify-oracle-image.sh --engine docker oxpinyin-oracle:candidate
+
+      # Reuse the exact pinned environment needed for local --regen-data.
+      # No model inputs enter this stage or the published artifact.
+      - name: Build the pinned oracle build environment
+        id: deps
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: tools/oracle
+          file: tools/oracle/Dockerfile.oracle
+          target: deps
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          tags: oxpinyin-oracle-deps:candidate
+
+      - name: Verify deps is exactly the pinned build stage
+        env:
+          BUILT_STAGE_ID: ${{ steps.deps.outputs.imageid }}
+        run: |
+          set -euo pipefail
+          # Publish only the image produced by the explicit file/target above.
+          test "$(docker image inspect --format '{{.Id}}' oxpinyin-oracle-deps:candidate)" = "$BUILT_STAGE_ID"
+          base=$(sed -n 's/^base_image=//p' tools/oracle/oracle-pin.txt)
+          snapshot=$(sed -n 's/^apt_snapshot=//p' tools/oracle/oracle-pin.txt)
+          grep -Fq "$base AS deps" tools/oracle/Dockerfile.oracle
+          grep -Fq "/archive/debian/$snapshot " tools/oracle/Dockerfile.oracle
+          # The pinned deps stage contains no COPY/ADD and has no secret-bearing ENV.
+          sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle | \
+            grep -q '^FROM .*debian:testing@sha256:'
+          ! sed '/^FROM deps AS build/,$d' tools/oracle/Dockerfile.oracle | grep -qE '^(COPY|ADD|ENV) '
+          docker run --rm oxpinyin-oracle-deps:candidate sh -ec '
+            test ! -e /opt/pinyin-oracle
+            test ! -e /root/.docker/config.json
+            test ! -e /root/.aws
+            test ! -e /state
+            test ! -e /run/secrets/cacert
+            test -z "$(find / -name "*model20*" -print -quit 2>/dev/null)"
+            command -v cc; command -v pkg-config; command -v python3'
+
+      - name: Build compatibility execution environment from the same stages
+        run: |
+          docker buildx build --builder default --load --platform linux/amd64 \
+            --build-arg DEPS_IMAGE=oxpinyin-oracle-deps:candidate \
+            --build-arg REFERENCE_IMAGE=oxpinyin-oracle:candidate \
+            -f tools/oracle/Dockerfile.compat -t oxpinyin-compat:candidate .
+          docker run --rm --workdir /tmp/toolchain oxpinyin-compat:candidate rustc -Vv
+          bash -n tools/container/runtime.sh tools/oracle/compat.sh tools/oracle/compat-inside.sh tools/cloud/setup.sh
+          # No CI job fetches model20. End-to-end local differentials are
+          # recorded separately and never turn missing model input into pass.
+
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -107,7 +207,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
         env:
           TAG: ${{ steps.meta.outputs.tag }}
         run: |
@@ -124,3 +224,30 @@ jobs:
           fi
           docker tag oxpinyin-oracle:candidate "$image"
           docker push "$image"
+
+      - name: Push pinned build environment
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.oracle == 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          image=ghcr.io/shenghaoc/oxpinyin-oracle:${TAG}-deps
+          if out=$(docker manifest inspect "$image" 2>&1); then
+            echo "::notice::${image} already exists; not overwriting it"
+            exit 0
+          elif ! grep -qiE 'no such manifest|manifest unknown|not found' <<<"$out"; then
+            echo "::error::cannot tell whether ${image} exists: ${out}"
+            exit 1
+          fi
+          docker tag oxpinyin-oracle-deps:candidate "$image"
+          docker push "$image"
+
+  compatibility-environment:
+    needs: changes
+    if: needs.changes.outputs.oracle != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    # Same checks/recipe; frozen build and publication steps are gated out.
+    steps: *validation_steps
