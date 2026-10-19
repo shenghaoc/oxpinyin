@@ -4991,6 +4991,8 @@ mod tests {
                     assert_eq!(store.phrase_table_generation(), 2);
                     assert!(writer.remove_user_phrase(second).unwrap());
                     assert_eq!(store.phrase_table_generation(), 3);
+                    drop(writer);
+                    drop(store);
                     cleanup(&path);
                 }
 
