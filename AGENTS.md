@@ -451,10 +451,9 @@ always".
    per cell and reuse it; do not delete target directories between
    issues. Clean once, at the end of the lane.
    On Linux and macOS, heavy work uses the host-wide slot and the
-   memory admission check (maintainer ruling 2026-10-19 UTC). This wrapper
-   rule applies on these hosts until #895 Stage 2 (`just heavy`) adds
-   the portable slot. On Windows, `run-all.py` stops with a clear message
-   that names that stage. Heavy work includes cell builds
+   memory admission check (maintainer ruling 2026-10-19 UTC). Run direct
+   cargo build, test and clippy commands through `just heavy`. The native
+   slot is not validated on Windows. Heavy work includes cell builds
    and runners that `tools/bisection/runners.json` marks `"heavy": true`.
    The bisect, contract-diff, open-counter-diff, and transformed-options-sweep
    runners are heavy at every selection size. Direct `cargo build`,
@@ -462,7 +461,7 @@ always".
    Full or family-wide differentials, mutation runs, Valgrind, Massif,
    release builds, and LTO builds are also heavy. `run-all.py` applies
    both checks to cell builds and heavy runners. Start other heavy work
-   with `uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/bisection/run-all.py --heavy-slot -- <command>`.
+   with `just heavy -- <command>`.
    The heavy child receives an inheritable slot descriptor through
    `pass_fds`. The slot stays held until the child and its descendants
    close their copies. The parent keeps its copy until it reaps the child.
@@ -525,7 +524,7 @@ always".
    `contract-diff.py --cases` against built artifacts and registry runners
    that are not marked heavy. Light work runs without resource admission.
    Runner scripts that need Cargo builds start them through
-   `run-all.py --heavy-slot --` in the uv form above.
+   `just heavy --`.
 9. The tkrzw cell runs only against a sound libtkrzw: one that
    `tools/tkrzw/distro-probe.sh` reports healthy, which
    `tools/cloud/setup.sh` provides on hosts whose packaged library is
