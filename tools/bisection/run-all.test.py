@@ -95,7 +95,7 @@ class TimingColumnsTests(unittest.TestCase):
     def test_each_wait_has_its_own_column(self):
         columns = run_all['COLUMNS']
         self.assertEqual(columns[:6], ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds'))
-        self.assertEqual(columns[6:8], ('slot_wait_seconds', 'build_slot_wait_seconds'))
+        self.assertEqual(columns[6:9], ('slot_wait_seconds', 'build_slot_wait_seconds', 'memory_wait_seconds'))
         self.assertNotIn('build_wait_seconds', columns)
         self.assertNotIn('resource_wait_seconds', columns)
 

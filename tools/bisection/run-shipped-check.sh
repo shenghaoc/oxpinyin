@@ -18,6 +18,7 @@
 # soundness check, never a decision input.
 
 set -euo pipefail
+HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 SRC_CURR=${SRC_CURR:-/src-curr}
 OUT=${CTRL_OUT:-/out}
 RUNS=${CTRL_RUNS:-20}
@@ -38,7 +39,7 @@ L_SO=$(find /opt/libpinyin-tkrzw -name 'libpinyin.so' \( -type f -o -type l \) -
 build_cinstall() { # <out> <extra-features>
     local out=$1 feats=$2 target stage
     target=$(mktemp -d); stage=$(mktemp -d)
-    cargo cinstall --locked --release -p oxpinyin-capi \
+    "$HEAVY_RUNNER" --heavy-slot -- cargo cinstall --locked --release -p oxpinyin-capi \
         --no-default-features --features "$feats" \
         --manifest-path "$SRC_CURR/Cargo.toml" \
         --target-dir "$target" --destdir "$stage" --prefix /usr >&2

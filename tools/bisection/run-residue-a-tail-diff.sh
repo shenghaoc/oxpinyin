@@ -27,6 +27,7 @@
 # Exit: 0 = identical; 1 = build/run/provisioning failure; 2 = divergence.
 
 set -euo pipefail
+HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 cd "$(dirname "$0")"
 # shellcheck source=tools/bisection/system-dir.sh
 . ./system-dir.sh
@@ -144,7 +145,7 @@ if [[ "${RESIDUE_A_PROBE:-}" == "1" ]]; then
             rm -rf "$PROBE_USER"
             exit 1
         fi
-        cargo build --locked -p oxpinyin-runtime --example nbest_tail_probe \
+        "$HEAVY_RUNNER" --heavy-slot -- cargo build --locked -p oxpinyin-runtime --example nbest_tail_probe \
             --no-default-features --features "$CAPI_FEATURE" \
             --manifest-path "$REPO_ROOT/Cargo.toml"
         probe=$CARGO_TARGET_DIR/debug/examples/nbest_tail_probe

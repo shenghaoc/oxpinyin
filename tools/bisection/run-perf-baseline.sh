@@ -34,6 +34,7 @@
 #   PERF_RAM_RUNS         ram-init/ram-cycle processes per backend (default 10)
 
 set -euo pipefail
+HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
@@ -80,7 +81,7 @@ if [ -n "$STAGED_PC" ] && [ "${PERF_REUSE_STAGE:-0}" = "1" ]; then
 else
     echo "--- cargo cinstall oxpinyin-capi -> $STAGE ---"
     rm -rf "$STAGE"
-    cargo cinstall --locked --release -p oxpinyin-capi \
+    "$HEAVY_RUNNER" --heavy-slot -- cargo cinstall --locked --release -p oxpinyin-capi \
         --destdir="$STAGE" --prefix=/usr \
         --manifest-path "$REPO_ROOT/Cargo.toml"
     STAGED_PC=$(find "$STAGE/usr" -name libpinyin.pc -print -quit)

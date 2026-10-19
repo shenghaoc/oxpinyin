@@ -29,6 +29,7 @@
 #       Either way the artifact's backend linkage is verified before any
 #       cell is measured -- see verify_backend.
 set -euo pipefail
+HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
@@ -86,7 +87,7 @@ build_capi() {
         kyotocabinet|tkrzw) ;;
         *) echo "fatal: build_capi: unknown backend '$backend'" >&2; exit 1 ;;
     esac
-    cargo build --locked --release -p oxpinyin-capi --no-default-features --features "$backend" \
+    "$HEAVY_RUNNER" --heavy-slot -- cargo build --locked --release -p oxpinyin-capi --no-default-features --features "$backend" \
         --manifest-path "$REPO_ROOT/Cargo.toml"
     cp "$TARGET/release/libpinyin_capi.so" "$out"
     strip --strip-all "$out"

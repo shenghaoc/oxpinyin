@@ -9,6 +9,7 @@ try:
 except ImportError:
     fcntl = None
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -19,6 +20,212 @@ import sys
 import tempfile
 import threading
 import time
+
+# Heavy work needs a slot and a memory budget. Read resources after taking
+# the slot. Keep explicit child settings. Choose only unset settings.
+# These estimates use the existing Step 0 peaks from 2026-10-19 UTC.
+RUSTC_PEAK_MIB = 600        # rustc 555 MiB (test build), 492 (cold cell build), 470 (incremental)
+TEST_THREAD_PEAK_MIB = 64   # the crates' test binaries peak at 6-11 MiB; rustdoc beside them 91 MiB
+RUNNER_PEAK_MIB = 1024      # one gate-set runner job (contract-diff worker pairs and their fixtures)
+HEADROOM_MIB = 2048         # left to the desktop: the browser, the editor, the page cache
+
+
+def memory_available_mib():
+    """Memory the host can give new processes now, in MiB, or None.
+    Linux: MemAvailable from /proc/meminfo. macOS: free + inactive +
+    speculative pages from vm_stat. Windows: GlobalMemoryStatusEx.ullAvailPhys."""
+    try:
+        if sys.platform.startswith('linux'):
+            for line in Path('/proc/meminfo').read_text().splitlines():
+                if line.startswith('MemAvailable:'):
+                    return int(line.split()[1]) // 1024
+        elif sys.platform == 'darwin':
+            out = subprocess.run(['vm_stat'], capture_output=True, text=True, check=True).stdout
+            page = int(re.search(r'page size of (\d+) bytes', out).group(1))
+            pages = 0
+            for key in ('Pages free', 'Pages inactive', 'Pages speculative'):
+                match = re.search(key + r':\s+(\d+)', out)
+                pages += int(match.group(1)) if match else 0
+            return pages * page // (1024 * 1024)
+        elif sys.platform == 'win32':
+            import ctypes
+            class Status(ctypes.Structure):
+                _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
+                            ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
+                            ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
+                            ('ullTotalVirtual', ctypes.c_ulonglong), ('ullAvailVirtual', ctypes.c_ulonglong),
+                            ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
+            status = Status(dwLength=ctypes.sizeof(Status))
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.ullAvailPhys) // (1024 * 1024)
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+        return None
+    return None
+
+
+def linux_cgroup_dirs(proc=Path('/proc'), root=Path('/sys/fs/cgroup')):
+    """Find the current cgroup and its visible ancestors."""
+    entry = next(line[3:] for line in (proc / 'self/cgroup').read_text().splitlines()
+                 if line.startswith('0::'))
+    relative = Path(entry)
+    if not relative.is_absolute() or '..' in relative.parts:
+        raise ValueError('invalid cgroup path')
+    current = root / entry.lstrip('/')
+    return [current, *list(current.parents)[:len(current.relative_to(root).parts)]]
+
+
+def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
+    """Read known limits. Report each unreadable limit as unknown."""
+    notes, memories, cpus = [], [], []
+    if sys.platform.startswith('linux'):
+        try:
+            line = next(line for line in (proc / 'meminfo').read_text().splitlines()
+                        if line.startswith('MemAvailable:'))
+            memory = int(line.split()[1]) // 1024
+            if memory < 0:
+                raise ValueError('negative memory')
+            memories.append(memory)
+            notes.append(f'MemAvailable={memory} MiB')
+        except (OSError, ValueError, IndexError, StopIteration):
+            notes.append('MemAvailable=unknown')
+        try:
+            affinity = len(os.sched_getaffinity(0))
+            if not affinity:
+                raise ValueError('empty CPU affinity')
+            cpus.append(affinity)
+            notes.append(f'CPU affinity={affinity}')
+        except (OSError, ValueError, AttributeError):
+            notes.append('CPU affinity=unknown')
+            count = os.cpu_count()
+            if count:
+                cpus.append(count)
+                notes.append(f'CPU count={count}')
+        try:
+            directories = linux_cgroup_dirs(proc, cgroup_root)
+        except (OSError, ValueError, StopIteration):
+            directories = []
+            notes.append('cgroup v2 memory and CPU limits=unknown')
+        for directory in directories:
+            label = '/' if directory == cgroup_root else '/' + str(directory.relative_to(cgroup_root))
+            try:
+                maximum = (directory / 'memory.max').read_text().strip()
+                if maximum == 'max':
+                    notes.append(f'cgroup {label} memory.max=max')
+                else:
+                    maximum = int(maximum)
+                    current = int((directory / 'memory.current').read_text().strip())
+                    if maximum < 0 or current < 0:
+                        raise ValueError('negative memory')
+                    room = max(0, maximum - current) // (1024 * 1024)
+                    memories.append(room)
+                    notes.append(f'cgroup {label} memory room={room} MiB')
+            except (OSError, ValueError):
+                notes.append(f'cgroup {label} memory room=unknown')
+            try:
+                quota, period = (directory / 'cpu.max').read_text().split()
+                period = int(period)
+                if period <= 0:
+                    raise ValueError('invalid CPU period')
+                if quota == 'max':
+                    notes.append(f'cgroup {label} cpu.max=max')
+                else:
+                    quota = int(quota)
+                    if quota <= 0:
+                        raise ValueError('invalid CPU quota')
+                    cpus.append(quota / period)
+                    notes.append(f'cgroup {label} CPU quota={quota}/{period}')
+            except (OSError, ValueError):
+                notes.append(f'cgroup {label} CPU quota=unknown')
+    else:
+        memory = memory_available_mib()
+        if memory is not None:
+            memories.append(memory)
+        notes.append(f'available memory={memory if memory is not None else "unknown"} MiB')
+    if not cpus:
+        count = os.cpu_count()
+        notes.append(f'CPU count={count if count is not None else "unknown; fallback 1"}')
+        cpus.append(count or 1)
+    return dict(available_mib=min(memories) if memories else None,
+                cpus=max(1, math.floor(min(cpus))),
+                cargo_cpus=max(1, math.ceil(min(cpus))), notes=notes)
+
+
+def fit(available_mib, per_process_mib, ceiling):
+    """Return zero when no process fits after the headroom."""
+    return max(0, min(ceiling, (available_mib - HEADROOM_MIB) // per_process_mib))
+
+
+READ_HOST = object()
+
+
+def validate_settings(env):
+    build = env.get('CARGO_BUILD_JOBS')
+    if build is not None and build != 'default':
+        if not re.fullmatch(r'[+-]?[0-9]+', build) or int(build) == 0 or not -(2**31) <= int(build) < 2**31:
+            raise ValueError('Invalid CARGO_BUILD_JOBS: use a nonzero integer or default')
+    threads = env.get('RUST_TEST_THREADS')
+    if threads is not None and (not re.fullmatch(r'[+]?[0-9]+', threads) or int(threads) <= 0):
+        raise ValueError('Invalid RUST_TEST_THREADS: use a positive integer')
+
+
+def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST):
+    """Keep caller values. Choose only unset values from current resources."""
+    validate_settings(env)
+    if available_mib is READ_HOST:
+        resources = resource_snapshot()
+        available_mib = resources['available_mib']
+        cpus = cpus or resources['cpus']
+    cpus = cpus or os.cpu_count() or 1
+    chosen = {}
+    def choose(name, explicit, per_process, ceiling, unit):
+        if explicit is not None:
+            chosen[name] = (explicit, 'set by the caller', True)
+        elif available_mib is None:
+            chosen[name] = (0, 'available memory unknown; no capacity admitted', False)
+        else:
+            value = fit(available_mib, per_process, ceiling)
+            chosen[name] = (value, f'{available_mib} MiB available - {HEADROOM_MIB} MiB headroom, '
+                                   f'{per_process} MiB per {unit}, at most {ceiling}', False)
+    choose('CARGO_BUILD_JOBS', env.get('CARGO_BUILD_JOBS'), RUSTC_PEAK_MIB,
+           cpus, 'rustc')
+    choose('RUST_TEST_THREADS', env.get('RUST_TEST_THREADS'), TEST_THREAD_PEAK_MIB,
+           cpus, 'test thread')
+    choose('--jobs', explicit_jobs, RUNNER_PEAK_MIB, 2, 'runner job')
+    return chosen
+
+
+def plan_defaults(chosen, out=sys.stderr, phase='defaults'):
+    for name, (value, reason, explicit) in chosen.items():
+        print(f"{phase}: {name}={value} ({'explicit: ' if explicit else ''}{reason})", file=out, flush=True)
+
+
+def prepare_heavy_env(env, resources, *, runner=False):
+    """Prepare one child environment and its admission estimate."""
+    chosen = memory_defaults(env, None, cpus=resources['cpus'], available_mib=resources['available_mib'])
+    chosen.pop('--jobs')
+    child = dict(env, **{name: str(value[0]) for name, value in chosen.items()})
+    build = child['CARGO_BUILD_JOBS']
+    count = resources['cargo_cpus'] if build == 'default' else int(build)
+    if count < 0:
+        count = max(1, resources['cargo_cpus'] + count)
+    estimate = max(RUNNER_PEAK_MIB if runner else RUSTC_PEAK_MIB, count * RUSTC_PEAK_MIB,
+                   int(child['RUST_TEST_THREADS']) * TEST_THREAD_PEAK_MIB)
+    return child, chosen, estimate
+
+
+def resource_wait_limit(env):
+    try:
+        limit = float(env.get('OXPINYIN_RESOURCE_WAIT_SECONDS', '1800'))
+        if not math.isfinite(limit) or limit < 0:
+            raise ValueError('invalid wait')
+        return limit
+    except ValueError as exc:
+        raise ValueError('Invalid OXPINYIN_RESOURCE_WAIT_SECONDS: use finite nonnegative seconds') from exc
+
+
+class ResourceBlocked(ValueError):
+    pass
+
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
@@ -315,8 +522,9 @@ HEAVY_SLOT_HELD = 'OXPINYIN_HEAVY_SLOT_HELD'
 # resources (#899); slot_wait_seconds is the runner's wait for the heavy slot,
 # taken before its locks; build_slot_wait_seconds is the cell build's wait for
 # the heavy slot, shared by every row of that cell.
+# memory_wait_seconds adds the cell build and runner memory waits.
 COLUMNS = ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds',
-           'slot_wait_seconds', 'build_slot_wait_seconds', 'pin_ref', 'reason')
+           'slot_wait_seconds', 'build_slot_wait_seconds', 'memory_wait_seconds', 'pin_ref', 'reason')
 
 
 def host_lock_dir():
@@ -630,26 +838,143 @@ class HeavySlot:
         return False
 
 
-class HeavyAdmission:
-    """Prepare heavy work before it enters the worker pool."""
+def other_reservations(directory, own_slot):
+    """Count live holders in other locked slots. Ignore dead records."""
+    reserved = 0
+    for path in directory.glob(f'{HEAVY_SLOT}-*'):
+        suffix = path.name.removeprefix(HEAVY_SLOT + '-')
+        if not suffix.isdigit() or int(suffix) == own_slot:
+            continue
+        holder = read_holder(path)
+        if not isinstance(holder, dict):
+            continue
+        pid, estimate = holder.get('pid'), holder.get('estimate_mib')
+        if type(pid) is not int or pid <= 0 or not pid_alive(pid):
+            continue
+        if type(estimate) is not int or estimate <= 0:
+            continue
+        with path.open('a+') as probe:
+            try:
+                lock_file(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                reserved += estimate
+            # Close only this probe. Never unlock a shared description.
+    return reserved
 
-    def __init__(self, command, env, out=sys.stderr, poll=0.5):
+
+def reserve_heavy_env(slot, env, *, runner=False):
+    """Serialize the resource read, reservation check, and holder update."""
+    with admission_lock(slot.lock_dir):
+        resources = resource_snapshot()
+        reserved = other_reservations(slot.lock_dir, slot.slot)
+        resources['notes'] = [*resources['notes'], f'other slot reservations={reserved} MiB']
+        if resources['available_mib'] is not None:
+            resources['available_mib'] = max(0, resources['available_mib'] - reserved)
+        child, chosen, estimate = prepare_heavy_env(env, resources, runner=runner)
+        admitted = resources['available_mib'] is not None and resources['available_mib'] - HEADROOM_MIB >= estimate
+        if admitted:
+            path = slot.lock_dir / f'{HEAVY_SLOT}-{slot.slot}'
+            with path.open('r+') as record:
+                holder = json.load(record)
+                previous = holder.get('estimate_mib', 0)
+                if type(previous) is not int or previous < 0:
+                    previous = 0
+                holder['estimate_mib'] = max(previous, estimate) if slot.inherited else estimate
+                write_holder(record, holder)
+        return resources, child, chosen, estimate, admitted
+
+
+class HeavyAdmission:
+    """Take the slot, then read resources before starting heavy work."""
+
+    def __init__(self, command, env, out=sys.stderr, poll=0.5, *, runner=False):
+        validate_settings(env)
+        self.command, self.out, self.poll = command, out, poll
+        self.runner = runner
+        self.base_env, self.env = env.copy(), None
+        self.limit = resource_wait_limit(env)
         self.slot = HeavySlot(command, out=out, poll=poll)
-        self.base_env, self.env, self.poll = env.copy(), None, poll
+        self.started = None
+        self.slot_wait = self.memory_wait = 0.0
+        self.memory_since = None
+        self.retry_at = 0.0
+        self.announced = None
+        resources = resource_snapshot()
+        _, self.provisional, self.estimate = prepare_heavy_env(self.base_env, resources, runner=self.runner)
+        self.available = resources['available_mib']
+        print('resources (provisional): ' + '; '.join(resources['notes']), file=out, flush=True)
+        plan_defaults(self.provisional, out, 'provisional defaults')
+
+    def _blocked(self):
+        if self.available is None:
+            return ResourceBlocked('resource-blocked: available memory unknown')
+        available = max(0, self.available - HEADROOM_MIB)
+        inherited = 'inherited slot; ' if self.slot.inherited else ''
+        return ResourceBlocked(f'resource-blocked: {inherited}{self.estimate} MiB needed, {available} MiB available')
+
+    def _finish_memory_wait(self, now):
+        if self.memory_since is not None:
+            self.memory_wait += now - self.memory_since
+            self.memory_since = None
 
     def try_acquire(self):
+        check_cancelled()
+        now = time.monotonic()
+        if self.started is None:
+            self.started = now
+        elif now - self.started >= self.limit:
+            self._finish_memory_wait(now)
+            self.close()
+            raise self._blocked()
+        if now < self.retry_at:
+            return False
+        self._finish_memory_wait(now)
         if not self.slot.try_acquire():
             return False
-        self.env = self.slot.child_env(self.base_env)
-        return True
+        self.slot_wait += self.slot.waited
+        try:
+            resources, child, chosen, self.estimate, admitted = reserve_heavy_env(
+                self.slot, self.base_env, runner=self.runner)
+            self.available = resources['available_mib']
+            if not admitted:
+                if self.slot.inherited:
+                    raise self._blocked()
+                self.slot.__exit__()
+                if not self.slot.inherited:
+                    self.slot = HeavySlot(self.command, out=self.out, poll=self.poll)
+                now = time.monotonic()
+                self.memory_since, self.retry_at = now, now + self.poll
+                if self.announced is None or now - self.announced >= 30:
+                    print('resources: ' + '; '.join(resources['notes']), file=self.out, flush=True)
+                    available = 'unknown' if self.available is None else max(0, self.available - HEADROOM_MIB)
+                    print(f'waiting for memory: estimate {self.estimate} MiB, '
+                          f'{available} MiB available after headroom; '
+                          f'no process started: {self.command}', file=self.out, flush=True)
+                    self.announced = now
+                if now - self.started >= self.limit:
+                    raise self._blocked()
+                return False
+            print('resources (admitted): ' + '; '.join(resources['notes']), file=self.out, flush=True)
+            before = {key: value[0] for key, value in self.provisional.items()}
+            after = {key: value[0] for key, value in chosen.items()}
+            if before != after:
+                print(f'defaults changed after admission: {before} -> {after}', file=self.out, flush=True)
+            plan_defaults(chosen, self.out, 'effective defaults')
+            self.env = self.slot.child_env(child)
+            return True
+        except BaseException:
+            self.close()
+            raise
 
     def record(self, result):
-        result['slot_wait_seconds'] = round(self.slot.waited, 3)
+        result['slot_wait_seconds'] = round(self.slot_wait + (self.slot.waited if self.env is None else 0), 3)
+        result['memory_wait_seconds'] = round(result.get('memory_wait_seconds', 0.0) + self.memory_wait, 3)
 
     def __enter__(self):
         try:
             while not self.try_acquire():
-                time.sleep(self.poll)
+                remaining = max(0, self.limit - (time.monotonic() - self.started))
+                time.sleep(min(self.poll, remaining))
         except BaseException:
             self.close()
             raise
@@ -718,7 +1043,7 @@ def run_in_heavy_slot(command):
         started = time.monotonic()
         with start_child(command, admission.env, slot=slot) as process:
             rc = wait_child(process)
-        print(f'heavy slot {slot.slot}: slot_wait_seconds {slot.waited:.1f}, ran {time.monotonic() - started:.1f}s, exit {rc}',
+        print(f'heavy slot {slot.slot}: slot_wait_seconds {admission.slot_wait:.1f}, memory_wait_seconds {admission.memory_wait:.1f}, ran {time.monotonic() - started:.1f}s, exit {rc}',
               file=sys.stderr, flush=True)
         return rc
 
@@ -753,7 +1078,8 @@ def run_main():
                         help='issue number, W tag, or row:N; selects the runners and the exact '
                              'contract-diff cases registered under it')
     parser.add_argument('--list', action='store_true', help='list gate and not-a-gate metadata; do not build')
-    parser.add_argument('--jobs', type=positive, default=2)
+    parser.add_argument('--jobs', type=positive, default=None,
+                        help='concurrent runner jobs (default: from available memory, at most 2)')
     parser.add_argument('--timeout', type=positive, help='override the registry default for every runner')
     parser.add_argument('--runner-timeout', action='append', default=[], metavar='RUNNER=SECONDS')
     parser.add_argument('--allow-skipped', action='append', default=[], metavar='RUNNER[:CELL]',
@@ -860,6 +1186,13 @@ def run_main():
             parser.error(f'invalid or reserved cell environment setting: {value}')
         extra_env[cell][key] = item
     base_env = os.environ.copy()
+    resources = resource_snapshot()
+    print('resources (provisional): ' + '; '.join(resources['notes']), file=sys.stderr, flush=True)
+    defaults = memory_defaults(base_env, args.jobs, cpus=resources['cpus'],
+                               available_mib=resources['available_mib'])
+    plan_defaults(defaults, phase='provisional defaults')
+    # A worker can run light work even when no heavy process fits.
+    args.jobs = max(1, defaults['--jobs'][0])
     if len(cells) > 1 and base_env.get('CARGO_TARGET_DIR'):
         parser.error('CARGO_TARGET_DIR is a single-cell override; use --target-root for multiple cells')
     targets = args.target_root.resolve()
@@ -908,7 +1241,7 @@ def run_main():
                 runner_prefix = Path(oracle['PINYIN_ORACLE_PREFIX'])
                 result = dict(runner=row['name'], cell=cell, status='SKIPPED', seconds=0.0,
                               build_seconds=0.0, lock_wait_seconds=0.0, phases=None,
-                              slot_wait_seconds=0.0, build_slot_wait_seconds=0.0,
+                              slot_wait_seconds=0.0, build_slot_wait_seconds=0.0, memory_wait_seconds=0.0,
                               pin_ref=oracle['EXPECTED_ORACLE_PIN_REF'].removeprefix('pin_ref='), reason='')
                 if cell not in row['cells']:
                     result['reason'] = 'unsupported cell'
@@ -946,17 +1279,24 @@ def run_main():
                 print(f'Building dev opt-level 1 artifacts: {cell}: {", ".join(artifacts)}',
                       file=sys.stderr, flush=True)
                 # The build is heavy work: it holds a host-wide slot while cargo runs.
-                with HeavyAdmission(f'cell build {cell} in {ROOT}', env) as admission:
-                    rc, seconds, output, expired = execute(['bash', str(HERE / 'cell-artifacts.sh'),
-                                                            '--artifacts', ','.join(artifacts)], admission.env, ROOT,
-                                                           args.build_timeout, scratch / f'build-{cell}.log', slot=admission.slot)
+                admission = HeavyAdmission(f'cell build {cell} in {ROOT}', env)
+                try:
+                    with admission:
+                        rc, seconds, output, expired = execute(
+                            ['bash', str(HERE / 'cell-artifacts.sh'), '--artifacts', ','.join(artifacts)],
+                            admission.env, ROOT, args.build_timeout, scratch / f'build-{cell}.log', slot=admission.slot)
+                except ResourceBlocked as exc:
+                    rc, seconds, output, expired = 1, 0.0, str(exc), False
                 build_seconds[cell] = round(seconds, 3)
                 for _, result, _ in build_candidates:
-                    result['build_slot_wait_seconds'] = round(admission.slot.waited, 3)
+                    admission.record(result)
+                    result['build_slot_wait_seconds'] = result['slot_wait_seconds']
+                    result['slot_wait_seconds'] = 0.0
                 if rc or expired:
                     for _, result, _ in build_candidates:
                         result.update(status='FAIL', seconds=round(seconds, 3), build_seconds=build_seconds[cell],
-                                      reason='cell build: ' + reason_for(rc, output, args.build_timeout, expired))
+                                      reason=output if output.startswith('resource-blocked:') else
+                                      'cell build: ' + reason_for(rc, output, args.build_timeout, expired))
                         results.append(result)
                     continue
             # Execute only what this worktree staged into this cell's target.
@@ -996,7 +1336,7 @@ def run_main():
                               else 'SKIPPED', reason='missing required input: ' + ', '.join(missing))
                 results.append(result)
                 continue
-            admission = HeavyAdmission(f"{row['name']} / {result['cell']} in {ROOT}", env) if is_heavy(row) else None
+            admission = HeavyAdmission(f"{row['name']} / {result['cell']} in {ROOT}", env, runner=True) if is_heavy(row) else None
             prepared.append(dict(row=row, result=result, env=env, command=command,
                                  timeout=timeout, work=work, admission=admission))
 
@@ -1041,7 +1381,7 @@ def run_main():
     order = {row['name']: index for index, row in enumerate(rows)}
     results.sort(key=lambda row: (order[row['runner']], cells.index(row['cell'])))
     print(' | '.join(COLUMNS))
-    print('--- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---')
+    print(' | '.join('---' for _ in COLUMNS))
     for row in results:
         print(' | '.join(str(row[key]).replace('|', '/').replace('\n', ' ') for key in COLUMNS))
     if args.json:

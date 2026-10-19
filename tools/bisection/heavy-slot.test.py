@@ -21,6 +21,20 @@ RUN_ALL = HERE / 'run-all.py'
 run_all = runpy.run_path(str(RUN_ALL))
 
 
+SYNTHETIC_MAIN = """import runpy,sys
+sys.argv=sys.argv[1:]
+m=runpy.run_path(sys.argv[0])
+m['main'].__globals__['resource_snapshot']=lambda: dict(
+    available_mib=16000,cpus=4,cargo_cpus=4,notes=['synthetic slot test'])
+try:
+    sys.exit(m['main']())
+except (OSError,ValueError) as exc:
+    print(f'FAIL: {exc}',file=sys.stderr)
+    sys.exit(1)
+"""
+ENTRY = [sys.executable, '-c', SYNTHETIC_MAIN, str(RUN_ALL)]
+
+
 class HeavySlotTests(unittest.TestCase):
     def setUp(self):
         self.environment = mock.patch.dict(os.environ)
@@ -38,7 +52,7 @@ class HeavySlotTests(unittest.TestCase):
         self.environment.stop()
 
     def heavy(self, seconds):
-        return subprocess.Popen([sys.executable, str(RUN_ALL), '--heavy-slot', '--', sys.executable, '-c',
+        return subprocess.Popen([*ENTRY, '--heavy-slot', '--', sys.executable, '-c',
                                  f'import time; time.sleep({seconds})'], env=self.env,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -63,8 +77,9 @@ class HeavySlotTests(unittest.TestCase):
 
     def test_nested_wrapper_inherits_the_slot_without_waiting(self):
         code = (f"import runpy, sys; m = runpy.run_path({str(RUN_ALL)!r}); "
+                "m['main'].__globals__['resource_snapshot']=lambda: dict(available_mib=16000,cpus=4,cargo_cpus=4,notes=['synthetic nested']); "
                 "sys.exit(m['run_in_heavy_slot']([sys.executable, '-c', 'pass']))")
-        result = subprocess.run([sys.executable, str(RUN_ALL), '--heavy-slot', '--',
+        result = subprocess.run([*ENTRY, '--heavy-slot', '--',
                                  sys.executable, '-c', code], env=self.env,
                                 capture_output=True, text=True, timeout=5)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -187,7 +202,7 @@ with mock.patch.object(Path, 'read_text', read), mock.patch.object(sys, 'argv',
             env = dict(self.env, OXPINYIN_HEAVY_SLOT_HELD=json.dumps(
                 dict(lock_dir=other, slot=0, pid=os.getpid())))
             with run_all['HeavySlot']('test holder', out=io.StringIO()):
-                child = subprocess.Popen([sys.executable, str(RUN_ALL), '--heavy-slot', '--',
+                child = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
                                           sys.executable, '-c', 'pass'], env=env,
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
@@ -211,7 +226,7 @@ with mock.patch.object(Path, 'read_text', read), mock.patch.object(sys, 'argv',
                        '{"lock_dir":"/tmp","slot":-1}',
                        '{"lock_dir":"/tmp","slot":true}'):
             with self.subTest(marker=marker):
-                result = subprocess.run([sys.executable, str(RUN_ALL), '--heavy-slot', '--',
+                result = subprocess.run([*ENTRY, '--heavy-slot', '--',
                                          sys.executable, '-c', 'pass'],
                                         env=dict(self.env, OXPINYIN_HEAVY_SLOT_HELD=marker),
                                         capture_output=True, text=True, timeout=5)
@@ -224,6 +239,7 @@ from pathlib import Path
 from unittest import mock
 script = sys.argv[1]
 m = runpy.run_path(script)
+m['main'].__globals__['resource_snapshot']=lambda: dict(available_mib=16000,cpus=4,cargo_cpus=4,notes=['synthetic slot test'])
 original_read = Path.read_text
 row = next(r for r in json.loads(original_read(Path(sys.argv[1]).with_name('runners.json')))
            if r['name'] == 'pc-version')
@@ -247,7 +263,7 @@ def execute(command, env, cwd, timeout, output, slot=None):
         else:
             raise AssertionError('The runner did not hold its own slot.')
     start = time.monotonic()
-    nested = subprocess.run([sys.executable, script, '--heavy-slot', '--',
+    nested = subprocess.run([sys.executable, '-c', "import runpy,sys; script=sys.argv[1]; sys.argv=sys.argv[1:]; m=runpy.run_path(script); m['main'].__globals__['resource_snapshot']=lambda: dict(available_mib=16000,cpus=4,cargo_cpus=4,notes=['synthetic nested']); sys.exit(m['main']())", script, '--heavy-slot', '--',
                              sys.executable, '-c', 'pass'], env=env,
                             capture_output=True, text=True, timeout=3)
     assert nested.returncode == 0, nested.stderr
@@ -276,6 +292,7 @@ from pathlib import Path
 from unittest import mock
 script = sys.argv[1]
 m = runpy.run_path(script)
+m['main'].__globals__['resource_snapshot']=lambda: dict(available_mib=16000,cpus=4,cargo_cpus=4,notes=['synthetic slot test'])
 original_read = Path.read_text
 row = next(r for r in json.loads(original_read(Path(script).with_name('runners.json')))
            if r['name'] == 'pc-version')
@@ -332,7 +349,7 @@ finally:
 
     def test_child_keeps_slot_after_wrapper_death(self):
         code = 'import os,time; print(os.getpid(), flush=True); time.sleep(1.4)'
-        wrapper = subprocess.Popen([sys.executable, str(RUN_ALL), '--heavy-slot', '--',
+        wrapper = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
                                     sys.executable, '-c', code], env=self.env,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
@@ -363,6 +380,7 @@ from pathlib import Path
 from unittest import mock
 script=sys.argv[1]
 m=runpy.run_path(script)
+m['main'].__globals__['resource_snapshot']=lambda: dict(available_mib=16000,cpus=4,cargo_cpus=4,notes=['synthetic slot test'])
 original=Path.read_text
 row=next(r for r in json.loads(original(Path(script).with_name('runners.json'))) if r['name']=='pc-version')
 row=dict(row, name='tiny-heavy', heavy=True, command=[sys.executable, '-c', 'import time; time.sleep(1.4)'])
@@ -404,7 +422,7 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
     def test_normal_parent_exit_does_not_unlock_a_descendant(self):
         code = ('import os,time; pid=os.fork(); '
                 'print(pid,flush=True) if pid else time.sleep(1.2)')
-        parent = subprocess.Popen([sys.executable, str(RUN_ALL), '--heavy-slot', '--',
+        parent = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
                                    sys.executable, '-c', code], env=self.env,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
@@ -443,7 +461,7 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
                         run_all['write_holder'](slot._file, record)
                         env = dict(self.env, OXPINYIN_HEAVY_SLOT_HELD=json.dumps(
                             dict(lock_dir=self.lock_dir.name, slot=0, pid=marker_pid)))
-                        child = subprocess.Popen([sys.executable, str(RUN_ALL), '--heavy-slot', '--',
+                        child = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
                                                   sys.executable, '-c', 'pass'], env=env,
                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                         with self.assertRaises(subprocess.TimeoutExpired):
@@ -487,7 +505,7 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
     def test_light_work_proceeds_while_the_slot_is_held(self):
         with run_all['HeavySlot']('test holder', out=io.StringIO()):
             started = time.monotonic()
-            result = subprocess.run([sys.executable, str(RUN_ALL), '--runners', 'pc-version', '--no-build',
+            result = subprocess.run([*ENTRY, '--runners', 'pc-version', '--no-build',
                                      '--cells', 'bdb'], env=self.env, capture_output=True, text=True, timeout=60)
             elapsed = time.monotonic() - started
         self.assertEqual(result.returncode, 0, result.stderr)
