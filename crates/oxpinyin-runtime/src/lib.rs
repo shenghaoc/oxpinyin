@@ -1414,12 +1414,16 @@ impl Dictionary for RuntimeDict {
             .into_iter()
             .map(PhraseToken::new)
             .collect();
-        if let Ok(lookup) = self.user_lookup() {
+        // The pin probes the user phrase table directly (074a2219
+        // pinyin.cpp:2652-2667, storage/facade_phrase_table3.h:120-126).
+        // Read only this text's row. A phrase write must not make this
+        // query rebuild the full pronunciation and phrase indices.
+        if let Some(store) = self.user.as_ref() {
             tokens.extend(
-                lookup
-                    .tokens_for_text(text)
-                    .iter()
-                    .copied()
+                store
+                    .phrase_table_tokens_for_text(text)
+                    .unwrap_or_default()
+                    .into_iter()
                     .map(PhraseToken::new),
             );
         }
@@ -2564,6 +2568,39 @@ mod tests {
             .join("fixtures")
             .join("w3")
             .join(oxpinyin_data::DEFAULT_STORE_EXT)
+    }
+
+    #[test]
+    fn tokens_for_text_reads_live_rows_without_rebuilding_user_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = Runtime::open(&w3_dir(), Some(dir.path())).unwrap();
+        let dict = runtime.dict();
+        let phrase = "你鎄";
+        assert!(dict.tokens_for_text(phrase).is_empty());
+        assert!(dict.user_lookup_cache.lock().unwrap().is_none());
+
+        // Keep an old snapshot alive. Exact-text queries must read current
+        // rows without refreshing this unrelated pronunciation index.
+        let snapshot = dict.user_lookup().unwrap();
+        let keys: Vec<_> = ["ni", "hao"]
+            .into_iter()
+            .map(|text| PinyinKey::try_from(SyllableKey::from_text(text).unwrap().index()).unwrap())
+            .collect();
+        let mut store = runtime.user_store().unwrap();
+        let token = store.add_phrase(phrase, &keys, None).unwrap();
+        assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(token)]);
+        assert!(store.remove_user_phrase(token).unwrap());
+        assert!(dict.tokens_for_text(phrase).is_empty());
+
+        // Another session's store handle can write without touching this
+        // dictionary or its old lookup snapshot.
+        let mut other = runtime.user_store().unwrap();
+        let imported = other.add_phrase_in(7, phrase, &keys, Some(5)).unwrap();
+        assert_eq!(dict.tokens_for_text(phrase), [PhraseToken::new(imported)]);
+        assert!(other.remove_user_phrase(imported).unwrap());
+        assert!(dict.tokens_for_text(phrase).is_empty());
+        let cache = dict.user_lookup_cache.lock().unwrap();
+        assert!(Arc::ptr_eq(&snapshot, &cache.as_ref().unwrap().1));
     }
 
     // `new_session`'s own gate, pinned. The engine gate has
