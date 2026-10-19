@@ -7059,10 +7059,11 @@ def _item_size(item):
     return 6 + 4 * length + prons * (2 * length + 4)
 
 
-def _system_items(k, name='gb_char.bin'):
-    """A system chunk's total, its items `{slot: bytes}` at their header
-    length, and the item-area offsets `{slot: offset}`."""
-    payload = Path(k.data, name).read_bytes()[8:]
+def _chunk_items(path):
+    """A chunk file's total, its items `{slot: bytes}` at their header
+    length, and the item-area offsets `{slot: offset}`. A system chunk and
+    a user library (`user.bin`) share the layout."""
+    payload = Path(path).read_bytes()[8:]
     word = lambda offset: int.from_bytes(payload[offset:offset + 4], 'little')
     total, index, content = word(0), word(4), word(8)
     items, offsets = {}, {}
@@ -7076,6 +7077,11 @@ def _system_items(k, name='gb_char.bin'):
             items[slot] = payload[start:start + size]
             offsets[slot] = offset
     return total, items, offsets
+
+
+def _system_items(k, name='gb_char.bin'):
+    """`_chunk_items` of a chunk in the system directory."""
+    return _chunk_items(Path(k.data, name))
 
 
 def _item_with(item, unigram=None, freq=None):
@@ -7372,8 +7378,9 @@ def hex_of(value):
     return None if value is None else value.hex()
 
 
-# The shipped chunk of each library and its number in `table.conf`.
-UCS4_LIBRARIES = {'gb_char.bin': 1, 'gbk_char.bin': 2, 'opengram.bin': 3, 'merged.bin': 4}
+# The shipped chunk of each library and its number in `table.conf`. `art.bin`
+# is addon library 4: the addon phrase index numbers its libraries on its own.
+UCS4_LIBRARIES = {'gb_char.bin': 1, 'gbk_char.bin': 2, 'opengram.bin': 3, 'merged.bin': 4, 'art.bin': 4}
 
 # name -> (shipped phrase, its reading, {index: replacement code point}), all in
 # `gb_char.bin`. The reading is toned pinyin, which both facades take (the
@@ -7411,6 +7418,19 @@ UCS4_EXPORTED = {
 }
 
 
+def ucs4_patch_words(payload, offset, codes, patch):
+    """Writes `patch` (`{index: code point}`) over the words of the item at
+    `offset` of a chunk `payload`, in place; the answer is the code points the
+    item stores now."""
+    content = int.from_bytes(payload[8:12], 'little')
+    codes = list(codes)
+    for index, code in patch.items():
+        codes[index] = code
+        start = content + offset + 6 + 4 * index
+        payload[start:start + 4] = code.to_bytes(4, 'little')
+    return codes
+
+
 def ucs4_fixture(k, patches):
     """Points `k.data` at a private copy of the system directory whose chunks
     have the given items' code points rewritten. `patches` is a list of
@@ -7432,13 +7452,7 @@ def ucs4_fixture(k, patches):
         slot = by_text[phrase][0]
         if library not in payloads:
             payloads[library] = bytearray(Path(system, library).read_bytes()[8:])
-        payload = payloads[library]
-        content = int.from_bytes(payload[8:12], 'little')
-        codes = [ord(char) for char in phrase]
-        for index, code in patch.items():
-            codes[index] = code
-            start = content + offsets[slot] + 6 + 4 * index
-            payload[start:start + 4] = code.to_bytes(4, 'little')
+        codes = ucs4_patch_words(payloads[library], offsets[slot], [ord(char) for char in phrase], patch)
         placed.append(((UCS4_LIBRARIES[library] << 24) | slot, codes))
     for library, payload in payloads.items():
         path = Path(system, library)
@@ -7446,6 +7460,19 @@ def ucs4_fixture(k, patches):
         path.write_bytes(_chunk(bytes(payload)))
     k.data = system
     return placed
+
+
+def ucs4_patch_file(path, phrase, patch):
+    """`ucs4_fixture` for a chunk file of the user directory (`user.bin`), in
+    place: the size stays the same and the checksum is calculated again. The
+    answer is the slot of `phrase` and the code points it stores now."""
+    _total, items, offsets = _chunk_items(path)
+    slots = [slot for slot, item in items.items() if _item_text(item) == phrase]
+    assert len(slots) == 1, (phrase, slots)
+    payload = bytearray(Path(path).read_bytes()[8:])
+    codes = ucs4_patch_words(payload, offsets[slots[0]], [ord(char) for char in phrase], patch)
+    Path(path).write_bytes(_chunk(bytes(payload)))
+    return slots[0], codes
 
 
 def ucs4_place(k, name):
@@ -7498,16 +7525,21 @@ def ucs4_guess(k, reading, sentence_first=True):
     return {'guess': guessed, 'rows': ucs4_candidate_rows(k, inst)}
 
 
+def ucs4_token_phrase(k, token):
+    """`token_get_phrase` of a token as `{'get', 'len', 'str'}`: the string as
+    hex bytes, None for NULL."""
+    length, text = U(UNTOUCHED), P(UNTOUCHED)
+    ret = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
+        k.inst, token, C.byref(length), C.byref(text))
+    return {'get': ret, 'len': 'untouched' if length.value == UNTOUCHED else length.value,
+            'str': raw_cstr(k, text.value)}
+
+
 def ucs4_token_probe(name):
     def run(k):
         token, codes = ucs4_place(k, name)
-        length, text = U(UNTOUCHED), P(UNTOUCHED)
-        ret = k.fn('token_get_phrase', B, P, U, C.POINTER(U), C.POINTER(P))(
-            k.inst, token, C.byref(length), C.byref(text))
-        return {'token': hex(token), 'stored': codes, 'get': ret,
-                'len': 'untouched' if length.value == UNTOUCHED else length.value,
-                'str': raw_cstr(k, text.value),
-                '~glib': hex_of(glib_ucs4_to_utf8(codes))}
+        return dict(ucs4_token_phrase(k, token), token=hex(token), stored=codes,
+                    **{'~glib': hex_of(glib_ucs4_to_utf8(codes))})
     return run
 
 
@@ -7550,25 +7582,45 @@ def ucs4_candidates_probe(name):
     return run
 
 
-def ucs4_predicted_probe(name):
-    """The predicted candidates after a prefix of the item, which show the
+def ucs4_predicted(k, prefix):
+    """The predicted candidates after `prefix` as `{'guess', 'rows'}`."""
+    inst = k.alloc()
+    guessed = k.fn('guess_predicted_candidates', B, P, S)(inst, prefix.encode())
+    return {'guess': guessed, 'rows': ucs4_candidate_rows(k, inst)}
+
+
+def ucs4_predicted_probe(name, shallow=False):
+    """The predicted candidates after each prefix of the item, which show the
     phrase from the prefix on (`_token_get_phrase` with `begin`,
-    `pinyin.cpp:1644`): a zero inside the skipped prefix ends nothing."""
+    `pinyin.cpp:1644`): a zero inside the skipped prefix ends nothing, and
+    the NULL string of a word after it counts again. The string comes from the
+    words of the item, not from the key of the phrase index: the fixture
+    rewrites the words only. With `shallow`, the case stops at the first
+    prefix."""
     phrase, _reading, _patch = UCS4_ITEMS[name]
-    # `nul-then-null` stops at one: from two on the pin converts the word
-    # 0x80000000 that follows the zero, which is the NULL string.
-    lengths = (1,) if name == 'nul-then-null' else range(1, len(phrase))
 
     def run(k):
         _token, codes = ucs4_place(k, name)
         out = {'~glib': {}}
-        for length in lengths:
-            inst = k.alloc()
-            guessed = k.fn('guess_predicted_candidates', B, P, S)(inst, phrase[:length].encode())
-            out[phrase[:length]] = {'guess': guessed, 'rows': ucs4_candidate_rows(k, inst)}
+        for length in (1,) if shallow else range(1, len(phrase)):
+            out[phrase[:length]] = ucs4_predicted(k, phrase[:length])
             out['~glib'][phrase[:length]] = hex_of(glib_ucs4_to_utf8(codes[length:]))
         return out
     return run
+
+
+def ucs4_export_rows(k, library):
+    """A library exported row by row as `[ret, phrase, pinyin, count]` (the
+    strings as hex bytes, None for NULL)."""
+    it = k.fn('begin_get_phrases', P, P, U)(k.ctx, library)
+    rows = []
+    while k.fn('iterator_has_next_phrase', B, P)(it):
+        ph, py, n = P(UNTOUCHED), P(UNTOUCHED), I(UNTOUCHED)
+        ret = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
+            it, C.byref(ph), C.byref(py), C.byref(n))
+        rows.append([ret, raw_cstr(k, ph.value), raw_cstr(k, py.value), n.value])
+    k.fn('end_get_phrases', None, P)(it)
+    return rows
 
 
 def ucs4_export_probe(name):
@@ -7577,15 +7629,113 @@ def ucs4_export_probe(name):
 
     def run(k):
         _token, codes = ucs4_fixture(k, [('merged.bin', phrase, patch)])[0]
-        it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 4)
-        rows = []
-        while k.fn('iterator_has_next_phrase', B, P)(it):
-            ph, py, n = P(UNTOUCHED), P(UNTOUCHED), I(UNTOUCHED)
-            ret = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
-                it, C.byref(ph), C.byref(py), C.byref(n))
-            rows.append([ret, raw_cstr(k, ph.value), raw_cstr(k, py.value), n.value])
-        k.fn('end_get_phrases', None, P)(it)
-        return {'rows': rows, '~glib': hex_of(glib_ucs4_to_utf8(codes))}
+        return {'rows': ucs4_export_rows(k, 4), '~glib': hex_of(glib_ucs4_to_utf8(codes))}
+    return run
+
+
+# The words of the three corners, in a user library and in an addon library.
+# The pin loads a library chunk and looks at no word (`phrase_index->load`:
+# `_load_phrase_library`, `pinyin.cpp:303-319` for `user.bin`, `:272-298` for the
+# addon libraries). It writes the words back as they are (`SubPhraseIndex::store`,
+# `phrase_index.cpp:365-390`). When the caller chooses an addon candidate, it
+# copies the item as it is (`pinyin_choose_candidate`, `pinyin.cpp:2518-2544`).
+# The facade then gives the bytes of the words, as for a shipped item.
+UCS4_STORED = {
+    'plain': {},
+    'surrogate': {1: 0xd800},
+    'above-unicode': {1: 0x110000},
+    'six-byte': {1: 0x7fffffff},
+    'null': {1: 0x80000000},
+}
+
+
+# The three user libraries of `table.conf` and their files in the user directory.
+UCS4_USER_LIBRARIES = {5: 'addon.bin', 6: 'network.bin', 7: 'user.bin'}
+
+
+def ucs4_user_probe(name, library=7):
+    """Corner 1 and corner 3. A user library item (`TOKEN_REUSE_PHRASES[0]`)
+    whose second word is rewritten in the file of the library (`user.bin` for
+    library 7) between two sessions. The phrase index
+    (`user_phrase_index.bin`) keeps the key of the old text, so the key and
+    the words disagree. The new session shows the item by its token, in the
+    candidate list of its reading, in the predicted candidates after its first
+    character (the pin takes the string from the words of the item, and finds
+    the item by the key), in the export of the library and in the files that a
+    second save writes. A NULL string is not in the lists: the pin stops in
+    `strcmp` when the list holds a second candidate."""
+    patch = UCS4_STORED[name]
+    phrase = TOKEN_REUSE_PHRASES[0][0]
+    other = TOKEN_REUSE_PHRASES[1]
+
+    def run(k):
+        column = 1 if k.mode == 'pinyin' else 2
+        out = {'added': import_rows(k, library, [(phrase, TOKEN_REUSE_PHRASES[0][column], 100)])}
+        out['saved'] = bool(k.fn('save', B, P)(k.ctx))
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        slot, codes = ucs4_patch_file(Path(k.user, UCS4_USER_LIBRARIES[library]), phrase, patch)
+        token = (library << 24) | slot
+        out.update({'token': hex(token), 'stored': codes, '~glib': hex_of(glib_ucs4_to_utf8(codes))})
+        out['phrase'] = ucs4_token_phrase(k, token)
+        if name != 'null':
+            out['candidates'] = ucs4_guess(k, b'da2da2', sentence_first=False)
+            if k.mode == 'pinyin':
+                out['predicted'] = ucs4_predicted(k, phrase[:1])
+        if k.mode == 'pinyin':  # the zhuyin facade has no export
+            out['export'] = ucs4_export_rows(k, library)
+        out['added-again'] = import_rows(k, library, [(other[0], other[column], 100)])
+        out['saved-again'] = bool(k.fn('save', B, P)(k.ctx))
+        out['files'] = token_reuse_files(k)
+        return out
+    return run
+
+
+def ucs4_addon_probe(name):
+    """Corner 2. The addon candidate `书学` (`art.bin`, addon library 4) with
+    its second word rewritten. The caller chooses the candidate. The pin copies
+    the item to the user addon library (library 5), under the first token of
+    that library, and adds the keys of the phrase index from its words. The
+    case shows the candidate list before the choice and the same list after it
+    (the chosen row is a normal candidate now), the new token, the export of
+    library 5 and the files that a save writes."""
+    phrase, reading = '书学', b'shuxue'
+    patch = UCS4_STORED[name]
+
+    def run(k):
+        _token, codes = ucs4_fixture(k, [('art.bin', phrase, patch)])[0]
+        ctx = k.ctx
+        out = {'stored': codes, '~glib': hex_of(glib_ucs4_to_utf8(codes)),
+               'loaded': bool(k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, 4))}
+
+        def listing():
+            inst = k.alloc()
+            k.fn('parse_more_full_pinyins', Z, P, S)(inst, reading)
+            k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
+            return inst, ucs4_candidate_rows(k, inst)
+
+        inst, out['before'] = listing()
+        row = row_of(k, inst, 6)
+        out['addon-row'] = row is not None
+        if row is not None:
+            out['choose'] = k.fn('choose_candidate', I, P, Z, P)(inst, 0, row)
+            out['chosen'] = ucs4_candidate_rows(k, inst)
+        k.fn('free_instance', None, P)(inst)
+        out['promoted'] = ucs4_token_phrase(k, 0x05000001)
+        out['next'] = ucs4_token_phrase(k, 0x05000002)
+        out['export'] = ucs4_export_rows(k, 5)
+        # A choice alone does not make the profile dirty, an import does.
+        out['imported'] = import_rows(k, 7, [TOKEN_REUSE_PHRASES[0][:2] + (100,)])
+        out['saved'] = bool(k.fn('save', B, P)(ctx))
+        out['files'] = token_reuse_files(k)
+        # The next session reads the item and the key back.
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(ctx)
+        k._ctx = k._inst = None
+        out['reopened'] = ucs4_token_phrase(k, 0x05000001)
+        out['reopened-export'] = ucs4_export_rows(k, 5)
+        out['reopened-candidates'] = ucs4_guess(k, reading, sentence_first=False)
+        return out
     return run
 
 
@@ -7595,68 +7745,83 @@ def ucs4_case(name, **kwargs):
 
 
 # What each class is. The zero classes are the embedded U+0000 of #894
-# difference 2: the string ends at the first zero. The ruling classes are
-# difference 1 (a code point that is no scalar value): the pin hands out bytes
-# that are not UTF-8, or NULL, which a Rust `str` cannot carry through the
-# engine, so they differ from the pin until a maintainer rules on #894. They are
-# registered only with CONTRACT_DIFF_PENDING_RULING=1; the NULL candidate list
-# (the pin's `strcmp` dies, class (b)) and the NULL export (register row 62)
-# already match and are always registered.
+# difference 2: the string ends at the first zero. The byte classes are
+# difference 1 (a code point that is not a Unicode scalar value). The pin gives
+# the bytes of `g_unichar_to_utf8`, which are not UTF-8, and NULL from 0x80000000
+# on. A Rust `str` cannot carry these bytes through the engine, so the byte
+# classes, the three corners and the NULL strings of the predicted list differ
+# from the pin until the engine carries a byte string. They register only with
+# CONTRACT_DIFF_PENDING_RULING=1. The NULL candidate list and the NULL export
+# match already, and they always register.
 #
-# `--expect-parent` on the parent build: the controls match there (`plain`, the
-# NULL candidate list and export, `nul-first`'s predicted rows, whose zero sits
-# in the skipped prefix) and every other case differs.
+# A NULL string stops the pin in `strcmp` when a candidate list holds two
+# candidates (`pinyin.cpp:2053`, `:2082`; `:2451` for the predicted list). This
+# is class (b). The case registers the stop (`crash=`). The subject must answer
+# a failed call. A subject that has no NULL string does not.
+#
+# `--expect-parent` on the parent build: a control holds on the parent. The
+# parent has the fix for difference 2, so the zero classes are controls, with
+# the plain item, the NULL candidate list and the NULL export. Every other case
+# differs.
 UCS4_PLAIN = ('plain',)
 UCS4_ZERO = ('nul-mid', 'nul-first', 'nul-last', 'nul-then-null')
-UCS4_RULING = ('surrogate', 'above-unicode', 'six-byte', 'null', 'null-all-ones')
+UCS4_BYTES = ('surrogate', 'above-unicode', 'six-byte', 'null', 'null-all-ones')
 UCS4_PENDING = os.environ.get('CONTRACT_DIFF_PENDING_RULING') == '1'
 
 
 def ucs4_register(name, control=False):
-    null = glib_ucs4_to_utf8(ucs4_codes(name)) is None
-    ruling = name in UCS4_RULING
+    phrase, _reading, _patch = UCS4_ITEMS[name]
+    codes = ucs4_codes(name)
+    null = glib_ucs4_to_utf8(codes) is None
+    bytes_class = name in UCS4_BYTES
+    # The first prefix after which the pin reads a NULL string. The list of the
+    # predicted candidates holds a longer phrase too, so the pin stops there.
+    dies = next((phrase[:n] for n in range(1, len(phrase)) if glib_ucs4_to_utf8(codes[n:]) is None), None)
+    # `nul-then-null` is no byte class, but its second prefix reads a NULL string:
+    # until the fix, its case stops at the first prefix.
+    shallow = dies is not None and not bytes_class and not UCS4_PENDING
     for mode in ('pinyin', 'zhuyin'):
-        if not ruling or UCS4_PENDING:
+        if not bytes_class or UCS4_PENDING:
             ucs4_case('ucs4-text-token-%s-%s' % (name, mode), mode=mode, control=control)(ucs4_token_probe(name))
             ucs4_case('ucs4-text-sentence-%s-%s' % (name, mode), mode=mode, control=control)(
                 ucs4_sentence_probe(name))
-        # A NULL candidate string dies in the pin's `strcmp` when the list holds a
-        # second candidate (`pinyin.cpp:2053`): the class (b) crash, which the
-        # subject answers with a failed call. It does so on the parent build too.
-        if not ruling or UCS4_PENDING or null:
+        if not bytes_class or UCS4_PENDING or null:
             ucs4_case('ucs4-text-candidates-%s-%s' % (name, mode), mode=mode, control=control or null,
                  **({'crash': {'whole': {'guess': False, 'rows': []}}} if null else {}))(
                 ucs4_candidates_probe(name))
-    if not ruling or UCS4_PENDING:
+    if not bytes_class or UCS4_PENDING:
         # A zero inside the skipped prefix ends nothing, so `nul-first` holds on the
-        # parent build too. The predicted list sorts its strings with the same
-        # `strcmp` (`pinyin.cpp:2451`, `:2053`): the pin dies at the first prefix of
-        # a NULL item, whose list holds a second candidate. The crash is registered,
-        # so that the case is a valid observation (class (b)); the subject must
-        # answer a failed call, and does so only once it carries the NULL string.
-        ucs4_case('ucs4-text-predicted-%s-pinyin' % name, control=control or name == 'nul-first',
-             **({'crash': {UCS4_ITEMS[name][0][:1]: {'guess': False, 'rows': []}}} if null else {}))(
-            ucs4_predicted_probe(name))
+        # parent too.
+        ucs4_case('ucs4-text-predicted-%s-pinyin' % name, control=control and (dies is None or shallow),
+             **({'crash': {dies: {'guess': False, 'rows': []}}} if dies and not shallow else {}))(
+            ucs4_predicted_probe(name, shallow))
 
 
 def ucs4_register_export(name, control=False):
     ucs4_case('ucs4-text-export-%s-pinyin' % name, control=control)(ucs4_export_probe(name))
 
 
-for _name in UCS4_PLAIN:
+for _name in UCS4_PLAIN + UCS4_ZERO:
     ucs4_register(_name, control=True)
-    ucs4_register_export(_name, control=True)
-for _name in UCS4_ZERO:
+for _name in UCS4_BYTES:
     ucs4_register(_name)
 for _name in UCS4_EXPORTED:
-    if _name in UCS4_PLAIN:
-        continue
-    # Row 62 sends a NULL phrase for a value of 0x80000000 or more, which the
-    # pin does too (a control); any other value is bytes at the pin (difference 1).
-    if _name in UCS4_ZERO or _name == 'null' or UCS4_PENDING:
-        ucs4_register_export(_name, control=_name == 'null')
-for _name in UCS4_RULING:
-    ucs4_register(_name)
+    # Row 62 sends a NULL phrase for a value of 0x80000000 or more, as the pin does.
+    if _name in UCS4_PLAIN + UCS4_ZERO or _name == 'null' or UCS4_PENDING:
+        ucs4_register_export(_name, control=_name in UCS4_PLAIN + UCS4_ZERO or _name == 'null')
+if UCS4_PENDING:
+    for _name in UCS4_STORED:
+        for _mode in ('pinyin', 'zhuyin'):
+            ucs4_case('ucs4-text-user-%s-%s' % (_name, _mode), mode=_mode, control=_name == 'plain')(
+                ucs4_user_probe(_name))
+            # The other two user libraries load the same way: one case for a byte
+            # string and one for NULL each.
+            if _name in ('plain', 'surrogate', 'null'):
+                for _kind, _library in (('network', 6), ('addonbin', 5)):
+                    ucs4_case('ucs4-text-%s-%s-%s' % (_kind, _name, _mode), mode=_mode, control=_name == 'plain')(
+                        ucs4_user_probe(_name, _library))
+        if _name != 'null':
+            ucs4_case('ucs4-text-addon-%s-pinyin' % _name, control=_name == 'plain')(ucs4_addon_probe(_name))
 
 
 def unigram_null_user_save(k):
