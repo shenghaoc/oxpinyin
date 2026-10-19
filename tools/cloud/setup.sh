@@ -3,10 +3,9 @@ set -euo pipefail
 
 # Provision a Claude Code cloud session (a root container behind a
 # TLS-intercepting egress proxy) so every verification gate can run in it
-# (issue #818). Idempotent: each step checks its result and skips when it
-# already holds, so a second run does nothing but the checks.
+# (issue #818). Idempotent: each step checks
+# its result and skips when it already holds.
 #
-#   0. install valgrind from the distribution archive if it is missing
 #   0b. require the backend dump utilities the stateful differentials call:
 #      db5.3_dump (bdb) and kchashmgr (kc); install them with apt-get when
 #      root, otherwise print the apt-get line and exit 1 (never sudo)
@@ -55,6 +54,7 @@ cache=${OXPINYIN_CLOUD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/oxpinyin}
 cells=(bdb kc tkrzw)
 jobs=$(nproc 2>/dev/null || echo 2)
 pull=1
+inside=0
 proxy_ca=${OXPINYIN_PROXY_CA:-/root/.ccr/ca-bundle.crt}
 proxy_ca_single=/root/.ccr/agent-proxy-ca.crt
 # Upstream tkrzw 1.0.34 (9ee8416): its sentinel fix makes defect 1 immune to
@@ -76,6 +76,10 @@ while (($#)); do
 		jobs=$2
 		shift 2
 		;;
+	--in-container)
+		inside=1
+		shift
+		;;
 	--no-pull)
 		pull=0
 		shift
@@ -90,6 +94,16 @@ while (($#)); do
 		;;
 	esac
 done
+
+[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
+	printf 'Oracle provisioning requires Linux x86_64; run subject, reference and harness together in a Linux amd64 environment. See docs/runbooks/setup.md.\n' >&2
+	exit 2
+}
+if ((inside)) && [[ ${OXPINYIN_COMPAT_CONTAINER:-} != 1 || ! -d /opt/reference ]]; then
+	printf '%s\n' '--in-container requires the controlled compatibility image; no host provisioning attempted' >&2
+	exit 2
+fi
+((${#cells[@]})) || { echo 'at least one cell is required' >&2; exit 2; }
 
 for dbm in "${cells[@]}"; do
 	case $dbm in
@@ -122,7 +136,9 @@ retry() {
 
 mkdir -p "$cache"
 cache=$(cd "$cache" && pwd)
-model_cache=$cache/model20
+model_cache=${PINYIN_MODEL_CACHE:-$cache/model20}
+mkdir -p "$model_cache"
+model_cache=$(cd "$model_cache" && pwd)
 oracle_root=$cache/oracle
 mkdir -p "$oracle_root"
 
@@ -136,31 +152,42 @@ platform=$(pinval platform)
 deps_image=oxpinyin-oracle-deps:$(sha256sum "$repo/tools/oracle/Dockerfile.oracle" | cut -c1-12)
 
 proxy=${HTTPS_PROXY:-${https_proxy:-}}
-if [[ -n $proxy && ! -s $proxy_ca ]]; then
-	die "HTTPS_PROXY is set but its CA bundle $proxy_ca is missing (set OXPINYIN_PROXY_CA)"
+# An ordinary proxy needs no custom CA. Claude trust handling is opt-in by
+# an existing session file or an explicit OXPINYIN_PROXY_CA path.
+if [[ -n ${OXPINYIN_PROXY_CA:-} && ! -s $proxy_ca ]]; then
+	die "OXPINYIN_PROXY_CA bundle is missing: $proxy_ca"
+fi
+custom_ca=0
+[[ -s $proxy_ca ]] && custom_ca=1
+
+if ((!inside)); then
+	# shellcheck source=../container/runtime.sh
+	source "$repo/tools/container/runtime.sh"
+	oxpinyin_select_runtime "${OXPINYIN_CONTAINER:-}"
+	[[ $(basename "$ctr") != container ]] || die 'normal cloud provisioning requires a Linux cloud runtime; use compat.sh for the Apple adapter'
+else
+	printf 'Runtime: supplied compatibility container (no nested runtime)\n'
 fi
 
-# ---- 0. valgrind --------------------------------------------------------
-
-# The same-run callgrind measurements (docs/runbooks/benches.md) need
-# valgrind, and each one reports the version it used. Install it from the
-# distribution archive when it is missing.
-if ! valgrind --version >/dev/null 2>&1; then
-	sudo_cmd=()
-	((EUID == 0)) || sudo_cmd=(sudo)
-	log 'installing valgrind from the distribution archive'
-	"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null 2>&1 ||
-		{ "${sudo_cmd[@]}" apt-get update >/dev/null 2>&1 &&
-			"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null; } ||
-		die 'could not install valgrind with apt-get'
+# ---- 0. valgrind (normal cloud provisioning only) -----------------------
+if ((!inside)); then
+	if ! valgrind --version >/dev/null 2>&1; then
+		sudo_cmd=()
+		((EUID == 0)) || sudo_cmd=(sudo)
+		log 'installing valgrind from the distribution archive'
+		"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null 2>&1 ||
+			{ "${sudo_cmd[@]}" apt-get update >/dev/null 2>&1 &&
+				"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null; } ||
+			die 'could not install valgrind with apt-get'
+	fi
+	valgrind_version=$(valgrind --version)
 fi
-valgrind_version=$(valgrind --version)
 
 # ---- 0b. backend dump utilities -----------------------------------------
 
 # contract-diff.py and the requested-row training gates call db5.3_dump
 # (bdb) and kchashmgr (kc); tkrzw_dbm_util (tkrzw) comes with the tkrzw
-# step below. Root installs them as the valgrind step does; anyone else
+# step below. Root containers install them explicitly; anyone else
 # gets the exact command, because this script never runs sudo.
 missing_tool=() missing_pkg=()
 for dbm in "${cells[@]}"; do
@@ -183,19 +210,17 @@ if ((${#missing_tool[@]})); then
 	fi
 fi
 
+# The compatibility launcher supplies a controlled image and Linux volume.
+# This mode provisions and executes without a nested runtime or host libraries.
+if ((inside)); then
+	[[ ${OXPINYIN_COMPAT_CONTAINER:-} == 1 && -d /opt/reference ]] || die '--in-container requires the compatibility image'
+	ln -s "$oracle_root" /opt/pinyin-oracle
+	ln -s "$model_cache" /model-cache
+else
 # ---- 1. container runtime -----------------------------------------------
 
 # $OXPINYIN_CONTAINER, else podman, else docker. Every container call below
 # goes through $ctr; only docker needs a daemon, and podman runs rootless.
-ctr=${OXPINYIN_CONTAINER:-}
-if [[ -z $ctr ]]; then
-	if command -v podman >/dev/null 2>&1; then
-		ctr=podman
-	else
-		ctr=docker
-	fi
-fi
-command -v "$ctr" >/dev/null 2>&1 || die "container command $ctr is not installed"
 ctr_ready() { "$ctr" info >/dev/null 2>&1; }
 
 if ctr_ready; then
@@ -234,18 +259,13 @@ if [[ -n $proxy ]]; then
 	env_flags=(
 		-e "https_proxy=$proxy" -e "HTTPS_PROXY=$proxy"
 		-e "no_proxy=${NO_PROXY:-${no_proxy:-}}" -e "NO_PROXY=${NO_PROXY:-${no_proxy:-}}"
-		-e GIT_SSL_CAINFO=/run/ca.crt -e SSL_CERT_FILE=/run/ca.crt -e CURL_CA_BUNDLE=/run/ca.crt
-		-v "$proxy_ca:/run/ca.crt:ro"
 	)
+	if ((custom_ca)); then
+		env_flags+=(-e GIT_SSL_CAINFO=/run/ca.crt -e SSL_CERT_FILE=/run/ca.crt
+			-e CURL_CA_BUNDLE=/run/ca.crt -v "$proxy_ca:/run/ca.crt:ro,z")
+	fi
 fi
 
-# ---- 2. pinned base image -----------------------------------------------
-
-if "$ctr" image inspect "$base_image" >/dev/null 2>&1; then
-	log "base image present: ${base_image#*@}"
-else
-	log "pulling $base_image"
-	retry "$ctr" pull --quiet --platform "$platform" "$base_image" >/dev/null
 fi
 
 # ---- 3. oracle libraries ------------------------------------------------
@@ -268,6 +288,23 @@ data_ok() {
 	[[ $(sha256sum "$oracle_root/$dbm/oracle-data.sha256" | cut -d' ' -f1) == "$want" ]] || return 1
 	(cd "$oracle_root/$dbm" && sha256sum --check --quiet oracle-data.sha256 >/dev/null 2>&1)
 }
+
+if ((inside)); then
+	for dbm in "${cells[@]}"; do
+		if ! libs_ok "$dbm"; then
+			rm -rf "${oracle_root:?}/$dbm"
+			cp -a "/opt/reference/$dbm" "$oracle_root/$dbm"
+		fi
+		if ! libs_ok "$dbm"; then
+			for lib in libpinyin libzhuyin; do
+				printf 'MISMATCH %s %s\n  recorded: %s\n  reference: %s\n' "$dbm" "$lib" \
+					"$(pinval "${lib}_sha256_$dbm")" \
+					"$(sha256sum "$oracle_root/$dbm/lib/$lib.so" | cut -d' ' -f1)" >&2
+			done
+			exit 3
+		fi
+	done
+fi
 
 need=()
 for dbm in "${cells[@]}"; do
@@ -316,11 +353,27 @@ if ((${#need[@]} && pull)); then
 fi
 
 build_deps_image() {
+	((inside)) && return 0
 	"$ctr" image inspect "$deps_image" >/dev/null 2>&1 && return 0
+	# Same deps stage as the oracle recipe, published by the normal image workflow.
+	# Pulling it avoids snapshot.debian.org on cold data regeneration.
+	if ((pull)); then
+		if "$ctr" pull --quiet --platform "$platform" "${published}-deps" > /dev/null 2>"$cache/pull-deps.err"; then
+			"$ctr" tag "${published}-deps" "$deps_image"
+			return 0
+		fi
+		log "pinned deps image unavailable; building locally (details: $cache/pull-deps.err)"
+		tail -n 5 "$cache/pull-deps.err" >&2
+	fi
+	if ! "$ctr" image inspect "$base_image" >/dev/null 2>&1; then
+		log "pulling $base_image for the local fallback build"
+		retry "$ctr" pull --quiet --platform "$platform" "$base_image" >/dev/null
+	fi
 	log "building $deps_image (the pinned toolchain)"
 	local flags=("${net_flags[@]}")
 	if [[ -n $proxy ]]; then
-		flags+=(--build-arg "https_proxy=$proxy" --build-arg "HTTPS_PROXY=$proxy" --secret "id=cacert,src=$proxy_ca")
+		flags+=(--build-arg "https_proxy=$proxy" --build-arg "HTTPS_PROXY=$proxy")
+		if ((custom_ca)); then flags+=(--secret "id=cacert,src=$proxy_ca"); fi
 	fi
 	DOCKER_BUILDKIT=1 "$ctr" build --platform "$platform" "${flags[@]}" --target deps \
 		-f "$repo/tools/oracle/Dockerfile.oracle" -t "$deps_image" "$repo/tools/oracle" >&2
@@ -333,6 +386,7 @@ build_deps_image() {
 # in_image calls mount the same paths again, and on a host without SELinux
 # the option does nothing.
 in_image() {
+	if ((inside)); then "$repo/tools/oracle/build-oracle.sh" "$@"; return; fi
 	"$ctr" run --rm --platform "$platform" "${net_flags[@]}" "${env_flags[@]}" \
 		-v "$repo/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro,z" \
 		-v "$repo/tools/oracle/oracle-pin.txt:/usr/local/bin/oracle-pin.txt:ro,z" \
@@ -493,6 +547,8 @@ done
 
 # ---- 5. report ----------------------------------------------------------
 
+if ((!inside)); then printf 'Valgrind: %s\n' "$valgrind_version"; fi
+
 for dbm in "${cells[@]}"; do
 	# pkg-config files record the prefix; point them at this location.
 	sed -i "s|^prefix=.*|prefix=$oracle_root/$dbm|" "$oracle_root/$dbm"/lib/pkgconfig/*.pc
@@ -508,6 +564,7 @@ default_cell=${cells[0]}
 for dbm in "${cells[@]}"; do [[ $dbm == bdb ]] && default_cell=bdb; done
 {
 	printf '# Written by tools/cloud/setup.sh; source it, do not edit it.\n'
+	printf '_oxp_provisioned=%q\n' " ${cells[*]} "
 	printf 'export PINYIN_MODEL_DIR=%q\n' "$model_cache/extracted"
 	if ((tkrzw_local)); then
 		printf 'export PKG_CONFIG_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib/pkgconfig")\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
@@ -523,14 +580,18 @@ for dbm in "${cells[@]}"; do [[ $dbm == bdb ]] && default_cell=bdb; done
 	# decides the prefix and data directory every time the file is sourced.
 	printf "export PINYIN_ORACLE_DBM=\${PINYIN_ORACLE_DBM:-%s}\n" "$default_cell"
 	cat <<'SELECT'
+case $_oxp_provisioned in
+    *" $PINYIN_ORACLE_DBM "*) ;;
+    *) echo "cell $PINYIN_ORACLE_DBM was not provisioned by this environment file" >&2; unset _oxp_provisioned; return 1 ;;
+esac
 _oxp_cell=${PINYIN_ORACLE_DBM^^}
 _oxp_prefix=OXPINYIN_ORACLE_PREFIX_$_oxp_cell
 _oxp_data=OXPINYIN_ORACLE_DATA_$_oxp_cell
 export PINYIN_ORACLE_PREFIX=${!_oxp_prefix:?cell not provisioned by tools/cloud/setup.sh}
 export OXPINYIN_LIBPINYIN_DATA_DIR=${!_oxp_data}
-unset _oxp_cell _oxp_prefix _oxp_data
+unset _oxp_cell _oxp_prefix _oxp_data _oxp_provisioned
 SELECT
 } >"$env_file.new"
 mv "$env_file.new" "$env_file"
-log "valgrind: $valgrind_version"
+
 log "wrote $env_file; source it before a runner"
