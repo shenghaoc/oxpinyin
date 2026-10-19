@@ -42,6 +42,7 @@ use crate::phrase::{
 use crate::phrase_table;
 use crate::registry::{self, CountCache, RegistryLease, StandaloneLease, StoreInner};
 use crate::seed;
+use crate::session_values::SessionValues;
 use crate::store_libpinyin::{FiniGuard, IndexRows};
 
 /// Token type — libpinyin's 32-bit `phrase_token_t`.
@@ -1725,7 +1726,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// Locks the shared store handle, recovering from a poisoned lock
     /// (constitution §4: nothing here panics, so a poisoned mutex must not
     /// brick the store either).
-    pub(crate) fn database(&self) -> MutexGuard<'_, S> {
+    pub(crate) fn database(&self) -> MutexGuard<'_, SessionValues<S>> {
         self.inner
             .db
             .lock()
@@ -1788,7 +1789,11 @@ impl<S: WriteStore> GenericUserStore<S> {
     }
 
     /// [`Self::bigram_row`] with the database guard already held.
-    fn gram_in(&self, db: &S, prev: Token) -> Result<Option<Vec<u8>>, UserStoreError> {
+    fn gram_in(
+        &self,
+        db: &SessionValues<S>,
+        prev: Token,
+    ) -> Result<Option<Vec<u8>>, UserStoreError> {
         if let Some(container) = self.container() {
             return Ok(container.get(&prev.to_le_bytes())?);
         }
@@ -2032,7 +2037,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// between the two or four rows `count_delta` reads.
     fn with_count_cache<T>(
         &self,
-        read: impl FnOnce(&mut CountCache, &S) -> Result<T, UserStoreError>,
+        read: impl FnOnce(&mut CountCache, &SessionValues<S>) -> Result<T, UserStoreError>,
     ) -> Result<T, UserStoreError> {
         let mut cache = self.count_cache();
         let db = self.database();
@@ -2053,7 +2058,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// paired with [`Self::with_count_cache`] reading the generation under
     /// the same guard, no reader can observe post-commit rows against a
     /// pre-commit generation (or vice versa).
-    fn mark_committed_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
+    fn mark_committed_write(&self, db: MutexGuard<'_, SessionValues<S>>, has_user_data: bool) {
         self.inner
             .has_user_data
             .store(has_user_data, Ordering::Release);
@@ -2064,7 +2069,11 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// A phrase-table edit invalidates exact-text rows and phonetic
     /// lookups. Count-only writes take [`Self::mark_committed_write`].
-    fn mark_committed_phrase_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
+    fn mark_committed_phrase_write(
+        &self,
+        db: MutexGuard<'_, SessionValues<S>>,
+        has_user_data: bool,
+    ) {
         self.inner
             .phrase_table_generation
             .fetch_add(1, Ordering::AcqRel);
@@ -2073,7 +2082,7 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     // Keep the import memo's publication separate from whether this write
     // changed the exact-text row; reading-only merges retain queried rows.
-    fn mark_committed_import_write(&self, db: MutexGuard<'_, S>, added_token: bool) {
+    fn mark_committed_import_write(&self, db: MutexGuard<'_, SessionValues<S>>, added_token: bool) {
         if added_token {
             self.mark_committed_phrase_write(db, true);
         } else {
@@ -2083,7 +2092,11 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// A pronunciation merge changes the phonetic lookup, but keeps the
     /// phrase table's text-to-token rows (074a2219 pinyin.cpp:563-582).
-    fn mark_committed_reading_write(&self, db: MutexGuard<'_, S>, has_user_data: bool) {
+    fn mark_committed_reading_write(
+        &self,
+        db: MutexGuard<'_, SessionValues<S>>,
+        has_user_data: bool,
+    ) {
         self.inner.phrase_generation.fetch_add(1, Ordering::AcqRel);
         self.mark_committed_write(db, has_user_data);
     }
@@ -2225,7 +2238,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             has_removed_system_items: AtomicBool::new(false),
             removed_system_items: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             count_cache: Mutex::new(None),
-            db: Mutex::new(db),
+            db: Mutex::new(SessionValues::Native(db)),
             dirty: AtomicBool::new(false),
             write_generation: AtomicU64::new(0),
             phrase_generation: AtomicU64::new(0),
@@ -2332,7 +2345,12 @@ impl<S: WriteStore> GenericUserStore<S> {
 
     /// `Bigram::store(prev, gram)` with the database guard held: the pin's
     /// container on a libpinyin session, the [`BIGRAM_GRAM`] row otherwise.
-    fn store_gram(&self, db: &S, prev: Token, gram: &[u8]) -> Result<(), UserStoreError> {
+    fn store_gram(
+        &self,
+        db: &SessionValues<S>,
+        prev: Token,
+        gram: &[u8],
+    ) -> Result<(), UserStoreError> {
         if let Some(container) = self.container() {
             container.store(&prev.to_le_bytes(), gram)?;
             return Ok(());
