@@ -260,7 +260,7 @@ From the repository root, print the current number of registered cases
 without running the CLI or any case:
 
 ```sh
-python3 -c "import runpy; print(len(runpy.run_path('tools/bisection/contract-diff.py')['CASES']))"
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c "import runpy; print(len(runpy.run_path('tools/bisection/contract-diff.py')['CASES']))"
 ```
 
 The harness runs `sorted(CASES)` when `--cases` is omitted. Count the

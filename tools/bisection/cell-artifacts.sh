@@ -20,7 +20,7 @@ if [[ ${1:-} == --describe-oracle && $# == 3 ]]; then
     set -- --describe
 fi
 if [[ ${1:-} == --describe ]]; then
-	python3 - <<'PY'
+	uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PY'
 import json, os
 keys = ('PINYIN_ORACLE_DBM', 'ORACLE_DBM', 'CAPI_FEATURE',
         'OXPINYIN_CAPI_BACKEND_EXT', 'EXPECTED_PIN_REF',
@@ -71,7 +71,7 @@ fi
 # build leaves the claim or the previous record in place.
 identity=$CARGO_TARGET_DIR/oxpinyin-cell-identity.json
 mkdir -p "$CARGO_TARGET_DIR"
-python3 - "$identity" "$REPO_ROOT" "$ORACLE_DBM" "$CAPI_FEATURE" "${CARGO_PROFILE_DEV_OPT_LEVEL}" <<'PY'
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$identity" "$REPO_ROOT" "$ORACLE_DBM" "$CAPI_FEATURE" "${CARGO_PROFILE_DEV_OPT_LEVEL}" <<'PY'
 import datetime, json, os, sys, tempfile
 path, worktree, cell, feature, opt_level = sys.argv[1:]
 wanted = dict(worktree=worktree, cell=cell, feature=feature, profile='dev', opt_level=opt_level)
@@ -114,7 +114,7 @@ if [[ $build_user_rt == 1 ]]; then
 		--manifest-path "$REPO_ROOT/Cargo.toml" -p oxpinyin-runtime \
 		--no-default-features --features "$CAPI_FEATURE" \
 		--test user_dir_round_trip >"$manifest"
-	python3 - "$manifest" "$CARGO_TARGET_DIR/debug/user-dir-round-trip-test" <<'PY'
+	uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$manifest" "$CARGO_TARGET_DIR/debug/user-dir-round-trip-test" <<'PY'
 import json, os, pathlib, sys
 executables = []
 for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
@@ -136,7 +136,7 @@ PY
 fi
 # Record the identity of what this directory now holds (written last, so a
 # failed build leaves the previous record, and atomically).
-python3 - "$identity" "$REPO_ROOT" "$ORACLE_DBM" "$CAPI_FEATURE" "${CARGO_PROFILE_DEV_OPT_LEVEL}" \
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$identity" "$REPO_ROOT" "$ORACLE_DBM" "$CAPI_FEATURE" "${CARGO_PROFILE_DEV_OPT_LEVEL}" \
 	"$CARGO_TARGET_DIR" <<'PY'
 import datetime, hashlib, json, os, subprocess, sys
 path, worktree, cell, feature, opt_level, target = sys.argv[1:]

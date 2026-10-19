@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
 """Regressions for run-all.py's target-directory identity check."""
 import json
 import os
@@ -90,7 +90,7 @@ class ClaimTests(unittest.TestCase):
         self.bin = self.root / 'bin'
         self.bin.mkdir()
         cargo = self.bin / 'cargo'
-        cargo.write_text('''#!/usr/bin/env python3
+        cargo.write_text('''#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
 import json, os, pathlib, sys, time
 target = pathlib.Path(os.environ['CARGO_TARGET_DIR'])
 owner = pathlib.Path(sys.argv[sys.argv.index('--manifest-path') + 1]).resolve().parent

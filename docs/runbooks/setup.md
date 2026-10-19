@@ -16,10 +16,12 @@ The **linker** connects compiled code into executables and native libraries.
 
 Use Bash. Linux is one native platform target. You need Git, curl and CA
 certificates, a C/C++ compiler and linker, Make, pkg-config, libclang,
-Berkeley DB **5.3** development headers/libraries, GLib development files and
-Python 3. A development package supplies the headers and libraries needed to
+Berkeley DB **5.3** development headers/libraries and GLib development files.
+A development package supplies the headers and libraries needed to
 compile against a native library. Package names depend on your system; that
 does not change the build or create another compatibility environment.
+Repository Python does not use the system interpreter; provision it with uv
+as described below.
 
 If these prerequisites are missing, install them with your system's package
 manager. `sudo` asks for administrator permission to install system packages.
@@ -29,12 +31,61 @@ distribution targets; check that your packages provide Berkeley DB 5.3:
 ```bash
 # Systems using apt:
 sudo apt-get update
-sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev libdb-dev libglib2.0-dev python3
+sudo apt-get install -y build-essential git curl ca-certificates pkg-config libclang-dev libdb-dev libglib2.0-dev
 ```
 
 ```bash
 # Systems using dnf:
-sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel libdb-devel glib2-devel python3
+sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel libdb-devel glib2-devel
+```
+
+Repository Python uses uv 0.13.1 and its managed CPython 3.15.0 with the GIL.
+Install uv from its documented host route, then provision the interpreter:
+
+```bash
+installer="$(mktemp)"
+curl --fail --location --retry 3 \
+  https://github.com/astral-sh/uv/releases/download/0.13.1/uv-installer.sh -o "$installer"
+printf '%s  %s\n' \
+  7c482d409673a53f4d9bd34ae95c9166be3b8d89ca82f27dd7bca3cab457afff "$installer" \
+  | sha256sum -c -
+sh "$installer"
+rm -f "$installer"
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
+uv python install cpython@3.15.0
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PYTHON'
+from pathlib import Path
+import subprocess
+import sys
+import sysconfig
+assert sys.implementation.name == "cpython"
+assert sys.version_info[:3] == (3, 15, 0)
+assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+assert sys._is_gil_enabled()
+managed = subprocess.check_output(
+    ["uv", "python", "find", "--managed-python", "cpython@3.15.0+gil"],
+    text=True).strip()
+assert Path(sys.executable).resolve() == Path(managed).resolve()
+PYTHON
+```
+
+The installer digest comes from its `digest` field in the official
+[uv 0.13.1 release API](https://api.github.com/repos/astral-sh/uv/releases/tags/0.13.1).
+Automated Linux x86_64 setup verifies the release archive against the pinned
+[published checksum](https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum).
+
+The `+gil` request requires the GIL-enabled build. uv 0.13.1 has no separate
+`+gil` archive, so install the plain 3.15.0 build and verify that the request
+resolves to it. Do not use a system Python, a virtual environment,
+`pyproject.toml` or `uv.lock`; the checkout's `.python-version` and
+`uv.toml` pin the same interpreter and uv version.
+
+To regenerate the W3 content fixtures, run this command from the checkout root:
+
+```bash
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+  tools/generate_w3_fixtures.py
 ```
 
 Use your system's official package documentation if names or enabled
@@ -122,7 +173,10 @@ git clone https://github.com/shenghaoc/oxpinyin.git
 cd oxpinyin
 ```
 
-Install rustup if absent using the Linux rustup commands above. Then:
+Run the uv provisioning commands from the Linux section. For the checksum
+step, replace `sha256sum -c -` with `shasum -a256 -c -` on macOS.
+Then install rustup if absent using the Linux rustup commands above
+and run:
 
 ```bash
 . "$HOME/.cargo/env"

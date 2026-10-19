@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
 """perf-ci.py — medians with percentile-bootstrap CIs over bisect --perf captures.
 
 `bisect --perf` writes one JSON object per process; `run-perf-matrix.sh` and

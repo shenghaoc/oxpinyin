@@ -13,7 +13,7 @@ mkdir "$out"
 out=$(realpath "$out")
 root=$(cd "$(dirname "$0")" && pwd)
 cc -std=gnu11 -Wall -Wextra -Werror -O2 "$root/system-import-profile.c" -ldl -o "$out/driver"
-python3 - "$pin" "$ox" "$data" "$out" "$iterations" <<'PY'
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$pin" "$ox" "$data" "$out" "$iterations" <<'PY'
 from pathlib import Path
 import re
 import subprocess

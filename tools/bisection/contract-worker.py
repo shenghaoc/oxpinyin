@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
 """Worker entry for contract-diff.py: one fresh process per side per case.
 
-`python3 contract-diff.py --worker ...` compiled the whole driver on every
+`python contract-diff.py --worker ...` compiled the whole driver on every
 start: a script run as `__main__` is never bytecode-cached, and the compile
 was most of a worker's cost (91 ms of 127 ms on the baseline host, against
 28 ms for executing the body and registering every case). This stub loads

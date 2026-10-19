@@ -233,7 +233,7 @@
     ],
     "required_inputs": [
       "pin-built oracle at the selected cell",
-      "python3 and libglib-2.0.so.0",
+      "uv 0.13.1, managed CPython 3.15.0+gil and libglib-2.0.so.0",
       "prebuilt dev libpinyin and libzhuyin for the cell",
       "matching PREFIX/oracle-pin.txt and pin-built pinyin/zhuyin system tables"
     ],
@@ -1691,13 +1691,21 @@
     ],
     "required_inputs": [
       "cell oracle and prebuilt libraries",
-      "Python 3",
+      "uv 0.13.1 and managed CPython 3.15.0+gil",
       "native backend dump tools"
     ],
     "timeout": 900,
     "exclusive_resources": [],
     "command": [
-      "python3",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "--python",
+      "cpython@3.15.0+gil",
+      "python",
+      "-X",
+      "lazy_imports=normal",
       "{root}/tools/bisection/train-index-diff.py",
       "{cell}",
       "{prefix}",
@@ -1726,14 +1734,22 @@
     ],
     "required_inputs": [
       "cell oracle and prebuilt libraries",
-      "Python 3",
+      "uv 0.13.1 and managed CPython 3.15.0+gil",
       "committed transformed-options input and word files"
     ],
     "timeout": 3600,
     "heavy": true,
     "exclusive_resources": [],
     "command": [
-      "python3",
+      "uv",
+      "run",
+      "--no-project",
+      "--managed-python",
+      "--python",
+      "cpython@3.15.0+gil",
+      "python",
+      "-X",
+      "lazy_imports=normal",
       "{root}/tools/oracle/transformed-options-sweep.py",
       "--oracle",
       "{prefix}/lib/libpinyin.so",

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
 """Requested-row training differential; isolated libraries and aborting calls.
 
 Usage: train-index-diff.py CELL PREFIX PINYIN_SO ZHUYIN_SO [--expect-parent]
