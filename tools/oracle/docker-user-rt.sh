@@ -4,9 +4,9 @@
 # differential both directions (tools/oracle/user-dir-round-trip.sh).
 #
 # Usage:
-#   docker-user-rt.sh [IMAGE]
+#   docker-user-rt.sh IMAGE
 #
-#   IMAGE  base image (default oxpinyin-validate:latest — Debian testing,
+#   IMAGE  explicitly provisioned base image (Debian testing,
 #          rust toolchain, libtkrzw-dev + libkyotocabinet-dev, cargo-c).
 #
 # Host requirements: the model20 cache (tools/model/fetch-model.sh) under
@@ -24,7 +24,7 @@
 # timeouts and retries; everything else is network-free.
 set -euo pipefail
 
-image=${1:-oxpinyin-validate:latest}
+image=${1:?Supply a provisioned round-trip image; see docs/runbooks/setup.md. This is not ordinary setup.}
 script_dir=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$script_dir/../.." && pwd)
 

@@ -30,19 +30,12 @@ work that keeps compatibility continues in Stage 2 (`docs/perf/`). Stage 3
 
 ## Quickstart
 
-```sh
-# Debian/Ubuntu: apt-get install libdb-dev libclang-dev libglib2.0-dev pkg-config
-# The default build links the system Berkeley DB (the analogue of a bare libpinyin ./configure);
-# add --no-default-features --features tkrzw for the peer the docs' macOS path uses:
-# macOS (Homebrew): brew install tkrzw glib pkgconf; libclang ships with the Xcode Command Line Tools.
-#   export LIBRARY_PATH="$(brew --prefix)/lib"  # tkrzw links lz4/lzma/zstd from there, but the store's build
-#   script emits only tkrzw's own -L dir: without this `cargo test` fails at link time ("library 'lz4' not
-#   found") while `cargo check`/`clippy`, which never link, still pass. For the default (BDB) macOS build
-#   use the `berkeley-db@5` keg and the OXPINYIN_BDB_* overrides in docs/runbooks/backends.md.
-cargo fmt --all --check
-cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo test --locked --workspace
-```
+Start at [CONTRIBUTING.md](CONTRIBUTING.md). It walks through prerequisites,
+native Linux/macOS/Windows setup, a first link-and-run test, and returning
+in a fresh terminal. Ordinary development does not need an oracle, model20,
+or container. For compatibility gates, use a supported [cloud session](docs/runbooks/cloud.md)
+or the [canonical pinned Debian container](docs/runbooks/compatibility-container.md),
+which runs the subject, reference and harness together.
 
 ## Layout
 

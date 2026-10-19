@@ -1,13 +1,18 @@
-# Cloud sessions — provisioning a Claude Code cloud host
+# Cloud sessions — provisioning an agent-platform cloud host
 
-A Claude Code cloud session is a supported host for every gate in this
-repository (`AGENTS.md`), and so is any Linux host with rootless podman
-(below). A cloud session is a root container with Docker installed
-but not necessarily running, outbound HTTPS only through a session proxy
-that re-terminates TLS, and a network policy that allows a fixed list of
-domains. `tools/cloud/setup.sh` brings it to the state the gates expect;
-this page is what it does, what the environment must allow, and what it
-costs.
+Cloud sessions are a first-class supported host for every gate. Provision
+one with `tools/cloud/setup.sh`; this supported route includes Valgrind for
+measurement tasks. Ordinary native development uses [native setup](setup.md)
+and does not require it. The [canonical compatibility container](compatibility-container.md)
+is a second supported route, not a replacement for cloud provisioning.
+
+Agent-platform cloud hosts may supply root containers, a container runtime,
+and an egress proxy. The provisioner handles those capabilities, scopes custom
+trust to existing session certificates or an explicit CA path, and verifies
+the same frozen oracle/data contracts. It does not require a particular IDE.
+Use task-owned `OXPINYIN_ORACLE_ENV` and `--cache-dir` paths for concurrent
+worktrees. `--in-container` is the behavioural adapter for the second route;
+it neither installs nor requires Valgrind.
 
 ## Setup command
 
@@ -54,27 +59,31 @@ provision stops the `source` with an error. The file needs bash.
 
 ## What it does
 
-0. Installs Valgrind with `apt-get install -y valgrind` (through `sudo`
-   when not root) if `valgrind --version` fails, and prints the version in
-   the summary; `benches.md` requires every measurement report to state it.
-   Then requires the backend dump utilities the stateful differentials
-   call, for the cells requested: `db5.3_dump` (package `db5.3-util`, bdb)
-   and `kchashmgr` (`kyotocabinet-utils`, kc). A missing one is installed
-   with `apt-get install -y` when running as root; otherwise the script
-   prints `run as root: apt-get install -y <packages>` and exits 1. It never
-   runs `sudo` for these. `tkrzw_dbm_util` (tkrzw) comes from step 3b.
-1. Chooses the container command: `$OXPINYIN_CONTAINER` if set, else
-   `podman` if it is on `PATH`, else `docker`; every container call goes
-   through it. Only the docker path starts `dockerd` (detached, `setsid
+0. Requires backend dump utilities for the requested cells: `db5.3_dump`
+   (`db5.3-util`) and `kchashmgr` (`kyotocabinet-utils`). Root containers may
+   install them with apt; ordinary accounts get an explicit missing-package
+   error. Install them deliberately before running setup. Normal cloud
+   provisioning also installs Valgrind idempotently when
+   `valgrind --version` fails and prints its version in the summary. The
+   `--in-container` behavioural path omits that requirement; see [benches](benches.md).
+1. Resolves and prints the runtime/version before provisioning. Platform order
+   is Windows: wslc/Podman/Docker; macOS: Apple container/Podman/Docker;
+   Linux: Podman/Docker. Explicit `OXPINYIN_CONTAINER` wins; no available candidate
+   is an error. wslc is blocked as not yet verified, and the Apple adapter is
+   not yet verified (use compat.sh rather than the Linux cloud provisioner).
+   Every container call uses the resolved runtime. Only the Docker path
+   starts `dockerd` (detached, `setsid
    nohup dockerd`) unless `docker info` already answers, and waits for it.
-   When it starts the daemon it first installs
-   `/root/.ccr/agent-proxy-ca.crt` into the system trust store, so the
-   daemon's own pulls trust the session proxy. podman needs no daemon, no
+   If the session certificate
+   `/root/.ccr/agent-proxy-ca.crt` exists, this path installs it into the system
+   trust store for the daemon's own proxy access; an ordinary proxy setting
+   does not imply that this file exists. podman needs no daemon, no
    root and no `sudo`: `podman info` must answer, and the pulls, the
    `deps` build and the data runs are the same commands rootless.
 2. Pulls the `base_image` digest of `tools/oracle/oracle-pin.txt`
-   (`debian:testing@sha256:dab11cdb…`), retrying 429s from the registry
-   at 2, 4, 8 and 16 s.
+   (`debian:testing@sha256:dab11cdb…`) only when an uncached local fallback
+   build needs it. Published artifacts/cached stages avoid that pull. Registry
+   retries retain the existing 2, 4, 8 and 16 s backoff.
 3. Gets the libraries for bdb, kc and tkrzw (linux/amd64, the platform
    the recorded hashes are for). If
    `ghcr.io/shenghaoc/oxpinyin-oracle:<tag>` exists, with `<tag>` printed by
@@ -120,9 +129,11 @@ provision stops the `source` with an error. The file needs bash.
 
 Processes in a container cannot reach the proxy at `127.0.0.1` and do not
 trust its CA (`/root/.ccr/README.md`, "docker build / docker run"), so
-every `docker run` here uses `--network host`, passes `https_proxy` and
+every Docker/Podman run here uses `--network host`, passes `https_proxy` and
 the CA (`GIT_SSL_CAINFO`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`) and mounts
-`/root/.ccr/ca-bundle.crt`. The `deps` build passes the proxy as a build
+`/root/.ccr/ca-bundle.crt` only when that bundle exists (or an explicit
+`OXPINYIN_PROXY_CA` is supplied). An ordinary HTTPS proxy does not require
+Claude files. The `deps` build passes the proxy as a build
 arg and the CA as the optional BuildKit secret `cacert`
 (`tools/oracle/Dockerfile.oracle`); with the secret, apt reads the same
 dated snapshot over https instead of http. Without it (CI, a workstation)
@@ -146,8 +157,13 @@ setup contacts, and what a session showed on 2026-10-16 UTC:
 `snapshot.debian.org` is the one that is easy to miss: the pinned
 toolchain is installed from it, and `--regen-data` compiles the pin's data
 build, so both the library build and the data step need the `deps` image.
-A published image would save only the library compile; it does not remove
-the apt dependency.
+The normal image workflow now also publishes that exact `deps` stage as
+`ghcr.io/shenghaoc/oxpinyin-oracle:<oracle-tag>-deps`. Setup tries it before
+building locally, so a successful pull removes the snapshot cold-start
+requirement. If unavailable, the existing snapshot build remains the fallback;
+its pull stderr is retained in `<cache>/pull-deps.err`. Anonymous access to
+this newly published tag must be checked after normal publication. Historical
+measurements below predate this optimization.
 
 ## Setup time and disk use
 

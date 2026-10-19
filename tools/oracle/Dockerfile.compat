@@ -1,0 +1,38 @@
+# Pinned compatibility execution environment; no source/model data is baked in.
+# Base and reference are built/pulled by compat.sh from Dockerfile.oracle.
+ARG DEPS_IMAGE
+ARG REFERENCE_IMAGE
+FROM ${REFERENCE_IMAGE} AS reference
+FROM ${DEPS_IMAGE}
+ARG CA_IDENTITY=no-custom-ca
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; set --; \
+    if [ -s /run/secrets/cacert ]; then \
+      sed -i 's|http://snapshot|https://snapshot|' /etc/apt/sources.list; \
+      set -- -o Acquire::https::CaInfo=/run/secrets/cacert; \
+    fi; \
+    apt-get "$@" -o Acquire::Check-Valid-Until=false update; \
+    apt-get "$@" install -y --no-install-recommends \
+      libclang-dev db5.3-util kyotocabinet-utils tkrzw-utils; \
+    rm -rf /var/lib/apt/lists/*
+COPY --from=reference /opt/pinyin-oracle /opt/reference
+COPY rust-toolchain.toml /tmp/toolchain/rust-toolchain.toml
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; printf 'Local CA identity: %s\n' "$CA_IDENTITY"; \
+    if [ -s /run/secrets/cacert ]; then \
+      cp /run/secrets/cacert /usr/local/share/ca-certificates/compat-proxy.crt; \
+      update-ca-certificates; \
+    fi; \
+    rustup_version=1.28.2; \
+    rustup_target=x86_64-unknown-linux-gnu; \
+    rustup_sha256=20a06e644b0d9bd2fbdbfd52d42540bdde820ea7df86e92e533c073da0cdd43c; \
+    curl --fail --location --retry 3 \
+      "https://static.rust-lang.org/rustup/archive/$rustup_version/$rustup_target/rustup-init" \
+      -o /tmp/rustup-init; \
+    printf '%s  /tmp/rustup-init\n' "$rustup_sha256" | sha256sum --check -; \
+    chmod +x /tmp/rustup-init; \
+    /tmp/rustup-init -y --profile minimal --default-toolchain none; \
+    cd /tmp/toolchain; rustup show; rm /tmp/rustup-init
+ENV OXPINYIN_COMPAT_CONTAINER=1 CARGO_HOME=/state/cargo HOME=/state/home TMPDIR=/tmp
+WORKDIR /state/work
