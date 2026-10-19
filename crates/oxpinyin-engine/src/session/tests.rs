@@ -3940,15 +3940,54 @@ fn the_candidate_comparator_wraps_large_frequency_gaps() {
         phrase_length: 1,
         pinyin_span: 1,
         frequency,
+        m_freq: frequency,
     };
     assert!(key(10).pin_compare(&key(5)) < 0, "higher frequency first");
     assert!(key(5).pin_compare(&key(10)) > 0);
     assert_eq!(key(7).pin_compare(&key(7)), 0);
     assert!(
-        key(1).pin_compare(&key(u64::from(u32::MAX))) < 0,
+        key(1).pin_compare(&key(u32::MAX)) < 0,
         "the wrap puts 1 first"
     );
-    assert!(key(u64::from(u32::MAX)).pin_compare(&key(1)) > 0);
+    assert!(key(u32::MAX).pin_compare(&key(1)) > 0);
+}
+
+/// Of two rows with one text the larger `m_freq` survives wherever the sort
+/// put it, a tie keeps the earlier row, and the order of the rest holds
+/// (`pinyin.cpp:2128-2138`).
+#[test]
+fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
+    use crate::candidate::{Candidate, CandidateKind};
+
+    let row = |text: &str, kind, m_freq| {
+        let key = super::RankKey {
+            phrase_length: 2,
+            pinyin_span: 6,
+            frequency: 0,
+            m_freq,
+        };
+        (key, Candidate::new(text, kind, 2, 6, 0, None, None))
+    };
+    let mut ranked = vec![
+        row("书学", CandidateKind::Phrase, 3),
+        row("数学", CandidateKind::Phrase, 9),
+        row("书学", CandidateKind::Addon, 7),
+        row("数学", CandidateKind::Addon, 9),
+        row("书学", CandidateKind::Phrase, 7),
+    ];
+    super::dedup_ranked_by_text(&mut ranked);
+    let rows: Vec<_> = ranked
+        .iter()
+        .map(|(_, candidate)| (candidate.text().to_owned(), candidate.kind()))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("数学".to_owned(), CandidateKind::Phrase),
+            ("书学".to_owned(), CandidateKind::Addon),
+        ],
+        "the addon row beats the lower normal row; equal frequencies keep the earlier row"
+    );
 }
 
 #[test]

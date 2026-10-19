@@ -85,7 +85,8 @@ writes there too:
 
 After promotion the phrase surfaces through `UserLookup` (which indexes every
 stored phrase regardless of nibble, ascending nibble then token — nibble 5 sorts
-ahead of 6/7, matching `_append_items`) as a `NORMAL_CANDIDATE`.
+ahead of 6/7, matching `_append_items`) as a `NORMAL_CANDIDATE` row. The
+addon row of the same string stays in the list and replaces it (section 5).
 
 ## 3. Rust-mechanism divergences
 
@@ -113,3 +114,61 @@ this path; fold in on the next sweep.
   `NORMAL_CANDIDATE` at a nibble-5 token, that the phrase persists under that
   token in the user store, and that a freshly built `UserLookup` finds the
   promoted phrase — i.e. it will surface as a default-facade candidate.
+
+## 5. The next candidate list: the string dedup (2026-10-19 UTC)
+
+After a promotion, a new candidate list for the same input holds two rows with
+the promoted string. One is the `NORMAL_CANDIDATE` row of the new nibble-5
+token. The other is the `ADDON_CANDIDATE` row. The pin keeps the addon row.
+Pin source read: the checkout at `074a2219`.
+
+- `pinyin_guess_candidates` appends the normal rows of a span and then the
+  addon rows of the same span (`src/pinyin.cpp:2247`, `:2253`).
+- `_compute_frequency_of_items` sets `m_freq` of an addon row from the total
+  frequency of the addon phrase index (`:1828-1842`). It sets `m_freq` of a
+  normal row from the total frequency of the whole phrase index
+  (`:1855-1866`). The addon total is much smaller, so the addon row has the
+  larger `m_freq`.
+- `_remove_duplicated_items_by_phrase_string` sorts the indices by string with
+  a stable sort. Of two rows with the same string, it keeps the row with the
+  larger `m_freq`. On a tie it keeps the earlier row (`:2058-2145`, the
+  comparison at `:2128-2138`). `zhuyin.cpp:1406-1416` has the same rule.
+
+The sort word does not change the result. With `sort_option` 0 the normal row
+is first in the list and the addon row still wins. With
+`SORT_BY_FREQUENCY` set, the sort puts the addon row first.
+
+The engine implements the rule in `dedup_ranked_by_text`
+(`crates/oxpinyin-engine/src/session/mod.rs`). It runs on the sorted phrase
+rows, where the true `m_freq` of each row is known. It includes the LONGER
+row before this dedup. The sentence prepend then keeps an n-best row over
+any phrase row with its text (`src/pinyin.cpp:2116-2125`).
+
+The pin gives LONGER only a unigram term (`src/pinyin.cpp:1916-1927`). A
+NORMAL row can have the same text through a divided reading and get a
+larger frequency from DYNAMIC_ADJUST (`:1845-1866`). Both rows reach the
+final dedup (`:2292-2300`). The LONGER row keeps its frequency until then.
+
+The before-cursor path also keeps each slice's frequency when it joins the
+list (`src/zhuyin.cpp:1607-1612`). The final dedup compares all slices
+(`:1626-1630`, `:1406-1416`). A later slice can win when it has a different
+previous token. On a frequency tie the earlier slice still wins. The
+engine retains each slice's rank keys through that comparison.
+
+The before-cursor case guesses `nianhao`, then parses `ni''hao`. Parsing
+keeps the sentence result (`src/zhuyin.cpp:1017-1042`). That result gives
+start 4 a predecessor, while separator starts 2 and 3 have none
+(`:1188-1197`). The bigram makes start 4 win. The LONGER case imports one
+text in libraries 6 and 7 with readings `xi'an` and `xian'ni`. Each new
+item gets its own pinyin index entry (`src/pinyin.cpp:584-605`).
+
+The contract cases are `addon-promoted-listing-unsorted` and
+`addon-promoted-listing-by-frequency` (issue 913). The second case is
+a control: a keep-first dedup also gives the pin's row there.
+The cases `before-cursor-frequency-dedup` and
+`longer-normal-frequency-dedup` cover the combined slices and LONGER.
+Each has a `frequency-tie` case with DYNAMIC_ADJUST clear. The before-cursor
+tie is a control. The LONGER tie also needs the fix: the old path omitted
+the final dedup when sentence rows were suppressed. `longer-normal-disabled`
+is its control. All seven cases have tag 913. The LONGER cases also check
+sentence precedence and the sentence-suppression bit.

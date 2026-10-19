@@ -2859,6 +2859,150 @@ def addon_promote_sequence(k, mask_value):
     return {'steps': out, 'files': token_reuse_files(k)}
 
 
+def candidate_rows(k, inst):
+    """Every row of the instance's list as `[type, text]`, in list order."""
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    rows = []
+    for i in range(count.value):
+        cand, kind, text = P(), I(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        rows.append([kind.value, text.value.decode()])
+    return rows
+
+
+# A promoted addon phrase leaves two rows with one string in the next list:
+# the NORMAL row of the new nibble-5 token and the ADDON row. The phrase-string
+# dedup keeps the row with the larger `m_freq`, and a tie keeps the earlier row
+# (`_remove_duplicated_items_by_phrase_string`, `pinyin.cpp:2128-2138`). The
+# ADDON row is scaled by the addon index total (`:1828-1842`) and the NORMAL row
+# by the whole index total (`:1855-1866`), so the ADDON row survives.
+def addon_promoted_listing(k, sort_option):
+    ctx = k.ctx
+    assert k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, 4)
+    out = {}
+
+    def listing(label):
+        inst = k.fn('alloc_instance', P, P)(ctx)
+        k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'shuxue')
+        k.fn('guess_candidates', B, P, Z, U)(inst, 0, sort_option)
+        rows = candidate_rows(k, inst)
+        out[label] = [len(rows), [row for row in rows if row[1] == '书学']]
+        return inst, rows
+
+    inst, rows = listing('before')
+    count = U()
+    k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
+    chosen = None
+    for i in range(count.value):
+        cand, kind, text = P(), I(), S()
+        k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, i, C.byref(cand))
+        k.fn('get_candidate_type', B, P, P, C.POINTER(I))(inst, cand, C.byref(kind))
+        k.fn('get_candidate_string', B, P, P, C.POINTER(S))(inst, cand, C.byref(text))
+        if kind.value == 6 and text.value.decode() == '书学':
+            chosen = cand
+            break
+    assert chosen, 'no addon candidate for shuxue'
+    out['choose'] = k.fn('choose_candidate', I, P, Z, P)(inst, 0, chosen)
+    k.fn('free_instance', None, P)(inst)
+    inst, rows = listing('after')
+    k.fn('free_instance', None, P)(inst)
+    out['rows after'] = rows
+    return out
+
+
+# `sort_option` 0 sorts by nothing, so the two rows stay in collection order
+# (NORMAL first) and only the dedup picks the ADDON row. 0x1c is
+# `SORT_BY_PHRASE_LENGTH | SORT_BY_PINYIN_LENGTH | SORT_BY_FREQUENCY`: the sort
+# puts the larger `m_freq` (the ADDON row) first, so a keep-first dedup also
+# answers the pin's row; that case is the control.
+case('addon-promoted-listing-unsorted', mode='pinyin', issues=('913',))(
+    lambda k: addon_promoted_listing(k, 0))
+case('addon-promoted-listing-by-frequency', mode='pinyin', control=True, issues=('913',))(
+    lambda k: addon_promoted_listing(k, 0x1c))
+
+
+# At 074a2219, each before-cursor slice keeps its `m_freq` when appended
+# (`zhuyin.cpp:1607-1612`). The final dedup compares all slices (:1630,
+# :1406-1416). A parse keeps the last sentence result (:1017-1042).
+# Guess `nianhao`, then parse `ni''hao`: result[4] still holds the second
+# token. The separator starts have no predecessor; start 4 has the first
+# token (:1188-1197). Its bigram lets the later slice win. With the bit
+# clear the rows tie.
+def before_cursor_frequency_listing(k, dynamic):
+    row58_import(k, [('甲', 'ㄋㄧㄢˊ', 1000000), ('乙', 'ㄏㄠˇ', 1000000)])
+    first, second = (tokens_of(k, text)[-1] for text in ('甲', '乙'))
+    assert k.fn('save', B, P)(k.ctx)
+    _replace_user_bigram(k, [(1, _gram_bytes(1000000, [(first, 1000000)])),
+                             (first, _gram_bytes(1000000, [(second, 1000000)]))])
+    assert k.fn('set_options', B, P, U)(k.ctx, 0x20 | (0x200 if dynamic else 0))
+    inst = k.inst
+    assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nianhao') == 7
+    guessed = k.fn('guess_sentence', B, P)(inst)
+    assert guessed
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b"ni''hao")
+    assert parsed == 7
+    ret = k.fn('guess_candidates_before_cursor', B, P, Z)(inst, parsed)
+    rows = candidate_rows(k, inst)
+    chosen = None
+    for index, (_, text) in enumerate(rows):
+        if text == '乙':
+            candidate = P()
+            assert k.fn('get_candidate', B, P, U, C.POINTER(P))(inst, index, C.byref(candidate))
+            chosen = k.fn('choose_candidate', I, P, Z, P)(inst, parsed, candidate)
+            break
+    assert chosen is not None, 'the imported before-cursor row is missing'
+    return dict(parsed=parsed, guessed=guessed, ret=ret, rows=rows, chosen=chosen)
+
+
+case('before-cursor-frequency-dedup', mode='zhuyin', issues=('913',))(
+    lambda k: before_cursor_frequency_listing(k, True))
+case('before-cursor-frequency-tie', mode='zhuyin', control=True, issues=('913',))(
+    lambda k: before_cursor_frequency_listing(k, False))
+
+
+# The divided table adds xi + an to `xian` (phonetic_key_matrix.cpp:169-217,
+# special_table.h:27). Two libraries hold one text with xi'an and xian'ni
+# readings. New items add both index entries (pinyin.cpp:584-605). The first
+# is NORMAL on the divided path; the second is LONGER on the whole key.
+# LONGER has only a unigram term (pinyin.cpp:1916-1927), while NORMAL gets
+# the planted bigram (:1845-1866). The final dedup sees both (:2292-2300).
+def longer_frequency_listing(k, dynamic, longer=True):
+    for library, reading in ((6, "xi1'an1"), (7, "xian1'ni1")):
+        iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
+        assert iterator
+        assert k.fn('iterator_add_phrase', B, P, S, S, I)(
+            iterator, '甲乙'.encode(), reading.encode(), 10000000)
+        k.fn('end_add_phrases', None, P)(iterator)
+    token, = (token for token in tokens_of(k, '甲乙') if token >> 24 == 6)
+    assert k.fn('save', B, P)(k.ctx)
+    _replace_user_bigram(k, [(1, _gram_bytes(1000000, [(token, 1000000)]))])
+    assert k.fn('set_options', B, P, U)(k.ctx, 0x18a | (0x200 if dynamic else 0))
+    inst = k.inst
+    parsed = k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'xian')
+    assert parsed == 4
+    sort = 1 if longer else 3
+    out = dict(parsed=parsed, at_end=guess_rows(k, inst, parsed, sort))
+    if longer:
+        assert [7, '甲乙'] in out['at_end']['rows'], 'the LONGER fixture row is missing'
+    out['without_sentence'] = guess_rows(k, inst, 0, sort)
+    out['guess_sentence'] = k.fn('guess_sentence', B, P)(inst)
+    out['with_sentence'] = guess_rows(k, inst, 0, sort & ~1)
+    out['sentence_suppressed'] = guess_rows(k, inst, 0, sort)
+    return out
+
+
+case('longer-normal-frequency-dedup', issues=('913',))(
+    lambda k: longer_frequency_listing(k, True))
+# With sentence rows suppressed the old path did no final dedup. Even
+# the tie case must remove the duplicate NORMAL row (:2298-2300).
+case('longer-normal-frequency-tie', issues=('913',))(
+    lambda k: longer_frequency_listing(k, False))
+case('longer-normal-disabled', control=True, issues=('913',))(
+    lambda k: longer_frequency_listing(k, True, longer=False))
+
 case('issue762-addon-promote-no-mask', control=True, issues=('762',))(lambda k: addon_promote_sequence(k, None))
 case('issue762-addon-promote-mask-highest', issues=('762',))(lambda k: addon_promote_sequence(k, 0x05000003))
 case('issue762-addon-promote-mask-middle', control=True, issues=('762',))(lambda k: addon_promote_sequence(k, 0x05000002))

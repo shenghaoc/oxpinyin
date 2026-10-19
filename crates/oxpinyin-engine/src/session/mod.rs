@@ -9,7 +9,8 @@
 //! W4-T0. Not one of them changed.
 
 use core::fmt::Display;
-use std::collections::HashSet;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 
 use smallvec::SmallVec;
 
@@ -928,7 +929,13 @@ struct RankKey {
     /// Bytes of the raw input the candidate covers.
     pinyin_span: usize,
     /// Real unigram count from the model's frequency table.
-    frequency: u64,
+    frequency: u32,
+    /// The pin's `m_freq` whatever the sort word: the string dedup reads it
+    /// when `SORT_BY_FREQUENCY` is clear and `frequency` is zeroed. Not a
+    /// sort key; `pin_compare` never reads it. Both are `guint32` in the pin
+    /// (`lookup_candidate_t::m_freq`, `pinyin.cpp:105`), so the key keeps its
+    /// 24 bytes.
+    m_freq: u32,
 }
 
 /// `sort_option_t::SORT_BY_PHRASE_LENGTH` (`pinyin.h`).
@@ -989,8 +996,7 @@ impl RankKey {
             };
         }
         if self.frequency != other.frequency {
-            let (left, right) = (self.frequency as u32, other.frequency as u32);
-            return right.wrapping_sub(left) as i32;
+            return other.frequency.wrapping_sub(self.frequency) as i32;
         }
         0
     }
@@ -1006,6 +1012,9 @@ impl RankKey {
         frequency: u64,
         sort_word: u32,
     ) -> Self {
+        // The scale never leaves `guint32`: `guint32_of_score` is the only
+        // source of a frequency.
+        let frequency = frequency as u32;
         Self {
             phrase_length: if sort_word & SORT_BY_PHRASE_LENGTH != 0 {
                 phrase_length
@@ -1022,6 +1031,7 @@ impl RankKey {
             } else {
                 0
             },
+            m_freq: frequency,
         }
     }
 }
@@ -1045,6 +1055,48 @@ fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
     }
     let mut index = 0;
     candidates.retain(|_| {
+        let kept = keep[index];
+        index += 1;
+        kept
+    });
+}
+
+/// The pin's phrase-string dedup over the sorted phrase rows
+/// (`_remove_duplicated_items_by_phrase_string`, `pinyin.cpp:2128-2138`;
+/// `zhuyin.cpp:1406-1416`): of the rows that share a text, the one with the
+/// larger `m_freq` survives, and a tie keeps the earlier row.
+///
+/// The pin sorts its indices by string with a stable sort and walks each run
+/// of equal strings left to right, so the survivor is the first maximum of
+/// the run in list order. The input includes the LONGER row and every
+/// before-cursor slice. The sentence prepend then keeps n-best rows over
+/// all phrase rows (`pinyin.cpp:2116-2125`; `zhuyin.cpp:1394-1403`).
+///
+/// The map holds one index per distinct text, as the keep-first set held one
+/// text: time and space stay linear in the rows.
+fn dedup_ranked_by_text(ranked: &mut Vec<(RankKey, Candidate)>) {
+    let mut keep = vec![true; ranked.len()];
+    {
+        let mut survivor: HashMap<&str, usize> = HashMap::with_capacity(ranked.len());
+        for (index, (key, candidate)) in ranked.iter().enumerate() {
+            match survivor.entry(candidate.text()) {
+                Entry::Vacant(slot) => {
+                    slot.insert(index);
+                }
+                Entry::Occupied(mut slot) => {
+                    let held = *slot.get();
+                    if key.m_freq > ranked[held].0.m_freq {
+                        keep[held] = false;
+                        slot.insert(index);
+                    } else {
+                        keep[index] = false;
+                    }
+                }
+            }
+        }
+    }
+    let mut index = 0;
+    ranked.retain(|_| {
         let kept = keep[index];
         index += 1;
         kept
