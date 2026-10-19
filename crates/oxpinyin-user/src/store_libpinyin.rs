@@ -55,7 +55,7 @@ use oxpinyin_data::chunk_write::ChunkItem;
 use oxpinyin_data::pin_stderr;
 use oxpinyin_data::user_files::SystemVersions;
 use oxpinyin_store::{
-    DefaultStore, DefaultUserBigramDb, StoreError, UserBigramDb, WriteStore, WriteTxn,
+    DefaultStore, DefaultUserBigramDb, ReadStore, StoreError, UserBigramDb, WriteStore, WriteTxn,
 };
 
 use crate::codec;
@@ -406,7 +406,7 @@ impl GenericUserStore<DefaultStore> {
         // already raised the open counter and wiped a non-conforming
         // profile. It is this session's alone: process memory, shared
         // with no other open and no other process.
-        let db = DefaultStore::create_in_memory()?;
+        let db = crate::session_values::SessionValues::<DefaultStore>::transient();
 
         let profile = if let Some(dir) = user_dir {
             match checked {

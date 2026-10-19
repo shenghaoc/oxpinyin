@@ -174,10 +174,38 @@ pin's coupling while preserving its behaviour.
 | User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`oxpinyin-store/src/lib.rs`): the pin's container per backend through the real library | same / follows |
 | Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` only | in-memory ordered maps in `oxpinyin-kmm/src/model.rs` | different / off path — training tools only; their outputs are rows in §8 |
 
-oxpinyin's own internal tables live in one in-memory session keyspace
-with a `table\0key` prefix (`oxpinyin-store/src/common.rs`). Nothing in
-that keyspace is written to disk: at save the pin's files are produced
-in the pin's formats.
+For libpinyin sessions, `SessionValues::Memory`
+(`oxpinyin-user/src/session_values.rs`) owns separate logical tables:
+`Tables = BTreeMap<String, Rows>`, with
+`Rows = BTreeMap<Vec<u8>, Vec<u8>>`. Table names select maps instead of
+being prepended to every key. Keys and values are owned, and scans borrow
+rows in bytewise key order. With T tables and N rows in the selected table,
+a point read takes O(log T + log N) comparisons plus the returned value's
+copy; a range scan takes O(log T + log N + R) for R visited rows. Retained
+space is O(T + N_total) map entries plus their owned names, keys and values.
+
+`SessionTxn::Memory` stages writes in
+`BTreeMap<String, BTreeMap<Vec<u8>, Option<Vec<u8>>>>`; `None` marks a
+deletion. Reads consult staged changes before the source maps. A transaction
+scan streams the two ordered ranges together, replacing or omitting source
+rows as staged, and stops when the visitor breaks. Its cost is
+O(log T + log N + log W + R + C), where W is the number of staged keys in
+that table and R and C are the source and staged rows examined. No scan or
+transaction clones an entire table. Staging a put or delete takes
+O(log T + log W) comparisons plus copied key/value bytes. A successful
+callback applies the changes; an error drops them without changing the
+source. For W_total distinct staged keys, commit takes at most
+O(W_total (log T + log N_max)) comparisons, and staging uses O(W_total)
+entries plus their owned bytes, rather than another copy of all source rows.
+
+This keeps the session's logical values in owned memory, as the pin does
+for phrase items, while using ordered maps and staged writes instead of
+the pin's packed items and native in-memory DBs. Standalone stores use
+`SessionValues::Native` and retain their backend transactions and
+`table\0key` framing (`oxpinyin-store/src/common.rs`). The session's
+`UserBigramDb` and file persistence still use the selected native backend.
+At save, the pin's files are produced in the pin's formats; the logical
+session maps themselves are not written to disk.
 
 Exact-text lookup (#884, 2026-10-19 UTC) reads the system row, then the
 live user row. `RuntimeDict::tokens_for_text` keeps stored multiplicity

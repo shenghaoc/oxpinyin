@@ -46,6 +46,7 @@ pub mod persistence;
 mod pinyin_chain;
 mod registry;
 mod replay;
+mod session_values;
 mod store;
 pub(crate) mod store_libpinyin;
 
