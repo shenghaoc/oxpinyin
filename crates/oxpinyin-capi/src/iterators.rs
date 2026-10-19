@@ -180,7 +180,7 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     // `assert(phrase_length == item.get_phrase_length())` (`:568`), and one
     // of the same length with other text the `memcmp` assert (`:571`). The
     // phrase table is the `user_phrase_index` membership plus the system
-    // phrase index; the item text is the token introspection. Each refusal
+    // phrase index; the item text is read without its pronunciation view. Each refusal
     // is one `libpinyin` warning; a lookup that fails outright refuses before
     // either add call rather than reading an empty token list.
     let same_library: Vec<u32> = tokens
@@ -196,12 +196,9 @@ pub extern "C" fn pinyin_iterator_add_phrase(
     }
     if let Some(&token) = same_library.first() {
         let item_text = if let Some(dict) = handle.dict.as_ref() {
-            dict.token_introspection(token).map(|item| item.text)
+            dict.token_text(token)
         } else {
-            user.phrase(token)
-                .ok()
-                .flatten()
-                .map(|item| item.text().to_owned())
+            user.phrase_text(token).ok().flatten()
         };
         // A missing item leaves the pin's PhraseItem at length zero;
         // :568 then asserts before any import mutation.
