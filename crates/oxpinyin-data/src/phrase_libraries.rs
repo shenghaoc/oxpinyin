@@ -440,6 +440,14 @@ impl PhraseLibraries {
         self.library(token)?.item(token)?.phrase_text()
     }
 
+    /// [`PhraseItemView::scalar_text`] of `token`'s item: its text for a
+    /// reader that carries the item on, `None` unless every stored word is a
+    /// Unicode scalar value.
+    #[must_use]
+    pub fn scalar_text(&self, token: u32) -> Option<String> {
+        self.library(token)?.item(token)?.scalar_text()
+    }
+
     /// The character count of [`Self::phrase_text`], read without
     /// building the string; `None` where that text is `None`.
     #[must_use]

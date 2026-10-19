@@ -214,7 +214,7 @@ impl SystemLibrary {
         }
         let view = self.mapped.as_ref()?.item(slot)?;
         Some(ChunkItem {
-            phrase: view.phrase_text()?.chars().map(u32::from).collect(),
+            phrase: carried_words(&view)?,
             unigram: view.unigram(),
             prons: view
                 .pronunciations()
@@ -231,13 +231,15 @@ impl SystemLibrary {
     }
 
     /// Whether [`Self::item`] would answer `Some` for `slot`, without building
-    /// the item: an inline item, or a mapped one whose phrase text decodes.
+    /// the item: an inline item, or a mapped one whose words are all scalar
+    /// values.
     pub(crate) fn is_readable(&self, slot: u32) -> bool {
         self.items.contains_key(&slot)
             || self.mapped.as_ref().is_some_and(|library| {
-                library
-                    .item(slot)
-                    .is_some_and(|view| view.phrase_chars().all(|scalar| scalar.is_some()))
+                library.item(slot).is_some_and(|view| {
+                    view.phrase_words()
+                        .all(|word| word.is_some_and(|word| char::from_u32(word).is_some()))
+                })
             })
     }
 
@@ -252,6 +254,18 @@ impl SystemLibrary {
         let view = self.mapped.as_ref()?.item(slot)?;
         Some(std::borrow::Cow::Borrowed(view.as_bytes()))
     }
+}
+
+/// A mapped item's phrase as the words it stores, for the profile that
+/// carries the item on: `None` unless the item holds every word and each is a
+/// Unicode scalar value. The item travels as its own words, not through the
+/// string the pin's conversion makes of it (that stops at the first zero and
+/// never reads the words behind it, so a word it skips would come back
+/// altered).
+fn carried_words(view: &oxpinyin_data::phrase_library::PhraseItemView<'_>) -> Option<Vec<u32>> {
+    view.phrase_words()
+        .map(|word| word.filter(|&word| char::from_u32(word).is_some()))
+        .collect()
 }
 
 /// The `SYSTEM_FILE` libraries' originals together with the user dir's
@@ -3282,6 +3296,11 @@ mod tests {
             (2, item(&[0x4f60], 4, &[])),
             (3, item(&[0xd800], 4, &[(vec![1], 2)])),
             (4, item(&[0x4f60, 0x597d], 9, &[(key(1), 5), (key(1), 8)])),
+            // A zero ends the pin's string, but the item still holds its words:
+            // one behind the zero that is no scalar value keeps the item out,
+            // and scalar ones (the zero too) travel as stored.
+            (5, item(&[0x4f60, 0, 0xd800], 4, &[(vec![1, 2, 3], 2)])),
+            (6, item(&[0x4f60, 0, 0x4f1a], 4, &[(vec![1, 2, 3], 2)])),
         ];
         let chunk = oxpinyin_data::chunk_write::build_chunk(&items).expect("chunk");
         let dir = tempdir(name);
@@ -3295,6 +3314,23 @@ mod tests {
             items: BTreeMap::from([(9, item(&[0x1234], 3, &[(vec![7], 11), (vec![7], 12)]))]),
             mapped: Some(mapped),
         }
+    }
+
+    #[test]
+    fn an_item_travels_as_the_words_it_stores_whatever_the_pins_string_skips() {
+        let library = library_for_equivalence("travels");
+        // Slot 6 holds a zero and scalar words behind it: carried verbatim.
+        assert!(library.is_readable(6));
+        assert_eq!(
+            library.item(6).map(|item| item.phrase),
+            Some(vec![0x4f60, 0, 0x4f1a])
+        );
+        // Slot 5 holds a word behind the zero that is no scalar value: the
+        // pin's string never reads it, but carrying it would alter it, so
+        // the item stays out (as an item with such a word anywhere always
+        // has).
+        assert!(!library.is_readable(5));
+        assert_eq!(library.item(5), None);
     }
 
     #[test]
@@ -3320,7 +3356,7 @@ mod tests {
             item(&[], 0, &[]),
         ];
         // Present, inline, unreadable text, and absent slots alike.
-        for slot in [0_u32, 1, 2, 3, 4, 5, 9, 1000] {
+        for slot in [0_u32, 1, 2, 3, 4, 5, 6, 7, 9, 1000] {
             let materialized = library.item(slot);
             assert_eq!(
                 library.is_readable(slot),

@@ -1757,6 +1757,41 @@ fn amplified_frequency_is_c_float_not_f64() {
 }
 
 #[test]
+fn the_phrase_string_dedup_compares_what_the_pin_compares() {
+    use super::{CandidateKind, dedup_by_text_keep_first};
+    use crate::candidate::Candidate;
+
+    // `_remove_duplicated_items_by_phrase_string` compares with `strcmp`
+    // (`pinyin.cpp:2082`): phrases that differ only behind their first zero
+    // code point are the same string, and the first row stays.
+    let row = |text: &str, token: u32| {
+        Candidate::new(
+            compact_str::CompactString::from(text),
+            CandidateKind::Phrase,
+            3,
+            9,
+            0,
+            Some(PhraseToken::new(token)),
+            None,
+        )
+    };
+    let mut rows = vec![
+        row("\u{59d4}\0\u{4f1a}", 1),
+        row("\u{59d4}\0\u{5458}", 2),
+        row("\u{59d4}", 3),
+        row("\u{59d4}\u{5458}", 4),
+        row("\0", 5),
+        row("", 6),
+    ];
+    dedup_by_text_keep_first(&mut rows);
+    let kept: Vec<u32> = rows
+        .iter()
+        .filter_map(|candidate| candidate.token().map(PhraseToken::value))
+        .collect();
+    assert_eq!(kept, [1, 4, 5]);
+}
+
+#[test]
 fn window_flush_is_token_ascending_and_one_row_per_token() {
     use super::{CandidateKind, flush_window_batch};
     use crate::candidate::Candidate;
@@ -4276,4 +4311,26 @@ fn a_fitting_forcing_whose_item_read_fails_surfaces_the_error() {
     let mut session = wide_abbreviation_session(Some(wide_abbreviation_item()));
     session.dictionary.failing = true;
     assert!(session.guess_sentence().is_err());
+}
+
+#[test]
+fn fallback_keeps_a_sentence_whose_phrases_start_with_zero() {
+    let vocab = "token=1\ttext=\0你\tkeys=ni\tunigram=1000\n";
+    let model = FixtureLanguageModel::parse(vocab, "").expect("model");
+    assert!(!model.has_real_unigrams());
+    let mut session = Session::new(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        FixtureDictionary::parse(vocab).expect("dictionary"),
+        model,
+    )
+    .expect("session");
+    session.type_pinyin("nini").expect("input");
+    session.guess_sentence().expect("guess");
+    assert_eq!(session.sentence.rows.len(), 1);
+    assert_eq!(session.sentence.rows[0].text, "");
+    assert_eq!(
+        session.sentence.rows[0].tokens,
+        vec![PhraseToken::new(1); 2]
+    );
 }

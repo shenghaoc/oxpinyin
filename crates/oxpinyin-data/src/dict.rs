@@ -138,6 +138,9 @@ fn resolve_items(
 /// here into a stack buffer and handed to the entry as `&str`, so a hit
 /// of ordinary length costs no heap allocation; a longer text takes the
 /// one owned `String` it needs ([`PhraseItemView::phrase_text_into`]).
+/// The decoder also says whether the text holds a U+0000, where the
+/// pin's string ends; the entry keeps that, so no reader of the string
+/// scans the text for it.
 fn resolve_item(
     libraries: &PhraseLibraries,
     keys: &[ChewingKey],
@@ -146,9 +149,10 @@ fn resolve_item(
     let library = libraries.library(token)?;
     let item = library.item(token)?;
     let mut buf = [0_u8; PHRASE_TEXT_STACK_BYTES];
-    let mut entry = match item.phrase_text_into(&mut buf)? {
-        Cow::Borrowed(text) => PhraseEntry::new(PhraseToken::new(token), text),
-        Cow::Owned(text) => PhraseEntry::new(PhraseToken::new(token), text),
+    let (text, zero) = item.phrase_text_into(&mut buf)?;
+    let mut entry = match text {
+        Cow::Borrowed(text) => PhraseEntry::decoded(PhraseToken::new(token), text, zero),
+        Cow::Owned(text) => PhraseEntry::decoded(PhraseToken::new(token), text, zero),
     };
     if let Some((matched, total)) = libraries.pronunciation_possibility(token, keys) {
         entry = entry.with_pronunciation_possibility(matched, total);
@@ -992,10 +996,13 @@ impl AddonDictionary {
         self.libraries.phrase_text(token)
     }
 
-    /// The addon item behind `token`.
+    /// The addon item behind `token`, for the choose-promotion path that
+    /// copies it into the user store: its text is the item's own words, so an
+    /// item with a word that is no scalar value is not carried (the pin's
+    /// string conversion would stand a word behind a zero for U+FFFD).
     #[must_use]
     pub fn phrase_item(&self, token: u32) -> Option<AddonPhraseItem> {
-        let text = self.libraries.phrase_text(token)?;
+        let text = self.libraries.scalar_text(token)?;
         let pronunciations = self
             .libraries
             .pronunciations(token)?

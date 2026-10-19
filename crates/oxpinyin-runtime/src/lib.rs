@@ -1102,10 +1102,9 @@ impl RuntimeDict {
                     .as_ref()
                     .and_then(|store| store.system_item_override(token).ok().flatten());
                 let (text, pronunciations) = if let Some(item) = override_item {
-                    let text = item
-                        .phrase
-                        .into_iter()
-                        .map(char::from_u32)
+                    // The replaced item's words, read as the pin's conversion
+                    // reads them (a word behind the first zero is never read).
+                    let text = oxpinyin_core::ucs4_phrase_chars(item.phrase)
                         .collect::<Option<String>>()?;
                     let pronunciations = item
                         .prons

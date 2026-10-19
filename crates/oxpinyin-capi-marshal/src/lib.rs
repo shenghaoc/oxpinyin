@@ -169,9 +169,12 @@ macro_rules! opaque_handle_casts {
 /// text into a libc-`malloc` buffer (the allocator edge each facade keeps
 /// in its own `ffi.rs`), so that path is passed in explicitly rather than
 /// assumed. The emitted `fn write_owned_sentence(text, sentence) -> bool`
-/// answers `false` — nulling the out-param first — on an empty text, an
-/// interior NUL, or an allocation failure, and otherwise transfers a
-/// caller-owned (`g_free`) buffer through the out-param.
+/// answers `false` — nulling the out-param first — on an interior NUL or an
+/// allocation failure, and otherwise transfers a caller-owned (`g_free`)
+/// buffer through the out-param. An empty text is a string like another:
+/// `convert_to_utf8` makes `""` of phrases whose first code point is zero
+/// (`g_ucs4_to_utf8` allocates an empty string, `glib/gutf8.c:1050-1060`)
+/// and `pinyin_get_sentence` answers it.
 ///
 /// # Example
 ///
@@ -182,18 +185,9 @@ macro_rules! opaque_handle_casts {
 macro_rules! write_owned_sentence {
     ($owned_cstr:path) => {
         /// Writes `text` through the caller-owned out-param: `false` on an
-        /// empty text, an interior NUL, or allocation failure, with the
-        /// out-param nulled on every failure path.
+        /// interior NUL or allocation failure, with the out-param nulled on
+        /// every failure path.
         fn write_owned_sentence(text: &str, sentence: *mut *mut ::std::os::raw::c_char) -> bool {
-            if text.is_empty() {
-                if !sentence.is_null() {
-                    // SAFETY: Caller null-checks the out-param.
-                    unsafe {
-                        *sentence = ::std::ptr::null_mut();
-                    }
-                }
-                return false;
-            }
             if !sentence.is_null() {
                 // SAFETY: Null-checked above. `owned_cstr` returns null on an
                 // interior NUL or allocation failure; otherwise ownership

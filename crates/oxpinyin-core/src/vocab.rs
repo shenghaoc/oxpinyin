@@ -327,6 +327,8 @@ pub struct PhraseEntry {
     /// counts (the candidate scan never reads it; only the sentence
     /// trellis does).
     pronunciation: Option<(u64, u64)>,
+    /// Whether `text` holds a U+0000 (see [`crate::holds_zero`]).
+    zero: bool,
 }
 
 impl PhraseEntry {
@@ -337,10 +339,32 @@ impl PhraseEntry {
     /// `&str`, or [`CompactString`].
     #[must_use]
     pub fn new(token: PhraseToken, text: impl Into<CompactString>) -> Self {
+        let text = text.into();
+        let zero = crate::holds_zero(&text);
         Self {
             token,
-            text: text.into(),
+            text,
             pronunciation: None,
+            zero,
+        }
+    }
+
+    /// Builds an entry from a text whose reader already knows whether it
+    /// holds a U+0000, as the dictionary-hit decoder does while it walks the
+    /// stored words ([`crate::ucs4_phrase_char`]); [`PhraseEntry::new`]
+    /// looks for itself.
+    ///
+    /// `zero` must be [`crate::holds_zero`] of `text`: a wrong answer makes
+    /// the entry's string end in the wrong place or not at all.
+    #[must_use]
+    pub fn decoded(token: PhraseToken, text: impl Into<CompactString>, zero: bool) -> Self {
+        let text = text.into();
+        debug_assert_eq!(zero, crate::holds_zero(&text), "{text:?}");
+        Self {
+            token,
+            text,
+            pronunciation: None,
+            zero,
         }
     }
 
@@ -354,6 +378,13 @@ impl PhraseEntry {
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// Whether the text holds a U+0000, where the pin's string for the
+    /// phrase ends ([`crate::phrase_c_string`]).
+    #[must_use]
+    pub const fn holds_zero(&self) -> bool {
+        self.zero
     }
 
     /// The pronunciation possibility `(matched, total)`, when the backend
@@ -492,5 +523,27 @@ mod tests {
         assert_eq!(entry.text(), "\u{4f60}\u{597d}");
         assert_eq!(entry.clone().into_text().as_str(), "\u{4f60}\u{597d}");
         assert_eq!(entry.token().to_string(), "7");
+    }
+
+    #[test]
+    fn an_entry_knows_whether_its_text_holds_a_zero() {
+        // `new` looks for itself; `decoded` takes the decoder's word for it,
+        // and the two make equal entries.
+        for (text, zero) in [
+            ("", false),
+            ("\u{4f60}\u{597d}", false),
+            ("\u{59d4}\0\u{4f1a}", true),
+            ("\0\u{52a1}\u{9662}", true),
+            ("\u{529e}\u{516c}\0", true),
+            ("\0", true),
+        ] {
+            let found = PhraseEntry::new(PhraseToken::new(1), text);
+            assert_eq!(found.holds_zero(), zero, "{text:?}");
+            assert_eq!(
+                PhraseEntry::decoded(PhraseToken::new(1), text, zero),
+                found,
+                "{text:?}"
+            );
+        }
     }
 }

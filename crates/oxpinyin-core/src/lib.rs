@@ -18,6 +18,7 @@ pub mod graph;
 pub mod kbest;
 pub mod options;
 mod parser;
+mod phrase_text;
 mod scheme;
 pub mod scoring;
 pub mod single_gram;
@@ -44,6 +45,7 @@ pub use oxpinyin_chewing::{CHEWING_ZERO_TONE, ChewingKey};
 pub use parser::{
     Completeness, FullPinyinParser, MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
 };
+pub use phrase_text::{holds_zero, phrase_c_string, ucs4_phrase_char, ucs4_phrase_chars};
 pub use scheme::{
     DoublePinyinKey, DoublePinyinParse, DoublePinyinParser, DoublePinyinScheme, FullPinyinScheme,
     ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme, parse_zhuyin_direct,
