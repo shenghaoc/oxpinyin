@@ -1,7 +1,7 @@
 # Backends — building under each store backend
 
 `oxpinyin-store` compiles exactly one peer backend per binary;
-the store refuses zero or more than one with a `compile_error!`. tkrzw is
+the store refuses zero or more than one with a `compile_error!`. Berkeley DB is
 the workspace default. The crate map (`.kiro/steering/structure.md`) and
 `docs/findings/backend-selection-audit.md` carry the why.
 
@@ -21,7 +21,7 @@ then), and two backends at once is refused.
 
 | backend | Debian/Ubuntu packages | macOS (Homebrew) |
 | --- | --- | --- |
-| tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev pkg-config` | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see README: `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
+| tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev pkg-config` | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see [setup](setup.md#macos): `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
 | kyotocabinet | `libkyotocabinet-dev libclang-dev pkg-config` | `kyoto-cabinet`; the keg ships `kyotocabinet.pc`, pkg-config resolves it, and the store suite passes (verified on 1.2.80, 2026-09-13). The old "the KC dylib does not dlopen on macOS" note does not reproduce on today's bottled formula — the dylib dlopens by absolute path, and the backend links at link time, so bare-name lookup never enters the picture |
 | bdb (the default) | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg ships no `.pc`, so point the overrides at it: `OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix)/opt/berkeley-db@5/include"` and `OXPINYIN_BDB_LIB_DIR="$(brew --prefix)/opt/berkeley-db@5/lib"` (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
 

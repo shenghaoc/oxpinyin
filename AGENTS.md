@@ -289,6 +289,13 @@ Linux/macOS/Windows. Oracle, capi: Linux-first.
 Cloud sessions are a supported host for every gate: provision one with
 `tools/cloud/setup.sh` (`docs/runbooks/cloud.md`).
 
+Start with `CONTRIBUTING.md` and `docs/runbooks/setup.md`, the same setup
+procedures humans use. Ordinary development is native and needs no oracle
+or container. Alongside cloud provisioning, compatibility tasks may use
+`tools/oracle/compat.sh`, which runs
+the subject, pinned reference and harness together in the canonical pinned Debian Linux amd64 environment
+(`docs/runbooks/compatibility-container.md`). Native tests are separate evidence.
+
 ## Concurrent sessions
 
 More than one agent may hold this checkout. Never switch the shared

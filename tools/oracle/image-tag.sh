@@ -37,5 +37,8 @@ grep -qF "$snapshot" "$dir/Dockerfile.oracle" || {
 	printf 'FAIL: Dockerfile.oracle does not use apt_snapshot %s\n' "$snapshot" >&2
 	exit 1
 }
-recipe=$(cat "$dir/Dockerfile.oracle" "$dir/build-oracle.sh" | sha256sum | cut -c1-12)
+hash() {
+	if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi
+}
+recipe=$(cat "$dir/Dockerfile.oracle" "$dir/build-oracle.sh" | hash | cut -c1-12)
 printf '%s-%s-%s-%s\n' "${commit:0:12}" "${digest:0:12}" "$snapshot" "$recipe"

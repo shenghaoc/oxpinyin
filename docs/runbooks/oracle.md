@@ -1,5 +1,13 @@
 # Oracle — building the pin and running the differentials
 
+For contributor compatibility verification, use a supported
+[cloud session](cloud.md) provisioned for every gate, or the second supported
+[canonical Debian compatibility container](compatibility-container.md).
+The latter executes subject, reference and harness together on Linux storage.
+Ordinary work uses [native setup](setup.md), without an oracle or container.
+The direct build/runner operations below expose the existing machinery used
+by both routes; extracting libraries alone is not passing parity evidence.
+
 The oracle is libpinyin built from the pinned commit, with the pinned
 model20 data, on the Berkeley DB backend by default (the reference
 build is a bare `./configure`); Kyoto Cabinet and tkrzw prefixes are

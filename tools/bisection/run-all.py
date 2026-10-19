@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,19 @@ import time
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 CELLS = ('bdb', 'kc', 'tkrzw')
+
+
+@contextlib.contextmanager
+def scratch_directory(log_dir):
+    with tempfile.TemporaryDirectory(prefix='oxpinyin-gates-') as name:
+        try:
+            yield name
+        finally:
+            if log_dir:
+                for log in Path(name).rglob('*.log'):
+                    dest = log_dir / log.relative_to(name)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(log, dest)
 
 
 def positive(value):
@@ -276,6 +290,7 @@ def main():
     parser.add_argument('--no-build', action='store_true', help='use existing dev artifacts at the cell targets')
     parser.add_argument('--build-timeout', type=positive, default=900)
     parser.add_argument('--json', type=Path, help='write the same result table as JSON (no raw captures)')
+    parser.add_argument('--log-dir', type=Path, help='retain local build/runner logs here instead of deleting scratch')
     args = parser.parse_args()
     registry = json.loads((HERE / 'runners.json').read_text())
     names = {row['name'] for row in registry}
@@ -361,7 +376,11 @@ def main():
     # directories. This protects fixed native outputs across concurrent invocations.
     lock_root = ROOT / 'target/runner-locks'
     lock_root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix='oxpinyin-gates-') as scratch_name:
+    if args.log_dir:
+        if args.log_dir.exists() and (not args.log_dir.is_dir() or any(args.log_dir.iterdir())):
+            parser.error('--log-dir must be a new or empty directory')
+        args.log_dir.mkdir(parents=True, exist_ok=True)
+    with scratch_directory(args.log_dir) as scratch_name:
         scratch = Path(scratch_name)
         for cell in cells:
             cfg = cell_config(cell, targets, base_env)
