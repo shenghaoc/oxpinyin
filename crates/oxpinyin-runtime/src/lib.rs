@@ -1099,6 +1099,9 @@ impl RuntimeDict {
     /// `zhuyin.cpp:1778-1790`). No introspection view is built.
     #[must_use]
     pub fn token_pronunciation_count(&self, token: u32) -> Option<u32> {
+        // PHRASE_INDEX_LIBRARY_INDEX ignores the high four bits
+        // (074a2219 novel_types.h:42-44).
+        let token = token & (oxpinyin_user::PHRASE_INDEX_LIBRARY_MASK | oxpinyin_user::PHRASE_MASK);
         match token >> 24 {
             1..=4 => {
                 if !self.library_visible_token(token) {
