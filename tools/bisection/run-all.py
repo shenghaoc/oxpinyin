@@ -115,13 +115,34 @@ def timing_of(output):
     return None
 
 
+def planned_inputs(row, base_env, substitutions):
+    """The input paths a runner will check, as the plan shows them: resolved
+    the way run() resolves them, with the row's own env entries applied and
+    `{env[NAME]}` read from that environment. A path naming a variable the
+    host does not set is shown unresolved; the runner skips on it later."""
+    env = dict(base_env)
+    shown_substitutions = dict(substitutions, work='<work>')
+    try:
+        env.update({key: value.format_map(shown_substitutions) for key, value in row.get('env', {}).items()})
+    except KeyError:
+        pass
+    shown_substitutions['env'] = env
+    inputs = []
+    for item in row.get('input_paths', []):
+        try:
+            inputs.append(item.format_map(shown_substitutions))
+        except KeyError:
+            inputs.append(item)
+    return inputs or ['none']
+
+
 def plan_lines(cell, jobs, contract_cases, reasons, index):
     """The selection plan for one cell: each runner, why it runs, the inputs
     it needs and whether it needs the oracle; for a tag-selected contract
     run, the case IDs, why each was selected and their facades."""
     lines = [f'plan ({cell}): {len(jobs)} runner{"" if len(jobs) == 1 else "s"}']
-    for row, _, _, substitutions in jobs:
-        inputs = [item.format_map(substitutions) for item in row.get('input_paths', [])] or ['none']
+    for row, _, env, substitutions in jobs:
+        inputs = planned_inputs(row, env, substitutions)
         lines.append(f"  {row['name']}: {reasons[row['name']]}; oracle: "
                      f"{'yes' if row.get('oracle', True) else 'no'}; inputs: {', '.join(inputs)}")
         if row['name'] == 'contract-diff' and contract_cases:

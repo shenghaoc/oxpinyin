@@ -27,8 +27,8 @@ class IssueResolutionTests(unittest.TestCase):
     def test_plan_names_runners_inputs_cases_and_facades(self):
         row = dict(name='contract-diff', input_paths=['{capi}', '{zhuyin}'])
         other = dict(name='pc-version', oracle=False, input_paths=[])
-        jobs = [(row, None, None, dict(capi='/t/libpinyin_capi.so', zhuyin='/t/libzhuyin_capi.so')),
-                (other, None, None, {})]
+        jobs = [(row, None, {}, dict(capi='/t/libpinyin_capi.so', zhuyin='/t/libzhuyin_capi.so')),
+                (other, None, {}, {})]
         chosen = run_all['contract_cases_for']({'532'}, self.index)
         lines = run_all['plan_lines']('bdb', jobs, chosen, {'contract-diff': '--issue 532: 2 contract cases',
                                                             'pc-version': '--runners'}, self.index)
@@ -37,6 +37,20 @@ class IssueResolutionTests(unittest.TestCase):
         self.assertIn('2 contract cases; facades: pinyin 2', lines[2])
         self.assertTrue(lines[3].strip().startswith('default-option-parse') and 'issue 532' in lines[3])
         self.assertIn('pc-version: --runners; oracle: no; inputs: none', lines[-1])
+
+    def test_plan_resolves_env_placeholders_like_the_runner(self):
+        row = dict(name='user-dir-round-trip', input_paths=['{capi}', '{env[OXPINYIN_USER_RT_TEST]}'],
+                   env={'OXPINYIN_USER_RT_TEST': '{root}/target/rt-test'})
+        substitutions = dict(root='/w', capi='/w/libpinyin_capi.so')
+        self.assertEqual(run_all['planned_inputs'](row, {}, substitutions),
+                         ['/w/libpinyin_capi.so', '/w/target/rt-test'])
+        unset = dict(name='pc-metadata', input_paths=['{env[OXPINYIN_METADATA_PIN_ROOT]}'])
+        self.assertEqual(run_all['planned_inputs'](unset, {'PATH': '/bin'}, {}),
+                         ['{env[OXPINYIN_METADATA_PIN_ROOT]}'])
+        self.assertEqual(run_all['planned_inputs'](unset, {'OXPINYIN_METADATA_PIN_ROOT': '/pin'}, {}), ['/pin'])
+        lines = run_all['plan_lines']('bdb', [(unset, None, {'OXPINYIN_METADATA_PIN_ROOT': '/pin'}, {})], {},
+                                      {'pc-metadata': 'default'}, {'tags': {}, 'modes': {}})
+        self.assertIn('pc-metadata: default; oracle: yes; inputs: /pin', lines[1])
 
 
 class TimingTests(unittest.TestCase):
