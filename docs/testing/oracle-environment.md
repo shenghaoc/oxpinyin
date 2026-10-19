@@ -207,3 +207,50 @@ What changed, and what did not:
 - Dated facts above stay as written: Debian's history with Berkeley DB,
   the 2026-09-06 bench-oracle introduction, and "deprecated" as the
   2026-09-06 characterisation.
+
+## Amendment — the GLib of the pinned image (2026-10-19 UTC, #894)
+
+The oracle libraries load GLib at run time. The pin's behaviour comes from
+the GLib in the pinned build image (`tools/oracle/Dockerfile.oracle`). It
+does not come from the GLib of the host that runs a differential. Cite
+GLib source at the version in this table.
+
+| Item | Value |
+|---|---|
+| Base image | `debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9` |
+| APT snapshot | `20260831T000000Z` |
+| Binary packages | `libglib2.0-0t64` and `libglib2.0-dev`, Debian version `2.89.4-2` |
+| Upstream release | GLib `2.89.4` |
+| Source archive | `glib2.0_2.89.4.orig.tar.xz`, SHA-256 `1cdbb799f558832e6f14b8337b5fd599c6918ab144977b55e05e00a5e2e84a2c` |
+| Debian patches | None of them changes `glib/gutf8.c`, `glib/gstrfuncs.c`, `glib/gerror.c` or `glib/gprintf.c` |
+
+The version comes from the indexes of the snapshot, read on 2026-10-19 UTC:
+`https://snapshot.debian.org/archive/debian/20260831T000000Z/dists/testing/main/binary-amd64/Packages.xz`
+lists `libglib2.0-0t64 2.89.4-2`, and
+`https://snapshot.debian.org/archive/debian/20260831T000000Z/dists/testing/main/source/Sources.xz`
+lists `glib2.0 2.89.4-2` with the source archive above. In that archive,
+`glib/gutf8.c`, `glib/gstrfuncs.c`, `glib/gerror.c` and `glib/gprintf.c` are
+byte-identical to the files of the upstream tag `2.89.4`.
+
+A host can have another GLib. The cloud host of #894 has GLib `2.80.0`
+(`libglib-2.0.so.0.8000.0`), and the oracle libraries load it there. For
+`g_ucs4_to_utf8` and `g_unichar_to_utf8`, the code of `2.80.0` and `2.89.4`
+gives the same result for every input. Only the integer types of the local
+variables differ (`gint`, `int` and `guint` in `2.80.0`; `size_t` and `char`
+in `2.89.4`). `g_set_error_literal`, `g_strdup` and `g_strconcat` handle a
+NULL argument in the same way in both versions. A differential on such a
+host therefore shows the behaviour of the pinned image for these functions.
+Compare the two versions again when the snapshot date in
+`tools/oracle/oracle-pin.txt` changes.
+
+Lines that the #894 records cite, in `2.89.4` (and in `2.80.0`):
+
+| Function | `2.89.4` | `2.80.0` |
+|---|---|---|
+| `g_unichar_to_utf8`, `glib/gutf8.c` | `:549-599` | `:543-593` |
+| `g_ucs4_to_utf8`, `glib/gutf8.c` | `:1023-1070` | `:1013-1060` |
+| its stop at a zero word | `:1037-1038` | `:1027-1028` |
+| its NULL for a word of 0x80000000 or more | `:1040-1045` | `:1030-1035` |
+| `g_set_error_literal` with a NULL error, `glib/gerror.c` | `:523-524` | `:523-524` |
+| `g_strdup` of NULL, `glib/gstrfuncs.c` | `:320-327` | `:320-327` |
+| `g_strconcat` ends its list at a NULL, `glib/gstrfuncs.c` | `:581-587` | `:577-582` |
