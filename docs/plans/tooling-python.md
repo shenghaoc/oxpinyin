@@ -110,9 +110,13 @@ until a separate measured decision.
 
 ## 5. Native heavy slot and memory admission
 
-Add `tools.dev.slot`. Preserve `tools/bisection/run-all.py`'s slot and admission
-semantics from #905/#906/#903, subject to the fail-closed ruling below.
-Support one host, one filesystem and one environment per heavy lock domain.
+At T2N, add `tools.dev.slot` by extracting the slot and admission core from
+`tools/bisection/run-all.py`. It is the one implementation. Preserve that
+script's slot and admission semantics from #905/#906/#903, subject to the
+fail-closed ruling below. `run-all.py` imports the core through an adapter and
+keeps its CLI, its rows, its environment variables and its cancellation
+semantics unchanged. It remains authoritative for its legacy behaviour until
+T5. Support one host, one filesystem and one environment per heavy lock domain.
 Do not claim distributed locking or shared native/container slot ownership.
 Layer 4's host budget record does not share a heavy lock domain.
 
@@ -168,8 +172,8 @@ while the ancestor holds the slot. Cancellation, expiry or a killed child
 cannot pass or skip. Start the workload timeout only after admission.
 
 Layer 2 owns the public heavy recipe. Layer 3 owns nextest's internal limits.
-Layer 5 schedules the legacy runner handoff. That handoff reuses this code,
-with separate state in each environment.
+Layer 5 schedules the runner refactor at T5. T2N already extracted this code;
+the refactor keeps the adapter import, with separate state in each environment.
 
 ## 6. Implementation acceptance
 
