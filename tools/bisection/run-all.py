@@ -3,7 +3,11 @@
 import argparse
 import concurrent.futures
 import contextlib
-import fcntl
+import errno
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 import json
 import os
 from pathlib import Path
@@ -13,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 HERE = Path(__file__).resolve().parent
@@ -33,6 +38,66 @@ def scratch_directory(log_dir):
                     shutil.copy2(log, dest)
 
 
+CANCELLED = threading.Event()
+
+
+class Cancelled(ValueError):
+    pass
+
+
+def check_cancelled():
+    if CANCELLED.is_set():
+        raise Cancelled('cancelled; child process groups terminated and reaped')
+
+
+@contextlib.contextmanager
+def cancellation_handlers():
+    CANCELLED.clear()
+    previous = {}
+    for name in ('SIGTERM', 'SIGINT', 'SIGHUP'):
+        signum = getattr(signal, name, None)
+        if signum is not None:
+            previous[signum] = signal.signal(signum, lambda *_: CANCELLED.set())
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def terminate_group(process):
+    """Stop the group and reap its leader before the caller releases locks."""
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    # The leader can exit while a descendant still runs.
+    with contextlib.suppress(ProcessLookupError):
+        os.killpg(process.pid, signal.SIGKILL)
+    process.wait()
+
+
+def wait_child(process, timeout=None):
+    deadline = None if timeout is None else time.monotonic() + timeout
+    try:
+        while True:
+            check_cancelled()
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                raise subprocess.TimeoutExpired(process.args, timeout)
+            try:
+                rc = process.wait(timeout=min(0.1, remaining) if remaining is not None else 0.1)
+                check_cancelled()
+                return rc
+            except subprocess.TimeoutExpired:
+                continue
+    except BaseException:
+        terminate_group(process)
+        raise
+
+
 def positive(value):
     number = int(value)
     if number <= 0:
@@ -50,30 +115,20 @@ def assignments(values, allowed, parser):
     return result
 
 
-def execute(command, env, cwd, timeout, output):
+def execute(command, env, cwd, timeout, output, slot=None):
     """Bound the whole process group, including grandchildren retaining stdout."""
     start = time.monotonic()
     with output.open('wb') as log:
         try:
-            process = subprocess.Popen(command, env=env, cwd=cwd, stdout=log,
-                                       stderr=subprocess.STDOUT, start_new_session=True)
+            process = start_child(command, env, slot=slot, cwd=cwd, stdout=log,
+                                  stderr=subprocess.STDOUT, start_new_session=True)
         except OSError as exc:
             return 1, time.monotonic() - start, str(exc), False
         expired = False
         try:
-            process.wait(timeout=timeout)
+            wait_child(process, timeout)
         except subprocess.TimeoutExpired:
             expired = True
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGTERM)
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-            # A descendant may outlive its leader, even after the leader exits.
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
-            process.wait()
     text = output.read_text(errors='replace')
     return process.returncode, time.monotonic() - start, text, expired
 
@@ -241,6 +296,431 @@ def check_identity(identity, root, cell, needed):
             raise ValueError(f'artifact {name} ({path}) changed after the recorded build '
                              f'(size/mtime {stat.st_size}/{stat.st_mtime_ns} vs {staged.get("size")}/{staged.get("mtime_ns")}): '
                              'a mixed target directory; rebuild it from this worktree')
+# ---------------------------------------------------------------------------
+# The host-wide heavy slot. Heavy work (a cell build, a full differential, a
+# campaign, a Valgrind run, a release/LTO build) takes one of a few slots
+# shared by every worktree and agent on the host, so concurrent heavy work
+# serialises instead of running the host out of memory; light work (fmt,
+# clippy on one crate, a small case selection, harness tests, the small
+# differentials) never waits. The slot is the existing exclusive-resource
+# mechanism (a flock on a lock file) at a host-wide location rather than
+# beside one checkout: the holder's identity is written into the file so
+# anyone waiting sees who holds it, and a file still naming a dead holder is
+# reclaimed with a message (the kernel released a dead holder's flock).
+# ---------------------------------------------------------------------------
+HEAVY_SLOT = 'heavy-slot'
+HEAVY_SLOT_HELD = 'OXPINYIN_HEAVY_SLOT_HELD'
+# The results table. build_seconds is the cell's one build, shared by every row
+# of that cell; lock_wait_seconds is the runner's wait for its exclusive
+# resources (#899); slot_wait_seconds is the runner's wait for the heavy slot,
+# taken before its locks; build_slot_wait_seconds is the cell build's wait for
+# the heavy slot, shared by every row of that cell.
+COLUMNS = ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds',
+           'slot_wait_seconds', 'build_slot_wait_seconds', 'pin_ref', 'reason')
+
+
+def host_lock_dir():
+    """Where the host-wide locks live: $OXPINYIN_LOCK_DIR, else
+    $XDG_CACHE_HOME/oxpinyin/locks, else ~/.cache/oxpinyin/locks (the cache
+    tools/cloud/setup.sh already uses). Shared by every worktree and agent."""
+    root = os.environ.get('OXPINYIN_LOCK_DIR')
+    if not root:
+        cache = os.environ.get('XDG_CACHE_HOME') or str(Path.home() / '.cache')
+        root = str(Path(cache) / 'oxpinyin/locks')
+    path = Path(root)
+    if os.environ.get('OXPINYIN_LOCK_DIR') and not path.is_absolute():
+        raise ValueError('OXPINYIN_LOCK_DIR must be an absolute path')
+    path = path.resolve()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def heavy_slot_count():
+    """How many heavy slots the host offers: $OXPINYIN_HEAVY_SLOTS, default 1."""
+    try:
+        return max(1, int(os.environ.get('OXPINYIN_HEAVY_SLOTS', '1')))
+    except ValueError:
+        return 1
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def read_holder(path):
+    try:
+        return json.loads(path.read_text() or 'null')
+    except (OSError, ValueError):
+        return None
+
+
+def describe_holder(holder):
+    if not isinstance(holder, dict):
+        return 'no holder recorded'
+    return (f"pid {holder.get('pid')} in {holder.get('worktree')} since {holder.get('since')}: "
+            f"{holder.get('command')}")
+
+
+def is_heavy(row):
+    """A registry row is heavy when it says so (`"heavy": true`); the default
+    is light. The cell build is always heavy (cargo decides how much it
+    compiles; a no-op build holds the slot for a fraction of a second)."""
+    return bool(row.get('heavy'))
+
+
+def lock_file(file, operation):
+    """Retry interrupted locks. Keep other errors and the lock path."""
+    while True:
+        try:
+            fcntl.flock(file, operation)
+            return
+        except InterruptedError:
+            continue
+        except BlockingIOError:
+            raise
+        except OSError as exc:
+            if exc.errno == errno.EINTR:
+                continue
+            raise OSError(exc.errno, exc.strerror, file.name) from exc
+
+
+@contextlib.contextmanager
+def admission_lock(directory):
+    with (directory / 'heavy-admission').open('a+') as file:
+        lock_file(file, fcntl.LOCK_EX)
+        yield
+        # Closing this unshared descriptor releases the admission lock.
+
+
+def process_parent(pid):
+    try:
+        if sys.platform.startswith('linux'):
+            return int(Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[1])
+        result = subprocess.run(['ps', '-o', 'ppid=', '-p', str(pid)],
+                                capture_output=True, text=True, check=True)
+        return int(result.stdout.strip())
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return None
+
+
+def is_ancestor(pid):
+    current, seen = os.getppid(), set()
+    while current and current not in seen:
+        if current == pid:
+            return True
+        seen.add(current)
+        current = process_parent(current)
+    return False
+
+
+def write_holder(file, holder):
+    file.seek(0)
+    file.truncate()
+    file.write(json.dumps(holder))
+    file.flush()
+
+
+def start_child(command, env, *, slot=None, **kwargs):
+    """Transfer an acquired slot to the workload before it executes."""
+    descriptors = ()
+    if slot is not None:
+        descriptors = slot.pass_fds()
+        if not slot.inherited:
+            command = [sys.executable, str(HERE / 'run-all.py'), '--heavy-child-fd',
+                       str(descriptors[0]), '--', *command]
+    check_cancelled()
+    kwargs.setdefault('start_new_session', True)
+    process = subprocess.Popen(command, env=env, pass_fds=descriptors, **kwargs)
+    if slot is not None and not slot.inherited:
+        slot.handoff()
+    return process
+
+
+def heavy_child(fd, command):
+    """Give the inherited descriptor and holder record to the actual child."""
+    os.set_inheritable(fd, True)
+    marker = json.loads(os.environ[HEAVY_SLOT_HELD])
+    directory = Path(marker['lock_dir'])
+    with admission_lock(directory):
+        with os.fdopen(os.dup(fd), 'r+') as file:
+            file.seek(0)
+            holder = json.loads(file.read())
+            holder.update(pid=os.getpid(), command=' '.join(command))
+            write_holder(file, holder)
+    marker.update(pid=os.getpid(), fd=fd)
+    env = dict(os.environ, **{HEAVY_SLOT_HELD: json.dumps(marker)})
+    check_cancelled()
+    with subprocess.Popen(command, env=env, pass_fds=(fd,)) as process:
+        while True:
+            try:
+                rc = process.wait(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                if CANCELLED.is_set():
+                    # The group already received the signal. Keep the supervisor
+                    # alive so it can reap a command that ignores cancellation.
+                    try:
+                        rc = process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        rc = process.wait()
+                    break
+    if CANCELLED.is_set():
+        return 1
+    if rc < 0:
+        if -rc not in (signal.SIGKILL, signal.SIGSTOP):
+            signal.signal(-rc, signal.SIG_DFL)
+        os.kill(os.getpid(), -rc)
+    return rc
+
+
+class HeavySlot:
+    """Hold one host-wide heavy slot for the duration of a `with` block.
+
+    Acquisition tries every slot without blocking, then waits, polling, and
+    prints who holds the slots once at the start of the wait and every 30 s;
+    the wait never fails or skips the work. `waited` is the seconds spent
+    waiting, for the caller's timing row. `reclaimed` names a dead holder
+    whose record this acquisition replaced, if any."""
+
+    def __init__(self, command, out=sys.stderr, poll=0.5):
+        self.command, self.out, self.poll = command, out, poll
+        self.waited, self.reclaimed, self.slot, self._file = 0.0, None, None, None
+        self.started, self.announced = None, None
+        self.inherited = False
+        self._handed_off = False
+        self.holder_pid, self.inherited_fd = None, None
+
+    def _try(self, index):
+        file = (self.lock_dir / f'{HEAVY_SLOT}-{index}').open('a+')
+        try:
+            lock_file(file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            file.close()
+            return None
+        except BaseException:
+            file.close()
+            raise
+        return file
+
+    def _inherit(self):
+        self.lock_dir = host_lock_dir().resolve()
+        marker = os.environ.get(HEAVY_SLOT_HELD)
+        if marker is not None:
+            try:
+                held = json.loads(marker)
+                if (not isinstance(held, dict) or not {'lock_dir', 'slot', 'pid'} <= set(held)
+                        or set(held) - {'lock_dir', 'slot', 'pid', 'fd'}
+                        or not isinstance(held['lock_dir'], str)
+                        or not Path(held['lock_dir']).is_absolute()
+                        or type(held['slot']) is not int or held['slot'] < 0
+                        or type(held['pid']) is not int or held['pid'] <= 0
+                        or ('fd' in held and (type(held['fd']) is not int or held['fd'] < 0))):
+                    raise ValueError('invalid fields')
+                directory = Path(held['lock_dir']).resolve()
+            except (ValueError, OSError, RuntimeError) as exc:
+                raise ValueError(f'Invalid {HEAVY_SLOT_HELD}: expected a JSON object with '
+                                 'an absolute lock_dir, a nonnegative integer slot, and a positive holder pid') from exc
+            if directory == self.lock_dir:
+                path = directory / f"{HEAVY_SLOT}-{held['slot']}"
+                holder = read_holder(path)
+                if (isinstance(holder, dict) and holder.get('pid') == held['pid']
+                        and pid_alive(held['pid']) and is_ancestor(held['pid'])):
+                    self.slot, self.holder_pid = held['slot'], held['pid']
+                    self.inherited = True
+                    fd = held.get('fd')
+                    if fd is not None:
+                        try:
+                            if os.path.samestat(os.fstat(fd), path.stat()):
+                                self.inherited_fd = fd
+                        except OSError:
+                            pass
+                    print(f'heavy slot {self.slot} inherited from ancestor pid {self.holder_pid}: {self.command}',
+                          file=self.out, flush=True)
+                    return True
+                print(f'stale {HEAVY_SLOT_HELD}: pid {held["pid"]}, slot {held["slot"]}; '
+                      'acquire a slot normally', file=self.out, flush=True)
+            else:
+                print(f'stale {HEAVY_SLOT_HELD}: different lock directory; acquire a slot normally',
+                      file=self.out, flush=True)
+        return False
+
+    def try_acquire(self):
+        """Try once. Do not block a worker while the slot is busy."""
+        check_cancelled()
+        if self._file is not None or self.inherited:
+            return True
+        if self.started is None:
+            self.started = time.monotonic()
+            if self._inherit():
+                return True
+        slots = heavy_slot_count()
+        for index in range(slots):
+            file = self._try(index)
+            if file is not None:
+                self.slot, self._file = index, file
+                break
+        self.waited = time.monotonic() - self.started
+        if self._file is None:
+            now = time.monotonic()
+            if self.announced is None or now - self.announced >= 30:
+                holders = [describe_holder(read_holder(self.lock_dir / f'{HEAVY_SLOT}-{i}')) for i in range(slots)]
+                print(f'waiting for a heavy slot ({slots} on this host) for: {self.command}; held by: '
+                      + '; '.join(holders), file=self.out, flush=True)
+                self.announced = now
+            return False
+        path = Path(self._file.name)
+        previous = read_holder(path)
+        if isinstance(previous, dict) and previous.get('pid') and not pid_alive(int(previous['pid'])):
+            self.reclaimed = previous
+            print(f'reclaimed stale heavy slot {self.slot}: {describe_holder(previous)} (pid dead)',
+                  file=self.out, flush=True)
+        self.holder_pid = os.getpid()
+        holder = dict(pid=self.holder_pid, worktree=str(ROOT), command=self.command,
+                      since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+        write_holder(self._file, holder)
+        if self.waited >= self.poll:
+            print(f'heavy slot {self.slot} acquired after {self.waited:.1f}s wait: {self.command}',
+                  file=self.out, flush=True)
+        return True
+
+    def __enter__(self):
+        while not self.try_acquire():
+            time.sleep(self.poll)
+        return self
+
+    def pass_fds(self):
+        fd = self.inherited_fd if self.inherited else self._file.fileno()
+        if fd is None:
+            return ()
+        os.set_inheritable(fd, True)
+        return (fd,)
+
+    def child_env(self, env):
+        """Copy the environment and mark the slot for this child."""
+        marker = dict(lock_dir=str(self.lock_dir), slot=self.slot, pid=self.holder_pid)
+        descriptors = self.pass_fds()
+        if descriptors:
+            marker['fd'] = descriptors[0]
+        return dict(env, OXPINYIN_LOCK_DIR=str(self.lock_dir), **{HEAVY_SLOT_HELD: json.dumps(marker)})
+
+    def handoff(self):
+        # The child shares this open file description. Never unlock it here.
+        # Keep our copy until the child is reaped. Descendants keep theirs.
+        self._handed_off = True
+
+    def __exit__(self, *exc):
+        if self._file is None:
+            return False
+        try:
+            if not self._handed_off:
+                self._file.seek(0)
+                self._file.truncate()
+                self._file.flush()
+        finally:
+            self._file.close()
+            self._file = None
+            self._handed_off = False
+        return False
+
+
+class HeavyAdmission:
+    """Prepare heavy work before it enters the worker pool."""
+
+    def __init__(self, command, env, out=sys.stderr, poll=0.5):
+        self.slot = HeavySlot(command, out=out, poll=poll)
+        self.base_env, self.env, self.poll = env.copy(), None, poll
+
+    def try_acquire(self):
+        if not self.slot.try_acquire():
+            return False
+        self.env = self.slot.child_env(self.base_env)
+        return True
+
+    def record(self, result):
+        result['slot_wait_seconds'] = round(self.slot.waited, 3)
+
+    def __enter__(self):
+        try:
+            while not self.try_acquire():
+                time.sleep(self.poll)
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def close(self):
+        self.slot.__exit__()
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+
+def run_admitted(jobs, workers, run):
+    """Submit only admitted jobs. Keep the pool at the requested size."""
+    pending, active, results = list(jobs), {}, []
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            while pending or active:
+                check_cancelled()
+                for future in list(active):
+                    if future.done():
+                        job = active.pop(future)
+                        try:
+                            result = future.result()
+                            if job['admission']:
+                                job['admission'].record(result)
+                            results.append(result)
+                        finally:
+                            if job['admission']:
+                                job['admission'].close()
+                for job in list(pending):
+                    if len(active) >= workers:
+                        break
+                    admission = job['admission']
+                    try:
+                        ready = admission is None or admission.try_acquire()
+                    except (OSError, ValueError) as exc:
+                        job['result'].update(status='FAIL', reason=str(exc))
+                        admission.record(job['result'])
+                        admission.close()
+                        results.append(job['result'])
+                        pending.remove(job)
+                        continue
+                    if ready:
+                        pending.remove(job)
+                        active[pool.submit(run, job)] = job
+                if active:
+                    concurrent.futures.wait(active, timeout=0.05,
+                                            return_when=concurrent.futures.FIRST_COMPLETED)
+                elif pending:
+                    time.sleep(0.05)
+    finally:
+        for job in jobs:
+            if job['admission']:
+                job['admission'].close()
+    return results
+
+
+def run_in_heavy_slot(command):
+    """`run-all.py --heavy-slot -- COMMAND...`: run COMMAND holding a heavy
+    slot (for campaigns, Valgrind runs and builds started outside run-all).
+    The wait is printed; the command's exit status is returned."""
+    with HeavyAdmission(' '.join(command), os.environ) as admission:
+        slot = admission.slot
+        started = time.monotonic()
+        with start_child(command, admission.env, slot=slot) as process:
+            rc = wait_child(process)
+        print(f'heavy slot {slot.slot}: slot_wait_seconds {slot.waited:.1f}, ran {time.monotonic() - started:.1f}s, exit {rc}',
+              file=sys.stderr, flush=True)
+        return rc
 
 
 def cell_config(cell, target_root, env):
@@ -263,7 +743,9 @@ def oracle_config(prefix, variant, env):
     return json.loads(result.stdout)
 
 
-def main():
+def run_main():
+    if fcntl is None:
+        raise ValueError("run-all.py needs POSIX fcntl; Windows support requires #895 Stage 2 (`just heavy`)")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runners', help='comma-separated registry names (default: every gate)')
     parser.add_argument('--cells', default='bdb', help='comma-separated bdb,kc,tkrzw')
@@ -291,6 +773,17 @@ def main():
     parser.add_argument('--build-timeout', type=positive, default=900)
     parser.add_argument('--json', type=Path, help='write the same result table as JSON (no raw captures)')
     parser.add_argument('--log-dir', type=Path, help='retain local build/runner logs here instead of deleting scratch')
+    if sys.argv[1:2] == ['--heavy-child-fd']:
+        return heavy_child(int(sys.argv[2]), sys.argv[4:])
+    parser.epilog = ('run-all.py --heavy-slot -- COMMAND...  runs COMMAND holding one host-wide heavy slot '
+                     '(for campaigns, Valgrind runs and builds started outside run-all) and exits with its status.')
+    if sys.argv[1:2] == ['--heavy-slot']:
+        command = sys.argv[2:]
+        if command[:1] == ['--']:
+            command = command[1:]
+        if not command:
+            parser.error('--heavy-slot needs a command after --')
+        return run_in_heavy_slot(command)
     args = parser.parse_args()
     registry = json.loads((HERE / 'runners.json').read_text())
     names = {row['name'] for row in registry}
@@ -415,6 +908,7 @@ def main():
                 runner_prefix = Path(oracle['PINYIN_ORACLE_PREFIX'])
                 result = dict(runner=row['name'], cell=cell, status='SKIPPED', seconds=0.0,
                               build_seconds=0.0, lock_wait_seconds=0.0, phases=None,
+                              slot_wait_seconds=0.0, build_slot_wait_seconds=0.0,
                               pin_ref=oracle['EXPECTED_ORACLE_PIN_REF'].removeprefix('pin_ref='), reason='')
                 if cell not in row['cells']:
                     result['reason'] = 'unsupported cell'
@@ -451,10 +945,14 @@ def main():
             elif not args.no_build:
                 print(f'Building dev opt-level 1 artifacts: {cell}: {", ".join(artifacts)}',
                       file=sys.stderr, flush=True)
-                rc, seconds, output, expired = execute(['bash', str(HERE / 'cell-artifacts.sh'),
-                                                        '--artifacts', ','.join(artifacts)], env, ROOT,
-                                                       args.build_timeout, scratch / f'build-{cell}.log')
+                # The build is heavy work: it holds a host-wide slot while cargo runs.
+                with HeavyAdmission(f'cell build {cell} in {ROOT}', env) as admission:
+                    rc, seconds, output, expired = execute(['bash', str(HERE / 'cell-artifacts.sh'),
+                                                            '--artifacts', ','.join(artifacts)], admission.env, ROOT,
+                                                           args.build_timeout, scratch / f'build-{cell}.log', slot=admission.slot)
                 build_seconds[cell] = round(seconds, 3)
+                for _, result, _ in build_candidates:
+                    result['build_slot_wait_seconds'] = round(admission.slot.waited, 3)
                 if rc or expired:
                     for _, result, _ in build_candidates:
                         result.update(status='FAIL', seconds=round(seconds, 3), build_seconds=build_seconds[cell],
@@ -475,8 +973,8 @@ def main():
                           f"{identity.get('built_utc', '?')}; this worktree is at {head[:12]}", file=sys.stderr, flush=True)
             jobs.extend(cell_jobs)
 
-        def run(job):
-            row, result, base, substitutions = job
+        prepared = []
+        for row, result, base, substitutions in jobs:
             timeout = timeouts.get(row['name'], args.timeout or row['timeout'])
             work = scratch / (row['name'] + '-' + result['cell'])
             work.mkdir()
@@ -488,21 +986,42 @@ def main():
             absent = [name for name in row.get('required_env', []) if not env.get(name)]
             if absent:
                 result.update(status='SKIPPED', reason='missing required environment: ' + ', '.join(absent))
-                return result
+                results.append(result)
+                continue
             command = [part.format_map(substitutions) for part in row['command']]
             missing = [item.format_map(substitutions) for item in row.get('input_paths', [])
                        if not Path(item.format_map(substitutions)).exists()]
             if missing:
                 result.update(status='FAIL' if row.get('oracle_variant', 'unpatched') != 'unpatched'
                               else 'SKIPPED', reason='missing required input: ' + ', '.join(missing))
-                return result
+                results.append(result)
+                continue
+            admission = HeavyAdmission(f"{row['name']} / {result['cell']} in {ROOT}", env) if is_heavy(row) else None
+            prepared.append(dict(row=row, result=result, env=env, command=command,
+                                 timeout=timeout, work=work, admission=admission))
+
+        def run(job):
+            row, result = job['row'], job['result']
+            admission = job['admission']
+            env = admission.env if admission else job['env']
+            timeout = job['timeout']
             with contextlib.ExitStack() as stack:
+                # Admission holds the slot before these sorted checkout locks.
+                # Light holders never wait for a slot. Heavy holders have one.
+                # These waits cannot form a cycle.
                 waiting = time.monotonic()
                 for resource in sorted(row['exclusive_resources']):
                     lock = stack.enter_context((lock_root / resource).open('a'))
-                    fcntl.flock(lock, fcntl.LOCK_EX)
+                    while True:
+                        check_cancelled()
+                        try:
+                            lock_file(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                            break
+                        except BlockingIOError:
+                            time.sleep(0.05)
                 lock_wait = time.monotonic() - waiting
-                rc, seconds, output, expired = execute(command, env, ROOT, timeout, work / 'runner.log')
+                rc, seconds, output, expired = execute(job['command'], env, ROOT, timeout, job['work'] / 'runner.log',
+                                                        slot=admission.slot if admission else None)
             # Legacy CI behavior is preserved in the direct live-typing runner;
             # aggregate skips cannot silently turn into passes.
             required_skips = [line for line in output.splitlines() if 'SKIP:' in line and
@@ -511,23 +1030,20 @@ def main():
                 rc, output = 77, '\n'.join(required_skips)
             result.update(status='FAIL' if expired else 'PASS' if rc == 0 else 'SKIPPED' if rc == 77 else 'FAIL',
                           seconds=round(seconds, 3), build_seconds=build_seconds.get(result['cell'], 0.0),
-                          lock_wait_seconds=round(lock_wait, 3), phases=timing_of(output),
+                          lock_wait_seconds=round(lock_wait, 3),
+                          phases=timing_of(output),
                           reason=reason_for(rc, output, timeout, expired))
             print(f"Completed {result['runner']} / {result['cell']}: {result['status']}",
                   file=sys.stderr, flush=True)
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
-            results.extend(pool.map(run, jobs))
+        results.extend(run_admitted(prepared, args.jobs, run))
     order = {row['name']: index for index, row in enumerate(rows)}
     results.sort(key=lambda row: (order[row['runner']], cells.index(row['cell'])))
-    # build_seconds is the cell's one build, shared by every row of that cell.
-    print('runner | cell | status | seconds | build_seconds | lock_wait_seconds | pin_ref | reason')
-    print('--- | --- | --- | ---: | ---: | ---: | --- | ---')
+    print(' | '.join(COLUMNS))
+    print('--- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---')
     for row in results:
-        print(' | '.join(str(row[key]).replace('|', '/').replace('\n', ' ') for key in
-                         ('runner', 'cell', 'status', 'seconds', 'build_seconds', 'lock_wait_seconds',
-                          'pin_ref', 'reason')))
+        print(' | '.join(str(row[key]).replace('|', '/').replace('\n', ' ') for key in COLUMNS))
     if args.json:
         args.json.write_text(json.dumps(results, indent=2, ensure_ascii=False) + '\n')
     def allowed(row):
@@ -535,6 +1051,11 @@ def main():
                    ('*', row['runner'], row['runner'] + ':' + row['cell']))
     return int(any(row['status'] == 'FAIL' or row['status'] == 'SKIPPED' and not allowed(row)
                    for row in results))
+
+
+def main():
+    with cancellation_handlers():
+        return run_main()
 
 
 if __name__ == '__main__':
