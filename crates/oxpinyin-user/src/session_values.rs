@@ -14,6 +14,7 @@ use oxpinyin_store::{Flow, ReadStore, StoreError, WriteStore, WriteTxn};
 type Rows = BTreeMap<Vec<u8>, Vec<u8>>;
 type Tables = BTreeMap<String, Rows>;
 type Changes = BTreeMap<String, BTreeMap<Vec<u8>, Option<Vec<u8>>>>;
+type Visitor<'a> = dyn FnMut(&[u8], &[u8]) -> Result<Flow, StoreError> + 'a;
 
 pub(crate) enum SessionValues<S> {
     Native(S),
@@ -136,7 +137,7 @@ pub(crate) trait NativeTransaction {
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut dyn FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
+        visit: &mut Visitor<'_>,
     ) -> Result<(), StoreError>;
 }
 
@@ -158,7 +159,7 @@ impl<T: WriteTxn> NativeTransaction for T {
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-        visit: &mut dyn FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
+        visit: &mut Visitor<'_>,
     ) -> Result<(), StoreError> {
         WriteTxn::scan(self, table, lo, hi, visit)
     }
