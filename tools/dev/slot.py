@@ -19,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 
 from . import host
 
@@ -436,16 +437,180 @@ def other_reservations(directory, own_slot):
     return reserved
 
 
+def write_container_record(path, record):
+    """Atomic replacement, always called with heavy-admission held."""
+    temporary = path.with_suffix('.tmp')
+    with temporary.open('w') as file:
+        json.dump(record, file)
+        file.flush()
+        os.fsync(file.fileno())
+    temporary.replace(path)
+
+
+def container_recovery_state(record):
+    """Reconcile runtime state under admission, with no other launch client."""
+    if record['phase'] == 'create-failed' and host.container_token_absent(record) is True:
+        return 'gone'
+    state = host.container_liveness(record)
+    if state == 'created':
+        # A token-labeled, never-started object settles even an interrupted
+        # create. Delete it before freeing the budget. Guard holders prevent
+        # this path from racing a client that could still issue start.
+        if not host.remove_created_container(record):
+            return 'unknown'
+        if record['phase'] == 'create-failed':
+            return 'gone' if host.container_token_absent(record) is True else 'unknown'
+        return 'gone'
+    if record['phase'] == 'creating' and state == 'gone':
+        return 'creation outcome unknown'
+    if record['phase'] == 'create-failed' and state == 'gone':
+        # Name absence alone cannot exclude a differently named token holder.
+        return 'unknown'
+    return state
+
+
+def container_reservations(directory, out=sys.stderr):
+    """Count host budgets, recovering only settled, confirmed-gone containers.
+
+    Caller holds heavy-admission. The per-record fence is inherited by runtime
+    create/start clients. A dead launcher alone proves nothing about a container
+    or a request still in flight. An interrupted create remains reserved even
+    if its name is absent: a daemon may still complete that request later.
+    """
+    reserved = 0
+    for path in directory.glob('container-memory-*.json'):
+        record = host.read_holder(path)
+        if (not isinstance(record, dict) or record.get('schema') != 1
+                or type(record.get('memory_mib')) is not int or record['memory_mib'] <= 0
+                or record.get('phase') not in ('creating', 'created', 'create-failed')
+                or record.get('kind') not in ('docker', 'podman', 'container')
+                or any(not isinstance(record.get(key), str) or not record[key]
+                       for key in ('runtime', 'name', 'token'))
+                or not Path(record['runtime']).is_absolute()):
+            print(f'container reservation invalid: {path}; available memory unknown', file=out, flush=True)
+            return None
+        guard = path.with_suffix('.guard')
+        with guard.open('a+') as file:
+            try:
+                lock_file(file, LOCK_EX | LOCK_NB)
+            except BlockingIOError:
+                state = 'launch/attached client active'
+            else:
+                state = container_recovery_state(record)
+                if state == 'gone':
+                    path.unlink()
+                    guard.unlink()
+                    print(f'recovered confirmed-gone container reservation: {record["name"]}',
+                          file=out, flush=True)
+                    continue
+            reserved += record['memory_mib']
+            if state not in ('live', 'launch/attached client active'):
+                print(f'container reservation retained: {record["name"]}; '
+                      f'liveness unknown ({state}); {record["memory_mib"]} MiB', file=out, flush=True)
+    return reserved
+
+
+def budget_resources(directory, own_slot=None, *, read=None, out=sys.stderr):
+    """One budget calculation for native heavy work and container transport."""
+    resources = (read or host.resource_snapshot)()
+    reserved = other_reservations(directory, own_slot)
+    resources['notes'] = [*resources['notes'], f'other slot reservations={reserved} MiB']
+    containers = container_reservations(directory, out=out)
+    resources['notes'].append(f'container reservations={containers if containers is not None else "unknown"} MiB')
+    if containers is None:
+        resources['available_mib'] = None
+    elif resources['available_mib'] is not None:
+        resources['available_mib'] = max(0, resources['available_mib'] - reserved - containers)
+    return resources
+
+
+class ContainerReservation:
+    """Native memory only: no heavy slot, PID ownership or inner lock state."""
+
+    def __init__(self, runtime, kind, name, memory_mib, out=sys.stderr, poll=0.5):
+        self.directory = host.host_lock_dir()
+        token = uuid.uuid4().hex
+        self.path = self.directory / f'container-memory-{token}.json'
+        self.guard = None
+        self.out, self.poll = out, poll
+        self.record = dict(schema=1, runtime=runtime, kind=kind, name=name, token=token,
+                           memory_mib=host.container_memory_mib(str(memory_mib)), phase='creating',
+                           since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+
+    def acquire(self):
+        started, announced = time.monotonic(), None
+        limit = host.resource_wait_limit(os.environ)
+        self.guard = self.path.with_suffix('.guard').open('a+')
+        lock_file(self.guard, LOCK_EX)
+        try:
+            while True:
+                check_cancelled()
+                with admission_lock(self.directory):
+                    resources = budget_resources(self.directory, out=self.out)
+                    available = resources['available_mib']
+                    estimate = self.record['memory_mib']
+                    if available is not None and available - host.HEADROOM_MIB >= estimate:
+                        write_container_record(self.path, self.record)
+                        print(f'container reservation: {self.path}; {estimate} MiB; '
+                              + '; '.join(resources['notes']), file=self.out, flush=True)
+                        return self
+                now = time.monotonic()
+                room = 'unknown' if available is None else max(0, available - host.HEADROOM_MIB)
+                if announced is None or now - announced >= 30:
+                    print(f'waiting for memory: estimate {estimate} MiB, {room} MiB available '
+                          'after headroom; no process started: container', file=self.out, flush=True)
+                    announced = now
+                if now - started >= limit:
+                    reason = ('available memory unknown' if available is None else
+                              f'{estimate} MiB needed, {room} MiB available')
+                    raise host.ResourceBlocked(f'resource-blocked: {reason}')
+                time.sleep(min(self.poll, max(0, limit - (now - started))))
+        except BaseException:
+            self.close()
+            raise
+
+    def pass_fds(self):
+        return (self.guard.fileno(),)
+
+    def created(self):
+        with admission_lock(self.directory):
+            self.record['phase'] = 'created'
+            write_container_record(self.path, self.record)
+
+    def create_failed(self):
+        # Persist that the client returned normally. A crash after this write
+        # can recover from a complete token listing, unlike an in-flight create.
+        with admission_lock(self.directory):
+            self.record['phase'] = 'create-failed'
+            write_container_record(self.path, self.record)
+        return self.release()
+
+    def release(self):
+        with admission_lock(self.directory):
+            if container_recovery_state(self.record) != 'gone':
+                print(f'container reservation retained: {self.record["name"]}; exit unconfirmed',
+                      file=self.out, flush=True)
+                return False
+            self.path.unlink(missing_ok=True)
+            self.path.with_suffix('.guard').unlink(missing_ok=True)
+            print(f'container reservation released after confirmed exit: {self.record["name"]}',
+                  file=self.out, flush=True)
+            return True
+
+    def close(self):
+        if self.guard is not None:
+            self.guard.close()
+            self.guard = None
+        if not self.path.exists():
+            self.path.with_suffix('.guard').unlink(missing_ok=True)
+
+
 def reserve_heavy_env(slot, env, *, runner=False, resource_snapshot=None, prepare_heavy_env=None):
     """Serialize the resource read, reservation check, and holder update."""
     read = resource_snapshot or host.resource_snapshot
     prepare = prepare_heavy_env or host.prepare_heavy_env
     with admission_lock(slot.lock_dir):
-        resources = read()
-        reserved = other_reservations(slot.lock_dir, slot.slot)
-        resources['notes'] = [*resources['notes'], f'other slot reservations={reserved} MiB']
-        if resources['available_mib'] is not None:
-            resources['available_mib'] = max(0, resources['available_mib'] - reserved)
+        resources = budget_resources(slot.lock_dir, slot.slot, read=read)
         child, chosen, estimate = prepare(env, resources, runner=runner)
         admitted = resources['available_mib'] is not None and resources['available_mib'] - host.HEADROOM_MIB >= estimate
         if admitted:

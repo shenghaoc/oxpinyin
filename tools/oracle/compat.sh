@@ -15,6 +15,8 @@ Options:
   --cell bdb|kc|tkrzw               Default: bdb; one backend on both sides
   --archive PATH                    Optional local model20 archive (checksum verified)
   --jobs N                          Build/runner concurrency (default 2)
+  --memory-mib N                    Hard limit and native reservation (default 4096 MiB)
+  --memory-smoke                    Short memory-limit smoke; requires an existing compat image
   --timeout N                       Existing registry runner timeout override
   --runner-timeout NAME=SECONDS     Existing per-runner override
   --list                            Existing registry listing; needs uv 0.13.1 and CPython 3.15.0+gil, no build
@@ -27,11 +29,12 @@ HELP
 }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 hash() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
-runtime=${OXPINYIN_CONTAINER:-} cell=bdb archive='' jobs=2
-selection=() selected=0
+runtime=${OXPINYIN_CONTAINER:-} cell=bdb archive='' jobs=2 memory=${OXPINYIN_CONTAINER_MEMORY_MIB-4096}
+selection=() selected=0 memory_smoke=0
 while (($#)); do
 	case $1 in
 	--help|-h) usage; exit 0 ;;
+	--memory-smoke) memory_smoke=1; shift ;;
 	--list)
 		for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
 			if [[ -n ${!name:-} ]]; then
@@ -45,13 +48,14 @@ while (($#)); do
 		}
 		exec uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/bisection/run-all.py --list ;;
 	--runners=*|--issue=*) set -- "${1%%=*}" "${1#*=}" "${@:2}"; continue ;;
-	--runtime|--cell|--archive|--jobs|--runners|--issue|--timeout|--runner-timeout)
+	--runtime|--cell|--archive|--jobs|--memory-mib|--runners|--issue|--timeout|--runner-timeout)
 		(($# >= 2)) || { usage >&2; exit 2; }
 		case $1 in
 		--runtime) runtime=$2 ;;
 		--cell) cell=$2 ;;
 		--archive) archive=$2 ;;
 		--jobs) jobs=$2 ;;
+		--memory-mib) memory=$2 ;;
 		--runners|--issue)
 			[[ -n ${2//[[:space:],]/} ]] || { printf 'Give a value for %s.\n' "$1" >&2; exit 2; }
 			selection+=("$1" "$2"); selected=1 ;;
@@ -63,8 +67,19 @@ while (($#)); do
 done
 case $cell in bdb|kc|tkrzw) ;; *) echo 'cell must be bdb, kc or tkrzw' >&2; exit 2 ;; esac
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || { echo '--jobs must be positive' >&2; exit 2; }
-((selected)) || { echo 'select --runners or --issue (use --list to discover gates)' >&2; exit 2; }
+[[ $memory =~ ^[1-9][0-9]*$ ]] || { echo '--memory-mib must be a positive integer in MiB' >&2; exit 2; }
+((selected || memory_smoke)) || { echo 'select --runners or --issue (use --list to discover gates)' >&2; exit 2; }
+((!memory_smoke || !selected)) || die '--memory-smoke cannot select runners or an issue'
 for command in git tar; do command -v "$command" >/dev/null || die "missing $command"; done
+for variable in UV_PYTHON PYTHONHOME PYTHONPATH; do
+	[[ -z ${!variable:-} ]] || die "$variable is not supported; unset it before running repository Python"
+done
+command -v uv >/dev/null || die 'missing uv 0.13.1 and managed CPython 3.15.0+gil'
+# All host admission and reservation decisions use the native Python core.
+reserved_run() {
+	exec uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+		-m tools.container.memory --runtime "$runtime" --name "$1" --memory-mib "$memory" "${@:2}"
+}
 # shellcheck source=../container/runtime.sh
 source "$repo/tools/container/runtime.sh"
 oxpinyin_select_runtime "$runtime"
@@ -76,19 +91,53 @@ if [[ $(basename "$runtime") == container ]]; then
 else
 	"$runtime" info >/dev/null || die "$runtime capability unavailable; check its installation/access (no daemon or host packages are installed by this launcher)"
 fi
+reference_tag=$(bash tools/oracle/image-tag.sh)
+reference=ghcr.io/shenghaoc/oxpinyin-oracle:$reference_tag
+deps=$reference-deps
+ca_identity=no-custom-ca
+if [[ -n ${OXPINYIN_PROXY_CA:-} ]]; then
+	[[ -s $OXPINYIN_PROXY_CA ]] || die "custom CA file missing: $OXPINYIN_PROXY_CA"
+	ca_identity=$(hash < "$OXPINYIN_PROXY_CA" | cut -d' ' -f1)
+fi
+key=$( { cat tools/oracle/Dockerfile.compat rust-toolchain.toml; printf '%s:%s' "$reference_tag" "$ca_identity"; } | hash | cut -c1-16)
+image=oxpinyin-compat:$key
+if ((memory_smoke)); then
+	# Exercise the real launcher/admission transport without provisioning or
+	# building the oracle. Keep output in the terminal, with no evidence files.
+	if [[ $(basename "$runtime") == container ]]; then
+		"$runtime" image list --quiet | grep -Fxq "$image" || die "memory smoke requires existing $image; no build attempted"
+	else
+		"$runtime" image inspect "$image" >/dev/null || die "memory smoke requires existing $image; no build attempted"
+	fi
+	launcher=''
+	trap 'if [[ -n $launcher ]]; then kill -TERM "$launcher" 2>/dev/null || true; wait "$launcher" || true; fi' EXIT
+	trap 'exit 130' INT TERM HUP
+	reserved_run "oxpinyin-memory-smoke-$$" --remove --smoke -- --platform linux/amd64 --cpus "$jobs" -- "$image" &
+	launcher=$!
+	status=0
+	wait "$launcher" || status=$?
+	launcher=''
+	exit "$status"
+fi
 mkdir -p target/compat/results
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
 results=$repo/target/compat/results/$run_id
 mkdir -p "$results"
 input=$(mktemp -d "${TMPDIR:-/tmp}/oxpinyin-compat.XXXXXX")
 name=oxpinyin-compat-$(date -u +%s)-$$
-created=0
+launcher=''
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup() {
-	if ((created)); then "$runtime" rm -f "$name" >/dev/null 2>&1 || true; fi
+	if [[ -n $launcher ]]; then
+		kill -TERM "$launcher" 2>/dev/null || true
+		wait "$launcher" || true
+	fi
+	# Never force-remove a potentially live container after a failed/uncertain stop.
+	"$runtime" rm "$name" >/dev/null 2>&1 || true
 	rm -rf "$input"
 }
 trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
 if [[ -n $archive ]]; then
 	[[ -f $archive ]] || die "local model archive missing: $archive"
 	cp "$archive" "$input/model.tar.gz"
@@ -109,16 +158,6 @@ printf 'Source archive SHA-256: %s\n' "$(hash < "$input/source.tar" | cut -d' ' 
 cp "$input/source.tar" "$results/source.tar"
 cp "$input/source.txt" "$results/source.txt"
 cp tools/oracle/compat-inside.sh "$input/inside.sh"
-reference_tag=$(bash tools/oracle/image-tag.sh)
-reference=ghcr.io/shenghaoc/oxpinyin-oracle:$reference_tag
-deps=$reference-deps
-ca_identity=no-custom-ca
-if [[ -n ${OXPINYIN_PROXY_CA:-} ]]; then
-	[[ -s $OXPINYIN_PROXY_CA ]] || die "custom CA file missing: $OXPINYIN_PROXY_CA"
-	ca_identity=$(hash < "$OXPINYIN_PROXY_CA" | cut -d' ' -f1)
-fi
-key=$( { cat tools/oracle/Dockerfile.compat rust-toolchain.toml; printf '%s:%s' "$reference_tag" "$ca_identity"; } | hash | cut -c1-16)
-image=oxpinyin-compat:$key
 volume=oxpinyin-compat-$(printf '%s' "$repo" | hash | cut -c1-16)
 platform=(--platform linux/amd64)
 relabel=
@@ -193,18 +232,24 @@ else
 	"$runtime" volume inspect "$volume" >/dev/null 2>&1 || "$runtime" volume create "$volume"
 fi
 printf 'Compatibility: Linux amd64; non-amd64 hosts require emulation. No native performance claims.\nVolume: %s\nResults: %s\n' "$volume" "$results"
-created=1
 set +e
-"$runtime" run --name "$name" "${platform[@]}" "${run_env[@]}" \
+reserved_run "$name" --console "$results/console.log" --exit-confirmed "$input/exit-confirmed" -- "${platform[@]}" "${run_env[@]}" \
 	-v "$volume:/state" -v "$input:/input:ro$relabel" \
-	-w / "$image" bash /input/inside.sh "$cell" "$key" "$run_id" "$reference_tag" \
-	"${selection[@]}" --jobs "$jobs" 2>&1 | tee "$results/console.log"
-status=${PIPESTATUS[0]}
+	-w / -- "$image" bash /input/inside.sh "$cell" "$key" "$run_id" "$reference_tag" \
+	"${selection[@]}" --jobs "$jobs" &
+launcher=$!
+wait "$launcher"
+status=$?
+launcher=''
 set -e
+# A payload failure can still have a confirmed exit. A disconnected/failed
+# launcher cannot authorize another start until the helper confirms exit.
+[[ -f $input/exit-confirmed ]] || die 'main container exit unconfirmed; no result reader started'
 if [[ $(basename "$runtime") == container ]]; then
 	# Apple copy requires a running container; read the persisted volume instead.
-	"$runtime" run --rm "${platform[@]}" --cpus "$jobs" -v "$volume:/state:ro" -w / "$image" \
+	(reserved_run "$name-results" --remove -- "${platform[@]}" --cpus "$jobs" -v "$volume:/state:ro" -w / -- "$image" \
 		tar -C "/state/results/$run_id" -cf - . | tar -C "$results" -xf -
+	)
 else
 	"$runtime" cp "$name:/state/results/$run_id/." "$results/"
 fi || echo "Additional result files unavailable; console retained at $results/console.log" >&2
