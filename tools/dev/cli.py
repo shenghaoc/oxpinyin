@@ -1,12 +1,16 @@
 """One CLI for the native tooling services. Standard library only."""
 import argparse
+import json
 import sys
 
 from . import check, doctor, host, registry, slot, test_runner
 
 
-def _names(value):
-    return [name.strip() for name in (value or '').split(',') if name.strip()]
+def _selected(args, *, required=False):
+    return registry.select(registry.load(),
+                           names=None if args.runners is None else registry.names(args.runners),
+                           cells=None if args.cells is None else registry.names(args.cells),
+                           issues=args.issue, kind=args.kind, require_selection=required)
 
 
 def doctor_command(args):
@@ -32,22 +36,32 @@ def test_doc_command(args):
 
 
 def list_command(args):
-    rows = registry.load()
+    rows = _selected(args)
     if args.heavy:
         rows = [row for row in rows if registry.is_heavy(row)]
     for row in rows:
         print(f'{row["name"]}\t{row.get("kind", "")}\t{",".join(row["cells"])}\t'
-              f'{"heavy" if registry.is_heavy(row) else "light"}')
+              f'{"heavy" if registry.is_heavy(row) else "light"}\t'
+              f'{row.get("reason", "registered")}')
+    if not rows:
+        raise registry.RegistryError('selection matched no registry rows')
     return 0
 
 
 def plan_command(args):
-    rows = registry.load()
-    chosen = registry.select(rows, _names(args.runners) or None, _names(args.cells) or None)
+    chosen = _selected(args, required=True)
+    cells = None if args.cells is None else registry.names(args.cells)
+    print('Registry description only; executes nothing. Cells and commands are compatibility metadata.')
     for row in chosen:
         inputs = '; '.join(row.get('required_inputs', []))
+        selected_cells = [cell for cell in row['cells'] if cells is None or cell in cells]
         print(f'{row["name"]}: {"heavy" if registry.is_heavy(row) else "light"}; cells: '
-              f'{",".join(row["cells"])}; inputs: {inputs or "none"}')
+              f'{",".join(selected_cells)}; '
+              f'kind: {row.get("kind", "")}; inputs: {inputs or "none"}')
+        print('  command template: ' + json.dumps(row['command']))
+        print('  environment template: ' + json.dumps(row.get('env', {}), sort_keys=True))
+        if row.get('reason'):
+            print('  state: ' + row['reason'])
     return 0
 
 
@@ -96,11 +110,11 @@ def build_parser():
 
     p = sub.add_parser('list', help='list the registry, read-only')
     p.add_argument('--heavy', action='store_true', help='only rows marked heavy')
+    _selection_arguments(p)
     p.set_defaults(func=list_command)
 
     p = sub.add_parser('plan', help='show the selected registry rows, read-only')
-    p.add_argument('--runners', help='comma-separated runner names')
-    p.add_argument('--cells', help='comma-separated cells')
+    _selection_arguments(p)
     p.set_defaults(func=plan_command)
 
     p = sub.add_parser('slot', help='inspect or run under the host-wide heavy slot')
@@ -112,6 +126,13 @@ def build_parser():
     return parser
 
 
+def _selection_arguments(parser):
+    parser.add_argument('--runners', help='comma-separated registry runner names')
+    parser.add_argument('--cells', help='comma-separated registry cells (metadata only)')
+    parser.add_argument('--issue', action='append', help='registry issue tag; repeat for alternatives')
+    parser.add_argument('--kind', help='registry kind, such as gate or not-a-gate')
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ['test'] and argv[1:2] not in (['-h'], ['--help']):
@@ -119,4 +140,8 @@ def main(argv=None):
     if argv[:1] == ['test-doc'] and argv[1:2] not in (['-h'], ['--help']):
         return test_runner.run_doc(argv[1:])
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except registry.RegistryError as exc:
+        print(f'{args.command}: {exc}', file=sys.stderr)
+        return 2

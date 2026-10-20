@@ -93,6 +93,30 @@ host route: `brew install just` on macOS, the distribution package on Linux,
 or `cargo install just --version 1.59.0 --locked`. The root `justfile`
 enforces the minimum version.
 
+`just build` and `just clippy` pass Cargo arguments unchanged through
+`just heavy`, including the host-wide slot and memory admission. `just fmt`
+calls Cargo directly without taking the slot. Select the same native packages
+and backend as the Cargo command you would otherwise run:
+
+```bash
+just build --locked -p oxpinyin-core
+just clippy --locked -p oxpinyin-core --all-targets -- -D warnings
+just fmt --all --check
+```
+
+`just list` reads `tools/bisection/runners.json`. Use `--issue 541`,
+`--kind gate` or `--heavy` to filter its static rows. `just plan` requires
+an explicit selection, for example `just plan --runners bisect --cells bdb`.
+Both commands also accept `--runners`, `--cells`, repeated `--issue` and
+`--kind`; different filters intersect. Empty values, unknown selections and
+filters matching no rows fail. Plans print command and environment templates
+as registry metadata. They do not resolve oracle inputs, build artifacts,
+take a heavy slot or run commands. Cell names describe compatibility metadata;
+they do not make the native interface execute a container or oracle check.
+
+The Windows recipes use PowerShell and preserve the child status explicitly.
+Their argument transport and slot behavior remain TODO (no Windows host).
+
 The native Rust test entry point uses cargo-nextest 0.9.115 or later. Install
 it with `cargo install cargo-nextest --locked` (or the prebuilt release) and
 check `cargo-nextest --version`. [Profile inheritance](https://nexte.st/docs/configuration/#profile-inheritance)
