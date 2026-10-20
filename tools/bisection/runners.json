@@ -64,7 +64,8 @@
     ],
     "command": [
       "bash",
-      "{root}/tools/bisection/run-addon-candidate-diff.sh"
+      "{root}/tools/bisection/run-w11-diff.sh",
+      "addon-candidate-diff"
     ],
     "env": {},
     "input_paths": [
@@ -905,7 +906,8 @@
     ],
     "command": [
       "bash",
-      "{root}/tools/bisection/run-predict-diff.sh"
+      "{root}/tools/bisection/run-w11-diff.sh",
+      "predict-diff"
     ],
     "env": {},
     "input_paths": [
@@ -937,8 +939,8 @@
       "bisection-source-output"
     ],
     "command": [
-      "bash",
-      "{root}/tools/bisection/run-punct-diff.sh"
+      "{root}/tools/bisection/run-w11-diff.sh",
+      "punct-diff"
     ],
     "env": {},
     "input_paths": [
@@ -1471,7 +1473,8 @@
     ],
     "command": [
       "bash",
-      "{root}/tools/bisection/run-user-candidate-diff.sh"
+      "{root}/tools/bisection/run-w11-diff.sh",
+      "user-candidate-diff"
     ],
     "env": {},
     "input_paths": [

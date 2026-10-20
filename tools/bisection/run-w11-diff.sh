@@ -3,6 +3,7 @@
 #
 # Usage: run-w11-diff.sh <driver-stem> [prebuilt-library] [driver-arg ...]
 #   driver-stem is user-candidate-diff | addon-candidate-diff | predict-diff
+#                  | punct-diff
 # Env: PINYIN_ORACLE_PREFIX (default $HOME/.local/opt/pinyin-oracle)
 #      CAPI_W11_SYSTEM_DIR, or OXPINYIN_SYSTEM_DIR -- the oxpinyin system
 #      data dir. Required once an oracle is present; see system-dir.sh.
@@ -16,6 +17,9 @@ REPO_ROOT="$(cd ../.. && pwd)"
 STEM="${1:?driver stem}"
 OXPINYIN_CAPI_SO=${2:-${OXPINYIN_CAPI_SO:-}}
 DRIVER_ARGS=("${@:3}")
+if [[ $STEM == punct-diff ]]; then
+    DRIVER_ARGS=(punctuation-only)
+fi
 # shellcheck source=oracle-cell.sh
 source ./oracle-cell.sh
 case $STEM in

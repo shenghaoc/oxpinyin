@@ -4,7 +4,8 @@
  * Train a user phrase, then guess predicted candidates for a prefix and
  * print type|text. Punctuation (type 8) is omitted: the capi side uses
  * mini tables, so a system suffix such as 测 can emit puncts on the
- * oracle only. Phrase bigrams stay comparable. See run-punct-diff.sh.
+ * oracle only. Phrase bigrams stay comparable. The punct-diff registry row
+ * runs run-w11-diff.sh in punctuation-only mode for this surface.
  * A second plain call adds two imported suffixes to the trained prefix,
  * ensuring that list-order changes have more than one row to affect.
  *
