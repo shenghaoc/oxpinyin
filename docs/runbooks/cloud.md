@@ -37,9 +37,34 @@ stdout is one line per cell:
 bdb prefix=<dir> libpinyin=<sha256> libzhuyin=<sha256> data manifest OK
 ```
 
+### Python-only tools.dev sessions
+
+For a Linux x86_64 session that only needs `tools.dev`, provision Python
+without the oracle setup:
+
+```sh
+tools/cloud/setup.sh --python-only
+export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev doctor
+```
+
+This mode runs the existing argument and Linux x86_64 checks, then the
+same uv 0.13.1 and managed CPython 3.15.0 GIL provisioning and interpreter
+verification as full setup. It prints the verified-interpreter line, logs
+that it stops after Python provisioning and exits successfully. It does
+not select, start or pull a container runtime, install Valgrind or backend
+utilities, provision oracle libraries or model data, or write the oracle
+environment file. See [native setup](setup.md) for the interpreter policy.
+
+`--python-only` cannot be combined with `--cells`, `--cache-dir`, `--jobs`,
+`--no-pull` or `--in-container`; these combinations fail with exit 2 before
+provisioning. For concurrent worktrees, `UV_INSTALL_DIR`,
+`UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR` can select task-owned uv,
+interpreter and download-cache locations.
+
 ### The environment file
 
-On success the setup writes `~/.oxpinyin-oracle.env` (`OXPINYIN_ORACLE_ENV`
+On success full setup writes `~/.oxpinyin-oracle.env` (`OXPINYIN_ORACLE_ENV`
 overrides the path), rewritten on every run. A lane sources it before a
 runner:
 
