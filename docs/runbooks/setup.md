@@ -180,7 +180,7 @@ Use Terminal with Bash (`bash`), Git, Apple's
 Tools are absent, run `xcode-select --install` and complete the system dialog.
 
 ```bash
-brew install tkrzw glib pkgconf
+brew install berkeley-db@5 glib pkgconf
 mkdir -p ~/src
 cd ~/src
 git clone https://github.com/shenghaoc/oxpinyin.git
@@ -196,22 +196,24 @@ and run:
 . "$HOME/.cargo/env"
 rustup show
 cargo test --locked -p oxpinyin-chewing -p oxpinyin-core -p oxpinyin-engine
-export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
-export CARGO_TARGET_DIR=target/tkrzw
-just check tkrzw
+export OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include"
+export OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib"
+export CARGO_TARGET_DIR=target/bdb
+just check bdb
 ```
 
-`export` sets a setting inherited by commands in this terminal. The library
-path lets the native linker find tkrzw's lz4/lzma/zstd dependencies; a mere
-`cargo check` can miss this failure. This is a real storage link/run check.
+`export` sets a setting inherited by commands in this terminal. Both Berkeley
+DB paths are needed because Homebrew's `berkeley-db@5` is keg-only. macOS uses
+the same Berkeley DB 5.3 reference backend as Linux. This is a real storage
+link/run check; a mere `cargo check` does not execute the tests.
 In a fresh Bash terminal, return to the checkout, source Cargo's environment,
-repeat both exports and the check. Linux C-ABI packaging and Linux reference
+repeat all three exports and the check. Linux C-ABI packaging and Linux reference
 differentials are separate evidence, not permanent restrictions on portability.
 
 The existing macOS CI uses this broader portable scope:
 
 ```bash
-cargo test --locked --workspace --no-default-features --features tkrzw \
+cargo test --locked --workspace --no-default-features --features bdb \
   --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi \
   --exclude oxpinyin-corpus --exclude oxpinyin-kmm \
   --exclude oxpinyin-punct --exclude oxpinyin-word
@@ -220,6 +222,13 @@ cargo test --locked --workspace --no-default-features --features tkrzw \
 The [validation status](#validated-on--not-validated) distinguishes native macOS CI
 from hands-on setup evidence. The current CI exclusions describe maintained
 build integration, not permanent limitations of the portable Rust code.
+
+tkrzw remains optional and stays covered on Linux CI. To use it locally,
+install `brew install tkrzw`, set
+`export LIBRARY_PATH="$(brew --prefix)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"`
+so its lz4/lzma/zstd dependencies link, and select
+`export CARGO_TARGET_DIR=target/tkrzw` followed by `just check tkrzw`.
+Keep each backend's target and user-data directories separate.
 
 ## Native Windows
 
@@ -262,7 +271,7 @@ available now; storage-dependent work uses the Windows CI evidence and needs
 a validated 5.3 installation before claiming a supported native local run.
 
 The existing CI exclusion set is the same six packages shown in the macOS
-command, with default BDB instead of `--features tkrzw`. The oracle's Linux
+command, with default BDB instead of explicit backend selection. The oracle's Linux
 FFI feature is not selected. Native Windows C-ABI/oracle behavior is not
 established by those tests. Physical Windows hardware is not needed to use
 this CI coverage.
@@ -297,12 +306,12 @@ cargo test --locked -p oxpinyin-core
 For a storage-dependent macOS package, use the explicit backend arguments:
 
 ```bash
-cargo clippy --locked -p oxpinyin-store --all-targets --no-default-features --features tkrzw -- -D warnings
-cargo test --locked -p oxpinyin-store --no-default-features --features tkrzw
+cargo clippy --locked -p oxpinyin-store --all-targets --no-default-features --features bdb -- -D warnings
+cargo test --locked -p oxpinyin-store --no-default-features --features bdb
 ```
 
 `--no-default-features` turns off the default Berkeley DB selection;
-`--features tkrzw` selects its peer instead (exactly one is allowed).
+`--features bdb` selects Berkeley DB explicitly (exactly one backend is allowed).
 Clippy's `--` separates Cargo options from the lint options that follow.
 Use your preferred native editor/debugger with this same toolchain and
 terminal environment; no particular IDE or container is required. CI owns
@@ -338,8 +347,10 @@ to their existing task runbooks.
   `pkg-config --modversion glib-2.0` checks GLib discovery; the setup check
   prints the compiler's Berkeley DB header version and bindgen's missing
   libclang diagnostic, so retain those lines too.
-- macOS linker cannot find lz4/lzma/zstd: repeat `LIBRARY_PATH` before running
-  tests. Do not treat a successful Clippy/check as a link test.
+- macOS cannot find Berkeley DB headers/libraries: repeat both
+  `OXPINYIN_BDB_INCLUDE_DIR` and `OXPINYIN_BDB_LIB_DIR` exports above. For optional
+  tkrzw, repeat `LIBRARY_PATH` if lz4/lzma/zstd cannot link. Do not treat a
+  successful Clippy/check as a link test.
 - Missing oracle/model inputs do not block ordinary native tests. They must
   be supplied for the selected compatibility checks, where a skipped/missing
   prerequisite is a failed verification, not a pass.
@@ -348,8 +359,12 @@ to their existing task runbooks.
 
 - Native Linux x86_64: Rust-only first check (410 passed), BDB link/run
   (172 passed, four ignored), and fresh-terminal resume passed.
-- Native macOS/Windows: maintained CI scopes passed at `56618e7f`.
-  No hands-on Mac setup or local Windows storage installation was executed.
+- Native macOS arm64: the full portable CI command above passed locally with
+  Homebrew Berkeley DB 5.3.28 (1,218 passed, zero failed, 22 ignored; doctests:
+  four passed, zero failed, two ignored). This exercised the full six-exclude
+  workspace scope; the narrower `just check bdb` was not run separately.
+- Native Windows: the maintained CI scope passed at `56618e7f`.
+  No local Windows storage installation was executed.
   Supported local BDB5.3/MSVC provisioning remains a gap; CI's BDB4.8
   exception is not a contributor default.
 - Canonical pinned Debian/Linux amd64: BDB `same-data-dir-diff` and cache/
