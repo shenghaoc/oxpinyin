@@ -26,7 +26,7 @@ pub extern "C" fn zhuyin_guess_sentence(instance: *mut ZhuyinInstance) -> bool {
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
-    if refuse_zero_consumption(inst) {
+    if refuse_empty_matrix(inst) {
         return false;
     }
     match inst.core.session.guess_sentence() {
@@ -57,16 +57,41 @@ pub(crate) fn refuse_lookup_gram(name: &str, error: &oxpinyin_engine::EngineErro
     true
 }
 
-// fill_matrix leaves an empty matrix after any zero-consumption parse.
+// fill_matrix leaves an empty matrix whenever the parser places no keys,
+// even when separators consume bytes (074a2219, phonetic_key_matrix.cpp:34-38).
 // Validate against it, but keep the previous sentence rows: get_nbest_match
 // returns false before results->clear (074a2219, phonetic_lookup.h:743-748;
 // zhuyin.cpp:902-907). The same rule applies to the prefix-seeded lookup.
-fn refuse_zero_consumption(inst: &mut crate::state::CapiInstance) -> bool {
-    if inst.core.parsed_len != 0 {
+fn refuse_empty_matrix(inst: &mut crate::state::CapiInstance) -> bool {
+    if matrix_has_keys(inst) {
         return false;
     }
     inst.core.session.discard_composition();
     true
+}
+
+fn matrix_has_keys(inst: &crate::state::CapiInstance) -> bool {
+    if inst.core.parsed_len == 0 {
+        return false;
+    }
+    if let Some(parse) = &inst.core.zhuyin_parse {
+        return !parse.keys().is_empty();
+    }
+    if let Some(parse) = &inst.core.double_parse {
+        return !parse.keys().is_empty();
+    }
+    if let Some(parse) = &inst.core.full_parse {
+        return !parse.keys().is_empty();
+    }
+    // Hanyu's only consumed bytes without keys are apostrophes
+    // (074a2219, storage/pinyin_parser2.cpp:238-250,360-378).
+    // Inspect the consumed prefix without rebuilding the parse matrix.
+    inst.core
+        .session
+        .raw_input()
+        .bytes()
+        .take(inst.core.parsed_len)
+        .any(|byte| byte != b'\'')
 }
 
 /// Guess a sentence seeded with prefix tokens.
@@ -91,7 +116,7 @@ pub extern "C" fn zhuyin_guess_sentence_with_prefix(
     let Some(prefix) = cstr_to_strict(prefix) else {
         return false;
     };
-    if refuse_zero_consumption(inst) {
+    if refuse_empty_matrix(inst) {
         return false;
     }
     let prefixes =
@@ -326,6 +351,13 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     // SAFETY: `instance` is non-null and was produced by
     // `zhuyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // Both candidate exports free their rows before the empty-matrix
+    // refusal, leaving sentence results intact (074a2219,
+    // zhuyin.cpp:1468-1471,1548-1551).
+    if !matrix_has_keys(inst) {
+        inst.candidates.clear();
+        return false;
+    }
     if inst.core.session.set_options(inst.core.options()).is_err() {
         return false;
     }
@@ -452,11 +484,7 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
         return false;
     }
     // The pin answers `true` for a valid lookup into a non-empty matrix
-    // even when no candidate spans the offset (the empty-col-window
-    // shape, `zhuyin.cpp:1474,1549`); only an empty matrix (nothing
-    // parsed) answers `false` (`0 == matrix.size()`, `:1475`).
-    if inst.candidates.is_empty() && inst.core.parsed_len == 0 {
-        return false;
-    }
+    // even when no candidate spans the offset (074a2219,
+    // zhuyin.cpp:1460-1551). The empty matrix was refused above.
     true
 }
