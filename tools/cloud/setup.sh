@@ -38,7 +38,10 @@ set -euo pipefail
 # recipe is not reproducible on this host, which is the result to report.
 #
 # Usage: setup.sh [--cache-dir DIR] [--cells "bdb kc tkrzw"] [--jobs N] [--no-pull]
+#        setup.sh --python-only
 #
+#   --python-only    provision uv and managed Python, then stop; cannot combine
+#                    with --cells, --cache-dir, --jobs, --no-pull or --in-container
 #   --cache-dir DIR  oracle prefixes and the model20 cache live here
 #                    (default ${XDG_CACHE_HOME:-$HOME/.cache}/oxpinyin, or
 #                    $OXPINYIN_CLOUD_CACHE)
@@ -56,6 +59,8 @@ cells=(bdb kc tkrzw)
 jobs=$(nproc 2>/dev/null || echo 2)
 pull=1
 inside=0
+python_only=0
+oracle_options=0
 proxy_ca=${OXPINYIN_PROXY_CA:-/root/.ccr/ca-bundle.crt}
 proxy_ca_single=/root/.ccr/agent-proxy-ca.crt
 # Upstream tkrzw 1.0.34 (9ee8416): its sentinel fix makes defect 1 immune to
@@ -65,23 +70,32 @@ tkrzw_rev=9ee84164cf45e441aa8186418c03a02c9b89f08b
 
 while (($#)); do
 	case $1 in
+	--python-only)
+		python_only=1
+		shift
+		;;
 	--cache-dir)
+		oracle_options=1
 		cache=$2
 		shift 2
 		;;
 	--cells)
+		oracle_options=1
 		read -r -a cells <<<"$2"
 		shift 2
 		;;
 	--jobs)
+		oracle_options=1
 		jobs=$2
 		shift 2
 		;;
 	--in-container)
+		oracle_options=1
 		inside=1
 		shift
 		;;
 	--no-pull)
+		oracle_options=1
 		pull=0
 		shift
 		;;
@@ -95,6 +109,11 @@ while (($#)); do
 		;;
 	esac
 done
+
+if ((python_only && oracle_options)); then
+	printf '%s\n' '--python-only cannot be combined with --cells, --cache-dir, --jobs, --no-pull or --in-container' >&2
+	exit 2
+fi
 
 [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
 	printf 'Oracle provisioning requires Linux x86_64; run subject, reference and harness together in a Linux amd64 environment. See docs/runbooks/setup.md.\n' >&2
@@ -177,6 +196,11 @@ managed = subprocess.check_output(
 assert Path(sys.executable).resolve() == Path(managed).resolve()
 print("Verified managed CPython 3.15.0 GIL build:", Path(managed).resolve())
 PYTHON
+
+if ((python_only)); then
+	log 'stopping after Python provisioning (--python-only)'
+	exit 0
+fi
 
 # retry CMD...: registries answer 429 to anonymous pulls from a shared
 # egress address; back off 2, 4, 8, 16 s before giving up.
