@@ -353,25 +353,24 @@ jobs:
         with:
           rust-cache: 'true'
       - run: rustup show active-toolchain
-      # Homebrew tkrzw, exactly as README.md documents it (`brew install
-      # tkrzw glib pkgconf`, then LIBRARY_PATH so the test link finds
-      # lz4/lzma/zstd). Pinned with `--features tkrzw` rather than riding
-      # the workspace default, which is Berkeley DB: this lane is the CI
-      # for the path macOS users are told to follow, and the default
-      # build is covered on Linux. `--no-default-features` also keeps
+      # The macOS reference backend uses the same libdb release as Linux;
+      # tkrzw stays covered on Linux. Homebrew's keg-only berkeley-db@5
+      # needs explicit include and library paths, as documented in README.md.
+      # `--no-default-features` also keeps
       # pinyin-oracle's Linux-only `oracle-ffi` off.
-      - name: Install the store backend (Homebrew tkrzw)
+      - name: Install the store backend (Homebrew Berkeley DB 5.3)
         run: |
-          brew install tkrzw glib pkgconf
-          echo "LIBRARY_PATH=$(brew --prefix)/lib" >> "$GITHUB_ENV"
+          brew install berkeley-db@5 glib pkgconf
+          echo "OXPINYIN_BDB_INCLUDE_DIR=$(brew --prefix berkeley-db@5)/include" >> "$GITHUB_ENV"
+          echo "OXPINYIN_BDB_LIB_DIR=$(brew --prefix berkeley-db@5)/lib" >> "$GITHUB_ENV"
           # `brew list --versions` prints "<name> <cellar-version>..."
           # (space-separated; a second installed version is another field
-          # on the same line). Pin the 1.x line the core formula is on
-          # (1.0.32); a major bump fails here instead of silently.
-          brew list --versions tkrzw | grep -Eq '^tkrzw 1[.]' \
-            || { echo "::error::Homebrew tkrzw is not the documented 1.x line: $(brew list --versions tkrzw)"; exit 1; }
+          # on the same line). Pin the surveyed 5.3.x line; a version
+          # bump fails here instead of silently.
+          brew list --versions berkeley-db@5 | grep -Eq '^berkeley-db@5 5[.]3[.]' \
+            || { echo "::error::Homebrew berkeley-db@5 is not the documented 5.3.x line: $(brew list --versions berkeley-db@5)"; exit 1; }
       - run: >
-          cargo test --locked --workspace --no-default-features --features tkrzw
+          cargo test --locked --workspace --no-default-features --features bdb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word

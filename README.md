@@ -37,6 +37,12 @@ or container. For compatibility gates, use a supported [cloud session](docs/runb
 or the [canonical pinned Debian container](docs/runbooks/compatibility-container.md),
 which runs the subject, reference and harness together.
 
+On macOS, install `brew install berkeley-db@5 glib pkgconf` and set
+`OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix berkeley-db@5)/include"` and
+`OXPINYIN_BDB_LIB_DIR="$(brew --prefix berkeley-db@5)/lib"` with `export`.
+The [macOS setup guide](docs/runbooks/setup.md#macos) uses Berkeley DB 5.3,
+the reference backend shared with Linux; tkrzw is an optional backend.
+
 ## Layout
 
 | Path | What |
