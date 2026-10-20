@@ -1,9 +1,10 @@
 # Tooling layer 5: migration and recovered measurement
 
-> Status: proposed plan. Docs only. This is PR #895, the top layer.
-> Date: 2026-10-19 UTC (`date -u`). Original amendment: 2026-10-18 UTC.
+> Status: partial implementation; remaining migration proposed. Docs only.
+> Reconciled: 2026-10-20 UTC (`date -u`). Original split: PR #895,
+> 2026-10-19 UTC. Original amendment: 2026-10-18 UTC.
 > Preserve the original Phase 1 records and the later d8539e96 corrections.
-> This split changes no code, tool config, workflow or production AGENTS.md rule.
+> This reconciliation changes no code, tool config, workflow or AGENTS.md rule.
 
 ## 0. Purpose and layer ownership
 
@@ -19,6 +20,16 @@ not create a second implementation or acceptance contract.
 | 3, native | [tooling-nextest](../plans/tooling-nextest.md) | Native Rust test orchestration, profiles, groups and parity. |
 | 4, container | [tooling-container](../plans/tooling-container.md) | Pinned Linux execution, launch, separate state and pin-test profile. |
 | 5, native/container migration | This document | Script handoffs, recovered semantics, measurement and historical records. |
+
+The #938 → #939 → #941 → #942 → #943 stack is merged on main at `b034e834`.
+Layer 1's interpreter and core services, Layer 2's six current recipes and
+Layer 3's native nextest configuration are implemented in #939/#941/#942/#943.
+The full environment provisioner, remaining recipe surface, CI cutover and
+Python container service remain proposed. See each layer's capability status
+and §10's delivery status. Implementation does not establish host acceptance.
+Layers 1–3 record the Windows deferral and the bounded macOS checks on
+`b034e834` from 2026-10-20 UTC. Their remaining macOS scopes stay unverified.
+Historical findings and validation records retain their original provenance.
 
 The 2026-10-19 separation ruling supersedes mixed native/pin execution.
 It also supersedes cross-OS or native/container shared-lock acceptance.
@@ -70,16 +81,16 @@ Product crates remain separate from orchestration.
 
 This layer owns these module handoffs:
 
-| Module | Migration responsibility | Source |
-| --- | --- | --- |
-| `registry` | Read one `runners.json`; validate/select issue, row, runner, cell and kind. | `run-all.py`, Appendix A |
-| `subject` | Load through ctypes; use facade-specific symbols, lifetimes and process isolation. | §6 and contract-diff's Kit |
-| `observation` | Keep one tree and both existing wire formats byte for byte. | Capture and contract rows |
-| `compare` | Move plain/abort/crash/either/control rules once. | `contract-diff.py` matches() |
-| `runner` | Keep selection, builds, resource locks, timeouts, process cleanup and result protocol. | §5.2, Appendix A BIS-P-02 |
-| `report` | Keep tables, JSONL, uncertainty, ratios and provenance. | Existing parsers and §7 |
-| `measure` | Order recipes and interleave subjects within the selected environment. | Perf recipes and §7 |
-| `cases/` | Keep capture, replay, contract, option and startup grammars. | Existing case families |
+| Module | Migration responsibility | Source | Status |
+| --- | --- | --- | --- |
+| `registry` | Read one `runners.json`; validate/select issue, row, runner, cell and kind. | `run-all.py`, Appendix A | Partial, #941: read/validate and runner/cell selection. Issue/kind and implementation metadata are proposed. |
+| `subject` | Load through ctypes; use facade-specific symbols, lifetimes and process isolation. | §6 and contract-diff's Kit | Proposed recovery. |
+| `observation` | Keep one tree and both existing wire formats byte for byte. | Capture and contract rows | Proposed handoff. |
+| `compare` | Move plain/abort/crash/either/control rules once. | `contract-diff.py` matches() | Proposed handoff. |
+| `runner` | Keep selection, builds, resource locks, timeouts, process cleanup and result protocol. | §5.2, Appendix A BIS-P-02 | Partial, #941: shared slot adapter only; runner handoff is proposed. |
+| `report` | Keep tables, JSONL, uncertainty, ratios and provenance. | Existing parsers and §7 | Proposed handoff. |
+| `measure` | Order recipes and interleave subjects within the selected environment. | Perf recipes and §7 | Proposed recovery. |
+| `cases/` | Keep capture, replay, contract, option and startup grammars. | Existing case families | Proposed handoff. |
 
 Layer 1 owns `cli`, `host` and `slot`. Layer 4 owns `cell`, `pin`, `systemdir`
 and `artifacts`. Final names stay an implementation-stage decision.
@@ -143,7 +154,7 @@ inputs rather than a live-run comparison.
 Require identical values for every other field: `runner`, `cell`, `status`,
 `reason`, `pin_ref`, the `phases` structure, the selection and the verdicts.
 
-Tooling stage T2N extracts the slot and admission core from `run-all.py` into
+PR #941 extracted T2N's slot and admission core from `run-all.py` into
 Layer 1's `tools.dev.slot`, the one implementation. `run-all.py` imports it
 through an adapter and keeps its CLI, its rows, its environment variables and
 its cancellation semantics unchanged. Keep independent state in each
@@ -194,8 +205,21 @@ Keep the three classes distinct:
 
 A native executable means compiled code; it does not imply host-native pin work.
 Layer 4 places every pin workload. Subject-only probes retain their native
-scope from that layer's gate-placement table. Keep wrappers after family
-acceptance. Tooling stage T14 owns retirement, with a separate ruling.
+scope from that layer's gate-placement table.
+
+A superseded script may be retired in the same implementation PR that proves
+its replacement, if that PR:
+
+- (a) delivers the functional replacement;
+- (b) gives old/new acceptance for the affected behaviour;
+- (c) moves the registry and every live consumer;
+- (d) loses no required test or error handling; and
+- (e) lists the retired files by name for the maintainer's approval of that PR.
+
+T14 keeps the final repository-wide reconciliation. Frozen evidence and
+historical documents stay protected. This docs-only PR retires no files.
+Keep each wrapper until these conditions are met. A historical reference
+is not a live consumer.
 Keep #767 workloads and every existing golden. Rewrite an instrument only
 after a separate decision and same-run evidence.
 
@@ -592,16 +616,41 @@ or rewrite the historical inventory.
 | Cell/SystemDir/PinProfile/Artifacts extraction | Layer 4's modules; pinyin-oracle retains its files. |
 | Rust-test differential driver | Layer 4's container test path. |
 | Frozen data, instrument or probe | Retain; use §5.4 and Layer 4's placement. |
-| Retire after proof | tooling stage T14, after consumer reconciliation and a ruling. |
+| Retire after proof | Replacement PR under §5.4; T14 keeps final repository-wide reconciliation. |
 
 Keep the three #890 handoffs. Layer 2 owns check.sh's native interface.
 Layer 4 owns compat.sh/compat-inside.sh launch acceptance. Tooling stages T2 and T6
 schedule those handoffs. Preserve both compatibility scripts until launch
-acceptance passes. Their deletion still needs a separate ruling.
+acceptance passes. Their retirement follows §5.4 in the replacement PR.
 Absence from CI is not non-use. Check and name documented/manual consumers
 before classifying a tool for retirement.
 The Phase 1 summary table and recovered records remain history at their
 recorded revisions. Use the five layer documents for the current proposal.
+
+### 8.1 Current shell inventory
+
+Count rule at main `b034e834`: count tracked paths below `tools/` whose names
+end in `.sh`, including sourced libraries and shell test harnesses. Use
+`git ls-files 'tools/*.sh' 'tools/**/*.sh'` and count each path once.
+There are 90 files, including 52 below `tools/bisection/`. A separate shebang
+scan found no shell files without that suffix. This is a current file count,
+not a replacement for the historical 290-record inventory.
+
+The groups below partition those 90 files by primary responsibility.
+Counts in parentheses are total / bisection. Paths are relative to `tools/`.
+Consumers are current commands, source calls or active instructions; workflow
+path filters and historical mentions do not establish live use. A group can
+have manual-only members. No caller found is not proof for retirement.
+
+| Responsibility (count) | Shell files | Live consumers | Planned owner |
+| --- | --- | --- | --- |
+| Dispatch wrappers (38 / 38) | `bisection/run-*.sh` except the ABI, instrumentation and packaging files below. | `bisection/runners.json` commands; `run-all.sh` → `run-all.py`; `oracle/compat-inside.sh`; `ci.yml` live-typing step; oracle and compatibility runbooks. | Layer 5 runner/cases; Layer 4 container dispatch. Subject-only uses retain native scope. |
+| Toolchain/artifact preparation (3 / 3) | `bisection/cell-artifacts.sh`, `oracle-cell.sh`, `system-dir.sh`. | `run-all.py` calls cell-artifacts; runner shells source oracle-cell/system-dir; `cell-identity.test.py` checks artifact preparation. | Layer 4 cell/artifacts/systemdir. |
+| Fixture/environment (11 / 0) | `bdb/run-sanitizers.sh`, `kc/run-sanitizers.sh`, `capture/run-capture.sh`, `cloud/setup.sh`, `dev/check.sh`, `env-probe/*.sh`, `model/fetch-model.sh`, `store/backend-matrix.sh`, `tkrzw/*.sh`. | `store-backends.yml` backend-matrix/BDB sanitizer steps; cloud setup calls distro-probe and fetch-model; compat-inside calls cloud setup; `dev/check.test.py` runs check.sh; setup/cloud/backends and capture-fixtures instructions. Env probes and libpinyin-backend-probe remain manual entry points without an external live caller found. | Layer 1 native check/host; Layer 4 fixtures/provisioning; Layer 5 diagnostics. |
+| ABI comparison (4 / 2) | `abi/*.sh`, `bisection/run-abi-probe-diff.sh`, `run-cpp-smoke.sh`. | Registry abi-probe-diff/cpp-smoke/abi-exports/abi-alloc rows; `ci.yml` exports/allocation/C++ steps; run-bisect calls C++ smoke; packaging instructions. | Layer 5 subject-only ABI probes; Layer 4 pin ABI comparisons. Keep compiled probes. |
+| Instrumentation (12 / 8) | `bisection/debuginfo-neutrality-lib.sh`, `run-callgrind-differential.sh`, `run-perf-baseline.sh`, `run-perf-matrix.sh`, `run-perf-same-data.sh`, `run-rss-diag.sh`, `run-system-import-profile.sh`, `run-tree-recipe-control.sh`; `perf-gate/*.sh`; `profile/run-w8-cycle.sh`. | Registry measurement/probe rows; verify-nightly calls snapshot.sh; callgrind runner and debuginfo probe source the library; benches runbook names perf/profile commands. callgrind-ir.test.sh and series.test.sh remain manual parser harnesses. | Layer 5 measure/report and retained instruments; Layer 4 pin execution. |
+| Oracle/container (12 / 0) | `oracle/*.sh`, `container/runtime.sh`, `datagen/libpinyin-drop-in-differential.sh`. | compat sources runtime and calls image-tag/compat-inside; cloud setup and oracle Dockerfiles use build-oracle; oracle-image workflow calls image-tag/verify-oracle-image; verify-nightly calls nightly-fixture-differentials, which calls drop-in-differential; registry user-dir-round-trip; oracle/compatibility runbooks. | Layer 4 launcher/pin/provisioning and container Rust tests. |
+| Packaging (10 / 1) | `packaging/*.sh`, `bisection/run-shipped-check.sh`. | Registry shipped-check/pc-version/pc-metadata rows; `ci.yml` check-pc-version; release-packages calls release-stage and distro packagers; release-stage calls install/relink helpers; perf snapshot and packaging/benches instructions use install.sh. | Layer 5 packaging orchestration; Layer 4 pinned install-tree comparisons. |
 
 ## 9. Decision ownership
 
@@ -619,7 +668,7 @@ This table routes D1–D13. The referenced owner holds the requirement.
 | D8 CI | §5.5 and tooling stage T13. Each workflow edit needs approval. |
 | D9 platforms | Layers 1–3 native; Layer 4 pin execution and runtime limits. |
 | D10 pacing | §10. Tooling stage T1 keeps its separate authorization. Keep family handoff and no-narrowing safeguards. |
-| D11 retirements | tooling stage T14. Keep closed branches. Delete nothing without a specific ruling. |
+| D11 retirements | §5.4 permits named script retirement in the approved replacement PR. T14 keeps final reconciliation. Keep closed branches; branch deletion still needs separate approval. |
 | D12 startup worker | §7. Keep units, source hash and executed-worker full SHA-256, size and build command. Refuse missing or mismatched identity. |
 | D13 Python packaging | Layer 1. No published/installed Python package or new console entry point. |
 
@@ -628,41 +677,43 @@ This table routes D1–D13. The referenced owner holds the requirement.
 Tooling stages use T0–T14 for delivery milestones.
 They differ from stack layers and repository roadmap stages.
 Each implementation PR needs a coherent scope and its own approval.
-Tooling stages T1a and T2 onward remain unapproved implementation work.
+T1a and the native T2 core are implemented as recorded below; their full
+cross-platform acceptance remains partial. Remaining delivery is proposed.
 Tooling stage T1 retains only its independent existing authorization.
 A split row below is an acceptance scope, not permission for a partial cutover.
-Tooling stage T1a remains one atomic interpreter PR across both environments.
-Do not retain an older supported interpreter while one scope waits.
+PR #939 delivered T1a as one interpreter PR across both environments.
+It did not deliver full environment provisioning. Keep its exact interpreter;
+do not restore an older supported interpreter while another scope waits.
 
-| Tooling stage | Environment | Delivery and acceptance |
-| --- | --- | --- |
-| T0 | Native/container records | This docs-only stack. Review documents; build nothing. |
-| T1N | Native | Improve existing native script feedback under the authorized lane. Keep selected checks, observations, valid verdicts and required gate breadth. No just prerequisite. |
-| T1C | Container | Improve expect-parent validity, exact issue/family selection, phase timing, worker registration and consumed-artifact builds. Check staged-artifact identity before execution. Prove #896 INVALID with old-driver failure/new-driver success. Preserve selected IDs, envelopes, valid verdicts and statuses. |
-| T1aN | Native | Deliver Layer 1's exact interpreter cutover, setup and identity acceptance. |
-| T1aC | Container | Deliver Layer 4's separate interpreter in the same atomic PR. Keep frozen oracle artifacts. Workflow edits need separate approval. |
-| T2N | Native | Deliver Layers 1–2: package, CLI, registry reader, bootstrap doctor, thin recipes and slot. Extract the slot and admission core from run-all.py into tools.dev.slot, the one implementation; run-all.py imports it through an adapter and keeps its CLI, rows, environment variables and cancellation semantics unchanged. Migrate check.sh with matching selection/status. Run native shell, inheritance, resource and argument acceptance. |
-| T2C | Container | Keep legacy scripts authoritative. Apply Layer 4's separate namespaces and host budget contract before any pin handoff. Do not share native slot/cache state. |
-| T2T | Native | Deliver Layer 3 nextest after the native interface. Compare every current CI crate/feature scope, doctests and selected ignored tests. No workflow changes without approval. |
-| T3N | Native | Add conservative native verification records and invalidation. Keep original provenance on reused results. |
-| T3C | Container | Add separate records and an operational full BDB differential backstop with pin/model20. Validate its host and scheduling policy before narrowing mandatory local selection. |
-| T4N | Native | Test portable pure core functions without an oracle or pin installation. Use Layer 3 for Rust tests. |
-| T4C | Container | Deliver subject/observation/compare/capture/replay. Reproduce all §6 tests, both facades, ownership/abort/missing-symbol rules and fixture bytes. Retain C drivers and contract-diff. |
-| T5 | Container | Refactor runner/cli and carry the T2N slot and admission import through the adapter, with container-only state. Apply §5.2's full row/timing comparison. Run one full gate set under the cell rule. The refactored runner/cli takes legacy authority at T5; retain run-all.py and run-all.sh. |
-| T6 | Container | Deliver cell/systemdir/artifacts/pin and launch handoff. Require byte-equal describe JSON/env dumps, every exit-3 text and record/constant agreement. Apply Layer 4's full side-by-side container acceptance. Retain shims. |
-| T7 | Container | Unify runtime per-cell pin checks. Use BDB by default. Run original live tkrzw and kc-on-bdb rejection only when rule 2's path trigger fires. Keep EXPECTED_PIN_REF meanwhile. |
-| T8 | Container | Move observation families one per PR. Require four-way C/Python × pin/subject checks and original expectations. Keep wrappers and C drivers after acceptance until retirement approval. |
-| T9 | Container | Move contract families, Axis C and tie regeneration. Keep observation JSONL bytes, verdict rows, difference signatures/counts/stability and byte-identical regenerated fixtures. Retain unported families and old Axis-C/tie implementations until equal. |
-| T10N | Native | Finish any native Rust-test family handoff under Layer 3 parity. Keep its crate/feature/ignore scope. |
-| T10C | Container | Migrate option sweep and Rust differential tier. Require per-scheme counts/JSON, identical selected ignored tests/pass-fail and the drop-in bdb arm. Use Layer 4's test profile. |
-| T11N | Native macOS | Deliver only §7's optional oxpinyin base/PR information. Keep unavailable metrics explicit; no pin or cross-OS gate. |
-| T11C | Container | Deliver measurement/report and startup controller/worker. Use Layer 4's base/PR source input contract. Keep parser output on retained Callgrind/Massif/smaps/JSONL inputs and the same dry-run commands. Apply all §7 units, profiles, refusals, mutations, digests and four-subject interleaving/ratio tests. Retain old parsers until equal. |
-| T12N | Native | Migrate source/subject-only ABI probes. Require identical symbol verdicts. Retain wrappers. |
-| T12C | Container | Migrate pin ABI and packaging seams. Require identical symbol verdicts and staged installation trees. Retain wrappers. |
-| T13N | Native | Switch one approved workflow step at a time to Layers 2–3. Pin uv setup/version, provision managed CPython and verify identity. Keep old/new conclusions equal for one cycle. No permanent Python-version matrix. |
-| T13C | Container | Switch separately approved pin workflow steps to Layer 4. Keep the same one-cycle comparison and container identities. |
-| T14N | Native | Reconcile native consumers and proof of replacement/non-use. Retire only with a specific ruling. |
-| T14C | Container | Reconcile container consumers and proof independently. Keep retired PR branches unless deletion receives separate approval. |
+| Tooling stage | Environment | Delivery and acceptance | Status |
+| --- | --- | --- | --- |
+| T0 | Native/container records | This docs-only stack. Review documents; build nothing. | Implemented, original plans and #938 acceptance corrections; this reconciliation is docs only. |
+| T1N | Native | Improve existing native script feedback under the authorized lane. Keep selected checks, observations, valid verdicts and required gate breadth. No just prerequisite. | Partial: #905/#906 delivered admission/defaults. The remaining feedback scope is proposed under T1 authorization. |
+| T1C | Container | Improve expect-parent validity, exact issue/family selection, phase timing, worker registration and consumed-artifact builds. Check staged-artifact identity before execution. Prove #896 INVALID with old-driver failure/new-driver success. Preserve selected IDs, envelopes, valid verdicts and statuses. | Proposed remaining feedback scope under T1 authorization. |
+| T1aN | Native | Deliver Layer 1's exact interpreter cutover, setup and identity acceptance. | Implemented interpreter cutover, #939. Bounded macOS identity passed at `b034e834`; full setup acceptance remains partial. |
+| T1aC | Container | Deliver Layer 4's separate interpreter in the same atomic PR. Keep frozen oracle artifacts. Workflow edits need separate approval. | Implemented interpreter cutover, #939. Full environment provisioning is proposed. |
+| T2N | Native | Deliver Layers 1–2: package, CLI, registry reader, bootstrap doctor, thin recipes and slot. Extract the slot and admission core from run-all.py into tools.dev.slot, the one implementation; run-all.py imports it through an adapter and keeps its CLI, rows, environment variables and cancellation semantics unchanged. Migrate check.sh with matching selection/status. Run native shell, inheritance, resource and argument acceptance. | Partial: #941 core/adapter and #942 native recipes/check are implemented. Full recipe surface and host acceptance remain open. |
+| T2C | Container | Keep legacy scripts authoritative. Apply Layer 4's separate namespaces and host budget contract before any pin handoff. Do not share native slot/cache state. | Proposed environment/budget contract; #890 legacy launch remains implemented. |
+| T2T | Native | Deliver Layer 3 nextest after the native interface. Compare every current CI crate/feature scope, doctests and selected ignored tests. No workflow changes without approval. | Partial: #943 native profiles/recipes are implemented. Linux equivalence is historical at its named head; macOS tkrzw equivalence is historical at `b034e834` on 2026-10-20 UTC. The current macOS CI BDB scope passed at `219f420` on 2026-10-20 UTC: 1,218 passed and 22 ignored across 1,240 identities; separate doctests had four passed and two ignored. Identities and verdicts match. Other macOS scopes and Windows remain unverified. CI cutover is proposed. |
+| T3N | Native | Add conservative native verification records and invalidation. Keep original provenance on reused results. | Proposed. |
+| T3C | Container | Add separate records and an operational full BDB differential backstop with pin/model20. Validate its host and scheduling policy before narrowing mandatory local selection. | Proposed. |
+| T4N | Native | Test portable pure core functions without an oracle or pin installation. Use Layer 3 for Rust tests. | Proposed. |
+| T4C | Container | Deliver subject/observation/compare/capture/replay. Reproduce all §6 tests, both facades, ownership/abort/missing-symbol rules and fixture bytes. Retain C drivers and contract-diff. | Proposed. |
+| T5 | Container | Refactor runner/cli and carry the T2N slot and admission import through the adapter, with container-only state. Apply §5.2's full row/timing comparison. Run one full gate set under the cell rule. The refactored runner/cli takes legacy authority at T5; retain run-all.py and run-all.sh until §5.4 is met. | Proposed. |
+| T6 | Container | Deliver cell/systemdir/artifacts/pin and launch handoff. Require byte-equal describe JSON/env dumps, every exit-3 text and record/constant agreement. Apply Layer 4's full side-by-side container acceptance. Retain shims until §5.4 is met. | Proposed. |
+| T7 | Container | Unify runtime per-cell pin checks. Use BDB by default. Run original live tkrzw and kc-on-bdb rejection only when rule 2's path trigger fires. Keep EXPECTED_PIN_REF meanwhile. | Proposed. |
+| T8 | Container | Move observation families one per PR. Require four-way C/Python × pin/subject checks and original expectations. Retain wrappers and C drivers until replacement acceptance and §5.4 approval. | Proposed. |
+| T9 | Container | Move contract families, Axis C and tie regeneration. Keep observation JSONL bytes, verdict rows, difference signatures/counts/stability and byte-identical regenerated fixtures. Retain unported families and old Axis-C/tie implementations until equal. | Proposed. |
+| T10N | Native | Finish any native Rust-test family handoff under Layer 3 parity. Keep its crate/feature/ignore scope. | Proposed. |
+| T10C | Container | Migrate option sweep and Rust differential tier. Require per-scheme counts/JSON, identical selected ignored tests/pass-fail and the drop-in bdb arm. Use Layer 4's test profile. | Proposed. |
+| T11N | Native macOS | Deliver only §7's optional oxpinyin base/PR information. Keep unavailable metrics explicit; no pin or cross-OS gate. | Proposed. |
+| T11C | Container | Deliver measurement/report and startup controller/worker. Use Layer 4's base/PR source input contract. Keep parser output on retained Callgrind/Massif/smaps/JSONL inputs and the same dry-run commands. Apply all §7 units, profiles, refusals, mutations, digests and four-subject interleaving/ratio tests. Retain old parsers until equal. | Proposed. |
+| T12N | Native | Migrate source/subject-only ABI probes. Require identical symbol verdicts. Retain wrappers until §5.4 is met. | Proposed. |
+| T12C | Container | Migrate pin ABI and packaging seams. Require identical symbol verdicts and staged installation trees. Retain wrappers until §5.4 is met. | Proposed. |
+| T13N | Native | Switch one approved workflow step at a time to Layers 2–3. Pin uv setup/version, provision managed CPython and verify identity. Keep old/new conclusions equal for one cycle. No permanent Python-version matrix. | Proposed. |
+| T13C | Container | Switch separately approved pin workflow steps to Layer 4. Keep the same one-cycle comparison and container identities. | Proposed. |
+| T14N | Native | Final repository-wide reconciliation of native consumers and replacement proof. Under §5.4, a superseded script may retire in its implementation PR if it (a) delivers the functional replacement, (b) gives old/new acceptance for the affected behaviour, (c) moves the registry and every live consumer, (d) loses no required test or error handling, and (e) lists retired files by name for maintainer approval of that PR. Frozen evidence and historical documents stay protected. | Proposed. |
+| T14C | Container | Final repository-wide reconciliation of container consumers and replacement proof. Under §5.4, a superseded script may retire in its implementation PR if it (a) delivers the functional replacement, (b) gives old/new acceptance for the affected behaviour, (c) moves the registry and every live consumer, (d) loses no required test or error handling, and (e) lists retired files by name for maintainer approval of that PR. Frozen evidence and historical documents stay protected. Keep retired PR branches unless deletion receives separate approval. | Proposed. |
 
 Tooling stages T8 and T9 retain `non-utf8-directory-system`, `non-utf8-directory-user`,
 `non-utf8-directory-both` and `non-utf8-directory-zhuyin-both`.
@@ -703,10 +754,11 @@ and prove each against the original driver; preserve all valid observations.
 
 ## 11. Review and authorization gate
 
-This stack changes plans only. It does not authorize an implementation PR,
-workflow edit, retirement, merge or branch deletion. The host-tool choices
-Python/uv, just and cargo-nextest are approved plan directions.
-Do not install or configure them in this stack.
+This reconciliation changes plans only. It authorizes no implementation,
+workflow edit, file retirement, merge or branch deletion. Section 5.4 defines
+retirement conditions for approval of a specific future replacement PR.
+Python/uv, just and cargo-nextest remain approved host-tool directions.
+This documentation change installs or configures nothing.
 
 Before implementation, obtain the required maintainer review and explicit
 human approval of the named tooling stage and scope. A clean automated review is not
