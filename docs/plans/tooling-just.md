@@ -1,8 +1,42 @@
 # Tooling layer 2: native just interface
 
-Status: proposed plan. Docs only. Date: 2026-10-19 UTC (`date -u`).
+Status: partial implementation. Reconciled: 2026-10-20 UTC (`date -u`).
 This layer builds on [native Python](tooling-python.md).
-It adds no `justfile`, configuration or implementation.
+PR [#942](https://github.com/shenghaoc/oxpinyin/pull/942) added the native
+`justfile`, doctor, check and heavy recipes. PR
+[#943](https://github.com/shenghaoc/oxpinyin/pull/943) added test and test-doc.
+The recipe table distinguishes these from the remaining surface.
+
+macOS: bounded checks passed on 2026-10-20 UTC at
+`b034e8342e70aab874b32414976cc9b6d232dc1d`.
+`just doctor` and the managed-Python doctor had identical output and status.
+For BDB, Kyoto Cabinet and tkrzw, the old shell check under `just heavy`
+and `just check <backend>` both exited 0. The BDB row used
+Homebrew `berkeley-db@5` 5.3.28 with its include and library directories.
+The rows passed 51 tests with four ignored, 43 tests and 49 tests,
+respectively. Their stdout matched after elapsed test times and two
+intentional old oracle-directory display lines were removed. Those exact
+lines were:
+
+```text
+PINYIN_MODEL_DIR: not selected (optional for setup)
+PINYIN_ORACLE_PREFIX: not selected (optional for setup)
+```
+
+The removal follows §2's native boundary: the earlier optional
+oracle-directory display is superseded. Every other stdout line matched.
+An unconfigured `just check bdb` attempt returned 101. Its diagnostic began:
+
+```text
+libdb required: the `bdb` feature links the SYSTEM Berkeley DB and needs its header db.h, which was found nowhere on the include path.
+```
+
+The configured BDB result supersedes that attempt.
+
+Windows: TODO (no host); tooling verification is deferred.
+Shell and argument acceptance remains partial. Hosted Rust CI does not verify
+these recipes. Historical macOS checks in #942/#943 retain their original
+heads and failures; they do not verify this head.
 
 ## 1. Interface boundary
 
@@ -24,33 +58,33 @@ Use one CLI and one registry; do not copy runner metadata into recipes.
 Tooling stages use the T prefix. Layer 5 defines these delivery milestones.
 They differ from the repository roadmap stages.
 
-Tooling stage T2 fixes the minimum `just` version.
-Record it in the runbook and approved CI image.
-The implementation must support the acceptance below.
+PR #942 fixes the minimum `just` version at 1.59.0 and records it in setup.
+CI image provisioning remains proposed. Complete §3 acceptance remains open.
 The recipe names below define interfaces, not a second test catalog.
 Layer 5 schedules the old-to-new handoffs.
 
-| Native recipe | Purpose | Existing entry point or replacement |
-| --- | --- | --- |
-| `just --list` | List tasks; bare `just` runs the default recipe. | README/runbook discovery |
-| `just doctor` | Call Layer 1's native doctor. | Ad-hoc host probes and bootstrap doctor |
-| `just list [--issue X] [--kind K]` | Read static registry rows and implementation state; execute nothing. | Catalog inspection through `run-all.py --list` |
-| `just plan [selection ...]` | Print the native check plan without executing it. | Ad-hoc native command planning |
-| `just check [backend]` | Run the selected native setup checks. | `tools/dev/check.sh` |
-| `just heavy -- <command>` | Run a command inside Layer 1's native slot and memory admission. | The #905/#906/#903 stack's `run-all.py --heavy-slot --` interface; that stack is not on inspected main |
-| `just test [args ...]` | Enter the native Rust test path. Layer 3 owns execution. | Direct native `cargo test` orchestration |
-| `just test-doc [args ...]` | Run doctests through the heavy wrapper. | `cargo test --doc` |
-| `just build [args ...]` | Run a native build through the heavy wrapper. | Direct `cargo build` |
-| `just fmt [args ...]` | Run formatting. | Direct `cargo fmt` |
-| `just clippy [args ...]` | Run lints through the heavy wrapper. | Direct `cargo clippy` |
-| `just bench <recipe>` | Enter a native benchmark without pin inputs. | Native Criterion/perf entry points |
-| `just measure <recipe>` / `just initbench` | Enter optional native measurement. Layer 5 owns its limits. | Native oxpinyin-only measurement entry points |
-| `just fuzz` / `just coverage` / `just sanitize` | Call existing native tools for native inputs. | cargo-fuzz, cargo-llvm-cov and native sanitizer entry points |
-| `just ci <job>` | Select an approved native job. | Native workflow-specific commands |
+| Native recipe | Purpose | Existing entry point or replacement | Status |
+| --- | --- | --- | --- |
+| `just --list` | List tasks; bare `just` runs doctor. | README/runbook discovery | Implemented, #942. |
+| `just doctor` | Call Layer 1's native doctor. | Bootstrap doctor | Implemented, #942. |
+| `just list [--issue X] [--kind K]` | Read registry rows and implementation state; execute nothing. | `run-all.py --list` | Partial: #941 supplies `tools.dev list [--heavy]`; this recipe, issue/kind filters and implementation state are proposed. |
+| `just plan [selection ...]` | Print the native plan without execution. | Native command planning | Partial: #941 supplies read-only `tools.dev plan --runners/--cells`; the recipe and full command/input identities are proposed. |
+| `just check [backend]` | Run native setup checks; default bdb. | `tools/dev/check.sh` | Implemented, #942. The shell remains an old/new acceptance input. |
+| `just heavy -- <command>` | Use Layer 1's slot and admission. | Merged #905/#906/#903 `run-all.py --heavy-slot --` | Implemented, #942; shared core from #941. |
+| `just test [args ...]` | Enter Layer 3's native Rust test path. | Native `cargo test` orchestration | Implemented, #943; CI cutover is proposed. |
+| `just test-doc [args ...]` | Run doctests through the heavy slot. | `cargo test --doc` | Implemented, #943. |
+| `just build [args ...]` | Run a native build through the heavy wrapper. | `cargo build` | Proposed. |
+| `just fmt [args ...]` | Run formatting. | `cargo fmt` | Proposed. |
+| `just clippy [args ...]` | Run lints through the heavy wrapper. | `cargo clippy` | Proposed. |
+| `just bench <recipe>` | Enter a native benchmark without pin inputs. | Native Criterion/perf entry points | Proposed. |
+| `just measure <recipe>` / `just initbench` | Enter optional native measurement. | Native oxpinyin-only measurement | Proposed. |
+| `just fuzz` / `just coverage` / `just sanitize` | Call native tools for native inputs. | Existing fuzz/coverage/sanitizer commands | Proposed. |
+| `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
 `just check` keeps `check.sh`'s backend selection and selected crate sets.
 Keep the platform-specific native dependency checks and exit results.
-Use `just heavy` for its cargo steps. Layer 3 may change the test executor
+The #942 check uses `slot.run_command` for its cargo steps. It still uses
+`cargo test`. Layer 3 may change that executor
 only after its equivalence check passes. Native checks must not probe an
 oracle installation or pass oracle variables to tests. The earlier optional
 oracle-directory display is superseded by this native boundary.
@@ -72,8 +106,12 @@ Native recipes do not acquire pin or cell semantics from that vocabulary.
 Configure a native Windows shell with `[windows]` on `set shell`.
 Do not require Git Bash, Cygwin, WSL or another POSIX shell.
 Do not use deprecated `set windows-shell` or `set windows-powershell`.
-Choose the concrete shell in the implementation PR after the acceptance case.
-`cmd.exe` remains a candidate, not an assumed solution.
+PR #942 added `powershell.exe -NoLogo -NoProfile -Command` and variadic
+recipes that use `@args` with `exit $LASTEXITCODE`. Windows variadic transport
+is partial and unverified. With `-Command`, trailing tokens may be parsed as
+command text rather than preserved as separate arguments. A recipe fix needs
+a Windows host and a separate implementation PR. Native Windows acceptance
+remains TODO. Do not infer acceptance from the syntax.
 See the [just shell manual](https://just.systems/man/en/configuring-the-shell.html).
 
 Preserve argument boundaries and paths with spaces. Do not use POSIX `quote()`
@@ -90,18 +128,13 @@ Compare verdicts, case counts, digests, input identities and exit codes.
 Only OS path separators and line endings may differ where the format permits.
 Do not weaken byte-exact fixtures or wire formats. Record untested cases.
 
-## 4. Planned wrapper rule
+## 4. Implemented wrapper rule
 
-`run-all.py --heavy-slot` belongs to the unmerged #905/#906/#903 stack.
-It is not an interface on inspected main at `7c80bdca`.
-The transition rule below applies to that stack's wrapper once it lands.
-It does not claim that the wrapper exists on main now.
-
-Tooling stage T2's implementation updates the AGENTS.md wrapper text:
-“Once tooling stage T2 lands, run direct cargo build, test and clippy commands
-through `just heavy`. Until then, use `run-all.py --heavy-slot --` on Linux
-and macOS only.” Layer 1 limits this native slot to its environment.
-This docs-only layer does not change the current production rule.
+The #905/#906/#903 stack is merged. `run-all.py --heavy-slot --` remains
+available through #941's adapter to the shared core. PR #942 changed
+AGENTS.md to use `just heavy --` for direct heavy commands and runner builds.
+Layer 1 limits the native slot to its environment. The remaining recipe and
+CI migrations above are proposed. This reconciliation changes no production rule.
 
 ## 5. Inspected source pattern
 

@@ -1,8 +1,43 @@
 # Tooling layer 3: native nextest
 
-Status: proposed plan. Docs only. Date: 2026-10-19 UTC (`date -u`).
+Status: partial implementation. Reconciled: 2026-10-20 UTC (`date -u`).
 This layer builds on the [native just interface](tooling-just.md).
-It adds no nextest installation, configuration, code or workflow change.
+PR [#943](https://github.com/shenghaoc/oxpinyin/pull/943) is merged.
+
+| Capability | Status on main |
+| --- | --- |
+| Native test entry point, minimum version and ignored-test mapping (§§1, 4) | Implemented in #943 through `tools.dev.test_runner`, `just test` and `just test-doc`. |
+| Native profiles and resource groups (§2) | Implemented in #943: local uses admitted num-cpus; ci uses four threads; retries are zero and fail-fast is false. The store-backend group has one thread; selected real-data binaries take the full budget. |
+| Shared admission and explicit nextest concurrency (§3) | Implemented in #943 on #941's shared slot. CLI counts precede NEXTEST_TEST_THREADS, then profile settings. Unsupported or ambiguous overrides fail closed. |
+| Equivalence across every native CI scope (§5) | Partial. #943 records six accepted Linux rows only at `7991ec6b17509980f42a59d72531617059f109d6`. The macOS tkrzw equivalence at `b034e834` on 2026-10-20 UTC is historical. The current macOS CI BDB scope passed at `219f420` on 2026-10-20 UTC: 1,218 passed and 22 ignored; identities and verdicts match. Other scopes and sanitizer equivalence remain unverified. |
+| CI and AGENTS.md rule 5 cutover (§5) | Proposed. Configured nextest is not a workflow cutover. CI still uses its existing Cargo commands, including its older scheduled nextest lane. Rule 5 still names cargo test. |
+| Pin-dependent test route | Proposed under Layer 4; no container profile exists yet. |
+
+macOS: bounded checks passed on 2026-10-20 UTC at
+`b034e8342e70aab874b32414976cc9b6d232dc1d`.
+`tools.dev.test_runner.test` passed 16 tests. One live
+`just test --locked -p oxpinyin-core` run passed 189 tests and printed
+`nextest test threads: 1 (admitted)`. This verifies the selected local path,
+not every CI or backend scope. For the historical macOS `ci.yml` tkrzw scope
+at `b034e834`, Cargo and nextest each passed 1,222 tests and skipped the same
+20. Discovery found 1,242 test identities in 85 binaries. Every per-binary
+name, pass verdict and ignored status matched. The separate `just test-doc`
+step matched Cargo's six doctest identities: four passed and two ignored.
+The runs used one test thread through the shared slot.
+
+The current `ci.yml` test-macos BDB scope passed equivalence on 2026-10-20 UTC
+at `219f4205952a6db549331a90ec11501f6be0b68d`, with Homebrew
+`berkeley-db@5` 5.3.28. Cargo and nextest each passed 1,218 tests and ignored
+22, across 1,240 identities in 85 binaries. Identities and verdicts match.
+The separate `cargo test --doc` comparison matched all six doctest
+identities: four passed and two ignored. The commands used `just heavy --`,
+one Cargo job, one test thread and the repository's nextest `local` profile.
+Elapsed times were excluded. The earlier BDB `just check` result remains
+separate evidence. Other CI scopes remain unverified.
+Windows: TODO (no host); tooling verification is deferred.
+Historical macOS comparisons in #943 belong to `e23367bc` and include failed
+backend runs. They do not verify this head. Hosted Rust CI supplies no local
+Python, PowerShell or slot acceptance. The sections below keep pending requirements.
 
 ## 1. Test entry point
 
@@ -25,13 +60,13 @@ Require cargo-nextest 0.9.115 or later for the `inherits` key.
 See the [profile inheritance documentation](https://nexte.st/docs/configuration/#profile-inheritance).
 Set `nextest-version = "0.9.115"` in `.config/nextest.toml`.
 Keep `--run-ignored=only` for ignored-only selections.
-The implementation records compatible versions and provisioning commands.
-Do not install them in this docs-only stack. Keep `rust-toolchain.toml`
+PR #943 records the minimum and provisioning commands in setup and doctor.
+This reconciliation installs nothing. Keep `rust-toolchain.toml`
 as the Rust toolchain authority.
 
-## 2. Planned configuration
+## 2. Implemented native configuration
 
-The implementation adds `.config/nextest.toml`.
+PR #943 added `.config/nextest.toml`.
 Define native `local` and `ci` profiles explicitly. Let both inherit a shared
 base where their behaviour agrees. Local limits serve developer machines;
 CI limits serve the existing native CI scopes. Do not copy CI concurrency
@@ -40,14 +75,17 @@ Keep retries at zero for the equivalence run, so a retry cannot hide a failure.
 Do not narrow test discovery through an unreviewed default filter.
 
 Use named test groups with `max-threads` for tests that interfere or use much
-memory. Plan a `store-backend` group with an initial ceiling of 1 for selected
-storage integration cases. Use an exact package/binary/test filter after
-reading those cases. Keep independent unit tests outside the group.
-Name other shared resources before adding groups. An implementation must
-list each matched test and justify every excluded case.
+memory. The implemented `store-backend` group has a ceiling of 1. Its binary
+filters are `assembly`, `empty_user_dir`, `trait_laws`, `user_store_acid`,
+`user_store_semantics`, `bdb_libpinyin_files`, `libpinyin_data_dir` and
+`user_dir_round_trip`. These cases create or recover backend files, fork or
+change process state. Independent logic and in-memory tests stay outside.
+Name other shared resources before adding groups. Any extension must list
+its matched tests and justify exclusions.
 
-Use `threads-required = "num-test-threads"` for a test that must run alone
-within that nextest invocation. Use a smaller weight only for a measured
+The `bdb_libpinyin_files`, `libpinyin_data_dir` and `user_dir_round_trip`
+binaries use `threads-required = "num-test-threads"` to run alone
+within that invocation. Use a smaller weight only for a measured
 resource estimate. A group's ceiling limits its subset; `threads-required`
 uses the global test budget. Check both local and CI overrides.
 See nextest's [groups](https://nexte.st/docs/configuration/test-groups/)
@@ -92,15 +130,18 @@ pass and fail, including deliberate failures and selected missing-input cases.
 Keep ignore reasons and optional-input behaviour. Treat a timeout, crash or
 empty unintended selection as a failure, not a passing skip.
 
-Cover every crate/feature set that current CI runs. At oxpinyin `7c80bdca`:
+Cover every crate/feature set that current CI runs. These scopes are
+current on main at `219f4205`; the table states required comparisons, not
+completed validation on each host:
 
 | Existing native job/scope | Required nextest comparison |
 | --- | --- |
 | `ci.yml` test | Default-feature native workspace tests; keep non-Rust gates separate. |
-| `ci.yml` test-macos | Workspace with `--no-default-features --features tkrzw` and the same six exclusions. |
+| `ci.yml` test-macos | Workspace with `--no-default-features --features bdb`, Homebrew `berkeley-db@5`, and the same six exclusions. Passed at `219f420` on 2026-10-20 UTC: 1,218 passed and 22 ignored; identities and verdicts match. Separate doctests: four passed and two ignored. |
 | `ci.yml` test-windows | Default BDB workspace and the same six exclusions; preserve its current dependency setup. |
 | `store-backends.yml` store-features | Existing bdb, kyotocabinet and tkrzw crate/feature selections. |
 | `verify-nightly.yml` overflow-lane | Kyotocabinet workspace with `--locked --workspace --release --no-default-features --features kyotocabinet`. Set `RUSTFLAGS=-C overflow-checks=y -C debug-assertions=y -D warnings`. Preserve both profile and flags. |
+| `verify-nightly.yml` nextest | Existing scheduled Kyotocabinet workspace with `--locked --workspace --no-default-features --features kyotocabinet` and separate doctests. This predates the new native recipes. |
 | Native sanitizer test selections | Compare only supported libtest targets; keep specialized sanitizer tools where nextest cannot replace them. |
 
 The six macOS/Windows exclusions are `oxpinyin-capi`, `oxpinyin-zhuyin-capi`,

@@ -1,8 +1,24 @@
 # Tooling layer 4: pinned Linux container
 
-Status: proposed plan. Docs only. Date: 2026-10-19 UTC (`date -u`).
+Status: partial foundation; Python service proposed.
+Reconciled: 2026-10-20 UTC (`date -u`).
 This layer builds on [native nextest](tooling-nextest.md).
-It adds no image, launcher, tool config or workflow implementation.
+The shell compatibility route is implemented. It is not the planned Python service.
+
+| Capability | Status on main |
+| --- | --- |
+| Shell launcher, inner script, compatibility image and runtime selection (§2) | Implemented in [#890](https://github.com/shenghaoc/oxpinyin/pull/890): `compat.sh`, `compat-inside.sh`, `Dockerfile.compat` and `runtime.sh`. Keep that PR's runtime limitations. |
+| Container-owned uv and exact managed interpreter (§3) | Implemented in [#939](https://github.com/shenghaoc/oxpinyin/pull/939). This is interpreter provisioning, not delivery of all environment services below. Frozen oracle artifacts stay unchanged. |
+| Environment isolation and identities (§§1, 3) | Partial: #890 supplies a Linux volume, source snapshot, generated inner environment and legacy pin/hash checks. The stricter Python input/override validation, complete result namespaces and source/artifact identity service remain proposed. |
+| Hard memory limit and native lifetime reservation (§1) | Proposed, including recovery after cancellation or launcher death. Native slot code does not implement this reservation contract. |
+| Python launcher, cell/pin/systemdir/artifacts modules, cloud daemon/network checks and just container surface (§§2–4) | Proposed. Existing shell provisioning is retained; there is no Python container service or `just container` recipe. |
+| Two identified source snapshots and same-run builds (§4) | Proposed transport contract. |
+| Container nextest profile and pin-test handoff (§4) | Proposed. #943 configures native profiles only. |
+| Gate placement, full launcher parity, CI handoff and retirement (§§5–6) | Proposed migration. Current registry/workflow scopes below are inputs to acceptance, not completed cutovers. |
+
+Requirements below marked proposed by this table do not describe current
+`compat.sh` guarantees. No runtime, host or emulation acceptance is added here.
+Historical findings keep their recorded heads and limitations.
 
 ## 1. Environment boundary
 
@@ -144,7 +160,7 @@ No root recipe contains orchestration logic.
 | Container command | Task inside the pinned environment | Existing entry points |
 | --- | --- | --- |
 | `just container list` | List registry work without execution. | `run-all.py --list` |
-| `just container plan` | Print selected work without execution. | New `tools.dev plan` mode; no legacy `--plan` flag |
+| `just container plan` | Print selected work without execution. | Proposed wrapper. #941 implemented read-only `tools.dev plan --runners/--cells` for row metadata; resolved commands and identities remain proposed. |
 | `just container doctor` | Report inner capabilities. | Cell/env probes |
 | `just container run` | Run selected registry gates. | `run-all.sh`, `run-all.py` |
 | `just container contract` | Run selected contract families/options/Axis C. | `contract-diff.py`, `transformed-options-sweep.py`, wrappers |
@@ -156,9 +172,10 @@ No root recipe contains orchestration logic.
 | `just container abi` / `packaging` | Run pinned ABI and staged-install comparisons. | ABI and packaging differential wrappers |
 | `just container compat-smoke` | Check image/runtime/argument/status integration. | `compat.sh`, `compat-inside.sh` |
 
-The inspected `run-all.py` has `--list` but no `--plan` flag.
-It prints its plan on the execution path. Add a non-executing `tools.dev plan`
-mode for `just container plan`. That mode prints commands and identities only.
+The current `run-all.py` has `--list` but no `--plan` flag.
+It prints its plan on the execution path. PR #941 added a read-only
+`tools.dev plan --runners/--cells` that prints row metadata. Extending it to
+`just container plan` with resolved commands and identities remains proposed.
 It starts no build, worker, selected command, check or provisioning operation.
 Container launch supplies transport; it does not turn plan mode into a run.
 
@@ -181,8 +198,8 @@ nextest. Compare the same pin-test IDs and pass/fail outcomes before cutover.
 
 ## 5. Current gate placement
 
-Inspect scope from `tools/bisection/runners.json` and workflow commands at
-oxpinyin `7c80bdca2b5fb3016ab8c9f4d026ed2cc0c5f3be`.
+Scope below is from `tools/bisection/runners.json` and workflow commands on
+main at `b034e834`. No gate has moved through the proposed Python service.
 The existing aggregate runner establishes a cell and reference environment.
 Every registry invocation listed below therefore remains container-scoped.
 The catalog stays singular. A leaf script can also have a separate native
@@ -287,7 +304,9 @@ Check plan-only mode with selected work that would build or start workers;
 require no execution or provisioning. Check both source snapshots, their
 identities and separate build paths in one base/PR/pin measurement run.
 Record unavailable runtime and emulation cases as untested with reasons.
-Tooling stage T6 in Layer 5 owns the handoff and later retirement approval.
+Tooling stage T6 in Layer 5 owns the handoff. Layer 5 §5.4 permits script
+retirement in the replacement PR after proof, consumer migration and named
+maintainer approval. T14 keeps final repository-wide reconciliation.
 
 Keep BDB as the default comparison cell. Use all three cells only when
 AGENTS.md's mechanical path check selects them. Keep the start-of-sweep and

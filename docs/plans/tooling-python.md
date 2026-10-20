@@ -1,8 +1,34 @@
 # Tooling layer 1: native Python
 
-Status: proposed plan. Docs only. Date: 2026-10-19 UTC (`date -u`).
-This layer targets `main`. It defines native scripting on Linux, macOS and
-Windows. It adds no implementation or host installation.
+Status: partial implementation. Reconciled: 2026-10-20 UTC (`date -u`).
+The #938 → #939 → #941 → #942 → #943 stack is merged on `main`.
+This document records current code and remaining requirements. It installs nothing.
+
+| Capability | Status on main |
+| --- | --- |
+| Exact interpreter, uv pins, managed execution and setup instructions (§2) | Implemented in [#939](https://github.com/shenghaoc/oxpinyin/pull/939). Interpreter provisioning does not provision the full native or container environment. |
+| Package, CLI, host report, bootstrap doctor and identity checks (§3) | Implemented in [#941](https://github.com/shenghaoc/oxpinyin/pull/941); nextest version check added in [#943](https://github.com/shenghaoc/oxpinyin/pull/943). Doctor reports capabilities; it does not install them. |
+| Registry service (§3) | Partial in #941: read, validate and select by runner/cell. Layer 5's issue/kind selection and implementation field remain proposed. |
+| Python feature policy (§4) | Partial: #939 sets normal import mode in execution commands. The entry-point mode guard and optional lazy imports, frozendict, sentinel and sampling use remain proposed. |
+| Shared native slot, admission, process cleanup and legacy adapter (§5) | Implemented in #941, from the merged #905/#906/#903 contracts and #938 acceptance. Platform acceptance remains partial. |
+| Container lifetime budget integration (§5) | Proposed. Layer 4's hard-limit reservations do not exist yet. |
+| Full environment provisioning and complete three-platform acceptance (§§2, 6) | Proposed provisioning; partial acceptance. Native compiler/backend setup remains a separate runbook procedure. |
+
+macOS: bounded checks passed on 2026-10-20 UTC at
+`b034e8342e70aab874b32414976cc9b6d232dc1d`. uv 0.13.1 selected managed
+CPython 3.15.0 with `Py_GIL_DISABLED == 0` and an enabled runtime GIL.
+`UV_PYTHON`, `PYTHONHOME` and `PYTHONPATH` overrides each failed with status 1.
+`uv ... -m tools.dev doctor` and `just doctor` had identical status and output.
+The slot, CLI, host and test-runner suites passed 6, 7, 4 and 16 tests.
+The slot suite included wrapper-kill handoff. Live `just heavy` children
+returned 143 for SIGTERM and 137 for SIGKILL. The macOS host reader returned
+positive `available_mib`; `sysctl` and `vm_stat` reads were available.
+Fresh-install, offline cache and full environment provisioning acceptance
+remain unverified.
+Windows: TODO (no host); tooling verification is deferred.
+Hosted Rust CI does not verify these tooling paths. Earlier host checks retain
+their original heads and limitations in #939/#941; they do not verify this stack.
+The requirements below remain proposed where the table does not mark them implemented.
 
 ## 1. Scope and ownership
 
@@ -13,8 +39,8 @@ The later container layer owns its separate environment.
 
 Python provides the scripting layer. `just` provides the command interface.
 The nextest layer owns Rust test orchestration. Keep these responsibilities
-separate. This plan does not change production AGENTS.md or existing commands.
-Each implementation PR needs its own approval.
+separate. This reconciliation changes no code or AGENTS.md rule.
+Each remaining implementation PR needs its own approval.
 
 ## 2. Interpreter contract
 
@@ -26,14 +52,14 @@ its [versioned Python guide](https://github.com/astral-sh/uv/blob/0.13.1/docs/co
 Support no older version, system-Python fallback or transition implementation.
 A later ruling must approve a Python package dependency.
 
-The interpreter implementation PR adds two root files:
+PR #939 added these root files:
 
-| Planned file | Required content |
+| Implemented file | Required content |
 | --- | --- |
 | `.python-version` | exactly `cpython@3.15.0+gil` |
 | `uv.toml` | `python-preference = "only-managed"` and `required-version = "==0.13.1"` on separate lines |
 
-These files remain planned. Do not vendor Python. Do not add `pyproject.toml`,
+Keep these pins. Do not vendor Python. Do not add `pyproject.toml`,
 a virtual environment or `uv.lock` for interpreter provisioning alone.
 Every repository-owned uv call passes the exact interpreter request explicitly.
 Use `uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal ...`
@@ -52,7 +78,7 @@ Check `Py_GIL_DISABLED == 0` and the enabled runtime GIL. Check CPython
 `uv python find --managed-python cpython@3.15.0+gil`.
 These checks enforce the managed GIL build after installation.
 Keep the managed interpreter and uv cache on persistent native storage.
-The later implementation enforces uv 0.13.1 and records the provisioning route.
+The #939 setup enforces uv 0.13.1 and records the interpreter provisioning route.
 See uv's [Python guide](https://docs.astral.sh/uv/concepts/python-versions/)
 and [managed-only setting](https://docs.astral.sh/uv/reference/settings/#python-preference).
 
@@ -100,9 +126,9 @@ Do not accept a free-threaded build merely because its GIL is enabled at runtime
 
 Force normal import mode before importing any application module.
 The execution command above uses `-X lazy_imports=normal` at interpreter start.
-The tools.dev entry point checks `sys.get_lazy_imports()` before app imports;
-it stops with a clear error unless the mode is `normal`.
-This also protects direct entry-point use. See
+Proposed: make the tools.dev entry point check `sys.get_lazy_imports()` before
+app imports. It must stop with a clear error unless the mode is `normal`.
+That guard will also protect direct entry-point use. See
 [PEP 810's global control](https://peps.python.org/pep-0810/#global-lazy-imports-control).
 
 Use explicit lazy imports (PEP 810) only for modules that `doctor`, `list`
@@ -116,8 +142,8 @@ until a separate measured decision.
 
 ## 5. Native heavy slot and memory admission
 
-At T2N, add `tools.dev.slot` by extracting the slot and admission core from
-`tools/bisection/run-all.py`. It is the one implementation. Preserve that
+PR #941 delivered T2N's `tools.dev.slot` by extracting the slot and admission
+core from `tools/bisection/run-all.py`. It is the one implementation. Preserve that
 script's slot and admission semantics from #905/#906/#903, subject to the
 fail-closed ruling below. `run-all.py` imports the core through an adapter and
 keeps its CLI, its rows, its environment variables and its cancellation
@@ -164,8 +190,9 @@ See Microsoft's [job lifetime rules](https://learn.microsoft.com/en-us/windows/w
 Keep the Linux MemAvailable and cgroup readers, macOS `vm_stat` reader and
 Windows GlobalMemoryStatusEx reader. Take the slot before the final resource
 read. Keep estimates, headroom, CPU ceilings and explicit-setting validation.
-Serialize reservation updates. Count live native slot reservations and subtract
-Layer 4's unreleased native memory reservations for containers.
+Serialize reservation updates. Count live native slot reservations.
+Proposed integration: subtract Layer 4's unreleased native memory reservations
+for containers.
 Layer 4 owns their creation, lifetime and release; do not read inner slot state.
 Hold no checkout lock while waiting for resources.
 
