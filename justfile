@@ -44,3 +44,48 @@ test-doc *args:
 [windows]
 test-doc *args:
     @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev test-doc @args; exit $LASTEXITCODE
+
+# Build with the native heavy slot and memory admission.
+[unix]
+build *args:
+    @just heavy -- cargo build "$@"
+
+[windows]
+build *args:
+    @just heavy -- cargo build @args; exit $LASTEXITCODE
+
+# Format directly; formatting does not take the heavy slot.
+[unix]
+fmt *args:
+    @cargo fmt "$@"
+
+[windows]
+fmt *args:
+    @cargo fmt @args; exit $LASTEXITCODE
+
+# Lint with the native heavy slot and memory admission.
+[unix]
+clippy *args:
+    @just heavy -- cargo clippy "$@"
+
+[windows]
+clippy *args:
+    @just heavy -- cargo clippy @args; exit $LASTEXITCODE
+
+# Read registry metadata, optionally filtered by issue or kind.
+[unix]
+list *args:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev list "$@"
+
+[windows]
+list *args:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev list @args; exit $LASTEXITCODE
+
+# Describe an explicit registry selection without executing it.
+[unix]
+plan *args:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev plan "$@"
+
+[windows]
+plan *args:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev plan @args; exit $LASTEXITCODE
