@@ -92,6 +92,11 @@ fi
 
 DB_FORMAT="$(db_format_for "$BACKEND")"
 
+command -v strip >/dev/null 2>&1 || {
+  echo "error: strip is required; install binutils" >&2
+  exit 1
+}
+
 # cmp (diffutils) is not in every minimal container base; its absence must
 # not read as "headers differ".
 command -v cmp >/dev/null 2>&1 || {
@@ -148,9 +153,7 @@ unexpected="$(find "$DEST" -type f ! -path "$STAGE_LIB/*" ! -path "$STAGE_INC/*"
 [ -z "$unexpected" ] || { echo "error: unexpected staged files:" >&2; echo "$unexpected" >&2; exit 1; }
 
 # Release artifacts ship stripped, as every distro's libpinyin does.
-if command -v strip >/dev/null 2>&1; then
-  strip --strip-unneeded -- "$STAGE_LIB/libpinyin.so.15.0.0" "$STAGE_LIB/libzhuyin.so.15.0.0"
-fi
+strip --strip-unneeded -- "$STAGE_LIB/libpinyin.so.15.0.0" "$STAGE_LIB/libzhuyin.so.15.0.0"
 chmod 0755 -- "$STAGE_LIB/libpinyin.so.15.0.0" "$STAGE_LIB/libzhuyin.so.15.0.0"
 chmod 0644 -- "$STAGE_LIB"/*.a "$STAGE_PC"/*.pc "$STAGE_INC"/*.h
 
