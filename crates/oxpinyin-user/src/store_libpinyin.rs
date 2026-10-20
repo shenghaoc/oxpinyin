@@ -37,10 +37,9 @@
 //!   exactly this store's full accumulation for the token (`count·3` at
 //!   `_add_phrase`, `seed·7` per training, the promotion unigram).
 //! * system tokens — a `.dbin` MODIFY record is the original item with
-//!   `unigram + UNIGRAM[token]`; the value model tracks no per-token
-//!   removal (a replayed REMOVE degrades to a skip, noted at load). The
-//!   session holds a replayed item whole, readings included, in its live
-//!   system-item view, and that item is where its readings' counts are read:
+//!   `unigram + UNIGRAM[token]`; a replayed REMOVE enters the live removal
+//!   set. The session retains replayed originals in a private mapped view,
+//!   decoding an item on its first use. That item holds its reading counts:
 //!   opening writes no `PRONUNCIATION` row for it. Training writes the
 //!   exact-reading delta over the original for the readings it moves (a row
 //!   is that delta, kept for the tables that probe it), and the live view
@@ -410,7 +409,7 @@ impl GenericUserStore<DefaultStore> {
 
         let profile = if let Some(dir) = user_dir {
             match checked {
-                Some(check) => persistence::load_checked(dir, &originals, &check),
+                Some(check) => persistence::load_session_checked(dir, &originals, &check),
                 None => persistence::load_profile(dir, &originals, &versions, law)?,
             }
         } else {
@@ -431,6 +430,7 @@ impl GenericUserStore<DefaultStore> {
         }
         let persistence::LoadedProfile {
             mut loaded,
+            replayed,
             overlong_index_keys,
             index_keys,
             index_file_keys,
@@ -456,11 +456,12 @@ impl GenericUserStore<DefaultStore> {
         });
         let fini = FiniGuard(Some(Arc::clone(&target)));
         let (has_user_data, library_offsets) = db.write(|txn| {
-            let offset = seed_txn(
+            let offset = seed_txn_with_replay(
                 txn,
                 &loaded.state,
                 &target.originals(),
                 &loaded.library_totals,
+                &replayed,
             )?;
             Ok((count_tables(txn)?, offset))
         })?;
@@ -483,7 +484,7 @@ impl GenericUserStore<DefaultStore> {
         // The seed and the kept index are done with the loaded overrides, which
         // the session now owns: move them into the live map rather than
         // cloning every item and dropping the originals with `loaded`.
-        let has_system_items = !loaded.state.system_overrides.is_empty();
+        let has_system_items = !loaded.state.system_overrides.is_empty() || !replayed.is_empty();
         // One pass over the replayed overrides: an item is kept, a removal has
         // none to keep and the session records its token.
         let mut kept_items = Vec::new();
@@ -499,7 +500,8 @@ impl GenericUserStore<DefaultStore> {
                 }
             }
         }
-        let system_items = kept_items.into_iter().collect();
+        let system_items =
+            crate::system_items::SystemItems::new(kept_items.into_iter().collect(), replayed);
 
         let inner = Arc::new(StoreInner {
             system_bumps_live: std::sync::atomic::AtomicBool::new(false),
@@ -605,6 +607,16 @@ pub(crate) fn seed_txn(
     state: &UserState,
     originals: &SystemOriginals,
     library_totals: &BTreeMap<u8, u32>,
+) -> Result<BTreeMap<u8, u32>, StoreError> {
+    seed_txn_with_replay(txn, state, originals, library_totals, &BTreeMap::new())
+}
+
+fn seed_txn_with_replay(
+    txn: &mut impl WriteTxn,
+    state: &UserState,
+    originals: &SystemOriginals,
+    library_totals: &BTreeMap<u8, u32>,
+    replayed: &BTreeMap<u8, crate::replay::ReplayedLibrary>,
 ) -> Result<BTreeMap<u8, u32>, StoreError> {
     let mut unigram_total = 0_u64;
     // The unigrams seeded per library, as the facade would sum them.
@@ -736,6 +748,37 @@ pub(crate) fn seed_txn(
                 continue;
             }
             let key = codec::encode_token(token);
+            let prev = crate::store::txn_get_u64_or(txn, UNIGRAM, &key, 0)?;
+            txn.put(
+                UNIGRAM,
+                &key,
+                &codec::encode_u64(prev.saturating_add(delta)),
+            )?;
+            unigram_total = unigram_total.saturating_add(delta);
+            let sum = seeded.entry(nibble).or_insert(0);
+            *sum = sum.wrapping_add(delta as u32);
+        }
+    }
+
+    // A replayed original needs its unigram row, but no decoded text or
+    // pronunciation rows. The private view retains absolute entry counts.
+    for (&nibble, view) in replayed {
+        let Some(original) = originals.get(&nibble) else {
+            continue;
+        };
+        for slot in view.slots() {
+            if !original.is_readable(slot) {
+                continue;
+            }
+            let Some(bytes) = view.bytes(slot) else {
+                continue;
+            };
+            let base = original.unigram(slot).unwrap_or(0);
+            let delta = u64::from(crate::replay::raw_unigram(&bytes).wrapping_sub(base));
+            if delta == 0 {
+                continue;
+            }
+            let key = codec::encode_token((u32::from(nibble) << 24) | slot);
             let prev = crate::store::txn_get_u64_or(txn, UNIGRAM, &key, 0)?;
             txn.put(
                 UNIGRAM,

@@ -621,13 +621,13 @@ impl<'a> Scan<'a> {
 /// native-endian (`u32` `LOG_TYPE`/token, `u16` lengths) and each record
 /// carries whole `PhraseItem` chunks as its payloads.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LogRecord {
+pub enum LogRecord<P = Vec<u8>> {
     /// `LOG_ADD_RECORD` — a phrase item the system chunk lacks.
     Add {
         /// The record's token.
         token: u32,
         /// The new item's bytes (a `PhraseItem` chunk).
-        new_item: Vec<u8>,
+        new_item: P,
     },
     /// `LOG_REMOVE_RECORD` — a system phrase item removed from the live
     /// index.
@@ -635,16 +635,16 @@ pub enum LogRecord {
         /// The record's token.
         token: u32,
         /// The removed item's bytes, as the system chunk held them.
-        old_item: Vec<u8>,
+        old_item: P,
     },
     /// `LOG_MODIFY_RECORD` — a phrase item whose content changed.
     Modify {
         /// The record's token.
         token: u32,
         /// The system item's bytes.
-        old_item: Vec<u8>,
+        old_item: P,
         /// The current item's bytes.
-        new_item: Vec<u8>,
+        new_item: P,
     },
     /// `LOG_MODIFY_HEADER` — the sub-index `total_freq` change; the
     /// token is `null_token` and both payloads are the same 4-byte
@@ -655,6 +655,91 @@ pub enum LogRecord {
         /// The current sub-index total.
         new_total: u32,
     },
+}
+
+impl<P: AsRef<[u8]>> LogRecord<P> {
+    /// Borrow a record's payloads without copying either item.
+    #[must_use]
+    pub fn as_ref(&self) -> LogRecord<&[u8]> {
+        match self {
+            Self::Add { token, new_item } => LogRecord::Add {
+                token: *token,
+                new_item: new_item.as_ref(),
+            },
+            Self::Remove { token, old_item } => LogRecord::Remove {
+                token: *token,
+                old_item: old_item.as_ref(),
+            },
+            Self::Modify {
+                token,
+                old_item,
+                new_item,
+            } => LogRecord::Modify {
+                token: *token,
+                old_item: old_item.as_ref(),
+                new_item: new_item.as_ref(),
+            },
+            Self::ModifyHeader {
+                old_total,
+                new_total,
+            } => LogRecord::ModifyHeader {
+                old_total: *old_total,
+                new_total: *new_total,
+            },
+        }
+    }
+}
+
+impl LogRecord<&[u8]> {
+    fn into_owned(self) -> LogRecord {
+        match self {
+            Self::Add { token, new_item } => LogRecord::Add {
+                token,
+                new_item: new_item.to_vec(),
+            },
+            Self::Remove { token, old_item } => LogRecord::Remove {
+                token,
+                old_item: old_item.to_vec(),
+            },
+            Self::Modify {
+                token,
+                old_item,
+                new_item,
+            } => LogRecord::Modify {
+                token,
+                old_item: old_item.to_vec(),
+                new_item: new_item.to_vec(),
+            },
+            Self::ModifyHeader {
+                old_total,
+                new_total,
+            } => LogRecord::ModifyHeader {
+                old_total,
+                new_total,
+            },
+        }
+    }
+}
+
+/// Walk a logger's records as borrowed byte slices, stopping at its first error.
+/// Payloads retain their raw sizes, including trailing bytes.
+pub fn log_records(bytes: &[u8]) -> impl Iterator<Item = Result<LogRecord<&[u8]>, LogDecodeError>> {
+    let mut offset = 0;
+    std::iter::from_fn(move || {
+        if offset >= bytes.len() {
+            return None;
+        }
+        match decode_log_record_at(bytes, offset) {
+            Ok((record, next)) => {
+                offset = next;
+                Some(Ok(record))
+            }
+            Err(error) => {
+                offset = bytes.len();
+                Some(Err(error))
+            }
+        }
+    })
 }
 
 /// `sizeof(LOG_TYPE)` — the unscoped enum's underlying `int`.
@@ -747,7 +832,7 @@ pub fn decode_log_records_partial(bytes: &[u8]) -> (Vec<LogRecord>, Option<LogDe
     while offset < bytes.len() {
         match decode_log_record_at(bytes, offset) {
             Ok((record, next)) => {
-                records.push(record);
+                records.push(record.into_owned());
                 offset = next;
             }
             Err(error) => return (records, Some(error)),
@@ -761,7 +846,7 @@ pub fn decode_log_records_partial(bytes: &[u8]) -> (Vec<LogRecord>, Option<LogDe
 fn decode_log_record_at(
     bytes: &[u8],
     mut offset: usize,
-) -> Result<(LogRecord, usize), LogDecodeError> {
+) -> Result<(LogRecord<&[u8]>, usize), LogDecodeError> {
     let take_u16 = |offset: &mut usize| -> Result<u16, LogDecodeError> {
         let lo = *offset;
         let hi = lo + 2;
@@ -807,19 +892,19 @@ fn decode_log_record_at(
     let record = match log_type {
         1 => {
             let len = take_u16(&mut offset)?;
-            let new_item = take_bytes(&mut offset, len)?.to_vec();
+            let new_item = take_bytes(&mut offset, len)?;
             LogRecord::Add { token, new_item }
         }
         2 => {
             let len = take_u16(&mut offset)?;
-            let old_item = take_bytes(&mut offset, len)?.to_vec();
+            let old_item = take_bytes(&mut offset, len)?;
             LogRecord::Remove { token, old_item }
         }
         3 => {
             let old_len = take_u16(&mut offset)?;
             let new_len = take_u16(&mut offset)?;
-            let old_item = take_bytes(&mut offset, old_len)?.to_vec();
-            let new_item = take_bytes(&mut offset, new_len)?.to_vec();
+            let old_item = take_bytes(&mut offset, old_len)?;
+            let new_item = take_bytes(&mut offset, new_len)?;
             LogRecord::Modify {
                 token,
                 old_item,

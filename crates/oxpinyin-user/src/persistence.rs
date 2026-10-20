@@ -46,13 +46,13 @@ use oxpinyin_data::table_entries::pinyin_index_entries;
 use oxpinyin_data::table_info::FileName;
 use oxpinyin_data::user_files::{
     LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout, UserTableInfo,
-    decode_log_records, encode_log_records, get_open_counter, read_chunk_payload,
+    decode_log_records, encode_log_records, get_open_counter, log_records, read_chunk_payload,
 };
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
 };
 
-use crate::replay::{Merge, Stop, raw_unigram};
+use crate::replay::{Merge, ReplayedLibrary, Stop, raw_unigram};
 use crate::store::SaveReport;
 
 /// `USER_TABLE_INFO` (`pinyin_internal.h:56`).
@@ -536,6 +536,8 @@ pub struct Loaded {
 /// the user pinyin index's key metadata needed by session wiring.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LoadedProfile {
+    /// Completed private views retained by session opens.
+    pub(crate) replayed: BTreeMap<u8, ReplayedLibrary>,
     /// The public load result.
     pub(crate) loaded: Loaded,
     /// The user pinyin index's readings longer than `MAX_PHRASE_LENGTH`
@@ -751,7 +753,7 @@ pub(crate) fn load_profile(
     law: UserConfLaw,
 ) -> Result<LoadedProfile, PersistenceError> {
     let check = check_format(dir, versions, originals.layout(), law)?;
-    Ok(load_checked(dir, originals, &check))
+    Ok(load_session_checked(dir, originals, &check))
 }
 
 /// What `check_format` decided about a profile: the open counter this
@@ -829,12 +831,30 @@ pub(crate) fn load_checked(
     originals: &SystemOriginals,
     check: &ProfileCheck,
 ) -> LoadedProfile {
+    load_checked_impl(dir, originals, check, false)
+}
+
+pub(crate) fn load_session_checked(
+    dir: &Path,
+    originals: &SystemOriginals,
+    check: &ProfileCheck,
+) -> LoadedProfile {
+    load_checked_impl(dir, originals, check, true)
+}
+
+fn load_checked_impl(
+    dir: &Path,
+    originals: &SystemOriginals,
+    check: &ProfileCheck,
+    lazy: bool,
+) -> LoadedProfile {
     let mut profile = LoadedProfile {
         loaded: Loaded {
             open_counter: check.open_counter,
             wiped: !check.conform,
             ..Loaded::default()
         },
+        replayed: BTreeMap::new(),
         overlong_index_keys: Vec::new(),
         index_keys: BTreeSet::new(),
         index_file_keys: IndexKeys::default(),
@@ -857,7 +877,18 @@ pub(crate) fn load_checked(
             &mut profile.loaded.skipped,
             &mut profile.loaded.state.phrase_table,
         );
-        load_logs(dir, originals, &mut profile.loaded);
+        if lazy {
+            load_logs_with_mask(
+                SystemLogSource::Directory(dir),
+                originals,
+                &mut profile.loaded,
+                None,
+                false,
+                Some(&mut profile.replayed),
+            );
+        } else {
+            load_logs(dir, originals, &mut profile.loaded);
+        }
         // The file's records are the table's: one that the readings do not
         // derive keeps its bytes (#785).
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
@@ -1212,6 +1243,7 @@ fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
         loaded,
         None,
         false,
+        None,
     );
 }
 
@@ -1231,6 +1263,7 @@ pub(crate) fn load_library_logs(
         &mut loaded,
         None,
         true,
+        None,
     );
     (loaded.state, loaded.library_totals)
 }
@@ -1276,8 +1309,23 @@ pub(crate) fn load_masked_logs(
         &mut loaded,
         Some((mask, value)),
         false,
+        None,
     );
     (loaded.state, loaded.library_totals)
+}
+
+enum Journal {
+    Owned(Vec<LogRecord>),
+    Bytes(Vec<u8>),
+}
+
+impl Journal {
+    fn records(&self) -> Box<dyn Iterator<Item = LogRecord<&[u8]>> + '_> {
+        match self {
+            Self::Owned(records) => Box::new(records.iter().map(LogRecord::as_ref)),
+            Self::Bytes(bytes) => Box::new(log_records(&bytes[8..]).filter_map(Result::ok)),
+        }
+    }
 }
 
 enum SystemLogSource<'a> {
@@ -1291,6 +1339,7 @@ fn load_logs_with_mask(
     loaded: &mut Loaded,
     mask: Option<(u32, u32)>,
     only_originals: bool,
+    mut replayed: Option<&mut BTreeMap<u8, ReplayedLibrary>>,
 ) {
     for (nibble, file) in originals.layout().system_logs() {
         let nibble = *nibble;
@@ -1305,18 +1354,20 @@ fn load_logs_with_mask(
             continue;
         }
         let name = file.display();
-        let mut records = match &mut source {
+        let mut journal = match &mut source {
             SystemLogSource::Snapshot(snapshot) => {
                 let Some(records) = snapshot.records.remove(&nibble) else {
                     continue;
                 };
-                records
+                Journal::Owned(records)
             }
             SystemLogSource::Directory(dir) => {
                 let path = file.under(dir);
-                let bytes = match std::fs::read(&path) {
+                let mut bytes = match std::fs::read(&path) {
                     Ok(bytes) => bytes,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        continue;
+                    }
                     Err(e) => {
                         loaded.skipped.push(format!("{name}: {e}"));
                         continue;
@@ -1329,8 +1380,13 @@ fn load_logs_with_mask(
                         continue;
                     }
                 };
-                match decode_log_records(payload) {
-                    Ok(records) => records,
+                let end = 8 + payload.len();
+                let validation = log_records(payload).try_for_each(|record| record.map(|_| ()));
+                match validation {
+                    Ok(()) => {
+                        bytes.truncate(end);
+                        Journal::Bytes(bytes)
+                    }
                     Err(error) => {
                         // A non-null-`MODIFY_HEADER` token is the pin's
                         // `assert(token == null_token)` (`phrase_index_logger.h:202`):
@@ -1348,6 +1404,16 @@ fn load_logs_with_mask(
             }
         };
         if let Some((mask, value)) = mask {
+            let mut records = match journal {
+                Journal::Owned(records) => records,
+                Journal::Bytes(bytes) => match read_chunk_payload(&bytes)
+                    .ok()
+                    .and_then(|payload| decode_log_records(payload).ok())
+                {
+                    Some(records) => records,
+                    None => continue,
+                },
+            };
             let Some(old_total) = records.iter().find_map(|record| match record {
                 LogRecord::ModifyHeader { old_total, .. } => Some(*old_total),
                 _ => None,
@@ -1386,15 +1452,17 @@ fn load_logs_with_mask(
                     new_total,
                 },
             );
+            journal = Journal::Owned(records);
         }
 
         // The pin emits local slots, but its reader masks high bits even
         // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
         // `SubPhraseIndex::merge` over the records, in the pin's own terms:
         // bytes compared as bytes, payloads kept whole, the first failure the
-        // end (`phrase_index.cpp:439-517`); typed items are made once, below.
+        // end (`phrase_index.cpp:439-517`). Session opens retain the byte
+        // views; value-only callers decode the final touched slots.
         let mut merge = Merge::new(originals.get(&nibble));
-        for record in records {
+        for record in journal.records() {
             if let Err(stop) = merge.apply(record) {
                 loaded.skipped.push(match stop {
                     Stop::ShortAdd(token) => {
@@ -1411,7 +1479,15 @@ fn load_logs_with_mask(
                 break;
             }
         }
-        let (total, overrides) = merge.finish(&mut loaded.skipped, &name);
+        let (total, overrides) = if let Some(replayed) = replayed.as_deref_mut() {
+            let (total, overrides, retained) = merge.finish_lazy(&mut loaded.skipped, &name);
+            if let Some(retained) = retained {
+                replayed.insert(nibble, retained);
+            }
+            (total, overrides)
+        } else {
+            merge.finish(&mut loaded.skipped, &name)
+        };
         if let Some(total) = total {
             loaded.library_totals.insert(nibble, total);
         }
@@ -2357,7 +2433,17 @@ mod tests {
             bigram: Vec::new(),
             ..saved
         };
-        assert_eq!(loaded.loaded.state, saved, "an empty key names no row");
+        let mut actual = loaded.loaded.state;
+        for (library, replayed) in loaded.replayed {
+            for slot in replayed.slots() {
+                actual
+                    .system_overrides
+                    .entry(library)
+                    .or_default()
+                    .insert(slot, replayed.item(slot));
+            }
+        }
+        assert_eq!(actual, saved, "an empty key names no row");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

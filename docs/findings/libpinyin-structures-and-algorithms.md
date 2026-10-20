@@ -164,7 +164,7 @@ pin's coupling while preserving its behaviour.
 | --- | --- | --- | --- |
 | Phrase item | `PhraseItem` (`storage/phrase_index.h:64`): `{u8 len, u8 npron, u32 unigram, ucs4[len], {ChewingKey[len], u32 freq} × npron}` in a `MemoryChunk` | `PhraseItemView` and `PronunciationView` in `oxpinyin-data/src/phrase_library.rs`, borrowed views over the same bytes | same / follows |
 | Sub phrase index | `SubPhraseIndex` (`storage/phrase_index.h:257`): header (total freq), offset array indexed by `token & PHRASE_MASK`, content area; file `mmap`ped `PROT_READ\|PROT_WRITE, MAP_PRIVATE` (`include/memory_chunk.h:505-506`); O(1) token → item | `PhraseLibrary` (`phrase_library.rs`), `item`, `slot_offset`; the same files mapped read-only; O(1) token → item | same / follows (reads) |
-| Phrase index edits | in place on the private mapping: `PhraseItem::add_pronunciation` (`storage/phrase_index.cpp:56`), `SubPhraseIndex::add_unigram_frequency` (`:150`) | mapping never written; edits go to overlays — `StoreInner` system-item map (`oxpinyin-user/src/registry.rs`), user value tables in `oxpinyin-user/src/store.rs`, `ChunkItem` (`oxpinyin-data/src/chunk_write.rs`) — and the chunk is rebuilt by `build_chunk` at save | different / unverified — the files written at save are the pin's formats; the in-memory equivalence is not yet argued |
+| Phrase index edits | in place on the private mapping: `PhraseItem::add_pronunciation` (`storage/phrase_index.cpp:56`), `SubPhraseIndex::add_unigram_frequency` (`:150`) | journal MODIFY writes into a separate `PhraseContent` private mapping; `SystemItems` retains completed replay views and caches `ChunkItem`s on first use; later imports/training use those decoded items and saves rebuild the pin's chunk format | different / argued (journal replay, below) |
 | Facade phrase index | `FacadePhraseIndex` (`storage/phrase_index.h:438`): 16 `SubPhraseIndex*` and a running `m_total_freq` | `PhraseLibraries` (`oxpinyin-data/src/phrase_libraries.rs`): 16 lock-guarded slots; system total read from the chunk header, user total a separate row | different / unverified |
 | Pinyin key → tokens | `ChewingLargeTable2` per backend (`storage/chewing_large_table2_bdb.h:34` and peers): DBM keyed by packed `ChewingKey[len]`, values `PinyinIndexItem2` arrays (`storage/pinyin_phrase3.h:181`), per-length `ChewingTableEntry` objects with a reused buffer (`storage/chewing_large_table2.h:74`); results compressed to token ranges by `convert` (`:90`) | `ChewingTable` (`oxpinyin-data/src/chewing_table.rs`) over the same file and keys; each lookup decodes rows into a fresh `Vec`; range compression ported as `PhraseIndexRanges::convert` (`oxpinyin-core/src/lib.rs`) | different / unverified; one heap allocation per record per lookup where the pin reuses a buffer |
 | User pinyin table | the user DBM loaded into an in-memory DB (`storage/facade_chewing_table2.h:87`, `load_db`) and searched like the system table | `UserLookup` (`oxpinyin-user/src/lookup.rs`): text-keyed ordered maps plus an initials map, rebuilt in full when the phrase generation changes; the pin's file format is written back at save | different / unverified |
@@ -173,6 +173,40 @@ pin's coupling while preserving its behaviour.
 | System bigram | `Bigram::attach` read-only on the DBM (`storage/ngram_bdb.h:88`), one `load` per row | `BigramTable::load_raw_successors` (`oxpinyin-data/src/bigram_table.rs`) | same / follows |
 | User bigram | `Bigram::load_db` into the backend's in-memory container (`storage/ngram_bdb.h:67`) | `UserBigramDb` (`oxpinyin-store/src/lib.rs`): the pin's container per backend through the real library | same / follows |
 | Training-only n-grams | `FlexibleSingleGram` / `FlexibleBigram` on a DBM, used by `utils/training` only | in-memory ordered maps in `oxpinyin-kmm/src/model.rs` | different / off path — training tools only; their outputs are rows in §8 |
+
+Journal replay follows `SubPhraseIndex::merge` at 074a2219
+`storage/phrase_index.cpp:439-517`, called by `pinyin.cpp:250-276` and
+`zhuyin.cpp:194-220`. A logger yields borrowed raw payloads; old-item equality
+requires the same size and bytes (`storage/phrase_index.h:235-240`). REMOVE
+publishes its removal before comparing. MODIFY compares first, overwrites the
+private view when the payload fits, and otherwise removes/appends the whole
+payload. A failed record leaves the applied prefix. Stale item views, cross-item
+header reads and the registered short-ADD exception retain their existing laws.
+
+`Merge` in `oxpinyin-user/src/replay.rs` owns a writable private view of the
+original file, separate from the immutable save baseline. It copies content only
+when an append needs owned storage, or as a fallback when a second mapping
+cannot be made. Unchanged slot offsets are read directly from the baseline;
+only relocated/removed offsets enter a sparse map. A sorted set marks changed
+slots. The ordinary loader validates and walks one journal byte buffer without
+building a vector of records or allocating item-write runs. Mask snapshots keep
+the existing owned-record path. Session opens retain completed original-item
+views after decoding each payload for validation, discarding that temporary
+item. A failure records the eager diagnostic and leaves the baseline slot.
+`SystemItems` caches decoded items on use; added items still seed
+the existing text/index rows, removals the removal set, and original items seed
+only necessary unigram deltas. Replayed reading rows are never synthesized.
+
+For B journal bytes, J changed slots, M relocated slots and K items subsequently
+used, replay takes O(B + J log J + J log M), versus the pin's O(B + J) mapped
+walk. Metadata uses O(J + M); the raw journal buffer uses O(B), and typed payloads
+are retained only for the K used items. Since J and M are bounded by B, this does
+not worsen the loader's linear space class. It removes retained eager decoded payloads,
+write runs and record staging; the sparse metadata retains a logarithmic time
+cost. Validation decodes one item at a time during init without retaining it;
+first use decodes again and caches it. Bulk save/mask operations may materialize all changed items, as the
+previous loader did at init. The extra private view shares clean file pages;
+MODIFY dirties private pages as the pin does, without writing the system file.
 
 For libpinyin sessions, `SessionValues::Memory`
 (`oxpinyin-user/src/session_values.rs`) owns separate logical tables:

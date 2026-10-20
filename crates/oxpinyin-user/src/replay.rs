@@ -33,11 +33,12 @@
 //! * The first failure ends the merge and the records before it stay applied
 //!   (`pinyin.cpp:276` ignores the answer).
 //!
-//! Typed [`ChunkItem`]s are made once, at [`Merge::finish`].
+//! Session opens decode to validate each retained payload, then keep its private
+//! byte view. Typed [`ChunkItem`]s are cached on use; value-only callers use
+//! [`Merge::finish`].
 
 use std::borrow::Cow;
-use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use oxpinyin_data::chunk_write::{ChunkItem, PHRASE_MASK, decode_phrase_item};
 use oxpinyin_data::phrase_library::PhraseLibrary;
@@ -97,95 +98,63 @@ enum Stale {
     },
 }
 
-/// The pin's `m_phrase_content`: the shipped item area, then the payloads an
-/// `add_phrase_item` appends to it, in order.
-struct Content<'a> {
-    /// The shipped item area, exactly as loaded.
-    shipped: Cow<'a, [u8]>,
-    /// In-place writes into the shipped mapping before its first copy, as
-    /// disjoint runs sorted by their start.
-    writes: Vec<(usize, Vec<u8>)>,
-    /// The run scan's cursor: the first run that starts past the last offset
-    /// read. Replay reads slots in ascending order, so the scan is linear.
-    cursor: Cell<usize>,
-    /// The copy the first append makes, and every appended byte after it.
-    owned: Option<Vec<u8>>,
-    /// The copy's data end; in-place writes into its slack do not move it.
-    data_end: usize,
-    /// The copy's allocation size; bytes past the data end are zero.
-    capacity: usize,
+/// The private mapping the pin edits, or an inline/fallback byte buffer.
+enum Shipped {
+    Mapped(oxpinyin_data::phrase_library::PhraseContent),
+    Inline(Vec<u8>),
 }
 
-impl<'a> Content<'a> {
-    fn shipped(area: Cow<'a, [u8]>) -> Self {
+impl Shipped {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            Self::Mapped(map) => map.as_slice(),
+            Self::Inline(bytes) => bytes,
+        }
+    }
+    fn bytes_mut(&mut self) -> &mut [u8] {
+        match self {
+            Self::Mapped(map) => map.as_mut_slice(),
+            Self::Inline(bytes) => bytes,
+        }
+    }
+}
+
+/// `m_phrase_content`: edit the private view until an append copies it.
+struct Content {
+    shipped: Shipped,
+    owned: Option<Vec<u8>>,
+    data_end: usize,
+    capacity: usize,
+    // Inject a failed decode independently of the earlier header bounds check.
+    #[cfg(test)]
+    item_override: Option<(usize, Vec<u8>)>,
+}
+
+impl Content {
+    fn shipped(area: Shipped) -> Self {
+        let len = area.bytes().len();
         Self {
-            data_end: area.len(),
-            capacity: area.len(),
             shipped: area,
-            writes: Vec::new(),
-            cursor: Cell::new(0),
             owned: None,
+            data_end: len,
+            capacity: len,
+            #[cfg(test)]
+            item_override: None,
         }
     }
-
     fn data_len(&self) -> usize {
-        self.owned
-            .as_ref()
-            .map_or(self.shipped.len(), |_| self.data_end)
+        self.data_end
     }
-
     fn buffer_capacity(&self) -> usize {
-        self.owned
-            .as_ref()
-            .map_or(self.shipped.len(), |_| self.capacity)
+        self.capacity
     }
-
-    /// The first run that starts past `pos`, advancing a one-way cursor.
-    fn scan(&self, pos: usize) -> usize {
-        let mut index = self.cursor.get();
-        if index > self.writes.len() || (index > 0 && self.writes[index - 1].0 > pos) {
-            index = 0;
-        }
-        while index < self.writes.len() && self.writes[index].0 <= pos {
-            index += 1;
-        }
-        self.cursor.set(index);
-        index
-    }
-
-    /// One byte of the shipped mapping with its in-place writes.
-    fn shipped_byte(&self, pos: usize) -> Option<u8> {
-        if pos >= self.shipped.len() {
-            return None;
-        }
-        let index = self.scan(pos);
-        if let Some((start, run)) = index.checked_sub(1).map(|index| &self.writes[index])
-            && pos < start + run.len()
-        {
-            return Some(run[pos - *start]);
-        }
-        Some(self.shipped[pos])
-    }
-
-    /// One byte of the current content; zeros between the data end and the
-    /// copy's allocation end, `None` past the allocation.
     fn byte(&self, pos: usize) -> Option<u8> {
         match &self.owned {
-            Some(owned) => {
-                if pos < owned.len() {
-                    Some(owned[pos])
-                } else if pos < self.capacity {
-                    Some(0)
-                } else {
-                    None
-                }
-            }
-            None => self.shipped_byte(pos),
+            Some(owned) if pos < self.capacity => Some(owned.get(pos).copied().unwrap_or(0)),
+            Some(_) => None,
+            None => self.shipped.bytes().get(pos).copied(),
         }
     }
-
-    /// `SubPhraseIndex::get_phrase_item`'s read of the two header bytes and
-    /// the item view they give (`phrase_index.cpp:180-206`).
     fn header(&self, offset: usize) -> Found {
         if offset
             .checked_add(2)
@@ -203,123 +172,65 @@ impl<'a> Content<'a> {
             _ => Found::Past,
         }
     }
-
-    /// The current content's bytes at `[offset, offset + len)`, or `None`
-    /// when the range ends past the allocation.
-    fn read(&self, offset: usize, len: usize) -> Option<Vec<u8>> {
-        let end = offset.checked_add(len)?;
-        if end > self.buffer_capacity() {
-            return None;
-        }
-        (offset..end).map(|pos| self.byte(pos)).collect()
-    }
-
-    /// The current content's item bytes, borrowed when no write overlays them.
     fn item(&self, offset: usize, len: usize) -> Option<Cow<'_, [u8]>> {
+        #[cfg(test)]
+        if let Some((at, bytes)) = &self.item_override
+            && *at == offset
+        {
+            return Some(Cow::Borrowed(bytes));
+        }
         let end = offset.checked_add(len)?;
-        if end > self.buffer_capacity() {
+        if end > self.capacity {
             return None;
         }
         match &self.owned {
             Some(owned) if end <= owned.len() => Some(Cow::Borrowed(&owned[offset..end])),
-            Some(_) => Some(Cow::Owned(self.read(offset, len)?)),
+            Some(_) => Some(Cow::Owned(
+                (offset..end)
+                    .map(|pos| self.byte(pos))
+                    .collect::<Option<Vec<_>>>()?,
+            )),
             None => self.shipped_item(offset, len),
         }
     }
-
-    /// Bytes of the shipped mapping, with its in-place writes: what a stale
-    /// view into the mapping still sees after the first append copied it.
     fn shipped_item(&self, offset: usize, len: usize) -> Option<Cow<'_, [u8]>> {
-        let end = offset.checked_add(len)?;
-        if end > self.shipped.len() {
-            return None;
-        }
-        let index = self.scan(offset);
-        let containing = index
-            .checked_sub(1)
-            .map(|index| &self.writes[index])
-            .filter(|(start, run)| offset < start + run.len());
-        let inside = self
-            .writes
-            .get(index)
-            .is_some_and(|(start, _)| *start < end);
-        if containing.is_none() && !inside {
-            return Some(Cow::Borrowed(&self.shipped[offset..end]));
-        }
-        // A run that starts at or before the item and ends at or after it,
-        // with nothing overlapping behind it, serves the item itself.
-        if let Some((start, run)) = containing
-            && start + run.len() >= end
-            && !inside
-        {
-            return Some(Cow::Borrowed(&run[offset - *start..end - *start]));
-        }
-        let mut out = self.shipped[offset..end].to_vec();
-        let mut apply = |start: &usize, run: &[u8]| {
-            let run_end = *start + run.len();
-            let from = std::cmp::max(*start, offset);
-            let to = std::cmp::min(run_end, end);
-            out[from - offset..to - offset].copy_from_slice(&run[from - *start..to - *start]);
-        };
-        if let Some((start, run)) = containing {
-            apply(start, run);
-        }
-        for (start, run) in &self.writes[index..] {
-            if *start >= end {
-                break;
-            }
-            apply(start, run);
-        }
-        Some(Cow::Owned(out))
+        Some(Cow::Borrowed(
+            self.shipped.bytes().get(offset..offset.checked_add(len)?)?,
+        ))
     }
-
-    /// `add_phrase_item`: append `payload` at the content's end (at 8 for an
-    /// empty buffer) and return the slot's new offset.
     fn append(&mut self, payload: &[u8]) -> u32 {
-        let data_len = self.data_len();
-        let offset = if data_len == 0 {
+        let offset = if self.data_len() == 0 {
             FIRST_ITEM_OFFSET
         } else {
-            data_len
+            self.data_len()
         };
-        if self.owned.is_some() {
-            let needed = offset + payload.len();
+        let needed = offset + payload.len();
+        if let Some(owned) = &mut self.owned {
             if needed > self.capacity {
-                self.capacity = std::cmp::max(self.capacity.saturating_mul(2), needed);
+                self.capacity = self.capacity.saturating_mul(2).max(needed);
             }
-            if let Some(owned) = self.owned.as_mut() {
-                if owned.len() < needed {
-                    owned.resize(needed, 0);
-                }
-                owned[offset..needed].copy_from_slice(payload);
+            if needed > owned.len() {
+                owned.resize(needed, 0);
             }
-            self.data_end = needed;
+            owned[offset..needed].copy_from_slice(payload);
         } else {
-            let mut owned = vec![0; offset];
-            owned[..self.shipped.len()].copy_from_slice(&self.shipped);
-            for (start, run) in &self.writes {
-                let to = std::cmp::min(start + run.len(), owned.len());
-                if *start < to {
-                    owned[*start..to].copy_from_slice(&run[..to - *start]);
-                }
-            }
+            let mut owned = self.shipped.bytes().to_vec();
+            owned.resize(offset, 0);
             owned.extend_from_slice(payload);
-            self.data_end = owned.len();
-            self.capacity = owned.len();
+            self.capacity = needed;
             self.owned = Some(owned);
         }
+        self.data_end = needed;
         u32::try_from(offset).unwrap_or(u32::MAX)
     }
-
-    /// An in-place `memmove` into the current content.
     fn write(&mut self, offset: usize, bytes: &[u8]) -> bool {
         let Some(end) = offset.checked_add(bytes.len()) else {
             return false;
         };
-        if end > self.buffer_capacity() {
+        if end > self.capacity {
             return false;
         }
-        match self.owned.as_mut() {
+        match &mut self.owned {
             Some(owned) => {
                 if end > owned.len() {
                     owned.resize(end, 0);
@@ -327,68 +238,24 @@ impl<'a> Content<'a> {
                 owned[offset..end].copy_from_slice(bytes);
                 true
             }
-            None => self.write_run(offset, bytes),
+            None => self.write_shipped(offset, bytes),
         }
     }
-
-    /// Adds one run to the shipped writes, trimming the runs it overlaps so
-    /// the map stays disjoint and key order is content order.
-    fn write_run(&mut self, offset: usize, bytes: &[u8]) -> bool {
+    fn write_shipped(&mut self, offset: usize, bytes: &[u8]) -> bool {
         let Some(end) = offset.checked_add(bytes.len()) else {
             return false;
         };
-        if end > self.shipped.len() {
+        let Some(target) = self.shipped.bytes_mut().get_mut(offset..end) else {
             return false;
-        }
-        if bytes.is_empty() {
-            return true;
-        }
-        if self
-            .writes
-            .last()
-            .is_none_or(|(start, run)| start + run.len() <= offset)
-        {
-            self.writes.push((offset, bytes.to_vec()));
-            return true;
-        }
-        let mut first = self.writes.partition_point(|(start, _)| *start < offset);
-        if first > 0 {
-            let (start, run) = &self.writes[first - 1];
-            if start + run.len() > offset {
-                first -= 1;
-            }
-        }
-        let mut last = first;
-        while last < self.writes.len() && self.writes[last].0 < end {
-            last += 1;
-        }
-        let mut pieces: Vec<(usize, Vec<u8>)> = Vec::new();
-        for (start, run) in &self.writes[first..last] {
-            if *start < offset {
-                pieces.push((*start, run[..offset - *start].to_vec()));
-            }
-            let run_end = start + run.len();
-            if run_end > end {
-                pieces.push((end, run[end - *start..].to_vec()));
-            }
-        }
-        pieces.push((offset, bytes.to_vec()));
-        pieces.sort_by_key(|(start, _)| *start);
-        self.writes.splice(first..last, pieces);
-        self.cursor.set(0);
+        };
+        target.copy_from_slice(bytes);
         true
-    }
-
-    /// A write through a stale view into the shipped mapping: after its copy
-    /// that memory is no longer the content, so it is kept as an overlay.
-    fn write_shipped(&mut self, offset: usize, bytes: &[u8]) -> bool {
-        self.write_run(offset, bytes)
     }
 }
 
 /// Where a mapped library's item offsets come from.
-enum Origin<'a> {
-    Mapped(&'a PhraseLibrary),
+enum Origin {
+    Mapped(PhraseLibrary),
     /// A fixture `SystemLibrary`'s inline items, laid out as the pin's
     /// appended content would be.
     Inline(BTreeMap<u32, u32>),
@@ -396,12 +263,17 @@ enum Origin<'a> {
 }
 
 /// The content and offsets a replay starts from.
-fn origin_and_content<'a>(original: Option<&'a SystemLibrary>) -> (Origin<'a>, Content<'a>) {
+fn origin_and_content(original: Option<&SystemLibrary>) -> (Origin, Content) {
     match original {
         Some(library) => match &library.mapped {
             Some(mapped) => (
-                Origin::Mapped(mapped),
-                Content::shipped(Cow::Borrowed(mapped.item_area())),
+                Origin::Mapped(mapped.clone()),
+                Content::shipped(
+                    mapped
+                        .private_content()
+                        .map(Shipped::Mapped)
+                        .unwrap_or_else(|_| Shipped::Inline(mapped.item_area().to_vec())),
+                ),
             ),
             None if !library.items.is_empty() => {
                 let mut bytes = vec![0; FIRST_ITEM_OFFSET];
@@ -410,11 +282,14 @@ fn origin_and_content<'a>(original: Option<&'a SystemLibrary>) -> (Origin<'a>, C
                     offsets.insert(*slot, u32::try_from(bytes.len()).unwrap_or(u32::MAX));
                     bytes.extend_from_slice(&journal_item_bytes(item));
                 }
-                (Origin::Inline(offsets), Content::shipped(Cow::Owned(bytes)))
+                (
+                    Origin::Inline(offsets),
+                    Content::shipped(Shipped::Inline(bytes)),
+                )
             }
-            None => (Origin::None, Content::shipped(Cow::Borrowed(&[]))),
+            None => (Origin::None, Content::shipped(Shipped::Inline(Vec::new()))),
         },
-        None => (Origin::None, Content::shipped(Cow::Borrowed(&[]))),
+        None => (Origin::None, Content::shipped(Shipped::Inline(Vec::new()))),
     }
 }
 
@@ -435,12 +310,13 @@ fn visible_len(bytes: &[u8]) -> Option<usize> {
     (len <= bytes.len()).then_some(len)
 }
 
-pub(crate) struct Merge<'a> {
-    origin: Origin<'a>,
-    content: Content<'a>,
-    /// Slots a record changed, with their current offset; 0 is removed.
-    /// `finish` walks this map in ascending slot order.
-    touched: BTreeMap<u32, u32>,
+pub(crate) struct Merge {
+    origin: Origin,
+    content: Content,
+    /// Changed slots, walked in ascending order without copying item bytes.
+    touched: BTreeSet<u32>,
+    /// Relocated or removed slots only; in-place writes keep mapped offsets.
+    offsets: BTreeMap<u32, u32>,
     /// `SubPhraseIndex::m_total_freq`; `None` for a library with no original.
     total: Option<u32>,
     /// The same total for a library with no original to start from.
@@ -451,13 +327,14 @@ pub(crate) struct Merge<'a> {
     appends: u64,
 }
 
-impl<'a> Merge<'a> {
-    pub(crate) fn new(original: Option<&'a SystemLibrary>) -> Self {
+impl Merge {
+    pub(crate) fn new(original: Option<&SystemLibrary>) -> Self {
         let (origin, content) = origin_and_content(original);
         Self {
             origin,
             content,
-            touched: BTreeMap::new(),
+            touched: BTreeSet::new(),
+            offsets: BTreeMap::new(),
             total: original.map(|library| library.total),
             running: original.map_or(0, |library| library.total),
             stale: Stale::Default(vec![0; PHRASE_ITEM_HEADER]),
@@ -474,14 +351,15 @@ impl<'a> Merge<'a> {
     }
 
     fn slot_offset(&self, slot: u32) -> u32 {
-        self.touched
+        self.offsets
             .get(&slot)
             .copied()
             .unwrap_or_else(|| self.original_offset(slot))
     }
 
     fn set_offset(&mut self, slot: u32, offset: u32) {
-        self.touched.insert(slot, offset);
+        self.touched.insert(slot);
+        self.offsets.insert(slot, offset);
     }
 
     /// `SubPhraseIndex::get_phrase_item` for the slot.
@@ -504,15 +382,15 @@ impl<'a> Merge<'a> {
         self.total = self.total.map(|total| total.wrapping_sub(delta));
     }
 
-    pub(crate) fn apply(&mut self, record: LogRecord) -> Result<(), Stop> {
+    pub(crate) fn apply(&mut self, record: LogRecord<impl AsRef<[u8]>>) -> Result<(), Stop> {
         match record {
-            LogRecord::Add { token, new_item } => self.add(token & PHRASE_MASK, new_item),
-            LogRecord::Remove { token, old_item } => self.remove(token, &old_item),
+            LogRecord::Add { token, new_item } => self.add(token & PHRASE_MASK, new_item.as_ref()),
+            LogRecord::Remove { token, old_item } => self.remove(token, old_item.as_ref()),
             LogRecord::Modify {
                 token,
                 old_item,
                 new_item,
-            } => self.modify(token, &old_item, new_item),
+            } => self.modify(token, old_item.as_ref(), new_item.as_ref()),
             LogRecord::ModifyHeader {
                 old_total,
                 new_total,
@@ -531,7 +409,7 @@ impl<'a> Merge<'a> {
         }
     }
 
-    fn add(&mut self, slot: u32, payload: Vec<u8>) -> Result<(), Stop> {
+    fn add(&mut self, slot: u32, payload: &[u8]) -> Result<(), Stop> {
         // `add_phrase_item` stores the payload as it stands (`:208-217`); it
         // does not read the header, then reads the payload's unigram
         // (`phrase_index.h:124-126`). A payload shorter than six bytes
@@ -540,8 +418,8 @@ impl<'a> Merge<'a> {
         if payload.len() < PHRASE_ITEM_HEADER {
             return Err(Stop::ShortAdd(slot));
         }
-        let unigram = raw_unigram(&payload);
-        let offset = self.content.append(&payload);
+        let unigram = raw_unigram(payload);
+        let offset = self.content.append(payload);
         self.appends += 1;
         self.set_offset(slot, offset);
         self.add_total(unigram);
@@ -586,7 +464,7 @@ impl<'a> Merge<'a> {
         }
     }
 
-    fn modify(&mut self, token: u32, old_item: &[u8], new_item: Vec<u8>) -> Result<(), Stop> {
+    fn modify(&mut self, token: u32, old_item: &[u8], new_item: &[u8]) -> Result<(), Stop> {
         let slot = token & PHRASE_MASK;
         let mismatch = || Stop::Mismatch("MODIFY", token);
         match self.visible(slot) {
@@ -610,24 +488,23 @@ impl<'a> Merge<'a> {
                 if new_item.len() > len {
                     // A remove and an add of the whole new payload.
                     let old_unigram = raw_unigram(&bytes);
-                    let new_unigram = raw_unigram(&new_item);
+                    let new_unigram = raw_unigram(new_item);
                     self.subtract_total(old_unigram);
                     self.add_total(new_unigram);
-                    let offset = self.content.append(&new_item);
+                    let offset = self.content.append(new_item);
                     self.appends += 1;
                     self.set_offset(slot, offset);
                 } else {
                     // `memmove` over the stored bytes; the item keeps its
                     // header-derived length for the next read.
-                    if !self.content.write(offset, &new_item) {
+                    if !self.content.write(offset, new_item) {
                         return Err(mismatch());
                     }
-                    self.touched
-                        .insert(slot, u32::try_from(offset).unwrap_or(u32::MAX));
+                    self.touched.insert(slot);
                 }
                 Ok(())
             }
-            Found::Failed => self.modify_stale(old_item, &new_item).ok_or_else(mismatch),
+            Found::Failed => self.modify_stale(old_item, new_item).ok_or_else(mismatch),
         }
     }
 
@@ -708,7 +585,8 @@ impl<'a> Merge<'a> {
         name: &impl std::fmt::Display,
     ) -> (Option<u32>, BTreeMap<u32, Option<ChunkItem>>) {
         let mut typed = Vec::with_capacity(self.touched.len());
-        for (&slot, &offset) in &self.touched {
+        for &slot in &self.touched {
+            let offset = self.slot_offset(slot);
             if offset == 0 {
                 typed.push((slot, None));
                 continue;
@@ -735,6 +613,114 @@ impl<'a> Merge<'a> {
         // Ascending slots: the map is built in one pass.
         let overrides = typed.into_iter().collect();
         (self.total, overrides)
+    }
+}
+
+/// A completed private sub-index view. Typed payloads are decoded on demand.
+#[derive(Clone)]
+pub(crate) struct ReplayedLibrary(std::sync::Arc<Merge>);
+
+impl std::fmt::Debug for ReplayedLibrary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReplayedLibrary")
+            .field("slots", &self.0.touched.len())
+            .finish()
+    }
+}
+
+impl ReplayedLibrary {
+    pub(crate) fn slots(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
+        self.0.touched.iter().copied()
+    }
+    pub(crate) fn contains(&self, slot: u32) -> bool {
+        self.0.touched.contains(&slot)
+    }
+    pub(crate) fn bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
+        if !self.0.touched.contains(&slot) {
+            return None;
+        }
+        let offset = self.0.slot_offset(slot) as usize;
+        let Found::Item { offset, len } = self.0.content.header(offset) else {
+            return None;
+        };
+        self.0.content.item(offset, len)
+    }
+    pub(crate) fn item(&self, slot: u32) -> Option<ChunkItem> {
+        decode_phrase_item(&self.bytes(slot)?).ok()
+    }
+}
+
+impl Merge {
+    /// Keep original live slots as one private view. Added and removed slots
+    /// still use the session's existing value/index/removal paths.
+    pub(crate) fn finish_lazy(
+        mut self,
+        skipped: &mut Vec<String>,
+        name: &impl std::fmt::Display,
+    ) -> (
+        Option<u32>,
+        BTreeMap<u32, Option<ChunkItem>>,
+        Option<ReplayedLibrary>,
+    ) {
+        let mut typed = BTreeMap::new();
+        let origin = &self.origin;
+        let offsets = &self.offsets;
+        self.touched.retain(|&slot| {
+            let offset = offsets.get(&slot).copied().unwrap_or_else(|| match origin {
+                Origin::Mapped(library) => library.content_offset(slot).unwrap_or(0),
+                Origin::Inline(offsets) => offsets.get(&slot).copied().unwrap_or(0),
+                Origin::None => 0,
+            });
+            if offset == 0 {
+                typed.insert(slot, None);
+                return false;
+            }
+            match self.content.header(offset as usize) {
+                Found::Failed => {
+                    typed.insert(slot, None);
+                    false
+                }
+                Found::Past => {
+                    skipped.push(format!("{name}: item {slot} ends past the phrase content"));
+                    false
+                }
+                Found::Item { offset, len } => {
+                    let original = match &self.origin {
+                        Origin::Mapped(library) => library.item(slot).is_some(),
+                        Origin::Inline(offsets) => offsets.contains_key(&slot),
+                        Origin::None => false,
+                    };
+                    if original {
+                        match self.content.item(offset, len) {
+                            Some(bytes) => {
+                                if let Err(error) = decode_phrase_item(&bytes) {
+                                    skipped.push(format!("{name}: {error}"));
+                                    return false;
+                                }
+                            }
+                            None => {
+                                skipped.push(format!("{name}: item {slot} was not readable"));
+                                return false;
+                            }
+                        }
+                        return true;
+                    }
+                    if let Some(bytes) = self.content.item(offset, len) {
+                        match decode_phrase_item(&bytes) {
+                            Ok(item) => {
+                                typed.insert(slot, Some(item));
+                            }
+                            Err(error) => skipped.push(format!("{name}: {error}")),
+                        }
+                    }
+                    false
+                }
+            }
+        });
+        let total = self.total;
+        let retained =
+            (!self.touched.is_empty()).then(|| ReplayedLibrary(std::sync::Arc::new(self)));
+        (total, typed, retained)
     }
 }
 
@@ -788,6 +774,95 @@ mod tests {
         let end = item.len();
         item[end - 4..].copy_from_slice(&frequency.to_le_bytes());
         item
+    }
+
+    #[test]
+    fn eager_and_lazy_finish_reject_invalid_payloads_identically() {
+        let original = library();
+        // The replacement header claims more bytes than the content holds.
+        // A second, valid change keeps a lazy view alive beside the rejected
+        // slot, so presence and reads must both fall back to the baseline.
+        let invalid = bytes_with(&[255, 255], 200);
+        assert!(decode_phrase_item(&invalid).is_err());
+        let replay = || {
+            let mut merge = Merge::new(Some(&original));
+            assert!(merge.apply(modify(1, one(), invalid.clone())).is_ok());
+            assert!(merge.apply(modify(2, two(), with_freq(two(), 88))).is_ok());
+            merge
+        };
+        let mut eager_skipped = Vec::new();
+        let (eager_total, eager_items) = replay().finish(&mut eager_skipped, &"test");
+        let mut lazy_skipped = Vec::new();
+        let (lazy_total, lazy_items, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let retained = retained.expect("the valid slot stays lazy");
+        assert_eq!(lazy_total, eager_total);
+        assert_eq!(lazy_skipped, eager_skipped);
+        assert_eq!(lazy_skipped, ["test: item 1 ends past the phrase content"]);
+        assert!(!eager_items.contains_key(&1));
+        assert!(!lazy_items.contains_key(&1));
+        assert!(!retained.contains(1));
+        assert!(retained.item(1).is_none());
+        assert_eq!(retained.item(2), eager_items[&2]);
+
+        let token = (1 << 24) | 1;
+        let mut live =
+            crate::system_items::SystemItems::new(BTreeMap::new(), BTreeMap::from([(1, retained)]));
+        assert!(!live.contains_key(&token));
+        assert!(live.get(&token).is_none());
+        let eager_visible = eager_items
+            .get(&1)
+            .cloned()
+            .unwrap_or_else(|| original.item(1));
+        let lazy_visible = live.get(&token).cloned().or_else(|| original.item(1));
+        assert_eq!(lazy_visible, eager_visible);
+        assert_eq!(lazy_visible, original.item(1));
+    }
+
+    #[test]
+    fn lazy_original_decode_failure_drops_touched_and_keeps_baseline() {
+        let original = library();
+        let invalid = bytes_with(&[255, 255], 200);
+        let expected = format!("test: {}", decode_phrase_item(&invalid).unwrap_err());
+        let replay = || {
+            let mut merge = Merge::new(Some(&original));
+            assert!(merge.apply(modify(1, one(), with_freq(one(), 77))).is_ok());
+            assert!(merge.apply(modify(2, two(), with_freq(two(), 88))).is_ok());
+            assert!(merge.touched.contains(&1));
+            let offset = merge.slot_offset(1) as usize;
+            assert!(matches!(merge.content.header(offset), Found::Item { .. }));
+            // A structural error normally fails the header bounds check first.
+            // Inject bad bytes at the decoder boundary to exercise the original
+            // slot's defensive validation, with a valid slot keeping the view.
+            merge.content.item_override = Some((offset, invalid.clone()));
+            merge
+        };
+        let mut eager_skipped = Vec::new();
+        let (eager_total, eager_items) = replay().finish(&mut eager_skipped, &"test");
+        let mut lazy_skipped = Vec::new();
+        let (lazy_total, lazy_items, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let retained = retained.expect("the valid original slot keeps the view");
+        assert_eq!(lazy_total, eager_total);
+        assert_eq!(lazy_skipped, eager_skipped);
+        assert_eq!(lazy_skipped, [expected]);
+        assert!(!eager_items.contains_key(&1));
+        assert!(!lazy_items.contains_key(&1));
+        assert!(!retained.0.touched.contains(&1));
+        assert!(!retained.contains(1));
+        assert!(retained.item(1).is_none());
+        assert_eq!(retained.item(2), eager_items[&2]);
+
+        let token = (1 << 24) | 1;
+        let mut live =
+            crate::system_items::SystemItems::new(BTreeMap::new(), BTreeMap::from([(1, retained)]));
+        assert!(!live.contains_key(&token));
+        assert!(live.get(&token).is_none());
+        let eager_visible = eager_items
+            .get(&1)
+            .cloned()
+            .unwrap_or_else(|| original.item(1));
+        let lazy_visible = live.get(&token).cloned().or_else(|| original.item(1));
+        assert_eq!(lazy_visible, eager_visible);
+        assert_eq!(lazy_visible, original.item(1));
     }
 
     /// What a merge leaves: how it ended, the total and the overrides.

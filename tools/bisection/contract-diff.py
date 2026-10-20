@@ -7410,7 +7410,7 @@ def system_replay(k, build, reopen=False, unigram_add=True, observe_add=False):
 
 def _replay_case(name, build, reopen=False, unigram_add=True, observe_add=False, **options):
     for mode in ('pinyin', 'zhuyin'):
-        case('replay-' + name + '-' + mode, mode=mode, stderr=True, **options, issues=('851',))(
+        case('replay-' + name + '-' + mode, mode=mode, stderr=True, **options, issues=('851', '850', '870'))(
             lambda k, build=build: system_replay(k, build, reopen, unigram_add, observe_add))
 
 
@@ -7536,7 +7536,7 @@ for _mode in ('pinyin', 'zhuyin'):
     for _variant in ('repeat', 'replacement', 'wrap', 'overflow', 'missing', 'removed',
                      'reload', 'mask', 'training', 'timing', 'import-system'):
         case('unigram-lifecycle-' + _variant + '-' + _mode, mode=_mode, stderr=True,
-             control=_variant in ('overflow', 'missing', 'removed', 'reload', 'mask'), issues=('853',))(
+             control=_variant in ('overflow', 'missing', 'removed', 'reload', 'mask'), issues=('853', '870'))(
             lambda k, variant=_variant: unigram_lifecycle(k, variant))
 
 
@@ -7566,7 +7566,7 @@ def unigram_null_user_save(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('unigram-null-user-save-' + _mode, mode=_mode, control=True, stderr=True, issues=('853',))(
+    case('unigram-null-user-save-' + _mode, mode=_mode, control=True, stderr=True, issues=('853', '870'))(
         unigram_null_user_save)
 
 
@@ -7849,7 +7849,7 @@ for _name, _payload in (('one-byte', b'\x01'), ('five-bytes', bytes((1, 1, 7, 0,
     for _mode in ('pinyin', 'zhuyin'):
         _suffix = '-zhuyin' if _mode == 'zhuyin' else '-pinyin'
         case('replay-short-add-' + _name + _suffix,
-             mode=_mode, abort=True, stderr=True, issues=('850',))(_short_add(_payload))
+             mode=_mode, abort=True, stderr=True, issues=('850', '870'))(_short_add(_payload))
 
 
 # #871: the pronunciation counts of a replayed system item. A MODIFY record
@@ -7994,13 +7994,13 @@ _PRON_SHAPES = {
     'other-first': ([(_PRON_OTHER_KEYS, 130), (None, 250)], None),
 }
 for _mode in ('pinyin', 'zhuyin'):
-    case('replay-pron-unigram-combined-' + _mode, mode=_mode, stderr=True, issues=('871',))(
+    case('replay-pron-unigram-combined-' + _mode, mode=_mode, stderr=True, issues=('871', '876', '870'))(
         lambda k: pron_lifecycle(k, _pron_shape([(None, 160), (None, 220)]), 'unigram'))
 
 for _shape, (_entries, _unigram) in _PRON_SHAPES.items():
     for _steps in ('train', 'import', 'mask'):
         for _mode in ('pinyin', 'zhuyin'):
-            case('replay-pron-' + _steps + '-' + _shape + '-' + _mode, mode=_mode, stderr=True, issues=('871',))(
+            case('replay-pron-' + _steps + '-' + _shape + '-' + _mode, mode=_mode, stderr=True, issues=('871', '876', '870'))(
                 lambda k, e=_entries, u=_unigram, st=_steps: pron_lifecycle(k, _pron_shape(e, u), st))
 
 
@@ -8066,7 +8066,7 @@ def pron_mixed(k):
 
 
 for _mode in ('pinyin', 'zhuyin'):
-    case('replay-pron-mixed-' + _mode, mode=_mode, stderr=True, issues=('871',))(pron_mixed)
+    case('replay-pron-mixed-' + _mode, mode=_mode, stderr=True, issues=('871', '876', '870'))(pron_mixed)
 
 
 # A removed item and the prefix it extends. `SEARCH_CONTINUED` comes from the

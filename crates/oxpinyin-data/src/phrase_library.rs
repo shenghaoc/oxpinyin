@@ -219,7 +219,10 @@ mod map {
     use super::LibraryError;
 
     /// Map the chunk extent as one immutable slice on all targets.
-    pub struct MappedFile(Bytes);
+    pub struct MappedFile {
+        bytes: Bytes,
+        file: Option<std::fs::File>,
+    }
 
     /// Each variant owns its bytes. Both are `Send + Sync`.
     enum Bytes {
@@ -233,7 +236,10 @@ mod map {
         /// No bytes and no mapping: the payload of a chunk whose header was
         /// accepted but whose sub-index layout the pin refused.
         pub(crate) fn empty() -> Self {
-            Self(Bytes::Heap(Box::new([])))
+            Self {
+                bytes: Bytes::Heap(Box::new([])),
+                file: None,
+            }
         }
 
         /// Map the first `len` bytes of `file`.
@@ -246,7 +252,10 @@ mod map {
         fn from_file(file: std::fs::File, len: usize) -> Result<Self, LibraryError> {
             if len == 0 {
                 // Keep an empty heap slice. Do not map a zero-length file.
-                return Ok(Self(Bytes::Heap(Box::new([]))));
+                return Ok(Self {
+                    bytes: Bytes::Heap(Box::new([])),
+                    file: None,
+                });
             }
             // SAFETY: The file is open. The offset is zero. The explicit
             // length is the chunk extent checked by map_chunk. Mmap owns
@@ -280,14 +289,36 @@ mod map {
                     .map_copy_read_only(&file)
             }
             .map_err(LibraryError::Io)?;
-            drop(file);
-            Ok(Self(Bytes::Mapped(mapped)))
+            Ok(Self {
+                bytes: Bytes::Mapped(mapped),
+                file: Some(file),
+            })
+        }
+
+        pub(super) fn private_copy(&self) -> Result<memmap2::MmapMut, LibraryError> {
+            let file = self
+                .file
+                .as_ref()
+                .ok_or_else(|| LibraryError::Io(std::io::Error::other("empty mapping")))?;
+            // SAFETY: This is the same retained file and checked extent as
+            // from_file. MAP_PRIVATE is copy-on-write: unwritten pages stay
+            // shared with the page cache; visibility of later file changes
+            // in those pages is unspecified. Writes create private copies.
+            // Mutable slices borrow this view, independently of the immutable
+            // view. Do not modify or truncate the mapped system file: the
+            // existing mutation/truncation precondition remains in force.
+            unsafe {
+                memmap2::MmapOptions::new()
+                    .len(self.as_slice().len())
+                    .map_copy(file)
+            }
+            .map_err(LibraryError::Io)
         }
 
         /// The mapped bytes. The slice borrows `self`, so the mapping
         /// outlives every view taken over it.
         pub(crate) fn as_slice(&self) -> &[u8] {
-            match &self.0 {
+            match &self.bytes {
                 Bytes::Mapped(mapped) => mapped,
                 Bytes::Heap(heap) => heap,
             }
@@ -620,6 +651,26 @@ pub fn verify_chunk(path: &Path) -> Result<(), LibraryError> {
     map_chunk(path).map(drop)
 }
 
+/// A writable private view of one library's phrase-content area.
+/// Changes never reach the system file or other library views.
+pub struct PhraseContent {
+    mapping: memmap2::MmapMut,
+    area: Range<usize>,
+}
+
+impl PhraseContent {
+    /// Borrow the current content bytes.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.mapping[self.area.clone()]
+    }
+
+    /// Borrow the content for an in-place journal write.
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.mapping[self.area.clone()]
+    }
+}
+
 /// One per-library phrase index over a mapped libpinyin `*.bin` chunk
 /// file — the `SubPhraseIndex` of `FacadePhraseIndex`, upstream's
 /// mmap-backed half of the system data.
@@ -879,6 +930,18 @@ impl PhraseLibrary {
     #[must_use]
     pub fn item_area(&self) -> &[u8] {
         &self.payload()[self.content.clone()]
+    }
+
+    /// Map a separate writable private view for journal replay.
+    ///
+    /// # Errors
+    /// Returns the mapping error, including an empty/refused library.
+    pub fn private_content(&self) -> Result<PhraseContent, LibraryError> {
+        Ok(PhraseContent {
+            mapping: self.file.private_copy()?,
+            area: (self.payload.start + self.content.start)
+                ..(self.payload.start + self.content.end),
+        })
     }
 
     /// The raw entry-area offset of `token`'s slot, `None` when the slot has
