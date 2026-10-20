@@ -19,7 +19,14 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
 # plain 3.15.0 build; uv 0.13.1 has no separate +gil archive.
 # Archive digest: https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
 ENV UV_INSTALL_DIR=/opt/uv/bin UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
-RUN set -eu; \
+# uv's bundled roots omit the optional proxy CA installed in this image.
+RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
+    set -eu; \
+    if [ -s /run/secrets/cacert ]; then \
+      cp /run/secrets/cacert /usr/local/share/ca-certificates/compat-proxy.crt; \
+      update-ca-certificates; \
+      export UV_SYSTEM_CERTS=true; \
+    fi; \
     [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; \
     uv_target=x86_64-unknown-linux-gnu; \
     uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220; \
