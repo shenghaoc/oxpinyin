@@ -245,6 +245,25 @@ Every contributor remains responsible for understanding, reviewing, testing,
 and maintaining the changes they submit, including changes produced with
 assistance from any tool.
 
+## Pull request descriptions
+
+- Use [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md)
+  for every PR, including PRs made with `gh` or the API. Write the body to
+  a file. Use `gh pr create --body-file <file>`, not `--fill`.
+- Keep the template headings and their order.
+- Use short, factual sentences. Do not use emoji, badges, decorative
+  headings, or generic checklists.
+- Do not write chronological logs, status updates, or pasted transcripts.
+- When results change, edit the existing sections. Do not append a new
+  report at the end.
+- For a stacked PR, describe only that PR's own diff and name its direct
+  parent PR.
+- Use about 150–300 words for an ordinary PR. Technical evidence can make
+  it longer. Put bulk evidence in a linked findings document. The existing
+  "Findings documents commit no captures" rule still applies.
+- The verification rules elsewhere in this file stay authoritative. This
+  section changes only the format.
+
 ## STOP → do not improvise
 
 Ambiguous task · needs a C interface/ABI or dependency change (Rust
