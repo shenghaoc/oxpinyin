@@ -14,6 +14,76 @@ A passing differential covers its selected behavior/reference environment;
 it does not prove native Windows/macOS ABI behavior. Native tests provide
 separate platform evidence.
 
+## Container memory budget
+
+Each execution uses a runtime hard limit and a matching native reservation.
+`--memory-mib N` overrides `OXPINYIN_CONTAINER_MEMORY_MIB`; both accept only a
+positive integer in MiB. The default is **4096 MiB**. It covers the existing
+two-job build estimate (2 × 600 MiB) and the inner 2048 MiB headroom, with room
+for runtime overhead. Larger explicit job counts can need a larger limit.
+The host must also retain its normal 2048 MiB headroom. Admission uses the
+native resource measurements and `OXPINYIN_RESOURCE_WAIT_SECONDS` (default
+1800); unknown or inadequate memory waits, then fails without launching.
+The host needs uv 0.13.1 and managed CPython 3.15.0+gil for this shared code.
+
+`tools.dev.slot` serializes native admission and container budget changes with
+`heavy-admission` in the native lock directory (`OXPINYIN_LOCK_DIR`, otherwise
+the existing host default). It subtracts the full container limit throughout
+its lifetime. No native heavy slot is acquired for transport. The inner task
+retains independent admission, effective cgroup/guest memory measurements and
+container-only reservations. The Apple result-reader container uses the same
+hard-limit/reservation path and gets its own record. The helper writes an exit
+confirmation only after the main container is confirmed gone and its record
+released. The shell requires that confirmation before starting the reader;
+an uncertain main exit starts no reader. The two cannot overlap through this
+launcher. Main task, Apple reader and memory smoke all call `reserved_run`,
+which delegates to the single `tools.container.memory.run` launch function.
+
+`container-memory-<token>.json` is an atomic JSON record with `schema: 1`, an
+absolute `runtime` executable, `kind` (`container`, `podman`, `docker`), `name`,
+random `token`, positive `memory_mib`, `phase` (`creating`, `created`, or
+`create-failed`), and
+UTC `since`. It contains no PID/slot ownership or inner lock state. The token
+must match the runtime label `io.oxpinyin.memory-reservation`. Its `.guard`
+file fences creation and attached runtime clients; they inherit the descriptor
+so launcher SIGKILL cannot expose a launch/recovery gap. Records are written
+before creation, under the same admission lock used for updates/removal.
+
+Create does not run the payload. The launcher checks the reported hard limit
+before start. Docker/Podman additionally cap memory+swap and verify an effective
+kernel cgroup limit before executing the payload. Unsupported/unreadable limits
+fail. Cancellation stops the container and waits for confirmed exit before
+release. Recovery removes only a settled record whose labeled container is
+confirmed stopped or absent from a successful complete runtime listing. When
+no launch client holds the guard, a token-labeled `created` (never-started)
+container is removed without force and absence is confirmed before releasing
+its budget. A live guard prevents this cleanup. A normally returned create
+failure is recorded as `create-failed`; a complete token-label listing must
+prove absence before release, including on subsequent recovery.
+Unavailable runtimes, unknown states and mismatched labels retain the budget
+and report uncertainty. An interrupted `creating` record remains reserved even
+when its name is absent: a daemon request may still finish later. Such records
+need operator resolution after all creation requests are known to have settled;
+launcher PID death alone is insufficient. Malformed records block admission.
+Apple liveness accepts the `status` object with a `state` string observed from
+`container inspect` on container 1.5.0, and the documented scalar status form.
+Other status shapes remain unknown. If stdout closes during a console-backed
+run, the sole pipe reader keeps draining into the console file until the
+runtime client exits; it stops only mirroring to the closed stdout sink.
+
+For a short transport/memory check using an **already cached** compatibility
+image, without oracle provisioning/builds or evidence files:
+
+```bash
+bash tools/oracle/compat.sh --runtime container --memory-mib 512 --memory-smoke
+```
+
+Use `podman` or `docker` on Linux. During the 12-second alive window, native
+admission must report `container reservations=512 MiB`. The guest then attempts
+an allocation twice its limit; the smoke requires its child to be killed (137).
+After confirmed container exit, no smoke reservation should remain. This smoke
+does not establish differential compatibility or full runtime/emulation parity.
+
 ## Prerequisites
 
 A container **runtime** runs a packaged Linux environment. Its **image**

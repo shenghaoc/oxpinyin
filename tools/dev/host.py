@@ -26,6 +26,136 @@ RUSTC_PEAK_MIB = 600        # rustc 555 MiB (test build), 492 (cold cell build),
 TEST_THREAD_PEAK_MIB = 64   # the crates' test binaries peak at 6-11 MiB; rustdoc beside them 91 MiB
 RUNNER_PEAK_MIB = 1024      # one gate-set runner job (contract-diff worker pairs and their fixtures)
 HEADROOM_MIB = 2048         # left to the desktop: the browser, the editor, the page cache
+CONTAINER_MEMORY_MIB = 4096  # two rustc (1,200 MiB) + inner headroom + runtime room
+
+
+def container_memory_mib(value):
+    if value is None:
+        return CONTAINER_MEMORY_MIB
+    if not isinstance(value, str) or not re.fullmatch(r'[1-9][0-9]*', value):
+        raise ValueError('container memory must be a positive integer in MiB')
+    return int(value)
+
+
+def inspect_container(record):
+    """Read runtime metadata; CLI/daemon errors are unknown, never exit proof."""
+    try:
+        result = subprocess.run([record['runtime'], 'inspect', record['name']],
+                                capture_output=True, text=True, timeout=5)
+        if result.returncode:
+            return None
+        rows = json.loads(result.stdout)
+        if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict):
+            return None
+        return rows[0]
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def container_liveness(record):
+    """Read live, created (never started), gone, or unknown runtime state.
+
+    Names carry a random ownership label; a different owner is uncertain.
+    Pending creates are handled by the admission code, never by PID death.
+    """
+    row = inspect_container(record)
+    try:
+        if row is not None:
+            if record['kind'] == 'container':
+                labels = row['configuration']['labels']
+                status = row['status']
+                # Observed container 1.5.0 uses an object with state,
+                # startedDate and networks; documented versions use a scalar.
+                state = status.get('state') if isinstance(status, dict) else status
+                if not isinstance(state, str):
+                    return 'unknown'
+                stopped = state == 'stopped'
+            else:
+                labels = row['Config']['Labels']
+                state = row['State']['Status']
+                stopped = state in ('exited', 'dead')
+            if not isinstance(labels, dict) or labels.get('io.oxpinyin.memory-reservation') != record['token']:
+                return 'unknown'
+            if stopped:
+                return 'gone'
+            if state == 'created':
+                return 'created'
+            return 'live' if state in ('running', 'paused', 'restarting', 'stopping') else 'unknown'
+        # Do not turn an inspect error, including "not found", into exit proof.
+        apple = record['kind'] == 'container'
+        rows = list_containers(record)
+        if rows is None:
+            return 'unknown'
+        for item in rows:
+            names = [item['id']] if apple else item['Names']
+            if isinstance(names, str):
+                names = names.split(',')
+            if not isinstance(names, list):
+                return 'unknown'
+            if record['name'] in names:
+                return 'unknown'
+        return 'gone'
+    except (KeyError, TypeError, OSError, ValueError, subprocess.SubprocessError):
+        return 'unknown'
+
+
+def list_containers(record, *, token_only=False):
+    """A completed all-container listing, or None for an uncertain result."""
+    try:
+        apple = record['kind'] == 'container'
+        args = (['list', '--all', '--format', 'json'] if apple else
+                ['ps', '--all', '--no-trunc', '--format', '{{json .}}'])
+        if token_only and not apple:
+            args += ['--filter', f'label=io.oxpinyin.memory-reservation={record["token"]}']
+        result = subprocess.run([record['runtime'], *args], capture_output=True,
+                                text=True, timeout=5)
+        if result.returncode:
+            return None
+        data = result.stdout.strip()
+        # Docker emits JSON lines; Apple and some Podman versions emit arrays.
+        rows = (json.loads(data) if apple or data.startswith('[') else
+                [json.loads(line) for line in data.splitlines()])
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            return None
+        return rows
+    except (KeyError, OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
+def container_token_absent(record):
+    """True only after a complete listing proves no token-labeled container."""
+    rows = list_containers(record, token_only=True)
+    if rows is None:
+        return None
+    if record['kind'] != 'container':
+        # A supported Docker/Podman label filter covers every container state.
+        return not rows
+    try:
+        for row in rows:
+            labels = row['configuration']['labels']
+            if not isinstance(labels, dict):
+                return None
+            if labels.get('io.oxpinyin.memory-reservation') == record['token']:
+                return False
+        return True
+    except (KeyError, TypeError):
+        return None
+
+
+def remove_created_container(record):
+    """Remove only this token's inert object. Caller owns admission and guard.
+
+    No force: if something starts it between inspect and removal, the runtime
+    refuses deletion. Confirm absence/exit again before releasing any budget.
+    """
+    if container_liveness(record) != 'created':
+        return False
+    try:
+        result = subprocess.run([record['runtime'], 'rm', record['name']],
+                                capture_output=True, text=True, timeout=5)
+        return result.returncode == 0 and container_liveness(record) == 'gone'
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def _macos_available_mib():
