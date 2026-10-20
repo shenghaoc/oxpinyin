@@ -769,16 +769,25 @@ seen in the same probe is a separate parity defect: issue #356.
   "what oxpinyin does instead" text below describes the pre-fix state
   and is kept as the record; the cursor helpers' class-(c) `false` at
   the `_check_offset` abort shapes is unchanged.
+  Since #902 (this PR), the zhuyin facade's `guess_sentence`,
+  `guess_sentence_with_prefix`, `guess_candidates_after_cursor` and
+  `guess_candidates_before_cursor` return `false` on a zero-key matrix,
+  as the pin does, and the tag-902 contract cases hold that behaviour.
 
-- **Upstream source cite:** `src/pinyin.cpp` parse path over
-  `FullPinyinParser2` (`src/storage/pinyin_parser2.cpp`): the pin emits a
-  zero `ChewingKey` per `'` separator and counts it in `m_parsed_len` —
-  measured on the pin: `'` → parse_return 1, `''` → 2, `'''` → 3
-  (the table in `docs/testing/oracle-apostrophe-abort.md`, F-E-14).
-- **Mechanism:** the pin's DP walks a separator-only input by emitting
-  zero keys, so an all-apostrophe composition has a non-empty matrix
-  (lone zero keys at every position) and a consumed length equal to the
-  input length.
+- **Upstream source cite:** at `074a2219`,
+  `src/storage/pinyin_parser2.cpp:238-250` propagates each `'` with an
+  unchanged key count and an incremented parsed length; `:360-378`
+  exports only real keys. Thus `'` → parse_return 1, `''` → 2,
+  `'''` → 3, but each exports zero keys.
+- **Mechanism (corrected for #902):** a separator-only input consumes
+  every byte but leaves an empty matrix:
+  `src/storage/phonetic_key_matrix.cpp:34-38` clears it and returns
+  before creating separator columns when there are no real keys.
+  Sentence guessing therefore returns false before clearing prior
+  results (`src/lookup/phonetic_lookup.h:743-748`); candidate guessing
+  clears candidates and returns false (`src/pinyin.cpp:2193-2196`,
+  `src/zhuyin.cpp:1468-1471,1548-1551`). This corrects the former
+  non-empty-matrix explanation; the consumed-length fix stays closed.
 - **What oxpinyin does instead:** `SegmentGraph` consumes a leading
   apostrophe run only as propagation TOWARD a following key — with no
   key following, no edge is emitted and the consumed length is 0. The
