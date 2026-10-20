@@ -264,6 +264,37 @@ assistance from any tool.
 - The verification rules elsewhere in this file stay authoritative. This
   section changes only the format.
 
+## Issue descriptions
+
+- Use the appropriate template in `.github/ISSUE_TEMPLATE/` for every new issue,
+  including issues created with `gh` or the API: bug report, task/proposal,
+  or tracking issue. Search open and closed issues first; link existing work
+  rather than creating duplicates.
+- Preserve the chosen template's headings and order. For CLI/API creation,
+  write a completed body file without YAML front matter or instruction
+  comments, then submit it with `gh issue create --body-file <file>`; where
+  GraphQL is unavailable, use `gh api repos/shenghaoc/oxpinyin/issues -f title=<title> -F body=@<file>`.
+- Apply existing repository labels where they fit (for example bug-for-bug,
+  axis:*, severity:*, backend:*). Do not create new labels.
+- Use a specific, factual title and short sentences. No emoji, badges,
+  decorative headings, agent/model attribution fields, transcripts, or
+  chronological execution logs. Use checkboxes only for concrete outcomes
+  or linked work items, not generic assurances.
+- Separate observed results, source-derived conclusions, hypotheses, and
+  proposals. Identify the revision relevant to evidence. Say "Unknown" or
+  "Not reproduced" where appropriate; never invent results, dependencies,
+  issue numbers, approvals, or acceptance thresholds.
+- Keep each non-tracking issue focused on one outcome. Describe the problem
+  before a proposed solution, and leave implementation choices open unless
+  an explicit requirement settles them. Link extensive analysis rather than
+  duplicating it. Do not create extra issues merely to fill a template.
+- Keep the body current in its existing sections. Use comments for meaningful
+  new evidence or decisions, not repeated status dumps. Preserve links to
+  decisions when summarizing them; do not erase their history.
+- Creating an issue does not authorize implementation or change project policy.
+  Existing approval, compatibility, verification, and STOP rules remain
+  authoritative. These templates change reporting format only.
+
 ## STOP → do not improvise
 
 Ambiguous task · needs a C interface/ABI or dependency change (Rust
