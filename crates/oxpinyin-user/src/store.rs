@@ -2234,7 +2234,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             system_bumps_live: std::sync::atomic::AtomicBool::new(false),
             system_bumps: Mutex::new(crate::registry::SystemUnigramBumps::default()),
             has_system_items: AtomicBool::new(false),
-            system_items: std::sync::Mutex::new(std::collections::BTreeMap::new()),
+            system_items: std::sync::Mutex::new(crate::system_items::SystemItems::default()),
             has_removed_system_items: AtomicBool::new(false),
             removed_system_items: std::sync::Mutex::new(std::collections::BTreeSet::new()),
             count_cache: Mutex::new(None),
@@ -4434,7 +4434,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
+            .snapshot()
     }
 
     /// Whether this session carries system-item payloads from imports or logs.
@@ -4570,9 +4570,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             .system_items
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .range((u32::from(library) << 24)..(u32::from(library + 1) << 24))
-            .next_back()
-            .and_then(|(&token, _)| token.checked_add(1))
+            .end(library)
     }
 
     /// The effective live system item shared by export, n-best and token
@@ -4593,7 +4591,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         if !self.has_system_items() || !(1..=4).contains(&(token >> 24)) {
             return None;
         }
-        let items = self
+        let mut items = self
             .inner
             .system_items
             .lock()

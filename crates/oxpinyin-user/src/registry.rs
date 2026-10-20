@@ -65,8 +65,7 @@ pub struct StoreInner<S: WriteStore> {
     pub(crate) system_bumps_live: AtomicBool,
     pub(crate) system_bumps: Mutex<SystemUnigramBumps>,
     pub(crate) has_system_items: AtomicBool,
-    pub(crate) system_items:
-        Mutex<std::collections::BTreeMap<Token, oxpinyin_data::chunk_write::ChunkItem>>,
+    pub(crate) system_items: Mutex<crate::system_items::SystemItems>,
     /// Whether [`Self::removed_system_items`] holds a token.
     pub(crate) has_removed_system_items: AtomicBool,
     /// The system tokens whose item a journal REMOVE took out of its
