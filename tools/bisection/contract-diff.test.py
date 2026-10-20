@@ -523,10 +523,29 @@ class CancellationTests(unittest.TestCase):
     """Cancel a real driver while its worker and a descendant ignore TERM."""
 
     def children(self, pid):
+        children_path = Path(f'/proc/{pid}/task/{pid}/children')
         try:
-            return [int(item) for item in Path(f'/proc/{pid}/task/{pid}/children').read_text().split()]
-        except FileNotFoundError:
-            return []
+            return [int(item) for item in children_path.read_text().split()]
+        except OSError as children_error:
+            # CONFIG_PROC_CHILDREN is optional; still observe the entire tree.
+            try:
+                children, scanned = [], False
+                for process in Path('/proc').iterdir():
+                    if not process.name.isdecimal():
+                        continue
+                    try:
+                        parent = int((process / 'stat').read_text().rsplit(') ', 1)[1].split()[1])
+                    except OSError:
+                        continue  # An individual process can exit or be hidden.
+                    scanned = True
+                    if parent == pid:
+                        children.append(int(process.name))
+                if not scanned:
+                    raise FileNotFoundError('no readable /proc/*/stat records')
+                return children
+            except (OSError, ValueError, IndexError) as stat_error:
+                self.fail(f'descendant observation unavailable: {children_path}: {children_error}; '
+                          f'/proc/*/stat scan: {stat_error}')
 
     def tree(self, pid):
         result = [pid]
@@ -541,6 +560,8 @@ class CancellationTests(unittest.TestCase):
             return False
 
     def cancel(self, signum, through_runner=False, leader_exits=False, per_call=False):
+        # Fail before spawning if neither process-observation source is available.
+        self.children(os.getpid())
         with tempfile.TemporaryDirectory() as scratch:
             prefix = Path(scratch)
             (prefix / 'lib/libpinyin/data').mkdir(parents=True)
@@ -571,11 +592,26 @@ class CancellationTests(unittest.TestCase):
                        str(worker), 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
                        *(['--per-call', 'lookup-only', '--per-call-facades', 'pinyin'] if per_call else
                          ['--cases', 'default-option-parse'])]
+            env = os.environ.copy()
             if through_runner:
-                command = [sys.executable, str(Path(__file__).with_name('run-all.py')),
+                # Exercise real slot admission and cancellation without host resources
+                # or caller settings delaying the worker past the startup deadline.
+                env.update(OXPINYIN_LOCK_DIR=str(prefix / 'locks'), OXPINYIN_HEAVY_SLOTS='1',
+                           OXPINYIN_RESOURCE_WAIT_SECONDS='0', CARGO_BUILD_JOBS='1',
+                           RUST_TEST_THREADS='1')
+                env.pop('OXPINYIN_HEAVY_SLOT_HELD', None)
+                runner_code = (
+                    "import importlib.util, sys; "
+                    "spec = importlib.util.spec_from_file_location('run_all', sys.argv.pop(1)); "
+                    "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
+                    "module.resource_snapshot = lambda: dict(available_mib=4096, cpus=1, cargo_cpus=1, "
+                    "notes=['synthetic cancellation-test resources']); "
+                    "sys.exit(module.main())")
+                command = [sys.executable, '-c', runner_code,
+                           str(Path(__file__).with_name('run-all.py').resolve()),
                            '--heavy-slot', '--', *command]
             proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    start_new_session=True)
+                                    start_new_session=True, env=env)
             worker_pid = descendant = None
             try:
                 deadline = time.monotonic() + 20
@@ -608,6 +644,10 @@ class CancellationTests(unittest.TestCase):
                 # The direct worker must be reaped, not left as a zombie.
                 self.assertFalse(Path(f'/proc/{worker_pid}').exists())
             finally:
+                # Also clean up groups created before startup detection succeeds.
+                for pid in reversed(self.tree(proc.pid)):
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(pid, signal.SIGKILL)
                 if worker_pid is not None:
                     with contextlib.suppress(ProcessLookupError):
                         os.killpg(worker_pid, signal.SIGKILL)
@@ -645,6 +685,81 @@ class CancellationTests(unittest.TestCase):
                 self.assertEqual([call.args for call in kill.call_args_list],
                                  [(process.pid, signal.SIGTERM), (process.pid, signal.SIGKILL)])
                 self.assertEqual(process.wait.call_count, 2)
+
+
+class ProcessObservationTests(unittest.TestCase):
+    def test_children_file_observes_direct_children(self):
+        with patch.object(Path, 'read_text', return_value='11 12\n'), \
+                patch.object(Path, 'iterdir', side_effect=AssertionError('unexpected stat scan')):
+            self.assertEqual(CancellationTests().children(10), [11, 12])
+
+    def test_stat_scan_observes_worker_and_descendant_without_children_file(self):
+        records = {'10': '10 (driver) S 1 0', '11': '11 (worker ) with spaces) S 10 0',
+                   '12': '12 (descendant) S 11 0', '99': '99 (unrelated) S 1 0'}
+        def read(path):
+            if path.name == 'children' or path.parent.name == '98':
+                raise FileNotFoundError(path)
+            return records[path.parent.name]
+        entries = [Path('/proc') / name for name in (*records, '98', 'self')]
+        with patch.object(Path, 'read_text', read), \
+                patch.object(Path, 'iterdir', side_effect=lambda: iter(entries)):
+            self.assertEqual(CancellationTests().tree(10), [10, 11, 12])
+
+    def test_unavailable_proc_sources_fail_explicitly(self):
+        for error in (FileNotFoundError('/proc missing'), PermissionError('/proc unreadable')):
+            with self.subTest(error=error), \
+                    patch.object(Path, 'read_text', side_effect=FileNotFoundError('children missing')), \
+                    patch.object(Path, 'iterdir', side_effect=error), \
+                    self.assertRaisesRegex(AssertionError, r'/proc/10/task/10/children.* /proc/\*/stat scan:'):
+                CancellationTests().children(10)
+
+    def test_stat_scan_skips_unreadable_unrelated_entries(self):
+        records = {'10': '10 (driver) S 1 0', '11': '11 (worker) S 10 0',
+                   '12': '12 (descendant) S 11 0'}
+        entries = [Path('/proc') / name for name in ('99', *records)]
+        for error in (PermissionError('hidden'), ProcessLookupError('exited'), OSError('unreadable')):
+            def read(path):
+                if path.name == 'children':
+                    raise FileNotFoundError(path)
+                if path.parent.name == '99':
+                    raise error
+                return records[path.parent.name]
+            with self.subTest(error=error), patch.object(Path, 'read_text', read), \
+                    patch.object(Path, 'iterdir', side_effect=lambda: iter(entries)):
+                self.assertEqual(CancellationTests().tree(10), [10, 11, 12])
+
+    def test_all_unreadable_stat_records_fail_explicitly(self):
+        errors = {'99': PermissionError('hidden'), '98': ProcessLookupError('exited'),
+                  '97': OSError('unreadable')}
+        def read(path):
+            if path.name == 'children':
+                raise FileNotFoundError(path)
+            raise errors[path.parent.name]
+        entries = [Path('/proc') / name for name in errors]
+        with patch.object(Path, 'read_text', read), \
+                patch.object(Path, 'iterdir', side_effect=lambda: iter(entries)), \
+                self.assertRaisesRegex(AssertionError,
+                                      r'/proc/10/task/10/children.* /proc/\*/stat scan: no readable /proc/\*/stat records'):
+            CancellationTests().children(10)
+
+    def test_unavailable_stat_records_fail_explicitly(self):
+        for error in (FileNotFoundError('stat missing'), PermissionError('stat unreadable')):
+            def read(path):
+                if path.name == 'children':
+                    raise FileNotFoundError('children missing')
+                raise error
+            with self.subTest(error=error), patch.object(Path, 'read_text', read), \
+                    patch.object(Path, 'iterdir', side_effect=lambda: iter([Path('/proc/10')])), \
+                    self.assertRaisesRegex(AssertionError, r'/proc/10/task/10/children.* /proc/\*/stat scan:'):
+                CancellationTests().children(10)
+
+    def test_unavailable_observation_fails_before_spawning(self):
+        with patch.object(Path, 'read_text', side_effect=FileNotFoundError('children missing')), \
+                patch.object(Path, 'iterdir', return_value=iter(())), \
+                patch.object(subprocess, 'Popen') as spawn, \
+                self.assertRaisesRegex(AssertionError, r'no readable /proc/\*/stat records'):
+            CancellationTests().cancel(signal.SIGTERM, through_runner=True)
+        spawn.assert_not_called()
 
 
 class PerCallTests(unittest.TestCase):
