@@ -134,9 +134,10 @@ impl Seed {
 }
 
 fn default_seed(key: &str) -> Option<Seed> {
-    UPSTREAM_DEFAULTS
-        .iter()
-        .find_map(|&(name, seed)| (name == key).then_some(seed))
+    let index = UPSTREAM_DEFAULTS
+        .binary_search_by_key(&key, |&(name, _)| name)
+        .ok()?;
+    UPSTREAM_DEFAULTS.get(index).map(|&(_, seed)| seed)
 }
 
 fn default_values() -> BTreeMap<String, ConfigValue> {
@@ -155,7 +156,8 @@ pub const UPSTREAM_DEFAULT_COUNT: usize = 69;
 /// The pinned upstream defaults, verbatim.
 ///
 /// Every key of the `com.github.libpinyin.ibus-libpinyin.libpinyin` schema
-/// frozen in `docs/findings/upstream-schema.md`, in that document's order.
+/// frozen in `docs/findings/upstream-schema.md`, sorted by key so typed
+/// reads use binary search without building the owned map.
 /// `tests/upstream_defaults.rs` re-reads the schema and asserts this table
 /// matches it key for key, so the two cannot drift apart.
 ///
@@ -163,74 +165,74 @@ pub const UPSTREAM_DEFAULT_COUNT: usize = 69;
 /// pinyin, and Zhuyin is out of scope.
 static UPSTREAM_DEFAULTS: [(&str, Seed); UPSTREAM_DEFAULT_COUNT] = [
     ("auto-commit", Seed::Bool(false)),
+    ("both-switch", Seed::Text("")),
+    ("clear-custom-table", Seed::Text("")),
+    ("clear-user-data", Seed::Text("")),
+    ("cloud-candidates-number", Seed::Int(1)),
+    ("cloud-input-source", Seed::Int(0)),
+    ("cloud-request-delay-time", Seed::Int(600)),
     ("comma-period-page", Seed::Bool(false)),
-    ("square-bracket-page", Seed::Bool(false)),
     ("correct-pinyin", Seed::Bool(true)),
     ("correct-pinyin-gn-ng", Seed::Bool(true)),
     ("correct-pinyin-iou-iu", Seed::Bool(true)),
     ("correct-pinyin-mg-ng", Seed::Bool(true)),
     ("correct-pinyin-on-ong", Seed::Bool(true)),
-    ("correct-pinyin-v-u", Seed::Bool(true)),
+    ("correct-pinyin-ue-ve", Seed::Bool(true)),
     ("correct-pinyin-uei-ui", Seed::Bool(true)),
     ("correct-pinyin-uen-un", Seed::Bool(true)),
-    ("correct-pinyin-ue-ve", Seed::Bool(true)),
+    ("correct-pinyin-v-u", Seed::Bool(true)),
     ("dictionaries", Seed::Text("")),
+    ("display-style", Seed::Int(0)),
     ("double-pinyin", Seed::Bool(false)),
     ("double-pinyin-schema", Seed::Int(0)),
     ("double-pinyin-show-raw", Seed::Bool(false)),
     ("dynamic-adjust", Seed::Bool(true)),
+    ("emoji-candidate", Seed::Bool(true)),
+    ("enable-cloud-input", Seed::Bool(false)),
+    ("english-candidate", Seed::Bool(true)),
+    ("english-input-mode", Seed::Bool(true)),
+    ("export-bigram-phrase", Seed::Bool(true)),
+    ("export-custom-table", Seed::Text("")),
+    ("export-dictionary", Seed::Text("")),
+    ("export-user-phrase", Seed::Bool(true)),
     ("fuzzy-pinyin", Seed::Bool(false)),
     ("fuzzy-pinyin-an-ang", Seed::Bool(true)),
+    ("fuzzy-pinyin-c-ch", Seed::Bool(true)),
     ("fuzzy-pinyin-en-eng", Seed::Bool(true)),
-    ("fuzzy-pinyin-in-ing", Seed::Bool(true)),
     ("fuzzy-pinyin-f-h", Seed::Bool(true)),
     ("fuzzy-pinyin-g-k", Seed::Bool(false)),
+    ("fuzzy-pinyin-in-ing", Seed::Bool(true)),
     ("fuzzy-pinyin-l-n", Seed::Bool(true)),
     ("fuzzy-pinyin-l-r", Seed::Bool(false)),
-    ("fuzzy-pinyin-c-ch", Seed::Bool(true)),
     ("fuzzy-pinyin-s-sh", Seed::Bool(true)),
     ("fuzzy-pinyin-z-zh", Seed::Bool(true)),
+    ("import-custom-table", Seed::Text("")),
+    ("import-dictionary", Seed::Text("")),
     ("incomplete-pinyin", Seed::Bool(true)),
     ("init-chinese", Seed::Bool(true)),
     ("init-full", Seed::Bool(false)),
     ("init-full-punct", Seed::Bool(true)),
     ("init-simplified-chinese", Seed::Bool(true)),
-    ("main-switch", Seed::Text("<Shift>")),
+    ("keyboard-layout", Seed::Text("default")),
     ("letter-switch", Seed::Text("")),
-    ("punct-switch", Seed::Text("<Control>period")),
-    ("both-switch", Seed::Text("")),
-    ("trad-switch", Seed::Text("<Control><Shift>f")),
     ("lookup-table-orientation", Seed::Int(0)),
     ("lookup-table-page-size", Seed::Int(5)),
-    ("display-style", Seed::Int(0)),
+    ("lua-converter", Seed::Text("")),
+    ("lua-extension", Seed::Bool(true)),
+    ("main-switch", Seed::Text("<Shift>")),
     ("minus-equal-page", Seed::Bool(true)),
+    ("network-dictionary-end-timestamp", Seed::Int64(0)),
+    ("network-dictionary-start-timestamp", Seed::Int64(0)),
+    ("opencc-config", Seed::Text("s2tw.json")),
+    ("punct-switch", Seed::Text("<Control>period")),
     ("remember-every-input", Seed::Bool(false)),
     ("shift-select-candidate", Seed::Bool(false)),
     ("sort-candidate-option", Seed::Int(1)),
-    ("import-dictionary", Seed::Text("")),
-    ("export-dictionary", Seed::Text("")),
-    ("clear-user-data", Seed::Text("")),
-    ("lua-converter", Seed::Text("")),
-    ("opencc-config", Seed::Text("s2tw.json")),
-    ("emoji-candidate", Seed::Bool(true)),
-    ("english-candidate", Seed::Bool(true)),
+    ("square-bracket-page", Seed::Bool(false)),
     ("suggestion-candidate", Seed::Bool(false)),
-    ("network-dictionary-start-timestamp", Seed::Int64(0)),
-    ("network-dictionary-end-timestamp", Seed::Int64(0)),
-    ("lua-extension", Seed::Bool(true)),
-    ("english-input-mode", Seed::Bool(true)),
     ("table-input-mode", Seed::Bool(true)),
+    ("trad-switch", Seed::Text("<Control><Shift>f")),
     ("use-custom-table", Seed::Bool(false)),
-    ("import-custom-table", Seed::Text("")),
-    ("export-custom-table", Seed::Text("")),
-    ("clear-custom-table", Seed::Text("")),
-    ("enable-cloud-input", Seed::Bool(false)),
-    ("cloud-input-source", Seed::Int(0)),
-    ("cloud-candidates-number", Seed::Int(1)),
-    ("cloud-request-delay-time", Seed::Int(600)),
-    ("export-user-phrase", Seed::Bool(true)),
-    ("export-bigram-phrase", Seed::Bool(true)),
-    ("keyboard-layout", Seed::Text("default")),
 ];
 
 /// Anything a session can read settings from.
