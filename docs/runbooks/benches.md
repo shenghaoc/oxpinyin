@@ -40,6 +40,11 @@ plus two warm-ups. `--teardown-cases` selects named scenarios; the defaults are
 `empty`, `modest`, `phrases`, `journals`, `modest-unsaved`, `modest-saved`.
 Every sample receives a private starting profile. A transcript, diagnostic,
 final-file or reopen mismatch is `NOT COMPARABLE` and stops before ratios.
+Final BDB containers use the existing contract driver's logical row and known
+padding rules; random file IDs/LSNs are not profile contents. Every file and
+empty row remains compared. Raw starting/final profile identities are recorded
+separately. Dirty imports use romanized readings for pinyin and direct bopomofo
+for zhuyin, as their pinned importer contracts require.
 
 Save, each instance free, all frees, fini and dlclose have separate wall/CPU
 times. `teardown_total_ns` sums the free-call and fini durations. The full
