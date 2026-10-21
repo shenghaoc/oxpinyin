@@ -7423,7 +7423,8 @@ def _observe_system_item(k, watched, phrase):
     return out
 
 
-def system_replay(k, build, reopen=False, unigram_add=True, observe_add=False):
+def system_replay(k, build, reopen=False, unigram_add=True, observe_add=False, observe=None,
+                   observe_saved=False):
     """`build(p)` returns the records after the header and the tokens to
     watch; `p` maps `one`, `two` (an item of two or more readings) and `last`
     (the item at the highest item-area offset) to (token, bytes) of library 1,
@@ -7438,12 +7439,15 @@ def system_replay(k, build, reopen=False, unigram_add=True, observe_add=False):
                               'two': (0x01000000 | two, items[two]),
                               'last': (0x01000000 | last, items[last]),
                               'fresh': (0x01000000 | fresh, _item_with(items[one], unigram=11)),
-                              'absent': (0x01000000 | (fresh + 3), b'')})
+                              'absent': (0x01000000 | (fresh + 3), b''),
+                              'items': items, 'offsets': offsets})
     phrase = _item_text(items[one])
     _write_user_conf(k)
     _write_log(k, _modify_header(0, total, total) + b''.join(records))
     out = {'total': total, 'ctx': bool(k.ctx)}
     out.update(_observe_system_item(k, watched, phrase))
+    if observe:
+        out['detail'] = observe(k)
     if unigram_add:
         # A unigram add reaches only an item the sub-index holds.
         out['add-unigram'] = k.fn('token_add_unigram_frequency', B, P, U, U)(k.inst, watched['one'], 7)
@@ -7458,18 +7462,27 @@ def system_replay(k, build, reopen=False, unigram_add=True, observe_add=False):
     k.fn('end_add_phrases', None, P)(it)
     out['save'] = k.fn('save', B, P)(k.ctx)
     out['dbin'] = Path(k.user, 'gb_char.dbin').read_bytes().hex()
+    if observe_saved:
+        header, counts = log_walk(bytes.fromhex(out['dbin']))
+        out['saved-header'] = header
+        out['saved-counts'] = counts
     if reopen:
         k.fn('free_instance', None, P)(k.inst)
         k.fn('fini', None, P)(k.ctx)
         k._ctx = k._inst = None
         out['reopen'] = _observe_system_item(k, watched, phrase)
+        if observe:
+            out['reopen-detail'] = observe(k)
     return out
 
 
-def _replay_case(name, build, reopen=False, unigram_add=True, observe_add=False, **options):
+def _replay_case(name, build, reopen=False, unigram_add=True, observe_add=False, observe=None,
+                 observe_saved=False, extra_issues=(), **options):
     for mode in ('pinyin', 'zhuyin'):
-        case('replay-' + name + '-' + mode, mode=mode, stderr=True, **options, issues=('851', '850', '870'))(
-            lambda k, build=build: system_replay(k, build, reopen, unigram_add, observe_add))
+        case('replay-' + name + '-' + mode, mode=mode, stderr=True,
+             issues=('851', '850', '870') + tuple(extra_issues), **options)(
+            lambda k, build=build: system_replay(k, build, reopen, unigram_add, observe_add,
+                                                 observe, observe_saved))
 
 
 def _watch(p):
@@ -7932,6 +7945,101 @@ _compare_case('modify-header-overlong-small', lambda p: ([
     _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
                 new=bytes((2, 1)) + (200).to_bytes(4, 'little')),
     _add_fresh(p)], _watch(p)))
+
+
+# #981: the same borrowed bytes, one record later. A first MODIFY leaves a
+# six-byte payload whose header claims two readings (30 bytes), so slot A's
+# header-derived item spans the adjacent slot B. A second in-place MODIFY of A
+# compares the 30 bytes and rewrites them with B's unigram changed; B has no
+# record of its own. The replay view exposes only the slots it touched
+# (`ReplayedLibrary::contains`), so a reader that falls back to the original
+# item for B answers B's original unigram, while the pin's `get_phrase_item`
+# reads the changed bytes. A is a one-character, one-reading slot so the fixed
+# 30-byte header always spans B; B's item must hold those 14 bytes. In the
+# pinned gb_char.bin the pair is slot 1 (token 0x01000001, 锕, unigram 3) and
+# slot 2 (token 0x01000002, 吖, two readings, unigram 11).
+def _cross_item_pair(p):
+    """The first adjacent pair whose A is a one-character, one-reading item
+    and whose B holds the 14 bytes A's (2, 2) header borrows."""
+    ordered = sorted(p['offsets'].items(), key=lambda pair: pair[1])
+    for (slot_a, offset_a), (slot_b, offset_b) in zip(ordered, ordered[1:]):
+        item_a = p['items'][slot_a]
+        item_b = p['items'][slot_b]
+        if item_a[0] != 1 or item_a[1] != 1 or offset_b != offset_a + len(item_a):
+            continue
+        # The synthesized second phrase character is A's first pronunciation
+        # key plus its frequency's low half; keep it a Unicode scalar so the
+        # pin's `g_ucs4_to_utf8` has a value to render.
+        second = int.from_bytes(item_a[10:14], 'little')
+        if second > 0x10FFFF or 0xD800 <= second <= 0xDFFF or len(item_b) < 14:
+            continue
+        return (0x01000000 | slot_a, item_a, 0x01000000 | slot_b, item_b)
+    raise AssertionError('no adjacent one-reading items the header can span')
+
+
+def _cross_item_records(p):
+    token_a, item_a, token_b, item_b = _cross_item_pair(p)
+    expanded = bytes((2, 2)) + (200).to_bytes(4, 'little')
+    claimed = _item_size(expanded[:2])
+    borrowed = claimed - len(item_a)
+    assert claimed == 30 and 0 < borrowed <= len(item_b)
+    # The first in-place write copies only the six-byte payload, so the rest
+    # of A's slot keeps its bytes and the read borrows B's first 14.
+    old = expanded + item_a[6:] + item_b[:borrowed]
+    assert len(old) == claimed
+    at = len(item_a) + 2  # B's unigram, relative to A
+    original = int.from_bytes(old[at:at + 4], 'little')
+    changed = 170 if original != 170 else 171
+    new = old[:at] + changed.to_bytes(4, 'little') + old[at + 4:]
+    return ([_log_record(_LOG_MODIFY, token_a, old=item_a, new=expanded),
+             _log_record(_LOG_MODIFY, token_a, old=old, new=new),
+             _add_fresh(p)],
+            {'a': token_a, 'b': token_b, 'fresh': p['fresh'][0]})
+
+
+def _cross_item_records_past_area(p):
+    token_a, item_a, token_b, item_b = _cross_item_pair(p)
+    expanded = bytes((2, 3)) + (200).to_bytes(4, 'little')
+    claimed = _item_size(expanded[:2])
+    assert claimed == 38
+    fresh = p['fresh'][1]
+    borrowed = claimed - len(item_a)
+    old = expanded + item_a[6:] + item_b + fresh[:borrowed - len(item_b)]
+    assert len(old) == claimed
+    at = len(item_a) + 2
+    original = int.from_bytes(old[at:at + 4], 'little')
+    changed = 170 if original != 170 else 171
+    new = old[:at] + changed.to_bytes(4, 'little') + old[at + 4:]
+    # The ADD comes first so the last original item B is followed by the fresh
+    # item; A's 34-byte header reaches past the original area into it.
+    return ([_add_fresh(p),
+             _log_record(_LOG_MODIFY, token_a, old=item_a, new=expanded),
+             _log_record(_LOG_MODIFY, token_a, old=old, new=new)],
+            {'a': token_a, 'b': token_b, 'fresh': p['fresh'][0]})
+
+
+def _observe_replayed_item(k, token):
+    phrase = token_phrase_of(k, token)
+    text = phrase[2] if phrase[0] else None
+    return {'token': '0x%08x' % token,
+            'phrase': phrase,
+            'n-pron': _reload_pron_keys(k, token),
+            'unigram': unigram_of(k, token),
+            'export': remember_export(k, 1, text) if text else 'NO PHRASE'}
+
+
+def _observe_cross_item(k):
+    _total, items, offsets = _system_items(k)
+    token_a, _item_a, token_b, _item_b = _cross_item_pair({'items': items, 'offsets': offsets})
+    return {'a': _observe_replayed_item(k, token_a), 'b': _observe_replayed_item(k, token_b)}
+
+
+_compare_case('cross-item-unigram-unrecorded', _cross_item_records,
+              observe=_observe_cross_item, observe_saved=True, extra_issues=('981',))
+_compare_case('cross-item-unigram-unrecorded-reopen', _cross_item_records, reopen=True,
+              observe=_observe_cross_item, observe_saved=True, extra_issues=('981',))
+_compare_case('cross-item-unigram-unrecorded-past-area', _cross_item_records_past_area,
+              observe=_observe_cross_item, observe_saved=True, extra_issues=('981',))
 
 
 # The pin does not check a new chunk's header against its size: the compare is
