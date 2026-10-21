@@ -16,10 +16,10 @@ import time
 import unittest
 from unittest import mock
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev import host, slot
-from tools.container import memory
+from tools.dev.compat import memory
 
 
 class MemoryTests(unittest.TestCase):
@@ -493,7 +493,7 @@ elif action=='rm': path.unlink(missing_ok=True)
     def launcher(self, runtime, **environment):
         code = ("from tools.dev import host\n"
                 "host.resource_snapshot=lambda: dict(available_mib=16000, cpus=1, cargo_cpus=1, notes=[])\n"
-                "from tools.container.memory import main\n"
+                "from tools.dev.compat.memory import main\n"
                 f"raise SystemExit(main(['--runtime', {str(runtime)!r}, '--name','test','--memory-mib','512', '--', 'image']))")
         process = subprocess.Popen([sys.executable, '-c', code], cwd=ROOT,
                                    env=dict(self.env, **environment),
@@ -593,8 +593,8 @@ elif action=='rm': path.unlink(missing_ok=True)
         uv.write_text(f'#!{sys.executable}\n' + """import sys
 from tools.dev import host
 host.resource_snapshot=lambda: dict(available_mib=16000, cpus=1, cargo_cpus=1, notes=[])
-from tools.container.memory import main
-assert sys.argv[sys.argv.index('-m')+1]=='tools.container.memory'
+from tools.dev.compat.memory import main
+assert sys.argv[sys.argv.index('-m')+1]=='tools.dev.compat.memory'
 raise SystemExit(main(sys.argv[sys.argv.index('-m')+2:]))
 """)
         uv.chmod(0o755)
@@ -675,8 +675,8 @@ esac
         source = (ROOT / 'tools/oracle/compat.sh').read_text()
         sites = re.findall(r'^\s*\(?reserved_run\s+([^\n]+)', source, re.MULTILINE)
         self.assertEqual(len(sites), 3, sites)  # main, Apple reader, memory smoke
-        self.assertIn('-m tools.container.memory', source)
-        tree = ast.parse((ROOT / 'tools/container/memory.py').read_text())
+        self.assertIn('-m tools.dev.compat.memory', source)
+        tree = ast.parse((ROOT / 'tools/dev/compat/memory.py').read_text())
         starts = []
         for function in (node for node in tree.body if isinstance(node, ast.FunctionDef)):
             for node in ast.walk(function):

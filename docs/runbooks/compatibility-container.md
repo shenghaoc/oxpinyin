@@ -37,7 +37,7 @@ confirmation only after the main container is confirmed gone and its record
 released. The shell requires that confirmation before starting the reader;
 an uncertain main exit starts no reader. The two cannot overlap through this
 launcher. Main task, Apple reader and memory smoke all call `reserved_run`,
-which delegates to the single `tools.container.memory.run` launch function.
+which delegates to the single `tools.dev.compat.memory.run` launch function.
 
 `container-memory-<token>.json` is an atomic JSON record with `schema: 1`, an
 absolute `runtime` executable, `kind` (`container`, `podman`, `docker`), `name`,

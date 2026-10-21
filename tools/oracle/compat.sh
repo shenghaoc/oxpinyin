@@ -78,7 +78,7 @@ command -v uv >/dev/null || die 'missing uv 0.13.1 and managed CPython 3.15.0+gi
 # All host admission and reservation decisions use the native Python core.
 reserved_run() {
 	exec uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
-		-m tools.container.memory --runtime "$runtime" --name "$1" --memory-mib "$memory" "${@:2}"
+		-m tools.dev.compat.memory --runtime "$runtime" --name "$1" --memory-mib "$memory" "${@:2}"
 }
 # shellcheck source=../container/runtime.sh
 source "$repo/tools/container/runtime.sh"

@@ -10,7 +10,7 @@ The shell compatibility route is implemented. It is not the planned Python servi
 | Shell launcher, inner script, compatibility image and runtime selection (§2) | Implemented in [#890](https://github.com/shenghaoc/oxpinyin/pull/890): `compat.sh`, `compat-inside.sh`, `Dockerfile.compat` and `runtime.sh`. Keep that PR's runtime limitations. |
 | Container-owned uv and exact managed interpreter (§3) | Implemented in [#939](https://github.com/shenghaoc/oxpinyin/pull/939). This is interpreter provisioning, not delivery of all environment services below. Frozen oracle artifacts stay unchanged. |
 | Environment isolation and identities (§§1, 3) | Partial: #890 supplies a Linux volume, source snapshot, generated inner environment and legacy pin/hash checks. The stricter Python input/override validation, complete result namespaces and source/artifact identity service remain proposed. |
-| Hard memory limit and native lifetime reservation (§1) | T2C first slice implemented through `tools.dev.slot`/`host` and the retained shell launcher. Synthetic lifetime/recovery tests and the Apple memory-only smoke passed; full runtime results belong to the PR. Linux smoke pending; Windows TODO. |
+| Hard memory limit and native lifetime reservation (§1) | T2C first slice implemented through `tools.dev.compat.memory`, `tools.dev.slot`/`host` and the retained shell launcher. Synthetic lifetime/recovery tests, the Apple memory-only smoke and the Linux Docker memory smoke passed in [#957](https://github.com/shenghaoc/oxpinyin/pull/957); full runtime results belong to that PR. Windows TODO. |
 | Python launcher, cell/pin/systemdir/artifacts modules, cloud daemon/network checks and just container surface (§§2–4) | Proposed. Existing shell provisioning is retained; there is no Python container service or `just container` recipe. |
 | Two identified source snapshots and same-run builds (§4) | Proposed transport contract. |
 | Container nextest profile and pin-test handoff (§4) | Proposed. #943 configures native profiles only. |
@@ -56,6 +56,9 @@ Accept only declared task inputs and validate their content identities.
 An exported container report remains a container record. Never reuse it as
 native verification. The reverse is also prohibited.
 
+Host-side container transport and later container services live in
+`tools.dev.compat`, a domain subpackage of the single `tools.dev` package.
+Admission remains owned by the shared `tools.dev.slot` implementation.
 Use shared slot code with independent state. Preserve the fail-closed memory
 rule from Layer 1. The container reads its own effective resources, including
 cgroup limits, and counts only its environment's live reservations.
@@ -293,7 +296,7 @@ Do not mix the two environments in one verification claim.
 ## 6. Launcher acceptance and migration
 
 T2C first-slice status: hard-limit/reservation acceptance is covered by
-`tools/container/memory.test.py` and `compat.sh --memory-smoke`. This is not
+`tools/dev/compat/memory.test.py` and `compat.sh --memory-smoke`. This is not
 full launcher parity, a runner migration, pin handoff or retirement.
 
 Keep both compatibility shell scripts until side-by-side launch acceptance
