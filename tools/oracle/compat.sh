@@ -142,7 +142,8 @@ fi
 git ls-files --cached --others --exclude-standard -z | while IFS= read -r -d '' path; do
 	if [[ -e $path || -L $path ]]; then printf '%s\0' "$path"; fi
 done > "$input/files"
-tar --null -T "$input/files" -cf "$input/source.tar"
+# No macOS metadata: COPYFILE_DISABLE stops AppleDouble ._* members, --no-xattrs stops xattr headers.
+COPYFILE_DISABLE=1 tar --no-xattrs --null -T "$input/files" -cf "$input/source.tar"
 {
 	printf 'Host source commit: '; git rev-parse HEAD
 	printf 'Host source status:\n'; git status --short
