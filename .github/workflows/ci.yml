@@ -282,6 +282,46 @@ jobs:
               text=True).strip()
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
+      - name: Run tools Python harness tests
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Tests that need inputs CI never has stay out of this discovery
+          # loop rather than self-skipping (docs/testing/README.md). The list
+          # is deliberately explicit: a new *.test.py is picked up by find,
+          # and every listed exclusion needs a comment naming its missing
+          # input. A failure in any non-excluded file fails this step.
+          excluded=(
+            # Compiler-backed J-ledger checks require clang++, LLVM tools and
+            # a discoverable libclang. These jobs do not provision that
+            # toolchain.
+            tools/bisection/internal-ledger.test.py
+          )
+          is_excluded() {
+            local candidate="$1" item
+            for item in "${excluded[@]}"; do
+              if [ "$candidate" = "$item" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+          status=0
+          while IFS= read -r test_file; do
+            if is_excluded "$test_file"; then
+              printf 'tools harness excluded (missing CI input): %s\n' "$test_file"
+              continue
+            fi
+            printf 'tools harness: %s\n' "$test_file"
+            if ! uv run --no-project --managed-python --python cpython@3.15.0+gil \
+                python -X lazy_imports=normal "$test_file"; then
+              status=1
+            fi
+          done < <(find tools -type f -name '*.test.py' | LC_ALL=C sort)
+          if [ "$status" -ne 0 ]; then
+            echo '::error::one or more tools/ Python harness tests failed' >&2
+          fi
+          exit "$status"
       # The w3 fixture manifest is a byte-identity gate that nothing
       # consumed: no job, test or script checked it, which is how a stale
       # row survived two members of the stack that produced this step.
@@ -370,6 +410,96 @@ jobs:
         with:
           rust-cache: 'true'
       - run: rustup show active-toolchain
+      - name: Set up pinned repository Python
+        run: |
+          set -euo pipefail
+          uv_install_dir="$HOME/.local/bin"
+          case "$(uname -m)" in
+            arm64)
+              uv_target=aarch64-apple-darwin
+              # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+              uv_sha256=cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2
+              ;;
+            x86_64)
+              uv_target=x86_64-apple-darwin
+              # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+              uv_sha256=bb7b805bdcf3d0bc8c74ceb94569e6b3e8aa35bd492acdbb9d46bf46d9d4ff6b
+              ;;
+            *)
+              printf 'unsupported macOS architecture: %s\n' "$(uname -m)" >&2
+              exit 1
+              ;;
+          esac
+          uv_tmp=$(mktemp -d)
+          trap 'rm -rf "$uv_tmp"' EXIT
+          trap 'exit 1' HUP INT TERM
+          curl --fail --location --retry 3 -o "$uv_tmp/uv.tar.gz" \
+            "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz"
+          uv_actual=$(shasum -a 256 "$uv_tmp/uv.tar.gz")
+          [[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
+          tar -xzf "$uv_tmp/uv.tar.gz" -C "$uv_tmp" "uv-$uv_target/uv" "uv-$uv_target/uvx"
+          mkdir -p "$uv_install_dir"
+          install -m755 "$uv_tmp/uv-$uv_target/uv" "$uv_tmp/uv-$uv_target/uvx" "$uv_install_dir/"
+          printf 'uv archive SHA-256 verified: %s\n' "$uv_sha256"
+          export PATH="$HOME/.local/bin:$PATH"
+          hash -r
+          printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
+          uv --version | grep -q '^uv 0\.13\.1 '
+          uv python install cpython@3.15.0
+          uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PYTHON'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import sysconfig
+          assert sys.implementation.name == "cpython"
+          assert sys.version_info[:3] == (3, 15, 0)
+          assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
+          assert sys._is_gil_enabled()
+          managed = subprocess.check_output(
+              ["uv", "python", "find", "--managed-python", "cpython@3.15.0+gil"],
+              text=True).strip()
+          assert Path(sys.executable).resolve() == Path(managed).resolve()
+          PYTHON
+      - name: Run tools Python harness tests
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Tests that need inputs CI never has stay out of this discovery
+          # loop rather than self-skipping (docs/testing/README.md). The list
+          # is deliberately explicit: a new *.test.py is picked up by find,
+          # and every listed exclusion needs a comment naming its missing
+          # input. A failure in any non-excluded file fails this step.
+          excluded=(
+            # Compiler-backed J-ledger checks require clang++, LLVM tools and
+            # a discoverable libclang. These jobs do not provision that
+            # toolchain, so the test fails before its assertions can run.
+            tools/bisection/internal-ledger.test.py
+          )
+          is_excluded() {
+            local candidate="$1" item
+            for item in "${excluded[@]}"; do
+              if [ "$candidate" = "$item" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+          status=0
+          while IFS= read -r test_file; do
+            if is_excluded "$test_file"; then
+              printf 'tools harness excluded (missing CI input): %s\n' "$test_file"
+              continue
+            fi
+            printf 'tools harness: %s\n' "$test_file"
+            if ! uv run --no-project --managed-python --python cpython@3.15.0+gil \
+                python -X lazy_imports=normal "$test_file"; then
+              status=1
+            fi
+          done < <(find tools -type f -name '*.test.py' | LC_ALL=C sort)
+          if [ "$status" -ne 0 ]; then
+            echo '::error::one or more tools/ Python harness tests failed' >&2
+          fi
+          exit "$status"
       # The macOS reference backend uses the same libdb release as Linux;
       # tkrzw stays covered on Linux. Homebrew's keg-only berkeley-db@5
       # needs explicit include and library paths, as documented in README.md.

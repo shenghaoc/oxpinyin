@@ -99,10 +99,14 @@ class HeavySlotTests(unittest.TestCase):
 
     def test_nested_call_in_another_directory_inherits_resolved_default(self):
         with tempfile.TemporaryDirectory() as initial, tempfile.TemporaryDirectory() as other:
-            expected = str(Path(initial) / 'cache/oxpinyin/locks')
+            # tempfile on macOS reports the /var spelling; getcwd returns the
+            # physical /private/var path that the child records.
+            initial = Path(initial).resolve()
+            other = Path(other).resolve()
+            expected = str(initial / 'cache/oxpinyin/locks')
             code = ("import json, os, runpy, sys; "
                     f"assert os.environ['OXPINYIN_LOCK_DIR'] == {expected!r}; "
-                    f"os.chdir({other!r}); m = runpy.run_path({str(RUN_ALL)!r}); "
+                    f"os.chdir({str(other)!r}); m = runpy.run_path({str(RUN_ALL)!r}); "
                     "sys.exit(m['run_in_heavy_slot']([sys.executable, '-c', 'pass']))")
             env = dict(self.env, XDG_CACHE_HOME='cache')
             env.pop('OXPINYIN_LOCK_DIR')
