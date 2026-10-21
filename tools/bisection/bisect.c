@@ -24,14 +24,20 @@
 /* _DEFAULT_SOURCE alongside _POSIX_C_SOURCE: the RSS diagnostic mode calls
  * malloc_trim(3) and mallinfo2(3), glibc extensions that a bare
  * _POSIX_C_SOURCE definition hides; syscall(2) backs the perf_event_open
- * wrapper for the hardware instruction counter. */
+ * wrapper for the hardware instruction counter. Darwin exposes mkdtemp(3)
+ * and getline(3) only through _DARWIN_C_SOURCE. */
+#if defined(__APPLE__)
+#define _DARWIN_C_SOURCE
+#endif
 #define _DEFAULT_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#if defined(__GLIBC__)
 #include <malloc.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,8 +45,16 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
+#if defined(__linux__)
 #include <linux/perf_event.h>
 #include <sys/syscall.h>
+#else
+/* The hardware counter is Linux-only; the call sites stay compiled but are
+ * unreachable because perf_open_instruction_counter() always returns -1. */
+#define PERF_EVENT_IOC_ENABLE 0
+#define PERF_EVENT_IOC_DISABLE 0
+#define PERF_EVENT_IOC_RESET 0
+#endif
 
 /* Registered class-(c) cursor assertion: probe only the first input. */
 static bool right_tail_case;
@@ -575,6 +589,7 @@ struct arena_state {
 };
 
 static void read_arena_state(struct arena_state *a) {
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
     struct mallinfo2 mi = mallinfo2();
 
     a->arena = (long)mi.arena;
@@ -583,13 +598,23 @@ static void read_arena_state(struct arena_state *a) {
     a->uordblks = (long)mi.uordblks;
     a->fordblks = (long)mi.fordblks;
     a->keepcost = (long)mi.keepcost;
+#else
+    /* Not available on this libc; print_arena_state() emits null. */
+    a->arena = a->hblks = a->hblkhd = -1;
+    a->uordblks = a->fordblks = a->keepcost = -1;
+#endif
 }
 
 static void print_arena_state(const char *tag, const struct arena_state *a) {
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
     printf("\"%s\":{\"arena\":%ld,\"hblks\":%ld,\"hblkhd\":%ld,"
            "\"uordblks\":%ld,\"fordblks\":%ld,\"keepcost\":%ld}",
            tag, a->arena, a->hblks, a->hblkhd,
            a->uordblks, a->fordblks, a->keepcost);
+#else
+    (void)a;
+    printf("\"%s\":null", tag);
+#endif
 }
 
 /* Copy a /proc text file verbatim. Returns 0 on success. The destination
@@ -626,6 +651,7 @@ static int dump_proc_text(const char *dir, const char *tag, const char *what,
 /* glibc's own arena XML, which mallinfo2 cannot express: per-arena free
  * totals, the mmap threshold, and the system-bytes high-water. */
 static int dump_malloc_info(const char *dir, const char *tag) {
+#if defined(__GLIBC__)
     char path[512];
     FILE *out;
 
@@ -640,6 +666,11 @@ static int dump_malloc_info(const char *dir, const char *tag) {
         return -1;
     }
     return fclose(out) == 0 ? 0 : -1;
+#else
+    (void)dir;
+    (void)tag;
+    return -1;
+#endif
 }
 
 /* The gated Rust counting allocator, when the artifact under test carries
@@ -805,6 +836,7 @@ static int perf_env_count(const char *name, int fallback) {
  * label or seccomp profile denies perf_event_open gets a diagnostic and
  * an hw_errno field, never a failed run. */
 static long perf_open_instruction_counter(void) {
+#if defined(__linux__)
     struct perf_event_attr attr;
 
     memset(&attr, 0, sizeof attr);
@@ -815,6 +847,10 @@ static long perf_open_instruction_counter(void) {
     attr.exclude_kernel = 1;
     attr.exclude_hv = 1;
     return syscall(SYS_perf_event_open, &attr, 0, -1, -1, 0);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
 }
 
 static int resolve_perf_symbols(void *handle, struct symbols *s) {
@@ -1074,7 +1110,9 @@ static int run_perf_mode(int argc, char **argv) {
         struct perf_memory after_trim;
         struct smaps_rollup rollup_trim;
         struct arena_state arena_trim;
+#if defined(__GLIBC__)
         int trim_released = -1;
+#endif
 
         if (rss_diag) {
             read_smaps_rollup(&rollup_cycle);
@@ -1089,7 +1127,9 @@ static int run_perf_mode(int argc, char **argv) {
                                      "smaps-rollup-cycle",
                                      "/proc/self/smaps_rollup");
             }
+#if defined(__GLIBC__)
             trim_released = malloc_trim(0);
+#endif
             read_perf_memory(&after_trim);
             read_smaps_rollup(&rollup_trim);
             read_arena_state(&arena_trim);
@@ -1118,7 +1158,12 @@ static int run_perf_mode(int argc, char **argv) {
             print_arena_state("arena_cycle", &arena_cycle);
             putchar(',');
             print_alloc_counters("alloc_cycle", &alloc_cycle);
-            printf(",\"trim_released\":%d,\"after_trim\":", trim_released);
+#if defined(__GLIBC__)
+            printf(",\"trim_released\":%d", trim_released);
+#else
+            printf(",\"trim_released\":null");
+#endif
+            printf(",\"after_trim\":");
             perf_print_memory_body(&after_trim);
             putchar(',');
             print_smaps_rollup("rollup_trim", &rollup_trim);

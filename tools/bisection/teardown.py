@@ -18,6 +18,7 @@ import selectors
 import shutil
 import statistics
 import subprocess
+import sys
 import threading
 import time
 
@@ -91,7 +92,9 @@ def build_worker(work, instrumentation=None):
         raise ValueError('unknown worker instrumentation')
     executable = work / ('bisect-teardown' + ('-' + instrumentation if instrumentation else ''))
     command = ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2', '-g',
-               '-o', str(executable), str(HERE / 'bisect.c'), '-ldl']
+               '-o', str(executable), str(HERE / 'bisect.c')]
+    if sys.platform != 'darwin':
+        command.append('-ldl')
     if instrumentation:
         command.append('-DOXPINYIN_TEARDOWN_' + instrumentation.upper() + '=1')
     subprocess.run(command, check=True)
@@ -256,7 +259,7 @@ class Campaign:
         shutil.copytree(profile, user)
         expected_source = file_set(profile)
         checkpoints, samples, closed = {}, [], None
-        command = ['taskset', '-c', str(self.cpu)]
+        command = ['taskset', '-c', str(self.cpu)] if self.cpu is not None else []
         if profiler:
             command += ['valgrind', '--tool=' + profiler, '--vgdb-prefix=' + str(scratch / 'vgdb')]
             if profiler == 'callgrind':
