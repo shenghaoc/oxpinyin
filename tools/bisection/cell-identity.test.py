@@ -82,7 +82,9 @@ class ClaimTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)
-        self.root = Path(self.scratch.name)
+        # Physical, like the owner cell-artifacts.sh records (pwd -P): the macOS
+        # default temporary directory is under the /var -> /private/var link.
+        self.root = Path(self.scratch.name).resolve()
         self.target = self.root / 'target'
         self.entered = self.root / 'entered'
         self.entered.mkdir()
