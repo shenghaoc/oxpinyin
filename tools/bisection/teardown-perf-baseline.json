@@ -1,0 +1,73 @@
+{
+  "_comment": "Generated once from tools/bisection/bisect.c at main 2ce6cb7d (pre-teardown) using the NativeTests stub. Regenerate with: uv run --no-project --managed-python --python cpython@3.15.0+gil python tools/bisection/teardown.test.py --write-perf-baseline",
+  "checksum": "65155381b19ef1a8421728555196be78f80b5571126bc21b0bd270b8249961ea",
+  "input_sha256": "4eb75ca686ed32a3b068eab3922f76ef5f832f99068736f029a6a54f0c8cb4a2",
+  "schema": {
+    "after_first": {
+      "hwm_kib": "int",
+      "rss_anon_kib": "int",
+      "rss_file_kib": "int",
+      "rss_kib": "int",
+      "vm_size_kib": "int"
+    },
+    "after_init": {
+      "hwm_kib": "int",
+      "rss_anon_kib": "int",
+      "rss_file_kib": "int",
+      "rss_kib": "int",
+      "vm_size_kib": "int"
+    },
+    "after_last": {
+      "hwm_kib": "int",
+      "rss_anon_kib": "int",
+      "rss_file_kib": "int",
+      "rss_kib": "int",
+      "vm_size_kib": "int"
+    },
+    "alloc_ns": "int",
+    "backend": "str",
+    "cycles_ns": [
+      "int",
+      "int"
+    ],
+    "init_ns": "int",
+    "mode": "str",
+    "repeats": "int",
+    "so": "str",
+    "systemdir": "str"
+  },
+  "values": {
+    "after_first": {
+      "hwm_kib": "<number>",
+      "rss_anon_kib": "<number>",
+      "rss_file_kib": "<number>",
+      "rss_kib": "<number>",
+      "vm_size_kib": "<number>"
+    },
+    "after_init": {
+      "hwm_kib": "<number>",
+      "rss_anon_kib": "<number>",
+      "rss_file_kib": "<number>",
+      "rss_kib": "<number>",
+      "vm_size_kib": "<number>"
+    },
+    "after_last": {
+      "hwm_kib": "<number>",
+      "rss_anon_kib": "<number>",
+      "rss_file_kib": "<number>",
+      "rss_kib": "<number>",
+      "vm_size_kib": "<number>"
+    },
+    "alloc_ns": "<number>",
+    "backend": "stub",
+    "cycles_ns": [
+      "<number>",
+      "<number>"
+    ],
+    "init_ns": "<number>",
+    "mode": "speed",
+    "repeats": 1,
+    "so": "<so>",
+    "systemdir": "<systemdir>"
+  }
+}
