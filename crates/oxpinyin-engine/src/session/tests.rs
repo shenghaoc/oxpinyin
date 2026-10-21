@@ -3968,17 +3968,19 @@ fn the_string_dedup_keeps_the_larger_m_freq_and_the_earlier_tie() {
         };
         (key, Candidate::new(text, kind, 2, 6, 0, None, None))
     };
-    let mut ranked = vec![
+    let (keys, mut ranked): (Vec<_>, Vec<_>) = [
         row("书学", CandidateKind::Phrase, 3),
         row("数学", CandidateKind::Phrase, 9),
         row("书学", CandidateKind::Addon, 7),
         row("数学", CandidateKind::Addon, 9),
         row("书学", CandidateKind::Phrase, 7),
-    ];
-    super::dedup_ranked_by_text(&mut ranked);
+    ]
+    .into_iter()
+    .unzip();
+    super::dedup_ranked_by_text(&mut ranked, &keys);
     let rows: Vec<_> = ranked
         .iter()
-        .map(|(_, candidate)| (candidate.text().to_owned(), candidate.kind()))
+        .map(|candidate| (candidate.text().to_owned(), candidate.kind()))
         .collect();
     assert_eq!(
         rows,
