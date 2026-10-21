@@ -260,8 +260,13 @@ enum Origin {
     Mapped(PhraseLibrary),
     /// A fixture `SystemLibrary`'s inline items, laid out as the pin's
     /// appended content would be.
-    Inline(BTreeMap<u32, u32>),
+    Inline(BTreeMap<u32, OriginalItem>),
     None,
+}
+
+struct OriginalItem {
+    offset: u32,
+    unigram: u32,
 }
 
 /// The content and offsets a replay starts from.
@@ -281,7 +286,13 @@ fn origin_and_content(original: Option<&SystemLibrary>) -> (Origin, Content) {
                 let mut bytes = vec![0; FIRST_ITEM_OFFSET];
                 let mut offsets = BTreeMap::new();
                 for (slot, item) in &library.items {
-                    offsets.insert(*slot, u32::try_from(bytes.len()).unwrap_or(u32::MAX));
+                    offsets.insert(
+                        *slot,
+                        OriginalItem {
+                            offset: u32::try_from(bytes.len()).unwrap_or(u32::MAX),
+                            unigram: item.unigram,
+                        },
+                    );
                     bytes.extend_from_slice(&journal_item_bytes(item));
                 }
                 (
@@ -318,6 +329,9 @@ pub(crate) struct Merge {
     /// Slot IDs only. Replay appends; finalization sorts and deduplicates before
     /// any membership query or ascending walk. No record payloads are staged.
     touched: Vec<u32>,
+    /// Slots whose unigram changed, or whose write needs a conservative check.
+    /// Payloads and unchanged reading-only slots are never staged here.
+    unigram_changes: Vec<u32>,
     /// Relocated or removed slots only; in-place writes keep mapped offsets.
     offsets: BTreeMap<u32, u32>,
     /// `SubPhraseIndex::m_total_freq`; `None` for a library with no original.
@@ -326,6 +340,8 @@ pub(crate) struct Merge {
     running: u32,
     /// The `PhraseItem` MODIFY reads into.
     stale: Stale,
+    /// The slot behind `stale`, which an absent-token MODIFY can still edit.
+    stale_slot: Option<u32>,
     /// `add_phrase_item` calls so far.
     appends: u64,
 }
@@ -337,10 +353,12 @@ impl Merge {
             origin,
             content,
             touched: Vec::new(),
+            unigram_changes: Vec::new(),
             offsets: BTreeMap::new(),
             total: original.map(|library| library.total),
             running: original.map_or(0, |library| library.total),
             stale: Stale::Default(vec![0; PHRASE_ITEM_HEADER]),
+            stale_slot: None,
             appends: 0,
         }
     }
@@ -348,7 +366,7 @@ impl Merge {
     fn original_offset(&self, slot: u32) -> u32 {
         match &self.origin {
             Origin::Mapped(library) => library.content_offset(slot).unwrap_or(0),
-            Origin::Inline(offsets) => offsets.get(&slot).copied().unwrap_or(0),
+            Origin::Inline(offsets) => offsets.get(&slot).map_or(0, |item| item.offset),
             Origin::None => 0,
         }
     }
@@ -362,6 +380,9 @@ impl Merge {
 
     fn set_offset(&mut self, slot: u32, offset: u32) {
         self.touched.push(slot);
+        // ADD, REMOVE and relocation take the conservative path. Finalization
+        // discards removed/rejected slots; seeding checks the final delta.
+        self.unigram_changes.push(slot);
         self.offsets.insert(slot, offset);
     }
 
@@ -475,6 +496,7 @@ impl Merge {
             // the remove-and-add would read past it (class (b), row 107).
             Found::Past => Err(mismatch()),
             Found::Item { offset, len } => {
+                self.stale_slot = Some(slot);
                 self.stale = if self.content.owned.is_some() {
                     Stale::Owned {
                         offset,
@@ -488,6 +510,11 @@ impl Merge {
                 if bytes.as_ref() != old_item {
                     return Err(mismatch());
                 }
+                // A short write may retain part of the previous unigram.
+                // Keep that slot conservative instead of guessing its value.
+                let unigram_changed = new_item
+                    .get(2..6)
+                    .is_none_or(|new| bytes.get(2..6).is_none_or(|old| old != new));
                 if new_item.len() > len {
                     // A remove and an add of the whole new payload.
                     let old_unigram = raw_unigram(&bytes);
@@ -504,6 +531,9 @@ impl Merge {
                         return Err(mismatch());
                     }
                     self.touched.push(slot);
+                    if unigram_changed {
+                        self.unigram_changes.push(slot);
+                    }
                 }
                 Ok(())
             }
@@ -578,7 +608,13 @@ impl Merge {
         if !equal || new_item.len() > size {
             return None;
         }
-        self.stale_write(place, new_item).then_some(())
+        if !self.stale_write(place, new_item) {
+            return None;
+        }
+        if let Some(slot) = self.stale_slot {
+            self.unigram_changes.push(slot);
+        }
+        Some(())
     }
 
     /// The library's total and its overrides as typed items; `None` removes.
@@ -641,6 +677,11 @@ impl ReplayedLibrary {
     pub(crate) fn slots(&self) -> impl DoubleEndedIterator<Item = u32> + '_ {
         self.0.touched.iter().copied()
     }
+    /// Only slots that may need a stored unigram delta. Repeated changes are
+    /// visited once, and rejected/removed slots never reach this iterator.
+    pub(crate) fn unigram_slots(&self) -> impl Iterator<Item = u32> + '_ {
+        self.0.unigram_changes.iter().copied()
+    }
     pub(crate) fn contains(&self, slot: u32) -> bool {
         self.0.touched.binary_search(&slot).is_ok()
     }
@@ -679,7 +720,7 @@ impl Merge {
         self.touched.retain(|&slot| {
             let offset = offsets.get(&slot).copied().unwrap_or_else(|| match origin {
                 Origin::Mapped(library) => library.content_offset(slot).unwrap_or(0),
-                Origin::Inline(offsets) => offsets.get(&slot).copied().unwrap_or(0),
+                Origin::Inline(offsets) => offsets.get(&slot).map_or(0, |item| item.offset),
                 Origin::None => 0,
             });
             if offset == 0 {
@@ -696,17 +737,25 @@ impl Merge {
                     false
                 }
                 Found::Item { offset, len } => {
-                    let original = match &self.origin {
-                        Origin::Mapped(library) => library.item(slot).is_some(),
-                        Origin::Inline(offsets) => offsets.contains_key(&slot),
-                        Origin::None => false,
+                    let original_unigram = match &self.origin {
+                        Origin::Mapped(library) => library.item(slot).map(|item| item.unigram()),
+                        Origin::Inline(offsets) => offsets.get(&slot).map(|item| item.unigram),
+                        Origin::None => None,
                     };
-                    if original {
+                    if let Some(original_unigram) = original_unigram {
                         match self.content.item(offset, len) {
                             Some(bytes) => {
                                 if let Err(error) = validate_phrase_item(&bytes) {
                                     skipped.push(format!("{name}: {error}"));
                                     return false;
+                                }
+                                // A malformed header can make another slot's
+                                // write overlap this unigram. The validation
+                                // pass already reads both views: retain that
+                                // count change even if its own records only
+                                // changed readings. No extra item walk.
+                                if raw_unigram(&bytes) != original_unigram {
+                                    self.unigram_changes.push(slot);
                                 }
                             }
                             None => {
@@ -730,6 +779,11 @@ impl Merge {
         });
         // Repeated records and rejected slots need no retained capacity.
         self.touched.shrink_to_fit();
+        self.unigram_changes.sort_unstable();
+        self.unigram_changes.dedup();
+        self.unigram_changes
+            .retain(|slot| self.touched.binary_search(slot).is_ok());
+        self.unigram_changes.shrink_to_fit();
         let total = self.total;
         let retained =
             (!self.touched.is_empty()).then(|| ReplayedLibrary(std::sync::Arc::new(self)));
@@ -747,6 +801,99 @@ mod tests {
             unigram,
             prons: prons.to_vec(),
         }
+    }
+
+    #[test]
+    fn unigram_candidates_exclude_reading_only_edits_and_deduplicate_changes() {
+        let original = library();
+        let mut changed = two();
+        changed[2..6].copy_from_slice(&70_u32.to_le_bytes());
+        let mut restored = changed.clone();
+        restored[2..6].copy_from_slice(&50_u32.to_le_bytes());
+        let mut merge = Merge::new(Some(&original));
+        for record in [
+            modify(1, one(), with_freq(one(), 77)),
+            modify(2, two(), changed.clone()),
+            modify(2, changed, restored.clone()),
+            modify(2, restored, with_freq(two(), 88)),
+        ] {
+            assert!(merge.apply(record).is_ok());
+        }
+        let mut skipped = Vec::new();
+        let (_, _, view) = merge.finish_lazy(&mut skipped, &"test");
+        let view = view.expect("retained originals");
+        assert!(skipped.is_empty());
+        assert_eq!(view.slots().collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(view.unigram_slots().collect::<Vec<_>>(), [2]);
+        assert_eq!(view.item(2).expect("restored item").unigram, 50);
+    }
+
+    #[test]
+    fn a_stale_unigram_write_marks_its_storage_slot_for_seeding() {
+        let original = library();
+        let reading_only = with_freq(one(), 77);
+        let mut changed = reading_only.clone();
+        changed[2..6].copy_from_slice(&150_u32.to_le_bytes());
+        let mut merge = Merge::new(Some(&original));
+        assert!(merge.apply(modify(1, one(), reading_only.clone())).is_ok());
+        assert!(merge.apply(modify(9, reading_only, changed)).is_ok());
+        let (_, _, view) = merge.finish_lazy(&mut Vec::new(), &"test");
+        let view = view.expect("retained original");
+        assert_eq!(view.slots().collect::<Vec<_>>(), [1]);
+        assert_eq!(view.unigram_slots().collect::<Vec<_>>(), [1]);
+        assert_eq!(view.item(1).expect("stale storage").unigram, 150);
+    }
+
+    #[test]
+    fn a_cross_item_write_marks_the_other_retained_unigram() {
+        let original = library();
+        let mut merge = Merge::new(Some(&original));
+        assert!(merge.apply(modify(2, two(), with_freq(two(), 88))).is_ok());
+        // A longer header in a short payload borrows the next item's bytes,
+        // just as the existing cross-item replay cases require.
+        let mut expanded = one();
+        expanded[1] = 3;
+        assert!(merge.apply(modify(1, one(), expanded)).is_ok());
+        let offset = merge.slot_offset(1) as usize;
+        let Found::Item { len, .. } = merge.content.header(offset) else {
+            panic!("expanded item");
+        };
+        let old = merge
+            .content
+            .item(offset, len)
+            .expect("cross-item bytes")
+            .into_owned();
+        let mut new = old.clone();
+        let next_unigram = merge.slot_offset(2) as usize - offset + 2;
+        new[next_unigram..next_unigram + 4].copy_from_slice(&170_u32.to_le_bytes());
+        // Slot 1's own unigram is unchanged; this write changes slot 2's.
+        assert!(merge.apply(modify(1, old, new)).is_ok());
+        let mut skipped = Vec::new();
+        let (_, _, view) = merge.finish_lazy(&mut skipped, &"test");
+        let view = view.expect("retained originals");
+        assert!(skipped.is_empty());
+        assert_eq!(view.item(2).expect("overlapped item").unigram, 170);
+        assert_eq!(view.unigram_slots().collect::<Vec<_>>(), [2]);
+    }
+
+    #[test]
+    fn rejected_unigram_candidates_do_not_seed_the_baseline_fallback() {
+        let original = library();
+        let mut merge = Merge::new(Some(&original));
+        assert!(merge.apply(modify(2, two(), with_freq(two(), 88))).is_ok());
+        assert!(
+            merge
+                .apply(modify(1, one(), bytes_with(&[255, 255], 200)))
+                .is_ok()
+        );
+        let mut skipped = Vec::new();
+        let (_, _, view) = merge.finish_lazy(&mut skipped, &"test");
+        let view = view.expect("valid original remains");
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(view.slots().collect::<Vec<_>>(), [2]);
+        assert!(view.unigram_slots().next().is_none());
+        assert!(!view.contains(1));
+        assert!(view.item(1).is_none());
     }
 
     /// Slot 1 holds a one-reading item (unigram 100), slot 2 a two-reading one

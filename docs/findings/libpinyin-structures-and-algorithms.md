@@ -212,6 +212,24 @@ it never removes individual vector entries. Completed views use O(log J) binary
 search for membership, as the tree did, and iterate ascending unique slots. No payloads
 are staged and no array spans the token range.
 
+Replay also records a separate vector of slots whose unigram bytes change.
+ADD, REMOVE, relocation, partial unigram payloads and stale writes take the
+conservative path; a stale write records the slot behind the saved item view.
+During the existing validation pass, the already-read original and live views
+also identify unigrams changed by overlapping cross-item writes. No extra
+item walk or decoding is needed for this conservative guard.
+The vector is sorted and deduplicated once, then filtered against the retained
+slots after validation. Seeding visits only those candidates, compares their
+final absolute unigram with the immutable baseline and writes nonzero deltas.
+A later restoration can leave one candidate but writes no delta. Reading-only
+changes require no second item visit. The existing per-library absolute total
+and offset calculation still carry header changes independently of item counts.
+For C candidate records, this adds O(C) transient IDs, O(C log C + C log J)
+finalization and O(K) seeding visits for K distinct surviving candidates;
+neither payloads nor a full-token-range array are staged. This replaces the
+previous seeding walk over every retained slot without changing replay's
+worst-case time or space class.
+
 For B journal bytes, R touching records, J unique changed slots, M relocated
 slots and K items subsequently used, the worst-case replay time remains
 O(B + R log R + R log(M+1)), versus the pin's O(B + R) mapped walk. Collecting
