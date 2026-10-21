@@ -7,6 +7,57 @@ sizing it, and a sampled profile of the keystroke cycle. Numbers are only
 comparable within one container on one host; every published snapshot
 (`docs/perf/`, `docs/findings/perf-*.md`) names both.
 
+## Native teardown workload
+
+`contract-diff.py --teardown` adds one workload to the existing driver. It
+builds `bisect.c` with its `teardown.h` mode; no external initbench is used.
+Python provisions private profiles, interleaves subjects and reads the paused
+native child's memory. ABI calls are bracketed in C. Other bisect and contract
+modes keep their existing output.
+
+Run inside the pinned Linux amd64 BDB environment, after installing both
+shipping libraries with `tools/packaging/install.sh`. Use the existing
+container reservation and heavy admission paths. Keep one campaign active.
+The work directory and measured library copies must be on ext4; tmpfs gives
+misleading private-dirty attribution for clean library pages.
+
+```bash
+teardown_work=$(mktemp -d "$PWD/target/teardown.XXXXXX")
+trap 'rm -rf "$teardown_work"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil \
+  python -B -X lazy_imports=normal tools/bisection/contract-diff.py \
+  bdb "$pin_prefix" "$shipping_prefix/lib/libpinyin.so" \
+  --zhuyin-so "$shipping_prefix/lib/libzhuyin.so" \
+  --teardown --teardown-stage verify --teardown-work-dir "$teardown_work"
+```
+
+The host's `python -m tools.dev slot run --` is the same admission entry used
+by `just heavy`. After verification, select `pilot`, then `confirm` explicitly.
+The latter uses 60 timing rounds plus three warm-ups and 30 memory rounds
+plus two warm-ups. `--teardown-cases` selects named scenarios; the defaults are
+`empty`, `modest`, `phrases`, `journals`, `modest-unsaved`, `modest-saved`.
+Every sample receives a private starting profile. A transcript, diagnostic,
+final-file or reopen mismatch is `NOT COMPARABLE` and stops before ratios.
+
+Save, each instance free, all frees, fini and dlclose have separate wall/CPU
+times. `teardown_total_ns` sums the free-call and fini durations. The full
+lifecycle guardrail sums native load, init-through-fini and dlclose intervals;
+it excludes result formatting and process launch. Memory samples are never
+aggregated as timing samples. M0 is after load, M1 after workload/optional
+save, M2 after every instance is freed, M3 after fini returns. The process
+waits alive for parent observation. Report signed M1−M2, M2−M3 and M3−M0;
+never use VmHWM differences or label retained library pages as context leaks.
+
+The same-bytes control is mandatory. Its paired median ratio and entire 95%
+paired-bootstrap interval must lie within 0.95–1.05. Otherwise the metric is
+inconclusive and pin ratios are suppressed. Do not change this rule after
+looking at results. Keep profiler data in memory and emit plain-text reports;
+commit or upload no captures. `repeat`, `multi` and `attribute` select the
+separate lifecycle and attribution diagnostics; their timings are not primary
+performance samples.
+
 ## Criterion benches
 
 | crate | bench | needs |

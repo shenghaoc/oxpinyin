@@ -81,6 +81,7 @@ bool fake_type(void *p, void *candidate, int *type) { *type=2; return p && candi
 bool fake_string(void *p, void *candidate, const char **text) { *text="你好"; return p && candidate; }
 bool fake_nbest(void *p, void *candidate, uint8_t *index) { (void)p; (void)candidate; (void)index; abort(); }
 bool fake_true(void *p) { return p != NULL; }
+bool fake_save(void *p) { fputs("SAVE\n", stderr); return p != NULL; }
 bool fake_load(void *p, uint8_t index) { return p && index > 0; }
 void *fake_begin(void *p, uint8_t index) { (void)index; return p; }
 bool fake_add(void *p, const char *s, const char *r, int n) { return p && s && r && n > 0; }
@@ -102,7 +103,7 @@ class NativeTests(unittest.TestCase):
                      parse_more_full_pinyins='parse', parse_more_chewings='parse', reset='true',
                      guess_sentence='true', get_sentence='sentence', get_n_candidate='count',
                      get_candidate='candidate', get_candidate_type='type', get_candidate_string='string',
-                     save='true', begin_add_phrases='begin', iterator_add_phrase='add', end_add_phrases='end',
+                     save='save', begin_add_phrases='begin', iterator_add_phrase='add', end_add_phrases='end',
                      load_phrase_library='load')
         source = STUB
         for facade in ('pinyin', 'zhuyin'):
@@ -154,6 +155,46 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(len(row['samples']), 10)
         self.assertEqual(set(row['checkpoints']), {0, 1, 10})
         self.assertEqual(td.file_set(self.profile), {})
+
+    def test_save_is_named_and_precedes_every_free(self):
+        rows = self.root / 'dirty.tsv'
+        rows.write_text(td.row_text([(1, '测试', "ce4'shi4", 20000)]))
+        for facade in ('pinyin', 'zhuyin'):
+            with self.subTest(facade=facade), patch.object(td, 'exports', return_value=[facade + '_init']):
+                row = self.campaign().run(facade, self.library, self.profile, scenario='dirty', save=True, rows=rows)
+                self.assertEqual(row['observation']['stderr'].splitlines(), ['INIT', 'ALLOC', 'SAVE', 'FREE', 'FINI'])
+                self.assertTrue(row['samples'][0]['saved'])
+                self.assertIn('save_ns', row['samples'][0]['times'])
+                self.assertIn('full_lifecycle_ns', row['samples'][0]['times'])
+
+    def test_missing_export_is_invalid_and_cleans_private_sample(self):
+        campaign = self.campaign()
+        with patch.object(td, 'exports', return_value=['missing_export']), self.assertRaisesRegex(ValueError, 'missing export'):
+            campaign.run('pinyin', self.library, self.profile)
+        self.assertFalse(list(self.root.glob('sample-*')))
+
+    def test_existing_perf_mode_preserves_schema_and_checksum(self):
+        source = self.root / 'bisect-main.c'
+        source.write_bytes(subprocess.check_output(['git', 'show', 'origin/main:tools/bisection/bisect.c'], cwd=td.ROOT))
+        baseline = self.root / 'bisect-main'
+        subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2',
+                        '-o', str(baseline), str(source), '-ldl'], check=True)
+        values = []
+        for executable in (baseline, self.worker):
+            result = subprocess.run([str(executable), '--perf', str(self.library), str(self.root)],
+                                    env=dict(os.environ, PERF_MODE='speed', PERF_CYCLES='2'),
+                                    capture_output=True, text=True, check=True)
+            values.append(td.json.loads(result.stdout))
+        def schema(value):
+            if isinstance(value, dict):
+                return {key: schema(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [schema(item) for item in value]
+            return type(value).__name__
+        self.assertEqual(schema(values[0]), schema(values[1]))
+        for key in ('backend', 'so', 'systemdir', 'mode', 'checksum', 'cycles'):
+            if key in values[0]:
+                self.assertEqual(values[0][key], values[1][key])
 
 
 if __name__ == '__main__':

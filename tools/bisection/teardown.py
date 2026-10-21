@@ -42,17 +42,6 @@ def sibling(name):
 SMAPS = sibling('rss-smaps')
 
 
-def add_arguments(parser):
-    parser.add_argument('--teardown', action='store_true', help='native teardown measurement workload')
-    parser.add_argument('--teardown-stage', choices=('provision', 'verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute'),
-                        default='verify')
-    parser.add_argument('--teardown-work-dir', type=Path, help='owned temporary ext4 directory; caller cleans it')
-    parser.add_argument('--teardown-cases', default=','.join(CASES))
-    parser.add_argument('--teardown-facades', choices=('both', 'pinyin', 'zhuyin'), default='both')
-    parser.add_argument('--teardown-cpu', type=int)
-    parser.add_argument('--teardown-attribution-case', choices=CASES, default='journals')
-
-
 def digest_bytes(value):
     return hashlib.sha256(value).hexdigest()
 
@@ -167,6 +156,22 @@ def stable_control(ox, control):
     ratio = paired_ratio(control, ox)
     return dict(ratio=ratio, stable=CONTROL_INTERVAL[0] <= ratio['ci95'][0] <= ratio['median'] <=
                 ratio['ci95'][1] <= CONTROL_INTERVAL[1], rule=list(CONTROL_INTERVAL))
+
+
+def filesystem(path):
+    """Read the actual mount type; ext2/3/4 share statfs's magic number."""
+    path = Path(path).resolve()
+    matches = []
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        fields, separator, trailer = line.partition(' - ')
+        if not separator:
+            continue
+        mount = re.sub(r'\\([0-7]{3})', lambda match: chr(int(match[1], 8)), fields.split()[4])
+        if path.is_relative_to(mount):
+            matches.append((len(mount), trailer.split()[0]))
+    if not matches:
+        raise ValueError('filesystem type is unknown')
+    return max(matches)[1]
 
 
 def select_rows(exported, balanced=False):
@@ -331,6 +336,13 @@ class Campaign:
                         if total != row['times']['free_all_instances_ns'][clock] or total + row['times']['fini_ns'][clock] != row['times']['teardown_total_ns'][clock]:
                             raise ValueError('native teardown totals are inconsistent')
                 samples[-1]['times'].update(closed['times'])
+                for row in samples:
+                    for index, value in enumerate(row['free_instance_ns']):
+                        row['times'][f'free_instance_{index}_ns'] = value['call']
+                if cycles == 1:
+                    samples[0]['times']['full_lifecycle_ns'] = {
+                        clock: sum(samples[0]['times'][name][clock] for name in ('load_ns', 'lifecycle_ns', 'dlclose_ns'))
+                        for clock in ('wall_ns', 'cpu_ns')}
             if reopen:
                 observation['reopen'] = self.run(facade, library, user, mode='observe', inputs=inputs)['observation']
             return dict(observation=observation, samples=samples, checkpoints=checkpoints, command=command)
@@ -408,8 +420,8 @@ def run(args, driver, parser):
     if cpu not in os.sched_getaffinity(0):
         parser.error('--teardown-cpu is outside this process affinity')
     work = args.teardown_work_dir.resolve()
-    fs = subprocess.check_output(['stat', '-f', '-c', '%T', str(work)], text=True).strip()
-    if fs != 'ext2/ext3':
+    fs = filesystem(work)
+    if fs != 'ext4':
         parser.error('teardown work and measured libraries must reside on ext4 (stat reported ' + fs + ')')
     facades = ('pinyin', 'zhuyin') if args.teardown_facades == 'both' else (args.teardown_facades,)
     subjects = {'ox': dict(pinyin=args.pinyin_so, zhuyin=args.zhuyin_so),
@@ -600,28 +612,40 @@ def report_times(facade, case, samples, pilot):
             print_record('time', facade=facade, case=case, metric=metric, clock=clock, pilot=pilot,
                          summaries={side: summary(value) for side, value in values.items()}, control=control,
                          verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
-                         ox_pin_ratio=paired_ratio(values['ox'], values['pin']),
-                         control_pin_ratio=paired_ratio(values['control'], values['pin']))
+                         ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
+                         control_pin_ratio=paired_ratio(values['control'], values['pin']) if control['stable'] else None)
 
 
 def report_memory(facade, case, samples, pilot):
     # Absolute checkpoint levels have meaningful positive-denominator ratios.
     # Signed release/residual deltas are reported in KiB, never divided by a
     # negative/zero baseline. No VmHWM observation enters this path.
-    page_kib = os.sysconf('SC_PAGE_SIZE') // 1024
     for point in ('M0', 'M1', 'M2', 'M3'):
         for metric in FIELDS:
             values = {side: [row['checkpoints'][0 if point == 'M0' else 1][point]['totals'][metric] for row in rows]
                       for side, rows in samples.items()}
             control_differences = [b - a for a, b in zip(values['ox'], values['control'])]
+            control = stable_control(values['ox'], values['control']) if all(value > 0 for value in values['ox']) else dict(
+                stable=values['ox'] == values['control'], ratio=None, rule=list(CONTROL_INTERVAL))
             print_record('memory', facade=facade, case=case, point=point, metric=metric, unit='KiB', pilot=pilot,
                          summaries={side: summary(value) for side, value in values.items()},
                          control_paired_difference=summary(control_differences),
-                         control_within_one_page=all(abs(value) <= page_kib for value in control_differences),
-                         ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if all(value > 0 for value in values['pin']) else None)
+                         control=control, verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
+                         ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] and all(value > 0 for value in values['pin']) else None)
     for side, rows in samples.items():
         deltas = [memory_deltas(dict(row['checkpoints'][1], M0=row['checkpoints'][0]['M0'])) for row in rows]
         shown = {label: {metric: summary([delta[label]['totals'][metric] for delta in deltas]) for metric in FIELDS}
                  for label in ('M1-M2', 'M2-M3', 'M3-M0')}
+        checkpoints = {}
+        for point in ('M0', 'M1', 'M2', 'M3'):
+            observations = [row['checkpoints'][0 if point == 'M0' else 1][point] for row in rows]
+            groups = set().union(*(observation['groups'] for observation in observations))
+            checkpoints[point] = dict(
+                fds=summary([observation['fds'] for observation in observations]),
+                mappings=summary([observation['mappings'] for observation in observations]),
+                groups={group: {metric: summary([observation['groups'].get(group, {}).get(metric, 0) for observation in observations])
+                                for metric in FIELDS} for group in sorted(groups)},
+                allocator={key: summary([observation['allocator'][key] for observation in observations])
+                           for key in observations[0]['allocator']} if all(observation['allocator'] is not None for observation in observations) else None)
         print_record('memory-deltas', facade=facade, case=case, side=side, pilot=pilot, signed_kib=shown,
-                     checkpoints={point: rows[0]['checkpoints'][0 if point == 'M0' else 1][point] for point in ('M0', 'M1', 'M2', 'M3')})
+                     checkpoints=checkpoints)

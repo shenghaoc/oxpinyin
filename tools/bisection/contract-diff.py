@@ -12305,8 +12305,13 @@ def run_per_call(args, parser):
 
 def run_main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    import teardown
-    teardown.add_arguments(parser)
+    parser.add_argument('--teardown', action='store_true', help='native teardown measurement workload')
+    parser.add_argument('--teardown-stage', choices=('provision', 'verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute'), default='verify')
+    parser.add_argument('--teardown-work-dir', type=Path, help='owned temporary ext4 directory; caller cleans it')
+    parser.add_argument('--teardown-cases', default='empty,modest,phrases,journals,modest-unsaved,modest-saved')
+    parser.add_argument('--teardown-facades', choices=('both', 'pinyin', 'zhuyin'), default='both')
+    parser.add_argument('--teardown-cpu', type=int)
+    parser.add_argument('--teardown-attribution-case', choices=('empty', 'modest', 'phrases', 'journals', 'modest-unsaved', 'modest-saved'), default='journals')
     parser.add_argument('cell', nargs='?', choices=['bdb', 'kc', 'tkrzw'])
     parser.add_argument('prefix', nargs='?', type=Path)
     parser.add_argument('pinyin_so', nargs='?', type=Path)
@@ -12363,10 +12368,11 @@ def run_main():
     manifest = (args.prefix / 'oracle-pin.txt').read_text()
     assert 'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' in manifest
     assert '+dbm-' + args.cell + '\n' in manifest
+    if args.teardown:
+        import teardown
+        return teardown.run(args, sys.modules[__name__], parser)
     if args.per_call:
         return run_per_call(args, parser)
-    if args.teardown:
-        return teardown.run(args, sys.modules[__name__], parser)
     if args.base_pinyin_so or args.base_zhuyin_so or args.per_call_attribution or args.per_call_operations:
         parser.error('base paths, attribution and operation selection require --per-call')
     if args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
