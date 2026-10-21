@@ -144,7 +144,7 @@ class CgroupMemoryTests(unittest.TestCase):
         self.stats.update(active_file=2048 * 1024**2, inactive_file=0)
         self.write_stats()
         snapshot = self.snapshot()
-        self.assertEqual(snapshot['available_mib'], 2416)
+        self.assertEqual(snapshot['available_mib'], 2352)
         self.assert_build_fits(snapshot, True)
 
     def test_anonymous_full_cgroup_refuses_the_next_build(self):
@@ -152,7 +152,7 @@ class CgroupMemoryTests(unittest.TestCase):
         (self.guest / 'memory.current').write_text(str(2544 * 1024**2))
         self.write_stats()
         snapshot = self.snapshot()
-        self.assertEqual(snapshot['available_mib'], 80)
+        self.assertEqual(snapshot['available_mib'], 16)
         self.assert_build_fits(snapshot, False)
 
     def test_dirty_and_writeback_pages_are_both_reserved(self):
@@ -162,7 +162,7 @@ class CgroupMemoryTests(unittest.TestCase):
                                   file_writeback=writeback * 1024**2)
                 self.write_stats()
                 snapshot = self.snapshot()
-                self.assertEqual(snapshot['available_mib'], 368)
+                self.assertEqual(snapshot['available_mib'], 304)
                 self.assert_build_fits(snapshot, False)
 
     def test_dirty_writeback_overlap_reservation_is_bounded_by_file_candidates(self):
@@ -172,41 +172,54 @@ class CgroupMemoryTests(unittest.TestCase):
         # Their sum exceeds file; reserve all candidates once, without
         # producing negative clean cache or treating max(dirty, writeback)
         # as an exact union. Overlapping pages may be overreserved.
-        self.assertEqual(snapshot['available_mib'], 368)
+        self.assertEqual(snapshot['available_mib'], 304)
         self.assert_build_fits(snapshot, False)
 
     def test_shmem_is_excluded_even_when_file_lru_counters_are_larger(self):
         self.stats['shmem'] = self.stats['file']
         self.write_stats()
         snapshot = self.snapshot()
-        self.assertEqual(snapshot['available_mib'], 368)
+        self.assertEqual(snapshot['available_mib'], 304)
         self.assert_build_fits(snapshot, False)
 
     def test_file_pages_outside_the_reclaim_lists_are_retained(self):
         self.stats.update(active_file=0, inactive_file=0)
         self.write_stats()
-        self.assertEqual(self.snapshot()['available_mib'], 368)
+        self.assertEqual(self.snapshot()['available_mib'], 304)
 
     def test_kernel_components_are_not_added_to_the_aggregate(self):
         self.stats.update({key: value * 1024**2 for key, value in dict(
             kernel_stack=8, pagetables=8, sec_pagetables=4, percpu=4,
             slab_unreclaimable=32, slab=96).items()})
         self.write_stats()
-        self.assertEqual(self.snapshot()['available_mib'], 2416)
-        self.stats.update(slab_reclaimable=0, slab=32 * 1024**2)
-        self.write_stats()
-        # Only reclaimable slab is released; kernel and sock remain charged.
         self.assertEqual(self.snapshot()['available_mib'], 2352)
+
+    def test_large_reclaimable_slab_does_not_gain_room(self):
+        self.stats.update(kernel=128 * 1024**2, slab_reclaimable=128 * 1024**2)
+        self.write_stats()
+        snapshot = self.snapshot()
+        # The same room as the 64 MiB slab fixture: slab stays inside kernel.
+        self.assertEqual(snapshot['available_mib'], 2352)
+        self.assertTrue(any('slab_reclaimable=134217728' in note
+                            for note in snapshot['notes']))
+
+    def test_missing_slab_reclaimable_is_not_required(self):
+        self.write_stats({key: value for key, value in self.stats.items()
+                          if key != 'slab_reclaimable'})
+        snapshot = self.snapshot()
+        self.assertEqual(snapshot['available_mib'], 2352)
+        self.assertFalse(any('fallback to memory.current=' in note
+                             for note in snapshot['notes']))
 
     def test_larger_current_or_stat_total_retains_unclassified_or_new_charges(self):
         self.write_stats()
-        for current, room in ((2192, 2416), (2320, 2352)):
+        for current, room in ((2192, 2352), (2320, 2288)):
             with self.subTest(current=current):
                 (self.guest / 'memory.current').write_text(str(current * 1024**2))
                 self.assertEqual(self.snapshot()['available_mib'], room)
 
     def test_each_missing_required_field_falls_back_to_current(self):
-        for key in self.stats:
+        for key in set(self.stats) - {'slab_reclaimable'}:
             with self.subTest(missing=key):
                 self.write_stats({name: value for name, value in self.stats.items() if name != key})
                 snapshot = self.snapshot()
@@ -242,6 +255,49 @@ class CgroupMemoryTests(unittest.TestCase):
                 self.assertTrue(any('fallback to memory.current=' in note
                                     for note in snapshot['notes']))
 
+    def test_positive_memory_min_falls_back_to_memory_current(self):
+        (self.guest / 'memory.min').write_text(str(512 * 1024**2))
+        snapshot = self.snapshot()
+        self.assertEqual(snapshot['available_mib'], 304)
+        self.assertTrue(any(f'memory.min={512 * 1024**2}: protected memory; '
+                            f'fallback to memory.current={2256 * 1024**2}' in note
+                            for note in snapshot['notes']))
+
+    def test_zero_missing_or_unreadable_memory_min_uses_the_reclaimable_rule(self):
+        self.write_stats()
+        path = self.guest / 'memory.min'
+        for content, note in ((None, 'memory.min=0 (kernel default; missing)'),
+                              ('0', 'memory.min=0;'),
+                              ('unreadable', 'memory.min=0 (kernel default; unreadable)')):
+            with self.subTest(content=content):
+                if path.exists():
+                    if path.is_dir():
+                        path.rmdir()
+                    else:
+                        path.unlink()
+                if content == 'unreadable':
+                    path.mkdir()
+                elif content is not None:
+                    path.write_text(content)
+                snapshot = self.snapshot()
+                self.assertEqual(snapshot['available_mib'], 2352)
+                self.assertTrue(any(note in line for line in snapshot['notes']))
+
+    def test_memory_min_protects_only_its_own_level(self):
+        parent_stats = dict.fromkeys(self.stats, 0)
+        parent_stats.update(file=512 * 1024**2, active_file=512 * 1024**2)
+        self.write_stats(parent_stats, self.cgroup)
+        (self.cgroup / 'memory.max').write_text(str(1024 * 1024**2))
+        (self.cgroup / 'memory.current').write_text(str(512 * 1024**2))
+        self.write_stats()
+        protected = str(512 * 1024**2)
+        for root_min, guest_min, room in ((protected, '0', 512),
+                                          ('0', protected, 304)):
+            with self.subTest(root_min=root_min, guest_min=guest_min):
+                (self.cgroup / 'memory.min').write_text(root_min)
+                (self.guest / 'memory.min').write_text(guest_min)
+                self.assertEqual(self.snapshot()['available_mib'], room)
+
     def test_nested_ancestors_take_the_smallest_room(self):
         self.write_stats()
         parent_stats = dict(self.stats, anon=256 * 1024**2, file=0, kernel=0,
@@ -259,7 +315,7 @@ class CgroupMemoryTests(unittest.TestCase):
         (self.cgroup / 'memory.max').write_text(str(1024 * 1024**2))
         (self.cgroup / 'memory.current').unlink()
         snapshot = self.snapshot()
-        self.assertEqual(snapshot['available_mib'], 2416)
+        self.assertEqual(snapshot['available_mib'], 2352)
         self.assertIn('cgroup / memory room=unknown', snapshot['notes'])
 
     def test_reclaiming_cache_never_produces_more_room_than_the_limit(self):
@@ -268,7 +324,7 @@ class CgroupMemoryTests(unittest.TestCase):
                           active_file=2048 * 1024**2, slab_reclaimable=128 * 1024**2)
         (self.guest / 'memory.current').write_text(str(2176 * 1024**2))
         self.write_stats()
-        self.assertEqual(self.snapshot()['available_mib'], 2560)
+        self.assertEqual(self.snapshot()['available_mib'], 2432)
 
 
 if __name__ == '__main__':

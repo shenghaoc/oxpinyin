@@ -293,24 +293,48 @@ def linux_cgroup_dirs(proc=Path('/proc'), root=Path('/sys/fs/cgroup')):
     return [current, *list(current.parents)[:len(current.relative_to(root).parts)]]
 
 
-def _cgroup_memory_used(directory, current):
-    """Retain charges other than clean file cache and reclaimable slab.
+def _memory_min(directory):
+    """Read a level's hard memory protection, defaulting to the kernel's zero.
 
-    Field meanings: https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files
+    memory.min is hard protection that the kernel does not reclaim, so a
+    positive floor keeps this level on the current-based calculation. A
+    missing or unreadable file is the kernel default, zero:
+    https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files
+    """
+    try:
+        minimum = int((directory / 'memory.min').read_text().strip())
+        if minimum < 0:
+            raise ValueError('negative memory.min')
+        return minimum, f'memory.min={minimum}'
+    except FileNotFoundError:
+        return 0, 'memory.min=0 (kernel default; missing)'
+    except (OSError, ValueError):
+        return 0, 'memory.min=0 (kernel default; unreadable)'
+
+
+def _cgroup_memory_used(directory, current):
+    """Retain charges other than clean file cache.
+
+    Reclaimable slab is not free room: the kernel defines it as memory that
+    only might be reclaimed, and referenced slab objects stay charged in
+    kernel. It remains inside the kernel aggregate and is never subtracted.
+    Field meanings and slab semantics:
+    https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files
     The kernel aggregate includes its component counters and both slab types;
     never add those components again. Socket buffers are charged separately:
     Linux v6.18 mm/memcontrol.c, memory_stats and mem_cgroup_sk_charge:
     https://github.com/torvalds/linux/blob/v6.18/mm/memcontrol.c
     """
     required = ('anon', 'file', 'kernel', 'sock', 'shmem', 'active_file',
-                'inactive_file', 'file_dirty', 'file_writeback', 'slab_reclaimable')
+                'inactive_file', 'file_dirty', 'file_writeback')
+    optional = ('slab_reclaimable',)
     stats = {}
     for line in (directory / 'memory.stat').read_text().splitlines():
         fields = line.split()
         if len(fields) != 2:
             raise ValueError('malformed memory.stat row')
         key, value = fields
-        if key in required:
+        if key in required or key in optional:
             if key in stats or not re.fullmatch(r'[0-9]+', value):
                 raise ValueError(f'invalid memory.stat {key}')
             stats[key] = int(value)
@@ -320,7 +344,7 @@ def _cgroup_memory_used(directory, current):
     for key in ('shmem', 'file_dirty', 'file_writeback'):
         if stats[key] > stats['file']:
             raise ValueError(f'memory.stat {key} exceeds file')
-    if stats['slab_reclaimable'] > stats['kernel']:
+    if stats.get('slab_reclaimable', 0) > stats['kernel']:
         raise ValueError('memory.stat slab_reclaimable exceeds kernel')
 
     # file already includes shmem, whose swap-backed pages are not clean file
@@ -338,7 +362,7 @@ def _cgroup_memory_used(directory, current):
     # Keep unclassified charges and use the larger total across non-atomic
     # current/stat reads. shmem and kernel components are already included.
     total = max(current, stats['anon'] + stats['file'] + stats['kernel'] + stats['sock'])
-    return total - clean - stats['slab_reclaimable'], stats
+    return total - clean, stats
 
 
 def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
@@ -386,17 +410,28 @@ def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
                     current = int((directory / 'memory.current').read_text().strip())
                     if current < 0:
                         raise ValueError('negative memory')
-                    try:
-                        used, stats = _cgroup_memory_used(directory, current)
-                        fields = ' '.join(f'{key}={value}' for key, value in stats.items())
-                        notes.append(f'cgroup {label} memory.stat bytes: {fields}; '
-                                     f'memory.current={current}; used={used}')
-                    except (OSError, ValueError) as exc:
-                        # Missing/unsupported stats retain today's stricter room.
-                        # An unreadable max/current still skips this level below.
+                    minimum, minimum_note = _memory_min(directory)
+                    if minimum > 0:
+                        # Protected memory is not reclaimable, so this level
+                        # keeps today's max - current room even when memory.stat
+                        # is readable:
+                        # https://docs.kernel.org/admin-guide/cgroup-v2.html#memory-interface-files
                         used = current
-                        notes.append(f'cgroup {label} memory.stat unusable; '
-                                     f'fallback to memory.current={current} ({exc})')
+                        notes.append(f'cgroup {label} {minimum_note}: protected memory; '
+                                     f'fallback to memory.current={current}')
+                    else:
+                        try:
+                            used, stats = _cgroup_memory_used(directory, current)
+                            fields = ' '.join(f'{key}={value}' for key, value in stats.items())
+                            notes.append(f'cgroup {label} memory.stat bytes: {fields}; '
+                                         f'memory.current={current}; {minimum_note}; used={used}')
+                        except (OSError, ValueError) as exc:
+                            # Missing/unsupported stats retain today's stricter room.
+                            # An unreadable max/current still skips this level below.
+                            used = current
+                            notes.append(f'cgroup {label} memory.stat unusable; '
+                                         f'fallback to memory.current={current} ({exc}); '
+                                         f'{minimum_note}')
                     room = max(0, maximum - used) // (1024 * 1024)
                     memories.append(room)
                     notes.append(f'cgroup {label} memory room={room} MiB')

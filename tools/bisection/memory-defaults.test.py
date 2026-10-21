@@ -150,19 +150,19 @@ class CgroupTests(unittest.TestCase):
     def test_active_build_cache_allows_compatibility_defaults(self):
         self.write_cache_stats(self.cg / 'parent/child')
         snapshot = self.snapshot()
-        self.assertEqual(snapshot['available_mib'], 2416)
+        self.assertEqual(snapshot['available_mib'], 2352)
         chosen = M['memory_defaults']({'OXPINYIN_COMPAT_CONTAINER': '1'}, None,
                                      cpus=snapshot['cpus'],
                                      available_mib=snapshot['available_mib'],
                                      memory_limit_mib=snapshot['memory_limit_mib'])
-        self.assertEqual(chosen['CARGO_BUILD_JOBS'][0], 4)
+        self.assertEqual(chosen['CARGO_BUILD_JOBS'][0], 3)
         self.assertEqual(chosen['--jobs'][0], 2)
 
     def test_mixed_stat_and_current_levels_take_the_smallest_room(self):
         self.write_cache_stats(self.cg / 'parent/child')
         parent = self.cg / 'parent'
         (parent / 'memory.current').write_text(str(1000 * 1024**2))
-        for limit, room in ((4000, 2416), (2048, 1048)):
+        for limit, room in ((4000, 2352), (2048, 1048)):
             with self.subTest(parent_limit=limit):
                 (parent / 'memory.max').write_text(str(limit * 1024**2))
                 snapshot = self.snapshot()
