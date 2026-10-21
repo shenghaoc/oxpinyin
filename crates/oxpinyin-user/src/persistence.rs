@@ -47,6 +47,7 @@ use oxpinyin_data::table_info::FileName;
 use oxpinyin_data::user_files::{
     LogRecord, SystemVersions, UserConfError, UserDbm, UserFileLayout, UserTableInfo,
     decode_log_records, encode_log_records, get_open_counter, log_records, read_chunk_payload,
+    validate_log_records,
 };
 use oxpinyin_store::{
     DefaultStore, DefaultUserBigramDb, RawReadStore, StoreError, UserBigramDb, WriteStore,
@@ -1381,7 +1382,7 @@ fn load_logs_with_mask(
                     }
                 };
                 let end = 8 + payload.len();
-                let validation = log_records(payload).try_for_each(|record| record.map(|_| ()));
+                let validation = validate_log_records(payload);
                 match validation {
                     Ok(()) => {
                         bytes.truncate(end);

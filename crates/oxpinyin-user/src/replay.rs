@@ -33,14 +33,16 @@
 //! * The first failure ends the merge and the records before it stay applied
 //!   (`pinyin.cpp:276` ignores the answer).
 //!
-//! Session opens decode to validate each retained payload, then keep its private
+//! Session opens structurally validate each retained payload, then keep its private
 //! byte view. Typed [`ChunkItem`]s are cached on use; value-only callers use
 //! [`Merge::finish`].
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use oxpinyin_data::chunk_write::{ChunkItem, PHRASE_MASK, decode_phrase_item};
+use oxpinyin_data::chunk_write::{
+    ChunkItem, PHRASE_MASK, decode_phrase_item, validate_phrase_item,
+};
 use oxpinyin_data::phrase_library::PhraseLibrary;
 use oxpinyin_data::user_files::LogRecord;
 
@@ -693,7 +695,7 @@ impl Merge {
                     if original {
                         match self.content.item(offset, len) {
                             Some(bytes) => {
-                                if let Err(error) = decode_phrase_item(&bytes) {
+                                if let Err(error) = validate_phrase_item(&bytes) {
                                     skipped.push(format!("{name}: {error}"));
                                     return false;
                                 }
