@@ -402,49 +402,41 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
             .zhuyin_parse
             .as_ref()
             .is_some_and(|parse| oxpinyin_facade::zhuyin_offset_is_mid_key(parse, normalized));
-    let window_owned: oxpinyin_engine::CandidateList = if before_cursor {
-        let window = match inst.core.session.candidates_ending_at(session_offset) {
-            Ok(window) => window,
-            Err(error) => {
-                refuse_lookup_gram("zhuyin_guess_candidates", &error);
-                inst.core.anchored_window = None;
-                inst.candidates.clear();
-                return false;
-            }
-        };
-        // The before-cursor window is re-anchored just like the
-        // after-cursor one: `snapshot_candidates` records each row's index
-        // into THIS list, so a later `zhuyin_choose_candidate` must resolve
-        // it here and not against the composition-anchored cached list —
-        // the two differ in general, and the caller would commit a row it
-        // never displayed. The anchor is the buffer start rather than the
-        // lookup offset because the ending-at window is END-anchored; see
-        // `oxpinyin_facade::BEFORE_CURSOR_ANCHOR`.
-        inst.core.anchored_window = Some((oxpinyin_facade::BEFORE_CURSOR_ANCHOR, window.clone()));
-        window
+    // The before-cursor window is re-anchored just like the after-cursor
+    // one: `snapshot_candidates` records each row's index into THIS list,
+    // so a later `zhuyin_choose_candidate` must resolve it here and not
+    // against the composition-anchored cached list — the two differ in
+    // general, and the caller would commit a row it never displayed. The
+    // anchor is the buffer start rather than the lookup offset because the
+    // ending-at window is END-anchored; see
+    // `oxpinyin_facade::BEFORE_CURSOR_ANCHOR`.
+    let looked_up = if before_cursor {
+        inst.core.session.candidates_ending_at(session_offset)
     } else {
-        let window = match inst.core.session.candidates_at(session_offset) {
-            Ok(window) => window,
-            Err(error) => {
-                refuse_lookup_gram("zhuyin_guess_candidates", &error);
-                inst.core.anchored_window = None;
-                inst.candidates.clear();
-                return false;
-            }
-        };
-        inst.core.anchored_window = Some((session_offset, window.clone()));
-        window
+        inst.core.session.candidates_at(session_offset)
+    };
+    let window_owned: oxpinyin_engine::CandidateList = match looked_up {
+        Ok(window) => window,
+        Err(error) => {
+            refuse_lookup_gram("zhuyin_guess_candidates", &error);
+            inst.core.anchored_window = None;
+            inst.candidates.clear();
+            return false;
+        }
+    };
+    // The window is retained on the instance after the snapshot below
+    // (moved, not cloned): the snapshot borrows it, and the retained list
+    // is the one a later `zhuyin_choose_candidate` resolves against.
+    let window_anchor = if before_cursor {
+        oxpinyin_facade::BEFORE_CURSOR_ANCHOR
+    } else {
+        session_offset
     };
     // Class (b), `zhuyin.cpp:1096`: a token of a loaded library whose item
     // cannot be read leaves `m_phrase_string` unset, and the pin's duplicate
     // removal compares it (SIGSEGV). Only a `table.conf` that points a
     // library at another file (or at none) gets here. The call fails, once.
-    if inst
-        .core
-        .anchored_window
-        .as_ref()
-        .is_some_and(|(_, window)| window.had_unreadable_item())
-    {
+    if window_owned.had_unreadable_item() {
         inst.core.anchored_window = None;
         inst.candidates.clear();
         crate::ffi::log_warning(
@@ -457,18 +449,15 @@ fn guess_candidates(instance: *mut ZhuyinInstance, offset: usize, before_cursor:
     } else {
         None
     };
-    let anchor = match inst.core.anchored_window.as_ref() {
-        Some((anchor, _)) => *anchor,
-        None => inst.core.session.composition_offset(),
-    };
     crate::candidates::snapshot_candidates(
         &mut *inst,
         &window_owned,
         before_cursor,
         before_end,
-        anchor,
+        window_anchor,
         sentence_rows_only,
     );
+    inst.core.anchored_window = Some((window_anchor, window_owned));
     // Class (c), `zhuyin.cpp:1261`: `assert (0 < total_freq)` while ranking a
     // candidate, with the facade total wrapped to zero by
     // `zhuyin_token_add_unigram_frequency`. The assertion sits in the loop
