@@ -291,7 +291,19 @@ jobs:
       # repo-relative.
       - name: Verify the w3 fixture checksums
         run: sha256sum -c fixtures/w3/fixtures.sha256
-      - run: cargo test --locked --workspace
+      - name: Install pinned cargo-nextest
+        run: |
+          ver=0.9.143
+          sum=6d891c18105ec2d33f6e441a4f92b7ccab47ba263e22055c8bb66884243f3389
+          curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-x86_64-unknown-linux-musl.tar.gz"
+          echo "${sum}  cargo-nextest.tar.gz" | sha256sum -c -
+          tar xzf cargo-nextest.tar.gz
+          mkdir -p ~/.local/bin
+          install -m755 cargo-nextest ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: cargo nextest run --locked --profile ci --workspace
+      # nextest does not run doctests; keep the same workspace selection.
+      - run: cargo test --locked --doc --workspace
       - name: C++ pinyin.h smoke gate
         run: tools/bisection/run-cpp-smoke.sh
       # The exported-symbol gate: each cdylib exports exactly its pin
@@ -369,8 +381,24 @@ jobs:
           # bump fails here instead of silently.
           brew list --versions berkeley-db@5 | grep -Eq '^berkeley-db@5 5[.]3[.]' \
             || { echo "::error::Homebrew berkeley-db@5 is not the documented 5.3.x line: $(brew list --versions berkeley-db@5)"; exit 1; }
+      - name: Install pinned cargo-nextest
+        run: |
+          ver=0.9.143
+          sum=4830d430411148d17602a75cc880bfb4dc8dac153dea59a48a2ef4cc93577f07
+          curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-universal-apple-darwin.tar.gz"
+          echo "${sum}  cargo-nextest.tar.gz" | shasum -a 256 -c -
+          tar xzf cargo-nextest.tar.gz
+          mkdir -p ~/.local/bin
+          install -m755 cargo-nextest ~/.local/bin
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: >
-          cargo test --locked --workspace --no-default-features --features bdb
+          cargo nextest run --locked --profile ci --workspace --no-default-features --features bdb
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
+          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
+          --exclude oxpinyin-word
+      # nextest does not run doctests; keep the same features and exclusions.
+      - run: >
+          cargo test --locked --doc --workspace --no-default-features --features bdb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word

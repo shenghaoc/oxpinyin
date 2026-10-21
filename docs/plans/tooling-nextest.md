@@ -10,7 +10,7 @@ PR [#943](https://github.com/shenghaoc/oxpinyin/pull/943) is merged.
 | Native profiles and resource groups (§2) | Implemented in #943: local uses admitted num-cpus; ci uses four threads; retries are zero and fail-fast is false. The store-backend group has one thread; selected real-data binaries take the full budget. |
 | Shared admission and explicit nextest concurrency (§3) | Implemented in #943 on #941's shared slot. CLI counts precede NEXTEST_TEST_THREADS, then profile settings. Unsupported or ambiguous overrides fail closed. |
 | Equivalence across every native CI scope (§5) | Partial. #943 records six accepted Linux rows only at `7991ec6b17509980f42a59d72531617059f109d6`. The macOS tkrzw equivalence at `b034e834` on 2026-10-20 UTC is historical. The current macOS CI BDB scope passed at `219f420` on 2026-10-20 UTC: 1,218 passed and 22 ignored; identities and verdicts match. Other scopes and sanitizer equivalence remain unverified. |
-| CI and AGENTS.md rule 5 cutover (§5) | Proposed. Configured nextest is not a workflow cutover. CI still uses its existing Cargo commands, including its older scheduled nextest lane. Rule 5 still names cargo test. |
+| CI and AGENTS.md rule 5 cutover (§5) | Partial T13N: `ci.yml` test (Linux) and test-macos use pinned nextest 0.9.143 with `--profile ci` and separate `cargo test --doc` steps. Features, exclusions and ignored-test behavior are preserved. Windows stays on cargo test (#950). Other workflows and AGENTS.md rule 5 are unchanged. |
 | Pin-dependent test route | Proposed under Layer 4; no container profile exists yet. |
 
 macOS: bounded checks passed on 2026-10-20 UTC at
@@ -38,6 +38,18 @@ Windows: TODO (no host); tooling verification is deferred.
 Historical macOS comparisons in #943 belong to `e23367bc` and include failed
 backend runs. They do not verify this head. Hosted Rust CI supplies no local
 Python, PowerShell or slot acceptance. The sections below keep pending requirements.
+
+The approved T13N cutover covers only `ci.yml` test and test-macos.
+Both reuse verify-nightly's checksum-verified release-archive installation
+and version 0.9.143. Linux uses `x86_64-unknown-linux-musl`; macOS uses
+`universal-apple-darwin`, with its published SHA-256 from the
+[cargo-nextest 0.9.143 release](https://github.com/nextest-rs/nextest/releases/tag/cargo-nextest-0.9.143).
+PR CI supplies the one-cycle comparison against main: compare complete
+crate/binary-qualified identities and verdicts, then separate doctest counts.
+Normalize nextest skipped to Cargo ignored only for the same ignored test.
+Record observed job times without a controlled performance claim. CI comparison
+is pending. No logs, archives or evidence files are retained or uploaded.
+Windows remains on cargo test under #950.
 
 ## 1. Test entry point
 
@@ -150,7 +162,7 @@ Keep the Windows CI dependency/version exception confined to that CI scope.
 Do not claim a validated local storage setup from CI alone.
 The local completion gate stays limited to touched crates under AGENTS.md.
 The workspace sweep remains CI's job. Each workflow edit needs separate
-approval; this plan changes neither current policy nor workflow files.
+approval; the T13N exception above covers only the two approved CI jobs.
 
 After equivalence passes, the cutover implementation updates AGENTS.md rule 5.
 Replace its `cargo test -p <crate>` completion gate with the native `just test`
