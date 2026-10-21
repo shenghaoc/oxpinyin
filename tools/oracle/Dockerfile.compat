@@ -49,6 +49,10 @@ ENV PATH=/opt/uv/bin:$PATH
 COPY --from=reference /opt/pinyin-oracle /opt/reference
 COPY rust-toolchain.toml /tmp/toolchain/rust-toolchain.toml
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+# rustup 1.28.2: `rustup show` ignores a failed install and exits 0 (#984);
+# `rustup toolchain install` with no name installs the rust-toolchain.toml
+# toolchain and components and fails on error (src/cli/rustup_mode.rs:644,
+# 902-903). The checks reject a partial install without downloading.
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     set -eu; printf 'Local CA identity: %s\n' "$CA_IDENTITY"; \
     if [ -s /run/secrets/cacert ]; then \
@@ -64,6 +68,14 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     printf '%s  /tmp/rustup-init\n' "$rustup_sha256" | sha256sum --check -; \
     chmod +x /tmp/rustup-init; \
     /tmp/rustup-init -y --profile minimal --default-toolchain none; \
-    cd /tmp/toolchain; rustup show; rm /tmp/rustup-init
-ENV OXPINYIN_COMPAT_CONTAINER=1 CARGO_HOME=/state/cargo HOME=/state/home TMPDIR=/tmp
+    cd /tmp/toolchain; rustup toolchain install; \
+    export RUSTUP_AUTO_INSTALL=0; \
+    rustup show active-toolchain; rustc --version; cargo --version; \
+    channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml); \
+    [ -d "$RUSTUP_HOME/toolchains/$channel-$rustup_target" ] || \
+      { printf 'toolchain %s missing from %s/toolchains\n' "$channel" "$RUSTUP_HOME" >&2; exit 1; }; \
+    rm /tmp/rustup-init
+# A run with a missing toolchain fails instead of downloading one
+# (rustup 1.28.2 doc/user-guide/src/environment-variables.md).
+ENV OXPINYIN_COMPAT_CONTAINER=1 CARGO_HOME=/state/cargo HOME=/state/home TMPDIR=/tmp RUSTUP_AUTO_INSTALL=0
 WORKDIR /state/work
