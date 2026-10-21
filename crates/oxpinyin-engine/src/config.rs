@@ -335,13 +335,6 @@ impl Config {
         }
     }
 
-    fn values_mut(&mut self) -> &mut BTreeMap<String, ConfigValue> {
-        match &mut self.values {
-            ConfigValues::Defaults(values) => values.get_mut_or_init(default_values),
-            ConfigValues::Map(values) => values,
-        }
-    }
-
     /// Number of keys carried.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -362,7 +355,15 @@ impl Config {
 
     /// Sets `key`, returning what it held.
     pub fn set(&mut self, key: impl Into<String>, value: ConfigValue) -> Option<ConfigValue> {
-        self.values_mut().insert(key.into(), value)
+        match &mut self.values {
+            ConfigValues::Defaults(values) => {
+                let mut values = values.take().unwrap_or_else(default_values);
+                let previous = values.insert(key.into(), value);
+                self.values = ConfigValues::Map(values);
+                previous
+            }
+            ConfigValues::Map(values) => values.insert(key.into(), value),
+        }
     }
 }
 
