@@ -138,6 +138,50 @@ class CgroupTests(unittest.TestCase):
         self.assertEqual(snapshot['cpus'], 8)
         self.assertIn('cgroup v2 memory and CPU limits=unknown', snapshot['notes'])
 
+    def write_cache_stats(self, directory):
+        stats = dict(anon=64, file=2048, kernel=128, sock=16, shmem=0,
+                     active_file=2048, inactive_file=0, file_dirty=0,
+                     file_writeback=0, slab_reclaimable=64)
+        (directory / 'memory.max').write_text(str(2560 * 1024**2))
+        (directory / 'memory.current').write_text(str(2256 * 1024**2))
+        (directory / 'memory.stat').write_text(''.join(
+            f'{key} {value * 1024**2}\n' for key, value in stats.items()))
+
+    def test_active_build_cache_allows_compatibility_defaults(self):
+        self.write_cache_stats(self.cg / 'parent/child')
+        snapshot = self.snapshot()
+        self.assertEqual(snapshot['available_mib'], 2416)
+        chosen = M['memory_defaults']({'OXPINYIN_COMPAT_CONTAINER': '1'}, None,
+                                     cpus=snapshot['cpus'],
+                                     available_mib=snapshot['available_mib'],
+                                     memory_limit_mib=snapshot['memory_limit_mib'])
+        self.assertEqual(chosen['CARGO_BUILD_JOBS'][0], 4)
+        self.assertEqual(chosen['--jobs'][0], 2)
+
+    def test_mixed_stat_and_current_levels_take_the_smallest_room(self):
+        self.write_cache_stats(self.cg / 'parent/child')
+        parent = self.cg / 'parent'
+        (parent / 'memory.current').write_text(str(1000 * 1024**2))
+        for limit, room in ((4000, 2416), (2048, 1048)):
+            with self.subTest(parent_limit=limit):
+                (parent / 'memory.max').write_text(str(limit * 1024**2))
+                snapshot = self.snapshot()
+                self.assertEqual(snapshot['available_mib'], room)
+                self.assertTrue(any('cgroup /parent memory.stat unusable; fallback' in note
+                                    for note in snapshot['notes']))
+
+    def test_missing_stat_field_keeps_current_room_beside_a_readable_ancestor(self):
+        self.write_cache_stats(self.cg / 'parent')
+        child = self.cg / 'parent/child'
+        self.write_cache_stats(child)
+        path = child / 'memory.stat'
+        path.write_text(''.join(line + '\n' for line in path.read_text().splitlines()
+                                if not line.startswith('shmem ')))
+        snapshot = self.snapshot()
+        self.assertEqual(snapshot['available_mib'], 304)
+        self.assertTrue(any('fallback to memory.current=' in note and 'shmem' in note
+                            for note in snapshot['notes']))
+
 
 class AdmissionTests(unittest.TestCase):
     def setUp(self):
