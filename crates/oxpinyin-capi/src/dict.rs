@@ -249,21 +249,30 @@ pub extern "C" fn pinyin_token_get_nth_pronunciation(
         }
         return true;
     };
-    // Pack each syllable key into its two-byte chewing-key word.
-    let mut packed: Vec<u16> = Vec::with_capacity(keys_list.len());
-    for &key in keys_list {
-        let Some(syllable) =
-            oxpinyin_core::SyllableKey::from_index(oxpinyin_user::key_syllable(key))
-        else {
-            return false;
-        };
-        let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
-            return false;
-        };
-        // The stored key's tone rides along (`get_nth_pronunciation`
-        // copies the item's `ChewingKey`s verbatim).
-        packed.push(chewing.with_tone(oxpinyin_user::key_tone(key)).to_packed());
-    }
+    // A system item hands out the stored words directly; a USER_FILE item
+    // carries structured keys and packs them the same way.
+    let packed: std::borrow::Cow<'_, [u16]> = match keys_list {
+        oxpinyin_runtime::IntroPronunciation::Stored(keys) => {
+            std::borrow::Cow::Borrowed(keys.as_slice())
+        }
+        oxpinyin_runtime::IntroPronunciation::Structured(keys) => {
+            let mut packed: Vec<u16> = Vec::with_capacity(keys.len());
+            for &key in keys {
+                let Some(syllable) =
+                    oxpinyin_core::SyllableKey::from_index(oxpinyin_user::key_syllable(key))
+                else {
+                    return false;
+                };
+                let Some(chewing) = oxpinyin_core::ChewingKey::from_pinyin(syllable.text()) else {
+                    return false;
+                };
+                // The stored key's tone rides along (`get_nth_pronunciation`
+                // copies the item's `ChewingKey`s verbatim).
+                packed.push(chewing.with_tone(oxpinyin_user::key_tone(key)).to_packed());
+            }
+            std::borrow::Cow::Owned(packed)
+        }
+    };
     if packed.is_empty() {
         return false;
     }

@@ -309,13 +309,24 @@ fn pinyin_to_keys(pinyin: &str) -> Option<Vec<PinyinKey>> {
         .collect()
 }
 
+/// One pronunciation's keys in the representation the item carries.
+/// System items are stored as packed 16-bit `ChewingKey` words, and the
+/// pin's `get_nth_pronunciation` copies those words verbatim
+/// (`phrase_index.cpp:33-50`); USER_FILE items carry structured keys.
+pub enum IntroPronunciation {
+    /// The item's stored words, copied as the pin hands them out.
+    Stored(Vec<u16>),
+    /// A USER_FILE reading's structured (syllable-id + tone) keys.
+    Structured(Vec<PinyinKey>),
+}
+
 /// One token's dictionary introspection: the `pinyin_token_*` read
 /// surface's answer, assembled per library seam.
 pub struct TokenIntrospection {
     /// The phrase text.
     pub text: String,
-    /// Pronunciations as `(structured keys, count)` pairs.
-    pub pronunciations: Vec<(Vec<PinyinKey>, u64)>,
+    /// Pronunciations as `(keys, count)` pairs.
+    pub pronunciations: Vec<(IntroPronunciation, u64)>,
 }
 
 /// The pin's query keys for `syllables`.
@@ -1190,37 +1201,24 @@ impl RuntimeDict {
                         .prons
                         .into_iter()
                         .map(|(keys, frequency)| {
-                            let spelling = keys
-                                .into_iter()
-                                .map(|key| {
-                                    oxpinyin_core::ChewingKey::from_packed(key).pinyin_string()
-                                })
-                                .collect::<Vec<_>>()
-                                .join("'");
-                            (spelling, u64::from(frequency))
+                            (IntroPronunciation::Stored(keys), u64::from(frequency))
                         })
                         .collect();
                     (text, pronunciations)
                 } else {
                     (
                         self.system.phrase_text(token)?,
-                        self.system.pronunciations(token),
+                        self.system
+                            .libraries()
+                            .pronunciation_keys(token)?
+                            .into_iter()
+                            .map(|(keys, frequency)| (IntroPronunciation::Stored(keys), frequency))
+                            .collect(),
                     )
                 };
                 Some(TokenIntrospection {
                     text,
-                    // Drop only the pronunciations whose spelling can't
-                    // resolve to a `SyllableKey`; keep the rest. A single
-                    // unmappable row used to poison the whole
-                    // introspection via `collect::<Option<Vec<_>>>()?`,
-                    // hiding every valid pronunciation for a token that
-                    // happens to carry one bad spelling.
-                    pronunciations: pronunciations
-                        .into_iter()
-                        .filter_map(|(spelling, freq)| {
-                            pinyin_to_keys(&spelling).map(|keys| (keys, freq))
-                        })
-                        .collect(),
+                    pronunciations,
                 })
             }
             // The default facade's USER_FILE sub-indexes (addon.bin /
@@ -1242,7 +1240,12 @@ impl RuntimeDict {
                     pronunciations: phrase
                         .pronunciations()
                         .iter()
-                        .map(|pronunciation| (pronunciation.keys().to_vec(), pronunciation.count()))
+                        .map(|pronunciation| {
+                            (
+                                IntroPronunciation::Structured(pronunciation.keys().to_vec()),
+                                pronunciation.count(),
+                            )
+                        })
                         .collect(),
                 })
             }

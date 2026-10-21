@@ -607,6 +607,27 @@ impl PhraseLibraries {
         )
     }
 
+    /// `token`'s stored pronunciation words, in stored order — the bytes
+    /// `get_nth_pronunciation` copies into `ChewingKeyVector`, without a
+    /// spelling round-trip.
+    #[must_use]
+    pub fn pronunciation_keys(&self, token: u32) -> Option<Vec<(Vec<u16>, u64)>> {
+        let library = self.library(token)?;
+        let item = library.item(token)?;
+        Some(
+            item.pronunciations()
+                .map(|view| {
+                    let keys = view
+                        .keys
+                        .chunks_exact(2)
+                        .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                        .collect();
+                    (keys, u64::from(view.freq))
+                })
+                .collect(),
+        )
+    }
+
     /// `token`'s pronunciations as `(spelling, freq)` pairs, in stored
     /// order — `get_nth_pronunciation` rendered through the chewing key
     /// tables (syllables `'`-joined, no tone digits).
