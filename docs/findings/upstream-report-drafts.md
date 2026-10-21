@@ -10,7 +10,7 @@ was added 2026-09-27 UTC: `pinyin_init` leaves the process
 `LC_NUMERIC` at `"C"` (#539), read at the current pin `074a2219`.
 A seventh draft, item 7, was added 2026-10-21 UTC: temporary Berkeley
 DB handles leak on failed user-database loads (#993). The file now
-holds seven drafts; item 7 is ready to file as a separate report.
+holds seven drafts; item 7 awaits standalone validation before filing.
 Filing is the
 maintainer's action (and account); nothing here has been posted. The
 collection mandate is `AGENTS.md`'s ("collected to report back to
@@ -368,8 +368,78 @@ requires `DB->close` even when open fails. The
 describes release of allocated resources and invalidates the handle
 regardless of the close return value.
 
-**Reproduction** (the exact existing #993 attribution command, not the
-shared C fragment). It requires the oxpinyin harness at
+**Reproduction** (standalone C, with the same `systemdir` prerequisite
+as the shared setup). Save this as `repro.c`. It creates a fresh user
+directory for each process and loops only over init/fini; no instance,
+candidate workload, oxpinyin library or teardown harness is involved.
+Build with libpinyin's installed headers and pkg-config files. The
+`ZHUYIN` build selects the corresponding libzhuyin calls:
+
+```c
+#define _GNU_SOURCE
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#ifdef ZHUYIN
+#include <zhuyin.h>
+#define INIT zhuyin_init
+#define FINI zhuyin_fini
+#else
+#include <pinyin.h>
+#define INIT pinyin_init
+#define FINI pinyin_fini
+#endif
+int main(int argc, char **argv) {
+    const char *systemdir = getenv("PINYIN_SYSTEM_DIR");
+    int n = argc == 2 ? atoi(argv[1]) : 0, status = 0;
+    char userdir[] = "./libpinyin-repro-XXXXXX", marker[128];
+    if (!systemdir || n < 1 || !mkdtemp(userdir)) return 2;
+    for (int i = 0; i < n; ++i) {
+        void *ctx = INIT(systemdir, userdir);
+        if (!ctx) { status = 1; break; }
+        FINI(ctx);
+    }
+    snprintf(marker, sizeof marker, "%s/user.conf", userdir);
+    unlink(marker);
+    if (rmdir(userdir) != 0) status = 1;
+    return status;
+}
+```
+
+Select the pin's BDB installation through `PKG_CONFIG_PATH` if it is
+not the default installation. `PINYIN_SYSTEM_DIR` must contain the
+matching BDB system data (`table.conf`, indexes and phrase/model files).
+The pin's libpinyin `.pc` file puts these under `pkgdatadir/data`;
+both facades use that same data directory. Run in a private temporary
+working directory with EXIT/INT/TERM cleanup so an interrupted process
+also loses its temporary user directory. Each successful process
+removes its own `user.conf` marker and directory. The marker can
+survive between loop iterations; the three user databases remain
+absent because this program does not save.
+
+```sh
+export PINYIN_SYSTEM_DIR="$(pkg-config --variable=pkgdatadir libpinyin)/data"
+export LD_LIBRARY_PATH="$(pkg-config --variable=libdir libpinyin)"
+cc -std=c11 -g -O0 -Wall -Wextra repro.c -o repro $(pkg-config --cflags --libs libpinyin)
+valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 1
+valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 10
+cc -std=c11 -g -O0 -Wall -Wextra -DZHUYIN repro.c -o repro $(pkg-config --cflags --libs libzhuyin)
+valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 1
+valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 10
+```
+
+**Standalone evidence:** validation is pending. The first C11 compile
+stopped because the reproduction omitted `<stdbool.h>` before the pin's
+headers. The include is now present, but this revision has not been
+compiled. None of the four standalone Memcheck runs completed, and
+the patched-pin comparison has not started. Definitely/indirectly lost
+totals and allocation stacks remain to be recorded separately for each
+facade/N. #993's figures below are supporting evidence, not results of
+this init-only program.
+
+**Supporting reproduction from #993** (the exact existing attribution
+command, retained as historical evidence). It requires the oxpinyin harness at
 [`11da1d7adb324f516d1b2cf87db831096e33f486`](https://github.com/shenghaoc/oxpinyin/tree/11da1d7adb324f516d1b2cf87db831096e33f486),
 the final head of [#993](https://github.com/shenghaoc/oxpinyin/pull/993);
 this documentation PR does not supply that unmerged harness. Run from
@@ -395,9 +465,10 @@ worker uses `--leak-check=no --show-leak-kinds=all --num-callers=24
 count requests at the lifecycle checkpoints. Thus automatic exit leak
 checking is disabled, but post-fini live/lost counts are still measured.
 The stage also runs the journals and other attribution controls; it is
-not an empty-only command. No measurements were rerun for this draft.
+not an empty-only command. These remain the original #993 measurements.
 
-**Evidence:** #993's Memcheck 3.27.1 results for the pin, after fini:
+**Supporting evidence:** #993's Memcheck 3.27.1 results for the pin,
+after fini (not standalone init-only results):
 
 | Completed init/fini cycles | Lost bytes, each facade | Lost blocks, each facade |
 | --- | ---: | ---: |
@@ -475,9 +546,9 @@ measured with the fix:
 +    }
 ```
 
-This separate BDB resource-leak report is ready for the maintainer to
-file. Nothing has been filed upstream; the proposed cleanup is not an
-authorization to change oxpinyin behavior.
+This separate BDB resource-leak report awaits standalone validation
+before the maintainer files it. Nothing has been filed upstream; the
+proposed cleanup is not an authorization to change oxpinyin behavior.
 
 ---
 
@@ -486,7 +557,8 @@ authorization to change oxpinyin behavior.
 - Independence: no fix touches another; file items 1–4 as four issues.
   Item 5 is a separate report; it does not belong in that batch, and
   neither does item 6, which is a process-state defect to file on its
-  own. Item 7 is a separate BDB resource-leak report, ready to file.
+  own. Item 7 is a separate BDB resource-leak report, pending standalone
+  validation before filing.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Credit line per `AGENTS.md` attribution rules is the maintainer's to
   place; the reproductions above stand alone.
