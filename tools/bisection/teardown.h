@@ -372,9 +372,15 @@ static int run_teardown_mode(int argc, char **argv) {
     if (save && !dirty && !populate) return 2;
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stdin, NULL, _IONBF, 0);
+    if (wait) {
+        /* Fault the pipe/stdio wait path before load and M0, rather than
+         * racing its first-use residency against the parent's smaps read. */
+        puts("{\"teardown\":\"ready\"}");
+        if (getchar() != '\n') return 1;
+    }
     /* Fixed observation storage is faulted before M0; copying observations
      * cannot add a retained controller buffer to M1-M0. */
-    struct td_observation observations[TD_MAX_INSTANCES];
+    struct td_observation observations[instances];
     memset(observations, 0, sizeof observations);
     struct td_clock start = td_now();
     void *handle = dlopen(argv[3], RTLD_NOW | RTLD_LOCAL);
@@ -416,9 +422,7 @@ static int run_teardown_mode(int argc, char **argv) {
             alloc.wall += duration.wall; alloc.cpu += duration.cpu;
             if (!allocated[i]) { fputs("teardown alloc returned NULL\n", stderr); return 1; }
             start = td_now();
-            const char *input = observing ? getenv("OXPINYIN_TEARDOWN_INPUT") : NULL;
-            if (!input) input = "nihao";
-            bool valid = td_first(&api, allocated[i], input, &observations[i]);
+            bool valid = td_first(&api, allocated[i], "nihao", &observations[i]);
             duration = td_elapsed(start);
             first.wall += duration.wall; first.cpu += duration.cpu;
             if (!valid || (!observing && (observations[i].consumed != 5 || observations[i].parsed != 5 ||

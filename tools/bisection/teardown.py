@@ -276,7 +276,10 @@ class Campaign:
                                 documents.append(line.decode())
                                 continue
                             document = json.loads(line)
-                            if 'checkpoint' in document:
+                            if document.get('teardown') == 'ready':
+                                process.stdin.write(b'\n')
+                                process.stdin.flush()
+                            elif 'checkpoint' in document:
                                 point, cycle = document['checkpoint'], document['cycle']
                                 boundaries.append((point, cycle))
                                 if point == 'reset':
@@ -295,6 +298,11 @@ class Campaign:
                             else:
                                 documents.append(document)
                     status = process.wait(timeout=10)
+                    while reader.is_alive():
+                        self.driver.check_cancelled()
+                        if time.monotonic() >= deadline:
+                            raise subprocess.TimeoutExpired(command, deadline)
+                        reader.join(.1)
                 except BaseException:
                     self.driver.terminate_group(process)
                     raise
@@ -403,9 +411,26 @@ def populate_user(campaign, pin, user, rows):
     command = [str(campaign.worker), '--teardown', 'pinyin', str(pin), str(campaign.data), str(user),
                'populate', '1', '1', '1', 'first-candidate', str(rows)]
     env = dict(os.environ, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports('pinyin')))
-    result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=300)
-    if result.returncode or json.loads(result.stdout) != dict(populated=True, saved=True):
-        raise ValueError('fixture population failed: ' + result.stderr)
+    campaign.driver.check_cancelled()
+    with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True, start_new_session=True) as process:
+        deadline = time.monotonic() + 300
+        try:
+            while True:
+                campaign.driver.check_cancelled()
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(command, 300)
+                try:
+                    stdout, stderr = process.communicate(timeout=.1)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            campaign.driver.check_cancelled()
+        except BaseException:
+            campaign.driver.terminate_group(process)
+            raise
+    if process.returncode or json.loads(stdout) != dict(populated=True, saved=True):
+        raise ValueError('fixture population failed: ' + stderr)
 
 
 def run(args, driver, parser):
@@ -444,13 +469,18 @@ def run(args, driver, parser):
             target = directory / ('lib' + facade + '.so')
             if source.resolve() != target.resolve():
                 shutil.copyfile(source, target)
+            library_fs = filesystem(target)
+            if library_fs != 'ext4':
+                parser.error('measured library is not on ext4: ' + str(target) + ' (' + library_fs + ')')
             subjects[subject][facade] = target
-            provenance[subject][facade] = dict(path=str(target), sha256=digest_bytes(target.read_bytes()), bytes=target.stat().st_size)
+            provenance[subject][facade] = dict(path=str(target), sha256=digest_bytes(target.read_bytes()),
+                                              bytes=target.stat().st_size, filesystem=library_fs)
     worker, worker_identity = build_worker(work)
     data = args.prefix / 'lib/libpinyin/data'
     campaign = Campaign(worker, data, work, cpu, driver)
     print_record('start', stage=args.teardown_stage, cpu=cpu, filesystem=fs, libraries=provenance,
-                 worker=worker_identity, model_identity=identity(file_set(data)), control_noise_rule=list(CONTROL_INTERVAL))
+                 worker=worker_identity, model_identity=identity(file_set(data)),
+                 model_filesystem=filesystem(data), control_noise_rule=list(CONTROL_INTERVAL))
     profiles = provision(campaign, subjects['pin']['pinyin'], work / 'profiles')
     if args.teardown_stage == 'provision':
         return 0
@@ -508,8 +538,11 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                         report_memory(facade, case, samples, pilot)
         return 0
     if args.teardown_stage in ('repeat', 'multi'):
+        populated = args.teardown_attribution_case.split('-')[0]
+        if populated == 'empty':
+            populated = 'journals'
         for facade in facades:
-            for case in ('empty', args.teardown_attribution_case):
+            for case in ('empty', populated):
                 options = case_options(case, profiles, dirty_rows)
                 for side in ('ox', 'control', 'pin'):
                     repeated = args.teardown_stage == 'repeat'
