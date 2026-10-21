@@ -106,7 +106,7 @@ class IdentityTests(unittest.TestCase):
                 boundary.validate(['--memory-smoke'], {})
             self.assertEqual(
                 identity.result_directory(repo, 'a' * 64, '20261021T000000Z-1'),
-                real / 'repo/.oxpinyin-container/results' / ('a' * 64) / '20261021T000000Z-1')
+                real.resolve() / 'repo/.oxpinyin-container/results' / ('a' * 64) / '20261021T000000Z-1')
             identity.verify_state('b' * 16, 'a' * 64, alias / 'state')
 
     def test_symlinks_below_trusted_base_still_fail_with_symlinked_ancestor(self):
@@ -130,6 +130,48 @@ class IdentityTests(unittest.TestCase):
             (real / 'work').symlink_to(native, target_is_directory=True)
             with self.assertRaisesRegex(ValueError, '^container namespace redirects through a symlink:'):
                 identity.verify_state('b' * 16, 'a' * 64, alias)
+
+    def test_symlinked_ancestor_is_trusted_for_artifact_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real = root / 'real'
+            (real / 'state/container/image/targets/source/bdb').mkdir(parents=True)
+            alias = root / 'alias'
+            alias.symlink_to(real, target_is_directory=True)
+            target = alias / 'state/container/image/targets/source'
+            artifact = target / 'bdb/library'
+            artifact.write_bytes(b'library')
+            inputs = dict(source_sha256='source', image='image', reference='reference', files={})
+            record = dict(worktree=str(root), cell='bdb', profile='dev', toolchain={},
+                          artifacts={'pinyin-capi': {'path': str(artifact)}})
+            with patch.object(identity, 'STATE_ROOT', alias / 'state'), \
+                    patch.object(identity, 'current_inputs', return_value=inputs), \
+                    patch.dict(os.environ, OXPINYIN_TARGET_ROOT=str(target)):
+                record['container'] = identity.seal_artifacts(record, target / 'bdb')
+                identity.verify_artifacts(record, root, {'pinyin-capi': str(artifact)})
+
+    def test_symlinks_below_trusted_base_still_fail_for_artifact_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real = root / 'real'
+            (real / 'state/container/image').mkdir(parents=True)
+            native = root / 'native'
+            native.mkdir()
+            (real / 'state/container/image/targets').symlink_to(native, target_is_directory=True)
+            alias = root / 'alias'
+            alias.symlink_to(real, target_is_directory=True)
+            target = alias / 'state/container/image/targets/source'
+            inputs = dict(source_sha256='source', image='image', reference='reference', files={})
+            sealed = dict(source_sha256='source', image='image', reference='reference',
+                          cell='bdb', profile='dev', toolchain={}, artifacts={})
+            record = dict(cell='bdb', profile='dev', toolchain={}, container=sealed)
+            with patch.object(identity, 'STATE_ROOT', alias / 'state'), \
+                    patch.object(identity, 'current_inputs', return_value=inputs), \
+                    patch.dict(os.environ, OXPINYIN_TARGET_ROOT=str(target)):
+                with self.assertRaisesRegex(ValueError, '^container namespace redirects through a symlink:'):
+                    identity.artifact_content({}, target / 'bdb')
+                with self.assertRaisesRegex(ValueError, '^container namespace redirects through a symlink:'):
+                    identity.verify_artifacts(record, root, {})
 
     def test_source_identity_hashes_bytes_not_size_or_mtime(self):
         first = identity.archive_content(archive([('source', b'aaaa', False)]))
@@ -156,7 +198,8 @@ class IdentityTests(unittest.TestCase):
             inputs = dict(source_sha256='source', image='image', reference='reference', files={})
             record = dict(worktree=str(root), cell='bdb', profile='dev', toolchain={},
                           artifacts={'pinyin-capi': {'path': str(artifact)}})
-            with patch.object(identity, 'current_inputs', return_value=inputs), \
+            with patch.object(identity, 'STATE_ROOT', root), \
+                    patch.object(identity, 'current_inputs', return_value=inputs), \
                     patch.dict(os.environ, OXPINYIN_TARGET_ROOT=str(root)):
                 record['container'] = identity.seal_artifacts(record, root)
                 identity.verify_artifacts(record, root, {'pinyin-capi': str(artifact)})
@@ -182,7 +225,8 @@ class IdentityTests(unittest.TestCase):
             target.mkdir()
             link = target / 'library'
             link.symlink_to(native)
-            with self.assertRaisesRegex(ValueError, 'outside container target'):
+            with patch.object(identity, 'STATE_ROOT', root), \
+                    self.assertRaisesRegex(ValueError, 'outside container target'):
                 identity.artifact_content({'library': {'path': str(link)}}, target)
 
     def test_export_refuses_missing_identity_and_changed_output(self):
