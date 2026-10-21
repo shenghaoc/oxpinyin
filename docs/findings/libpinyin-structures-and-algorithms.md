@@ -187,8 +187,9 @@ header reads and the registered short-ADD exception retain their existing laws.
 original file, separate from the immutable save baseline. It copies content only
 when an append needs owned storage, or as a fallback when a second mapping
 cannot be made. Unchanged slot offsets are read directly from the baseline;
-only relocated/removed offsets enter a sparse map. A sorted set marks changed
-slots. The ordinary loader validates and walks one journal byte buffer without
+only relocated/removed offsets enter a sparse map. A vector of slot IDs marks
+changed slots; it is sorted and deduplicated once at finalization (below).
+The ordinary loader validates and walks one journal byte buffer without
 building a vector of records or allocating item-write runs. Mask snapshots keep
 the existing owned-record path. Session opens retain completed original-item
 views after constant-time structural validation of each payload's extents,
@@ -204,13 +205,22 @@ the same diagnostics only when the caller reports an error.
 the existing text/index rows, removals the removal set, and original items seed
 only necessary unigram deltas. Replayed reading rows are never synthesized.
 
-For B journal bytes, J changed slots, M relocated slots and K items subsequently
-used, replay takes O(B + J log J + J log(M+1)), versus the pin's O(B + J) mapped
-walk. Metadata uses O(J + M); the raw journal buffer uses O(B), and typed payloads
-are retained only for the K used items. Since J and M are bounded by B, this does
-not worsen the loader's linear space class. It removes retained eager decoded payloads,
-write runs and record staging; the sparse metadata retains a logarithmic time
-cost. Validation checks one item's shape in O(1) time and space during init;
+Replay never queries touched membership while applying records. It appends only
+slot IDs to a vector, then sorts and deduplicates once before either finish.
+Lazy validation filters rejected slots in one `retain` pass and trims capacity;
+it never removes individual vector entries. Completed views use O(log J) binary
+search for membership, as the tree did, and iterate ascending unique slots. No payloads
+are staged and no array spans the token range.
+
+For B journal bytes, R touching records, J unique changed slots, M relocated
+slots and K items subsequently used, the worst-case replay time remains
+O(B + R log R + R log(M+1)), versus the pin's O(B + R) mapped walk. Collecting
+IDs uses amortized O(1) per touch; ordering is paid at finish. Transient slot
+metadata uses O(R + M), including duplicates, within the existing O(B) loader
+space bound. After lazy filtering and capacity trimming it retains O(J + M),
+plus typed payloads for the K used items. This trades transient duplicate IDs
+for cheaper insertion; it does not restore decoded payload, write-run or record
+staging. Validation checks one item's shape in O(1) time and space during init;
 first use decodes and caches it. Bulk save/mask operations may materialize all changed items, as the
 previous loader did at init. The extra private view shares clean file pages;
 MODIFY dirties private pages as the pin does, without writing the system file.
