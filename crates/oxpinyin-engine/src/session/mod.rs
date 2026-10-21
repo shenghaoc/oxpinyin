@@ -275,16 +275,17 @@ impl Default for Lookup {
 /// duration of one scan so the scan can borrow `&self.input` while it
 /// fills them, then handed straight back. Always cleared before use, so
 /// their contents never carry state between scans.
+///
+/// The default facade's rows go straight into the caller's output
+/// vector — each window is ordered in place over the tail it appended
+/// ([`order_window_tail`]) — so the only candidate buffer here is the
+/// addon batch, empty whenever no addon library is loaded.
 #[derive(Clone, Debug, Default)]
 struct Scratch {
-    /// The scan's candidate buffer.
-    collected: Vec<Candidate>,
     /// Dictionary-hit buffer for one window-scan lookup.
     entries: Vec<PhraseEntry>,
     /// One scan path (phrase length ≤ 16).
     path: SmallVec<[SyllableKey; 16]>,
-    /// Per-window scan batch, default facade.
-    window_phrase: Vec<Candidate>,
     /// Per-window scan batch, addon facade.
     window_addon: Vec<Candidate>,
 }
@@ -363,7 +364,18 @@ fn append_scan_entries(
 /// keeping the first occurrence of a token reached through several
 /// key-paths — the duplicate the pin's string dedup drops later.
 fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
-    batch.sort_by_key(|candidate| {
+    let start = into.len();
+    into.append(batch);
+    order_window_tail(into, start);
+}
+
+/// Puts one window's rows, appended at `into[start..]`, into the pin's
+/// array order in place: tokens ascending by library (a stable sort of
+/// the tail), then the first row of each token kept — the same
+/// membership rule as [`flush_window_batch`], without a batch buffer
+/// between the lookups and the output.
+fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
+    into[start..].sort_by_key(|candidate| {
         candidate
             .token()
             .map_or(u32::MAX, |token| token.value() >> 24)
@@ -371,15 +383,18 @@ fn flush_window_batch(batch: &mut Vec<Candidate>, into: &mut Vec<Candidate>) {
     // Membership only: the retained candidates keep the batch's order, so
     // the set's own (unspecified) iteration order is never observed.
     let mut seen: std::collections::HashSet<u32> =
-        std::collections::HashSet::with_capacity(batch.len());
-    for candidate in batch.drain(..) {
-        if let Some(token) = candidate.token().map(oxpinyin_core::PhraseToken::value)
+        std::collections::HashSet::with_capacity(into.len() - start);
+    let mut write = start;
+    for read in start..into.len() {
+        if let Some(token) = into[read].token().map(oxpinyin_core::PhraseToken::value)
             && !seen.insert(token)
         {
             continue;
         }
-        into.push(candidate);
+        into.swap(write, read);
+        write += 1;
     }
+    into.truncate(write);
 }
 
 /// λ as the pin parses it out of `table.conf` (`fscanf "%f"`,
@@ -583,7 +598,6 @@ struct ScanScratch<'a> {
     unreadable: &'a mut bool,
     path: &'a mut SmallVec<[SyllableKey; 16]>,
     entries: &'a mut Vec<PhraseEntry>,
-    window_phrase: &'a mut Vec<Candidate>,
     window_addon: &'a mut Vec<Candidate>,
 }
 

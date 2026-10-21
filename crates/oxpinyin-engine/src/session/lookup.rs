@@ -198,15 +198,14 @@ where
         // use `&self.input.as_str()[anchor..]` without cloning into a
         // CompactString. Destructured into owned locals so the scan body
         // below reads exactly as before; reassembled and handed back at the
-        // end.
+        // end. The candidates themselves are collected straight into
+        // `out`, the buffer the caller keeps.
         let Scratch {
-            mut collected,
             mut entries,
             mut path,
-            mut window_phrase,
             mut window_addon,
         } = core::mem::take(&mut self.scratch);
-        collected.clear();
+        let collected = out;
 
         let remaining = &self.input.as_str()[anchor..];
         let real_unigrams = self.model.has_real_unigrams();
@@ -253,10 +252,9 @@ where
                     unreadable: &mut unreadable,
                     path: &mut path,
                     entries: &mut entries,
-                    window_phrase: &mut window_phrase,
                     window_addon: &mut window_addon,
                 };
-                self.collect_window_scan(remaining.as_bytes(), &mut collected, &mut scratch)?;
+                self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
                 self.scan_unreadable = unreadable;
             }
 
@@ -295,7 +293,7 @@ where
             // Stable sort, all three keys descending: an all-equal tie keeps
             // the collection order, which the scan now lays down in the
             // pin's array order (per window, token-ascending).
-            glib_rank_sort(&mut collected, &mut keys);
+            glib_rank_sort(collected, &mut keys);
             let mut keys: Vec<RankKey> = keys.into_iter().map(|(key, _)| key).collect();
 
             // The pin prepends LONGER before the frequency dedup
@@ -308,7 +306,7 @@ where
                 collected.insert(0, row);
                 keys.insert(0, key);
             }
-            dedup_ranked_by_text(&mut collected, &keys);
+            dedup_ranked_by_text(collected, &keys);
         } else {
             let scorer = Scorer::with_key_costs(
                 self.scoring,
@@ -318,8 +316,8 @@ where
             );
             let paths = k_best(&graph, &scorer, SEGMENTATION_K)?;
             for path in &paths {
-                self.collect_prefix_phrases(&graph, &scorer, path, &mut collected)?;
-                self.collect_sentence(&graph, &scorer, path, &mut collected)?;
+                self.collect_prefix_phrases(&graph, &scorer, path, collected)?;
+                self.collect_sentence(&graph, &scorer, path, collected)?;
             }
             collected.sort_by_key(Candidate::cost);
             collected.dedup_by(|left, right| left.text() == right.text());
@@ -342,15 +340,11 @@ where
         // sort and its phrase-string dedup keeps the NBEST row (and the
         // lower n-best index) over any phrase candidate with the same
         // string (`pinyin.cpp:2290-2298`, `2058-2126`).
-        self.prepend_nbest_rows(&mut collected);
+        self.prepend_nbest_rows(collected);
 
-        core::mem::swap(out, &mut collected);
-        collected.clear();
         self.scratch = Scratch {
-            collected,
             entries,
             path,
-            window_phrase,
             window_addon,
         };
         Ok(parsed_prefix)
@@ -781,10 +775,8 @@ where
         let bound = matrix.bound.min(offset);
 
         let Scratch {
-            collected,
             mut entries,
             mut path,
-            mut window_phrase,
             mut window_addon,
         } = core::mem::take(&mut self.scratch);
         let mut group: Vec<Candidate> = Vec::new();
@@ -810,12 +802,13 @@ where
                 continue;
             }
             let mut continued = false;
+            group.clear();
             {
                 let mut buf = ScanBuf {
                     span_base: 0,
                     path: &mut path,
                     tones: SmallVec::new(),
-                    system: &mut window_phrase,
+                    system: &mut group,
                     addon: &mut window_addon,
                     continued: &mut continued,
                     unreadable: &mut unreadable,
@@ -823,8 +816,7 @@ where
                 };
                 self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
             }
-            group.clear();
-            flush_window_batch(&mut window_phrase, &mut group);
+            order_window_tail(&mut group, 0);
             flush_window_batch(&mut window_addon, &mut group);
             if group.is_empty() {
                 continue;
@@ -862,10 +854,8 @@ where
         dedup_ranked_by_text(out, &keys);
 
         self.scratch = Scratch {
-            collected,
             entries,
             path,
-            window_phrase,
             window_addon,
         };
 
@@ -1338,14 +1328,14 @@ where
                 .get(anchor + end)
                 .is_none_or(std::vec::Vec::is_empty);
             scratch.path.clear();
-            scratch.window_phrase.clear();
             scratch.window_addon.clear();
+            let start = into.len();
             {
                 let mut buf = ScanBuf {
                     span_base: anchor,
                     path: scratch.path,
                     tones: SmallVec::new(),
-                    system: scratch.window_phrase,
+                    system: &mut *into,
                     addon: scratch.window_addon,
                     continued: &mut continued,
                     unreadable: &mut *scratch.unreadable,
@@ -1353,11 +1343,12 @@ where
                 };
                 self.scan_parsed_paths(retained, anchor, anchor + end, &mut buf)?;
             }
-            // Flush the window in the pin's array order: the default
-            // facade's tokens ascending, then the addon facade's — the
-            // order `_append_items` lays down and the stable sort keeps
-            // for comparator ties.
-            flush_window_batch(scratch.window_phrase, into);
+            // Order the window the pin's array way: the default facade's
+            // tokens ascending (in place over the rows this window
+            // appended), then the addon facade's — the order
+            // `_append_items` lays down and the stable sort keeps for
+            // comparator ties.
+            order_window_tail(into, start);
             flush_window_batch(scratch.window_addon, into);
             if !continued {
                 break;
