@@ -27,21 +27,30 @@ FIELDS = ('Rss', 'Anonymous', 'Private_Dirty', 'Private_Clean',
 
 def parse(path):
     """Every mapping in one smaps dump, as dicts of the fields we read."""
+    with open(path) as handle:
+        return parse_lines(handle)
+
+
+def parse_lines(lines, fields=FIELDS):
+    """Parse an iterable in memory; the historical file/CLI schema is unchanged.
+
+    A paused native child's parent can supply /proc/PID/smaps lines and request
+    Pss as well, without creating a capture or importing Python into the child.
+    """
     rows = []
     cur = None
-    with open(path) as handle:
-        for line in handle:
-            match = HEADER.match(line)
-            if match:
-                cur = {'perms': match.group(3), 'name': match.group(4).strip()}
-                cur.update({f: 0 for f in FIELDS})
-                rows.append(cur)
-                continue
-            if cur is None:
-                continue
-            key, _, value = line.partition(':')
-            if key in cur and value.strip().endswith('kB'):
-                cur[key] = int(value.strip().split()[0])
+    for line in lines:
+        match = HEADER.match(line)
+        if match:
+            cur = {'perms': match.group(3), 'name': match.group(4).strip()}
+            cur.update({f: 0 for f in fields})
+            rows.append(cur)
+            continue
+        if cur is None:
+            continue
+        key, _, value = line.partition(':')
+        if key in fields and value.strip().endswith('kB'):
+            cur[key] = int(value.strip().split()[0])
     return rows
 
 
