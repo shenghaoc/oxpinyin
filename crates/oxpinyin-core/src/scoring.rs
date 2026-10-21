@@ -14,8 +14,8 @@ use crate::cost::UNKNOWN_COST;
 use crate::graph::{Edge, EdgeKind};
 use crate::kbest::EdgeCost;
 use crate::{
-    Cost, Dictionary, FULL_PINYIN_SYLLABLES, LanguageModel, PhraseEntry, PhraseToken,
-    SYLLABLE_KEY_COUNT, SyllableKey,
+    Cost, Dictionary, LanguageModel, PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey,
+    full_pinyin_syllables,
 };
 
 /// One expanded key sequence. Phrase length is capped at 16, so this stays
@@ -437,11 +437,10 @@ fn completions(key: SyllableKey) -> KeyCompletions {
     let initial = key.text();
     // The prefix test is implied by the initial test and rejects most of
     // the inventory for one comparison, before the longest-initial search.
-    FULL_PINYIN_SYLLABLES
-        .iter()
+    full_pinyin_syllables()
         .filter(|syllable| syllable.starts_with(initial))
         .filter(|syllable| crate::phonetic_initial(syllable) == Some(initial))
-        .filter_map(|syllable| SyllableKey::from_text(syllable))
+        .filter_map(SyllableKey::from_text)
         .collect()
 }
 

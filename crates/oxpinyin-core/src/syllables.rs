@@ -6,51 +6,27 @@ use crate::options::{
     PINYIN_CORRECT_UEN_UN, PINYIN_CORRECT_V_U,
 };
 
-/// Number of complete syllables in [`FULL_PINYIN_SYLLABLES`].
+/// Number of complete syllables in [`full_pinyin_syllables`].
 pub const FULL_PINYIN_SYLLABLE_COUNT: usize = 405;
 
-/// Complete untuned full-pinyin syllables in pinned upstream numeric-ID order.
-///
-/// This is the active `PINYIN_DICT` key set from libpinyin `2.11.91`; partial
-/// initials, correction aliases, tones, and commented entries are excluded.
-pub static FULL_PINYIN_SYLLABLES: [&str; FULL_PINYIN_SYLLABLE_COUNT] = [
-    "a", "ai", "an", "ang", "ao", "ba", "bai", "ban", "bang", "bao", "bei", "ben", "beng", "bi",
-    "bian", "biao", "bie", "bin", "bing", "bo", "bu", "ca", "cai", "can", "cang", "cao", "ce",
-    "cen", "ceng", "ci", "cong", "cou", "cu", "cuan", "cui", "cun", "cuo", "cha", "chai", "chan",
-    "chang", "chao", "che", "chen", "cheng", "chi", "chong", "chou", "chu", "chuai", "chuan",
-    "chuang", "chui", "chun", "chuo", "da", "dai", "dan", "dang", "dao", "de", "dei", "deng", "di",
-    "dia", "dian", "diao", "die", "ding", "diu", "dong", "dou", "du", "duan", "dui", "dun", "duo",
-    "e", "ei", "en", "er", "fa", "fan", "fang", "fei", "fen", "feng", "fo", "fou", "fu", "ga",
-    "gai", "gan", "gang", "gao", "ge", "gei", "gen", "geng", "gong", "gou", "gu", "gua", "guai",
-    "guan", "guang", "gui", "gun", "guo", "ha", "hai", "han", "hang", "hao", "he", "hei", "hen",
-    "heng", "hong", "hou", "hu", "hua", "huai", "huan", "huang", "hui", "hun", "huo", "ji", "jia",
-    "jian", "jiang", "jiao", "jie", "jin", "jing", "jiong", "jiu", "ju", "juan", "jue", "jun",
-    "ka", "kai", "kan", "kang", "kao", "ke", "ken", "keng", "kong", "kou", "ku", "kua", "kuai",
-    "kuan", "kuang", "kui", "kun", "kuo", "la", "lai", "lan", "lang", "lao", "le", "lei", "leng",
-    "li", "lia", "lian", "liang", "liao", "lie", "lin", "ling", "liu", "lo", "long", "lou", "lu",
-    "luan", "lun", "luo", "lv", "lve", "ma", "mai", "man", "mang", "mao", "me", "mei", "men",
-    "meng", "mi", "mian", "miao", "mie", "min", "ming", "miu", "mo", "mou", "mu", "na", "nai",
-    "nan", "nang", "nao", "ne", "nei", "nen", "neng", "ni", "nian", "niang", "niao", "nie", "nin",
-    "ning", "niu", "ng", "nong", "nou", "nu", "nuan", "nuo", "nv", "nve", "o", "ou", "pa", "pai",
-    "pan", "pang", "pao", "pei", "pen", "peng", "pi", "pian", "piao", "pie", "pin", "ping", "po",
-    "pou", "pu", "qi", "qia", "qian", "qiang", "qiao", "qie", "qin", "qing", "qiong", "qiu", "qu",
-    "quan", "que", "qun", "ran", "rang", "rao", "re", "ren", "reng", "ri", "rong", "rou", "ru",
-    "ruan", "rui", "run", "ruo", "sa", "sai", "san", "sang", "sao", "se", "sen", "seng", "si",
-    "song", "sou", "su", "suan", "sui", "sun", "suo", "sha", "shai", "shan", "shang", "shao",
-    "she", "shei", "shen", "sheng", "shi", "shou", "shu", "shua", "shuai", "shuan", "shuang",
-    "shui", "shun", "shuo", "ta", "tai", "tan", "tang", "tao", "te", "teng", "ti", "tian", "tiao",
-    "tie", "ting", "tong", "tou", "tu", "tuan", "tui", "tun", "tuo", "wa", "wai", "wan", "wang",
-    "wei", "wen", "weng", "wo", "wu", "xi", "xia", "xian", "xiang", "xiao", "xie", "xin", "xing",
-    "xiong", "xiu", "xu", "xuan", "xue", "xun", "ya", "yan", "yang", "yao", "ye", "yi", "yin",
-    "ying", "yo", "yong", "you", "yu", "yuan", "yue", "yun", "za", "zai", "zan", "zang", "zao",
-    "ze", "zei", "zen", "zeng", "zi", "zong", "zou", "zu", "zuan", "zui", "zun", "zuo", "zha",
-    "zhai", "zhan", "zhang", "zhao", "zhe", "zhen", "zheng", "zhi", "zhong", "zhou", "zhu", "zhua",
-    "zhuai", "zhuan", "zhuang", "zhui", "zhun", "zhuo",
-];
+/// Complete full-pinyin syllables in pinned upstream numeric-ID order.
+#[must_use]
+pub fn full_pinyin_syllables()
+-> impl ExactSizeIterator<Item = &'static str> + DoubleEndedIterator + Clone {
+    crate::string_tables::full_pinyin_syllables()
+        .entries()
+        .map(|[text]| text)
+}
+
+/// A complete full-pinyin spelling by its frozen numeric ID.
+#[must_use]
+pub fn full_pinyin_syllable(index: usize) -> Option<&'static str> {
+    crate::string_tables::full_pinyin_syllables().field(index, 0)
+}
 
 /// Longest complete syllable, in bytes.
 ///
-/// A property of [`FULL_PINYIN_SYLLABLES`], asserted by
+/// A property of [`full_pinyin_syllables`], asserted by
 /// `frozen_inventory_has_expected_shape`. Both the parser and the segment
 /// graph bound their match length by it.
 ///
@@ -70,7 +46,7 @@ pub const INCOMPLETE_PINYIN_KEY_COUNT: usize = 23;
 ///
 /// An initial-only key is a non-empty proper prefix of a complete syllable
 /// that contains no vowel byte (`a`, `e`, `i`, `o`, `u`, `v`) and is not itself
-/// a complete syllable. Applied to [`FULL_PINYIN_SYLLABLES`] that rule yields
+/// a complete syllable. Applied to [`full_pinyin_syllables`] that rule yields
 /// exactly these 23 keys, which `incomplete_keys_follow_the_frozen_rule`
 /// asserts.
 ///
@@ -114,7 +90,7 @@ include!(concat!(env!("OUT_DIR"), "/syllable_maps.rs"));
 pub fn canonical_complete_syllable(text: &str) -> Option<&'static str> {
     FULL_PINYIN_SYLLABLE_MAP
         .get(text)
-        .map(|&index| FULL_PINYIN_SYLLABLES[index as usize])
+        .and_then(|&index| full_pinyin_syllable(index as usize))
         .or_else(|| {
             OPTION_ONLY_COMPLETE_SYLLABLE_MAP
                 .get(text)
@@ -233,8 +209,8 @@ mod tests {
     use std::collections::HashSet;
 
     use super::{
-        FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
-        INCOMPLETE_PINYIN_KEYS, MAX_SYLLABLE_LEN,
+        FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEY_COUNT, INCOMPLETE_PINYIN_KEYS,
+        MAX_SYLLABLE_LEN, full_pinyin_syllables,
     };
 
     /// Whether `byte` is a vowel for the initial-only key rule.
@@ -247,10 +223,10 @@ mod tests {
 
     #[test]
     fn frozen_inventory_has_expected_shape() {
-        assert_eq!(FULL_PINYIN_SYLLABLES.len(), FULL_PINYIN_SYLLABLE_COUNT);
+        assert_eq!(full_pinyin_syllables().len(), FULL_PINYIN_SYLLABLE_COUNT);
 
         let mut seen = HashSet::with_capacity(FULL_PINYIN_SYLLABLE_COUNT);
-        for syllable in FULL_PINYIN_SYLLABLES {
+        for syllable in full_pinyin_syllables() {
             assert!(!syllable.is_empty(), "syllables are non-empty");
             assert!(
                 syllable.bytes().all(|byte| byte.is_ascii_lowercase()),
@@ -260,21 +236,18 @@ mod tests {
         }
 
         assert_eq!(
-            FULL_PINYIN_SYLLABLES
-                .iter()
-                .map(|syllable| syllable.len())
-                .max(),
+            full_pinyin_syllables().map(|syllable| syllable.len()).max(),
             Some(MAX_SYLLABLE_LEN)
         );
 
         for required in ["ng", "lv", "lve", "nv", "nve", "zhuan"] {
-            assert!(FULL_PINYIN_SYLLABLES.contains(&required));
+            assert!(full_pinyin_syllables().any(|entry| entry == required));
         }
         for excluded in [
             "b", "zh", "den", "kei", "lue", "nue", "tei", "eng", "chua", "din", "fe", "len", "nia",
             "rua", "yai", "zhei",
         ] {
-            assert!(!FULL_PINYIN_SYLLABLES.contains(&excluded));
+            assert!(!full_pinyin_syllables().any(|entry| entry == excluded));
         }
     }
 
@@ -289,7 +262,7 @@ mod tests {
                 "{syllable:?} is out of ascending order"
             );
             assert!(
-                !FULL_PINYIN_SYLLABLES.contains(&syllable),
+                !full_pinyin_syllables().any(|entry| entry == syllable),
                 "{syllable:?} leaked into the full-pinyin inventory"
             );
             previous = syllable;
@@ -298,10 +271,10 @@ mod tests {
 
     #[test]
     fn incomplete_keys_follow_the_frozen_rule() {
-        let complete: HashSet<&str> = FULL_PINYIN_SYLLABLES.into_iter().collect();
+        let complete: HashSet<&str> = full_pinyin_syllables().collect();
         let mut derived: Vec<&str> = Vec::new();
 
-        for syllable in FULL_PINYIN_SYLLABLES {
+        for syllable in full_pinyin_syllables() {
             for length in 1..syllable.len() {
                 let prefix = &syllable[..length];
                 if prefix.bytes().any(is_vowel)
@@ -337,7 +310,7 @@ mod tests {
         let mut previous = "";
         for key in INCOMPLETE_PINYIN_KEYS {
             assert!(previous < key, "{key:?} is out of ascending order");
-            assert!(!FULL_PINYIN_SYLLABLES.contains(&key));
+            assert!(!full_pinyin_syllables().any(|entry| entry == key));
             previous = key;
         }
     }
@@ -384,4 +357,21 @@ mod tests {
             None
         );
     }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    #[test]
+    fn full_pinyin_syllables_match_original_rows() {
+        assert_eq!(
+            super::FULL_PINYIN_SYLLABLE_COUNT,
+            super::reference::FULL_PINYIN_SYLLABLE_COUNT
+        );
+        assert!(super::full_pinyin_syllables().eq(super::reference::FULL_PINYIN_SYLLABLES));
+    }
+}
+
+#[cfg(test)]
+mod reference {
+    include!("table_data/full_pinyin_syllables.rs");
 }

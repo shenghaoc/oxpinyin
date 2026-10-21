@@ -132,7 +132,7 @@ pub fn exact_input(keys: &[impl ExactKey]) -> (String, Vec<ExactSegment>) {
 fn parse_one_scheme_key(
     options: u32,
     input: &[u8],
-    index: &[(&'static str, &'static str)],
+    index: oxpinyin_core::FullPinyinIndex,
 ) -> Option<ChewingKey> {
     if input.contains(&b'\'') {
         return None;
@@ -153,8 +153,7 @@ fn parse_one_scheme_key(
         }
     }
     let spelling = core::str::from_utf8(spelling).ok()?;
-    let position = index.partition_point(|row| row.0 < spelling);
-    let canonical = index.get(position).filter(|row| row.0 == spelling)?.1;
+    let canonical = index.canonical(spelling)?;
     let mut key = ChewingKey::from_pinyin(canonical)?;
     key.tone = tone;
     Some(key)

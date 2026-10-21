@@ -20,9 +20,10 @@ use crate::syllables::{
     ZHUYIN_ONLY_COMPLETE_SYLLABLE_MAP,
 };
 use crate::{
-    Completeness, FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
-    INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
-    ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT, ZHUYIN_ONLY_COMPLETE_SYLLABLES, option_alias_canonical,
+    Completeness, FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEY_COUNT, INCOMPLETE_PINYIN_KEYS,
+    OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
+    ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT, ZHUYIN_ONLY_COMPLETE_SYLLABLES, full_pinyin_syllable,
+    option_alias_canonical,
 };
 
 /// Number of keys addressable by a [`SyllableKey`].
@@ -42,7 +43,7 @@ pub const SYLLABLE_KEY_COUNT: usize = FULL_PINYIN_SYLLABLE_COUNT
 
 /// One decoder-visible pinyin key: a complete syllable or an initial-only key.
 ///
-/// Ids are dense and frozen: `0..405` are [`FULL_PINYIN_SYLLABLES`] in their
+/// Ids are dense and frozen: `0..405` are [`crate::full_pinyin_syllables`] in their
 /// pinned upstream numeric-ID order, `405..428` are
 /// [`INCOMPLETE_PINYIN_KEYS`] in ascending byte order, `428..430` are
 /// [`OPTION_ONLY_COMPLETE_SYLLABLES`], and `430..440` are
@@ -161,7 +162,7 @@ impl SyllableKey {
     #[must_use]
     pub fn text(self) -> &'static str {
         let index = self.index();
-        if let Some(syllable) = FULL_PINYIN_SYLLABLES.get(index) {
+        if let Some(syllable) = full_pinyin_syllable(index) {
             return syllable;
         }
         let incomplete_start = FULL_PINYIN_SYLLABLE_COUNT;
@@ -388,7 +389,7 @@ mod tests {
     use super::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
     use crate::OptionBits;
     use crate::{
-        Completeness, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES,
+        Completeness, INCOMPLETE_PINYIN_KEYS, OPTION_ONLY_COMPLETE_SYLLABLES, full_pinyin_syllables,
     };
 
     #[test]
@@ -405,19 +406,19 @@ mod tests {
 
     #[test]
     fn completeness_follows_the_frozen_id_ranges() {
-        for syllable in FULL_PINYIN_SYLLABLES {
+        for syllable in full_pinyin_syllables() {
             let key = SyllableKey::from_text(syllable).expect("complete syllable");
             assert_eq!(key.completeness(), Completeness::Complete);
         }
         for incomplete in INCOMPLETE_PINYIN_KEYS {
             let key = SyllableKey::from_text(incomplete).expect("initial-only key");
             assert_eq!(key.completeness(), Completeness::Partial);
-            assert!(key.index() >= FULL_PINYIN_SYLLABLES.len());
+            assert!(key.index() >= full_pinyin_syllables().len());
         }
         for option_only in OPTION_ONLY_COMPLETE_SYLLABLES {
             let key = SyllableKey::from_canonical_text(option_only).expect("option-only key");
             assert_eq!(key.completeness(), Completeness::Complete);
-            assert!(key.index() >= FULL_PINYIN_SYLLABLES.len() + INCOMPLETE_PINYIN_KEYS.len());
+            assert!(key.index() >= full_pinyin_syllables().len() + INCOMPLETE_PINYIN_KEYS.len());
         }
         for zhuyin_only in crate::ZHUYIN_ONLY_COMPLETE_SYLLABLES {
             let key = SyllableKey::from_canonical_text(zhuyin_only).expect("zhuyin-only key");

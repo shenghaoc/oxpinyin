@@ -10,839 +10,67 @@
 //! `content_table` spelling columns exactly. Source-embedded tables,
 //! copyable under the project source policy; not model-archive data.
 
-/// Number of entries in [`LUOMA_PINYIN_INDEX`].
+use oxpinyin_chewing::StringTable;
+
+/// Number of entries in [`luoma_pinyin_index`].
 pub const LUOMA_PINYIN_COUNT: usize = 406;
-
-/// `(input spelling, canonical pinyin)` pairs from `luoma_pinyin_index[]`,
-/// sorted by spelling — the binary-search invariant of the pinned table.
-///
-/// Source: `pinyin_parser_table.h:674`, equal to the `m_luoma_pinyin_str`
-/// column of `content_table`.
-pub static LUOMA_PINYIN_INDEX: [(&str, &str); LUOMA_PINYIN_COUNT] = [
-    ("a", "a"),
-    ("ai", "ai"),
-    ("an", "an"),
-    ("ang", "ang"),
-    ("ao", "ao"),
-    ("ba", "ba"),
-    ("bai", "bai"),
-    ("ban", "ban"),
-    ("bang", "bang"),
-    ("bao", "bao"),
-    ("bei", "bei"),
-    ("ben", "ben"),
-    ("beng", "beng"),
-    ("bi", "bi"),
-    ("bian", "bian"),
-    ("biao", "biao"),
-    ("bieh", "bie"),
-    ("bin", "bin"),
-    ("bing", "bing"),
-    ("bo", "bo"),
-    ("bu", "bu"),
-    ("cha", "cha"),
-    ("chai", "chai"),
-    ("chan", "chan"),
-    ("chang", "chang"),
-    ("chao", "chao"),
-    ("che", "che"),
-    ("chen", "chen"),
-    ("cheng", "cheng"),
-    ("chi", "qi"),
-    ("chia", "qia"),
-    ("chian", "qian"),
-    ("chiang", "qiang"),
-    ("chiao", "qiao"),
-    ("chieh", "qie"),
-    ("chih", "ch"),
-    ("chin", "qin"),
-    ("ching", "qing"),
-    ("chiou", "qiu"),
-    ("chong", "chong"),
-    ("chou", "chou"),
-    ("chu", "chu"),
-    ("chuai", "chuai"),
-    ("chuan", "chuan"),
-    ("chuang", "chuang"),
-    ("chuei", "chui"),
-    ("chun", "chun"),
-    ("chuo", "chuo"),
-    ("chyong", "qiong"),
-    ("chyu", "qu"),
-    ("chyuan", "quan"),
-    ("chyueh", "que"),
-    ("chyun", "qun"),
-    ("da", "da"),
-    ("dai", "dai"),
-    ("dan", "dan"),
-    ("dang", "dang"),
-    ("dao", "dao"),
-    ("de", "de"),
-    ("dei", "dei"),
-    ("deng", "deng"),
-    ("di", "di"),
-    ("dian", "dian"),
-    ("diao", "diao"),
-    ("dieh", "die"),
-    ("ding", "ding"),
-    ("diou", "diu"),
-    ("dong", "dong"),
-    ("dou", "dou"),
-    ("du", "du"),
-    ("duan", "duan"),
-    ("duei", "dui"),
-    ("dun", "dun"),
-    ("duo", "duo"),
-    ("e", "e"),
-    ("ei", "ei"),
-    ("en", "en"),
-    ("eng", "eng"),
-    ("er", "er"),
-    ("fa", "fa"),
-    ("fan", "fan"),
-    ("fang", "fang"),
-    ("fei", "fei"),
-    ("fen", "fen"),
-    ("fo", "fo"),
-    ("fou", "fou"),
-    ("fu", "fu"),
-    ("ga", "ga"),
-    ("gai", "gai"),
-    ("gan", "gan"),
-    ("gang", "gang"),
-    ("gao", "gao"),
-    ("ge", "ge"),
-    ("gei", "gei"),
-    ("gen", "gen"),
-    ("geng", "geng"),
-    ("gong", "gong"),
-    ("gou", "gou"),
-    ("gu", "gu"),
-    ("gua", "gua"),
-    ("guai", "guai"),
-    ("guan", "guan"),
-    ("guang", "guang"),
-    ("guei", "gui"),
-    ("gun", "gun"),
-    ("guo", "guo"),
-    ("ha", "ha"),
-    ("hai", "hai"),
-    ("han", "han"),
-    ("hang", "hang"),
-    ("hao", "hao"),
-    ("he", "he"),
-    ("hei", "hei"),
-    ("hen", "hen"),
-    ("heng", "heng"),
-    ("hong", "hong"),
-    ("hou", "hou"),
-    ("hu", "hu"),
-    ("hua", "hua"),
-    ("huai", "huai"),
-    ("huan", "huan"),
-    ("huang", "huang"),
-    ("huei", "hui"),
-    ("hun", "hun"),
-    ("huo", "huo"),
-    ("jha", "zha"),
-    ("jhai", "zhai"),
-    ("jhan", "zhan"),
-    ("jhang", "zhang"),
-    ("jhao", "zhao"),
-    ("jhe", "zhe"),
-    ("jhei", "zhei"),
-    ("jhen", "zhen"),
-    ("jheng", "zheng"),
-    ("jhih", "zh"),
-    ("jhong", "zhong"),
-    ("jhou", "zhou"),
-    ("jhu", "zhu"),
-    ("jhua", "zhua"),
-    ("jhuai", "zhuai"),
-    ("jhuan", "zhuan"),
-    ("jhuang", "zhuang"),
-    ("jhuei", "zhui"),
-    ("jhun", "zhun"),
-    ("jhuo", "zhuo"),
-    ("ji", "ji"),
-    ("jia", "jia"),
-    ("jian", "jian"),
-    ("jiang", "jiang"),
-    ("jiao", "jiao"),
-    ("jieh", "jie"),
-    ("jin", "jin"),
-    ("jing", "jing"),
-    ("jiou", "jiu"),
-    ("jyong", "jiong"),
-    ("jyu", "ju"),
-    ("jyuan", "juan"),
-    ("jyueh", "jue"),
-    ("jyun", "jun"),
-    ("ka", "ka"),
-    ("kai", "kai"),
-    ("kan", "kan"),
-    ("kang", "kang"),
-    ("kao", "kao"),
-    ("ke", "ke"),
-    ("ken", "ken"),
-    ("keng", "keng"),
-    ("kong", "kong"),
-    ("kou", "kou"),
-    ("ku", "ku"),
-    ("kua", "kua"),
-    ("kuai", "kuai"),
-    ("kuan", "kuan"),
-    ("kuang", "kuang"),
-    ("kuei", "kui"),
-    ("kun", "kun"),
-    ("kuo", "kuo"),
-    ("la", "la"),
-    ("lai", "lai"),
-    ("lan", "lan"),
-    ("lang", "lang"),
-    ("lao", "lao"),
-    ("le", "le"),
-    ("lei", "lei"),
-    ("leng", "leng"),
-    ("li", "li"),
-    ("lia", "lia"),
-    ("lian", "lian"),
-    ("liang", "liang"),
-    ("liao", "liao"),
-    ("lieh", "lie"),
-    ("lin", "lin"),
-    ("ling", "ling"),
-    ("liou", "liu"),
-    ("lo", "lo"),
-    ("long", "long"),
-    ("lou", "lou"),
-    ("lu", "lu"),
-    ("luan", "luan"),
-    ("lun", "lun"),
-    ("luo", "luo"),
-    ("lyu", "lv"),
-    ("lyueh", "lve"),
-    ("ma", "ma"),
-    ("mai", "mai"),
-    ("man", "man"),
-    ("mang", "mang"),
-    ("mao", "mao"),
-    ("me", "me"),
-    ("mei", "mei"),
-    ("men", "men"),
-    ("meng", "meng"),
-    ("mi", "mi"),
-    ("mian", "mian"),
-    ("miao", "miao"),
-    ("mieh", "mie"),
-    ("min", "min"),
-    ("ming", "ming"),
-    ("miou", "miu"),
-    ("mo", "mo"),
-    ("mou", "mou"),
-    ("mu", "mu"),
-    ("na", "na"),
-    ("nai", "nai"),
-    ("nan", "nan"),
-    ("nang", "nang"),
-    ("nao", "nao"),
-    ("ne", "ne"),
-    ("nei", "nei"),
-    ("nen", "nen"),
-    ("neng", "neng"),
-    ("ni", "ni"),
-    ("nian", "nian"),
-    ("niang", "niang"),
-    ("niao", "niao"),
-    ("nieh", "nie"),
-    ("nin", "nin"),
-    ("ning", "ning"),
-    ("niou", "niu"),
-    ("nong", "nong"),
-    ("nou", "nou"),
-    ("nu", "nu"),
-    ("nuan", "nuan"),
-    ("nun", "nun"),
-    ("nuo", "nuo"),
-    ("nyu", "nv"),
-    ("nyueh", "nve"),
-    ("o", "o"),
-    ("ou", "ou"),
-    ("pa", "pa"),
-    ("pai", "pai"),
-    ("pan", "pan"),
-    ("pang", "pang"),
-    ("pao", "pao"),
-    ("pei", "pei"),
-    ("pen", "pen"),
-    ("peng", "peng"),
-    ("pi", "pi"),
-    ("pian", "pian"),
-    ("piao", "piao"),
-    ("pieh", "pie"),
-    ("pin", "pin"),
-    ("ping", "ping"),
-    ("po", "po"),
-    ("pou", "pou"),
-    ("pu", "pu"),
-    ("ran", "ran"),
-    ("rang", "rang"),
-    ("rao", "rao"),
-    ("re", "re"),
-    ("ren", "ren"),
-    ("reng", "reng"),
-    ("rih", "r"),
-    ("rong", "rong"),
-    ("rou", "rou"),
-    ("ru", "ru"),
-    ("ruan", "ruan"),
-    ("ruei", "rui"),
-    ("run", "run"),
-    ("ruo", "ruo"),
-    ("sa", "sa"),
-    ("sai", "sai"),
-    ("san", "san"),
-    ("sang", "sang"),
-    ("sao", "sao"),
-    ("se", "se"),
-    ("sen", "sen"),
-    ("seng", "seng"),
-    ("sha", "sha"),
-    ("shai", "shai"),
-    ("shan", "shan"),
-    ("shang", "shang"),
-    ("shao", "shao"),
-    ("she", "she"),
-    ("shei", "shei"),
-    ("shen", "shen"),
-    ("sheng", "sheng"),
-    ("shih", "sh"),
-    ("shou", "shou"),
-    ("shu", "shu"),
-    ("shua", "shua"),
-    ("shuai", "shuai"),
-    ("shuan", "shuan"),
-    ("shuang", "shuang"),
-    ("shuei", "shui"),
-    ("shun", "shun"),
-    ("shuo", "shuo"),
-    ("si", "xi"),
-    ("sia", "xia"),
-    ("sian", "xian"),
-    ("siang", "xiang"),
-    ("siao", "xiao"),
-    ("sieh", "xie"),
-    ("sih", "s"),
-    ("sin", "xin"),
-    ("sing", "xing"),
-    ("siou", "xiu"),
-    ("song", "song"),
-    ("sou", "sou"),
-    ("su", "su"),
-    ("suan", "suan"),
-    ("suei", "sui"),
-    ("sun", "sun"),
-    ("suo", "suo"),
-    ("syong", "xiong"),
-    ("syu", "xu"),
-    ("syuan", "xuan"),
-    ("syueh", "xue"),
-    ("syun", "xun"),
-    ("ta", "ta"),
-    ("tai", "tai"),
-    ("tan", "tan"),
-    ("tang", "tang"),
-    ("tao", "tao"),
-    ("te", "te"),
-    ("teng", "teng"),
-    ("ti", "ti"),
-    ("tian", "tian"),
-    ("tiao", "tiao"),
-    ("tieh", "tie"),
-    ("ting", "ting"),
-    ("tong", "tong"),
-    ("tou", "tou"),
-    ("tsa", "ca"),
-    ("tsai", "cai"),
-    ("tsan", "can"),
-    ("tsang", "cang"),
-    ("tsao", "cao"),
-    ("tse", "ce"),
-    ("tsen", "cen"),
-    ("tseng", "ceng"),
-    ("tsih", "c"),
-    ("tsong", "cong"),
-    ("tsou", "cou"),
-    ("tsu", "cu"),
-    ("tsuan", "cuan"),
-    ("tsuei", "cui"),
-    ("tsun", "cun"),
-    ("tsuo", "cuo"),
-    ("tu", "tu"),
-    ("tuan", "tuan"),
-    ("tuei", "tui"),
-    ("tun", "tun"),
-    ("tuo", "tuo"),
-    ("wa", "wa"),
-    ("wai", "wai"),
-    ("wan", "wan"),
-    ("wang", "wang"),
-    ("wei", "wei"),
-    ("wo", "wo"),
-    ("wong", "weng"),
-    ("wu", "wu"),
-    ("wun", "wen"),
-    ("ya", "ya"),
-    ("yai", "yai"),
-    ("yan", "yan"),
-    ("yang", "yang"),
-    ("yao", "yao"),
-    ("yeh", "ye"),
-    ("yi", "yi"),
-    ("yin", "yin"),
-    ("ying", "ying"),
-    ("yo", "yo"),
-    ("yong", "yong"),
-    ("you", "you"),
-    ("yu", "yu"),
-    ("yuan", "yuan"),
-    ("yueh", "yue"),
-    ("yun", "yun"),
-    ("za", "za"),
-    ("zai", "zai"),
-    ("zan", "zan"),
-    ("zang", "zang"),
-    ("zao", "zao"),
-    ("ze", "ze"),
-    ("zei", "zei"),
-    ("zen", "zen"),
-    ("zeng", "zeng"),
-    ("zih", "z"),
-    ("zong", "zong"),
-    ("zou", "zou"),
-    ("zu", "zu"),
-    ("zuan", "zuan"),
-    ("zuei", "zui"),
-    ("zun", "zun"),
-    ("zuo", "zuo"),
-];
-
-/// Number of entries in [`SECONDARY_ZHUYIN_INDEX`].
+/// Number of entries in [`secondary_zhuyin_index`].
 pub const SECONDARY_ZHUYIN_COUNT: usize = 406;
 
-/// `(input spelling, canonical pinyin)` pairs from `secondary_zhuyin_index[]`,
-/// sorted by spelling — the binary-search invariant of the pinned table.
-///
-/// Source: `pinyin_parser_table.h:1083`, equal to the
-/// `m_secondary_zhuyin_str` column of `content_table`.
-pub static SECONDARY_ZHUYIN_INDEX: [(&str, &str); SECONDARY_ZHUYIN_COUNT] = [
-    ("a", "a"),
-    ("ai", "ai"),
-    ("an", "an"),
-    ("ang", "ang"),
-    ("au", "ao"),
-    ("ba", "ba"),
-    ("bai", "bai"),
-    ("ban", "ban"),
-    ("bang", "bang"),
-    ("bau", "bao"),
-    ("bei", "bei"),
-    ("ben", "ben"),
-    ("beng", "beng"),
-    ("bi", "bi"),
-    ("bian", "bian"),
-    ("biau", "biao"),
-    ("bie", "bie"),
-    ("bin", "bin"),
-    ("bing", "bing"),
-    ("bo", "bo"),
-    ("bu", "bu"),
-    ("cha", "cha"),
-    ("chai", "chai"),
-    ("chan", "chan"),
-    ("chang", "chang"),
-    ("chau", "chao"),
-    ("che", "che"),
-    ("chen", "chen"),
-    ("cheng", "cheng"),
-    ("chi", "qi"),
-    ("chia", "qia"),
-    ("chian", "qian"),
-    ("chiang", "qiang"),
-    ("chiau", "qiao"),
-    ("chie", "qie"),
-    ("chin", "qin"),
-    ("ching", "qing"),
-    ("chiou", "qiu"),
-    ("chiu", "qu"),
-    ("chiuan", "quan"),
-    ("chiue", "que"),
-    ("chiun", "qun"),
-    ("chiung", "qiong"),
-    ("chou", "chou"),
-    ("chr", "ch"),
-    ("chu", "chu"),
-    ("chuai", "chuai"),
-    ("chuan", "chuan"),
-    ("chuang", "chuang"),
-    ("chuei", "chui"),
-    ("chuen", "chun"),
-    ("chung", "chong"),
-    ("chuo", "chuo"),
-    ("da", "da"),
-    ("dai", "dai"),
-    ("dan", "dan"),
-    ("dang", "dang"),
-    ("dau", "dao"),
-    ("de", "de"),
-    ("dei", "dei"),
-    ("deng", "deng"),
-    ("di", "di"),
-    ("dian", "dian"),
-    ("diau", "diao"),
-    ("die", "die"),
-    ("ding", "ding"),
-    ("diou", "diu"),
-    ("dou", "dou"),
-    ("du", "du"),
-    ("duan", "duan"),
-    ("duei", "dui"),
-    ("duen", "dun"),
-    ("dung", "dong"),
-    ("duo", "duo"),
-    ("e", "e"),
-    ("ei", "ei"),
-    ("en", "en"),
-    ("eng", "eng"),
-    ("er", "er"),
-    ("fa", "fa"),
-    ("fan", "fan"),
-    ("fang", "fang"),
-    ("fei", "fei"),
-    ("fen", "fen"),
-    ("fo", "fo"),
-    ("fou", "fou"),
-    ("fu", "fu"),
-    ("ga", "ga"),
-    ("gai", "gai"),
-    ("gan", "gan"),
-    ("gang", "gang"),
-    ("gau", "gao"),
-    ("ge", "ge"),
-    ("gei", "gei"),
-    ("gen", "gen"),
-    ("geng", "geng"),
-    ("gou", "gou"),
-    ("gu", "gu"),
-    ("gua", "gua"),
-    ("guai", "guai"),
-    ("guan", "guan"),
-    ("guang", "guang"),
-    ("guei", "gui"),
-    ("guen", "gun"),
-    ("gung", "gong"),
-    ("guo", "guo"),
-    ("ha", "ha"),
-    ("hai", "hai"),
-    ("han", "han"),
-    ("hang", "hang"),
-    ("hau", "hao"),
-    ("he", "he"),
-    ("hei", "hei"),
-    ("hen", "hen"),
-    ("heng", "heng"),
-    ("hou", "hou"),
-    ("hu", "hu"),
-    ("hua", "hua"),
-    ("huai", "huai"),
-    ("huan", "huan"),
-    ("huang", "huang"),
-    ("huei", "hui"),
-    ("huen", "hun"),
-    ("hung", "hong"),
-    ("huo", "huo"),
-    ("ja", "zha"),
-    ("jai", "zhai"),
-    ("jan", "zhan"),
-    ("jang", "zhang"),
-    ("jau", "zhao"),
-    ("je", "zhe"),
-    ("jei", "zhei"),
-    ("jen", "zhen"),
-    ("jeng", "zheng"),
-    ("ji", "ji"),
-    ("jia", "jia"),
-    ("jian", "jian"),
-    ("jiang", "jiang"),
-    ("jiau", "jiao"),
-    ("jie", "jie"),
-    ("jin", "jin"),
-    ("jing", "jing"),
-    ("jiou", "jiu"),
-    ("jiu", "ju"),
-    ("jiuan", "juan"),
-    ("jiue", "jue"),
-    ("jiun", "jun"),
-    ("jiung", "jiong"),
-    ("jou", "zhou"),
-    ("jr", "zh"),
-    ("ju", "zhu"),
-    ("jua", "zhua"),
-    ("juai", "zhuai"),
-    ("juan", "zhuan"),
-    ("juang", "zhuang"),
-    ("juei", "zhui"),
-    ("juen", "zhun"),
-    ("jung", "zhong"),
-    ("juo", "zhuo"),
-    ("ka", "ka"),
-    ("kai", "kai"),
-    ("kan", "kan"),
-    ("kang", "kang"),
-    ("kau", "kao"),
-    ("ke", "ke"),
-    ("ken", "ken"),
-    ("keng", "keng"),
-    ("kou", "kou"),
-    ("ku", "ku"),
-    ("kua", "kua"),
-    ("kuai", "kuai"),
-    ("kuan", "kuan"),
-    ("kuang", "kuang"),
-    ("kuei", "kui"),
-    ("kuen", "kun"),
-    ("kung", "kong"),
-    ("kuo", "kuo"),
-    ("la", "la"),
-    ("lai", "lai"),
-    ("lan", "lan"),
-    ("lang", "lang"),
-    ("lau", "lao"),
-    ("le", "le"),
-    ("lei", "lei"),
-    ("leng", "leng"),
-    ("li", "li"),
-    ("lia", "lia"),
-    ("lian", "lian"),
-    ("liang", "liang"),
-    ("liau", "liao"),
-    ("lie", "lie"),
-    ("lin", "lin"),
-    ("ling", "ling"),
-    ("liou", "liu"),
-    ("liu", "lv"),
-    ("liue", "lve"),
-    ("lo", "lo"),
-    ("lou", "lou"),
-    ("lu", "lu"),
-    ("luan", "luan"),
-    ("luen", "lun"),
-    ("lung", "long"),
-    ("luo", "luo"),
-    ("ma", "ma"),
-    ("mai", "mai"),
-    ("man", "man"),
-    ("mang", "mang"),
-    ("mau", "mao"),
-    ("me", "me"),
-    ("mei", "mei"),
-    ("men", "men"),
-    ("meng", "meng"),
-    ("mi", "mi"),
-    ("mian", "mian"),
-    ("miau", "miao"),
-    ("mie", "mie"),
-    ("min", "min"),
-    ("ming", "ming"),
-    ("miou", "miu"),
-    ("mo", "mo"),
-    ("mou", "mou"),
-    ("mu", "mu"),
-    ("na", "na"),
-    ("nai", "nai"),
-    ("nan", "nan"),
-    ("nang", "nang"),
-    ("nau", "nao"),
-    ("ne", "ne"),
-    ("nei", "nei"),
-    ("nen", "nen"),
-    ("neng", "neng"),
-    ("ni", "ni"),
-    ("nian", "nian"),
-    ("niang", "niang"),
-    ("niau", "niao"),
-    ("nie", "nie"),
-    ("nin", "nin"),
-    ("ning", "ning"),
-    ("niou", "niu"),
-    ("niu", "nv"),
-    ("niue", "nve"),
-    ("nou", "nou"),
-    ("nu", "nu"),
-    ("nuan", "nuan"),
-    ("nuen", "nun"),
-    ("nung", "nong"),
-    ("nuo", "nuo"),
-    ("o", "o"),
-    ("ou", "ou"),
-    ("pa", "pa"),
-    ("pai", "pai"),
-    ("pan", "pan"),
-    ("pang", "pang"),
-    ("pau", "pao"),
-    ("pei", "pei"),
-    ("pen", "pen"),
-    ("peng", "peng"),
-    ("pi", "pi"),
-    ("pian", "pian"),
-    ("piau", "piao"),
-    ("pie", "pie"),
-    ("pin", "pin"),
-    ("ping", "ping"),
-    ("po", "po"),
-    ("pou", "pou"),
-    ("pu", "pu"),
-    ("r", "r"),
-    ("ran", "ran"),
-    ("rang", "rang"),
-    ("rau", "rao"),
-    ("re", "re"),
-    ("ren", "ren"),
-    ("reng", "reng"),
-    ("rou", "rou"),
-    ("ru", "ru"),
-    ("ruan", "ruan"),
-    ("ruei", "rui"),
-    ("ruen", "run"),
-    ("rung", "rong"),
-    ("ruo", "ruo"),
-    ("sa", "sa"),
-    ("sai", "sai"),
-    ("san", "san"),
-    ("sang", "sang"),
-    ("sau", "sao"),
-    ("se", "se"),
-    ("sen", "sen"),
-    ("seng", "seng"),
-    ("sha", "sha"),
-    ("shai", "shai"),
-    ("shan", "shan"),
-    ("shang", "shang"),
-    ("shau", "shao"),
-    ("she", "she"),
-    ("shei", "shei"),
-    ("shen", "shen"),
-    ("sheng", "sheng"),
-    ("shi", "xi"),
-    ("shia", "xia"),
-    ("shian", "xian"),
-    ("shiang", "xiang"),
-    ("shiau", "xiao"),
-    ("shie", "xie"),
-    ("shin", "xin"),
-    ("shing", "xing"),
-    ("shiou", "xiu"),
-    ("shiu", "xu"),
-    ("shiuan", "xuan"),
-    ("shiue", "xue"),
-    ("shiun", "xun"),
-    ("shiung", "xiong"),
-    ("shou", "shou"),
-    ("shr", "sh"),
-    ("shu", "shu"),
-    ("shua", "shua"),
-    ("shuai", "shuai"),
-    ("shuan", "shuan"),
-    ("shuang", "shuang"),
-    ("shuei", "shui"),
-    ("shuen", "shun"),
-    ("shuo", "shuo"),
-    ("sou", "sou"),
-    ("su", "su"),
-    ("suan", "suan"),
-    ("suei", "sui"),
-    ("suen", "sun"),
-    ("sung", "song"),
-    ("suo", "suo"),
-    ("sz", "s"),
-    ("ta", "ta"),
-    ("tai", "tai"),
-    ("tan", "tan"),
-    ("tang", "tang"),
-    ("tau", "tao"),
-    ("te", "te"),
-    ("teng", "teng"),
-    ("ti", "ti"),
-    ("tian", "tian"),
-    ("tiau", "tiao"),
-    ("tie", "tie"),
-    ("ting", "ting"),
-    ("tou", "tou"),
-    ("tsa", "ca"),
-    ("tsai", "cai"),
-    ("tsan", "can"),
-    ("tsang", "cang"),
-    ("tsau", "cao"),
-    ("tse", "ce"),
-    ("tsen", "cen"),
-    ("tseng", "ceng"),
-    ("tsou", "cou"),
-    ("tsu", "cu"),
-    ("tsuan", "cuan"),
-    ("tsuei", "cui"),
-    ("tsun", "cun"),
-    ("tsung", "cong"),
-    ("tsuo", "cuo"),
-    ("tsz", "c"),
-    ("tu", "tu"),
-    ("tuan", "tuan"),
-    ("tuei", "tui"),
-    ("tuen", "tun"),
-    ("tung", "tong"),
-    ("tuo", "tuo"),
-    ("tz", "z"),
-    ("tza", "za"),
-    ("tzai", "zai"),
-    ("tzan", "zan"),
-    ("tzang", "zang"),
-    ("tzau", "zao"),
-    ("tze", "ze"),
-    ("tzei", "zei"),
-    ("tzen", "zen"),
-    ("tzeng", "zeng"),
-    ("tzou", "zou"),
-    ("tzu", "zu"),
-    ("tzuan", "zuan"),
-    ("tzuei", "zui"),
-    ("tzuen", "zun"),
-    ("tzung", "zong"),
-    ("tzuo", "zuo"),
-    ("wa", "wa"),
-    ("wai", "wai"),
-    ("wan", "wan"),
-    ("wang", "wang"),
-    ("wei", "wei"),
-    ("wen", "wen"),
-    ("weng", "weng"),
-    ("wo", "wo"),
-    ("wu", "wu"),
-    ("ya", "ya"),
-    ("yai", "yai"),
-    ("yan", "yan"),
-    ("yang", "yang"),
-    ("yau", "yao"),
-    ("ye", "ye"),
-    ("yi", "yi"),
-    ("yin", "yin"),
-    ("ying", "ying"),
-    ("yo", "yo"),
-    ("you", "you"),
-    ("yu", "yu"),
-    ("yuan", "yuan"),
-    ("yue", "yue"),
-    ("yun", "yun"),
-    ("yung", "yong"),
-];
+/// An indexed full-pinyin spelling table, decoded on demand.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FullPinyinIndex(StringTable<2>);
+
+impl FullPinyinIndex {
+    /// Number of spelling rows.
+    #[must_use]
+    pub const fn len(self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether the table has no rows.
+    #[must_use]
+    pub const fn is_empty(self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The input spelling and canonical pinyin at a row.
+    #[must_use]
+    pub fn get(self, index: usize) -> Option<(&'static str, &'static str)> {
+        self.0
+            .get(index)
+            .map(|[input, canonical]| (input, canonical))
+    }
+
+    /// Canonical pinyin for an exact input spelling.
+    #[must_use]
+    pub fn canonical(self, spelling: &str) -> Option<&'static str> {
+        self.0.field(self.0.position(spelling)?, 1)
+    }
+
+    /// All spelling rows in pinned order.
+    #[must_use]
+    pub fn entries(
+        self,
+    ) -> impl ExactSizeIterator<Item = (&'static str, &'static str)> + DoubleEndedIterator + Clone
+    {
+        self.0
+            .entries()
+            .map(|[input, canonical]| (input, canonical))
+    }
+}
+
+/// Luoma input spellings and canonical pinyin, in pinned byte order.
+#[must_use]
+pub const fn luoma_pinyin_index() -> FullPinyinIndex {
+    FullPinyinIndex(crate::string_tables::luoma_pinyin_index())
+}
+
+/// Secondary-zhuyin input spellings and canonical pinyin, in pinned byte order.
+#[must_use]
+pub const fn secondary_zhuyin_index() -> FullPinyinIndex {
+    FullPinyinIndex(crate::string_tables::secondary_zhuyin_index())
+}
 
 /// Longest spelling in either index, in bytes.
 ///
@@ -946,7 +174,7 @@ struct Step {
 fn parse_one_index_key(
     input: &[u8],
     options: crate::OptionBits,
-    index: &[(&'static str, &'static str)],
+    index: FullPinyinIndex,
 ) -> Option<FullPinyinIndexKey> {
     let use_tone = options.contains(crate::USE_TONE);
     let mut parsed_len = input.len();
@@ -960,15 +188,14 @@ fn parse_one_index_key(
     }
 
     let spelling = core::str::from_utf8(input.get(..parsed_len)?).ok()?;
-    let position = index.partition_point(|row| row.0 < spelling);
-    let canonical = index.get(position).filter(|row| row.0 == spelling)?;
+    let canonical = index.canonical(spelling)?;
 
     let mut end = parsed_len;
     if use_tone && tone != 0 {
         end += 1;
     }
     Some(FullPinyinIndexKey {
-        canonical: canonical.1,
+        canonical,
         start: 0,
         end,
         tone,
@@ -989,7 +216,7 @@ fn parse_one_index_key(
 pub fn parse_full_pinyin_index(
     input: &[u8],
     use_tone: bool,
-    index: &[(&'static str, &'static str)],
+    index: FullPinyinIndex,
 ) -> FullPinyinIndexParse {
     let options = crate::OptionBits::from_bits(if use_tone { crate::USE_TONE } else { 0 });
     parse_index(input, options, index)
@@ -1007,7 +234,7 @@ pub fn parse_full_pinyin_index(
 pub fn parse_full_pinyin_index_with_options(
     input: &[u8],
     options: crate::OptionBits,
-    index: &[(&'static str, &'static str)],
+    index: FullPinyinIndex,
 ) -> Result<FullPinyinIndexParse, core::convert::Infallible> {
     Ok(parse_index(input, options, index))
 }
@@ -1015,7 +242,7 @@ pub fn parse_full_pinyin_index_with_options(
 fn parse_index(
     input: &[u8],
     options: crate::OptionBits,
-    index: &[(&'static str, &'static str)],
+    index: FullPinyinIndex,
 ) -> FullPinyinIndexParse {
     let mut steps = vec![
         Step {
@@ -1117,24 +344,24 @@ fn parse_index(
 #[cfg(test)]
 mod tests {
     use super::{
-        LUOMA_PINYIN_COUNT, LUOMA_PINYIN_INDEX, SECONDARY_ZHUYIN_COUNT, SECONDARY_ZHUYIN_INDEX,
-        parse_full_pinyin_index,
+        LUOMA_PINYIN_COUNT, SECONDARY_ZHUYIN_COUNT, luoma_pinyin_index, parse_full_pinyin_index,
+        secondary_zhuyin_index,
     };
 
     #[test]
     fn indexes_match_the_pinned_shapes() {
         for (index, count) in [
-            (&LUOMA_PINYIN_INDEX[..], LUOMA_PINYIN_COUNT),
-            (&SECONDARY_ZHUYIN_INDEX[..], SECONDARY_ZHUYIN_COUNT),
+            (luoma_pinyin_index(), LUOMA_PINYIN_COUNT),
+            (secondary_zhuyin_index(), SECONDARY_ZHUYIN_COUNT),
         ] {
             assert_eq!(index.len(), count);
             assert_eq!(count, 406);
-            for pair in index.windows(2) {
+            for pair in index.entries().collect::<Vec<_>>().windows(2) {
                 assert!(pair[0].0 < pair[1].0, "index not strictly sorted");
             }
             // Every target is a canonical key: the 440-id inventory
             // covers both indexes with nothing to spare or add.
-            for &(spelling, canonical) in index {
+            for (spelling, canonical) in index.entries() {
                 assert!(
                     crate::SyllableKey::from_canonical_text(canonical).is_some(),
                     "{spelling} -> {canonical} leaves the inventory"
@@ -1145,14 +372,14 @@ mod tests {
         // The pinned remaps: shared spellings mean different syllables
         // per scheme.
         let luoma = |spelling: &str| {
-            LUOMA_PINYIN_INDEX
-                .iter()
+            luoma_pinyin_index()
+                .entries()
                 .find(|row| row.0 == spelling)
                 .map(|row| row.1)
         };
         let secondary = |spelling: &str| {
-            SECONDARY_ZHUYIN_INDEX
-                .iter()
+            secondary_zhuyin_index()
+                .entries()
                 .find(|row| row.0 == spelling)
                 .map(|row| row.1)
         };
@@ -1169,7 +396,7 @@ mod tests {
     #[test]
     fn luoma_parses_through_the_dp() {
         let parse =
-            |input: &str| parse_full_pinyin_index(input.as_bytes(), false, &LUOMA_PINYIN_INDEX);
+            |input: &str| parse_full_pinyin_index(input.as_bytes(), false, luoma_pinyin_index());
 
         // Longest coverage wins; the canonical spelling is what the
         // segment maps to, spans stay raw.
@@ -1204,7 +431,7 @@ mod tests {
     #[test]
     fn index_parse_handles_tone_digits() {
         let parse = |input: &str, use_tone| {
-            parse_full_pinyin_index(input.as_bytes(), use_tone, &SECONDARY_ZHUYIN_INDEX)
+            parse_full_pinyin_index(input.as_bytes(), use_tone, secondary_zhuyin_index())
         };
 
         // Under USE_TONE the trailing digit rides the key (secondary
@@ -1230,8 +457,9 @@ mod tests {
         // "xian" style ambiguity through the secondary index: "shian"
         // covers 5 bytes as one key; "shi"->xi + "an" also covers 5 as
         // two keys — fewest keys wins, so the single long key parses.
-        let parse =
-            |input: &str| parse_full_pinyin_index(input.as_bytes(), false, &SECONDARY_ZHUYIN_INDEX);
+        let parse = |input: &str| {
+            parse_full_pinyin_index(input.as_bytes(), false, secondary_zhuyin_index())
+        };
         assert_eq!(parse("shian").full_pinyin(), "xian");
 
         // An initial-only target parses with no option bit: these
@@ -1248,8 +476,8 @@ mod option_tests {
     #[test]
     fn force_tone_is_nested_under_use_tone_for_both_indexes() {
         for (index, input) in [
-            (&LUOMA_PINYIN_INDEX[..], "shih"),
-            (&SECONDARY_ZHUYIN_INDEX[..], "tsz"),
+            (luoma_pinyin_index(), "shih"),
+            (secondary_zhuyin_index(), "tsz"),
         ] {
             for bits in [0, FORCE_TONE, USE_TONE, USE_TONE | FORCE_TONE] {
                 let options = OptionBits::from_bits(bits);
@@ -1281,4 +509,38 @@ mod option_tests {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod identity_tests {
+    #[test]
+    fn luoma_pinyin_index_matches_original_rows() {
+        assert_eq!(
+            super::LUOMA_PINYIN_COUNT,
+            super::reference::LUOMA_PINYIN_COUNT
+        );
+        assert!(
+            super::luoma_pinyin_index()
+                .entries()
+                .eq(super::reference::LUOMA_PINYIN_INDEX)
+        );
+    }
+
+    #[test]
+    fn secondary_zhuyin_index_matches_original_rows() {
+        assert_eq!(
+            super::SECONDARY_ZHUYIN_COUNT,
+            super::reference::SECONDARY_ZHUYIN_COUNT
+        );
+        assert!(
+            super::secondary_zhuyin_index()
+                .entries()
+                .eq(super::reference::SECONDARY_ZHUYIN_INDEX)
+        );
+    }
+}
+
+#[cfg(test)]
+mod reference {
+    include!("table_data/full_pinyin_indexes.rs");
 }

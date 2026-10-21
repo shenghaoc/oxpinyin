@@ -1,8 +1,8 @@
 //! Frozen F-A acceptance, structured path-set cases, and arbitrary-byte properties.
 
 use oxpinyin_core::{
-    Completeness, FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, FullPinyinParser, InputParser,
-    MAX_PARSE_RESULTS, ParseError, ParseResult, ParsedSyllable,
+    Completeness, FULL_PINYIN_SYLLABLE_COUNT, FullPinyinParser, InputParser, MAX_PARSE_RESULTS,
+    ParseError, ParseResult, ParsedSyllable, full_pinyin_syllables,
 };
 use proptest::prelude::*;
 
@@ -110,14 +110,14 @@ fn maximum_length_valid_syllable_zhuang() {
 
 #[test]
 fn every_table_syllable_round_trips_as_complete_identity() {
-    assert_eq!(FULL_PINYIN_SYLLABLES.len(), FULL_PINYIN_SYLLABLE_COUNT);
+    assert_eq!(full_pinyin_syllables().len(), FULL_PINYIN_SYLLABLE_COUNT);
     assert_eq!(
         FULL_PINYIN_SYLLABLE_COUNT, 405,
         "frozen inventory is exactly 405 complete syllables"
     );
 
     let parser = FullPinyinParser;
-    for syllable in FULL_PINYIN_SYLLABLES {
+    for syllable in full_pinyin_syllables() {
         let paths = parser
             .parse(syllable.as_bytes())
             .unwrap_or_else(|error| panic!("syllable {syllable:?} failed: {error}"));
@@ -278,12 +278,16 @@ fn assert_path_invariants(
 
         match segment.completeness {
             Completeness::Complete => {
-                prop_assert!(FULL_PINYIN_SYLLABLES.contains(&segment.syllable.as_str()));
+                prop_assert!(
+                    full_pinyin_syllables().any(|entry| entry == segment.syllable.as_str())
+                );
             }
             Completeness::Partial => {
                 saw_partial = true;
-                prop_assert!(!FULL_PINYIN_SYLLABLES.contains(&segment.syllable.as_str()));
-                let is_partial = FULL_PINYIN_SYLLABLES.iter().any(|syllable| {
+                prop_assert!(
+                    !full_pinyin_syllables().any(|entry| entry == segment.syllable.as_str())
+                );
+                let is_partial = full_pinyin_syllables().any(|syllable| {
                     segment.syllable.len() < syllable.len()
                         && syllable.as_bytes().starts_with(segment.syllable.as_bytes())
                 });
