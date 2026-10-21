@@ -760,13 +760,14 @@ fn seed_txn_with_replay(
         }
     }
 
-    // A replayed original needs its unigram row, but no decoded text or
-    // pronunciation rows. The private view retains absolute entry counts.
+    // Replay records which slots can need a unigram delta while it already
+    // compares the raw bytes. Reading-only changes keep their original counts
+    // without another item visit. The private view retains absolute entry counts.
     for (&nibble, view) in replayed {
         let Some(original) = originals.get(&nibble) else {
             continue;
         };
-        for slot in view.slots() {
+        for slot in view.unigram_slots() {
             if !original.is_readable(slot) {
                 continue;
             }

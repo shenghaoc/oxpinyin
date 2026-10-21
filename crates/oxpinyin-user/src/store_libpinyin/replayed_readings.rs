@@ -119,6 +119,69 @@ fn open_over(name: &str, base: &SystemOriginals, records: &[LogRecord]) -> (Path
     (dir, store)
 }
 
+#[test]
+fn per_slot_seeding_keeps_mixed_restored_added_removed_and_header_counts() {
+    let one = item(0x4f60, 100, &[(tone("ni", 3), 10)]);
+    let two = item(0x597d, 50, &[(tone("hao", 3), 20)]);
+    let three = item(0x4e09, 25, &[(tone("san", 1), 30)]);
+    let four = item(0x56db, 40, &[(tone("si", 4), 40)]);
+    let added = item(0x4e94, 11, &[(tone("wu", 3), 50)]);
+    let base = library_of(vec![
+        (1, one.clone()),
+        (2, two.clone()),
+        (3, three.clone()),
+        (4, four.clone()),
+    ]);
+    let mut reading_only = one.clone();
+    reading_only.prons[0].1 = 77;
+    let mut changed = two.clone();
+    changed.unigram = 60;
+    let mut changed_again = changed.clone();
+    changed_again.unigram = 70;
+    let mut temporary = three.clone();
+    temporary.unigram = 35;
+    let (dir, store) = open_over(
+        "per-slot-unigrams",
+        &base,
+        &[
+            header(215, 1_000),
+            modify(1, &one, &reading_only),
+            modify(2, &two, &changed),
+            modify(2, &changed, &changed_again),
+            modify(3, &three, &temporary),
+            modify(3, &temporary, &three),
+            LogRecord::Add {
+                token: 5,
+                new_item: encode_phrase_item(&added).expect("added"),
+            },
+            LogRecord::Remove {
+                token: 4,
+                old_item: encode_phrase_item(&four).expect("removed"),
+            },
+        ],
+    );
+    assert_eq!(store.unigram_delta(LIBRARY | 1).expect("unchanged"), 0);
+    assert_eq!(store.unigram_delta(LIBRARY | 2).expect("changed"), 20);
+    assert_eq!(store.unigram_delta(LIBRARY | 3).expect("restored"), 0);
+    assert_eq!(store.unigram_delta(LIBRARY | 5).expect("added"), 11);
+    assert_eq!(store.unigram_library_total(1).expect("seeded deltas"), 31);
+    assert_eq!(
+        base[&1]
+            .total
+            .wrapping_add(store.unigram_library_total(1).expect("deltas"))
+            .wrapping_add(store.library_offset(1).expect("header offset")),
+        971
+    );
+    assert_eq!(counts(&store, 1), [77]);
+    assert!(
+        store
+            .with_effective_system_item(LIBRARY | 4, |_| ())
+            .is_none()
+    );
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
 /// The live counts of `slot`'s readings, in the item's order.
 fn counts(store: &UserStore, slot: u32) -> Vec<u32> {
     store
