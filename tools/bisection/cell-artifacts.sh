@@ -43,7 +43,9 @@ fi
 packages=()
 build_user_rt=0
 IFS=, read -ra wanted <<<"$artifacts"
-for artifact in "${wanted[@]}"; do
+# Guarded: Bash before 4.4 (macOS /bin/bash is 3.2) treats an empty
+# "${wanted[@]}" as unbound under set -u.
+for artifact in ${wanted[@]+"${wanted[@]}"}; do
 	case $artifact in
 	'') ;;
 	pinyin-capi) packages+=(-p oxpinyin-capi) ;;
