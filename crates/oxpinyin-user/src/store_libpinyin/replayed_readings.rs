@@ -97,6 +97,14 @@ fn modify(slot: u32, old: &ChunkItem, new: &ChunkItem) -> LogRecord {
     }
 }
 
+fn raw_modify(slot: u32, old: &[u8], new: &[u8]) -> LogRecord {
+    LogRecord::Modify {
+        token: slot,
+        old_item: old.to_vec(),
+        new_item: new.to_vec(),
+    }
+}
+
 fn open(dir: &std::path::Path, base: &SystemOriginals) -> UserStore {
     UserStore::open_libpinyin(dir, base.clone(), versions(), UserConfLaw::Pinyin).expect("open")
 }
@@ -267,6 +275,83 @@ fn a_replayed_item_opens_without_reading_rows_and_trains_from_its_counts() {
     drop(store);
     let store = open(&dir, &base);
     assert_eq!(counts(&store, 1), [314, 40]);
+    drop(store);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}
+
+/// A write through an over-length item changes slot 2 without a record of
+/// its own. The replayed view must expose slot 2, seed its unigram delta and
+/// carry it into the save, as the pin's save diff does.
+#[test]
+fn an_unrecorded_overlapped_slot_is_visible_seeded_and_saved() {
+    let one = item(0x4f60, 100, &[(tone("ni", 3), 100)]);
+    let two = item(0x597d, 50, &[(tone("hao", 3), 30), (tone("hao", 4), 20)]);
+    let one_bytes = encode_phrase_item(&one).expect("one");
+    let two_bytes = encode_phrase_item(&two).expect("two");
+    let base = library_of(vec![(1, one), (2, two)]);
+    // The six-byte payload claims two readings (30 bytes): slot 1 borrows
+    // slot 2's first 14 bytes, and the second write changes slot 2's
+    // unigram through them. Slot 2 has no record of its own.
+    let expanded = {
+        let mut bytes = vec![2, 2];
+        bytes.extend_from_slice(&200_u32.to_le_bytes());
+        bytes
+    };
+    let old = [
+        expanded.clone(),
+        one_bytes[6..].to_vec(),
+        two_bytes[..14].to_vec(),
+    ]
+    .concat();
+    let mut new = old.clone();
+    let at = one_bytes.len() + 2;
+    new[at..at + 4].copy_from_slice(&170_u32.to_le_bytes());
+    let (dir, mut store) = open_over(
+        "overlap-unrecorded",
+        &base,
+        &[
+            header(150, 150),
+            raw_modify(1, &one_bytes, &expanded),
+            raw_modify(1, &old, &new),
+        ],
+    );
+    // Visible and seeded: the item is the replayed bytes, not the original.
+    assert_eq!(
+        store.with_effective_system_item(LIBRARY | 2, |item| item.unigram),
+        Some(170)
+    );
+    assert_eq!(store.unigram_delta(LIBRARY | 1).expect("slot 1 delta"), 100);
+    assert_eq!(store.unigram_delta(LIBRARY | 2).expect("slot 2 delta"), 120);
+    assert_eq!(counts(&store, 2), [30, 20]);
+    // The over-length item's raw words are the borrowed bytes.
+    let rows = store
+        .item_pronunciations(LIBRARY | 1)
+        .expect("rows")
+        .expect("over-length item");
+    let keys: Vec<Vec<u16>> = rows
+        .iter()
+        .map(|(keys, _)| keys.iter().map(|key| key.to_packed()).collect())
+        .collect();
+    assert_eq!(keys[0], [0x0000, 0x0201]);
+    assert_eq!(keys[1], [0x597d, 0x0000]);
+    // The save's override map carries slot 2 and the save writes it.
+    let saved = export_state(&store, &base).expect("export");
+    assert_eq!(
+        saved.system_overrides[&1][&2]
+            .as_ref()
+            .expect("saved slot 2")
+            .unigram,
+        170
+    );
+    store.mark_modified();
+    assert!(store.save().expect("save"));
+    drop(store);
+    let store = open(&dir, &base);
+    assert_eq!(
+        store.with_effective_system_item(LIBRARY | 2, |item| item.unigram),
+        Some(170)
+    );
+    assert_eq!(counts(&store, 2), [30, 20]);
     drop(store);
     std::fs::remove_dir_all(dir).expect("cleanup");
 }
