@@ -297,6 +297,10 @@ def check_identity(identity, root, cell, needed):
             raise ValueError(f'artifact {name} ({path}) changed after the recorded build '
                              f'(size/mtime {stat.st_size}/{stat.st_mtime_ns} vs {staged.get("size")}/{staged.get("mtime_ns")}): '
                              'a mixed target directory; rebuild it from this worktree')
+    if os.environ.get('OXPINYIN_COMPAT_CONTAINER') == '1':
+        from tools.dev.compat.identity import verify_artifacts
+        verify_artifacts(identity, root, needed)
+
 def start_child(command, env, *, slot=None, **kwargs):
     """Transfer an acquired slot to the workload before it executes."""
     descriptors = ()

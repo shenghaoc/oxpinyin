@@ -145,8 +145,14 @@ path, worktree, cell, feature, opt_level, target = sys.argv[1:]
 def run(*command):
     return subprocess.run(command, cwd=worktree, capture_output=True, text=True, check=True).stdout
 rustc = dict(line.split(': ', 1) for line in run('rustc', '-vV').splitlines() if ': ' in line)
-head = run('git', 'rev-parse', 'HEAD').strip()
-dirty = hashlib.sha256(run('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest()
+if os.environ.get('OXPINYIN_COMPAT_CONTAINER') == '1':
+    from tools.dev.compat.identity import current_inputs, seal_artifacts
+    inputs = current_inputs()
+    source = dict(head=inputs['head'], container_source_sha256=inputs['source_sha256'])
+else:
+    head = run('git', 'rev-parse', 'HEAD').strip()
+    dirty = hashlib.sha256(run('git', 'diff', 'HEAD', '--', '.').encode()).hexdigest()
+    source = dict(head=head, tracked_diff_sha256=dirty)
 artifacts = {}
 for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'libzhuyin_capi.so'),
                        ('dictool', 'oxpinyin-dictool'), ('user-rt-test', 'user-dir-round-trip-test')):
@@ -156,9 +162,11 @@ for name, filename in (('pinyin-capi', 'libpinyin_capi.so'), ('zhuyin-capi', 'li
         artifacts[name] = dict(path=file, size=stat.st_size, mtime_ns=stat.st_mtime_ns)
 record = dict(schema=1, worktree=worktree, cell=cell, feature=feature, profile='dev', opt_level=opt_level,
               toolchain=dict(release=rustc.get('release'), commit=rustc.get('commit-hash'), host=rustc.get('host')),
-              source=dict(head=head, tracked_diff_sha256=dirty),
+              source=source,
               built_utc=datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
               artifacts=artifacts)
+if os.environ.get('OXPINYIN_COMPAT_CONTAINER') == '1':
+    record['container'] = seal_artifacts(record, target)
 staged = path + '.%d' % os.getpid()
 with open(staged, 'w') as f:
     json.dump(record, f, indent=1, sort_keys=True)
