@@ -310,12 +310,9 @@ jobs:
       # version script's set (libpinyin.ver 79, libzhuyin.ver 52) and
       # leaks nothing else — in the development build (fixture hooks
       # allowed) and in the packaged one (--features shipped, hooks
-      # compiled out). Cheap: only the two capi crates rebuild for the
-      # second mode.
+      # compiled out). The packaged mode is the last step of this job.
       - name: ABI export gate (development build)
         run: tools/abi/check-exports.sh
-      - name: ABI export gate (shipped build)
-        run: tools/abi/check-exports.sh --shipped
       # The allocator-pairing gate: every pointer the two C ABIs hand a
       # consumer is classified in libpinyin.alloc / libzhuyin.alloc, and a
       # C++ consumer built from those registers releases each one with its
@@ -335,6 +332,14 @@ jobs:
       # on GitHub-hosted runners.
       - name: Live-typing differential
         run: tools/bisection/run-live-typing-diff.sh
+      # The exported-symbol gate's packaged mode runs after every gate that
+      # uses the development build (#970). Only oxpinyin-capi rebuilds for
+      # it, and that build replaces the development one: the crate's lib
+      # target is a cdylib, so cargo writes both feature sets to the same
+      # files and fingerprint in target/cells/bdb. A development-build gate
+      # after this step would compile oxpinyin-capi again.
+      - name: ABI export gate (shipped build)
+        run: tools/abi/check-exports.sh --shipped
 
   # macOS and Windows each link a C store backend. #501 removed redb.
   # macOS links Homebrew tkrzw — the path README.md documents — and pins
