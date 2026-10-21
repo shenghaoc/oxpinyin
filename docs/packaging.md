@@ -261,6 +261,101 @@ anything; `check-exports.sh` keeps comparing the cdylib cargo builds
 (names, not versions), which is still the right gate for the development
 artifact the relink then supersedes on install.
 
+## Function ordering prototype (#986 Phase 2A)
+
+This is the proposed implementation and verification plan. Function ordering
+is not enabled by this documentation change. The release profile remains fat
+LTO with one codegen unit.
+
+### Final-link mechanism and fallback
+
+Apply ordering in `tools/packaging/relink-versioned.sh`, after cargo-c has
+produced the static library. That relink produces the installed ELF object;
+changing only cargo-c's cdylib link would miss the shipping artifact.
+
+Use GNU ld's `--section-ordering-file` to prepend selected input sections to
+the existing `.text` output section. The option augments the default linker
+script, avoiding a copied platform-specific script or a new output section.
+It does not require `KEEP`, new roots, a version-script change, or a change to
+`--whole-archive` or `--gc-sections`. See the
+[GNU ld option description](https://sourceware.org/binutils/docs/ld/Options.html#index-_002d_002dsection_002dordering_002dfile).
+
+Check support through the compiler driver used by the relink, rather than
+assuming that the `ld` on PATH is the selected linker. An unsupported option,
+an unavailable Rust demangler, or no applicable policy must select the
+existing link command without ordering arguments. The capability check must
+leave no installed output. Verify that the unsupported-feature route has
+the same bytes as the original relink for the same inputs. An ordinary link
+or export-verification failure must still fail; fallback must not mask it.
+
+No linker replacement or new packaging dependency is part of this plan.
+Resolve the policy with the relinker's existing Bash, binutils and text
+utilities. Python and uv are used for regeneration, not required by the
+package build. If that separation proves unworkable, stop for approval
+before adding a dependency.
+
+### Regeneration contract
+
+Add a generator under `tools/`, run with the repository's managed interpreter:
+
+```sh
+uv run --no-project --managed-python --python cpython@3.15.0+gil \
+  python -X lazy_imports=normal tools/<function-order-generator>.py <arguments>
+```
+
+The filename and arguments above are placeholders until implementation.
+The generator must derive a checked-in policy from measured execution, in
+this priority order:
+
+1. The union of functions executing at load or init, for both facades and
+   both phrases and journals profiles, using the Phase 1 Callgrind method.
+2. The measured steady keystroke/guess path, excluding functions already
+   assigned to the first group.
+3. Everything else, left to the default linker script.
+
+Use exact canonical demangled paths for policy identity, preserving generic
+arguments and closure identities. Hashed mangled names, archive paths,
+addresses and profiler encounter order must not determine that policy.
+Resolve each stable path against the current static library at package-build
+time, emitting matching input-section names into private temporary linker
+input. Include applicable `.text.unlikely.*` and other function-section
+variants. The mapping must not broaden a measured match into unrelated code.
+Report unresolved or ambiguous identities during regeneration. Specify a
+deterministic within-group order and tie handling.
+
+Keep profiler streams in memory where possible. Operational scratch belongs
+only to the task, with EXIT/INT/TERM cleanup. Retain or upload no captures,
+logs, evidence bundles or archives; report commands and figures as text.
+
+### Verification before enabling the layout
+
+Build the current base and candidate through `tools/packaging/install.sh`.
+Show byte-identical SHA-256 values from two clean candidate builds. Verify
+the actual function-section placement, the missing-feature fallback, the
+79/52 exports, and allocator pairing. Run fmt, clippy and package tests for
+affected crates, plus the standard contract and same-data differentials on
+BDB debug. State the three AGENTS rule 2 path-check outputs.
+
+Measure base, candidate, same-bytes control and pin in one campaign on one
+host, using ext4 and 20 interleaved samples for both facades and profiles.
+Report resident text pages and text Pss at load and init, executed-code
+pages, total init Pss, init Ir and peak heap, warm and cold init time,
+first-candidate time, steady guess costs, and stripped shipping sizes.
+Use the unchanged #842 initbench at `a204f9c0` for its established boundaries.
+
+For cold samples, clean and evict only task-private sample-library copies,
+then verify page-cache nonresidency before loading them. A fresh copy alone
+does not prove coldness. Reject a sample whose cold condition cannot be
+verified. Do not drop system caches or evict another lane's artifacts.
+
+Treat a residency gain below the control envelope (36–48 KiB) as none.
+Issue #986 requires residency within the pin's control envelope or an
+explicit account of the remaining gap; there is no separate assumed savings
+target. Stop if reproducibility fails, exports change, the guess path slows
+beyond the control spread, or a new toolchain/dependency is needed. Coordinate
+with the init-code-trimming lane: whichever lands later regenerates the
+policy and repeats measurements on the resulting source.
+
 ## Release artifacts (`release-packages.yml`)
 
 Every published GitHub release triggers
