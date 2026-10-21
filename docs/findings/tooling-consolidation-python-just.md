@@ -486,12 +486,36 @@ Timing metrics (nanoseconds on one monotonic clock, reported in ms):
 - **Always include a same-bytes control** (the same oxpinyin object at another
   path). Its ratio against ox is the noise floor; if it is not near 1, the
   machine is not quiet and the run is not a result.
-  **tooling stage T11 threshold — OPEN DECISION.** #842 defines no numeric band or
-  acceptance test (`docs/runbooks/initbench.md`, same-bytes control rule;
-  `crates/oxpinyin-initbench/src/report.rs::fmt_ratio`). Tooling stage T11 must choose
-  a fixed band or a confidence-interval overlap test on repeated rounds.
-  This amendment chooses neither. The historical 0.94–1.05 range is not an
-  acceptance band.
+  **tooling stage T11 threshold — maintainer ruling 2026-10-21 UTC.** The
+  ruling applies to the same-bytes control (control against ox) for each
+  metric.
+  1. **Timing.** The paired control/ox median and the entire 95% bootstrap
+     interval (4,000 resamples, seed `0x074A2219`) lie within [0.95, 1.05],
+     inclusive. Otherwise the metric is INCONCLUSIVE and no ox/pin ratio is
+     reported for it. Implemented in #993 (merge `5b8cfddf`):
+     `tools/bisection/teardown.py::CONTROL_INTERVAL`, `paired_ratio` and
+     `stable_control`.
+  2. **Residency (memory checkpoint levels).** The paired difference
+     d = control − ox in KiB has a median and an entire 95% bootstrap
+     interval (same resampling and seed) within ±max(64 KiB, 1% of
+     |median(ox)|), inclusive. Otherwise INCONCLUSIVE. Not implemented:
+     `report_memory` still applies the timing ratio band, with exact
+     equality when a value is not positive.
+  3. **Scoped instruction counts and deterministic heap accounting.**
+     Control equals ox exactly. An unexplained mismatch makes that
+     comparison INVALID, and its ox/pin figures are not reported. Not
+     implemented: the Callgrind, Massif and Memcheck rows are
+     `profiler_only`, and `require_profile_controls` checks only the
+     workload observation.
+  4. **No faster/slower verdict.** There is no faster/slower verdict
+     threshold. Ox/pin ratios are reported with their intervals and no
+     verdict.
+  5. **Unchanged.** The behavioral-equivalence gates, the diagnostic
+     summaries and the historical provenance stay unchanged.
+  6. **Follow-up.** Items 2 and 3 are a focused follow-up with synthetic
+     boundary tests. The campaign is not repeated to reconcile the plan.
+
+  The historical 0.94–1.05 range is not an acceptance band.
 - Never use an absolute figure from another run, host or CPU as a baseline.
   Report the host line, SHA-256 and size for each timed artifact.
   On Linux, report ELF `NEEDED` from `readelf -d`.
@@ -710,7 +734,7 @@ do not restore an older supported interpreter while another scope waits.
 | T10N | Native | Finish any native Rust-test family handoff under Layer 3 parity. Keep its crate/feature/ignore scope. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
 | T10C | Container | Migrate option sweep and Rust differential tier. Require per-scheme counts/JSON, identical selected ignored tests/pass-fail and the drop-in bdb arm. Use Layer 4's test profile. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
 | T11N | Native macOS | Deliver only §7's optional oxpinyin base/PR information. Keep unavailable metrics explicit; no pin or cross-OS gate. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
-| T11C | Container | Deliver measurement/report and startup controller/worker. Use Layer 4's base/PR source input contract. Keep parser output on retained Callgrind/Massif/smaps/JSONL inputs and the same dry-run commands. Apply all §7 units, profiles, refusals, mutations, digests and four-subject interleaving/ratio tests. Retain old parsers until equal. | Partial: #993 (merge `5b8cfddf`) delivered the native teardown workload — in-tree lifecycle worker, M0–M3 checkpoints, separate ABI timings, equivalence, committed `--perf` baseline and attribution; Delivery 3 is not approved. Remaining: the startup controller/worker under Layer 4's base/PR contract, §7 units and profiles, refusals, mutations, digests, measurement/report and four-subject interleaving. #1002 (open) moves function-order regeneration off #842. The §7.5 same-bytes threshold stays open. |
+| T11C | Container | Deliver measurement/report and startup controller/worker. Use Layer 4's base/PR source input contract. Keep parser output on retained Callgrind/Massif/smaps/JSONL inputs and the same dry-run commands. Apply all §7 units, profiles, refusals, mutations, digests and four-subject interleaving/ratio tests. Retain old parsers until equal. | Partial: #993 (merge `5b8cfddf`) delivered the native teardown workload — in-tree lifecycle worker, M0–M3 checkpoints, separate ABI timings, equivalence, committed `--perf` baseline and attribution; Delivery 3 is not approved. Remaining: the startup controller/worker under Layer 4's base/PR contract, §7 units and profiles, refusals, mutations, digests, measurement/report and four-subject interleaving. #1002 (open) moves function-order regeneration off #842. The §7.5 same-bytes threshold is decided by the 2026-10-21 UTC maintainer ruling; its residency and exact-count items are the focused follow-up. |
 | T12N | Native | Migrate source/subject-only ABI probes. Require identical symbol verdicts. Retain wrappers until §5.4 is met. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
 | T12C | Container | Migrate pin ABI and packaging seams. Require identical symbol verdicts and staged installation trees. Retain wrappers until §5.4 is met. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
 | T13N | Native | Switch one approved workflow step at a time to Layers 2–3. Pin uv setup/version, provision managed CPython and verify identity. Keep old/new conclusions equal for one cycle. No permanent Python-version matrix. | Partial: #968 (merge `c017ebee`) switched `ci.yml` test and test-macos to pinned nextest 0.9.143 with the ci profile and separate doctests, preserving selections with a one-cycle identity/verdict comparison. #988 (merge `96ca8c8e`) runs the `tools/**/*.test.py` harnesses on Linux and macOS, excluding `internal-ledger.test.py`, with pinned uv 0.13.1 and managed CPython 3.15.0. Windows stays on cargo test (#950); other workflow steps remain proposed. |
@@ -727,7 +751,8 @@ four W11 dispatch wrappers after moving their registry rows to
 
 Next proposed work, in order: the #1001 fix (the intermittent
 `heavy-slot.test.py` resource-admission failure in the tools harness CI step),
-T2N completion, then T11C. #1002 remains open for the function-order
+T2N completion, then T11C, then the §7.5 residency and exact-count enforcement
+follow-up. #1002 remains open for the function-order
 regeneration move. These are proposals only; each needs its own approval.
 
 Tooling stages T8 and T9 retain `non-utf8-directory-system`, `non-utf8-directory-user`,
@@ -790,9 +815,11 @@ An abort remains a child observation, not a controller crash.
 
 Layers 1–4 own interpreter, shell, nextest and runtime risks. Do not claim
 Windows startup support or adapter/emulation support without acceptance.
-Keep §7.5's control threshold open. Keep tooling stage T3's backstop host and timing
-policy open. Keep one old/new owner per migration family to prevent permanent
-duplication. Historical initbench numbers stay tied to a204f9c0.
+Apply §7.5's maintainer ruling: timing is implemented; residency and
+exact-count enforcement are the focused follow-up. Keep tooling stage T3's
+backstop host and timing policy open. Keep one old/new owner per migration
+family to prevent permanent duplication. Historical initbench numbers stay
+tied to a204f9c0.
 The zhuyin apostrophe difference stays an open finding. This plan neither
 fixes nor classifies it.
 
