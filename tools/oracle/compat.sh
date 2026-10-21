@@ -23,30 +23,20 @@ Options:
   --help                            No runtime or build required
 Needs Bash, Git, tar, SHA-256 utility, and a working runtime. macOS/WSL/Linux
 hosts need no Rust, native DBM or libpinyin for compatibility execution.
-Results remain local in target/compat/results; inputs/targets live in a
+Results remain local in .oxpinyin-container/results; inputs/targets live in a
 checkout-specific Linux volume. See docs/runbooks/compatibility-container.md.
 HELP
 }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 hash() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
 runtime=${OXPINYIN_CONTAINER:-} cell=bdb archive='' jobs=2 memory=${OXPINYIN_CONTAINER_MEMORY_MIB-4096}
-selection=() selected=0 memory_smoke=0
+original_args=("$@")
+selection=() selected=0 memory_smoke=0 list_only=0
 while (($#)); do
 	case $1 in
 	--help|-h) usage; exit 0 ;;
 	--memory-smoke) memory_smoke=1; shift ;;
-	--list)
-		for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
-			if [[ -n ${!name:-} ]]; then
-				printf 'FAIL: %s is not supported; unset it before running repository Python\n' "$name" >&2
-				exit 2
-			fi
-		done
-		command -v uv >/dev/null 2>&1 || {
-			printf 'missing uv 0.13.1; install it and managed CPython 3.15.0+gil (docs/runbooks/setup.md)\n' >&2
-			exit 127
-		}
-		exec uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/bisection/run-all.py --list ;;
+	--list) list_only=1; shift ;;
 	--runners=*|--issue=*) set -- "${1%%=*}" "${1#*=}" "${@:2}"; continue ;;
 	--runtime|--cell|--archive|--jobs|--memory-mib|--runners|--issue|--timeout|--runner-timeout)
 		(($# >= 2)) || { usage >&2; exit 2; }
@@ -68,13 +58,19 @@ done
 case $cell in bdb|kc|tkrzw) ;; *) echo 'cell must be bdb, kc or tkrzw' >&2; exit 2 ;; esac
 [[ $jobs =~ ^[1-9][0-9]*$ ]] || { echo '--jobs must be positive' >&2; exit 2; }
 [[ $memory =~ ^[1-9][0-9]*$ ]] || { echo '--memory-mib must be a positive integer in MiB' >&2; exit 2; }
-((selected || memory_smoke)) || { echo 'select --runners or --issue (use --list to discover gates)' >&2; exit 2; }
+((selected || memory_smoke || list_only)) || { echo 'select --runners or --issue (use --list to discover gates)' >&2; exit 2; }
 ((!memory_smoke || !selected)) || die '--memory-smoke cannot select runners or an issue'
 for command in git tar; do command -v "$command" >/dev/null || die "missing $command"; done
-for variable in UV_PYTHON PYTHONHOME PYTHONPATH; do
+for variable in UV_PYTHON UV_PYTHON_VERSION UV_PYTHON_IMPLEMENTATION UV_PYTHON_VARIANT UV_PYTHON_ARCH UV_PYTHON_BIN_DIR UV_PYTHON_PREFERENCE PYTHONHOME PYTHONPATH; do
 	[[ -z ${!variable:-} ]] || die "$variable is not supported; unset it before running repository Python"
 done
 command -v uv >/dev/null || die 'missing uv 0.13.1 and managed CPython 3.15.0+gil'
+# Fail before runtime detection, pulling, snapshotting or reserving memory.
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+	-m tools.dev.compat.boundary "${original_args[@]}"
+if ((list_only)); then
+	exec uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/bisection/run-all.py --list
+fi
 # All host admission and reservation decisions use the native Python core.
 reserved_run() {
 	exec uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
@@ -119,10 +115,7 @@ if ((memory_smoke)); then
 	launcher=''
 	exit "$status"
 fi
-mkdir -p target/compat/results
 run_id=$(date -u +%Y%m%dT%H%M%SZ)-$$
-results=$repo/target/compat/results/$run_id
-mkdir -p "$results"
 input=$(mktemp -d "${TMPDIR:-/tmp}/oxpinyin-compat.XXXXXX")
 name=oxpinyin-compat-$(date -u +%s)-$$
 launcher=''
@@ -155,9 +148,18 @@ tar --null -T "$input/files" -cf "$input/source.tar"
 	printf 'Host source status:\n'; git status --short
 } > "$input/source.txt"
 printf 'Source archive SHA-256: %s\n' "$(hash < "$input/source.tar" | cut -d' ' -f1)" >> "$input/source.txt"
-cp "$input/source.tar" "$results/source.tar"
-cp "$input/source.txt" "$results/source.txt"
 cp tools/oracle/compat-inside.sh "$input/inside.sh"
+cp tools/dev/compat/identity.py "$input/identity.py"
+input_identity=$(uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+	-m tools.dev.compat.identity seal-inputs "$input" "$key" "$reference_tag" "$(git rev-parse HEAD)")
+source_identity=$(uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+	-m tools.dev.compat.identity verify-inputs "$input" "$input_identity")
+# Container exports are never placed in the native Cargo target/result tree.
+result_root=$(uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+	-m tools.dev.compat.identity result-directory "$repo" "$source_identity" "$run_id")
+results=$result_root/transport
+exported_results=$result_root/result
+mkdir -p "$results" "$exported_results"
 volume=oxpinyin-compat-$(printf '%s' "$repo" | hash | cut -c1-16)
 platform=(--platform linux/amd64)
 relabel=
@@ -231,12 +233,12 @@ if [[ $(basename "$runtime") == container ]]; then
 else
 	"$runtime" volume inspect "$volume" >/dev/null 2>&1 || "$runtime" volume create "$volume"
 fi
-printf 'Compatibility: Linux amd64; non-amd64 hosts require emulation. No native performance claims.\nVolume: %s\nResults: %s\n' "$volume" "$results"
+printf 'Compatibility: Linux amd64; non-amd64 hosts require emulation. No native performance claims.\nVolume: %s\nResults: %s\n' "$volume" "$result_root"
 set +e
 reserved_run "$name" --console "$results/console.log" --exit-confirmed "$input/exit-confirmed" -- "${platform[@]}" "${run_env[@]}" \
 	-v "$volume:/state" -v "$input:/input:ro$relabel" \
 	-w / -- "$image" bash /input/inside.sh "$cell" "$key" "$run_id" "$reference_tag" \
-	"${selection[@]}" --jobs "$jobs" &
+	"$input_identity" "${selection[@]}" --jobs "$jobs" &
 launcher=$!
 wait "$launcher"
 status=$?
@@ -248,9 +250,12 @@ set -e
 if [[ $(basename "$runtime") == container ]]; then
 	# Apple copy requires a running container; read the persisted volume instead.
 	(reserved_run "$name-results" --remove -- "${platform[@]}" --cpus "$jobs" -v "$volume:/state:ro" -w / -- "$image" \
-		tar -C "/state/results/$run_id" -cf - . | tar -C "$results" -xf -
+		tar -C "/state/results/container/$source_identity/$run_id" -cf - . | tar -C "$exported_results" -xf -
 	)
 else
-	"$runtime" cp "$name:/state/results/$run_id/." "$results/"
-fi || echo "Additional result files unavailable; console retained at $results/console.log" >&2
+	"$runtime" cp "$name:/state/results/container/$source_identity/$run_id/." "$exported_results/"
+fi || die 'container result export failed; results are not verified'
+# Host transport diagnostics are separate from the sealed inner result files.
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+	-m tools.dev.compat.identity verify-results "$exported_results" "$input_identity" || die 'container result identity verification failed'
 exit "$status"

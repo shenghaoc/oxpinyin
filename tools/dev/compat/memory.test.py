@@ -431,7 +431,7 @@ sys.stdin.readline()
     def fake_runtime(self):
         runtime = self.directory / 'docker'
         runtime.write_text(f'#!{sys.executable}\n' + r'''
-import json, os, sys, time
+import hashlib, io, json, os, sys, tarfile, time
 from pathlib import Path
 root=Path(os.environ['OXPINYIN_LOCK_DIR'])
 path=root/'runtime-state'
@@ -442,6 +442,9 @@ elif action=='image':
     if args[1]=='list': print(os.environ.get('FAKE_COMPAT_IMAGE',''))
 elif action in ('info','volume'): pass
 elif action=='create':
+    for argument in args:
+        if ':/input:ro' in argument:
+            (root/'fixture-input').write_text(argument.split(':/input:ro')[0])
     records=list(root.glob('container-memory-*.json'))
     assert len(records)==1, 'create without reservation'
     record=json.loads(records[0].read_text())
@@ -474,9 +477,20 @@ elif action=='start':
     row['status']['startedDate']='2026-10-20T15:40:28Z'; row['status']['networks']=[dict(network='default')]
     path.write_text(json.dumps(row))
     (root/'started').touch()
-    print('payload-ready',flush=True)
     if row['Name'].endswith('-results'):
+        directory=Path((root/'fixture-input').read_text())
+        data=(directory/'identity.json').read_bytes()
+        provenance=dict(schema=1, environment='container', inputs=json.loads(data),
+                        input_sha256=hashlib.sha256(data).hexdigest(), artifacts=None,
+                        artifacts_sha256=hashlib.sha256(b'null').hexdigest(),
+                        files={'results.json':hashlib.sha256(b'[]').hexdigest()})
+        with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as output:
+            for filename, content in [('results.json', b'[]'), ('provenance.json', json.dumps(provenance).encode())]:
+                member=tarfile.TarInfo(filename); member.size=len(content)
+                output.addfile(member, io.BytesIO(content))
         row['State']['Status']='exited'; row['status']['state']='stopped'; row['status']['networks']=[]; path.write_text(json.dumps(row))
+    else:
+        print('payload-ready',flush=True)
     while json.loads(path.read_text())['State']['Status']=='running': time.sleep(.01)
     sys.exit(int(os.environ.get('PAYLOAD_STATUS','0')))
 elif action=='stop':
@@ -593,9 +607,10 @@ elif action=='rm': path.unlink(missing_ok=True)
         uv.write_text(f'#!{sys.executable}\n' + """import sys
 from tools.dev import host
 host.resource_snapshot=lambda: dict(available_mib=16000, cpus=1, cargo_cpus=1, notes=[])
-from tools.dev.compat.memory import main
-assert sys.argv[sys.argv.index('-m')+1]=='tools.dev.compat.memory'
-raise SystemExit(main(sys.argv[sys.argv.index('-m')+2:]))
+import importlib
+module = sys.argv[sys.argv.index('-m')+1]
+assert module in ('tools.dev.compat.memory', 'tools.dev.compat.boundary', 'tools.dev.compat.identity')
+raise SystemExit(importlib.import_module(module).main(sys.argv[sys.argv.index('-m')+2:]))
 """)
         uv.chmod(0o755)
         # This executable lives outside ROOT, as real uv does.
@@ -607,7 +622,7 @@ raise SystemExit(main(sys.argv[sys.argv.index('-m')+2:]))
         apple = self.directory / 'container'
         apple.symlink_to(runtime)
         fixture = self.directory / 'source'
-        paths = ('tools/oracle/compat.sh', 'tools/container/runtime.sh')
+        paths = ('tools/oracle/compat.sh', 'tools/container/runtime.sh', 'tools/dev/compat/identity.py')
         for relative in paths:
             destination = fixture / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -620,7 +635,7 @@ raise SystemExit(main(sys.argv[sys.argv.index('-m')+2:]))
         git = self.directory / 'git'
         git.write_text('''#!/bin/sh
 case $1 in
-ls-files) printf 'tools/oracle/compat-inside.sh\\0' ;;
+ls-files) printf 'tools/oracle/compat-inside.sh\\0tools/dev/compat/identity.py\\0' ;;
 rev-parse) printf '0000000000000000000000000000000000000000\\n' ;;
 status) : ;;
 *) exit 1 ;;

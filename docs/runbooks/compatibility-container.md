@@ -215,6 +215,41 @@ input here.
 
 ## Inputs, results and resumption
 
+The host preflight in `tools.dev.compat.boundary` runs before runtime access,
+pulls, snapshot creation or memory reservation. Unknown options, runner/cell
+selections, timeouts naming unselected runners, invalid model checksums and
+undeclared `OXPINYIN_*`, `PINYIN_*` or `ORACLE_*` inputs fail there. Native
+target, Cargo, interpreter, uv-cache and library-path overrides are rejected;
+unset them before launch. `OXPINYIN_LOCK_DIR` remains an absolute native budget
+directory only, and the host heavy-slot marker is never forwarded inside.
+Runtime, memory, proxy/network and optional CA inputs retain their existing
+meaning. No arbitrary inner path or prebuilt host artifact input is accepted.
+
+The inner script assigns Cargo, uv cache, home and heavy locks under
+`/state/container/<image-key>/`; the managed interpreter remains the image's
+`/opt/uv/python` installation. Targets add the source content identity and cell
+to this container namespace. The per-checkout `/state/run.lock` still serializes
+source replacement and preparation. The native budget reservation is the only
+shared admission state.
+
+`tools.dev.compat.identity` seals the source member contents/modes, archive,
+optional model, inner script and verifier before launch. The inner verifier
+checks the expected identity before extraction; unsafe source members fail.
+Container artifact records add source/image/reference identities and SHA-256
+content digests, checked before runner execution. Missing identities, changed
+content (including same-size/same-mtime changes) and artifacts outside the
+container target fail. Native artifact records retain their existing contract.
+
+The boundary crossings are limited to the following:
+
+| Crossing | Classification |
+| --- | --- |
+| Source snapshot, manifest and optional checksum-pinned model input | Read-only task inputs mounted at `/input`. |
+| Runtime selection, jobs, hard limit, six proxy variables and optional CA | Declared transport/build configuration; no native cache or artifact path is forwarded. |
+| `/state` volume and generated oracle environment | Container-owned work, caches, targets, locks and results, private to the checkout. |
+| Native container-memory reservation | Sole shared-state exception; lifetime remains tied to confirmed runtime exit. |
+| Host result export | Verified container record under `.oxpinyin-container`, never native verification or native build state. |
+
 Model20 and all derived files remain local under the existing data policy.
 If you already have the pinned archive, avoid downloading it again:
 
@@ -236,12 +271,16 @@ rebuilds. Interrupted preparation can be rerun; existing hash/manifest checks
 prevent partial inputs from being treated as verified.
 
 The launcher prints the volume name and a host result directory under
-`target/compat/results/<UTC-run-id>/`. It copies comparison JSON, console output and the existing registry
-runner/build logs there as the host user. Pull/build failures also retain local diagnostics.
-The exact source snapshot (`source.tar`), its SHA-256 and source status are
-also retained there, so dirty-source results remain attributable after later
-runs replace the working snapshot. These are local evidence, not material
-for Git or model redistribution. Do not commit these local files. The JSON/table's reason
+`.oxpinyin-container/results/<source-content-sha256>/<UTC-run-id>/`.
+Its `transport/` directory retains pull/build diagnostics and the attached
+console. Its `result/` directory contains exported comparison JSON and existing
+registry logs plus `provenance.json`: the source content manifest,
+image/reference identity, artifact content identities and result-file digests.
+The export must match that identity; a missing or mismatched record fails the
+launcher. These remain container records outside the native Cargo target
+namespace. The input source archive is temporary and is not retained in the
+export. These are local evidence, not material for Git or model redistribution.
+Do not commit these local files. The JSON/table's reason
 column identifies missing prerequisites versus actual differences; the
 container console records source identity, reference identity and toolchain.
 
