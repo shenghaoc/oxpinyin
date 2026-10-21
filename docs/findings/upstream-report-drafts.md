@@ -10,7 +10,7 @@ was added 2026-09-27 UTC: `pinyin_init` leaves the process
 `LC_NUMERIC` at `"C"` (#539), read at the current pin `074a2219`.
 A seventh draft, item 7, was added 2026-10-21 UTC: temporary Berkeley
 DB handles leak on failed user-database loads (#993). The file now
-holds seven drafts; item 7 awaits standalone validation before filing.
+holds seven drafts; item 7 is ready to file as a separate report.
 Filing is the
 maintainer's action (and account); nothing here has been posted. The
 collection mandate is `AGENTS.md`'s ("collected to report back to
@@ -429,14 +429,67 @@ valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 1
 valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 10
 ```
 
-**Standalone evidence:** validation is pending. The first C11 compile
-stopped because the reproduction omitted `<stdbool.h>` before the pin's
-headers. The include is now present, but this revision has not been
-compiled. None of the four standalone Memcheck runs completed, and
-the patched-pin comparison has not started. Definitely/indirectly lost
-totals and allocation stacks remain to be recorded separately for each
-facade/N. #993's figures below are supporting evidence, not results of
-this init-only program.
+**Standalone evidence** (Memcheck 3.27.1, Linux amd64): all four
+init/fini-only runs completed against the reference pin prefix. Each
+process used a fresh empty user directory. The reference libraries were
+the pin-built `libpinyin.so.15.0.0` (SHA-256
+`754499651c302efd91fe7f72dd6a791978400b268cb6206d2ebe644015721f30`)
+and `libzhuyin.so.15.0.0` (SHA-256
+`cf4ccbce9f70f6c7e412b92a52a243ba64fdea1ff197cbc44019c6b85650d53b`),
+with the pin's existing Berkeley DB system data. On the measurement
+host the pin prefix was a relocated copy of `/opt/pinyin-oracle/bdb`;
+`PKG_CONFIG_PATH` pointed at a copy of its two `.pc` files with
+`prefix=` set to that copy. No header or library content changed.
+
+| Facade | N | Definitely lost | Indirectly lost | Total |
+| --- | ---: | ---: | ---: | ---: |
+| pinyin | 1 | 4,368 B / 3 blocks | 11,462 B / 30 blocks | 15,830 B / 33 blocks |
+| pinyin | 10 | 43,680 B / 30 blocks | 114,620 B / 300 blocks | 158,300 B / 330 blocks |
+| zhuyin | 1 | 4,368 B / 3 blocks | 11,462 B / 30 blocks | 15,830 B / 33 blocks |
+| zhuyin | 10 | 43,680 B / 30 blocks | 113,884 B / 298 blocks | 157,564 B / 328 blocks |
+
+The three definitely-lost roots are the temporary handles, and the
+indirect blocks hang from them. In the N=1 runs the roots are:
+
+- `ChewingLargeTable2::load_db` (`chewing_large_table2_bdb.cpp:115`),
+  1,456 direct + 3,816 indirect bytes. The stack runs through
+  `load` (`facade_chewing_table2.h:88`) and `pinyin_init`/`zhuyin_init`.
+- `PhraseLargeTable3::load_db` (`phrase_large_table3_bdb.cpp:130`),
+  1,456 + 3,823 bytes; caller `load` (`facade_phrase_table3.h:87`) and
+  `pinyin_init`/`zhuyin_init`.
+- `Bigram::load_db` (`ngram_bdb.cpp:61`), 1,456 + 3,823 bytes; caller
+  `pinyin_init`/`zhuyin_init`.
+
+The indirect stacks pass through `db_env_create`/`__rep_env_create`
+and the failed `tmp_db->open` at lines 121, 136 and 67. N=10 repeats
+each root ten times.
+
+The standalone N=1 total is 15,830 B / 33 blocks per facade. #993's
+15,854 B / 33 blocks per cycle is 24 bytes higher with the same block
+count. The difference is the first-candidate work in #993's cycle:
+this loop only calls init/fini and never prepares an instance or a
+candidate. The three `load_db` roots are identical. At N=10 the direct
+root count is ten times; pinyin's indirect total is exactly ten times,
+while zhuyin's is 736 bytes / 2 blocks below ten times. The direct
+30-block count and every `load_db` root remain.
+
+**Patched-pin check:** applying the suggested diff below to the same
+pinned source and rebuilding it in a separate prefix removes the loss.
+The patch SHA-256 is
+`77e0453a6830255c9fb9ce832864a9ce72e093223d4f7fc6c0214e214067dc4a`.
+This host lacks `autoreconf`, so the build used the pin's generated
+`configure` and the oracle recipe's `--libs-only` steps
+(`--disable-static --with-dbm=BerkeleyDB --enable-libzhuyin`,
+`make -C src`, `make -C src install`, `make install-pkgconfigDATA`);
+the system data stayed the reference prefix's. The same four valgrind
+commands then reported:
+
+| Facade | N | Definitely lost | Indirectly lost |
+| --- | ---: | ---: | ---: |
+| pinyin | 1 | 0 B / 0 blocks | 0 B / 0 blocks |
+| pinyin | 10 | 0 B / 0 blocks | 0 B / 0 blocks |
+| zhuyin | 1 | 0 B / 0 blocks | 0 B / 0 blocks |
+| zhuyin | 10 | 0 B / 0 blocks | 0 B / 0 blocks |
 
 **Supporting reproduction from #993** (the exact existing attribution
 command, retained as historical evidence). It requires the oxpinyin harness at
@@ -492,8 +545,8 @@ figures above apply to failed open only.
 **Suggested fix:** close the successfully created temporary handle before
 each of the two early returns in all three methods, preserving the
 existing `false` result and success-path close. This proposed upstream
-diff is not applied to shipping code and has not been build-tested or
-measured with the fix:
+diff is not applied to shipping code; it was built and measured in the
+separate patched prefix above:
 
 ```diff
 --- a/src/storage/chewing_large_table2_bdb.cpp
@@ -546,8 +599,8 @@ measured with the fix:
 +    }
 ```
 
-This separate BDB resource-leak report awaits standalone validation
-before the maintainer files it. Nothing has been filed upstream; the
+This separate BDB resource-leak report is ready for the maintainer to
+file. Nothing has been filed upstream; the
 proposed cleanup is not an authorization to change oxpinyin behavior.
 
 ---
@@ -557,8 +610,7 @@ proposed cleanup is not an authorization to change oxpinyin behavior.
 - Independence: no fix touches another; file items 1–4 as four issues.
   Item 5 is a separate report; it does not belong in that batch, and
   neither does item 6, which is a process-state defect to file on its
-  own. Item 7 is a separate BDB resource-leak report, pending standalone
-  validation before filing.
+  own. Item 7 is a separate BDB resource-leak report, ready to file.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Credit line per `AGENTS.md` attribution rules is the maintainer's to
   place; the reproductions above stand alone.
