@@ -48,9 +48,10 @@ class MemoryTests(unittest.TestCase):
         self.addCleanup(reservation.close)
         return reservation
 
-    def test_positive_memory_size_and_default_covers_existing_build_admission(self):
-        self.assertEqual(host.container_memory_mib(None), 4096)
-        self.assertGreaterEqual(4096, host.HEADROOM_MIB + 2 * host.RUSTC_PEAK_MIB)
+    def test_positive_memory_size_and_default_covers_two_job_estimates(self):
+        self.assertEqual(host.container_memory_mib(None), host.CONTAINER_MEMORY_MIB)
+        self.assertGreaterEqual(host.CONTAINER_MEMORY_MIB, 2 * host.RUSTC_PEAK_MIB)
+        self.assertGreaterEqual(host.CONTAINER_MEMORY_MIB, 2 * host.RUNNER_PEAK_MIB)
         self.assertEqual(host.container_memory_mib('1'), 1)
         for value in ('0', '-1', '+1', '1.5', '1G', '', ' 2', 'true'):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'positive integer'):
@@ -101,6 +102,43 @@ class MemoryTests(unittest.TestCase):
             with self.assertRaises(host.ResourceBlocked):
                 self.reservation()
             self.assertFalse(list(self.directory.glob('container-memory-*.json')))
+
+    def test_launcher_excludes_only_its_validated_ancestor_slot(self):
+        code = ("from unittest import mock\n"
+                "from tools.dev import host, slot\n"
+                "host.resource_snapshot=lambda: dict(available_mib=6144, cpus=2, cargo_cpus=2, notes=[])\n"
+                "reservation=slot.ContainerReservation('/usr/bin/podman', 'podman', 'nested', 4096)\n"
+                "try:\n"
+                "    reservation.acquire()\n"
+                "    with mock.patch.object(slot, 'container_recovery_state', return_value='gone'):\n"
+                "        reservation.release()\n"
+                "finally:\n"
+                "    reservation.close()\n")
+        def launch(env, held):
+            return subprocess.run([sys.executable, '-c', code], cwd=ROOT, env=env,
+                                  pass_fds=held.slot.pass_fds(), capture_output=True, text=True, timeout=5)
+        with slot.HeavyAdmission('launcher', self.env, out=self.out) as held:
+            env = held.slot.child_env(self.env)
+            result = launch(env, held)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('other slot reservations=0 MiB', result.stderr)
+            marker = json.loads(env[slot.HEAVY_SLOT_HELD])
+            invalid = ({slot.HEAVY_SLOT_HELD: json.dumps(dict(marker, pid=os.getppid()))},
+                       {slot.HEAVY_SLOT_HELD: json.dumps(dict(marker, lock_dir=str(self.directory / 'elsewhere')))},
+                       {slot.HEAVY_SLOT_HELD: None})
+            for change in invalid:
+                with self.subTest(change=change):
+                    changed = dict(env, **change)
+                    if changed[slot.HEAVY_SLOT_HELD] is None:
+                        changed.pop(slot.HEAVY_SLOT_HELD)
+                    result = launch(changed, held)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('resource-blocked: 4096 MiB needed, 3496 MiB available', result.stderr)
+            with mock.patch.dict(os.environ, OXPINYIN_HEAVY_SLOTS='2'):
+                with slot.HeavyAdmission('other work', self.env, out=self.out):
+                    result = launch(env, held)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('resource-blocked: 4096 MiB needed, 3496 MiB available', result.stderr)
 
     def test_inner_domain_uses_its_effective_limit_and_own_reservations(self):
         self.reservation()

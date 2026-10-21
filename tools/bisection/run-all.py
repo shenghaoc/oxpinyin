@@ -510,7 +510,8 @@ def run_main():
     resources = resource_snapshot()
     print('resources (provisional): ' + '; '.join(resources['notes']), file=sys.stderr, flush=True)
     defaults = memory_defaults(base_env, args.jobs, cpus=resources['cpus'],
-                               available_mib=resources['available_mib'])
+                               available_mib=resources['available_mib'],
+                               memory_limit_mib=resources.get('memory_limit_mib'))
     plan_defaults(defaults, phase='provisional defaults')
     # A worker can run light work even when no heavy process fits.
     args.jobs = max(1, defaults['--jobs'][0])

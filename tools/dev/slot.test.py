@@ -173,6 +173,29 @@ class SlotTests(unittest.TestCase):
                 self.fail('admission should fail closed')
         self.assertIn('no process started', out.getvalue())
 
+    def test_admission_omits_headroom_only_for_a_finite_compatibility_guest(self):
+        env = dict(self.env, CARGO_BUILD_JOBS='2', RUST_TEST_THREADS='2',
+                   OXPINYIN_RESOURCE_WAIT_SECONDS='0')
+        for compat, limit, available, succeeds in (('1', 4096, 1200, True),
+                                                   ('1', 4096, 1199, False),
+                                                   ('1', None, 1200, False),
+                                                   ('0', 4096, 1200, False)):
+            with self.subTest(compat=compat, limit=limit, available=available):
+                out = io.StringIO()
+                admission = slot.HeavyAdmission(
+                    'limited guest', dict(env, OXPINYIN_COMPAT_CONTAINER=compat), out=out,
+                    resource_snapshot=lambda: dict(available_mib=available, memory_limit_mib=limit,
+                                                   cpus=2, cargo_cpus=2, notes=[]))
+                if succeeds:
+                    with admission:
+                        self.assertEqual(admission.estimate, 1200)
+                        self.assertEqual(admission.headroom, 0)
+                else:
+                    room = available if compat == '1' and limit is not None else 0
+                    with self.assertRaisesRegex(host.ResourceBlocked, f'1200 MiB needed, {room} MiB available'):
+                        with admission:
+                            self.fail('work started without sufficient admitted memory')
+
     def test_relative_lock_directory_is_rejected_before_a_child_starts(self):
         with mock.patch.dict(os.environ, {'OXPINYIN_LOCK_DIR': 'relative'}):
             with self.assertRaisesRegex(ValueError, 'must be an absolute path'):

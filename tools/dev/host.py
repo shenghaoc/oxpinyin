@@ -26,7 +26,10 @@ RUSTC_PEAK_MIB = 600        # rustc 555 MiB (test build), 492 (cold cell build),
 TEST_THREAD_PEAK_MIB = 64   # the crates' test binaries peak at 6-11 MiB; rustdoc beside them 91 MiB
 RUNNER_PEAK_MIB = 1024      # one gate-set runner job (contract-diff worker pairs and their fixtures)
 HEADROOM_MIB = 2048         # left to the desktop: the browser, the editor, the page cache
-CONTAINER_MEMORY_MIB = 4096  # two rustc (1,200 MiB) + inner headroom + runtime room
+# BDB cpp-smoke, two jobs, rootless Podman, 2026-10-21 UTC: cold-build peak
+# 2,232,991,744 bytes (ceil 2130 MiB). Add 20% (426 MiB), round up to 256 MiB;
+# also covers two RUNNER_PEAK_MIB (2048 MiB) and two RUSTC_PEAK_MIB (1200 MiB).
+CONTAINER_MEMORY_MIB = 2560
 
 
 def container_memory_mib(value):
@@ -292,7 +295,7 @@ def linux_cgroup_dirs(proc=Path('/proc'), root=Path('/sys/fs/cgroup')):
 
 def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
     """Read known limits. Report each unreadable limit as unknown."""
-    notes, memories, cpus = [], [], []
+    notes, memories, limits, cpus = [], [], [], []
     if sys.platform.startswith('linux'):
         try:
             line = next(line for line in (proc / 'meminfo').read_text().splitlines()
@@ -329,8 +332,11 @@ def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
                     notes.append(f'cgroup {label} memory.max=max')
                 else:
                     maximum = int(maximum)
+                    if maximum < 0:
+                        raise ValueError('negative memory limit')
+                    limits.append(maximum)
                     current = int((directory / 'memory.current').read_text().strip())
-                    if maximum < 0 or current < 0:
+                    if current < 0:
                         raise ValueError('negative memory')
                     room = max(0, maximum - current) // (1024 * 1024)
                     memories.append(room)
@@ -365,13 +371,21 @@ def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
         notes.append(f'CPU count={count if count is not None else "unknown; fallback 1"}')
         cpus.append(count or 1)
     return dict(available_mib=min(memories) if memories else None,
+                memory_limit_mib=min(limits) // (1024 * 1024) if limits else None,
                 cpus=max(1, math.floor(min(cpus))),
                 cargo_cpus=max(1, math.ceil(min(cpus))), notes=notes)
 
 
-def fit(available_mib, per_process_mib, ceiling):
+def memory_headroom(env, resources):
+    """The host keeps desktop room; a hard-limited compatibility guest does not."""
+    if env.get('OXPINYIN_COMPAT_CONTAINER') == '1' and resources.get('memory_limit_mib') is not None:
+        return 0
+    return HEADROOM_MIB
+
+
+def fit(available_mib, per_process_mib, ceiling, headroom_mib=HEADROOM_MIB):
     """Return zero when no process fits after the headroom."""
-    return max(0, min(ceiling, (available_mib - HEADROOM_MIB) // per_process_mib))
+    return max(0, min(ceiling, (available_mib - headroom_mib) // per_process_mib))
 
 
 READ_HOST = object()
@@ -387,14 +401,16 @@ def validate_settings(env):
         raise ValueError('Invalid RUST_TEST_THREADS: use a positive integer')
 
 
-def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST):
+def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST, *, memory_limit_mib=None):
     """Keep caller values. Choose only unset values from current resources."""
     validate_settings(env)
     if available_mib is READ_HOST:
         resources = resource_snapshot()
         available_mib = resources['available_mib']
+        memory_limit_mib = resources.get('memory_limit_mib')
         cpus = cpus or resources['cpus']
     cpus = cpus or os.cpu_count() or 1
+    headroom = memory_headroom(env, dict(memory_limit_mib=memory_limit_mib))
     chosen = {}
     def choose(name, explicit, per_process, ceiling, unit):
         if explicit is not None:
@@ -402,8 +418,8 @@ def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST):
         elif available_mib is None:
             chosen[name] = (0, 'available memory unknown; no capacity admitted', False)
         else:
-            value = fit(available_mib, per_process, ceiling)
-            chosen[name] = (value, f'{available_mib} MiB available - {HEADROOM_MIB} MiB headroom, '
+            value = fit(available_mib, per_process, ceiling, headroom)
+            chosen[name] = (value, f'{available_mib} MiB available - {headroom} MiB headroom, '
                                    f'{per_process} MiB per {unit}, at most {ceiling}', False)
     choose('CARGO_BUILD_JOBS', env.get('CARGO_BUILD_JOBS'), RUSTC_PEAK_MIB,
            cpus, 'rustc')
@@ -420,7 +436,8 @@ def plan_defaults(chosen, out=sys.stderr, phase='defaults'):
 
 def prepare_heavy_env(env, resources, *, runner=False):
     """Prepare one child environment and its admission estimate."""
-    chosen = memory_defaults(env, None, cpus=resources['cpus'], available_mib=resources['available_mib'])
+    chosen = memory_defaults(env, None, cpus=resources['cpus'], available_mib=resources['available_mib'],
+                             memory_limit_mib=resources.get('memory_limit_mib'))
     chosen.pop('--jobs')
     child = dict(env, **{name: str(value[0]) for name, value in chosen.items()})
     build = child['CARGO_BUILD_JOBS']

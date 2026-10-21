@@ -18,10 +18,20 @@ separate platform evidence.
 
 Each execution uses a runtime hard limit and a matching native reservation.
 `--memory-mib N` overrides `OXPINYIN_CONTAINER_MEMORY_MIB`; both accept only a
-positive integer in MiB. The default is **4096 MiB**. It covers the existing
-two-job build estimate (2 × 600 MiB) and the inner 2048 MiB headroom, with room
-for runtime overhead. Larger explicit job counts can need a larger limit.
-The host must also retain its normal 2048 MiB headroom. Admission uses the
+positive integer in MiB. The default is **2560 MiB**. A serial base/candidate
+measurement on Ubuntu with rootless Podman and BDB `cpp-smoke --jobs 2`
+(2026-10-21 UTC) measured a base cold-build peak of 2,232,991,744 bytes
+(rounded up to 2130 MiB), including container preparation. Add a 20% margin
+(426 MiB) and round up to 256 MiB: 2560 MiB. This also exceeds the two-job
+build estimate (2 × 600 MiB) and runner estimate (2 × 1024 MiB). The candidate
+peaked at 1,860,026,368 bytes and passed without reaching its limit. The PR
+records the commands and separate gate-phase peaks; raw capture was not kept.
+Larger explicit job counts can need a larger limit.
+Desktop headroom applies once, on the host: host admission requires the full
+container limit plus 2048 MiB (4608 MiB by default), after other reservations.
+Inside the compatibility container, `OXPINYIN_COMPAT_CONTAINER=1` and a visible finite cgroup `memory.max`
+select zero desktop headroom. Native work, an unlimited guest and an unknown
+cgroup limit retain the normal 2048 MiB headroom. Admission uses the
 native resource measurements and `OXPINYIN_RESOURCE_WAIT_SECONDS` (default
 1800); unknown or inadequate memory waits, then fails without launching.
 The host needs uv 0.13.1 and managed CPython 3.15.0+gil for this shared code.
@@ -29,7 +39,9 @@ The host needs uv 0.13.1 and managed CPython 3.15.0+gil for this shared code.
 `tools.dev.slot` serializes native admission and container budget changes with
 `heavy-admission` in the native lock directory (`OXPINYIN_LOCK_DIR`, otherwise
 the existing host default). It subtracts the full container limit throughout
-its lifetime. No native heavy slot is acquired for transport. The inner task
+its lifetime. No native heavy slot is acquired for transport. If transport
+inherits `OXPINYIN_HEAVY_SLOT_HELD`, its validated live ancestor slot is excluded
+from the container budget; other native slots still count. The inner task
 retains independent admission, effective cgroup/guest memory measurements and
 container-only reservations. The Apple result-reader container uses the same
 hard-limit/reservation path and gets its own record. The helper writes an exit

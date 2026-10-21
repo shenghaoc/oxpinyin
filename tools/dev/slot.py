@@ -263,6 +263,38 @@ def admission_lock(directory):
         # Closing this unshared descriptor releases the admission lock.
 
 
+def inherited_slot_marker(directory, out=sys.stderr):
+    """Validate the existing marker against this domain and a live ancestor holder."""
+    marker = os.environ.get(HEAVY_SLOT_HELD)
+    if marker is None:
+        return None
+    try:
+        held = json.loads(marker)
+        if (not isinstance(held, dict) or not {'lock_dir', 'slot', 'pid'} <= set(held)
+                or set(held) - {'lock_dir', 'slot', 'pid', 'fd'}
+                or not isinstance(held['lock_dir'], str)
+                or not Path(held['lock_dir']).is_absolute()
+                or type(held['slot']) is not int or held['slot'] < 0
+                or type(held['pid']) is not int or held['pid'] <= 0
+                or ('fd' in held and (type(held['fd']) is not int or held['fd'] < 0))):
+            raise ValueError('invalid fields')
+        marked_directory = Path(held['lock_dir']).absolute()
+    except (ValueError, OSError, RuntimeError) as exc:
+        raise ValueError(f'Invalid {HEAVY_SLOT_HELD}: expected a JSON object with '
+                         'an absolute lock_dir, a nonnegative integer slot, and a positive holder pid') from exc
+    if marked_directory == directory.resolve():
+        holder = host.read_holder(marked_directory / f"{HEAVY_SLOT}-{held['slot']}")
+        if (isinstance(holder, dict) and holder.get('pid') == held['pid']
+                and host.pid_alive(held['pid']) and host.is_ancestor(held['pid'])):
+            return held
+        print(f'stale {HEAVY_SLOT_HELD}: pid {held["pid"]}, slot {held["slot"]}; '
+              'acquire a slot normally', file=out, flush=True)
+    else:
+        print(f'stale {HEAVY_SLOT_HELD}: different lock directory; acquire a slot normally',
+              file=out, flush=True)
+    return None
+
+
 class HeavySlot:
     """Hold one host-wide heavy slot for the duration of a `with` block.
 
@@ -294,45 +326,22 @@ class HeavySlot:
 
     def _inherit(self):
         self.lock_dir = host.host_lock_dir().absolute()
-        marker = os.environ.get(HEAVY_SLOT_HELD)
-        if marker is not None:
+        held = inherited_slot_marker(self.lock_dir, self.out)
+        if held is None:
+            return False
+        self.slot, self.holder_pid = held['slot'], held['pid']
+        self.inherited = True
+        fd = held.get('fd')
+        if fd is not None:
+            path = self.lock_dir / f'{HEAVY_SLOT}-{self.slot}'
             try:
-                held = json.loads(marker)
-                if (not isinstance(held, dict) or not {'lock_dir', 'slot', 'pid'} <= set(held)
-                        or set(held) - {'lock_dir', 'slot', 'pid', 'fd'}
-                        or not isinstance(held['lock_dir'], str)
-                        or not Path(held['lock_dir']).is_absolute()
-                        or type(held['slot']) is not int or held['slot'] < 0
-                        or type(held['pid']) is not int or held['pid'] <= 0
-                        or ('fd' in held and (type(held['fd']) is not int or held['fd'] < 0))):
-                    raise ValueError('invalid fields')
-                directory = Path(held['lock_dir']).absolute()
-            except (ValueError, OSError, RuntimeError) as exc:
-                raise ValueError(f'Invalid {HEAVY_SLOT_HELD}: expected a JSON object with '
-                                 'an absolute lock_dir, a nonnegative integer slot, and a positive holder pid') from exc
-            if directory == self.lock_dir.resolve():
-                path = directory / f"{HEAVY_SLOT}-{held['slot']}"
-                holder = host.read_holder(path)
-                if (isinstance(holder, dict) and holder.get('pid') == held['pid']
-                        and host.pid_alive(held['pid']) and host.is_ancestor(held['pid'])):
-                    self.slot, self.holder_pid = held['slot'], held['pid']
-                    self.inherited = True
-                    fd = held.get('fd')
-                    if fd is not None:
-                        try:
-                            if os.path.samestat(os.fstat(fd), path.stat()):
-                                self.inherited_fd = fd
-                        except OSError:
-                            pass
-                    print(f'heavy slot {self.slot} inherited from ancestor pid {self.holder_pid}: {self.command}',
-                          file=self.out, flush=True)
-                    return True
-                print(f'stale {HEAVY_SLOT_HELD}: pid {held["pid"]}, slot {held["slot"]}; '
-                      'acquire a slot normally', file=self.out, flush=True)
-            else:
-                print(f'stale {HEAVY_SLOT_HELD}: different lock directory; acquire a slot normally',
-                      file=self.out, flush=True)
-        return False
+                if os.path.samestat(os.fstat(fd), path.stat()):
+                    self.inherited_fd = fd
+            except OSError:
+                pass
+        print(f'heavy slot {self.slot} inherited from ancestor pid {self.holder_pid}: {self.command}',
+              file=self.out, flush=True)
+        return True
 
     def try_acquire(self):
         """Try once. Do not block a worker while the slot is busy."""
@@ -546,7 +555,9 @@ class ContainerReservation:
             while True:
                 check_cancelled()
                 with admission_lock(self.directory):
-                    resources = budget_resources(self.directory, out=self.out)
+                    held = inherited_slot_marker(self.directory, self.out)
+                    own_slot = held['slot'] if held is not None else None
+                    resources = budget_resources(self.directory, own_slot, out=self.out)
                     available = resources['available_mib']
                     estimate = self.record['memory_mib']
                     if available is not None and available - host.HEADROOM_MIB >= estimate:
@@ -612,7 +623,8 @@ def reserve_heavy_env(slot, env, *, runner=False, resource_snapshot=None, prepar
     with admission_lock(slot.lock_dir):
         resources = budget_resources(slot.lock_dir, slot.slot, read=read)
         child, chosen, estimate = prepare(env, resources, runner=runner)
-        admitted = resources['available_mib'] is not None and resources['available_mib'] - host.HEADROOM_MIB >= estimate
+        headroom = host.memory_headroom(env, resources)
+        admitted = resources['available_mib'] is not None and resources['available_mib'] - headroom >= estimate
         if admitted:
             path = slot.lock_dir / f'{HEAVY_SLOT}-{slot.slot}'
             with path.open('r+') as record:
@@ -647,13 +659,14 @@ class HeavyAdmission:
         _, self.provisional, self.estimate = self.prepare_heavy_env(
             self.base_env, resources, runner=self.runner)
         self.available = resources['available_mib']
+        self.headroom = host.memory_headroom(self.base_env, resources)
         print('resources (provisional): ' + '; '.join(resources['notes']), file=out, flush=True)
         host.plan_defaults(self.provisional, out, 'provisional defaults')
 
     def _blocked(self):
         if self.available is None:
             return host.ResourceBlocked('resource-blocked: available memory unknown')
-        available = max(0, self.available - host.HEADROOM_MIB)
+        available = max(0, self.available - self.headroom)
         inherited = 'inherited slot; ' if self.slot.inherited else ''
         return host.ResourceBlocked(f'resource-blocked: {inherited}{self.estimate} MiB needed, {available} MiB available')
 
@@ -683,6 +696,7 @@ class HeavyAdmission:
                 resource_snapshot=self.resource_snapshot,
                 prepare_heavy_env=self.prepare_heavy_env)
             self.available = resources['available_mib']
+            self.headroom = host.memory_headroom(self.base_env, resources)
             if not admitted:
                 if self.slot.inherited:
                     raise self._blocked()
@@ -693,7 +707,7 @@ class HeavyAdmission:
                 self.memory_since, self.retry_at = now, now + self.poll
                 if self.announced is None or now - self.announced >= 30:
                     print('resources: ' + '; '.join(resources['notes']), file=self.out, flush=True)
-                    available = 'unknown' if self.available is None else max(0, self.available - host.HEADROOM_MIB)
+                    available = 'unknown' if self.available is None else max(0, self.available - self.headroom)
                     print(f'waiting for memory: estimate {self.estimate} MiB, '
                           f'{available} MiB available after headroom; '
                           f'no process started: {self.command}', file=self.out, flush=True)

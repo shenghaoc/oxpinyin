@@ -15,7 +15,7 @@ Options:
   --cell bdb|kc|tkrzw               Default: bdb; one backend on both sides
   --archive PATH                    Optional local model20 archive (checksum verified)
   --jobs N                          Build/runner concurrency (default 2)
-  --memory-mib N                    Hard limit and native reservation (default 4096 MiB)
+  --memory-mib N                    Hard limit and native reservation (default 2560 MiB)
   --memory-smoke                    Short memory-limit smoke; requires an existing compat image
   --timeout N                       Existing registry runner timeout override
   --runner-timeout NAME=SECONDS     Existing per-runner override
@@ -29,7 +29,7 @@ HELP
 }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 hash() { if command -v sha256sum >/dev/null 2>&1; then sha256sum; else shasum -a 256; fi; }
-runtime=${OXPINYIN_CONTAINER:-} cell=bdb archive='' jobs=2 memory=${OXPINYIN_CONTAINER_MEMORY_MIB-4096}
+runtime=${OXPINYIN_CONTAINER:-} cell=bdb archive='' jobs=2 memory=${OXPINYIN_CONTAINER_MEMORY_MIB-2560}
 original_args=("$@")
 selection=() selected=0 memory_smoke=0 list_only=0
 while (($#)); do

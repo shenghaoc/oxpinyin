@@ -74,7 +74,7 @@ def validate(argv, environ=None):
     parser.add_argument('--archive', type=Path)
     parser.add_argument('--jobs', type=positive, default=2)
     parser.add_argument('--memory-mib', type=positive,
-                        default=environ.get('OXPINYIN_CONTAINER_MEMORY_MIB', '4096'))
+                        default=environ.get('OXPINYIN_CONTAINER_MEMORY_MIB', '2560'))
     parser.add_argument('--memory-smoke', action='store_true')
     parser.add_argument('--list', action='store_true')
     parser.add_argument('--runners')

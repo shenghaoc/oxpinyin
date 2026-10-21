@@ -75,7 +75,16 @@ directory. Apply Layer 1's native memory admission to that full limit.
 Wait, then fail closed if the budget cannot fit or cannot be measured.
 Serialize the budget check and reservation update with native admission.
 Native admission subtracts that reservation for the container's full lifetime.
+Apply the 2048 MiB desktop headroom once, on the native host. A compatibility
+guest with `OXPINYIN_COMPAT_CONTAINER=1` and a visible finite cgroup `memory.max`
+uses zero desktop headroom. Without that finite limit, keep native headroom.
 Inner admission uses the effective cgroup limit and its own reservations.
+Size the default limit from a cold two-job build and the selected gates on one
+host, including measured overhead and at least the two-job build and runner
+estimates. The measured default is 2560 MiB; host admission requires 4608 MiB
+including desktop headroom (the [runbook](../runbooks/compatibility-container.md#container-memory-budget)
+records the sizing). A host launcher excludes only the native slot identified
+by the existing validated live-ancestor marker; other live native slots still count.
 Reject a runtime that cannot enforce and report the hard limit.
 Do not launch without both the limit and the native reservation.
 Layer 1 consumes the record; this layer owns its creation and lifetime.
