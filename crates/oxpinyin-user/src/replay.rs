@@ -38,7 +38,7 @@
 //! [`Merge::finish`].
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use oxpinyin_data::chunk_write::{
     ChunkItem, PHRASE_MASK, decode_phrase_item, validate_phrase_item,
@@ -315,8 +315,9 @@ fn visible_len(bytes: &[u8]) -> Option<usize> {
 pub(crate) struct Merge {
     origin: Origin,
     content: Content,
-    /// Changed slots, walked in ascending order without copying item bytes.
-    touched: BTreeSet<u32>,
+    /// Slot IDs only. Replay appends; finalization sorts and deduplicates before
+    /// any membership query or ascending walk. No record payloads are staged.
+    touched: Vec<u32>,
     /// Relocated or removed slots only; in-place writes keep mapped offsets.
     offsets: BTreeMap<u32, u32>,
     /// `SubPhraseIndex::m_total_freq`; `None` for a library with no original.
@@ -335,7 +336,7 @@ impl Merge {
         Self {
             origin,
             content,
-            touched: BTreeSet::new(),
+            touched: Vec::new(),
             offsets: BTreeMap::new(),
             total: original.map(|library| library.total),
             running: original.map_or(0, |library| library.total),
@@ -360,7 +361,7 @@ impl Merge {
     }
 
     fn set_offset(&mut self, slot: u32, offset: u32) {
-        self.touched.insert(slot);
+        self.touched.push(slot);
         self.offsets.insert(slot, offset);
     }
 
@@ -502,7 +503,7 @@ impl Merge {
                     if !self.content.write(offset, new_item) {
                         return Err(mismatch());
                     }
-                    self.touched.insert(slot);
+                    self.touched.push(slot);
                 }
                 Ok(())
             }
@@ -582,10 +583,11 @@ impl Merge {
 
     /// The library's total and its overrides as typed items; `None` removes.
     pub(crate) fn finish(
-        self,
+        mut self,
         skipped: &mut Vec<String>,
         name: &impl std::fmt::Display,
     ) -> (Option<u32>, BTreeMap<u32, Option<ChunkItem>>) {
+        self.sort_touched();
         let mut typed = Vec::with_capacity(self.touched.len());
         for &slot in &self.touched {
             let offset = self.slot_offset(slot);
@@ -616,6 +618,11 @@ impl Merge {
         let overrides = typed.into_iter().collect();
         (self.total, overrides)
     }
+
+    fn sort_touched(&mut self) {
+        self.touched.sort_unstable();
+        self.touched.dedup();
+    }
 }
 
 /// A completed private sub-index view. Typed payloads are decoded on demand.
@@ -635,10 +642,10 @@ impl ReplayedLibrary {
         self.0.touched.iter().copied()
     }
     pub(crate) fn contains(&self, slot: u32) -> bool {
-        self.0.touched.contains(&slot)
+        self.0.touched.binary_search(&slot).is_ok()
     }
     pub(crate) fn bytes(&self, slot: u32) -> Option<Cow<'_, [u8]>> {
-        if !self.0.touched.contains(&slot) {
+        if !self.contains(slot) {
             return None;
         }
         let offset = self.0.slot_offset(slot) as usize;
@@ -664,9 +671,11 @@ impl Merge {
         BTreeMap<u32, Option<ChunkItem>>,
         Option<ReplayedLibrary>,
     ) {
+        self.sort_touched();
         let mut typed = BTreeMap::new();
         let origin = &self.origin;
         let offsets = &self.offsets;
+        // Validate and compact rejected slots in one pass, without per-slot removal.
         self.touched.retain(|&slot| {
             let offset = offsets.get(&slot).copied().unwrap_or_else(|| match origin {
                 Origin::Mapped(library) => library.content_offset(slot).unwrap_or(0),
@@ -719,6 +728,8 @@ impl Merge {
                 }
             }
         });
+        // Repeated records and rejected slots need no retained capacity.
+        self.touched.shrink_to_fit();
         let total = self.total;
         let retained =
             (!self.touched.is_empty()).then(|| ReplayedLibrary(std::sync::Arc::new(self)));
@@ -776,6 +787,163 @@ mod tests {
         let end = item.len();
         item[end - 4..].copy_from_slice(&frequency.to_le_bytes());
         item
+    }
+
+    #[test]
+    fn touched_slots_keep_final_values_after_duplicate_sparse_and_relocated_edits() {
+        let original = library();
+        let high = PHRASE_MASK - 1;
+        let mut grown = with_freq(two(), 88);
+        grown.extend_from_slice(&[1, 2, 3]);
+        let replay = || {
+            let mut merge = Merge::new(Some(&original));
+            for record in [
+                modify(2, two(), grown.clone()),
+                modify(1, one(), with_freq(one(), 77)),
+                modify(2, with_freq(two(), 88), with_freq(two(), 99)),
+                LogRecord::Remove {
+                    token: 1,
+                    old_item: with_freq(one(), 77),
+                },
+                LogRecord::Add {
+                    token: 1,
+                    new_item: with_freq(one(), 66),
+                },
+                LogRecord::Add {
+                    token: high,
+                    new_item: one(),
+                },
+                LogRecord::Remove {
+                    token: high,
+                    old_item: one(),
+                },
+                LogRecord::Add {
+                    token: high,
+                    new_item: with_freq(one(), 55),
+                },
+            ] {
+                assert!(merge.apply(record).is_ok());
+            }
+            merge
+        };
+        let mut eager_skipped = Vec::new();
+        let (eager_total, eager) = replay().finish(&mut eager_skipped, &"test");
+        let mut lazy_skipped = Vec::new();
+        let (lazy_total, lazy, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let retained = retained.expect("the two original slots stay lazy");
+        assert_eq!(eager_total, Some(250));
+        assert_eq!(lazy_total, eager_total);
+        assert!(eager_skipped.is_empty());
+        assert_eq!(lazy_skipped, eager_skipped);
+        assert_eq!(eager.keys().copied().collect::<Vec<_>>(), [1, 2, high]);
+        assert_eq!(retained.slots().collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(retained.slots().rev().collect::<Vec<_>>(), [2, 1]);
+        assert!(retained.contains(1));
+        assert!(retained.contains(2));
+        assert!(!retained.contains(high));
+        assert_eq!(retained.item(1), eager[&1]);
+        assert_eq!(retained.item(2), eager[&2]);
+        assert_eq!(lazy[&high], eager[&high]);
+        assert_eq!(eager[&1].as_ref().expect("one").prons[0].1, 66);
+        assert_eq!(eager[&2].as_ref().expect("two").prons[1].1, 99);
+        assert_eq!(eager[&high].as_ref().expect("high").prons[0].1, 55);
+    }
+
+    #[test]
+    fn duplicate_invalid_slots_report_once_and_keep_the_baseline() {
+        let original = library();
+        let invalid = bytes_with(&[255, 255], 200);
+        let expected = format!("test: {}", decode_phrase_item(&invalid).unwrap_err());
+        let replay = || {
+            let mut merge = Merge::new(Some(&original));
+            for record in [
+                modify(2, two(), with_freq(two(), 88)),
+                modify(1, one(), with_freq(one(), 77)),
+                modify(2, with_freq(two(), 88), with_freq(two(), 99)),
+                modify(1, with_freq(one(), 77), with_freq(one(), 66)),
+            ] {
+                assert!(merge.apply(record).is_ok());
+            }
+            let offset = merge.slot_offset(1) as usize;
+            merge.content.item_override = Some((offset, invalid.clone()));
+            merge
+        };
+        let mut eager_skipped = Vec::new();
+        let (_, eager) = replay().finish(&mut eager_skipped, &"test");
+        let mut lazy_skipped = Vec::new();
+        let (_, lazy, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let retained = retained.expect("the valid original slot keeps the view");
+        assert_eq!(eager_skipped, [expected]);
+        assert_eq!(lazy_skipped, eager_skipped);
+        assert!(!eager.contains_key(&1));
+        assert!(!lazy.contains_key(&1));
+        assert_eq!(retained.slots().collect::<Vec<_>>(), [2]);
+        assert!(!retained.contains(1));
+        assert!(retained.item(1).is_none());
+        assert_eq!(retained.item(2), eager[&2]);
+        assert_eq!(
+            retained.item(1).or_else(|| original.item(1)),
+            original.item(1)
+        );
+    }
+
+    #[test]
+    fn many_invalid_slots_are_filtered_once_in_ascending_order() {
+        let invalid_count = 256;
+        let valid_slot = invalid_count + 1;
+        let baseline = library().items[&1].clone();
+        let original = SystemLibrary {
+            total: valid_slot * 100,
+            range_end: valid_slot + 1,
+            items: (1..=valid_slot)
+                .map(|slot| (slot, baseline.clone()))
+                .collect(),
+            mapped: None,
+        };
+        let invalid = bytes_with(&[255, 255], 200);
+        let replay = || {
+            let mut merge = Merge::new(Some(&original));
+            assert!(
+                merge
+                    .apply(modify(valid_slot, one(), with_freq(one(), 88)))
+                    .is_ok()
+            );
+            for slot in (1..=invalid_count).rev() {
+                assert!(
+                    merge
+                        .apply(modify(slot, one(), with_freq(one(), 77)))
+                        .is_ok()
+                );
+                assert!(
+                    merge
+                        .apply(modify(slot, with_freq(one(), 77), invalid.clone()))
+                        .is_ok()
+                );
+            }
+            merge
+        };
+        let mut eager_skipped = Vec::new();
+        let (_, eager) = replay().finish(&mut eager_skipped, &"test");
+        let mut lazy_skipped = Vec::new();
+        let (_, lazy, retained) = replay().finish_lazy(&mut lazy_skipped, &"test");
+        let retained = retained.expect("one valid original remains");
+        let expected: Vec<_> = (1..=invalid_count)
+            .map(|slot| format!("test: item {slot} ends past the phrase content"))
+            .collect();
+        assert_eq!(eager_skipped, expected);
+        assert_eq!(lazy_skipped, expected);
+        assert_eq!(eager.keys().copied().collect::<Vec<_>>(), [valid_slot]);
+        assert!(lazy.is_empty());
+        assert_eq!(retained.slots().collect::<Vec<_>>(), [valid_slot]);
+        assert_eq!(retained.item(valid_slot), eager[&valid_slot]);
+        for slot in 1..=invalid_count {
+            assert!(!retained.contains(slot));
+            assert!(retained.item(slot).is_none());
+            assert_eq!(
+                retained.item(slot).or_else(|| original.item(slot)),
+                original.item(slot)
+            );
+        }
     }
 
     #[test]

@@ -7681,6 +7681,41 @@ def _compare_case(name, build, **options):
     _replay_case(name, build, unigram_add=False, **options)
 
 
+# #870: merge walks the journal in record order, while a later diff walks
+# ascending slots (074a2219 phrase_index.cpp:392-436,439-517). Repeated,
+# out-of-order writes leave each slot's final value, including after reopen.
+def _touched_order(p):
+    rows = sorted((p['one'], p['two']), reverse=True, key=lambda row: row[0])
+    records = [_log_record(_LOG_MODIFY, token, old=item, new=_item_with(item, freq=77))
+               for token, item in rows]
+    token, item = rows[-1]
+    records.append(_log_record(_LOG_MODIFY, token, old=_item_with(item, freq=77),
+                               new=_item_with(item, freq=99)))
+    return records, dict(_watch(p), two=p['two'][0])
+
+
+_compare_case('touched-order-duplicates-reopen', _touched_order, reopen=True)
+
+
+def _touched_sparse_edits(p):
+    token, item = p['one']
+    moved = _item_with(item, freq=77)
+    high = 0x01040000  # sparse slot 262144; no full-token-range fixture
+    records = [
+        _log_record(_LOG_MODIFY, token, old=item, new=moved + b'\x01\x02\x03'),
+        _log_record(_LOG_MODIFY, token, old=moved, new=_item_with(item, freq=99)),
+        _log_record(_LOG_ADD, high, new=p['fresh'][1]),
+        _log_record(_LOG_REMOVE, token, old=_item_with(item, freq=99)),
+        _log_record(_LOG_ADD, token, new=item),
+        _log_record(_LOG_REMOVE, high, old=p['fresh'][1]),
+        _log_record(_LOG_ADD, high, new=_item_with(p['fresh'][1], freq=55)),
+    ]
+    return records, dict(_watch(p), high=high)
+
+
+_compare_case('touched-sparse-add-remove-relocate-reopen', _touched_sparse_edits, reopen=True)
+
+
 # REMOVE whose old chunk carries a trailing byte: the sizes differ, the item
 # is gone already and the merge stops before the ADD.
 _compare_case('remove-trailing-old', lambda p: ([
@@ -7879,6 +7914,50 @@ _compare_case('modify-header-overlong', lambda p: ([
     crash={'ctx': True, 'fresh': [[True, 1, '锕'], [True, 11]],
            'one': [[True, 1, '锕'], [True, 3]],
            'last': [[True, 14, '中华人民共和国中央军事委员会'], [True, 62]]})
+
+
+# Same row-107 refusal after a duplicate touch. The pin still over-reads the
+# last slot; the safe finish reports it once and keeps that slot's baseline.
+_compare_case('touched-duplicate-invalid', lambda p: ([
+    _log_record(_LOG_MODIFY, p['last'][0], old=p['last'][1],
+                new=_item_with(p['last'][1], freq=77)),
+    _log_record(_LOG_MODIFY, p['last'][0], old=_item_with(p['last'][1], freq=77),
+                new=bytes((255, 255)) + (200).to_bytes(4, 'little')),
+    _add_fresh(p)], _watch_last(p)),
+    crash={'ctx': True, 'fresh': [[True, 1, '锕'], [True, 11]],
+           'one': [[True, 1, '锕'], [True, 3]],
+           'last': [[True, 14, '中华人民共和国中央军事委员会'], [True, 62]]})
+
+
+# Many row-107 invalidations, in descending order and each after an earlier
+# valid touch. Finalization must emit each diagnostic once in ascending order;
+# membership and item reads fall back to the original for every rejected slot.
+def touched_many_invalid(k):
+    _, items, offsets = _system_items(k)
+    slots = sorted(offsets, key=offsets.get)[-256:]
+
+    def build(p):
+        records = []
+        for slot in reversed(slots):
+            token, item = 0x01000000 | slot, items[slot]
+            changed = _item_with(item, freq=77)
+            records.extend([
+                _log_record(_LOG_MODIFY, token, old=item, new=changed),
+                _log_record(_LOG_MODIFY, token, old=changed,
+                            new=bytes((255, 255)) + (200).to_bytes(4, 'little')),
+            ])
+        return records + [_add_fresh(p)], _watch_last(p)
+
+    return system_replay(k, build, unigram_add=False)
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    case('replay-touched-many-invalid-' + _mode, mode=_mode, stderr=True,
+         issues=('850', '851', '870'),
+         crash={'ctx': True, 'fresh': [[True, 1, '锕'], [True, 11]],
+                'one': [[True, 1, '锕'], [True, 3]],
+                'last': [[True, 14, '中华人民共和国中央军事委员会'], [True, 62]]})(
+                    touched_many_invalid)
 
 
 # An ADD payload shorter than the six bytes `add_phrase_item` reads its
