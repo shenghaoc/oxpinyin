@@ -746,29 +746,27 @@ pub fn log_records(bytes: &[u8]) -> impl Iterator<Item = Result<LogRecord<&[u8]>
 const LOG_TYPE_SIZE: usize = 4;
 
 /// A malformed `PhraseIndexLogger` record stream.
-#[derive(Debug)]
-pub struct LogDecodeError {
-    message: String,
-    non_null_header_token: Option<u32>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LogDecodeError(LogDecodeFault);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LogDecodeFault {
+    Head(usize),
+    U16(usize),
+    Payload { start: usize, len: u16 },
+    HeaderToken(u32),
+    HeaderTotal,
+    HeaderNewRun,
+    Type { value: u32, offset: usize },
 }
 
 impl LogDecodeError {
-    fn other(message: String) -> Self {
-        Self {
-            message,
-            non_null_header_token: None,
-        }
-    }
-
     /// [`decode_log_records`]'s rejection of a `MODIFY_HEADER` record whose
     /// token is not `null_token`. Upstream `assert(token == null_token)`s
     /// there (`phrase_index_logger.h:202`), so it is a class (c) abort site
     /// rather than a graceful malformed-stream return.
     fn header_token(token: u32) -> Self {
-        Self {
-            message: format!("MODIFY_HEADER record carries token {token:#010x}"),
-            non_null_header_token: Some(token),
-        }
+        Self(LogDecodeFault::HeaderToken(token))
     }
 
     /// The offending token when this error is the non-null-`MODIFY_HEADER`
@@ -776,7 +774,10 @@ impl LogDecodeError {
     /// malformed stream.
     #[must_use]
     pub fn non_null_header_token(&self) -> Option<u32> {
-        self.non_null_header_token
+        match self.0 {
+            LogDecodeFault::HeaderToken(token) => Some(token),
+            _ => None,
+        }
     }
 
     /// The decoded records' `MODIFY_HEADER` count when `bytes` decodes
@@ -796,11 +797,105 @@ impl LogDecodeError {
 
 impl std::fmt::Display for LogDecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "phrase index logger: {}", self.message)
+        write!(f, "phrase index logger: ")?;
+        match self.0 {
+            LogDecodeFault::Head(offset) => write!(f, "truncated record head at {offset}"),
+            LogDecodeFault::U16(offset) => write!(f, "truncated u16 at {offset}"),
+            LogDecodeFault::Payload { start, len } => {
+                write!(f, "truncated {len}-byte payload at {start}")
+            }
+            LogDecodeFault::HeaderToken(token) => {
+                write!(f, "MODIFY_HEADER record carries token {token:#010x}")
+            }
+            LogDecodeFault::HeaderTotal => write!(f, "MODIFY_HEADER payload has no total"),
+            LogDecodeFault::HeaderNewRun => write!(f, "MODIFY_HEADER has no new-total run"),
+            LogDecodeFault::Type { value, offset } => {
+                write!(f, "invalid record type {value} at {offset}")
+            }
+        }
     }
 }
 
 impl std::error::Error for LogDecodeError {}
+
+/// Check a whole logger's framing without allocating or constructing records.
+/// Item payloads remain opaque: replay, rather than framing, decides what
+/// their bytes mean. The first error and its abort-site token match decoding.
+///
+/// # Errors
+/// Returns the same framing error as [`decode_log_records`], including its
+/// first-error order. Even the error value needs no allocation.
+pub fn validate_log_records(bytes: &[u8]) -> Result<(), LogDecodeError> {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        offset = validate_log_record_at(bytes, offset)?;
+    }
+    Ok(())
+}
+
+fn validate_log_record_at(bytes: &[u8], mut offset: usize) -> Result<usize, LogDecodeError> {
+    let take_u16 = |offset: &mut usize| {
+        let lo = *offset;
+        if bytes.len() < lo + 2 {
+            return Err(LogDecodeError(LogDecodeFault::U16(lo)));
+        }
+        *offset += 2;
+        Ok(u16::from_le_bytes([bytes[lo], bytes[lo + 1]]))
+    };
+    let skip = |offset: &mut usize, len: u16| {
+        let start = *offset;
+        let end = start + usize::from(len);
+        if bytes.len() < end {
+            return Err(LogDecodeError(LogDecodeFault::Payload { start, len }));
+        }
+        *offset = end;
+        Ok(())
+    };
+    if bytes.len() < offset + LOG_TYPE_SIZE + 4 {
+        return Err(LogDecodeError(LogDecodeFault::Head(offset)));
+    }
+    let log_type = u32::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+    ]);
+    offset += LOG_TYPE_SIZE + 4;
+    match log_type {
+        1 | 2 => {
+            let len = take_u16(&mut offset)?;
+            skip(&mut offset, len)?;
+        }
+        3 => {
+            let old_len = take_u16(&mut offset)?;
+            let new_len = take_u16(&mut offset)?;
+            skip(&mut offset, old_len)?;
+            skip(&mut offset, new_len)?;
+        }
+        4 => {
+            let token = u32::from_le_bytes([
+                bytes[offset - 4],
+                bytes[offset - 3],
+                bytes[offset - 2],
+                bytes[offset - 1],
+            ]);
+            if token != 0 {
+                return Err(LogDecodeError::header_token(token));
+            }
+            let len = take_u16(&mut offset)?;
+            if len < 4 {
+                return Err(LogDecodeError(LogDecodeFault::HeaderTotal));
+            }
+            skip(&mut offset, len)?;
+            if bytes.len() < offset + usize::from(len) {
+                return Err(LogDecodeError(LogDecodeFault::HeaderNewRun));
+            }
+            offset += usize::from(len);
+        }
+        value => return Err(LogDecodeError(LogDecodeFault::Type { value, offset })),
+    }
+    Ok(offset)
+}
 
 /// Decodes a record stream (`PhraseIndexLogger::next_record`'s loop).
 ///
@@ -851,7 +946,7 @@ fn decode_log_record_at(
         let lo = *offset;
         let hi = lo + 2;
         if bytes.len() < hi {
-            return Err(LogDecodeError::other(format!("truncated u16 at {lo}")));
+            return Err(LogDecodeError(LogDecodeFault::U16(lo)));
         }
         let value = u16::from_le_bytes([bytes[lo], bytes[lo + 1]]);
         *offset = hi;
@@ -861,19 +956,14 @@ fn decode_log_record_at(
         let start = *offset;
         let end = start + usize::from(len);
         if bytes.len() < end {
-            return Err(LogDecodeError::other(format!(
-                "truncated {}-byte payload at {start}",
-                usize::from(len)
-            )));
+            return Err(LogDecodeError(LogDecodeFault::Payload { start, len }));
         }
         *offset = end;
         Ok(&bytes[start..end])
     };
 
     if bytes.len() < offset + LOG_TYPE_SIZE + 4 {
-        return Err(LogDecodeError::other(format!(
-            "truncated record head at {offset}"
-        )));
+        return Err(LogDecodeError(LogDecodeFault::Head(offset)));
     }
     let log_type = u32::from_le_bytes([
         bytes[offset],
@@ -917,17 +1007,13 @@ fn decode_log_record_at(
             }
             let len = take_u16(&mut offset)?;
             if usize::from(len) < 4 {
-                return Err(LogDecodeError::other(
-                    "MODIFY_HEADER payload has no total".to_owned(),
-                ));
+                return Err(LogDecodeError(LogDecodeFault::HeaderTotal));
             }
             // Two consecutive `len`-byte runs: the old totals, then
             // the new — `next_record` hands one run to each payload.
             let old_run = take_bytes(&mut offset, len)?;
             if bytes.len() < offset + usize::from(len) {
-                return Err(LogDecodeError::other(
-                    "MODIFY_HEADER has no new-total run".to_owned(),
-                ));
+                return Err(LogDecodeError(LogDecodeFault::HeaderNewRun));
             }
             let new_run = take_bytes(&mut offset, len)?;
             let old_total = u32::from_le_bytes([old_run[0], old_run[1], old_run[2], old_run[3]]);
@@ -938,9 +1024,10 @@ fn decode_log_record_at(
             }
         }
         other => {
-            return Err(LogDecodeError::other(format!(
-                "invalid record type {other} at {offset}"
-            )));
+            return Err(LogDecodeError(LogDecodeFault::Type {
+                value: other,
+                offset,
+            }));
         }
     };
     Ok((record, offset))
@@ -1473,6 +1560,113 @@ mod tests {
             .is_err(),
             "an oversized payload must be refused, not truncated"
         );
+    }
+
+    #[test]
+    fn log_validation_matches_every_decoder_rejection() {
+        let record = |kind: u32, token: u32, tail: &[u8]| {
+            [
+                kind.to_le_bytes().as_slice(),
+                token.to_le_bytes().as_slice(),
+                tail,
+            ]
+            .concat()
+        };
+        let cases = [
+            (vec![0; 3], "truncated record head at 0"),
+            (record(9, 0, &[]), "invalid record type 9 at 8"),
+            (record(1, 1, &[]), "truncated u16 at 8"),
+            (record(2, 1, &[0]), "truncated u16 at 8"),
+            (record(3, 1, &[]), "truncated u16 at 8"),
+            (record(3, 1, &[3, 0]), "truncated u16 at 10"),
+            (record(4, 0, &[]), "truncated u16 at 8"),
+            (
+                record(1, 1, &[3, 0, 1, 2]),
+                "truncated 3-byte payload at 10",
+            ),
+            (
+                record(2, 1, &[3, 0, 1, 2]),
+                "truncated 3-byte payload at 10",
+            ),
+            (
+                record(3, 1, &[3, 0, 1, 0, 1, 2]),
+                "truncated 3-byte payload at 12",
+            ),
+            (
+                record(3, 1, &[3, 0, 2, 0, 1, 2, 3, 4]),
+                "truncated 2-byte payload at 15",
+            ),
+            (
+                record(4, 1, &[]),
+                "MODIFY_HEADER record carries token 0x00000001",
+            ),
+            (record(4, 0, &[3, 0]), "MODIFY_HEADER payload has no total"),
+            (
+                record(4, 0, &[4, 0, 1, 2, 3]),
+                "truncated 4-byte payload at 10",
+            ),
+            (
+                record(4, 0, &[4, 0, 1, 2, 3, 4, 5]),
+                "MODIFY_HEADER has no new-total run",
+            ),
+        ];
+        let mut mismatches = Vec::new();
+        for (index, (bytes, reason)) in cases.iter().enumerate() {
+            let expected = format!("phrase index logger: {reason}");
+            let decoded = decode_log_records(bytes).expect_err("decoder rejects");
+            let validated = validate_log_records(bytes);
+            if validated.as_ref().map_err(ToString::to_string) != Err(expected.clone())
+                || decoded.to_string() != expected
+                || validated
+                    .err()
+                    .and_then(|error| error.non_null_header_token())
+                    != decoded.non_null_header_token()
+            {
+                mismatches.push(index);
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "mismatched rejection paths: {mismatches:?}"
+        );
+    }
+
+    #[test]
+    fn log_validation_matches_prefixes_and_opaque_payloads() {
+        let mut bytes = encode_log_records(&[
+            LogRecord::Add {
+                token: 1,
+                new_item: vec![255],
+            },
+            LogRecord::Remove {
+                token: 2,
+                old_item: vec![],
+            },
+            LogRecord::Modify {
+                token: 3,
+                old_item: vec![255, 255],
+                new_item: vec![],
+            },
+            LogRecord::ModifyHeader {
+                old_total: u32::MAX,
+                new_total: 0,
+            },
+        ])
+        .expect("encode");
+        // A header may carry padding after each total; those bytes are opaque.
+        bytes.extend_from_slice(&[4, 0, 0, 0, 0, 0, 0, 0, 6, 0]);
+        bytes.extend_from_slice(&[255; 12]);
+        for end in 0..=bytes.len() {
+            assert_eq!(
+                validate_log_records(&bytes[..end]).map_err(|error| error.to_string()),
+                decode_log_records(&bytes[..end])
+                    .map(|_| ())
+                    .map_err(|error| error.to_string()),
+                "prefix {end}"
+            );
+        }
+        assert!(validate_log_records(&bytes).is_ok());
+        assert!(decode_log_records(&bytes).is_ok());
     }
 
     #[test]

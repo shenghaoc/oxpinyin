@@ -241,6 +241,58 @@ pub fn encode_phrase_item(item: &ChunkItem) -> Result<Vec<u8>, ChunkWriteError> 
     Ok(bytes)
 }
 
+/// A structural rejection from [`validate_phrase_item`], without allocation.
+/// Its diagnostic matches the corresponding [`ChunkWriteError`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PhraseItemValidationError(&'static str);
+
+impl std::fmt::Display for PhraseItemValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "chunk write error: {}", self.0)
+    }
+}
+
+impl std::error::Error for PhraseItemValidationError {}
+
+/// Check exactly the byte extents [`decode_phrase_item`] reads, without
+/// allocating or constructing a typed item. Trailing bytes and arbitrary
+/// text/key/frequency values are accepted, just as by the decoder.
+///
+/// # Errors
+/// Reports the decoder's first missing header field, truncated text,
+/// truncated pronunciation keys, or truncated pronunciation frequency.
+pub fn validate_phrase_item(bytes: &[u8]) -> Result<(), PhraseItemValidationError> {
+    let length = usize::from(*bytes.first().ok_or(PhraseItemValidationError(
+        "phrase item: no phrase length byte",
+    ))?);
+    let prons = usize::from(*bytes.get(1).ok_or(PhraseItemValidationError(
+        "phrase item: no pronunciation count byte",
+    ))?);
+    if bytes.len() < 6 {
+        return Err(PhraseItemValidationError("phrase item: no unigram"));
+    }
+    let text_end = 6 + 4 * length;
+    if bytes.len() < text_end {
+        return Err(PhraseItemValidationError(
+            "phrase item: phrase text truncated",
+        ));
+    }
+    let keys = 2 * length;
+    let row = keys + 4;
+    let remaining = bytes.len() - text_end;
+    // Both counts are u8, so these products fit even on 32-bit targets.
+    if remaining < prons * row {
+        // Earlier complete rows cannot fail. Locate the first incomplete
+        // row without decoding every pronunciation before it.
+        return Err(PhraseItemValidationError(if remaining % row < keys {
+            "phrase item: pronunciation keys truncated"
+        } else {
+            "phrase item: pronunciation freq truncated"
+        }));
+    }
+    Ok(())
+}
+
 /// Decodes one `PhraseItem` wire form — the inverse of
 /// [`encode_phrase_item`], for the logger payloads' replay.
 ///
@@ -610,6 +662,80 @@ mod tests {
             usize::try_from(u32::from_le_bytes(body[8..12].try_into().unwrap())).unwrap();
         let entry_area = &body[index_two..];
         assert_eq!(&entry_area[8..8 + bytes.len()], &bytes[..]);
+    }
+
+    #[test]
+    fn phrase_validation_matches_every_decoder_rejection() {
+        let cases: &[(&str, &[u8], &str)] = &[
+            ("length", &[], "no phrase length byte"),
+            ("count", &[1], "no pronunciation count byte"),
+            ("unigram", &[1, 0], "no unigram"),
+            ("text", &[1, 0, 0, 0, 0, 0], "phrase text truncated"),
+            (
+                "keys",
+                &[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                "pronunciation keys truncated",
+            ),
+            (
+                "frequency",
+                &[1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                "pronunciation freq truncated",
+            ),
+        ];
+        let mut mismatches = Vec::new();
+        for &(name, bytes, reason) in cases {
+            let expected = Err(format!("chunk write error: phrase item: {reason}"));
+            let decoded = decode_phrase_item(bytes)
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+            let validated = validate_phrase_item(bytes).map_err(|error| error.to_string());
+            if decoded != expected || validated != expected {
+                mismatches.push(name);
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "mismatched rejection paths: {mismatches:?}"
+        );
+    }
+
+    #[test]
+    fn phrase_validation_matches_boundaries_and_permissive_values() {
+        for length in [0_u8, 1, 2, 255] {
+            for prons in [0_u8, 1, 2, 255] {
+                let text_end = 6 + 4 * usize::from(length);
+                let keys = 2 * usize::from(length);
+                let row = keys + 4;
+                let end = text_end + usize::from(prons) * row;
+                // u32::MAX text, u16::MAX keys and wrapping-sized counts
+                // are all legal to the decoder; validation adds no policy.
+                let mut bytes = vec![255; end + 3];
+                bytes[0] = length;
+                bytes[1] = prons;
+                let mut cuts: Vec<_> = (0..=text_end).collect();
+                for pron in 0..usize::from(prons) {
+                    let start = text_end + pron * row;
+                    cuts.extend([start, start + keys, start + keys + 3, start + row]);
+                    if keys != 0 {
+                        cuts.push(start + keys - 1);
+                    }
+                }
+                cuts.extend([end, end + 1, end + 3]);
+                cuts.sort_unstable();
+                cuts.dedup();
+                for cut in cuts {
+                    assert_eq!(
+                        validate_phrase_item(&bytes[..cut]).map_err(|error| error.to_string()),
+                        decode_phrase_item(&bytes[..cut])
+                            .map(|_| ())
+                            .map_err(|error| error.to_string()),
+                        "length={length}, prons={prons}, cut={cut}"
+                    );
+                }
+                assert!(validate_phrase_item(&bytes).is_ok());
+                assert!(decode_phrase_item(&bytes).is_ok());
+            }
+        }
     }
 
     #[test]

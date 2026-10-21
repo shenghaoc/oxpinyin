@@ -191,20 +191,27 @@ only relocated/removed offsets enter a sparse map. A sorted set marks changed
 slots. The ordinary loader validates and walks one journal byte buffer without
 building a vector of records or allocating item-write runs. Mask snapshots keep
 the existing owned-record path. Session opens retain completed original-item
-views after decoding each payload for validation, discarding that temporary
-item. A failure records the eager diagnostic and leaves the baseline slot.
+views after constant-time structural validation of each payload's extents,
+without allocating a typed item. The checks match `decode_phrase_item`: both
+header bytes, the unigram, text, and the first incomplete pronunciation's keys
+or frequency. Extra trailing bytes and arbitrary scalar values stay accepted.
+A failure records the eager diagnostic and leaves the baseline slot. Journal
+preflight likewise checks record heads, tokens, lengths and payload extents
+without constructing records; only the replay walk produces borrowed records.
+Both validators keep static/numeric error values without allocation, formatting
+the same diagnostics only when the caller reports an error.
 `SystemItems` caches decoded items on use; added items still seed
 the existing text/index rows, removals the removal set, and original items seed
 only necessary unigram deltas. Replayed reading rows are never synthesized.
 
 For B journal bytes, J changed slots, M relocated slots and K items subsequently
-used, replay takes O(B + J log J + J log M), versus the pin's O(B + J) mapped
+used, replay takes O(B + J log J + J log(M+1)), versus the pin's O(B + J) mapped
 walk. Metadata uses O(J + M); the raw journal buffer uses O(B), and typed payloads
 are retained only for the K used items. Since J and M are bounded by B, this does
 not worsen the loader's linear space class. It removes retained eager decoded payloads,
 write runs and record staging; the sparse metadata retains a logarithmic time
-cost. Validation decodes one item at a time during init without retaining it;
-first use decodes again and caches it. Bulk save/mask operations may materialize all changed items, as the
+cost. Validation checks one item's shape in O(1) time and space during init;
+first use decodes and caches it. Bulk save/mask operations may materialize all changed items, as the
 previous loader did at init. The extra private view shares clean file pages;
 MODIFY dirties private pages as the pin does, without writing the system file.
 
