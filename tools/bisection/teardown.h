@@ -5,6 +5,12 @@
  */
 #include <limits.h>
 #include <sys/resource.h>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+#if !defined(CLOCK_MONOTONIC_RAW)
+#define CLOCK_MONOTONIC_RAW CLOCK_MONOTONIC
+#endif
 #if defined(OXPINYIN_TEARDOWN_MASSIF) || defined(OXPINYIN_TEARDOWN_MEMCHECK)
 #include <valgrind/valgrind.h>
 #endif
@@ -218,7 +224,7 @@ static void td_checkpoint(const char *point, int cycle, bool wait) {
 #endif
     /* mallinfo2 is a native, allocation-free glibc read. All formatting and
      * pipe synchronization are outside every timed/profiler ABI interval. */
-#if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
     struct mallinfo2 arena = mallinfo2();
     printf("{\"checkpoint\":\"%s\",\"cycle\":%d,\"allocator\":{"
            "\"arena\":%zu,\"uordblks\":%zu,\"fordblks\":%zu,"

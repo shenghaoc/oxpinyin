@@ -166,6 +166,37 @@ def build_stub(root):
                  get_candidate='candidate', get_candidate_type='type', get_candidate_string='string',
                  save='save', begin_add_phrases='begin', iterator_add_phrase='add', end_add_phrases='end',
                  load_phrase_library='load')
+    signatures = {
+        'init': ('void *', 'const char *data, const char *user', 'data, user'),
+        'fini': ('void', 'void *p', 'p'),
+        'alloc_instance': ('void *', 'void *p', 'p'),
+        'free_instance': ('void', 'void *p', 'p'),
+        'set_options': ('bool', 'void *p, uint32_t flags', 'p, flags'),
+        'parse_more_full_pinyins': ('size_t', 'void *p, const char *input', 'p, input'),
+        'parse_more_chewings': ('size_t', 'void *p, const char *input', 'p, input'),
+        'reset': ('bool', 'void *p', 'p'),
+        'guess_sentence': ('bool', 'void *p', 'p'),
+        'get_sentence': ('bool', 'void *p, uint8_t rank, char **text', 'p, rank, text'),
+        'get_n_candidate': ('bool', 'void *p, unsigned *count', 'p, count'),
+        'get_candidate': ('bool', 'void *p, unsigned index, void **out', 'p, index, out'),
+        'get_candidate_type': ('bool', 'void *p, void *candidate, int *type', 'p, candidate, type'),
+        'get_candidate_string': ('bool', 'void *p, void *candidate, const char **text', 'p, candidate, text'),
+        'save': ('bool', 'void *p', 'p'),
+        'begin_add_phrases': ('void *', 'void *p, uint8_t index', 'p, index'),
+        'iterator_add_phrase': ('bool', 'void *p, const char *s, const char *r, int n', 'p, s, r, n'),
+        'end_add_phrases': ('void', 'void *p', 'p'),
+        'load_phrase_library': ('bool', 'void *p, uint8_t index', 'p, index'),
+        'guess_candidates': ('bool', 'void *p, size_t offset, uint32_t sort', 'p, offset, sort'),
+        'get_parsed_input_length': ('size_t', 'void *p', 'p'),
+        'get_candidate_nbest_index': ('bool', 'void *p, void *candidate, uint8_t *index', 'p, candidate, index'),
+        'begin_get_phrases': ('void *', 'void *p, uint8_t index', 'p, index'),
+        'iterator_has_next_phrase': ('bool', 'void *p', 'p'),
+        'iterator_get_next_phrase': ('bool', 'void *p, char **s, char **r, int *n', 'p, s, r, n'),
+        'end_get_phrases': ('void', 'void *p', 'p'),
+        'guess_candidates_after_cursor': ('bool', 'void *p, size_t offset', 'p, offset'),
+    }
+    # Mach-O has no alias attribute, so export wrappers instead.
+    overrides = {('zhuyin', 'get_sentence'): ('bool', 'void *p, char **text', 'p, text')}
     source = STUB
     for facade in ('pinyin', 'zhuyin'):
         names = dict(pairs)
@@ -177,11 +208,15 @@ def build_stub(root):
                           iterator_has_next_phrase='has', iterator_get_next_phrase='next', end_get_phrases='end')
                      if facade == 'pinyin' else dict(guess_candidates_after_cursor='after'))
         for suffix, implementation in names.items():
-            source += f'extern __typeof__(fake_{implementation}) {facade}_{suffix} __attribute__((alias("fake_{implementation}")));\n'
+            returns, parameters, arguments = overrides.get((facade, suffix), signatures[suffix])
+            call = f'fake_{implementation}({arguments})'
+            body = f'{call};' if returns == 'void' else f'return {call};'
+            source += f'{returns} {facade}_{suffix}({parameters}) {{ {body} }}\n'
     cfile = root / 'stub.c'
     cfile.write_text(source)
     library = root / 'stub.so'
-    subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', '-O2',
+    link = ['-dynamiclib'] if sys.platform == 'darwin' else ['-shared']
+    subprocess.run(['cc', *link, '-fPIC', '-Wall', '-Wextra', '-Werror', '-O2',
                     '-o', str(library), str(cfile)], check=True)
     return library
 
@@ -273,7 +308,9 @@ class NativeTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location('contract_diff', td.HERE / 'contract-diff.py')
         driver = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(driver)
-        return td.Campaign(worker or self.worker, self.root, self.root, min(os.sched_getaffinity(0)), driver)
+        affinity = getattr(os, 'sched_getaffinity', None)
+        cpu = min(affinity(0)) if affinity else None
+        return td.Campaign(worker or self.worker, self.root, self.root, cpu, driver)
 
     def test_both_facades_and_teardown_order(self):
         for facade in ('pinyin', 'zhuyin'):
@@ -292,6 +329,7 @@ class NativeTests(unittest.TestCase):
                 self.assertEqual(len(documents), 21 if facade == 'zhuyin' else 18)
                 self.assertTrue(all(value['sentence_read'] and value['sentence'] == '你好' for value in documents))
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), '/proc memory readers and glibc allocator counters')
     def test_parent_checkpoints_and_surviving_instance(self):
         for facade in ('pinyin', 'zhuyin'):
             with self.subTest(facade=facade), patch.object(td, 'exports', return_value=[facade + '_init']):
@@ -300,6 +338,7 @@ class NativeTests(unittest.TestCase):
                 self.assertEqual(row['observation']['stderr'].splitlines(), ['INIT', 'ALLOC', 'ALLOC', 'FREE', 'FREE', 'FINI'])
                 self.assertEqual(len(row['samples'][0]['free_instance_ns']), 2)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), '/proc memory readers and glibc allocator counters')
     def test_repeated_lifecycle_resets_profile_and_keeps_library_loaded(self):
         with patch.object(td, 'exports', return_value=['pinyin_init']):
             row = self.campaign().run('pinyin', self.library, self.profile, mode='memory', cycles=10)
