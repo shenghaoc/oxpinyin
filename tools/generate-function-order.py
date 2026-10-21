@@ -78,7 +78,11 @@ def run(command):
 
 def capture(command, environment):
     """Run a measured child and keep both streams in memory until it succeeds."""
-    result = subprocess.run(command, capture_output=True, check=False, env=environment)
+    try:
+        result = subprocess.run(command, capture_output=True, check=False,
+                                env=environment, timeout=1800)
+    except subprocess.TimeoutExpired as error:
+        raise ValueError(f"measurement child timed out: {command[0]}") from error
     if result.returncode:
         diagnostic = result.stderr[-4000:].decode("utf-8", errors="backslashreplace")
         raise ValueError(f"measurement child failed ({result.returncode}): {diagnostic}")
@@ -304,19 +308,64 @@ def teardown_exports(library, facade):
     return ",".join(names)
 
 
-def init_array_symbols(library):
-    """The library's load-time constructors, as exact local symbols."""
-    text = run(["readelf", "-x", ".init_array", str(library)])
-    addresses = []
-    for line in text.splitlines():
-        match = re.match(r"^\s*0x[0-9a-f]+\s+(.*)$", line)
+def init_array_section(library):
+    """The .init_array virtual address and byte size from the section table."""
+    for line in run(["readelf", "-SW", str(library)]).splitlines():
+        match = re.match(
+            r"^\s*\[\s*\d+\]\s+\.init_array\s+\S+\s+([0-9a-fA-F]+)\s+"
+            r"[0-9a-fA-F]+\s+([0-9a-fA-F]+)\b", line)
+        if match:
+            return int(match.group(1), 16), int(match.group(2), 16)
+    raise ValueError(f"no .init_array section in {library}")
+
+
+def init_array_words(library, base, size):
+    """Raw slot values, without applying relocations."""
+    words = []
+    for line in run(["readelf", "-x", ".init_array", str(library)]).splitlines():
+        match = re.match(r"^\s*0x[0-9a-fA-F]+\s+(.*)$", line)
         if not match:
             continue
-        words = [word for word in match.group(1).split()
-                 if re.fullmatch(r"[0-9a-fA-F]{8}", word)]
-        for low, high in zip(words[::2], words[1::2]):
-            little = lambda word: int("".join(word[i:i + 2] for i in range(6, -1, -2)), 16)
-            addresses.append(little(low) | (little(high) << 32))
+        words.extend(word for word in match.group(1).split()
+                     if re.fullmatch(r"[0-9a-fA-F]{8}", word))
+    if len(words) % 2:
+        raise ValueError("odd .init_array word count")
+    little = lambda word: int("".join(word[i:i + 2] for i in range(6, -1, -2)), 16)
+    slots = [little(low) | (little(high) << 32)
+             for low, high in zip(words[::2], words[1::2])]
+    if len(slots) * 8 != size:
+        raise ValueError(f".init_array size {size} does not match {len(slots)} slots")
+    return slots
+
+
+def init_array_relocations(library, base, size):
+    """Relocation targets in the .init_array address range, by slot address."""
+    relocations = {}
+    for line in run(["readelf", "-rW", str(library)]).splitlines():
+        fields = line.split()
+        if len(fields) < 4:
+            continue
+        try:
+            offset = int(fields[0], 16)
+        except ValueError:
+            continue
+        if not base <= offset < base + size:
+            continue
+        if fields[2].endswith("_RELATIVE"):
+            try:
+                relocations[offset] = int(fields[-1], 16)
+            except ValueError:
+                relocations[offset] = None
+        else:
+            relocations[offset] = None
+    return relocations
+
+
+def init_array_symbols(library):
+    """Every load-time constructor, resolved from slots and relocations."""
+    base, size = init_array_section(library)
+    slots = init_array_words(library, base, size)
+    relocations = init_array_relocations(library, base, size)
     table = {}
     for line in run(["nm", "--defined-only", str(library)]).splitlines():
         fields = line.split()
@@ -325,7 +374,27 @@ def init_array_symbols(library):
                 table[int(fields[0], 16)] = fields[2]
             except ValueError:
                 pass
-    return [table[address] for address in addresses if address in table]
+    result = []
+    unresolved = []
+    for index, raw in enumerate(slots):
+        offset = base + index * 8
+        if offset in relocations:
+            target = relocations[offset]
+            if target is None:
+                unresolved.append(f"{offset:#x} (unresolved relocation)")
+                continue
+        elif raw == 0:
+            # A zero placeholder with no relocation is not a constructor.
+            continue
+        else:
+            target = raw
+        if target not in table:
+            unresolved.append(f"{offset:#x} -> {target:#x}")
+            continue
+        result.append(table[target])
+    if unresolved:
+        raise ValueError("unresolved .init_array constructors: " + ", ".join(unresolved))
+    return result
 
 
 def callgrind_prefix(executable, cpu, toggle):

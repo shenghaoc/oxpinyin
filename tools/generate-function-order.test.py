@@ -137,20 +137,73 @@ class GeneratorTests(unittest.TestCase):
                 with self.subTest(available=available), self.assertRaises(ValueError):
                     measured(Path("-"), LIBRARY, table, available)
 
-    def test_init_array_symbols_use_exact_constructor_targets(self):
-        reader = GENERATOR["init_array_symbols"]
+    def init_array_fixture(self, values, relocations=(), symbols=()):
+        size = 8 * len(values)
+        section = ("  [20] .init_array       INIT_ARRAY      "
+                   f"0000000000002000 002000 {size:06x} 08 WAo  0   0  8\n")
+        words = [f"{value.to_bytes(8, 'little').hex()[:8]} "
+                 f"{value.to_bytes(8, 'little').hex()[8:]}" for value in values]
         dump = ("\nHex dump of section '.init_array':\n"
-                "  0x00273ef0 00100000 00000000 00200000 00000000 ................\n\n")
-        symbols = (
-            "0000000000001000 T first_ctor\n"
-            "0000000000002000 t second_ctor\n"
-            "0000000000003000 T not_init\n")
+                "  0x0000000000002000 " + " ".join(words) + " ................\n\n")
+        relocs = ("Relocation section '.rela.dyn' at offset 0x1 contains entries:\n"
+                  "    Offset             Info             Type               "
+                  "Symbol's Value  Symbol's Name + Addend\n"
+                  + "".join(f"{offset:016x}  0000000000000008 R_X86_64_RELATIVE"
+                            f"                         {addend:x}\n"
+                            for offset, addend in relocations))
+        nm = "".join(f"{address:016x} T {name}\n" for address, name in symbols)
 
         def dispatch(command):
-            return dump if command[0] == "readelf" else symbols
+            if command[:2] == ["readelf", "-SW"]:
+                return section
+            if command[:2] == ["readelf", "-x"]:
+                return dump
+            if command[:2] == ["readelf", "-rW"]:
+                return relocs
+            return nm
 
-        with mock.patch.dict(reader.__globals__, run=dispatch):
+        return dispatch
+
+    def test_init_array_symbols_use_exact_constructor_targets(self):
+        reader = GENERATOR["init_array_symbols"]
+        run = self.init_array_fixture([0x1000, 0x2000], symbols=[(0x1000, "first_ctor"), (0x2000, "second_ctor")])
+        with mock.patch.dict(reader.__globals__, run=run):
             self.assertEqual(reader(LIBRARY), ["first_ctor", "second_ctor"])
+
+    def test_init_array_nonzero_unresolved_slot_raises(self):
+        reader = GENERATOR["init_array_symbols"]
+        run = self.init_array_fixture([0x4000], symbols=[(0x1000, "first_ctor")])
+        with mock.patch.dict(reader.__globals__, run=run), self.assertRaisesRegex(ValueError, "0x4000"):
+            reader(LIBRARY)
+
+    def test_init_array_zero_slot_without_relocation_is_exempt(self):
+        reader = GENERATOR["init_array_symbols"]
+        run = self.init_array_fixture([0x0, 0x1000], symbols=[(0x1000, "first_ctor")])
+        with mock.patch.dict(reader.__globals__, run=run):
+            self.assertEqual(reader(LIBRARY), ["first_ctor"])
+
+    def test_init_array_relocated_zero_slot_resolves_from_addend(self):
+        reader = GENERATOR["init_array_symbols"]
+        run = self.init_array_fixture([0x0], relocations=[(0x2000, 0x2000)],
+                                      symbols=[(0x2000, "relocated_ctor")])
+        with mock.patch.dict(reader.__globals__, run=run):
+            self.assertEqual(reader(LIBRARY), ["relocated_ctor"])
+
+    def test_init_array_relocated_target_missing_raises(self):
+        reader = GENERATOR["init_array_symbols"]
+        run = self.init_array_fixture([0x0], relocations=[(0x2000, 0x3000)],
+                                      symbols=[(0x1000, "first_ctor")])
+        with mock.patch.dict(reader.__globals__, run=run), self.assertRaisesRegex(ValueError, "0x3000"):
+            reader(LIBRARY)
+
+    def test_capture_timeout_is_a_value_error(self):
+        capture = GENERATOR["capture"]
+        subprocess = GENERATOR["subprocess"]
+        with mock.patch.object(subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired(["worker"], 1800)) as run:
+            with self.assertRaisesRegex(ValueError, "measurement child timed out: worker"):
+                capture(["worker"], {})
+        self.assertEqual(run.call_args.kwargs["timeout"], 1800)
 
     def test_teardown_exports_keep_only_the_selected_facade(self):
         reader = GENERATOR["teardown_exports"]
