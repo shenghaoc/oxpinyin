@@ -25,21 +25,29 @@ pub enum CandidateKind {
 }
 
 /// One offered conversion.
+///
+/// Sized to need (48 bytes): the three span counts are `u16` because an
+/// input is at most [`MAX_INPUT_BYTES`](crate::MAX_INPUT_BYTES) bytes
+/// long and a key is at least one byte, and the n-best rank is a byte
+/// with [`NO_ROW`] for "not a row", the pin's own `gint8 m_nbest_index`
+/// width (`pinyin.cpp:102` at 074a2219). A window of a hundred-odd rows
+/// is retained per instance, so each byte here is a hundred-odd bytes of
+/// instance heap.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Candidate {
     text: CompactString,
-    kind: CandidateKind,
-    consumed_keys: usize,
-    consumed_bytes: usize,
     cost: Cost,
     token: Option<PhraseToken>,
+    consumed_keys: u16,
+    consumed_bytes: u16,
     /// Tail rank of the n-best sentence row this candidate is (W14);
     /// `None` for every non-row candidate — including fallback sentence
     /// candidates, which share the row `CandidateKind::Sentence` but are
     /// not rows and carry no token path. The rank is the *original* tail
     /// order, so a row that survives the NBEST-wins dedup still knows
     /// which `NbestRow` is its own even when its list position shifted.
-    nbest_index: Option<u8>,
+    /// [`NO_ROW`] stands for `None`.
+    nbest_index: u8,
     /// Where the candidate's span starts, in the coordinates of the window
     /// it was built in — upstream's `lookup_candidate_t::m_begin`
     /// (`pinyin.h`/`zhuyin.h`; set beside `m_end` at `zhuyin.cpp:1509,1595`
@@ -48,7 +56,26 @@ pub struct Candidate {
     /// (`Session::candidates_ending_at`) runs on the absolute prefix graph,
     /// so its rows carry each span's absolute start. Sentence rows and
     /// fallbacks carry 0.
-    span_start: usize,
+    span_start: u16,
+    kind: CandidateKind,
+}
+
+/// The `nbest_index` value of a candidate that is not an n-best row.
+const NO_ROW: u8 = u8::MAX;
+
+// The row width the doc above claims; a field that grows it shows up here.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<Candidate>() == 48);
+
+/// Narrows a byte or key count to the row's width. Every count the
+/// session produces is below [`MAX_INPUT_BYTES`](crate::MAX_INPUT_BYTES)
+/// (32,767), so the saturation never fires; it stands in for a panic.
+const fn narrow(count: usize) -> u16 {
+    if count > u16::MAX as usize {
+        u16::MAX
+    } else {
+        count as u16
+    }
 }
 
 impl Candidate {
@@ -61,21 +88,27 @@ impl Candidate {
         token: Option<PhraseToken>,
         nbest_index: Option<u8>,
     ) -> Self {
+        debug_assert!(consumed_keys <= u16::MAX as usize && consumed_bytes <= u16::MAX as usize);
+        debug_assert!(nbest_index.is_none_or(|rank| rank != NO_ROW));
         Self {
             text: text.into(),
-            kind,
-            consumed_keys,
-            consumed_bytes,
             cost,
             token,
-            nbest_index,
+            consumed_keys: narrow(consumed_keys),
+            consumed_bytes: narrow(consumed_bytes),
+            nbest_index: match nbest_index {
+                Some(rank) if rank != NO_ROW => rank,
+                _ => NO_ROW,
+            },
             span_start: 0,
+            kind,
         }
     }
 
     /// Records where this candidate's span starts (see [`Self::span_start`]).
     pub(crate) const fn set_span_start(&mut self, start: usize) {
-        self.span_start = start;
+        debug_assert!(start <= u16::MAX as usize);
+        self.span_start = narrow(start);
     }
 
     /// Where this candidate's span starts, in the coordinates of the
@@ -91,7 +124,7 @@ impl Candidate {
     /// [`Session::candidates_ending_at`]: crate::Session::candidates_ending_at
     #[must_use]
     pub const fn span_start(&self) -> usize {
-        self.span_start
+        self.span_start as usize
     }
 
     /// The text this candidate would insert.
@@ -109,13 +142,13 @@ impl Candidate {
     /// How many pinyin keys the candidate absorbs.
     #[must_use]
     pub const fn consumed_keys(&self) -> usize {
-        self.consumed_keys
+        self.consumed_keys as usize
     }
 
     /// How many bytes of the raw input the candidate absorbs.
     #[must_use]
     pub const fn consumed_bytes(&self) -> usize {
-        self.consumed_bytes
+        self.consumed_bytes as usize
     }
 
     /// The scoring token behind this candidate, when it is one phrase.
@@ -146,9 +179,10 @@ impl Candidate {
     /// duplicate without renumbering.
     #[must_use]
     pub const fn nbest_index(&self) -> u8 {
-        match self.nbest_index {
-            Some(rank) => rank,
-            None => 0,
+        if self.nbest_index == NO_ROW {
+            0
+        } else {
+            self.nbest_index
         }
     }
 
@@ -159,7 +193,11 @@ impl Candidate {
     /// never by list position, which the NBEST-wins dedup can shift.
     #[must_use]
     pub const fn nbest_row(&self) -> Option<u8> {
-        self.nbest_index
+        if self.nbest_index == NO_ROW {
+            None
+        } else {
+            Some(self.nbest_index)
+        }
     }
 }
 
