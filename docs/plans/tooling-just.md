@@ -1,10 +1,12 @@
 # Tooling layer 2: native just interface
 
-Status: partial implementation. Reconciled: 2026-10-20 UTC (`date -u`).
+Status: partial implementation. Reconciled: 2026-10-21 UTC (`date -u`).
 This layer builds on [native Python](tooling-python.md).
 PR [#942](https://github.com/shenghaoc/oxpinyin/pull/942) added the native
 `justfile`, doctor, check and heavy recipes. PR
 [#943](https://github.com/shenghaoc/oxpinyin/pull/943) added test and test-doc.
+PR [#948](https://github.com/shenghaoc/oxpinyin/pull/948) (merge `219f4205`)
+added build, fmt, clippy, list and plan.
 The recipe table distinguishes these from the remaining surface.
 
 macOS: bounded checks passed on 2026-10-20 UTC at
@@ -33,7 +35,8 @@ libdb required: the `bdb` feature links the SYSTEM Berkeley DB and needs its hea
 
 The configured BDB result supersedes that attempt.
 
-Windows: TODO (no host); tooling verification is deferred.
+Windows: TODO (no host); tooling verification is deferred. It does not block
+T2N (maintainer ruling 2026-10-21 UTC).
 Shell and argument acceptance remains partial. Hosted Rust CI does not verify
 these recipes. Historical macOS checks in #942/#943 retain their original
 heads and failures; they do not verify this head.
@@ -67,15 +70,15 @@ Layer 5 schedules the old-to-new handoffs.
 | --- | --- | --- | --- |
 | `just --list` | List tasks; bare `just` runs doctor. | README/runbook discovery | Implemented, #942. |
 | `just doctor` | Call Layer 1's native doctor. | Bootstrap doctor | Implemented, #942. |
-| `just list [--issue X] [--kind K]` | Read registry rows and implementation state; execute nothing. | `run-all.py --list` | Partial: #941 supplies `tools.dev list [--heavy]`; this recipe, issue/kind filters and implementation state are proposed. |
-| `just plan [selection ...]` | Print the native plan without execution. | Native command planning | Partial: #941 supplies read-only `tools.dev plan --runners/--cells`; the recipe and full command/input identities are proposed. |
+| `just list [--issue X] [--kind K]` | Read registry rows and implementation state; execute nothing. | `run-all.py --list` | Partial: #941 supplies `tools.dev list [--heavy]`; #948 implemented the recipe, issue/kind filters and selection tests. `list` implementation state remains proposed: the proposed `implementation` field does not exist in `runners.json` or `registry.py`. |
+| `just plan [selection ...]` | Print the native plan without execution. | Native command planning | Partial: #941 supplies read-only `tools.dev plan --runners/--cells`; #948 implemented the recipe and issue/kind selection. Full command/input identities and digests (stage T3) remain proposed. |
 | `just check [backend]` | Run native setup checks; default bdb. | `tools/dev/check.sh` | Implemented, #942. The shell remains an old/new acceptance input. |
 | `just heavy -- <command>` | Use Layer 1's slot and admission. | Merged #905/#906/#903 `run-all.py --heavy-slot --` | Implemented, #942; shared core from #941. |
-| `just test [args ...]` | Enter Layer 3's native Rust test path. | Native `cargo test` orchestration | Implemented, #943; CI cutover is proposed. |
+| `just test [args ...]` | Enter Layer 3's native Rust test path. | Native `cargo test` orchestration | Implemented, #943; the `ci.yml` Linux and macOS test cutover is #968 (merge `c017ebee`). Windows and other workflows remain proposed. |
 | `just test-doc [args ...]` | Run doctests through the heavy slot. | `cargo test --doc` | Implemented, #943. |
-| `just build [args ...]` | Run a native build through the heavy wrapper. | `cargo build` | Proposed. |
-| `just fmt [args ...]` | Run formatting. | `cargo fmt` | Proposed. |
-| `just clippy [args ...]` | Run lints through the heavy wrapper. | `cargo clippy` | Proposed. |
+| `just build [args ...]` | Run a native build through the heavy wrapper. | `cargo build` | Implemented, #948. |
+| `just fmt [args ...]` | Run formatting. | `cargo fmt` | Implemented, #948. |
+| `just clippy [args ...]` | Run lints through the heavy wrapper. | `cargo clippy` | Implemented, #948. |
 | `just bench <recipe>` | Enter a native benchmark without pin inputs. | Native Criterion/perf entry points | Proposed. |
 | `just measure <recipe>` / `just initbench` | Enter optional native measurement. | Native oxpinyin-only measurement | Proposed. |
 | `just fuzz` / `just coverage` / `just sanitize` | Call native tools for native inputs. | Existing fuzz/coverage/sanitizer commands | Proposed. |
@@ -133,8 +136,10 @@ Do not weaken byte-exact fixtures or wire formats. Record untested cases.
 The #905/#906/#903 stack is merged. `run-all.py --heavy-slot --` remains
 available through #941's adapter to the shared core. PR #942 changed
 AGENTS.md to use `just heavy --` for direct heavy commands and runner builds.
-Layer 1 limits the native slot to its environment. The remaining recipe and
-CI migrations above are proposed. This reconciliation changes no production rule.
+Layer 1 limits the native slot to its environment. The recipe migrations above
+that remain open are bench, measure/initbench, fuzz, coverage, sanitize and ci;
+the `ci.yml` Linux and macOS test cutover landed in #968 (merge `c017ebee`).
+This reconciliation changes no production rule.
 
 ## 5. Inspected source pattern
 

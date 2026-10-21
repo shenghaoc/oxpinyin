@@ -1,6 +1,6 @@
 # Tooling layer 3: native nextest
 
-Status: partial implementation. Reconciled: 2026-10-20 UTC (`date -u`).
+Status: partial implementation. Reconciled: 2026-10-21 UTC (`date -u`).
 This layer builds on the [native just interface](tooling-just.md).
 PR [#943](https://github.com/shenghaoc/oxpinyin/pull/943) is merged.
 
@@ -9,8 +9,8 @@ PR [#943](https://github.com/shenghaoc/oxpinyin/pull/943) is merged.
 | Native test entry point, minimum version and ignored-test mapping (§§1, 4) | Implemented in #943 through `tools.dev.test_runner`, `just test` and `just test-doc`. |
 | Native profiles and resource groups (§2) | Implemented in #943: local uses admitted num-cpus; ci uses four threads; retries are zero and fail-fast is false. The store-backend group has one thread; selected real-data binaries take the full budget. |
 | Shared admission and explicit nextest concurrency (§3) | Implemented in #943 on #941's shared slot. CLI counts precede NEXTEST_TEST_THREADS, then profile settings. Unsupported or ambiguous overrides fail closed. |
-| Equivalence across every native CI scope (§5) | Partial. #943 records six accepted Linux rows only at `7991ec6b17509980f42a59d72531617059f109d6`. The macOS tkrzw equivalence at `b034e834` on 2026-10-20 UTC is historical. The current macOS CI BDB scope passed at `219f420` on 2026-10-20 UTC: 1,218 passed and 22 ignored; identities and verdicts match. Other scopes and sanitizer equivalence remain unverified. |
-| CI and AGENTS.md rule 5 cutover (§5) | Partial T13N: `ci.yml` test (Linux) and test-macos use pinned nextest 0.9.143 with `--profile ci` and separate `cargo test --doc` steps. Features, exclusions and ignored-test behavior are preserved. Windows stays on cargo test (#950). Other workflows and AGENTS.md rule 5 are unchanged. |
+| Equivalence across every native CI scope (§5) | Partial. #943 records six accepted Linux rows only at `7991ec6b17509980f42a59d72531617059f109d6`. The macOS tkrzw equivalence at `b034e834` on 2026-10-20 UTC is historical. The current macOS CI BDB scope passed at `219f420` on 2026-10-20 UTC: 1,218 passed and 22 ignored; identities and verdicts match. [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) compared all 1,531 Linux and 1,246 macOS crate/binary-qualified identities and verdicts against cargo test; all matched, and both doctest sets matched six identities (four passed, two ignored). Other scopes and sanitizer equivalence remain unverified. |
+| CI and AGENTS.md rule 5 cutover (§5) | Partial T13N: [#968](https://github.com/shenghaoc/oxpinyin/pull/968) (merge `c017ebee`) switched `ci.yml` test (Linux) and test-macos to pinned nextest 0.9.143 with `--profile ci` and separate `cargo test --doc` steps. Features, exclusions and ignored-test behavior are preserved. Windows stays on cargo test (#950). Other workflows and AGENTS.md rule 5 are unchanged. |
 | Pin-dependent test route | Proposed under Layer 4; no container profile exists yet. |
 
 macOS: bounded checks passed on 2026-10-20 UTC at
@@ -36,8 +36,10 @@ Elapsed times were excluded. The earlier BDB `just check` result remains
 separate evidence. Other CI scopes remain unverified.
 Windows: TODO (no host); tooling verification is deferred.
 Historical macOS comparisons in #943 belong to `e23367bc` and include failed
-backend runs. They do not verify this head. Hosted Rust CI supplies no local
-Python, PowerShell or slot acceptance. The sections below keep pending requirements.
+backend runs. They do not verify this head. Hosted CI runs the repository
+Python harnesses on Linux and macOS ([#988](https://github.com/shenghaoc/oxpinyin/pull/988),
+merge `96ca8c8e`), including the slot harness. It supplies no PowerShell or
+Windows acceptance. The sections below keep pending requirements.
 
 The approved T13N cutover covers only `ci.yml` test and test-macos.
 Both reuse verify-nightly's checksum-verified release-archive installation
