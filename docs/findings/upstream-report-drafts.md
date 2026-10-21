@@ -8,6 +8,9 @@ was added 2026-09-22: Tkrzw has no upstream CI coverage, not an API
 defect, and not part of that four-issue filing shape. A sixth, item 6,
 was added 2026-09-27 UTC: `pinyin_init` leaves the process
 `LC_NUMERIC` at `"C"` (#539), read at the current pin `074a2219`.
+A seventh draft, item 7, was added 2026-10-21 UTC: temporary Berkeley
+DB handles leak on failed user-database loads (#993). The file now
+holds seven drafts; item 7 is ready to file as a separate report.
 Filing is the
 maintainer's action (and account); nothing here has been posted. The
 collection mandate is `AGENTS.md`'s ("collected to report back to
@@ -17,14 +20,14 @@ either timing cheap.
 
 Suggested filing shape: four independent issues (no coupling worth
 cross-blocking), ordered by severity below, each linking the
-memory-safety character where applicable. Reproductions are plain C
-against a stock libpinyin build — no harness, no oxpinyin. All four
-verified against the pinned libpinyin 2.11.91 (`0c5e80e`); the aux
+memory-safety character where applicable. The first four reproductions
+are plain C against a stock libpinyin build — no harness, no oxpinyin.
+All four verified against the pinned libpinyin 2.11.91 (`0c5e80e`); the aux
 over-read was additionally surveyed still-present on `main` @
 `55e9051` (2026-08-20) with no existing report found on GitHub or
 Fedora Bugzilla.
 
-**Shared setup — every reproduction below is a fragment that assumes
+**Shared setup — the C fragments in items 1–4 and 6 assume
 this block** (declared once here, not repeated per snippet):
 
 ```c
@@ -331,12 +334,159 @@ it.
 
 ---
 
+## 7. Berkeley DB `load_db` leaks temporary handles on failure
+
+**Severity: resource leak** — repeated context initialization with an
+empty user directory loses native allocations, even when every context
+is finalized. Both the pinyin and zhuyin facades are affected.
+
+**Affected version:** verified at libpinyin 2.11.92, pin
+`074a2219c90feaf962d0d24f034514033ece5f99`, with Berkeley DB 5.3.28
+on Linux amd64. Other revisions, current upstream status, and the Kyoto
+Cabinet/Tkrzw backends have not been established by this report.
+
+Three `load_db` methods create `tmp_db` with `db_create`, then return
+`false` after failed `tmp_db->open` or failed `copy_bdb` without closing
+it. Their success paths do close it. The temporary handle is never
+transferred to the context, so later `pinyin_fini`/`zhuyin_fini` cannot
+release it:
+
+- [`ChewingLargeTable2::load_db`, `src/storage/chewing_large_table2_bdb.cpp:115–130`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/chewing_large_table2_bdb.cpp#L115-L130).
+- [`PhraseLargeTable3::load_db`, `src/storage/phrase_large_table3_bdb.cpp:130–145`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phrase_large_table3_bdb.cpp#L130-L145).
+- [`Bigram::load_db`, `src/storage/ngram_bdb.cpp:61–76`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/ngram_bdb.cpp#L61-L76).
+
+These are the same pin blobs read in #993's detached `libpinyin-pin`
+worktree, checked against the pinned tree before that worktree was
+removed. Their Git blob identities are respectively
+`469ee7d969e853ff07312b5b72b268dd47433a0e`,
+`d54c80a6031c634c91c35d6aebd9ebc2ffac7f46`, and
+`8910f9d6c7ba6f12cc234e1e02a7f99d47b6b7f2`.
+
+The [official Berkeley DB C API contract for `DB->open`](https://docs.oracle.com/cd/E17275_01/html/api_reference/C/dbopen.html)
+requires `DB->close` even when open fails. The
+[`DB->close` contract](https://docs.oracle.com/cd/E17275_01/html/api_reference/C/dbclose.html)
+describes release of allocated resources and invalidates the handle
+regardless of the close return value.
+
+**Reproduction** (the exact existing #993 attribution command, not the
+shared C fragment). It requires the oxpinyin harness at
+[`11da1d7adb324f516d1b2cf87db831096e33f486`](https://github.com/shenghaoc/oxpinyin/tree/11da1d7adb324f516d1b2cf87db831096e33f486),
+the final head of [#993](https://github.com/shenghaoc/oxpinyin/pull/993);
+this documentation PR does not supply that unmerged harness. Run from
+`/src` at that ref in the prepared #993 Debian Linux amd64 BDB cell,
+with its pin-built `/work/reference`, equivalent system data, and
+shipping facade libraries under `/work/shipping`. Preparation and input
+identities are recorded in #993. Keep the normal container reservation
+and host admission from the [compatibility runbook](../runbooks/compatibility-container.md);
+these paths are reproduction inputs, not retained artifact links.
+
+```sh
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal -m tools.dev slot run -- uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal tools/bisection/contract-diff.py bdb /work/reference /work/shipping/lib/libpinyin.so --zhuyin-so /work/shipping/lib/libzhuyin.so --teardown --teardown-stage attribute --teardown-attribution-case journals --teardown-work-dir /work/measure
+```
+
+The attribution stage includes the empty-profile Memcheck loop for
+both facades and all three subjects. The native child keeps its library
+loaded and repeats init, first-candidate preparation, instance free and
+fini 100 times; the parent restores the same fresh empty user profile
+between cycles. This is the existing lifecycle reproduction, not a
+claim that a separate init-only driver was run. Its native Memcheck
+worker uses `--leak-check=no --show-leak-kinds=all --num-callers=24
+--undef-value-errors=no`, with explicit `VALGRIND_DO_LEAK_CHECK` and
+count requests at the lifecycle checkpoints. Thus automatic exit leak
+checking is disabled, but post-fini live/lost counts are still measured.
+The stage also runs the journals and other attribution controls; it is
+not an empty-only command. No measurements were rerun for this draft.
+
+**Evidence:** #993's Memcheck 3.27.1 results for the pin, after fini:
+
+| Completed init/fini cycles | Lost bytes, each facade | Lost blocks, each facade |
+| --- | ---: | ---: |
+| 1 | 15,854 | 33 |
+| 10 | 158,540 | 330 |
+| 50 | 792,700 | 1,650 |
+| 100 | 1,585,400 | 3,300 |
+
+The allocation stacks identify the three temporary handles above. The
+empty directory takes their failed-open paths on each cycle. The
+journals profile, with existing user databases, avoids those paths and
+has no corresponding post-fini lost-allocation growth. This is live
+client-allocation evidence, not an inference from RSS or allocator arena
+retention. Raw captures were ephemeral, parsed in memory, and deleted
+with #993's private operational files; none is retained or uploaded.
+
+The `copy_bdb` failure branches have the same missing cleanup by source
+inspection. They were not fault-injected or measured; the byte/block
+figures above apply to failed open only.
+
+**Suggested fix:** close the successfully created temporary handle before
+each of the two early returns in all three methods, preserving the
+existing `false` result and success-path close. This proposed upstream
+diff is not applied to shipping code and has not been build-tested or
+measured with the fix:
+
+```diff
+--- a/src/storage/chewing_large_table2_bdb.cpp
++++ b/src/storage/chewing_large_table2_bdb.cpp
+@@ -121,4 +121,6 @@
+     ret = tmp_db->open(tmp_db, NULL, filename, NULL,
+                        DB_BTREE, DB_RDONLY, 0600);
+-    if (ret != 0)
++    if (ret != 0) {
++        tmp_db->close(tmp_db, 0);
+         return false;
++    }
+@@ -126,2 +128,4 @@
+-    if (!copy_bdb(tmp_db, m_db))
++    if (!copy_bdb(tmp_db, m_db)) {
++        tmp_db->close(tmp_db, 0);
+         return false;
++    }
+--- a/src/storage/phrase_large_table3_bdb.cpp
++++ b/src/storage/phrase_large_table3_bdb.cpp
+@@ -136,4 +136,6 @@
+     ret = tmp_db->open(tmp_db, NULL, filename, NULL,
+                        DB_BTREE, DB_RDONLY, 0600);
+-    if (ret != 0)
++    if (ret != 0) {
++        tmp_db->close(tmp_db, 0);
+         return false;
++    }
+@@ -141,2 +143,4 @@
+-    if (!copy_bdb(tmp_db, m_db))
++    if (!copy_bdb(tmp_db, m_db)) {
++        tmp_db->close(tmp_db, 0);
+         return false;
++    }
+--- a/src/storage/ngram_bdb.cpp
++++ b/src/storage/ngram_bdb.cpp
+@@ -67,4 +67,6 @@
+     ret = tmp_db->open(tmp_db, NULL, dbfile, NULL,
+                        DB_HASH, DB_RDONLY, 0600);
+-    if ( ret != 0 )
++    if ( ret != 0 ) {
++        tmp_db->close(tmp_db, 0);
+         return false;
++    }
+@@ -72,2 +74,4 @@
+-    if ( !copy_bdb(tmp_db, m_db) )
++    if ( !copy_bdb(tmp_db, m_db) ) {
++        tmp_db->close(tmp_db, 0);
+         return false;
++    }
+```
+
+This separate BDB resource-leak report is ready for the maintainer to
+file. Nothing has been filed upstream; the proposed cleanup is not an
+authorization to change oxpinyin behavior.
+
+---
+
 ## Filing notes
 
 - Independence: no fix touches another; file items 1–4 as four issues.
   Item 5 is a separate report; it does not belong in that batch, and
-  neither does item 6, which is a process-state defect filed on its
-  own.
+  neither does item 6, which is a process-state defect to file on its
+  own. Item 7 is a separate BDB resource-leak report, ready to file.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Credit line per `AGENTS.md` attribution rules is the maintainer's to
   place; the reproductions above stand alone.
