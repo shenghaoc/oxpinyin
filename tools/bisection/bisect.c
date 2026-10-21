@@ -853,19 +853,44 @@ static long perf_open_instruction_counter(void) {
 #endif
 }
 
-static int resolve_perf_symbols(void *handle, struct symbols *s) {
+/* zhuyin.h:343-344 at 074a2219: the after-cursor entry takes no sort
+ * argument. Adapt it to the existing cycle instead of calling through an
+ * incompatible function-pointer type. Only the harness owns this adapter. */
+static struct {
+    bool (*guess_after_cursor)(pinyin_instance_t *, size_t);
+} perf_zhuyin;
+
+static bool perf_zhuyin_guess(pinyin_instance_t *instance, size_t offset,
+                             guint sort) {
+    (void)sort;
+    return perf_zhuyin.guess_after_cursor(instance, offset);
+}
+
+static int resolve_perf_symbols(void *handle, struct symbols *s, bool zhuyin) {
     int missing = 0;
 
     memset(s, 0, sizeof *s);
-    RESOLVE(handle, *s, init,            "pinyin_init");
-    RESOLVE(handle, *s, fini,            "pinyin_fini");
-    RESOLVE(handle, *s, alloc_instance,  "pinyin_alloc_instance");
-    RESOLVE(handle, *s, free_instance,   "pinyin_free_instance");
-    RESOLVE(handle, *s, set_options,     "pinyin_set_options");
-    RESOLVE(handle, *s, parse_full,      "pinyin_parse_more_full_pinyins");
-    RESOLVE(handle, *s, guess_candidates,"pinyin_guess_candidates");
-    RESOLVE(handle, *s, get_n_candidate, "pinyin_get_n_candidate");
-    RESOLVE(handle, *s, reset,           "pinyin_reset");
+#define PERF_RESOLVE(field, suffix) do { \
+    char name[96]; \
+    snprintf(name, sizeof name, "%s_%s", zhuyin ? "zhuyin" : "pinyin", suffix); \
+    RESOLVE(handle, *s, field, name); \
+} while (0)
+    PERF_RESOLVE(init, "init");
+    PERF_RESOLVE(fini, "fini");
+    PERF_RESOLVE(alloc_instance, "alloc_instance");
+    PERF_RESOLVE(free_instance, "free_instance");
+    PERF_RESOLVE(set_options, "set_options");
+    PERF_RESOLVE(parse_full, "parse_more_full_pinyins");
+    if (zhuyin) {
+        RESOLVE(handle, perf_zhuyin, guess_after_cursor,
+                "zhuyin_guess_candidates_after_cursor");
+        s->guess_candidates = perf_zhuyin_guess;
+    } else {
+        PERF_RESOLVE(guess_candidates, "guess_candidates");
+    }
+    PERF_RESOLVE(get_n_candidate, "get_n_candidate");
+    PERF_RESOLVE(reset, "reset");
+#undef PERF_RESOLVE
     return missing;
 }
 
@@ -889,10 +914,13 @@ static int run_perf_mode(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr,
                 "Usage: %s --perf <path-to-so> <systemdir>\n"
-                "  Environment: PERF_BACKEND (label), PERF_MODE\n"
+                "  Environment: PERF_BACKEND (label), PERF_FACADE\n"
+                "    (pinyin|zhuyin, default pinyin), PERF_MODE\n"
                 "    (speed|ram-init|ram-cycle|rss-diag), PERF_CYCLES\n"
                 "    (default 8), PERF_REPEATS (corpus passes per cycle,\n"
-                "    default 1). rss-diag additionally reports\n"
+                "    default 1), PERF_WORKLOAD_CHECKSUM (emit the cycle\n"
+                "    return/count fingerprint when non-empty). rss-diag\n"
+                "    additionally reports\n"
                 "    smaps_rollup and mallinfo2 at init and after the\n"
                 "    cycles, calls malloc_trim(0) and re-reads both;\n"
                 "    RSS_DIAG_DIR (with RSS_DIAG_TAG) also writes the\n"
@@ -908,6 +936,8 @@ static int run_perf_mode(int argc, char **argv) {
 
     const char *backend    = getenv("PERF_BACKEND");
     const char *mode       = getenv("PERF_MODE");
+    const char *facade     = getenv("PERF_FACADE");
+    const char *checksum_env = getenv("PERF_WORKLOAD_CHECKSUM");
     int cycles             = perf_env_count("PERF_CYCLES", 8);
     int repeats            = perf_env_count("PERF_REPEATS", 1);
 
@@ -915,6 +945,12 @@ static int run_perf_mode(int argc, char **argv) {
         backend = so_path;
     if (!mode)
         mode = "speed";
+    if (!facade)
+        facade = "pinyin";
+    if (strcmp(facade, "pinyin") != 0 && strcmp(facade, "zhuyin") != 0) {
+        fprintf(stderr, "fatal: PERF_FACADE must be pinyin or zhuyin\n");
+        return 1;
+    }
 
     /* RSS diagnosis. The /proc text dumps are opt-in on RSS_DIAG_DIR
      * because writing them allocates: a round that reports the
@@ -928,7 +964,16 @@ static int run_perf_mode(int argc, char **argv) {
     if (!rss_diag)
         diag_dir = NULL;
 
-    char user_dir[] = "/tmp/bisect-perf-XXXXXX";
+    const char *temp_root = getenv("TMPDIR");
+    if (temp_root == NULL || *temp_root == '\0')
+        temp_root = "/tmp";
+    char user_dir[4096];
+    int user_path_length = snprintf(user_dir, sizeof user_dir,
+                                    "%s/bisect-perf-XXXXXX", temp_root);
+    if (user_path_length < 0 || (size_t)user_path_length >= sizeof user_dir) {
+        fprintf(stderr, "fatal: TMPDIR path is too long\n");
+        return 1;
+    }
     if (!mkdtemp(user_dir)) {
         perror("mkdtemp");
         return 1;
@@ -942,7 +987,7 @@ static int run_perf_mode(int argc, char **argv) {
     }
 
     struct symbols sym;
-    int missing = resolve_perf_symbols(handle, &sym);
+    int missing = resolve_perf_symbols(handle, &sym, strcmp(facade, "zhuyin") == 0);
     if (missing > 0) {
         fprintf(stderr, "fatal: %d perf symbols missing\n", missing);
         dlclose(handle);
@@ -1054,6 +1099,7 @@ static int run_perf_mode(int argc, char **argv) {
         int hw_errno = 0;
         uint64_t hw_instructions = 0;
         int hw_cycles = 0;
+        uint64_t workload_checksum = 1469598103934665603ULL;
 
         if (hw_wanted) {
             hw_fd = (int)perf_open_instruction_counter();
@@ -1067,6 +1113,7 @@ static int run_perf_mode(int argc, char **argv) {
         }
 
         for (int i = 0; i < cycles; i++) {
+            uint64_t sink_before = perf_sink;
             if (i == 1 && alloc_syms.count && alloc_syms.bytes) {
                 read_alloc_counters(&alloc_syms, &alloc_steady_start);
                 alloc_steady_captured = 1;
@@ -1080,6 +1127,11 @@ static int run_perf_mode(int argc, char **argv) {
                              ? bisect_perf_cold_unit(&sym, inst, repeats)
                              : bisect_perf_steady_unit(&sym, inst, repeats);
             uint64_t end = now_ns();
+            /* Outside the timer: retain the existing cycle's return/count
+             * fingerprint without XOR-cancelling an even number of cycles.
+             * Full observable equivalence still belongs to contract-diff. */
+            workload_checksum ^= sink_before ^ perf_sink;
+            workload_checksum *= 1099511628211ULL;
             if (i > 0 && hw_fd >= 0) {
                 uint64_t counted = 0;
 
@@ -1099,6 +1151,9 @@ static int run_perf_mode(int argc, char **argv) {
                 read_perf_memory(&after_first);
         }
         read_perf_memory(&after_last);
+        if (checksum_env && *checksum_env)
+            printf(",\"workload_checksum\":\"%016llx\"",
+                   (unsigned long long)workload_checksum);
 
         /* The decisive experiment. Read the post-cycle state, then ask
          * glibc to return everything it is merely retaining, then read

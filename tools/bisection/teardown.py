@@ -455,7 +455,7 @@ def provision(campaign, pin, root):
 
 def populate_user(campaign, pin, user, rows):
     # Fixture generation is untimed. This is the same native executable and
-    # facade machinery, with no dependency on the historical initbench.
+    # facade machinery, with no external workload dependency.
     command = [str(campaign.worker), '--teardown', 'pinyin', str(pin), str(campaign.data), str(user),
                'populate', '1', '1', '1', 'first-candidate', str(rows)]
     env = dict(os.environ, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports('pinyin')))
