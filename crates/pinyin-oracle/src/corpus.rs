@@ -11,7 +11,7 @@
 
 use std::collections::HashSet;
 
-use oxpinyin_core::{FULL_PINYIN_SYLLABLES, FullPinyinParser, InputParser};
+use oxpinyin_core::{FullPinyinParser, InputParser, full_pinyin_syllables};
 
 /// Fixed generator seed, `"Parity01"` read as big-endian ASCII.
 pub const SEED: u64 = 0x5061_7269_7479_3031;
@@ -152,11 +152,11 @@ fn junk_alphabet() -> Vec<u8> {
 
 /// Proper prefixes of table syllables that are not themselves table syllables.
 fn partial_prefixes() -> Vec<String> {
-    let table: HashSet<&str> = FULL_PINYIN_SYLLABLES.iter().copied().collect();
+    let table: HashSet<&str> = full_pinyin_syllables().collect();
     let mut seen: HashSet<&str> = HashSet::new();
     let mut prefixes: Vec<String> = Vec::new();
 
-    for syllable in FULL_PINYIN_SYLLABLES {
+    for syllable in full_pinyin_syllables() {
         for length in 1..syllable.len() {
             let prefix = &syllable[..length];
             if table.contains(prefix) {
@@ -176,9 +176,7 @@ fn partial_prefixes() -> Vec<String> {
 /// from the parser rather than restating the number keeps the two in step.
 fn ambiguous_syllables() -> Vec<&'static str> {
     let parser = FullPinyinParser;
-    FULL_PINYIN_SYLLABLES
-        .iter()
-        .copied()
+    full_pinyin_syllables()
         .filter(|syllable| {
             parser
                 .parse(syllable.as_bytes())
@@ -235,7 +233,10 @@ fn fill(
 fn join_syllables(rng: &mut SplitMix64, count: usize) -> String {
     let mut text = String::new();
     for _ in 0..count {
-        let syllable = rng.pick(FULL_PINYIN_SYLLABLES.as_slice());
+        let syllable = oxpinyin_core::full_pinyin_syllable(
+            rng.below(oxpinyin_core::FULL_PINYIN_SYLLABLE_COUNT),
+        )
+        .unwrap_or_default();
         text.push_str(syllable);
     }
     text
@@ -260,10 +261,7 @@ pub fn generate() -> Vec<Stratum> {
     strata.push(Stratum {
         file_name: "01-single-syllable.txt",
         description: "every table syllable alone, in frozen inventory order",
-        inputs: FULL_PINYIN_SYLLABLES
-            .iter()
-            .map(|syllable| (*syllable).to_owned())
-            .collect(),
+        inputs: full_pinyin_syllables().map(str::to_owned).collect(),
     });
 
     let mut rng = SplitMix64::new(SEED);
@@ -436,7 +434,7 @@ mod tests {
     use std::sync::OnceLock;
 
     use super::{CORPUS_DIR, DOMAIN_HIGH, DOMAIN_LOW, Stratum, generate};
-    use oxpinyin_core::{FULL_PINYIN_SYLLABLES, FullPinyinParser, InputParser};
+    use oxpinyin_core::{FullPinyinParser, InputParser, full_pinyin_syllables};
 
     /// Generation is pure, so one run serves every assertion. Regenerating per
     /// test would dominate the suite's runtime for no extra coverage;
@@ -495,7 +493,7 @@ mod tests {
             first
                 .inputs
                 .iter()
-                .zip(FULL_PINYIN_SYLLABLES)
+                .zip(full_pinyin_syllables())
                 .all(|(got, want)| got == want)
         );
     }

@@ -19,8 +19,8 @@
 
 use oxpinyin_core::{
     DoublePinyinParser, DoublePinyinScheme, FullPinyinParser, FullPinyinScheme, InputParser,
-    LUOMA_PINYIN_INDEX, SECONDARY_ZHUYIN_INDEX, SyllableKey, ZhuyinParser, ZhuyinScheme,
-    parse_full_pinyin_index,
+    SyllableKey, ZhuyinParser, ZhuyinScheme, luoma_pinyin_index, parse_full_pinyin_index,
+    secondary_zhuyin_index,
 };
 
 /// All double-pinyin layouts with a compiled table (Customized has none).
@@ -281,8 +281,8 @@ fn the_romanization_indexes_parse_with_aligned_spans() {
     // secondary sample. Each must parse as aligned keys resolving to
     // frozen canonical syllables.
     for (name, index, input) in [
-        ("luoma", &LUOMA_PINYIN_INDEX[..], &b"jhih"[..]),
-        ("secondary", &SECONDARY_ZHUYIN_INDEX[..], &b"ai"[..]),
+        ("luoma", luoma_pinyin_index(), &b"jhih"[..]),
+        ("secondary", secondary_zhuyin_index(), &b"ai"[..]),
     ] {
         let parse = parse_full_pinyin_index(input, false, index);
         assert_eq!(
@@ -316,12 +316,9 @@ fn the_full_pinyin_scheme_slot_enumerates_its_three_romanizations() {
     // for LUOMA/SECONDARY; the Hanyu default uses the ordinary parser and
     // has no index mapping through this seam.
     assert!(FullPinyinScheme::Hanyu.index().is_none());
-    assert_eq!(
-        FullPinyinScheme::Luoma.index(),
-        Some(&LUOMA_PINYIN_INDEX[..])
-    );
+    assert_eq!(FullPinyinScheme::Luoma.index(), Some(luoma_pinyin_index()));
     assert_eq!(
         FullPinyinScheme::SecondaryZhuyin.index(),
-        Some(&SECONDARY_ZHUYIN_INDEX[..])
+        Some(secondary_zhuyin_index())
     );
 }

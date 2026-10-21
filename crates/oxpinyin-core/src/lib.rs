@@ -21,15 +21,21 @@ mod parser;
 mod scheme;
 pub mod scoring;
 pub mod single_gram;
+mod string_tables {
+    use crate::options::{
+        ZHUYIN_CORRECT_ETEN26, ZHUYIN_CORRECT_HSU, ZHUYIN_CORRECT_SHUFFLE, ZHUYIN_INCOMPLETE,
+    };
+    include!(concat!(env!("OUT_DIR"), "/string_tables.rs"));
+}
 mod syllables;
 mod vocab;
 mod zhuyin_map;
 pub use zhuyin_map::{zhuyin_display_for_pinyin, zhuyin_for_pinyin};
 
 pub use full_pinyin_index::{
-    FullPinyinIndexKey, FullPinyinIndexParse, LUOMA_PINYIN_COUNT, LUOMA_PINYIN_INDEX,
-    MAX_INDEX_SPELLING_LEN, SECONDARY_ZHUYIN_COUNT, SECONDARY_ZHUYIN_INDEX,
-    parse_full_pinyin_index, parse_full_pinyin_index_with_options,
+    FullPinyinIndex, FullPinyinIndexKey, FullPinyinIndexParse, LUOMA_PINYIN_COUNT,
+    MAX_INDEX_SPELLING_LEN, SECONDARY_ZHUYIN_COUNT, luoma_pinyin_index, parse_full_pinyin_index,
+    parse_full_pinyin_index_with_options, secondary_zhuyin_index,
 };
 pub use options::{
     DYNAMIC_ADJUST, FORCE_TONE, OptionBits, PINYIN_AMB_ALL, PINYIN_AMB_AN_ANG, PINYIN_AMB_C_CH,
@@ -49,11 +55,11 @@ pub use scheme::{
     ZhuyinKey, ZhuyinParse, ZhuyinParser, ZhuyinScheme, parse_zhuyin_direct,
 };
 pub use syllables::{
-    FULL_PINYIN_SYLLABLE_COUNT, FULL_PINYIN_SYLLABLES, INCOMPLETE_PINYIN_KEY_COUNT,
-    INCOMPLETE_PINYIN_KEYS, MAX_SYLLABLE_LEN, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT,
-    OPTION_ONLY_COMPLETE_SYLLABLES, ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT,
-    ZHUYIN_ONLY_COMPLETE_SYLLABLES, canonical_complete_syllable, option_alias_canonical,
-    phonetic_initial, syllable_initial,
+    FULL_PINYIN_SYLLABLE_COUNT, INCOMPLETE_PINYIN_KEY_COUNT, INCOMPLETE_PINYIN_KEYS,
+    MAX_SYLLABLE_LEN, OPTION_ONLY_COMPLETE_SYLLABLE_COUNT, OPTION_ONLY_COMPLETE_SYLLABLES,
+    ZHUYIN_ONLY_COMPLETE_SYLLABLE_COUNT, ZHUYIN_ONLY_COMPLETE_SYLLABLES,
+    canonical_complete_syllable, full_pinyin_syllable, full_pinyin_syllables,
+    option_alias_canonical, phonetic_initial, syllable_initial,
 };
 pub use vocab::{PhraseEntry, PhraseToken, SYLLABLE_KEY_COUNT, SyllableKey};
 

@@ -4,7 +4,7 @@ use core::fmt;
 
 use crate::options::{FORCE_TONE, PINYIN_INCOMPLETE, USE_TONE};
 use crate::{CHEWING_ZERO_TONE, ChewingKey};
-use crate::{FULL_PINYIN_SYLLABLES, InputParser, MAX_SYLLABLE_LEN, OptionBits, SyllableKey};
+use crate::{InputParser, MAX_SYLLABLE_LEN, OptionBits, SyllableKey, full_pinyin_syllables};
 
 const OVER_LIMIT: usize = MAX_PARSE_RESULTS + 1;
 
@@ -518,8 +518,7 @@ fn longest_partial_prefix(bytes: &[u8]) -> usize {
 
 fn is_partial_only(bytes: &[u8]) -> bool {
     complete_syllable(bytes, OptionBits::default()).is_none()
-        && FULL_PINYIN_SYLLABLES
-            .iter()
+        && full_pinyin_syllables()
             .any(|syllable| bytes.len() < syllable.len() && syllable.as_bytes().starts_with(bytes))
 }
 
@@ -559,7 +558,7 @@ mod tests {
     };
     use crate::ChewingKey;
     use crate::options::{FORCE_TONE, PINYIN_CORRECT_GN_NG, PINYIN_INCOMPLETE, USE_TONE};
-    use crate::{FULL_PINYIN_SYLLABLES, InputParser};
+    use crate::{InputParser, full_pinyin_syllables};
 
     /// `FullPinyinParser2::parse_one_key`: the whole stripped input is
     /// one spelling probe — multi-syllable and apostrophe inputs are
@@ -770,7 +769,7 @@ mod tests {
     #[test]
     fn every_frozen_syllable_is_the_first_complete_path() {
         let parser = FullPinyinParser;
-        for syllable in FULL_PINYIN_SYLLABLES {
+        for syllable in full_pinyin_syllables() {
             let parsed = parser
                 .parse(syllable.as_bytes())
                 .expect("one complete syllable stays below the path limit");

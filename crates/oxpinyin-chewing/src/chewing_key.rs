@@ -18,7 +18,7 @@
 //! `docs/findings/upstream-divergences.md`).
 
 use crate::chewing_key_data::{
-    CHEWING_KEY_TABLE, CONTENT_TABLE, NUM_FINALS, NUM_INITIALS, NUM_MIDDLES,
+    CHEWING_KEY_TABLE, CONTENT_KEYS, NUM_FINALS, NUM_INITIALS, NUM_MIDDLES, content_strings,
 };
 
 /// `CHEWING_ZERO_TONE` (`src/storage/chewing_enum.h:92`).
@@ -86,25 +86,22 @@ impl ChewingKey {
         usize::try_from(entry).unwrap_or(0)
     }
 
-    /// The key's `content_table` row (row 0 for the zero and invalid keys,
-    /// whose strings are all empty — upstream renders them the same way
-    /// before the API-level `get_table_index() == 0` guard).
-    #[must_use]
-    pub(crate) fn content(self) -> &'static crate::chewing_key_data::ContentItem {
-        &CONTENT_TABLE[self.table_index()]
+    /// One display field of the key (empty for the zero and invalid keys).
+    fn content_string(self, field: usize) -> &'static str {
+        content_strings()
+            .field(self.table_index(), field)
+            .unwrap_or_default()
     }
 
     /// The key for a full-pinyin spelling, tone zero.
     #[must_use]
     pub fn from_pinyin(text: &str) -> Option<Self> {
-        let position = CONTENT_TABLE
-            .binary_search_by(|row| row.pinyin.cmp(text))
-            .ok()?;
-        let row = &CONTENT_TABLE[position];
+        let position = content_strings().position(text)?;
+        let &[initial, middle, final_] = CONTENT_KEYS.get(position)?;
         Some(Self {
-            initial: row.initial,
-            middle: row.middle,
-            final_: row.final_,
+            initial,
+            middle,
+            final_,
             tone: CHEWING_ZERO_TONE,
         })
     }
@@ -138,14 +135,14 @@ impl ChewingKey {
     /// `_ChewingKey::get_pinyin_string` renders before its `%d`.
     #[must_use]
     pub fn pinyin_spelling(self) -> &'static str {
-        self.content().pinyin
+        self.content_string(0)
     }
 
     /// `_ChewingKey::get_pinyin_string` (`chewing_key.cpp:47-58`): the
     /// canonical spelling, tone digit appended for a non-zero tone.
     #[must_use]
     pub fn pinyin_string(self) -> String {
-        let base = self.content().pinyin;
+        let base = self.content_string(0);
         match (self.tone, digit(self.tone)) {
             (CHEWING_ZERO_TONE, _) | (_, None) => base.to_owned(),
             (_, Some(d)) => format!("{base}{d}"),
@@ -156,14 +153,14 @@ impl ChewingKey {
     /// initial column; no tone.
     #[must_use]
     pub fn shengmu_string(self) -> &'static str {
-        self.content().shengmu
+        self.content_string(1)
     }
 
     /// `_ChewingKey::get_yunmu_string` (`chewing_key.cpp:67-72`): the
     /// middle+final column; no tone.
     #[must_use]
     pub fn yunmu_string(self) -> &'static str {
-        self.content().yunmu
+        self.content_string(2)
     }
 
     /// `_ChewingKey::get_zhuyin_string` (`chewing_key.cpp:74-89`): the
@@ -171,7 +168,7 @@ impl ChewingKey {
     /// tone mark.
     #[must_use]
     pub fn zhuyin_string(self) -> String {
-        let base = self.content().zhuyin;
+        let base = self.content_string(3);
         match self.tone {
             CHEWING_ZERO_TONE | 1 => base.to_owned(),
             2..=5 => format!("{base}{}", tone_symbol(self.tone)),
@@ -184,7 +181,7 @@ impl ChewingKey {
     /// including the first tone, unlike zhuyin.
     #[must_use]
     pub fn luoma_pinyin_string(self) -> String {
-        let base = self.content().luoma;
+        let base = self.content_string(4);
         match (self.tone, digit(self.tone)) {
             (CHEWING_ZERO_TONE, _) | (_, None) => base.to_owned(),
             (_, Some(d)) => format!("{base}{d}"),
@@ -196,7 +193,7 @@ impl ChewingKey {
     /// digit appended for a non-zero tone — including the first tone.
     #[must_use]
     pub fn secondary_zhuyin_string(self) -> String {
-        let base = self.content().secondary;
+        let base = self.content_string(5);
         match (self.tone, digit(self.tone)) {
             (CHEWING_ZERO_TONE, _) | (_, None) => base.to_owned(),
             (_, Some(d)) => format!("{base}{d}"),
@@ -232,7 +229,35 @@ const fn tone_symbol(tone: u8) -> &'static str {
 #[cfg(test)]
 mod chewing_key_data_tests {
     use super::ChewingKey;
-    use crate::chewing_key_data::{CHEWING_KEY_TABLE, CONTENT_TABLE, NUM_FINALS, NUM_MIDDLES};
+    use crate::chewing_key_data::reference::CONTENT_TABLE;
+    use crate::chewing_key_data::{
+        CHEWING_KEY_TABLE, CONTENT_KEYS, NUM_FINALS, NUM_MIDDLES, content_strings,
+    };
+
+    #[test]
+    fn content_table_matches_original_rows() {
+        assert_eq!(content_strings().len(), CONTENT_TABLE.len());
+        assert_eq!(CONTENT_KEYS.len(), CONTENT_TABLE.len());
+        for (index, row) in CONTENT_TABLE.iter().enumerate() {
+            assert_eq!(
+                content_strings().get(index),
+                Some([
+                    row.pinyin,
+                    row.shengmu,
+                    row.yunmu,
+                    row.zhuyin,
+                    row.luoma,
+                    row.secondary
+                ]),
+                "row {index}"
+            );
+            assert_eq!(
+                CONTENT_KEYS[index],
+                [row.initial, row.middle, row.final_],
+                "row {index}"
+            );
+        }
+    }
 
     /// Every content row's components resolve, through
     /// `chewing_key_table`, to the row's own index — the two ported
@@ -240,19 +265,19 @@ mod chewing_key_data_tests {
     /// components are the all-zero key, which maps to row 0 anyway).
     #[test]
     fn tables_cross_validate() {
-        for (index, row) in CONTENT_TABLE.iter().enumerate() {
+        for (index, &[initial, middle, final_]) in CONTENT_KEYS.iter().enumerate() {
             if index == 0 {
                 continue;
             }
-            let entry = CHEWING_KEY_TABLE[(usize::from(row.initial) * NUM_MIDDLES
-                + usize::from(row.middle))
+            let entry = CHEWING_KEY_TABLE[(usize::from(initial) * NUM_MIDDLES
+                + usize::from(middle))
                 * NUM_FINALS
-                + usize::from(row.final_)];
+                + usize::from(final_)];
             assert_eq!(
                 entry,
                 i16::try_from(index).expect("table index fits i16"),
                 "row {index} ({})",
-                row.pinyin
+                content_strings().field(index, 0).expect("content spelling")
             );
         }
     }
@@ -261,10 +286,10 @@ mod chewing_key_data_tests {
     /// search; the zero row sorts first.
     #[test]
     fn content_rows_are_sorted() {
-        for pair in CONTENT_TABLE.windows(2) {
-            assert!(pair[0].pinyin <= pair[1].pinyin);
+        for pair in content_strings().entries().collect::<Vec<_>>().windows(2) {
+            assert!(pair[0][0] <= pair[1][0]);
         }
-        assert_eq!(CONTENT_TABLE[0].pinyin, "");
+        assert_eq!(content_strings().field(0, 0), Some(""));
     }
 
     /// The zero key renders empty everywhere and answers table index 0;
