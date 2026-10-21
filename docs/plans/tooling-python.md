@@ -1,6 +1,6 @@
 # Tooling layer 1: native Python
 
-Status: partial implementation. Reconciled: 2026-10-20 UTC (`date -u`).
+Status: partial implementation. Reconciled: 2026-10-21 UTC (`date -u`).
 The #938 → #939 → #941 → #942 → #943 stack is merged on `main`.
 This document records current code and remaining requirements. It installs nothing.
 
@@ -8,11 +8,11 @@ This document records current code and remaining requirements. It installs nothi
 | --- | --- |
 | Exact interpreter, uv pins, managed execution and setup instructions (§2) | Implemented in [#939](https://github.com/shenghaoc/oxpinyin/pull/939). Interpreter provisioning does not provision the full native or container environment. |
 | Package, CLI, host report, bootstrap doctor and identity checks (§3) | Implemented in [#941](https://github.com/shenghaoc/oxpinyin/pull/941); nextest version check added in [#943](https://github.com/shenghaoc/oxpinyin/pull/943). Doctor reports capabilities; it does not install them. |
-| Registry service (§3) | Partial in #941: read, validate and select by runner/cell. Layer 5's issue/kind selection and implementation field remain proposed. |
-| Python feature policy (§4) | Partial: #939 sets normal import mode in execution commands. The entry-point mode guard and optional lazy imports, frozendict, sentinel and sampling use remain proposed. |
+| Registry service (§3) | Implemented in [#941](https://github.com/shenghaoc/oxpinyin/pull/941) and [#948](https://github.com/shenghaoc/oxpinyin/pull/948) (merge `219f4205`): read, validate and select by runner, cell, issue and kind through `registry.select`, with tests. Only the `implementation` field remains proposed; it does not exist in `runners.json` or `registry.py`. |
+| Python feature policy (§4) | Partial: #939 sets normal import mode in execution commands. The entry-point `sys.get_lazy_imports()` guard remains proposed (`tools/dev/__main__.py` has no guard). Optional lazy imports, frozendict, sentinel and sampling use also remain proposed. |
 | Shared native slot, admission, process cleanup and legacy adapter (§5) | Implemented in #941, from the merged #905/#906/#903 contracts and #938 acceptance. Platform acceptance remains partial. |
-| Container lifetime budget integration (§5) | Proposed. Layer 4's hard-limit reservations do not exist yet. |
-| Full environment provisioning and complete three-platform acceptance (§§2, 6) | Proposed provisioning; partial acceptance. Native compiler/backend setup remains a separate runbook procedure. |
+| Container lifetime budget integration (§5) | Implemented in [#957](https://github.com/shenghaoc/oxpinyin/pull/957) (merge `af9df745`), [#969](https://github.com/shenghaoc/oxpinyin/pull/969) (merge `bdb520f4`) and [#978](https://github.com/shenghaoc/oxpinyin/pull/978) (merge `e219d33d`): Layer 4's hard limit and native lifetime reservation exist, with one desktop-headroom application and 2560/4608 MiB defaults. [#998](https://github.com/shenghaoc/oxpinyin/pull/998) (merge `3e280c8c`) adds cache-aware admission. Platform acceptance stays Layer 4's record. |
+| Full environment provisioning and complete three-platform acceptance (§§2, 6) | Proposed provisioning; partial acceptance. [#955](https://github.com/shenghaoc/oxpinyin/pull/955) (merge `21be16aa`) adds a Python-only cloud provisioning mode, not full environment provisioning. Native compiler/backend setup remains a separate runbook procedure. |
 
 macOS: bounded checks passed on 2026-10-20 UTC at
 `b034e8342e70aab874b32414976cc9b6d232dc1d`. uv 0.13.1 selected managed
@@ -25,8 +25,9 @@ returned 143 for SIGTERM and 137 for SIGKILL. The macOS host reader returned
 positive `available_mib`; `sysctl` and `vm_stat` reads were available.
 Fresh-install, offline cache and full environment provisioning acceptance
 remain unverified.
-Windows: TODO (no host); tooling verification is deferred.
-Hosted Rust CI does not verify these tooling paths. Earlier host checks retain
+Windows: TODO (no host); tooling verification is deferred. It does not block
+T2N (maintainer ruling 2026-10-21 UTC).
+Hosted CI runs the repository Python harnesses on Linux and macOS ([#988](https://github.com/shenghaoc/oxpinyin/pull/988), merge `96ca8c8e`). It does not run the container launcher's runtime paths. Earlier host checks retain
 their original heads and limitations in #939/#941; they do not verify this stack.
 The requirements below remain proposed where the table does not mark them implemented.
 
