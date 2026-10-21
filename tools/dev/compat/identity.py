@@ -34,17 +34,23 @@ def write_record(path, record):
     Path(path).write_text(json.dumps(record, sort_keys=True, indent=2) + '\n')
 
 
-def unredirected(path):
+def unredirected(path, base=None, *, message=None):
+    """Resolve trusted ancestors, then refuse links in the owned namespace."""
     path = Path(path).absolute()
-    if path.resolve() != path:
-        raise ValueError(f'container namespace redirects through a symlink: {path}')
-    return path
+    base = Path(base).absolute() if base is not None else Path(path.anchor)
+    relative = path.relative_to(base)
+    current = base.resolve()
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError(message or f'container namespace redirects through a symlink: {path}')
+    return current
 
 
 def result_directory(repo, source, run_id):
     if not re.fullmatch(r'[a-f0-9]{64}', source) or not re.fullmatch(r'[0-9]{8}T[0-9]{6}Z-[0-9]+', run_id):
         raise ValueError('invalid container result namespace')
-    return unredirected(Path(repo) / '.oxpinyin-container/results' / source / run_id)
+    return unredirected(Path(repo) / '.oxpinyin-container/results' / source / run_id, repo)
 
 
 def verify_state(image, source, root=Path('/state')):
@@ -54,7 +60,7 @@ def verify_state(image, source, root=Path('/state')):
     for relative in ('work', 'cache', 'model20', 'results/container/' + source,
                      *(f'container/{image}/{name}' for name in
                        ('home', 'cargo', 'uv/cache', 'locks', 'cache', 'targets/' + source))):
-        unredirected(root / relative)
+        unredirected(root / relative, root)
 
 
 def inner_state(inputs):

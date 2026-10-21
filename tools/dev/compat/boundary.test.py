@@ -93,6 +93,44 @@ class IdentityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'redirects'):
                 identity.verify_state('b' * 16, 'a' * 64, root)
 
+    def test_symlinked_ancestor_is_trusted_for_host_and_container_namespaces(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real = root / 'real'
+            (real / 'repo').mkdir(parents=True)
+            (real / 'state').mkdir()
+            alias = root / 'alias'
+            alias.symlink_to(real, target_is_directory=True)
+            repo = alias / 'repo'
+            with patch.object(boundary.Path, 'cwd', return_value=repo):
+                boundary.validate(['--memory-smoke'], {})
+            self.assertEqual(
+                identity.result_directory(repo, 'a' * 64, '20261021T000000Z-1'),
+                real / 'repo/.oxpinyin-container/results' / ('a' * 64) / '20261021T000000Z-1')
+            identity.verify_state('b' * 16, 'a' * 64, alias / 'state')
+
+    def test_symlinks_below_trusted_base_still_fail_with_symlinked_ancestor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            real = root / 'real'
+            real.mkdir()
+            alias = root / 'alias'
+            alias.symlink_to(real, target_is_directory=True)
+            native = root / 'native'
+            native.mkdir()
+            (real / '.oxpinyin-container').symlink_to(native, target_is_directory=True)
+            with patch.object(boundary.Path, 'cwd', return_value=alias):
+                with self.assertRaisesRegex(ValueError, '^container result namespace must not redirect through a symlink$'):
+                    boundary.validate(['--memory-smoke'], {})
+            (real / '.oxpinyin-container').unlink()
+            (real / '.oxpinyin-container').mkdir()
+            (real / '.oxpinyin-container/results').symlink_to(native, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, '^container namespace redirects through a symlink:'):
+                identity.result_directory(alias, 'a' * 64, '20261021T000000Z-1')
+            (real / 'work').symlink_to(native, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, '^container namespace redirects through a symlink:'):
+                identity.verify_state('b' * 16, 'a' * 64, alias)
+
     def test_source_identity_hashes_bytes_not_size_or_mtime(self):
         first = identity.archive_content(archive([('source', b'aaaa', False)]))
         second = identity.archive_content(archive([('source', b'bbbb', False)]))
