@@ -24,7 +24,7 @@ export OXPINYIN_COMPAT_IMAGE_ID=$identity OXPINYIN_COMPAT_REFERENCE_ID=$referenc
 source_identity=$(uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
 	/input/identity.py verify-inputs /input "$input_identity" "$identity" "$reference_id")
 uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
-	/input/identity.py verify-state "$identity" "$source_identity"
+	/input/identity.py verify-state "$identity" "$source_identity" "$cell" "$run_id"
 result=/state/results/container/$source_identity/$run_id
 mkdir -p "$HOME" "$CARGO_HOME" "$UV_CACHE_DIR" "$OXPINYIN_LOCK_DIR" /state/work "$result"
 # A volume is private to one checkout, and one invocation owns it at a time.

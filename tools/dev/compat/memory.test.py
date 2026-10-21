@@ -431,7 +431,7 @@ sys.stdin.readline()
     def fake_runtime(self):
         runtime = self.directory / 'docker'
         runtime.write_text(f'#!{sys.executable}\n' + r'''
-import hashlib, io, json, os, sys, tarfile, time
+import hashlib, io, json, os, runpy, sys, tarfile, time
 from pathlib import Path
 root=Path(os.environ['OXPINYIN_LOCK_DIR'])
 path=root/'runtime-state'
@@ -484,6 +484,11 @@ elif action=='start':
                         input_sha256=hashlib.sha256(data).hexdigest(), artifacts=None,
                         artifacts_sha256=hashlib.sha256(b'null').hexdigest(),
                         files={'results.json':hashlib.sha256(b'[]').hexdigest()})
+        if not os.environ.get('OMIT_STATE'):
+            # The shipped verifier's own state table, as the guest's seal-results records it.
+            state_paths=runpy.run_path(str(directory/'identity.py'))['state_paths']
+            provenance['state']=dict(state_paths(provenance['inputs']),
+                                     executable='/opt/uv/python/cpython-3.15.0-linux-x86_64-gnu/bin/python3.15')
         with tarfile.open(fileobj=sys.stdout.buffer, mode='w|') as output:
             for filename, content in [('results.json', b'[]'), ('provenance.json', json.dumps(provenance).encode())]:
                 member=tarfile.TarInfo(filename); member.size=len(content)
@@ -617,7 +622,7 @@ raise SystemExit(importlib.import_module(module).main(sys.argv[sys.argv.index('-
         uv.write_text(uv.read_text().replace('import sys\n', f'import sys\nsys.path.insert(0,{str(ROOT)!r})\n', 1))
         return dict(self.env, PATH=self.temp.name + os.pathsep + os.environ['PATH'])
 
-    def reader_fixture(self, unknown_exit=False):
+    def reader_fixture(self, unknown_exit=False, omit_state=False):
         runtime = self.fake_runtime()
         apple = self.directory / 'container'
         apple.symlink_to(runtime)
@@ -646,6 +651,8 @@ esac
         env.pop('OXPINYIN_PROXY_CA', None)
         if unknown_exit:
             env['UNKNOWN_EXIT'] = '1'
+        if omit_state:
+            env['OMIT_STATE'] = '1'
         process = subprocess.Popen(['bash', 'tools/oracle/compat.sh', '--runtime', str(apple),
                                     '--memory-mib', '512', '--runners', 'pc-version'],
                                    cwd=fixture, env=env, stdout=subprocess.PIPE,
@@ -667,6 +674,17 @@ esac
         self.assertNotEqual(names[0]['token'], names[1]['token'])
         # The fake runtime refuses every create without exactly one matching
         # full-limit reservation: main and reader cannot overlap here.
+        self.assertFalse(list(self.directory.glob('container-memory-*.json')))
+
+    def test_apple_reader_export_without_state_fails_verification(self):
+        process, runtime, _ = self.reader_fixture(omit_state=True)
+        self.await_path(self.directory / 'started')
+        record = json.loads(next(self.directory.glob('container-memory-*.json')).read_text())
+        subprocess.run([str(runtime), 'stop', record['name']], check=True, env=self.env)
+        _, error = process.communicate(timeout=10)
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn('exported container state mismatch', error)
+        self.assertIn('container result identity verification failed', error)
         self.assertFalse(list(self.directory.glob('container-memory-*.json')))
 
     def test_apple_reader_does_not_start_when_main_exit_is_unknown(self):
