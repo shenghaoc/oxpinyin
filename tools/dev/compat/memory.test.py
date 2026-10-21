@@ -19,7 +19,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev import host, slot
-from tools.dev.compat import memory
+from tools.dev.compat import boundary, memory
 
 
 class MemoryTests(unittest.TestCase):
@@ -658,7 +658,16 @@ raise SystemExit(importlib.import_module(module).main(sys.argv[sys.argv.index('-
         uv.chmod(0o755)
         # This executable lives outside ROOT, as real uv does.
         uv.write_text(uv.read_text().replace('import sys\n', f'import sys\nsys.path.insert(0,{str(ROOT)!r})\n', 1))
-        return dict(self.env, PATH=self.temp.name + os.pathsep + os.environ['PATH'])
+        env = dict(self.env, PATH=self.temp.name + os.pathsep + os.environ['PATH'])
+        # The launcher deliberately rejects host state variables. A runner may
+        # export UV_CACHE_DIR (GitHub-hosted images do), so keep this fixture
+        # self-contained instead of inheriting the caller's Python state.
+        for name in tuple(env):
+            if name in boundary.STATE_SETTINGS or (
+                    name.startswith(('OXPINYIN_', 'PINYIN_', 'ORACLE_', 'UV_PYTHON_'))
+                    and name not in boundary.HOST_SETTINGS):
+                env.pop(name)
+        return env
 
     def reader_fixture(self, unknown_exit=False, omit_state=False):
         runtime = self.fake_runtime()

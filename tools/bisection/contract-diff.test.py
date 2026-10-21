@@ -519,6 +519,8 @@ class DriverVerdictTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, 2)
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'),
+                     'requires Linux /proc process observation')
 class CancellationTests(unittest.TestCase):
     """Cancel a real driver while its worker and a descendant ignore TERM."""
 
@@ -943,6 +945,8 @@ totals: 5
         counted(None, 7, contract['C'].byref(num))
         kit.native.pc_count.assert_called_once()
 
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'requires Linux CPU affinity')
     def test_native_rounds_interleave_and_profile_each_side(self):
         from argparse import Namespace
         globals_ = contract['run_per_call'].__globals__
