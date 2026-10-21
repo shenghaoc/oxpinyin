@@ -56,6 +56,22 @@ class PureTests(unittest.TestCase):
         self.assertEqual(len(td.exports('pinyin')), 79)
         self.assertEqual(len(td.exports('zhuyin')), 52)
 
+    def test_profile_semantics_retain_empty_rows_and_all_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            db = root / 'user_bigram.db'
+            db.write_bytes(b'A' * 12 + b'\x62\x31\x05\x00' + b'arbitrary')
+            (root / 'unexpected.tmp').write_bytes(b'kept')
+            driver = SimpleNamespace(index_file_rows=lambda _: [['01', ''], ['02', '03']])
+            a = td.profile_contents(driver, root)
+            db.write_bytes(b'B' * 12 + b'\x62\x31\x05\x00' + b'changed metadata')
+            b = td.profile_contents(driver, root)
+            self.assertEqual(a, b)
+            self.assertEqual(a['user_bigram.db']['rows'][0], ['01', ''])
+            self.assertIn('unexpected.tmp', a)
+            driver.index_file_rows = lambda _: [['01', ''], ['02', '04']]
+            self.assertNotEqual(a, td.profile_contents(driver, root))
+
 
 STUB = r'''
 #define _POSIX_C_SOURCE 200809L
@@ -85,8 +101,10 @@ bool fake_save(void *p) { fputs("SAVE\n", stderr); return p != NULL; }
 bool fake_load(void *p, uint8_t index) { return p && index > 0; }
 void *fake_begin(void *p, uint8_t index) { (void)index; return p; }
 bool fake_add(void *p, const char *s, const char *r, int n) { return p && s && r && n > 0; }
+bool fake_zhuyin_add(void *p, const char *s, const char *r, int n) { return r && strcmp(r, "ㄘㄜˋ ㄕˋ") == 0 && fake_add(p, s, r, n); }
 void fake_end(void *p) { (void)p; }
 bool fake_sentence(void *p, uint8_t rank, char **text) { (void)rank; *text=strdup("你好"); return p != NULL; }
+bool fake_zhuyin_sentence(void *p, char **text) { *text=strdup("你好"); return p != NULL; }
 bool fake_has(void *p) { (void)p; return false; }
 bool fake_next(void *p, char **s, char **r, int *n) { (void)p; (void)s; (void)r; (void)n; return false; }
 void g_free(void *p) { free(p); }
@@ -108,6 +126,9 @@ class NativeTests(unittest.TestCase):
         source = STUB
         for facade in ('pinyin', 'zhuyin'):
             names = dict(pairs)
+            if facade == 'zhuyin':
+                names['get_sentence'] = 'zhuyin_sentence'
+                names['iterator_add_phrase'] = 'zhuyin_add'
             names.update(dict(guess_candidates='guess', get_parsed_input_length='length',
                               get_candidate_nbest_index='nbest', begin_get_phrases='begin',
                               iterator_has_next_phrase='has', iterator_get_next_phrase='next', end_get_phrases='end')
@@ -141,6 +162,14 @@ class NativeTests(unittest.TestCase):
                 self.assertNotIn('save_ns', row['samples'][0]['times'])
                 self.assertIn('dlclose_ns', row['samples'][0]['times'])
 
+    def test_observation_uses_each_facades_sentence_signature(self):
+        for facade in ('pinyin', 'zhuyin'):
+            with self.subTest(facade=facade), patch.object(td, 'exports', return_value=[facade + '_init']):
+                row = self.campaign().run(facade, self.library, self.profile, mode='observe')
+                documents = row['observation']['documents']
+                self.assertEqual(len(documents), 21 if facade == 'zhuyin' else 18)
+                self.assertTrue(all(value['sentence_read'] and value['sentence'] == '你好' for value in documents))
+
     def test_parent_checkpoints_and_surviving_instance(self):
         for facade in ('pinyin', 'zhuyin'):
             with self.subTest(facade=facade), patch.object(td, 'exports', return_value=[facade + '_init']):
@@ -158,9 +187,10 @@ class NativeTests(unittest.TestCase):
 
     def test_save_is_named_and_precedes_every_free(self):
         rows = self.root / 'dirty.tsv'
-        rows.write_text(td.row_text([(1, '测试', "ce4'shi4", 20000)]))
         for facade in ('pinyin', 'zhuyin'):
             with self.subTest(facade=facade), patch.object(td, 'exports', return_value=[facade + '_init']):
+                reading = "ce4'shi4" if facade == 'pinyin' else 'ㄘㄜˋ ㄕˋ'
+                rows.write_text(td.row_text([(1, '测试', reading, 20000)]))
                 row = self.campaign().run(facade, self.library, self.profile, scenario='dirty', save=True, rows=rows)
                 self.assertEqual(row['observation']['stderr'].splitlines(), ['INIT', 'ALLOC', 'SAVE', 'FREE', 'FINI'])
                 self.assertTrue(row['samples'][0]['saved'])

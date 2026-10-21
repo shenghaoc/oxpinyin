@@ -22,6 +22,7 @@ struct td_api {
     struct symbols common;
     bool zhuyin;
     bool (*guess_after)(void *, size_t);
+    bool (*zhuyin_sentence)(void *, char **);
     bool (*load_library)(void *, uint8_t);
     void (*free_memory)(void *);
 };
@@ -107,7 +108,6 @@ static void td_resolve(void *library, const char *facade, struct td_api *api) {
     TD_RESOLVE(parse_chewing, "parse_more_chewings");
     TD_RESOLVE(reset, "reset");
     TD_RESOLVE(guess_sentence, "guess_sentence");
-    TD_RESOLVE(get_sentence, "get_sentence");
     TD_RESOLVE(get_n_candidate, "get_n_candidate");
     TD_RESOLVE(get_candidate, "get_candidate");
     TD_RESOLVE(get_candidate_type, "get_candidate_type");
@@ -121,7 +121,10 @@ static void td_resolve(void *library, const char *facade, struct td_api *api) {
     if (!api->free_memory) exit(1);
     if (api->zhuyin) {
         *(void **)(&api->guess_after) = td_symbol(library, facade, "guess_candidates_after_cursor");
+        /* zhuyin.h:256-257 at 074a2219 has no nbest-index argument. */
+        *(void **)(&api->zhuyin_sentence) = td_symbol(library, facade, "get_sentence");
     } else {
+        TD_RESOLVE(get_sentence, "get_sentence");
         TD_RESOLVE(guess_candidates, "guess_candidates");
         TD_RESOLVE(get_parsed_input_length, "get_parsed_input_length");
         TD_RESOLVE(get_candidate_nbest_index, "get_candidate_nbest_index");
@@ -207,7 +210,8 @@ static bool td_observe_input(const struct td_api *api, void *instance,
     size_t parsed = api->zhuyin ? consumed : api->common.get_parsed_input_length(instance);
     bool sentence_ok = api->common.guess_sentence(instance);
     char *sentence = NULL;
-    bool sentence_read = sentence_ok && api->common.get_sentence(instance, 0, &sentence);
+    bool sentence_read = sentence_ok && (api->zhuyin ? api->zhuyin_sentence(instance, &sentence) :
+                                         api->common.get_sentence(instance, 0, &sentence));
     bool guessed = api->zhuyin ? api->guess_after(instance, 0) :
         api->common.guess_candidates(instance, 0, DEFAULT_SORT);
     unsigned count = 0;
@@ -306,6 +310,8 @@ static bool td_populate(const struct td_api *api, void *context, const char *pat
             previous = (unsigned)library;
         }
         if (!api->common.iterator_add_phrase(iterator, tab1 + 1, tab2 + 1, (int)frequency)) {
+            fprintf(stderr, "teardown %s phrase import rejected row %u\n",
+                    api->zhuyin ? "zhuyin" : "pinyin", count + 1);
             valid = false; break;
         }
         count++;

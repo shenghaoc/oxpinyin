@@ -55,6 +55,32 @@ def identity(files):
     return digest_bytes(json.dumps(files, sort_keys=True, separators=(',', ':')).encode())
 
 
+def profile_contents(driver, directory):
+    """Reuse contract-diff's DB row/padding rules, retaining every file/row.
+
+    BDB page headers include random file identities and LSNs; Bigram::save_db
+    recreates the container (src/storage/ngram_bdb.cpp:81-105 at 074a2219).
+    Raw input identities are recorded separately, never used as semantic DB
+    equality. The existing registered padding/timestamp rules also apply.
+    """
+    result = {}
+    for path in sorted(Path(directory).rglob('*')):
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
+        name = str(path.relative_to(directory))
+        if raw[12:16] in (b'\x62\x31\x05\x00', b'\x61\x15\x06\x00'):
+            rows = driver.index_file_rows(path)
+            if path.name == 'user_pinyin_index.bin':
+                rows = [[key, driver.zero_item_padding(key, value)] for key, value in rows]
+            result[name] = dict(format='bdb-rows', rows=rows)
+        else:
+            if path.name in ('user.bin', 'addon.bin', 'network.bin'):
+                raw = raw[:4] + b'\0\0\0\0' + raw[8:]
+            result[name] = dict(bytes=len(raw), sha256=digest_bytes(raw))
+    return result
+
+
 def exports(facade):
     crate, version = ('oxpinyin-capi', 'libpinyin.ver') if facade == 'pinyin' else ('oxpinyin-zhuyin-capi', 'libzhuyin.ver')
     return re.findall(r'\b' + facade + r'_\w+(?=\s*;)', (ROOT / 'crates' / crate / version).read_text())
@@ -317,7 +343,7 @@ class Campaign:
                 raise ValueError('source profile was changed')
             stderr = errors.decode('utf-8', 'surrogateescape').replace(str(user), '$USER')
             observation = dict(samples=[{key: row[key] for key in ('options', 'saved', 'observations')} for row in samples],
-                               stderr=stderr, userfiles=file_set(user), documents=documents)
+                               stderr=stderr, userfiles=profile_contents(self.driver, user), documents=documents)
             if mode not in ('export', 'populate'):
                 if len(samples) != cycles or closed is None or closed['status'] != 0:
                     raise ValueError('native lifecycle did not complete')
@@ -353,7 +379,8 @@ class Campaign:
                         for clock in ('wall_ns', 'cpu_ns')}
             if reopen:
                 observation['reopen'] = self.run(facade, library, user, mode='observe', inputs=inputs)['observation']
-            return dict(observation=observation, samples=samples, checkpoints=checkpoints, command=command)
+            return dict(observation=observation, samples=samples, checkpoints=checkpoints, command=command,
+                        raw_profile_identity=identity(file_set(user)))
         finally:
             shutil.rmtree(scratch)
 
@@ -488,13 +515,18 @@ def run(args, driver, parser):
 
 
 def execute(campaign, args, subjects, profiles, cases, facades, driver):
-    dirty_rows = campaign.work / 'dirty.tsv'
-    dirty_rows.write_text(row_text([(1, '测试', "ce4'shi4", 20000)]))
+    # zhuyin.cpp:515-526 at 074a2219 uses ZhuyinDirectParser2, not
+    # pinyin's romanized importer. Subjects receive identical inputs within
+    # each facade, with the same phrase, library and frequency on both.
+    dirty_rows = {}
+    for facade, reading in (('pinyin', "ce4'shi4"), ('zhuyin', 'ㄘㄜˋ ㄕˋ')):
+        dirty_rows[facade] = campaign.work / ('dirty-' + facade + '.tsv')
+        dirty_rows[facade].write_text(row_text([(1, '测试', reading, 20000)]))
     witnesses = prepare_witnesses(campaign, subjects['pin']['pinyin'], profiles)
     comparable, references = {}, {}
     for facade in facades:
         for case in cases:
-            options = case_options(case, profiles, dirty_rows)
+            options = case_options(case, profiles, dirty_rows[facade])
             readings = {}
             for side in ('pin', 'ox', 'control'):
                 readings[side] = campaign.run(facade, subjects[side][facade], mode='observe',
@@ -506,6 +538,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
             print_record('equivalence', facade=facade, case=case,
                          verdict='COMPARABLE' if matches else 'NOT COMPARABLE',
                          digests={side: identity(row['observation']) for side, row in readings.items()},
+                         raw_final_profile_identities={side: row['raw_profile_identity'] for side, row in readings.items()},
                          differences={} if matches else {side: first_difference(reference, row['observation'])
                                                         for side, row in readings.items() if row['observation'] != reference})
     # Report a safe checkpoint before starting any ratio campaign. A mismatch
@@ -519,7 +552,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
         pilot = args.teardown_stage == 'pilot'
         for facade in facades:
             for case in cases:
-                options = case_options(case, profiles, dirty_rows)
+                options = case_options(case, profiles, dirty_rows[facade])
                 for mode, rounds, warmups in (('time', 5 if pilot else TIMING_ROUNDS, 1 if pilot else TIMING_WARMUPS),
                                               ('memory', 3 if pilot else MEMORY_ROUNDS, 1 if pilot else MEMORY_WARMUPS)):
                     samples = {side: [] for side in subjects}
@@ -543,7 +576,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
             populated = 'journals'
         for facade in facades:
             for case in ('empty', populated):
-                options = case_options(case, profiles, dirty_rows)
+                options = case_options(case, profiles, dirty_rows[facade])
                 for side in ('ox', 'control', 'pin'):
                     repeated = args.teardown_stage == 'repeat'
                     row = campaign.run(facade, subjects[side][facade], mode='memory', cycles=100 if repeated else 1,
@@ -555,7 +588,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
         return 0
     if args.teardown_stage == 'attribute':
         for facade in facades:
-            options = case_options(args.teardown_attribution_case, profiles, dirty_rows)
+            options = case_options(args.teardown_attribution_case, profiles, dirty_rows[facade])
             for side in ('ox', 'control', 'pin'):
                 row = campaign.run(facade, subjects[side][facade], profiler='callgrind', **options)
                 profile = driver.per_call_profile(row['observation']['stderr'])
