@@ -86,10 +86,14 @@ def exports(facade):
     return re.findall(r'\b' + facade + r'_\w+(?=\s*;)', (ROOT / 'crates' / crate / version).read_text())
 
 
-def build_worker(work):
-    executable = work / 'bisect-teardown'
+def build_worker(work, instrumentation=None):
+    if instrumentation not in (None, 'massif', 'memcheck'):
+        raise ValueError('unknown worker instrumentation')
+    executable = work / ('bisect-teardown' + ('-' + instrumentation if instrumentation else ''))
     command = ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2', '-g',
                '-o', str(executable), str(HERE / 'bisect.c'), '-ldl']
+    if instrumentation:
+        command.append('-DOXPINYIN_TEARDOWN_' + instrumentation.upper() + '=1')
     subprocess.run(command, check=True)
     return executable, dict(command=command, sha256=digest_bytes(executable.read_bytes()),
                             bytes=executable.stat().st_size,
@@ -254,7 +258,7 @@ class Campaign:
         checkpoints, samples, closed = {}, [], None
         command = ['taskset', '-c', str(self.cpu)]
         if profiler:
-            command += ['valgrind', '--tool=' + profiler]
+            command += ['valgrind', '--tool=' + profiler, '--vgdb-prefix=' + str(scratch / 'vgdb')]
             if profiler == 'callgrind':
                 command += ['--collect-atstart=no', '--cache-sim=no', '--branch-sim=no',
                             '--read-inline-info=yes', '--callgrind-out-file=/dev/stderr',
@@ -262,6 +266,12 @@ class Campaign:
                             '--toggle-collect=bisect_teardown_fini_unit']
             elif profiler == 'dhat':
                 command += ['--dhat-out-file=/dev/stderr']
+            elif profiler == 'massif':
+                command += ['--massif-out-file=/dev/stderr', '--time-unit=i', '--stacks=no',
+                            '--detailed-freq=1', '--max-snapshots=1000', '--peak-inaccuracy=0']
+            elif profiler == 'memcheck':
+                command += ['--leak-check=no', '--show-leak-kinds=all', '--num-callers=24',
+                            '--undef-value-errors=no']
             else:
                 raise ValueError('unknown profiler')
         command += [str(self.worker), '--teardown', facade, str(library), str(self.data), str(user),
@@ -588,25 +598,51 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                                  observations_equal=all(value == row['observation']['samples'][0] for value in row['observation']['samples']))
         return 0
     if args.teardown_stage == 'attribute':
+        diagnostic_workers = {tool: build_worker(campaign.work, tool) for tool in ('massif', 'memcheck')}
+        for tool, (_, worker_identity) in diagnostic_workers.items():
+            print_record('diagnostic-worker', tool=tool, profiler_only=True, worker=worker_identity)
+        plain_worker = campaign.worker
         for facade in facades:
             options = case_options(args.teardown_attribution_case, profiles, dirty_rows[facade])
             for side in ('ox', 'control', 'pin'):
                 row = campaign.run(facade, subjects[side][facade], profiler='callgrind', **options)
+                require_profile_controls(row, references[facade, args.teardown_attribution_case][side])
                 profile = driver.per_call_profile(row['observation']['stderr'])
                 shown = driver.per_call_attribution(profile, 1, 25)
                 print_record('callgrind', facade=facade, case=args.teardown_attribution_case, side=side,
                              profiler_only=True, **shown)
-                heap = campaign.run(facade, subjects[side][facade], profiler='dhat', **options)
-                text = heap['observation']['stderr']
-                position = text.find('{"dhatFileVersion"')
-                if position < 0:
-                    position = text.find('{\n "dhatFileVersion"')
-                if position < 0:
-                    raise ValueError('missing in-memory DHAT document')
-                document, _ = json.JSONDecoder().raw_decode(text[position:])
-                print_record('dhat', facade=facade, case=args.teardown_attribution_case, side=side,
-                             profiler_only=True, totals={key: document.get(key) for key in ('te', 'tg', 'tuth')},
-                             sites=document.get('pps', []))
+                campaign.worker = diagnostic_workers['massif'][0]
+                try:
+                    heap = campaign.run(facade, subjects[side][facade], mode='memory', profiler='massif', **options)
+                finally:
+                    campaign.worker = plain_worker
+                require_profile_controls(heap, references[facade, args.teardown_attribution_case][side])
+                print_record('massif', facade=facade, case=args.teardown_attribution_case, side=side,
+                             profiler_only=True, **massif_profile(heap['observation']['stderr']))
+        # The native repeated-lifecycle counters can include glibc tcache and
+        # arena retention. Memcheck's live-block accounting distinguishes those
+        # from unfreed client allocations, including native libdb/GLib blocks.
+        populated = args.teardown_attribution_case.split('-')[0]
+        for facade in facades:
+            for case in dict.fromkeys(('empty', populated)):
+                if (facade, case) not in references:
+                    raise ValueError('heap repetition needs an equivalence-verified case')
+                options = case_options(case, profiles, dirty_rows[facade])
+                for side in ('ox', 'control', 'pin'):
+                    campaign.worker = diagnostic_workers['memcheck'][0]
+                    try:
+                        heap = campaign.run(facade, subjects[side][facade], mode='memory',
+                                            cycles=100, profiler='memcheck', **options)
+                    finally:
+                        campaign.worker = plain_worker
+                    require_profile_controls(heap, references[facade, case][side])
+                    points = [point for point in heap['observation']['documents'] if point.get('heap_live')]
+                    expected = [('M0', 0), ('M1', 1), ('M2', 1), ('M3', 1),
+                                ('M3', 10), ('M3', 50), ('M3', 100)]
+                    if [(point['point'], point['cycle']) for point in points] != expected:
+                        raise ValueError('incomplete live-heap checkpoint sequence')
+                    print_record('live-heap', facade=facade, case=case, side=side, profiler_only=True,
+                                 points=points, sites=memcheck_sites(heap['observation']['stderr'], 'M3', 100))
         return 0
     raise ValueError('unknown teardown stage')
 
@@ -614,6 +650,61 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
 def case_options(case, profiles, dirty_rows):
     return dict(profile=profiles[case.split('-')[0]], scenario='dirty' if '-' in case else 'first-candidate',
                 rows=dirty_rows if '-' in case else None, save=case.endswith('-saved'))
+
+
+def require_profile_controls(row, reference):
+    if (any(sample != reference['samples'][0] for sample in row['observation']['samples']) or
+            row['observation']['userfiles'] != reference['userfiles']):
+        raise ValueError('NOT COMPARABLE: instrumented workload observation changed')
+
+
+def massif_snapshots(text):
+    snapshots = []
+    for block in re.split(r'^snapshot=\d+\s*$', text, flags=re.M)[1:]:
+        values = {name: int(value) for name, value in re.findall(
+            r'^(time|mem_heap_B|mem_heap_extra_B|mem_stacks_B)=(\d+)\s*$', block, re.M)}
+        if set(values) != {'time', 'mem_heap_B', 'mem_heap_extra_B', 'mem_stacks_B'}:
+            raise ValueError('incomplete Massif heap snapshot')
+        values['tree'] = [line for line in block.splitlines() if re.match(r'^\s*n\d+:', line)][:20]
+        snapshots.append(values)
+    return snapshots
+
+
+def massif_profile(text):
+    checkpoints = {}
+    for point, block in re.findall(r'TEARDOWN_HEAP (M[0-3]) BEGIN\n(.*?)TEARDOWN_HEAP \1 END', text, re.S):
+        values = massif_snapshots(block)
+        if point in checkpoints or len(values) != 1:
+            raise ValueError('invalid Massif checkpoint')
+        checkpoints[point] = values[0]
+    if set(checkpoints) != {'M0', 'M1', 'M2', 'M3'}:
+        raise ValueError('missing Massif teardown checkpoints')
+    snapshots = massif_snapshots(text)
+    interval = [value for value in snapshots
+                if checkpoints['M1']['time'] <= value['time'] <= checkpoints['M3']['time']]
+    return dict(checkpoints=checkpoints, sampled_teardown_peak=max(interval, key=lambda value: value['mem_heap_B']),
+                whole_lifecycle_peak=max(snapshots, key=lambda value: value['mem_heap_B']),
+                interval_snapshots=len(interval), peak_basis='sampled snapshots plus exact ABI-boundary snapshots; not an exact transient-peak claim',
+                freed_heap_bytes={label: checkpoints[a]['mem_heap_B'] - checkpoints[b]['mem_heap_B']
+                                  for label, a, b in (('M1-M2', 'M1', 'M2'), ('M2-M3', 'M2', 'M3'))})
+
+
+def memcheck_sites(text, point, cycle):
+    marker = f'TEARDOWN_LEAK {point} {cycle}'
+    matches = re.findall(re.escape(marker + ' BEGIN\n') + r'(.*?)' + re.escape(marker + ' END'), text, re.S)
+    if len(matches) != 1:
+        raise ValueError('missing Memcheck live-heap report')
+    plain = re.sub(r'^==\d+== ?', '', matches[0], flags=re.M)
+    sites = []
+    pattern = r'^([\d,]+)(?: \([^\n]*?\))? bytes in ([\d,]+) blocks are ([^\n]+?) in loss record[^\n]*\n((?:(?: +(?:at|by) [^\n]*|[^\S\n]*)\n)*)'
+    for size, blocks, kind, stack in re.findall(pattern, plain, re.M):
+        sites.append(dict(bytes=int(size.replace(',', '')), blocks=int(blocks.replace(',', '')),
+                          kind=kind, frames=[line.strip() for line in stack.splitlines() if line.strip()]))
+    if not sites:
+        raise ValueError('missing Memcheck allocation sites')
+    # Loss records with direct+indirect bytes can overlap. They are named
+    # roots, not an additive partition; authoritative totals are the requests.
+    return sorted(sites, key=lambda value: (-value['bytes'], value['kind']))[:20]
 
 
 def workload_observation(row):
