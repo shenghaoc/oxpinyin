@@ -7697,6 +7697,45 @@ def _touched_order(p):
 _compare_case('touched-order-duplicates-reopen', _touched_order, reopen=True)
 
 
+# #870: unigram candidates are per slot, not a whole-library zero-change
+# proof. Counts stay absolute in the pin's mapped items (phrase_index.h:124-126).
+def _seed_mixed(p):
+    token, item = p['two']
+    return [
+        _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                    new=_item_with(p['one'][1], freq=77)),
+        _log_record(_LOG_MODIFY, token, old=item, new=_item_with(item, unigram=71)),
+        _log_record(_LOG_MODIFY, token, old=_item_with(item, unigram=71),
+                    new=_item_with(item, unigram=93)),
+    ], dict(_watch(p), two=token)
+
+
+_compare_case('seed-mixed-repeated-unigrams-reopen', _seed_mixed, reopen=True)
+_compare_case('seed-restored-unigram-reopen', lambda p: ([
+    _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                new=_item_with(p['one'][1], unigram=99)),
+    _log_record(_LOG_MODIFY, p['one'][0], old=_item_with(p['one'][1], unigram=99),
+                new=_item_with(p['one'][1], freq=77)),
+], _watch(p)), reopen=True)
+_compare_case('seed-add-remove-unigrams-reopen', lambda p: ([
+    _add_fresh(p),
+    _log_record(_LOG_REMOVE, p['one'][0], old=p['one'][1]),
+    _log_record(_LOG_MODIFY, p['two'][0], old=p['two'][1],
+                new=_item_with(p['two'][1], unigram=91)),
+], dict(_watch(p), two=p['two'][0])), reopen=True)
+_compare_case('seed-header-total-reopen', lambda p: ([
+    _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                new=_item_with(p['one'][1], freq=77)),
+    _modify_header(0, p['total'], 123456),
+], _watch(p)), reopen=True)
+_compare_case('seed-stale-storage-unigram-reopen', lambda p: ([
+    _log_record(_LOG_MODIFY, p['one'][0], old=p['one'][1],
+                new=_item_with(p['one'][1], freq=77)),
+    _log_record(_LOG_MODIFY, p['absent'][0], old=_item_with(p['one'][1], freq=77),
+                new=_item_with(p['one'][1], unigram=99, freq=77)),
+], _watch(p)), reopen=True)
+
+
 def _touched_sparse_edits(p):
     token, item = p['one']
     moved = _item_with(item, freq=77)
