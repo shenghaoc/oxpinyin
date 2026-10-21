@@ -4,6 +4,7 @@
  * runs inside the measured ABI calls. Existing bisect modes do not enter here.
  */
 #include <limits.h>
+#include <sys/resource.h>
 
 #define TD_MAX_INSTANCES 16
 #define TD_MAX_CANDIDATES 512
@@ -342,6 +343,8 @@ static void td_print_time(const char *name, struct td_clock value, bool comma) {
 }
 
 static int run_teardown_mode(int argc, char **argv) {
+    struct rlimit no_core = {0, 0};
+    if (setrlimit(RLIMIT_CORE, &no_core)) { perror("teardown core limit"); return 1; }
     if (argc != 12 || (strcmp(argv[2], "pinyin") && strcmp(argv[2], "zhuyin"))) {
         fputs("usage: bisect --teardown pinyin|zhuyin SO DATA USER "
               "time|memory|export|populate|observe SAVE INSTANCES CYCLES "
