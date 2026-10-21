@@ -18,6 +18,7 @@
 #
 # Usage: relink-versioned.sh --staticlib PATH --ver PATH --soname NAME
 #                             --dest PATH [--features LIST] [--cc CC]
+#                             [--function-order POLICY]
 #   --staticlib  the cargo staticlib artifact (e.g. …/release/libpinyin_capi.a)
 #   --ver        the upstream version script copied verbatim at the pin
 #   --soname     the drop-in SONAME (libpinyin.so.15 / libzhuyin.so.15)
@@ -28,6 +29,9 @@
 #               staticlib, for the store-backend link flags (same precedence
 #               as the crates: tkrzw > kyotocabinet > bdb;
 #               default bdb, the workspace default)
+#   --function-order  optional measured policy; absent by default. Also read
+#               from OXPINYIN_FUNCTION_ORDER_POLICY (forwarded by install.sh).
+#               Unsupported linkers/policies retain the original layout.
 #
 # Linux + GNU ld only: the ELF versioning this implements has no macOS
 # counterpart (the cdylib as built is correct there). Exits 0 on success,
@@ -41,9 +45,10 @@ SONAME=""
 DEST=""
 FEATURES="${OXPINYIN_RELINK_FEATURES:-}"
 CC_CMD="${CC:-cc}"
+FUNCTION_ORDER="${OXPINYIN_FUNCTION_ORDER_POLICY:-}"
 
 usage() {
-  echo "usage: $0 --staticlib PATH --ver PATH --soname NAME --dest PATH [--features LIST] [--cc CC]" >&2
+  echo "usage: $0 --staticlib PATH --ver PATH --soname NAME --dest PATH [--features LIST] [--cc CC] [--function-order POLICY]" >&2
   exit 2
 }
 
@@ -61,6 +66,8 @@ while [ $# -gt 0 ]; do
     --features)    shift; FEATURES="${1:-}" ;;
     --cc=*)        CC_CMD="${1#*=}" ;;
     --cc)          shift; CC_CMD="${1:-}" ;;
+    --function-order=*) FUNCTION_ORDER="${1#*=}" ;;
+    --function-order)   shift; FUNCTION_ORDER="${1:-}" ;;
     *) usage ;;
   esac
   shift || true
@@ -112,8 +119,36 @@ GLIB_LIBS="$(pkg-config --libs glib-2.0 gobject-2.0 2>/dev/null || echo '-lglib-
 
 BACKEND_LIBS="$(backend_libs "$BACKEND")"
 
+TMP_DEST=""
+VER_SYMBOLS=""
+SO_SYMBOLS=""
+ORDER_DIR=""
+cleanup() {
+  rm -f -- "$TMP_DEST" "$VER_SYMBOLS" "$SO_SYMBOLS"
+  if [ -n "$ORDER_DIR" ]; then rm -rf -- "$ORDER_DIR"; fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 TMP_DEST="$(mktemp "${DEST%.so*}.relink.XXXXXX")"
-trap 'rm -f "$TMP_DEST"' EXIT
+
+# No default policy exists yet. The opt-in is for the measured prototype;
+# unsupported capabilities never reach the shipping command as arguments.
+ORDER_ARGS=()
+if [ -n "$FUNCTION_ORDER" ]; then
+  ORDER_DIR="$(mktemp -d "${TMP_DEST}.order.XXXXXX")"
+  # shellcheck source=tools/packaging/function-order.sh
+  source "$(dirname -- "${BASH_SOURCE[0]}")/function-order.sh"
+  if [ -f "$FUNCTION_ORDER" ] \
+      && function_order_supported "$CC_CMD" "$STATICLIB" "$ORDER_DIR" \
+      && function_order_resolve "$STATICLIB" "$FUNCTION_ORDER" "$SONAME" > "$ORDER_DIR/order.ld"; then
+    # Separate arguments preserve commas and spaces in staging paths.
+    ORDER_ARGS=(-Xlinker --section-ordering-file -Xlinker "$ORDER_DIR/order.ld")
+    echo "function ordering: using measured policy $FUNCTION_ORDER" >&2
+  else
+    echo "function ordering: unavailable or inapplicable; using the original layout" >&2
+  fi
+fi
 
 # --whole-archive includes every member of the staticlib, all of
 # compiler_builtins among them, and GNU ld keeps every section of an
@@ -121,6 +156,7 @@ trap 'rm -f "$TMP_DEST"' EXIT
 # nothing reaches from the version script's exports and the constructors.
 # shellcheck disable=SC2086
 "$CC_CMD" -shared -o "$TMP_DEST" \
+  ${ORDER_ARGS[@]+"${ORDER_ARGS[@]}"} \
   -Wl,-soname,"$SONAME" \
   -Wl,--version-script="$VER" \
   -Wl,--gc-sections -Wl,--whole-archive "$STATICLIB" -Wl,--no-whole-archive \
@@ -134,14 +170,14 @@ VER_NODE="$(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\) {.*/\1/p' "$VER" | head -1)"
 [ -n "$VER_NODE" ] || { echo "error: no version node found in $VER" >&2; exit 1; }
 
 # The .ver global list — one symbol per line.
-VER_SYMBOLS="$(mktemp)"; trap 'rm -f "$TMP_DEST" "$VER_SYMBOLS"' EXIT
+VER_SYMBOLS="$(mktemp)"
 sed -n '/global:/,/local:/p' "$VER" | sed -e 's/global://' -e 's/local://' \
   | tr ';' '\n' | sed -e 's/[[:space:]]//g' -e '/^$/d' | sort > "$VER_SYMBOLS"
 
 # The object's defined dynamic symbols, version tag stripped. The version
 # node itself appears as a defined dynsym entry (GNU ld's verdef carrier —
 # upstream's own .so shows it too), so it is expected and filtered.
-SO_SYMBOLS="$(mktemp)"; trap 'rm -f "$TMP_DEST" "$VER_SYMBOLS" "$SO_SYMBOLS"' EXIT
+SO_SYMBOLS="$(mktemp)"
 nm -D --defined-only "$TMP_DEST" | awk '{print $NF}' | sed 's/@.*//g' \
   | grep -v -x "$VER_NODE" | sort > "$SO_SYMBOLS"
 
@@ -169,7 +205,6 @@ ACTUAL_SONAME="$(readelf -d "$TMP_DEST" | awk '/SONAME/ {gsub(/[\[\]]/, ""); pri
 # Install: replace the real file; the .so / .so.<major> symlinks cargo-c put
 # next to it still resolve (same file name).
 mv -f "$TMP_DEST" "$DEST"
-trap 'rm -f "$VER_SYMBOLS" "$SO_SYMBOLS"' EXIT
 
 echo "relinked $DEST"
 echo "  soname: $SONAME · version node: $VER_NODE · exports: $(wc -l < "$VER_SYMBOLS" | tr -d ' ') versioned (backend: $BACKEND)"

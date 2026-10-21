@@ -263,9 +263,10 @@ artifact the relink then supersedes on install.
 
 ## Function ordering prototype (#986 Phase 2A)
 
-This is the proposed implementation and verification plan. Function ordering
-is not enabled by this documentation change. The release profile remains fat
-LTO with one codegen unit.
+Function ordering is an opt-in prototype. No measured policy is checked in
+and the default link command is unchanged. The release profile remains fat
+LTO with one codegen unit. All execution and measurement gates below remain
+pending until the scheduling hold is released.
 
 ### Final-link mechanism and fallback
 
@@ -280,13 +281,30 @@ It does not require `KEEP`, new roots, a version-script change, or a change to
 `--whole-archive` or `--gc-sections`. See the
 [GNU ld option description](https://sourceware.org/binutils/docs/ld/Options.html#index-_002d_002dsection_002dordering_002dfile).
 
-Check support through the compiler driver used by the relink, rather than
-assuming that the `ld` on PATH is the selected linker. An unsupported option,
-an unavailable Rust demangler, or no applicable policy must select the
-existing link command without ordering arguments. The capability check must
-leave no installed output. Verify that the unsupported-feature route has
-the same bytes as the original relink for the same inputs. An ordinary link
-or export-verification failure must still fail; fallback must not mask it.
+`tools/packaging/function-order.sh` checks support through the compiler driver
+used by the relink, rather than assuming that `ld` on PATH is the selected
+linker. It requires GNU BFD: gold uses the same option name with different
+syntax. An unsupported option, an unavailable Rust demangler, or an
+inapplicable policy selects the existing link command without ordering
+arguments. Probe output stays in self-cleaning scratch. Verify that the
+unsupported-feature route has the same bytes as the original relink for the
+same inputs. An ordinary link or export-verification failure still fails;
+fallback does not retry a failed shipping link.
+
+Use `--function-order POLICY` with the relinker directly. For the full
+shipping path, set `OXPINYIN_FUNCTION_ORDER_POLICY` for one install invocation;
+`install.sh` passes its environment to the relinker. A policy header must
+match that invocation's SONAME. For example, once a measured policy exists:
+
+```sh
+OXPINYIN_FUNCTION_ORDER_POLICY="$POLICIES/libpinyin.order" \
+  just heavy -- tools/packaging/install.sh libpinyin --prefix="$PREFIX" \
+  -- --locked --release --no-default-features --features bdb,shipped
+```
+
+Install libzhuyin separately with its own policy and normal feature selection.
+No setting means no ordering, inventory, or capability query. A package build
+does not generate or infer its own policy from its workload.
 
 No linker replacement or new packaging dependency is part of this plan.
 Resolve the policy with the relinker's existing Bash, binutils and text
@@ -296,16 +314,30 @@ before adding a dependency.
 
 ### Regeneration contract
 
-Add a generator under `tools/`, run with the repository's managed interpreter:
+Run the generator with the repository's managed interpreter. The six stream
+paths below must refer to measured, unmodified Callgrind output collected with
+`--demangle=no`. They may be pipes or inherited memory-file descriptors; the
+generator itself saves no capture. `--init` inputs must include load and stop
+after init, without teardown, using the Phase 1 #842 stop-point method.
+`--steady` inputs must collect only the existing steady keystroke/guess path,
+excluding startup and its cold pass. Collect under normal heavy admission.
+
+The library and staticlib for a facade must be the same shipping build.
+`PP`/`PJ` identify pinyin phrases/journals streams, `ZP`/`ZJ` the corresponding
+zhuyin streams, and `PS`/`ZS` the isolated steady streams:
 
 ```sh
 uv run --no-project --managed-python --python cpython@3.15.0+gil \
-  python -X lazy_imports=normal tools/<function-order-generator>.py <arguments>
+  python -X lazy_imports=normal tools/generate-function-order.py \
+  --library "pinyin=$PINYIN_SO" --library "zhuyin=$ZHUYIN_SO" \
+  --staticlib "pinyin=$PINYIN_A" --staticlib "zhuyin=$ZHUYIN_A" \
+  --init "pinyin:phrases=$PP" --init "pinyin:journals=$PJ" \
+  --init "zhuyin:phrases=$ZP" --init "zhuyin:journals=$ZJ" \
+  --steady "pinyin=$PS" --steady "zhuyin=$ZS" --output-dir "$POLICIES"
 ```
 
-The filename and arguments above are placeholders until implementation.
-The generator must derive a checked-in policy from measured execution, in
-this priority order:
+The generator requires all four init inputs and both steady inputs before
+writing either policy. Their priority is:
 
 1. The union of functions executing at load or init, for both facades and
    both phrases and journals profiles, using the Phase 1 Callgrind method.
@@ -313,15 +345,34 @@ this priority order:
    assigned to the first group.
 3. Everything else, left to the default linker script.
 
-Use exact canonical demangled paths for policy identity, preserving generic
-arguments and closure identities. Hashed mangled names, archive paths,
-addresses and profiler encounter order must not determine that policy.
-Resolve each stable path against the current static library at package-build
-time, emitting matching input-section names into private temporary linker
-input. Include applicable `.text.unlikely.*` and other function-section
-variants. The mapping must not broaden a measured match into unrelated code.
-Report unresolved or ambiguous identities during regeneration. Specify a
-deterministic within-group order and tie handling.
+Policy identity is the exact canonical demangled path, preserving generic
+arguments and closure identities. Normalization removes a terminal LLVM
+clone suffix and a terminal legacy Rust hash. Within each group, paths sort
+lexically; init wins a tie with steady. Exclusive positive Ir determines
+membership; inclusive call-edge costs do not. The reader scopes functions
+to the exact library object and reconciles exclusive Ir with the dump total.
+
+At package-build time, the existing `nm --format=sysv --demangle=rust` exposes
+both each demangled path and its actual input section. The awk resolver emits
+exact section selectors, including applicable `.text.unlikely.*` variants.
+Hashed names only identify the resolved section; they do not choose or rank
+policy paths. Unresolved/ambiguous policy paths cause fallback, never a fuzzy
+match. Regeneration rejects unresolved Rust paths and ambiguous paths. Fixed
+loader/CRT functions without an individual archive section are counted and
+excluded; bundled sections cannot be ordered by only their first function.
+
+The synthetic regressions need no compiler or profiler. Run them after the
+hold is released, before the real shipping-artifact gates:
+
+```sh
+uv run --no-project --managed-python --python cpython@3.15.0+gil \
+  python -X lazy_imports=normal tools/packaging/function-order.test.py
+```
+
+These tests cover parser reconciliation, exact scope, name normalization,
+ambiguity, policy precedence, linker selection, fallback command arguments,
+and refusal to install after a link/export failure. They do not establish
+real-link placement, byte reproducibility, fallback byte identity or a gain.
 
 Keep profiler streams in memory where possible. Operational scratch belongs
 only to the task, with EXIT/INT/TERM cleanup. Retain or upload no captures,
