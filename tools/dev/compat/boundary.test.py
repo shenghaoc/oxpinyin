@@ -13,6 +13,13 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT))
 from tools.dev.compat import boundary, identity
 
+IMAGE, SOURCE, RUN = 'b' * 16, 'a' * 64, '20261021T000000Z-1'
+PYTHON = '/opt/uv/python/cpython-3.15.0-linux-x86_64-gnu/bin/python3.15'
+
+
+def input_identity(inputs):
+    return identity.hashlib.sha256((json.dumps(inputs, sort_keys=True, indent=2) + '\n').encode()).hexdigest()
+
 
 class BoundaryTests(unittest.TestCase):
     def test_native_state_and_unknown_inputs_fail_before_launch(self):
@@ -91,7 +98,7 @@ class IdentityTests(unittest.TestCase):
                 identity.result_directory(root, 'a' * 64, '20261021T000000Z-1')
             (root / 'work').symlink_to(native)
             with self.assertRaisesRegex(ValueError, 'redirects'):
-                identity.verify_state('b' * 16, 'a' * 64, root)
+                identity.verify_state(IMAGE, SOURCE, 'bdb', RUN, root)
 
     def test_symlinked_ancestor_is_trusted_for_host_and_container_namespaces(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -107,7 +114,7 @@ class IdentityTests(unittest.TestCase):
             self.assertEqual(
                 identity.result_directory(repo, 'a' * 64, '20261021T000000Z-1'),
                 real.resolve() / 'repo/.oxpinyin-container/results' / ('a' * 64) / '20261021T000000Z-1')
-            identity.verify_state('b' * 16, 'a' * 64, alias / 'state')
+            identity.verify_state(IMAGE, SOURCE, 'bdb', RUN, alias / 'state')
 
     def test_symlinks_below_trusted_base_still_fail_with_symlinked_ancestor(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -129,7 +136,33 @@ class IdentityTests(unittest.TestCase):
                 identity.result_directory(alias, 'a' * 64, '20261021T000000Z-1')
             (real / 'work').symlink_to(native, target_is_directory=True)
             with self.assertRaisesRegex(ValueError, '^container namespace redirects through a symlink:'):
-                identity.verify_state('b' * 16, 'a' * 64, alias)
+                identity.verify_state(IMAGE, SOURCE, 'bdb', RUN, alias)
+
+    def test_cell_and_run_directories_cannot_redirect_before_any_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / 'state'
+            native = Path(directory) / 'native'
+            native.mkdir()
+            identity.verify_state(IMAGE, SOURCE, 'bdb', RUN, root)
+            cell = root / f'container/{IMAGE}/targets/{SOURCE}/bdb'
+            cell.parent.mkdir(parents=True)
+            cell.symlink_to(native, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, '^container namespace redirects through a symlink:'):
+                identity.verify_state(IMAGE, SOURCE, 'bdb', RUN, root)
+            cell.unlink()
+            run = root / f'results/container/{SOURCE}/{RUN}'
+            run.parent.mkdir(parents=True)
+            run.symlink_to(native, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, '^container namespace redirects through a symlink:'):
+                identity.verify_state(IMAGE, SOURCE, 'bdb', RUN, root)
+            self.assertEqual(list(native.iterdir()), [])
+            for cell_name, run_id in (('lmdb', RUN), ('bdb', '../native')):
+                with self.subTest(cell=cell_name, run=run_id), \
+                        self.assertRaisesRegex(ValueError, 'invalid container state namespace'):
+                    identity.verify_state(IMAGE, SOURCE, cell_name, run_id, root)
+        inside = (ROOT / 'tools/oracle/compat-inside.sh').read_text()
+        check = inside.index('verify-state "$identity" "$source_identity" "$cell" "$run_id"')
+        self.assertLess(check, inside.index('mkdir -p'))
 
     def test_symlinked_ancestor_is_trusted_for_artifact_targets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -216,6 +249,39 @@ class IdentityTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'source_sha256 mismatch'):
                 identity.verify_artifacts({'container': {'source_sha256': 'stale'}}, '.', {})
 
+    def test_unsealed_empty_claim_exports_failure_but_no_artifact_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result, target = root / 'result', root / 'targets'
+            (result / 'logs').mkdir(parents=True)
+            (result / 'logs/build-bdb.log').write_text('error: could not compile\n')
+            (target / 'bdb').mkdir(parents=True)
+            # The claim cell-artifacts.sh writes before cargo runs.
+            claim = target / 'bdb/oxpinyin-cell-identity.json'
+            identity.write_record(claim, dict(schema=1, worktree=str(root), cell='bdb', feature='bdb',
+                                              profile='dev', opt_level='1', artifacts={}))
+            inputs = dict(schema=1, environment='container', image=IMAGE, source_sha256=SOURCE, files={})
+            expected = input_identity(inputs)
+            state = dict(identity.state_paths(inputs), executable=PYTHON)
+
+            def seal(status):
+                (result / 'results.json').write_text(json.dumps([dict(runner='cpp-smoke', cell='bdb', status=status)]))
+                identity.seal_results(result, target, 'bdb')
+
+            with patch.object(identity, 'current_inputs', return_value=inputs), \
+                    patch.object(identity, 'inner_state', return_value=state), \
+                    patch.dict(os.environ, OXPINYIN_COMPAT_INPUT_SHA256=expected):
+                seal('FAIL')
+                self.assertIsNone(identity.read_record(result / 'provenance.json')['artifacts'])
+                identity.verify_results(result, expected)
+                (result / 'provenance.json').unlink()
+                with self.assertRaisesRegex(ValueError, 'passing result lacks container artifact identity'):
+                    seal('PASS')
+                identity.write_record(claim, dict(identity.read_record(claim), artifacts={
+                    'pinyin-capi': {'path': str(target / 'bdb/debug/libpinyin_capi.so')}}))
+                with self.assertRaisesRegex(ValueError, 'missing container artifact content identity'):
+                    seal('FAIL')
+
     def test_native_pointing_artifact_symlink_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -234,19 +300,52 @@ class IdentityTests(unittest.TestCase):
             root = Path(directory)
             with self.assertRaises(OSError):
                 identity.verify_results(root, 'expected')
-            inputs = {'schema': 1, 'environment': 'container'}
+            inputs = {'schema': 1, 'environment': 'container', 'image': IMAGE, 'source_sha256': SOURCE}
             serialized = json.dumps(inputs, sort_keys=True, indent=2) + '\n'
             expected = identity.hashlib.sha256(serialized.encode()).hexdigest()
             result = root / 'results.json'
             result.write_text('[]')
-            identity.write_record(root / 'provenance.json', dict(
+            provenance = dict(
                 schema=1, environment='container', inputs=inputs, input_sha256=expected,
                 artifacts=None, artifacts_sha256=identity.digest_record(None),
-                files={'results.json': identity.digest_file(result)}))
+                files={'results.json': identity.digest_file(result)})
+            identity.write_record(root / 'provenance.json', provenance)
+            with self.assertRaisesRegex(ValueError, 'state mismatch'):
+                identity.verify_results(root, expected)
+            identity.write_record(root / 'provenance.json', dict(
+                provenance, state=dict(identity.state_paths(inputs), executable=PYTHON)))
             identity.verify_results(root, expected)
             result.write_text('[1]')
             with self.assertRaisesRegex(ValueError, 'result content mismatch'):
                 identity.verify_results(root, expected)
+
+    def test_export_refuses_missing_or_altered_container_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            inputs = {'schema': 1, 'environment': 'container', 'image': IMAGE, 'source_sha256': SOURCE}
+            expected = input_identity(inputs)
+            (root / 'results.json').write_text('[]')
+            provenance = dict(schema=1, environment='container', inputs=inputs, input_sha256=expected,
+                              artifacts=None, artifacts_sha256=identity.digest_record(None),
+                              files={'results.json': identity.digest_file(root / 'results.json')})
+            state = dict(identity.state_paths(inputs), executable=PYTHON)
+            cases = {
+                'missing': None,
+                'not a record': 'state',
+                'altered path': dict(state, HOME=f'/state/container/{"c" * 16}/home'),
+                'missing path': {key: value for key, value in state.items() if key != 'OXPINYIN_LOCK_DIR'},
+                'extra path': dict(state, CARGO_TARGET_DIR='/native/target'),
+                'native interpreter': dict(state, executable='/usr/bin/python3'),
+                'escaping interpreter': dict(state, executable='/opt/uv/python/../../usr/bin/python3'),
+                'relative interpreter': dict(state, executable='opt/uv/python/bin/python3'),
+            }
+            for name, value in cases.items():
+                record = dict(provenance) if value is None else dict(provenance, state=value)
+                identity.write_record(root / 'provenance.json', record)
+                with self.subTest(name), self.assertRaisesRegex(ValueError, '^exported container state mismatch$'):
+                    identity.verify_results(root, expected)
+            identity.write_record(root / 'provenance.json', dict(provenance, state=state))
+            identity.verify_results(root, expected)
 
 
 if __name__ == '__main__':

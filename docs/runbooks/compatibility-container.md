@@ -275,7 +275,8 @@ The launcher prints the volume name and a host result directory under
 Its `transport/` directory retains pull/build diagnostics and the attached
 console. Its `result/` directory contains exported comparison JSON and existing
 registry logs plus `provenance.json`: the source content manifest,
-image/reference identity, artifact content identities and result-file digests.
+image/reference identity, artifact content identities, the container state
+paths and interpreter, and result-file digests.
 The export must match that identity; a missing or mismatched record fails the
 launcher. These remain container records outside the native Cargo target
 namespace. The input source archive is temporary and is not retained in the

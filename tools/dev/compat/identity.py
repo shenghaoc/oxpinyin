@@ -57,23 +57,31 @@ def result_directory(repo, source, run_id):
     return unredirected(Path(repo) / '.oxpinyin-container/results' / source / run_id, repo)
 
 
-def verify_state(image, source, root=STATE_ROOT):
-    if not re.fullmatch(r'[a-f0-9]{16}', image) or not re.fullmatch(r'[a-f0-9]{64}', source):
+def verify_state(image, source, cell, run_id, root=STATE_ROOT):
+    # The cell and run patterns are compat-inside.sh's; this runs before its first write.
+    if (not re.fullmatch(r'[a-f0-9]{16}', image) or not re.fullmatch(r'[a-f0-9]{64}', source)
+            or not re.fullmatch(r'(bdb|kc|tkrzw)', cell)
+            or not re.fullmatch(r'[0-9]{8}T[0-9]{6}Z-[0-9]+', run_id)):
         raise ValueError('invalid container state namespace')
     root = Path(root)
-    for relative in ('work', 'cache', 'model20', 'results/container/' + source,
+    for relative in ('work', 'cache', 'model20', f'results/container/{source}/{run_id}',
                      *(f'container/{image}/{name}' for name in
-                       ('home', 'cargo', 'uv/cache', 'locks', 'cache', 'targets/' + source))):
+                       ('home', 'cargo', 'uv/cache', 'locks', 'cache', f'targets/{source}/{cell}'))):
         unredirected(root / relative, root)
 
 
-def inner_state(inputs):
+def state_paths(inputs):
+    """The state paths one image and source own; the guest exports and the host checks them."""
     base = '/state/container/' + inputs['image']
-    expected = dict(HOME=base + '/home', CARGO_HOME=base + '/cargo', RUSTUP_HOME='/opt/rustup',
-                    UV_PYTHON_INSTALL_DIR='/opt/uv/python', UV_CACHE_DIR=base + '/uv/cache',
-                    UV_INSTALL_DIR='/opt/uv/bin', XDG_CACHE_HOME=base + '/cache',
-                    OXPINYIN_LOCK_DIR=base + '/locks',
-                    OXPINYIN_TARGET_ROOT=base + '/targets/' + inputs['source_sha256'])
+    return dict(HOME=base + '/home', CARGO_HOME=base + '/cargo', RUSTUP_HOME='/opt/rustup',
+                UV_PYTHON_INSTALL_DIR='/opt/uv/python', UV_CACHE_DIR=base + '/uv/cache',
+                UV_INSTALL_DIR='/opt/uv/bin', XDG_CACHE_HOME=base + '/cache',
+                OXPINYIN_LOCK_DIR=base + '/locks',
+                OXPINYIN_TARGET_ROOT=base + '/targets/' + inputs['source_sha256'])
+
+
+def inner_state(inputs):
+    expected = state_paths(inputs)
     for name, value in expected.items():
         if os.environ.get(name) != value:
             raise ValueError(f'container state mismatch: {name}')
@@ -238,8 +246,10 @@ def seal_results(directory, target, cell):
     artifacts = None
     if path.is_file():
         record = read_record(path)
-        artifacts = verify_artifacts(record, record['worktree'],
-                                     {name: info['path'] for name, info in record['artifacts'].items()})
+        # A failed first build leaves only the unsealed, empty claim: it seals nothing.
+        if 'container' in record or record.get('artifacts') != {}:
+            artifacts = verify_artifacts(record, record['worktree'],
+                                         {name: info['path'] for name, info in record['artifacts'].items()})
     from tools.dev import registry
     catalog = registry.by_name(registry.load())
     for row in rows:
@@ -264,6 +274,17 @@ def verify_results(directory, expected):
     encoded = json.dumps(inputs, sort_keys=True, indent=2) + '\n'
     if hashlib.sha256(encoded.encode()).hexdigest() != expected:
         raise ValueError('exported container input content mismatch')
+    state = record.get('state')
+    executable = state.get('executable') if isinstance(state, dict) else None
+    try:
+        paths = state_paths(inputs)
+    except (KeyError, TypeError):
+        paths = None
+    interpreter = PurePosixPath(executable) if isinstance(executable, str) else None
+    if (paths is None or interpreter is None or not interpreter.is_absolute() or '..' in interpreter.parts
+            or not interpreter.is_relative_to('/opt/uv/python')
+            or state != dict(paths, executable=executable)):
+        raise ValueError('exported container state mismatch')
     if digest_record(record.get('artifacts')) != record.get('artifacts_sha256'):
         raise ValueError('exported container artifact identity mismatch')
     actual = result_files(directory)
