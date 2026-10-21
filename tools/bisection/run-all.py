@@ -32,7 +32,6 @@ RUNNER_PEAK_MIB = _host.RUNNER_PEAK_MIB
 HEADROOM_MIB = _host.HEADROOM_MIB
 memory_available_mib = _host.memory_available_mib
 linux_cgroup_dirs = _host.linux_cgroup_dirs
-resource_snapshot = _host.resource_snapshot
 fit = _host.fit
 validate_settings = _host.validate_settings
 memory_defaults = _host.memory_defaults
@@ -51,6 +50,18 @@ is_ancestor = _host.is_ancestor
 is_heavy = _registry.is_heavy
 HEAVY_SLOT = _slot.HEAVY_SLOT
 HEAVY_SLOT_HELD = _slot.HEAVY_SLOT_HELD
+
+
+def resource_snapshot(*args, **kwargs):
+    """Read resources through tools.dev.host, the shared admission entry point.
+
+    Late-bound so one replacement of host.resource_snapshot covers every
+    admission path in this module, including the wrapper and the aggregate.
+    The arguments are the host reader's synthetic test roots.
+    """
+    return _host.resource_snapshot(*args, **kwargs)
+
+
 lock_file = _slot.lock_file
 admission_lock = _slot.admission_lock
 CANCELLED = _slot.CANCELLED
