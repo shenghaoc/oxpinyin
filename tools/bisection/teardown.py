@@ -303,7 +303,14 @@ class Campaign:
                         block = os.read(process.stdout.fileno(), 65536)
                         if not block:
                             if buffered:
-                                raise ValueError('unterminated native response')
+                                status = process.wait(timeout=10)
+                                while reader.is_alive():
+                                    self.driver.check_cancelled()
+                                    if time.monotonic() >= deadline:
+                                        raise subprocess.TimeoutExpired(command, deadline)
+                                    reader.join(.1)
+                                raise ValueError(f'unterminated native response (exit {status}): '
+                                                 f'{bytes(errors)[-3000:]!r}')
                             break
                         buffered.extend(block)
                         while b'\n' in buffered:

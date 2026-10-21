@@ -1,6 +1,7 @@
 #!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
 """Teardown instrumentation controls. Run through the existing heavy slot: cc is used."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -152,35 +153,115 @@ void g_free(void *p) { free(p); }
 '''
 
 
+PERF_BASELINE = Path(__file__).with_name('teardown-perf-baseline.json')
+PERF_CYCLES = 2
+PERF_VOLATILE = ('init_ns', 'alloc_ns', 'rss_kib', 'hwm_kib', 'vm_size_kib',
+                 'rss_anon_kib', 'rss_file_kib')
+
+
+def build_stub(root):
+    pairs = dict(init='init', fini='fini', alloc_instance='alloc', free_instance='free', set_options='options',
+                 parse_more_full_pinyins='parse', parse_more_chewings='parse', reset='true',
+                 guess_sentence='true', get_sentence='sentence', get_n_candidate='count',
+                 get_candidate='candidate', get_candidate_type='type', get_candidate_string='string',
+                 save='save', begin_add_phrases='begin', iterator_add_phrase='add', end_add_phrases='end',
+                 load_phrase_library='load')
+    source = STUB
+    for facade in ('pinyin', 'zhuyin'):
+        names = dict(pairs)
+        if facade == 'zhuyin':
+            names['get_sentence'] = 'zhuyin_sentence'
+            names['iterator_add_phrase'] = 'zhuyin_add'
+        names.update(dict(guess_candidates='guess', get_parsed_input_length='length',
+                          get_candidate_nbest_index='nbest', begin_get_phrases='begin',
+                          iterator_has_next_phrase='has', iterator_get_next_phrase='next', end_get_phrases='end')
+                     if facade == 'pinyin' else dict(guess_candidates_after_cursor='after'))
+        for suffix, implementation in names.items():
+            source += f'extern __typeof__(fake_{implementation}) {facade}_{suffix} __attribute__((alias("fake_{implementation}")));\n'
+    cfile = root / 'stub.c'
+    cfile.write_text(source)
+    library = root / 'stub.so'
+    subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', '-O2',
+                    '-o', str(library), str(cfile)], check=True)
+    return library
+
+
+def perf_output(worker, library, systemdir):
+    env = {key: value for key, value in os.environ.items() if not key.startswith('PERF_')}
+    env.update(PERF_BACKEND='stub', PERF_MODE='speed', PERF_CYCLES=str(PERF_CYCLES), PERF_REPEATS='1')
+    result = subprocess.run([str(worker), '--perf', str(library), str(systemdir)],
+                            env=env, capture_output=True, text=True, check=True)
+    return json.loads(result.stdout)
+
+
+def perf_schema(value):
+    if isinstance(value, dict):
+        return {key: perf_schema(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [perf_schema(item) for item in value]
+    return type(value).__name__
+
+
+def perf_values(value, library, systemdir):
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            if key == 'repeats':
+                result[key] = item
+            elif key in PERF_VOLATILE:
+                result[key] = '<number>'
+            else:
+                result[key] = perf_values(item, library, systemdir)
+        return result
+    if isinstance(value, list):
+        return [perf_values(item, library, systemdir) for item in value]
+    if isinstance(value, str):
+        return {str(library): '<so>', str(systemdir): '<systemdir>'}.get(value, value)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    return '<number>'
+
+
+def perf_digest(schema, values):
+    payload = json.dumps(dict(schema=schema, values=values), sort_keys=True, separators=(',', ':'))
+    return td.digest_bytes(payload.encode())
+
+
+def perf_observation(worker, library, systemdir):
+    output = perf_output(worker, library, systemdir)
+    schema = perf_schema(output)
+    values = perf_values(output, library, systemdir)
+    return dict(schema=schema, values=values, checksum=perf_digest(schema, values))
+
+
+def write_perf_baseline():
+    with tempfile.TemporaryDirectory(prefix='teardown-perf-baseline-') as directory:
+        root = Path(directory)
+        source = root / 'bisect-main.c'
+        source.write_bytes(subprocess.check_output(
+            ['git', 'show', '2ce6cb7d:tools/bisection/bisect.c'], cwd=td.ROOT))
+        worker = root / 'bisect-main'
+        subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2',
+                        '-o', str(worker), str(source), '-ldl'], check=True)
+        library = build_stub(root)
+        observation = perf_observation(worker, library, root)
+        input_sha256 = td.digest_bytes((root / 'stub.c').read_bytes())
+    fixture = dict(
+        _comment=('Generated once from tools/bisection/bisect.c at main 2ce6cb7d '
+                  '(pre-teardown) using the NativeTests stub. Regenerate with: '
+                  'uv run --no-project --managed-python --python cpython@3.15.0+gil '
+                  'python tools/bisection/teardown.test.py --write-perf-baseline'),
+        input_sha256=input_sha256, **observation)
+    PERF_BASELINE.write_text(json.dumps(fixture, indent=2, sort_keys=True) + '\n')
+
+
 class NativeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory(prefix='teardown-controls-')
         cls.root = Path(cls.temporary.name)
         cls.worker, _ = td.build_worker(cls.root)
-        pairs = dict(init='init', fini='fini', alloc_instance='alloc', free_instance='free', set_options='options',
-                     parse_more_full_pinyins='parse', parse_more_chewings='parse', reset='true',
-                     guess_sentence='true', get_sentence='sentence', get_n_candidate='count',
-                     get_candidate='candidate', get_candidate_type='type', get_candidate_string='string',
-                     save='save', begin_add_phrases='begin', iterator_add_phrase='add', end_add_phrases='end',
-                     load_phrase_library='load')
-        source = STUB
-        for facade in ('pinyin', 'zhuyin'):
-            names = dict(pairs)
-            if facade == 'zhuyin':
-                names['get_sentence'] = 'zhuyin_sentence'
-                names['iterator_add_phrase'] = 'zhuyin_add'
-            names.update(dict(guess_candidates='guess', get_parsed_input_length='length',
-                              get_candidate_nbest_index='nbest', begin_get_phrases='begin',
-                              iterator_has_next_phrase='has', iterator_get_next_phrase='next', end_get_phrases='end')
-                         if facade == 'pinyin' else dict(guess_candidates_after_cursor='after'))
-            for suffix, implementation in names.items():
-                source += f'extern __typeof__(fake_{implementation}) {facade}_{suffix} __attribute__((alias("fake_{implementation}")));\n'
-        cfile = cls.root / 'stub.c'
-        cfile.write_text(source)
-        cls.library = cls.root / 'stub.so'
-        subprocess.run(['cc', '-shared', '-fPIC', '-Wall', '-Wextra', '-Werror', '-O2',
-                        '-o', str(cls.library), str(cfile)], check=True)
+        cls.library = build_stub(cls.root)
         cls.profile = cls.root / 'profile'
         cls.profile.mkdir()
 
@@ -188,11 +269,11 @@ class NativeTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.temporary.cleanup()
 
-    def campaign(self):
+    def campaign(self, worker=None):
         spec = importlib.util.spec_from_file_location('contract_diff', td.HERE / 'contract-diff.py')
         driver = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(driver)
-        return td.Campaign(self.worker, self.root, self.root, min(os.sched_getaffinity(0)), driver)
+        return td.Campaign(worker or self.worker, self.root, self.root, min(os.sched_getaffinity(0)), driver)
 
     def test_both_facades_and_teardown_order(self):
         for facade in ('pinyin', 'zhuyin'):
@@ -244,29 +325,27 @@ class NativeTests(unittest.TestCase):
             campaign.run('pinyin', self.library, self.profile)
         self.assertFalse(list(self.root.glob('sample-*')))
 
+    def test_partial_stdout_reports_exit_status_and_stderr(self):
+        worker = self.root / 'partial-worker'
+        worker.write_text('#!/bin/sh\nprintf \'{"teardown":\'\nprintf \'candidate too long\\n\' >&2\nexit 1\n')
+        worker.chmod(0o755)
+        with self.assertRaises(ValueError) as raised:
+            self.campaign(worker).run('pinyin', self.library, self.profile, mode='observe')
+        self.assertIn('exit 1', str(raised.exception))
+        self.assertIn('candidate too long', str(raised.exception))
+
     def test_existing_perf_mode_preserves_schema_and_checksum(self):
-        source = self.root / 'bisect-main.c'
-        source.write_bytes(subprocess.check_output(['git', 'show', 'origin/main:tools/bisection/bisect.c'], cwd=td.ROOT))
-        baseline = self.root / 'bisect-main'
-        subprocess.run(['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2',
-                        '-o', str(baseline), str(source), '-ldl'], check=True)
-        values = []
-        for executable in (baseline, self.worker):
-            result = subprocess.run([str(executable), '--perf', str(self.library), str(self.root)],
-                                    env=dict(os.environ, PERF_MODE='speed', PERF_CYCLES='2'),
-                                    capture_output=True, text=True, check=True)
-            values.append(td.json.loads(result.stdout))
-        def schema(value):
-            if isinstance(value, dict):
-                return {key: schema(item) for key, item in value.items()}
-            if isinstance(value, list):
-                return [schema(item) for item in value]
-            return type(value).__name__
-        self.assertEqual(schema(values[0]), schema(values[1]))
-        for key in ('backend', 'so', 'systemdir', 'mode', 'checksum', 'cycles'):
-            if key in values[0]:
-                self.assertEqual(values[0][key], values[1][key])
+        baseline = json.loads(PERF_BASELINE.read_text())
+        self.assertEqual(td.digest_bytes((self.root / 'stub.c').read_bytes()), baseline['input_sha256'])
+        observation = perf_observation(self.worker, self.library, self.root)
+        self.assertEqual(observation['schema'], baseline['schema'])
+        self.assertEqual(observation['values'], baseline['values'])
+        self.assertEqual(observation['checksum'], baseline['checksum'])
 
 
 if __name__ == '__main__':
+    if '--write-perf-baseline' in sys.argv:
+        sys.argv.remove('--write-perf-baseline')
+        write_perf_baseline()
+        raise SystemExit(0)
     unittest.main()
