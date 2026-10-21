@@ -301,7 +301,7 @@ jobs:
           mkdir -p ~/.local/bin
           install -m755 cargo-nextest ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: cargo nextest run --locked --profile ci --workspace
+      - run: cargo nextest run --locked --profile ci --status-level skip --workspace
       # nextest does not run doctests; keep the same workspace selection.
       - run: cargo test --locked --doc --workspace
       - name: C++ pinyin.h smoke gate
@@ -392,7 +392,7 @@ jobs:
           install -m755 cargo-nextest ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: >
-          cargo nextest run --locked --profile ci --workspace --no-default-features --features bdb
+          cargo nextest run --locked --profile ci --status-level skip --workspace --no-default-features --features bdb
           --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word

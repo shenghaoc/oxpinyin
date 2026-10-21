@@ -47,8 +47,9 @@ and version 0.9.143. Linux uses `x86_64-unknown-linux-musl`; macOS uses
 PR CI supplies the one-cycle comparison against main: compare complete
 crate/binary-qualified identities and verdicts, then separate doctest counts.
 Normalize nextest skipped to Cargo ignored only for the same ignored test.
-Record observed job times without a controlled performance claim. CI comparison
-is pending. No logs, archives or evidence files are retained or uploaded.
+Use `--status-level skip` to expose ignored identities without changing selection.
+Record observed job times without a controlled performance claim. The implementing
+PR records the one-cycle comparison and verified head. No logs, archives or evidence files are retained or uploaded.
 Windows remains on cargo test under #950.
 
 ## 1. Test entry point
