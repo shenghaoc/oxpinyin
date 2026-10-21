@@ -870,6 +870,14 @@ impl AddonDictionary {
         }
     }
 
+    /// Whether either addon index has an open DBM handle.
+    ///
+    /// Independent of whether any addon phrase library is loaded.
+    #[must_use]
+    pub const fn has_open_indexes(&self) -> bool {
+        self.pinyin.is_some() || self.phrase.is_some()
+    }
+
     /// Loads addon library `index`'s chunk file from `dir` —
     /// `pinyin_load_addon_phrase_library`. `false` when the index names no
     /// addon library, the library is already loaded, or the file is

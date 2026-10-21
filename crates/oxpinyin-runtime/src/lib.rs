@@ -3,7 +3,8 @@
 //! Wiring only: this crate opens a system data directory the way
 //! `pinyin_init` does — the pinyin and phrase DBMs, the per-library
 //! chunk files, `bigram.db`, `punct.bin`, the addon DBM pair, λ from
-//! `table.conf` — installs the optional user store, and hands out
+//! `table.conf` — or as `zhuyin_init` does, without addon or punctuation
+//! tables. It installs the optional user store and hands out
 //! [`Session`]s over the merged backends. On each backend that
 //! directory is the backend's native data directory — the one a
 //! libpinyin build on the same backend uses, or what
@@ -2127,7 +2128,10 @@ impl Runtime {
     /// pinyin facade's init passes [`UserConfLaw::Pinyin`], the zhuyin
     /// facade's [`UserConfLaw::Zhuyin`] — the two pins share the data
     /// directory and the user file set but not the open counter's
-    /// lifecycle (`oxpinyin_user::persistence::UserConfLaw`).
+    /// lifecycle (`oxpinyin_user::persistence::UserConfLaw`). The law also
+    /// selects the facade's system tables: only pinyin opens the addon
+    /// indexes and punctuation table (074a2219 `pinyin.cpp:416-440`;
+    /// `zhuyin.cpp:270-358`).
     ///
     /// # Errors
     ///
@@ -2202,9 +2206,19 @@ impl Runtime {
         };
 
         let addons = Arc::new(RwLock::new(AddonSet {
-            dict: AddonDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?,
+            dict: match law {
+                UserConfLaw::Pinyin => {
+                    AddonDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?
+                }
+                UserConfLaw::Zhuyin => AddonDictionary::empty(),
+            },
         }));
-        let punct = PunctTable::open_optional(&system_dir.join(SystemDbm::Punct.file_name()));
+        let punct = match law {
+            UserConfLaw::Pinyin => {
+                PunctTable::open_optional(&system_dir.join(SystemDbm::Punct.file_name()))
+            }
+            UserConfLaw::Zhuyin => PunctTable::empty(),
+        };
 
         let bumps = Arc::new(FacadeBumps::default());
         let dict = RuntimeDict {
@@ -2665,6 +2679,48 @@ mod tests {
             .join("fixtures")
             .join("w3")
             .join(oxpinyin_data::DEFAULT_STORE_EXT)
+    }
+
+    #[test]
+    fn zhuyin_open_holds_no_addon_or_punct_handles() {
+        let system = w3_dir();
+        let pinyin = Runtime::open(&system, None).expect("pinyin fixture opens");
+        assert!(
+            pinyin.dict.addons.read().unwrap().dict.has_open_indexes(),
+            "vacuity guard: pinyin eagerly opens the fixture's addon indexes"
+        );
+        assert!(
+            pinyin.dict.punct.is_open(),
+            "vacuity guard: pinyin eagerly opens the fixture's punctuation table"
+        );
+
+        let user = tempfile::tempdir().unwrap();
+        for user_dir in [None, Some(user.path())] {
+            let zhuyin = Runtime::open_with_law(&system, user_dir, UserConfLaw::Zhuyin)
+                .expect("zhuyin fixture opens");
+            // An empty loaded-library set would also pass before the fix;
+            // inspect the actual index handles, not just visible items.
+            assert!(!zhuyin.dict.addons.read().unwrap().dict.has_open_indexes());
+            assert!(!zhuyin.dict.punct.is_open());
+
+            // Default user library 5 (addon.bin) is separate from the
+            // addon DBM pair and remains available to zhuyin imports.
+            let mut store = zhuyin.user_store().expect("user state");
+            let ni = SyllableKey::from_text("ni").unwrap();
+            let hao = SyllableKey::from_text("hao").unwrap();
+            let keys = [
+                oxpinyin_user::toned_key(ni.index(), 3).unwrap(),
+                oxpinyin_user::toned_key(hao.index(), 3).unwrap(),
+            ];
+            let token = store.add_phrase_in(5, "你鎄", &keys, Some(5)).unwrap();
+            assert_eq!(token >> 24, 5);
+            assert!(
+                zhuyin
+                    .dict
+                    .tokens_for_text("你鎄")
+                    .contains(&PhraseToken::new(token))
+            );
+        }
     }
 
     #[test]
