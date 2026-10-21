@@ -66,6 +66,15 @@ looking at results. Keep profiler data in memory and emit plain-text reports;
 commit or upload no captures. `repeat`, `multi` and `attribute` select the
 separate lifecycle and attribution diagnostics; their timings are not primary
 performance samples.
+`attribute` uses separate optional Massif/Memcheck builds of this same native
+worker. Shipping libraries stay unchanged. Massif takes M0–M3 boundary
+snapshots; its reported interval maximum is a sampled peak, not a promise to
+catch every transient allocation. Memcheck counts live blocks at M0 and the
+first lifecycle's boundaries, then after cycles 10/50/100 on empty and the
+selected populated profile. Compare those live counts with native glibc arena
+statistics before calling growth a leak or an allocator plateau. Callgrind
+collects only the free/fini wrappers, with exclusive costs and overlapping
+inclusive edges reported separately. All profiler documents are parsed in RAM.
 
 ## Criterion benches
 

@@ -75,6 +75,28 @@ class PureTests(unittest.TestCase):
         self.assertEqual(len(td.exports('pinyin')), 79)
         self.assertEqual(len(td.exports('zhuyin')), 52)
 
+    def test_massif_boundaries_and_sampled_peak_are_separate(self):
+        def snapshot(t, heap):
+            return f'snapshot={t}\ntime={t}\nmem_heap_B={heap}\nmem_heap_extra_B=8\nmem_stacks_B=0\nheap_tree=empty\n'
+        text = ''.join(f'TEARDOWN_HEAP {point} BEGIN\n{snapshot(t, heap)}TEARDOWN_HEAP {point} END\n'
+                       for point, t, heap in (('M0', 0, 10), ('M1', 10, 100), ('M2', 20, 80), ('M3', 30, 20)))
+        text += snapshot(5, 200) + snapshot(15, 120)
+        result = td.massif_profile(text)
+        self.assertEqual(result['freed_heap_bytes'], {'M1-M2': 20, 'M2-M3': 60})
+        self.assertEqual(result['sampled_teardown_peak']['mem_heap_B'], 120)
+        self.assertEqual(result['whole_lifecycle_peak']['mem_heap_B'], 200)
+        with self.assertRaisesRegex(ValueError, 'missing Massif'):
+            td.massif_profile(snapshot(1, 10))
+
+    def test_memcheck_sites_keep_loss_classes_and_nonadditive_roots(self):
+        text = ('TEARDOWN_LEAK M3 100 BEGIN\n==123== 1,024 bytes in 2 blocks are definitely lost in loss record 1 of 2\n'
+                '==123==    at 0x123: malloc (malloc.c:1)\n==123==    by 0x234: db_create (db.c:2)\n==123== \n'
+                '==123== 2,048 bytes in 4 blocks are still reachable in loss record 2 of 2\n'
+                '==123==    at 0x123: malloc (malloc.c:1)\n==123== \nTEARDOWN_LEAK M3 100 END\n')
+        sites = td.memcheck_sites(text, 'M3', 100)
+        self.assertEqual([(site['bytes'], site['kind']) for site in sites], [(2048, 'still reachable'), (1024, 'definitely lost')])
+        self.assertIn('db_create', sites[1]['frames'][1])
+
     def test_profile_semantics_retain_empty_rows_and_all_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -5,6 +5,12 @@
  */
 #include <limits.h>
 #include <sys/resource.h>
+#if defined(OXPINYIN_TEARDOWN_MASSIF) || defined(OXPINYIN_TEARDOWN_MEMCHECK)
+#include <valgrind/valgrind.h>
+#endif
+#ifdef OXPINYIN_TEARDOWN_MEMCHECK
+#include <valgrind/memcheck.h>
+#endif
 
 #define TD_MAX_INSTANCES 16
 #define TD_MAX_CANDIDATES 512
@@ -184,6 +190,32 @@ static void td_print_observation(const struct td_api *api, const struct td_obser
 
 static void td_checkpoint(const char *point, int cycle, bool wait) {
     if (!wait) return;
+#ifdef OXPINYIN_TEARDOWN_MASSIF
+    if (strcmp(point, "reset")) {
+        fprintf(stderr, "TEARDOWN_HEAP %s BEGIN\n", point);
+        if (VALGRIND_MONITOR_COMMAND("detailed_snapshot /dev/stderr")) exit(1);
+        fprintf(stderr, "TEARDOWN_HEAP %s END\n", point);
+    }
+#endif
+#ifdef OXPINYIN_TEARDOWN_MEMCHECK
+    /* Diagnostic builds only. These scans are outside ABI timing and do not
+     * enter shipping figures. Count live blocks independently of glibc arenas. */
+    if ((!strcmp(point, "M0")) || (cycle == 1 && strcmp(point, "reset")) ||
+        (!strcmp(point, "M3") && (cycle == 10 || cycle == 50 || cycle == 100))) {
+        unsigned long lost, possible, reachable, suppressed;
+        unsigned long lost_blocks, possible_blocks, reachable_blocks, suppressed_blocks;
+        fprintf(stderr, "TEARDOWN_LEAK %s %d BEGIN\n", point, cycle);
+        VALGRIND_DO_LEAK_CHECK;
+        VALGRIND_COUNT_LEAKS(lost, possible, reachable, suppressed);
+        VALGRIND_COUNT_LEAK_BLOCKS(lost_blocks, possible_blocks, reachable_blocks, suppressed_blocks);
+        printf("{\"heap_live\":true,\"point\":\"%s\",\"cycle\":%d,"
+               "\"lost_bytes\":%lu,\"possible_bytes\":%lu,\"reachable_bytes\":%lu,\"suppressed_bytes\":%lu,"
+               "\"lost_blocks\":%lu,\"possible_blocks\":%lu,\"reachable_blocks\":%lu,\"suppressed_blocks\":%lu}\n",
+               point, cycle, lost, possible, reachable, suppressed,
+               lost_blocks, possible_blocks, reachable_blocks, suppressed_blocks);
+        fprintf(stderr, "TEARDOWN_LEAK %s %d END\n", point, cycle);
+    }
+#endif
     /* mallinfo2 is a native, allocation-free glibc read. All formatting and
      * pipe synchronization are outside every timed/profiler ABI interval. */
 #if defined(__GLIBC__) && __GLIBC_PREREQ(2, 33)
