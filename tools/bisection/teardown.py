@@ -112,8 +112,8 @@ def mapping_group(row, library, data):
     return 'OTHER:' + name + ':' + access
 
 
-def read_memory(pid, library, data):
-    proc = Path('/proc') / str(pid)
+def read_memory(pid, library, data, *, proc_root=Path('/proc')):
+    proc = proc_root / str(pid)
     with (proc / 'smaps').open() as handle:
         rows = SMAPS.parse_lines(handle, fields=FIELDS)
     totals = {field: sum(row[field] for row in rows) for field in FIELDS}
@@ -122,16 +122,17 @@ def read_memory(pid, library, data):
         key, _, value = line.partition(':')
         if key in FIELDS:
             rollup[key] = int(value.split()[0])
-    # Pss is rounded per mapping; the rollup rounds after summation.
-    for field in FIELDS:
-        if field != 'Pss' and totals[field] != rollup.get(field):
-            raise ValueError('smaps/rollup disagreement for ' + field)
+    # These are sequential kernel reads. Even a blocked child cannot freeze
+    # shared-page classification changes caused by another process. Use the
+    # same smaps read for totals and groups; retain the later rollup only as a
+    # diagnostic. Pss here sums the kernel's per-mapping rounded KiB values.
     groups = {}
     for row in rows:
         group = groups.setdefault(mapping_group(row, library, data), dict.fromkeys(FIELDS, 0))
         for field in FIELDS:
             group[field] += row[field]
-    return dict(totals=rollup, mapping_totals=totals, groups=groups,
+    return dict(totals=totals, mapping_totals=totals, rollup=rollup,
+                rollup_minus_smaps=signed_delta(rollup, totals), groups=groups,
                 mappings=len(rows), fds=len(list((proc / 'fd').iterdir())))
 
 
@@ -712,6 +713,8 @@ def report_memory(facade, case, samples, pilot):
                 groups={group: {metric: summary([observation['groups'].get(group, {}).get(metric, 0) for observation in observations])
                                 for metric in FIELDS} for group in sorted(groups)},
                 allocator={key: summary([observation['allocator'][key] for observation in observations])
-                           for key in observations[0]['allocator']} if all(observation['allocator'] is not None for observation in observations) else None)
+                           for key in observations[0]['allocator']} if all(observation['allocator'] is not None for observation in observations) else None,
+                rollup_minus_smaps={key: summary([observation['rollup_minus_smaps'][key] for observation in observations])
+                                    for key in FIELDS})
         print_record('memory-deltas', facade=facade, case=case, side=side, pilot=pilot, signed_kib=shown,
                      checkpoints=checkpoints)

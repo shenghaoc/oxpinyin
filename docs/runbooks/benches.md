@@ -54,6 +54,10 @@ aggregated as timing samples. M0 is after load, M1 after workload/optional
 save, M2 after every instance is freed, M3 after fini returns. The process
 waits alive for parent observation. Report signed M1−M2, M2−M3 and M3−M0;
 never use VmHWM differences or label retained library pages as context leaks.
+Totals and mapping groups come from one smaps read; Pss is the sum of its
+per-mapping rounded KiB values. A later smaps_rollup read and its signed gap are
+diagnostics: shared-page classification may change between sequential reads,
+even while the native child waits, so equality is not a sample gate.
 
 The same-bytes control is mandatory. Its paired median ratio and entire 95%
 paired-bootstrap interval must lie within 0.95–1.05. Otherwise the metric is

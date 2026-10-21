@@ -28,6 +28,25 @@ class PureTests(unittest.TestCase):
         self.assertEqual(td.signed_delta({'Rss': 0}, {'Rss': 8}), {'Rss': -8})
         self.assertEqual(td.signed_delta({}, {'Rss': 8}), {'Rss': -8})
 
+    def test_memory_totals_and_groups_use_one_read_despite_later_rollup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            proc = root / '123'
+            proc.mkdir()
+            (proc / 'fd').mkdir()
+            (proc / 'smaps').write_text('1000-2000 r--p 0000 00:00 0\n'
+                                       'Rss: 8 kB\nPss: 3 kB\nAnonymous: 0 kB\n'
+                                       'Private_Clean: 8 kB\nPrivate_Dirty: 0 kB\nShared_Clean: 0 kB\n')
+            (proc / 'smaps_rollup').write_text('Rss: 8 kB\nPss: 4 kB\nAnonymous: 0 kB\n'
+                                              'Private_Clean: 0 kB\nPrivate_Dirty: 0 kB\nShared_Clean: 8 kB\n')
+            result = td.read_memory(123, Path('/lib.so'), Path('/data'), proc_root=root)
+            self.assertEqual(result['totals']['Private_Clean'], 8)
+            self.assertEqual(result['rollup_minus_smaps']['Private_Clean'], -8)
+            self.assertEqual(result['rollup_minus_smaps']['Shared_Clean'], 8)
+            self.assertEqual(result['rollup_minus_smaps']['Pss'], 1)
+            for field in td.FIELDS:
+                self.assertEqual(result['totals'][field], sum(group[field] for group in result['groups'].values()))
+
     def test_ratios_are_paired_and_control_rule_is_fixed(self):
         self.assertEqual(td.paired_ratio([2, 200], [1, 100])['median'], 2)
         self.assertTrue(td.stable_control([100] * 8, [101] * 8)['stable'])
