@@ -519,8 +519,6 @@ class DriverVerdictTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, 2)
 
 
-@unittest.skipUnless(sys.platform.startswith('linux'),
-                     'requires Linux /proc process observation')
 class CancellationTests(unittest.TestCase):
     """Cancel a real driver while its worker and a descendant ignore TERM."""
 
@@ -657,20 +655,30 @@ class CancellationTests(unittest.TestCase):
                     proc.kill()
                 proc.communicate()
 
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'requires Linux /proc process observation')
     def test_sigint(self):
         self.cancel(signal.SIGINT)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'requires Linux /proc process observation')
     def test_sigterm(self):
         for leader_exits in (False, True):
             with self.subTest(leader_exits=leader_exits):
                 self.cancel(signal.SIGTERM, leader_exits=leader_exits)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'requires Linux /proc process observation')
     def test_sighup(self):
         self.cancel(signal.SIGHUP)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'requires Linux /proc process observation')
     def test_sigterm_through_run_all(self):
         self.cancel(signal.SIGTERM, through_runner=True)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'),
+                         'requires Linux /proc process observation')
     def test_per_call_sigterm(self):
         for leader_exits in (False, True):
             with self.subTest(leader_exits=leader_exits):
