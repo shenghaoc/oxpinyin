@@ -279,8 +279,6 @@ impl Default for Lookup {
 struct Scratch {
     /// The scan's candidate buffer.
     collected: Vec<Candidate>,
-    /// Schwartzian buffer for the three-key order.
-    ranked: Vec<(RankKey, Candidate)>,
     /// Dictionary-hit buffer for one window-scan lookup.
     entries: Vec<PhraseEntry>,
     /// One scan path (phrase length ≤ 16).
@@ -965,19 +963,25 @@ const SORT_WITHOUT_LONGER_CANDIDATE: u32 = 0x2;
 /// frequencies stay below 2²⁴) and a `table.conf` λ outside `[0, 1]` does
 /// (`(1−λ)` negative wraps the stored `guint32`). The order is then the merge
 /// sort's, so the sort is GLib's recursion, not the standard library's.
-fn glib_rank_sort(ranked: &mut Vec<(RankKey, Candidate)>) {
-    let mut order: Vec<(RankKey, usize)> = ranked
-        .iter()
-        .enumerate()
-        .map(|(index, (key, _))| (*key, index))
-        .collect();
-    crate::nbest::glib_merge_sort(&mut order, &|left, right| left.0.pin_compare(&right.0));
-    let mut slots: Vec<Option<(RankKey, Candidate)>> = ranked.drain(..).map(Some).collect();
-    ranked.extend(
-        order
-            .into_iter()
-            .filter_map(|(_, index)| slots[index].take()),
-    );
+///
+/// `keys[i]` is `(candidates[i]`'s key, `i)`. The merge runs over the
+/// 32-byte key rows; the 72-byte candidates move once each.
+fn glib_rank_sort(candidates: &mut [Candidate], keys: &mut [(RankKey, u32)]) {
+    debug_assert_eq!(candidates.len(), keys.len());
+    crate::nbest::glib_merge_sort(keys, &|left, right| left.0.pin_compare(&right.0));
+    // Apply the sorted order with swaps, following each displaced element
+    // to where an earlier swap moved it (the standard library's
+    // `sort_by_cached_key` scheme): no second candidate buffer, no
+    // per-call slot vector. After the loop `keys[i]` is `candidates[i]`'s
+    // key.
+    for i in 0..keys.len() {
+        let mut index = keys[i].1 as usize;
+        while index < i {
+            index = keys[index].1 as usize;
+        }
+        keys[i].1 = index as u32;
+        candidates.swap(i, index);
+    }
 }
 
 impl RankKey {
@@ -1077,18 +1081,19 @@ fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
 ///
 /// The map holds one index per distinct text, as the keep-first set held one
 /// text: time and space stay linear in the rows.
-fn dedup_ranked_by_text(ranked: &mut Vec<(RankKey, Candidate)>) {
+fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[RankKey]) {
+    debug_assert_eq!(ranked.len(), keys.len());
     let mut keep = vec![true; ranked.len()];
     {
         let mut survivor: HashMap<&str, usize> = HashMap::with_capacity(ranked.len());
-        for (index, (key, candidate)) in ranked.iter().enumerate() {
+        for (index, (key, candidate)) in keys.iter().zip(ranked.iter()).enumerate() {
             match survivor.entry(candidate.text()) {
                 Entry::Vacant(slot) => {
                     slot.insert(index);
                 }
                 Entry::Occupied(mut slot) => {
                     let held = *slot.get();
-                    if key.m_freq > ranked[held].0.m_freq {
+                    if key.m_freq > keys[held].m_freq {
                         keep[held] = false;
                         slot.insert(index);
                     } else {

@@ -201,7 +201,6 @@ where
         // end.
         let Scratch {
             mut collected,
-            mut ranked,
             mut entries,
             mut path,
             mut window_phrase,
@@ -265,48 +264,51 @@ where
             // table lacks rank as zero rather than falling back.
             let frequencies = self
                 .candidate_frequencies(
-                    &collected,
+                    collected,
                     gram.as_ref().map(|(prev, row)| (*prev, row)),
                     gate,
                 )?
                 .unwrap_or_else(|| vec![0; collected.len()]);
-            ranked.clear();
-            ranked.extend(
-                collected
-                    .drain(..)
-                    .zip(frequencies)
-                    .map(|(candidate, frequency)| {
-                        // `compare_item_with_sort_option` compares a key
-                        // only while its bit is set and returns 0 — a tie —
-                        // once it is clear (`pinyin.cpp:1678-1709`): zeroing
-                        // a disabled field makes every candidate equal on
-                        // it, which is that comparator exactly.
-                        let key = RankKey::for_sort_word(
-                            candidate.text().chars().count(),
-                            candidate.consumed_bytes(),
-                            frequency,
-                            self.lookup.sort_word,
-                        );
-                        (key, candidate)
-                    }),
-            );
+            // One key row per candidate, sorted and applied in place: the
+            // candidates never leave `collected`, and the key rows are the
+            // only per-call buffer of this stage.
+            let mut keys: Vec<(RankKey, u32)> = collected
+                .iter()
+                .zip(frequencies)
+                .enumerate()
+                .map(|(index, (candidate, frequency))| {
+                    // `compare_item_with_sort_option` compares a key
+                    // only while its bit is set and returns 0 — a tie —
+                    // once it is clear (`pinyin.cpp:1678-1709`): zeroing
+                    // a disabled field makes every candidate equal on
+                    // it, which is that comparator exactly.
+                    let key = RankKey::for_sort_word(
+                        candidate.text().chars().count(),
+                        candidate.consumed_bytes(),
+                        frequency,
+                        self.lookup.sort_word,
+                    );
+                    (key, index as u32)
+                })
+                .collect();
 
             // Stable sort, all three keys descending: an all-equal tie keeps
             // the collection order, which the scan now lays down in the
             // pin's array order (per window, token-ascending).
-            glib_rank_sort(&mut ranked);
+            glib_rank_sort(&mut collected, &mut keys);
+            let mut keys: Vec<RankKey> = keys.into_iter().map(|(key, _)| key).collect();
 
             // The pin prepends LONGER before the frequency dedup
             // (`pinyin.cpp:2292-2300`). Keep its unigram-only `m_freq`:
             // a same-text NORMAL row can have a larger bigram term.
-            empty_phrase_scan = ranked.is_empty();
+            empty_phrase_scan = collected.is_empty();
             if self.lookup.sort_word & SORT_WITHOUT_LONGER_CANDIDATE == 0
-                && let Some(row) = self.longer_candidate(gate)?
+                && let Some((key, row)) = self.longer_candidate(gate)?
             {
-                ranked.insert(0, row);
+                collected.insert(0, row);
+                keys.insert(0, key);
             }
-            dedup_ranked_by_text(&mut ranked);
-            collected.extend(ranked.drain(..).map(|(_, candidate)| candidate));
+            dedup_ranked_by_text(&mut collected, &keys);
         } else {
             let scorer = Scorer::with_key_costs(
                 self.scoring,
@@ -346,7 +348,6 @@ where
         collected.clear();
         self.scratch = Scratch {
             collected,
-            ranked,
             entries,
             path,
             window_phrase,
@@ -780,17 +781,15 @@ where
         let bound = matrix.bound.min(offset);
 
         let Scratch {
-            mut collected,
-            mut ranked,
+            collected,
             mut entries,
             mut path,
             mut window_phrase,
             mut window_addon,
         } = core::mem::take(&mut self.scratch);
-        collected.clear();
-        ranked.clear();
         let mut group: Vec<Candidate> = Vec::new();
-        let mut slice_ranked = Vec::new();
+        let mut keys: Vec<RankKey> = Vec::new();
+        let mut slice_keys: Vec<(RankKey, u32)> = Vec::new();
         let mut unreadable = false;
 
         for start in 0..bound {
@@ -841,33 +840,29 @@ where
             let frequencies = self
                 .candidate_frequencies(&group, gram.as_ref().map(|(prev, row)| (*prev, row)), true)?
                 .unwrap_or_else(|| vec![0; group.len()]);
-            slice_ranked.clear();
-            slice_ranked.extend(
-                group
-                    .drain(..)
-                    .zip(frequencies)
-                    .map(|(candidate, frequency)| {
-                        let key = RankKey {
-                            phrase_length: candidate.text().chars().count(),
-                            pinyin_span: candidate.consumed_bytes(),
-                            frequency: frequency as u32,
-                            m_freq: frequency as u32,
-                        };
-                        (key, candidate)
-                    }),
-            );
-            glib_rank_sort(&mut slice_ranked);
-            ranked.append(&mut slice_ranked);
+            slice_keys.clear();
+            slice_keys.extend(group.iter().zip(frequencies).enumerate().map(
+                |(index, (candidate, frequency))| {
+                    let key = RankKey {
+                        phrase_length: candidate.text().chars().count(),
+                        pinyin_span: candidate.consumed_bytes(),
+                        frequency: frequency as u32,
+                        m_freq: frequency as u32,
+                    };
+                    (key, index as u32)
+                },
+            ));
+            glib_rank_sort(&mut group, &mut slice_keys);
+            keys.extend(slice_keys.iter().map(|(key, _)| *key));
+            out.append(&mut group);
         }
 
         // Each slice keeps its own sort order. The final dedup compares
         // `m_freq` across all slices (`zhuyin.cpp:1612,1626-1630`).
-        dedup_ranked_by_text(&mut ranked);
-        out.extend(ranked.drain(..).map(|(_, candidate)| candidate));
+        dedup_ranked_by_text(out, &keys);
 
         self.scratch = Scratch {
             collected,
-            ranked,
             entries,
             path,
             window_phrase,
