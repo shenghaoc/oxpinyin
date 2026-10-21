@@ -34,10 +34,14 @@ def write_record(path, record):
     Path(path).write_text(json.dumps(record, sort_keys=True, indent=2) + '\n')
 
 
-def unredirected(path, base=None, *, message=None):
-    """Resolve trusted ancestors, then refuse links in the owned namespace."""
+# The container volume: the trusted base of every container namespace.
+STATE_ROOT = Path('/state')
+
+
+def unredirected(path, base, *, message=None):
+    """Resolve the trusted base, then refuse links in the owned namespace below it."""
     path = Path(path).absolute()
-    base = Path(base).absolute() if base is not None else Path(path.anchor)
+    base = Path(base).absolute()
     relative = path.relative_to(base)
     current = base.resolve()
     for part in relative.parts:
@@ -53,7 +57,7 @@ def result_directory(repo, source, run_id):
     return unredirected(Path(repo) / '.oxpinyin-container/results' / source / run_id, repo)
 
 
-def verify_state(image, source, root=Path('/state')):
+def verify_state(image, source, root=STATE_ROOT):
     if not re.fullmatch(r'[a-f0-9]{16}', image) or not re.fullmatch(r'[a-f0-9]{64}', source):
         raise ValueError('invalid container state namespace')
     root = Path(root)
@@ -185,7 +189,7 @@ def current_inputs():
 
 
 def artifact_content(artifacts, target):
-    target = unredirected(target)
+    target = unredirected(target, STATE_ROOT)
     result = {}
     for name, info in artifacts.items():
         path = Path(info['path'])
@@ -216,7 +220,7 @@ def verify_artifacts(record, root, needed):
     for key in ('cell', 'profile', 'toolchain'):
         if sealed.get(key) != record.get(key):
             raise ValueError(f'container artifact {key} mismatch')
-    target = unredirected(os.environ['OXPINYIN_TARGET_ROOT'])
+    target = unredirected(os.environ['OXPINYIN_TARGET_ROOT'], STATE_ROOT)
     for name, path in needed.items():
         if not Path(path).resolve().is_relative_to(target):
             raise ValueError(f'artifact outside container target: {name}')
