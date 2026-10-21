@@ -12305,6 +12305,8 @@ def run_per_call(args, parser):
 
 def run_main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    import teardown
+    teardown.add_arguments(parser)
     parser.add_argument('cell', nargs='?', choices=['bdb', 'kc', 'tkrzw'])
     parser.add_argument('prefix', nargs='?', type=Path)
     parser.add_argument('pinyin_so', nargs='?', type=Path)
@@ -12363,6 +12365,8 @@ def run_main():
     assert '+dbm-' + args.cell + '\n' in manifest
     if args.per_call:
         return run_per_call(args, parser)
+    if args.teardown:
+        return teardown.run(args, sys.modules[__name__], parser)
     if args.base_pinyin_so or args.base_zhuyin_so or args.per_call_attribution or args.per_call_operations:
         parser.error('base paths, attribution and operation selection require --per-call')
     if args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
