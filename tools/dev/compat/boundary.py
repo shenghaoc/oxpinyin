@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 from .. import doctor, host, registry
-from .identity import digest_file
+from .identity import digest_file, unredirected
 
 HOST_SETTINGS = frozenset({
     'OXPINYIN_CONTAINER', 'OXPINYIN_CONTAINER_MEMORY_MIB',
@@ -86,8 +86,8 @@ def validate(argv, environ=None):
     if runtime and Path(runtime).name not in ('podman', 'docker', 'container', 'wslc'):
         raise ValueError(f'unknown container runtime: {runtime}')
     result_root = Path.cwd() / '.oxpinyin-container'
-    if result_root.is_symlink() or result_root.resolve() != result_root.absolute():
-        raise ValueError('container result namespace must not redirect through a symlink')
+    unredirected(result_root, Path.cwd(),
+                 message='container result namespace must not redirect through a symlink')
     host.container_memory_mib(str(args.memory_mib))
     if args.memory_smoke or args.list:
         if args.runners is not None or args.issue is not None or args.archive is not None or args.timeout or args.runner_timeout:
