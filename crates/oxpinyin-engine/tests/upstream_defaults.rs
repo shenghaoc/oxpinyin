@@ -11,10 +11,13 @@
 
 use std::collections::BTreeMap;
 
-use oxpinyin_engine::{Config, ConfigSource, ConfigValue, UPSTREAM_DEFAULT_COUNT};
+use oxpinyin_engine::{
+    Config, ConfigLayer, ConfigSource, ConfigValue, UPSTREAM_DEFAULT_COUNT, merge,
+};
 
 const SCHEMA: &str = include_str!("../../../docs/findings/upstream-schema.md");
 const SCHEMA_ID: &str = "com.github.libpinyin.ibus-libpinyin.libpinyin";
+const EMPTY_CONFIG: Config = Config::from_map(BTreeMap::new());
 
 /// Every `name -> default` of the pinyin schema, read out of the frozen XML.
 fn captured_defaults() -> BTreeMap<String, ConfigValue> {
@@ -105,6 +108,9 @@ fn config_default_equals_the_captured_upstream_defaults() {
         "the default carries exactly the captured key set"
     );
 
+    // Check the typed path before any generic read materializes the map.
+    assert_typed_defaults(&config, &captured);
+
     for (key, value) in &captured {
         assert_eq!(
             config.get(key),
@@ -120,6 +126,103 @@ fn config_default_equals_the_captured_upstream_defaults() {
             "key {key:?} is not in the frozen schema"
         );
     }
+
+    assert_typed_defaults(&config, &captured);
+}
+
+fn assert_typed_defaults(config: &Config, captured: &BTreeMap<String, ConfigValue>) {
+    for (key, value) in captured {
+        assert_eq!(config.get_bool(key), value.as_bool(), "bool {key:?}");
+        assert_eq!(config.get_int(key), value.as_int(), "int {key:?}");
+        assert_eq!(config.get_int64(key), value.as_int64(), "int64 {key:?}");
+        assert_eq!(config.get_text(key), value.as_text(), "text {key:?}");
+    }
+    assert_eq!(config.get_bool("absent"), None);
+    assert_eq!(config.get_int("absent"), None);
+    assert_eq!(config.get_int64("absent"), None);
+    assert_eq!(config.get_text("absent"), None);
+}
+
+#[test]
+fn default_and_explicit_maps_have_the_same_value_semantics() {
+    let captured = captured_defaults();
+    let config = Config::default();
+    let unmaterialized_clone = config.clone();
+    let explicit = Config::from_map(captured.clone());
+
+    assert_eq!(config, explicit);
+    assert_eq!(explicit, unmaterialized_clone);
+    assert_eq!(config.clone(), unmaterialized_clone);
+    assert_eq!(
+        format!("{config:?}"),
+        format!("Config {{ values: {captured:?} }}")
+    );
+
+    // Keep the concrete iterator API, including reverse and exact-size use.
+    let iter: std::collections::btree_map::Iter<'_, String, ConfigValue> = config.iter();
+    assert_eq!(iter.len(), captured.len());
+    assert!(iter.eq(captured.iter()));
+    assert!(config.into_iter().rev().eq(captured.iter().rev()));
+    assert!(EMPTY_CONFIG.is_empty());
+    assert_eq!(EMPTY_CONFIG.len(), 0);
+    assert_eq!(EMPTY_CONFIG.get_bool("incomplete-pinyin"), None);
+}
+
+#[test]
+fn editing_a_default_before_or_after_materialization_matches_an_explicit_map() {
+    let materialized = Config::default();
+    assert_eq!(
+        materialized.get("incomplete-pinyin"),
+        Some(&ConfigValue::Bool(true))
+    );
+    for mut config in [Config::default(), materialized.clone()] {
+        let untouched = config.clone();
+        let mut explicit = Config::from_map(captured_defaults());
+        for (key, value) in [
+            ("incomplete-pinyin", ConfigValue::Bool(false)),
+            ("lookup-table-page-size", ConfigValue::Int(9)),
+            ("network-dictionary-start-timestamp", ConfigValue::Int64(-1)),
+            ("opencc-config", ConfigValue::Text(String::new())),
+            ("future-key", ConfigValue::Text("kept".to_owned())),
+            // Direct set permits type changes; merge alone rejects them.
+            (
+                "incomplete-pinyin",
+                ConfigValue::Text("changed type".to_owned()),
+            ),
+        ] {
+            assert_eq!(config.set(key, value.clone()), explicit.set(key, value));
+            assert_eq!(config, explicit);
+        }
+        assert_eq!(untouched, Config::default());
+        assert_eq!(config.get_bool("incomplete-pinyin"), None);
+        assert_eq!(config.get_text("incomplete-pinyin"), Some("changed type"));
+        assert_eq!(config.get_int("lookup-table-page-size"), Some(9));
+        assert_eq!(
+            config.get_int64("network-dictionary-start-timestamp"),
+            Some(-1)
+        );
+        assert_eq!(config.get_text("opencc-config"), Some(""));
+        assert_eq!(config.get_text("future-key"), Some("kept"));
+    }
+}
+
+#[test]
+fn merging_default_and_explicit_maps_preserves_results_and_errors() {
+    let default = Config::default();
+    let explicit = Config::from_map(captured_defaults());
+    let layers = [
+        ConfigLayer::new("system")
+            .with("lookup-table-page-size", ConfigValue::Int(9))
+            .with("future-key", ConfigValue::Text("kept".to_owned())),
+        ConfigLayer::new("user").with("lookup-table-page-size", ConfigValue::Int(7)),
+    ];
+    assert_eq!(merge(&default, &layers), merge(&explicit, &layers));
+    let mismatched = [ConfigLayer::new("user").with(
+        "lookup-table-page-size",
+        ConfigValue::Text("nine".to_owned()),
+    )];
+    assert_eq!(merge(&default, &mismatched), merge(&explicit, &mismatched));
+    assert_eq!(default, explicit);
 }
 
 #[test]

@@ -34,6 +34,7 @@
 
 use core::fmt;
 use std::collections::{BTreeMap, btree_map};
+use std::sync::OnceLock;
 
 /// One configuration value.
 ///
@@ -110,8 +111,9 @@ impl ConfigValue {
 
 /// A default value as it appears in the frozen upstream schema.
 ///
-/// A separate type from [`ConfigValue`] because a `static` cannot hold an
-/// owned `String`; [`Config::default`] turns each seed into a value.
+/// The default configuration reads these typed values directly. Its owned
+/// map is built only when a caller requests values by reference, iterates or
+/// edits the configuration.
 #[derive(Clone, Copy, Debug)]
 enum Seed {
     Bool(bool),
@@ -129,6 +131,19 @@ impl Seed {
             Self::Text(value) => ConfigValue::Text(value.to_owned()),
         }
     }
+}
+
+fn default_seed(key: &str) -> Option<Seed> {
+    UPSTREAM_DEFAULTS
+        .iter()
+        .find_map(|&(name, seed)| (name == key).then_some(seed))
+}
+
+fn default_values() -> BTreeMap<String, ConfigValue> {
+    UPSTREAM_DEFAULTS
+        .iter()
+        .map(|(key, seed)| ((*key).to_owned(), seed.value()))
+        .collect()
 }
 
 /// Number of keys [`Config::default`] carries.
@@ -228,7 +243,7 @@ static UPSTREAM_DEFAULTS: [(&str, Seed); UPSTREAM_DEFAULT_COUNT] = [
 /// reads: each `get_*` method answers `None` when the key is absent or
 /// holds a value of another type. No fallbacks live here — substituting a
 /// default is the caller's decision, and [`Config::default`] is the
-/// simplest source, a map pre-filled with the pinned upstream values.
+/// simplest source, carrying the pinned upstream values.
 ///
 /// ```
 /// use oxpinyin_engine::{Config, ConfigSource, ConfigValue};
@@ -286,55 +301,145 @@ impl ConfigSource for EmptyConfigSource {
 ///
 /// [`Config::default`] is the pinned upstream default for every key, which is
 /// also the parity configuration: Stage 1 runs under it unchanged.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct Config {
-    values: BTreeMap<String, ConfigValue>,
+    values: ConfigValues,
+}
+
+#[derive(Clone)]
+enum ConfigValues {
+    Defaults(OnceLock<BTreeMap<String, ConfigValue>>),
+    Map(BTreeMap<String, ConfigValue>),
 }
 
 impl Config {
     /// Builds a configuration from an explicit map.
     #[must_use]
     pub const fn from_map(values: BTreeMap<String, ConfigValue>) -> Self {
-        Self { values }
+        Self {
+            values: ConfigValues::Map(values),
+        }
+    }
+
+    fn materialized(&self) -> Option<&BTreeMap<String, ConfigValue>> {
+        match &self.values {
+            ConfigValues::Defaults(values) => values.get(),
+            ConfigValues::Map(values) => Some(values),
+        }
+    }
+
+    fn values(&self) -> &BTreeMap<String, ConfigValue> {
+        match &self.values {
+            ConfigValues::Defaults(values) => values.get_or_init(default_values),
+            ConfigValues::Map(values) => values,
+        }
+    }
+
+    fn values_mut(&mut self) -> &mut BTreeMap<String, ConfigValue> {
+        match &mut self.values {
+            ConfigValues::Defaults(values) => values.get_mut_or_init(default_values),
+            ConfigValues::Map(values) => values,
+        }
     }
 
     /// Number of keys carried.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.values.len()
+        self.materialized()
+            .map_or(UPSTREAM_DEFAULT_COUNT, BTreeMap::len)
     }
 
     /// Whether no key is carried.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.values.is_empty()
+        self.materialized().is_some_and(BTreeMap::is_empty)
     }
 
     /// Every key and value, in ascending key order.
     pub fn iter(&self) -> btree_map::Iter<'_, String, ConfigValue> {
-        self.values.iter()
+        self.values().iter()
     }
 
     /// Sets `key`, returning what it held.
     pub fn set(&mut self, key: impl Into<String>, value: ConfigValue) -> Option<ConfigValue> {
-        self.values.insert(key.into(), value)
+        self.values_mut().insert(key.into(), value)
     }
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            values: UPSTREAM_DEFAULTS
-                .iter()
-                .map(|(key, seed)| ((*key).to_owned(), seed.value()))
-                .collect(),
+            // Facade init only needs the default settings to exist. The pin
+            // seeds its option word directly (074a2219 pinyin.cpp:329,
+            // zhuyin.cpp:273); no String keys or sorted map are needed here.
+            values: ConfigValues::Defaults(OnceLock::new()),
         }
     }
 }
 
+impl fmt::Debug for Config {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Config")
+            .field("values", self.values())
+            .finish()
+    }
+}
+
+impl PartialEq for Config {
+    fn eq(&self, other: &Self) -> bool {
+        match (self.materialized(), other.materialized()) {
+            (None, None) => true,
+            _ => self.values() == other.values(),
+        }
+    }
+}
+
+impl Eq for Config {}
+
 impl ConfigSource for Config {
     fn get(&self, key: &str) -> Option<&ConfigValue> {
-        self.values.get(key)
+        self.values().get(key)
+    }
+
+    fn get_bool(&self, key: &str) -> Option<bool> {
+        match self.materialized() {
+            Some(values) => values.get(key).and_then(ConfigValue::as_bool),
+            None => match default_seed(key) {
+                Some(Seed::Bool(value)) => Some(value),
+                _ => None,
+            },
+        }
+    }
+
+    fn get_int(&self, key: &str) -> Option<i32> {
+        match self.materialized() {
+            Some(values) => values.get(key).and_then(ConfigValue::as_int),
+            None => match default_seed(key) {
+                Some(Seed::Int(value)) => Some(value),
+                _ => None,
+            },
+        }
+    }
+
+    fn get_int64(&self, key: &str) -> Option<i64> {
+        match self.materialized() {
+            Some(values) => values.get(key).and_then(ConfigValue::as_int64),
+            None => match default_seed(key) {
+                Some(Seed::Int64(value)) => Some(value),
+                _ => None,
+            },
+        }
+    }
+
+    fn get_text(&self, key: &str) -> Option<&str> {
+        match self.materialized() {
+            Some(values) => values.get(key).and_then(ConfigValue::as_text),
+            None => match default_seed(key) {
+                Some(Seed::Text(value)) => Some(value),
+                _ => None,
+            },
+        }
     }
 }
 
@@ -343,7 +448,7 @@ impl<'a> IntoIterator for &'a Config {
     type Item = (&'a String, &'a ConfigValue);
 
     fn into_iter(self) -> Self::IntoIter {
-        self.values.iter()
+        self.iter()
     }
 }
 
@@ -508,7 +613,7 @@ pub fn merge(base: &Config, layers: &[ConfigLayer]) -> Result<Config, ConfigErro
                     found: value.type_letter(),
                 });
             }
-            merged.values.insert(key.clone(), value.clone());
+            merged.set(key.clone(), value.clone());
         }
     }
 
@@ -602,6 +707,28 @@ mod tests {
         fn get(&self, key: &str) -> Option<&ConfigValue> {
             self.0.get(key)
         }
+    }
+
+    #[test]
+    fn default_typed_reads_and_clones_do_not_materialize_the_map() {
+        let config = Config::default();
+        let source: &dyn ConfigSource = &config;
+        assert_eq!(source.get_bool("incomplete-pinyin"), Some(true));
+        assert_eq!(source.get_int("lookup-table-page-size"), Some(5));
+        assert_eq!(
+            source.get_int64("network-dictionary-start-timestamp"),
+            Some(0)
+        );
+        assert_eq!(source.get_text("opencc-config"), Some("s2tw.json"));
+        assert_eq!(source.get_text("dictionaries"), Some(""));
+        assert_eq!(source.get_int("incomplete-pinyin"), None);
+        assert_eq!(source.get_text("absent"), None);
+        assert_eq!(config.len(), super::UPSTREAM_DEFAULT_COUNT);
+        assert!(!config.is_empty());
+        let cloned = config.clone();
+        assert_eq!(config, cloned);
+        assert!(config.materialized().is_none());
+        assert!(cloned.materialized().is_none());
     }
 
     #[test]
