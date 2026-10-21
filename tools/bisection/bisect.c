@@ -30,9 +30,11 @@
 #define _DARWIN_C_SOURCE
 #endif
 #define _DEFAULT_SOURCE
+#define _XOPEN_SOURCE 700
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
 #include <errno.h>
+#include <ftw.h>
 #include <stdbool.h>
 #include <stdint.h>
 #if defined(__GLIBC__)
@@ -894,20 +896,17 @@ static int resolve_perf_symbols(void *handle, struct symbols *s, bool zhuyin) {
     return missing;
 }
 
-static void perf_remove_user_dir(char *user_dir) {
-    char command[640];
+static int perf_remove_entry(const char *path, const struct stat *st,
+                            int type, struct FTW *ftw) {
+    (void)st;
+    (void)type;
+    (void)ftw;
+    return remove(path);
+}
 
-    if (strlen(user_dir) + 32 >= sizeof command)
-        return;
-    snprintf(command, sizeof command, "rm -rf -- '%s'", user_dir);
-    /* Best-effort cleanup of our own mkdtemp directory; a failure is not
-     * worth aborting a measurement over. The status is bound rather than
-     * cast away because system(3) is warn_unused_result under the
-     * _FORTIFY_SOURCE level Ubuntu's gcc enables by default, and a plain
-     * (void) cast does not satisfy it -- the harness would not build at
-     * -Werror outside the Debian container. */
-    int status = system(command);
-    (void)status;
+static void perf_remove_user_dir(char *user_dir) {
+    /* Best-effort cleanup of our own mkdtemp directory. */
+    (void)nftw(user_dir, perf_remove_entry, 16, FTW_DEPTH | FTW_PHYS);
 }
 
 static int run_perf_mode(int argc, char **argv) {

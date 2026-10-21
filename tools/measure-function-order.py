@@ -254,11 +254,11 @@ def teardown_command(args, facade, library, user, mode):
             str(user), mode, "0", "1", "1", "first-candidate", "-"]
 
 
-def toggle_profile(args, facade, library, user, toggle, env):
+def toggle_profile(args, facade, library, user, toggle, env, sizes):
     command = [*GEN["callgrind_prefix"](args.bisect, args.cpu, toggle),
                *teardown_command(args, facade, library, user, "time")[1:]]
     _, err = run(command, env)
-    return executed_profile(err, library, instruction_sizes(library))
+    return executed_profile(err, library, sizes)
 
 
 def main():
@@ -372,12 +372,14 @@ def main():
                 # Deterministic counters use the init/load toggles and the
                 # existing steady toggle, outside native timing samples.
                 for arm in ARMS:
+                    # These sizes are for libraries[arm, facade]; fresh()
+                    # copies exactly those bytes to each private lib.so.
                     sizes = instruction_sizes(libraries[arm, facade])
                     startup = defaultdict(list)
                     for toggle in (*GEN["init_array_symbols"](libraries[arm, facade]), f"{facade}_init"):
                         work, library, user = fresh(arm, facade, profile)
                         try:
-                            startup[toggle].append(toggle_profile(args, facade, library, user, toggle, env))
+                            startup[toggle].append(toggle_profile(args, facade, library, user, toggle, env, sizes))
                         finally:
                             shutil.rmtree(work)
                     combined = {"ir": sum(p["ir"] for values in startup.values() for p in values),
