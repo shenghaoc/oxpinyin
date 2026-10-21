@@ -6,7 +6,6 @@
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
 use std::collections::HashSet;
-use std::ffi::CString;
 use std::os::raw::c_char;
 
 use oxpinyin_core::single_gram;
@@ -163,11 +162,12 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
         if winners.get(&item.text) != Some(&index) {
             continue;
         }
-        let Ok(text) = CString::new(item.text) else {
+        let Some(text) = inst.candidates.intern(item.text.as_bytes()) else {
             continue;
         };
         inst.candidates.push(CapiCandidate {
             text,
+            text_ptr: std::ptr::null(),
             kind: CandidateKind::Phrase,
             candidate_type: item.candidate_type,
             nbest_index: 0,
@@ -177,7 +177,7 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
             // `pinyin_choose_predicted_candidate`, never the anchored-select
             // path, so the window index is unused here; record the snapshot
             // position for determinism.
-            source_index: inst.candidates.len(),
+            source_index: u32::try_from(inst.candidates.len()).unwrap_or(u32::MAX),
         });
     }
     Ok(true)
@@ -276,7 +276,7 @@ pub extern "C" fn pinyin_guess_predicted_candidates(
     if inst
         .candidates
         .iter()
-        .any(|candidate| std::ptr::eq(candidate.text.as_ptr(), prefix))
+        .any(|candidate| std::ptr::eq(candidate.text_ptr, prefix))
     {
         inst.candidates.clear();
         inst.prefixes.clear();
@@ -318,22 +318,23 @@ fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
     if puncts.is_empty() {
         return;
     }
-    let rest = std::mem::take(&mut inst.candidates);
+    let rest = inst.candidates.take();
     for text in puncts {
-        let Ok(text) = CString::new(text) else {
+        let Some(text) = inst.candidates.intern(text.as_bytes()) else {
             continue;
         };
         inst.candidates.push(CapiCandidate {
             text,
+            text_ptr: std::ptr::null(),
             kind: CandidateKind::Phrase,
             candidate_type: lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE,
             nbest_index: 0,
             consumed_bytes: 0,
             token: None,
-            source_index: inst.candidates.len(),
+            source_index: u32::try_from(inst.candidates.len()).unwrap_or(u32::MAX),
         });
     }
-    inst.candidates.extend(rest);
+    inst.candidates.append(rest);
 }
 
 fn append_predicted_bigrams(

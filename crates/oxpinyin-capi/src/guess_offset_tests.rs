@@ -31,7 +31,7 @@ fn texts(instance: *mut PinyinInstance) -> Vec<String> {
     let inst = unsafe { instance_ref(instance) };
     inst.candidates
         .iter()
-        .map(|c| c.text.to_str().expect("UTF-8 candidate").to_owned())
+        .map(|c| c.text_str().expect("UTF-8 candidate").to_owned())
         .collect()
 }
 
@@ -41,7 +41,7 @@ fn position_of(instance: *mut PinyinInstance, text: &str) -> usize {
     let inst = unsafe { instance_ref(instance) };
     inst.candidates
         .iter()
-        .position(|c| c.text.to_str() == Ok(text))
+        .position(|c| c.text_str() == Ok(text))
         .unwrap_or_else(|| panic!("{text:?} is offered"))
 }
 

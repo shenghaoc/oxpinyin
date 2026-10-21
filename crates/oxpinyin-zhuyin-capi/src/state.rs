@@ -75,7 +75,7 @@ impl CapiContext {
         Some(CapiInstance {
             context,
             core,
-            candidates: Vec::new(),
+            candidates: oxpinyin_facade::CandidateSnapshot::new(),
         })
     }
 
@@ -123,8 +123,17 @@ impl CapiContext {
 
 /// One snapshotted candidate, stored inside `CapiInstance` so that
 /// `lookup_candidate_t *` can borrow into it across C calls.
+///
+/// Sized to need, as the pinyin facade's row is: the text lives in the
+/// instance's [`CandidateSnapshot`](oxpinyin_facade::CandidateSnapshot)
+/// buffer and the counts are `u32`.
 pub struct CapiCandidate {
-    pub(crate) text: std::ffi::CString,
+    /// The row's string in the snapshot's packed text buffer.
+    pub(crate) text: oxpinyin_facade::TextSpan,
+    /// The pointer `zhuyin_get_candidate_string` answers — from the row
+    /// alone, as the pin reads only the candidate there — kept current by
+    /// the snapshot.
+    pub(crate) text_ptr: *const std::ffi::c_char,
     /// The four fields below are snapshotted exactly as the pinyin facade
     /// snapshots them, but this facade's display law reads only `text`,
     /// `candidate_type` and `source_index` today.
@@ -144,7 +153,7 @@ pub struct CapiCandidate {
         dead_code,
         reason = "snapshotted in step with oxpinyin-capi; no reader on the zhuyin display law yet"
     )]
-    pub(crate) consumed_bytes: usize,
+    pub(crate) consumed_bytes: u32,
     /// The candidate's scoring token, snapshotted for training.
     #[cfg_attr(
         not(test),
@@ -155,11 +164,36 @@ pub struct CapiCandidate {
     )]
     pub(crate) token: Option<oxpinyin_core::PhraseToken>,
     /// The index this candidate held in the window it was snapshotted from.
-    pub(crate) source_index: usize,
+    pub(crate) source_index: u32,
     /// Where the candidate's span starts, in original input coordinates —
     /// upstream's `m_begin`, which `zhuyin_choose_candidate` answers as the
     /// new cursor for a before-cursor row (`zhuyin.cpp:1660` at the pin).
-    pub(crate) span_begin: usize,
+    pub(crate) span_begin: u32,
+}
+
+#[cfg(test)]
+impl CapiCandidate {
+    /// The row's string, for the in-crate tests.
+    pub(crate) fn text_str(&self) -> Result<&str, std::str::Utf8Error> {
+        if self.text_ptr.is_null() {
+            return Ok("");
+        }
+        // SAFETY: a pushed row's pointer addresses its NUL-terminated string
+        // inside the owning snapshot's buffer, which outlives the row and
+        // is re-pointed whenever that buffer moves.
+        unsafe { std::ffi::CStr::from_ptr(self.text_ptr) }.to_str()
+    }
+}
+
+impl oxpinyin_facade::SnapshotRow for CapiCandidate {
+    fn text_span(&self) -> oxpinyin_facade::TextSpan {
+        self.text
+    }
+
+    fn set_text(&mut self, span: oxpinyin_facade::TextSpan, ptr: *const std::ffi::c_char) {
+        self.text = span;
+        self.text_ptr = ptr;
+    }
 }
 
 /// State behind `zhuyin_instance_t *`.
@@ -170,8 +204,10 @@ pub struct CapiInstance {
     /// word, parse-mode state machine, re-anchored window — shared with
     /// the pinyin facade.
     pub(crate) core: InstanceCore,
-    /// Snapshotted candidates, rebuilt by `zhuyin_guess_candidates_*`.
-    pub(crate) candidates: Vec<CapiCandidate>,
+    /// Snapshotted candidates, rebuilt by `zhuyin_guess_candidates_*`:
+    /// the rows `lookup_candidate_t *` pointers address and the packed
+    /// strings they read.
+    pub(crate) candidates: oxpinyin_facade::CandidateSnapshot<CapiCandidate>,
 }
 
 // ── Pointer casts ───────────────────────────────────────────────────────

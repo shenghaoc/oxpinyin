@@ -136,10 +136,10 @@ pub extern "C" fn pinyin_get_candidate_string(
     // `pinyin_get_candidate`.
     let cand = unsafe { candidate_ref(candidate) };
     if !utf8_str.is_null() {
-        // SAFETY: Null-checked above. Pointer borrows into the
-        // CapiCandidate's CString, valid until candidates are rebuilt.
+        // SAFETY: Null-checked above. Pointer borrows into the instance's
+        // packed candidate text, valid until candidates are rebuilt.
         unsafe {
-            *utf8_str = cand.text.as_ptr();
+            *utf8_str = cand.text_ptr;
         }
     }
     true
@@ -436,7 +436,7 @@ pub extern "C" fn pinyin_choose_candidate(
             -1
         };
     }
-    let source_index = inst.candidates[index].source_index;
+    let source_index = inst.candidates[index].source_index as usize;
     // The chosen row's end in the window the caller saw — the pin's
     // `offset + len` (`pinyin.cpp:2582-2589`, `m_begin = start = offset`,
     // `:2246`). A choose behind the composition offset (register row 37)
