@@ -1,6 +1,5 @@
 //! Sentence guessing and retrieval.
 
-use std::ffi::CString;
 use std::os::raw::c_char;
 
 use oxpinyin_core::{Dictionary as _, LanguageModel as _};
@@ -566,6 +565,12 @@ pub extern "C" fn pinyin_guess_candidates(
         inst.candidates.clear();
         return false;
     };
+    // One row vector and one text buffer, each sized once for the window
+    // (rows the loop skips leave a little slack, never a second growth).
+    inst.candidates.reserve(
+        candidates.len(),
+        candidates.iter().map(|cand| cand.text().len() + 1).sum(),
+    );
     for (window_index, cand) in candidates.iter().enumerate() {
         // The engine's remaining-raw-input `Fallback` row is the
         // session-API affordance (`session-api.md`: it keeps `Space`
@@ -599,7 +604,7 @@ pub extern "C" fn pinyin_guess_candidates(
         {
             continue;
         }
-        let Ok(text) = CString::new(cand.text().as_bytes()) else {
+        let Some(text) = inst.candidates.intern(cand.text().as_bytes()) else {
             continue;
         };
         let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
@@ -616,6 +621,7 @@ pub extern "C" fn pinyin_guess_candidates(
         // reads back, never the type marker.
         inst.candidates.push(CapiCandidate {
             text,
+            text_ptr: std::ptr::null(),
             kind: cand.kind(),
             candidate_type: match cand.kind() {
                 oxpinyin_engine::CandidateKind::Sentence => {
@@ -630,9 +636,9 @@ pub extern "C" fn pinyin_guess_candidates(
                 | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
             },
             nbest_index: cand.nbest_index(),
-            consumed_bytes,
+            consumed_bytes: u32::try_from(consumed_bytes).unwrap_or(u32::MAX),
             token: cand.token(),
-            source_index: window_index,
+            source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
         });
     }
     // Class (c), `pinyin.cpp:1859`: `assert(0 < total_freq)` while ranking a

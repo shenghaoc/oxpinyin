@@ -39,6 +39,7 @@ mod instance;
 mod offsets;
 mod parse;
 mod predict;
+mod snapshot;
 
 pub use context::{
     ContextCore, FALLBACK_CLEARED_BIT, LibraryLoadFault, LibraryRowAssert, LiveOptions,
@@ -59,6 +60,7 @@ pub use offsets::{
 };
 pub use parse::{ToneForwarding, double_scheme, full_scheme, zhuyin_scheme};
 pub use predict::{compute_prefixes, merged_suggestions};
+pub use snapshot::{CandidateSnapshot, SnapshotRow, TextSpan};
 
 /// The option word `pinyin_init` seeds (`USE_TONE`, and nothing else;
 /// `pinyin.cpp:329` at the pin) — the pinyin facade's distinguishing

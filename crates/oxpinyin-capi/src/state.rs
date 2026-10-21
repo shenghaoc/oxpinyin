@@ -12,7 +12,6 @@
 //! slots, the `CString` candidate snapshot, and this facade's §9
 //! user-data export machinery.
 
-use std::ffi::CString;
 use std::path::Path;
 
 use oxpinyin_core::PhraseToken;
@@ -26,6 +25,7 @@ use oxpinyin_engine::CandidateKind;
 pub(crate) const PHRASE_INDEX_LIBRARY_COUNT: u8 = 16;
 pub use oxpinyin_facade::ExportedBigramRow;
 pub use oxpinyin_facade::InstanceCore;
+use oxpinyin_facade::{CandidateSnapshot, SnapshotRow, TextSpan};
 use oxpinyin_facade::{ContextCore, OpenFailure};
 pub use oxpinyin_runtime::{RuntimeDict as SharedDict, RuntimeLm as SharedLm};
 
@@ -90,7 +90,7 @@ impl CapiContext {
             context,
             predicted_lambda: self.predicted_lambda,
             prefixes: Vec::new(),
-            candidates: Vec::new(),
+            candidates: CandidateSnapshot::new(),
             core: self.core.alloc_instance()?,
         })
     }
@@ -227,8 +227,18 @@ impl CapiContext {
 
 /// One snapshotted candidate, stored inside `CapiInstance` so that
 /// `lookup_candidate_t *` can borrow into it across C calls.
+///
+/// The row is sized to need (40 bytes): its text lives in the instance's
+/// [`CandidateSnapshot`] buffer and the row keeps the span, and the two
+/// counts below are `u32` because an input is at most
+/// `oxpinyin_engine::MAX_INPUT_BYTES` long and a window holds at most a
+/// few hundred rows.
 pub struct CapiCandidate {
-    pub(crate) text: CString,
+    /// The row's string in the snapshot's packed text buffer.
+    pub(crate) text: TextSpan,
+    /// The pointer `pinyin_get_candidate_string` answers: the row's string
+    /// inside the snapshot's buffer, kept current by the snapshot.
+    pub(crate) text_ptr: *const std::ffi::c_char,
     pub(crate) kind: CandidateKind,
     pub(crate) candidate_type: crate::types::lookup_candidate_type_t,
     pub(crate) nbest_index: u8,
@@ -243,7 +253,7 @@ pub struct CapiCandidate {
             reason = "read by the in-crate tests only since the row-choose cursor moved to the parse end"
         )
     )]
-    pub(crate) consumed_bytes: usize,
+    pub(crate) consumed_bytes: u32,
     /// The candidate's scoring token, snapshotted so the training entry
     /// points (`pinyin_train`'s observation, predicted-candidate training,
     /// `pinyin_is_user_candidate`) can resolve it without re-decoding.
@@ -255,7 +265,41 @@ pub struct CapiCandidate {
     /// `Fallback` row, a `CString` conversion failure), so a candidate's position in the snapshot is NOT its
     /// position in the window; `pinyin_choose_candidate` must select by
     /// THIS index, which is the one `Session::select[_anchored]` indexes.
-    pub(crate) source_index: usize,
+    pub(crate) source_index: u32,
+}
+
+#[cfg(test)]
+impl CapiCandidate {
+    /// The row's string bytes, for the in-crate tests.
+    pub(crate) fn text_bytes(&self) -> &[u8] {
+        self.text_cstr().to_bytes()
+    }
+
+    /// The row's string, for the in-crate tests.
+    pub(crate) fn text_str(&self) -> Result<&str, std::str::Utf8Error> {
+        self.text_cstr().to_str()
+    }
+
+    fn text_cstr(&self) -> &std::ffi::CStr {
+        if self.text_ptr.is_null() {
+            return c"";
+        }
+        // SAFETY: a pushed row's pointer addresses its NUL-terminated string
+        // inside the owning snapshot's buffer, which outlives the row and
+        // is re-pointed whenever that buffer moves.
+        unsafe { std::ffi::CStr::from_ptr(self.text_ptr) }
+    }
+}
+
+impl SnapshotRow for CapiCandidate {
+    fn text_span(&self) -> TextSpan {
+        self.text
+    }
+
+    fn set_text(&mut self, span: TextSpan, ptr: *const std::ffi::c_char) {
+        self.text = span;
+        self.text_ptr = ptr;
+    }
 }
 
 /// State behind `pinyin_instance_t *`.
@@ -279,8 +323,9 @@ pub struct CapiInstance {
     /// longest of them (`_get_previous_token`, `pinyin.cpp:1711-1740`).
     pub(crate) prefixes: Vec<u32>,
     /// Snapshotted candidates, rebuilt by `pinyin_guess_candidates`.
-    /// `lookup_candidate_t *` pointers borrow into this vec.
-    pub(crate) candidates: Vec<CapiCandidate>,
+    /// `lookup_candidate_t *` pointers borrow into its rows, and the
+    /// strings they read into its text buffer.
+    pub(crate) candidates: CandidateSnapshot<CapiCandidate>,
 }
 
 // ── Pointer casts ───────────────────────────────────────────────────────

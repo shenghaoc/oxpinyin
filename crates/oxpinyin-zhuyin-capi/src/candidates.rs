@@ -149,10 +149,10 @@ pub extern "C" fn zhuyin_get_candidate_string(
     // `zhuyin_get_candidate`.
     let cand = unsafe { candidate_ref(candidate) };
     if !utf8_str.is_null() {
-        // SAFETY: Null-checked above. Pointer borrows into the
-        // CapiCandidate's CString, valid until candidates are rebuilt.
+        // SAFETY: Null-checked above. Pointer borrows into the instance's
+        // packed candidate text, valid until candidates are rebuilt.
         unsafe {
-            *utf8_str = cand.text.as_ptr();
+            *utf8_str = cand.text_ptr;
         }
     }
     true
@@ -196,7 +196,7 @@ pub extern "C" fn zhuyin_choose_candidate(
     if inst.candidates[index].candidate_type == lookup_candidate_type_t::BEST_MATCH_CANDIDATE {
         return c_int::try_from(inst.core.parsed_len).unwrap_or(c_int::MAX);
     }
-    let source_index = inst.candidates[index].source_index;
+    let source_index = inst.candidates[index].source_index as usize;
     // An after-cursor row's end in the window the caller saw — the pin's
     // `offset = m_end` (`zhuyin.cpp:1649-1654`). A choose behind the
     // composition offset (register row 37) re-derives the composition
@@ -229,7 +229,7 @@ pub extern "C" fn zhuyin_choose_candidate(
     let chosen = &inst.candidates[index];
     let end = match chosen.candidate_type {
         lookup_candidate_type_t::BEST_MATCH_CANDIDATE => inst.core.parsed_len,
-        lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => chosen.span_begin,
+        lookup_candidate_type_t::NORMAL_CANDIDATE_BEFORE_CURSOR => chosen.span_begin as usize,
         _ => {
             let end = window_end.unwrap_or_else(|| inst.core.session.composition_offset());
             if let Some(parse) = inst.core.zhuyin_parse.as_ref() {
@@ -365,6 +365,11 @@ pub fn snapshot_candidates(
         lookup_candidate_type_t::NORMAL_CANDIDATE_AFTER_CURSOR
     };
     let zhuyin_parse = inst.core.zhuyin_parse.clone();
+    // One row vector and one text buffer, each sized once for the window.
+    inst.candidates.reserve(
+        window.len(),
+        window.iter().map(|cand| cand.text().len() + 1).sum(),
+    );
     for (window_index, cand) in window.iter().enumerate() {
         if cand.kind() == CandidateKind::Sentence && !before_cursor {
             // BEST_MATCH row stays at the head.
@@ -375,7 +380,7 @@ pub fn snapshot_candidates(
         if sentence_rows_only && cand.kind() != CandidateKind::Sentence {
             continue;
         }
-        let Ok(text) = std::ffi::CString::new(cand.text().as_bytes()) else {
+        let Some(text) = inst.candidates.intern(cand.text().as_bytes()) else {
             continue;
         };
         let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
@@ -402,16 +407,17 @@ pub fn snapshot_candidates(
         }
         inst.candidates.push(CapiCandidate {
             text,
+            text_ptr: std::ptr::null(),
             kind: cand.kind(),
             candidate_type: match cand.kind() {
                 CandidateKind::Sentence => lookup_candidate_type_t::BEST_MATCH_CANDIDATE,
                 _ => normal_type,
             },
             nbest_index: cand.nbest_index(),
-            consumed_bytes,
+            consumed_bytes: u32::try_from(consumed_bytes).unwrap_or(u32::MAX),
             token: cand.token(),
-            source_index: window_index,
-            span_begin,
+            source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
+            span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),
         });
     }
 }
