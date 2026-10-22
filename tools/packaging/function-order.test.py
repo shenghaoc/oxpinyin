@@ -308,6 +308,17 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
             self.assertTrue(arguments[index + 2].endswith(b"/order.ld"))
             self.assertEqual(arguments[:index - 1] + arguments[index + 3:], base_args)
 
+    def test_every_link_route_carries_z_defs(self):
+        with scratch() as work:
+            environment = self.prepare(work)
+            unordered, base_args, _ = self.relink(work, environment)
+            ordered, arguments, _ = self.relink(work, environment, work / "policy")
+            fallback, fallback_args, _ = self.relink(
+                work, {**environment, "TEST_LINKER_VERSION": "LLD 20"}, work / "policy")
+            for result, args in ((unordered, base_args), (ordered, arguments), (fallback, fallback_args)):
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(args.count(b"-Wl,-z,defs"), 1)
+
     def test_link_and_export_failures_do_not_install_or_retry(self):
         with scratch() as work:
             environment = self.prepare(work)

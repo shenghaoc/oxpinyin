@@ -290,6 +290,16 @@ unsupported-feature route has the same bytes as the original relink for the
 same inputs. An ordinary link or export-verification failure still fails;
 fallback does not retry a failed shipping link.
 
+The relink passes `-Wl,-z,defs` on that one link command, so the ordered and
+the unordered link both carry it, on every backend. A reference in the
+staticlib that `$GLIB_LIBS`, the backend libraries, `-lpthread`, `-ldl` and
+`-lm` do not resolve fails the link, and the linker names the symbol. Without
+the option the object would ship with the symbol undefined and no
+`DT_NEEDED` entry for it. No route removes the option: a driver or linker
+that rejects it fails the shipping link, it does not fall back. The option
+changes no layout; the bytes match a link without it whenever that link
+resolves every reference.
+
 Use `--function-order POLICY` to override the relinker's measured default.
 For the full shipping path, set `OXPINYIN_FUNCTION_ORDER_POLICY` for one install invocation;
 `install.sh` passes its environment to the relinker. A policy header must

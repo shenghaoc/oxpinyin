@@ -159,9 +159,14 @@ fi
 # compiler_builtins among them, and GNU ld keeps every section of an
 # included member unless told to collect. --gc-sections drops the sections
 # nothing reaches from the version script's exports and the constructors.
+# -z defs fails the link on any reference the link libraries do not
+# resolve, naming the symbol, instead of shipping it undefined with no
+# DT_NEEDED for it. It sits on the one command both the ordered and the
+# unordered link run, and no route drops it.
 # shellcheck disable=SC2086
 "$CC_CMD" -shared -o "$TMP_DEST" \
   ${ORDER_ARGS[@]+"${ORDER_ARGS[@]}"} \
+  -Wl,-z,defs \
   -Wl,-soname,"$SONAME" \
   -Wl,--version-script="$VER" \
   -Wl,--gc-sections -Wl,--whole-archive "$STATICLIB" -Wl,--no-whole-archive \
