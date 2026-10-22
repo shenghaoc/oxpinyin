@@ -292,7 +292,7 @@ use your real directory for an existing checkout. Rustup chooses the same
 repository toolchain automatically. Editors/debuggers use this same native
 MSVC environment and toolchain; no project-specific IDE is required.
 
-**Storage-dependent native Windows scope:** existing Windows CI runs the
+**Storage-dependent native Windows scope:** the Windows CI job runs the
 portable workspace with vcpkg `berkeleydb:x64-windows` (4.8), explicit include,
 library, DLL and LLVM paths, and an **unsurveyed-version exception reserved
 for CI**. Do not copy that exception into developer or production setup.
@@ -307,6 +307,26 @@ command, with default BDB instead of explicit backend selection. The oracle's Li
 FFI feature is not selected. Native Windows C-ABI/oracle behavior is not
 established by those tests. Physical Windows hardware is not needed to use
 this CI coverage.
+
+**When the Windows job runs:** the full Windows workspace job is the
+`test-windows` job in `verify-nightly.yml`. It runs every night and on manual
+dispatch, not on every pull request. Windows remains a supported native
+target; only the verification frequency changed. Before merging any of the
+following, dispatch the job on the branch with `windows_only` set:
+
+- changes to Windows-sensitive storage, filesystem or native-build code
+  (the store backends and their build scripts, path and file handling,
+  build scripts that compile or link native code);
+- toolchain updates and relevant dependency updates (`rust-toolchain.toml`,
+  `Cargo.lock` changes that reach the portable workspace, the vcpkg port);
+- releases.
+
+```bash
+gh workflow run verify-nightly.yml --ref <branch> -f windows_only=true
+```
+
+With `windows_only` set, every other nightly job is skipped. A dispatch
+without it runs the whole nightly workflow, including the Windows job.
 
 Recent upstream MinGW portability changes were checked separately from
 oxpinyin's MSVC support; see the [validation status](#validated-on--not-validated).

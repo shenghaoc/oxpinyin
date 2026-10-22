@@ -7,7 +7,9 @@ differential), `test-macos` / `test-windows`,
 `deny`, `fuzz` (pinned nightly; builds all ten targets, ~10s smoke run of
 each) and `ci-aggregate`. Fuzzing left the PR gate on 2026-09-23: every
 target builds and soaks nightly (`verify-nightly.yml` fuzz-soak). Main's
-required check is `ci-aggregate`.
+required check is `ci-aggregate`. `test-windows` left the PR path on
+2026-10-22: the full Windows workspace job runs in `verify-nightly.yml`,
+nightly and on manual dispatch (`docs/runbooks/setup.md`, "Native Windows").
 Estimated costs below are rough additive deltas on a cached runner.
 
 ## Tier 1 — FAST PR GATE (every push/PR, ~+2 min over today)
@@ -46,7 +48,8 @@ Doctest step only if nextest lands. Gates: all hard.
 > `public-api` lane once diffed the engine's `cargo public-api` snapshot;
 > it was retired 2026-10-18 UTC, when the C APIs/ABIs became the only
 > supported external interfaces. geiger was retired 2026-09-01.
-- Windows/macOS keep today's portable test jobs; `store-backends.yml`
+- macOS keeps its portable PR test job; the Windows one runs nightly and
+  on dispatch (`verify-nightly.yml` `test-windows`); `store-backends.yml`
   (`store-features`, `backend-matrix`, `store-backends-gate`,
   `tkrzw-sanitizers`) proves every backend selection compiles and runs
   the C-backed ones under ASan/UBSan.

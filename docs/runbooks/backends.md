@@ -63,7 +63,8 @@ Berkeley DB backend refuses any linked libdb other than 5.3 at open
 (`check_runtime_version` in `crates/oxpinyin-store/src/bdb/ffi.rs`). Set
 to a non-empty value, that comparison alone warns once — the line names
 the linked version and the surveyed 5.3 — and the open continues. It
-does not skip any other check. `test-windows` sets it because the vcpkg
+does not skip any other check. The nightly `test-windows` job
+(`verify-nightly.yml`) sets it because the vcpkg
 `berkeleydb` port is 4.8.30 and no surveyed build is packagable on that
 runner today. A developer recipe does not set it: Linux `libdb-dev` and
 Homebrew `berkeley-db@5` are the surveyed 5.3.
