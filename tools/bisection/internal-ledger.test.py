@@ -569,12 +569,25 @@ libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
     def test_measured_worker_passes_the_cell_to_its_subprocess(self):
         module = gcov_measure.contract_module('kc')
         with tempfile.TemporaryDirectory() as scratch:
-            result = SimpleNamespace(returncode=0, stdout=b'{"ret": true}\n', stderr=b'')
-            with patch.object(module.subprocess, 'run', return_value=result) as run:
+            with patch.object(module.subprocess, 'Popen') as run:
+                process = run.return_value
+                process.returncode = 0
+                process.communicate.return_value = (b'{"ret": true}\n', b'')
                 gcov_measure.measured_worker(module, 'pinyin', Path('/p'), Path('/data'), 'probe', scratch, 'kc')
             self.assertEqual(run.call_args.kwargs['env']['J_MEASUREMENT_CELL'], 'kc')
             self.assertEqual(run.call_args.kwargs['env']['CONTRACT_DIFF_CELL'], 'kc')
-            self.assertEqual(run.call_args.args[0][1], str(Path(gcov_measure.__file__).resolve()))
+            self.assertEqual(run.call_args.args[0][1:3], [str(Path(gcov_measure.__file__).resolve()), '--worker'])
+
+    def test_ordinary_contract_worker_starts_the_cached_entry(self):
+        module = gcov_measure.contract_module('kc')
+        with tempfile.TemporaryDirectory() as scratch:
+            with patch.object(module.subprocess, 'Popen') as run:
+                process = run.return_value
+                process.returncode = 0
+                process.communicate.return_value = (b'{"ret": true}\n', b'')
+                gcov_measure.bounded_worker(module, 'pinyin', Path('/p'), Path('/data'), 'probe', scratch)
+            self.assertEqual(run.call_args.args[0][1:], [str(module.WORKER), 'pinyin', '/p', '/data', 'probe'])
+            self.assertEqual(Path(run.call_args.args[0][1]).name, 'contract-worker.py')
 
     def test_contracts_skip_other_cells_fixtures_and_select_the_cell(self):
         good = dict(exit=0, result={}, stderr='', userfiles=[], measurement_abort_flush=False)

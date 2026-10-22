@@ -261,19 +261,16 @@ def counters(out, pin):
 
 def measured_worker(module, mode, so, data, name, scratch, cell='bdb'):
     """Keep the existing observation parser and isolated-worker semantics."""
-    original_file = module.__file__
-    try:
-        module.__file__ = str(Path(__file__).resolve())
-        # The measurement worker selects its fixture cell from this explicit
-        # variable, not from an inherited default.
-        return bounded_worker(module, mode, so, data, name, scratch, extra_env={'J_MEASUREMENT_CELL': cell})
-    finally:
-        module.__file__ = original_file
+    # Start this file's tracing `--worker`, not the driver's ordinary entry.
+    # The measurement worker selects its fixture cell from this explicit
+    # variable, not from an inherited default.
+    return bounded_worker(module, mode, so, data, name, scratch, extra_env={'J_MEASUREMENT_CELL': cell},
+                          entry=(Path(__file__).resolve(), '--worker'))
 
 
-def bounded_worker(module, mode, so, data, name, scratch, extra_env=None):
+def bounded_worker(module, mode, so, data, name, scratch, **options):
     try:
-        return module.run_worker(mode, so, data, name, scratch, extra_env=extra_env, timeout=WORKER_TIMEOUT)
+        return module.run_worker(mode, so, data, name, scratch, timeout=WORKER_TIMEOUT, **options)
     except subprocess.TimeoutExpired:
         return dict(exit='TIMEOUT', result=None, userfiles=[], measurement_roots=[],
                     measurement_abort_flush=False, stderr='', stderr_lines=0)

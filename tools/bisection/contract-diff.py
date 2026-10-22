@@ -5640,13 +5640,15 @@ def terminate_group(proc):
     proc.wait()
 
 
-def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None):
+def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None, entry=None):
     env = dict(os.environ, TMPDIR=str(scratch))
     env.update(extra_env or {})
     before = set(os.listdir(scratch))
     spawned = time.monotonic()
     env['CONTRACT_DIFF_SPAWNED'] = repr(spawned)
-    command = [sys.executable, str(WORKER), mode, str(so), str(data), name]
+    # `entry` is the script and its leading arguments; the default is read
+    # per call so a patched WORKER takes effect.
+    command = [sys.executable, *map(str, entry or (WORKER,)), mode, str(so), str(data), name]
     check_cancelled()
     proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env=env, start_new_session=True)
