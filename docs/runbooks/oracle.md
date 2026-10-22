@@ -220,6 +220,32 @@ Exit 0 is identical on every driver; 2 prints each divergence. The
 per-surface drivers (`tools/bisection/run-*-diff.sh`) run one surface
 each; their headers say what they prove.
 
+### The full default contract selection
+
+"The full default contract selection" is the contract driver run with no
+`--cases`, `--issue` or `--family`, on one cell:
+
+```sh
+just heavy -- tools/bisection/run-contract-diff.sh bdb "$PINYIN_ORACLE_PREFIX" \
+    <target>/debug/libpinyin_capi.so <target>/debug/libzhuyin_capi.so
+```
+
+It runs every registered case except the axis C battery (`axis-c-*`), in
+sorted order. At `5decad77` that is 2,889 cases (pinyin 1,734, zhuyin
+1,155), and one of them is a SKIP on the BDB cell. The count changes
+whenever a case is registered, so report the count from the run. Add
+`-- --plan-only` to print it without running a case: the first line is
+`plan: <N> cases (default suite: every registered non-axis-C case)`. Two
+runs that report different counts ran different registries. For example,
+2,865 is the registry at `b587d599`, before `074f0b36` added cases.
+
+Five `table-conf-abort-*` cases (`dir_chunk` in `contract-diff.py`, #1011)
+depend on the file system of `TMPDIR`, where the harness makes its scratch.
+On a file system whose directories answer `lseek(SEEK_END)` with 8 or more
+(ext4, for example), all five MATCH. On tmpfs, the default `/tmp` of many
+desktop hosts, the two user-directory cases MATCH, and the three
+system-directory cases print `HOST-DEPENDENT`.
+
 ### Contract differentials in a macOS-hosted Linux container
 
 Keep the contract harness's scratch directory and generated user directories
@@ -257,15 +283,18 @@ not yet contain the two user-library-token unload cases included in the
 151-case run.
 
 From the repository root, print the current number of registered cases
-without running the CLI or any case:
+without running the CLI or any case. The first number is every registered
+case; the second is the default selection, which leaves out the axis C
+battery:
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c "import runpy; print(len(runpy.run_path('tools/bisection/contract-diff.py')['CASES']))"
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c "import runpy; c = runpy.run_path('tools/bisection/contract-diff.py')['CASES']; print(len(c), sum(not n.startswith('axis-c-') for n in c))"
 ```
 
-The harness runs `sorted(CASES)` when `--cases` is omitted. Count the
-registry at the tested commit rather than assuming an earlier count still
-applies; a selected-case run does not establish a complete-suite result.
+The harness runs every registered non-axis-C case, sorted, when no selector
+is given (the full default selection, below). Count the registry at the
+tested commit rather than assuming an earlier count still applies; a
+selected-case run does not establish a complete-suite result.
 
 Retain the original failure logs when diagnosing this setup error. Evidence
 logs may be written or copied back to the mounted work directory, but keep
