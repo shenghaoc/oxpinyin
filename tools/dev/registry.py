@@ -60,14 +60,30 @@ def _check_implementation(row):
             raise RegistryError(f'registry row {name!r} implementation {value!r} is not a module name')
         base = ROOT.joinpath(*target.split('.'))
         exists = base.with_suffix('.py').is_file() or (base / '__init__.py').is_file()
+        command = row['command']
+        runs = any(part == '-m' and command[index + 1:index + 2] == [target]
+                   for index, part in enumerate(command))
     else:
         path = PurePosixPath(target)
         if path.is_absolute() or '..' in path.parts or '\\' in target:
             raise RegistryError(f'registry row {name!r} implementation {value!r} must be a '
                                 'checkout-relative path')
         exists = ROOT.joinpath(*path.parts).is_file()
+        runs = path in {_command_path(part) for part in row['command'] if isinstance(part, str)}
     if not exists:
         raise RegistryError(f'registry row {name!r} implementation {value!r} does not exist')
+    if not runs:
+        raise RegistryError(f'registry row {name!r} implementation {value!r} does not match '
+                            f'its command {json.dumps(row["command"])}')
+
+
+def _command_path(part):
+    """A command element as a checkout-relative path: drop `{root}/` or the
+    checkout's absolute path; PurePosixPath drops `./` components."""
+    for prefix in ('{root}/', ROOT.as_posix() + '/'):
+        if part.startswith(prefix):
+            return PurePosixPath(part[len(prefix):])
+    return PurePosixPath(part)
 
 
 def by_name(rows):
