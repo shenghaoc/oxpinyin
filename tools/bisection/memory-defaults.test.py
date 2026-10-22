@@ -246,6 +246,7 @@ class AdmissionTests(unittest.TestCase):
 
     def test_zero_room_releases_slot_and_expires_without_a_child(self):
         with mock.patch.dict(self.globals, resource_snapshot=lambda: resources(M['HEADROOM_MIB'])):
+            started = time.monotonic()
             admission = self.admission()
             self.assertFalse(admission.try_acquire())
             with M['HeavySlot']('probe', out=self.out) as slot:
@@ -253,10 +254,17 @@ class AdmissionTests(unittest.TestCase):
             calls = []
             result = M['run_admitted']([dict(result={}, admission=admission)], 2,
                                        lambda job: calls.append(job))
+            elapsed = time.monotonic() - started
         self.assertEqual(calls, [])
         self.assertEqual(result[0]['status'], 'FAIL')
         self.assertEqual(result[0]['reason'], 'resource-blocked: 600 MiB needed, 0 MiB available')
-        self.assertGreaterEqual(result[0]['memory_wait_seconds'], 0.1)
+        # The recorded memory wait leaves out each attempt's slot acquisition
+        # and resource read, which the 0.12 s limit includes, so no fixed share
+        # of the limit is a floor: on a stalled host the first attempt alone
+        # took 70 ms and the row read 0.05 (CI test on ae5f4d13). What holds is
+        # that a memory wait was recorded and fits inside the admission.
+        self.assertGreater(result[0]['memory_wait_seconds'], 0)
+        self.assertLessEqual(result[0]['memory_wait_seconds'], elapsed)
         self.assertIn('no process started', self.out.getvalue())
 
     def test_unknown_memory_releases_slot_and_fails_closed_with_explicit_settings(self):
@@ -264,6 +272,7 @@ class AdmissionTests(unittest.TestCase):
                          {'CARGO_BUILD_JOBS': 'default'}, {'CARGO_BUILD_JOBS': '-1'}):
             with self.subTest(settings=settings), mock.patch.dict(
                     self.globals, resource_snapshot=lambda: resources(None)):
+                started = time.monotonic()
                 admission = self.admission(dict(os.environ, **settings))
                 self.assertFalse(admission.try_acquire())
                 self.assertIsNone(admission.env)
@@ -272,10 +281,14 @@ class AdmissionTests(unittest.TestCase):
                 calls = []
                 result = M['run_admitted']([dict(result={}, admission=admission)], 2,
                                            lambda job: calls.append(job))
+                elapsed = time.monotonic() - started
                 self.assertEqual(calls, [])
                 self.assertEqual(result[0]['status'], 'FAIL')
                 self.assertEqual(result[0]['reason'], 'resource-blocked: available memory unknown')
-                self.assertGreaterEqual(result[0]['memory_wait_seconds'], 0.1)
+                # Same accounting as the zero-room test: a positive memory wait
+                # inside the admission, not a share of the limit.
+                self.assertGreater(result[0]['memory_wait_seconds'], 0)
+                self.assertLessEqual(result[0]['memory_wait_seconds'], elapsed)
                 self.assertIn('no process started', self.out.getvalue())
 
     def test_unknown_memory_can_recover_after_a_fresh_read(self):
