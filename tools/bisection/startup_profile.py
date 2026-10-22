@@ -29,7 +29,11 @@ def manifest(directory):
             elif path.is_file():
                 with path.open('rb') as handle:
                     digest = hashlib.file_digest(handle, 'sha256').hexdigest()
-                rows.append(f'{path.stat().st_size}\t{digest}\t{path.relative_to(directory).as_posix()}')
+                relative = path.relative_to(directory).as_posix()
+                # A tab or newline would split the row into other fields or records.
+                if '\t' in relative or '\n' in relative:
+                    raise ValueError(f'manifest input path contains a tab or newline: {relative!r}')
+                rows.append(f'{path.stat().st_size}\t{digest}\t{relative}')
             else:
                 raise ValueError(f'manifest input is not a regular file: {path}')
 
