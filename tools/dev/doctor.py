@@ -26,6 +26,7 @@ OVERRIDES = (
 )
 MANAGED_REQUEST = 'cpython@3.15.0+gil'
 NEXTEST_MINIMUM = '0.9.115'
+UV_MINIMUM = (0, 13, 1)
 
 
 class DoctorError(RuntimeError):
@@ -52,10 +53,14 @@ def uv_version(environ=None):
     environ = os.environ if environ is None else environ
     result = _run(['uv', '--version'], environ)
     if result is None or result.returncode != 0:
-        raise DoctorError('missing uv 0.13.1; install it from its documented host route')
+        raise DoctorError('missing uv 0.13.1 or newer; install it from its documented host route')
     text = result.stdout.strip()
-    if not text.startswith('uv 0.13.1 '):
-        raise DoctorError(f'uv 0.13.1 required; found {text}')
+    version = re.match(r'^uv (\d+)\.(\d+)\.(\d+)(?:\s|$)', text)
+    if version is None:
+        raise DoctorError(f'unparseable uv version output: {text or "empty"}; '
+                          'uv 0.13.1 or newer required')
+    if tuple(map(int, version.groups())) < UV_MINIMUM:
+        raise DoctorError(f'uv 0.13.1 or newer required; found {text}')
     return text
 
 

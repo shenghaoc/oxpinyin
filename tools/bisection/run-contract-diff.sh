@@ -9,7 +9,7 @@
 #   ... -- --family zero-key     # every zero-key/... case
 #   ... -- --issue 640 --plan-only   # print the selection plan and stop
 #   ... -- --expect-parent      # against the parent build: fixes must differ
-# Needs uv 0.13.1, managed CPython 3.15.0+gil and libglib-2.0.so.0. The case list, the tag index
+# Needs uv 0.13.1 or newer, managed CPython 3.15.0+gil and libglib-2.0.so.0. The case list, the tag index
 # (`contract-diff.py --list-tags`) and the comparison rules are in
 # contract-diff.py; an unknown tag or an empty selection is an error, never
 # the default suite. The plan (case IDs, why each was selected, facades and
@@ -37,7 +37,7 @@ for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
 	fi
 done
 command -v uv >/dev/null 2>&1 || {
-	echo 'missing uv 0.13.1; install it and managed CPython 3.15.0+gil (docs/runbooks/setup.md)' >&2
+	echo 'missing uv 0.13.1 or newer; install it and managed CPython 3.15.0+gil (docs/runbooks/setup.md)' >&2
 	exit 127
 }
 exec uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$script_dir/contract-diff.py" "$cell" "$prefix" "$pinyin_so" \
