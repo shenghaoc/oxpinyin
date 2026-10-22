@@ -23,7 +23,8 @@
 #     graph against fuzz/Cargo.lock (the targets themselves build and
 #     run only in verify-nightly.yml's fuzz-soak)
 #   - tools/** — the test job runs tools/bisection/run-cpp-smoke.sh and
-#     run-live-typing-diff.sh, so bisection-script changes are CI inputs
+#     the tools/abi/ export and allocator-pairing gates, so changes to
+#     those scripts are CI inputs
 #   - Cargo.toml / Cargo.lock — workspace manifest and lockfile: a
 #     dependency or feature change reaches lint, test and deny
 #   - deny.toml — the deny job reads this directly
@@ -39,6 +40,8 @@
 #     then a fixture-only PR ran no CI at all)
 #   - tests/parity/** — the parity corpus pinyin-oracle's tests replay
 #   - clippy.toml — the lint job's Clippy configuration (msrv)
+#   - .config/nextest.toml — the `ci` nextest profile the Linux and macOS
+#     test jobs run under
 #   - .github/actions/** — the bootstrap composite action every job runs
 #
 # Deliberately NOT gated (changes to these skip every lane):
@@ -77,6 +80,12 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+
+# A new push to a pull request cancels that pull request's older run. Runs
+# on main never cancel each other: each push gets its own group.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Three job groups (plus path gate and aggregate):
 #   lint — rustfmt + clippy + the Lizard CCN ratchet
@@ -130,7 +139,7 @@ jobs:
             echo 'run=true' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             .github/workflows/ci.yml             .github/scripts/lint-crate-cfg-placement.sh             tests/lint-crate-cfg-placement.test.sh             fixtures tests/parity .github/actions)
+          changed=$(git diff --name-only "$base" HEAD --             crates fuzz tools             Cargo.toml Cargo.lock rust-toolchain.toml deny.toml clippy.toml             .github/workflows/ci.yml             .github/scripts/lint-crate-cfg-placement.sh             tests/lint-crate-cfg-placement.test.sh             fixtures tests/parity .github/actions .config/nextest.toml)
           if [ -n "$changed" ]; then
             echo 'run=true' >> "$GITHUB_OUTPUT"
           else
@@ -170,8 +179,8 @@ jobs:
       - name: Install build dependencies (apt)
         # Berkeley DB is the default store backend (the analogue of a
         # bare libpinyin ./configure); bindgen (libclang) reads the
-        # system db.h at build time. test-macos installs its own
-        # Homebrew tkrzw and test-windows links vcpkg Berkeley DB, so
+        # system db.h at build time. test-macos installs Homebrew
+        # berkeley-db@5 and test-windows links vcpkg Berkeley DB, so
         # neither of those jobs uses this apt line.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
       - run: cargo fmt --all --check
@@ -238,8 +247,8 @@ jobs:
       - name: Install build dependencies (apt)
         # Berkeley DB is the default store backend (the analogue of a
         # bare libpinyin ./configure); bindgen (libclang) reads the
-        # system db.h at build time. test-macos installs its own
-        # Homebrew tkrzw and test-windows links vcpkg Berkeley DB, so
+        # system db.h at build time. test-macos installs Homebrew
+        # berkeley-db@5 and test-windows links vcpkg Berkeley DB, so
         # neither of those jobs uses this apt line.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
       - name: Set up pinned repository Python
@@ -362,16 +371,6 @@ jobs:
       # the g++ installed above already carries libasan/liblsan.
       - name: Allocator-pairing gate
         run: tools/abi/check-alloc-pairing.sh
-      # The post-choose live-typing/train differential (sentence-surface's
-      # §3 machinery). Self-skips unless the pin-built oracle
-      # (PINYIN_ORACLE_PREFIX) and a real-unigram system dir
-      # (LIVETYPING_SYSTEM) are present — runner-local only: the model20
-      # archive is non-redistributable and never enters CI, so this and
-      # every model20-dependent check (oxpinyin-datagen's strict tests,
-      # sentence-surface parity) run on a provisioned local machine, never
-      # on GitHub-hosted runners.
-      - name: Live-typing differential
-        run: tools/bisection/run-live-typing-diff.sh
       # The exported-symbol gate's packaged mode runs after every gate that
       # uses the development build (#970). Only oxpinyin-capi rebuilds for
       # it, and that build replaces the development one: the crate's lib
