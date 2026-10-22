@@ -35,12 +35,16 @@ set -uo pipefail
 #        cargo run -p oxpinyin-datagen --no-default-features --features tkrzw -- \
 #            compile --backend tkrzw \
 #            --model-dir <model20 dir> --out-dir <export dir>
+#   4. The extracted model20 directory (--model), also used by the
+#      cross_backend read-back test. The runtime data-directory test reads
+#      --data unchanged; both new suites use the same tkrzw cell.
 #
 # Usage:
-#   run-differentials.sh --libpinyin DIR --data DIR --export DIR [--model DIR]
+#   just heavy -- tools/oracle/run-differentials.sh --libpinyin DIR --data DIR --export DIR --model DIR
 #
-# Every path is validated before a single gate runs: a typo would otherwise
-# make the env-gated tests print `skipping` and the run look green.
+# Every required path is validated before a single gate runs. Explicitly
+# selected ignored tests fail on missing inputs (docs/testing/README.md).
+# The pre-release checks for BDB and KC live in docs/runbooks/oracle.md.
 #
 # The build recipe used to produce (1)+(2) from the pinned source (when the
 # release tarball is reachable, tools/oracle/build-oracle.sh is canonical; in a
@@ -77,7 +81,7 @@ while (($#)); do
 	esac
 done
 
-for v in libpinyin data export_dir; do
+for v in libpinyin data export_dir model; do
 	if [[ -z ${!v} ]]; then
 		printf 'missing --%s\n' "${v/_dir/}" >&2
 		exit 2
@@ -99,13 +103,13 @@ need_exe() {
 need_dir "$libpinyin" "--libpinyin: built libpinyin 2.11.92 tree"
 need_dir "$data" "--data: built system data dir"
 need_dir "$export_dir" "--export: oxpinyin tkrzw export"
-[[ -n $model ]] && need_dir "$model" "--model: extracted model20 dir"
+need_dir "$model" "--model: extracted model20 dir"
 ((missing)) && exit 2
 
 L=$(cd "$libpinyin" && pwd)
 data=$(cd "$data" && pwd)
 export_dir=$(cd "$export_dir" && pwd)
-[[ -n $model ]] && model=$(cd "$model" && pwd)
+model=$(cd "$model" && pwd)
 
 need_file "$L/src/.libs/libpinyin.so.15" "the built shared object (make)"
 need_file "$data/table.conf" "system table.conf"
@@ -120,7 +124,7 @@ if ! grep -q "^backend=tkt$" "$export_dir/datagen-manifest.txt"; then
 	echo "fatal: --export holds a $(sed -n 's/^backend=//p' "$export_dir/datagen-manifest.txt") export; this runner's oracle is tkrzw. Rebuild the export with --features tkrzw (see the header recipe)." >&2
 	exit 2
 fi
-[[ -n $model ]] && need_file "$model/interpolation2.text" "model20 export"
+need_file "$model/interpolation2.text" "model20 export"
 
 # Segment utils.
 PINYIN_SPSEG="$L/utils/segment/spseg"
@@ -159,7 +163,8 @@ export LD_LIBRARY_PATH="$L/src/.libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PINYIN_GEN_NGRAM_DATA="$data"
 export PINYIN_NGSEG_DATA="$data"
 export PINYIN_EXPORT_DIR="$export_dir"
-[[ -n $model ]] && export PINYIN_MODEL_DIR="$model"
+export PINYIN_MODEL_DIR="$model"
+export OXPINYIN_LIBPINYIN_DATA_DIR="$data"
 
 # The evaluator gate: wired only when its two extra inputs exist. The pin
 # side runs in the data dir (its .bin indexes, bigram.db, evals2.text); the
@@ -202,6 +207,10 @@ run_suite() {
 	fi
 }
 
+run_suite "datagen: compiled tkrzw backend reads model20 back" \
+	cargo test -p oxpinyin-datagen "${feat[@]}" --test cross_backend -- --include-ignored --nocapture
+run_suite "runtime: unmodified tkrzw libpinyin data directory" \
+	cargo test -p oxpinyin-runtime "${feat[@]}" --test libpinyin_data_dir -- --include-ignored --nocapture
 run_suite "KMM differentials (gen+export, to-interpolation, merge, prune, validate)" \
 	cargo test -p oxpinyin-kmm --test differential -- --include-ignored --nocapture
 run_suite "segment: spseg / mergeseq" \

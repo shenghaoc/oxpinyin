@@ -15,6 +15,9 @@
 //! gate compares a `gen_binary_files → gen_unigram → gen_ngram → export_interpolation`
 //! run in a fresh temp dir value-for-value against the Rust counter, so
 //! the manifest cannot go stale silently.
+//!
+//! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
+//! for execution owners and pre-release input identities.
 
 use std::path::{Path, PathBuf};
 
