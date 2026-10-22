@@ -183,67 +183,81 @@ impl InstanceCore {
     ///
     /// Forwards [`EngineError`] from the session's matrix read.
     pub fn mode_keys(&self) -> Result<(Vec<KeyAt>, &[u8], bool), EngineError> {
+        let (input, separators) = self.mode_input();
+        Ok((self.mode_key_list()?, input, separators))
+    }
+
+    /// [`Self::mode_keys`]'s input buffer and separator flag alone. It
+    /// reads no matrix, so a caller holding the key list from an earlier
+    /// [`Self::mode_key_list`] can take the buffer again after mutating
+    /// the session.
+    #[must_use]
+    pub fn mode_input(&self) -> (&[u8], bool) {
+        if self.zhuyin_parse.is_some() {
+            (self.zhuyin_input.as_bytes(), false)
+        } else if self.double_parse.is_some() {
+            (self.double_input.as_bytes(), false)
+        } else if self.full_parse.is_some() {
+            (self.full_input.as_bytes(), true)
+        } else {
+            (self.session.raw_input().as_bytes(), true)
+        }
+    }
+
+    /// [`Self::mode_keys`]'s key list alone. Plain full pinyin rebuilds the
+    /// session's scan matrix for it, a function of the raw input and the
+    /// session's option word only.
+    ///
+    /// # Errors
+    ///
+    /// Forwards [`EngineError`] from the session's matrix read.
+    pub fn mode_key_list(&self) -> Result<Vec<KeyAt>, EngineError> {
         if let Some(parse) = self.zhuyin_parse.as_ref() {
-            return Ok((
-                parse
-                    .keys()
-                    .iter()
-                    .map(|k| KeyAt {
-                        text: k.key().text(),
-                        tone: k.tone(),
-                        begin: k.start(),
-                        end: k.end(),
-                    })
-                    .collect(),
-                self.zhuyin_input.as_bytes(),
-                false,
-            ));
-        }
-        if let Some(parse) = self.double_parse.as_ref() {
-            return Ok((
-                parse
-                    .keys()
-                    .iter()
-                    .map(|k| KeyAt {
-                        text: k.key().text(),
-                        tone: 0,
-                        begin: k.start(),
-                        end: k.end(),
-                    })
-                    .collect(),
-                self.double_input.as_bytes(),
-                false,
-            ));
-        }
-        if let Some(parse) = self.full_parse.as_ref() {
-            return Ok((
-                parse
-                    .keys()
-                    .iter()
-                    .map(|k| KeyAt {
-                        text: k.canonical(),
-                        tone: k.tone(),
-                        begin: k.start(),
-                        end: k.end(),
-                    })
-                    .collect(),
-                self.full_input.as_bytes(),
-                true,
-            ));
-        }
-        let (keys, _) = self.session.matrix_keys()?;
-        Ok((
-            keys.iter()
+            return Ok(parse
+                .keys()
+                .iter()
                 .map(|k| KeyAt {
                     text: k.key().text(),
                     tone: k.tone(),
-                    begin: k.syllable_start(),
+                    begin: k.start(),
                     end: k.end(),
                 })
-                .collect(),
-            self.session.raw_input().as_bytes(),
-            true,
-        ))
+                .collect());
+        }
+        if let Some(parse) = self.double_parse.as_ref() {
+            return Ok(parse
+                .keys()
+                .iter()
+                .map(|k| KeyAt {
+                    text: k.key().text(),
+                    tone: 0,
+                    begin: k.start(),
+                    end: k.end(),
+                })
+                .collect());
+        }
+        if let Some(parse) = self.full_parse.as_ref() {
+            return Ok(parse
+                .keys()
+                .iter()
+                .map(|k| KeyAt {
+                    text: k.canonical(),
+                    tone: k.tone(),
+                    begin: k.start(),
+                    end: k.end(),
+                })
+                .collect());
+        }
+        let (keys, _) = self.session.matrix_keys()?;
+        Ok(keys
+            .iter()
+            .map(|k| KeyAt {
+                text: k.key().text(),
+                tone: k.tone(),
+                begin: k.syllable_start(),
+                end: k.end(),
+            })
+            .collect())
     }
 
     /// Lookup byte offset → character count within `phrase` in the
@@ -295,8 +309,14 @@ impl InstanceCore {
     /// Original-coordinate columns: a real first item, a zero key, or empty.
     fn abi_columns(&self) -> Result<AbiColumns, EngineError> {
         let (keys, input, separators) = self.mode_keys()?;
+        Ok(self.abi_columns_over(&keys, input, separators))
+    }
+
+    /// [`Self::abi_columns`] over a key list already taken from
+    /// [`Self::mode_keys`].
+    fn abi_columns_over(&self, keys: &[KeyAt], input: &[u8], separators: bool) -> AbiColumns {
         let mut columns = vec![None; self.parsed_len + 1];
-        for key in &keys {
+        for key in keys {
             if let Some(column) = columns.get_mut(key.begin)
                 && column.is_none()
             {
@@ -306,7 +326,7 @@ impl InstanceCore {
             }
         }
         if keys.is_empty() {
-            return Ok(columns);
+            return columns;
         }
         let first = keys.iter().map(|key| key.begin).min();
         if separators {
@@ -324,7 +344,7 @@ impl InstanceCore {
                 *column = Some((0, position, position + 1));
             }
         }
-        Ok(columns)
+        columns
     }
 
     /// Packed key and raw rest for the two ABI accessor laws.
@@ -373,7 +393,23 @@ impl InstanceCore {
         offset: usize,
         zhuyin: bool,
     ) -> Result<usize, EngineError> {
-        let columns = self.abi_columns()?;
+        let keys = self.mode_key_list()?;
+        self.validate_abi_lookup_offset_over(&keys, offset, zhuyin)
+    }
+
+    /// [`Self::validate_abi_lookup_offset`] over a key list already taken
+    /// from [`Self::mode_key_list`] for the current input and option word.
+    ///
+    /// # Errors
+    /// Returns out-of-range or the pin's zhuyin zero-column assertion.
+    pub fn validate_abi_lookup_offset_over(
+        &self,
+        keys: &[KeyAt],
+        offset: usize,
+        zhuyin: bool,
+    ) -> Result<usize, EngineError> {
+        let (input, separators) = self.mode_input();
+        let columns = self.abi_columns_over(keys, input, separators);
         oxpinyin_engine::check_lookup_offset_range(self.parsed_len, offset)?;
         if zhuyin {
             if offset > 0
@@ -385,7 +421,6 @@ impl InstanceCore {
             }
             return Ok(offset);
         }
-        let (_, input, _) = self.mode_keys()?;
         if input.first() == Some(&b'\'') && columns.first() == Some(&None) {
             // pinyin.cpp:2226 ignores _check_offset's Boolean result and
             // searches this original column, including leading empties.

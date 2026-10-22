@@ -23,6 +23,7 @@
 //! class (c) change, not here.
 
 use oxpinyin_core::ChewingKey;
+use oxpinyin_facade::KeyAt;
 
 use crate::state::CapiInstance;
 
@@ -66,6 +67,18 @@ impl SharedMatrix {
     /// a parse without keys, `phonetic_key_matrix.cpp:34-38`) or a key has
     /// no spelling.
     pub(crate) fn of(inst: &CapiInstance) -> Option<Self> {
+        let keys = if inst.core.double_parse.is_some() {
+            Vec::new()
+        } else {
+            inst.core.mode_key_list().ok()?
+        };
+        Self::of_keys(inst, &keys)
+    }
+
+    /// [`Self::of`] over the key list
+    /// [`oxpinyin_facade::InstanceCore::mode_key_list`] gave for the
+    /// current parse. Double pinyin reads its parse's keys instead.
+    pub(crate) fn of_keys(inst: &CapiInstance, keys: &[KeyAt]) -> Option<Self> {
         let core = &inst.core;
         let parsed_len = core.parsed_len;
         let spans: Vec<(&'static str, u8, usize, usize)> =
@@ -78,7 +91,6 @@ impl SharedMatrix {
                     .map(|k| (k.key().text(), k.tone(), k.start(), k.end()))
                     .collect()
             } else {
-                let (keys, _, _) = core.mode_keys().ok()?;
                 keys.iter()
                     .map(|k| (k.text, k.tone, k.begin, k.end))
                     .collect()

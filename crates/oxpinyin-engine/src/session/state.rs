@@ -481,6 +481,12 @@ where
         self.refresh()
     }
 
+    /// The option word applied ([`Self::set_options`]).
+    #[must_use]
+    pub const fn options(&self) -> OptionBits {
+        self.settings.options
+    }
+
     /// The last sort-option word applied ([`Self::set_sort_options`]).
     #[must_use]
     pub const fn sort_options(&self) -> u32 {
