@@ -35,7 +35,8 @@ criterion = "0.8"
 # tests/integration.rs declares each tests/*.rs suite as a module, so the
 # dependency closure links once instead of once per suite (#1005). With
 # autotests off, a new file under tests/ builds only once it is declared
-# there; its every_suite_file_is_declared test fails until it is.
+# there, and a tests/<dir>/main.rs only once a [[test]] here names it; its
+# every_suite_file_is_declared test fails until then.
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
