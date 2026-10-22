@@ -59,9 +59,16 @@ per-mapping rounded KiB values. A later smaps_rollup read and its signed gap are
 diagnostics: shared-page classification may change between sequential reads,
 even while the native child waits, so equality is not a sample gate.
 
-The same-bytes control is mandatory. Its paired median ratio and entire 95%
-paired-bootstrap interval must lie within 0.95–1.05. Otherwise the metric is
-inconclusive and pin ratios are suppressed. Do not change this rule after
+The same-bytes control is mandatory (§7.5 of
+`docs/findings/tooling-consolidation-python-just.md`). Its library directory
+name has the subject's byte length. For a timing metric, its paired median
+ratio and entire 95% paired-bootstrap interval must lie within 0.95–1.05. For a
+memory checkpoint level, the paired difference control − ox in KiB must have
+its median and entire interval within ±max(64 KiB, 1% of |median(ox)|).
+Otherwise the metric is inconclusive and pin ratios are suppressed. Callgrind
+scoped `Ir`, Massif checkpoint `mem_heap_B` and Memcheck live bytes and blocks
+of the control must equal ox exactly; otherwise that comparison is INVALID, its
+ox and pin rows are not printed, and the stage exits nonzero. Do not change this rule after
 looking at results. Keep profiler data in memory and emit plain-text reports;
 commit or upload no captures. `repeat`, `multi` and `attribute` select the
 separate lifecycle and attribution diagnostics; their timings are not primary

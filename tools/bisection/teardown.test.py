@@ -57,6 +57,146 @@ class PureTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             td.paired_ratio([1], [1, 2])
 
+    # §7.5 boundary tests. Constant samples make the paired median and the
+    # whole bootstrap interval equal one value, so each bound is hit exactly.
+    def test_timing_control_bounds_are_inclusive(self):
+        ox = [100] * 8
+        self.assertTrue(td.stable_control(ox, [95] * 8)['stable'])
+        self.assertTrue(td.stable_control(ox, [105] * 8)['stable'])
+        self.assertEqual(td.stable_control(ox, [95] * 8)['ratio']['ci95'], [0.95, 0.95])
+        self.assertFalse(td.stable_control(ox, [94.99] * 8)['stable'])
+        self.assertFalse(td.stable_control(ox, [105.01] * 8)['stable'])
+
+    def test_timing_control_needs_the_whole_interval_inside(self):
+        result = td.stable_control([100] * 20, [100] * 12 + [120] * 8)
+        self.assertEqual(result['ratio']['median'], 1)
+        self.assertGreater(result['ratio']['ci95'][1], td.CONTROL_INTERVAL[1])
+        self.assertFalse(result['stable'])
+
+    def test_residency_bound_is_inclusive_at_both_signs(self):
+        ox = [1000] * 8
+        for sign in (1, -1):
+            inside = td.stable_residency(ox, [v + sign * 64 for v in ox])
+            self.assertEqual(inside['bound_kib'], 64)
+            self.assertEqual(inside['difference']['ci95'], [sign * 64, sign * 64])
+            self.assertTrue(inside['stable'])
+            self.assertFalse(td.stable_residency(ox, [v + sign * 65 for v in ox])['stable'])
+
+    def test_residency_bound_is_the_floor_or_one_percent(self):
+        # 1% of 1,000 KiB is 10 KiB, under the floor.
+        self.assertEqual(td.stable_residency([1000] * 8, [1000] * 8)['bound_kib'], 64)
+        # 1% of 100,000 KiB is 1,000 KiB, over the floor.
+        large = [100_000] * 8
+        self.assertEqual(td.stable_residency(large, large)['bound_kib'], 1000)
+        for sign in (1, -1):
+            self.assertTrue(td.stable_residency(large, [v + sign * 1000 for v in large])['stable'])
+            self.assertFalse(td.stable_residency(large, [v + sign * 1001 for v in large])['stable'])
+        self.assertEqual(td.stable_residency(large, large)['rule'], dict(floor_kib=64, fraction=0.01))
+
+    def test_residency_needs_the_whole_interval_inside(self):
+        ox = [1000] * 20
+        result = td.stable_residency(ox, [1000] * 12 + [1200] * 8)
+        self.assertEqual(result['difference']['median'], 0)
+        self.assertGreater(result['difference']['ci95'][1], result['bound_kib'])
+        self.assertFalse(result['stable'])
+        with self.assertRaises(ValueError):
+            td.paired_difference([1], [1, 2])
+        with self.assertRaises(ValueError):
+            td.paired_difference([], [])
+
+    def test_residency_with_zero_or_negative_ox_uses_the_floor(self):
+        for level in (0, -100):
+            ox = [level] * 8
+            self.assertEqual(td.stable_residency(ox, ox)['bound_kib'], 64)
+            self.assertTrue(td.stable_residency(ox, [v + 64 for v in ox])['stable'])
+            self.assertFalse(td.stable_residency(ox, [v + 65 for v in ox])['stable'])
+
+    def test_exact_counts_admit_no_difference(self):
+        self.assertEqual(td.exact_control(5, 5)['verdict'], 'VALID')
+        self.assertEqual(td.exact_control(5, 6), dict(rule='exact', ox=5, control=6, difference=1, verdict='INVALID'))
+        self.assertEqual(td.exact_control(6, 5)['difference'], -1)
+
+    def test_invalid_exact_count_withholds_ox_and_pin_rows(self):
+        rows = {side: dict(scoped_ir=10, raw_ir_per_call=10.0) for side in ('ox', 'control', 'pin')}
+        printed = []
+        with patch.object(td, 'print_record', lambda kind, **values: printed.append((kind, values))):
+            self.assertFalse(td.report_exact('callgrind', 'pinyin', 'modest', rows, td.callgrind_counts))
+            self.assertEqual([(kind, values.get('side')) for kind, values in printed],
+                             [('callgrind-control', None), ('callgrind', 'ox'), ('callgrind', 'control'),
+                              ('callgrind', 'pin')])
+            self.assertTrue(all(values['profiler_only'] for kind, values in printed[1:]))
+            printed.clear()
+            rows['control'] = dict(scoped_ir=11, raw_ir_per_call=11.0)
+            self.assertTrue(td.report_exact('callgrind', 'pinyin', 'modest', rows, td.callgrind_counts))
+            self.assertEqual([(kind, values.get('side')) for kind, values in printed],
+                             [('callgrind-control', None), ('callgrind', 'control')])
+            self.assertEqual({key: printed[0][1][key] for key in ('ox', 'control', 'difference', 'verdict')},
+                             dict(ox=10, control=11, difference=1, verdict='INVALID'))
+
+    def test_exact_counts_select_the_ruled_fields(self):
+        points = {p: dict(time=i, mem_heap_B=100 + i, mem_heap_extra_B=8, mem_stacks_B=0)
+                  for i, p in enumerate(('M0', 'M1', 'M2', 'M3'))}
+        self.assertEqual(td.massif_counts(dict(checkpoints=points, sampled_teardown_peak=dict(mem_heap_B=900))),
+                         {'M0.mem_heap_B': 100, 'M1.mem_heap_B': 101, 'M2.mem_heap_B': 102, 'M3.mem_heap_B': 103})
+        point = dict(heap_live=True, point='M3', cycle=100, lost_bytes=1, possible_bytes=2, reachable_bytes=4,
+                     suppressed_bytes=8, lost_blocks=1, possible_blocks=1, reachable_blocks=1, suppressed_blocks=0)
+        self.assertEqual(td.live_heap_counts(dict(points=[point], sites=[])),
+                         {'M3.100.live_bytes': 15, 'M3.100.live_blocks': 3})
+
+    def test_attribute_stage_exits_nonzero_after_printing_every_record(self):
+        points = [('M0', 0), ('M1', 1), ('M2', 1), ('M3', 1), ('M3', 10), ('M3', 50), ('M3', 100)]
+
+        def outcome(control_ir):
+            ir = dict(ox=1000, control=control_ir, pin=2000)
+
+            def run(facade, library, profile=None, *, profiler=None, **options):
+                side = library.name
+                documents = [dict(heap_live=True, point=point, cycle=cycle,
+                                  **{kind + '_' + unit: 1 for kind in ('lost', 'possible', 'reachable', 'suppressed')
+                                     for unit in ('bytes', 'blocks')}) for point, cycle in points]
+                # Profilers read their output from stderr; equivalence runs see one observation.
+                return dict(observation=dict(samples=[1], stderr=side if profiler else '', userfiles={},
+                                             documents=documents),
+                            raw_profile_identity='same')
+            driver = SimpleNamespace(per_call_profile=lambda side: dict(total=ir[side]),
+                                     per_call_attribution=lambda profile, calls, limit: dict(raw_ir_per_call=profile['total']))
+            heaps = {p: dict(time=0, mem_heap_B=64, mem_heap_extra_B=8, mem_stacks_B=0) for p in ('M0', 'M1', 'M2', 'M3')}
+            printed = []
+            with tempfile.TemporaryDirectory() as directory, \
+                    patch.object(td, 'prepare_witnesses', lambda *a: dict(empty=None)), \
+                    patch.object(td, 'build_worker', lambda *a: (Path('worker'), {})), \
+                    patch.object(td, 'massif_profile', lambda text: dict(checkpoints=heaps)), \
+                    patch.object(td, 'memcheck_sites', lambda *a: []), \
+                    patch.object(td, 'print_record', lambda kind, **values: printed.append((kind, values))):
+                campaign = SimpleNamespace(work=Path(directory), worker=Path('worker'), run=run)
+                subjects = {side: dict(pinyin=Path(side)) for side in ('ox', 'control', 'pin')}
+                args = SimpleNamespace(teardown_stage='attribute', teardown_attribution_case='empty')
+                status = td.execute(campaign, args, subjects, dict(empty=Path(directory)), ('empty',), ('pinyin',), driver)
+            return status, printed
+
+        status, printed = outcome(1000)
+        self.assertEqual(status, 0)
+        self.assertTrue(all(values['verdict'] == 'VALID' for kind, values in printed if kind.endswith('-control')))
+        self.assertEqual(sum(kind == 'callgrind' for kind, _ in printed), 3)
+        status, printed = outcome(1001)
+        self.assertEqual(status, 1)
+        invalid = [values for kind, values in printed if kind == 'callgrind-control']
+        self.assertEqual([(v['ox'], v['control'], v['difference'], v['verdict']) for v in invalid],
+                         [(1000, 1001, 1, 'INVALID')])
+        self.assertEqual([values['side'] for kind, values in printed if kind == 'callgrind'], ['control'])
+        # The later Massif and Memcheck comparisons still print in full.
+        self.assertEqual(sum(kind == 'massif' for kind, _ in printed), 3)
+        self.assertEqual(sum(kind == 'live-heap-control' for kind, _ in printed), 14)
+        self.assertEqual(sum(kind == 'live-heap' for kind, _ in printed), 3)
+
+    def test_ox_and_control_library_paths_have_equal_length(self):
+        names = td.LIBRARY_DIRECTORIES
+        self.assertEqual(set(names), {'ox', 'control', 'pin'})
+        self.assertEqual(len(set(names.values())), 3)
+        work = Path('/work/libraries')
+        lengths = {side: len(bytes(work / name / 'libpinyin.so')) for side, name in names.items()}
+        self.assertEqual(lengths['ox'], lengths['control'])
+
     def test_recovered_rows_and_global_distinctness(self):
         rows = td.modest_rows()
         self.assertEqual(len(rows), 80)
