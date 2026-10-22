@@ -20,7 +20,7 @@
 //! **Unwinding.** Kyoto Cabinet is C++ internally, but this backend calls
 //! it only through `kclangc.h`'s C entry points, and Rust is always the
 //! caller. No Rust panic unwinds through a foreign frame. [`Db`],
-//! [`Cursor`] and [`Buf`] release their resources on an unwind exactly as
+//! [`Db`] and [`Cursor`] release their resources on an unwind exactly as
 //! on a normal return.
 //!
 //! **`Send`/`Sync`.** [`Db`] holds a raw pointer, so the compiler derives
@@ -32,37 +32,41 @@
 //! state is thread-specific data, not shared state (see
 //! `docs/findings/kyotocabinet-backend.md` for the verification record).
 //!
-//! **Buffer ownership — and why this differs from Berkeley DB.** The
-//! brief for this backend carried Berkeley DB's cursor hazard over
-//! ("do not hold the returned pointer past a cursor move"). That is the
-//! wrong shape for Kyoto Cabinet, and building to it would have produced
-//! a bug. `kcdbget`, `kccurgetkey`, `kccurgetvalue` and `kccurget` each
-//! return a **caller-owned, freshly allocated** region — "the region of
-//! the return value should be released with the kcfree function when it
-//! is no longer in use" (`kclangc.h:577-578`, `:923-924`, `:942-943`).
-//! Nothing expires when the cursor moves; the failure mode is a *leak*,
-//! or a free through the wrong allocator. So the answer here is
-//! ownership, not a lifetime bound: [`Buf`] owns the region and its
-//! `Drop` calls `kcfree` — never `libc::free`, which would be freeing
-//! across allocators.
+//! **Buffer ownership.** Reads go through visitors: `kcdbaccept`,
+//! `kccuraccept` and `kcdbiterate` hand a callback the record's key and
+//! value as pointers into Kyoto Cabinet's own storage, valid only for the
+//! call. The callbacks here copy those bytes into a Rust-owned buffer and
+//! return `KCVISNOP`; no Kyoto Cabinet allocation reaches Rust, so there is
+//! nothing to release with `kcfree`. The copying getters (`kcdbget`,
+//! `kccurget`) allocate a region with `new[]` inside the same `accept` and
+//! leave it to the caller (`kcdb.h` `BasicDB::get`, `Cursor::get`); the
+//! visitor reaches the same record under the same lock without that
+//! region or the second copy out of it.
 //!
-//! `kccurget`'s value pointer is an **interior** pointer into the same
-//! allocation as its key, so [`Record`] holds one [`Buf`] and an offset,
-//! and frees once.
+//! **Callbacks under the record lock.** A visitor runs while Kyoto Cabinet
+//! holds the record's (or, for `iterate`, the database's) lock, and "to
+//! avoid deadlock, any explicit database operation must not be performed
+//! in this function" (`kclangc.h`, `kcdbaccept`, `kccuraccept`,
+//! `kcdbiterate`). The callbacks below only copy bytes. A store visitor
+//! that may call back into the database runs after the call has returned,
+//! over the copy.
 //!
-//! **Null returns.** Every one of those four functions returns `NULL` on
-//! a miss *or* an error, and the two are told apart only by the error
-//! code (`kcdbecode`, named by `kcecodename`). `kcdbnew` and `kcdbcursor`
-//! return `NULL` on allocation failure. All are checked; nothing is
-//! dereferenced unconditionally.
+//! **Allocation failure** in a callback aborts the process, as `new[]`
+//! failing inside libpinyin's own reads does: the copies use
+//! `reserve_exact`, never a fallible reservation turned into an error.
+//!
+//! **Failure codes.** `kcdbnew` and `kcdbcursor` return `NULL` on
+//! allocation failure. A visitor call that returns false reports why
+//! through the error code (`kcdbecode`, `kccurecode`, named by
+//! `kcecodename`); a miss is not a failure, but a call to the empty-record
+//! callback. All are checked; nothing is dereferenced unconditionally.
 #![expect(
     unsafe_code,
     reason = "FFI over the system libkyotocabinet; every block carries a SAFETY comment"
 )]
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_void};
 use std::marker::PhantomData;
-use std::ops::Deref;
 use std::os::raw::c_char;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
@@ -195,50 +199,164 @@ fn c_ptr(bytes: &[u8]) -> *const c_char {
     }
 }
 
-/// An owned region Kyoto Cabinet allocated, released with `kcfree`.
+/// The bytes a visitor callback was handed: `len` bytes at `ptr`.
 ///
-/// The whole answer to the buffer-ownership hazard: the region is ours,
-/// and it must go back through Kyoto Cabinet's allocator rather than
-/// Rust's or libc's.
-pub(crate) struct Buf {
-    ptr: *mut c_char,
-    len: usize,
+/// # Safety
+///
+/// `ptr` must address `len` readable bytes for `'a`, or `len` must be 0.
+unsafe fn visited<'a>(ptr: *const c_char, len: usize) -> &'a [u8] {
+    if len == 0 {
+        return &[];
+    }
+    // SAFETY: the caller's contract.
+    unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
 }
 
-impl Buf {
-    /// Wraps a region Kyoto Cabinet returned, or `None` for a null.
-    ///
-    /// # Safety
-    ///
-    /// `ptr` must be null, or a region of `len` bytes returned by a Kyoto
-    /// Cabinet function documented as releasable with `kcfree`, and not
-    /// yet released.
-    unsafe fn from_raw(ptr: *mut c_char, len: usize) -> Option<Self> {
-        (!ptr.is_null()).then_some(Self { ptr, len })
+/// What a visitor callback does with one record: copy it out. Never a
+/// database call (see the module notes on the record lock).
+trait Visit {
+    fn full(&mut self, key: &[u8], value: &[u8]);
+}
+
+/// `KCVISITFULL` for a `V`; `opq` is the `&mut V` the caller passed.
+///
+/// # Safety
+///
+/// Called only by Kyoto Cabinet, with the record's key and value regions
+/// and the `opq` this module passed, which is a live, exclusive `*mut V`.
+unsafe extern "C" fn visit_full<V: Visit>(
+    kbuf: *const c_char,
+    ksiz: usize,
+    vbuf: *const c_char,
+    vsiz: usize,
+    _sp: *mut usize,
+    opq: *mut c_void,
+) -> *const c_char {
+    // SAFETY: Kyoto Cabinet passes the record's key and value regions,
+    // valid for this call; `opq` is the exclusive `*mut V` this module
+    // handed to the same call.
+    unsafe {
+        let visitor = &mut *opq.cast::<V>();
+        visitor.full(visited(kbuf, ksiz), visited(vbuf, vsiz));
+        sys::KCVISNOP
     }
 }
 
-impl Deref for Buf {
-    type Target = [u8];
+/// `KCVISITEMPTY`: a miss leaves the visitor untouched.
+///
+/// # Safety
+///
+/// Called only by Kyoto Cabinet; it reads nothing it is given.
+unsafe extern "C" fn visit_empty(
+    _kbuf: *const c_char,
+    _ksiz: usize,
+    _sp: *mut usize,
+    _opq: *mut c_void,
+) -> *const c_char {
+    // SAFETY: `KCVISNOP` is a library constant, read-only.
+    unsafe { sys::KCVISNOP }
+}
 
-    fn deref(&self) -> &[u8] {
-        if self.len == 0 {
-            return &[];
+/// A point read's result: the value, copied into its final allocation.
+impl Visit for Option<Vec<u8>> {
+    fn full(&mut self, _key: &[u8], value: &[u8]) {
+        let mut out = Vec::new();
+        out.reserve_exact(value.len());
+        out.extend_from_slice(value);
+        *self = Some(out);
+    }
+}
+
+/// The record at a cursor, key then value, in a buffer the cursor reuses.
+struct RecordBuf<'a> {
+    bytes: &'a mut Vec<u8>,
+    key_len: &'a mut usize,
+    with_value: bool,
+}
+
+impl Visit for RecordBuf<'_> {
+    fn full(&mut self, key: &[u8], value: &[u8]) {
+        let value = if self.with_value { value } else { &[] };
+        self.bytes.clear();
+        self.bytes.reserve_exact(key.len() + value.len());
+        self.bytes.extend_from_slice(key);
+        self.bytes.extend_from_slice(value);
+        *self.key_len = key.len();
+    }
+}
+
+/// One record of a whole-file copy: key then value in one allocation,
+/// so a consumer that takes the records by value frees each as it goes.
+pub(crate) struct Record {
+    bytes: Box<[u8]>,
+    key_len: usize,
+}
+
+impl Record {
+    pub(crate) fn key(&self) -> &[u8] {
+        &self.bytes[..self.key_len]
+    }
+
+    pub(crate) fn value(&self) -> &[u8] {
+        &self.bytes[self.key_len..]
+    }
+}
+
+impl Visit for Vec<Record> {
+    fn full(&mut self, key: &[u8], value: &[u8]) {
+        let mut bytes = Vec::new();
+        bytes.reserve_exact(key.len() + value.len());
+        bytes.extend_from_slice(key);
+        bytes.extend_from_slice(value);
+        self.push(Record {
+            bytes: bytes.into_boxed_slice(),
+            key_len: key.len(),
+        });
+    }
+}
+
+/// A table's rows, copied into one buffer by the cursor walks of
+/// `WriteTxn::scan`.
+pub(crate) struct Rows {
+    bytes: Vec<u8>,
+    /// `(start, key length, value length)` per record.
+    spans: Vec<(usize, usize, usize)>,
+}
+
+impl Rows {
+    pub(crate) const fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            spans: Vec::new(),
         }
-        // SAFETY: the constructor's contract guarantees `ptr` addresses
-        // `len` initialised bytes, and `Drop` is the only thing that
-        // releases them, so the region outlives this borrow of `self`.
-        unsafe { std::slice::from_raw_parts(self.ptr.cast::<u8>(), self.len) }
+    }
+
+    /// Appends one record.
+    pub(crate) fn push(&mut self, key: &[u8], value: &[u8]) {
+        self.spans.push((self.bytes.len(), key.len(), value.len()));
+        self.bytes.extend_from_slice(key);
+        self.bytes.extend_from_slice(value);
+    }
+
+    /// Record `index`'s key and value.
+    pub(crate) fn get(&self, index: usize) -> (&[u8], &[u8]) {
+        let (start, key_len, value_len) = self.spans[index];
+        let key_end = start + key_len;
+        (
+            &self.bytes[start..key_end],
+            &self.bytes[key_end..key_end + value_len],
+        )
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.spans.len()
     }
 }
 
-impl Drop for Buf {
-    fn drop(&mut self) {
-        // SAFETY: `ptr` came from a Kyoto Cabinet call that documents
-        // `kcfree` as its release function, and this is its last use.
-        // Freeing it with `free` or Rust's allocator instead would be a
-        // cross-allocator free.
-        unsafe { sys::kcfree(self.ptr.cast::<std::ffi::c_void>()) }
+/// Every key of a database, in its walk order.
+impl Visit for Vec<Vec<u8>> {
+    fn full(&mut self, key: &[u8], _value: &[u8]) {
+        self.push(key.to_vec());
     }
 }
 
@@ -251,10 +369,11 @@ pub(crate) struct Db {
 // SAFETY: verified against the Kyoto Cabinet 1.2.80 headers (the version
 // floor this backend builds against), file and symbol at a time:
 //
-// * Every record operation this backend issues — `kcdbget`/`kcdbset`/
-//   `kcdbremove` (all `accept` underneath), `kcdbcount`, `kcdbsync`, and
-//   the cursor calls — is documented as "performed atomically and other
-//   threads accessing the same record are blocked" (`kchashdb.h`,
+// * Every record operation this backend issues — `kcdbaccept`/`kcdbset`/
+//   `kcdbremove` (all `accept` underneath), `kcdbiterate`, `kcdbcount`,
+//   `kcdbsync`, and the cursor calls — is documented as "performed
+//   atomically and other threads accessing the same record are blocked"
+//   (`iterate`: the whole iteration, other threads blocked) (`kchashdb.h`,
 //   `accept`'s @note; the same note is on `kcpolydb.h`'s and
 //   `kcplantdb.h`'s operations) and implemented by taking the database
 //   object's own reader-writer lock (`RWLock mlock_`, `kchashdb.h` and
@@ -440,18 +559,71 @@ impl Db {
     }
 
     /// Point read. `None` when the key is absent.
-    pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Buf>, StoreError> {
-        let mut size = 0_usize;
-        // SAFETY: the handle is live and `key` outlives the call. The
-        // returned region is ours to release.
-        let raw = unsafe { sys::kcdbget(self.handle, c_ptr(key), key.len(), &raw mut size) };
-        // SAFETY: `raw` is null or a `kcfree`-able region of `size` bytes,
-        // which is exactly the constructor's contract.
-        match unsafe { Buf::from_raw(raw, size) } {
-            Some(buf) => Ok(Some(buf)),
-            None if self.last_was_no_record() => Ok(None),
-            None => Err(self.error("kcdbget")),
+    ///
+    /// One `kcdbaccept`, read-only: the visitor copies the value straight
+    /// into the returned `Vec`. libpinyin reads the same record with
+    /// `check` and then `get(kbuf, ksiz, vbuf, vsiz)` into its chunk
+    /// (`ngram_kyotodb.cpp:131-139` at 074a2219), two `accept`s whose
+    /// results agree for a caller that does not write in between.
+    pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let mut found: Option<Vec<u8>> = None;
+        // SAFETY: the handle is live and `key` outlives the call; `opq`
+        // is `found`, exclusive for the call, which is what `visit_full`
+        // casts it back to.
+        let ok = unsafe {
+            sys::kcdbaccept(
+                self.handle,
+                c_ptr(key),
+                key.len(),
+                Some(visit_full::<Option<Vec<u8>>>),
+                Some(visit_empty),
+                (&raw mut found).cast::<c_void>(),
+                0,
+            )
+        };
+        if ok == 0 {
+            // The text `kcdbget` reported, so a failure reads as before.
+            return Err(self.error("kcdbget"));
         }
+        Ok(found)
+    }
+
+    /// Every record, copied out by one read-only `kcdbiterate`, in the
+    /// class's own walk order, into a vector reserved for `kcdbcount`
+    /// records.
+    ///
+    /// The iteration holds the database's lock throughout; the copy is
+    /// all that runs under it.
+    pub(crate) fn records(&self) -> Result<Vec<Record>, StoreError> {
+        let mut records = Vec::new();
+        records.reserve_exact(usize::try_from(self.count()?).unwrap_or(0));
+        self.iterate(&mut records)?;
+        Ok(records)
+    }
+
+    /// Every key, in the class's walk order — `Bigram::get_all_items`'
+    /// `iterate(&visitor, false)` (`ngram_kyotodb.cpp:186-196`).
+    pub(crate) fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        let mut keys: Vec<Vec<u8>> = Vec::new();
+        self.iterate(&mut keys)?;
+        Ok(keys)
+    }
+
+    fn iterate<V: Visit>(&self, visitor: &mut V) -> Result<(), StoreError> {
+        // SAFETY: the handle is live; `opq` is `visitor`, exclusive for
+        // the call, which is what `visit_full::<V>` casts it back to.
+        let ok = unsafe {
+            sys::kcdbiterate(
+                self.handle,
+                Some(visit_full::<V>),
+                std::ptr::from_mut(visitor).cast::<c_void>(),
+                0,
+            )
+        };
+        if ok == 0 {
+            return Err(self.error("kcdbiterate"));
+        }
+        Ok(())
     }
 
     /// Insert or overwrite.
@@ -617,6 +789,8 @@ impl Db {
         }
         Ok(Cursor {
             handle,
+            bytes: Vec::new(),
+            key_len: 0,
             _db: PhantomData,
         })
     }
@@ -638,35 +812,13 @@ impl Drop for Db {
 }
 
 /// A cursor over one database, deleted on drop.
+///
+/// Holds the last record it read, in a buffer it reuses from step to step.
 pub(crate) struct Cursor<'db> {
     handle: *mut sys::KCCUR,
-    _db: PhantomData<&'db Db>,
-}
-
-/// One record read from a cursor.
-///
-/// Owns the single allocation `kccurget` returns. The value pointer that
-/// call hands back is an **interior** pointer into the same region as the
-/// key (`kclangc.h:931-943`), so this holds one [`Buf`] and an offset and
-/// frees exactly once — freeing the value separately would be a free of
-/// an interior pointer.
-pub(crate) struct Record {
-    region: Buf,
+    bytes: Vec<u8>,
     key_len: usize,
-    value_at: usize,
-    value_len: usize,
-}
-
-impl Record {
-    /// The record's key.
-    pub(crate) fn key(&self) -> &[u8] {
-        &self.region[..self.key_len]
-    }
-
-    /// The record's value.
-    pub(crate) fn value(&self) -> &[u8] {
-        &self.region[self.value_at..self.value_at + self.value_len]
-    }
+    _db: PhantomData<&'db Db>,
 }
 
 impl Cursor<'_> {
@@ -687,6 +839,7 @@ impl Cursor<'_> {
     /// containers: KC's `kccurjumpkey("")` answers "no record" on a
     /// HashDB that has records, so an unbounded raw walk must take this
     /// form. `Ok(false)` when the database is empty.
+    #[cfg(test)]
     pub(crate) fn jump_first(&mut self) -> Result<bool, StoreError> {
         // SAFETY: the cursor handle is live.
         let ok = unsafe { sys::kccurjump(self.handle) };
@@ -715,62 +868,62 @@ impl Cursor<'_> {
         Err(StoreError::Backend(format!("{call}: {name}").into()))
     }
 
-    /// Reads the record at the cursor, then steps past it.
+    /// Reads the record at the cursor into the cursor's buffer, then steps
+    /// past it.
     ///
-    /// `None` at the end of the database. The returned [`Record`] owns its
-    /// memory, so — unlike the Berkeley DB backend's borrowed rows — it
-    /// stays valid after the cursor has moved on.
-    pub(crate) fn next(&mut self) -> Result<Option<Record>, StoreError> {
-        let mut key_len = 0_usize;
-        let mut value_ptr: *const c_char = ptr::null();
-        let mut value_len = 0_usize;
-        // SAFETY: the cursor handle is live; the three out-parameters are
-        // live locals. `step = 1` advances the cursor after reading,
-        // which is what makes this a one-call iteration. The returned
-        // region is ours to release.
-        let raw = unsafe {
-            sys::kccurget(
+    /// `Ok(false)` at the end of the database. The record stays readable
+    /// through [`Cursor::key`] and [`Cursor::value`] until the next read.
+    pub(crate) fn next(&mut self) -> Result<bool, StoreError> {
+        self.read(true, true)
+    }
+
+    /// [`Cursor::next`] without the value: [`Cursor::value`] is empty after
+    /// it.
+    #[cfg(any(test, feature = "bench-internal"))]
+    pub(crate) fn next_key(&mut self) -> Result<bool, StoreError> {
+        self.read(false, true)
+    }
+
+    /// Reads the key at the cursor without moving it.
+    pub(crate) fn peek_key(&mut self) -> Result<bool, StoreError> {
+        self.read(false, false)
+    }
+
+    /// The key of the last record read.
+    pub(crate) fn key(&self) -> &[u8] {
+        &self.bytes[..self.key_len]
+    }
+
+    /// The value of the last record read.
+    pub(crate) fn value(&self) -> &[u8] {
+        &self.bytes[self.key_len..]
+    }
+
+    fn read(&mut self, with_value: bool, step: bool) -> Result<bool, StoreError> {
+        let mut record = RecordBuf {
+            bytes: &mut self.bytes,
+            key_len: &mut self.key_len,
+            with_value,
+        };
+        // SAFETY: the cursor handle is live; `opq` is `record`, exclusive
+        // for the call, which is what `visit_full::<RecordBuf>` casts it
+        // back to. Read-only (`writable = 0`).
+        let ok = unsafe {
+            sys::kccuraccept(
                 self.handle,
-                &raw mut key_len,
-                &raw mut value_ptr,
-                &raw mut value_len,
-                1,
+                Some(visit_full::<RecordBuf<'_>>),
+                (&raw mut record).cast::<c_void>(),
+                0,
+                i32::from(step),
             )
         };
-        if raw.is_null() {
-            // A null is the end of the database as well as a failure;
-            // the cursor's own code separates them.
-            //
-            // SAFETY: the cursor handle is live.
-            let code = unsafe { sys::kccurecode(self.handle) };
-            if code == no_record_code() {
-                return Ok(None);
-            }
-            // SAFETY: `kcecodename` returns a static NUL-terminated string
-            // for any code.
-            let name = unsafe { CStr::from_ptr(sys::kcecodename(code)) }
-                .to_string_lossy()
-                .into_owned();
-            return Err(StoreError::Backend(format!("kccurget: {name}").into()));
+        if ok != 0 {
+            return Ok(true);
         }
-        // The value pointer is interior to the returned region; its offset
-        // is what `Record` stores so the whole thing is freed once.
-        let value_at = (value_ptr as usize).saturating_sub(raw as usize);
-        // Kyoto Cabinet appends a NUL after each of the key and the value,
-        // so the allocation is at least this long.
-        let region_len = value_at + value_len;
-        // SAFETY: `raw` is non-null and is a `kcfree`-able region; the
-        // length covers the key, the separator NUL and the value, which
-        // is what the two sizes and the interior offset bound.
-        let region = unsafe { Buf::from_raw(raw, region_len) }.ok_or_else(|| {
-            StoreError::Backend("kccurget returned a null region after a success".into())
-        })?;
-        Ok(Some(Record {
-            region,
-            key_len,
-            value_at,
-            value_len,
-        }))
+        // A false return is the end of the database as well as a
+        // failure; the cursor's own code separates them. The text is
+        // what `kccurget` reported.
+        self.positioning_outcome("kccurget")
     }
 }
 
