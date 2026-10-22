@@ -32,7 +32,8 @@ use super::{BIGRAM, PHRASE, emit, run_train_write, vm_hwm_kib};
 
 /// Every operation the mode knows, with the iteration count the paired
 /// runner uses by default.
-pub const OPS: [(&str, u64); 29] = [
+pub const OPS: [(&str, u64); 30] = [
+    ("contains_raw.tree", 200_000),
     ("get_raw.tree.empty", 200_000),
     ("get_raw.tree.small", 200_000),
     ("get_raw.tree.medium", 200_000),
@@ -241,17 +242,34 @@ where
                 pack(get_digest(store.get_raw(key).expect("get_raw")), 1)
             })
         }
+        "contains_raw.tree" => {
+            // `PhraseTable::search_suggestion`'s existence check: the
+            // one-character prefixes of the phrase index, alternating with
+            // keys that miss.
+            let store = S::open_read_only(&inputs.tree).expect("open phrase index");
+            let hits: Vec<Vec<u8>> = stride(
+                &all_rows(&store)
+                    .into_iter()
+                    .filter(|(key, _)| key.len() == 4)
+                    .map(|(key, _)| key)
+                    .collect::<Vec<_>>(),
+            );
+            let misses = miss_keys();
+            run(&mut |i| {
+                let at = (i / 2) as usize;
+                let found = if i % 2 == 0 {
+                    store.get_raw(&hits[at % hits.len()])
+                } else {
+                    store.get_raw(&misses[at % misses.len()])
+                }
+                .expect("get_raw")
+                .is_some();
+                pack(u64::from(found), 1)
+            })
+        }
         "get_raw.tree.miss" => {
             let store = S::open_read_only(&inputs.tree).expect("open phrase index");
-            // Keys past every UCS-4 phrase: code points above U+10FFFF.
-            let keys: Vec<[u8; 8]> = (0..SAMPLE as u32)
-                .map(|i| {
-                    let mut key = [0_u8; 8];
-                    key[..4].copy_from_slice(&(0x0011_0000 + i).to_le_bytes());
-                    key[4..].copy_from_slice(&(0x0011_0000 + i * 7).to_le_bytes());
-                    key
-                })
-                .collect();
+            let keys = miss_keys();
             run(&mut |i| {
                 let key = &keys[(i as usize) % keys.len()];
                 pack(get_digest(store.get_raw(key).expect("get_raw")), 1)
@@ -536,6 +554,18 @@ where
         Some(kib) => emit("vmhwm_kib", kib),
         None => emit("vmhwm_kib", "unavailable"),
     }
+}
+
+/// Keys past every UCS-4 phrase: code points above U+10FFFF.
+fn miss_keys() -> Vec<[u8; 8]> {
+    (0..SAMPLE as u32)
+        .map(|i| {
+            let mut key = [0_u8; 8];
+            key[..4].copy_from_slice(&(0x0011_0000 + i).to_le_bytes());
+            key[4..].copy_from_slice(&(0x0011_0000 + i * 7).to_le_bytes());
+            key
+        })
+        .collect()
 }
 
 /// The first [`USER_ROWS`] rows of the system bigram, in key order: real
