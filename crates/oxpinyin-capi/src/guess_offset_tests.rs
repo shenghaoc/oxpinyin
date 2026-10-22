@@ -509,9 +509,18 @@ fn a_choose_then_guess_covers_the_remaining_group() {
     let spans_xian = {
         // SAFETY: `instance` is a live `pinyin_alloc_instance` handle.
         let inst = unsafe { instance_ref(instance) };
+        let (_, window) = inst
+            .core
+            .anchored_window
+            .as_ref()
+            .expect("the guess retains its window");
         inst.candidates
             .iter()
-            .position(|c| c.consumed_bytes == 4)
+            .position(|c| {
+                window
+                    .get(c.source_index as usize)
+                    .is_some_and(|row| row.consumed_bytes() == 4)
+            })
             .expect("a candidate spans the xian group")
     };
     let cand = candidate_at(instance, spans_xian);
