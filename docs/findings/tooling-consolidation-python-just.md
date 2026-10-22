@@ -676,10 +676,15 @@ from T11C into T2N. T11C keeps the pin rows. The ruling decides:
    (NOT COMPARABLE, or an INVALID exact-count control). 130: cancelled.
    #993's equivalence-blocked status moves from 2 to 3 in the first
    controller PR.
-10. **Order.** First the hash-determinism PR. Then the §7.5 residency and
-    exact-count follow-up (branch `tooling/t11-residency-exact-counts`).
-    Then the native controller, which builds on that follow-up's helpers.
-    This record and the native worker may start before them.
+10. **Order.** First the §7.5 residency and exact-count follow-up
+    (#1036), which showed the teardown scopes deterministic across five
+    fresh processes, so no separate hash-determinism PR is needed for now.
+    Then the native controller, which takes #1036's statistics helpers into
+    `tools/dev/measure/stats.py` rather than re-implementing them. This
+    record and the native worker may start before #1036 merges. If the
+    controller finds init or first-candidate Ir differing between runs of
+    the same bytes, work stops and the determinism question returns to the
+    maintainer.
 
 Recipes: `just measure <recipe> [args]` calls `tools.dev measure`;
 `just initbench [args]` calls `tools.dev measure startup`. Run, provision and
@@ -809,9 +814,8 @@ four W11 dispatch wrappers after moving their registry rows to
 `run-w11-diff.sh`; T14's final reconciliation remains proposed.
 
 Next work, in the order the 2026-10-22 UTC maintainer ruling sets (§7.8):
-the hash-determinism PR, then the §7.5 residency and exact-count
-enforcement follow-up, then T2N completion including the native startup
-controller, then T11C. §7.8's record and native worker may start first.
+the §7.5 residency and exact-count enforcement follow-up (#1036), then
+T2N completion including the native startup controller, then T11C. §7.8's record and native worker may start first.
 Each PR still needs its own approval.
 
 Tooling stages T8 and T9 retain `non-utf8-directory-system`, `non-utf8-directory-user`,
