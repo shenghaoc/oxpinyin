@@ -30,8 +30,10 @@
 //! Shared readers therefore get `Sync` without native threaded opens.
 //! Cursors borrow that owner and never cross threads. The lock is
 //! released before a row reaches a visitor, so visitors can read the
-//! same store. `DB_DBT_USERMEM` keeps point-read and cursor output in
-//! caller-owned buffers that remain valid across those intervening reads.
+//! same store. `DB_DBT_USERMEM` keeps cursor output in caller-owned
+//! buffers that remain valid across those intervening reads. A point read
+//! uses the handle's own return buffer and copies the value out before
+//! the lock is released.
 //!
 //! **Cursor lifetimes.** [`Cursor::get`] takes `&mut self` and returns
 //! a [`Row`] borrowing `&self` (the cursor's own buffers), so a second
@@ -443,63 +445,53 @@ impl Db {
 
     /// Point read. `None` when the key is absent.
     ///
-    /// The value lands in a caller-owned buffer (`DB_DBT_USERMEM`),
-    /// grown once on `DB_BUFFER_SMALL` and returned as an owned `Vec`.
-    /// This buffer remains valid after another operation uses the handle.
+    /// The value DBT is zeroed, as in every libpinyin point read
+    /// (074a2219 `ngram_bdb.cpp:138-140`, `phrase_large_table3_bdb.cpp:194-196`,
+    /// `chewing_large_table2_bdb.cpp:180-182`), so libdb copies the record
+    /// into this handle's own return buffer, which it grows only when a
+    /// record is larger than any read before (`src/db/db_ret.c:144-158`,
+    /// owned by the handle through `SET_RET_MEM`, `src/db/db_iface.c:800`).
+    /// That buffer is valid until the next call on the handle, so the value
+    /// is copied out at its exact size before this returns. One lookup
+    /// serves every record size: there is no `DB_BUFFER_SMALL` retry.
     pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         let get = method!(self.handle, get, "DB->get")?;
         let mut key_dbt = dbt_from(key)?;
-        // DB_DBT_USERMEM is pure output here: unlike a cursor seek key,
-        // none of these bytes is read by libdb before it writes the value.
-        // 074a2219 ngram_bdb.cpp:127-151 likewise has no zeroed value buffer.
-        let mut buf = Vec::<u8>::with_capacity(INITIAL_BUFFER);
-        loop {
-            let mut value_dbt = empty_dbt();
-            value_dbt.flags = sys::DB_DBT_USERMEM;
-            value_dbt.data = buf.spare_capacity_mut().as_mut_ptr().cast();
-            value_dbt.ulen = u32::try_from(buf.capacity()).unwrap_or(u32::MAX);
-            // SAFETY: both `DBT`s are live locals; `key` and `buf`
-            // outlive the call; the transaction is null, as in every
-            // libpinyin call.
-            let code = unsafe {
-                get(
-                    self.handle,
-                    ptr::null_mut(),
-                    &raw mut key_dbt,
-                    &raw mut value_dbt,
-                    0,
-                )
-            };
-            if code == sys::DB_NOTFOUND {
-                return Ok(None);
-            }
-            if code == sys::DB_BUFFER_SMALL {
-                // The same self-contradiction guard `Cursor::get` carries:
-                // libdb reports the size it needed, so the buffer grows and
-                // the retry fits. A `DB_BUFFER_SMALL` whose reported size
-                // the buffer already covers would otherwise spin forever.
-                let needed = value_dbt.size as usize;
-                if needed <= value_dbt.ulen as usize {
-                    return Err(StoreError::Backend(
-                        "DB->get keeps returning DB_BUFFER_SMALL with a buffer it says fits".into(),
-                    ));
-                }
-                buf.reserve_exact(needed);
-                continue;
-            }
-            check(code, "DB->get")?;
-            let size = value_dbt.size as usize;
-            if size > value_dbt.ulen as usize {
-                return Err(StoreError::Backend(
-                    "DB->get reported more bytes than the buffer it filled".into(),
-                ));
-            }
-            // SAFETY: successful DB->get initialized exactly `size` output
-            // bytes; the check above bounds them by the advertised capacity.
-            // No error or DB_BUFFER_SMALL path exposes uninitialized bytes.
-            unsafe { buf.set_len(size) };
-            return Ok(Some(buf));
+        let mut value_dbt = empty_dbt();
+        // SAFETY: both `DBT`s are live locals and `key` outlives the call;
+        // the transaction is null, as in every libpinyin call. A zeroed
+        // output DBT is refused only on a `DB_THREAD` handle
+        // (`src/db/db_iface.c:2921-2923`), and this one is opened without it.
+        let code = unsafe {
+            get(
+                self.handle,
+                ptr::null_mut(),
+                &raw mut key_dbt,
+                &raw mut value_dbt,
+                0,
+            )
+        };
+        if code == sys::DB_NOTFOUND {
+            return Ok(None);
         }
+        check(code, "DB->get")?;
+        let size = value_dbt.size as usize;
+        // An empty record copies nothing, and libdb then leaves `data` at
+        // the handle's buffer, which is null until a non-empty read.
+        if size == 0 {
+            return Ok(Some(Vec::new()));
+        }
+        if value_dbt.data.is_null() {
+            return Err(StoreError::Backend(
+                "DB->get reported bytes but returned no buffer".into(),
+            ));
+        }
+        // SAFETY: a successful DB->get with a zeroed DBT points `data` at
+        // `size` initialized bytes of the handle's return buffer. Nothing
+        // else can use the handle before the copy: `Db` is not `Sync`, and
+        // `SharedDb::get` holds the owner lock across this whole call.
+        let value = unsafe { std::slice::from_raw_parts(value_dbt.data.cast::<u8>(), size) };
+        Ok(Some(value.to_vec()))
     }
 
     /// Insert or overwrite.
@@ -608,10 +600,15 @@ impl Db {
 //   cached cursors without using their old thread_info (src/db/db.c:897-901;
 //   src/db/db_cam.c:180-216; src/btree/bt_cursor.c:662-688;
 //   src/hash/hash.c:255-265).
-// - Output DBTs always use DB_DBT_USERMEM: src/db/db_ret.c:141-158 copies
-//   into caller-owned buffers, so no native return buffer escapes the lock
-//   or becomes invalid after an intervening call. Cursor rows borrow those
-//   buffers, rather than BDB pages. Close/cleanup is serialized as well.
+// - Cursor output DBTs use DB_DBT_USERMEM: src/db/db_ret.c:141-158 copies
+//   into caller-owned buffers, so a cursor row borrows those buffers, not
+//   BDB pages, and stays valid after an intervening call. A point read's
+//   zeroed DBT lands in the handle's return buffer (src/db/db_ret.c:144-158,
+//   src/db/db_iface.c:800); it is copied out before Db::get returns, so no
+//   native return buffer escapes the lock. Close/cleanup is serialized too.
+//   Debian's 5.3.28+dfsg2-11 patch series changes none of the lines cited
+//   here; 001-checkpoint-opd-deadlock adds five lines to __dbc_iget's
+//   off-page-duplicate branch (src/db/db_cam.c:868), past those cited.
 unsafe impl Send for Db {}
 
 impl Drop for Db {
@@ -863,6 +860,8 @@ mod tests {
             db.put(b"key", &expected).unwrap();
             let retained = db.get(b"key").unwrap().unwrap();
             assert_eq!(retained, expected);
+            // Exact size: a retained value holds no spare capacity.
+            assert_eq!(retained.capacity(), len);
             assert!(db.get(b"absent").unwrap().is_none());
             db.put(b"key", b"replacement").unwrap();
             assert_eq!(db.get(b"key").unwrap().unwrap(), b"replacement");
