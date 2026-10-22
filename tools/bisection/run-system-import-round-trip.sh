@@ -21,7 +21,7 @@ esac
 run() {
   local profile=$1 so=$2 library=$3
   shift 3
-  (cd "$profile" && LD_LIBRARY_PATH="$(dirname "$so")" "$work/driver" "$so" "$data" "$library" "$@")
+  (cd "$profile" && LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$work/driver" "$so" "$data" "$library" "$@")
 }
 for library in 1 2 3 4; do
   mkdir "$work/pin-$library" "$work/ox-$library"

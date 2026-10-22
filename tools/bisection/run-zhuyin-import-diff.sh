@@ -51,7 +51,7 @@ gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$work/driver" zhuyin-import-diff.c 
 run() {
   local side=$1 so=$2 library=$3
   mkdir -p "$work/$side-$library"
-  (cd "$work/$side-$library" && LD_LIBRARY_PATH="$(dirname "$so")" \
+  (cd "$work/$side-$library" && LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     "$work/driver" "$so" "$data" "$library") >"$work/$side-$library.log" 2>/dev/null
 }
 

@@ -60,7 +60,7 @@ gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$work/driver" bigram-export-diff.c 
 run() {
   local side=$1 so=$2 scenario=$3
   mkdir -p "$work/$side-$scenario"
-  (cd "$work/$side-$scenario" && LD_LIBRARY_PATH="$(dirname "$so")" \
+  (cd "$work/$side-$scenario" && LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
     "$work/driver" "$so" "$data" "$scenario") >"$work/$side-$scenario.log" 2>/dev/null
 }
 
