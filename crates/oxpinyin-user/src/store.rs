@@ -2014,6 +2014,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         self.has_user_data()
     }
 
+    /// The count memo's entry for `token`'s unigram row, if it holds one.
+    #[cfg(test)]
+    pub(crate) fn memoised_unigram_for_test(&self, token: Token) -> Option<u64> {
+        self.count_cache()
+            .as_ref()
+            .and_then(|cache| cache.unigram.get(&token).copied())
+    }
+
     /// Sets the gate and retires the count cache, as a committed write does.
     #[cfg(test)]
     pub(crate) fn force_gate_for_test(&self, open: bool) {
@@ -4349,19 +4357,17 @@ impl CountCache {
     }
 
     /// `UNIGRAM[token]`, memoised. A present row is memoised whatever its
-    /// value, including an explicit `0`; an absent row reads as `0`
-    /// without entering the memo.
+    /// value, including an explicit `0`; an absent row memoises as `0`.
     fn unigram(&mut self, db: &impl ReadStore, token: Token) -> Result<u64, UserStoreError> {
         if let Some(&hit) = self.unigram.get(&token) {
             return Ok(hit);
         }
-        match get_u64(db, UNIGRAM, &codec::encode_token(token))? {
-            Some(value) => {
-                memo_insert(&mut self.unigram, token, value);
-                Ok(value)
-            }
-            None => Ok(0),
-        }
+        // An absent row memoises as `0`, as the type's doc says: every
+        // committed write retires the whole cache, so the memo cannot
+        // outlive a row that a later write creates.
+        let value = get_u64(db, UNIGRAM, &codec::encode_token(token))?.unwrap_or(0);
+        memo_insert(&mut self.unigram, token, value);
+        Ok(value)
     }
 
     /// `UNIGRAM_TOTAL`'s single row, memoised. Absent reads as `0`.
@@ -5935,6 +5941,109 @@ mod tests {
                     cleanup(&path);
                 }
 
+                /// Reads `token`'s absent unigram row into the count memo.
+                /// The write that follows must retire the memo for the next
+                /// read to see the row it creates.
+                fn memoise_absent(store: &Store, token: Token) {
+                    assert!(store.has_user_data(), "the read must go through the memo");
+                    assert_eq!(store.unigram_delta(token).unwrap(), 0);
+                    assert_eq!(
+                        store.memoised_unigram_for_test(token),
+                        Some(0),
+                        "the absent row is memoised"
+                    );
+                }
+
+                /// A store with user data, so its count reads use the memo.
+                fn with_user_data(tag: &str) -> (std::path::PathBuf, Store) {
+                    let path = temp_path(tag);
+                    let mut store = Store::create_standalone(&path).unwrap();
+                    store.observe_selection(1, 100).unwrap();
+                    (path, store)
+                }
+
+                #[test]
+                fn training_retires_a_memoised_absent_unigram() {
+                    let (path, mut store) = with_user_data("absent-train");
+                    memoise_absent(&store, 200);
+                    store.observe_selection(1, 200).unwrap();
+                    assert_eq!(store.unigram_delta(200).unwrap(), 483);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn a_predicted_prefix_retires_a_memoised_absent_unigram() {
+                    let (path, mut store) = with_user_data("absent-predicted");
+                    memoise_absent(&store, 200);
+                    assert_eq!(store.observe_predicted_prefix(200).unwrap(), 69);
+                    assert_eq!(store.unigram_delta(200).unwrap(), 483);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn an_import_retires_a_memoised_absent_unigram() {
+                    let (path, mut store) = with_user_data("absent-import");
+                    let token = store.next_user_token().unwrap();
+                    memoise_absent(&store, token);
+                    assert_eq!(
+                        store.add_phrase("世界", &[30, 40], Some(10)).unwrap(),
+                        token
+                    );
+                    assert_eq!(store.unigram_delta(token).unwrap(), 30);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn a_promotion_retires_a_memoised_absent_unigram() {
+                    let (path, mut store) = with_user_data("absent-promote");
+                    let token = phrase_index_make_token(ADDON_DICTIONARY, 1);
+                    memoise_absent(&store, token);
+                    let keys = [key("er"), key("huang")];
+                    assert_eq!(
+                        store
+                            .promote_addon_phrase("二簧", &[(keys.to_vec(), 100)], 100)
+                            .unwrap(),
+                        token
+                    );
+                    assert_eq!(store.unigram_delta(token).unwrap(), 100);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn a_system_unigram_flush_retires_a_memoised_absent_unigram() {
+                    let (path, store) = with_user_data("absent-flush");
+                    let token = 0x0100_0001;
+                    store.inner.system_items.lock().unwrap().insert(
+                        token,
+                        oxpinyin_data::chunk_write::ChunkItem {
+                            phrase: vec![u32::from('你')],
+                            unigram: 0,
+                            prons: Vec::new(),
+                        },
+                    );
+                    store.inner.has_system_items.store(true, Ordering::Release);
+                    memoise_absent(&store, token);
+                    assert!(store.add_system_unigram_frequency(token, 7).unwrap());
+                    store.flush_system_unigrams().unwrap();
+                    assert_eq!(store.unigram_delta(token).unwrap(), 7);
+                    cleanup(&path);
+                }
+
+                #[test]
+                fn removals_retire_a_memoised_present_unigram() {
+                    let (path, mut store) = with_user_data("present-removal");
+                    let removed = store.add_phrase("你好", &[10, 20], None).unwrap();
+                    let masked = store.add_phrase("世界", &[30, 40], None).unwrap();
+                    assert_eq!(store.unigram_delta(removed).unwrap(), 15);
+                    assert_eq!(store.unigram_delta(masked).unwrap(), 15);
+                    assert!(store.remove_user_phrase(removed).unwrap());
+                    assert_eq!(store.unigram_delta(removed).unwrap(), 0);
+                    assert_eq!(store.unigram_delta(masked).unwrap(), 15);
+                    store.mask_out(0xFFFF_FFFF, masked).unwrap();
+                    assert_eq!(store.unigram_delta(masked).unwrap(), 0);
+                    cleanup(&path);
+                }
+
                 #[test]
                 fn promote_addon_phrase_allocates_nibble_5_and_copies_frequency() {
                     let path = temp_path("promote-addon");
@@ -6411,15 +6520,16 @@ mod tests {
     }
 
     #[test]
-    fn absent_rows_read_zero_without_being_memoised() {
+    fn absent_rows_memoise_as_zero() {
         let db = MemoDb(BTreeMap::from([(codec::encode_token(1).to_vec(), 5_u64)]));
         let mut cache = CountCache::new(0);
         assert_eq!(cache.unigram(&db, 2).unwrap(), 0);
-        assert_eq!(cache.unigram(&db, 2).unwrap(), 0);
-        assert!(
-            !cache.unigram.contains_key(&2),
-            "a zero miss must not occupy memo space"
+        assert_eq!(
+            cache.unigram.get(&2),
+            Some(&0),
+            "a miss is served from the memo until a write retires it"
         );
+        assert_eq!(cache.unigram(&db, 2).unwrap(), 0);
         assert_eq!(cache.unigram(&db, 1).unwrap(), 5);
         assert_eq!(cache.unigram.get(&1), Some(&5), "present rows stay cached");
     }

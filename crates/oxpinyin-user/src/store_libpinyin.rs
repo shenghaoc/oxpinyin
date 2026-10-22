@@ -1871,6 +1871,33 @@ mod tests {
         std::fs::remove_dir_all(dir).expect("cleanup");
     }
 
+    /// The unload removes the system token's stored unigram row and the
+    /// read memoises it as absent; the reload replays the saved log, which
+    /// writes the row back, and must retire that memo.
+    #[test]
+    fn a_reload_retires_a_memoised_absent_unigram() {
+        let dir = tempdir("reload-absent-unigram");
+        let token = 0x0100_0001;
+        let mut store =
+            UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
+                .expect("open");
+        store.observe_selection(1, token).expect("train");
+        assert!(store.save().expect("save"));
+        assert_eq!(store.unigram_delta(token).expect("delta"), 69 * 7);
+        store.unload_system_libraries(originals()).expect("unload");
+        assert!(store.gate_for_test(), "the read must go through the memo");
+        assert_eq!(store.unigram_delta(token).expect("delta"), 0);
+        assert_eq!(
+            store.memoised_unigram_for_test(token),
+            Some(0),
+            "the absent row is memoised"
+        );
+        store.load_system_libraries(originals()).expect("reload");
+        assert_eq!(store.unigram_delta(token).expect("delta"), 69 * 7);
+        drop(store);
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
+
     #[test]
     fn reloading_a_system_library_drops_the_unsaved_session() {
         let dir = tempdir("reload-drops-session");
