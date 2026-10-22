@@ -223,6 +223,51 @@ impl KcStore {
         Ok(rows)
     }
 
+    /// [`crate::RawReadStore::scan_raw`] on an ordered class: one cursor,
+    /// positioned at `lo` and stepped until the first key past `hi`, so the
+    /// walk costs the rows it returns and one more — libpinyin's own
+    /// `search_suggestion` walk, `cursor->jump(key)` and `step()`
+    /// (`phrase_large_table3_kyotodb.cpp:211-244` at 074a2219).
+    ///
+    /// `TreeDB` and `ProtoTreeDB` order keys with `LEXICALCOMP`, byte-wise
+    /// with the shorter key first on a shared prefix, which is the order of
+    /// `[u8]`; libpinyin never tunes the comparator. So this visits the
+    /// same rows, in the same order, as sorting the whole file would.
+    ///
+    /// The visitor runs over the cursor's copy of each row after
+    /// `kccuraccept` has returned, outside the record lock, so it may call
+    /// back into the store.
+    fn walk_raw(
+        &self,
+        lo: Bound<&[u8]>,
+        hi: Bound<&[u8]>,
+        mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, StoreError>,
+    ) -> Result<(), StoreError> {
+        let mut cursor = self.db.cursor()?;
+        let positioned = match lo {
+            // `kccurjumpkey("")` is the first record on an ordered class,
+            // but the no-key jump says so directly.
+            Bound::Unbounded => cursor.jump_first()?,
+            Bound::Included(key) | Bound::Excluded(key) => cursor.jump_to(key)?,
+        };
+        if !positioned {
+            return Ok(());
+        }
+        while cursor.next()? {
+            let key = cursor.key();
+            if matches!(lo, Bound::Excluded(bound) if key == bound) {
+                continue;
+            }
+            if !in_bounds(key, Bound::Unbounded, hi) {
+                return Ok(());
+            }
+            if visit(key, cursor.value())?.is_break() {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
     /// Every row of `table` in `[lo, hi]`, copied out in key order.
     fn collect_rows(
         &self,
@@ -346,21 +391,21 @@ impl crate::RawReadStore for KcStore {
         hi: Bound<&[u8]>,
         mut visit: impl FnMut(&[u8], &[u8]) -> Result<Flow, crate::StoreError>,
     ) -> Result<(), crate::StoreError> {
+        if self.db.is_ordered() {
+            return self.walk_raw(lo, hi, visit);
+        }
         // The contract is ascending key order, but a cursor over the
         // unordered containers (HashDB, and the StashDB the user bigram
         // loads into) walks in bucket order — jump positions at a hash
         // slot, not at the first key at or above a lower bound. Collect
-        // every row, sort by key, and apply the bounds here: the only
-        // walk that is correct on all three container classes. TreeDB
-        // rows arrive sorted, so the sort is a no-op re-sort there. Each
-        // row is dropped once visited, so a visitor that copies rows out
-        // never holds two copies of the file.
+        // every row, sort by key, and apply the bounds here. Each row is
+        // dropped once visited, so a visitor that copies rows out never
+        // holds two copies of the file.
         for record in self.sorted_rows()? {
             let (key, value) = (record.key(), record.value());
-            if matches!(lo, Bound::Excluded(bound) if key == bound) {
-                continue;
-            }
-            if matches!(lo, Bound::Included(bound) if key < bound) {
+            if !in_bounds(key, lo, Bound::Unbounded) {
+                // Below the lower bound, which an `Excluded` bound's
+                // equality test alone did not catch.
                 continue;
             }
             if !in_bounds(key, Bound::Unbounded, hi) {
@@ -651,8 +696,32 @@ impl crate::UserBigramDb for KcUserBigramDb {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::ops::{Bound, ControlFlow};
+    use std::path::PathBuf;
+
     use super::{KcStore, KcUserBigramDb};
-    use crate::{RawReadStore, UserBigramDb, WriteStore, WriteTxn};
+    use crate::{RawReadStore, ReadStore, UserBigramDb, WriteStore, WriteTxn};
+
+    /// A file under the temp directory, removed on drop.
+    struct Temp(PathBuf);
+
+    impl Temp {
+        fn new(tag: &str, ext: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "oxpinyin-store-kc-{tag}-{}.{ext}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&path);
+            Self(path)
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
 
     #[test]
     fn keys_walk_the_stash_in_its_cursor_order() {
@@ -692,5 +761,131 @@ mod tests {
         assert_eq!(store.get_raw(b"empty").unwrap(), Some(Vec::new()));
         assert_eq!(store.get_raw(b"full").unwrap(), Some(vec![9; 5]));
         assert_eq!(store.get_raw(b"absent").unwrap(), None);
+    }
+
+    /// Keys that share prefixes, cross 0x00/0xFF and include the empty
+    /// key's neighbours, half with empty values.
+    fn rows() -> BTreeMap<Vec<u8>, Vec<u8>> {
+        let mut rows = BTreeMap::new();
+        for a in [0x00_u8, 0x01, 0x7F, 0x80, 0xFE, 0xFF] {
+            rows.insert(vec![a], vec![]);
+            for b in [0x00_u8, 0x41, 0xFF] {
+                rows.insert(vec![a, b], vec![a, b, 1]);
+                rows.insert(vec![a, b, b], if b == 0x41 { vec![] } else { vec![b; 40] });
+            }
+        }
+        rows
+    }
+
+    /// An owned `[lo, hi]` pair.
+    type Range = (Bound<Vec<u8>>, Bound<Vec<u8>>);
+
+    fn bounds() -> Vec<Range> {
+        let points: [&[u8]; 6] = [
+            &[],
+            &[0x00],
+            &[0x01, 0x41],
+            &[0x7F, 0xFF, 0xFF],
+            &[0x80],
+            &[0xFF, 0xFF],
+        ];
+        let mut out = vec![(Bound::Unbounded, Bound::Unbounded)];
+        for lo in points {
+            for hi in points {
+                for (l, h) in [
+                    (Bound::Included(lo.to_vec()), Bound::Excluded(hi.to_vec())),
+                    (Bound::Excluded(lo.to_vec()), Bound::Included(hi.to_vec())),
+                    (Bound::Included(lo.to_vec()), Bound::Unbounded),
+                    (Bound::Unbounded, Bound::Excluded(hi.to_vec())),
+                ] {
+                    out.push((l, h));
+                }
+            }
+        }
+        out
+    }
+
+    fn as_ref(bound: &Bound<Vec<u8>>) -> Bound<&[u8]> {
+        match bound {
+            Bound::Included(key) => Bound::Included(key),
+            Bound::Excluded(key) => Bound::Excluded(key),
+            Bound::Unbounded => Bound::Unbounded,
+        }
+    }
+
+    /// `scan_raw` over `store` agrees with the model for every bound pair,
+    /// and a visitor `Break` stops after exactly that row.
+    fn assert_scans_match(store: &KcStore, model: &BTreeMap<Vec<u8>, Vec<u8>>) {
+        for (lo, hi) in bounds() {
+            let lower = as_ref(&lo);
+            let upper = as_ref(&hi);
+            let expected: Vec<(Vec<u8>, Vec<u8>)> = model
+                .iter()
+                .filter(|(key, _)| crate::common::in_bounds(key, lower, upper))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            let mut got = Vec::new();
+            store
+                .scan_raw(lower, upper, |key, value| {
+                    got.push((key.to_vec(), value.to_vec()));
+                    Ok(ControlFlow::Continue(()))
+                })
+                .unwrap();
+            assert_eq!(got, expected, "bounds {lo:?} .. {hi:?}");
+            let mut first = Vec::new();
+            store
+                .scan_raw(lower, upper, |key, _| {
+                    first.push(key.to_vec());
+                    Ok(ControlFlow::Break(()))
+                })
+                .unwrap();
+            assert_eq!(
+                first,
+                expected
+                    .iter()
+                    .take(1)
+                    .map(|row| row.0.clone())
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn scan_raw_is_ascending_and_bounded_on_every_container() {
+        let model = rows();
+        let fill = |store: &KcStore| {
+            store
+                .write(|txn| {
+                    for (key, value) in &model {
+                        txn.put_raw(key, value)?;
+                    }
+                    Ok(())
+                })
+                .unwrap();
+        };
+        let tree = Temp::new("scan-tree", "kct");
+        let store = KcStore::create(&tree.0).unwrap();
+        fill(&store);
+        drop(store);
+        assert_scans_match(&KcStore::open_read_only(&tree.0).unwrap(), &model);
+
+        let hash = Temp::new("scan-hash", "kch");
+        let store = KcStore::create_hash(&hash.0).unwrap();
+        fill(&store);
+        drop(store);
+        assert_scans_match(&KcStore::open_hash_read_only(&hash.0).unwrap(), &model);
+
+        let store = KcStore::create_in_memory().unwrap();
+        fill(&store);
+        assert_scans_match(&store, &model);
+
+        let rows: Vec<(Vec<u8>, Vec<u8>)> = model.clone().into_iter().collect();
+        let index = Temp::new("scan-index", "bin");
+        KcStore::write_user_index(&index.0, &rows).unwrap();
+        assert_scans_match(&KcStore::open_user_index(&index.0).unwrap(), &model);
+
+        let bigram = Temp::new("scan-bigram", "db");
+        KcStore::write_user_bigram(&bigram.0, &rows).unwrap();
+        assert_scans_match(&KcStore::open_user_bigram(&bigram.0).unwrap(), &model);
     }
 }
