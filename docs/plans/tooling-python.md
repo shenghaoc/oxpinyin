@@ -9,7 +9,7 @@ This document records current code and remaining requirements. It installs nothi
 | Exact interpreter, uv pins, managed execution and setup instructions (§2) | Implemented in [#939](https://github.com/shenghaoc/oxpinyin/pull/939). Interpreter provisioning does not provision the full native or container environment. |
 | Package, CLI, host report, bootstrap doctor and identity checks (§3) | Implemented in [#941](https://github.com/shenghaoc/oxpinyin/pull/941); nextest version check added in [#943](https://github.com/shenghaoc/oxpinyin/pull/943). Doctor reports capabilities; it does not install them. |
 | Registry service (§3) | Implemented in [#941](https://github.com/shenghaoc/oxpinyin/pull/941) and [#948](https://github.com/shenghaoc/oxpinyin/pull/948) (merge `219f4205`): read, validate and select by runner, cell, issue and kind through `registry.select`, with tests. Only the `implementation` field remains proposed; it does not exist in `runners.json` or `registry.py`. |
-| Python feature policy (§4) | Partial: #939 sets normal import mode in execution commands. This PR adds the entry-point `sys.get_lazy_imports()` guard in `tools/dev/__main__.py`, tested by `tools/dev/entry.test.py`. Optional lazy imports, frozendict, sentinel and sampling use remain proposed. |
+| Python feature policy (§4) | Partial: #939 sets normal import mode in execution commands. #1013 adds the entry-point `sys.get_lazy_imports()` guard in `tools/dev/__main__.py`, tested by `tools/dev/entry.test.py`. Optional lazy imports, frozendict, sentinel and sampling use remain proposed. |
 | Shared native slot, admission, process cleanup and legacy adapter (§5) | Implemented in #941, from the merged #905/#906/#903 contracts and #938 acceptance. Platform acceptance remains partial. |
 | Container lifetime budget integration (§5) | Implemented in [#957](https://github.com/shenghaoc/oxpinyin/pull/957) (merge `af9df745`), [#969](https://github.com/shenghaoc/oxpinyin/pull/969) (merge `bdb520f4`) and [#978](https://github.com/shenghaoc/oxpinyin/pull/978) (merge `e219d33d`): Layer 4's hard limit and native lifetime reservation exist, with one desktop-headroom application and 2560/4608 MiB defaults. [#998](https://github.com/shenghaoc/oxpinyin/pull/998) (merge `3e280c8c`) adds cache-aware admission. Platform acceptance stays Layer 4's record. |
 | Full environment provisioning and complete three-platform acceptance (§§2, 6) | Proposed provisioning; partial acceptance. [#955](https://github.com/shenghaoc/oxpinyin/pull/955) (merge `21be16aa`) adds a Python-only cloud provisioning mode, not full environment provisioning. Native compiler/backend setup remains a separate runbook procedure. |
@@ -130,7 +130,7 @@ Do not accept a free-threaded build merely because its GIL is enabled at runtime
 
 Force normal import mode before importing any application module.
 The execution command above uses `-X lazy_imports=normal` at interpreter start.
-Implemented in this PR: `tools/dev/__main__.py` checks `sys.get_lazy_imports()`
+Implemented in #1013: `tools/dev/__main__.py` checks `sys.get_lazy_imports()`
 before any application import. Unless the mode is `normal`, it writes one
 line to stderr naming the mode and `-X lazy_imports=normal` (or
 `PYTHON_LAZY_IMPORTS=normal`) and exits with status 2. When
