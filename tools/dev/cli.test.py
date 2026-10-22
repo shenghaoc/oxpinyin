@@ -15,6 +15,8 @@ if str(ROOT) not in sys.path:
 
 from tools.dev import cli, host, registry, slot
 
+IMPLEMENTATION = 'legacy:tools/bisection/run-bisect.sh'
+
 
 class CliTests(unittest.TestCase):
     def setUp(self):
@@ -119,7 +121,14 @@ class CliTests(unittest.TestCase):
                                  ['abi-probe-diff', 'residue-a-tail-diff'])
         with contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(cli.main(['list', '--runners', 'bisect', '--heavy']), 0)
-            self.assertIn('bisect\tgate\tbdb,kc,tkrzw\theavy', output.getvalue())
+            self.assertEqual(output.getvalue(), 'bisect\tgate\tbdb,kc,tkrzw\theavy\t'
+                             'legacy:tools/bisection/run-bisect.sh\n')
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(['list', '--runners', 'perf-baseline']), 0)
+        self.assertEqual(output.getvalue().split('\t')[-1],
+                         'instrument:tools/bisection/run-perf-baseline.sh\n')
+        self.assertNotIn('registered', output.getvalue())
+        self.assertNotIn('measurement recipe', output.getvalue())
         self.launch.assert_not_called()
 
     def test_plan_describes_templates_without_resolving_or_executing_them(self):
@@ -131,6 +140,28 @@ class CliTests(unittest.TestCase):
         self.assertNotIn('cells: bdb,kc,tkrzw;', plan)
         self.assertIn('{env[OXPINYIN_METADATA_PIN_ROOT]}', plan)
         self.assertIn('command template:', plan)
+        self.assertIn('\n  implementation: legacy:tools/packaging/check-pc-metadata.sh\n', plan)
+        self.launch.assert_not_called()
+
+    def test_plan_prints_the_implementation_with_each_row(self):
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(['plan', '--runners', 'bisect,perf-baseline']), 0)
+        lines = [line for line in output.getvalue().splitlines() if line.startswith('  implementation: ')]
+        self.assertEqual(lines, ['  implementation: legacy:tools/bisection/run-bisect.sh',
+                                 '  implementation: instrument:tools/bisection/run-perf-baseline.sh'])
+        self.launch.assert_not_called()
+
+    def test_registry_commands_report_a_missing_implementation_without_tracebacks(self):
+        rows = [dict(name='fixture', command=['unused'], cells=['bdb'])]
+        for command, selection in (('list', []), ('plan', ['--runners', 'fixture'])):
+            with self.subTest(command=command), \
+                    mock.patch.object(Path, 'read_text', return_value=json.dumps(rows)), \
+                    contextlib.redirect_stdout(io.StringIO()) as output, \
+                    contextlib.redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(cli.main([command, *selection]), 2)
+                self.assertEqual(output.getvalue(), '')
+                self.assertEqual(error.getvalue(),
+                                 f"{command}: registry row 'fixture' has no implementation\n")
         self.launch.assert_not_called()
 
     def test_registry_read_failure_has_a_nonzero_diagnostic(self):
@@ -144,7 +175,7 @@ class CliTests(unittest.TestCase):
 
     def test_registry_load_rejects_numeric_issue_labels(self):
         for issues in ([541], ['541', 542], 541):
-            rows = [dict(name='fixture', command=['unused'], cells=['bdb'], issues=issues)]
+            rows = [dict(name='fixture', command=['unused'], cells=['bdb'], implementation=IMPLEMENTATION, issues=issues)]
             with self.subTest(issues=issues), mock.patch.object(
                     Path, 'read_text', return_value=json.dumps(rows)):
                 with self.assertRaisesRegex(registry.RegistryError,
@@ -153,7 +184,7 @@ class CliTests(unittest.TestCase):
         self.launch.assert_not_called()
 
     def test_registry_commands_report_numeric_issue_labels_without_tracebacks(self):
-        rows = [dict(name='fixture', command=['unused'], cells=['bdb'], issues=[541])]
+        rows = [dict(name='fixture', command=['unused'], cells=['bdb'], implementation=IMPLEMENTATION, issues=[541])]
         for command, selection in (('list', []), ('plan', ['--runners', 'fixture'])):
             with self.subTest(command=command), \
                     mock.patch.object(Path, 'read_text', return_value=json.dumps(rows)), \
@@ -166,7 +197,7 @@ class CliTests(unittest.TestCase):
         self.launch.assert_not_called()
 
     def test_registry_numeric_string_issue_labels_remain_selectable(self):
-        rows = [dict(name='fixture', command=['unused'], cells=['bdb'], issues=['541', 'Row 33'])]
+        rows = [dict(name='fixture', command=['unused'], cells=['bdb'], implementation=IMPLEMENTATION, issues=['541', 'Row 33'])]
         with mock.patch.object(Path, 'read_text', return_value=json.dumps(rows)):
             loaded = registry.load()
         self.assertEqual(loaded, rows)

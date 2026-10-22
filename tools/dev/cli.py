@@ -42,7 +42,7 @@ def list_command(args):
     for row in rows:
         print(f'{row["name"]}\t{row.get("kind", "")}\t{",".join(row["cells"])}\t'
               f'{"heavy" if registry.is_heavy(row) else "light"}\t'
-              f'{row.get("reason", "registered")}')
+              f'{row["implementation"]}')
     if not rows:
         raise registry.RegistryError('selection matched no registry rows')
     return 0
@@ -58,6 +58,7 @@ def plan_command(args):
         print(f'{row["name"]}: {"heavy" if registry.is_heavy(row) else "light"}; cells: '
               f'{",".join(selected_cells)}; '
               f'kind: {row.get("kind", "")}; inputs: {inputs or "none"}')
+        print('  implementation: ' + row['implementation'])
         print('  command template: ' + json.dumps(row['command']))
         print('  environment template: ' + json.dumps(row.get('env', {}), sort_keys=True))
         if row.get('reason'):
