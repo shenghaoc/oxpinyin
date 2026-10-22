@@ -6,6 +6,8 @@ set -euo pipefail
 # (issue #818). Idempotent: each step checks
 # its result and skips when it already holds.
 #
+#   0. require Cargo and the repository toolchain; normal cloud setup
+#      requires Valgrind or installs it with apt-get as root/through sudo
 #   0a. install uv 0.13.1 unless uv 0.13.1 or newer is present, and its
 #       managed CPython 3.15.0 GIL build
 #   0b. require the backend dump utilities the stateful differentials call:
@@ -152,6 +154,42 @@ for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
 	fi
 done
 
+# Fail before Python downloads or oracle builds. rustup run uses only an
+# installed toolchain (unlike invoking a proxy, which may install one).
+# Python-only tooling deliberately has no Rust or Valgrind prerequisite.
+if ((!python_only)); then
+	command -v cargo >/dev/null 2>&1 ||
+		die 'cargo is missing; install the rustup-managed toolchain from rust-toolchain.toml (docs/runbooks/setup.md)'
+	command -v rustup >/dev/null 2>&1 ||
+		die 'rustup is missing; install the repository toolchain via docs/runbooks/setup.md'
+	toolchain=$(sed -n 's/^channel = "\([^"]*\)"/\1/p' "$repo/rust-toolchain.toml")
+	[[ -n $toolchain ]] || die 'no channel in rust-toolchain.toml'
+	for tool in rustc cargo rustfmt clippy-driver; do
+		rustup run "$toolchain" "$tool" --version >/dev/null 2>&1 ||
+			die "Rust toolchain $toolchain is not installed; run: rustup toolchain install $toolchain --component clippy --component rustfmt"
+	done
+	if ((!inside)); then
+		if ! valgrind --version >/dev/null 2>&1; then
+			sudo_cmd=()
+			if ((EUID != 0)); then
+				if ! command -v sudo >/dev/null 2>&1; then
+					printf 'missing: valgrind\nrun as root: apt-get install -y valgrind\n' >&2
+					die 'valgrind is missing and neither root nor sudo is available'
+				fi
+				sudo_cmd=(sudo)
+			fi
+			command -v apt-get >/dev/null 2>&1 ||
+				die 'valgrind is missing and apt-get is unavailable; ask the environment owner to install Valgrind'
+			log 'installing valgrind from the distribution archive'
+			"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null 2>&1 ||
+				{ "${sudo_cmd[@]}" apt-get update >/dev/null 2>&1 &&
+					"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null; } ||
+				die 'could not install valgrind with apt-get'
+		fi
+		valgrind_version=$(valgrind --version)
+	fi
+fi
+
 # uv.toml sets the floor (required-version = ">=0.13.1"). Keep a uv at or
 # above it; install the checksummed 0.13.1 only when uv is missing or older.
 uv_at_least_floor() {
@@ -165,6 +203,16 @@ uv_at_least_floor() {
 uv_install_dir=${UV_INSTALL_DIR:-$HOME/.local/bin}
 if ! command -v uv >/dev/null 2>&1 || ! uv_at_least_floor ||
 	[[ -n ${UV_INSTALL_DIR:-} && $(command -v uv) != "$uv_install_dir/uv" ]]; then
+	# Probe the actual destination before fetching the archive. This catches
+	# read-only cloud mounts as well as ordinary directory permissions.
+	uv_write_error="uv installation directory is not writable: $uv_install_dir; set UV_INSTALL_DIR to a writable task-owned directory"
+	mkdir -p "$uv_install_dir" 2>/dev/null || die "$uv_write_error"
+	uv_probe=$(mktemp "$uv_install_dir/.oxpinyin-write.XXXXXX" 2>/dev/null) || die "$uv_write_error"
+	rm -f "$uv_probe"
+	for tool in uv uvx; do
+		[[ ! -e $uv_install_dir/$tool || -w $uv_install_dir/$tool ]] || die "$uv_write_error"
+	done
+	command -v curl >/dev/null 2>&1 || die 'installing uv needs curl; ask the environment owner to install it'
 	log 'installing uv 0.13.1'
 	(
 		[[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
@@ -172,7 +220,8 @@ if ! command -v uv >/dev/null 2>&1 || ! uv_at_least_floor ||
 		# Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
 		uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
 		# Keep the archive in memory. Write only its verified executables.
-		uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
+		uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64) ||
+			die 'uv download failed; allow github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
 		uv_actual=$(printf '%s' "$uv_payload" | base64 -d | sha256sum)
 		[[ ${uv_actual%% *} == "$uv_sha256" ]] || { printf 'uv archive checksum mismatch\n' >&2; exit 1; }
 		uv_tmp=$(mktemp -d)
@@ -191,7 +240,8 @@ fi
 uv_at_least_floor ||
 	die "uv 0.13.1 or newer required; found: $(uv --version 2>/dev/null || echo missing)"
 uv_dir=$(dirname "$(command -v uv)")
-uv python install cpython@3.15.0
+uv python install cpython@3.15.0 ||
+	die 'managed CPython 3.15.0 provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
 uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PYTHON'
 from pathlib import Path
 import subprocess
@@ -260,26 +310,12 @@ else
 	printf 'Runtime: supplied compatibility container (no nested runtime)\n'
 fi
 
-# ---- 0. valgrind (normal cloud provisioning only) -----------------------
-if ((!inside)); then
-	if ! valgrind --version >/dev/null 2>&1; then
-		sudo_cmd=()
-		((EUID == 0)) || sudo_cmd=(sudo)
-		log 'installing valgrind from the distribution archive'
-		"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null 2>&1 ||
-			{ "${sudo_cmd[@]}" apt-get update >/dev/null 2>&1 &&
-				"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null; } ||
-			die 'could not install valgrind with apt-get'
-	fi
-	valgrind_version=$(valgrind --version)
-fi
-
 # ---- 0b. backend dump utilities -----------------------------------------
 
 # contract-diff.py and the requested-row training gates call db5.3_dump
 # (bdb) and kchashmgr (kc); tkrzw_dbm_util (tkrzw) comes with the tkrzw
 # step below. Root containers install them explicitly; anyone else
-# gets the exact command, because this script never runs sudo.
+# gets the exact command; this backend-utility step never runs sudo.
 missing_tool=() missing_pkg=()
 for dbm in "${cells[@]}"; do
 	case $dbm in
@@ -300,6 +336,19 @@ if ((${#missing_tool[@]})); then
 		exit 1
 	fi
 fi
+
+# Resolve model access before container pulls or library builds. Replacing
+# invalid libraries also replaces their data directory. The existing fetcher
+# accepts its verified cache/local archive without network access.
+# shellcheck source=env.sh
+source "$repo/tools/cloud/env.sh"
+for dbm in "${cells[@]}"; do
+	if ! libs_ok "$dbm" || ! data_ok "$dbm"; then
+		"$repo/tools/model/fetch-model.sh" --cache-dir "$model_cache" >/dev/null ||
+			die 'model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net redirect target, or supply a verified local model cache (docs/runbooks/cloud.md)'
+		break
+	fi
+done
 
 # The compatibility launcher supplies a controlled image and Linux volume.
 # This mode provisions and executes without a nested runtime or host libraries.
@@ -360,9 +409,6 @@ fi
 fi
 
 # ---- 3. oracle libraries ------------------------------------------------
-
-# shellcheck source=env.sh
-source "$repo/tools/cloud/env.sh"
 
 if ((inside)); then
 	for dbm in "${cells[@]}"; do
