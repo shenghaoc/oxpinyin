@@ -1,12 +1,14 @@
 # Tooling layer 2: native just interface
 
-Status: partial implementation. Reconciled: 2026-10-21 UTC (`date -u`).
+Status: partial implementation. Reconciled: 2026-10-22 UTC (`date -u`).
 This layer builds on [native Python](tooling-python.md).
 PR [#942](https://github.com/shenghaoc/oxpinyin/pull/942) added the native
 `justfile`, doctor, check and heavy recipes. PR
 [#943](https://github.com/shenghaoc/oxpinyin/pull/943) added test and test-doc.
 PR [#948](https://github.com/shenghaoc/oxpinyin/pull/948) (merge `219f4205`)
-added build, fmt, clippy, list and plan.
+added build, fmt, clippy, list and plan. PR
+[#1037](https://github.com/shenghaoc/oxpinyin/pull/1037) added bench and
+bench-smoke (maintainer ruling 2026-10-22 UTC).
 The recipe table distinguishes these from the remaining surface.
 
 macOS: bounded checks passed on 2026-10-20 UTC at
@@ -79,7 +81,8 @@ Layer 5 schedules the old-to-new handoffs.
 | `just build [args ...]` | Run a native build through the heavy wrapper. | `cargo build` | Implemented, #948. |
 | `just fmt [args ...]` | Run formatting. | `cargo fmt` | Implemented, #948. |
 | `just clippy [args ...]` | Run lints through the heavy wrapper. | `cargo clippy` | Implemented, #948. |
-| `just bench <recipe>` | Enter a native benchmark without pin inputs. | Native Criterion/perf entry points | Proposed. |
+| `just bench [args ...]` | Run the workspace benches through the heavy wrapper: `cargo bench --workspace --benches <args>`. | `cargo bench` | Implemented, #1037 (maintainer ruling 2026-10-22 UTC). `--benches` skips the four `required-features` targets: `backend_matrix_kyotocabinet`, `backend_matrix_tkrzw` and `kyotocabinet_bnum` (oxpinyin-store), and `dbm_bench` (pinyin-oracle). |
+| `just bench-smoke` | Build every selected bench harness without running it: `just bench --no-run`. | `cargo bench --no-run` | Implemented, #1037 (maintainer ruling 2026-10-22 UTC). On a host with model20, `just bench -- --test` is the full start-up check. |
 | `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Proposed for T2N (maintainer ruling 2026-10-22 UTC). |
 | `just fuzz` / `just coverage` / `just sanitize` | Call native tools for native inputs. | Existing fuzz/coverage/sanitizer commands | Proposed. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
