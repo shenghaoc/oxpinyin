@@ -22,12 +22,15 @@ missing_safety_doc = "deny"
 must_use_candidate = "warn"
 
 [dependencies]
+cxx = { workspace = true, optional = true }
+
 [dev-dependencies]
 # Backend micro-benches (benches/); workspace lock pins 0.8.
 criterion = "0.8"
 
 [build-dependencies]
 bindgen = { workspace = true, optional = true }
+cxx-build = { workspace = true, optional = true }
 
 [features]
 # The backends (kyotocabinet, tkrzw, bdb) are peer
@@ -43,10 +46,10 @@ bindgen = { workspace = true, optional = true }
 # `--no-default-features --features {kyotocabinet|tkrzw|bdb}`.
 default = ["bdb"]
 tkrzw = ["dep:bindgen"]
-# Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
-# the runtime dependency is the system libkyotocabinet the distro already
-# ships.
-kyotocabinet = ["dep:bindgen"]
+# Kyoto Cabinet backend: a cxx bridge to Kyoto Cabinet's C++ classes,
+# compiled against the system headers (it needs a C++ compiler) and
+# linked to the system libkyotocabinet the distro already ships.
+kyotocabinet = ["dep:cxx", "dep:cxx-build"]
 # Berkeley DB backend — libpinyin's original DBM and the third drop-in
 # set. bindgen is build-time only; the runtime dependency is the system
 # libdb 5.3 the distro already ships (Debian libdb-dev, Fedora

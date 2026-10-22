@@ -1,4 +1,4 @@
-//! Generates the C backends' bindings.
+//! Generates the backends' bindings.
 //!
 //! Berkeley DB is the workspace's default selected backend, so a normal
 //! build runs bindgen over `db.h` and links the system libdb. With
@@ -8,7 +8,7 @@
 //! {kyotocabinet|tkrzw}`) skips the C-binding step for the ones
 //! it does not build.
 //!
-//! * `kyotocabinet` — the Kyoto Cabinet C API (`kclangc.h`).
+//! * `kyotocabinet` — a `cxx` bridge to Kyoto Cabinet's C++ classes.
 //! * `tkrzw` — the tkrzw C API (`tkrzw_langc.h`).
 //! * `bdb` — the Berkeley DB C API (`db.h`), from the system libdb, on by
 //!   default.
@@ -95,43 +95,30 @@ fn split_shell_words(line: &str) -> Vec<String> {
     words
 }
 
-/// Kyoto Cabinet bindings.
+/// Kyoto Cabinet bridge.
 ///
-/// # Why the C API and not the C++ classes
+/// # Why a C++ shim and not the C API
 ///
-/// Kyoto Cabinet is C++ internally — libpinyin instantiates
-/// `kyotocabinet::HashDB` and `kyotocabinet::TreeDB` directly — but it
-/// ships a complete C API in `kclangc.h`, so bindgen reads a C header and
-/// no `cxx` bridge is needed. The C API is the polymorphic `PolyDB`,
-/// which has one consequence that shapes the whole backend; see
-/// `src/kyotocabinet/mod.rs` on the `#type=` path suffix.
+/// Kyoto Cabinet is C++, and libpinyin instantiates its concrete classes
+/// directly — `TreeDB`, `HashDB`, `StashDB`, `ProtoTreeDB`. The C API in
+/// `kclangc.h` reaches them only through the polymorphic `PolyDB`, which
+/// picks the class from a `#type=` path suffix. The shim in
+/// `src/kyotocabinet/shim.{h,cc}` constructs the classes libpinyin does and
+/// exposes exactly the operations `src/kyotocabinet/ffi.rs` declares in its
+/// `cxx` bridge.
 ///
-/// # Why generated fresh, not checked in
-///
-/// A weaker argument than the Berkeley DB backend's, and worth stating
-/// honestly: `KCDB` and `KCCUR` are **opaque** one-pointer wrappers
-/// (`kclangc.h:48-58`), so unlike Berkeley DB's `DB`/`DBT`/`DBC` there is
-/// no exposed struct layout to get wrong, and a checked-in binding could
-/// not silently misread a field. What is still baked from the header are
-/// the open-mode `enum` constants (`KCOREADER`, `KCOWRITER`, `KCOCREATE`,
-/// …) — stable across Kyoto Cabinet's life, but values a checked-in
-/// binding would carry from the machine that generated them to a machine
-/// with a different library.
-///
-/// Generating keeps the declarations and the linked library in lockstep
-/// by construction, which is what makes the `KCVERSION` gate meaningful
-/// at all. The cost is a build-time libclang, and it is small here
-/// because linking already requires the development package that carries
-/// the header: only libclang is added, and only when a build compiles a
-/// C backend in (Berkeley DB by default; Kyoto Cabinet or tkrzw when
-/// asked for).
+/// Kyoto Cabinet's engine is header code: compiling the shim instantiates
+/// those classes from the build-time headers into this crate, as compiling
+/// libpinyin does. The system libkyotocabinet, linked below, supplies what
+/// it exports (files, threads, locks, utilities). Headers and library
+/// must therefore come from the same installation — pkg-config's, or the
+/// `OXPINYIN_KC_INCLUDE_DIR` / `OXPINYIN_KC_LIB_DIR` pair.
 #[cfg(feature = "kyotocabinet")]
 mod kyotocabinet {
-    use std::path::PathBuf;
-
     pub fn build() {
-        println!("cargo:rerun-if-changed=src/kyotocabinet/wrapper.h");
-        println!("cargo:rerun-if-env-changed=BINDGEN_EXTRA_CLANG_ARGS");
+        println!("cargo:rerun-if-changed=src/kyotocabinet/ffi.rs");
+        println!("cargo:rerun-if-changed=src/kyotocabinet/shim.h");
+        println!("cargo:rerun-if-changed=src/kyotocabinet/shim.cc");
         println!("cargo:rerun-if-env-changed=OXPINYIN_KC_INCLUDE_DIR");
         println!("cargo:rerun-if-env-changed=OXPINYIN_KC_LIB_DIR");
         // All three pkg-config selectors, as the tkrzw branch tracks:
@@ -142,12 +129,29 @@ mod kyotocabinet {
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_LIBDIR");
         println!("cargo:rerun-if-env-changed=PKG_CONFIG_SYSROOT_DIR");
 
-        let mut clang_args: Vec<String> = Vec::new();
+        let mut build = cxx_build::bridge("src/kyotocabinet/ffi.rs");
+        build.file("src/kyotocabinet/shim.cc");
         if let Some(cflags) = super::pkg_config("--cflags", "kyotocabinet") {
-            clang_args.extend(cflags);
+            for flag in cflags {
+                if let Some(dir) = flag.strip_prefix("-I") {
+                    build.include(dir);
+                } else {
+                    build.flag(&flag);
+                }
+            }
         }
         if let Ok(dir) = std::env::var("OXPINYIN_KC_INCLUDE_DIR") {
-            clang_args.push(format!("-I{dir}"));
+            build.include(dir);
+        }
+        if let Err(error) = build.try_compile("oxpinyin_kc_shim") {
+            panic!(
+                "libkyotocabinet required: the `kyotocabinet` feature compiles a C++ \
+                 shim against Kyoto Cabinet's headers, and it did not build \
+                 ({error}). Install the distro's development package (Debian/Ubuntu: \
+                 libkyotocabinet-dev; Fedora: kyotocabinet-devel) and a C++ compiler, \
+                 or point OXPINYIN_KC_INCLUDE_DIR and OXPINYIN_KC_LIB_DIR at an \
+                 installation. Build without --features kyotocabinet to skip all of it."
+            );
         }
 
         // A `rustc-link-search` reaches every later link in the graph, but a
@@ -180,73 +184,6 @@ mod kyotocabinet {
             // puts it on the default search path.
             None => println!("cargo:rustc-link-lib=kyotocabinet"),
         }
-
-        let mut builder = bindgen::Builder::default()
-            .header("src/kyotocabinet/wrapper.h")
-            // Only the surface this backend uses. `kclangc.h` is the whole
-            // polymorphic API; allowlisting keeps the generated file to
-            // what is actually called and makes an accidental new
-            // dependency visible as a compile error.
-            .allowlist_function("kcdbnew")
-            .allowlist_function("kcdbopen")
-            .allowlist_function("kcdbclose")
-            .allowlist_function("kcdbdel")
-            // Reads are visitors: the record is copied out by a callback
-            // instead of into a region the caller frees.
-            .allowlist_function("kcdbaccept")
-            .allowlist_function("kcdbiterate")
-            .allowlist_function("kcdbset")
-            .allowlist_function("kcdbremove")
-            .allowlist_function("kcdbsync")
-            // libpinyin's Kyoto Cabinet *user* bigram is an in-memory
-            // StashDB persisted as a snapshot stream, not a HashDB file
-            // (ngram_kyotodb.cpp:54-108); these two are that format.
-            .allowlist_function("kcdbloadsnap")
-            .allowlist_function("kcdbdumpsnap")
-            .allowlist_function("kcdbcount")
-            .allowlist_function("kcdbcursor")
-            .allowlist_function("kcdbbegintran")
-            .allowlist_function("kcdbendtran")
-            .allowlist_function("kccurecode")
-            .allowlist_function("kccurdel")
-            .allowlist_function("kccurjump")
-            .allowlist_function("kccurjumpkey")
-            .allowlist_function("kccurstep")
-            .allowlist_function("kccuraccept")
-            .allowlist_function("kcdbecode")
-            .allowlist_function("kcdbemsg")
-            .allowlist_function("kcecodename")
-            .allowlist_type("KCDB")
-            .allowlist_type("KCCUR")
-            .allowlist_var("KCVERSION")
-            .allowlist_var("KCVISNOP")
-            .allowlist_var("KCO.*")
-            .allowlist_var("KCE.*")
-            .layout_tests(false)
-            .derive_debug(false)
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()));
-
-        for arg in clang_args {
-            builder = builder.clang_arg(arg);
-        }
-
-        let bindings = match builder.generate() {
-            Ok(bindings) => bindings,
-            Err(error) => panic!(
-                "libkyotocabinet required: the `kyotocabinet` feature needs Kyoto \
-                 Cabinet and its C header kclangc.h, and bindgen could not read them \
-                 ({error}). Install the distro's development package (Debian/Ubuntu: \
-                 libkyotocabinet-dev; Fedora: kyotocabinet-devel), or point \
-                 OXPINYIN_KC_INCLUDE_DIR and OXPINYIN_KC_LIB_DIR at an installation. \
-                 Generating these declarations also needs libclang (Debian/Ubuntu: \
-                 libclang-dev). Build without --features kyotocabinet to skip all of it."
-            ),
-        };
-
-        let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo sets OUT_DIR"));
-        bindings
-            .write_to_file(out.join("kc_bindings.rs"))
-            .expect("write generated Kyoto Cabinet declarations");
     }
 }
 

@@ -63,6 +63,8 @@ oxpinyin-engine = { path = "crates/oxpinyin-engine" }
 oxpinyin-store = { path = "crates/oxpinyin-store", default-features = false }
 oxpinyin-user = { path = "crates/oxpinyin-user", default-features = false }
 bindgen = "0.73.2"
+cxx = "1.0.205"
+cxx-build = "1.0.205"
 smallvec = "1.15"
 compact_str = "0.10"
 # Perfect-hash text lookups over the frozen syllable inventories;

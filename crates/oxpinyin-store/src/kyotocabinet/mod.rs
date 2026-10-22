@@ -6,14 +6,12 @@
 //! [`KcStore`] is a `TreeDB` implementation of the store's two capability
 //! tiers, addressed by `(table, key)` like every other backend.
 //!
-//! # Why every open carries `#type=`
+//! # Which class each open constructs
 //!
-//! The C API is `PolyDB` and picks the database class from the path
-//! suffix, failing outright on an unrecognised one (`kclangc.h:312-320`).
-//! oxpinyin names its native tables `.kct` (the Kyoto Cabinet TreeDB
-//! convention), so the suffix already tells `PolyDB` what to open — but
-//! [`ffi::Db::open`] passes `#type=` explicitly anyway so the class is
-//! never guessed from a filename that came in from a caller.
+//! [`ffi::Db::open`] constructs the concrete class libpinyin constructs —
+//! `TreeDB` for the indexes, `HashDB` for `bigram.db`, `StashDB` for the
+//! user bigram, `ProtoTreeDB` for the user indexes — through the `cxx`
+//! bridge in `ffi`, so the class never depends on a file's name.
 //!
 //! # Key ordering
 //!
@@ -27,15 +25,15 @@
 //! # Atomicity
 //!
 //! Kyoto Cabinet gives a standalone handle real transactions
-//! (`kcdbbegintran`/`kcdbendtran`), so [`WriteStore::write`] is the
+//! (`begin_transaction`/`end_transaction`), so [`WriteStore::write`] is the
 //! library's own transaction rather than a buffered imitation: the
 //! closure's writes go straight to the database inside the transaction,
 //! reads see them, and an `Err` rolls the whole thing back.
 //!
-//! Commits end with `kcdbsync(hard = 0)`: the commit is pushed to the
+//! Commits end with `synchronize(hard = false)`: the commit is pushed to the
 //! operating system, so another process — or another handle in this one
 //! — observes it and it survives a process crash, but it is not yet on
-//! the device. [`WriteStore::compact`] is the hard `kcdbsync(hard = 1)`,
+//! the device. [`WriteStore::compact`] is the hard `synchronize(hard = true)`,
 //! the one point at which a file-backed store reaches stable storage.
 //! The tkrzw backend documents the same split and the measurement
 //! behind it (`docs/findings/perf-train-commit-fsync-2026-09-09.md`).
@@ -45,8 +43,8 @@
 //! moved into memory (#621) the store it compacts is the `ProtoTreeDB`
 //! of [`WriteStore::create_in_memory`], which has no file. The profile
 //! `pinyin_save` writes goes out through `write_user_index` and the
-//! user bigram's `save_db`, which dump a snapshot (`kcdbdumpsnap`) and
-//! issue no `kcdbsync` at all — as the pin's own `save_db` does
+//! user bigram's `save_db`, which dump a snapshot (`dump_snapshot`) and
+//! issue no `synchronize` at all — as the pin's own `save_db` does
 //! (`chewing_large_table2_kyotodb.cpp:124-130`,
 //! `phrase_large_table3_kyotodb.cpp:139-145`,
 //! `ngram_kyotodb.cpp:82-101` at `074a2219`).
@@ -57,7 +55,7 @@
 //!
 //! # Threading
 //!
-//! [`KcStore`] is `Send + Sync`: Kyoto Cabinet's `PolyDB` carries its own
+//! [`KcStore`] is `Send + Sync`: each Kyoto Cabinet class carries its own
 //! locking (every access method takes the database's rwlock), and the
 //! `unsafe impl`s on the FFI handle record exactly that contract — see the
 //! SAFETY comment in `ffi.rs`. This is required for a peer backend that
@@ -68,8 +66,8 @@
 //! # Unsafe waiver
 //!
 //! This module carries none. Every `unsafe` in the backend — the
-//! `kcdb*` calls, the `unsafe impl Send`/`Sync` on the handle, the
-//! generated declarations — is confined to `ffi`, whose
+//! bridge declarations and the `unsafe impl Send`/`Sync` on the handle
+//! — is confined to `ffi`, whose
 //! `expect(unsafe_code)` is scoped to that module, so the safe wrapper
 //! here stays under the workspace `deny`.
 

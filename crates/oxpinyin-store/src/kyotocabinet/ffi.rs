@@ -1,105 +1,132 @@
-//! Safe RAII wrappers over the generated Kyoto Cabinet declarations.
+//! Safe RAII wrappers over the Kyoto Cabinet bridge.
 //!
 //! This is the crate's only Kyoto Cabinet FFI surface. Everything above
 //! it is safe Rust.
 //!
-//! The generated declarations are `unsafe extern "C"`, which the
+//! The bridge is a `cxx` declaration of a narrow C++ shim (`shim.h`,
+//! `shim.cc`) over Kyoto Cabinet's own classes. The shim constructs the
+//! concrete class libpinyin constructs for each container — `TreeDB`,
+//! `HashDB`, `StashDB`, `ProtoTreeDB` (`chewing_large_table2_kyotodb.cpp`,
+//! `phrase_large_table3_kyotodb.cpp`, `ngram_kyotodb.cpp` at 074a2219) —
+//! with no `PolyDB` between them and no `#type=` string. Kyoto Cabinet's
+//! database engine is header code, so those classes are compiled into this
+//! crate from the build-time headers, exactly as they are into libpinyin;
+//! the system libkyotocabinet supplies files, threads, locks and the other
+//! utilities it exports.
+//!
+//! The bridge's declarations are `unsafe extern "C++"`, which the
 //! workspace's `unsafe_code = "deny"` would otherwise reject; the
-//! `expect` is scoped to this module alone. Every `unsafe` in the
-//! backend lives below, so `super` stays under the workspace `deny` —
-//! and because the waiver is an `expect` rather than an `allow`, an
-//! unfulfilled one draws `unfulfilled_lint_expectations` —
-//! warn-by-default, an error only where warnings are denied, and every
-//! supported CI check denies them (`RUSTFLAGS: -D warnings`). Waived
-//! safety is not waived correctness: every block below states its
-//! invariant, and the shared read and write suites gate this backend
-//! like any other.
+//! `expect` is scoped to this module alone, as it was for the C binding.
 //!
-//! # The four hazards
+//! # The hazards
 //!
-//! **Unwinding.** Kyoto Cabinet is C++ internally, but this backend calls
-//! it only through `kclangc.h`'s C entry points, and Rust is always the
-//! caller. No Rust panic unwinds through a foreign frame. [`Db`],
-//! [`Db`] and [`Cursor`] release their resources on an unwind exactly as
-//! on a normal return.
+//! **Exceptions and unwinding.** No bridge function returns `Result`, so a
+//! C++ exception (Kyoto Cabinet's `new` throwing `std::bad_alloc`) reaches
+//! cxx's `noexcept` boundary and ends the process with `std::terminate` —
+//! the end the same exception met escaping the C API, defined here rather
+//! than relied on. A Rust panic in a collector aborts at the
+//! `extern "Rust"` boundary. Kyoto Cabinet reports every other failure
+//! through its error code, which the wrappers below read and map
+//! explicitly; no error is ever classified by an exception's message.
 //!
-//! **`Send`/`Sync`.** [`Db`] holds a raw pointer, so the compiler derives
-//! neither — this module supplies both explicitly with `unsafe impl`s,
-//! whose SAFETY note (near the bottom of the module) verifies the
-//! underlying contract against the Kyoto Cabinet 1.2.80 headers, file
-//! and symbol at a time: every operation takes the database object's own
-//! reader-writer lock, transactions serialize on that lock, and the error
-//! state is thread-specific data, not shared state (see
-//! `docs/findings/kyotocabinet-backend.md` for the verification record).
+//! **`Send`/`Sync`.** [`Db`] holds a `UniquePtr` to an opaque C++ type, so
+//! the compiler derives neither — the `unsafe impl`s near the bottom of
+//! the module carry the same argument the C binding did, for the concrete
+//! classes `PolyDB` used to wrap.
 //!
-//! **Buffer ownership.** Reads go through visitors: `kcdbaccept`,
-//! `kccuraccept` and `kcdbiterate` hand a callback the record's key and
-//! value as pointers into Kyoto Cabinet's own storage, valid only for the
-//! call. The callbacks here copy those bytes into a Rust-owned buffer and
-//! return `KCVISNOP`; no Kyoto Cabinet allocation reaches Rust, so there is
-//! nothing to release with `kcfree`. The copying getters (`kcdbget`,
-//! `kccurget`) allocate a region with `new[]` inside the same `accept` and
-//! leave it to the caller (`kcdb.h` `BasicDB::get`, `Cursor::get`); the
-//! visitor reaches the same record under the same lock without that
-//! region or the second copy out of it.
+//! **Buffer ownership.** Reads go through visitors: `accept` on a record,
+//! `Cursor::accept` and `iterate` hand the shim's visitor the record's key
+//! and value as pointers into Kyoto Cabinet's own storage, valid only for
+//! the call. The visitor passes them to a Rust collector as `&[u8]`, the
+//! collector copies them into a Rust-owned buffer, and the visitor returns
+//! `NOP`. No record view outlives the callback, and no Kyoto Cabinet
+//! allocation reaches Rust.
 //!
 //! **Callbacks under the record lock.** A visitor runs while Kyoto Cabinet
-//! holds the record's (or, for `iterate`, the database's) lock, and "to
-//! avoid deadlock, any explicit database operation must not be performed
-//! in this function" (`kclangc.h`, `kcdbaccept`, `kccuraccept`,
-//! `kcdbiterate`). The callbacks below only copy bytes. A store visitor
-//! that may call back into the database runs after the call has returned,
-//! over the copy.
+//! holds the record's (or, for `iterate`, the database's) lock, and must
+//! not perform a database operation (`kcdb.h`, `DB::accept`, `iterate`).
+//! The collectors below only copy bytes. A store visitor that may call back
+//! into the database runs after the call has returned, over the copy.
 //!
-//! **Allocation failure** in a callback aborts the process, as `new[]`
+//! **Allocation failure** in a collector aborts the process, as `new[]`
 //! failing inside libpinyin's own reads does: the copies use
 //! `reserve_exact`, never a fallible reservation turned into an error.
-//!
-//! **Failure codes.** `kcdbnew` and `kcdbcursor` return `NULL` on
-//! allocation failure. A visitor call that returns false reports why
-//! through the error code (`kcdbecode`, `kccurecode`, named by
-//! `kcecodename`); a miss is not a failure, but a call to the empty-record
-//! callback. All are checked; nothing is dereferenced unconditionally.
 #![expect(
     unsafe_code,
-    reason = "FFI over the system libkyotocabinet; every block carries a SAFETY comment"
+    reason = "cxx bridge to Kyoto Cabinet's C++ classes; every block carries a SAFETY comment"
 )]
 
-use std::ffi::{CStr, CString, c_void};
 use std::marker::PhantomData;
-use std::os::raw::c_char;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::ptr;
+
+use cxx::UniquePtr;
 
 use crate::StoreError;
 
-/// The generated Kyoto Cabinet declarations.
-///
-/// Written by `build.rs` from the system `kclangc.h` on every build; see
-/// there for why they are not checked in.
-#[allow(
-    non_camel_case_types,
-    non_snake_case,
-    non_upper_case_globals,
-    missing_docs,
-    dead_code,
-    clippy::all
-)]
-mod sys {
-    include!(concat!(env!("OUT_DIR"), "/kc_bindings.rs"));
+#[cxx::bridge(namespace = "oxpinyin::kc")]
+mod bridge {
+    extern "Rust" {
+        type PointRead;
+        type RecordSink;
+        type Records;
+        type KeySink;
+
+        fn visit_point(sink: &mut PointRead, key: &[u8], value: &[u8]);
+        fn visit_record(sink: &mut RecordSink, key: &[u8], value: &[u8]);
+        fn visit_records(sink: &mut Records, key: &[u8], value: &[u8]);
+        fn visit_keys(sink: &mut KeySink, key: &[u8], value: &[u8]);
+    }
+
+    unsafe extern "C++" {
+        include!("oxpinyin-store/src/kyotocabinet/shim.h");
+
+        type Db;
+        type Cursor;
+
+        fn db_new(which: u8) -> UniquePtr<Db>;
+        fn codename(code: i32) -> &'static [u8];
+        fn version() -> &'static [u8];
+
+        fn open(self: Pin<&mut Db>, path: &[u8], mode: u32) -> bool;
+        fn tune_buckets(self: Pin<&mut Db>, bnum: i64) -> bool;
+        fn ecode(self: &Db) -> i32;
+        fn emsg(self: &Db) -> &[u8];
+        fn accept_get(self: &Db, key: &[u8], out: &mut PointRead) -> bool;
+        fn set(self: &Db, key: &[u8], value: &[u8]) -> bool;
+        fn remove(self: &Db, key: &[u8]) -> bool;
+        fn iterate_records(self: &Db, out: &mut Records) -> bool;
+        fn iterate_keys(self: &Db, out: &mut KeySink) -> bool;
+        fn count(self: &Db) -> i64;
+        fn sync(self: &Db, hard: bool) -> bool;
+        fn begin_transaction(self: &Db, hard: bool) -> bool;
+        fn end_transaction(self: &Db, commit: bool) -> bool;
+        fn load_snapshot(self: &Db, path: &[u8]) -> bool;
+        fn dump_snapshot(self: &Db, path: &[u8]) -> bool;
+        fn cursor(self: &Db) -> UniquePtr<Cursor>;
+
+        fn jump(self: Pin<&mut Cursor>) -> bool;
+        fn jump_key(self: Pin<&mut Cursor>, key: &[u8]) -> bool;
+        fn accept_record(self: Pin<&mut Cursor>, out: &mut RecordSink, step: bool) -> bool;
+        fn ecode(self: &Cursor) -> i32;
+    }
 }
 
 /// The Kyoto Cabinet major.minor this backend's format survey covers.
 const SUPPORTED: &str = "1.2";
 
-/// The linked library's version string (`KCVERSION`).
+/// `BasicDB::Error::NOREC`.
+const NO_RECORD: i32 = 7;
+
+/// `BasicDB::OREADER`, `OWRITER`, `OCREATE` (`kcdb.h`; `KCOREADER` and
+/// the rest in `kclangc.h` carry the same values).
+const OREADER: u32 = 1 << 0;
+const OWRITER: u32 = 1 << 1;
+const OCREATE: u32 = 1 << 2;
+
+/// The linked library's version string (`kyotocabinet::VERSION`).
 pub(crate) fn runtime_version() -> String {
-    // SAFETY: `KCVERSION` is a `const char* const` pointing at a static
-    // NUL-terminated string in the library.
-    unsafe { CStr::from_ptr(sys::KCVERSION) }
-        .to_string_lossy()
-        .into_owned()
+    String::from_utf8_lossy(bridge::version()).into_owned()
 }
 
 /// Refuses a Kyoto Cabinet whose on-disk format this backend has not
@@ -124,21 +151,7 @@ pub(crate) fn check_runtime_version() -> Result<(), StoreError> {
     ))
 }
 
-/// `KCENOREC` as the error-code functions return it.
-///
-/// bindgen types the `enum` constant as `u32` and the accessors as `i32`;
-/// the value is small and positive, so the conversion is exact.
-fn no_record_code() -> i32 {
-    i32::try_from(sys::KCENOREC).unwrap_or(i32::MAX)
-}
-
-/// Which Kyoto Cabinet class a path opens as.
-///
-/// The C API is `PolyDB`, which picks the class from the path — see
-/// [`Db::open`] for why that matters so much here. The store's peer
-/// backend opens `TreeDB` for ordered, ranged access; the enum is kept
-/// as an enum so a caller could not open the wrong class by handing a
-/// bare suffix string.
+/// Which Kyoto Cabinet class a database is.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DbType {
     /// `TreeDB`, ordered by the record comparator.
@@ -154,135 +167,54 @@ pub(crate) enum DbType {
 }
 
 impl DbType {
-    /// The `#type=` value `PolyDB` recognises for this class.
-    const fn tuning(self) -> &'static str {
+    /// The shim's `db_new` selector.
+    const fn which(self) -> u8 {
         match self {
-            Self::Tree => "kct",
-            Self::Hash => "kch",
-            Self::Stash => "kcs",
-            Self::ProtoTree => "kcpt",
+            Self::Tree => 0,
+            Self::Hash => 1,
+            Self::Stash => 2,
+            Self::ProtoTree => 3,
         }
     }
 }
 
-/// A path as a NUL-terminated C string. Unlike [`Db::open`]'s spec this
-/// is the bare path — the snapshot calls take a literal filename, not a
-/// PolyDB open spec, so `#` needs no rejection here (it would only be
-/// tuning-parameter syntax where a spec is parsed). Interior NUL bytes
-/// remain the one thing a C filename cannot carry.
-fn cstring_path(path: &Path) -> Result<CString, StoreError> {
+/// A path's bytes, refusing an interior NUL as the C binding did: the
+/// shim hands them to Kyoto Cabinet as a `std::string`, which then opens
+/// them as a C filename.
+fn path_bytes(path: &Path) -> Result<&[u8], StoreError> {
     let bytes = path.as_os_str().as_bytes();
-    CString::new(bytes).map_err(|_| StoreError::InvalidInput("store path contains NUL"))
-}
-
-/// The pointer Kyoto Cabinet may read `bytes.len()` bytes through.
-///
-/// An empty slice must not be handed over as its own `as_ptr()`: a
-/// `Vec<u8>` with no allocation reports Rust's dangling sentinel, the
-/// alignment address `1` — and `(const char*)1` is Kyoto Cabinet's
-/// `Visitor::REMOVE` (`kcdb.h:46`, `DB::Visitor::REMOVE`). The set path
-/// compares the value pointer its visitor returns against that sentinel
-/// (`kcdb.h:62`: "if it is Visitor::REMOVE, the record is removed"), so a
-/// zero-length value passed as address `1` **deletes** the key instead of
-/// storing an empty record — `kcdbset` still returns success. Measured
-/// against Kyoto Cabinet 1.2.80: `kcdbset(k, 2, (char*)1, 0)` leaves no
-/// record and removes an existing one; `kcdbset(k, 2, "", 0)` stores an
-/// empty record. libpinyin's `pinyin_index.bin` / `phrase_index.bin` are
-/// full of empty-value continuation markers, so the raw writer depends on
-/// this. Every byte pointer crossing this boundary goes through here.
-fn c_ptr(bytes: &[u8]) -> *const c_char {
-    static EMPTY: u8 = 0;
-    if bytes.is_empty() {
-        std::ptr::addr_of!(EMPTY).cast::<c_char>()
-    } else {
-        bytes.as_ptr().cast::<c_char>()
+    if bytes.contains(&0) {
+        return Err(StoreError::InvalidInput("store path contains NUL"));
     }
+    Ok(bytes)
 }
 
-/// The bytes a visitor callback was handed: `len` bytes at `ptr`.
-///
-/// # Safety
-///
-/// `ptr` must address `len` readable bytes for `'a`, or `len` must be 0.
-unsafe fn visited<'a>(ptr: *const c_char, len: usize) -> &'a [u8] {
-    if len == 0 {
-        return &[];
-    }
-    // SAFETY: the caller's contract.
-    unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) }
-}
-
-/// What a visitor callback does with one record: copy it out. Never a
-/// database call (see the module notes on the record lock).
-trait Visit {
-    fn full(&mut self, key: &[u8], value: &[u8]);
-}
-
-/// `KCVISITFULL` for a `V`; `opq` is the `&mut V` the caller passed.
-///
-/// # Safety
-///
-/// Called only by Kyoto Cabinet, with the record's key and value regions
-/// and the `opq` this module passed, which is a live, exclusive `*mut V`.
-unsafe extern "C" fn visit_full<V: Visit>(
-    kbuf: *const c_char,
-    ksiz: usize,
-    vbuf: *const c_char,
-    vsiz: usize,
-    _sp: *mut usize,
-    opq: *mut c_void,
-) -> *const c_char {
-    // SAFETY: Kyoto Cabinet passes the record's key and value regions,
-    // valid for this call; `opq` is the exclusive `*mut V` this module
-    // handed to the same call.
-    unsafe {
-        let visitor = &mut *opq.cast::<V>();
-        visitor.full(visited(kbuf, ksiz), visited(vbuf, vsiz));
-        sys::KCVISNOP
-    }
-}
-
-/// `KCVISITEMPTY`: a miss leaves the visitor untouched.
-///
-/// # Safety
-///
-/// Called only by Kyoto Cabinet; it reads nothing it is given.
-unsafe extern "C" fn visit_empty(
-    _kbuf: *const c_char,
-    _ksiz: usize,
-    _sp: *mut usize,
-    _opq: *mut c_void,
-) -> *const c_char {
-    // SAFETY: `KCVISNOP` is a library constant, read-only.
-    unsafe { sys::KCVISNOP }
-}
+// ── collectors ─────────────────────────────────────────────────────
 
 /// A point read's result: the value, copied into its final allocation.
-impl Visit for Option<Vec<u8>> {
-    fn full(&mut self, _key: &[u8], value: &[u8]) {
-        let mut out = Vec::new();
-        out.reserve_exact(value.len());
-        out.extend_from_slice(value);
-        *self = Some(out);
-    }
+pub(crate) struct PointRead(Option<Vec<u8>>);
+
+fn visit_point(sink: &mut PointRead, _key: &[u8], value: &[u8]) {
+    let mut out = Vec::new();
+    out.reserve_exact(value.len());
+    out.extend_from_slice(value);
+    sink.0 = Some(out);
 }
 
 /// The record at a cursor, key then value, in a buffer the cursor reuses.
-struct RecordBuf<'a> {
-    bytes: &'a mut Vec<u8>,
-    key_len: &'a mut usize,
+pub(crate) struct RecordSink {
+    bytes: Vec<u8>,
+    key_len: usize,
     with_value: bool,
 }
 
-impl Visit for RecordBuf<'_> {
-    fn full(&mut self, key: &[u8], value: &[u8]) {
-        let value = if self.with_value { value } else { &[] };
-        self.bytes.clear();
-        self.bytes.reserve_exact(key.len() + value.len());
-        self.bytes.extend_from_slice(key);
-        self.bytes.extend_from_slice(value);
-        *self.key_len = key.len();
-    }
+fn visit_record(sink: &mut RecordSink, key: &[u8], value: &[u8]) {
+    let value = if sink.with_value { value } else { &[] };
+    sink.bytes.clear();
+    sink.bytes.reserve_exact(key.len() + value.len());
+    sink.bytes.extend_from_slice(key);
+    sink.bytes.extend_from_slice(value);
+    sink.key_len = key.len();
 }
 
 /// One record of a whole-file copy: key then value in one allocation,
@@ -302,17 +234,18 @@ impl Record {
     }
 }
 
-impl Visit for Vec<Record> {
-    fn full(&mut self, key: &[u8], value: &[u8]) {
-        let mut bytes = Vec::new();
-        bytes.reserve_exact(key.len() + value.len());
-        bytes.extend_from_slice(key);
-        bytes.extend_from_slice(value);
-        self.push(Record {
-            bytes: bytes.into_boxed_slice(),
-            key_len: key.len(),
-        });
-    }
+/// Every record of a database, collected by `iterate`.
+pub(crate) struct Records(Vec<Record>);
+
+fn visit_records(sink: &mut Records, key: &[u8], value: &[u8]) {
+    let mut bytes = Vec::new();
+    bytes.reserve_exact(key.len() + value.len());
+    bytes.extend_from_slice(key);
+    bytes.extend_from_slice(value);
+    sink.0.push(Record {
+        bytes: bytes.into_boxed_slice(),
+        key_len: key.len(),
+    });
 }
 
 /// A table's rows, copied into one buffer by the cursor walks of
@@ -354,88 +287,61 @@ impl Rows {
 }
 
 /// Every key of a database, in its walk order.
-impl Visit for Vec<Vec<u8>> {
-    fn full(&mut self, key: &[u8], _value: &[u8]) {
-        self.push(key.to_vec());
-    }
+pub(crate) struct KeySink(Vec<Vec<u8>>);
+
+fn visit_keys(sink: &mut KeySink, key: &[u8], _value: &[u8]) {
+    sink.0.push(key.to_vec());
 }
 
-/// An owned Kyoto Cabinet database handle.
+// ── the database ───────────────────────────────────────────────────
+
+/// An owned Kyoto Cabinet database object.
 pub(crate) struct Db {
-    handle: *mut sys::KCDB,
+    handle: UniquePtr<bridge::Db>,
     db_type: DbType,
     read_only: bool,
 }
 
-// SAFETY: verified against the Kyoto Cabinet 1.2.80 headers (the version
-// floor this backend builds against), file and symbol at a time:
+// SAFETY: the argument the C binding's handle carried, verified against
+// the Kyoto Cabinet 1.2.80 headers for the four concrete classes this
+// wraps — the classes `PolyDB` forwarded every call to:
 //
-// * Every record operation this backend issues — `kcdbaccept`/`kcdbset`/
-//   `kcdbremove` (all `accept` underneath), `kcdbiterate`, `kcdbcount`,
-//   `kcdbsync`, and the cursor calls — is documented as "performed
+// * Every record operation this backend issues — `accept`, `set`,
+//   `remove` (all `accept` underneath), `iterate`, `count`,
+//   `synchronize`, and the cursor calls — is documented as "performed
 //   atomically and other threads accessing the same record are blocked"
-//   (`iterate`: the whole iteration, other threads blocked) (`kchashdb.h`,
-//   `accept`'s @note; the same note is on `kcpolydb.h`'s and
-//   `kcplantdb.h`'s operations) and implemented by taking the database
-//   object's own reader-writer lock (`RWLock mlock_`, `kchashdb.h` and
-//   `kcplantdb.h` private members; `ScopedRWLock` at the top of every
-//   method body, e.g. HashDB `count`, `synchronize`, and `Cursor::jump`).
-// * `kcdbbegintran` is `begin_transaction(false)`: it takes the writer
-//   lock and spins (`Thread::yield`/`chill`) while another transaction is
-//   live, holding the lock until `kcdbendtran` — so concurrent `write`
-//   transactions serialize inside the library rather than racing, and
-//   readers exclude with the whole transaction window.
-// * The error accessors are NOT shared state: HashDB holds its error as
-//   thread-specific data (`TSD<Error> error_`, `kchashdb.h`; `TSD` in
-//   `kcthread.h` gives each thread its own instance), and TreeDB and
-//   PolyDB forward to that inner database (`Error error() const { return
-//   db_.error(); }` in `kcplantdb.h`; PolyDB's `set_error` delegates when
-//   open). A thread reading `kcdbecode`/`kcdbemsg` therefore observes its
-//   own thread's last failure — no cross-thread race. This wrapper reads
-//   them immediately after the failing call on the same thread, before
-//   any other call could overwrite the slot.
-// * PolyDB's own plain `Error error_` member is touched only in the
-//   TYPEVOID (unopened) state; a handle exists here only after `open`
-//   succeeded, and `kcdbclose`/`kcdbdel` run in `Drop`, which holds the
-//   handle exclusively. Open completes before the handle exists to share.
+//   (`iterate`: the whole iteration, other threads blocked) and
+//   implemented by taking the database object's own reader-writer lock
+//   (`mlock_`: `kchashdb.h`, `kcplantdb.h`, `kcstashdb.h`, `kcprotodb.h`;
+//   a scoped lock at the top of every method body).
+// * `begin_transaction(false)` takes the writer lock and spins while
+//   another transaction is live, holding it until `end_transaction` — so
+//   concurrent `write` transactions serialize inside the library.
+// * The error accessors are NOT shared state: each class holds its error
+//   as thread-specific data (`TSD<Error> error_`; `TSD` in `kcthread.h`
+//   gives each thread its own instance), and `TreeDB` forwards to its
+//   inner `HashDB`. A thread reading `error()` observes its own thread's
+//   last failure; this wrapper reads it immediately after the failing call
+//   on the same thread.
 // * The class-level contract (`kcdb.h`, `BasicDB`'s @note) forbids two
 //   database objects in one process opening the same file, and sharing a
 //   database object with child processes — cross-thread sharing of one
-//   object is inside the supported model.
-//
-// That is what lets the store keep `get` and `write` on `&self`, and what
-// the user-store registry's `static Mutex<… DefaultStore …>` requires of
-// a default backend. libpinyin itself (`flexible_ngram_kyotodb.h`,
-// `kyotodb_utils.h`) uses the same C++ objects single-threaded with no
-// added locking, so it neither contradicts this nor exercises it — the
-// guarantee is Kyoto Cabinet's own, cited above.
+//   object is inside the supported model. Open completes before the
+//   handle exists to share, and the close and delete run in `Drop`, which
+//   holds the handle exclusively.
 unsafe impl Send for Db {}
-// SAFETY: same argument as Send — every KC record operation holds the
+// SAFETY: same argument as Send — every record operation holds the
 // database's own reader-writer lock, and error accessors are thread-local.
 unsafe impl Sync for Db {}
 
 impl Db {
     /// Opens `path` as `db_type`.
     ///
-    /// # The `#type=` suffix, and why it is not optional
-    ///
-    /// The C API is `PolyDB`, which chooses the database class from the
-    /// **path suffix**: `.kch` is a file hash database, `.kct` a file
-    /// tree database, "otherwise, this function fails"
-    /// (`kclangc.h:312-320`).
-    ///
-    /// libpinyin's files are named `bigram.db` and `user_bigram.db`
-    /// (`src/pinyin_internal.h:56-58`) — compile-time constants that do
-    /// not vary with the DBM backend it was built against, so a
-    /// Kyoto-Cabinet-built libpinyin ships **no `.kch` or `.kct` file at
-    /// all**. Measured: `kcdbopen(db, "bigram.db", …)` fails with
-    /// `invalid operation`.
-    ///
-    /// `PolyDB` also accepts tuning parameters after a `#`, among them
-    /// `type=` (`kcpolydb.h:496-515`), so `bigram.db#type=kch` opens
-    /// libpinyin's actual file as a hash database. That override is the
-    /// only way the C API can read these files, which is why every open
-    /// here goes through it rather than trusting a name.
+    /// libpinyin's files are named `bigram.db`, `pinyin_index.bin` and so
+    /// on (`src/pinyin_internal.h:56-58`): the class comes from the open,
+    /// never from a suffix. The C binding had to say so with a `#type=`
+    /// tuning parameter, so it refused a `#` in the path; this keeps that
+    /// refusal, so a path opens here exactly when it opened there.
     pub(crate) fn open(
         path: &Path,
         db_type: DbType,
@@ -445,25 +351,11 @@ impl Db {
         Self::open_with_tuning(path, db_type, read_only, create, "")
     }
 
-    /// Opens `path` as `db_type`, appending `extra_tuning` after the
-    /// mandatory `#type=` parameter.
+    /// Opens `path` as `db_type`, applying `extra_tuning` first.
     ///
-    /// `extra_tuning` is the concatenation of zero or more `#key=value`
-    /// tuning parameters — each starts with `#`, exactly the form that
-    /// follows `#type=` in the Kyoto Cabinet PolyDB open spec
-    /// (`kcpolydb.h:496-515`). An empty string reproduces [`Db::open`]
-    /// byte-for-byte, which is what [`Db::open`] itself passes.
-    ///
-    /// # Only reached in bench builds
-    ///
-    /// This is the entry point the `bench-internal` feature exposes; the
-    /// tuning knob it opens up is what shenghaoc/oxpinyin#402's time-side
-    /// measurement bench uses to characterise the cost of a Kyoto Cabinet
-    /// default for an upstream report. Nothing in the shipping path calls
-    /// this with a non-empty `extra_tuning` — the mandatory `#type=`
-    /// alone is what libpinyin's C++ construction produces, and matching
-    /// upstream on external-library handling is the standing policy
-    /// (see the module docstring).
+    /// `extra_tuning` is zero or more `#bnum=<n>` parameters, the one knob
+    /// the `kyotocabinet_bnum` bench drives; an empty string reproduces
+    /// [`Db::open`]. Nothing in the shipping path passes a non-empty one.
     pub(crate) fn open_with_tuning(
         path: &Path,
         db_type: DbType,
@@ -472,12 +364,7 @@ impl Db {
         extra_tuning: &str,
     ) -> Result<Self, StoreError> {
         check_runtime_version()?;
-
-        // The path is handed to Kyoto Cabinet as bytes, with the tuning
-        // parameter appended. A `#` in the path itself would be read as
-        // the start of tuning parameters, so it is refused rather than
-        // silently changing which database is opened.
-        let bytes = path.as_os_str().as_bytes();
+        let bytes = path_bytes(path)?;
         if bytes.contains(&b'#') {
             return Err(StoreError::InvalidInput(
                 "store path contains '#', which Kyoto Cabinet reads as the start of \
@@ -489,73 +376,52 @@ impl Db {
                 "extra_tuning must start with '#' or be empty",
             ));
         }
-        let mut spec = bytes.to_vec();
-        spec.extend_from_slice(b"#type=");
-        spec.extend_from_slice(db_type.tuning().as_bytes());
-        spec.extend_from_slice(extra_tuning.as_bytes());
-        let spec =
-            CString::new(spec).map_err(|_| StoreError::InvalidInput("store path contains NUL"))?;
-
-        // SAFETY: takes no arguments and returns either a fresh handle or
-        // null.
-        let handle = unsafe { sys::kcdbnew() };
-        if handle.is_null() {
-            return Err(StoreError::Backend(
-                "kcdbnew returned null (allocation failure)".into(),
-            ));
-        }
-        // Owned from here: every early return must release it, which
-        // `this` does by construction.
-        let this = Self {
-            handle,
+        let mut this = Self {
+            handle: bridge::db_new(db_type.which()),
             db_type,
             read_only,
         };
-
+        if this.handle.is_null() {
+            return Err(StoreError::Backend("db_new returned null".into()));
+        }
+        for parameter in extra_tuning.split('#').filter(|p| !p.is_empty()) {
+            let bnum = parameter
+                .strip_prefix("bnum=")
+                .and_then(|n| n.parse().ok())
+                .ok_or(StoreError::InvalidInput(
+                    "extra_tuning supports #bnum=<n> only",
+                ))?;
+            if !this.handle.pin_mut().tune_buckets(bnum) {
+                return Err(this.error("tune_buckets"));
+            }
+        }
         let mode = if read_only {
-            sys::KCOREADER
+            OREADER
         } else if create {
-            sys::KCOWRITER | sys::KCOCREATE
+            OWRITER | OCREATE
         } else {
-            sys::KCOWRITER
+            OWRITER
         };
-        // SAFETY: the handle is live and `spec` outlives the call.
-        if unsafe { sys::kcdbopen(this.handle, spec.as_ptr(), mode) } == 0 {
+        if !this.handle.pin_mut().open(bytes, mode) {
+            // The text the C binding's `kcdbopen` reported.
             return Err(this.error("kcdbopen"));
         }
         Ok(this)
     }
 
-    /// The library's own account of the last failure on this handle.
+    /// The library's own account of the last failure on this handle, in
+    /// the C binding's words (`<call>: <code name>: <message>`).
     fn error(&self, what: &str) -> StoreError {
-        // SAFETY: the handle is live; both calls are defined for a handle
-        // in any state, including one that failed to open.
-        let (code, message) = unsafe {
-            let code = sys::kcdbecode(self.handle);
-            let name = CStr::from_ptr(sys::kcecodename(code))
-                .to_string_lossy()
-                .into_owned();
-            let message = CStr::from_ptr(sys::kcdbemsg(self.handle))
-                .to_string_lossy()
-                .into_owned();
-            (name, message)
-        };
-        // Kyoto Cabinet reports filesystem trouble through its own codes
-        // rather than errno, so everything lands on the backend arm; the
-        // library's name for the code is preserved verbatim.
-        StoreError::Backend(format!("{what}: {code}: {message}").into())
+        let code = self.handle.ecode();
+        let name = String::from_utf8_lossy(bridge::codename(code));
+        let message = String::from_utf8_lossy(self.handle.emsg());
+        StoreError::Backend(format!("{what}: {name}: {message}").into())
     }
 
     /// Whether the last operation failed because the key was absent
     /// rather than because something went wrong.
-    ///
-    /// Both are a null return, so the code is the only way to tell them
-    /// apart — and treating an error as a miss would turn a damaged file
-    /// into silently empty data.
     fn last_was_no_record(&self) -> bool {
-        // SAFETY: the handle is live and `kcdbecode` is defined for any
-        // state.
-        unsafe { sys::kcdbecode(self.handle) == no_record_code() }
+        self.handle.ecode() == NO_RECORD
     }
 
     /// Whether this handle was opened read-only.
@@ -571,70 +437,41 @@ impl Db {
 
     /// Point read. `None` when the key is absent.
     ///
-    /// One `kcdbaccept`, read-only: the visitor copies the value straight
-    /// into the returned `Vec`. libpinyin reads the same record with
-    /// `check` and then `get(kbuf, ksiz, vbuf, vsiz)` into its chunk
+    /// One read-only `accept`: the visitor copies the value straight into
+    /// the returned `Vec`. libpinyin reads the same record with `check` and
+    /// then `get(kbuf, ksiz, vbuf, vsiz)` into its chunk
     /// (`ngram_kyotodb.cpp:131-139` at 074a2219), two `accept`s whose
     /// results agree for a caller that does not write in between.
     pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let mut found: Option<Vec<u8>> = None;
-        // SAFETY: the handle is live and `key` outlives the call; `opq`
-        // is `found`, exclusive for the call, which is what `visit_full`
-        // casts it back to.
-        let ok = unsafe {
-            sys::kcdbaccept(
-                self.handle,
-                c_ptr(key),
-                key.len(),
-                Some(visit_full::<Option<Vec<u8>>>),
-                Some(visit_empty),
-                (&raw mut found).cast::<c_void>(),
-                0,
-            )
-        };
-        if ok == 0 {
-            // The text `kcdbget` reported, so a failure reads as before.
+        let mut found = PointRead(None);
+        if !self.handle.accept_get(key, &mut found) {
             return Err(self.error("kcdbget"));
         }
-        Ok(found)
+        Ok(found.0)
     }
 
-    /// Every record, copied out by one read-only `kcdbiterate`, in the
-    /// class's own walk order, into a vector reserved for `kcdbcount`
+    /// Every record, copied out by one read-only `iterate`, in the
+    /// class's own walk order, into a vector reserved for `count`
     /// records.
-    ///
-    /// The iteration holds the database's lock throughout; the copy is
-    /// all that runs under it.
     pub(crate) fn records(&self) -> Result<Vec<Record>, StoreError> {
-        let mut records = Vec::new();
-        records.reserve_exact(usize::try_from(self.count()?).unwrap_or(0));
-        self.iterate(&mut records)?;
-        Ok(records)
+        let mut records = Records(Vec::new());
+        records
+            .0
+            .reserve_exact(usize::try_from(self.count()?).unwrap_or(0));
+        if !self.handle.iterate_records(&mut records) {
+            return Err(self.error("kcdbiterate"));
+        }
+        Ok(records.0)
     }
 
     /// Every key, in the class's walk order — `Bigram::get_all_items`'
     /// `iterate(&visitor, false)` (`ngram_kyotodb.cpp:186-196`).
     pub(crate) fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        let mut keys: Vec<Vec<u8>> = Vec::new();
-        self.iterate(&mut keys)?;
-        Ok(keys)
-    }
-
-    fn iterate<V: Visit>(&self, visitor: &mut V) -> Result<(), StoreError> {
-        // SAFETY: the handle is live; `opq` is `visitor`, exclusive for
-        // the call, which is what `visit_full::<V>` casts it back to.
-        let ok = unsafe {
-            sys::kcdbiterate(
-                self.handle,
-                Some(visit_full::<V>),
-                std::ptr::from_mut(visitor).cast::<c_void>(),
-                0,
-            )
-        };
-        if ok == 0 {
+        let mut keys = KeySink(Vec::new());
+        if !self.handle.iterate_keys(&mut keys) {
             return Err(self.error("kcdbiterate"));
         }
-        Ok(())
+        Ok(keys.0)
     }
 
     /// Insert or overwrite.
@@ -642,19 +479,7 @@ impl Db {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
-        // SAFETY: the handle is live; both slices outlive the call, and
-        // Kyoto Cabinet copies out of them before returning. `c_ptr`
-        // keeps an empty value off the `REMOVE` sentinel address.
-        let ok = unsafe {
-            sys::kcdbset(
-                self.handle,
-                c_ptr(key),
-                key.len(),
-                c_ptr(value),
-                value.len(),
-            )
-        };
-        if ok == 0 {
+        if !self.handle.set(key, value) {
             return Err(self.error("kcdbset"));
         }
         Ok(())
@@ -665,9 +490,7 @@ impl Db {
         if self.read_only {
             return Err(StoreError::ReadOnly);
         }
-        // SAFETY: the handle is live and `key` outlives the call.
-        let ok = unsafe { sys::kcdbremove(self.handle, c_ptr(key), key.len()) };
-        if ok == 0 && !self.last_was_no_record() {
+        if !self.handle.remove(key) && !self.last_was_no_record() {
             return Err(self.error("kcdbremove"));
         }
         Ok(())
@@ -678,104 +501,57 @@ impl Db {
         if self.read_only {
             return Ok(());
         }
-        // SAFETY: the handle is live; the post-processor callback and its
-        // opaque argument are both null, which the API documents as "no
-        // callback".
-        let ok = unsafe { sys::kcdbsync(self.handle, i32::from(hard), None, ptr::null_mut()) };
-        if ok == 0 {
+        if !self.handle.sync(hard) {
             return Err(self.error("kcdbsync"));
         }
         Ok(())
     }
 
-    /// Reads a snapshot stream (`KCSS`) into this database —
-    /// `kcdbloadsnap`.
-    ///
-    /// libpinyin's Kyoto Cabinet *user* bigram is this and nothing else:
-    /// `Bigram::load_db` opens an in-memory `StashDB` and calls
-    /// `load_snapshot(dbfile)` on it (`ngram_kyotodb.cpp:54-64`), so the
-    /// file on disk is a snapshot of records, not a `HashDB` — its magic
-    /// is `KCSS`, and opening it as a hash database fails with "missing
-    /// magic data of the file". The *system* bigram is a genuine `HashDB`
-    /// file (`attach`, `ngram_kyotodb.cpp:110-119`); the two are different
-    /// containers and must not share one open path.
+    /// Reads a snapshot stream (`KCSS`) into this database — what
+    /// libpinyin's `load_db` does for its in-memory containers
+    /// (`ngram_kyotodb.cpp:54-64`).
     pub(crate) fn load_snapshot(&self, path: &Path) -> Result<(), StoreError> {
-        let spec = cstring_path(path)?;
-        // SAFETY: the handle is live and `spec` outlives the call.
-        if unsafe { sys::kcdbloadsnap(self.handle, spec.as_ptr()) } == 0 {
+        if !self.handle.load_snapshot(path_bytes(path)?) {
             return Err(self.error("kcdbloadsnap"));
         }
         Ok(())
     }
 
-    /// Writes this database's records out as a snapshot stream (`KCSS`) —
-    /// `kcdbdumpsnap`, the inverse of [`Self::load_snapshot`] and the
-    /// format `Bigram::save_db` leaves behind
-    /// (`ngram_kyotodb.cpp:82-101`: `unlink` then `dump_snapshot`).
+    /// Writes this database's records out as a snapshot stream (`KCSS`),
+    /// the format `Bigram::save_db` leaves behind (`ngram_kyotodb.cpp:82-101`).
     pub(crate) fn dump_snapshot(&self, path: &Path) -> Result<(), StoreError> {
-        let spec = cstring_path(path)?;
-        // SAFETY: the handle is live and `spec` outlives the call.
-        if unsafe { sys::kcdbdumpsnap(self.handle, spec.as_ptr()) } == 0 {
+        if !self.handle.dump_snapshot(path_bytes(path)?) {
             return Err(self.error("kcdbdumpsnap"));
         }
         Ok(())
     }
 
     /// Marks this handle read-only, in place, after a load-time fill.
-    ///
-    /// The user-bigram open loads a snapshot into a writable in-memory
-    /// stash (the stash class opens writer, and `load_snapshot` needs
-    /// that); the seam itself is read-only, so the fill ends by sealing
-    /// the handle — a later `write` on it answers [`StoreError::ReadOnly`]
-    /// instead of mutating memory that nothing would ever dump.
     pub(crate) fn into_read_only(mut self) -> Self {
-        // Mutate in place and return `self`: constructing a new `Db` from
-        // `self.handle` would drop the original at the end of the call,
-        // and `Db`'s `Drop` closes and deletes the handle — leaving the
-        // returned value pointing at freed memory.
         self.read_only = true;
         self
     }
 
-    /// An in-memory `StashDB` — Kyoto Cabinet's `"-"` path with the stash
-    /// class forced, the container libpinyin's KC user bigram lives in
-    /// between its snapshot load and dump.
+    /// An in-memory `StashDB`, opened as the C binding opened it (`"-"`).
     pub(crate) fn open_stash() -> Result<Self, StoreError> {
         Self::open(Path::new("-"), DbType::Stash, false, true)
     }
 
-    /// The pin constructs ProtoTreeDB for both user indexes; PolyDB's
-    /// `kcpt` selector names the same class (kcpolydb.h's type parser).
+    /// The pin's in-memory `ProtoTreeDB` for both user indexes, opened as
+    /// the C binding opened it (`"+"`).
     pub(crate) fn open_proto_tree() -> Result<Self, StoreError> {
         Self::open(Path::new("+"), DbType::ProtoTree, false, true)
     }
 
-    /// The number of records — `kcdbcount`.
-    ///
-    /// A negative return (the header's `int64_t` failure value under some
-    /// kclangc.h versions) is reported through the handle's own error
-    /// state; bindings that type the call as `uint64_t` cannot produce
-    /// one and the conversion is infallible.
+    /// The number of records.
     pub(crate) fn count(&self) -> Result<u64, StoreError> {
-        // SAFETY: the handle is live; `kcdbcount` is defined for a handle
-        // in any state and is one of the record operations the thread
-        // safety audit above covers (it takes the database's own
-        // reader-writer lock).
-        let count = unsafe { sys::kcdbcount(self.handle) };
-        u64::try_from(count).map_err(|_| self.error("kcdbcount"))
+        u64::try_from(self.handle.count()).map_err(|_| self.error("kcdbcount"))
     }
 
-    /// Begins a transaction.
-    ///
-    /// Unlike the Berkeley DB backend — where libpinyin's environment-less
-    /// opens leave no transaction to use — Kyoto Cabinet gives a
-    /// standalone handle real transactions, so this backend's atomic
-    /// writes are the library's own rather than a buffered imitation.
+    /// Begins a transaction, durable against process crash but not against
+    /// power loss (`hard = false`), matching the commit's `sync(false)`.
     pub(crate) fn begin_transaction(&self) -> Result<(), StoreError> {
-        // SAFETY: the handle is live. `hard = 0` asks for a transaction
-        // durable against process crash but not against power loss, which
-        // matches what the commit's `sync(false)` then provides.
-        if unsafe { sys::kcdbbegintran(self.handle, 0) } == 0 {
+        if !self.handle.begin_transaction(false) {
             return Err(self.error("kcdbbegintran"));
         }
         Ok(())
@@ -783,9 +559,7 @@ impl Db {
 
     /// Ends a transaction, committing or rolling back.
     pub(crate) fn end_transaction(&self, commit: bool) -> Result<(), StoreError> {
-        // SAFETY: the handle is live and inside a transaction begun by
-        // `begin_transaction`.
-        if unsafe { sys::kcdbendtran(self.handle, i32::from(commit)) } == 0 {
+        if !self.handle.end_transaction(commit) {
             return Err(self.error("kcdbendtran"));
         }
         Ok(())
@@ -793,32 +567,19 @@ impl Db {
 
     /// Opens a cursor, which borrows this database.
     pub(crate) fn cursor(&self) -> Result<Cursor<'_>, StoreError> {
-        // SAFETY: the handle is live.
-        let handle = unsafe { sys::kcdbcursor(self.handle) };
+        let handle = self.handle.cursor();
         if handle.is_null() {
             return Err(self.error("kcdbcursor"));
         }
         Ok(Cursor {
             handle,
-            bytes: Vec::new(),
-            key_len: 0,
+            sink: RecordSink {
+                bytes: Vec::new(),
+                key_len: 0,
+                with_value: true,
+            },
             _db: PhantomData,
         })
-    }
-}
-
-impl Drop for Db {
-    fn drop(&mut self) {
-        // A close failure has nowhere to go in `Drop`, and the handle must
-        // be deleted either way. Callers who need to know a flush
-        // succeeded call `sync`, which reports.
-        //
-        // SAFETY: the handle is live and owned; `kcdbdel` is its last use,
-        // and Kyoto Cabinet requires the close before the delete.
-        unsafe {
-            sys::kcdbclose(self.handle);
-            sys::kcdbdel(self.handle);
-        }
     }
 }
 
@@ -826,9 +587,8 @@ impl Drop for Db {
 ///
 /// Holds the last record it read, in a buffer it reuses from step to step.
 pub(crate) struct Cursor<'db> {
-    handle: *mut sys::KCCUR,
-    bytes: Vec<u8>,
-    key_len: usize,
+    handle: UniquePtr<bridge::Cursor>,
+    sink: RecordSink,
     _db: PhantomData<&'db Db>,
 }
 
@@ -836,59 +596,40 @@ impl Cursor<'_> {
     /// Positions at the smallest key at or after `key`; `Ok(false)` when
     /// there is none.
     pub(crate) fn jump_to(&mut self, key: &[u8]) -> Result<bool, StoreError> {
-        // SAFETY: the cursor handle is live and `key` outlives the call.
-        let ok = unsafe { sys::kccurjumpkey(self.handle, c_ptr(key), key.len()) };
-        if ok != 0 {
+        if self.handle.pin_mut().jump_key(key) {
             return Ok(true);
         }
         self.positioning_outcome("kccurjumpkey")
     }
 
-    /// Positions at the first record — `kccurjump`, the no-key form.
-    ///
-    /// A key jump with the empty string is **not** equivalent on the hash
-    /// containers: KC's `kccurjumpkey("")` answers "no record" on a
-    /// HashDB that has records, so an unbounded raw walk must take this
-    /// form. `Ok(false)` when the database is empty.
+    /// Positions at the first record — the no-key jump. A key jump with the
+    /// empty string is **not** equivalent on the hash containers.
     pub(crate) fn jump_first(&mut self) -> Result<bool, StoreError> {
-        // SAFETY: the cursor handle is live.
-        let ok = unsafe { sys::kccurjump(self.handle) };
-        if ok != 0 {
+        if self.handle.pin_mut().jump() {
             return Ok(true);
         }
         self.positioning_outcome("kccurjump")
     }
 
-    /// A positioning call (`kccurjump` / `kccurjumpkey`) returned false:
-    /// `Ok(false)` when the cursor's code is "no record" — an empty database
-    /// or a key past the end — otherwise the backend error the code names.
-    /// The same split [`Cursor::next`] makes on a null region, so a genuine
-    /// failure is never silently reported as an empty range.
+    /// A cursor call returned false: `Ok(false)` when the cursor's code is
+    /// "no record" — an empty database or the end of the walk — otherwise
+    /// the backend error the code names.
     fn positioning_outcome(&self, call: &str) -> Result<bool, StoreError> {
-        // SAFETY: the cursor handle is live.
-        let code = unsafe { sys::kccurecode(self.handle) };
-        if code == no_record_code() {
+        let code = self.handle.ecode();
+        if code == NO_RECORD {
             return Ok(false);
         }
-        // SAFETY: `kcecodename` returns a static NUL-terminated string for
-        // any code.
-        let name = unsafe { CStr::from_ptr(sys::kcecodename(code)) }
-            .to_string_lossy()
-            .into_owned();
+        let name = String::from_utf8_lossy(bridge::codename(code));
         Err(StoreError::Backend(format!("{call}: {name}").into()))
     }
 
     /// Reads the record at the cursor into the cursor's buffer, then steps
-    /// past it.
-    ///
-    /// `Ok(false)` at the end of the database. The record stays readable
-    /// through [`Cursor::key`] and [`Cursor::value`] until the next read.
+    /// past it. `Ok(false)` at the end of the database.
     pub(crate) fn next(&mut self) -> Result<bool, StoreError> {
         self.read(true, true)
     }
 
-    /// [`Cursor::next`] without the value: [`Cursor::value`] is empty after
-    /// it.
+    /// [`Cursor::next`] without the value.
     #[cfg(any(test, feature = "bench-internal"))]
     pub(crate) fn next_key(&mut self) -> Result<bool, StoreError> {
         self.read(false, true)
@@ -901,46 +642,19 @@ impl Cursor<'_> {
 
     /// The key of the last record read.
     pub(crate) fn key(&self) -> &[u8] {
-        &self.bytes[..self.key_len]
+        &self.sink.bytes[..self.sink.key_len]
     }
 
     /// The value of the last record read.
     pub(crate) fn value(&self) -> &[u8] {
-        &self.bytes[self.key_len..]
+        &self.sink.bytes[self.sink.key_len..]
     }
 
     fn read(&mut self, with_value: bool, step: bool) -> Result<bool, StoreError> {
-        let mut record = RecordBuf {
-            bytes: &mut self.bytes,
-            key_len: &mut self.key_len,
-            with_value,
-        };
-        // SAFETY: the cursor handle is live; `opq` is `record`, exclusive
-        // for the call, which is what `visit_full::<RecordBuf>` casts it
-        // back to. Read-only (`writable = 0`).
-        let ok = unsafe {
-            sys::kccuraccept(
-                self.handle,
-                Some(visit_full::<RecordBuf<'_>>),
-                (&raw mut record).cast::<c_void>(),
-                0,
-                i32::from(step),
-            )
-        };
-        if ok != 0 {
+        self.sink.with_value = with_value;
+        if self.handle.pin_mut().accept_record(&mut self.sink, step) {
             return Ok(true);
         }
-        // A false return is the end of the database as well as a
-        // failure; the cursor's own code separates them. The text is
-        // what `kccurget` reported.
         self.positioning_outcome("kccurget")
-    }
-}
-
-impl Drop for Cursor<'_> {
-    fn drop(&mut self) {
-        // SAFETY: the cursor handle is live and owned, its database
-        // outlives it by the `'db` bound, and this is its last use.
-        unsafe { sys::kccurdel(self.handle) }
     }
 }
