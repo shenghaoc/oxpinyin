@@ -1,16 +1,16 @@
 oxpinyin-function-order-v1	libzhuyin.so.15
 init	<&[u8] as <alloc::ffi::c_str::CString>::new::SpecNewImpl>::spec_new_impl
-init	<&str as core::fmt::Display>::fmt [instantiating crate: oxpinyin_data]
-init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>::insert [instantiating crate: oxpinyin_user]
+init	<&str as core::fmt::Display>::fmt [instantiating crate: oxpinyin_store]
+init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>::insert [instantiating crate: oxpinyin_store]
 init	<alloc::collections::btree::map::BTreeMap<u8, u32>>::insert [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<(u32, alloc::vec::Vec<u16>), alloc::collections::btree::set_val::SetValZST>>::dying_next [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<alloc::vec::Vec<u8>, alloc::collections::btree::set_val::SetValZST>>::dying_next [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>>>::dying_next [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::IntoIter<u8, alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>>>::dying_next [instantiating crate: oxpinyin_user]
-init	<alloc::collections::btree::map::IntoIter<u8, u32>>::dying_next [instantiating crate: oxpinyin_runtime]
+init	<alloc::collections::btree::map::IntoIter<u8, u32>>::dying_next [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::Iter<(u32, alloc::vec::Vec<u16>), alloc::collections::btree::set_val::SetValZST> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::entry::Entry<alloc::string::String, alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>>::or_default [instantiating crate: oxpinyin_user]
-init	<alloc::collections::btree::map::entry::VacantEntry<u8, u32>>::insert_entry [instantiating crate: oxpinyin_runtime]
+init	<alloc::collections::btree::map::entry::VacantEntry<u8, u32>>::insert_entry [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::set::BTreeSet<(u32, alloc::vec::Vec<u16>)>>::difference [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::set::Difference<(u32, alloc::vec::Vec<u16>)> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
 init	<alloc::ffi::c_str::CString>::_from_vec_unchecked
@@ -71,7 +71,7 @@ init	<oxpinyin_user::replay::Content>::write
 init	<oxpinyin_user::replay::Merge>::slot_offset
 init	<oxpinyin_user::session_values::SessionTxn as oxpinyin_store::WriteTxn>::is_empty
 init	<oxpinyin_user::session_values::SessionTxn as oxpinyin_store::WriteTxn>::put
-init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore> as core::clone::Clone>::clone [instantiating crate: oxpinyin_runtime]
+init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore> as core::clone::Clone>::clone [instantiating crate: oxpinyin_facade]
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::open_session::<oxpinyin_user::persistence::SystemOriginals> [instantiating crate: oxpinyin_runtime]
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::open_session::<oxpinyin_user::persistence::SystemOriginals>::{closure#0} [instantiating crate: oxpinyin_runtime]
 init	<std::fs::OpenOptions>::_open
@@ -90,7 +90,7 @@ init	alloc::fmt::format::format_inner
 init	core::fmt::write
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>> [instantiating crate: oxpinyin_user]
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, u32>> [instantiating crate: oxpinyin_user]
-init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u8, alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>>> [instantiating crate: oxpinyin_runtime]
+init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u8, alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>>> [instantiating crate: oxpinyin_facade]
 init	core::ptr::drop_glue::<alloc::collections::btree::map::IntoIter<alloc::string::String, alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>> [instantiating crate: oxpinyin_user]
 init	core::ptr::drop_glue::<alloc::vec::Vec<(u32, oxpinyin_data::chunk_write::ChunkItem)>>
 init	core::ptr::drop_glue::<alloc::vec::Vec<alloc::vec::Vec<oxpinyin_engine::session::ScanKey>>>
@@ -134,10 +134,10 @@ steady	<alloc::raw_vec::RawVec<oxpinyin_core::graph::Edge>>::grow_one
 steady	<alloc::raw_vec::RawVec<oxpinyin_engine::cursor::MatrixKey>>::grow_one
 steady	<alloc::raw_vec::RawVec<oxpinyin_engine::nbest::Node>>::grow_one
 steady	<alloc::raw_vec::RawVec<oxpinyin_engine::session::ScanKey>>::grow_one
+steady	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
 steady	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_user]
-steady	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: zhuyin]
+steady	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_engine]
 steady	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_user]
-steady	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: zhuyin]
 steady	<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>::drop_slow [instantiating crate: oxpinyin_engine]
 steady	<alloc::vec::Vec<(oxpinyin_engine::session::RankKey, oxpinyin_engine::candidate::Candidate)> as alloc::vec::spec_extend::SpecExtend<(oxpinyin_engine::session::RankKey, oxpinyin_engine::candidate::Candidate), core::iter::adapters::map::Map<core::iter::adapters::zip::Zip<alloc::vec::drain::Drain<oxpinyin_engine::candidate::Candidate>, alloc::vec::into_iter::IntoIter<u64>>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#2}>>>::spec_extend [instantiating crate: zhuyin]
 steady	<alloc::vec::Vec<oxpinyin_engine::candidate::Candidate> as alloc::vec::spec_extend::SpecExtend<oxpinyin_engine::candidate::Candidate, core::iter::adapters::map::Map<alloc::vec::drain::Drain<(oxpinyin_engine::session::RankKey, oxpinyin_engine::candidate::Candidate)>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#3}>>>::spec_extend [instantiating crate: zhuyin]
