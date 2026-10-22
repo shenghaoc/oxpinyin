@@ -72,6 +72,24 @@ clippy *args:
 clippy *args:
     @just heavy -- cargo clippy @args; exit $LASTEXITCODE
 
+# Run the workspace benches with the native heavy slot and memory admission.
+[unix]
+bench *args:
+    @just heavy -- cargo bench --workspace --benches "$@"
+
+[windows]
+bench *args:
+    @just heavy -- cargo bench --workspace --benches @args; exit $LASTEXITCODE
+
+# Build every selected bench harness without running it.
+[unix]
+bench-smoke:
+    @just bench --no-run
+
+[windows]
+bench-smoke:
+    @just bench --no-run; exit $LASTEXITCODE
+
 # Read registry metadata, optionally filtered by issue or kind.
 [unix]
 list *args:

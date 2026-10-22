@@ -104,6 +104,49 @@ the lib under libtest, which rejects criterion flags such as
 `--profile-time`. To run a bench in debug mode: `cargo test --bench
 <name>` (AGENTS.md points here).
 
+### `just bench` and `just bench-smoke`
+
+Maintainer ruling 2026-10-22 UTC. Both recipes run under the heavy slot
+and memory admission:
+
+- `just bench [args ...]` runs
+  `cargo bench --workspace --benches <args>`.
+- `just bench-smoke` runs `just bench --no-run`. It builds every
+  selected harness and runs none. It needs no model20 cache.
+
+`--benches` selects every target with `bench = true`. That is each
+`[[bench]]` target plus each library and binary target, which keep the
+default `bench = true`. Library and binary harnesses run their unit
+tests under libtest. Criterion flags such as `--profile-time` are
+rejected there, so pass them to one bench through `just heavy`, as
+above.
+
+`--benches` skips a target whose `required-features` are not enabled.
+With the default features it skips these four targets:
+
+| package | bench | run it with |
+| --- | --- | --- |
+| oxpinyin-store | `backend_matrix_kyotocabinet` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features kyotocabinet --bench backend_matrix_kyotocabinet` |
+| oxpinyin-store | `backend_matrix_tkrzw` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features tkrzw --bench backend_matrix_tkrzw` |
+| oxpinyin-store | `kyotocabinet_bnum` | `just heavy -- cargo bench -p oxpinyin-store --no-default-features --features kyotocabinet,bench-internal --bench kyotocabinet_bnum` |
+| pinyin-oracle | `dbm_bench` | `just heavy -- cargo bench -p pinyin-oracle --features oracle-ffi --bench dbm_bench` (also needs the bench oracles) |
+
+`backend_matrix_bdb` needs `bdb`, which is a default feature, so it is
+selected.
+
+These default-feature benches load the model20 cache and panic when it is
+missing: `stage2` (oxpinyin-capi, `benches/support/mod.rs`), and
+`scan_perf` and `alloc_profile` (pinyin-oracle, `benches/support/mod.rs`).
+That is the repository's fail-on-missing-input rule
+([docs/testing/README.md](../testing/README.md)), not a defect, and no
+bench is excluded from the selection. Fetch the cache with
+`tools/model/fetch-model.sh`.
+
+On a host with model20, `just bench -- --test` is the full start-up
+check. It runs every selected harness once: each Criterion bench runs
+once without measurement, and each library and binary harness runs its
+unit tests.
+
 ### `alloc_profile` — heap attribution is opt-in
 
 `alloc_profile` is a custom harness, not a Criterion group. Its timing and
