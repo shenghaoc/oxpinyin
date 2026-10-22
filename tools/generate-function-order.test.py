@@ -8,6 +8,7 @@ normalization and reconciliation. They need no compiler, profiler or worker.
 import hashlib
 import io
 from pathlib import Path
+import re
 import runpy
 import tempfile
 import unittest
@@ -307,6 +308,18 @@ class ProfileManifestTests(unittest.TestCase):
     def test_symlink_is_rejected(self):
         (self.profiles / "phrases" / "user" / "link").symlink_to("a.txt")
         self.rejected(r"manifest input contains a symlink: .*phrases/user/link$")
+
+    def test_tab_or_newline_in_a_path_is_rejected(self):
+        for name in ("new\nline", "tab\tname"):
+            with self.subTest(name=name):
+                user = self.root / "control" / name.encode().hex()
+                user.mkdir(parents=True)
+                try:
+                    (user / name).write_bytes(b"x")
+                except OSError as error:
+                    self.skipTest(f"file system refuses {name!r}: {error}")
+                with self.assertRaisesRegex(ValueError, "path contains a tab or newline: " + re.escape(repr(name))):
+                    GENERATOR["manifest"](user)
 
     def test_old_four_column_manifest_is_rejected(self):
         manifest = self.profiles / "phrases" / "profile.manifest"
