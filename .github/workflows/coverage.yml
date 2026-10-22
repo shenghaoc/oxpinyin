@@ -1,11 +1,13 @@
 name: coverage
 
-# Line-coverage floor (ratchet): the PR gate for the library-path
+# Line-coverage floor: an advisory PR check for the library-path
 # crates the C API facade depends on, and the nightly's coverage lane,
-# from one job body. On a pull request it runs only when a
-# library-path crate changes
+# from one job body. It is not a required check: branch protection
+# requires only ci.yml's `ci-aggregate`, which does not depend on this
+# workflow, so a red result here does not block a merge on its own. On a
+# pull request it runs only when a library-path crate changes
 # (docs/safety/ci-strategy.md, Tier 2): a full-workspace llvm-cov run is
-# too slow to gate a docs PR, and these crates are where a dropped
+# too slow for a docs PR, and these crates are where a dropped
 # branch is a parity risk. verify-nightly.yml calls it unconditionally
 # (workflow_call) so the whole-tree number is measured every night
 # regardless of which paths a PR touched.
@@ -74,8 +76,9 @@ jobs:
           install -m755 cargo-llvm-cov ~/.local/bin
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - run: cargo llvm-cov --locked --workspace --no-default-features --features kyotocabinet --lcov --output-path lcov.info
-      # Coverage floor (ratchet, 2026-09-08): line coverage below the
-      # floor fails the lane. The report step reuses the profile data the
+      # Coverage floor (2026-09-08): line coverage below the floor fails
+      # this lane. The lane is advisory (see the header), so the floor is
+      # enforced by review, not by branch protection. The report step reuses the profile data the
       # lcov run collected, prints the per-crate table so the number is in
       # the log (the lcov run prints nothing, and the first floored run
       # failed without saying by how much), then applies the floor.

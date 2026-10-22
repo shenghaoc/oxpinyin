@@ -12,12 +12,15 @@ name: Store backends
 # suite through separate builds, one per peer.
 #
 # Five jobs:
-#   - store-features is a matrix over the peer backends. Each child
+#   - store-features is a matrix over the non-default peer backends
+#     (Kyoto Cabinet and tkrzw). Each child
 #     runs the workspace's backend-relevant crates (everything but the
 #     backend-independent corpus, KMM, punctuation, and word packages)
 #     under exactly ONE peer, on its
 #     own runner, so the sweeps run in PARALLEL (fail-fast: false,
-#     max-parallel: 4) instead of sequentially inside one job. Every pass
+#     max-parallel: 4) instead of sequentially inside one job. Berkeley DB
+#     has no child: it is the workspace default, and ci.yml's Linux test
+#     job already runs the whole workspace under it. Every pass
 #     decodes real queries through the fixture tables, not just the store's
 #     own unit tests. The matrix value only selects one of the fixed,
 #     repository-controlled cargo invocations (see the case in the test
@@ -31,24 +34,27 @@ name: Store backends
 #     exactly-one-backend `compile_error!` guards. This is what replaced
 #     the old "cross-backend conformance in one binary" job, which is
 #     architecturally impossible under exactly-one-backend.
-#   - store-backends-gate is the stable aggregate status check. It runs no
-#     tests; it only fails unless every backend child, the backend-matrix
+#   - store-backends-gate is this workflow's aggregate status check. It runs
+#     no tests; it only fails unless every backend child, the backend-matrix
 #     job AND both sanitizer jobs succeeded. Its display name tracks the
 #     peer set. Berkeley DB is the workspace default, and the pure-Rust
 #     peer left on 2026-09-20. The name is free to track the set because
-#     main's required-status-check context is `ci-aggregate`; before
+#     main's only required status check is `ci-aggregate`; before
 #     2026-09-08 the name was
 #     held fixed because branch protection named this job directly.
-#   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan and UBSan,
-#     on a date-pinned nightly, and gates the merge (since 2026-09-08; it
-#     had been continue-on-error and outside the gate, so a finding on the
-#     FFI boundary could not fail anything).
+#   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan on a
+#     date-pinned nightly. It feeds store-backends-gate, so a finding on
+#     the FFI boundary turns that check red.
 #   - bdb-sanitizers runs the Berkeley DB feature's suite under ASan and
 #     the C call-pattern harnesses under ASan+UBSan
-#     (`tools/bdb/run-sanitizers.sh`), gating the merge like the tkrzw
-#     lane: on a BerkeleyDB distro the system bigram.db is BDB and every
-#     session opens it through this FFI, so the instrumentation is
-#     load-bearing, not precautionary.
+#     (`tools/bdb/run-sanitizers.sh`), and feeds store-backends-gate like
+#     the tkrzw lane: on a BerkeleyDB distro the system bigram.db is BDB
+#     and every session opens it through this FFI, so the instrumentation
+#     is load-bearing, not precautionary.
+#
+# Every check in this workflow is advisory: branch protection requires only
+# ci.yml's `ci-aggregate`, which does not depend on any job here. A red
+# result here does not block a merge on its own; read it before merging.
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
 # debian:testing because oxpinyin aims to be a viable libpinyin
@@ -120,7 +126,8 @@ concurrency:
 
 jobs:
   store-features:
-    # One matrix child per backend, each on its own runner: every backend is
+    # One matrix child per non-default backend, each on its own runner:
+    # every such backend is
     # exercised through the backend-relevant workspace (the seven
     # backend-independent training crates are excluded — see the test
     # step) — a backend that "passes" only in the store's own unit tests
@@ -147,7 +154,6 @@ jobs:
         backend:
           - kyotocabinet
           - tkrzw
-          - bdb
 
     steps:
       # debian:testing ships a minimal base without bash or git; the
@@ -189,11 +195,7 @@ jobs:
         # must be present or every final link dies.
         # libkyotocabinet-dev: the explicit kyotocabinet child links the
         # distro Kyoto Cabinet; bindgen reads kclangc.h at build time.
-        # libdb-dev: the bdb child's backend (a metapackage resolving to
-        # libdb5.3-dev) — that backend binds the SYSTEM libdb and
-        # compiles no Berkeley DB source of its own, and it is also the
-        # workspace's default selection since 2026-09-20.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev libdb-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libkyotocabinet-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libglib2.0-dev
 
       # This child runs exactly one of the fixed cargo invocations, selected
       # by the matrix backend through a case over a closed set (fail-closed
@@ -246,10 +248,6 @@ jobs:
           tkrzw)
             echo "--- tkrzw (explicit) ---"
             cargo test --locked --workspace --no-default-features --features tkrzw "${excludes[@]}"
-            ;;
-          bdb)
-            echo "--- bdb (workspace, the default) ---"
-            cargo test --locked --workspace "${excludes[@]}"
             ;;
           *)
             echo "FAIL: unknown matrix.backend value '$BACKEND'" >&2
@@ -357,7 +355,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   store-backends-gate:
-    # Stable aggregate status check. The display name lists the peers
+    # Aggregate status check (advisory; see the header). The display name lists the peers
     # and is extended as peers land (bdb, 2026-09-12); it is no longer
     # pinned to a historical string, because main's required context is
     # `ci-aggregate` rather than this job. It
@@ -366,8 +364,8 @@ jobs:
     # documented `needs.<job>.result` semantics. For a matrix upstream,
     # that result is success only when EVERY matrix child succeeded, and
     # failure if any child failed — so this gate is red unless every
-    # peer build, the exactly-one-backend gate and both sanitizer jobs
-    # are green.
+    # non-default peer build, the exactly-one-backend gate and both
+    # sanitizer jobs are green.
     name: store backends (kyotocabinet / tkrzw / bdb)
     runs-on: ubuntu-latest
     if: ${{ always() }}
@@ -398,15 +396,15 @@ jobs:
           {
             echo "## store backends (aggregate gate)"
             echo ""
-            echo "This job runs no tests. It is the stable aggregate status"
-            echo "check that fails unless every peer matrix child, the"
+            echo "This job runs no tests. It is this workflow's advisory"
+            echo "aggregate check: it fails unless every peer matrix child, the"
             echo "exactly-one-backend gate AND both sanitizer jobs succeeded."
             echo ""
             echo "| Upstream job | Result |"
             echo "|---|---|"
             echo "| store-features (matrix, every peer) | ${FEATURES_RESULT} |"
             echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
-            echo "| tkrzw-sanitizers (ASan + UBSan) | ${SANITIZER_RESULT} |"
+            echo "| tkrzw-sanitizers (ASan) | ${SANITIZER_RESULT} |"
             echo "| bdb-sanitizers (ASan + UBSan) | ${BDB_SANITIZER_RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ] || [ "${BDB_SANITIZER_RESULT}" != "success" ]; then
@@ -420,22 +418,20 @@ jobs:
     # (db_get/db_scan install Process-full visitors handing borrowed key/value
     # records to Rust fn pointers valid only for the callback). Panic-unwinding
     # across that FFI boundary and borrow-escape of those records are the live
-    # hazards, so the feature's own test surface runs instrumented: once per
-    # sanitizer, any finding kills the job. There are no compiled C/C++
-    # translation units — the backend is pure bindgen over tkrzw_langc.h — so
-    # ASan instruments the Rust side of the FFI and UBSan has no C targets to
-    # instrument (its CFLAGS/CXXFLAGS exports are inert; see the test step).
-    # See the test step for how each arm composes its flags (the mandated
-    # -fsanitize=address,undefined pair does not map 1:1 onto rustc's
-    # -Zsanitizer list).
-    name: tkrzw FFI under ${{ matrix.sanitizer }}
+    # hazards, so the feature's own test surface runs under ASan and any
+    # finding kills the job. There are no compiled C/C++ translation units —
+    # the backend is pure bindgen over tkrzw_langc.h — so ASan instruments
+    # the Rust side of the FFI. A UBSan arm ran here until 2026-10-22; with
+    # no C targets and no rustc `undefined` sanitizer it instrumented
+    # nothing, and it was removed.
+    name: tkrzw FFI under address
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
       # ASan requires syscall leeway no other job here needs: Docker's
       # default seccomp profile blocks personality(2), which turned setarch's
       # ASLR-off ASan wrapper into EPERM on the previous run. Unconfining
-      # seccomp for THIS matrix alone restores standard sanitizer setups;
+      # seccomp for THIS job alone restores standard sanitizer setups;
       # everything else stays under stock confinement.
       options: --security-opt seccomp=unconfined
     timeout-minutes: 45
@@ -443,16 +439,10 @@ jobs:
       run:
         shell: bash
 
-    # Blocking since 2026-09-08: the job feeds the store-backends aggregate
-    # gate, so an ASan/UBSan finding on the FFI boundary fails the merge.
-    # (It had been continue-on-error and outside the gate — a red X that
-    # protected nothing.) Both arms had passed every main run for the
-    # preceding week on the nightly pinned below.
+    # Feeds store-backends-gate since 2026-09-08 (it had been
+    # continue-on-error and outside that gate). Like every check in this
+    # workflow it is advisory: only ci.yml's `ci-aggregate` is required.
 
-    strategy:
-      fail-fast: true
-      matrix:
-        sanitizer: [address, undefined]
     env:
       # Beats rust-toolchain.toml's channel pin for this job only: sanitizer
       # builds require nightly rustc. Everything else keeps the pinned file.
@@ -478,9 +468,9 @@ jobs:
           safe-directory: 'true'
 
       - name: Install build dependencies (apt)
-        # On Debian, libasan and libubsan ship with gcc and are not separate
-        # packages. libtkrzw-dev provides the distro library the backend
-        # links against; libclang-dev is bindgen's runtime dependency.
+        # On Debian, libasan ships with gcc and is not a separate package.
+        # libtkrzw-dev provides the distro library the backend links
+        # against; libclang-dev is bindgen's runtime dependency.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
 
       - name: Install nightly Rust (sanitizer support)
@@ -498,85 +488,48 @@ jobs:
       # (Rust-cache hashes RUSTFLAGS into its key anyway, so even a future
       # enablement cannot cross-contaminate the unsanitized dep store.)
       #
-      # Both arms implement the mandated -fsanitize=address,undefined pair
-      # against the surface where those hazards actually live: the Rust FFI
-      # layer over tkrzw_langc.h plus the linked distro runtime. There are
-      # no compiled C/C++ translation units — the backend is pure bindgen —
-      # so CFLAGS/CXXFLAGS have no effect on either arm. ASan still catches
-      # real hazards (the visitor callbacks hand borrowed records to Rust fn
-      # pointers), but UBSan is close to a no-op without C targets.
+      # -Zsanitizer=address instruments the whole target graph (rustc
+      # manages the runtime, so ordering and abort semantics are its
+      # problem, not ours). The step builds tkrzw EXPLICITLY, so the
+      # instrumented binary exercises exactly the FFI surface under test,
+      # rather than riding the workspace default, which moved to Berkeley DB
+      # on 2026-09-20.
       #
-      # ADDRESS instruments the whole target graph (-Zsanitizer=address;
-      # rustc manages the runtime, so ordering and abort semantics are its
-      # problem, not ours). UNDEFINED has no -Zsanitizer equivalent (rustc's
-      # option list has never included the value), so it injects libubsan at
-      # cargo's final link (-C linker=cc -Clink-arg=...). Any finding traps
-      # and fails the job.
-      #
-      # Both arms build tkrzw EXPLICITLY, so the instrumented binary
-      # exercises exactly the FFI surface under test. Pinned rather than
-      # riding the workspace default, which moved to Berkeley DB on
-      # 2026-09-20.
-      #
-      # Both arms pass an EXPLICIT --target on purpose: without it, cargo
-      # applies RUSTFLAGS to HOST build scripts and proc macros too, which is
-      # how -Zsanitizer=address produced unloadable proc-macro dylibs (E0463
-      # on cxxbridge_macro) and how link-arg flags broke build scripts in
-      # earlier iterations of this step. With --target, host artifacts
-      # compile clean and only the target graph is sanitized. The PREBUILT
-      # STANDARD LIBRARY stays uninstrumented in both arms: -Zbuild-std +
-      # rust-src is a heavier matrix than this job warrants; recorded here
-      # and in docs/findings/upstream-divergences.md.
-      - name: Run the tkrzw feature tests under the sanitizer
+      # The EXPLICIT --target is on purpose: without it, cargo applies
+      # RUSTFLAGS to HOST build scripts and proc macros too, which is how
+      # -Zsanitizer=address produced unloadable proc-macro dylibs (E0463 on
+      # cxxbridge_macro) in earlier iterations of this step. With --target,
+      # host artifacts compile clean and only the target graph is sanitized.
+      # The PREBUILT STANDARD LIBRARY stays uninstrumented: -Zbuild-std +
+      # rust-src is heavier than this job warrants; recorded here and in
+      # docs/findings/upstream-divergences.md.
+      - name: Run the tkrzw feature tests under ASan
         id: sanitize-tests
-        env:
-          # Indirection on purpose: ${{ }} inside run: bodies is a template-
-          # injection surface; an env binding gives bash a plain variable.
-          SANITIZER: ${{ matrix.sanitizer }}
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
           triple=$(rustc -vV | sed -n 's/^host: //p')
-          case "$SANITIZER" in
-          address)
-            export RUSTFLAGS="-D warnings -Zsanitizer=address -Cdebuginfo=1"
-            export CFLAGS="-fsanitize=address -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
-            export CXXFLAGS="$CFLAGS"
-            # LeakSanitizer is tuned off by documented choice, not laziness:
-            # the Rust harness holds deliberate process-lifetime allocations
-            # whose ownership crosses the cxx boundary, which LSan
-            # misclassifies, and the hazards under test are misuse of BORROWED
-            # records and unwinding, both of which stay fatal.
-            # abort_on_error=1 closes the last loophole where a report could
-            # print yet the step still go green. setarch -R disables ASLR for
-            # the process tree: GitHub runner kernels' mmap entropy exceeds
-            # what ASan's shadow mapping assumes, and an unprivileged
-            # container cannot lower vm.mmap_rnd_bits itself.
-            export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
-            setarch "$(uname -m)" -R \
-              cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
-            ;;
-          undefined)
-            # No -Zsanitizer=undefined exists; instrument the shim and link
-            # the runtime explicitly (nightly's default linker does not add
-            # it from a bare -fsanitize).
-            export RUSTFLAGS="-D warnings -C linker=cc -Clink-arg=-fsanitize=undefined -Clink-arg=-lubsan"
-            export CFLAGS="-fsanitize=undefined -fno-sanitize-recover=all -fno-omit-frame-pointer -g"
-            export CXXFLAGS="$CFLAGS"
+          export RUSTFLAGS="-D warnings -Zsanitizer=address -Cdebuginfo=1"
+          # LeakSanitizer is tuned off by documented choice, not laziness:
+          # the Rust harness holds deliberate process-lifetime allocations
+          # whose ownership crosses the cxx boundary, which LSan
+          # misclassifies, and the hazards under test are misuse of BORROWED
+          # records and unwinding, both of which stay fatal.
+          # abort_on_error=1 closes the last loophole where a report could
+          # print yet the step still go green. setarch -R disables ASLR for
+          # the process tree: GitHub runner kernels' mmap entropy exceeds
+          # what ASan's shadow mapping assumes, and an unprivileged
+          # container cannot lower vm.mmap_rnd_bits itself.
+          export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
+          setarch "$(uname -m)" -R \
             cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
-            ;;
-          *)
-            echo "FAIL: unknown matrix.sanitizer value '$SANITIZER'" >&2
-            exit 2
-            ;;
-          esac
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
         if: always()
         run: |
           {
-            echo "## tkrzw-sanitizers (${{ matrix.sanitizer }})"
+            echo "## tkrzw-sanitizers (address)"
             echo ""
             echo "Result: **$([ '${{ steps.sanitize-tests.outcome }}' = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
             echo ""
@@ -594,7 +547,8 @@ jobs:
     # rustc has no `undefined` sanitizer, so the C half is where UBSan
     # has something to instrument). On a BerkeleyDB distro the system
     # bigram.db is BDB and every session opens it through this FFI, so
-    # the lane gates the merge like tkrzw-sanitizers does.
+    # the lane feeds store-backends-gate like tkrzw-sanitizers does
+    # (advisory, like every check in this workflow).
     #
     # debian:testing deliberately unpinned like every job here. The
     # harness half needs libdb-dev (the system libdb the backend links

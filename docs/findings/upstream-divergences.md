@@ -1014,6 +1014,18 @@ seen in the same probe is a separate parity defect: issue #356.
   no differential. The residual gaps are toolchain-bound: no
   `-Zsanitizer=undefined` exists, and std is prebuilt. Revisit when either
   changes; per source policy, recorded and not chased.
+- **Amended 2026-10-22 UTC (#1014):** the UBSan arm described above is
+  removed in this PR. tkrzw is bound through bindgen to the prebuilt system
+  library and no C or C++ is compiled, so the UBSan flags instrumented
+  nothing. The ASan arm remains and instruments the Rust code only; the C++
+  shim and the cxxbridge described above no longer exist.
+  Correction to the libpinyin behaviour above: libpinyin's CI builds
+  without any sanitizer. At `074a2219`, `make-check.yml` runs autotools with
+  `--with-dbm=BerkeleyDB`, then `make check` and `make distcheck`, and
+  `cmake.yml` runs a Kyoto Cabinet `Release` build with `ctest`. No
+  `-fsanitize` (nor any `sanitize`) appears in that tree's
+  `.github/workflows/`, `configure.ac`, `Makefile.am` files or CMake files
+  (`CMakeLists.txt`, `cmake/*.cmake`).
 
 ## Native data-file naming under the compile-time backend (2026-08-29)
 
