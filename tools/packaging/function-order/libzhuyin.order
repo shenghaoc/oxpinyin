@@ -98,6 +98,7 @@ init	core::ptr::drop_glue::<oxpinyin_user::replay::Origin>
 init	core::slice::sort::unstable::ipnsort::<u32, <u32 as core::cmp::PartialOrd>::lt> [instantiating crate: oxpinyin_user]
 init	core::str::converts::from_utf8
 init	oxpinyin_data::chunk_format::chunk_checksum
+init	oxpinyin_data::phrase_library::directory_reads_as_a_chunk
 init	oxpinyin_data::phrase_library::map_chunk
 init	oxpinyin_data::table_info::atoi_guint8
 init	oxpinyin_data::table_info::c_float
