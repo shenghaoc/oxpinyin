@@ -119,7 +119,7 @@ build_cinstall "$SRC_CURR" "$Z_SO" tkrzw
 build_cinstall "$SRC_CURR" "$S_SO" tkrzw,shipped
 function_order_measurement --library "X/pinyin=$X_SO" --library "Y/pinyin=$Y_SO" \
     --library "Z/pinyin=$Z_SO" --library "S/pinyin=$S_SO" \
-    --reference-arm L --library "L/pinyin=$L_SO" "${FUNCTION_ORDER_ARGS[@]}"
+    --reference-arm L --library "L/pinyin=$L_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 
 {
     echo "=== build identity ==="

@@ -65,7 +65,7 @@ D_DATA="/opt/oxpinyin-kc/data"
 D_LIB=$(dirname "$D_SO")
 function_order_measurement --library "C/pinyin=$C_SO" --library "D/pinyin=$D_SO" \
     --reference-arm A --library "A/pinyin=$A_SO" \
-    --reference-arm B --library "B/pinyin=$B_SO" "${FUNCTION_ORDER_ARGS[@]}"
+    --reference-arm B --library "B/pinyin=$B_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 
 LABELS=("$A_LABEL" "$B_LABEL" "$C_LABEL" "$D_LABEL")
 SOS=("$A_SO" "$B_SO" "$C_SO" "$D_SO")

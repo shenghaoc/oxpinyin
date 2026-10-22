@@ -122,7 +122,7 @@ A_SO=$(find_so /opt/libpinyin-tkrzw); A_DATA=/opt/libpinyin-tkrzw/lib/libpinyin/
 B_SO=$(find_so /opt/libpinyin-kc);    B_DATA=/opt/libpinyin-kc/lib/libpinyin/data
 function_order_measurement --library "C/pinyin=$OXPINYIN_TKRZW_SO" \
     --library "D/pinyin=$OXPINYIN_KC_SO" --reference-arm A --library "A/pinyin=$A_SO" \
-    --reference-arm B --library "B/pinyin=$B_SO" "${FUNCTION_ORDER_ARGS[@]}"
+    --reference-arm B --library "B/pinyin=$B_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 
 LABELS=(libpinyin-tkrzw libpinyin-kc oxpinyin-tkrzw oxpinyin-kc)
 SOS=("$A_SO" "$B_SO" "$OXPINYIN_TKRZW_SO" "$OXPINYIN_KC_SO")
