@@ -27,8 +27,21 @@ target.
   0 MiB available`). At the maintainer's instruction, the remaining steps
   ran directly with `CARGO_BUILD_JOBS=3` set explicitly, so build figures
   stay comparable with the clean build.
+- CPU-time re-measurement (C12–C14), after review of the first revision:
+  `origin/main` at `52753e48a63badb6a3bf9b6e15d758b6d1273fb1`, same
+  host, 2026-10-22 between 08:44Z and 08:56Z, in two back-to-back
+  `just heavy` admissions with `CARGO_BUILD_JOBS=3` explicit. Every CPU figure and
+  every cargo test vs nextest work comparison in this document comes
+  from that run. Its workspace listing has 1,561 tests, three more than
+  C3. The inventory in §3 stays at the first baseline.
 
 ## 2. Commands
+
+Raw evidence was not retained. The nextest JSON listings, the `$R` and
+`$R2` per-process logs, the GNU time output, the strace traces and the
+cargo-timings data were written to an ephemeral scratch directory and
+are not attached anywhere. Each figure in this document can be
+reproduced with the command recorded for it below.
 
 Run from the repository root of a worktree at the baseline. `$R` is a
 target runner that wraps each test-binary process in GNU time:
@@ -36,6 +49,11 @@ target runner that wraps each test-binary process in GNU time:
 passed as `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER=$R` and gives
 wall seconds, peak RSS and exit status per process. Both cargo test and
 nextest honour it. `$T` is `/usr/bin/time -f 'WALL=%e MAXRSS_KB=%M'`.
+`$R2` is the same runner with `-f "%e\t%U\t%S\t%M\t%x\t%C"`, and `$T2`
+is `/usr/bin/time -f 'WALL=%e USER=%U SYS=%S MAXRSS_KB=%M'`. CPU time
+is user plus system seconds from the rusage of the wrapped process and
+the children it waits for. Summed per-process wall time is not used as
+a work measure: concurrent processes overlap and wait on one another.
 
 | ID | Command | Gives |
 |---|---|---|
@@ -50,12 +68,24 @@ nextest honour it. `$T` is `/usr/bin/time -f 'WALL=%e MAXRSS_KB=%M'`.
 | C9 | `$T cargo test --locked --workspace --no-run` after: nothing; `touch crates/oxpinyin-core/src/lib.rs` (with `--timings`); `touch crates/oxpinyin-core/tests/scheme_parsers.rs`; `touch crates/*/tests/*.rs` (with `--timings`) | incremental build wall and per-unit durations |
 | C10 | §5 grouping experiment, base and grouped, each in a fresh `CARGO_TARGET_DIR`: `$T cargo test --locked -p oxpinyin-core --no-run --timings`; then the two touches of C9 restricted to `-p oxpinyin-core`; then three repetitions each of `cargo test --locked -p oxpinyin-core --tests --no-fail-fast -- --test-threads 4` and `cargo nextest run --locked --profile ci -p oxpinyin-core --no-fail-fast`; C8 around one nextest run | grouping cost and benefit |
 | C11 | `PINYIN_ORACLE_PREFIX=$HOME/.cache/oxpinyin/oracle/tkrzw`, `PKG_CONFIG_PATH`/`LIBRARY_PATH` at `$HOME/.cache/oxpinyin/tkrzw/lib`, `LD_LIBRARY_PATH=$HOME/.cache/oxpinyin/tkrzw/lib:$PINYIN_ORACLE_PREFIX/lib`; `F='--no-default-features --features oracle-ffi,tkrzw'`; `cargo test --locked -p pinyin-oracle $F --no-run`; then C4 and C5 restricted to `-p pinyin-oracle $F --test differential_live --test live_smoke --test export_seam`, with `$R` | oracle-ffi costs under both harnesses |
+| C12 | All four with `$T2` and `$R2`, after `cargo test --locked --workspace --no-run`: `cargo test --locked --workspace --lib --bins --tests --no-fail-fast -- --test-threads 4`; the same with `--test-threads 1`; `cargo nextest run --locked --profile ci --status-level skip --workspace --no-fail-fast`; the same with `--test-threads 1` | CPU per test process and for the whole command, at four threads and serially |
+| C13 | C11's environment and `$F`, with `$T2` and `$R2`: `cargo test --locked -p pinyin-oracle $F --test differential_live --test live_smoke --test export_seam --no-fail-fast -- --test-threads 4`; the same with `--test-threads 1`; `cargo nextest run --locked --profile ci -p pinyin-oracle $F` with the same three `--test` and `--no-fail-fast`; the same with `--test-threads 1` | oracle-ffi CPU under both harnesses |
+| C14 | C11's environment without `$F`: `$T2 cargo test --locked -p pinyin-oracle --features oracle-ffi` | the documented `oracle-ffi` invocation with the default (bdb) Rust features |
 
-C11 notes. The `oracle-ffi` build refuses the Berkeley DB prefix: its
-`build.rs` accepts only the `dbm-tkrzw` `pin_ref`. The tkrzw library is
+C12–C14 ran under `CARGO_BUILD_JOBS=3 just heavy -- bash <script>`, in
+two back-to-back admissions. The two `--test-threads 1` cargo test runs
+were in the second.
+
+C11 notes. The `oracle-ffi` build refuses the Berkeley DB oracle prefix:
+its `build.rs` accepts only the `dbm-tkrzw` `pin_ref`. The Rust backend
+feature is a separate choice. C14 built `pinyin-oracle` with its default
+(bdb) features plus `oracle-ffi` against the tkrzw oracle prefix and
+passed: 128 passed, 0 failed, 6 ignored. `--no-default-features
+--features oracle-ffi,tkrzw` is only the choice C11 and C13 made for
+their cell. The tkrzw library is
 the one `tools/cloud/setup.sh` builds into `~/.cache/oxpinyin/tkrzw` and
-probes before writing its `REV`. `ldd` showed `differential_live`,
-`live_smoke` and `export_seam` resolving `libtkrzw.so.1` and
+probes before writing its `REV`. In C11, C13 and C14, `ldd` showed
+`differential_live`, `live_smoke` and `export_seam` resolving `libtkrzw.so.1` and
 `libpinyin.so.15` from those prefixes, not from `/usr/lib` (AGENTS.md
 Verification cells, rule 9). C11 is a cost measurement. It is not a
 tkrzw cell result, and no DIFFER is reported from it. All 21 tests
@@ -81,37 +111,39 @@ invokers) come from reading the files named in each row, and from
 | Doctests (C7) | 4 run, 2 ignored, across 19 doc-test crates |
 | `fuzz/` targets | 10, in a separate workspace, `test = false`. Nothing replays `fuzz/corpus` as a regular test |
 
-### 3.2 Per crate (C1, C3, C4, C5)
+### 3.2 Per crate (C1, C3, C4, C5, C12)
 
 "Build" is the sum of cargo-timings unit durations for the crate's test
 units in C1 (compile and link, measured at `-j3`). "Incr" is the same for
-C9's `touch crates/*/tests/*.rs` step. Process-seconds are summed
-per-process wall times from `$R`, so they measure work, not elapsed
-time. Peak RSS is the largest single test process.
+C9's `touch crates/*/tests/*.rs` step. "CPU s" is the summed CPU time of
+the crate's test-binary processes in C12 at four threads (cargo test
+`--test-threads 4`, nextest `--profile ci`). The serial figures are in
+§4.1. Process counts and peak RSS are from C4 and C5. Peak RSS is the
+largest single test process. Rows are rounded independently.
 
-| Crate | Bins | Integ. | Empty | Tests | Ign. | Size MiB | Build s | Incr s | cargo test proc-s | nextest proc-s | cargo procs | nextest procs | Peak RSS MiB (cargo / nextest) |
+| Crate | Bins | Integ. | Empty | Tests | Ign. | Size MiB | Build s | Incr s | cargo test CPU s | nextest CPU s | cargo procs | nextest procs | Peak RSS MiB (cargo / nextest) |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| oxpinyin-capi | 5 | 4 | 0 | 124 | 0 | 272 | 10.9 | 2.0 | 0.6 | 1.8 | 5 | 134 | 16 / 13 |
+| oxpinyin-capi | 5 | 4 | 0 | 124 | 0 | 272 | 10.9 | 2.0 | 1.6 | 1.1 | 5 | 134 | 16 / 13 |
 | oxpinyin-capi-marshal | 2 | 1 | 1 | 14 | 0 | 13 | 0.5 | 0.2 | 0.0 | 0.0 | 2 | 18 | 3 / 3 |
 | oxpinyin-chewing | 2 | 1 | 0 | 10 | 0 | 25 | 1.5 | 0.3 | 0.1 | 0.1 | 2 | 14 | 3 / 3 |
-| oxpinyin-core | 7 | 6 | 0 | 195 | 0 | 106 | 11.9 | 1.4 | 38.0 | 39.7 | 7 | 209 | 12 / 11 |
-| oxpinyin-corpus | 5 | 3 | 1 | 51 | 3 | 72 | 5.0 | 0.7 | 3.3 | 5.7 | 5 | 58 | 17 / 10 |
-| oxpinyin-data | 5 | 4 | 0 | 206 | 1 | 96 | 7.5 | 1.1 | 4.6 | 3.8 | 5 | 215 | 10 / 10 |
+| oxpinyin-core | 7 | 6 | 0 | 195 | 0 | 106 | 11.9 | 1.4 | 29.8 | 41.5 | 7 | 209 | 12 / 11 |
+| oxpinyin-corpus | 5 | 3 | 1 | 51 | 3 | 72 | 5.0 | 0.7 | 4.3 | 5.7 | 5 | 58 | 17 / 10 |
+| oxpinyin-data | 5 | 4 | 0 | 206 | 1 | 96 | 7.5 | 1.1 | 2.6 | 4.1 | 5 | 215 | 10 / 10 |
 | oxpinyin-datagen | 6 | 4 | 1 | 27 | 2 | 124 | 5.6 | 1.0 | 0.0 | 0.0 | 6 | 37 | 4 / 4 |
 | oxpinyin-dictool | 2 | 1 | 0 | 16 | 0 | 65 | 3.4 | 0.2 | 0.0 | 0.0 | 2 | 20 | 7 / 8 |
-| oxpinyin-engine | 5 | 4 | 0 | 214 | 0 | 109 | 17.7 | 1.3 | 8.0 | 9.6 | 5 | 224 | 9 / 8 |
-| oxpinyin-facade | 2 | 1 | 0 | 37 | 0 | 106 | 4.6 | 0.5 | 0.1 | 0.3 | 2 | 41 | 11 / 9 |
+| oxpinyin-engine | 5 | 4 | 0 | 214 | 0 | 109 | 17.7 | 1.3 | 8.2 | 11.2 | 5 | 224 | 9 / 8 |
+| oxpinyin-facade | 2 | 1 | 0 | 37 | 0 | 106 | 4.6 | 0.5 | 0.3 | 0.3 | 2 | 41 | 11 / 9 |
 | oxpinyin-kmm | 4 | 2 | 0 | 46 | 5 | 41 | 3.2 | 0.6 | 0.0 | 0.0 | 4 | 49 | 4 / 4 |
 | oxpinyin-punct | 3 | 1 | 1 | 13 | 0 | 23 | 1.2 | 0.1 | 0.0 | 0.0 | 3 | 19 | 3 / 3 |
-| oxpinyin-runtime | 5 | 4 | 1 | 28 | 2 | 206 | 11.6 | 1.8 | 0.6 | 0.8 | 5 | 36 | 11 / 10 |
+| oxpinyin-runtime | 5 | 4 | 1 | 28 | 2 | 206 | 11.6 | 1.8 | 0.5 | 0.7 | 5 | 36 | 11 / 10 |
 | oxpinyin-store | 3 | 2 | 0 | 55 | 4 | 32 | 4.6 | 0.5 | 0.1 | 0.2 | 3 | 57 | 7 / 6 |
 | oxpinyin-testsupport | 1 | 0 | 0 | 18 | 0 | 14 | 1.5 | 0.0 | 0.0 | 0.0 | 1 | 20 | 10 / 10 |
 | oxpinyin-training | 18 | 9 | 8 | 120 | 12 | 315 | 10.4 | 3.1 | 0.0 | 0.0 | 18 | 144 | 5 / 6 |
-| oxpinyin-user | 3 | 2 | 0 | 226 | 0 | 140 | 23.3 | 0.8 | 1.5 | 1.9 | 3 | 232 | 12 / 11 |
+| oxpinyin-user | 3 | 2 | 0 | 226 | 0 | 140 | 23.3 | 0.8 | 0.8 | 0.6 | 3 | 232 | 12 / 11 |
 | oxpinyin-word | 3 | 1 | 1 | 25 | 0 | 29 | 1.9 | 0.2 | 0.0 | 0.0 | 3 | 31 | 4 / 4 |
 | oxpinyin-zhuyin-capi | 4 | 3 | 0 | 23 | 0 | 187 | 6.2 | 1.1 | 0.2 | 0.3 | 4 | 31 | 13 / 11 |
-| pinyin-oracle | 24 | 13 | 14 | 110 | 3 | 384 | 10.9 | 3.9 | 15.9 | 73.0 | 24 | 155 | 24 / 18 |
-| **Total** | **109** | **66** | **28** | **1,558** | **32** | **2,358** | **143.2** | **21.1** | **73.0** | **137.2** | **109** | **1,744** | **24 / 18** |
+| pinyin-oracle | 24 | 13 | 14 | 110 | 3 | 384 | 10.9 | 3.9 | 31.8 | 81.7 | 24 | 155 | 24 / 18 |
+| **Total** | **109** | **66** | **28** | **1,558** | **32** | **2,358** | **143.2** | **21.1** | **80.4** | **147.4** | **109** | **1,744** | **24 / 18** |
 
 ### 3.3 Binaries with no tests in this cell
 
@@ -141,12 +173,23 @@ for each:
 | Run wall, without `$R` (C6) | 51.2 s | 36.7 s | 0.72 |
 | Test-binary processes (`$R` log) | 109 | 1,744 (1,526 tests + 218 `--list`) | 16.0 |
 | All successful `execve` (C8) | 132 | 3,232 | 24.5 |
-| Sum of per-process wall (work) | 73.0 s | 137.2 s | 1.88 |
 | Largest test-process peak RSS | 24 MiB | 18 MiB | — |
+| Test-process CPU, serial (C12, `--test-threads 1`) | 72.1 s | 102.0 s | 1.41 |
+| Test-process CPU, four threads (C12) | 80.4 s | 147.4 s | 1.83 |
+| Whole-command CPU incl. cargo and nextest, serial (C12, `$T2`) | 86.8 s | 124.8 s | 1.44 |
+| Whole-command CPU, four threads (C12, `$T2`) | 81.6 s | 175.9 s | 2.16 |
+| Run wall, serial / four threads (C12) | 78.3 / 54.1 s | 122.2 / 45.2 s | — |
 
 nextest finishes sooner because it runs tests from different binaries in
-parallel, while cargo test runs binaries one after another. It does
-about 1.9× the work, almost all of it in three places (§4.3). Its wall
+parallel, while cargo test runs binaries one after another. Measured
+serially, nextest's test processes use 1.41× the CPU of cargo test's:
+29.9 s more, of which 29.4 s is the `pinyin-oracle` lib binary's corpus
+regeneration (§4.3). Every other binary differs by 0.6 s or less. At four
+threads the ratio is 1.83×, but the same nextest selection then takes
+45.4 s more CPU than it does serially, so the four-thread figure
+includes contention and overstates the work. The first revision of this
+document summed per-process wall time (73.0 s vs 137.2 s, 1.88×). That
+is not work under concurrency, and those figures are withdrawn. Its wall
 time has a floor: the longest single test,
 `oxpinyin-core::parser_acceptance over_limit_ambiguity_is_total_and_deterministic`,
 took 26.4 s in its own process. Doctests (C7) add 2.1 s to either
@@ -176,25 +219,26 @@ Per-test setup that already runs once per test under cargo test costs
 the same under nextest. The table lists only setups that cargo test
 shares across tests and nextest repeats.
 
-| Binary | Shared setup | Measured (C4 vs C5 proc-s) | Cells affected |
+| Binary | Shared setup | Measured, CPU s, cargo test vs nextest (C12, C13; serial, then four threads) | Cells affected |
 |---|---|---|---|
-| `pinyin-oracle` lib, `corpus::tests` | `static CORPUS: OnceLock` holding `corpus::generate()` (10,465 inputs); 9 of 10 tests use it, `generation_is_deterministic` generates once more. 2 generations under cargo test, 10 under nextest | whole lib binary 8.1 s vs 54.2 s; nine tests over 1 s each under nextest | **Now**: CI Linux and macOS nextest jobs. Not the cargo-test cells (Windows nightly, kc/tkrzw store-features, overflow lane, coverage) |
-| `pinyin-oracle::parity_corpus` | none shared. 3 of 4 tests call `generate()` | 4.6 s vs 13.0 s. The cost is per test under both runners; nextest runs the tests concurrently, so this binary's wall time stays the same | Now, all cells; the work cost is per test under both runners |
-| `pinyin-oracle::differential_live` | `static RUN: OnceLock<RunOutput>` in `run_corpus()`, used by 7 tests; `a_live_run_is_deterministic` calls `execute_corpus()` twice. 3 corpus runs under cargo test, 9 under nextest. `static ORACLE_LOCK` in `src/live.rs` serialises oracles within one process only | C11: 1 process, 24.1 proc-s vs 11 processes, 81.5 proc-s (3.4×). Run wall for the three oracle binaries: 24.4 s vs 26.2 s | **Only with `oracle-ffi`**. No workflow enables it (§7). Latent for any oracle-enabled nextest cell |
-| `pinyin-oracle::live_smoke`, `export_seam` | none shared. 8 of 9 `live_smoke` tests open their own oracle | under 0.2 s in either harness | Only with `oracle-ffi` |
+| `pinyin-oracle` lib, `corpus::tests` | `static CORPUS: OnceLock` holding `corpus::generate()` (10,465 inputs); 9 of 10 tests use it, `generation_is_deterministic` generates once more. 2 generations under cargo test, 10 under nextest | whole lib binary 11.3 s vs 40.7 s serial, 13.0 s vs 59.0 s at four threads. Serially, each nextest test that only reads `CORPUS` takes 3.4–4.2 s, about one generation; `generation_is_deterministic` takes 7.5 s | **Now**: CI Linux and macOS nextest jobs. Not the cargo-test cells (Windows nightly, kc/tkrzw store-features, overflow lane, coverage) |
+| `pinyin-oracle::parity_corpus` | none shared. 3 of 4 tests call `generate()` | 11.3 s vs 10.9 s serial, 13.7 s vs 16.1 s at four threads: the same work. The first revision's 4.6 s vs 13.0 s was summed wall time, which counted concurrency, not work | Now, all cells; no nextest multiplier |
+| `pinyin-oracle::differential_live` | `static RUN: OnceLock<RunOutput>` in `run_corpus()`, used by 7 tests; `a_live_run_is_deterministic` calls `execute_corpus()` twice. 3 corpus runs under cargo test, 9 under nextest. `static ORACLE_LOCK` in `src/live.rs` serialises oracles within one process only | C13: 26.9 s vs 69.6 s serial (2.6×), 22.8 s vs 80.1 s at four threads; 7.7–9.0 s per corpus run serially. Run wall for the three oracle binaries at four threads: 23.1 s vs 26.3 s | **Only with `oracle-ffi`**. No workflow enables it (§7). Latent for any oracle-enabled nextest cell |
+| `pinyin-oracle::live_smoke`, `export_seam` | none shared. 8 of 9 `live_smoke` tests open their own oracle | 0.2 s or less in either harness | Only with `oracle-ffi` |
 | `oxpinyin-engine` lib, `nbest` tests | `static DICTIONARY` holding an empty `FixtureDictionary` | negligible | — |
 
 Other per-process costs, all paid per test under both runners:
 
 - Fixture parsing: `graph_paths` parses `fixtures/w4/oracle-paths.txt`
-  (about 950 KB) in each of 5 tests (0.95 s vs 2.32 s);
-  `decode_differential` parses it in both tests (1.9 s vs 3.1 s);
+  (about 950 KB) in each of 5 tests (CPU 1.7 s vs 1.8 s serial);
+  `decode_differential` parses it in both tests (1.9 s vs 2.2 s);
   `differential_replay`, `taxonomy_replay` and `capture_replay` re-read
   `fixtures/foundation/f-a.txt` and `f-c.txt` (19 KB and 36 KB).
 - w3 fixture opens: `oxpinyin-capi::abi` (33 tests,
   `oxpinyin_init_for_fixtures`), `oxpinyin-runtime::assembly` (20,
   `Runtime::open`), `oxpinyin-facade::instance_laws` (16,
-  `ContextCore::open`). Each binary was under 0.4 s under both runners.
+  `ContextCore::open`). Each of these crates' test processes used 1.6 s
+  CPU or less in every C12 run.
 - Backend files: `oxpinyin-store::trait_laws`,
   `oxpinyin-user::{user_store_acid, user_store_semantics}`,
   `oxpinyin-runtime::{assembly, empty_user_dir}`, the oxpinyin-data
@@ -207,8 +251,9 @@ Other per-process costs, all paid per test under both runners:
   differentials run pin-built tools. No test runs `cargo`. C8 counts 132
   successful `execve` for the whole cargo test run.
 - Proptest: `parser_acceptance` (three properties, up to 4,096-byte
-  inputs) is the slowest binary in either harness: 32.8 s cargo test,
-  27.8 s nextest.
+  inputs) is the slowest binary in either harness: 20.5 s CPU under cargo
+  test and 20.3 s under nextest, serially (19.9 s and 29.5 s at four
+  threads).
 
 `--include-ignored` adds the ignored tests' own setups (§7). None of
 them shares a static, so none has a nextest multiplier. Under nextest
@@ -327,7 +372,7 @@ Invokers (grep of `.github/`, `tools/`, `justfile`, `docs/runbooks`,
 | oxpinyin-training::counter-differential | `rust_matches_committed_manifest`, `rust_matches_live_gen_ngram` | export; pin `gen_ngram` | M | intentional; model20 space |
 | oxpinyin-training::lambda-differential | `rust_lambda_matches_committed_manifest`, `rust_lambda_matches_live_estimate_interpolation` | export; pin tools | M | intentional; model20 space |
 | oxpinyin-training::eval-differential | `native_correction_rate_matches_pin_eval_correction_rate` | pin `eval_correction_rate` + data | M (when its data exist) | intentional; the nightly header excludes it |
-| oxpinyin-training::emitter-differential | `fixture_emit_roundtrips_through_parse_interpolation2`, `rust_matches_live_export_interpolation` | export; pin `export_interpolation` | **None** (not in `run-differentials.sh`) | **unintentional gap** |
+| oxpinyin-training::emitter-differential | `fixture_emit_roundtrips_through_parse_interpolation2`, `rust_matches_live_export_interpolation` | export; pin `export_interpolation` | Doc (`docs/runbooks/goldens-and-pins.md`, trainer manifests row; not in `run-differentials.sh`) | intentional |
 | oxpinyin-datagen::libpinyin_parity (kc/tkrzw) | `drop_in_output_matches_the_pin_built_data_dir` | pin data dir + model20 | D, N (tkrzw) | intentional |
 | oxpinyin-runtime::user_dir_round_trip | `a_pin_profile_loads_and_saves_back_in_place`, `oxpinyin_trains_and_saves_its_own_profile` | pin oracle | U (filters `a_pin_profile`, `oxpinyin_trains`); G | intentional, lane gate |
 | pinyin-oracle::sentence_surface_parity | three `sentence_surface_*` tests | export + model20 | G | intentional, measurement |
@@ -341,14 +386,31 @@ Invokers (grep of `.github/`, `tools/`, `justfile`, `docs/runbooks`,
 | oxpinyin-datagen::cross_backend | `the_compiled_backend_reads_back_through_the_runtime_reader` | model20 | **None**. The module doc says "the backend matrix's local recipe does", but no script under `tools/store/` or runbook passes `--include-ignored` for it | **unintentional gap; stale comment** |
 | oxpinyin-runtime::libpinyin_data_dir (kc/tkrzw) | `an_unmodified_libpinyin_data_directory_opens_and_decodes` | pin data dir | **None** (named in `docs/testing/upstream-test-coverage.md` only) | **unintentional gap**; its module doc still says local runs "skip" |
 
+Four groups have no invoker (G1, tracked in #1021). The first revision
+of this document also counted `emitter-differential` as one. The trainer
+manifests row of `docs/runbooks/goldens-and-pins.md` names the ignored
+emitter differential tests as the check for regenerating those
+manifests, so that row is Doc.
+
 Non-ignored tests that no workflow compiles, because they need
-`oracle-ffi`: `differential_live` (11), `live_smoke` (9), `export_seam`
-(1), plus the oracle-ffi parts of `candidate_structure` and
-`real_tables_integration`. Their documented invocation is
-`docs/testing/oracle-ffi-seam.md` (`cargo test -p pinyin-oracle
---features oracle-ffi`, which now also needs `--no-default-features
---features tkrzw`; §2 C11). This is a coverage question, not a deletion
-candidate.
+`oracle-ffi`: `differential_live` (11), `live_smoke` (9) and
+`export_seam` (1). Their documented invocation is
+`docs/testing/oracle-ffi-seam.md`: `cargo test -p pinyin-oracle
+--features oracle-ffi` with `PINYIN_ORACLE_PREFIX` at the tkrzw oracle.
+C14 ran it with the default (bdb) Rust features, and it passed.
+
+The three oracle-ffi freshness tests, `structure_fixture_is_fresh`,
+`oracle_candidates_fixture_is_fresh` and
+`sentence_surface_fixture_is_fresh`, are `#[ignore]`. That invocation
+does not select them; they are in the table above. Each needs the same
+environment plus the ignored filter, for example `cargo test -p
+pinyin-oracle --features oracle-ffi --test candidate_structure --
+--ignored structure_fixture_is_fresh`, and `--test
+real_tables_integration -- --ignored <name>` for the other two
+(`oracle_candidates_fixture_is_fresh` runs about 3 h, by its ignore
+reason).
+
+Both are coverage questions, not deletion candidates.
 
 ## 8. Duplication (task 5)
 
@@ -430,16 +492,16 @@ user-state persistence and store tests, and all 37 ignored tests.
 
 | ID | Candidate | Class | Benefit (measured) | Risk | Detection unchanged because |
 |---|---|---|---|---|---|
-| A1 | oxpinyin-core: six integration binaries into one (§5) | CONSOLIDATE | −49 MiB of test binaries, −3.3 s of test-unit build, −6.3 s clean `-p` build, −1.4 to −1.6 s per run; five fewer binaries to build, link and list | Test identities gain a module prefix. One file's edit recompiles all six modules (+0.1 s) | Same files, same `#[test]` items, same assertions and fixtures; listed test count unchanged (151 + 44) |
-| A2 | `pinyin-oracle` lib `corpus::tests`: 10 corpus generations per nextest run | CONSOLIDATE (fold the nine read-only checks over one generated corpus into fewer `#[test]` items) or leave as is | Up to about 46 of the 54 proc-s in the CI Linux and macOS nextest jobs; about 70% of nextest's 64 proc-s of extra work over cargo test | Coarser failure reports: one failing check hides the next unless the test collects failures. Test identities change | Same checks over the same generated corpus. `generation_is_deterministic` keeps its own second generation |
-| A3 | `pinyin-oracle::differential_live`: 9 corpus runs under nextest | Latent. Options: merge the seven `run_corpus()` readers, or a nextest test group for this binary | 81.5 → about 24 proc-s, and up to four concurrent pin contexts fewer, in any future oracle-enabled nextest cell | No current cell pays it. Changing it now changes nothing measured in CI | Same assertions on the same `RunOutput` |
+| A1 | oxpinyin-core: six integration binaries into one (§5) | CONSOLIDATE | −49 MiB of test binaries, −3.3 s of test-unit build, −6.3 s clean `-p` build, −1.4 to −1.6 s of run wall; five fewer binaries to build, link and list | Test identities gain a module prefix. One file's edit recompiles all six modules (+0.1 s) | Same files, same `#[test]` items, same assertions and fixtures; listed test count unchanged (151 + 44) |
+| A2 | `pinyin-oracle` lib `corpus::tests`: 10 corpus generations per nextest run | CONSOLIDATE (fold the nine read-only checks over one generated corpus into fewer `#[test]` items) or leave as is | 10 → 2 corpus generations per nextest run if `generation_is_deterministic` joins the merged item, 10 → 3 if it stays separate: about 29 s or 26 s of CPU measured serially, at about 3.7 s per generation (the lib binary's 40.7 s toward cargo test's 11.3 s, C12). That is 29.4 s of nextest's 29.9 s serial CPU excess over cargo test, in the CI Linux and macOS nextest jobs | Coarser failure reports: one failing check hides the next unless the test collects failures. Test identities change | Same checks over the same generated corpus. `generation_is_deterministic` keeps its own second generation |
+| A3 | `pinyin-oracle::differential_live`: 9 corpus runs under nextest | Latent. CONSOLIDATE option: merge the seven `run_corpus()` readers into fewer `#[test]` items. A nextest test group with `max-threads` only caps how many oracle contexts run at once. It saves no CPU, because nextest still runs each test in its own process and each process fills its own `OnceLock` | Merging alone: 9 → 3 corpus runs, about 69.6 → 27 s of CPU serially (C13), in any future oracle-enabled nextest cell. A test group alone: fewer concurrent pin contexts, no CPU saving | No current cell pays it. Changing it now changes nothing measured in CI | Same assertions on the same `RunOutput` |
 | A4 | 21 test-less bin harnesses and 6 cfg-empty integration binaries | RELOCATE (`test = false` on the bins only) or KEEP | About 3.3 s of build, about 150 MiB, 42 `--list` processes per nextest run | A future `#[test]` in such a bin would silently not run. The cfg-empty binaries must stay because other cells fill them | Nothing runs today |
 | A5 | `parser_acceptance` strict duplicates (§8.1, 5 tests), or the unit copies; `src/parser.rs::every_frozen_syllable_is_the_first_complete_path` | REMOVE (one copy each) | Milliseconds; maintenance only | The unit and integration copies sit at different seams (in-crate vs public API). Removing the unit copies keeps the public-seam check | Identical input, entry point and expected value remain in the other copy |
 | A6 | `scheme_parsers` `the_customized_slot_is_rejected_at_the_parser_seam`, `incomplete_zhuyin_keystrokes_consume_zero_either_way` | KEEP | — | — | Not strict subsets (§8.1) |
 | A7 | `capi`/`zhuyin-capi` `locale.rs` and `userdir_arg.rs` pairs | KEEP | — | — | Separate ABIs; `userdir_arg` expected values differ |
 | A8 | `parser_acceptance` `over_limit_ambiguity_is_total_and_deterministic` (26.4 s, sets nextest's wall floor) | KEEP | — | Moving it out of per-PR CI would weaken per-PR detection of no-panic (constitution §4) | — |
-| G1 | Ignored tests with no invoker (§7: `emitter-differential` ×2, `bdb_libpinyin_files` ×4, `reads_a_real_libpinyin_installation`, `cross_backend`, `libpinyin_data_dir`) | KEEP; coverage gap to assign | Restores selection of real-file BDB, cross-backend and emitter coverage | Needs inputs CI never has. Selecting them belongs in a runner such as `run-differentials.sh`, not in CI | — |
-| G2 | Stale module docs: `cross_backend.rs` ("the backend matrix's local recipe does"), `libpinyin_data_dir.rs` (local runs "skip") | doc fix | Accuracy | None | — |
+| G1 | Ignored tests with no invoker, four groups (§7: `bdb_libpinyin_files` ×4, `reads_a_real_libpinyin_installation`, `cross_backend`, `libpinyin_data_dir`). Tracked in #1021 | KEEP; coverage gap to assign | Restores selection of real-file BDB, real-installation and cross-backend coverage | Needs inputs CI never has. Selecting them belongs in a runner such as `run-differentials.sh`, not in CI | — |
+| G2 | Stale module docs: `cross_backend.rs` ("the backend matrix's local recipe does"), `libpinyin_data_dir.rs` (local runs "skip"), and the headers of `oxpinyin-training/tests/{counter,segment,lambda,eval}-differential.rs`, `oxpinyin-kmm/tests/differential.rs` and `oxpinyin-corpus/tests/differential.rs`, which say a missing prerequisite makes the test skip. An explicitly selected ignored test panics on a missing input (`docs/testing/README.md`). Tracked in #1021 | doc fix | Accuracy | None | — |
 
 ## 10. Go / no-go for the first implementation PR
 
@@ -467,3 +529,11 @@ coarser test identities, and A3 has no current cell), A4 (silent-skip
 risk), A5 (negligible benefit; last in priority) and any change to the
 capi mirror pairs. G1 and G2 are coverage and documentation follow-ups,
 not test-suite reductions. Each needs its own decision.
+
+What the CPU-time re-measurement changed (§4.1, C12–C13): A2's measured
+benefit falls from about 46 s of summed wall to about 26–29 s of CPU per
+nextest run. A3's benefit now comes from merging test items alone, and
+the nextest test group no longer counts as a saving. `parity_corpus` has
+no nextest multiplier. No classification and no go/no-go decision
+changed. A1's evidence is build time, binary bytes and run wall (§5),
+which the re-measurement does not touch.
