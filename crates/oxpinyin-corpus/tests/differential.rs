@@ -19,8 +19,11 @@
 //! ignored; explicitly selecting them fails on a missing input
 //! (`docs/testing/README.md`). With those inputs loaded, run from the root:
 //!
+//! The corpus package has no backend features; select tkrzw through its
+//! `oxpinyin-training` dev-dependency:
+//!
 //! ```text
-//! just heavy -- cargo test --locked -p oxpinyin-corpus --no-default-features --features tkrzw --test differential -- --include-ignored
+//! just heavy -- cargo test --locked -p oxpinyin-corpus --no-default-features --features oxpinyin-training/tkrzw --test differential -- --include-ignored
 //! ```
 //!
 //! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
