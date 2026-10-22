@@ -85,7 +85,12 @@ fn facade_total_is_zero(inst: &crate::state::CapiInstance) -> bool {
 /// initial (`n4` under `USE_TONE | PINYIN_INCOMPLETE`) aborts. The lookup is
 /// refused with `false` and one warning.
 fn refuse_toned_initial(inst: &crate::state::CapiInstance, name: &str) -> bool {
-    let toned = crate::aux_matrix::SharedMatrix::of(inst).is_some_and(|m| m.has_toned_initial());
+    refuse_toned_matrix(crate::aux_matrix::SharedMatrix::of(inst), name)
+}
+
+/// [`refuse_toned_initial`] over a matrix the caller already built.
+fn refuse_toned_matrix(matrix: Option<crate::aux_matrix::SharedMatrix>, name: &str) -> bool {
+    let toned = matrix.is_some_and(|m| m.has_toned_initial());
     if toned {
         crate::ffi::log_warning(&format!(
             "{name}: assertion 'CHEWING_ZERO_TONE == key.m_tone' failed"
@@ -103,8 +108,21 @@ fn refuse_toned_initial(inst: &crate::state::CapiInstance, name: &str) -> bool {
 /// the end-of-input lookup — and anything further out aborts: class (c),
 /// `false` and one warning. The leading-separator refusal keeps its silent
 /// `false`.
-fn validated_lookup_offset(inst: &crate::state::CapiInstance, offset: usize) -> Option<usize> {
-    match inst.core.validate_abi_lookup_offset(offset, false) {
+///
+/// `keys` is the active mode's key list when the caller holds one for the
+/// current input and option word; `None` reads it again.
+fn validated_lookup_offset(
+    inst: &crate::state::CapiInstance,
+    keys: Option<&[oxpinyin_facade::KeyAt]>,
+    offset: usize,
+) -> Option<usize> {
+    let validated = match keys {
+        Some(keys) => inst
+            .core
+            .validate_abi_lookup_offset_over(keys, offset, false),
+        None => inst.core.validate_abi_lookup_offset(offset, false),
+    };
+    match validated {
         Ok(normalized) => Some(normalized),
         Err(oxpinyin_engine::EngineError::LookupOffsetOutOfRange { offset, len })
             if offset == len + 1 =>
@@ -427,18 +445,34 @@ pub extern "C" fn pinyin_guess_candidates(
     // SAFETY: `instance` is non-null and was produced by
     // `pinyin_alloc_instance`.
     let inst = unsafe { instance_mut(instance) };
+    // One key list serves the keyless check, the toned-initial refusal and
+    // the offset validation below. Plain full pinyin rebuilds the scan
+    // matrix for every read of it, and the list is a function of the input
+    // and the session's option word, so it is read again only when
+    // `set_options` changes that word.
+    let keys = inst.core.mode_key_list();
     // The pin frees the candidates, then answers `false` for a matrix
     // without a step before it stores the sort word
-    // (`pinyin.cpp:2193-2198`); a keyless parse is such a matrix.
-    if !matrix_has_keys(inst) {
+    // (`pinyin.cpp:2193-2198`); a keyless parse is such a matrix. An
+    // unreadable key list is left to the session.
+    if keys
+        .as_ref()
+        .is_ok_and(|keys| keys.is_empty() || inst.core.mode_input().0.is_empty())
+    {
         inst.candidates.clear();
         return false;
     }
-    if refuse_toned_initial(inst, "pinyin_guess_candidates") {
+    let matrix = keys
+        .as_ref()
+        .ok()
+        .and_then(|keys| crate::aux_matrix::SharedMatrix::of_keys(inst, keys));
+    if refuse_toned_matrix(matrix, "pinyin_guess_candidates") {
         inst.candidates.clear();
         return false;
     }
-    if inst.core.session.set_options(inst.core.options()).is_err() {
+    let options = inst.core.options();
+    let keys = keys.ok().filter(|_| inst.core.session.options() == options);
+    if inst.core.session.set_options(options).is_err() {
         return false;
     }
     // §9: the whole sort word, re-stored per call exactly as the pin's
@@ -459,7 +493,7 @@ pub extern "C" fn pinyin_guess_candidates(
     if !inst.core.session.is_composing() {
         return false;
     }
-    let Some(normalized) = validated_lookup_offset(inst, offset) else {
+    let Some(normalized) = validated_lookup_offset(inst, keys.as_deref(), offset) else {
         inst.candidates.clear();
         return false;
     };
