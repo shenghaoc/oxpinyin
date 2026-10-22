@@ -862,12 +862,27 @@ impl AddonDictionary {
     /// An addon facade with neither DBM nor libraries.
     #[must_use]
     pub fn empty() -> Self {
+        Self::without_indexes(&TableConf::stock())
+    }
+
+    /// An addon facade that keeps `conf`'s `addon` rows and opens nothing:
+    /// no index DBM, no library. For a facade whose pin never opens the
+    /// addon indexes (`zhuyin.cpp`'s context has no addon facade); the rows
+    /// stay those `table.conf` configured rather than the stock ones.
+    #[must_use]
+    pub fn without_indexes(conf: &TableConf) -> Self {
         Self {
             pinyin: None,
             phrase: None,
             libraries: PhraseLibraries::empty(),
-            rows: addon_rows(&TableConf::stock()),
+            rows: addon_rows(conf),
         }
+    }
+
+    /// The configured `addon` row of sub-index `index`.
+    #[must_use]
+    pub fn row(&self, index: u8) -> Option<&TableRow> {
+        self.rows.get(usize::from(index))
     }
 
     /// Whether either addon index has an open DBM handle.

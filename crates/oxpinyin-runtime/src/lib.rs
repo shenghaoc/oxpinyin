@@ -2210,7 +2210,7 @@ impl Runtime {
                 UserConfLaw::Pinyin => {
                     AddonDictionary::open_with(system_dir, &conf).map_err(OpenError::Dict)?
                 }
-                UserConfLaw::Zhuyin => AddonDictionary::empty(),
+                UserConfLaw::Zhuyin => AddonDictionary::without_indexes(&conf),
             },
         }));
         let punct = match law {
@@ -2720,6 +2720,43 @@ mod tests {
                     .tokens_for_text("你鎄")
                     .contains(&PhraseToken::new(token))
             );
+        }
+
+        // A table.conf whose addon 4 names a non-stock chunk: the stock
+        // rows would say `art.bin`, so a facade built from them would
+        // lose the configuration.
+        let system = tempfile::tempdir().unwrap();
+        for entry in std::fs::read_dir(w3_dir()).unwrap() {
+            let path = entry.unwrap().path();
+            std::fs::copy(&path, system.path().join(path.file_name().unwrap())).unwrap();
+        }
+        let conf_path = system.path().join("table.conf");
+        let conf = std::fs::read_to_string(&conf_path).unwrap();
+        let edited = conf.replace(
+            "addon 4 art.table art.bin NULL DICTIONARY",
+            "addon 4 art.table art-local.bin NULL DICTIONARY",
+        );
+        assert_ne!(conf, edited, "vacuity guard: the fixture names art.bin");
+        std::fs::write(&conf_path, edited).unwrap();
+
+        for user_dir in [None, Some(user.path())] {
+            let zhuyin = Runtime::open_with_law(system.path(), user_dir, UserConfLaw::Zhuyin)
+                .expect("edited fixture opens");
+            let addons = zhuyin.dict.addons.read().unwrap();
+            assert!(
+                !addons.dict.has_open_indexes(),
+                "no addon index handle is open"
+            );
+            let row = addons.dict.row(4).expect("sub-index 4 is in range");
+            assert_eq!(
+                row.system,
+                Some(oxpinyin_data::table_info::FileName::from_bytes(
+                    b"art-local.bin"
+                )),
+                "the configured addon row is kept, not the stock one"
+            );
+            assert_eq!(Some(row), zhuyin.table_conf().addon_row(4));
+            assert!(!zhuyin.dict.punct.is_open());
         }
     }
 
