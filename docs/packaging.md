@@ -300,6 +300,17 @@ that rejects it fails the shipping link, it does not fall back. The option
 changes no layout; the bytes match a link without it whenever that link
 resolves every reference.
 
+Measurement tools have a stricter boundary: before reporting a shipping arm,
+`tools/packaging/function_order.py` verifies the actual unstripped linked
+object's policy prefix at the start of `.text`. It refuses fallback,
+inapplicable/missing policy functions, wrong order and stripped objects, with
+the arm and a linker diagnostic. A successful install or a stderr message
+cannot replace this check. Each arm prints its own result. Use
+`--function-order ARM/FACADE=POLICY` to name a historical policy, or an explicit
+`--unordered-arm ARM` for an intentional non-shipping experiment. See
+[the measurement inventory and refusal rules](runbooks/benches.md#verify-function-ordering-before-shipping-measurements).
+Package installation still falls back normally and gains no Python dependency.
+
 Use `--function-order POLICY` to override the relinker's measured default.
 For the full shipping path, set `OXPINYIN_FUNCTION_ORDER_POLICY` for one install invocation;
 `install.sh` passes its environment to the relinker. A policy header must
@@ -361,6 +372,7 @@ just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil \
   python -B -X lazy_imports=normal tools/bisection/contract-diff.py \
   bdb "$PIN" "$STAGE/lib/libpinyin.so.15.0.0" \
   --zhuyin-so "$STAGE/lib/libzhuyin.so.15.0.0" \
+  --unordered-arm ox --unordered-arm control \
   --teardown --teardown-stage provision --teardown-work-dir "$TEARDOWN"
 PROFILES="$TEARDOWN/profiles"
 DATA_ID=$(uv run --no-project --managed-python --python cpython@3.15.0+gil \
@@ -403,9 +415,14 @@ just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil \
   python -X lazy_imports=normal tools/measure-function-order.py \
   --subject "base=$BASE" --subject "pr=$PR" \
   --subject "control=$CONTROL" --subject "pin=$PIN" \
+  --unordered-arm base \
   --bisect "$BISECT" --system-dir "$DATA" --system-identity "$DATA_ID" \
   --profiles-dir "$PROFILES" --work-dir "$WORK" --cpu "$CPU" --rounds 20
 ```
+
+Here `base` is the intentionally unordered baseline; `pr` and its same-bytes
+`control` must pass their policies. A different comparison can retain the
+default ordered base expectation or name its own policy explicitly.
 
 ## Release artifacts (`release-packages.yml`)
 

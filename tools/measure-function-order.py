@@ -26,6 +26,7 @@ import subprocess
 
 
 GEN = runpy.run_path(str(Path(__file__).with_name("generate-function-order.py")))
+ORDER = runpy.run_path(str(Path(__file__).parent / 'packaging/function_order.py'))
 ARMS = ("base", "pr", "control", "pin")
 FACADES = ("pinyin", "zhuyin")
 PROFILES = ("phrases", "journals")
@@ -263,6 +264,7 @@ def toggle_profile(args, facade, library, user, toggle, env, sizes):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    ORDER['add_arguments'](parser)
     parser.add_argument("--subject", action="append", required=True, help="base|pr|control|pin=installed prefix")
     for name in ("bisect", "system-dir", "profiles-dir", "work-dir"):
         parser.add_argument("--" + name, type=Path, required=True)
@@ -275,6 +277,8 @@ def main():
     prefixes = GEN["pairs"](args.subject, set(ARMS), "--subject")
     libraries = {(arm, facade): (prefixes[arm] / "lib" / f"lib{facade}.so.15.0.0").resolve()
                  for arm in ARMS for facade in FACADES}
+    ORDER['check_arms'](args, {arm: {facade: libraries[arm, facade] for facade in FACADES}
+                               for arm in ARMS}, references=('pin',))
     hashes = {key: digest(lib) for key, lib in libraries.items()}
     if any(hashes["pr", f] != hashes["control", f] for f in FACADES):
         raise ValueError("same-bytes control differs from PR")

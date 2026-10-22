@@ -22,6 +22,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
+source "$SCRIPT_DIR/../packaging/function-order.sh"
+function_order_arguments "$@"
 
 OUT="${MATRIX_OUT:-/out}"
 CPU="${PERF_CPU:-0}"
@@ -61,6 +63,9 @@ D_LABEL="oxpinyin-kc"
 D_SO=$(find_so /opt/oxpinyin-kc/stage)
 D_DATA="/opt/oxpinyin-kc/data"
 D_LIB=$(dirname "$D_SO")
+function_order_measurement --library "C/pinyin=$C_SO" --library "D/pinyin=$D_SO" \
+    --reference-arm A --library "A/pinyin=$A_SO" \
+    --reference-arm B --library "B/pinyin=$B_SO" "${FUNCTION_ORDER_ARGS[@]}"
 
 LABELS=("$A_LABEL" "$B_LABEL" "$C_LABEL" "$D_LABEL")
 SOS=("$A_SO" "$B_SO" "$C_SO" "$D_SO")

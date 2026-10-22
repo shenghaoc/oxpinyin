@@ -16,6 +16,25 @@ import teardown as td
 
 
 class PureTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux measurement controller')
+    def test_unordered_subject_is_refused_before_building_or_running_worker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'lib').mkdir()
+            (root / 'lib/libpinyin.so').write_bytes(b'not an ordered ELF')
+            args = SimpleNamespace(cell='bdb', per_call=None, cases='', issue=[], family=[],
+                                   expect_parent=False, observations=None, plan_only=False,
+                                   axis_c_replacement=None, axis_c_mutation=None,
+                                   axis_c_snapshot_check=False, regenerate_sentence_ties=None,
+                                   teardown_work_dir=root, teardown_cases='empty',
+                                   teardown_cpu=min(os.sched_getaffinity(0)), teardown_facades='pinyin',
+                                   pinyin_so=root / 'lib/libpinyin.so', zhuyin_so=None, prefix=root)
+            with patch.object(td, 'filesystem', return_value='ext4'), \
+                    patch.object(td, 'build_worker') as worker:
+                with self.assertRaisesRegex(ValueError, 'function ordering: arm ox/pinyin refused'):
+                    td.run(args, None, None)
+                worker.assert_not_called()
+
     def test_existing_smaps_schema_and_requested_pss(self):
         text = '1000-2000 r--p 0000 00:00 0 /data/gb_char.bin\nRss: 8 kB\nPss: 4 kB\nAnonymous: 0 kB\n'
         old = td.SMAPS.parse_lines(text.splitlines())

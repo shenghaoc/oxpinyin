@@ -8,18 +8,24 @@ byte identity and performance still need the shipping gate.
 """
 
 from contextlib import contextmanager
+import argparse
+import io
+import json
 import os
 from pathlib import Path
 import shutil
+import runpy
 import signal
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 
 HERE = Path(__file__).resolve().parent
 LIBRARY = Path("/synthetic/libpinyin.so")
 HEADER = "oxpinyin-function-order-v1\tlibpinyin.so.15\n"
+ORDER = runpy.run_path(str(HERE / 'function_order.py'))
 
 
 def row(name, section, address="0000000000000000"):
@@ -161,6 +167,197 @@ class CapabilityTests(unittest.TestCase):
                                    ("LLD 20", " --section-ordering-file FILE")):
             with self.subTest(version=version):
                 self.assertNotEqual(self.supported(version, help_text).returncode, 0)
+
+
+class LinkedObjectTests(unittest.TestCase):
+    def test_policy_reader_reuses_the_packaging_validation(self):
+        with scratch() as work:
+            policy = work / 'policy'
+            command = ['bash', str(HERE / 'function-order.sh'), 'policy', str(policy), 'libpinyin.so.15']
+            policy.write_text(HEADER + 'init\ta\nsteady\tb\n')
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, 'a\nb\n')
+            for text in ('', HEADER, HEADER + 'init\ta\ninit\ta\n',
+                         HEADER + 'steady\tb\ninit\ta\n',
+                         HEADER.replace('pinyin', 'zhuyin') + 'init\ta\n'):
+                policy.write_text(text)
+                with self.subTest(text=text):
+                    self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
+
+    def check(self, entries, names=('a', 'b'), *, start='100', soname='libpinyin.so.15', raw=None):
+        records = ''.join(row(name, '.text', f'{address:016x}') for name, address in entries)
+        raw_records = ''.join(row(name, '.text', f'{address:016x}') for name, address in (raw or entries))
+
+        def command(arguments):
+            if arguments[0] == 'bash':
+                return '\n'.join(names) + '\n'
+            if arguments[0] == 'readelf':
+                if arguments[1] == '-dW':
+                    return f' (SONAME) Library soname: [{soname}]\n'
+                return f' [13] .text PROGBITS {start} 00100 100 00 AX 0 0 16\n'
+            return records if '--demangle=rust' in arguments else raw_records
+
+        with mock.patch.dict(ORDER['verify'].__globals__, command=command):
+            return ORDER['verify'](LIBRARY, Path('/policy'), 'pinyin')
+
+    def test_ordered_passes_and_unordered_fails(self):
+        self.assertEqual(self.check([('a', 0x100), ('b', 0x120), ('crt', 0x140)])['paths'], 2)
+        for entries in ([('crt', 0x100), ('a', 0x120), ('b', 0x140)],
+                        [('b', 0x100), ('a', 0x120)],
+                        [('a', 0x100), ('crt', 0x120), ('b', 0x140)]):
+            with self.subTest(entries=entries), self.assertRaises(ValueError):
+                self.check(entries)
+
+    def test_prefix_and_every_path_are_required(self):
+        with self.assertRaisesRegex(ValueError, 'start of .text'):
+            self.check([('a', 0x120), ('b', 0x140)])
+        with self.assertRaisesRegex(ValueError, 'missing.*b'):
+            self.check([('a', 0x100)])
+        with self.assertRaisesRegex(ValueError, 'stripped'):
+            self.check([])
+        with self.assertRaisesRegex(ValueError, 'SONAME'):
+            self.check([], soname='libzhuyin.so.15')
+
+    def test_clone_bodies_are_contiguous_and_aliases_can_share_an_address(self):
+        self.check([('a', 0x100), ('a', 0x110), ('b', 0x120), ('b', 0x130)])
+        self.check([('a', 0x100), ('b', 0x100)])
+        for entries in ([('a', 0x100), ('b', 0x120), ('a', 0x140)],
+                        [('a', 0x100), ('b', 0x120), ('crt', 0x130), ('b', 0x140)]):
+            with self.subTest(entries=entries), self.assertRaises(ValueError):
+                self.check(entries)
+
+    def test_instantiating_crates_are_distinct(self):
+        names = ('crate::f [instantiating crate: oxpinyin_store]',
+                 'crate::f [instantiating crate: oxpinyin_runtime]')
+        self.check([('crate::f', 0x100), ('crate::f', 0x120)], names,
+                   raw=[('_RfakeCsOLD_14oxpinyin_store', 0x100),
+                        ('_RfakeCsNEW_16oxpinyin_runtime', 0x120)])
+
+    def test_two_unrelated_bodies_cannot_masquerade_as_clones(self):
+        with self.assertRaisesRegex(ValueError, 'ambiguous policy path'):
+            self.check([('a', 0x100), ('a', 0x110), ('b', 0x120)],
+                       raw=[('body_one', 0x100), ('body_two', 0x110), ('b', 0x120)])
+
+    def test_each_arm_is_checked_and_result_is_reported(self):
+        arms = {arm: {facade: LIBRARY for facade in ('pinyin', 'zhuyin')}
+                for arm in ('base', 'pr', 'control', 'pin')}
+        args = argparse.Namespace(function_order=['base/pinyin=/old-policy'], unordered_arm=[])
+        with mock.patch.dict(ORDER['check_arms'].__globals__, verify=mock.Mock(return_value={}),
+                             linker_description=lambda *_: 'GNU ld 2.47'), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+            result = ORDER['check_arms'](args, arms, references=('pin',))
+            calls = ORDER['check_arms'].__globals__['verify'].call_args_list
+        self.assertEqual(len(calls), 6)
+        self.assertEqual(calls[0].args[1], Path('/old-policy'))
+        self.assertEqual(len(output.getvalue().splitlines()), 8)
+        self.assertEqual(result['control']['zhuyin']['function_order'], 'ordered')
+        self.assertEqual(result['pin']['pinyin']['function_order'], 'reference')
+
+    def test_refusal_names_arm_and_linker_without_trusting_linker_support(self):
+        with mock.patch.dict(ORDER['check_arms'].__globals__, verify=mock.Mock(side_effect=ValueError('unordered')),
+                             linker_description=lambda *_: 'GNU ld 2.47'), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+            with self.assertRaisesRegex(ValueError, 'arm pr/pinyin refused.*GNU ld 2.47'):
+                ORDER['check_arms'](argparse.Namespace(), {'pr': {'pinyin': LIBRARY}})
+        self.assertEqual(json.loads(output.getvalue())['function_order'], 'refused')
+
+    def test_one_refusal_still_reports_the_other_arms_before_stopping(self):
+        arms = {arm: {'pinyin': LIBRARY} for arm in ('base', 'pr', 'control', 'pin')}
+        verify = mock.Mock(side_effect=[ValueError('unordered'), {}, ValueError('fallback')])
+        with mock.patch.dict(ORDER['check_arms'].__globals__, verify=verify,
+                             linker_description=lambda *_: 'GNU ld 2.42'), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+            with self.assertRaisesRegex(ValueError, 'arm base/pinyin refused') as failure:
+                ORDER['check_arms'](argparse.Namespace(), arms, references=('pin',))
+        self.assertEqual(verify.call_count, 3)
+        rows = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual([row['function_order'] for row in rows],
+                         ['refused', 'ordered', 'refused', 'reference'])
+        self.assertIn('arm control/pinyin refused', str(failure.exception))
+
+    def test_unordered_experiment_must_be_explicit_and_cannot_override_a_policy(self):
+        args = argparse.Namespace(unordered_arm=['base'], function_order=[])
+        with mock.patch.dict(ORDER['check_arms'].__globals__, verify=mock.Mock(side_effect=AssertionError),
+                             linker_description=lambda *_: 'GNU ld 2.42'), \
+                mock.patch('sys.stdout', new_callable=io.StringIO):
+            result = ORDER['check_arms'](args, {'base': {'pinyin': LIBRARY}})
+        self.assertEqual(result['base']['pinyin']['function_order'], 'intentional-unordered')
+        for flags in (['base/pinyin=/policy'], ['typo/pinyin=/policy']):
+            args.function_order = flags
+            with self.assertRaises(ValueError):
+                ORDER['check_arms'](args, {'base': {'pinyin': LIBRARY}})
+        args = argparse.Namespace(unordered_arm=['typo'], function_order=[])
+        with self.assertRaisesRegex(ValueError, 'unique non-reference'):
+            ORDER['check_arms'](args, {'base': {'pinyin': LIBRARY}})
+
+
+class MeasurementCallerTests(unittest.TestCase):
+    def test_input_library_tools_refuse_before_creating_output_or_starting_a_worker(self):
+        with scratch() as work:
+            library = work / 'unordered.so'
+            library.write_bytes(b'not an ordered ELF')
+            scripts = [('run-rss-diag.sh', 'S', ['--lp', str(library), '--ox', str(library),
+                                               '--data', str(work), '--out', str(work / 'output')]),
+                       ('run-system-import-profile.sh', 'ox', [str(library), str(library), str(work),
+                                                              str(work / 'output'), '--cold-open'])]
+            for script, arm, arguments in scripts:
+                with self.subTest(script=script):
+                    result = subprocess.run(['bash', str(HERE.parent / 'bisection' / script), *arguments],
+                                            capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(f'arm {arm}/pinyin refused', result.stderr)
+                    self.assertFalse((work / 'output').exists())
+
+    def test_snapshot_checks_before_stripping_or_building_the_fixture(self):
+        with scratch() as work:
+            script = HERE.parent / 'perf-gate/snapshot.sh'
+            command = r'''
+# Satisfy snapshot's tool-presence preflight on hosts without GNU binutils.
+# The invalid ELF must be refused before any build/strip command can run.
+cargo() { echo 'unexpected cargo' >&2; exit 99; }
+gcc() { echo 'unexpected gcc' >&2; exit 99; }
+readelf() { echo 'unexpected shell readelf' >&2; exit 99; }
+nm() { echo 'unexpected shell nm' >&2; exit 99; }
+tools/packaging/install.sh() {
+  for arg; do case "$arg" in --destdir=*) stage=${arg#*=};; esac; done
+  mkdir -p "$stage/usr/lib"
+  printf 'not an ordered ELF' > "$stage/usr/lib/libpinyin.so.15.0.0"
+}
+strip() { echo 'unexpected strip' >&2; exit 99; }
+source "$0"
+'''
+            result = subprocess.run(['bash', '-c', command, str(script), '--backend', 'kyotocabinet',
+                                     '--out', str(work / 'snapshot.json')], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('arm shipped/pinyin refused', result.stderr)
+            self.assertNotIn('unexpected strip', result.stderr)
+            self.assertNotIn('building the alloc-count', result.stdout)
+            self.assertFalse((work / 'snapshot.json').exists())
+
+    def test_legacy_runner_guards_pass_every_measured_arm_to_the_shared_check(self):
+        expected = {'run-perf-baseline.sh': ('ox', 'pin'), 'run-perf-matrix.sh': ('C', 'D', 'A', 'B'),
+                    'run-perf-same-data.sh': ('C', 'D', 'A', 'B'),
+                    'run-shipped-check.sh': ('Z', 'S', 'L'),
+                    'run-tree-recipe-control.sh': ('X', 'Y', 'Z', 'S', 'L')}
+        for script, arms in expected.items():
+            text = (HERE.parent / 'bisection' / script).read_text()
+            start = text.index('function_order_measurement ')
+            guard = text[start:].split('\n\n', 1)[0]
+            environment = {**os.environ}
+            for variable in ('CAPI_SO', 'ORACLE_SO', 'A_SO', 'B_SO', 'C_SO', 'D_SO',
+                             'L_SO', 'X_SO', 'Y_SO', 'Z_SO', 'S_SO'):
+                environment[variable] = str(LIBRARY)
+            environment.update(OXPINYIN_TKRZW_SO=str(LIBRARY), OXPINYIN_KC_SO=str(LIBRARY))
+            shell = 'source "$1"; FUNCTION_ORDER_ARGS=(); function_order_measurement() { printf "%s\\n" "$@"; }; ' + guard
+            result = subprocess.run(['bash', '-c', shell, 'guard-test', str(HERE / 'function-order.sh')],
+                                    capture_output=True, text=True, env=environment)
+            with self.subTest(script=script):
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for arm in arms:
+                    self.assertIn(f'{arm}/pinyin={LIBRARY}', result.stdout)
+                self.assertLess(start, text.index('SPEED_JSONL=' if script in ('run-perf-baseline.sh', 'run-perf-matrix.sh', 'run-perf-same-data.sh')
+                                                 else 'for n in $SIZES'))
 
 
 class RelinkTests(unittest.TestCase):

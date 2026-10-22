@@ -41,6 +41,8 @@
 
 set -euo pipefail
 HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
+source "$(dirname "$HEAVY_RUNNER")/../packaging/function-order.sh"
+function_order_arguments "$@"
 
 SRC_OLD=${SRC_OLD:-/src-old}
 SRC_CURR=${SRC_CURR:-/src-curr}
@@ -115,6 +117,9 @@ build_cargo "$SRC_OLD" "$X_SO"
 build_cargo "$SRC_CURR" "$Y_SO"
 build_cinstall "$SRC_CURR" "$Z_SO" tkrzw
 build_cinstall "$SRC_CURR" "$S_SO" tkrzw,shipped
+function_order_measurement --library "X/pinyin=$X_SO" --library "Y/pinyin=$Y_SO" \
+    --library "Z/pinyin=$Z_SO" --library "S/pinyin=$S_SO" \
+    --reference-arm L --library "L/pinyin=$L_SO" "${FUNCTION_ORDER_ARGS[@]}"
 
 {
     echo "=== build identity ==="

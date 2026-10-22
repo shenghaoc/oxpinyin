@@ -10,6 +10,7 @@ import io
 from pathlib import Path
 import re
 import runpy
+import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
@@ -33,6 +34,28 @@ def profile(body, total):
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_unordered_arm_is_refused_before_any_measurement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'lib').mkdir()
+            for facade in ('pinyin', 'zhuyin'):
+                (root / 'lib' / f'lib{facade}.so.15.0.0').write_bytes(b'not an ordered ELF')
+            for profile in ('phrases', 'journals'):
+                (root / profile).mkdir()
+                (root / profile / 'profile.manifest').write_text('')
+            argv = ['measure-function-order.py']
+            for arm in ('base', 'pr', 'control', 'pin'):
+                argv += ['--subject', f'{arm}={root}']
+            for option in ('bisect', 'system-dir', 'profiles-dir', 'work-dir'):
+                argv += ['--' + option, str(root)]
+            argv += ['--cpu', '0', '--system-identity', hashlib.sha256(b'').hexdigest()]
+            with mock.patch.object(sys, 'argv', argv), \
+                    mock.patch.dict(MEASUREMENT['main'].__globals__, run=lambda *a: (b'ext4', b'')), \
+                    mock.patch.dict(MEASUREMENT['GEN'], manifest=lambda *a: '',
+                                    collection_scratch=mock.Mock(side_effect=AssertionError('measurement started'))):
+                with self.assertRaisesRegex(ValueError, 'function ordering: arm base/pinyin refused'):
+                    MEASUREMENT['main']()
+
     def setUp(self):
         # These are 4 KiB Linux ELF fixtures, independent of the test host's
         # native page size (macOS arm64 uses 16 KiB).

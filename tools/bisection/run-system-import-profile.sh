@@ -3,15 +3,25 @@
 # pages for import/save or cold open. Profiling output stays in memory;
 # the new work directory contains only the driver and fresh user profiles.
 # Usage: <pin-so> <ox-so> <system-data-dir> <new-work-dir> [iterations|--cold-open]
+#        [--function-order ARM/FACADE=POLICY] [--unordered-arm ARM]
 set -euo pipefail
 pin=$(realpath "${1:?pin-so}")
 ox=$(realpath "${2:?ox-so}")
 data=$(realpath "${3:?system-data-dir}")
 out=${4:?new-output-dir}
-iterations=${5:-1000}
+shift 4
+iterations=1000
+if (( $# )) && [[ "$1" != --function-order && "$1" != --unordered-arm ]]; then
+    iterations=$1
+    shift
+fi
+root=$(cd "$(dirname "$0")" && pwd)
+source "$root/../packaging/function-order.sh"
+function_order_arguments "$@"
+function_order_measurement --library "ox/pinyin=$ox" \
+    --reference-arm pin --library "pin/pinyin=$pin" "${FUNCTION_ORDER_ARGS[@]}"
 mkdir "$out"
 out=$(realpath "$out")
-root=$(cd "$(dirname "$0")" && pwd)
 cc -std=gnu11 -Wall -Wextra -Werror -O2 "$root/system-import-profile.c" -ldl -o "$out/driver"
 uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$pin" "$ox" "$data" "$out" "$iterations" <<'PY'
 from pathlib import Path

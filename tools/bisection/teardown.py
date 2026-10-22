@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import random
 import re
+import runpy
 import selectors
 import shutil
 import statistics
@@ -50,6 +51,7 @@ def sibling(name):
 
 SMAPS = sibling('rss-smaps')
 STARTUP_PROFILE = sibling('startup_profile')
+FUNCTION_ORDER = runpy.run_path(str(ROOT / 'tools/packaging/function_order.py'))
 
 
 def digest_bytes(value):
@@ -554,6 +556,8 @@ def run(args, driver, parser):
             subjects[subject][facade] = target
             provenance[subject][facade] = dict(path=str(target), sha256=digest_bytes(target.read_bytes()),
                                               bytes=target.stat().st_size, filesystem=library_fs)
+    FUNCTION_ORDER['check_arms'](args, {side: {facade: paths[facade] for facade in facades}
+                                      for side, paths in subjects.items()}, references=('pin',))
     worker, worker_identity = build_worker(work)
     data = args.prefix / 'lib/libpinyin/data'
     campaign = Campaign(worker, data, work, cpu, driver)

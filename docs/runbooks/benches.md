@@ -7,6 +7,74 @@ sizing it, and a sampled profile of the keystroke cycle. Numbers are only
 comparable within one container on one host; every published snapshot
 (`docs/perf/`, `docs/findings/perf-*.md`) names both.
 
+## Verify function ordering before shipping measurements
+
+Packaging can fall back to the original layout on unsupported linkers or an
+inapplicable policy. Every shipping arm below runs the shared
+`tools/packaging/function_order.py` check before measurements. It reads the
+linked ELF's SONAME, `.text` start and address-sorted function symbols. Every
+policy path must resolve to one clone family, its bodies must be contiguous,
+and the groups must form the policy prefix at the start of `.text`. Missing,
+ambiguous, out-of-order or stripped symbols refuse the arm. Check the
+unstripped linked object before stripping a private copy for size reporting.
+
+Each arm/facade prints a JSON result: `ordered`, `refused`,
+`intentional-unordered`, or `reference` for the pinned upstream library. A
+refusal names the arm, policy and current compiler driver's linker probe.
+That probe is diagnostic; it does not identify a prebuilt object's linker or
+substitute for inspecting the object. GNU BFD ld >=2.43 and an applicable
+policy are needed to build the ordered shipping path. A successful install
+and its stderr do not establish that ordering applied.
+
+The measurement inventory (arm names are command-line names):
+
+| Tool | Shipping expectations and build route |
+| --- | --- |
+| `tools/measure-function-order.py` | Both facades of `base`, `pr`, `control`; supplied installed prefixes. `pin` is the reference. |
+| `tools/bisection/contract-diff.py --teardown` / `teardown.py` | Selected facades of `ox` and its byte-identical `control`; supplied libraries, copied then checked before building a worker. `pin` is the reference. This includes the provision stage. |
+| `tools/bisection/contract-diff.py --per-call` | Selected facades of `subject` and optional `base`; supplied libraries. `pin` is the reference. Ordinary behavioral differentials have no shipping-layout requirement. |
+| `tools/perf-gate/snapshot.sh` | `shipped/pinyin`; calls `install.sh`, hence `relink-versioned.sh`, then checks before strip. The separate `alloc-count` artifact is a fixture. This is the only measurement caller of those packaging scripts in this tree. |
+| `tools/bisection/run-rss-diag.sh` | `S/pinyin`; supplied shipping library. `L` is the reference. |
+| `tools/bisection/run-system-import-profile.sh` | `ox/pinyin`; supplied library for the import/save and cold-open profiles. `pin` is the reference. Ordering options follow the optional workload argument. |
+| `tools/bisection/run-perf-baseline.sh` | `ox/pinyin`; reusable installed stage or bare `cargo cinstall` stage. `pin` is the reference. |
+| `tools/bisection/run-perf-matrix.sh` | `C/pinyin`, `D/pinyin`; installed container libraries. `A`, `B` are references. |
+| `tools/bisection/run-perf-same-data.sh` | `C/pinyin`, `D/pinyin`; supplied libraries or legacy `cargo build` fixtures. `A`, `B` are references. |
+| `tools/bisection/run-shipped-check.sh` | `Z/pinyin`, `S/pinyin`; legacy bare `cargo cinstall` comparison, whose `S` description claims the product. `L` is the reference. |
+| `tools/bisection/run-tree-recipe-control.sh` | `X/pinyin`, `Y/pinyin`, `Z/pinyin`, `S/pinyin`; historical cargo-build/cinstall recipe comparison. `L` is the reference. |
+
+Legacy recipes do not gain the shipping relink merely by enabling `shipped`.
+They now refuse unordered artifacts by default. To reproduce an intentional
+original-layout experiment, pass `--unordered-arm ARM` for each such arm,
+for example `--unordered-arm C --unordered-arm D` for the same-data runner's
+cargo-build fixtures. Those rows are explicitly non-shipping experiments.
+Do not report their numbers as shipping figures. Environment variables and
+swallowed build warnings are not opt-outs.
+
+All these tools accept repeated `--function-order ARM/FACADE=POLICY` overrides
+for matched historical or experimental policies, for example
+`--function-order base/pinyin=/path/to/base/libpinyin.order`. Defaults are the
+current checked-in facade policies, independently of build environment
+overrides. Name `base` explicitly with `--unordered-arm base` when the
+function-order campaign compares an intentionally unordered baseline. Its
+same-bytes control is still checked as its own arm; specify that arm's policy
+or unordered experiment too. Unknown/repeated names or conflicting
+declarations fail. A check can run alone without starting a campaign:
+
+```sh
+uv run --no-project --managed-python --python cpython@3.15.0+gil \
+  python -X lazy_imports=normal tools/packaging/function_order.py \
+  --arm subject --library "pinyin=$SUBJECT_PREFIX/lib/libpinyin.so.15.0.0"
+```
+
+`tools/generate-function-order.py` intentionally profiles unordered inputs to
+derive policies; its output is a policy, not shipping performance figures.
+`tools/profile/run-w8-cycle.sh` uses the thin-LTO `profiling` recipe and makes
+no shipping-performance claim. `tools/workers/startup.c` is a native worker;
+there is no startup measurement controller in this tree. Packaging's
+`release-stage.sh` and `check-pc-metadata.sh` call `install.sh` for release or
+behavioral smoke checks, not measurements. Their ordinary fallback stays
+unchanged.
+
 ## Native teardown workload
 
 `contract-diff.py --teardown` adds one workload to the existing driver. It

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Optional function-layout plumbing. Requires only the relinker's existing
 # Bash, GNU nm, awk and sort. Python/uv are regeneration tools, not link inputs.
-# Commands: inventory ARCHIVE; resolve ARCHIVE POLICY SONAME
+# Commands: inventory ARCHIVE; resolve ARCHIVE POLICY SONAME; policy POLICY SONAME
 # Source this file to use the compiler capability check and resolver.
 
 function_order_inventory() {
@@ -37,6 +37,29 @@ function_order_supported() {
   [[ "$help" =~ --section-ordering-file([=[:space:]]|$) ]]
 }
 
+# Measurement callers share the linked-object verifier. This is deliberately
+# outside the package link path: Python/uv remain measurement prerequisites.
+function_order_measurement() {
+  local here
+  here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  uv run --no-project --managed-python --python cpython@3.15.0+gil \
+    python -X lazy_imports=normal "$here/function_order.py" "$@"
+}
+
+# Legacy runners have no other command-line options. Keep their opt-outs
+# explicit arguments, never an inherited environment variable.
+function_order_arguments() {
+  FUNCTION_ORDER_ARGS=()
+  while (( $# )); do
+    case "$1" in
+      --function-order|--unordered-arm)
+        [[ $# -ge 2 && -n "$2" ]] || return 2
+        FUNCTION_ORDER_ARGS+=("$1" "$2"); shift 2 ;;
+      *) echo "unknown function-order argument: $1" >&2; return 2 ;;
+    esac
+  done
+}
+
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   set -euo pipefail
   case "${1:-}" in
@@ -48,6 +71,11 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
       [[ $# -eq 4 ]] || exit 2
       function_order_resolve "$2" "$3" "$4"
       ;;
-    *) echo "usage: $0 inventory ARCHIVE | resolve ARCHIVE POLICY SONAME" >&2; exit 2 ;;
+    policy)
+      [[ $# -eq 3 ]] || exit 2
+      LC_ALL=C awk -v mode=policy -v policy="$2" -v soname="$3" \
+        -f "$(dirname -- "${BASH_SOURCE[0]}")/function-order.awk" "$2"
+      ;;
+    *) echo "usage: $0 inventory ARCHIVE | resolve ARCHIVE POLICY SONAME | policy POLICY SONAME" >&2; exit 2 ;;
   esac
 fi

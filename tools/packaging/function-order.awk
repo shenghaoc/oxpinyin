@@ -123,6 +123,13 @@ END {
         exit bad ? 1 : 0
     if (count == 0)
         fail("policy has no functions")
+    if (mode == "policy") {
+        if (bad)
+            exit 1
+        for (i = 1; i <= count; i++)
+            print names[i]
+        exit 0
+    }
     for (i = 1; i <= count; i++) {
         name = names[i]
         if (!(name in resolved))

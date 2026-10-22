@@ -38,6 +38,8 @@ HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+source "$REPO_ROOT/tools/packaging/function-order.sh"
+function_order_arguments "$@"
 
 ORACLE_PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"
 WORK="${OXPINYIN_PERF_WORK:-$REPO_ROOT/target/perf-baseline}"
@@ -98,6 +100,8 @@ echo "pkg-config oxpinyin cflags: $CAPI_CFLAGS"
 echo "pkg-config oxpinyin libs:   $CAPI_LIBS"
 echo "installed capi .so:         $CAPI_SO"
 [ -f "$CAPI_SO" ] || { echo "fatal: $CAPI_SO not found" >&2; exit 1; }
+function_order_measurement --library "ox/pinyin=$CAPI_SO" \
+    --reference-arm pin --library "pin/pinyin=$ORACLE_SO" "${FUNCTION_ORDER_ARGS[@]}"
 
 # ── Installed data tree (cargo-c ships no data; packager must add it) ────
 
