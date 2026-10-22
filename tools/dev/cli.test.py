@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 from tools.dev import cli, host, registry, slot
 
 IMPLEMENTATION = 'legacy:tools/bisection/run-bisect.sh'
+COMMAND = ['bash', '{root}/tools/bisection/run-bisect.sh']
 
 
 class CliTests(unittest.TestCase):
@@ -175,7 +176,7 @@ class CliTests(unittest.TestCase):
 
     def test_registry_load_rejects_numeric_issue_labels(self):
         for issues in ([541], ['541', 542], 541):
-            rows = [dict(name='fixture', command=['unused'], cells=['bdb'], implementation=IMPLEMENTATION, issues=issues)]
+            rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=issues)]
             with self.subTest(issues=issues), mock.patch.object(
                     Path, 'read_text', return_value=json.dumps(rows)):
                 with self.assertRaisesRegex(registry.RegistryError,
@@ -184,7 +185,7 @@ class CliTests(unittest.TestCase):
         self.launch.assert_not_called()
 
     def test_registry_commands_report_numeric_issue_labels_without_tracebacks(self):
-        rows = [dict(name='fixture', command=['unused'], cells=['bdb'], implementation=IMPLEMENTATION, issues=[541])]
+        rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=[541])]
         for command, selection in (('list', []), ('plan', ['--runners', 'fixture'])):
             with self.subTest(command=command), \
                     mock.patch.object(Path, 'read_text', return_value=json.dumps(rows)), \
@@ -197,7 +198,7 @@ class CliTests(unittest.TestCase):
         self.launch.assert_not_called()
 
     def test_registry_numeric_string_issue_labels_remain_selectable(self):
-        rows = [dict(name='fixture', command=['unused'], cells=['bdb'], implementation=IMPLEMENTATION, issues=['541', 'Row 33'])]
+        rows = [dict(name='fixture', command=COMMAND, cells=['bdb'], implementation=IMPLEMENTATION, issues=['541', 'Row 33'])]
         with mock.patch.object(Path, 'read_text', return_value=json.dumps(rows)):
             loaded = registry.load()
         self.assertEqual(loaded, rows)

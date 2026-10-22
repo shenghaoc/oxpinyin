@@ -39,13 +39,47 @@ class ImplementationTests(unittest.TestCase):
                 self.assertIn(form, registry.IMPLEMENTATION_FORMS)
                 self.assertTrue((ROOT / target).is_file())
 
-    def test_the_three_forms_load(self):
-        for implementation in ('legacy:tools/bisection/run-bisect.sh',
-                               'instrument:tools/bisection/run-perf-baseline.sh',
-                               'python:tools.dev.registry', 'python:tools.dev'):
-            with self.subTest(implementation=implementation):
-                self.assertEqual(self.load([row(implementation=implementation)])[0]['implementation'],
-                                 implementation)
+    def test_the_three_forms_load_when_the_command_runs_them(self):
+        python = ['uv', 'run', 'python', '-X', 'lazy_imports=normal', '-m']
+        for implementation, command in (
+                ('legacy:tools/bisection/run-bisect.sh', ['bash', '{root}/tools/bisection/run-bisect.sh']),
+                ('legacy:tools/bisection/run-bisect.sh', ['bash', './tools/bisection/run-bisect.sh']),
+                ('legacy:tools/bisection/run-bisect.sh',
+                 ['bash', (ROOT / 'tools/bisection/run-bisect.sh').as_posix()]),
+                ('legacy:./tools/bisection/run-bisect.sh', ['{root}/tools/bisection/run-bisect.sh', 'x']),
+                ('instrument:tools/bisection/run-perf-baseline.sh',
+                 ['bash', '{root}/tools/bisection/run-perf-baseline.sh']),
+                ('python:tools.dev.registry', [*python, 'tools.dev.registry', 'list']),
+                ('python:tools.dev', [*python, 'tools.dev'])):
+            with self.subTest(implementation=implementation, command=command):
+                loaded = self.load([row(implementation=implementation) | {'command': command}])
+                self.assertEqual(loaded[0]['implementation'], implementation)
+
+    def test_path_not_in_the_command(self):
+        for implementation, command in (
+                ('legacy:tools/bisection/run-bisect.sh', ['bash', '{root}/tools/bisection/run-w11-diff.sh']),
+                ('legacy:tools/bisection/run-bisect.sh', ['bash', '{root}/tools/bisection/run-bisect.sh.bak']),
+                ('legacy:tools/bisection/run-bisect.sh', ['bash', '-c', '{root}/tools/bisection/run-bisect.sh x']),
+                ('instrument:tools/bisection/run-perf-baseline.sh',
+                 ['bash', '{prefix}/tools/bisection/run-perf-baseline.sh'])):
+            with self.subTest(implementation=implementation, command=command):
+                with self.assertRaises(registry.RegistryError) as raised:
+                    self.load([row(implementation=implementation) | {'command': command}])
+                self.assertEqual(str(raised.exception),
+                                 f"registry row 'fixture' implementation {implementation!r} does not "
+                                 f'match its command {json.dumps(command)}')
+
+    def test_python_module_not_run_with_dash_m(self):
+        implementation = 'python:tools.dev.registry'
+        for command in (['python', 'tools/dev/registry.py'], ['python', 'tools.dev.registry'],
+                        ['python', '-m', 'tools.dev'], ['python', '-m'],
+                        ['python', '-m', 'tools.dev.registry.extra'], ['python', '-mtools.dev.registry']):
+            with self.subTest(command=command):
+                with self.assertRaises(registry.RegistryError) as raised:
+                    self.load([row(implementation=implementation) | {'command': command}])
+                self.assertEqual(str(raised.exception),
+                                 f"registry row 'fixture' implementation {implementation!r} does not "
+                                 f'match its command {json.dumps(command)}')
 
     def test_missing_field(self):
         for implementation in (None, '', 7, ['legacy:tools/bisection/run-bisect.sh']):
