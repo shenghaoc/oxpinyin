@@ -189,13 +189,13 @@ class PureTests(unittest.TestCase):
         self.assertEqual(sum(kind == 'live-heap-control' for kind, _ in printed), 14)
         self.assertEqual(sum(kind == 'live-heap' for kind, _ in printed), 3)
 
-    def test_ox_and_control_library_paths_have_equal_length(self):
+    def test_subject_control_and_pin_library_paths_have_equal_length(self):
         names = td.LIBRARY_DIRECTORIES
         self.assertEqual(set(names), {'ox', 'control', 'pin'})
         self.assertEqual(len(set(names.values())), 3)
         work = Path('/work/libraries')
         lengths = {side: len(bytes(work / name / 'libpinyin.so')) for side, name in names.items()}
-        self.assertEqual(lengths['ox'], lengths['control'])
+        self.assertEqual(len(set(lengths.values())), 1, lengths)
 
     def test_recovered_rows_and_global_distinctness(self):
         rows = td.modest_rows()
