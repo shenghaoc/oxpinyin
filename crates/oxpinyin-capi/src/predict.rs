@@ -169,9 +169,8 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
             text,
             text_ptr: std::ptr::null(),
             kind: CandidateKind::Phrase,
-            candidate_type: item.candidate_type,
+            type_tag: item.candidate_type.tag(),
             nbest_index: 0,
-            consumed_bytes: 0,
             token: Some(oxpinyin_core::PhraseToken::new(item.token)),
             // Predicted candidates are chosen via
             // `pinyin_choose_predicted_candidate`, never the anchored-select
@@ -327,9 +326,8 @@ fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
             text,
             text_ptr: std::ptr::null(),
             kind: CandidateKind::Phrase,
-            candidate_type: lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE,
+            type_tag: lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE.tag(),
             nbest_index: 0,
-            consumed_bytes: 0,
             token: None,
             source_index: u32::try_from(inst.candidates.len()).unwrap_or(u32::MAX),
         });

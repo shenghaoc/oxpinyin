@@ -131,6 +131,28 @@ pub enum lookup_candidate_type_t {
     PREDICTED_PUNCTUATION_CANDIDATE = 8,
 }
 
+impl lookup_candidate_type_t {
+    /// The one byte a snapshot row stores the type in: the discriminant.
+    pub(crate) const fn tag(self) -> u8 {
+        self as u8
+    }
+
+    /// The type [`Self::tag`] stored as `tag`. A row stores only tags of
+    /// real types; any other byte reads as `NORMAL_CANDIDATE`.
+    pub(crate) const fn from_tag(tag: u8) -> Self {
+        match tag {
+            1 => Self::NBEST_MATCH_CANDIDATE,
+            3 => Self::ZOMBIE_CANDIDATE,
+            4 => Self::PREDICTED_BIGRAM_CANDIDATE,
+            5 => Self::PREDICTED_PREFIX_CANDIDATE,
+            6 => Self::ADDON_CANDIDATE,
+            7 => Self::LONGER_CANDIDATE,
+            8 => Self::PREDICTED_PUNCTUATION_CANDIDATE,
+            _ => Self::NORMAL_CANDIDATE,
+        }
+    }
+}
+
 /// `sort_option_t` flag bits from `pinyin.h`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
