@@ -421,6 +421,10 @@ impl GenericUserStore<DefaultStore> {
             }
             persistence::LoadedProfile::default()
         };
+        // Only the profile read lends libraries from the facade. A wiped,
+        // unread or transient profile lends none, and the session keeps
+        // no hold on the facade either way.
+        originals.clear_source();
         // A non-null-`MODIFY_HEADER` token is the pin's
         // `assert(token == null_token)` during the library load's `merge`
         // (`phrase_index_logger.h:202`): the session open fails here, with
@@ -3316,6 +3320,86 @@ mod in_place_replay_tests {
             mapping_fields(&profile.chunk, "Anonymous:"),
             [("r--p".to_owned(), "0".to_owned())]
         );
+    }
+
+    /// A session open lends what it replays and then lets the facade go,
+    /// whichever way the profile was read (#1039 review).
+    fn assert_released(facade: &std::sync::Arc<PhraseLibraries>, before: usize, store: &UserStore) {
+        assert!(!store.holds_system_source());
+        assert_eq!(std::sync::Arc::strong_count(facade), before);
+    }
+
+    #[test]
+    fn a_transient_session_keeps_no_hold_on_the_facade() {
+        let profile = Profile::new(&records());
+        let facade = profile.facade();
+        let before = std::sync::Arc::strong_count(&facade);
+        let store = UserStore::open_transient(
+            crate::persistence::system_originals(&facade, UserFileLayout::stock()),
+            versions(),
+            UserConfLaw::Pinyin,
+        )
+        .expect("open");
+        assert_released(&facade, before, &store);
+    }
+
+    #[test]
+    fn a_checked_non_conform_session_keeps_no_hold_on_the_facade() {
+        let profile = Profile::new(&records());
+        std::fs::remove_file(profile.user().join("user.conf")).expect("marker");
+        let facade = profile.facade();
+        let before = std::sync::Arc::strong_count(&facade);
+        let originals = crate::persistence::system_originals(&facade, UserFileLayout::stock());
+        let check = UserStore::check_profile(
+            &profile.user(),
+            &versions(),
+            originals.layout(),
+            UserConfLaw::Pinyin,
+        )
+        .expect("check");
+        let store = UserStore::open_libpinyin_checked(
+            &profile.user(),
+            originals,
+            versions(),
+            UserConfLaw::Pinyin,
+            check,
+        )
+        .expect("open");
+        assert_released(&facade, before, &store);
+    }
+
+    #[test]
+    fn a_judged_non_conform_session_keeps_no_hold_on_the_facade() {
+        let profile = Profile::new(&records());
+        std::fs::remove_file(profile.user().join("user.conf")).expect("marker");
+        let facade = profile.facade();
+        let before = std::sync::Arc::strong_count(&facade);
+        let store = UserStore::open_libpinyin(
+            &profile.user(),
+            crate::persistence::system_originals(&facade, UserFileLayout::stock()),
+            versions(),
+            UserConfLaw::Pinyin,
+        )
+        .expect("open");
+        assert_released(&facade, before, &store);
+    }
+
+    #[test]
+    fn a_failed_open_keeps_no_hold_on_the_facade() {
+        let profile = Profile::new(&records());
+        let facade = profile.facade();
+        let before = std::sync::Arc::strong_count(&facade);
+        // The marker write fails under a directory that does not exist.
+        let missing = profile.user().join("missing").join("user");
+        let opened = UserStore::open_libpinyin(
+            &missing,
+            crate::persistence::system_originals(&facade, UserFileLayout::stock()),
+            versions(),
+            UserConfLaw::Pinyin,
+        );
+        assert!(opened.is_err());
+        drop(opened);
+        assert_eq!(std::sync::Arc::strong_count(&facade), before);
     }
 
     #[test]

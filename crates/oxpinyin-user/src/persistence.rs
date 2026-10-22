@@ -306,6 +306,18 @@ impl SystemOriginals {
         }
     }
 
+    /// Drops the hold on the facade the libraries were lent from: a
+    /// session open has lent all it will once the profile is read.
+    pub(crate) fn clear_source(&mut self) {
+        self.source = None;
+    }
+
+    /// Whether this set still holds its facade.
+    #[cfg(test)]
+    pub(crate) const fn has_source(&self) -> bool {
+        self.source.is_some()
+    }
+
     /// The user dir's file layout.
     #[must_use]
     pub const fn layout(&self) -> &UserFileLayout {
@@ -1504,7 +1516,7 @@ fn load_session_logs(
         keep_replay(loaded, nibble, total, overrides);
     }
     // The facade has lent what it had to: the session keeps no hold on it.
-    originals.source = None;
+    originals.clear_source();
 }
 
 /// `SubPhraseIndex::merge` into `library`'s own mapping, finished while
