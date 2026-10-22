@@ -683,6 +683,23 @@ impl Cursor<'_> {
     /// Moves as `seek` says and reads the row there; `None` at the end
     /// of the database.
     pub(crate) fn get(&mut self, seek: Seek<'_>) -> Result<Option<Row<'_>>, StoreError> {
+        self.read(seek, true)
+    }
+
+    /// [`Self::get`] for the key alone. The value `DBT` asks for zero
+    /// bytes at offset zero (`DB_DBT_PARTIAL`), so libdb copies none of it
+    /// (`src/db/db_ret.c:106-114`) and reads no overflow page for it
+    /// (`src/db/db_overflow.c:120-123`). The cursor moves exactly as
+    /// [`Self::get`] would. The pin's key walk, `Bigram::get_all_items`
+    /// (074a2219 `ngram_bdb.cpp:194-206`), copies every value it never
+    /// reads.
+    pub(crate) fn key(&mut self, seek: Seek<'_>) -> Result<Option<&[u8]>, StoreError> {
+        Ok(self.read(seek, false)?.map(|row| row.key))
+    }
+
+    /// The body of [`Self::get`] and [`Self::key`]: `value` says whether
+    /// the value is copied.
+    fn read(&mut self, seek: Seek<'_>, value: bool) -> Result<Option<Row<'_>>, StoreError> {
         let _guard = self.db.lock();
         let get = method!(self.handle, get, "DBC->get")?;
         let flags = match seek {
@@ -710,7 +727,11 @@ impl Cursor<'_> {
                 _ => 0,
             };
             let mut key_dbt = usermem_dbt_with_size(&mut self.key_buf, input_key_len);
-            let mut value_dbt = usermem_dbt(&mut self.value_buf);
+            let mut value_dbt = if value {
+                usermem_dbt(&mut self.value_buf)
+            } else {
+                no_value_dbt()
+            };
             // SAFETY: the cursor handle is live; both `DBT`s point at
             // this cursor's own buffers, which outlive the call, and any
             // seek slice `AtOrAfter` carries was re-copied into
@@ -825,6 +846,15 @@ fn grow(buf: &mut Vec<u8>, reported: u32) {
     if needed > buf.len() {
         buf.resize(needed, 0);
     }
+}
+
+/// An output `DBT` that takes none of the record: a zero-length partial
+/// read into an empty caller buffer, which libdb allows to be null when it
+/// copies nothing (`src/db/db_ret.c:125-130`).
+fn no_value_dbt() -> sys::DBT {
+    let mut dbt = empty_dbt();
+    dbt.flags = sys::DB_DBT_USERMEM | sys::DB_DBT_PARTIAL;
+    dbt
 }
 
 /// A zeroed `DBT`, which is how libdb wants an output parameter.
@@ -977,6 +1007,51 @@ mod tests {
                 assert_eq!(db.lock().cursor_buffers.is_some(), len <= INITIAL_BUFFER);
             }
         }
+    }
+
+    #[test]
+    fn key_walks_visit_the_row_walk_order_without_reading_values() {
+        struct TempPath(std::path::PathBuf);
+        impl Drop for TempPath {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        // File-backed, as in the tests above, for the overflow record.
+        let path = TempPath(
+            std::env::temp_dir().join(format!("oxpinyin-key-walk-{}.db", std::process::id())),
+        );
+        let db = SharedDb::open(&path.0, DB_HASH, false, true, USER_FILE_MODE).unwrap();
+        for (index, len) in [0, 1, INITIAL_BUFFER, INITIAL_BUFFER + 1, 397_899]
+            .into_iter()
+            .enumerate()
+        {
+            let value: Vec<u8> = (0..len).map(|byte| (byte % 251) as u8).collect();
+            db.put(&u32::try_from(index).unwrap().to_le_bytes(), &value)
+                .unwrap();
+        }
+        let mut rows = Vec::new();
+        let mut cursor = db.cursor().unwrap();
+        let mut seek = Seek::First;
+        while let Some(row) = cursor.get(seek).unwrap() {
+            rows.push(row.key.to_vec());
+            seek = Seek::Next;
+        }
+        drop(cursor);
+        let mut keys = Vec::new();
+        let mut cursor = db.cursor().unwrap();
+        let mut seek = Seek::First;
+        while let Some(key) = cursor.key(seek).unwrap() {
+            keys.push(key.to_vec());
+            seek = Seek::Next;
+        }
+        assert_eq!(keys, rows);
+        assert_eq!(keys.len(), 5);
+        // No value was copied, so the buffers never grew past one page
+        // and go back to the handle.
+        assert!(cursor.value_buf.len() <= INITIAL_BUFFER);
+        drop(cursor);
+        assert!(db.lock().cursor_buffers.is_some());
     }
 
     #[test]
