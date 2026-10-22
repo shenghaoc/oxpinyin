@@ -123,3 +123,77 @@ status=0
 unset -f mv
 [[ $status == 75 && $(cat "$OXPINYIN_ORACLE_ENV") == "$before" && ! -e $OXPINYIN_ORACLE_ENV.new ]] || fail 'failed rename changed the environment or left staging behind'
 printf 'PASS: failed rename leaves the old file intact and cleans staging\n'
+
+# Model setup's tkrzw decision with the real probe helpers. Cached utilities
+# are healthy; the synthetic host can be broken or healthy. No provisioning.
+(
+	cache_a=$tkrzw_prefix
+	cache_b=$work/cache-b/tkrzw
+	host_prefix=$work/host-tkrzw
+	for prefix in "$cache_a" "$cache_b" "$host_prefix"; do
+		mkdir -p "$prefix/bin" "$prefix/lib"
+		if [[ $prefix == "$host_prefix" ]]; then
+			printf '#!/bin/sh\n[ "$LD_LIBRARY_PATH" = "$SYNTHETIC_HOST_LIB" ] || exit 2\nexit "${SYNTHETIC_HOST_STATUS:-1}"\n' >"$prefix/bin/tkrzw_dbm_util"
+		else
+			printf '#!/bin/sh\nexit 0\n' >"$prefix/bin/tkrzw_dbm_util"
+		fi
+		chmod +x "$prefix/bin/tkrzw_dbm_util"
+	done
+	probe=$work/tkrzw-probe.sh
+	printf '#!/bin/sh\ntkrzw_dbm_util\n' >"$probe"
+	ldd() {
+		local so=${1%/bin/tkrzw_dbm_util}/lib/libtkrzw.so.1
+		[[ $1 != "$host_prefix/bin/tkrzw_dbm_util" ]] || so=${SYNTHETIC_HOST_SO:-$so}
+		printf 'libtkrzw.so.1 => %s (0x1234)\n' "$so"
+	}
+	base_path=$host_prefix/bin:$PATH
+	PATH=$base_path
+	LD_LIBRARY_PATH=$host_prefix/lib
+	export PINYIN_ORACLE_DBM=tkrzw SYNTHETIC_HOST_STATUS=1 SYNTHETIC_HOST_LIB=$host_prefix/lib
+	source "$OXPINYIN_ORACLE_ENV"
+	[[ $PATH == "$cache_a/bin:"* && $LD_LIBRARY_PATH == "$cache_a/lib:"* ]] || fail 'cache A was not inherited'
+	legacy_env=$work/legacy-a.env
+	sed '/^export OXPINYIN_TKRZW_PREFIXES=/d' "$OXPINYIN_ORACLE_ENV" >"$legacy_env"
+	tkrzw_prefix=$cache_b
+	PATH=$cache_b/bin:$PATH
+	LD_LIBRARY_PATH=$cache_b/lib:$LD_LIBRARY_PATH
+	tkrzw_local=0
+	if probe_host; then :; else tkrzw_local=1; fi
+	[[ $tkrzw_local == 1 ]] || fail 'cache A was mistaken for the host when provisioning cache B'
+	printf 'PASS: retained cache A and current cache B cannot pass the host probe\n'
+	(
+		unset OXPINYIN_TKRZW_PREFIXES
+		OXPINYIN_ORACLE_ENV=$legacy_env
+		PATH=$base_path
+		LD_LIBRARY_PATH=$host_prefix/lib
+		source "$OXPINYIN_ORACLE_ENV"
+		if probe_host; then fail 'legacy environment cache A was mistaken for the host'; fi
+	)
+	printf 'PASS: legacy environment files also exclude their cached runtime\n'
+
+	oracle_root=$work/cache-b/oracle
+	mkdir -p "$oracle_root"
+	cp -a "$old_root/tkrzw" "$oracle_root/tkrzw"
+	cells=(tkrzw)
+	write_oracle_env
+	(
+		PATH=$base_path
+		LD_LIBRARY_PATH=$host_prefix/lib
+		source "$OXPINYIN_ORACLE_ENV"
+		[[ $PATH == "$cache_b/bin:"* && $LD_LIBRARY_PATH == "$cache_b/lib:"* ]] || fail 'cache B runtime paths missing in a fresh shell'
+	)
+	printf 'PASS: cache B environment restores its runtime in a fresh shell\n'
+
+	# Sourcing another environment must keep the earlier cache excluded too.
+	source "$OXPINYIN_ORACLE_ENV"
+	tkrzw_prefix=$work/cache-c/tkrzw
+	export SYNTHETIC_HOST_STATUS=0
+	message=$(probe_host) || fail 'healthy real host library was rejected'
+	[[ $message == "host check: $host_prefix/bin/tkrzw_dbm_util resolves libtkrzw.so.1 to $host_prefix/lib/libtkrzw.so.1" ]] || fail "$message"
+	printf 'PASS: all sourced caches excluded while a healthy host still passes\n'
+
+	# Even a host executable can resolve a cached library through its RPATH.
+	SYNTHETIC_HOST_SO=$cache_a/lib/libtkrzw.so.1
+	if probe_host; then fail 'host executable resolved cache A but was accepted'; fi
+	printf 'PASS: a cached library cannot count as host through executable RPATH\n'
+)

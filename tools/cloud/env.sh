@@ -1,5 +1,54 @@
 #!/usr/bin/env bash
-# Shared oracle verification and environment-file writer for setup.sh.
+# Shared oracle verification, host probes and environment writer for setup.sh.
+
+# tkrzw_so FILE: where ldd, in the caller's environment, resolves FILE's
+# libtkrzw.so.1 (empty if it does not).
+tkrzw_so() {
+	ldd "$1" 2>/dev/null | sed -n 's/^[[:space:]]*libtkrzw\.so\.1 => \(\/[^ ]*\).*/\1/p'
+}
+
+# tkrzw_env_prefix [FILE]: the cache runtime named by an environment file.
+# Reading its generated LD_LIBRARY_PATH assignment also recognizes files
+# written before they recorded OXPINYIN_TKRZW_PREFIXES.
+tkrzw_env_prefix() (
+	local env_file=${1:-${OXPINYIN_ORACLE_ENV:-$HOME/.oxpinyin-oracle.env}} lib
+	[[ -f $env_file ]] || return 0
+	LD_LIBRARY_PATH=
+	source <(sed -n '/^export LD_LIBRARY_PATH=/p' "$env_file")
+	lib=${LD_LIBRARY_PATH%%:*}
+	[[ $lib == */lib ]] || return 0
+	printf '%s' "${lib%/lib}"
+)
+
+# without_prefix LIST: remove this run's cache and every cache runtime
+# added by sourced environment files. Cached builds are never the host.
+without_prefix() {
+	local entry prefix out=() excluded=() IFS=:
+	read -r -a excluded <<<"${OXPINYIN_TKRZW_PREFIXES:-}"
+	excluded+=("$tkrzw_prefix" "$(tkrzw_env_prefix)")
+	for entry in $1; do
+		for prefix in "${excluded[@]}"; do
+			[[ -n $prefix ]] || continue
+			if [[ $entry == "$prefix" || $entry == "$prefix"/* ]]; then continue 2; fi
+		done
+		out+=("$entry")
+	done
+	printf '%s' "${out[*]}"
+}
+
+# probe_host: the probe against the host's own libtkrzw, and an ldd check
+# that the probe's tkrzw_dbm_util resolved libtkrzw.so.1 outside the cache.
+probe_host() {
+	local host_path host_ld util so
+	host_path=$(without_prefix "$PATH")
+	host_ld=$(without_prefix "${LD_LIBRARY_PATH:-}")
+	env PATH="$host_path" LD_LIBRARY_PATH="$host_ld" sh "$probe" || return 1
+	util=$(PATH=$host_path command -v tkrzw_dbm_util) || return 1
+	so=$(LD_LIBRARY_PATH=$host_ld tkrzw_so "$util")
+	printf 'host check: %s resolves libtkrzw.so.1 to %s\n' "$util" "${so:-nothing}"
+	[[ -n $so && $(without_prefix "$so") == "$so" ]]
+}
+
 # libs_ok DBM [PREFIX]: both libraries hash to the recorded recipe values.
 libs_ok() {
 	local dbm=$1 prefix=${2:-$oracle_root/$1} lib want
@@ -56,12 +105,23 @@ write_oracle_env() (
 	fi
 	default_cell=${env_cells[0]}
 	for dbm in "${env_cells[@]}"; do [[ $dbm == bdb ]] && default_cell=bdb; done
+	runtime_prefix=
+	if ((tkrzw_local)); then
+		runtime_prefix=$tkrzw_prefix
+	elif [[ -n $kept_tkrzw_paths ]]; then
+		runtime_prefix=$(tkrzw_env_prefix "$env_file")
+	fi
 	trap 'rm -f "$env_file.new"' EXIT
 	{
 		printf '# Written by tools/cloud/setup.sh; source it, do not edit it.\n'
 		printf '_oxp_provisioned=%q\n' " ${env_cells[*]} "
 		printf 'export PINYIN_MODEL_DIR=%q\n' "$model_cache/extracted"
 		printf 'export PATH=%s\n' "$(printf '%q' "$uv_dir"):\$PATH"
+		if [[ -n $runtime_prefix ]]; then
+			# Accumulate at source time: a shell can load several environment
+			# files before setup probes a different cache's host library.
+			printf 'export OXPINYIN_TKRZW_PREFIXES=%s\n' "$(printf '%q' "$runtime_prefix")\${OXPINYIN_TKRZW_PREFIXES:+:\$OXPINYIN_TKRZW_PREFIXES}"
+		fi
 		if ((tkrzw_local)); then
 			printf 'export PKG_CONFIG_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib/pkgconfig")\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
 			printf 'export LD_LIBRARY_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib")\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
