@@ -248,6 +248,16 @@ the two user-directory cases and dies of SIGSEGV in the three
 system-directory cases. The subject follows the file system in all five,
 and the harness probes it, so all five MATCH on both.
 
+`user-gram-unsorted-export` and `user-gram-duplicate-export`
+(`strjoinv_over_read` in `contract-diff.py`, register row 1) take a
+different pin path depending on heap layout: the pin's bigram export joins
+an unterminated `GPtrArray`. Where the pin completes, the subject's rows are
+compared exactly and an equal result MATCHes. Where the pin dies of SIGSEGV
+after the same stderr as the subject, and the subject exits normally with a
+result, the case MATCHes without comparing rows. Any other pin signal, or
+different stderr, is INVALID. The kc cell has faulted on a host provisioned
+with `tools/cloud/setup.sh`; bdb and tkrzw completed there.
+
 ### Contract differentials in a macOS-hosted Linux container
 
 Keep the contract harness's scratch directory and generated user directories

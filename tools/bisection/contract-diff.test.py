@@ -380,7 +380,7 @@ class DirChunkTests(unittest.TestCase):
 
 class StrjoinvOverReadTests(unittest.TestCase):
     """`strjoinv_over_read`: register row 1's unterminated join is held to
-    the class (b) fault, or compared with the over-read's tail allowed."""
+    the class (b) fault, or compared exactly where the pin completes."""
 
     NAMES = ('user-gram-unsorted-export', 'user-gram-duplicate-export')
     STDERR = 'open SCRATCH/user-X/user.conf failed.\n'
@@ -424,15 +424,16 @@ class StrjoinvOverReadTests(unittest.TestCase):
     def test_exact_completion_matches(self):
         self.assertEqual(self.decide(self.completed(), self.completed()), ['MATCH', 'MATCH'])
 
-    def test_over_read_tail_is_accepted(self):
-        for reading in ("ni'da'da'\x01junk", "ni'junk'da'da", "ni'a'b'da'da'c", "ni'da'da'"):
-            with self.subTest(reading=reading):
-                self.assertEqual(self.decide(self.completed(reading), self.completed()), ['MATCH', 'MATCH'])
-
-    def test_wrong_reading_differs(self):
-        for reading in ("ni'da", "ni'da'du", "nii'da'da", "ni'da'dajunk", "x'ni'da'da", "ni'dada", None):
+    def test_completed_reading_is_compared_exactly(self):
+        for reading in ("ni'da'da'junk", "ni'junk'da'da", "ni'da'da'", "ni'da", "ni'da'du", "nii'da'da",
+                        "ni'dada", None):
             with self.subTest(reading=reading):
                 self.assertEqual(self.decide(self.completed(reading), self.completed()), ['DIFFER', 'DIFFER'])
+
+    def test_dropped_trailing_syllable_differs(self):
+        pin, subject = self.completed(), self.completed()
+        pin['result']['steps'][1][2], subject['result']['steps'][1][2] = "ni'hao'ma", "ni'hao"
+        self.assertEqual(self.decide(pin, subject), ['DIFFER', 'DIFFER'])
 
     def test_other_fields_stay_exact(self):
         for change in (lambda s: s[0].__setitem__(1, '你龘'), lambda s: s[0].__setitem__(3, 91),
