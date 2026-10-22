@@ -22,23 +22,30 @@ then), and two backends at once is refused.
 | backend | Debian/Ubuntu packages | macOS (Homebrew) |
 | --- | --- | --- |
 | tkrzw | `libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev libclang-dev pkg-config` | `tkrzw`, and `export LIBRARY_PATH="$(brew --prefix)/lib"` (see [setup](setup.md#macos): `cargo test` links lz4/zstd from there, `cargo check`/`clippy` never link and are not evidence) |
-| kyotocabinet | `libkyotocabinet-dev libclang-dev pkg-config` | `kyoto-cabinet`; the keg ships `kyotocabinet.pc`, pkg-config resolves it, and the store suite passes (verified on 1.2.80, 2026-09-13). The old "the KC dylib does not dlopen on macOS" note does not reproduce on today's bottled formula — the dylib dlopens by absolute path, and the backend links at link time, so bare-name lookup never enters the picture |
+| kyotocabinet | `libkyotocabinet-dev g++ pkg-config` | `kyoto-cabinet`; the keg ships `kyotocabinet.pc`, pkg-config resolves it, and the store suite passes (verified on 1.2.80, 2026-09-13). The old "the KC dylib does not dlopen on macOS" note does not reproduce on today's bottled formula — the dylib dlopens by absolute path, and the backend links at link time, so bare-name lookup never enters the picture |
 | bdb (the default) | `libdb-dev` (resolves to `libdb5.3-dev`) `libclang-dev pkg-config`; Fedora: `libdb-devel` | `berkeley-db@5` — 5.3.28 under the Sleepycat license, the surveyed version; the default `berkeley-db` formula is 18.1 AGPL-3.0-only and stays unusable. The keg ships no `.pc`, so point the overrides at it: `OXPINYIN_BDB_INCLUDE_DIR="$(brew --prefix)/opt/berkeley-db@5/include"` and `OXPINYIN_BDB_LIB_DIR="$(brew --prefix)/opt/berkeley-db@5/lib"` (the build's rpath flag lets the test binaries find the dylib). Clippy and the full suite pass with the same counts as Linux — 36/0/4 (verified 2026-09-13) |
 
-Every backend binds a **system** C library through its own header.
-oxpinyin vendors none of them: there
-is no copy of Kyoto Cabinet, of tkrzw or of Berkeley DB
-compiled into any oxpinyin artifact, so each library is the one the
-distribution ships and patches. A build with the development package missing fails at
-`build.rs` with a message naming the package; it never falls back to
-downloading or compiling its own copy.
+Every backend binds a **system** library through its own headers.
+oxpinyin vendors none of them: there is no copy of Kyoto Cabinet's,
+tkrzw's or Berkeley DB's source in the tree, and each linked library is
+the one the distribution ships and patches. Kyoto Cabinet's database
+classes are header code (`kchashdb.h`, `kcplantdb.h`, `kcstashdb.h`,
+`kcprotodb.h`), so its shim
+(`crates/oxpinyin-store/src/kyotocabinet/shim.cc`) compiles them from
+the installed headers into the shipping library, as libpinyin's own
+build does; `libkyotocabinet` supplies the rest. A build with the
+development package missing fails at `build.rs` with a message naming
+the package; it never falls back to downloading or compiling its own
+copy.
 
 ### Packaging: runtime versus build dependencies
 
 For a downstream Linux package built with a C-library backend (tkrzw,
-Kyoto Cabinet, Berkeley DB), `libclang` and `pkg-config` are build-time
+Berkeley DB), `libclang` and `pkg-config` are build-time
 only: `pkg-config` locates the library and `bindgen` reads its header to
-generate the declarations. Neither is linked, and neither appears in the
+generate the declarations. Kyoto Cabinet needs a C++ compiler and
+`pkg-config` instead: `cxx-build` compiles the shim against the
+headers `pkg-config` names. None of these is linked, and none appears in the
 runtime dependency set — each backend splits into its own
 `lib*-dev` / `lib*` pair (`libdb5.3` / `libdb5.3-dev` on Debian,
 `libdb` / `libdb-devel` on Fedora).
@@ -51,7 +58,8 @@ the `OXPINYIN_BDB_INCLUDE_DIR` / `OXPINYIN_BDB_LIB_DIR` pair.
 `OXPINYIN_BDB_LIB_NAME` names the library when it is not `db` (vcpkg
 installs `libdb48.lib`). `BINDGEN_EXTRA_CLANG_ARGS`
 reaches bindgen as usual. All are tracked by `build.rs`, so changing one
-regenerates the declarations instead of leaving a stale set behind.
+regenerates the declarations, or recompiles the Kyoto Cabinet shim,
+instead of leaving a stale set behind.
 The generated bindings are not committed, deliberately — they cross the
 ABI by layout rather than as opaque handles, and generating them from
 the installed header keeps the declarations and the linked `.so` in

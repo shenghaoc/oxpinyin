@@ -98,7 +98,11 @@ done
 # leaves C-library references in the staticlib that the shared-object link
 # must resolve; prefer pkg-config (it drags the backend's own dependencies,
 # e.g. tkrzw's -llzma) and fall back to the plain -l name build.rs uses when
-# pkg-config cannot help (libdb ships no .pc on Debian).
+# pkg-config cannot help (libdb ships no .pc on Debian). Kyoto Cabinet's
+# backend is a C++ shim (and the cxx crate's support code), so its link adds
+# -lstdc++ explicitly: the .pc's dynamic --libs names only -lkyotocabinet,
+# and without it the shim's libstdc++ references stay undefined with no
+# DT_NEEDED entry to resolve them.
 BACKEND="bdb"
 for feature in $(echo "$FEATURES" | tr ',' ' '); do
   case "$feature" in
@@ -109,7 +113,7 @@ done
 backend_libs() {
   case "$1" in
     tkrzw)         pkg-config --libs tkrzw 2>/dev/null || echo -ltkrzw ;;
-    kyotocabinet)  pkg-config --libs kyotocabinet 2>/dev/null || echo -lkyotocabinet ;;
+    kyotocabinet)  echo "$(pkg-config --libs kyotocabinet 2>/dev/null || echo -lkyotocabinet) -lstdc++" ;;
     bdb)           echo -ldb ;;
   esac
 }
