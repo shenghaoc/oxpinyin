@@ -219,13 +219,13 @@ fn fake() {} }
 
     def test_contract_matcher_rejects_equal_fatal_failures(self):
         module = gcov_measure.contract_module()
-        spec = dict(abort=module.NO_ABORT, either=False, crash=None, stderr=False)
+        spec = module.case_spec()
         fatal = dict(exit=-6, result=None)
         self.assertFalse(module.matches(spec, fatal, fatal))
 
     def test_measurement_observer_preserves_abort_and_crash_arms(self):
         module = gcov_measure.contract_module()
-        spec = dict(abort=False, either=True, crash={'ret': False}, stderr=True, userdir=False)
+        spec = module.case_spec(abort=False, either=True, crash={'ret': False})
         reference = dict(exit=-6, result=None, stderr='reference assert pathname')
         measurement = dict(exit=-6, result=None, stderr='measurement assert pathname')
         self.assertTrue(gcov_measure.same_reference(module, spec, reference, measurement))

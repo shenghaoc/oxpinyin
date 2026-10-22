@@ -114,9 +114,18 @@ NO_ABORT = object()
 WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
-def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
-         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
-         abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=()):
+def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
+              cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
+              abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(), *, fn=None):
+    """Build a complete spec from the defaults shared by registration and tests."""
+    return dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
+                crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
+                dir_chunk=dir_chunk, stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
+                both_abort=both_abort, strjoinv_over_read=strjoinv_over_read,
+                issues=tuple(normal_tag(tag) for tag in issues))
+
+
+def case(name, *args, **kwargs):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -183,13 +192,11 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     case's family for `--family` is the text before the first `/` of its
     ID, when it has one."""
     def register(fn):
-        assert not either or (abort is not NO_ABORT and crash is not None), name
-        assert not both_abort or fatal, name
-        assert dir_chunk in (None, 'user', 'system') and (dir_chunk is None or abort is not NO_ABORT), name
-        CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
-                           crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
-                           dir_chunk=dir_chunk, stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
-                           both_abort=both_abort, strjoinv_over_read=strjoinv_over_read, issues=tuple(normal_tag(tag) for tag in issues))
+        spec = case_spec(*args, fn=fn, **kwargs)
+        assert not spec['either'] or (spec['abort'] is not NO_ABORT and spec['crash'] is not None), name
+        assert not spec['both_abort'] or spec['fatal'], name
+        assert spec['dir_chunk'] in (None, 'user', 'system') and (spec['dir_chunk'] is None or spec['abort'] is not NO_ABORT), name
+        CASES[name] = spec
         return fn
     return register
 
