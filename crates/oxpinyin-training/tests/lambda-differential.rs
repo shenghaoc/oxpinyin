@@ -1,6 +1,15 @@
 //! Differential parity: Rust λ estimator vs pin-built `gen_deleted_ngram`
 //! + `estimate_interpolation`.
 //!
+//! Ordinary `cargo test` leaves these tests ignored; explicitly selecting
+//! them fails on a missing input (`docs/testing/README.md`). With the
+//! system-table export and the live gate's pin-built tools and data
+//! configured (as in `tools/oracle/run-differentials.sh`), run:
+//!
+//! ```text
+//! just heavy -- cargo test --locked -p oxpinyin-training --no-default-features --features tkrzw --test lambda-differential -- --include-ignored
+//! ```
+//!
 //! Configuration (documented in `docs/findings/lambda-port.md`): the system
 //! bigram + floored unigram are trained on **fold A** — the first ⌊N/2⌋
 //! lines of `segmenter-ngseg.txt` — and the held-out (`DELETED_BIGRAM`)
@@ -14,11 +23,11 @@
 //!
 //! - `rust_lambda_matches_committed_manifest` — recomputes the estimate from
 //!   the system-table export + fixture and checks it against the committed
-//!   golden (`fixtures/w9/lambda-estimate.manifest`). Skips without the
+//!   golden (`fixtures/w9/lambda-estimate.manifest`). Requires the
 //!   export. This is a Rust-internal regression pin: λ is a deterministic
 //!   function of integer counts, so equality is bit-exact.
-//! - `rust_lambda_matches_live_estimate_interpolation` — env-gated; runs the
-//!   pin pipeline and asserts (a) the `DELETED_BIGRAM` counts are integer
+//! - `rust_lambda_matches_live_estimate_interpolation` — requires the
+//!   pin-built tools and matching data; runs the pin pipeline and asserts (a) the `DELETED_BIGRAM` counts are integer
 //!   bit-exact and (b) every per-context λ and the average match the pin's
 //!   `%f` output (six decimals — the tool's entire observable precision).
 

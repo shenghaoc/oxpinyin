@@ -1,13 +1,21 @@
 //! The drop-in invariant at the Rust runtime seam: an **unmodified
 //! libpinyin data directory** opens through `Runtime::open` and decodes.
 //!
-//! Gated on `OXPINYIN_LIBPINYIN_DATA_DIR`, a libpinyin install's `data/`
-//! built with the same DBM as this crate's selected backend (Kyoto
-//! Cabinet or tkrzw). The perf-matrix container provides both
-//! (`/opt/libpinyin-{kc,tkrzw}/lib/libpinyin/data`); local runs without
-//! the variable skip. The C-ABI half of the invariant — libpinyin.so and
-//! `libpinyin_capi.so` on the same directory, every driver's log identical
-//! — is `tools/bisection/run-same-data-dir-diff.sh`.
+//! Requires `OXPINYIN_LIBPINYIN_DATA_DIR`, a pin-built libpinyin install's
+//! `data/` with the same DBM as this crate's selected backend (Kyoto
+//! Cabinet or tkrzw). Ordinary `cargo test` leaves the test ignored;
+//! explicitly selecting it fails on a missing input, as
+//! `docs/testing/README.md` requires. With the matching cell's environment
+//! loaded and a separate target directory per cell, run from the root:
+//!
+//! ```text
+//! just heavy -- cargo test --locked -p oxpinyin-runtime --no-default-features --features kyotocabinet --test libpinyin_data_dir -- --include-ignored
+//! just heavy -- cargo test --locked -p oxpinyin-runtime --no-default-features --features tkrzw --test libpinyin_data_dir -- --include-ignored
+//! ```
+//!
+//! The C-ABI half of the invariant — libpinyin.so and `libpinyin_capi.so`
+//! on the same directory, every driver's log identical — is
+//! `tools/bisection/run-same-data-dir-diff.sh`.
 //!
 //! Nothing here is converted, imported or copied: the directory is the
 //! test input.

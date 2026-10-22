@@ -12,8 +12,16 @@
 //!               `gen_ngram` → `gen_deleted_ngram` → `estimate_interpolation` →
 //!               `export_interpolation`
 //!
-//! Env-gated on the same variables the T1–T4a tasks use; skipped (not
-//! failed) when the pin tools or the rust-side tables are absent.
+//! Requires the T1–T4a inputs: the system-table export and model20
+//! (`PINYIN_EXPORT_DIR`, `PINYIN_MODEL_DIR`); the live gate also requires
+//! the pin-built trainer tools and matching `PINYIN_NGSEG_DATA` and
+//! `PINYIN_GEN_NGRAM_DATA`. Ordinary `cargo test` leaves these tests
+//! ignored; explicitly selecting them fails on a missing input
+//! (`docs/testing/README.md`). With those inputs loaded, run from the root:
+//!
+//! ```text
+//! just heavy -- cargo test --locked -p oxpinyin-corpus --no-default-features --features tkrzw --test differential -- --include-ignored
+//! ```
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

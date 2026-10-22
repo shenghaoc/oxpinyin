@@ -1,10 +1,18 @@
 //! Differential parity: Rust segmenter vs pin-built `ngseg`.
 //!
-//! Skips when the system-table export or the model20 cache is absent, matching
-//! the oracle integration tests. When both are present, the fixture must
-//! match the committed `ngseg` golden. When `PINYIN_NGSEG` (or a known
-//! pin-build path) is present, the golden is also checked against a live
-//! `ngseg` run so it cannot go stale silently.
+//! Requires the system-table export and model20 (`PINYIN_EXPORT_DIR`,
+//! `PINYIN_MODEL_DIR`); the live gate also requires `PINYIN_NGSEG` and
+//! its matching system data (`PINYIN_NGSEG_DATA`). Ordinary `cargo test`
+//! leaves these tests ignored; explicitly selecting them fails on a
+//! missing input (`docs/testing/README.md`). With those inputs loaded:
+//!
+//! ```text
+//! just heavy -- cargo test --locked -p oxpinyin-training --no-default-features --features tkrzw --test segment-differential -- --include-ignored
+//! ```
+//!
+//! The fixture must match the committed `ngseg` golden. The live gate
+//! also checks the golden against the pin-built `ngseg`, so it cannot
+//! go stale silently.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

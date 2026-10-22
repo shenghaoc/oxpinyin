@@ -1,11 +1,20 @@
 //! Differential parity: Rust counter vs pin-built `gen_ngram`.
 //!
-//! Skips when the system-table export is absent. The committed manifest pins the
-//! value-level golden (unigram/bigram counts + an FNV-1a 64-bit checksum of
-//! the full `Counts::dump()`). When the pin training binaries are present,
-//! a live `gen_binary_files → gen_unigram → gen_ngram → export_interpolation`
-//! run in a fresh temp dir is compared value-for-value against the Rust
-//! counter, so the manifest cannot go stale silently.
+//! Requires the system-table export (`PINYIN_EXPORT_DIR`); the live gate
+//! also requires the pin-built counter tools and `PINYIN_GEN_NGRAM_DATA`.
+//! Ordinary `cargo test` leaves these tests ignored; explicitly selecting
+//! them fails on a missing input (`docs/testing/README.md`). After loading
+//! those inputs, run from the repository root:
+//!
+//! ```text
+//! just heavy -- cargo test --locked -p oxpinyin-training --no-default-features --features tkrzw --test counter-differential -- --include-ignored
+//! ```
+//!
+//! The committed manifest pins the value-level golden (unigram/bigram
+//! counts + an FNV-1a 64-bit checksum of the full `Counts::dump()`). The live
+//! gate compares a `gen_binary_files → gen_unigram → gen_ngram → export_interpolation`
+//! run in a fresh temp dir value-for-value against the Rust counter, so
+//! the manifest cannot go stale silently.
 
 use std::path::{Path, PathBuf};
 
