@@ -282,8 +282,6 @@ impl Default for Lookup {
 /// addon batch, empty whenever no addon library is loaded.
 #[derive(Clone, Debug, Default)]
 struct Scratch {
-    /// Dictionary-hit buffer for one window-scan lookup.
-    entries: Vec<PhraseEntry>,
     /// One scan path (phrase length ≤ 16).
     path: SmallVec<[SyllableKey; 16]>,
     /// Per-window scan batch, addon facade.
@@ -318,26 +316,37 @@ mod state;
 #[cfg(test)]
 mod tests;
 
-/// Pushes the phrases one key-path search returned.
-fn append_scan_entries(
-    entries: impl IntoIterator<Item = PhraseEntry>,
+/// Pushes one phrase a key-path search returned.
+fn push_scan_entry(
+    entry: PhraseEntry,
     keys: usize,
     end: usize,
     kind: CandidateKind,
     into: &mut Vec<Candidate>,
 ) {
-    for entry in entries {
-        let token = entry.token();
-        into.push(Candidate::new(
-            entry.into_text(),
-            kind,
-            keys,
-            end,
-            0,
-            Some(token),
-            None,
-        ));
+    let token = entry.token();
+    into.push(Candidate::new(
+        entry.into_text(),
+        kind,
+        keys,
+        end,
+        0,
+        Some(token),
+        None,
+    ));
+}
+
+/// Keeps the rows of `rows[start..]` that `keep` accepts, in their order;
+/// the rows before `start` are untouched.
+fn retain_tail(rows: &mut Vec<Candidate>, start: usize, mut keep: impl FnMut(&Candidate) -> bool) {
+    let mut kept = start;
+    for index in start..rows.len() {
+        if keep(&rows[index]) {
+            rows.swap(kept, index);
+            kept += 1;
+        }
     }
+    rows.truncate(kept);
 }
 
 /// Flushes one window's facade batch in the pin's array order.
@@ -597,7 +606,6 @@ struct ScanScratch<'a> {
     /// item cannot be read.
     unreadable: &'a mut bool,
     path: &'a mut SmallVec<[SyllableKey; 16]>,
-    entries: &'a mut Vec<PhraseEntry>,
     window_addon: &'a mut Vec<Candidate>,
 }
 
@@ -611,7 +619,6 @@ struct ScanBuf<'a> {
     continued: &'a mut bool,
     /// As [`ScanScratch::unreadable`].
     unreadable: &'a mut bool,
-    entries: &'a mut Vec<PhraseEntry>,
 }
 
 /// One key of the scan matrix at its byte position, with the byte position

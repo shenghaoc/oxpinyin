@@ -201,7 +201,6 @@ where
         // end. The candidates themselves are collected straight into
         // `out`, the buffer the caller keeps.
         let Scratch {
-            mut entries,
             mut path,
             mut window_addon,
         } = core::mem::take(&mut self.scratch);
@@ -251,7 +250,6 @@ where
                 let mut scratch = ScanScratch {
                     unreadable: &mut unreadable,
                     path: &mut path,
-                    entries: &mut entries,
                     window_addon: &mut window_addon,
                 };
                 self.collect_window_scan(remaining.as_bytes(), collected, &mut scratch)?;
@@ -342,11 +340,7 @@ where
         // string (`pinyin.cpp:2290-2298`, `2058-2126`).
         self.prepend_nbest_rows(collected);
 
-        self.scratch = Scratch {
-            entries,
-            path,
-            window_addon,
-        };
+        self.scratch = Scratch { path, window_addon };
         Ok(parsed_prefix)
     }
 
@@ -775,7 +769,6 @@ where
         let bound = matrix.bound.min(offset);
 
         let Scratch {
-            mut entries,
             mut path,
             mut window_addon,
         } = core::mem::take(&mut self.scratch);
@@ -812,7 +805,6 @@ where
                     addon: &mut window_addon,
                     continued: &mut continued,
                     unreadable: &mut unreadable,
-                    entries: &mut entries,
                 };
                 self.scan_parsed_paths(matrix, start, offset, &mut buf)?;
             }
@@ -853,11 +845,7 @@ where
         // `m_freq` across all slices (`zhuyin.cpp:1612,1626-1630`).
         dedup_ranked_by_text(out, &keys);
 
-        self.scratch = Scratch {
-            entries,
-            path,
-            window_addon,
-        };
+        self.scratch = Scratch { path, window_addon };
 
         self.scan_unreadable = unreadable;
         self.prepend_nbest_rows(out);
@@ -1339,7 +1327,6 @@ where
                     addon: scratch.window_addon,
                     continued: &mut continued,
                     unreadable: &mut *scratch.unreadable,
-                    entries: scratch.entries,
                 };
                 self.scan_parsed_paths(retained, anchor, anchor + end, &mut buf)?;
             }
@@ -1443,7 +1430,6 @@ where
             addon,
             continued,
             unreadable,
-            entries,
         } = buf;
         let end = end.saturating_sub(*span_base);
         let has_incomplete = path
@@ -1452,17 +1438,11 @@ where
 
         if has_incomplete && !self.dictionary.handles_partial_keys() {
             for sequence in expand_keys(path, SCAN_EXPANSION_LIMIT) {
-                **unreadable |= self.lookup_and_append(
-                    sequence.as_slice(),
-                    tones,
-                    end,
-                    system,
-                    addon,
-                    entries,
-                )?;
+                **unreadable |=
+                    self.lookup_and_append(sequence.as_slice(), tones, end, system, addon)?;
             }
         } else {
-            **unreadable |= self.lookup_and_append(path, tones, end, system, addon, entries)?;
+            **unreadable |= self.lookup_and_append(path, tones, end, system, addon)?;
         }
 
         let can_extend = self
@@ -1492,13 +1472,18 @@ where
         end: usize,
         system: &mut Vec<Candidate>,
         addon: &mut Vec<Candidate>,
-        entries: &mut Vec<PhraseEntry>,
     ) -> Result<bool, EngineError> {
+        let keys = sequence.len();
+        let start = system.len();
         // The flag rides this call: a token of a loaded library whose item
-        // cannot be read, which the pin's candidate listing dies on.
+        // cannot be read, which the pin's candidate listing dies on. Each
+        // hit becomes its row as it arrives, as `_append_items` writes
+        // straight into `m_candidates` (`pinyin.cpp:1769-1791`).
         let unreadable = self
             .dictionary
-            .lookup_into_flagged(sequence, entries)
+            .lookup_each_flagged(sequence, &mut |entry| {
+                push_scan_entry(entry, keys, end, CandidateKind::Phrase, system);
+            })
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         if tones.iter().any(|tone| *tone != 0) {
             let mut toned: Vec<u32> = self
@@ -1509,25 +1494,17 @@ where
                 .map(|record| record.token().value())
                 .collect();
             toned.sort_unstable();
-            entries.retain(|entry| toned.binary_search(&entry.token().value()).is_ok());
+            retain_tail(system, start, |candidate| {
+                candidate
+                    .token()
+                    .is_some_and(|token| toned.binary_search(&token.value()).is_ok())
+            });
         }
-        append_scan_entries(
-            entries.drain(..),
-            sequence.len(),
-            end,
-            CandidateKind::Phrase,
-            system,
-        );
         self.dictionary
-            .lookup_addon_into(sequence, entries)
+            .lookup_addon_each(sequence, &mut |entry| {
+                push_scan_entry(entry, keys, end, CandidateKind::Addon, addon);
+            })
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
-        append_scan_entries(
-            entries.drain(..),
-            sequence.len(),
-            end,
-            CandidateKind::Addon,
-            addon,
-        );
         Ok(unreadable)
     }
 }

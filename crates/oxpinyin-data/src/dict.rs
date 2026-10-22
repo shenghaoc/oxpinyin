@@ -116,7 +116,7 @@ fn resolve_items(
     libraries: &PhraseLibraries,
     keys: &[ChewingKey],
     items: &[PinyinIndexItem],
-    out: &mut Vec<PhraseEntry>,
+    each: &mut dyn FnMut(PhraseEntry),
     user_nibbles: u32,
 ) -> bool {
     let mut unreadable = false;
@@ -125,7 +125,7 @@ fn resolve_items(
             unreadable |= library_loaded(libraries, user_nibbles, item.token);
             continue;
         };
-        out.push(entry);
+        each(entry);
     }
     unreadable
 }
@@ -598,13 +598,12 @@ impl SystemDictionary {
         syllables_to_chewing_keys(syllables)
     }
 
-    /// [`Dictionary::lookup_into_flagged`]'s body.
+    /// [`Dictionary::lookup_each_flagged`]'s body.
     fn fill_lookup(
         &self,
         syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
+        each: &mut dyn FnMut(PhraseEntry),
     ) -> Result<bool, DictError> {
-        out.clear();
         if syllables.is_empty() {
             return Ok(false);
         }
@@ -616,7 +615,7 @@ impl SystemDictionary {
             &self.libraries,
             &keys,
             &items,
-            out,
+            each,
             self.user_nibbles,
         ))
     }
@@ -630,7 +629,7 @@ impl Dictionary for SystemDictionary {
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
-        self.fill_lookup(syllables, &mut entries)?;
+        self.fill_lookup(syllables, &mut |entry| entries.push(entry))?;
         Ok(entries)
     }
 
@@ -697,15 +696,17 @@ impl Dictionary for SystemDictionary {
         syllables: &[SyllableKey],
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), DictError> {
-        self.fill_lookup(syllables, out).map(|_| ())
+        out.clear();
+        self.fill_lookup(syllables, &mut |entry| out.push(entry))
+            .map(|_| ())
     }
 
-    fn lookup_into_flagged(
+    fn lookup_each_flagged(
         &self,
         syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
+        each: &mut dyn FnMut(PhraseEntry),
     ) -> Result<bool, DictError> {
-        self.fill_lookup(syllables, out)
+        self.fill_lookup(syllables, each)
     }
 
     fn phrase_index_item_count(&self) -> Result<u64, DictError> {
@@ -1045,6 +1046,19 @@ impl AddonDictionary {
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), DictError> {
         out.clear();
+        self.lookup_each(syllables, &mut |entry| out.push(entry))
+    }
+
+    /// [`Self::lookup_into`]'s records handed to `each` in order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DictError`] when the DBM read or a value decode fails.
+    pub fn lookup_each(
+        &self,
+        syllables: &[SyllableKey],
+        each: &mut dyn FnMut(PhraseEntry),
+    ) -> Result<(), DictError> {
         let Some(pinyin) = self.pinyin.as_ref() else {
             return Ok(());
         };
@@ -1055,7 +1069,7 @@ impl AddonDictionary {
             return Ok(());
         };
         let items = pinyin.search(&keys)?;
-        resolve_items(&self.libraries, &keys, &items, out, 0);
+        resolve_items(&self.libraries, &keys, &items, each, 0);
         Ok(())
     }
 

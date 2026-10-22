@@ -286,8 +286,7 @@ pub trait Dictionary {
             .map(PhraseIndexToken::phrase_index_text))
     }
 
-    /// [`Self::lookup`] into a caller-owned buffer, which keeps capacity
-    /// across keystrokes on the window-scan path.
+    /// [`Self::lookup`] into a caller-owned buffer.
     ///
     /// The default copies [`Self::lookup`]'s vector. Implementors that
     /// already fill a `Vec` should override this and `clear`+`push` into
@@ -307,22 +306,30 @@ pub trait Dictionary {
         Ok(())
     }
 
-    /// [`Self::lookup_into`], also answering whether the lookup met a token
-    /// of a loaded library whose item could not be read (the entry is
-    /// dropped, as ever). The pin's candidate listing dies on such a token
-    /// (`pinyin.cpp:1635-1637`, `:2053`); the answer rides the call that met
-    /// it, not shared state, so the caller can fail exactly the listing it
-    /// was building.
+    /// [`Self::lookup`]'s entries handed to `each` in order, also
+    /// answering whether the lookup met a token of a loaded library whose
+    /// item could not be read (the entry is dropped, as ever). The pin's
+    /// candidate listing dies on such a token (`pinyin.cpp:1635-1637`,
+    /// `:2053`); the answer rides the call that met it, not shared state, so
+    /// the caller can fail exactly the listing it was building.
+    ///
+    /// The window scan's path: each entry goes straight into the caller's
+    /// row, as the pin's `_append_items` writes straight into
+    /// `m_candidates` (`pinyin.cpp:1769-1791` at 074a2219), with no
+    /// intermediate buffer. The default collects [`Self::lookup_into`].
     ///
     /// # Errors
     ///
-    /// As [`Self::lookup_into`].
-    fn lookup_into_flagged(
+    /// As [`Self::lookup_into`]. Entries handed over before the error stay
+    /// with the caller.
+    fn lookup_each_flagged(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        each: &mut dyn FnMut(Self::Entry),
     ) -> Result<bool, Self::Error> {
-        self.lookup_into(syllables, out)?;
+        let mut out = Vec::new();
+        self.lookup_into(syllables, &mut out)?;
+        out.into_iter().for_each(each);
         Ok(false)
     }
 
@@ -381,19 +388,18 @@ pub trait Dictionary {
         Ok(Vec::new())
     }
 
-    /// [`Self::lookup_addon`] into a caller-owned buffer.
+    /// [`Self::lookup_addon`]'s entries handed to `each` in order, as
+    /// [`Self::lookup_each_flagged`] hands the default facade's.
     ///
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the addon backend cannot serve the lookup.
-    fn lookup_addon_into(
+    fn lookup_addon_each(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        each: &mut dyn FnMut(Self::Entry),
     ) -> Result<(), Self::Error> {
-        let entries = self.lookup_addon(syllables)?;
-        out.clear();
-        out.extend(entries);
+        self.lookup_addon(syllables)?.into_iter().for_each(each);
         Ok(())
     }
 
@@ -432,7 +438,7 @@ pub trait Dictionary {
         Ok(0)
     }
 
-    /// Whether [`Self::lookup_into`] and [`Self::lookup_addon_into`] accept
+    /// Whether [`Self::lookup_into`] and [`Self::lookup_addon_each`] accept
     /// queries whose syllables mix complete and initial-only keys under
     /// upstream's `pinyin_compare_with_tones` matching rule.
     ///
@@ -652,12 +658,12 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         (**self).lookup_into(syllables, out)
     }
 
-    fn lookup_into_flagged(
+    fn lookup_each_flagged(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        each: &mut dyn FnMut(Self::Entry),
     ) -> Result<bool, Self::Error> {
-        (**self).lookup_into_flagged(syllables, out)
+        (**self).lookup_each_flagged(syllables, each)
     }
 
     fn phrase_prefix_exists(&self, syllables: &[Self::Syllable]) -> Result<bool, Self::Error> {
@@ -672,12 +678,12 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         (**self).lookup_addon(syllables)
     }
 
-    fn lookup_addon_into(
+    fn lookup_addon_each(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        each: &mut dyn FnMut(Self::Entry),
     ) -> Result<(), Self::Error> {
-        (**self).lookup_addon_into(syllables, out)
+        (**self).lookup_addon_each(syllables, each)
     }
 
     fn phrase_prefix_exists_addon(
