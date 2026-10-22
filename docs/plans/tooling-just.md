@@ -70,7 +70,7 @@ Layer 5 schedules the old-to-new handoffs.
 | --- | --- | --- | --- |
 | `just --list` | List tasks; bare `just` runs doctor. | README/runbook discovery | Implemented, #942. |
 | `just doctor` | Call Layer 1's native doctor. | Bootstrap doctor | Implemented, #942. |
-| `just list [--issue X] [--kind K]` | Read registry rows and implementation state; execute nothing. | `run-all.py --list` | Partial: #941 supplies `tools.dev list [--heavy]`; #948 implemented the recipe, issue/kind filters and selection tests. `list` implementation state remains proposed: the proposed `implementation` field does not exist in `runners.json` or `registry.py`. |
+| `just list [--issue X] [--kind K]` | Read registry rows and implementation state; execute nothing. | `run-all.py --list` | Partial: #941 supplies `tools.dev list [--heavy]`; #948 implemented the recipe, issue/kind filters and selection tests. [#1033](https://github.com/shenghaoc/oxpinyin/pull/1033) (maintainer ruling 2026-10-22 UTC) implemented the `implementation` field: `list` prints it in place of the reason, and `plan` prints it with each row. |
 | `just plan [selection ...]` | Print the native plan without execution. | Native command planning | Partial: #941 supplies read-only `tools.dev plan --runners/--cells`; #948 implemented the recipe and issue/kind selection. Full command/input identities and digests (stage T3) remain proposed. |
 | `just check [backend]` | Run native setup checks; default bdb. | `tools/dev/check.sh` | Implemented, #942. The shell remains an old/new acceptance input. |
 | `just heavy -- <command>` | Use Layer 1's slot and admission. | Merged #905/#906/#903 `run-all.py --heavy-slot --` | Implemented, #942; shared core from #941. |

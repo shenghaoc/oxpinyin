@@ -2,6 +2,7 @@
   {
     "name": "abi-probe-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-abi-probe-diff.sh",
     "issues": [
       "row:33",
       "row:34",
@@ -40,6 +41,7 @@
   {
     "name": "addon-candidate-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
     "issues": [
       "W11"
     ],
@@ -75,6 +77,7 @@
   {
     "name": "bigram-export-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-bigram-export-diff.sh",
     "issues": [
       "541",
       "row:1"
@@ -113,6 +116,7 @@
     "name": "bisect",
     "heavy": true,
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-bisect.sh",
     "issues": [
       "coverage:20",
       "coverage:2",
@@ -156,6 +160,7 @@
   {
     "name": "callgrind-differential",
     "kind": "not-a-gate",
+    "implementation": "instrument:tools/bisection/run-callgrind-differential.sh",
     "issues": [
       "measurement recipe"
     ],
@@ -182,6 +187,7 @@
   {
     "name": "candidate-assembly-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-candidate-assembly-diff.sh",
     "issues": [
       "582"
     ],
@@ -220,6 +226,7 @@
   {
     "name": "contract-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-contract-diff.sh",
     "issues": [
       "lane-C-contract"
     ],
@@ -259,6 +266,7 @@
   {
     "name": "cpp-smoke",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-cpp-smoke.sh",
     "issues": [
       "register:abi-reference"
     ],
@@ -290,6 +298,7 @@
   {
     "name": "dict-surface-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-dict-surface-diff.sh",
     "issues": [
       "register:probe-coverage-abi/Tier-C"
     ],
@@ -326,6 +335,7 @@
   {
     "name": "dynamic-adjust-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-dynamic-adjust-diff.sh",
     "issues": [
       "W10"
     ],
@@ -358,6 +368,7 @@
   {
     "name": "export-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-export-diff.sh",
     "issues": [
       "533"
     ],
@@ -392,6 +403,7 @@
   {
     "name": "import-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-import-diff.sh",
     "issues": [
       "W7-T1"
     ],
@@ -432,6 +444,7 @@
   {
     "name": "import-semantics-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-import-semantics-diff.sh",
     "issues": [
       "534"
     ],
@@ -466,6 +479,7 @@
   {
     "name": "key-surface-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-key-surface-diff.sh",
     "issues": [
       "109"
     ],
@@ -502,6 +516,7 @@
   {
     "name": "live-typing-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-live-typing-diff.sh",
     "issues": [
       "W12"
     ],
@@ -536,6 +551,7 @@
   {
     "name": "locale-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-locale-diff.sh",
     "issues": [
       "539",
       "619",
@@ -578,6 +594,7 @@
   {
     "name": "nbest-choose-train-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-nbest-choose-train-diff.sh",
     "issues": [
       "row:38"
     ],
@@ -619,6 +636,7 @@
   {
     "name": "nbest-train-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-nbest-train-diff.sh",
     "issues": [
       "W14"
     ],
@@ -653,6 +671,7 @@
   {
     "name": "open-counter-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-open-counter-diff.sh",
     "issues": [
       "523",
       "583",
@@ -696,6 +715,7 @@
   {
     "name": "option-sweep",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-option-sweep.sh",
     "issues": [
       "W10",
       "row:17"
@@ -732,6 +752,7 @@
   {
     "name": "perf-baseline",
     "kind": "not-a-gate",
+    "implementation": "instrument:tools/bisection/run-perf-baseline.sh",
     "issues": [
       "370"
     ],
@@ -758,6 +779,7 @@
   {
     "name": "perf-matrix",
     "kind": "not-a-gate",
+    "implementation": "instrument:tools/bisection/run-perf-matrix.sh",
     "issues": [
       "measurement recipe"
     ],
@@ -784,6 +806,7 @@
   {
     "name": "perf-same-data",
     "kind": "not-a-gate",
+    "implementation": "instrument:tools/bisection/run-perf-same-data.sh",
     "issues": [
       "260"
     ],
@@ -810,6 +833,7 @@
   {
     "name": "phrase-surface-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-phrase-surface-diff.sh",
     "issues": [
       "coverage:68",
       "coverage:69",
@@ -848,6 +872,7 @@
   {
     "name": "pred-order-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-pred-order-diff.sh",
     "issues": [
       "row:12"
     ],
@@ -882,6 +907,7 @@
   {
     "name": "predict-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
     "issues": [
       "W11",
       "104"
@@ -917,6 +943,7 @@
   {
     "name": "punct-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
     "issues": [
       "104"
     ],
@@ -950,6 +977,7 @@
   {
     "name": "residue-a-tail-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-residue-a-tail-diff.sh",
     "issues": [
       "row:33",
       "row:34",
@@ -992,6 +1020,7 @@
   {
     "name": "residue-mechanism-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-residue-mechanism-diff.sh",
     "issues": [
       "row:34"
     ],
@@ -1026,6 +1055,7 @@
   {
     "name": "rss-diag",
     "kind": "not-a-gate",
+    "implementation": "instrument:tools/bisection/run-rss-diag.sh",
     "issues": [
       "measurement recipe"
     ],
@@ -1052,6 +1082,7 @@
   {
     "name": "same-data-dir-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-same-data-dir-diff.sh",
     "issues": [
       "635",
       "636",
@@ -1088,6 +1119,7 @@
   {
     "name": "scheme-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-scheme-diff.sh",
     "issues": [
       "W13",
       "W15"
@@ -1123,6 +1155,7 @@
   {
     "name": "session-fork-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-session-fork-diff.sh",
     "issues": [
       "531",
       "546"
@@ -1161,6 +1194,7 @@
   {
     "name": "shipped-check",
     "kind": "not-a-gate",
+    "implementation": "legacy:tools/bisection/run-shipped-check.sh",
     "issues": [
       "measurement recipe"
     ],
@@ -1187,6 +1221,7 @@
   {
     "name": "system-import-profile",
     "kind": "not-a-gate",
+    "implementation": "instrument:tools/bisection/run-system-import-profile.sh",
     "issues": [
       "599"
     ],
@@ -1213,6 +1248,7 @@
   {
     "name": "system-import-round-trip",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-system-import-round-trip.sh",
     "issues": [
       "599"
     ],
@@ -1248,6 +1284,7 @@
   {
     "name": "train-diff-dynamic-off",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-train-diff-dynamic-off.sh",
     "issues": [
       "W10"
     ],
@@ -1282,6 +1319,7 @@
   {
     "name": "train-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-train-diff.sh",
     "issues": [
       "W6-T7"
     ],
@@ -1316,6 +1354,7 @@
   {
     "name": "tree-recipe-control",
     "kind": "not-a-gate",
+    "implementation": "instrument:tools/bisection/run-tree-recipe-control.sh",
     "issues": [
       "measurement recipe"
     ],
@@ -1342,6 +1381,7 @@
   {
     "name": "two-context-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-two-context-diff.sh",
     "issues": [
       "538",
       "578"
@@ -1382,6 +1422,7 @@
   {
     "name": "uncovered-surface-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-uncovered-surface-diff.sh",
     "issues": [
       "W12"
     ],
@@ -1416,6 +1457,7 @@
   {
     "name": "union-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-union-diff.sh",
     "issues": [
       "W11"
     ],
@@ -1450,6 +1492,7 @@
   {
     "name": "user-candidate-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
     "issues": [
       "W11"
     ],
@@ -1484,6 +1527,7 @@
   {
     "name": "user-file-modes-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-user-file-modes-diff.sh",
     "issues": [
       "544"
     ],
@@ -1523,6 +1567,7 @@
   {
     "name": "w11-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-w11-diff.sh",
     "issues": [
       "W11"
     ],
@@ -1558,6 +1603,7 @@
   {
     "name": "zhuyin-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-zhuyin-diff.sh",
     "issues": [
       "row:24",
       "row:25",
@@ -1604,6 +1650,7 @@
   {
     "name": "zhuyin-import-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-zhuyin-import-diff.sh",
     "issues": [
       "575",
       "600",
@@ -1644,6 +1691,7 @@
   {
     "name": "system-import-round-trip-zhuyin",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/run-system-import-round-trip.sh",
     "issues": [
       "599"
     ],
@@ -1680,6 +1728,7 @@
   {
     "name": "train-index-diff",
     "kind": "gate",
+    "implementation": "legacy:tools/bisection/train-index-diff.py",
     "issues": [
       "row:38"
     ],
@@ -1724,6 +1773,7 @@
   {
     "name": "transformed-options-sweep",
     "kind": "gate",
+    "implementation": "legacy:tools/oracle/transformed-options-sweep.py",
     "issues": [
       "634"
     ],
@@ -1772,6 +1822,7 @@
   {
     "name": "abi-exports",
     "kind": "gate",
+    "implementation": "legacy:tools/abi/check-exports.sh",
     "issues": [
       "register:libpinyin.ver",
       "register:libzhuyin.ver"
@@ -1805,6 +1856,7 @@
   {
     "name": "abi-alloc",
     "kind": "gate",
+    "implementation": "legacy:tools/abi/check-alloc-pairing.sh",
     "issues": [
       "register:libpinyin.alloc",
       "register:libzhuyin.alloc"
@@ -1839,6 +1891,7 @@
   {
     "name": "pc-version",
     "kind": "gate",
+    "implementation": "legacy:tools/packaging/check-pc-version.sh",
     "issues": [
       "register:oracle-pin.txt"
     ],
@@ -1865,6 +1918,7 @@
   {
     "name": "pc-metadata",
     "kind": "gate",
+    "implementation": "legacy:tools/packaging/check-pc-metadata.sh",
     "issues": [
       "register:oracle-pin.txt"
     ],
@@ -1903,6 +1957,7 @@
   {
     "name": "user-dir-round-trip",
     "kind": "gate",
+    "implementation": "legacy:tools/oracle/user-dir-round-trip.sh",
     "issues": [
       "task:9",
       "599"

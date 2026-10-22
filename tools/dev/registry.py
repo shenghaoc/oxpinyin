@@ -4,11 +4,13 @@ The registry remains the only catalog. This module validates the shape it
 reads and never writes, rewrites or derives a second catalog.
 """
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 
-REGISTRY = Path(__file__).resolve().parents[1] / 'bisection/runners.json'
+ROOT = Path(__file__).resolve().parents[2]
+REGISTRY = ROOT / 'tools/bisection/runners.json'
 COLUMNS = ('name', 'kind', 'cells', 'heavy')
+IMPLEMENTATION_FORMS = ('legacy', 'python', 'instrument')
 
 
 class RegistryError(ValueError):
@@ -38,7 +40,34 @@ def load(path=None):
         issues = row.get('issues', [])
         if not isinstance(issues, list) or any(not isinstance(issue, str) for issue in issues):
             raise RegistryError(f'registry row {row["name"]!r} issues must be a list of strings')
+        _check_implementation(row)
     return rows
+
+
+def _check_implementation(row):
+    """`implementation` names what runs the row: `legacy:<path>`,
+    `python:<module>` or `instrument:<path>`, each resolving inside the checkout."""
+    name = row['name']
+    value = row.get('implementation')
+    if not isinstance(value, str) or not value:
+        raise RegistryError(f'registry row {name!r} has no implementation')
+    form, sep, target = value.partition(':')
+    if not sep or form not in IMPLEMENTATION_FORMS or not target:
+        raise RegistryError(f'registry row {name!r} implementation {value!r} is not '
+                            'legacy:<path>, python:<module> or instrument:<path>')
+    if form == 'python':
+        if not all(part.isidentifier() for part in target.split('.')):
+            raise RegistryError(f'registry row {name!r} implementation {value!r} is not a module name')
+        base = ROOT.joinpath(*target.split('.'))
+        exists = base.with_suffix('.py').is_file() or (base / '__init__.py').is_file()
+    else:
+        path = PurePosixPath(target)
+        if path.is_absolute() or '..' in path.parts or '\\' in target:
+            raise RegistryError(f'registry row {name!r} implementation {value!r} must be a '
+                                'checkout-relative path')
+        exists = ROOT.joinpath(*path.parts).is_file()
+    if not exists:
+        raise RegistryError(f'registry row {name!r} implementation {value!r} does not exist')
 
 
 def by_name(rows):
