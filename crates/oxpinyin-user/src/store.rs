@@ -1672,6 +1672,15 @@ struct TrainingCheck {
 pub type UserStore = GenericUserStore<DefaultStore>;
 
 impl<S: WriteStore> GenericUserStore<S> {
+    /// Whether this session's system originals still hold their facade.
+    #[cfg(test)]
+    pub(crate) fn holds_system_source(&self) -> bool {
+        self.inner
+            .libpinyin
+            .as_ref()
+            .is_some_and(|target| target.originals().has_source())
+    }
+
     /// Whether a system journal's ADD payload was shorter than its
     /// unigram, which stops that library's replay there (register row 108).
     #[must_use]
