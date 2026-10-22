@@ -36,10 +36,21 @@ backends — Kyoto Cabinet, tkrzw, Berkeley DB — are used through the ABIs
 their maintainers provide, which are C: `kclangc.h`, `tkrzw_langc.h`,
 `db.h`, bound with bindgen over the system headers and linked to the
 distribution's own libraries. Nothing vendors or compiles C or C++ into
-oxpinyin, and the C++ interfaces are never used — a Rust program gains
-nothing from them, and they carry no ABI stability across compilers,
-standard libraries or library versions; the C API is the maintainer's
-stability promise.
+oxpinyin, and the C++ interfaces are not used: they carry no ABI
+stability across compilers, standard libraries or library versions, and
+the C API is the maintainer's stability promise.
+
+Kyoto Cabinet keeps `kclangc.h` on measurement. A cxx bridge to its C++
+classes, call for call with the C binding, was measured and not adopted
+(results: `docs/findings/kc-c-vs-cxx-adapter-2026-10-22.md`; code: PR
+#1043). Instantiating the header-inline engine into oxpinyin makes the
+engine itself cheaper (up to 19% fewer instructions in it), but on the
+hot paths the cxx glue outweighs that
+saving: point reads, writes and framed scans execute 0.6–5.5% more
+instructions, all of it in the bridge. The bridge also uses no capability
+the C API lacks, adds about 370 KB to each stripped library, and makes
+the cargo-built libraries export the cxx runtime and bridge symbols
+beyond the version scripts.
 
 **C struct parsing:** packed upstream structures are parsed by explicit
 byte-offset reads (`u32::from_le_bytes` and friends) into owned fields —
