@@ -361,24 +361,8 @@ fi
 
 # ---- 3. oracle libraries ------------------------------------------------
 
-# libs_ok DBM: both libraries of the cell hash to the recorded recipe values.
-libs_ok() {
-	local dbm=$1 lib want
-	for lib in libpinyin libzhuyin; do
-		want=$(pinval "${lib}_sha256_$dbm")
-		[[ -f $oracle_root/$dbm/lib/$lib.so ]] || return 1
-		[[ $(sha256sum "$oracle_root/$dbm/lib/$lib.so" | cut -d' ' -f1) == "$want" ]] || return 1
-	done
-}
-
-# data_ok DBM: the regenerated data is present, intact and the recorded one.
-data_ok() {
-	local dbm=$1 want
-	want=$(pinval "data_manifest_sha256_$dbm")
-	[[ -f $oracle_root/$dbm/oracle-data.sha256 ]] || return 1
-	[[ $(sha256sum "$oracle_root/$dbm/oracle-data.sha256" | cut -d' ' -f1) == "$want" ]] || return 1
-	(cd "$oracle_root/$dbm" && sha256sum --check --quiet oracle-data.sha256 >/dev/null 2>&1)
-}
+# shellcheck source=env.sh
+source "$repo/tools/cloud/env.sh"
 
 if ((inside)); then
 	for dbm in "${cells[@]}"; do
@@ -650,40 +634,4 @@ done
 # The environment file a lane sources before a runner. Per-cell variables
 # name every provisioned cell; PINYIN_ORACLE_DBM (the caller's value, else
 # bdb, else the first cell) selects the one the runners see.
-env_file=${OXPINYIN_ORACLE_ENV:-$HOME/.oxpinyin-oracle.env}
-default_cell=${cells[0]}
-for dbm in "${cells[@]}"; do [[ $dbm == bdb ]] && default_cell=bdb; done
-{
-	printf '# Written by tools/cloud/setup.sh; source it, do not edit it.\n'
-	printf '_oxp_provisioned=%q\n' " ${cells[*]} "
-	printf 'export PINYIN_MODEL_DIR=%q\n' "$model_cache/extracted"
-	printf 'export PATH=%s\n' "$(printf '%q' "$uv_dir"):\$PATH"
-	if ((tkrzw_local)); then
-		printf 'export PKG_CONFIG_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib/pkgconfig")\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
-		printf 'export LD_LIBRARY_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib")\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
-		printf 'export PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/bin"):\$PATH"
-	fi
-	for dbm in "${cells[@]}"; do
-		up=${dbm^^}
-		printf 'export OXPINYIN_ORACLE_PREFIX_%s=%q\n' "$up" "$oracle_root/$dbm"
-		printf 'export OXPINYIN_ORACLE_DATA_%s=%q\n' "$up" "$oracle_root/$dbm/lib/libpinyin/data"
-	done
-	# The selected cell (PINYIN_ORACLE_DBM, default the reference cell)
-	# decides the prefix and data directory every time the file is sourced.
-	printf "export PINYIN_ORACLE_DBM=\${PINYIN_ORACLE_DBM:-%s}\n" "$default_cell"
-	cat <<'SELECT'
-case $_oxp_provisioned in
-    *" $PINYIN_ORACLE_DBM "*) ;;
-    *) echo "cell $PINYIN_ORACLE_DBM was not provisioned by this environment file" >&2; unset _oxp_provisioned; return 1 ;;
-esac
-_oxp_cell=${PINYIN_ORACLE_DBM^^}
-_oxp_prefix=OXPINYIN_ORACLE_PREFIX_$_oxp_cell
-_oxp_data=OXPINYIN_ORACLE_DATA_$_oxp_cell
-export PINYIN_ORACLE_PREFIX=${!_oxp_prefix:?cell not provisioned by tools/cloud/setup.sh}
-export OXPINYIN_LIBPINYIN_DATA_DIR=${!_oxp_data}
-unset _oxp_cell _oxp_prefix _oxp_data _oxp_provisioned
-SELECT
-} >"$env_file.new"
-mv "$env_file.new" "$env_file"
-
-log "wrote $env_file; source it before a runner"
+write_oracle_env
