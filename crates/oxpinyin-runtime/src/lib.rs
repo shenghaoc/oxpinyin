@@ -2309,9 +2309,12 @@ impl Runtime {
         } else {
             self.cached_key_costs()?.to_vec()
         };
+        // The session reads no storage path (the runtime owns every store
+        // it decodes over), so it gets the empty set, which allocates
+        // nothing, instead of a copy of the runtime's.
         Session::new_with_key_costs(
             config,
-            self.paths.clone(),
+            StoragePaths::default(),
             self.dict.clone(),
             self.lm.clone(),
             key_costs,
