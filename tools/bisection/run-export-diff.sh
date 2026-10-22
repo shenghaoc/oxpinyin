@@ -36,7 +36,7 @@ gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$work/export-diff" export-diff.c -l
 run() {
   local side=$1 so=$2
   mkdir -p "$work/$side"
-  if ! (cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")" "$work/export-diff" "$so" "$data") \
+  if ! (cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$work/export-diff" "$so" "$data") \
     >"$work/$side.log" 2>"$work/$side.err"; then
     echo "FAIL: export-diff crashed against $side"
     tail -5 "$work/$side.err"

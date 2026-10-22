@@ -213,7 +213,7 @@ run_frontend() {
     local input=$1 output=$2 cache=$3
     rm -rf "$cache"
     mkdir -p "$cache"
-    if ! LD_LIBRARY_PATH="$IBUS_PREFIX/lib"         XDG_CACHE_HOME="$cache"         GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR"         ./frontend-import "$input" "$output" > /dev/null 2> "$cache/stderr"; then
+    if ! LD_LIBRARY_PATH="$IBUS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"         XDG_CACHE_HOME="$cache"         GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR"         ./frontend-import "$input" "$output" > /dev/null 2> "$cache/stderr"; then
         echo "FAIL: pinned frontend import/export failed for $input"
         cat "$cache/stderr"
         exit 1
