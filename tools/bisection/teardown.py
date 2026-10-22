@@ -34,9 +34,9 @@ RESIDENCY_FRACTION = 0.01
 # The control is the subject's bytes at a second path. With `libraries/ox`
 # against `libraries/control`, #1030 measured the control at 15 B more heap and
 # 12-354 more Ir, consistent with its 5-byte longer path (the loader and the
-# library keep path strings). Equal-length directory names remove that input;
-# pin's name matches too.
-LIBRARY_DIRECTORIES = dict(ox='subject', control='control', pin='pinned')
+# library keep path strings). `subject`, `control` and `pinlibs` are 7 bytes
+# each, so neither control-ox nor pin-ox figures carry a path-length difference.
+LIBRARY_DIRECTORIES = dict(ox='subject', control='control', pin='pinlibs')
 TIMING_ROUNDS, TIMING_WARMUPS = 60, 3
 MEMORY_ROUNDS, MEMORY_WARMUPS = 30, 2
 

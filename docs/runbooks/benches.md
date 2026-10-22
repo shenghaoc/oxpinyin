@@ -60,8 +60,9 @@ diagnostics: shared-page classification may change between sequential reads,
 even while the native child waits, so equality is not a sample gate.
 
 The same-bytes control is mandatory (§7.5 of
-`docs/findings/tooling-consolidation-python-just.md`). Its library directory
-name has the subject's byte length. For a timing metric, its paired median
+`docs/findings/tooling-consolidation-python-just.md`). The subject, control
+and pin library directory names (`subject`, `control`, `pinlibs`) have equal
+byte lengths. For a timing metric, its paired median
 ratio and entire 95% paired-bootstrap interval must lie within 0.95–1.05. For a
 memory checkpoint level, the paired difference control − ox in KiB must have
 its median and entire interval within ±max(64 KiB, 1% of |median(ox)|).
