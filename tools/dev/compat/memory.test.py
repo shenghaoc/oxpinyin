@@ -472,10 +472,25 @@ sys.stdin.readline()
     def fake_runtime(self):
         runtime = self.directory / 'docker'
         runtime.write_text(f'#!{sys.executable}\n' + r'''
-import hashlib, io, json, os, runpy, sys, tarfile, time
+import fcntl, hashlib, io, json, os, runpy, sys, tarfile, time
 from pathlib import Path
 root=Path(os.environ['OXPINYIN_LOCK_DIR'])
 path=root/'runtime-state'
+# Invocations overlap: a start polls the state while a stop rewrites it, and
+# the launcher inspects it meanwhile. Every write replaces the file atomically
+# and every read-modify-write holds one lock, so no reader sees a truncated
+# file and no update is lost (#1029).
+class locked:
+    def __enter__(self): self.file=(root/'runtime-lock').open('a'); fcntl.flock(self.file, fcntl.LOCK_EX); return self
+    def __exit__(self, *exc): self.file.close()
+def write(target, text):
+    temporary=target.with_name(f'{target.name}.{os.getpid()}.tmp'); temporary.write_text(text); os.replace(temporary, target)
+def read_state():
+    with locked(): return json.loads(path.read_text())
+def update_state(change):
+    with locked():
+        row=json.loads(path.read_text()); change(row); write(path, json.dumps(row)); return row
+def stopped(row): row['State']['Status']='exited'; row['status']['state']='stopped'; row['status']['networks']=[]
 args=sys.argv[1:]
 action=args[0]
 if action=='--version': print('synthetic runtime 1')
@@ -485,7 +500,7 @@ elif action in ('info','volume'): pass
 elif action=='create':
     for argument in args:
         if ':/input:ro' in argument:
-            (root/'fixture-input').write_text(argument.split(':/input:ro')[0])
+            write(root/'fixture-input', argument.split(':/input:ro')[0])
     records=list(root.glob('container-memory-*.json'))
     assert len(records)==1, 'create without reservation'
     record=json.loads(records[0].read_text())
@@ -498,25 +513,29 @@ elif action=='create':
              configuration=dict(labels={'io.oxpinyin.memory-reservation':record['token']},
                                 resources=dict(memoryInBytes=record['memory_mib']*1024**2)))
     events=root/'created-names'
-    names=json.loads(events.read_text()) if events.exists() else []
-    names.append(dict(name=record['name'], token=record['token']))
-    events.write_text(json.dumps(names))
+    with locked():
+        names=json.loads(events.read_text()) if events.exists() else []
+        names.append(dict(name=record['name'], token=record['token']))
+        write(events, json.dumps(names))
     (root/'create-entered').touch()
     while os.environ.get('BLOCK_CREATE') and not (root/'finish-create').exists(): time.sleep(.01)
-    path.write_text(json.dumps(row))
+    with locked(): write(path, json.dumps(row))
     if os.environ.get('CREATE_FAIL_AFTER'): sys.exit(125)
 elif action=='inspect':
-    if not path.exists(): sys.exit(1)
-    row=json.loads(path.read_text())
+    with locked():
+        if not path.exists(): sys.exit(1)
+        row=json.loads(path.read_text())
     if os.environ.get('UNKNOWN_EXIT') and row['State']['Status']=='exited':
         row['status']['state']='unknown'; row['State']['Status']='unknown'
     print(json.dumps([row]))
 elif action=='ps':
-    if path.exists(): print(json.dumps(dict(Names=json.loads(path.read_text())['Name'][1:])))
+    with locked():
+        if path.exists(): print(json.dumps(dict(Names=json.loads(path.read_text())['Name'][1:])))
 elif action=='start':
-    row=json.loads(path.read_text()); row['State']['Status']='running'; row['status']['state']='running'
-    row['status']['startedDate']='2026-10-20T15:40:28Z'; row['status']['networks']=[dict(network='default')]
-    path.write_text(json.dumps(row))
+    def started(row):
+        row['State']['Status']='running'; row['status']['state']='running'
+        row['status']['startedDate']='2026-10-20T15:40:28Z'; row['status']['networks']=[dict(network='default')]
+    row=update_state(started)
     (root/'started').touch()
     if row['Name'].endswith('-results'):
         directory=Path((root/'fixture-input').read_text())
@@ -534,18 +553,17 @@ elif action=='start':
             for filename, content in [('results.json', b'[]'), ('provenance.json', json.dumps(provenance).encode())]:
                 member=tarfile.TarInfo(filename); member.size=len(content)
                 output.addfile(member, io.BytesIO(content))
-        row['State']['Status']='exited'; row['status']['state']='stopped'; row['status']['networks']=[]; path.write_text(json.dumps(row))
+        update_state(stopped)
     else:
         print('payload-ready',flush=True)
-    while json.loads(path.read_text())['State']['Status']=='running': time.sleep(.01)
+    while read_state()['State']['Status']=='running': time.sleep(.01)
     sys.exit(int(os.environ.get('PAYLOAD_STATUS','0')))
 elif action=='stop':
     assert list(root.glob('container-memory-*.json')), 'release before stop'
-    row=json.loads(path.read_text()); row['State']['Status']='exited'; row['status']['state']='stopped'
-    row['status']['networks']=[]
-    path.write_text(json.dumps(row))
+    update_state(stopped)
     (root/'stop-confirmed').touch()
-elif action=='rm': path.unlink(missing_ok=True)
+elif action=='rm':
+    with locked(): path.unlink(missing_ok=True)
 ''')
         runtime.chmod(0o755)
         return runtime
@@ -632,6 +650,36 @@ elif action=='rm': path.unlink(missing_ok=True)
                 _, error = process.communicate(timeout=5)
                 self.assertEqual(process.returncode, expected, error)
                 self.assertFalse(list(self.directory.glob('container-memory-*.json')))
+
+    def test_fake_runtime_state_is_never_read_half_written(self):
+        """Readers overlap the fake's writes: a start polls the state while a stop
+        rewrites it (#1029). A reader must see the old or the new state, never a
+        truncated file."""
+        runtime = self.fake_runtime()
+        (self.directory / 'container-memory-test.json').write_text(
+            json.dumps(dict(name='test', memory_mib=512, token='test')))
+        subprocess.run([str(runtime), 'create', '--name', 'test', '--memory', '512M', 'image'],
+                       check=True, env=self.env)
+        finished = self.directory / 'reader-finished'
+        reader = subprocess.Popen([sys.executable, '-c', (
+            'import json, sys\nfrom pathlib import Path\n'
+            'state, finished = Path(sys.argv[1]), Path(sys.argv[2])\n'
+            'reads = errors = 0\n'
+            'while not finished.exists():\n'
+            '    reads += 1\n'
+            '    try: json.loads(state.read_text())\n'
+            '    except ValueError: errors += 1\n'
+            'print(reads, errors)'), str(self.directory / 'runtime-state'), str(finished)],
+            stdout=subprocess.PIPE, text=True)
+        self.addCleanup(self.reap, reader)
+        try:
+            for _ in range(40):
+                subprocess.run([str(runtime), 'stop', 'test'], check=True, env=self.env)
+        finally:
+            finished.touch()
+        reads, errors = map(int, reader.communicate(timeout=10)[0].split())
+        self.assertGreater(reads, 0)
+        self.assertEqual(errors, 0, f'{errors} of {reads} reads saw a half-written state after 40 writes')
 
     def test_compat_shell_cancellation_forwards_and_waits_before_exit(self):
         runtime = self.fake_runtime()
