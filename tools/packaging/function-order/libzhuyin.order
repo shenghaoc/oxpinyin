@@ -59,7 +59,7 @@ init	<oxpinyin_facade::context::ContextCore>::take_layout_faults
 init	<oxpinyin_runtime::FacadeBumps as core::default::Default>::default
 init	<oxpinyin_runtime::Runtime>::open_with_law
 init	<oxpinyin_store::bdb::ffi::Cursor as core::ops::drop::Drop>::drop
-init	<oxpinyin_store::bdb::ffi::Cursor>::get
+init	<oxpinyin_store::bdb::ffi::Cursor>::read
 init	<oxpinyin_store::bdb::ffi::Db>::open_at
 init	<oxpinyin_store::bdb::ffi::SharedDb>::cursor
 init	<oxpinyin_store::bdb::ffi::SharedDb>::open
@@ -128,13 +128,12 @@ init	std::sys::random::linux::hashmap_random_keys
 init	zhuyin::context::log_layout_faults
 init	zhuyin_init
 steady	<alloc::raw_vec::RawVec<oxpinyin_core::graph::Edge>>::grow_one
-steady	<alloc::raw_vec::RawVec<oxpinyin_engine::candidate::Candidate>>::grow_one [instantiating crate: oxpinyin_facade]
+steady	<alloc::raw_vec::RawVec<oxpinyin_engine::candidate::Candidate>>::grow_one
 steady	<alloc::raw_vec::RawVec<oxpinyin_engine::cursor::MatrixKey>>::grow_one
 steady	<alloc::raw_vec::RawVec<oxpinyin_engine::session::ScanKey>>::grow_one
 steady	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
 steady	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_user]
 steady	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_engine]
-steady	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_facade]
 steady	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_user]
 steady	<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>::drop_slow [instantiating crate: oxpinyin_engine]
 steady	<alloc::vec::Vec<(oxpinyin_engine::session::RankKey, u32)> as alloc::vec::spec_from_iter::SpecFromIter<(oxpinyin_engine::session::RankKey, u32), core::iter::adapters::map::Map<core::iter::adapters::enumerate::Enumerate<core::iter::adapters::zip::Zip<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate>, alloc::vec::into_iter::IntoIter<u64>>>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#2}>>>::from_iter [instantiating crate: zhuyin]
@@ -156,6 +155,7 @@ steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyi
 steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::dynamic_adjust_gram [instantiating crate: zhuyin]
 steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::ensure_matrix [instantiating crate: oxpinyin_facade]
 steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::ensure_matrix [instantiating crate: zhuyin]
+steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::lookup_and_append::{closure#0} [instantiating crate: zhuyin]
 steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::matrix_keys [instantiating crate: oxpinyin_facade]
 steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::prepend_nbest_rows [instantiating crate: zhuyin]
 steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::refill_raw [instantiating crate: oxpinyin_facade]
@@ -171,8 +171,9 @@ steady	<oxpinyin_facade::instance::InstanceCore>::abi_columns_over
 steady	<oxpinyin_facade::instance::InstanceCore>::mode_key_list
 steady	<oxpinyin_facade::instance::InstanceCore>::reset_parse_state
 steady	<oxpinyin_runtime::FacadeBumps>::token
-steady	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_addon_into
-steady	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_into_flagged
+steady	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_addon_each
+steady	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_each_flagged
+steady	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_each_flagged::{closure#0}
 steady	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::phrase_prefix_exists
 steady	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::phrase_prefix_exists_addon
 steady	<oxpinyin_runtime::RuntimeDict>::user_lookup
@@ -199,14 +200,13 @@ steady	core::slice::sort::stable::drift::sort::<oxpinyin_engine::candidate::Cand
 steady	core::slice::sort::stable::driftsort_main::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}, alloc::vec::Vec<oxpinyin_engine::candidate::Candidate>>
 steady	core::slice::sort::stable::quicksort::quicksort::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
 steady	oxpinyin_core::syllables::syllable_initial
-steady	oxpinyin_data::dict::resolve_items
+steady	oxpinyin_data::dict::resolve_item
 steady	oxpinyin_data::dict::syllables_to_chewing_keys
 steady	oxpinyin_data::phrase_libraries::item_possibility
 steady	oxpinyin_data::row_format::pinyin_index::decode_items
 steady	oxpinyin_data::row_format::pinyin_index::encode_complete_key
 steady	oxpinyin_data::row_format::pinyin_index::encode_incomplete_key
 steady	oxpinyin_engine::nbest::glib_merge_sort::<(oxpinyin_engine::session::RankKey, u32), oxpinyin_engine::session::glib_rank_sort::{closure#0}>
-steady	oxpinyin_engine::session::append_scan_entries::<alloc::vec::drain::Drain<oxpinyin_core::vocab::PhraseEntry>> [instantiating crate: zhuyin]
 steady	oxpinyin_engine::session::build_scan_matrix
 steady	oxpinyin_engine::session::dedup_ranked_by_text
 steady	oxpinyin_engine::session::dynamic_adjust_bigram_possibility
