@@ -245,12 +245,12 @@ impl AddonSet {
         self.dict.load_reporting(index, system_dir)
     }
 
-    fn lookup_into(
+    fn lookup_each(
         &self,
         syllables: &[SyllableKey],
-        out: &mut Vec<PhraseEntry>,
+        each: &mut dyn FnMut(PhraseEntry),
     ) -> Result<(), DictError> {
-        self.dict.lookup_into(syllables, out)
+        self.dict.lookup_each(syllables, each)
     }
 
     fn prefix_exists(&self, syllables: &[SyllableKey]) -> Result<bool, DictError> {
@@ -1425,39 +1425,45 @@ impl Dictionary for RuntimeDict {
         syllables: &[Self::Syllable],
         out: &mut Vec<Self::Entry>,
     ) -> Result<(), Self::Error> {
-        self.lookup_into_flagged(syllables, out).map(|_| ())
+        out.clear();
+        self.lookup_each_flagged(syllables, &mut |entry| out.push(entry))
+            .map(|_| ())
     }
 
-    fn lookup_into_flagged(
+    fn lookup_each_flagged(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        each: &mut dyn FnMut(Self::Entry),
     ) -> Result<bool, Self::Error> {
-        let unreadable = self.system.lookup_into_flagged(syllables, out)?;
-        let user = self.user_lookup()?;
-        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
-        self.note_user_search(syllables, &user);
-        out.extend(user.lookup(syllables));
+        // Each entry is finished before it is handed on: the pronunciation
+        // read and the visibility filter look at that entry alone, so doing
+        // them per entry keeps the order and the membership of the merged
+        // list without collecting it first.
+        //
         // 074a2219 phrase_index.h:136-163 uses wrapping guint32 sums;
         // pinyin_lookup2.cpp:437-466 reads pronunciation possibility from
         // the current item even when the match came from the shipped index.
-        if let Some(query) = self.effective_query(syllables) {
-            for entry in out.iter_mut() {
-                if let Some((matched, total)) =
-                    self.effective_possibility(&query, entry.token().value())
-                {
-                    *entry = entry
-                        .clone()
-                        .with_pronunciation_possibility(u64::from(matched), u64::from(total));
-                }
+        let query = self.effective_query(syllables);
+        // An unloaded library's phrases leave every read: upstream
+        // frees the sub-index (`phrase_index.cpp:260-268`), the
+        // mask keeps the monolithic tables resident but invisible.
+        let filter = self.token_filter_active();
+        let mut finish = |mut entry: PhraseEntry| {
+            if let Some(query) = query.as_deref()
+                && let Some((matched, total)) =
+                    self.effective_possibility(query, entry.token().value())
+            {
+                entry = entry.with_pronunciation_possibility(u64::from(matched), u64::from(total));
             }
-        }
-        if self.token_filter_active() {
-            // An unloaded library's phrases leave every read: upstream
-            // frees the sub-index (`phrase_index.cpp:260-268`), the
-            // mask keeps the monolithic tables resident but invisible.
-            out.retain(|entry| self.library_visible_token(entry.token().value()));
-        }
+            if !filter || self.library_visible_token(entry.token().value()) {
+                each(entry);
+            }
+        };
+        let unreadable = self.system.lookup_each_flagged(syllables, &mut finish)?;
+        let user = self.user_lookup()?;
+        #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
+        self.note_user_search(syllables, &user);
+        user.lookup(syllables).into_iter().for_each(finish);
         Ok(unreadable)
     }
 
@@ -1545,20 +1551,20 @@ impl Dictionary for RuntimeDict {
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         let mut entries = Vec::new();
-        self.lookup_addon_into(syllables, &mut entries)?;
+        self.lookup_addon_each(syllables, &mut |entry| entries.push(entry))?;
         Ok(entries)
     }
 
-    fn lookup_addon_into(
+    fn lookup_addon_each(
         &self,
         syllables: &[Self::Syllable],
-        out: &mut Vec<Self::Entry>,
+        each: &mut dyn FnMut(Self::Entry),
     ) -> Result<(), Self::Error> {
         let addons = self
             .addons
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        addons.lookup_into(syllables, out)
+        addons.lookup_each(syllables, each)
     }
 
     fn phrase_prefix_exists_addon(
@@ -1932,7 +1938,8 @@ const _: () = {
 /// clones sharing the table handles, and sessions built through
 /// [`Runtime::new_session`] share them too.
 pub struct Runtime {
-    paths: StoragePaths,
+    /// Shared by every session [`Runtime::new_session`] builds.
+    paths: Arc<StoragePaths>,
     dict: RuntimeDict,
     lm: RuntimeLm,
     user: Option<UserStore>,
@@ -2254,8 +2261,10 @@ impl Runtime {
         };
 
         Ok(Self {
-            paths: StoragePaths::new(user_dir.unwrap_or_else(|| Path::new("")))
-                .with_system_dirs([system_dir]),
+            paths: Arc::new(
+                StoragePaths::new(user_dir.unwrap_or_else(|| Path::new("")))
+                    .with_system_dirs([system_dir]),
+            ),
             dict,
             lm,
             user,
@@ -2311,7 +2320,7 @@ impl Runtime {
         };
         Session::new_with_key_costs(
             config,
-            self.paths.clone(),
+            Arc::clone(&self.paths),
             self.dict.clone(),
             self.lm.clone(),
             key_costs,
