@@ -9,8 +9,8 @@
 //! W4-T0. Not one of them changed.
 
 use core::fmt::Display;
+use std::collections::HashSet;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
 
 use smallvec::SmallVec;
 
@@ -382,8 +382,11 @@ fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
     });
     // Membership only: the retained candidates keep the batch's order, so
     // the set's own (unspecified) iteration order is never observed.
-    let mut seen: std::collections::HashSet<u32> =
-        std::collections::HashSet::with_capacity(into.len() - start);
+    let mut seen: oxpinyin_core::hash::FixedHashSet<u32> =
+        oxpinyin_core::hash::FixedHashSet::with_capacity_and_hasher(
+            into.len() - start,
+            oxpinyin_core::hash::FixedState::default(),
+        );
     let mut write = start;
     for read in start..into.len() {
         if let Some(token) = into[read].token().map(oxpinyin_core::PhraseToken::value)
@@ -1099,7 +1102,11 @@ fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[RankKey]) {
     debug_assert_eq!(ranked.len(), keys.len());
     let mut keep = vec![true; ranked.len()];
     {
-        let mut survivor: HashMap<&str, usize> = HashMap::with_capacity(ranked.len());
+        let mut survivor: oxpinyin_core::hash::FixedHashMap<&str, usize> =
+            oxpinyin_core::hash::FixedHashMap::with_capacity_and_hasher(
+                ranked.len(),
+                oxpinyin_core::hash::FixedState::default(),
+            );
         for (index, (key, candidate)) in keys.iter().zip(ranked.iter()).enumerate() {
             match survivor.entry(candidate.text()) {
                 Entry::Vacant(slot) => {

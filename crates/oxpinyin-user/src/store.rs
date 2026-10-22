@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use oxpinyin_core::hash::FixedHashMap;
 use oxpinyin_core::{ChewingKey, Completeness, SyllableKey, UserCountDelta, single_gram};
 use oxpinyin_data::user_files::{LogRecord, decode_log_records_partial, read_chunk_payload};
 use oxpinyin_store::{
@@ -4338,7 +4339,7 @@ impl GenericUserStore<DefaultStore> {
 const COUNT_MEMO_MAX_ENTRIES: usize = 8192;
 
 /// Inserts into a count-memo map, resetting it first once at capacity.
-fn memo_insert<K: std::hash::Hash + Eq, V>(map: &mut HashMap<K, V>, key: K, value: V) {
+fn memo_insert<K: std::hash::Hash + Eq, V>(map: &mut FixedHashMap<K, V>, key: K, value: V) {
     if map.len() >= COUNT_MEMO_MAX_ENTRIES {
         map.clear();
     }
@@ -4350,9 +4351,9 @@ impl CountCache {
     pub(crate) fn new(generation: u64) -> Self {
         Self {
             generation,
-            unigram: HashMap::new(),
+            unigram: FixedHashMap::default(),
             unigram_total: None,
-            bigram_rows: HashMap::new(),
+            bigram_rows: FixedHashMap::default(),
         }
     }
 

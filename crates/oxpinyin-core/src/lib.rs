@@ -15,6 +15,7 @@
 pub mod cost;
 mod full_pinyin_index;
 pub mod graph;
+pub mod hash;
 pub mod kbest;
 pub mod options;
 mod parser;
