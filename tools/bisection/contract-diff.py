@@ -116,7 +116,7 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
          cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
-         abort_logs=None, fatal=False, both_abort=False, issues=()):
+         abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=()):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -170,6 +170,11 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     subject writes the same line and gives the abort site's answer, so the
     pin must die of SIGSEGV after the stderr the subject wrote, byte for
     byte, and the subject must answer as `abort=` registers.
+    `strjoinv_over_read=True` is for the bigram export iterator's join of
+    an unterminated `GPtrArray` (register row 1, class (b);
+    `strjoinv_over_read_matches`): a pin that dies of SIGSEGV after the
+    stderr the subject wrote is held, and a pin that completes is compared
+    with each reading allowed the over-read's tail.
     `issues=<tags>` names the issues, register rows or lane tags the case
     guards (`'640'`, `'row:54'`, `'W11'`), the selectors of `--issue`; a
     case's family for `--family` is the text before the first `/` of its
@@ -181,7 +186,7 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
                            crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
                            dir_chunk=dir_chunk, stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
-                           both_abort=both_abort, issues=tuple(normal_tag(tag) for tag in issues))
+                           both_abort=both_abort, strjoinv_over_read=strjoinv_over_read, issues=tuple(normal_tag(tag) for tag in issues))
         return fn
     return register
 
@@ -9507,7 +9512,8 @@ for _kind in ('unsorted', 'duplicate'):
             case(f'user-gram-{_kind}-{_operation}-{_mode}', mode=_mode, issues=('757',))(
                 user_gram_layout(_kind, _operation))
     case(f'user-gram-{_kind}-remove-candidate-save', issues=('757',))(user_gram_layout(_kind, 'remove-candidate-save'))
-    case(f'user-gram-{_kind}-export', issues=('757',))(user_gram_layout(_kind, 'export'))
+    case(f'user-gram-{_kind}-export', strjoinv_over_read=True, issues=('757', 'row:1'))(
+        user_gram_layout(_kind, 'export'))
     case(f'user-gram-{_kind}-predicted', issues=('757',))(user_gram_predicted(_kind))
 
 
@@ -11874,7 +11880,8 @@ def verdict_for(spec, pin, subject, expect_parent):
     DIFFER by `matches`, and expected when it is what the mode asks for: a
     MATCH, or under --expect-parent a DIFFER from a non-control case."""
     same = matches(spec, pin, subject)
-    if not all(valid_observation(spec, side) for side in (pin, subject)):
+    held_fault = spec['strjoinv_over_read'] and strjoinv_fault(pin, subject)
+    if not held_fault and not all(valid_observation(spec, side) for side in (pin, subject)):
         return 'INVALID', False, same
     expected = same if (not expect_parent or spec['control']) else not same
     return ('MATCH' if same else 'DIFFER'), expected, same
@@ -11896,6 +11903,61 @@ def abort_answered(spec, pin, subject):
 def short_dir_chunk(spec):
     """A `dir_chunk` case on a host where the pin does not reach its assert."""
     return spec['dir_chunk'] is not None and not directory_reads_as_a_chunk()
+
+
+# Register row 1 (class (b)): `pinyin_bigram_iterator_has_next_phrase` joins
+# each predecessor's and each successor's syllables from a `GPtrArray` made by
+# `g_ptr_array_new` and taken by `g_ptr_array_free(…, FALSE)`, never
+# terminated, with `g_strjoinv("'", …)` and frees it with `g_strfreev`
+# (`pinyin.cpp:844-850`, `:857-863` at 074a2219), and stores
+# `first'second` (`:865`). At GLib 2.90.0 (the oracle image) and 2.80.0,
+# `g_ptr_array_maybe_expand` grows a non-terminated array, one add at a
+# time, to the power of two of bytes that holds its `len` pointers, at least
+# `MIN_ARRAY_SIZE` (16), with `g_realloc`, and clears the new slots only
+# under `g_mem_gc_friendly` (`garray.c:1893-1921` at 2.90.0);
+# `ptr_array_free` hands that buffer back as is (`:1845-1890`). So `pdata[len]` is uninitialised heap (inside the
+# 16-byte block for one syllable, the word past it for two), and
+# `g_strjoinv` walks to the first NULL (`gstrfuncs.c:2661`, `:2672`): an
+# unreadable word faults, a NULL word gives the subject's reading, and a
+# readable non-NULL one appends `'` and that string, and further slots
+# likewise, to the half it joined. The pin's later `g_strfreev` frees what
+# it joined; whether that survives is the heap's business too.
+def strjoinv_fault(pin, subject):
+    """Row 1's fault: the pin dies of SIGSEGV after the stderr the subject
+    wrote, byte for byte, and the subject completes."""
+    return pin['exit'] == -signal.SIGSEGV and pin['stderr'] == subject['stderr'] and \
+        subject['exit'] == 0 and subject['result'] is not None
+
+
+def strjoinv_reading_matches(pin_reading, subject_reading):
+    """The pin's `first'second` reading is the subject's with each half
+    optionally followed by the over-read's `'<tail>`."""
+    if pin_reading == subject_reading:
+        return True
+    if not isinstance(pin_reading, str) or not isinstance(subject_reading, str):
+        return False
+    syllables = [re.escape(part) for part in subject_reading.split("'")]
+    tail = "(?:'.*)?"
+    return any(re.fullmatch("'".join(syllables[:cut]) + tail + "'" + "'".join(syllables[cut:]) + tail,
+                            pin_reading, re.DOTALL)
+               for cut in range(1, len(syllables)))
+
+
+def strjoinv_over_read_matches(pin, subject):
+    """A completed export: every step equal, but for each reading's tail."""
+    left, right = observed(pin['result']), observed(subject['result'])
+    pin_steps, subject_steps = left.pop('steps', None), right.pop('steps', None)
+    if left != right or not isinstance(pin_steps, list) or not isinstance(subject_steps, list) or \
+            len(pin_steps) != len(subject_steps):
+        return False
+    for ours, theirs in zip(pin_steps, subject_steps):
+        if not (isinstance(ours, list) and isinstance(theirs, list) and len(ours) == len(theirs) == 4):
+            if ours != theirs:
+                return False
+            continue
+        if ours[:2] != theirs[:2] or ours[3] != theirs[3] or not strjoinv_reading_matches(ours[2], theirs[2]):
+            return False
+    return True
 
 
 def matches(spec, pin, subject):
@@ -11923,6 +11985,9 @@ def matches(spec, pin, subject):
             all(shown.get(key) == value for key, value in spec['crash'].items())
     elif as_abort:
         same = pin['exit'] == -6 and abort_answered(spec, pin, subject)
+    elif spec['strjoinv_over_read']:
+        completed = all(r['exit'] == 0 and r['result'] is not None for r in (pin, subject))
+        same = strjoinv_fault(pin, subject) or (completed and strjoinv_over_read_matches(pin, subject))
     elif short_dir and spec['dir_chunk'] == 'system':
         # Class (b): the pin dies of SIGSEGV after the stderr the subject
         # writes in full; the subject answers as the abort site registers.
