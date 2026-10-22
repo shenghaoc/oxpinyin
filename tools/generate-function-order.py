@@ -14,12 +14,12 @@ profiles are required, with no default policy.
 import argparse
 from collections import defaultdict
 from contextlib import contextmanager, nullcontext
-import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import signal
 import subprocess
@@ -30,6 +30,10 @@ import tempfile
 FACADES = ("pinyin", "zhuyin")
 PROFILES = ("phrases", "journals")
 HERE = Path(__file__).resolve().parent
+# The startup-profile manifest, shared with the teardown provisioner that
+# writes it; also the system-data identity.
+STARTUP_PROFILE = runpy.run_path(str(HERE / "bisection/startup_profile.py"))
+manifest = STARTUP_PROFILE["manifest"]
 
 
 def canonical(name):
@@ -254,27 +258,6 @@ def resolved_paths(functions, library, symbol_table, available):
     return result
 
 
-def manifest(directory):
-    """The unchanged startup-profile manifest schema, also used for the system identity."""
-    rows = ["oxpinyin-startup-profile-v1"]
-
-    def walk(parent):
-        for path in sorted(parent.iterdir(), key=lambda entry: entry.name):
-            if path.is_symlink():
-                raise ValueError(f"manifest input contains a symlink: {path}")
-            if path.is_dir():
-                walk(path)
-            elif path.is_file():
-                with path.open("rb") as handle:
-                    digest = hashlib.file_digest(handle, "sha256").hexdigest()
-                rows.append(f"file\t{path.stat().st_size}\t{digest}\t{path.relative_to(directory).as_posix()}")
-            else:
-                raise ValueError(f"manifest input is not a regular file: {path}")
-
-    walk(directory)
-    return "\n".join(rows) + "\n"
-
-
 @contextmanager
 def collection_scratch(root):
     # No profiler output is written here. Only private writable profile
@@ -464,13 +447,12 @@ def collect_policies(args, libraries, archives):
                 args.system_identity, args.cpu is not None)
     if not all(required) or args.init or args.steady:
         raise ValueError("collection needs the bisect worker, system/profile/work directories, identity and CPU; no stream inputs")
-    identity = hashlib.sha256(manifest(args.system_dir).encode()).hexdigest()
+    identity = STARTUP_PROFILE["identity"](args.system_dir)
     if identity != args.system_identity:
         raise ValueError(f"system identity differs: {identity}")
     for profile in PROFILES:
         fixture = args.profiles_dir / profile
-        if manifest(fixture / "user") != (fixture / "profile.manifest").read_text():
-            raise ValueError(f"profile manifest differs: {profile}")
+        STARTUP_PROFILE["check"](fixture / "user", fixture / "profile.manifest")
     outputs = {}
     with collection_scratch(args.work_dir) as work:
         environment = {**os.environ, "LC_ALL": "C", "TMPDIR": str(work)}
@@ -486,8 +468,10 @@ def collect_policies(args, libraries, archives):
     # The input fixtures are immutable even if a driver's private copy mutates.
     for profile in PROFILES:
         fixture = args.profiles_dir / profile
-        if manifest(fixture / "user") != (fixture / "profile.manifest").read_text():
-            raise ValueError(f"profile changed during collection: {profile}")
+        try:
+            STARTUP_PROFILE["check"](fixture / "user", fixture / "profile.manifest")
+        except ValueError as error:
+            raise ValueError(f"profile changed during collection: {profile}: {error}") from error
     return outputs
 
 
@@ -516,7 +500,9 @@ def main():
     parser.add_argument("--staticlib", action="append", default=[], metavar="FACADE=ARCHIVE")
     parser.add_argument("--init", action="append", default=[], metavar="FACADE:PROFILE=STREAM")
     parser.add_argument("--steady", action="append", default=[], metavar="FACADE=STREAM")
-    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path)
+    parser.add_argument("--print-identity", type=Path, metavar="DIR",
+                        help="print DIR's --system-identity value and exit")
     parser.add_argument("--bisect", type=Path, help="in-tree bisect worker; collects instead of reading streams")
     parser.add_argument("--system-dir", type=Path)
     parser.add_argument("--system-identity")
@@ -524,6 +510,14 @@ def main():
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--cpu", type=int)
     args = parser.parse_args()
+    if args.print_identity:
+        try:
+            print(STARTUP_PROFILE["identity"](args.print_identity))
+        except (OSError, ValueError) as error:
+            parser.exit(1, f"function ordering: {error}\n")
+        return
+    if not args.output_dir:
+        parser.error("--output-dir is required")
     try:
         libraries = pairs(args.library, FACADES, "--library")
         archives = pairs(args.staticlib, FACADES, "--staticlib")

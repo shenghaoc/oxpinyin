@@ -41,6 +41,7 @@ def sibling(name):
 
 
 SMAPS = sibling('rss-smaps')
+STARTUP_PROFILE = sibling('startup_profile')
 
 
 def digest_bytes(value):
@@ -413,13 +414,8 @@ def print_record(kind, **values):
 def provision(campaign, pin, root):
     if root.exists():
         profiles = {name: root / name / 'user' for name in PROFILES}
-        for name, user in profiles.items():
-            lines = (user.parent / 'profile.manifest').read_text().splitlines()
-            if lines[:1] != ['oxpinyin-startup-profile-v1']:
-                raise ValueError('profile manifest schema mismatch')
-            recorded = {line.split('\t', 2)[2]: (int(line.split('\t', 2)[0]), line.split('\t', 2)[1]) for line in lines[1:]}
-            if recorded != file_set(user):
-                raise ValueError('profile manifest mismatch: ' + name)
+        for user in profiles.values():
+            STARTUP_PROFILE.check(user, user.parent / 'profile.manifest')
         return profiles
     root.mkdir()
     export_user = root / 'export-user'
@@ -444,8 +440,7 @@ def provision(campaign, pin, root):
             # profile into place. run() intentionally never mutates its input.
             populate_user(campaign, pin, user, path)
         files = file_set(user)
-        (destination / 'profile.manifest').write_text('\n'.join(
-            ['oxpinyin-startup-profile-v1', *[f'{size}\t{sha}\t{filename}' for filename, (size, sha) in files.items()]]) + '\n')
+        (destination / 'profile.manifest').write_text(STARTUP_PROFILE.manifest(user))
         (destination / 'witness.txt').write_text('')
         profiles[name] = user
         print_record('fixture', profile=name, files=files, identity=identity(files),
