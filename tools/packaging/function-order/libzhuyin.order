@@ -167,8 +167,8 @@ steady	<oxpinyin_engine::session::buffer::InputBuffer>::clear
 steady	<oxpinyin_engine::session::buffer::InputBuffer>::refill
 steady	<oxpinyin_engine::session::buffer::InputBuffer>::set_physical_separators
 steady	<oxpinyin_engine::session::matrix::ParsedMatrix>::from_scan
-steady	<oxpinyin_facade::instance::InstanceCore>::abi_columns
-steady	<oxpinyin_facade::instance::InstanceCore>::mode_keys
+steady	<oxpinyin_facade::instance::InstanceCore>::abi_columns_over
+steady	<oxpinyin_facade::instance::InstanceCore>::mode_key_list
 steady	<oxpinyin_facade::instance::InstanceCore>::reset_parse_state
 steady	<oxpinyin_runtime::FacadeBumps>::token
 steady	<oxpinyin_runtime::RuntimeDict as oxpinyin_core::Dictionary>::lookup_addon_into

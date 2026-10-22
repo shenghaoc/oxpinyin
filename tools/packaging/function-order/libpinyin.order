@@ -151,7 +151,7 @@ steady	<alloc::vec::Vec<(oxpinyin_engine::session::RankKey, u32)> as alloc::vec:
 steady	<alloc::vec::Vec<oxpinyin_engine::session::RankKey> as alloc::vec::spec_from_iter::SpecFromIter<oxpinyin_engine::session::RankKey, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<(oxpinyin_engine::session::RankKey, u32)>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#3}>>>::from_iter [instantiating crate: pinyin]
 steady	<alloc::vec::Vec<oxpinyin_engine::session::ScanKey> as alloc::vec::spec_from_elem::SpecFromElem>::from_elem::<alloc::alloc::Global>
 steady	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: oxpinyin_engine]
-steady	<core::option::Option<&oxpinyin_core::scheme::ZhuyinParse>>::map_or_else::<usize, pinyin::sentence::pinyin_guess_candidates::{closure#2}, pinyin::sentence::pinyin_guess_candidates::{closure#3}>
+steady	<core::option::Option<&oxpinyin_core::scheme::ZhuyinParse>>::map_or_else::<usize, pinyin::sentence::pinyin_guess_candidates::{closure#5}, pinyin::sentence::pinyin_guess_candidates::{closure#6}>
 steady	<hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
 steady	<oxpinyin_chewing::chewing_key::ChewingKey>::from_pinyin
 steady	<oxpinyin_core::graph::SegmentGraph>::build_with_options
@@ -175,11 +175,11 @@ steady	<oxpinyin_engine::session::buffer::InputBuffer>::clear
 steady	<oxpinyin_engine::session::buffer::InputBuffer>::refill
 steady	<oxpinyin_engine::session::buffer::InputBuffer>::set_physical_separators
 steady	<oxpinyin_engine::session::matrix::ParsedMatrix>::from_scan
-steady	<oxpinyin_facade::instance::InstanceCore>::abi_columns
+steady	<oxpinyin_facade::instance::InstanceCore>::abi_columns_over
 steady	<oxpinyin_facade::instance::InstanceCore>::lookup_window
-steady	<oxpinyin_facade::instance::InstanceCore>::mode_keys
+steady	<oxpinyin_facade::instance::InstanceCore>::mode_key_list
 steady	<oxpinyin_facade::instance::InstanceCore>::reset_parse_state
-steady	<oxpinyin_facade::instance::InstanceCore>::validate_abi_lookup_offset
+steady	<oxpinyin_facade::instance::InstanceCore>::validate_abi_lookup_offset_over
 steady	<oxpinyin_facade::snapshot::CandidateSnapshot<pinyin::state::CapiCandidate>>::intern
 steady	<oxpinyin_facade::snapshot::CandidateSnapshot<pinyin::state::CapiCandidate>>::push
 steady	<oxpinyin_facade::snapshot::CandidateSnapshot<pinyin::state::CapiCandidate>>::reserve
@@ -200,7 +200,7 @@ steady	<oxpinyin_user::session_values::SessionValues<oxpinyin_store::bdb::BdbSto
 steady	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::unigram_delta [instantiating crate: oxpinyin_runtime]
 steady	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::unigram_total [instantiating crate: oxpinyin_runtime]
 steady	<phf::map::Map<&str, u16>>::get_entry::<str> [instantiating crate: oxpinyin_core]
-steady	<pinyin::aux_matrix::SharedMatrix>::of
+steady	<pinyin::aux_matrix::SharedMatrix>::of_keys
 steady	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&alloc::string::String> [instantiating crate: pinyin]
 steady	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32> [instantiating crate: oxpinyin_engine]
 steady	<std::sync::once::Once>::call_once_force::<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !>::{closure#0}>::{closure#0} [instantiating crate: pinyin]
@@ -228,14 +228,13 @@ steady	oxpinyin_engine::session::build_scan_matrix
 steady	oxpinyin_engine::session::dedup_ranked_by_text
 steady	oxpinyin_engine::session::dynamic_adjust_bigram_possibility
 steady	oxpinyin_engine::session::glib_rank_sort
-steady	oxpinyin_engine::session::normalize_lookup_offset
 steady	oxpinyin_engine::session::order_window_tail
 steady	oxpinyin_facade::snapshot::span_ptr
 steady	oxpinyin_user::lookup::index_key
 steady	oxpinyin_user::lookup::initial_key
 steady	oxpinyin_user::lookup::prefix_probe
 steady	pinyin::ffi::cstr_to_parsed_prefix
-steady	pinyin::sentence::refuse_toned_initial
+steady	pinyin::sentence::refuse_toned_matrix
 steady	pinyin_get_n_candidate
 steady	pinyin_guess_candidates
 steady	pinyin_parse_more_full_pinyins
