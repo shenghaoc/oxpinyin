@@ -32,13 +32,18 @@ use super::{BIGRAM, PHRASE, emit, run_train_write, vm_hwm_kib};
 
 /// Every operation the mode knows, with the iteration count the paired
 /// runner uses by default.
-pub const OPS: [(&str, u64); 21] = [
+pub const OPS: [(&str, u64); 29] = [
     ("get_raw.tree.empty", 200_000),
     ("get_raw.tree.small", 200_000),
     ("get_raw.tree.medium", 200_000),
     ("get_raw.tree.large", 100_000),
     ("get_raw.tree.miss", 200_000),
+    ("get_raw.tree.retain", 10_000),
     ("get_raw.hash", 200_000),
+    ("get_raw.hash.small", 200_000),
+    ("get_raw.hash.medium", 200_000),
+    ("get_raw.hash.large", 50_000),
+    ("get_raw.hash.miss", 200_000),
     ("scan_raw.suggestion", 20),
     ("scan_raw.full.tree", 5),
     ("scan_raw.full.hash", 2),
@@ -47,6 +52,9 @@ pub const OPS: [(&str, u64); 21] = [
     ("framed.txn_scan", 2_000),
     ("framed.is_empty", 200_000),
     ("user_bigram.get", 200_000),
+    ("user_bigram.get.small", 200_000),
+    ("user_bigram.get.large", 50_000),
+    ("user_bigram.miss", 200_000),
     ("user_bigram.store", 200_000),
     ("user_bigram.remove_store", 100_000),
     ("user_bigram.keys", 100),
@@ -64,6 +72,10 @@ type Runner<'a> = dyn FnMut(&mut dyn FnMut(u64) -> u64) -> Timed + 'a;
 
 /// Keys sampled per value-size class.
 const SAMPLE: usize = 256;
+/// Results `get_raw.tree.retain` holds at once: the n-best beam width
+/// (`NBEAM` in `oxpinyin-engine`), whose merged rows keep the point-read
+/// buffers alive for one position.
+const RETAINED: usize = 32;
 /// Rows the user bigram and the framed store hold.
 const USER_ROWS: usize = 4096;
 
@@ -116,6 +128,46 @@ fn all_rows<S: RawReadStore>(store: &S) -> Vec<(Vec<u8>, Vec<u8>)> {
         })
         .expect("walk raw rows");
     rows
+}
+
+/// The value-size class a `get_raw.hash.*` or `user_bigram.get.*`
+/// operation reads: a bigram row is a 4-byte total plus 8 bytes per
+/// successor, so `large` is a row past one 4 KiB page.
+fn hash_class(op: &str) -> fn(usize) -> bool {
+    if op.ends_with("small") {
+        |len| len <= 64
+    } else if op.ends_with("medium") {
+        |len| (65..=4096).contains(&len)
+    } else {
+        |len| len > 4096
+    }
+}
+
+/// A strided sample of the keys whose value length is in `class`.
+fn keys_in_class(rows: &[(Vec<u8>, Vec<u8>)], class: fn(usize) -> bool) -> Vec<Vec<u8>> {
+    stride(
+        &rows
+            .iter()
+            .filter(|(_, value)| class(value.len()))
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>(),
+    )
+}
+
+/// [`SAMPLE`] token keys the bigram does not hold, interleaved with the
+/// ones it does: each present key plus one, where that is absent.
+fn absent_tokens(rows: &[(Vec<u8>, Vec<u8>)]) -> Vec<Vec<u8>> {
+    let present: std::collections::BTreeSet<&[u8]> =
+        rows.iter().map(|(key, _)| key.as_slice()).collect();
+    let absent: Vec<Vec<u8>> = rows
+        .iter()
+        .filter_map(|(key, _)| {
+            let token = u32::from_le_bytes(key.as_slice().try_into().ok()?);
+            let next = token.checked_add(1)?.to_le_bytes();
+            (!present.contains(next.as_slice())).then(|| next.to_vec())
+        })
+        .collect();
+    stride(&absent)
 }
 
 /// An evenly strided sample of at most [`SAMPLE`] items.
@@ -216,6 +268,64 @@ where
             run(&mut |i| {
                 let key = &keys[(i as usize) % keys.len()];
                 pack(get_digest(store.get_raw(key).expect("get_raw")), 1)
+            })
+        }
+        "get_raw.hash.small"
+        | "get_raw.hash.medium"
+        | "get_raw.hash.large"
+        | "get_raw.hash.miss" => {
+            let store = S::open_hash_read_only(&inputs.hash).expect("open bigram");
+            let rows = all_rows(&store);
+            let keys = if op.ends_with("miss") {
+                absent_tokens(&rows)
+            } else {
+                keys_in_class(&rows, hash_class(op))
+            };
+            assert!(!keys.is_empty(), "no keys in class {op}");
+            drop(rows);
+            run(&mut |i| {
+                let key = &keys[(i as usize) % keys.len()];
+                pack(get_digest(store.get_raw(key).expect("get_raw")), 1)
+            })
+        }
+        "get_raw.tree.retain" => {
+            // The n-best beam's shape: `RETAINED` results alive at once.
+            // The keys are sampled by a streaming walk that keeps only
+            // them, so the setup's peak stays below the region's.
+            let store = S::open_read_only(&inputs.pinyin).expect("open pinyin index");
+            let medium = |len: usize| (17..=256).contains(&len);
+            let mut count = 0_usize;
+            store
+                .range_raw(Bound::Unbounded, Bound::Unbounded, |_, value| {
+                    count += usize::from(medium(value.len()));
+                    Ok(())
+                })
+                .expect("count keys");
+            let step = count.div_ceil(SAMPLE).max(1);
+            let mut keys = Vec::with_capacity(SAMPLE);
+            let mut seen = 0_usize;
+            store
+                .range_raw(Bound::Unbounded, Bound::Unbounded, |key, value| {
+                    if medium(value.len()) {
+                        if seen.is_multiple_of(step) && keys.len() < SAMPLE {
+                            keys.push(key.to_vec());
+                        }
+                        seen += 1;
+                    }
+                    Ok(())
+                })
+                .expect("sample keys");
+            assert!(keys.len() >= RETAINED, "too few keys for {op}");
+            run(&mut |i| {
+                let start = (i as usize * RETAINED) % (keys.len() - RETAINED + 1);
+                let held: Vec<Option<Vec<u8>>> = keys[start..start + RETAINED]
+                    .iter()
+                    .map(|key| store.get_raw(key).expect("get_raw"))
+                    .collect();
+                let sum = held
+                    .into_iter()
+                    .fold(0, |acc, value| fold(acc, get_digest(value)));
+                pack(sum, RETAINED as u64)
             })
         }
         "scan_raw.suggestion" => {
@@ -322,6 +432,9 @@ where
             }
         }
         "user_bigram.get"
+        | "user_bigram.get.small"
+        | "user_bigram.get.large"
+        | "user_bigram.miss"
         | "user_bigram.store"
         | "user_bigram.remove_store"
         | "user_bigram.keys" => {
@@ -336,6 +449,18 @@ where
                     let (key, _) = &sample[(i as usize) % sample.len()];
                     pack(get_digest(db.get(key).expect("get")), 1)
                 }),
+                "user_bigram.get.small" | "user_bigram.get.large" | "user_bigram.miss" => {
+                    let keys = if op.ends_with("miss") {
+                        absent_tokens(&rows)
+                    } else {
+                        keys_in_class(&rows, hash_class(op))
+                    };
+                    assert!(!keys.is_empty(), "no keys in class {op}");
+                    run(&mut |i| {
+                        let key = &keys[(i as usize) % keys.len()];
+                        pack(get_digest(db.get(key).expect("get")), 1)
+                    })
+                }
                 "user_bigram.store" => run(&mut |i| {
                     let (key, value) = &sample[(i as usize) % sample.len()];
                     db.store(key, value).expect("store");
@@ -387,10 +512,12 @@ where
                 run(&mut |_| {
                     db.save_db(&bigram).expect("save user bigram");
                     S::write_user_index(&index, &index_rows).expect("write user index");
-                    pack(
-                        digest(&std::fs::read(&bigram).expect("read saved bigram")),
-                        2,
-                    )
+                    // The saved lengths, not the bytes: Berkeley DB writes
+                    // a file ID drawn from the clock and the process into
+                    // each file's meta page, so two saves of the same rows
+                    // differ in those bytes alone.
+                    let saved = |path: &Path| std::fs::metadata(path).expect("saved file").len();
+                    pack(saved(&bigram) ^ saved(&index).rotate_left(32), 2)
                 })
             }
         }
@@ -517,7 +644,9 @@ where
             calls += 3;
         }
         user.save_db(&bigram_file).expect("save user bigram");
-        sum = fold(sum, digest(&std::fs::read(&bigram_file).expect("read")));
+        // The saved length: see `lifecycle.user_save` for why not the bytes.
+        let saved = std::fs::metadata(&bigram_file).expect("saved bigram").len();
+        sum = fold(sum, saved);
         drop(black_box((stores, user, session)));
         pack(sum, calls + 1)
     })
