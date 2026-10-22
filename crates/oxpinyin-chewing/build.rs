@@ -28,14 +28,38 @@ fn main() {
         }),
         "crate::static_strings",
     );
+    // The spelling column is also stored inline as an integer key: the
+    // spelling's bytes, zero-padded to eight, read big-endian. No spelling
+    // holds a NUL byte, so the integer order is the byte order of the
+    // spellings and integer equality is spelling equality.
     writeln!(
         output,
-        "pub(crate) static CONTENT_KEYS: [[u8; 3]; {}] = [",
+        "pub(crate) static CONTENT_KEYS: [ContentKey; {}] = [",
         source::CONTENT_TABLE.len()
     )
     .expect("write key declaration");
+    let mut previous = None;
     for row in source::CONTENT_TABLE {
-        writeln!(output, "[{}, {}, {}],", row.initial, row.middle, row.final_).expect("write key");
+        let bytes = row.pinyin.as_bytes();
+        assert!(
+            bytes.len() <= 8 && !bytes.contains(&0),
+            "content spelling {:?} does not fit an 8-byte key",
+            row.pinyin
+        );
+        let mut padded = [0_u8; 8];
+        padded[..bytes.len()].copy_from_slice(bytes);
+        let spelling = u64::from_be_bytes(padded);
+        assert!(
+            previous.is_none_or(|previous| previous < spelling),
+            "content spellings must be strictly increasing"
+        );
+        previous = Some(spelling);
+        writeln!(
+            output,
+            "ContentKey {{ spelling: {spelling:#018x}, initial: {}, middle: {}, final_: {} }},",
+            row.initial, row.middle, row.final_
+        )
+        .expect("write key");
     }
     writeln!(output, "];").expect("write key end");
     pool.finish(&mut output);

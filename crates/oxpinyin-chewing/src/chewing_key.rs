@@ -19,6 +19,7 @@
 
 use crate::chewing_key_data::{
     CHEWING_KEY_TABLE, CONTENT_KEYS, NUM_FINALS, NUM_INITIALS, NUM_MIDDLES, content_strings,
+    spelling_key,
 };
 
 /// `CHEWING_ZERO_TONE` (`src/storage/chewing_enum.h:92`).
@@ -96,12 +97,15 @@ impl ChewingKey {
     /// The key for a full-pinyin spelling, tone zero.
     #[must_use]
     pub fn from_pinyin(text: &str) -> Option<Self> {
-        let position = content_strings().position(text)?;
-        let &[initial, middle, final_] = CONTENT_KEYS.get(position)?;
+        let spelling = spelling_key(text)?;
+        let position = CONTENT_KEYS
+            .binary_search_by(|row| row.spelling.cmp(&spelling))
+            .ok()?;
+        let row = CONTENT_KEYS.get(position)?;
         Some(Self {
-            initial,
-            middle,
-            final_,
+            initial: row.initial,
+            middle: row.middle,
+            final_: row.final_,
             tone: CHEWING_ZERO_TONE,
         })
     }
@@ -231,7 +235,7 @@ mod chewing_key_data_tests {
     use super::ChewingKey;
     use crate::chewing_key_data::reference::CONTENT_TABLE;
     use crate::chewing_key_data::{
-        CHEWING_KEY_TABLE, CONTENT_KEYS, NUM_FINALS, NUM_MIDDLES, content_strings,
+        CHEWING_KEY_TABLE, CONTENT_KEYS, NUM_FINALS, NUM_MIDDLES, content_strings, spelling_key,
     };
 
     #[test]
@@ -251,11 +255,13 @@ mod chewing_key_data_tests {
                 ]),
                 "row {index}"
             );
+            let key = CONTENT_KEYS[index];
             assert_eq!(
-                CONTENT_KEYS[index],
+                [key.initial, key.middle, key.final_],
                 [row.initial, row.middle, row.final_],
                 "row {index}"
             );
+            assert_eq!(Some(key.spelling), spelling_key(row.pinyin), "row {index}");
         }
     }
 
@@ -265,7 +271,8 @@ mod chewing_key_data_tests {
     /// components are the all-zero key, which maps to row 0 anyway).
     #[test]
     fn tables_cross_validate() {
-        for (index, &[initial, middle, final_]) in CONTENT_KEYS.iter().enumerate() {
+        for (index, key) in CONTENT_KEYS.iter().enumerate() {
+            let (initial, middle, final_) = (key.initial, key.middle, key.final_);
             if index == 0 {
                 continue;
             }
@@ -290,6 +297,22 @@ mod chewing_key_data_tests {
             assert!(pair[0][0] <= pair[1][0]);
         }
         assert_eq!(content_strings().field(0, 0), Some(""));
+        for pair in CONTENT_KEYS.windows(2) {
+            assert!(pair[0].spelling < pair[1].spelling);
+        }
+    }
+
+    /// A spelling no row can hold matches no row: longer than the key, or
+    /// carrying a NUL byte that zero padding would otherwise hide.
+    #[test]
+    fn spellings_outside_the_key_match_no_row() {
+        assert_eq!(spelling_key("zhuangzh"), Some(0x7a68_7561_6e67_7a68));
+        assert_eq!(spelling_key("zhuangzhu"), None);
+        assert_eq!(spelling_key("ni\0"), None);
+        assert!(ChewingKey::from_pinyin("ni\0").is_none());
+        assert!(ChewingKey::from_pinyin("zhuangzhu").is_none());
+        assert_eq!(spelling_key(""), Some(0));
+        assert_eq!(ChewingKey::from_pinyin(""), Some(ChewingKey::default()));
     }
 
     /// The zero key renders empty everywhere and answers table index 0;
