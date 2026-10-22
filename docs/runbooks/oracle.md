@@ -251,24 +251,14 @@ The input identity authority is `tools/oracle/oracle-pin.txt`:
 | --- | --- |
 | Pin source | `libpinyin_commit` (`074a2219c90feaf962d0d24f034514033ece5f99`) |
 | Pin build, each cell | `libpinyin_sha256_bdb`, `libpinyin_sha256_kc`, `libpinyin_sha256_tkrzw`; the matching prefix's `oracle-pin.txt` records `shared_object_sha256` |
-| Real data, each cell | `data_manifest_sha256_bdb`, `data_manifest_sha256_kc`, `data_manifest_sha256_tkrzw`; hash the prefix's `oracle-data.sha256` and verify its listed files |
+| Real data, each cell | `data_manifest_sha256_bdb`, `data_manifest_sha256_kc`, `data_manifest_sha256_tkrzw`, plus the prefix's own `data_unstable_manifest_sha256`; use the shared [data verification](cloud.md#data-verification) |
 | Model20 archive | `model_archive_sha256` (`59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`); use its verified extraction for `PINYIN_MODEL_DIR` |
 
-For each selected cell, also check both manifests against the files in
-that exact prefix. With setup's matching environment loaded:
-
-```sh
-(cd "$PINYIN_ORACLE_PREFIX" &&
-    sha256sum --check oracle-data.sha256 &&
-    sha256sum --check oracle-data-unstable.sha256)
-```
-
-The unstable manifest covers the generated DBM files (`bigram.db`,
-`phrase_index.bin`, `pinyin_index.bin`, `punct.bin` and both addon indexes).
-This second check is local only: upstream DBM generation is not
-reproducible, so the aggregate digest of `oracle-data-unstable.sha256`
-cannot be compared across builds. Its local entries still detect changed
-or corrupted files in a reused prefix; the stable manifest alone does not.
+For each selected cell, run the read-only command in cloud setup's
+[data verification](cloud.md#data-verification) with its matching
+environment loaded. It uses the same `data_ok` function as setup to check
+both manifest digests and every listed file in that exact prefix, so the
+pre-release identity check follows setup's contract.
 
 Record the actual build and data-manifest digests, the model20 digest,
 host and cell with the results. The BDB real-file tests read `bigram.db`

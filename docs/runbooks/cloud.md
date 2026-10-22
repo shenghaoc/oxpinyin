@@ -132,6 +132,35 @@ provisioned cell), `PINYIN_ORACLE_PREFIX` and `OXPINYIN_LIBPINYIN_DATA_DIR`,
 recomputed each time the file is sourced. Naming a cell the setup did not
 provision stops the `source` with an error. The file needs bash.
 
+### Data verification
+
+`data_ok` in `tools/cloud/env.sh` checks the same data contract when setup
+reuses a cache, verifies regenerated data, or retains an existing cell in
+the environment file. It compares the SHA-256 of `oracle-data.sha256`
+with `data_manifest_sha256_<cell>` in the repository's pin file and checks
+every listed stable file. It also compares the SHA-256 of
+`oracle-data-unstable.sha256` with `data_unstable_manifest_sha256` in that
+prefix's own `oracle-pin.txt`, then checks every generated file it lists.
+A missing or changed unstable manifest fails; a generated-file failure
+names the file.
+
+The unstable manifest covers `bigram.db`, `phrase_index.bin`,
+`pinyin_index.bin`, `punct.bin` and both addon indexes. Their bytes differ
+between builds, so this digest is checked against the prefix's local
+record, never against the repository pin or another prefix.
+
+For a read-only check of a selected prefix, load its matching setup
+environment and run from the repository root:
+
+```sh
+(
+    source tools/cloud/env.sh
+    pin=tools/oracle/oracle-pin.txt
+    pinval() { sed -n "s/^$1=//p" "$pin"; }
+    data_ok "$PINYIN_ORACLE_DBM" "$PINYIN_ORACLE_PREFIX"
+)
+```
+
 ## What it does
 
 0. Checks Cargo and the repository toolchain, and requires or installs
@@ -195,8 +224,9 @@ provision stops the `source` with an error. The file needs bash.
    build when the cached revision is present and its probe passes.
 4. Uses model20 fetched early with `tools/model/fetch-model.sh` into
    `<cache>/model20`, runs `build-oracle.sh --regen-data` per cell inside
-   the image, and re-verifies the installed files against
-   `oracle-data.sha256`. The data is generated in a staging area and swapped
+   the image, and re-verifies the installed files with the shared
+   [data verification](#data-verification). The data is generated in a
+   staging area and swapped
    in only if the regenerated stable manifest equals
    `data_manifest_sha256_<cell>`; otherwise the step fails and the prefix is
    untouched.
