@@ -30,6 +30,11 @@
 //! RAM is a separate axis and a separate mode: `--vmhwm` re-executes this
 //! binary as one child per operation and reports each child's
 //! `/proc/self/status` `VmHWM`. Do not mix the two axes in one table.
+//!
+//! `--op` runs one store operation over a libpinyin data directory for
+//! paired build-to-build comparisons (`ops.rs`; `tools/bisection/store-ops.py`
+//! drives it). `--list-ops` prints the operations and their default
+//! iteration counts.
 
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
@@ -40,6 +45,8 @@ use std::time::{Duration, Instant};
 use criterion::{BatchSize, Criterion};
 
 use oxpinyin_store::{DEFAULT_STORE_EXT, RawReadStore, ReadStore, WriteStore, WriteTxn};
+
+mod ops;
 
 /// User-store table names, mirroring the user store's own tables.
 pub const BIGRAM: &str = "user_bigram";
@@ -445,6 +452,27 @@ where
     }
     if args.iter().any(|a| a == "--vmhwm") {
         run_vmhwm_parent(backend);
+        return;
+    }
+    if args.iter().any(|a| a == "--list-ops") {
+        for (op, iters) in ops::OPS {
+            println!("{op} {iters}");
+        }
+        return;
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--op") {
+        let value = |flag: &str| {
+            args.iter()
+                .position(|a| a == flag)
+                .and_then(|at| args.get(at + 1))
+                .unwrap_or_else(|| {
+                    eprintln!("backend_matrix: --op needs {flag}");
+                    std::process::exit(2);
+                })
+        };
+        let op = args.get(pos + 1).expect("--op needs an operation argument");
+        let iters = value("--iters").parse().expect("--iters is a count");
+        ops::run::<S>(op, iters, Path::new(value("--data")));
         return;
     }
 
