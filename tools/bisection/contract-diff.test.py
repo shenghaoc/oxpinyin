@@ -264,6 +264,114 @@ class DriverInvalidTests(unittest.TestCase):
         self.assertEqual((status, rows[0]['verdict']), (1, 'INVALID'))
 
 
+class DirChunkTests(unittest.TestCase):
+    """`dir_chunk`: the directory a NULL row makes the pin read is held to
+    the side of `directory_reads_as_a_chunk` this host is on (#1011)."""
+
+    USER = 'table-conf-abort-system-file-without-user-file'
+    SYSTEM = 'table-conf-abort-system-file-without-chunk'
+    FRESH = 'open SCRATCH/user-X/user.conf failed.'
+    UNMAPPABLE = 'mmap SCRATCH/sys-X failed!\n'
+
+    def tearDown(self):
+        driver.directory_reads_as_a_chunk.cache_clear()
+
+    def aborted(self):
+        return observation(exit=-signal.SIGABRT, stderr=self.FRESH + 'assert\n', userfiles={'user.conf': [1, 'd']})
+
+    def answered(self, ret=False, logs=(('libpinyin', 16),), stderr=FRESH):
+        return observation(result={'ret': ret, 'logs': [list(log) for log in logs]}, stderr=stderr,
+                           userfiles={'user.conf': [1, 'd']})
+
+    def segv(self, stderr=FRESH + UNMAPPABLE):
+        return observation(exit=-signal.SIGSEGV, stderr=stderr, userfiles={'user.conf': [1, 'd']})
+
+    def decide(self, name, pin, subject, reads):
+        with patch.object(driver, 'directory_reads_as_a_chunk', return_value=reads):
+            return driver.verdict_for(driver.CASES[name], pin, subject, False)[0]
+
+    def run_driver(self, name, pin, subject, reads):
+        with tempfile.TemporaryDirectory() as scratch:
+            prefix = Path(scratch)
+            (prefix / 'lib/libpinyin/data').mkdir(parents=True)
+            (prefix / 'lib/libpinyin.so').touch()
+            (prefix / 'lib/libpinyin/data/bigram.db').touch()
+            (prefix / 'oracle-pin.txt').write_text(
+                'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99+dbm-bdb\n')
+            argv = ['driver', 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'), '--cases', name]
+            workers = [pin, subject]
+            output = io.StringIO()
+            with patch.object(driver.sys, 'argv', argv), \
+                    patch.object(driver, 'run_worker', side_effect=lambda *a, **k: workers.pop(0)), \
+                    patch.object(driver, 'directory_reads_as_a_chunk', return_value=reads), \
+                    contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                status = driver.main()
+        rows = [row for row in (json.loads(line) for line in output.getvalue().splitlines()
+                                if line.startswith('{')) if 'case' in row]
+        return status, rows[0]['verdict'], rows[0]['expected_ok']
+
+    def test_registered_cases(self):
+        self.assertEqual({name: spec['dir_chunk'] for name, spec in driver.CASES.items() if spec['dir_chunk']}, {
+            'table-conf-abort-system-file-without-chunk': 'system',
+            'table-conf-abort-system-file-without-chunk-zhuyin': 'system',
+            'table-conf-abort-load-addon-without-chunk': 'system',
+            'table-conf-abort-system-file-without-user-file': 'user',
+            'table-conf-abort-user-file-without-user-file': 'user'})
+
+    def test_probe_repeats_the_pin_size_check(self):
+        for sought, reads in ((OSError(22, 'Invalid argument'), False), (0, False), (7, False), (8, True),
+                              (2 ** 63 - 1, True)):
+            with self.subTest(sought=sought):
+                driver.directory_reads_as_a_chunk.cache_clear()
+                with patch.object(driver.os, 'lseek', side_effect=[sought]):
+                    self.assertIs(driver.directory_reads_as_a_chunk(), reads)
+
+    def test_condition_absent_keeps_the_abort_matcher(self):
+        for name in (self.USER, self.SYSTEM):
+            with self.subTest(name=name):
+                self.assertEqual(self.decide(name, self.aborted(), self.answered(), True), 'MATCH')
+        # Survivals and the tmpfs SIGSEGV are not the abort the host predicts.
+        self.assertEqual(self.decide(self.USER, self.answered(True, ()), self.answered(True, ()), True), 'DIFFER')
+        self.assertEqual(self.decide(self.SYSTEM, self.segv(), self.answered(), True), 'DIFFER')
+        self.assertEqual(self.run_driver(self.SYSTEM, self.segv(), self.answered(), True), (1, 'DIFFER', False))
+
+    def test_condition_present_user_dir_compares_both_survivors(self):
+        survivor = self.answered(True, ())
+        self.assertEqual(self.decide(self.USER, survivor, copy.deepcopy(survivor), False), 'MATCH')
+        self.assertEqual(self.run_driver(self.USER, survivor, copy.deepcopy(survivor), False), (0, 'MATCH', True))
+        # The abort answer, another stderr or another profile stays a DIFFER.
+        self.assertEqual(self.decide(self.USER, survivor, self.answered(), False), 'DIFFER')
+        self.assertEqual(self.decide(self.USER, survivor, self.answered(True, (), stderr=''), False), 'DIFFER')
+        other_profile = self.answered(True, ())
+        other_profile['userfiles'] = {}
+        self.assertEqual(self.decide(self.USER, survivor, other_profile, False), 'DIFFER')
+        self.assertEqual(self.decide(self.USER, self.aborted(), self.answered(), False), 'DIFFER')
+        self.assertEqual(self.run_driver(self.USER, self.aborted(), self.answered(), False), (1, 'DIFFER', False))
+
+    def test_condition_present_system_dir_segv_is_host_dependent(self):
+        self.assertEqual(self.run_driver(self.SYSTEM, self.segv(), self.answered(), False),
+                         (0, 'HOST-DEPENDENT', True))
+
+    def test_condition_present_other_system_differences_stay_differ(self):
+        other_profile = self.answered()
+        other_profile['userfiles'] = {}
+        for label, pin, subject in (
+                ('no mmap line', self.segv(self.FRESH), self.answered()),
+                ('other line', self.segv(self.FRESH + 'open SCRATCH/sys-X failed!\n'), self.answered()),
+                ('abort', self.aborted(), self.answered()),
+                ('pin survived', self.answered(True, ()), self.answered()),
+                ('subject loaded', self.segv(), self.answered(True, ())),
+                ('two warnings', self.segv(), self.answered(logs=(('libpinyin', 16),) * 2)),
+                ('other profile', self.segv(), other_profile)):
+            with self.subTest(label):
+                self.assertEqual(self.run_driver(self.SYSTEM, pin, subject, False), (1, 'DIFFER', False))
+
+    def test_other_cases_ignore_the_probe(self):
+        spec = driver.CASES['table-conf-abort-default-dictionary']
+        with patch.object(driver, 'directory_reads_as_a_chunk', side_effect=AssertionError('probed')):
+            self.assertEqual(driver.verdict_for(spec, self.aborted(), self.answered(), False)[0], 'MATCH')
+
+
 class WorkerEntryTests(unittest.TestCase):
     """Workers start from contract-worker.py, which loads the same driver."""
 

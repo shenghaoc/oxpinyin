@@ -77,6 +77,7 @@ import argparse
 import copy
 import contextlib
 import ctypes as C
+import functools
 import hashlib
 import json
 import os
@@ -114,8 +115,8 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 
 def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
-         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), stderr_varies=False, abort_logs=None,
-         fatal=False, both_abort=False, issues=()):
+         cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
+         abort_logs=None, fatal=False, both_abort=False, issues=()):
     """Registers a case. `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
@@ -153,6 +154,22 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     created its context; the subject refused `table.conf`) prints
     `HOST-DEPENDENT` instead of `DIFFER` and is not a failure; any other
     difference stays a DIFFER. A MATCH is reported as such on any host.
+    `dir_chunk='user'|'system'` (with `abort=`) is for a `table.conf` row
+    without a file name, which makes the pin read that directory of the
+    case as a chunk. `MemoryChunk` asserts on the `read` of a directory
+    (the class (c) site) only where `lseek(SEEK_END)` on it answers the
+    8-byte header or more (`memory_chunk.h:424-434`, `:483-493`), and the
+    file system of the scratch directory decides that:
+    `directory_reads_as_a_chunk` asks this host. Where it answers less
+    (tmpfs refuses `SEEK_END` on a directory), the load is an ordinary
+    `false`. For `'user'` the pin then carries on, and so does the
+    subject, which asks the same question: the case is compared as an
+    ordinary one, with the stderr and the user directory. For `'system'`
+    the pin writes `mmap <dir> failed!` and dies of SIGSEGV in
+    `SubPhraseIndex::load` on the empty chunk, which the subject does not
+    reproduce: only that difference
+    (`pin_segv_after_unmappable_system_dir`) prints `HOST-DEPENDENT`;
+    any other difference stays a DIFFER.
     `issues=<tags>` names the issues, register rows or lane tags the case
     guards (`'640'`, `'row:54'`, `'W11'`), the selectors of `--issue`; a
     case's family for `--family` is the text before the first `/` of its
@@ -160,9 +177,10 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     def register(fn):
         assert not either or (abort is not NO_ABORT and crash is not None), name
         assert not both_abort or fatal, name
+        assert dir_chunk in (None, 'user', 'system') and (dir_chunk is None or abort is not NO_ABORT), name
         CASES[name] = dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
                            crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
-                           stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
+                           dir_chunk=dir_chunk, stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
                            both_abort=both_abort, issues=tuple(normal_tag(tag) for tag in issues))
         return fn
     return register
@@ -274,6 +292,45 @@ def pin_loaded_subject_refused_table_conf(pin, subject):
             and (subject['result'] or {}).get('ctx') is False
             and re.fullmatch(r'open \S*/user\.conf failed\.', pin['stderr']) is not None
             and re.fullmatch(r'load \S*table\.conf failed!\n', subject['stderr']) is not None)
+
+
+@functools.cache
+def directory_reads_as_a_chunk():
+    """Whether `MemoryChunk::load` and `::mmap` get past `file_size < header`
+    on a directory of this run's scratch file system: `lseek(fd, 0,
+    SEEK_END)` answers the 8-byte header or more, so the `read` after it
+    fails with `EISDIR` and the pin asserts (`memory_chunk.h:424-434`,
+    `:483-493` at 074a2219). `run_main` makes the scratch in the default
+    temporary directory, and so does this probe. ext4 answers the htree end
+    of file; tmpfs refuses `SEEK_END` on a directory (`EINVAL`), which is
+    the `-1` the pin compares. The probe directory holds one entry, as each
+    directory the `dir_chunk` cases read does by then (the system tables;
+    the `user.conf` that `check_format` saves, `pinyin.cpp:187`), for a
+    file system that sizes a directory by its entries."""
+    with tempfile.TemporaryDirectory(prefix='contract-dir-probe-') as probe:
+        Path(probe, 'user.conf').touch()
+        fd = os.open(probe, os.O_RDONLY)
+        try:
+            return os.lseek(fd, 0, os.SEEK_END) >= 8
+        except OSError:
+            return False
+        finally:
+            os.close(fd)
+
+
+def pin_segv_after_unmappable_system_dir(spec, pin, subject):
+    """The one difference a short system directory explains (`dir_chunk=
+    'system'` where `directory_reads_as_a_chunk` is false):
+    `MemoryChunk::mmap` refuses the directory (`memory_chunk.h:483-489`),
+    the pin writes `mmap <system dir> failed!` (`pinyin.cpp:255-256` and
+    `:289-290`, `zhuyin.cpp:199-200`) and hands the empty chunk to
+    `SubPhraseIndex::load`, which reads `*(NULL + 16)`
+    (`phrase_index.cpp:354`) and dies of SIGSEGV. The subject gives its
+    class (c) answer for the assert, so its stderr is the pin's without
+    that one line."""
+    return (pin['exit'] == -signal.SIGSEGV
+            and pin['stderr'] == subject['stderr'] + 'mmap SCRATCH/sys-X failed!\n'
+            and abort_answered(spec, pin, subject))
 
 
 class Kit:
@@ -6795,7 +6852,7 @@ conf_case('addon-duplicate-row', ('+', 'addon 4 culture.table culture.bin NULL D
 
 # Class (c): the rows the pin dies on. The triggering call fails with one
 # warning; `userdir` holds the profile the pin has written by then.
-def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin'), ret=False):
+def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin'), ret=False, dir_chunk=None):
     for mode in modes:
         def probe(k, edits=edits):
             system = conf_system(k, *edits)
@@ -6808,7 +6865,7 @@ def conf_abort(name, *edits, call='init', userdir=True, modes=('pinyin', 'zhuyin
                 return {'ret': k.fn('load_phrase_library', B, P, C.c_ubyte)(ctx, index)}
             return {'ret': k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, index)}
         case('table-conf-abort-' + name + ('-zhuyin' if mode == 'zhuyin' else ''), mode=mode,
-             abort=ret, userdir=userdir, issues=('694', '525'))(probe)
+             abort=ret, userdir=userdir, dir_chunk=dir_chunk, issues=('694', '525'))(probe)
 
 
 # `table_info.cpp` aborts inside `SystemTableInfo2::load`, before
@@ -6842,17 +6899,29 @@ def _(k):
 # is judged and `user.conf` written when it dies.
 conf_abort('default-dictionary', (_STOCK_DBIN, 'gb_char.dbin DICTIONARY'))
 conf_abort('default-dictionary-gbk', ('gbk_char.dbin SYSTEM_FILE', 'gbk_char.dbin DICTIONARY'))
+# A row without a file name makes the pin read that directory as a chunk
+# (`g_build_filename` stops at the NULL). `MemoryChunk` asserts on the
+# `read` of a directory (`memory_chunk.h:434` for `load`, `:493` for `mmap`)
+# only where `lseek(SEEK_END)` on it answers 8 or more, which the file system
+# of the scratch directory decides (#1011): ext4, fuse-overlayfs and a new
+# directory in an overlay answer more, tmpfs refuses `SEEK_END` on a
+# directory. `dir_chunk` holds each case to the side of that condition the
+# host is on (`case`, `directory_reads_as_a_chunk`). Without a system chunk
+# the pin reads the system directory: on tmpfs it writes `mmap <dir>
+# failed!` and dies of SIGSEGV in `SubPhraseIndex::load`
+# (`phrase_index.cpp:354`), which prints HOST-DEPENDENT.
 conf_abort('system-file-without-chunk', ('opengram.table opengram.bin opengram.dbin SYSTEM_FILE',
-                                         'opengram.table NULL opengram.dbin SYSTEM_FILE'))
-# A row without a user file makes the pin read the user directory as a chunk
-# (`memory_chunk.h:434`): it asserts only where `lseek(SEEK_END)` on a
-# directory answers 8 or more, which the file system decides. libpinyin has
-# written `user.conf` by then, so its answer is the same everywhere; the
-# zhuyin facade writes nothing at init, and an empty directory is 0 bytes on
-# some file systems, so it is not held.
+                                         'opengram.table NULL opengram.dbin SYSTEM_FILE'), dir_chunk='system')
+# Without a user file the pin reads the user directory, which holds the
+# `user.conf` libpinyin saved in `check_format` (`pinyin.cpp:187`); on tmpfs
+# the read is an ordinary `false`, and the pin and the subject both carry
+# on. The zhuyin facade writes nothing at init, and an empty directory is 0
+# bytes on some file systems, so it is not held.
 conf_abort('system-file-without-user-file', ('merged.table merged.bin merged.dbin SYSTEM_FILE',
-                                             'merged.table merged.bin NULL SYSTEM_FILE'), modes=('pinyin',))
-conf_abort('user-file-without-user-file', ('user.bin USER_FILE', 'NULL USER_FILE'), modes=('pinyin',))
+                                             'merged.table merged.bin NULL SYSTEM_FILE'), modes=('pinyin',),
+           dir_chunk='user')
+conf_abort('user-file-without-user-file', ('user.bin USER_FILE', 'NULL USER_FILE'), modes=('pinyin',),
+           dir_chunk='user')
 # A library call on a row the pin asserts on (`pinyin.cpp:457`, `:491`).
 conf_abort('load-library-not-used', ('opengram.dbin SYSTEM_FILE', 'opengram.dbin NOT_USED'),
            call=('load', 3), userdir=False)
@@ -6865,7 +6934,7 @@ conf_abort('load-addon-system-file', ('art.bin NULL DICTIONARY', 'art.bin NULL S
 conf_abort('load-addon-user-file', ('art.bin NULL DICTIONARY', 'art.bin NULL USER_FILE'),
            call=('addon', 4), userdir=False, modes=('pinyin',))
 conf_abort('load-addon-without-chunk', ('art.table art.bin NULL DICTIONARY', 'art.table NULL NULL DICTIONARY'),
-           call=('addon', 4), userdir=False, modes=('pinyin',))
+           call=('addon', 4), userdir=False, modes=('pinyin',), dir_chunk='system')
 # Class (b): the header's `source table format:` line is missing, and the pin
 # compares a buffer it never wrote (undefined behaviour).
 conf_abort('source-format-line-missing', ('-', 'source table format'))
@@ -11824,9 +11893,28 @@ def verdict_for(spec, pin, subject, expect_parent):
     return ('MATCH' if same else 'DIFFER'), expected, same
 
 
+def abort_answered(spec, pin, subject):
+    """The subject's half of a class (c) site: it survives with the `ret`
+    the spec names, the one warning and every untouched out-param, and
+    leaves the profile the pin left (`userdir`)."""
+    shown = subject['result'] or {}
+    expected_logs = spec['abort_logs'] if spec['abort_logs'] is not None \
+        else [[WARNING_DOMAIN[spec['mode']], 16]]
+    return subject['exit'] == 0 and \
+        shown.get('ret') == spec['abort'] and shown.get('logs') == expected_logs and \
+        all(v for key, v in shown.items() if key.startswith('untouched')) and \
+        (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
+
+
+def short_dir_chunk(spec):
+    """A `dir_chunk` case on a host where the pin does not reach its assert."""
+    return spec['dir_chunk'] is not None and not directory_reads_as_a_chunk()
+
+
 def matches(spec, pin, subject):
     """The verdict predicate shared by the driver and gcov measurement tier."""
-    as_abort = spec['abort'] is not NO_ABORT and (not spec['either'] or pin['exit'] == -6)
+    short_dir = short_dir_chunk(spec)
+    as_abort = spec['abort'] is not NO_ABORT and not short_dir and (not spec['either'] or pin['exit'] == -6)
     if spec['both_abort']:
         # GLib's _g_log_abort can use g_abort or G_BREAKPOINT (gmessages.c
         # at GLib 2.80.0 / 2.89.4). Require the same fatal-log signal;
@@ -11847,21 +11935,17 @@ def matches(spec, pin, subject):
             (spec['stderr_varies'] or pin['stderr'] == subject['stderr']) and \
             all(shown.get(key) == value for key, value in spec['crash'].items())
     elif as_abort:
-        shown = subject['result'] or {}
-        expected_logs = spec['abort_logs'] if spec['abort_logs'] is not None \
-            else [[WARNING_DOMAIN[spec['mode']], 16]]
-        same = pin['exit'] == -6 and subject['exit'] == 0 and \
-            shown.get('ret') == spec['abort'] and shown.get('logs') == expected_logs and \
-            all(v for key, v in shown.items() if key.startswith('untouched')) and \
-            (not spec['userdir'] or pin['userfiles'] == subject['userfiles'])
+        same = pin['exit'] == -6 and abort_answered(spec, pin, subject)
     else:
         # A side that died or printed nothing observed nothing: two
         # identical failures must not read as a match (nor satisfy
         # --expect-parent as a difference).
         same = all(r['exit'] == 0 and r['result'] is not None for r in (pin, subject)) and \
             observed(pin['result']) == observed(subject['result'])
-        if spec['stderr']:
+        if spec['stderr'] or short_dir:
             same = same and pin['stderr'] == subject['stderr']
+        if short_dir:
+            same = same and pin['userfiles'] == subject['userfiles']
     return same
 
 
@@ -12445,9 +12529,11 @@ def run_main():
             else:
                 verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
             compare_seconds += time.monotonic() - compared
-            host_dependent = (verdict == 'DIFFER' and not args.expect_parent
-                              and any(map(host_scanf_accepts, spec['host_scanf']))
-                              and pin_loaded_subject_refused_table_conf(pin, subject))
+            host_dependent = verdict == 'DIFFER' and not args.expect_parent and (
+                any(map(host_scanf_accepts, spec['host_scanf']))
+                and pin_loaded_subject_refused_table_conf(pin, subject)
+                or spec['dir_chunk'] == 'system' and short_dir_chunk(spec)
+                and pin_segv_after_unmappable_system_dir(spec, pin, subject))
             if host_dependent:
                 verdict = 'HOST-DEPENDENT'
                 expected = True
