@@ -514,36 +514,6 @@ probe=$repo/tools/tkrzw/distro-probe.sh
 tkrzw_prefix=$cache/tkrzw
 tkrzw_local=0
 
-# tkrzw_so FILE: where ldd, in the caller's environment, resolves FILE's
-# libtkrzw.so.1 (empty if it does not).
-tkrzw_so() {
-	ldd "$1" 2>/dev/null | sed -n 's/^[[:space:]]*libtkrzw\.so\.1 => \(\/[^ ]*\).*/\1/p'
-}
-
-# without_prefix LIST: the colon list LIST minus every entry inside
-# $tkrzw_prefix. A shell that sourced the environment file carries the
-# cached build on PATH and LD_LIBRARY_PATH; the host probe must not see it.
-without_prefix() {
-	local entry out=() IFS=:
-	for entry in $1; do
-		[[ $entry == "$tkrzw_prefix" || $entry == "$tkrzw_prefix"/* ]] || out+=("$entry")
-	done
-	printf '%s' "${out[*]}"
-}
-
-# probe_host: the probe against the host's own libtkrzw, and an ldd check
-# that the probe's tkrzw_dbm_util resolved libtkrzw.so.1 outside the cache.
-probe_host() {
-	local host_path host_ld util so
-	host_path=$(without_prefix "$PATH")
-	host_ld=$(without_prefix "${LD_LIBRARY_PATH:-}")
-	env PATH="$host_path" LD_LIBRARY_PATH="$host_ld" sh "$probe" || return 1
-	util=$(PATH=$host_path command -v tkrzw_dbm_util) || return 1
-	so=$(LD_LIBRARY_PATH=$host_ld tkrzw_so "$util")
-	printf 'host check: %s resolves libtkrzw.so.1 to %s\n' "$util" "${so:-nothing}"
-	[[ -n $so && $so != "$tkrzw_prefix"/* ]]
-}
-
 # probe_built: the probe against the cached build, then an ldd check, in the
 # same environment, that its tkrzw_dbm_util resolves libtkrzw.so.1 to the
 # cache. (The probe's own path line needs readelf, which is optional.)
