@@ -775,11 +775,14 @@ impl crate::UserBigramDb for BdbUserBigramDb {
     }
 
     fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        // `visit_db`'s walk without the values: the same cursor order.
         let mut keys = Vec::new();
-        visit_db(&self.db, |key, _| {
+        let mut cursor = self.db.cursor()?;
+        let mut seek = ffi::Seek::First;
+        while let Some(key) = cursor.key(seek)? {
             keys.push(key.to_vec());
-            Ok(())
-        })?;
+            seek = ffi::Seek::Next;
+        }
         Ok(keys)
     }
 
