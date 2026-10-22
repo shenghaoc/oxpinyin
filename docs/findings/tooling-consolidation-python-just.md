@@ -477,10 +477,13 @@ Timing metrics (nanoseconds on one monotonic clock, reported in ms):
   private dirty, PSS, virtual size, minor and major faults. Read between
   phases only in a `memory` sample; a memory sample's timings are never
   aggregated as timings, and a timing sample's mid-run memory is not used.
-  On macOS the worker reports RSS and virtual size only, as #842's `ps`
-  path did (`crates/oxpinyin-initbench/src/memory.rs::{PsProbe, parse_ps}` at
-  `a204f9c0`). Every other memory metric is recorded as unavailable, never
-  as zero; an unavailable metric is never part of a comparison.
+  On macOS the parent reads RSS and virtual size only, with `ps` on the
+  stopped child at the worker's handshake (§7.8 item 2), the same two
+  fields #842's `ps` path read
+  (`crates/oxpinyin-initbench/src/memory.rs::{PsProbe, parse_ps}` at
+  `a204f9c0`). The worker reports no memory on macOS or Linux. Every other
+  memory metric is recorded as unavailable, never as zero; an unavailable
+  metric is never part of a comparison.
 - Summaries: median, 95% confidence interval, range/median spread, `n`;
   ratios only between comparable subjects, with a ratio interval. Warm-up
   rounds are excluded; rejected samples are not aggregated.
@@ -564,7 +567,8 @@ current claims about `main`:
 
 - Use only libc and the subject's own libraries for the new startup worker.
   Read Linux process memory through `/proc`, in the container and on the
-  native Linux path. Keep the native macOS `ps` memory path.
+  native Linux path. On macOS the parent reads RSS and virtual size with
+  `ps`.
 - Python `measure` owns profiles, verification orchestration, comparability,
   statistics, report and the same-run base/PR/pin interleaving.
 - The native C worker (proposed path `tools/workers/startup.c`) has untimed
@@ -586,9 +590,10 @@ current claims about `main`:
   remains outside the timed process. At each requested point the worker
   stops and waits on a handshake. The parent reads the child's memory
   there (`/proc` on Linux, `ps` on macOS), as #993's teardown worker
-  does. The worker emits a line-oriented record. Python serialises the
-  existing `oxpinyin-initbench-sample-v1` /
-  `oxpinyin-initbench-observation-v1` schemas. Historical records remain
+  does. The worker emits a line-oriented record with answers and times
+  and no memory fields. Python serialises the existing
+  `oxpinyin-initbench-sample-v1` / `oxpinyin-initbench-observation-v1`
+  schemas, taking every memory field from the parent's reads. Historical records remain
   interpretable.
 - Record the worker source hash next to the executable identity.
   Record the full SHA-256, byte size and build command of the worker
@@ -655,14 +660,30 @@ from T11C into T2N. T11C keeps the pin rows. The ruling decides:
 5. **Profiles.** Profiles are provisioned once against the pin with the
    documented command (`docs/packaging.md`, "Regeneration"). The native path
    only verifies them against their `profile.manifest`. It does not provision.
+   Provisioning for the native controller includes populated witness files:
+   the documented command must run the witness step
+   (`tools/bisection/teardown.py::prepare_witnesses`, against the pin) as
+   well as the provision stage. The native verifier refuses, with status 1,
+   a populated profile (`modest`, `phrases`, `journals`) whose `witness.txt`
+   is missing or empty. **Gap:** the documented command cannot do this
+   today. It runs only `--teardown-stage provision`;
+   `tools/bisection/teardown.py::provision` writes each `witness.txt` empty,
+   and `run` returns before `execute` calls `prepare_witnesses`. The
+   witness files also lie outside the `user/` tree that `profile.manifest`
+   covers. The controller PRs must close the gap: a documented provisioning
+   step that populates the witnesses through the pin and records their
+   digests, and the verifier's refusal.
 6. **User files.** The native path compares user files through reopen
    observations plus the raw bytes of files that are not databases. It has no
    database row reader.
-7. **Cold cache.** Before each cold sample, evict the measured library and
-   every system-data file with `posix_fadvise(POSIX_FADV_DONTNEED)`, then
-   check residency with `mincore`. If a page is still resident, evict and
-   check once more. Reject the sample if any subject or data page is still
-   resident. Report the rejected and accepted counts. A metric with too many
+7. **Cold cache.** Before each cold sample, evict the measured library,
+   every system-data file and every regular file in that sample's private
+   user-directory copy with `posix_fadvise(POSIX_FADV_DONTNEED)`, then check
+   residency of all of them with `mincore`. The user copy is written just
+   before the sample, so `fsync` each of its files first; a dirty page is
+   not evicted. If a page is still resident, evict and
+   check once more. Reject the sample if any subject, data or user-copy page
+   is still resident. Report the rejected and accepted counts. A metric with too many
    rejected samples is INCONCLUSIVE. The rejection limit is not yet fixed;
    the PR that adds cold sampling proposes it for approval, and it is fixed
    before the first sample, never tuned from campaign output. macOS has no
