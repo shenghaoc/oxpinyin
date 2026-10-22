@@ -9,8 +9,10 @@ defect, and not part of that four-issue filing shape. A sixth, item 6,
 was added 2026-09-27 UTC: `pinyin_init` leaves the process
 `LC_NUMERIC` at `"C"` (#539), read at the current pin `074a2219`.
 A seventh draft, item 7, was added 2026-10-21 UTC: temporary Berkeley
-DB handles leak on failed user-database loads (#993). The file now
-holds seven drafts; item 7 is ready to file as a separate report.
+DB handles leak on failed user-database loads (#993). An eighth, item 8,
+was added 2026-10-22 UTC: every Berkeley DB `save_db` passes the wrong
+handle to `DB->sync`, which has no observable effect. The file now holds
+eight drafts; items 7 and 8 are ready to file as separate reports.
 Filing is the
 maintainer's action (and account); nothing here has been posted. The
 collection mandate is `AGENTS.md`'s ("collected to report back to
@@ -636,12 +638,84 @@ proposed cleanup is not an authorization to change oxpinyin behavior.
 
 ---
 
+## 8. Berkeley DB `save_db` syncs the in-memory handle, not the file
+
+**Severity: none observable** — a code defect with no effect on output,
+files or durability, because `DB->close` flushes the file anyway. It is
+reported so the call can be corrected, not because anything fails.
+
+**Affected version:** read at libpinyin 2.11.92, pin
+`074a2219c90feaf962d0d24f034514033ece5f99`, against Berkeley DB 5.3.28
+(github.com/berkeleydb/libdb `e66a5e66`, `dist/RELEASE` 5.3.28; Debian's
+`5.3.28+dfsg2-11` patch series changes none of the lines cited). Other
+revisions and current upstream status have not been established.
+
+Each Berkeley DB `save_db` writes the in-memory table `m_db` into a new
+file `tmp_db`, then calls `tmp_db`'s `sync` member with `m_db` as its
+handle argument:
+
+- [`Bigram::save_db`, `src/storage/ngram_bdb.cpp:103`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/ngram_bdb.cpp#L103)
+  (blob `8910f9d6c7ba6f12cc234e1e02a7f99d47b6b7f2`).
+- [`ChewingLargeTable2::save_db`, `src/storage/chewing_large_table2_bdb.cpp:157`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/chewing_large_table2_bdb.cpp#L157)
+  (blob `469ee7d969e853ff07312b5b72b268dd47433a0e`).
+- [`PhraseLargeTable3::save_db`, `src/storage/phrase_large_table3_bdb.cpp:172`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/phrase_large_table3_bdb.cpp#L172)
+  (blob `d54c80a6031c634c91c35d6aebd9ebc2ffac7f46`).
+- [`PunctTable::save_db`, `src/storage/punct_table_bdb.cpp:133`](https://github.com/libpinyin/libpinyin/blob/074a2219c90feaf962d0d24f034514033ece5f99/src/storage/punct_table_bdb.cpp#L133)
+  (blob `bdc7b84022a61c7cb282cd0f319d7a06f3f880ba`).
+
+```c
+    if ( tmp_db != NULL ) {
+        tmp_db->sync(m_db, 0);
+        tmp_db->close(tmp_db, 0);
+    }
+```
+
+Every `DB` handle's `sync` member is the same function, `__db_sync_pp`
+(`src/db/db_method.c:313`), so the call syncs `m_db`. Which database
+that is depends on how the table was opened (all lines at 074a2219):
+
+- In libpinyin itself every `save_db` call follows `load_db`, so `m_db`
+  is the unnamed in-memory database `load_db` creates, and `__db_sync`
+  returns at once for those (`src/db/db_am.c:813-814`). The user bigram
+  is loaded at `src/pinyin.cpp:401` and saved at `:1018`, and at
+  `src/zhuyin.cpp:343` and `:685`; the user pinyin and phrase tables at
+  `src/storage/facade_chewing_table2.h:87` and `:96`, and
+  `src/storage/facade_phrase_table3.h:86` and `:95`.
+- The library calls `attach` only with `ATTACH_READONLY`, on system
+  tables, which are never saved: `src/pinyin.cpp:396` and `:440`,
+  `src/zhuyin.cpp:338`, `src/storage/facade_chewing_table2.h:82` and
+  `src/storage/facade_phrase_table3.h:81`. No library code calls
+  `PunctTable::save_db`.
+- When `save_db` follows `attach`, `sync(m_db)` flushes `m_db`'s own
+  file, which is still harmless. Two of libpinyin's tests do this:
+  `tests/storage/test_ngram.cpp` attaches at `:40` and saves at `:78`,
+  and `tests/storage/test_punct_table.cpp` attaches at `:49` and saves
+  at `:63`. Nothing in `utils/` does.
+
+In every case the new file is still flushed: `DB->close` without
+`DB_NOSYNC` syncs the handle it closes (`src/db/db.c:872-874`). Nothing
+reaches the disk later than intended, so there is no reproduction to
+give.
+
+**Proposed fix**, the same in each of the four files:
+
+```diff
+-        tmp_db->sync(m_db, 0);
++        tmp_db->sync(tmp_db, 0);
+```
+
+Nothing has been filed upstream.
+
+---
+
 ## Filing notes
 
 - Independence: no fix touches another; file items 1–4 as four issues.
   Item 5 is a separate report; it does not belong in that batch, and
   neither does item 6, which is a process-state defect to file on its
   own. Item 7 is a separate BDB resource-leak report, ready to file.
+  Item 8 is a separate BDB report with no observable effect; it can go
+  with item 7 or on its own.
 - Order: 1 (info leak) → 2 (API inconsistency) → 3, 4 (abort classes).
 - Credit line per `AGENTS.md` attribution rules is the maintainer's to
   place; the reproductions above stand alone.
