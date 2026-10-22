@@ -29,6 +29,14 @@ PROFILES = ('empty', 'modest', 'phrases', 'journals')
 CASES = (*PROFILES, 'modest-unsaved', 'modest-saved')
 # Accepted before the first sample. Do not tune these from campaign output.
 CONTROL_INTERVAL = (0.95, 1.05)
+RESIDENCY_FLOOR_KIB = 64
+RESIDENCY_FRACTION = 0.01
+# The control is the subject's bytes at a second path. With `libraries/ox`
+# against `libraries/control`, #1030 measured the control at 15 B more heap and
+# 12-354 more Ir, consistent with its 5-byte longer path (the loader and the
+# library keep path strings). Equal-length directory names remove that input;
+# pin's name matches too.
+LIBRARY_DIRECTORIES = dict(ox='subject', control='control', pin='pinned')
 TIMING_ROUNDS, TIMING_WARMUPS = 60, 3
 MEMORY_ROUNDS, MEMORY_WARMUPS = 30, 2
 
@@ -178,19 +186,47 @@ def summary(values):
                 range_over_median=(max(values) - min(values)) / abs(middle) if middle else None)
 
 
+def paired_bootstrap(values):
+    generator = random.Random(0x074A2219)
+    resamples = [statistics.median(generator.choices(values, k=len(values))) for _ in range(4000)]
+    return dict(median=statistics.median(values), ci95=[percentile(resamples, .025), percentile(resamples, .975)])
+
+
 def paired_ratio(numerator, denominator):
     if len(numerator) != len(denominator) or not numerator or any(value <= 0 for value in denominator):
         raise ValueError('paired ratios require equal, positive-denominator samples')
-    ratios = [a / b for a, b in zip(numerator, denominator)]
-    generator = random.Random(0x074A2219)
-    resamples = [statistics.median(generator.choices(ratios, k=len(ratios))) for _ in range(4000)]
-    return dict(median=statistics.median(ratios), ci95=[percentile(resamples, .025), percentile(resamples, .975)])
+    return paired_bootstrap([a / b for a, b in zip(numerator, denominator)])
+
+
+def paired_difference(minuend, subtrahend):
+    if len(minuend) != len(subtrahend) or not minuend:
+        raise ValueError('paired differences require equal, nonempty samples')
+    return paired_bootstrap([a - b for a, b in zip(minuend, subtrahend)])
+
+
+def within(estimate, lo, hi):
+    return lo <= estimate['ci95'][0] <= estimate['median'] <= estimate['ci95'][1] <= hi
 
 
 def stable_control(ox, control):
     ratio = paired_ratio(control, ox)
-    return dict(ratio=ratio, stable=CONTROL_INTERVAL[0] <= ratio['ci95'][0] <= ratio['median'] <=
-                ratio['ci95'][1] <= CONTROL_INTERVAL[1], rule=list(CONTROL_INTERVAL))
+    return dict(ratio=ratio, stable=within(ratio, *CONTROL_INTERVAL), rule=list(CONTROL_INTERVAL))
+
+
+def stable_residency(ox, control):
+    # §7.5 item 2: d = control - ox in KiB; the median and the whole
+    # interval lie within +-max(64 KiB, 1% of |median(ox)|), inclusive.
+    difference = paired_difference(control, ox)
+    band = max(RESIDENCY_FLOOR_KIB, RESIDENCY_FRACTION * abs(statistics.median(ox)))
+    return dict(difference=difference, stable=within(difference, -band, band), bound_kib=band,
+                rule=dict(floor_kib=RESIDENCY_FLOOR_KIB, fraction=RESIDENCY_FRACTION))
+
+
+def exact_control(ox, control):
+    # §7.5 item 3: scoped instruction counts and deterministic heap
+    # accounting must be equal. No tolerance: any difference is INVALID.
+    return dict(rule='exact', ox=ox, control=control, difference=control - ox,
+                verdict='VALID' if control == ox else 'INVALID')
 
 
 def filesystem(path):
@@ -504,7 +540,7 @@ def run(args, driver, parser):
     subjects['control'] = {}
     provenance = {}
     for subject in ('ox', 'pin', 'control'):
-        directory = libraries / subject
+        directory = libraries / LIBRARY_DIRECTORIES[subject]
         directory.mkdir(exist_ok=True)
         provenance[subject] = {}
         for facade in facades:
@@ -607,23 +643,24 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
         for tool, (_, worker_identity) in diagnostic_workers.items():
             print_record('diagnostic-worker', tool=tool, profiler_only=True, worker=worker_identity)
         plain_worker = campaign.worker
+        invalid = False
         for facade in facades:
             options = case_options(args.teardown_attribution_case, profiles, dirty_rows[facade])
+            shown, heaps = {}, {}
             for side in ('ox', 'control', 'pin'):
                 row = campaign.run(facade, subjects[side][facade], profiler='callgrind', **options)
                 require_profile_controls(row, references[facade, args.teardown_attribution_case][side])
                 profile = driver.per_call_profile(row['observation']['stderr'])
-                shown = driver.per_call_attribution(profile, 1, 25)
-                print_record('callgrind', facade=facade, case=args.teardown_attribution_case, side=side,
-                             profiler_only=True, **shown)
+                shown[side] = dict(driver.per_call_attribution(profile, 1, 25), scoped_ir=profile['total'])
                 campaign.worker = diagnostic_workers['massif'][0]
                 try:
                     heap = campaign.run(facade, subjects[side][facade], mode='memory', profiler='massif', **options)
                 finally:
                     campaign.worker = plain_worker
                 require_profile_controls(heap, references[facade, args.teardown_attribution_case][side])
-                print_record('massif', facade=facade, case=args.teardown_attribution_case, side=side,
-                             profiler_only=True, **massif_profile(heap['observation']['stderr']))
+                heaps[side] = massif_profile(heap['observation']['stderr'])
+            invalid |= report_exact('callgrind', facade, args.teardown_attribution_case, shown, callgrind_counts)
+            invalid |= report_exact('massif', facade, args.teardown_attribution_case, heaps, massif_counts)
         # The native repeated-lifecycle counters can include glibc tcache and
         # arena retention. Memcheck's live-block accounting distinguishes those
         # from unfreed client allocations, including native libdb/GLib blocks.
@@ -633,6 +670,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                 if (facade, case) not in references:
                     raise ValueError('heap repetition needs an equivalence-verified case')
                 options = case_options(case, profiles, dirty_rows[facade])
+                live = {}
                 for side in ('ox', 'control', 'pin'):
                     campaign.worker = diagnostic_workers['memcheck'][0]
                     try:
@@ -646,9 +684,10 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                                 ('M3', 10), ('M3', 50), ('M3', 100)]
                     if [(point['point'], point['cycle']) for point in points] != expected:
                         raise ValueError('incomplete live-heap checkpoint sequence')
-                    print_record('live-heap', facade=facade, case=case, side=side, profiler_only=True,
-                                 points=points, sites=memcheck_sites(heap['observation']['stderr'], 'M3', 100))
-        return 0
+                    live[side] = dict(points=points, sites=memcheck_sites(heap['observation']['stderr'], 'M3', 100))
+                invalid |= report_exact('live-heap', facade, case, live, live_heap_counts)
+        # Every record prints first; an INVALID exact control fails the stage.
+        return 1 if invalid else 0
     raise ValueError('unknown teardown stage')
 
 
@@ -788,8 +827,7 @@ def report_memory(facade, case, samples, pilot):
             values = {side: [row['checkpoints'][0 if point == 'M0' else 1][point]['totals'][metric] for row in rows]
                       for side, rows in samples.items()}
             control_differences = [b - a for a, b in zip(values['ox'], values['control'])]
-            control = stable_control(values['ox'], values['control']) if all(value > 0 for value in values['ox']) else dict(
-                stable=values['ox'] == values['control'], ratio=None, rule=list(CONTROL_INTERVAL))
+            control = stable_residency(values['ox'], values['control'])
             print_record('memory', facade=facade, case=case, point=point, metric=metric, unit='KiB', pilot=pilot,
                          summaries={side: summary(value) for side, value in values.items()},
                          control_paired_difference=summary(control_differences),
@@ -814,3 +852,41 @@ def report_memory(facade, case, samples, pilot):
                                     for key in FIELDS})
         print_record('memory-deltas', facade=facade, case=case, side=side, pilot=pilot, signed_kib=shown,
                      checkpoints=checkpoints)
+
+
+def callgrind_counts(shown):
+    return dict(scoped_ir=shown['scoped_ir'])
+
+
+def massif_counts(heap):
+    # The ABI-boundary snapshots are exact; the sampled peaks are not
+    # deterministic accounting and stay out of the comparison.
+    return {point + '.mem_heap_B': value['mem_heap_B'] for point, value in heap['checkpoints'].items()}
+
+
+def live_heap_counts(live):
+    # Memcheck's four leak classes partition the live blocks.
+    counts = {}
+    for point in live['points']:
+        label = f"{point['point']}.{point['cycle']}"
+        for unit in ('bytes', 'blocks'):
+            counts[label + '.live_' + unit] = sum(point[kind + '_' + unit] for kind in
+                                                  ('lost', 'possible', 'reachable', 'suppressed'))
+    return counts
+
+
+def report_exact(kind, facade, case, rows, counts):
+    """Print one exact control record per count, then the profiler_only rows.
+    An INVALID count withholds the ox and pin rows (§7.5 item 3). Returns
+    whether any count was INVALID."""
+    ox, control = counts(rows['ox']), counts(rows['control'])
+    if ox.keys() != control.keys():
+        raise ValueError(kind + ' control counts do not name the same checkpoints')
+    invalid = False
+    for name in ox:
+        result = exact_control(ox[name], control[name])
+        invalid |= result['verdict'] == 'INVALID'
+        print_record(kind + '-control', facade=facade, case=case, count=name, **result)
+    for side in ('control',) if invalid else ('ox', 'control', 'pin'):
+        print_record(kind, facade=facade, case=case, side=side, profiler_only=True, **rows[side])
+    return invalid
