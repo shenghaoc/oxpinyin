@@ -318,11 +318,30 @@ implemented in one unbroken agent run, while the harness was reporting no
 human input. The change was correct and the discipline was not; only
 review caught it.
 
+## Reviews
+
+An agent never requests or triggers a review on any PR, by any means.
+This includes:
+
+- a comment that mentions a review bot (`@coderabbitai review`,
+  `@codex review` or similar);
+- a request to a reviewer or a team;
+- ticking a bot's "Trigger review" checkbox;
+- changing a PR from draft to ready for review.
+
+Only a human requests reviews. A question from a human about whether a
+PR is ready for review is a question: answer it, and do not act on it.
+
+Precedent: on 2026-10-22 UTC, an agent was asked whether three PRs were
+ready for review. It marked one ready and posted six review-request
+comments, without authority. A readiness question authorizes an answer;
+only a human requests reviews.
+
 ## Hard forbids
 
 Add/upgrade deps without ask · edit frozen SPECs/goldens/CI policy without
 ask · `unsafe` outside allowlisted crates · silence
-lints.
+lints · request a review.
 
 ## Dates
 
