@@ -168,14 +168,14 @@ fn reads_items_texts_and_pronunciations() {
     assert_eq!(item.phrase_text().as_deref(), Some("你"));
     let pronunciations: Vec<_> = item.pronunciations().collect();
     assert_eq!(pronunciations.len(), 1);
-    assert_eq!(pronunciations[0].keys, &[0x12, 0x34]);
+    assert_eq!(&*pronunciations[0].keys, &[0x12, 0x34]);
     assert_eq!(pronunciations[0].freq, 5);
 
     let item = library.item_at_slot(9).expect("item at slot 9");
     assert_eq!(item.phrase_text().as_deref(), Some("你好"));
     let pronunciations: Vec<_> = item.pronunciations().collect();
     assert_eq!(pronunciations.len(), 2);
-    assert_eq!(pronunciations[1].keys, &[0xAA, 0xBB, 0xCC, 0xDD]);
+    assert_eq!(&*pronunciations[1].keys, &[0xAA, 0xBB, 0xCC, 0xDD]);
     assert_eq!(pronunciations[1].freq, 1);
     assert!(item.pronunciation(2).is_none());
 

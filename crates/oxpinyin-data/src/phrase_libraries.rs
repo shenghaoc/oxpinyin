@@ -87,6 +87,14 @@ pub struct PhraseLibraries {
     layout_faults: Mutex<Vec<LayoutFault>>,
 }
 
+impl std::fmt::Debug for PhraseLibraries {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PhraseLibraries")
+            .field("total", &self.total.load(Ordering::SeqCst))
+            .finish_non_exhaustive()
+    }
+}
+
 /// The fault and diagnostic paths from one validation of each selected
 /// library. The first fault determines the pin's stopping site.
 #[derive(Default)]
@@ -363,6 +371,52 @@ impl PhraseLibraries {
             item_count: OnceLock::new(),
         });
         Ok(true)
+    }
+
+    /// Lends loaded library `nibble` to an in-place journal `replay`, under
+    /// its slot's write lock, so no reader sees it mid-replay: the pin merges
+    /// a library's `.dbin` into the chunk it just loaded (`pinyin.cpp:255-276`
+    /// at 074a2219). `held`, the caller's handle to the same mapping, is
+    /// dropped first, so `replay` gets the library with no other handle from
+    /// either; it gives back the library the slot keeps, and the call returns
+    /// a handle to that. A `replay` that gives none back leaves the slot
+    /// holding the chunk mapped again from its file.
+    ///
+    /// # Errors
+    ///
+    /// `held`, with `replay` not called, when the slot is empty or maps
+    /// another chunk.
+    pub fn lend<R>(
+        &self,
+        nibble: u8,
+        held: PhraseLibrary,
+        replay: impl FnOnce(PhraseLibrary) -> (Option<PhraseLibrary>, R),
+    ) -> Result<(PhraseLibrary, R), PhraseLibrary> {
+        let Some(slot) = self.by_nibble.get(usize::from(nibble)) else {
+            return Err(held);
+        };
+        let mut slot = slot
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(loaded) = slot.as_mut() else {
+            return Err(held);
+        };
+        if !loaded.library.shares_mapping(&held) {
+            return Err(held);
+        }
+        drop(held);
+        // The placeholder is never read: the lock is held until a library
+        // is back.
+        let total = loaded.library.total_freq();
+        let lent = std::mem::replace(&mut loaded.library, PhraseLibrary::empty(total));
+        let (kept, result) = replay(lent);
+        loaded.library = match kept {
+            Some(library) => library,
+            None => {
+                PhraseLibrary::open(&loaded.path).unwrap_or_else(|_| PhraseLibrary::empty(total))
+            }
+        };
+        Ok((loaded.library.clone(), result))
     }
 
     /// Drops library `nibble` — `FacadePhraseIndex::unload`. `true` when

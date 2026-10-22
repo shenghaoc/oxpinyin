@@ -399,7 +399,7 @@ impl GenericUserStore<DefaultStore> {
         law: UserConfLaw,
         checked: Option<crate::persistence::ProfileCheck>,
     ) -> Result<Self, UserStoreError> {
-        let originals: SystemOriginals = originals.into();
+        let mut originals: SystemOriginals = originals.into();
         // Create the session's own container before touching the
         // profile, so a failure here cannot follow a `check_format` that
         // already raised the open counter and wiped a non-conforming
@@ -409,8 +409,8 @@ impl GenericUserStore<DefaultStore> {
 
         let profile = if let Some(dir) = user_dir {
             match checked {
-                Some(check) => persistence::load_session_checked(dir, &originals, &check),
-                None => persistence::load_profile(dir, &originals, &versions, law)?,
+                Some(check) => persistence::load_session_checked(dir, &mut originals, &check),
+                None => persistence::load_profile(dir, &mut originals, &versions, law)?,
             }
         } else {
             // check_format reads ""; pinyin also tries to write "".
@@ -2758,7 +2758,7 @@ mod tests {
         }
         assert!(rows.get(&ucs4("他")).is_some_and(|value| value.len() == 4));
         let pinyin_keys =
-            persistence::load_profile(&dir, &originals(), &versions(), UserConfLaw::Pinyin)
+            persistence::load_profile(&dir, &mut originals(), &versions(), UserConfLaw::Pinyin)
                 .expect("load")
                 .index_file_keys
                 .pinyin;
@@ -3004,3 +3004,331 @@ mod tests {
 
 #[cfg(test)]
 mod replayed_readings;
+
+#[cfg(test)]
+mod in_place_replay_tests {
+    //! A session open replays each system `.dbin` into the library's own
+    //! mapping (#985). Everything that reads the library as loaded reads
+    //! what a replay with private writes leaves it reading — the diff base,
+    //! the seeded counts, the export and the save — and the file is mapped
+    //! once.
+
+    use super::*;
+    use crate::persistence::SystemLibrary;
+    use crate::store::UserStore;
+    use oxpinyin_core::ChewingKey;
+    use oxpinyin_data::chunk_write::{build_chunk, encode_phrase_item};
+    use oxpinyin_data::phrase_libraries::PhraseLibraries;
+    use oxpinyin_data::user_files::{LogRecord, UserFileLayout, UserTableInfo};
+
+    const SLOTS: u32 = 400;
+
+    fn key(n: u32) -> u16 {
+        ChewingKey::new(1 + (n % 20) as u8, 0, 1 + (n % 5) as u8, 0).to_packed()
+    }
+
+    /// Two-character items over several pages of `gb_char.bin`.
+    fn items() -> Vec<(u32, ChunkItem)> {
+        (1..=SLOTS)
+            .map(|slot| {
+                let prons = if slot % 7 == 0 {
+                    vec![
+                        (vec![key(slot), key(slot + 1)], slot),
+                        (vec![key(slot + 2), key(slot)], 5),
+                    ]
+                } else {
+                    vec![(vec![key(slot), key(slot + 1)], slot)]
+                };
+                let item = ChunkItem {
+                    phrase: vec![0x4e00 + slot, 0x4e01],
+                    unigram: slot + 1,
+                    prons,
+                };
+                (slot, item)
+            })
+            .collect()
+    }
+
+    fn versions() -> SystemVersions {
+        SystemVersions::for_this_build(7, 14)
+    }
+
+    /// A profile replaying `records` over its own copy of `gb_char.bin`,
+    /// with one user library item.
+    struct Profile {
+        dir: tempfile::TempDir,
+        chunk: PathBuf,
+    }
+
+    impl Profile {
+        fn new(records: &[LogRecord]) -> Self {
+            let dir = tempfile::tempdir().expect("tmpdir");
+            let chunk = dir.path().join("gb_char.bin");
+            std::fs::write(&chunk, build_chunk(&items()).expect("chunk")).expect("system chunk");
+            let user = dir.path().join("user");
+            std::fs::create_dir(&user).expect("user dir");
+            let payload = oxpinyin_data::user_files::encode_log_records(records).expect("log");
+            std::fs::write(
+                user.join("gb_char.dbin"),
+                oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("framed"),
+            )
+            .expect("log");
+            let user_item = ChunkItem {
+                phrase: vec![0x4f60],
+                unigram: 3,
+                prons: vec![(vec![key(3)], 3), (vec![key(4)], 2)],
+            };
+            std::fs::write(
+                user.join("user.bin"),
+                build_chunk(&[(1, user_item)]).expect("user"),
+            )
+            .expect("user chunk");
+            std::fs::write(
+                user.join("user.conf"),
+                UserTableInfo::conform_to(&versions()).to_text(),
+            )
+            .expect("marker");
+            Self { dir, chunk }
+        }
+
+        fn user(&self) -> PathBuf {
+            self.dir.path().join("user")
+        }
+
+        fn facade(&self) -> std::sync::Arc<PhraseLibraries> {
+            let mut libraries = PhraseLibraries::empty();
+            assert!(libraries.load(1, &self.chunk).expect("load"));
+            std::sync::Arc::new(libraries)
+        }
+
+        /// A session over the facade's own mapping, replayed in place.
+        fn in_place(&self) -> (std::sync::Arc<PhraseLibraries>, UserStore) {
+            let facade = self.facade();
+            let originals = crate::persistence::system_originals(&facade, UserFileLayout::stock());
+            let store =
+                UserStore::open_libpinyin(&self.user(), originals, versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            (facade, store)
+        }
+
+        /// A session whose replay keeps its writes private, as every
+        /// replay did before #985.
+        fn private(&self) -> (std::sync::Arc<PhraseLibraries>, UserStore) {
+            let facade = self.facade();
+            let library = facade.library(1 << 24).expect("library");
+            let originals = crate::persistence::SystemOriginals::new(
+                BTreeMap::from([(
+                    1,
+                    SystemLibrary {
+                        total: library.total_freq(),
+                        range_end: library.token_range().end,
+                        items: BTreeMap::new(),
+                        mapped: Some(library),
+                    },
+                )]),
+                UserFileLayout::stock(),
+            );
+            let store =
+                UserStore::open_libpinyin(&self.user(), originals, versions(), UserConfLaw::Pinyin)
+                    .expect("open");
+            (facade, store)
+        }
+    }
+
+    /// MODIFY records the way the pin's diff writes them: a header, then
+    /// each changed item in token order. Every item takes new reading
+    /// counts; every third a new unigram; slot 14 drops its second reading
+    /// in place.
+    fn records() -> Vec<LogRecord> {
+        let items = items();
+        let old_total = items
+            .iter()
+            .fold(0_u32, |total, (_, item)| total.wrapping_add(item.unigram));
+        let mut new_total = old_total;
+        let mut records = Vec::new();
+        for (slot, item) in &items {
+            let mut new = item.clone();
+            new.prons[0].1 += 20_000;
+            if slot % 3 == 0 {
+                new.unigram += 500;
+                new_total = new_total.wrapping_add(500);
+            }
+            if *slot == 14 {
+                new.prons.truncate(1);
+            }
+            records.push(LogRecord::Modify {
+                token: *slot,
+                old_item: encode_phrase_item(item).expect("old"),
+                new_item: encode_phrase_item(&new).expect("new"),
+            });
+        }
+        records.insert(
+            0,
+            LogRecord::ModifyHeader {
+                old_total,
+                new_total,
+            },
+        );
+        records
+    }
+
+    /// What every original-byte reader answers for a session.
+    fn readings(facade: &PhraseLibraries, store: &UserStore, user: &Path) -> Vec<String> {
+        let library = facade.library(1 << 24).expect("library");
+        let mut out = vec![format!("{:?}", library.item_total())];
+        for slot in 1..=SLOTS + 1 {
+            let token = (1_u32 << 24) | slot;
+            out.push(format!(
+                "{slot}: {:?} {:?} {:?} {:?} {:?} {:?}",
+                library.item(slot).map(|item| item.to_bytes().into_owned()),
+                library.pronunciation_count(slot),
+                facade.unigram_count(token),
+                store.unigram_delta(token).expect("delta"),
+                store.with_effective_system_item(token, Clone::clone),
+                store.with_effective_system_item(token, |item| item.prons.len()),
+            ));
+        }
+        out.push(format!(
+            "{:?}",
+            store.user_pronunciation_count((5 << 24) | 1)
+        ));
+        out.push(format!(
+            "{:?}",
+            std::fs::read(user.join("gb_char.dbin")).ok()
+        ));
+        out
+    }
+
+    #[cfg(target_os = "linux")]
+    fn mapping_fields(path: &Path, field: &str) -> Vec<(String, String)> {
+        let path = path.canonicalize().expect("path");
+        let smaps = std::fs::read_to_string("/proc/self/smaps").expect("smaps");
+        let mut lines = smaps.lines();
+        let mut out = Vec::new();
+        while let Some(line) = lines.next() {
+            if line.ends_with(path.to_str().expect("utf-8 path")) {
+                let perms = line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_owned();
+                let value = lines
+                    .find(|entry| entry.starts_with(field))
+                    .and_then(|entry| entry.split_whitespace().nth(1))
+                    .unwrap_or_default()
+                    .to_owned();
+                out.push((perms, value));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_session_replays_in_place_and_reads_as_a_private_replay_does() {
+        let records = records();
+        let (in_place, private) = (Profile::new(&records), Profile::new(&records));
+        let (in_place_facade, mut in_place_store) = in_place.in_place();
+        let (private_facade, mut private_store) = private.private();
+
+        // One mapping of the replayed file, read-only again, holding the
+        // replay's copied pages; the private replay's file has none.
+        #[cfg(target_os = "linux")]
+        {
+            let replayed = mapping_fields(&in_place.chunk, "Anonymous:");
+            assert_eq!(replayed.len(), 1, "{replayed:?}");
+            assert_eq!(replayed[0].0, "r--p");
+            assert_ne!(replayed[0].1, "0", "the replay wrote the mapping");
+            let kept = mapping_fields(&private.chunk, "Anonymous:");
+            assert_eq!(kept, [("r--p".to_owned(), "0".to_owned())]);
+        }
+        let library = in_place_facade.library(1 << 24).expect("library");
+        assert!(library.retained_bytes() > 0);
+        assert!(library.byte_identical(
+            &oxpinyin_data::phrase_library::PhraseLibrary::open(&in_place.chunk).expect("fresh")
+        ));
+        assert_eq!(
+            private_facade
+                .library(1 << 24)
+                .expect("library")
+                .retained_bytes(),
+            0
+        );
+
+        assert_eq!(
+            readings(&in_place_facade, &in_place_store, &in_place.user()),
+            readings(&private_facade, &private_store, &private.user()),
+        );
+        let export = |store: &UserStore, facade: &std::sync::Arc<PhraseLibraries>| {
+            export_state(
+                store,
+                &crate::persistence::system_originals(facade, UserFileLayout::stock()),
+            )
+            .expect("export")
+        };
+        assert_eq!(
+            export(&in_place_store, &in_place_facade),
+            export(&private_store, &private_facade)
+        );
+
+        // A save diffs the live items against the library as loaded: both
+        // sessions write the replayed MODIFY records back as they were.
+        in_place_store.mark_modified();
+        private_store.mark_modified();
+        assert!(in_place_store.save().expect("save"));
+        assert!(private_store.save().expect("save"));
+        let saved = std::fs::read(in_place.user().join("gb_char.dbin")).expect("saved log");
+        assert_eq!(
+            saved,
+            std::fs::read(private.user().join("gb_char.dbin")).expect("saved log")
+        );
+        let payload = oxpinyin_data::user_files::encode_log_records(&records).expect("log");
+        assert_eq!(
+            saved,
+            oxpinyin_data::chunk_format::build_memory_chunk(&payload).expect("framed")
+        );
+    }
+
+    #[test]
+    fn a_journal_that_changes_nothing_makes_no_private_view() {
+        let items = items();
+        let total = items
+            .iter()
+            .fold(0_u32, |total, (_, item)| total.wrapping_add(item.unigram));
+        let same = encode_phrase_item(&items[4].1).expect("item");
+        let profile = Profile::new(&[
+            LogRecord::ModifyHeader {
+                old_total: total,
+                new_total: total,
+            },
+            LogRecord::Modify {
+                token: 5,
+                old_item: same.clone(),
+                new_item: same,
+            },
+        ]);
+        let (facade, _store) = profile.in_place();
+        assert_eq!(
+            facade.library(1 << 24).expect("library").retained_bytes(),
+            0
+        );
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            mapping_fields(&profile.chunk, "Anonymous:"),
+            [("r--p".to_owned(), "0".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_refused_seal_replays_the_journal_again_privately() {
+        let records = records();
+        let (refused, private) = (Profile::new(&records), Profile::new(&records));
+        crate::replay::FAIL_NEXT_SEAL.with(|fail| fail.set(true));
+        let (refused_facade, refused_store) = refused.in_place();
+        assert!(!crate::replay::FAIL_NEXT_SEAL.with(std::cell::Cell::get));
+        let (private_facade, private_store) = private.private();
+        assert_eq!(
+            readings(&refused_facade, &refused_store, &refused.user()),
+            readings(&private_facade, &private_store, &private.user()),
+        );
+    }
+}
