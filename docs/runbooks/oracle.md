@@ -157,7 +157,8 @@ export PINYIN_ORACLE_DBM=bdb
 
 The six files in `oracle-data-unstable.sha256` are not reproducible
 upstream (`docs/findings/oracle-data-reproducibility.md`) and are not part
-of the check.
+of the cross-build digest comparison. Verify them against the prefix's
+local manifest before the pre-release real-installation checks below.
 
 ### Reproducing the libraries
 
@@ -229,10 +230,10 @@ each; their headers say what they prove.
 Before each release, run the three-cell sweep required by `AGENTS.md`,
 verification rule 3. The tkrzw suites above own `cross_backend` with
 model20 and `libpinyin_data_dir` on tkrzw. This pre-release procedure owns
-`bdb_libpinyin_files` (BDB), `reads_a_real_libpinyin_installation` (the BDB
-reference installation), and `libpinyin_data_dir` on KC. These checks need
-real installation files; the committed synthetic fixtures do not replace
-them. Ordinary `cargo test` leaves them ignored. Explicitly selecting
+`cross_backend` with model20 on BDB and KC, `bdb_libpinyin_files` (BDB),
+`reads_a_real_libpinyin_installation` (the BDB reference installation),
+and `libpinyin_data_dir` on KC. They need model20 or real installation
+files; the committed synthetic fixtures do not replace these inputs. Ordinary `cargo test` leaves them ignored. Explicitly selecting
 one fails when a required input is missing (`docs/testing/README.md`).
 Report each result or outstanding input limitation before release.
 
@@ -253,6 +254,22 @@ The input identity authority is `tools/oracle/oracle-pin.txt`:
 | Real data, each cell | `data_manifest_sha256_bdb`, `data_manifest_sha256_kc`, `data_manifest_sha256_tkrzw`; hash the prefix's `oracle-data.sha256` and verify its listed files |
 | Model20 archive | `model_archive_sha256` (`59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155`); use its verified extraction for `PINYIN_MODEL_DIR` |
 
+For each selected cell, also check both manifests against the files in
+that exact prefix. With setup's matching environment loaded:
+
+```sh
+(cd "$PINYIN_ORACLE_PREFIX" &&
+    sha256sum --check oracle-data.sha256 &&
+    sha256sum --check oracle-data-unstable.sha256)
+```
+
+The unstable manifest covers the generated DBM files (`bigram.db`,
+`phrase_index.bin`, `pinyin_index.bin`, `punct.bin` and both addon indexes).
+This second check is local only: upstream DBM generation is not
+reproducible, so the aggregate digest of `oracle-data-unstable.sha256`
+cannot be compared across builds. Its local entries still detect changed
+or corrupted files in a reused prefix; the stable manifest alone does not.
+
 Record the actual build and data-manifest digests, the model20 digest,
 host and cell with the results. The BDB real-file tests read `bigram.db`
 and `pinyin_index.bin`. The real-installation phrase-library test reads
@@ -272,6 +289,17 @@ export TMPDIR="$PWD/target/real-installation/tmp"
 mkdir -p "$TMPDIR"
 prefix_bdb="$HOME/.cache/oxpinyin/oracle/bdb"
 prefix_kc="$HOME/.cache/oxpinyin/oracle/kc"
+export PINYIN_MODEL_DIR="$HOME/.cache/oxpinyin/model20/extracted"
+
+# BDB: compile the verified model20 extraction and read back BDB files.
+CARGO_TARGET_DIR="$PWD/target/real-installation/bdb" \
+just heavy -- cargo test -p oxpinyin-datagen --no-default-features --features bdb \
+    --test cross_backend -- --include-ignored --nocapture
+
+# KC: the same model20 input, compiled and read back as Kyoto Cabinet.
+CARGO_TARGET_DIR="$PWD/target/real-installation/kc" \
+just heavy -- cargo test -p oxpinyin-datagen --no-default-features --features kyotocabinet \
+    --test cross_backend -- --include-ignored --nocapture
 
 # BDB: four real-file storage tests.
 OXPINYIN_LIBPINYIN_DATA_DIR="$prefix_bdb/lib/libpinyin/data" \
