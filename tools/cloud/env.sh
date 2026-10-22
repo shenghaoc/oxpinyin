@@ -59,13 +59,29 @@ libs_ok() {
 	done
 }
 
-# data_ok DBM [PREFIX]: data is present, intact and the recorded manifest.
+# data_ok DBM [PREFIX]: stable data matches the pin; generated data matches
+# the unstable manifest recorded by this prefix's own build.
 data_ok() {
-	local dbm=$1 prefix=${2:-$oracle_root/$1} want
+	local dbm=$1 prefix=${2:-$oracle_root/$1} want unstable_manifest
 	want=$(pinval "data_manifest_sha256_$dbm")
 	[[ -f $prefix/oracle-data.sha256 ]] || return 1
 	[[ $(sha256sum "$prefix/oracle-data.sha256" | cut -d' ' -f1) == "$want" ]] || return 1
-	(cd "$prefix" && sha256sum --check --quiet oracle-data.sha256 >/dev/null 2>&1)
+	(cd "$prefix" && sha256sum --check --quiet oracle-data.sha256 >/dev/null 2>&1) || return 1
+	unstable_manifest=$prefix/oracle-data-unstable.sha256
+	if [[ ! -f $unstable_manifest ]]; then
+		printf 'data manifest missing: %s\n' "$unstable_manifest" >&2
+		return 1
+	fi
+	if [[ ! -f $prefix/oracle-pin.txt ]]; then
+		printf 'data manifest provenance missing: %s/oracle-pin.txt\n' "$prefix" >&2
+		return 1
+	fi
+	want=$(sed -n 's/^data_unstable_manifest_sha256=//p' "$prefix/oracle-pin.txt")
+	if [[ -z $want || $(sha256sum "$unstable_manifest" | cut -d' ' -f1) != "$want" ]]; then
+		printf 'data manifest SHA-256 differs from %s/oracle-pin.txt: %s\n' "$prefix" "$unstable_manifest" >&2
+		return 1
+	fi
+	(cd "$prefix" && sha256sum --check --quiet oracle-data-unstable.sha256 >&2)
 }
 
 # Run in a subshell so reading old assignments cannot affect provisioning.

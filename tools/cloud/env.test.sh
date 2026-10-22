@@ -157,7 +157,7 @@ STUB
 )
 
 fixture() {
-	local dbm=$1 lib prefix=$oracle_root/$1
+	local dbm=$1 lib file prefix=$oracle_root/$1
 	mkdir -p "$prefix/lib/libpinyin/data"
 	for lib in libpinyin libzhuyin; do
 		printf '%s %s\n' "$dbm" "$lib" >"$prefix/lib/$lib.so"
@@ -166,6 +166,11 @@ fixture() {
 	printf '%s\n' "$dbm" >"$prefix/lib/libpinyin/data/table.conf"
 	(cd "$prefix" && sha256sum lib/libpinyin/data/table.conf >oracle-data.sha256)
 	printf 'data_manifest_sha256_%s=%s\n' "$dbm" "$(sha256sum "$prefix/oracle-data.sha256" | cut -d' ' -f1)" >>"$pin"
+	for file in bigram.db phrase_index.bin pinyin_index.bin punct.bin addon_phrase_index.bin addon_pinyin_index.bin; do
+		printf '%s %s\n' "$dbm" "$file" >"$prefix/lib/libpinyin/data/$file"
+	done
+	(cd "$prefix" && sha256sum lib/libpinyin/data/{bigram.db,phrase_index.bin,pinyin_index.bin,punct.bin,addon_phrase_index.bin,addon_pinyin_index.bin} >oracle-data-unstable.sha256)
+	printf 'data_unstable_manifest_sha256=%s\n' "$(sha256sum "$prefix/oracle-data-unstable.sha256" | cut -d' ' -f1)" >"$prefix/oracle-pin.txt"
 }
 
 select_cell() (
@@ -175,6 +180,31 @@ select_cell() (
 )
 
 for dbm in bdb kc tkrzw; do fixture "$dbm"; done
+
+for dbm in bdb kc tkrzw; do
+	data_ok "$dbm" || fail "good $dbm prefix was refused"
+done
+printf 'PASS: good prefixes with their own unstable digests accepted\n'
+
+refused_data() {
+	local file=$1 message
+	if message=$(data_ok bdb 2>&1); then fail "damaged or missing $file was accepted"; fi
+	[[ $message == *"$file"* ]] || fail "diagnostic did not name $file: $message"
+	printf 'PASS: damaged or missing %s refused with its name\n' "$file"
+}
+for file in bigram.db phrase_index.bin pinyin_index.bin punct.bin addon_phrase_index.bin addon_pinyin_index.bin; do
+	printf 'corrupt\n' >"$oracle_root/bdb/lib/libpinyin/data/$file"
+	refused_data "$file"
+	printf 'bdb %s\n' "$file" >"$oracle_root/bdb/lib/libpinyin/data/$file"
+done
+manifest=$(cat "$oracle_root/bdb/oracle-data-unstable.sha256")
+printf '\n' >>"$oracle_root/bdb/oracle-data-unstable.sha256"
+refused_data oracle-data-unstable.sha256
+rm "$oracle_root/bdb/oracle-data-unstable.sha256"
+refused_data oracle-data-unstable.sha256
+printf '%s\n' "$manifest" >"$oracle_root/bdb/oracle-data-unstable.sha256"
+data_ok bdb || fail 'restored prefix was refused'
+
 cells=(bdb)
 write_oracle_env
 if message=$(select_cell kc "$oracle_root/kc" 2>&1); then
@@ -215,9 +245,10 @@ restore_env() {
 	(oracle_root=$old_root; cells=(bdb kc tkrzw); tkrzw_local=1; write_oracle_env)
 }
 removed() {
-	local dbm=$1 check=$2 message
+	local dbm=$1 check=$2 file=${3:-} message
 	message=$(write_oracle_env 2>&1)
 	[[ $(printf '%s\n' "$message" | grep -c "^$dbm:") == 1 && $message == *"$dbm: removed from environment file; $check check failed"* ]] || fail "$message"
+	[[ -z $file || $message == *"$file"* ]] || fail "removed cell diagnostic did not name $file: $message"
 	if message=$(select_cell "$dbm" "$old_root/$dbm" 2>&1); then fail "invalid $dbm was retained"; fi
 	[[ $message == "cell $dbm was not provisioned by this environment file" ]] || fail "$message"
 	if grep -q "^export OXPINYIN_ORACLE_.*_${dbm^^}=" "$OXPINYIN_ORACLE_ENV"; then fail "stale $dbm assignment"; fi
@@ -238,6 +269,10 @@ restore_env
 printf 'corrupt\n' >"$old_root/tkrzw/lib/libpinyin/data/table.conf"
 removed tkrzw 'data manifest'
 printf 'tkrzw\n' >"$old_root/tkrzw/lib/libpinyin/data/table.conf"
+restore_env
+printf 'corrupt\n' >"$old_root/kc/lib/libpinyin/data/bigram.db"
+removed kc 'data manifest' 'lib/libpinyin/data/bigram.db'
+printf 'kc bigram.db\n' >"$old_root/kc/lib/libpinyin/data/bigram.db"
 restore_env
 
 # Observe the old complete file at the exact rename boundary, and source the
