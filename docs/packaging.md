@@ -339,6 +339,25 @@ manifest schema, and `$PROFILES` holds the `phrases` and `journals` fixture
 trees with their `user/` directories and `profile.manifest` files. The library
 and staticlib for a facade must be the same build.
 
+Provision the profiles with the in-tree teardown provisioner against the
+reference oracle: `$PIN` is the prefix that `tools/cloud/setup.sh --cells bdb`
+verified (`$OXPINYIN_ORACLE_PREFIX_BDB` in its environment file), and
+`$TEARDOWN` is an empty directory on ext4. The provisioner populates the
+profiles through the pin and writes each `profile.manifest`. Then compute the
+system-data identity:
+
+```sh
+just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil \
+  python -B -X lazy_imports=normal tools/bisection/contract-diff.py \
+  bdb "$PIN" "$STAGE/lib/libpinyin.so.15.0.0" \
+  --zhuyin-so "$STAGE/lib/libzhuyin.so.15.0.0" \
+  --teardown --teardown-stage provision --teardown-work-dir "$TEARDOWN"
+PROFILES="$TEARDOWN/profiles"
+DATA_ID=$(uv run --no-project --managed-python --python cpython@3.15.0+gil \
+  python -X lazy_imports=normal tools/generate-function-order.py \
+  --print-identity "$DATA")
+```
+
 ```sh
 just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil \
   python -X lazy_imports=normal tools/generate-function-order.py \

@@ -5,9 +5,11 @@ Synthetic nm, Callgrind, smaps and linker records exercise parsing, scoping,
 normalization and reconciliation. They need no compiler, profiler or worker.
 """
 
+import hashlib
 import io
 from pathlib import Path
 import runpy
+import tempfile
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -16,6 +18,7 @@ from unittest import mock
 HERE = Path(__file__).resolve().parent
 GENERATOR = runpy.run_path(str(HERE / "generate-function-order.py"))
 MEASUREMENT = runpy.run_path(str(HERE / "measure-function-order.py"))
+TEARDOWN = runpy.run_path(str(HERE / "bisection/teardown.py"))
 LIBRARY = Path("/synthetic/libpinyin.so")
 HEADER = "oxpinyin-function-order-v1\tlibpinyin.so.15\n"
 
@@ -222,6 +225,100 @@ class GeneratorTests(unittest.TestCase):
         self.assertEqual(command, [str(args.bisect), "--teardown", "pinyin", "/lib.so",
                                    "/data", "/user", "time", "0", "1", "1",
                                    "first-candidate", "-"])
+
+
+class ProfileManifestTests(unittest.TestCase):
+    """The generator reads the manifests the teardown provisioner writes (section 7.4)."""
+
+    class Reached(Exception):
+        pass
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.system = self.root / "data"
+        self.system.mkdir()
+        (self.system / "table.conf").write_bytes(b"conf\n")
+        self.profiles = self.root / "profiles"
+        for name in TEARDOWN["PROFILES"]:
+            user = self.profiles / name / "user"
+            (user / "nested" / "deeper").mkdir(parents=True)
+            (user / "a.txt").write_bytes(name.encode())
+            (user / "nested" / "b.bin").write_bytes(b"\x00\x01")
+            (user / "nested" / "deeper" / "c").write_bytes(b"")
+            (user / "nested.txt").write_bytes(b"sibling")
+            self.write_teardown_manifest(user)
+
+    @staticmethod
+    def write_teardown_manifest(user):
+        # teardown.py's provision() format, spelled out independently of the
+        # shared implementation: size<TAB>sha256<TAB>relative path.
+        rows = ["oxpinyin-startup-profile-v1"]
+        for path in sorted(user.rglob("*")):
+            if path.is_file():
+                data = path.read_bytes()
+                rows.append(f"{len(data)}\t{hashlib.sha256(data).hexdigest()}\t{path.relative_to(user)}")
+        (user.parent / "profile.manifest").write_text("\n".join(rows) + "\n")
+
+    def collect(self):
+        collect = GENERATOR["collect_policies"]
+        args = SimpleNamespace(
+            bisect=Path("/bin/bisect"), system_dir=self.system, profiles_dir=self.profiles,
+            work_dir=self.root, cpu=0, init=[], steady=[],
+            system_identity=GENERATOR["STARTUP_PROFILE"]["identity"](self.system))
+
+        def reached(_root):
+            raise self.Reached
+
+        with mock.patch.dict(collect.__globals__, collection_scratch=reached):
+            collect(args, {}, {})
+
+    def rejected(self, message):
+        with self.assertRaisesRegex(ValueError, message):
+            self.collect()
+
+    def test_teardown_format_with_nested_directories_is_accepted(self):
+        user = self.profiles / "phrases" / "user"
+        self.assertEqual((user.parent / "profile.manifest").read_text(), GENERATOR["manifest"](user))
+        with self.assertRaises(self.Reached):
+            self.collect()
+        # The provisioner's own existing-tree check accepts the same files.
+        self.assertEqual(set(TEARDOWN["provision"](None, None, self.profiles)), set(TEARDOWN["PROFILES"]))
+
+    def test_measurement_and_provisioner_write_the_same_manifest(self):
+        user = self.profiles / "journals" / "user"
+        recorded = (user.parent / "profile.manifest").read_text()
+        self.assertEqual(MEASUREMENT["GEN"]["manifest"](user), recorded)
+        self.assertEqual(TEARDOWN["STARTUP_PROFILE"].manifest(user), recorded)
+
+    def test_changed_file_is_rejected(self):
+        (self.profiles / "phrases" / "user" / "nested" / "b.bin").write_bytes(b"\x00\x02")
+        self.rejected(r"differs from .*phrases/user: changed nested/b\.bin$")
+
+    def test_added_file_is_rejected(self):
+        (self.profiles / "journals" / "user" / "nested" / "deeper" / "new").write_bytes(b"x")
+        self.rejected(r"differs from .*journals/user: added nested/deeper/new$")
+
+    def test_removed_file_is_rejected(self):
+        (self.profiles / "phrases" / "user" / "a.txt").unlink()
+        self.rejected(r"differs from .*phrases/user: removed a\.txt$")
+
+    def test_symlink_is_rejected(self):
+        (self.profiles / "phrases" / "user" / "link").symlink_to("a.txt")
+        self.rejected(r"manifest input contains a symlink: .*phrases/user/link$")
+
+    def test_old_four_column_manifest_is_rejected(self):
+        manifest = self.profiles / "phrases" / "profile.manifest"
+        lines = manifest.read_text().split("\n")
+        manifest.write_text("\n".join([lines[0], *("file\t" + line for line in lines[1:-1]), ""]))
+        self.rejected(r"line 2 is not size<TAB>sha256<TAB>path: .*phrases/profile\.manifest$")
+
+    def test_identity_of_a_fixed_directory(self):
+        # SHA-256 of the header plus a.txt, nested/b.bin, nested/deeper/c and
+        # nested.txt rows, in that order, computed outside Python.
+        self.assertEqual(GENERATOR["STARTUP_PROFILE"]["identity"](self.profiles / "empty" / "user"),
+                         "dc34a1df1c7365ad0dbdc19b51a9a7c20d64a6f0954877e90c16feac9ddef08f")
 
 
 if __name__ == "__main__":
