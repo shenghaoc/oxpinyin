@@ -29,6 +29,8 @@ SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+source "$REPO_ROOT/tools/packaging/function-order.sh"
+FUNCTION_ORDER_ARGS=()
 
 LP=""; OX=""; DATA=""; OUT=""; ROUNDS=10; CYCLES=8; CPU="${PERF_CPU:-0}"
 
@@ -49,11 +51,14 @@ while (($#)); do
             esac
             ROUNDS=$2; shift 2 ;;
         --cycles) CYCLES=$2; shift 2 ;;
+        --function-order|--unordered-arm) FUNCTION_ORDER_ARGS+=("$1" "$2"); shift 2 ;;
         -h|--help) usage ;;
         *) echo "unknown argument: $1" >&2; usage ;;
     esac
 done
 [ -n "$LP" ] && [ -n "$OX" ] && [ -n "$DATA" ] || usage
+function_order_measurement --library "S/pinyin=$OX" \
+    --reference-arm L --library "L/pinyin=$LP" "${FUNCTION_ORDER_ARGS[@]}"
 OUT="${OUT:-/tmp/rss-diag}"
 mkdir -p "$OUT" "$OUT/maps"
 

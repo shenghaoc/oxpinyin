@@ -19,6 +19,8 @@
 
 set -euo pipefail
 cd "$(dirname "$0")/../.."
+source tools/packaging/function-order.sh
+FUNCTION_ORDER_ARGS=()
 
 OUT=""
 BACKEND=tkrzw
@@ -31,6 +33,9 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	--out) shift; OUT=${1:-} ;;
 	--backend) shift; BACKEND=${1:-} ;;
+	--function-order | --unordered-arm)
+		[ $# -ge 2 ] || { echo "fatal: $1 needs a value" >&2; exit 2; }
+		FUNCTION_ORDER_ARGS+=("$1" "$2"); shift ;;
 	-h | --help) sed -n '2,19p' "$0"; exit 0 ;;
 	*) echo "fatal: unknown argument $1" >&2; exit 2 ;;
 	esac
@@ -68,6 +73,7 @@ tools/packaging/install.sh libpinyin --prefix=/usr --destdir="$STAGE" \
 	--target-dir "$WORK/target-shipped" >&2
 SHIPPED=$(find "$STAGE" -name 'libpinyin.so.15.0.0' -print -quit)
 [ -n "$SHIPPED" ] || { echo "fatal: cinstall produced no libpinyin.so.15.0.0" >&2; exit 2; }
+function_order_measurement --arm shipped --library "pinyin=$SHIPPED" "${FUNCTION_ORDER_ARGS[@]}"
 strip --strip-all "$SHIPPED"
 
 # The runbook's rule, enforced rather than trusted: the alloc-count readers are

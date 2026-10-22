@@ -33,6 +33,8 @@ HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+source "$REPO_ROOT/tools/packaging/function-order.sh"
+function_order_arguments "$@"
 
 OUT="${MATRIX_OUT:-/out}"
 CPU="${PERF_CPU:-0}"
@@ -118,6 +120,9 @@ find_so() {
 }
 A_SO=$(find_so /opt/libpinyin-tkrzw); A_DATA=/opt/libpinyin-tkrzw/lib/libpinyin/data
 B_SO=$(find_so /opt/libpinyin-kc);    B_DATA=/opt/libpinyin-kc/lib/libpinyin/data
+function_order_measurement --library "C/pinyin=$OXPINYIN_TKRZW_SO" \
+    --library "D/pinyin=$OXPINYIN_KC_SO" --reference-arm A --library "A/pinyin=$A_SO" \
+    --reference-arm B --library "B/pinyin=$B_SO" "${FUNCTION_ORDER_ARGS[@]}"
 
 LABELS=(libpinyin-tkrzw libpinyin-kc oxpinyin-tkrzw oxpinyin-kc)
 SOS=("$A_SO" "$B_SO" "$OXPINYIN_TKRZW_SO" "$OXPINYIN_KC_SO")

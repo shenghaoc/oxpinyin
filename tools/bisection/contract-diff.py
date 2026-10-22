@@ -84,6 +84,7 @@ import os
 from pathlib import Path
 import re
 import resource
+import runpy
 import shutil
 import signal
 import statistics
@@ -12358,6 +12359,8 @@ def run_per_call(args, parser):
             if not artifacts[mode] or not artifacts[mode].is_file():
                 parser.error('missing %s %s library' % (side, mode))
             artifacts[mode] = artifacts[mode].resolve()
+    FUNCTION_ORDER['check_arms'](args, {side: {mode: paths[mode] for mode in modes}
+                                      for side, paths in sides.items()}, references=('pin',))
     cpu = args.per_call_cpu if args.per_call_cpu is not None else min(os.sched_getaffinity(0))
     if cpu not in os.sched_getaffinity(0):
         parser.error('--per-call-cpu is outside this process CPU affinity')
@@ -12426,8 +12429,12 @@ def run_per_call(args, parser):
     return 0
 
 
+FUNCTION_ORDER = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'packaging/function_order.py'))
+
+
 def run_main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    FUNCTION_ORDER['add_arguments'](parser)
     parser.add_argument('--teardown', action='store_true', help='native teardown measurement workload')
     parser.add_argument('--teardown-stage', choices=('provision', 'verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute'), default='verify')
     parser.add_argument('--teardown-work-dir', type=Path, help='owned temporary ext4 directory; caller cleans it')
@@ -12496,6 +12503,8 @@ def run_main():
         return teardown.run(args, sys.modules[__name__], parser)
     if args.per_call:
         return run_per_call(args, parser)
+    if args.function_order or args.unordered_arm:
+        parser.error('function-order expectations require --teardown or --per-call')
     if args.base_pinyin_so or args.base_zhuyin_so or args.per_call_attribution or args.per_call_operations:
         parser.error('base paths, attribution and operation selection require --per-call')
     if args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check:
