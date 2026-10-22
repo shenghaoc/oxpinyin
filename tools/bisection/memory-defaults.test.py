@@ -233,7 +233,9 @@ class AdmissionTests(unittest.TestCase):
     def test_final_choice_uses_memory_read_after_the_slot_wait(self):
         holder = M['HeavySlot']('holder', out=self.out)
         with holder:
-            admission = self.admission()
+            # The wait limit runs from the first attempt; setUp's 0.12 s would
+            # expire on a host that stalls before the second one.
+            admission = self.admission(dict(os.environ, OXPINYIN_RESOURCE_WAIT_SECONDS='5'))
             self.assertFalse(admission.try_acquire())
         with mock.patch.dict(self.globals, resource_snapshot=lambda: resources(3000)):
             self.assertTrue(admission.try_acquire())
