@@ -363,6 +363,7 @@ impl Visit for Vec<Vec<u8>> {
 /// An owned Kyoto Cabinet database handle.
 pub(crate) struct Db {
     handle: *mut sys::KCDB,
+    db_type: DbType,
     read_only: bool,
 }
 
@@ -505,7 +506,11 @@ impl Db {
         }
         // Owned from here: every early return must release it, which
         // `this` does by construction.
-        let this = Self { handle, read_only };
+        let this = Self {
+            handle,
+            db_type,
+            read_only,
+        };
 
         let mode = if read_only {
             sys::KCOREADER
@@ -556,6 +561,12 @@ impl Db {
     /// Whether this handle was opened read-only.
     pub(crate) const fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// Whether a cursor walks this class in key order (`TreeDB`,
+    /// `ProtoTreeDB`) rather than in bucket order (`HashDB`, `StashDB`).
+    pub(crate) const fn is_ordered(&self) -> bool {
+        matches!(self.db_type, DbType::Tree | DbType::ProtoTree)
     }
 
     /// Point read. `None` when the key is absent.
@@ -839,7 +850,6 @@ impl Cursor<'_> {
     /// containers: KC's `kccurjumpkey("")` answers "no record" on a
     /// HashDB that has records, so an unbounded raw walk must take this
     /// form. `Ok(false)` when the database is empty.
-    #[cfg(test)]
     pub(crate) fn jump_first(&mut self) -> Result<bool, StoreError> {
         // SAFETY: the cursor handle is live.
         let ok = unsafe { sys::kccurjump(self.handle) };
