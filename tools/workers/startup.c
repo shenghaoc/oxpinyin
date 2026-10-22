@@ -30,7 +30,8 @@
  * Output: one JSON record per line. The "units" record is the canonical
  * U1–U6 record; the controller hashes it (§7.8 item 3), so it carries no
  * time, address or path. Every record is buffered and written only when the
- * run succeeds.
+ * run succeeds. process_wall is the controller's: it spans the process,
+ * which this worker cannot observe from inside.
  *
  * Exit: 0 success; 1 refusal (missing library, a file that is not a
  * loadable shared library, a missing symbol, a missing input) or a failed
@@ -299,61 +300,77 @@ static void *lookup(const char *name) {
     dlerror();
     void *symbol = dlsym(library, name);
     if (dlerror() || !symbol) {
-        for (size_t i = 0; i < missing_count; i++)
-            if (!strcmp(missing[i], name)) return NULL;
         if (missing_count < MAX_MISSING) missing[missing_count++] = name;
         return NULL;
     }
     return symbol;
 }
 
-static void *facade_symbol(const char *suffix) {
-    static char names[64][96];
-    static size_t used;
-    if (used == COUNT(names)) die("too many facade symbols");
-    char *name = names[used++];
-    if (snprintf(name, sizeof names[0], "%s_%s", facade, suffix) >= (int)sizeof names[0])
+/* The worker's api table, prepared before U1. A name in the export list
+ * takes that lookup's result; any other name is looked up once on its own. */
+static struct required { void **slot; char name[96]; long export_index; } required[48];
+static size_t required_count;
+static void *export_values[MAX_EXPORTS];
+
+static void require(void **slot, const char *prefix, const char *suffix) {
+    if (required_count == COUNT(required)) die("too many required symbols");
+    struct required *entry = &required[required_count++];
+    entry->slot = slot;
+    if (snprintf(entry->name, sizeof entry->name, "%s%s", prefix, suffix) >= (int)sizeof entry->name)
         die("symbol name too long");
-    return lookup(name);
+    entry->export_index = -1;
+    for (size_t i = 0; i < export_count; i++)
+        if (!strcmp(export_names[i], entry->name)) entry->export_index = (long)i;
 }
 
-/* Separately selectable Callgrind boundaries: each wraps exactly one unit. */
+static void prepare_required(void) {
+    char prefix[16];
+    snprintf(prefix, sizeof prefix, "%s_", facade);
+#define REQUIRE(FIELD, SUFFIX) require((void **)&api.FIELD, prefix, SUFFIX)
+    REQUIRE(init, "init");
+    REQUIRE(fini, "fini");
+    REQUIRE(alloc_instance, "alloc_instance");
+    REQUIRE(free_instance, "free_instance");
+    REQUIRE(set_options, "set_options");
+    REQUIRE(parse_full, "parse_more_full_pinyins");
+    REQUIRE(parse_chewing, "parse_more_chewings");
+    REQUIRE(reset, "reset");
+    REQUIRE(guess_sentence, "guess_sentence");
+    REQUIRE(get_n_candidate, "get_n_candidate");
+    REQUIRE(get_candidate, "get_candidate");
+    REQUIRE(get_candidate_type, "get_candidate_type");
+    REQUIRE(get_candidate_string, "get_candidate_string");
+    REQUIRE(save, "save");
+    REQUIRE(load_library, "load_phrase_library");
+    REQUIRE(begin_add, "begin_add_phrases");
+    REQUIRE(add_phrase, "iterator_add_phrase");
+    REQUIRE(end_add, "end_add_phrases");
+    if (api.zhuyin) {
+        REQUIRE(guess_after, "guess_candidates_after_cursor");
+        /* zhuyin.h:256-257 at 074a2219 has no nbest-index argument. */
+        REQUIRE(zhuyin_sentence, "get_sentence");
+    } else {
+        REQUIRE(guess_candidates, "guess_candidates");
+        REQUIRE(parsed_length, "get_parsed_input_length");
+        REQUIRE(get_nbest, "get_candidate_nbest_index");
+        REQUIRE(get_sentence, "get_sentence");
+    }
+#undef REQUIRE
+    require((void **)&api.free_memory, "", "g_free");
+}
+
+/* Separately selectable Callgrind boundaries: each wraps exactly one unit.
+ * U1 opens the library and resolves every name exactly once. */
 __attribute__((noinline))
 void startup_load_unit(const char *path, int flags) {
     library = dlopen(path, flags);
     if (!library) return;
-    for (size_t i = 0; i < export_count; i++) lookup(export_names[i]);
-#define RESOLVE(FIELD, SUFFIX) *(void **)(&api.FIELD) = facade_symbol(SUFFIX)
-    RESOLVE(init, "init");
-    RESOLVE(fini, "fini");
-    RESOLVE(alloc_instance, "alloc_instance");
-    RESOLVE(free_instance, "free_instance");
-    RESOLVE(set_options, "set_options");
-    RESOLVE(parse_full, "parse_more_full_pinyins");
-    RESOLVE(parse_chewing, "parse_more_chewings");
-    RESOLVE(reset, "reset");
-    RESOLVE(guess_sentence, "guess_sentence");
-    RESOLVE(get_n_candidate, "get_n_candidate");
-    RESOLVE(get_candidate, "get_candidate");
-    RESOLVE(get_candidate_type, "get_candidate_type");
-    RESOLVE(get_candidate_string, "get_candidate_string");
-    RESOLVE(save, "save");
-    RESOLVE(load_library, "load_phrase_library");
-    RESOLVE(begin_add, "begin_add_phrases");
-    RESOLVE(add_phrase, "iterator_add_phrase");
-    RESOLVE(end_add, "end_add_phrases");
-    if (api.zhuyin) {
-        RESOLVE(guess_after, "guess_candidates_after_cursor");
-        /* zhuyin.h:256-257 at 074a2219 has no nbest-index argument. */
-        RESOLVE(zhuyin_sentence, "get_sentence");
-    } else {
-        RESOLVE(guess_candidates, "guess_candidates");
-        RESOLVE(parsed_length, "get_parsed_input_length");
-        RESOLVE(get_nbest, "get_candidate_nbest_index");
-        RESOLVE(get_sentence, "get_sentence");
+    for (size_t i = 0; i < export_count; i++) export_values[i] = lookup(export_names[i]);
+    for (size_t i = 0; i < required_count; i++) {
+        struct required *entry = &required[i];
+        *entry->slot = entry->export_index >= 0 ? export_values[entry->export_index] :
+            lookup(entry->name);
     }
-#undef RESOLVE
-    *(void **)(&api.free_memory) = lookup("g_free");
 }
 
 __attribute__((noinline))
@@ -506,9 +523,8 @@ static void emit_clock(const char *name, struct clock_pair value) {
          (unsigned long long)value.wall, (unsigned long long)value.cpu);
 }
 
-/* §7.5 timing metrics. process_wall is the controller's: it spans the
- * process, which this worker cannot observe from inside. */
-static void emit_times(struct clock_pair main_start) {
+/* §7.5 timing metrics, except the controller's process_wall. */
+static void emit_times(void) {
     struct clock_pair setup = {
         units.lib_load.wall + units.init_time.wall + units.config.wall +
             units.alloc_time.wall + units.first.wall,
@@ -524,7 +540,6 @@ static void emit_times(struct clock_pair main_start) {
     emit_clock("setup_plus_first_candidate", setup);
     emit_clock("drop_instance", units.drop);
     emit_clock("fini", units.fini);
-    emit_clock("worker", since(main_start));
     emit("}\n");
 }
 
@@ -702,12 +717,15 @@ static void parse_exports(void) {
     if (!copy) die("export list allocation failed");
     for (char *name = strtok(copy, ","); name; name = strtok(NULL, ",")) {
         if (export_count == MAX_EXPORTS) usage("too many exports");
+        for (size_t i = 0; i < export_count; i++)
+            if (!strcmp(export_names[i], name)) usage("repeated export");
         export_names[export_count++] = name;
     }
     if (!export_count) usage("OXPINYIN_STARTUP_EXPORTS names no export");
 }
 
 static void parse_handshake(const char *list) {
+    if (!*list) usage("empty handshake argument; use - for none");
     if (!strcmp(list, "-")) return;
     for (const char *p = list; *p;) {
         size_t length = strcspn(p, ",");
@@ -732,7 +750,6 @@ static void parse_handshake(const char *list) {
 }
 
 int main(int argc, char **argv) {
-    struct clock_pair main_start = now();
     struct rlimit no_core = {0, 0};
     if (setrlimit(RLIMIT_CORE, &no_core)) die("core limit: %s", strerror(errno));
     if (argc != 8) usage("expected seven arguments");
@@ -766,6 +783,7 @@ int main(int argc, char **argv) {
         usage("unknown mode");
     }
     parse_exports();
+    prepare_required();
     /* Fault the output buffer before U1, so no unit grows it. */
     reserve(OUTPUT_RESERVE / 2);
     memset(out.data, 0, out.capacity);
@@ -779,7 +797,7 @@ int main(int argc, char **argv) {
     }
     run_units(path, flags, data, user, stop, !strcmp(mode, "verify"));
     emit_units();
-    if (!strcmp(mode, "measure")) emit_times(main_start);
+    if (!strcmp(mode, "measure")) emit_times();
     if (!strcmp(mode, "verify")) transcript(data, user, witness);
     if (probe >= 0) {
         void *context;
