@@ -126,7 +126,9 @@ impl CapiContext {
 ///
 /// Sized to need, as the pinyin facade's row is: the text lives in the
 /// instance's [`CandidateSnapshot`](oxpinyin_facade::CandidateSnapshot)
-/// buffer and the counts are `u32`.
+/// buffer and the counts are `u32`. It carries only what this facade's
+/// getters and its choose read; everything else about the row is in the
+/// window it was snapshotted from, at `source_index`.
 pub struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
     pub(crate) text: oxpinyin_facade::TextSpan,
@@ -134,35 +136,7 @@ pub struct CapiCandidate {
     /// alone, as the pin reads only the candidate there — kept current by
     /// the snapshot.
     pub(crate) text_ptr: *const std::ffi::c_char,
-    /// The four fields below are snapshotted exactly as the pinyin facade
-    /// snapshots them, but this facade's display law reads only `text`,
-    /// `candidate_type` and `source_index` today.
-    #[expect(
-        dead_code,
-        reason = "snapshotted in step with oxpinyin-capi; no reader on the zhuyin display law yet"
-    )]
-    pub(crate) kind: oxpinyin_engine::CandidateKind,
     pub(crate) candidate_type: crate::types::lookup_candidate_type_t,
-    #[expect(
-        dead_code,
-        reason = "snapshotted in step with oxpinyin-capi; no reader on the zhuyin display law yet"
-    )]
-    pub(crate) nbest_index: u8,
-    /// Bytes of raw input this candidate consumed, snapshotted at guess time.
-    #[expect(
-        dead_code,
-        reason = "snapshotted in step with oxpinyin-capi; no reader on the zhuyin display law yet"
-    )]
-    pub(crate) consumed_bytes: u32,
-    /// The candidate's scoring token, snapshotted for training.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "snapshotted in step with oxpinyin-capi; read by the in-crate tests only"
-        )
-    )]
-    pub(crate) token: Option<oxpinyin_core::PhraseToken>,
     /// The index this candidate held in the window it was snapshotted from.
     pub(crate) source_index: u32,
     /// Where the candidate's span starts, in original input coordinates —
@@ -170,6 +144,10 @@ pub struct CapiCandidate {
     /// new cursor for a before-cursor row (`zhuyin.cpp:1660` at the pin).
     pub(crate) span_begin: u32,
 }
+
+// The row width the doc above claims; a field that grows it shows up here.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<CapiCandidate>() == 32);
 
 #[cfg(test)]
 impl CapiCandidate {
