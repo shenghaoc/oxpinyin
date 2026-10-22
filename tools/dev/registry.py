@@ -59,7 +59,15 @@ def _check_implementation(row):
         if not all(part.isidentifier() for part in target.split('.')):
             raise RegistryError(f'registry row {name!r} implementation {value!r} is not a module name')
         base = ROOT.joinpath(*target.split('.'))
-        exists = base.with_suffix('.py').is_file() or (base / '__init__.py').is_file()
+        if base.with_suffix('.py').is_file():
+            file = base.with_suffix('.py')
+        elif (base / '__init__.py').is_file():
+            file = base / '__main__.py'
+            if not file.is_file():
+                raise RegistryError(f'registry row {name!r} implementation {value!r} is a package '
+                                    'without __main__.py')
+        else:
+            file = None
         command = row['command']
         runs = any(part == '-m' and command[index + 1:index + 2] == [target]
                    for index, part in enumerate(command))
@@ -68,10 +76,14 @@ def _check_implementation(row):
         if path.is_absolute() or '..' in path.parts or '\\' in target:
             raise RegistryError(f'registry row {name!r} implementation {value!r} must be a '
                                 'checkout-relative path')
-        exists = ROOT.joinpath(*path.parts).is_file()
+        file = ROOT.joinpath(*path.parts)
+        file = file if file.is_file() else None
         runs = path in {_command_path(part) for part in row['command'] if isinstance(part, str)}
-    if not exists:
+    if file is None:
         raise RegistryError(f'registry row {name!r} implementation {value!r} does not exist')
+    if not file.resolve().is_relative_to(ROOT.resolve()):
+        raise RegistryError(f'registry row {name!r} implementation {value!r} resolves outside '
+                            'the checkout')
     if not runs:
         raise RegistryError(f'registry row {name!r} implementation {value!r} does not match '
                             f'its command {json.dumps(row["command"])}')
