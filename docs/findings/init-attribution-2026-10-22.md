@@ -28,7 +28,7 @@ command behind each figure is given where the figure is used.
 - The relro difference that #987 found is gone. The facade library's
   `r--` mappings now hold 52 / 40 KiB of Private_Dirty against the pin's
   88. The #989 zhuyin addon and punct mappings are also gone.
-- **Init time:** ox/pin is 1.03–1.08 on the warm cache (all four cells are
+- **Init time:** ox/pin is 1.03–1.09 on the warm cache (all four cells are
   STABLE). Library load is 0.43–0.44, and the first candidate is 1.74–2.05
   (zhuyin `journals` is INCONCLUSIVE). Cold timing was not measured; see
   [Cold cache](#cold-cache).
@@ -327,7 +327,8 @@ are divided among the other processes on the host that map libstdc++.
 
 ### Mappings above the pin by more than the bound
 
-M1, Pss, ox − pin, with the bound ±max(64 KiB, 1% of the pin's median):
+M1, Pss, ox − pin, with the bound ±max(64 KiB, 1% of |median|) of the subject.
+Every mapping's median is below 6,400 KiB, so the bound is 64 KiB in each row:
 
 | mapping | pinyin `phrases` | pinyin `journals` | zhuyin `phrases` | zhuyin `journals` | likely owner |
 | --- | ---: | ---: | ---: | ---: | --- |
