@@ -228,11 +228,10 @@ impl CapiContext {
 /// One snapshotted candidate, stored inside `CapiInstance` so that
 /// `lookup_candidate_t *` can borrow into it across C calls.
 ///
-/// The row is sized to need (40 bytes): its text lives in the instance's
-/// [`CandidateSnapshot`] buffer and the row keeps the span, and the two
-/// counts below are `u32` because an input is at most
-/// `oxpinyin_engine::MAX_INPUT_BYTES` long and a window holds at most a
-/// few hundred rows.
+/// The row is sized to need (32 bytes): its text lives in the instance's
+/// [`CandidateSnapshot`] buffer and the row keeps the span, the type is
+/// one byte ([`CapiCandidate::candidate_type`]), and the window index is a
+/// `u32` because a window holds at most a few hundred rows.
 pub struct CapiCandidate {
     /// The row's string in the snapshot's packed text buffer.
     pub(crate) text: TextSpan,
@@ -240,20 +239,9 @@ pub struct CapiCandidate {
     /// inside the snapshot's buffer, kept current by the snapshot.
     pub(crate) text_ptr: *const std::ffi::c_char,
     pub(crate) kind: CandidateKind,
-    pub(crate) candidate_type: crate::types::lookup_candidate_type_t,
+    /// [`Self::candidate_type`]'s tag.
+    pub(crate) type_tag: u8,
     pub(crate) nbest_index: u8,
-    /// Bytes of raw input this candidate consumed, snapshotted at guess time.
-    /// No reader today: `pinyin_choose_candidate` answers the parse end
-    /// (register #9) and the anchored-window law resolves spans from the
-    /// engine. Kept beside the fields the zhuyin facade snapshots identically.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "read by the in-crate tests only since the row-choose cursor moved to the parse end"
-        )
-    )]
-    pub(crate) consumed_bytes: u32,
     /// The candidate's scoring token, snapshotted so the training entry
     /// points (`pinyin_train`'s observation, predicted-candidate training,
     /// `pinyin_is_user_candidate`) can resolve it without re-decoding.
@@ -266,6 +254,25 @@ pub struct CapiCandidate {
     /// position in the window; `pinyin_choose_candidate` must select by
     /// THIS index, which is the one `Session::select[_anchored]` indexes.
     pub(crate) source_index: u32,
+}
+
+// The row width the doc above claims; a field that grows it shows up here.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<CapiCandidate>() == 32);
+
+impl CapiCandidate {
+    /// The row's `lookup_candidate_type_t`.
+    pub(crate) const fn candidate_type(&self) -> crate::types::lookup_candidate_type_t {
+        crate::types::lookup_candidate_type_t::from_tag(self.type_tag)
+    }
+
+    /// Sets the row's `lookup_candidate_type_t`.
+    pub(crate) const fn set_candidate_type(
+        &mut self,
+        candidate_type: crate::types::lookup_candidate_type_t,
+    ) {
+        self.type_tag = candidate_type.tag();
+    }
 }
 
 #[cfg(test)]

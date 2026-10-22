@@ -102,7 +102,7 @@ pub extern "C" fn pinyin_get_candidate_type(
     // SAFETY: `candidate` is non-null and was produced by
     // `pinyin_get_candidate`.
     let cand = unsafe { candidate_ref(candidate) };
-    let ctype = cand.candidate_type;
+    let ctype = cand.candidate_type();
     if !candidate_type.is_null() {
         // SAFETY: Null-checked above.
         unsafe {
@@ -173,7 +173,7 @@ pub extern "C" fn pinyin_get_candidate_nbest_index(
     let cand = unsafe { candidate_ref(candidate) };
     // Class (c), `pinyin.cpp:2883`: `assert(NBEST_MATCH_CANDIDATE == type)`.
     // The pin dies before it writes `*index`.
-    if cand.candidate_type != lookup_candidate_type_t::NBEST_MATCH_CANDIDATE {
+    if cand.candidate_type() != lookup_candidate_type_t::NBEST_MATCH_CANDIDATE {
         crate::ffi::log_warning(
             "pinyin_get_candidate_nbest_index: assertion 'NBEST_MATCH_CANDIDATE == type' failed",
         );
@@ -254,7 +254,7 @@ pub extern "C" fn pinyin_remove_user_candidate(
     };
     // Class (c): `assert(NORMAL_CANDIDATE == type)` (`pinyin.cpp:3734`) and
     // `assert(USER_DICTIONARY == index)` (`:3738`).
-    if inst.candidates[index].candidate_type != lookup_candidate_type_t::NORMAL_CANDIDATE {
+    if inst.candidates[index].candidate_type() != lookup_candidate_type_t::NORMAL_CANDIDATE {
         crate::ffi::log_warning(
             "pinyin_remove_user_candidate: assertion 'NORMAL_CANDIDATE == type' failed",
         );
@@ -377,7 +377,7 @@ pub extern "C" fn pinyin_choose_candidate(
     // predicted bigram or prefix row (those go to
     // `pinyin_choose_predicted_candidate`).
     if matches!(
-        inst.candidates[index].candidate_type,
+        inst.candidates[index].candidate_type(),
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
     ) {
@@ -401,7 +401,7 @@ pub extern "C" fn pinyin_choose_candidate(
     // `int` cursor surfaces as `1`. An overlay refusal (the token's
     // library invisible) answers `-1`, standing in for the pin's
     // overflow `false`.
-    if inst.candidates[index].candidate_type == lookup_candidate_type_t::LONGER_CANDIDATE {
+    if inst.candidates[index].candidate_type() == lookup_candidate_type_t::LONGER_CANDIDATE {
         let Some(token) = inst.candidates[index].token else {
             return -1;
         };
@@ -492,7 +492,7 @@ pub extern "C" fn pinyin_choose_candidate(
     // coordinates through the parse's key spans. The sentence-row
     // branch above answers the parse end before this mapping — a
     // whole-composition hypothesis consumes the composition.
-    let end = if inst.candidates[index].candidate_type
+    let end = if inst.candidates[index].candidate_type()
         == lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
     {
         inst.core.parsed_len
@@ -579,7 +579,7 @@ fn try_promote_addon(inst: &mut CapiInstance, index: usize) -> Option<PhraseToke
         .ok()?;
     let promoted = PhraseToken::new(promoted);
     let snapshot = &mut inst.candidates[index];
-    snapshot.candidate_type = lookup_candidate_type_t::NORMAL_CANDIDATE;
+    snapshot.set_candidate_type(lookup_candidate_type_t::NORMAL_CANDIDATE);
     snapshot.kind = CandidateKind::Phrase;
     snapshot.token = Some(promoted);
     Some(promoted)
@@ -633,7 +633,7 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     // Class (c), `pinyin.cpp:2593`: only the three predicted row types are
     // chosen here.
     if !matches!(
-        inst.candidates[index].candidate_type,
+        inst.candidates[index].candidate_type(),
         lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
             | lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
@@ -644,7 +644,7 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
         return false;
     }
     // "The punctuation candidate does not have the frequency."
-    if inst.candidates[index].candidate_type
+    if inst.candidates[index].candidate_type()
         == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
     {
         return true;
@@ -656,7 +656,8 @@ pub extern "C" fn pinyin_choose_predicted_candidate(
     let Some(user) = inst.core.user.as_mut() else {
         return false;
     };
-    if inst.candidates[index].candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
+    if inst.candidates[index].candidate_type()
+        == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
     {
         user.observe_predicted_prefix(token.value()).is_ok()
     } else {

@@ -498,8 +498,6 @@ pub extern "C" fn pinyin_guess_candidates(
         return false;
     };
     inst.candidates.clear();
-    let double_parse = inst.core.double_parse.clone();
-    let zhuyin_parse = inst.core.zhuyin_parse.clone();
     // Search on every guess, including the composition offset: library
     // visibility can change without a parse (074a2219 pinyin.cpp:2193,
     // :2224-2262). The session's cached list predates such a change.
@@ -620,10 +618,8 @@ pub extern "C" fn pinyin_guess_candidates(
         // zero span the pin's prepend leaves (`m_begin == m_end == 0`,
         // never set for the type) — a normal phrase row always covers at
         // least one key, so `token && consumed_bytes == 0` names the type
-        // uniquely on this surface. The RAW span decides the type: under a
-        // transform (double pinyin, the zhuyin keyboards) the exported
-        // `consumed_bytes` is the original-input offset a transform maps
-        // the raw 0 to — nonzero and useless as the LONGER marker there.
+        // uniquely on this surface. The RAW span decides the type, under a
+        // transform (double pinyin, the zhuyin keyboards) too.
         // `pinyin_get_candidate_type` answers `LONGER_CANDIDATE` (7) for
         // the row and ibus maps it (`CANDIDATE_LONGER`/
         // `CANDIDATE_LONGER_USER`, `PYPLibPinyinCandidates.cc:56-62`).
@@ -641,23 +637,11 @@ pub extern "C" fn pinyin_guess_candidates(
         let Some(text) = inst.candidates.intern(cand.text().as_bytes()) else {
             continue;
         };
-        let consumed_bytes = zhuyin_parse.as_ref().map_or_else(
-            || {
-                double_parse.as_ref().map_or_else(
-                    || cand.consumed_bytes(),
-                    |parse| oxpinyin_facade::double_original_offset(parse, cand.consumed_bytes()),
-                )
-            },
-            |parse| oxpinyin_facade::zhuyin_original_offset(parse, cand.consumed_bytes()),
-        );
-        // §9: the LONGER type is decided above (raw zero span); the
-        // transformed `consumed_bytes` below is only what the caller
-        // reads back, never the type marker.
         inst.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
             kind: cand.kind(),
-            candidate_type: match cand.kind() {
+            type_tag: match cand.kind() {
                 oxpinyin_engine::CandidateKind::Sentence => {
                     lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
                 }
@@ -668,9 +652,9 @@ pub extern "C" fn pinyin_guess_candidates(
                 oxpinyin_engine::CandidateKind::Phrase
                 | oxpinyin_engine::CandidateKind::Fallback
                 | _ => lookup_candidate_type_t::NORMAL_CANDIDATE,
-            },
+            }
+            .tag(),
             nbest_index: cand.nbest_index(),
-            consumed_bytes: u32::try_from(consumed_bytes).unwrap_or(u32::MAX),
             token: cand.token(),
             source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
         });
@@ -685,7 +669,7 @@ pub extern "C" fn pinyin_guess_candidates(
     if facade_total_is_zero(inst)
         && inst.candidates.iter().any(|c| {
             matches!(
-                c.candidate_type,
+                c.candidate_type(),
                 lookup_candidate_type_t::NORMAL_CANDIDATE
                     | lookup_candidate_type_t::ADDON_CANDIDATE
             )

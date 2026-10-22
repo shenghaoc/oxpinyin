@@ -453,7 +453,7 @@ fn predicted_row(
     let index = inst
         .candidates
         .iter()
-        .position(|c| c.candidate_type == kind && c.token.is_some())
+        .position(|c| c.candidate_type() == kind && c.token.is_some())
         .expect("the prediction holds a row of this kind");
     let mut cand: *mut LookupCandidate = ptr::null_mut();
     assert!(pinyin_get_candidate(
@@ -626,7 +626,7 @@ fn training_a_stale_forcing_refuses_and_writes_nothing() {
         inst.candidates
             .iter()
             .rposition(|c| {
-                c.candidate_type == lookup_candidate_type_t::NORMAL_CANDIDATE && c.token.is_some()
+                c.candidate_type() == lookup_candidate_type_t::NORMAL_CANDIDATE && c.token.is_some()
             })
             .expect("a word candidate")
     };
@@ -1673,7 +1673,7 @@ fn offset_decode_rows_carry_prefix_context() {
             .candidates
             .iter()
             .filter(|c| {
-                c.candidate_type == crate::types::lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
+                c.candidate_type() == crate::types::lookup_candidate_type_t::NBEST_MATCH_CANDIDATE
             })
             .collect();
         assert!(
@@ -2061,7 +2061,7 @@ fn predicted_tie_groups_are_text_ascending_including_user_rows() {
     let rows: Vec<(String, usize, u64)> = inst
         .candidates
         .iter()
-        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
+        .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
         .map(|c| {
             let baked = c.token.map_or(0, |token| {
                 inst.core
@@ -2243,7 +2243,10 @@ fn a_mid_key_lookup_under_double_pinyin_lists_only_the_sentence_rows() {
     let kinds = |instance: *mut PinyinInstance| -> Vec<lookup_candidate_type_t> {
         // SAFETY: live instance immediately after a guess.
         let inst = unsafe { instance_ref(instance) };
-        inst.candidates.iter().map(|cd| cd.candidate_type).collect()
+        inst.candidates
+            .iter()
+            .map(|cd| cd.candidate_type())
+            .collect()
     };
     for offset in [0, 2] {
         assert!(pinyin_guess_candidates(instance, offset, DEFAULT_SORT));

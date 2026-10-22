@@ -45,7 +45,7 @@ fn imported_user_phrase_surfaces_as_a_user_candidate() {
             .is_some_and(|token| oxpinyin_user::is_user_token(token.value()))
     );
     assert_eq!(
-        found.candidate_type,
+        found.candidate_type(),
         lookup_candidate_type_t::NORMAL_CANDIDATE
     );
 
@@ -107,7 +107,7 @@ fn addon_library_load_is_idempotent_and_surfaces_addon_candidates() {
     let inst = unsafe { instance_ref(instance) };
     assert!(
         inst.candidates.iter().any(|c| {
-            c.candidate_type == lookup_candidate_type_t::ADDON_CANDIDATE
+            c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE
                 && (c.text_bytes() == "二簧".as_bytes() || c.text_bytes() == "二黄".as_bytes())
         }),
         "loaded art addon must offer 二簧/二黄 for erhuang"
@@ -146,7 +146,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
             .candidates
             .iter()
             .enumerate()
-            .find(|(_, c)| c.candidate_type == lookup_candidate_type_t::ADDON_CANDIDATE)
+            .find(|(_, c)| c.candidate_type() == lookup_candidate_type_t::ADDON_CANDIDATE)
             .expect("art addon offers an ADDON candidate for erhuang");
         (index, cand.text_str().expect("UTF-8 text").to_owned())
     };
@@ -168,7 +168,7 @@ fn chosen_addon_candidate_is_promoted_into_default_nibble_5() {
         let inst = unsafe { instance_ref(instance) };
         let snapshot = &inst.candidates[index];
         assert_eq!(
-            snapshot.candidate_type,
+            snapshot.candidate_type(),
             lookup_candidate_type_t::NORMAL_CANDIDATE,
             "the chosen addon candidate becomes NORMAL"
         );
@@ -257,7 +257,7 @@ fn predicted_candidates_include_trained_bigram_successors() {
     assert!(
         inst.candidates.iter().all(|c| {
             matches!(
-                c.candidate_type,
+                c.candidate_type(),
                 lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE
                     | lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE
             )
@@ -284,12 +284,12 @@ fn predicted_candidates_prepend_punctuation_for_hao() {
     let puncts: Vec<&str> = inst
         .candidates
         .iter()
-        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
+        .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
         .map(|c| c.text_str().unwrap_or(""))
         .collect();
     assert_eq!(puncts, ["，", "。"]);
     assert_eq!(
-        inst.candidates[0].candidate_type,
+        inst.candidates[0].candidate_type(),
         lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE
     );
     assert!(inst.candidates[0].token.is_none());
@@ -313,7 +313,7 @@ fn predicted_punctuation_uses_shortest_suffix_first_and_dedups() {
     let puncts: Vec<&str> = inst
         .candidates
         .iter()
-        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
+        .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PUNCTUATION_CANDIDATE)
         .map(|c| c.text_str().unwrap_or(""))
         .collect();
     // last-1 国 (，) then last-2 中国 (none). 中 is not a suffix.
@@ -372,7 +372,7 @@ fn predicted_bigram_filter_drops_9_keeps_10() {
     let bigrams: Vec<&str> = inst
         .candidates
         .iter()
-        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE)
+        .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_BIGRAM_CANDIDATE)
         .map(|c| c.text_str().unwrap_or(""))
         .collect();
     assert!(
@@ -408,7 +408,7 @@ fn predicted_prefix_candidates_slice_the_prefix_from_the_text() {
     let suggestions: Vec<&str> = inst
         .candidates
         .iter()
-        .filter(|c| c.candidate_type == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
+        .filter(|c| c.candidate_type() == lookup_candidate_type_t::PREDICTED_PREFIX_CANDIDATE)
         .map(|c| c.text_str().unwrap_or(""))
         .collect();
     assert_eq!(
