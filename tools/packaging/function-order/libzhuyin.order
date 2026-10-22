@@ -40,13 +40,11 @@ init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::n
 init	<core::str::pattern::CharSearcher as core::str::pattern::Searcher>::next_match
 init	<f32 as core::str::traits::FromStr>::from_str
 init	<memmap2::os::MmapInner>::map_copy_read_only
-init	<oxpinyin_data::dict::AddonDictionary>::open_with
+init	<oxpinyin_data::dict::AddonDictionary>::without_indexes
 init	<oxpinyin_data::lm::BigramLanguageModel>::open_with_mask
 init	<oxpinyin_data::phrase_library::PhraseContent>::as_slice
 init	<oxpinyin_data::phrase_library::PhraseLibrary>::item_at_slot
 init	<oxpinyin_data::phrase_library::PhraseLibrary>::open
-init	<oxpinyin_data::punct::PunctTable>::open_optional
-init	<oxpinyin_data::system_files::SystemDbm>::file_name
 init	<oxpinyin_data::table_conf::Lambda>::from_decimal
 init	<oxpinyin_data::table_info::DatabaseFormat>::from_token
 init	<oxpinyin_data::table_info::Scan>::literal
@@ -78,8 +76,6 @@ init	<std::fs::OpenOptions>::_open
 init	<std::path::Components as core::iter::traits::double_ended::DoubleEndedIterator>::next_back
 init	<std::path::Components>::parse_next_component_back
 init	<std::path::Path>::_join
-init	<std::path::Path>::is_file
-init	<std::path::Path>::join::<alloc::string::String> [instantiating crate: oxpinyin_runtime]
 init	<std::sys::fs::unix::File>::open_c
 init	__rustc::__rust_alloc
 init	__rustc::__rust_realloc
