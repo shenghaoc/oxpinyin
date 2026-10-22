@@ -621,9 +621,7 @@ fn map_chunk(path: &Path) -> Result<map::MappedFile, LibraryError> {
 /// and seeking a directory is POSIX behaviour, and the pin is Linux-first.
 #[cfg(unix)]
 fn directory_chunk_fault(path: &Path) -> LibraryError {
-    use std::io::{Seek, SeekFrom};
-    let sought = std::fs::File::open(path).and_then(|mut dir| dir.seek(SeekFrom::End(0)));
-    match sought {
+    match directory_end(path) {
         Ok(size) if size >= CHUNK_HEADER_SIZE as u64 => {
             LibraryError::Row(RowFault::ChunkHeaderRead)
         }
@@ -638,6 +636,25 @@ fn directory_chunk_fault(path: &Path) -> LibraryError {
             cause: Box::new(LibraryError::Io(error)),
         },
     }
+}
+
+/// `file_size = lseek(fd, 0, SEEK_END)` on a directory, as `MemoryChunk::load`
+/// and `::mmap` take it (`memory_chunk.h:420-427`, `:479-486`): the one
+/// file-system question every directory-as-chunk site asks.
+fn directory_end(dir: &Path) -> std::io::Result<u64> {
+    use std::io::Seek as _;
+    std::fs::File::open(dir).and_then(|mut file| file.seek(std::io::SeekFrom::End(0)))
+}
+
+/// Whether `MemoryChunk::load` or `::mmap` on the directory `dir` gets past
+/// `file_size < header` and asserts on the `read` of the length word
+/// (`memory_chunk.h:427-434`, `:486-493`): `lseek(SEEK_END)` answers at
+/// least the 8-byte chunk header. Where it fails or answers less (tmpfs
+/// refuses `SEEK_END` on a directory), the load is an ordinary `false`
+/// instead (`:427-430`, `:486-489`).
+#[must_use]
+pub fn directory_reads_as_a_chunk(dir: &Path) -> bool {
+    directory_end(dir).is_ok_and(|size| size >= CHUNK_HEADER_SIZE as u64)
 }
 
 /// Whether `MemoryChunk::mmap` accepts the file at `path` now, keeping

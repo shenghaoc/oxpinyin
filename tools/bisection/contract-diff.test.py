@@ -332,8 +332,9 @@ class DirChunkTests(unittest.TestCase):
                 self.assertEqual(self.decide(name, self.aborted(), self.answered(), True), 'MATCH')
         # Survivals and the tmpfs SIGSEGV are not the abort the host predicts.
         self.assertEqual(self.decide(self.USER, self.answered(True, ()), self.answered(True, ()), True), 'DIFFER')
-        self.assertEqual(self.decide(self.SYSTEM, self.segv(), self.answered(), True), 'DIFFER')
-        self.assertEqual(self.run_driver(self.SYSTEM, self.segv(), self.answered(), True), (1, 'DIFFER', False))
+        line = self.answered(stderr=self.FRESH + self.UNMAPPABLE)
+        self.assertEqual(self.decide(self.SYSTEM, self.segv(), line, True), 'DIFFER')
+        self.assertEqual(self.run_driver(self.SYSTEM, self.segv(), line, True), (1, 'DIFFER', False))
 
     def test_condition_present_user_dir_compares_both_survivors(self):
         survivor = self.answered(True, ())
@@ -348,23 +349,28 @@ class DirChunkTests(unittest.TestCase):
         self.assertEqual(self.decide(self.USER, self.aborted(), self.answered(), False), 'DIFFER')
         self.assertEqual(self.run_driver(self.USER, self.aborted(), self.answered(), False), (1, 'DIFFER', False))
 
-    def test_condition_present_system_dir_segv_is_host_dependent(self):
-        self.assertEqual(self.run_driver(self.SYSTEM, self.segv(), self.answered(), False),
-                         (0, 'HOST-DEPENDENT', True))
+    def test_condition_present_system_dir_segv_with_the_same_stderr_matches(self):
+        line = self.answered(stderr=self.FRESH + self.UNMAPPABLE)
+        self.assertEqual(self.decide(self.SYSTEM, self.segv(), line, False), 'MATCH')
+        self.assertEqual(self.run_driver(self.SYSTEM, self.segv(), line, False), (0, 'MATCH', True))
 
     def test_condition_present_other_system_differences_stay_differ(self):
-        other_profile = self.answered()
+        line = self.FRESH + self.UNMAPPABLE
+        other_profile = self.answered(stderr=line)
         other_profile['userfiles'] = {}
         for label, pin, subject in (
-                ('no mmap line', self.segv(self.FRESH), self.answered()),
-                ('other line', self.segv(self.FRESH + 'open SCRATCH/sys-X failed!\n'), self.answered()),
-                ('abort', self.aborted(), self.answered()),
-                ('pin survived', self.answered(True, ()), self.answered()),
-                ('subject loaded', self.segv(), self.answered(True, ())),
-                ('two warnings', self.segv(), self.answered(logs=(('libpinyin', 16),) * 2)),
+                ('subject without the line', self.segv(), self.answered()),
+                ('subject with another line', self.segv(), self.answered(stderr=self.FRESH + 'mmap SCRATCH/x failed!\n')),
+                ('subject writes it twice', self.segv(), self.answered(stderr=line + self.UNMAPPABLE)),
+                ('pin without the line', self.segv(self.FRESH), self.answered(stderr=line)),
+                ('abort', self.aborted(), self.answered(stderr=line)),
+                ('pin survived', self.answered(True, (), stderr=line), self.answered(stderr=line)),
+                ('subject loaded', self.segv(), self.answered(True, (), stderr=line)),
+                ('two warnings', self.segv(), self.answered(logs=(('libpinyin', 16),) * 2, stderr=line)),
                 ('other profile', self.segv(), other_profile)):
             with self.subTest(label):
                 self.assertEqual(self.run_driver(self.SYSTEM, pin, subject, False), (1, 'DIFFER', False))
+                self.assertNotEqual(self.decide(self.SYSTEM, pin, subject, False), 'MATCH')
 
     def test_other_cases_ignore_the_probe(self):
         spec = driver.CASES['table-conf-abort-default-dictionary']

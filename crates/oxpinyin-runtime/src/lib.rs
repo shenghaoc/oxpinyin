@@ -43,7 +43,9 @@ use oxpinyin_core::{
     Cost, Dictionary, LanguageModel, MergedGram, NbestStepCosts, PhraseEntry, PhraseIndexRanges,
     PhraseItemRead, PhraseToken, SyllableKey, TrellisItem, TrellisPathMemo, UserCountDelta,
 };
-pub use oxpinyin_data::phrase_library::{LayoutFault, LibraryError, PhraseItemView, RowFault};
+pub use oxpinyin_data::phrase_library::{
+    LayoutFault, LibraryError, PhraseItemView, RowFault, directory_reads_as_a_chunk,
+};
 pub use oxpinyin_data::table_info::{FileType, TableConfSite};
 pub use oxpinyin_data::table_info::{TableConf, TableConfError};
 use oxpinyin_data::user_files::{SystemVersions, UserFileLayout};
@@ -163,6 +165,17 @@ impl OpenError {
             Self::Dict(DictError::Library(error)) => error.unmappable_path(),
             _ => None,
         }
+    }
+
+    /// Whether the open failed on a default row that names no system chunk
+    /// ([`TableConfSite::NullSystemFile`]): the pin reads the system
+    /// directory itself as the chunk.
+    #[must_use]
+    pub fn null_system_chunk(&self) -> bool {
+        matches!(
+            self,
+            Self::TableConf(TableConfError::Abort(TableConfSite::NullSystemFile))
+        )
     }
 
     /// Whether the open failed on a system library that is a directory the
@@ -2429,6 +2442,12 @@ impl Runtime {
             return Ok(false);
         };
         self.dict.load_addon_reporting(index, system_dir)
+    }
+
+    /// The system directory the libraries load from, when there is one.
+    #[must_use]
+    pub fn system_dir(&self) -> Option<&Path> {
+        self.paths.system_data_dirs().first().map(PathBuf::as_path)
     }
 
     /// The system library files absent when this runtime opened.

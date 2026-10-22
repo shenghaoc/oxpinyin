@@ -240,11 +240,13 @@ runs that report different counts ran different registries. For example,
 2,865 is the registry at `b587d599`, before `074f0b36` added cases.
 
 Five `table-conf-abort-*` cases (`dir_chunk` in `contract-diff.py`, #1011)
-depend on the file system of `TMPDIR`, where the harness makes its scratch.
-On a file system whose directories answer `lseek(SEEK_END)` with 8 or more
-(ext4, for example), all five MATCH. On tmpfs, the default `/tmp` of many
-desktop hosts, the two user-directory cases MATCH, and the three
-system-directory cases print `HOST-DEPENDENT`.
+take a different pin path depending on the file system of `TMPDIR`, where
+the harness makes its scratch. On a file system whose directories answer
+`lseek(SEEK_END)` with 8 or more (ext4, for example), the pin dies of
+SIGABRT. On tmpfs, the default `/tmp` of many desktop hosts, it survives
+the two user-directory cases and dies of SIGSEGV in the three
+system-directory cases. The subject follows the file system in all five,
+and the harness probes it, so all five MATCH on both.
 
 ### Contract differentials in a macOS-hosted Linux container
 
