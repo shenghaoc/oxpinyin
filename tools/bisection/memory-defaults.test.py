@@ -520,7 +520,14 @@ finally:
                 admitted = self.admission(dict(os.environ, CARGO_BUILD_JOBS='3'))
                 self.assertFalse(admitted.try_acquire())
                 self.assertIsNone(admitted.env)
-                self.assertIn('other slot reservations=1800 MiB', self.out.getvalue())
+                # The record names the surviving child: its estimate less its use.
+                note = re.search(r'slot [0-9]+ pid ([0-9]+): estimate 1800 MiB, '
+                                 r'process tree use ([0-9]+) MiB, charge ([0-9]+) MiB', self.out.getvalue())
+                self.assertIsNotNone(note, self.out.getvalue())
+                pid, use, charge = map(int, note.groups())
+                self.assertNotEqual(pid, parent.pid)
+                self.assertEqual(charge, max(0, 1800 - use))
+                self.assertIn(f'other slot reservations={charge} MiB', self.out.getvalue())
         finally:
             if parent.poll() is None:
                 parent.kill()

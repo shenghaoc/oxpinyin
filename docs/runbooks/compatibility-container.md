@@ -28,10 +28,14 @@ peaked at 1,860,026,368 bytes and passed without reaching its limit. The PR
 records the commands and separate gate-phase peaks; raw capture was not kept.
 Larger explicit job counts can need a larger limit.
 Desktop headroom applies once, on the host: host admission requires the full
-container limit plus 2048 MiB (4608 MiB by default), after other reservations.
+container limit plus the desktop headroom, after other reservations. The
+headroom is 10% of total memory, rounded down, at most 2048 MiB, and 2048 MiB
+when total memory is unknown. A 16 GiB Linux host reports a MemTotal of about
+15,688 MiB, so by default admission needs 2560 + min(2048, 1568) = 4128 MiB;
+from 20,480 MiB of total memory it needs 2560 + 2048 = 4608 MiB.
 Inside the compatibility container, `OXPINYIN_COMPAT_CONTAINER=1` and a visible finite cgroup `memory.max`
 select zero desktop headroom. Native work, an unlimited guest and an unknown
-cgroup limit retain the normal 2048 MiB headroom. Admission uses the
+cgroup limit retain the normal desktop headroom. Admission uses the
 native resource measurements and `OXPINYIN_RESOURCE_WAIT_SECONDS` (default
 1800); unknown or inadequate memory waits, then fails without launching.
 The host needs uv 0.13.1 or newer and managed CPython 3.15.0+gil for this shared code.

@@ -196,6 +196,88 @@ class SlotTests(unittest.TestCase):
                         with admission:
                             self.fail('work started without sufficient admitted memory')
 
+    def hold(self, index, estimate):
+        """Lock slot INDEX through a second open file description: a live holder."""
+        file = (Path(self.temp.name) / f'{slot.HEAVY_SLOT}-{index}').open('a+')
+        self.addCleanup(file.close)
+        slot.lock_file(file, slot.LOCK_EX | slot.LOCK_NB)
+        host.write_holder(file, dict(pid=os.getpid(), estimate_mib=estimate))
+
+    def test_holder_is_charged_only_the_rest_of_its_estimate(self):
+        self.hold(1, 2400)
+        pid = os.getpid()
+        for use, charge in ((900, 1500), (2400, 0), (3000, 0)):
+            with self.subTest(use=use), mock.patch.object(host, 'process_tree_use_mib',
+                                                          return_value=use) as read:
+                notes = []
+                self.assertEqual(slot.other_reservations(Path(self.temp.name), 0, notes), charge)
+                read.assert_called_once_with(pid)
+                self.assertEqual(notes, [f'slot 1 pid {pid}: estimate 2400 MiB, '
+                                         f'process tree use {use} MiB, charge {charge} MiB'])
+        out = io.StringIO()
+        with mock.patch.object(host, 'process_tree_use_mib', return_value=900):
+            admission = slot.HeavyAdmission(
+                'second session', self.env, out=out, poll=0.01,
+                resource_snapshot=lambda: dict(available_mib=5000, total_mib=16384, cpus=10,
+                                               cargo_cpus=10, notes=['synthetic 5000 MiB']))
+            with admission:
+                self.assertEqual(admission.slot.slot, 0)
+                self.assertEqual(admission.available, 3500)
+        self.assertIn('other slot reservations=1500 MiB', out.getvalue())
+
+    def test_holder_with_unreadable_use_is_charged_its_full_estimate(self):
+        self.hold(1, 2400)
+        notes = []
+        with mock.patch.object(host, 'process_tree_use_mib', return_value=None):
+            self.assertEqual(slot.other_reservations(Path(self.temp.name), 0, notes), 2400)
+        self.assertEqual(notes, [f'slot 1 pid {os.getpid()}: estimate 2400 MiB, '
+                                 'process tree use unknown, charge 2400 MiB'])
+
+    def test_missing_smaps_rollup_charges_the_full_estimate(self):
+        self.hold(1, 2400)
+        pid, reader = os.getpid(), host.process_tree_use_mib
+        with tempfile.TemporaryDirectory() as temporary:
+            # A synthetic Linux /proc: the holder and one child, Pss 50 and 250 MiB.
+            proc = Path(temporary)
+            for process, parent in ((pid, 1), (pid + 1, pid)):
+                (proc / str(process)).mkdir()
+                (proc / str(process) / 'stat').write_text(f'{process} (python) S {parent} 0 0\n')
+            (proc / str(pid) / 'smaps_rollup').write_text('Rss: 61440 kB\nPss: 51200 kB\n')
+            child = proc / str(pid + 1) / 'smaps_rollup'
+            for rollup, use, charge in ((None, 'unknown', 2400),
+                                        ('Rss: 409600 kB\nPss: 256000 kB\n', '300 MiB', 2100)):
+                with self.subTest(rollup=rollup):
+                    if rollup is not None:
+                        child.write_text(rollup)
+                    notes = []
+                    with mock.patch.object(sys, 'platform', 'linux'), \
+                            mock.patch.object(host, 'process_tree_use_mib', lambda target: reader(target, proc)):
+                        self.assertEqual(slot.other_reservations(Path(self.temp.name), 0, notes), charge)
+                    self.assertEqual(notes, [f'slot 1 pid {pid}: estimate 2400 MiB, '
+                                             f'process tree use {use}, charge {charge} MiB'])
+
+    def test_live_holder_is_charged_its_estimate_less_its_measured_use(self):
+        code = ("import os, sys\n"
+                "from tools.dev import host\n"
+                "from tools.dev.slot import HeavySlot\n"
+                "with HeavySlot('holder', out=sys.stderr) as held:\n"
+                "    host.write_holder(held._file, dict(pid=os.getpid(), estimate_mib=2400))\n"
+                "    data = os.urandom(64 * 1024 * 1024)\n"
+                "    print('ready', flush=True)\n"
+                "    sys.stdin.readline()\n")
+        holder = self.run_python(code, wait=False, stdin=subprocess.PIPE)
+        try:
+            self.assertEqual(holder.stdout.readline().strip(), 'ready')
+            notes = []
+            charge = slot.other_reservations(Path(self.temp.name), None, notes)
+        finally:
+            holder.stdin.close()
+            holder.communicate(timeout=10)
+        self.assertGreater(charge, 0)
+        self.assertLessEqual(charge, 2400 - 64)
+        self.assertRegex(notes[0], rf'^slot 0 pid {holder.pid}: estimate 2400 MiB, '
+                                   rf'process tree use [0-9]+ MiB, charge {charge} MiB$')
+
     def test_relative_lock_directory_is_rejected_before_a_child_starts(self):
         with mock.patch.dict(os.environ, {'OXPINYIN_LOCK_DIR': 'relative'}):
             with self.assertRaisesRegex(ValueError, 'must be an absolute path'):
