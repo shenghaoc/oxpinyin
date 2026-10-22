@@ -6,7 +6,8 @@ set -euo pipefail
 # (issue #818). Idempotent: each step checks
 # its result and skips when it already holds.
 #
-#   0a. install uv 0.13.1 and its managed CPython 3.15.0 GIL build
+#   0a. install uv 0.13.1 unless uv 0.13.1 or newer is present, and its
+#       managed CPython 3.15.0 GIL build
 #   0b. require the backend dump utilities the stateful differentials call:
 #      db5.3_dump (bdb) and kchashmgr (kc); install them with apt-get when
 #      root, otherwise print the apt-get line and exit 1 (never sudo)
@@ -151,8 +152,18 @@ for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
 	fi
 done
 
+# uv.toml sets the floor (required-version = ">=0.13.1"). Keep a uv at or
+# above it; install the checksummed 0.13.1 only when uv is missing or older.
+uv_at_least_floor() {
+	local version
+	version=$(uv --version 2>/dev/null) || return 1
+	[[ $version =~ ^uv\ ([0-9]+)\.([0-9]+)\.([0-9]+)([[:space:]]|$) ]] || return 1
+	local major=$((10#${BASH_REMATCH[1]})) minor=$((10#${BASH_REMATCH[2]})) patch=$((10#${BASH_REMATCH[3]}))
+	((major > 0 || minor > 13 || (minor == 13 && patch >= 1)))
+}
+
 uv_install_dir=${UV_INSTALL_DIR:-$HOME/.local/bin}
-if ! command -v uv >/dev/null 2>&1 || [[ $(uv --version 2>/dev/null) != 'uv 0.13.1 '* ]] ||
+if ! command -v uv >/dev/null 2>&1 || ! uv_at_least_floor ||
 	[[ -n ${UV_INSTALL_DIR:-} && $(command -v uv) != "$uv_install_dir/uv" ]]; then
 	log 'installing uv 0.13.1'
 	(
@@ -177,8 +188,8 @@ if ! command -v uv >/dev/null 2>&1 || [[ $(uv --version 2>/dev/null) != 'uv 0.13
 else
 	log "using $(uv --version)"
 fi
-[[ $(uv --version 2>/dev/null) == 'uv 0.13.1 '* ]] ||
-	die "uv 0.13.1 required; found: $(uv --version 2>/dev/null || echo missing)"
+uv_at_least_floor ||
+	die "uv 0.13.1 or newer required; found: $(uv --version 2>/dev/null || echo missing)"
 uv_dir=$(dirname "$(command -v uv)")
 uv python install cpython@3.15.0
 uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PYTHON'

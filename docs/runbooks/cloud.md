@@ -49,7 +49,7 @@ uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_
 ```
 
 This mode runs the existing argument and Linux x86_64 checks, then the
-same uv 0.13.1 and managed CPython 3.15.0 GIL provisioning and interpreter
+same uv (0.13.1 or newer) and managed CPython 3.15.0 GIL provisioning and interpreter
 verification as full setup. It prints the verified-interpreter line, logs
 that it stops after Python provisioning and exits successfully. It does
 not select, start or pull a container runtime, install Valgrind or backend

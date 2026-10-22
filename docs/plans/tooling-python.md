@@ -46,7 +46,10 @@ Each remaining implementation PR needs its own approval.
 ## 2. Interpreter contract
 
 Use uv-managed CPython 3.15.0 only. Use the standard library only.
-Pin uv to 0.13.1. The earlier plan did not pin a uv version.
+Require uv 0.13.1 or newer (maintainer ruling 2026-10-22 UTC). This floor
+replaces the earlier exact uv 0.13.1 pin. CI installs exactly uv 0.13.1 from
+the checksummed release. Hosts may use any later uv. The interpreter pin is
+unchanged.
 Use the GIL-enabled CPython request `cpython@3.15.0+gil`.
 uv 0.13.1 documents the implementation/version and `+gil` request forms in
 its [versioned Python guide](https://github.com/astral-sh/uv/blob/0.13.1/docs/concepts/python-versions.md).
@@ -58,15 +61,15 @@ PR #939 added these root files:
 | Implemented file | Required content |
 | --- | --- |
 | `.python-version` | exactly `cpython@3.15.0+gil` |
-| `uv.toml` | `python-preference = "only-managed"` and `required-version = "==0.13.1"` on separate lines |
+| `uv.toml` | `python-preference = "only-managed"` and `required-version = ">=0.13.1"` on separate lines |
 
-Keep these pins. Do not vendor Python. Do not add `pyproject.toml`,
+Keep the interpreter pin and the uv floor. Do not vendor Python. Do not add `pyproject.toml`,
 a virtual environment or `uv.lock` for interpreter provisioning alone.
 Every repository-owned uv call passes the exact interpreter request explicitly.
 Use `uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal ...`
 for execution. An installed system Python 3.15 does not satisfy this rule.
-Reject another implementation or patch version. A patch upgrade needs a
-separate verified change.
+Reject another implementation or patch version. An interpreter patch upgrade
+needs a separate verified change.
 
 On Linux and macOS, install uv through its documented host route.
 On Windows, use a native uv executable from PowerShell or the native installer.
@@ -79,7 +82,7 @@ Check `Py_GIL_DISABLED == 0` and the enabled runtime GIL. Check CPython
 `uv python find --managed-python cpython@3.15.0+gil`.
 These checks enforce the managed GIL build after installation.
 Keep the managed interpreter and uv cache on persistent native storage.
-The #939 setup enforces uv 0.13.1 and records the interpreter provisioning route.
+The setup enforces the uv 0.13.1 floor and records the interpreter provisioning route.
 See uv's [Python guide](https://docs.astral.sh/uv/concepts/python-versions/)
 and [managed-only setting](https://docs.astral.sh/uv/reference/settings/#python-preference).
 

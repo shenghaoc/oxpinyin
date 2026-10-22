@@ -44,8 +44,32 @@ class DoctorTests(unittest.TestCase):
                 doctor.identity()
 
     def test_missing_uv_is_named(self):
-        with self.assertRaisesRegex(doctor.DoctorError, 'missing uv 0.13.1'):
+        with self.assertRaisesRegex(doctor.DoctorError, r'^missing uv 0\.13\.1 or newer;'):
             doctor.uv_version({'PATH': '/nonexistent'})
+
+    def test_uv_minimum_version(self):
+        for version, accepted in (('0.13.1', True), ('0.13.4', True), ('0.14.0', True),
+                                  ('0.13.0', False), ('0.12.9', False)):
+            text = f'uv {version} (x86_64-unknown-linux-gnu)'
+            result = mock.Mock(returncode=0, stdout=text + '\n', stderr='')
+            with self.subTest(version=version), \
+                    mock.patch.object(doctor, '_run', return_value=result):
+                if accepted:
+                    self.assertEqual(doctor.uv_version({'PATH': '/tools'}), text)
+                else:
+                    with self.assertRaisesRegex(doctor.DoctorError,
+                                                r'^uv 0\.13\.1 or newer required; found '):
+                        doctor.uv_version({'PATH': '/tools'})
+
+    def test_unparseable_uv_version_is_rejected(self):
+        for output in ('uv', 'uv version unknown', 'uv 0.13', '', 'ruff 0.13.1'):
+            result = mock.Mock(returncode=0, stdout=output, stderr='')
+            with self.subTest(output=output), \
+                    mock.patch.object(doctor, '_run', return_value=result):
+                with self.assertRaisesRegex(doctor.DoctorError,
+                                            r'^unparseable uv version output: .*; '
+                                            r'uv 0\.13\.1 or newer required$'):
+                    doctor.uv_version({'PATH': '/tools'})
 
     def test_nextest_minimum_version(self):
         for version, accepted in (('0.9.114', False), ('0.9.115', True), ('0.10.0', True)):

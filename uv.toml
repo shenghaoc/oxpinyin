@@ -1,2 +1,2 @@
 python-preference = "only-managed"
-required-version = "==0.13.1"
+required-version = ">=0.13.1"

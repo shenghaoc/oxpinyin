@@ -19,7 +19,7 @@ Options:
   --memory-smoke                    Short memory-limit smoke; requires an existing compat image
   --timeout N                       Existing registry runner timeout override
   --runner-timeout NAME=SECONDS     Existing per-runner override
-  --list                            Existing registry listing; needs uv 0.13.1 and CPython 3.15.0+gil, no build
+  --list                            Existing registry listing; needs uv 0.13.1 or newer and CPython 3.15.0+gil, no build
   --help                            No runtime or build required
 Needs Bash, Git, tar, SHA-256 utility, and a working runtime. macOS/WSL/Linux
 hosts need no Rust, native DBM or libpinyin for compatibility execution.
@@ -64,7 +64,7 @@ for command in git tar; do command -v "$command" >/dev/null || die "missing $com
 for variable in UV_PYTHON UV_PYTHON_VERSION UV_PYTHON_IMPLEMENTATION UV_PYTHON_VARIANT UV_PYTHON_ARCH UV_PYTHON_BIN_DIR UV_PYTHON_PREFERENCE PYTHONHOME PYTHONPATH; do
 	[[ -z ${!variable:-} ]] || die "$variable is not supported; unset it before running repository Python"
 done
-command -v uv >/dev/null || die 'missing uv 0.13.1 and managed CPython 3.15.0+gil'
+command -v uv >/dev/null || die 'missing uv 0.13.1 or newer and managed CPython 3.15.0+gil'
 # Fail before runtime detection, pulling, snapshotting or reserving memory.
 uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
 	-m tools.dev.compat.boundary "${original_args[@]}"

@@ -39,8 +39,10 @@ sudo apt-get install -y build-essential git curl ca-certificates pkg-config libc
 sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel libdb-devel glib2-devel
 ```
 
-Repository Python uses uv 0.13.1 and its managed CPython 3.15.0 with the GIL.
-Install uv from its documented host route, then provision the interpreter:
+Repository Python uses uv 0.13.1 or newer and its managed CPython 3.15.0 with
+the GIL. `uv.toml` sets the floor; CI installs exactly 0.13.1. Install uv from
+its documented host route (a uv that is already 0.13.1 or newer can stay),
+then provision the interpreter:
 
 ```bash
 installer="$(mktemp)"
