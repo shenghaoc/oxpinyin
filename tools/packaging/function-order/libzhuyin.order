@@ -25,26 +25,28 @@ init	<alloc::raw_vec::RawVecInner>::try_allocate_in [instantiating crate: oxpiny
 init	<alloc::string::String as core::fmt::Write>::write_str
 init	<alloc::string::String>::from_utf8_lossy
 init	<alloc::sync::Arc<oxpinyin_data::phrase_library::map::MappedFile>>::drop_slow
-init	<alloc::sync::Arc<std::sync::once_lock::OnceLock<u32>> as core::default::Default>::default [instantiating crate: oxpinyin_data]
 init	<alloc::sync::Arc<std::sync::once_lock::OnceLock<u32>>>::drop_slow [instantiating crate: oxpinyin_data]
 init	<alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<(u64, alloc::sync::Arc<std::collections::hash::map::HashMap<alloc::vec::Vec<u8>, alloc::vec::Vec<(alloc::vec::Vec<oxpinyin_chewing::chewing_key::ChewingKey>, oxpinyin_core::vocab::PhraseEntry)>>>)>>> as core::default::Default>::default [instantiating crate: oxpinyin_runtime]
 init	<alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<oxpinyin_runtime::TextTokens>>> as core::default::Default>::default
 init	<alloc::vec::Vec<(u8, oxpinyin_data::table_info::FileName)> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<(u8, oxpinyin_data::table_info::FileName), core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}>>>::from_iter
 init	<alloc::vec::Vec<alloc::vec::Vec<u8>>>::push_mut [instantiating crate: oxpinyin_data]
 init	<alloc::vec::Vec<oxpinyin_data::table_info::TableRow> as core::clone::Clone>::clone [instantiating crate: oxpinyin_runtime]
-init	<alloc::vec::Vec<u32>>::retain::<<oxpinyin_user::replay::Merge>::finish_lazy<alloc::borrow::Cow<str>>::{closure#0}>::{closure#0}
+init	<alloc::vec::Vec<u32>>::retain::<<oxpinyin_user::replay::Merge>::validate<alloc::borrow::Cow<str>>::{closure#0}>::{closure#0}
 init	<core::fmt::Formatter>::pad
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}> as core::iter::traits::iterator::Iterator>::next
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::sources::from_fn::FromFn<oxpinyin_data::user_files::log_records::{closure#0}>, <core::result::Result<oxpinyin_data::user_files::LogRecord<&[u8]>, oxpinyin_data::user_files::LogDecodeError>>::ok> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
 init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
 init	<core::str::pattern::CharSearcher as core::str::pattern::Searcher>::next_match
 init	<f32 as core::str::traits::FromStr>::from_str
+init	<memmap2::Mmap>::make_mut
 init	<memmap2::os::MmapInner>::map_copy_read_only
 init	<oxpinyin_data::dict::AddonDictionary>::without_indexes
 init	<oxpinyin_data::lm::BigramLanguageModel>::open_with_mask
-init	<oxpinyin_data::phrase_library::PhraseContent>::as_slice
-init	<oxpinyin_data::phrase_library::PhraseLibrary>::item_at_slot
+init	<oxpinyin_data::phrase_library::PhraseLibrary>::empty
 init	<oxpinyin_data::phrase_library::PhraseLibrary>::open
+init	<oxpinyin_data::phrase_library::PhraseLibrary>::pronunciation_count
+init	<oxpinyin_data::phrase_library::map::MappedFile>::promote
+init	<oxpinyin_data::sparse_bytes::Ascending>::push_changes
 init	<oxpinyin_data::table_conf::Lambda>::from_decimal
 init	<oxpinyin_data::table_info::DatabaseFormat>::from_token
 init	<oxpinyin_data::table_info::Scan>::literal
@@ -63,10 +65,10 @@ init	<oxpinyin_store::bdb::ffi::Cursor>::get
 init	<oxpinyin_store::bdb::ffi::Db>::open_at
 init	<oxpinyin_store::bdb::ffi::SharedDb>::cursor
 init	<oxpinyin_store::bdb::ffi::SharedDb>::open
-init	<oxpinyin_user::replay::Content>::header
-init	<oxpinyin_user::replay::Content>::item
-init	<oxpinyin_user::replay::Content>::write
-init	<oxpinyin_user::replay::Merge>::slot_offset
+init	<oxpinyin_user::replay::Merge>::into_finished
+init	<oxpinyin_user::replay::Merge>::validate::<alloc::borrow::Cow<str>>
+init	<oxpinyin_user::replay::Merge>::visible
+init	<oxpinyin_user::replay::Shipped>::write
 init	<oxpinyin_user::session_values::SessionTxn as oxpinyin_store::WriteTxn>::is_empty
 init	<oxpinyin_user::session_values::SessionTxn as oxpinyin_store::WriteTxn>::put
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore> as core::clone::Clone>::clone [instantiating crate: oxpinyin_facade]
@@ -77,8 +79,8 @@ init	<std::path::Components as core::iter::traits::double_ended::DoubleEndedIter
 init	<std::path::Components>::parse_next_component_back
 init	<std::path::Path>::_join
 init	<std::sys::fs::unix::File>::open_c
+init	<u64 as alloc::vec::spec_from_elem::SpecFromElem>::from_elem::<alloc::alloc::Global> [instantiating crate: oxpinyin_data]
 init	__rustc::__rust_alloc
-init	__rustc::__rust_realloc
 init	__udivti3
 init	__umodti3
 init	alloc::boxed::box_new_uninit
@@ -90,15 +92,18 @@ init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u8, alloc::
 init	core::ptr::drop_glue::<alloc::collections::btree::map::IntoIter<alloc::string::String, alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>> [instantiating crate: oxpinyin_user]
 init	core::ptr::drop_glue::<alloc::vec::Vec<(u32, oxpinyin_data::chunk_write::ChunkItem)>>
 init	core::ptr::drop_glue::<alloc::vec::Vec<alloc::vec::Vec<oxpinyin_engine::session::ScanKey>>>
+init	core::ptr::drop_glue::<oxpinyin_data::phrase_library::map::Bytes>
+init	core::ptr::drop_glue::<oxpinyin_data::phrase_library::map::MappedFile>
 init	core::ptr::drop_glue::<oxpinyin_data::table_info::TableRow>
 init	core::ptr::drop_glue::<oxpinyin_runtime::ConfFile>
 init	core::ptr::drop_glue::<oxpinyin_user::persistence::Loaded> [instantiating crate: oxpinyin_runtime]
 init	core::ptr::drop_glue::<oxpinyin_user::replay::Merge>
-init	core::ptr::drop_glue::<oxpinyin_user::replay::Origin>
+init	core::ptr::drop_glue::<oxpinyin_user::replay::Shipped>
 init	core::slice::sort::unstable::ipnsort::<u32, <u32 as core::cmp::PartialOrd>::lt> [instantiating crate: oxpinyin_user]
 init	core::str::converts::from_utf8
 init	oxpinyin_data::chunk_format::chunk_checksum
 init	oxpinyin_data::phrase_library::directory_reads_as_a_chunk
+init	oxpinyin_data::phrase_library::map::changed_span
 init	oxpinyin_data::phrase_library::map_chunk
 init	oxpinyin_data::table_info::atoi_guint8
 init	oxpinyin_data::table_info::c_float
@@ -109,11 +114,13 @@ init	oxpinyin_runtime::open_user_store
 init	oxpinyin_runtime::require_file
 init	oxpinyin_store::bdb::ffi::check
 init	oxpinyin_user::persistence::check_format
+init	oxpinyin_user::persistence::keep_replay
 init	oxpinyin_user::persistence::load_checked_impl
 init	oxpinyin_user::persistence::load_libraries
-init	oxpinyin_user::persistence::load_logs_with_mask
 init	oxpinyin_user::persistence::load_user_bigram_db
+init	oxpinyin_user::persistence::read_log
 init	oxpinyin_user::persistence::remove_dbm_sidecars
+init	oxpinyin_user::persistence::replay_log::<alloc::borrow::Cow<str>>
 init	oxpinyin_user::persistence::system_originals
 init	oxpinyin_user::store_libpinyin::backed_readings
 init	oxpinyin_user::store_libpinyin::loaded_pronunciation_counts
@@ -149,6 +156,8 @@ steady	<oxpinyin_core::vocab::SyllableKey>::from_option_text_with_distance
 steady	<oxpinyin_data::chewing_table::ChewingTable>::key_exists
 steady	<oxpinyin_data::chewing_table::ChewingTable>::search
 steady	<oxpinyin_data::phrase_libraries::PhraseLibraries>::unigram_count
+steady	<oxpinyin_data::phrase_library::PhraseItemView>::pronunciation
+steady	<oxpinyin_data::phrase_library::PhraseLibrary>::item_at_slot
 steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::build_graph_at [instantiating crate: oxpinyin_facade]
 steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::build_graph_at [instantiating crate: zhuyin]
 steady	<oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::candidate_frequencies [instantiating crate: zhuyin]
