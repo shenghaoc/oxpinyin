@@ -30,6 +30,9 @@
 //!   pin-built tools and matching data; runs the pin pipeline and asserts (a) the `DELETED_BIGRAM` counts are integer
 //!   bit-exact and (b) every per-context λ and the average match the pin's
 //!   `%f` output (six decimals — the tool's entire observable precision).
+//!
+//! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
+//! for execution owners and pre-release input identities.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;

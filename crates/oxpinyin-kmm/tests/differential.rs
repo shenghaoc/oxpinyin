@@ -34,6 +34,9 @@
 //! ```text
 //! just heavy -- cargo test --locked -p oxpinyin-kmm --test differential -- --include-ignored
 //! ```
+//!
+//! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
+//! for execution owners and pre-release input identities.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

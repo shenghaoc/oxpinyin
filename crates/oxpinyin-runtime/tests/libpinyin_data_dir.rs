@@ -19,6 +19,9 @@
 //!
 //! Nothing here is converted, imported or copied: the directory is the
 //! test input.
+//!
+//! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
+//! for execution owners and pre-release input identities.
 #![cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
 
 use std::path::PathBuf;

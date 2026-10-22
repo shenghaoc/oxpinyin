@@ -35,6 +35,9 @@
 //!   export (`oxpinyin-datagen compile`) of the same model the pin loads,
 //!   for the native `SystemDictionary` (which reads oxpinyin-format tables
 //!   in the compiled-in backend, not the pin's `.bin` files).
+//!
+//! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
+//! for execution owners and pre-release input identities.
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};

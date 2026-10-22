@@ -13,6 +13,9 @@
 //! The fixture must match the committed `ngseg` golden. The live gate
 //! also checks the golden against the pin-built `ngseg`, so it cannot
 //! go stale silently.
+//!
+//! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
+//! for execution owners and pre-release input identities.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;

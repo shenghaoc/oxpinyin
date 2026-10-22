@@ -10,14 +10,17 @@
 //! Requires model20 (`PINYIN_MODEL_DIR` or the model cache). Ordinary
 //! `cargo test` leaves this test ignored; explicitly selecting it fails
 //! on a missing input, as `docs/testing/README.md` requires. From the
-//! repository root, run the BDB reference cell with:
+//! repository root, run the tkrzw suite owned by `tools/oracle/run-differentials.sh` with:
 //!
 //! ```text
-//! just heavy -- cargo test --locked -p oxpinyin-datagen --no-default-features --features bdb --test cross_backend -- --include-ignored
+//! just heavy -- cargo test --locked -p oxpinyin-datagen --no-default-features --features tkrzw --test cross_backend -- --include-ignored
 //! ```
 //!
-//! For a backend sweep, select `kyotocabinet` or `tkrzw` instead and use
+//! For a backend sweep, select `bdb` or `kyotocabinet` instead and use
 //! a separate target directory for each cell. CI does not supply model20.
+//!
+//! See the [oracle runbook](../../../docs/runbooks/oracle.md#pre-release-real-installation-checks)
+//! for execution owners and pre-release input identities.
 
 use std::path::PathBuf;
 
