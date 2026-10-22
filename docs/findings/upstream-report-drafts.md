@@ -455,7 +455,8 @@ valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 10
 ```
 
 **Standalone evidence** (Memcheck 3.27.1, Linux amd64; the table is
-from a rerun of the block above on 2026-10-22 UTC): all four
+from a rerun of the block above on 2026-10-22 UTC, and each N=10 row
+held in 5 of 5 further runs per facade on 2026-10-22 UTC): all four
 init/fini-only runs completed against the reference pin prefix. Each
 process used a fresh empty user directory. The reference libraries were
 the pin-built `libpinyin.so.15.0.0` (SHA-256
@@ -496,10 +497,11 @@ count. The difference is the first-candidate work in #993's cycle:
 this loop only calls init/fini and never prepares an instance or a
 candidate. The three `load_db` roots are identical. At N=10 the direct
 root count and both facades' indirect totals are exactly ten times the
-N=1 figures. An earlier run of the previous command block recorded the
-zhuyin N=10 indirect loss as 113,884 B / 298 blocks (total 157,564 B /
-328 blocks), 736 bytes / 2 blocks below ten times; the rerun did not
-reproduce that shortfall, and its cause was not investigated. The
+N=1 figures (5 of 5 runs per facade). An earlier run of the previous
+command block recorded the zhuyin N=10 indirect loss as 113,884 B / 298
+blocks (total 157,564 B / 328 blocks), 736 bytes / 2 blocks below ten
+times; the rerun did not reproduce that shortfall, it did not recur in
+5 runs, and its cause was not investigated. The
 direct 30-block count and every `load_db` root remain.
 
 **Patched-pin check:** applying the suggested diff below to the same
