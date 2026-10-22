@@ -1,10 +1,12 @@
 # Cloud sessions — provisioning an agent-platform cloud host
 
-Cloud sessions are a first-class supported host for every gate. Provision
-one with `tools/cloud/setup.sh`; this supported route includes Valgrind for
-measurement tasks. Ordinary native development uses [native setup](setup.md)
-and does not require it. The [canonical compatibility container](compatibility-container.md)
-is a second supported route, not a replacement for cloud provisioning.
+Cloud sessions meeting the host requirements below can run every gate.
+Provision one with `tools/cloud/setup.sh`; this route includes Valgrind for
+measurement tasks. A cloud session is not automatically provisionable just
+because it is supplied by an agent platform. Ordinary native development
+uses [native setup](setup.md) and does not require it. The
+[canonical compatibility container](compatibility-container.md) is a second
+supported route, not a replacement for cloud provisioning.
 
 Agent-platform cloud hosts may supply root containers, a container runtime,
 and an egress proxy. The provisioner handles those capabilities, scopes custom
@@ -13,6 +15,45 @@ the same frozen oracle/data contracts. It does not require a particular IDE.
 Use task-owned `OXPINYIN_ORACLE_ENV` and `--cache-dir` paths for concurrent
 worktrees. `--in-container` is the behavioural adapter for the second route;
 it neither installs nor requires Valgrind.
+
+## Host requirements
+
+Full setup requires Linux x86_64 and:
+
+- Cargo on `PATH`, rustup and the installed toolchain/components selected by
+  `rust-toolchain.toml`. Setup checks these before provisioning; it does not
+  install Rust. Follow [native setup](setup.md) when they are missing.
+- Working `valgrind --version`, or root/sudo access plus `apt-get` to install
+  it. Root uses apt directly; a non-root account with sudo retains the sudo
+  install path. Without either privilege route, setup prints
+  `run as root: apt-get install -y valgrind` and a specific missing-Valgrind
+  failure before Python downloads. Ask the environment owner to install it
+  or choose a host with Valgrind already available.
+- A writable uv installation directory when uv needs installing or replacing
+  (default `$HOME/.local/bin`), plus writable managed-Python/cache locations.
+  Setup probes the uv destination before downloading. If a cloud image mounts
+  it read-only, set `UV_INSTALL_DIR`, `UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR`
+  to task-owned writable paths; put `UV_INSTALL_DIR` on `PATH` afterward.
+  An existing suitable uv can be reused without writing its installation
+  directory. uv 0.13.1 is the pinned fallback; newer versions are retained.
+- A usable Podman or Docker runtime, the backend dump utilities described
+  below, and the native build prerequisites in [native setup](setup.md).
+  Non-root accounts must arrange missing backend utilities with the owner;
+  that step prints its apt command and does not use sudo.
+- Network access to the [download hosts](#allowlist-domains) needed by any
+  uncached step. In particular, model20 needs `downloads.sourceforge.net`
+  and its selected `*.dl.sourceforge.net` redirect target. Cloud policy can
+  refuse either host. Setup resolves model20 through the existing fetcher
+  before image pulls or library builds when a requested cell needs data;
+  verified cached data/model inputs avoid that download.
+
+On a host lacking these capabilities, stop at the named prerequisite and
+ask the environment owner to provide it, or move to a suitable cloud host.
+Do not route around network policy. The canonical compatibility container
+can supply the reference/subject environment for compatibility work; it
+does not establish the host Valgrind measurement gate. `--python-only`
+has the narrower requirements documented below and needs no Cargo, Rust,
+Valgrind, backend utilities or container runtime.
 
 ## Setup command
 
@@ -93,14 +134,17 @@ provision stops the `source` with an error. The file needs bash.
 
 ## What it does
 
-0. Requires backend dump utilities for the requested cells: `db5.3_dump`
+0. Checks Cargo and the repository toolchain, and requires or installs
+   Valgrind before Python provisioning. Then provisions uv and managed
+   CPython, checking the uv installation destination before its download.
+   Requires backend dump utilities for the requested cells: `db5.3_dump`
    (`db5.3-util`) and `kchashmgr` (`kyotocabinet-utils`). Root containers may
    install them with apt; ordinary accounts get an explicit missing-package
    error. Install them deliberately before running setup. Normal cloud
-   provisioning also installs Valgrind idempotently when
+   provisioning installs Valgrind idempotently when
    `valgrind --version` fails and prints its version in the summary. The
    `--in-container` behavioural path omits that requirement; see [benches](benches.md).
-1. Resolves and prints the runtime/version before provisioning. Platform order
+1. Resolves and prints the runtime/version before container provisioning. Platform order
    is Windows: wslc/Podman/Docker; macOS: Apple container/Podman/Docker;
    Linux: Podman/Docker. Explicit `OXPINYIN_CONTAINER` wins; no available candidate
    is an error. wslc is blocked as not yet verified, and the Apple adapter is
@@ -149,7 +193,7 @@ provision stops the `source` with an error. The file needs bash.
    the script checks with `ldd` that the tkrzw oracle `libpinyin.so`
    resolves `libtkrzw.so.1` to `<cache>/tkrzw/lib`. A rerun skips the
    build when the cached revision is present and its probe passes.
-4. Fetches model20 with `tools/model/fetch-model.sh` into
+4. Uses model20 fetched early with `tools/model/fetch-model.sh` into
    `<cache>/model20`, runs `build-oracle.sh --regen-data` per cell inside
    the image, and re-verifies the installed files against
    `oracle-data.sha256`. The data is generated in a staging area and swapped
@@ -184,9 +228,16 @@ setup contacts, and what a session showed on 2026-10-16 UTC:
 | `registry-1.docker.io`, `auth.docker.io`, `production.cloudflare.docker.com` | the pinned `debian:testing` digest | reachable (429 under load; retried) |
 | `snapshot.debian.org` | the apt snapshot the toolchain is installed from | reachable once allowed (403 before) |
 | `github.com` | libpinyin at the pinned commit (`git fetch --depth=1 <url> <sha>`) | reachable |
+| `github.com`, `release-assets.githubusercontent.com` | uv fallback archive and uv-managed CPython release assets | required when uncached; no fresh download measured for #1055 |
 | `downloads.sourceforge.net` and its redirect target, a rotating `*.dl.sourceforge.net` mirror | model20 archive | reachable (redirected to `cytranet-dal.dl.sourceforge.net`) |
 | `ghcr.io` (and the blob host it redirects to) | the published oracle image, when it exists | token endpoint answers; no image published yet, blob host untested |
 | `index.crates.io`, `static.crates.io` | cargo | reachable |
+
+The reachable entries are historical observations, not guarantees for another
+session. The #1055 report records a cloud session refusing
+`downloads.sourceforge.net` on 2026-10-22 UTC. Request the required allowlist
+change from the environment owner or use an already verified local cache;
+model20 must not be mirrored or published by the project.
 
 `snapshot.debian.org` is the one that is easy to miss: the pinned
 toolchain is installed from it, and `--regen-data` compiles the pin's data
@@ -388,16 +439,26 @@ in a Codex cloud environment were not measured.
 
 ## Gates in a cloud session
 
-Everything in `AGENTS.md` ("Verification cells") runs as on any Linux
-host; the cells are the three prefixes the setup prints. The Rust toolchain
-(`rust-toolchain.toml`) is the one the session already carries, and
-`cargo`, `valgrind` and `cc` are present, so same-run callgrind
-measurements (`benches.md`) need nothing more than the oracle for the pin
-side. A main-against-main control (two builds of one commit, measured in
+On a host meeting the requirements above, `AGENTS.md` ("Verification cells")
+runs as on any Linux host; the cells are the prefixes setup prints.
+Do not assume a session already carries Cargo, the repository Rust toolchain,
+Valgrind or a native compiler. Same-run callgrind measurements (`benches.md`)
+require those host tools and the oracle for the pin side.
+A main-against-main control (two builds of one commit, measured in
 one run, spread 0) needs only the Rust side.
 
 ## Failure modes
 
+- Missing Cargo/toolchain, Valgrind without root/sudo, or an unwritable uv
+  destination: setup exits 1 with the prerequisite and next action before
+  downloads. `--python-only` omits the Cargo/toolchain and Valgrind checks.
+- The #1024 lane reported an OS read-only `/home/agent/.local/bin`, then
+  successful pinned uv/managed-CPython provisioning using task-private
+  overrides; full setup next stopped on missing Valgrind/sudo, and Cargo
+  was absent. That cloud image is unavailable locally. The OS read-only
+  mount was not reproduced on the Ubuntu maintainer host; synthetic PATH
+  stubs and an unwritable uv directory cover the failure paths without
+  installing prerequisites on that host.
 - `429 Too Many Requests` from the registry: the script retries; rerun it.
 - `403` from the proxy: the host is not allowed for the environment. Do
   not route around it; add the host (table above) to Allowed domains.

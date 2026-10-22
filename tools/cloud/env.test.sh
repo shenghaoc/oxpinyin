@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercise the real environment writer and verification with synthetic pins.
+# Exercise setup prerequisites and the real environment writer with synthetic pins.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
@@ -15,6 +15,146 @@ export OXPINYIN_ORACLE_ENV=$work/oracle.env
 pinval() { sed -n "s/^$1=//p" "$pin"; }
 log() { printf '%s\n' "$*" >&2; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+
+# Run the real setup entry point with an isolated PATH. Stubs report calls
+# through fd 3 into the in-memory result, even when setup redirects stderr.
+# No package manager, download, runtime or Python provisioning reaches the host.
+(
+	setup=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/setup.sh
+	stub_bin=$work/setup-bin
+	mkdir -p "$stub_bin" "$work/uv-bin" "$work/readonly-uv"
+	for tool in bash dirname nproc uname sed cat mkdir mktemp rm base64 sha256sum cut grep basename tar; do
+		ln -s "$(command -v "$tool")" "$stub_bin/$tool"
+	done
+	cat >"$stub_bin/stub" <<'STUB'
+#!/bin/bash
+case ${0##*/} in
+cargo) printf 'cargo 1.97.1\n' ;;
+rustup)
+	[[ ${SYNTHETIC_TOOLCHAIN_MISSING:-0} == 0 ]] || exit 1
+	printf 'rustc 1.97.1\n'
+	;;
+valgrind)
+	[[ ${SYNTHETIC_VALGRIND_MISSING:-0} == 0 ]] || exit 1
+	printf 'valgrind-3.25.1\n'
+	;;
+podman)
+	if [[ $1 == --version ]]; then printf 'podman (synthetic)\n'
+	else printf 'ACTION podman %s\n' "$*" >&3; exit 97; fi
+	;;
+uv)
+	if [[ $1 == --version ]]; then printf 'uv %s (synthetic)\n' "${SYNTHETIC_UV_VERSION:-0.13.1}"
+	else
+		printf 'ACTION uv %s\n' "$*" >&3
+		[[ ${SYNTHETIC_PYTHON_FAILURE:-0} == 0 ]] || exit 97
+		if [[ $1 == run ]]; then cat >/dev/null; printf 'Verified synthetic managed Python\n'; fi
+	fi
+	;;
+*) printf 'ACTION %s %s\n' "${0##*/}" "$*" >&3; exit 97 ;;
+esac
+STUB
+	chmod +x "$stub_bin/stub"
+	for tool in cargo rustup valgrind uv curl apt-get podman db5.3_dump; do
+		ln -s stub "$stub_bin/$tool"
+	done
+	run_setup() {
+		status=0
+		message=$(env -u UV_PYTHON -u PYTHONHOME -u PYTHONPATH \
+			PATH="$stub_bin" UV_INSTALL_DIR="${SYNTHETIC_UV_INSTALL_DIR:-$stub_bin}" \
+			OXPINYIN_CLOUD_CACHE="$work/setup-cache" OXPINYIN_ORACLE_ENV="$work/setup.env" \
+			PINYIN_MODEL_CACHE="$work/setup-model" OXPINYIN_CONTAINER=podman \
+			/bin/bash "$setup" "$@" 3>&1 2>&1) || status=$?
+	}
+	check_setup() {
+		local expected_status=$1 expected=$2
+		shift 2
+		run_setup "$@"
+		[[ $status == "$expected_status" && $message == *"$expected"* ]] ||
+			fail "setup expected exit $expected_status and '$expected'; got exit $status: $message"
+		[[ $message != *'ACTION '* ]] || fail "setup provisioned before checking prerequisites: $message"
+	}
+
+	rm "$stub_bin/cargo"
+	check_setup 1 'FAIL: cargo is missing; install the rustup-managed toolchain from rust-toolchain.toml (docs/runbooks/setup.md)'
+	ln -s stub "$stub_bin/cargo"
+	printf 'PASS: missing Cargo fails before provisioning\n'
+
+	export SYNTHETIC_TOOLCHAIN_MISSING=1
+	channel=$(sed -n 's/^channel = "\([^"]*\)"/\1/p' "${setup%/tools/cloud/setup.sh}/rust-toolchain.toml")
+	check_setup 1 "FAIL: Rust toolchain $channel is not installed; run: rustup toolchain install $channel --component clippy --component rustfmt"
+	unset SYNTHETIC_TOOLCHAIN_MISSING
+	printf 'PASS: missing repository toolchain fails before provisioning\n'
+
+	if ((EUID != 0)); then
+		export SYNTHETIC_VALGRIND_MISSING=1
+		check_setup 1 $'missing: valgrind\nrun as root: apt-get install -y valgrind\nFAIL: valgrind is missing and neither root nor sudo is available'
+		unset SYNTHETIC_VALGRIND_MISSING
+		printf 'PASS: non-root without sudo gets the exact Valgrind install command\n'
+	fi
+
+	# Preserve root apt-get and non-root sudo installation/retry paths.
+	export SYNTHETIC_VALGRIND_MISSING=1
+	installer=apt-get
+	if ((EUID != 0)); then ln -s stub "$stub_bin/sudo"; installer='sudo apt-get'; fi
+	run_setup
+	[[ $status == 1 && $message == *"ACTION $installer install -y valgrind"* && \
+		$message == *"ACTION $installer update"* && $message == *'FAIL: could not install valgrind with apt-get'* && \
+		$message != *'ACTION uv '* && $message != *'ACTION curl '* ]] || fail "$message"
+	if ((EUID != 0)); then rm "$stub_bin/sudo"; fi
+	unset SYNTHETIC_VALGRIND_MISSING
+	printf 'PASS: Valgrind keeps the %s install/retry path\n' "$installer"
+
+	# Force uv installation into a genuinely unwritable destination. Root
+	# bypasses mode bits, so give it a regular file instead of a directory.
+	chmod a-w "$work/readonly-uv"
+	export SYNTHETIC_UV_INSTALL_DIR="$work/readonly-uv"
+	if ((EUID == 0)); then
+		SYNTHETIC_UV_INSTALL_DIR=$work/uv-file
+		: >"$SYNTHETIC_UV_INSTALL_DIR"
+	fi
+	check_setup 1 "FAIL: uv installation directory is not writable: $SYNTHETIC_UV_INSTALL_DIR; set UV_INSTALL_DIR to a writable task-owned directory" --python-only
+	chmod u+w "$work/readonly-uv"
+	printf 'PASS: unwritable uv destination fails before download\n'
+
+	export SYNTHETIC_UV_INSTALL_DIR="$work/uv-bin"
+	run_setup --python-only
+	[[ $status == 1 && $message == *'ACTION curl '* && $message == *'FAIL: uv download failed; allow github.com and release-assets.githubusercontent.com'* ]] || fail "$message"
+	unset SYNTHETIC_UV_INSTALL_DIR
+	printf 'PASS: uv download failure names the required release hosts\n'
+
+	export SYNTHETIC_PYTHON_FAILURE=1
+	run_setup --python-only
+	[[ $status == 1 && $message == *'FAIL: managed CPython 3.15.0 provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com'* ]] || fail "$message"
+	unset SYNTHETIC_PYTHON_FAILURE
+	printf 'PASS: Python provisioning failure names writable paths and release hosts\n'
+
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *'ACTION curl '* && $message == *'downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz'* && \
+		$message == *'FAIL: model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net redirect target'* && \
+		$message != *'ACTION podman '* ]] || fail "$message"
+	printf 'PASS: model20 access failure precedes container pulls and library builds\n'
+
+	# Match the fetcher's existing synthetic cache contract. It must not
+	# require a network probe when a verified model extraction is present.
+	mkdir -p "$work/setup-model/extracted"
+	for name in art culture economy gb_char gbk_char geology history life merged nature opengram people punct science society sport technology; do
+		: >"$work/setup-model/extracted/$name.table"
+	done
+	: >"$work/setup-model/extracted/interpolation2.text"
+	printf 'sha256=59c68e89d43ff85f5a309489499cbcde282d2b04bd91888734884b7defcb1155\n' >"$work/setup-model/verified"
+	run_setup --cells bdb
+	[[ $status == 1 && $message == *'verified model cache present; skipping fetch'* && \
+		$message != *'ACTION curl '* && $message == *'ACTION podman info'* ]] || fail "$message"
+	printf 'PASS: a verified model cache avoids network access\n'
+
+	# Python-only must not inherit the full setup's Cargo/Valgrind requirements.
+	rm "$stub_bin/cargo" "$stub_bin/rustup" "$stub_bin/valgrind"
+	run_setup --python-only
+	[[ $status == 0 && $message == *'stopping after Python provisioning (--python-only)'* && \
+		$message == *'ACTION uv python install cpython@3.15.0'* && $message != *'ACTION curl '* && \
+		$message != *'ACTION apt-get '* && $message != *'ACTION podman '* ]] || fail "$message"
+	printf 'PASS: Python-only keeps its Python-only prerequisite scope\n'
+)
 
 fixture() {
 	local dbm=$1 lib prefix=$oracle_root/$1
