@@ -243,6 +243,15 @@ class GeneratorTests(unittest.TestCase):
             with mock.patch.dict(reader.__globals__, run=lambda _: "00000001 T g_free\n"):
                 reader(LIBRARY, "pinyin")
 
+    def test_first_candidate_toggles_follow_the_facade_exports(self):
+        toggles = GENERATOR["first_candidate_toggles"]
+        self.assertEqual(
+            toggles("zhuyin", "zhuyin_init,zhuyin_set_options,zhuyin_get_candidate,"
+                              "zhuyin_guess_candidates_after_cursor,pinyin_guess_candidates"),
+            ["zhuyin_set_options", "zhuyin_guess_candidates_after_cursor", "zhuyin_get_candidate"])
+        with self.assertRaisesRegex(ValueError, "lacks the first-candidate exports"):
+            toggles("pinyin", "pinyin_init,pinyin_set_options")
+
     def test_teardown_command_has_the_worker_boundary_arguments(self):
         args = SimpleNamespace(bisect=Path("/bin/bisect"), system_dir=Path("/data"))
         command = GENERATOR["teardown_command"](args, "pinyin", Path("/lib.so"), Path("/user"))

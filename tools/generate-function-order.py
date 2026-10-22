@@ -5,8 +5,9 @@ By default reads streams without running a workload. --bisect collects them
 in memory with the in-tree teardown worker; run that mode through just heavy.
 Neither mode writes a capture or builds a driver.
 Each facade's startup set is the load constructors plus the measured
-pinyin_init/zhuyin_init subtree, from the in-tree bisect worker. The steady
-set is the existing bisect perf workload. Use --demangle=no for Callgrind.
+pinyin_init/zhuyin_init subtree and the exports the worker calls from there
+to its M1 checkpoint, from the in-tree bisect worker. The steady set is the
+existing bisect perf workload. Use --demangle=no for Callgrind.
 nm supplies canonical demangled identity. Both facades and both startup
 profiles are required, with no default policy.
 """
@@ -408,8 +409,29 @@ def collect_toggle(args, facade, library, user, toggle, environment):
         raise
 
 
+# The exports tools/bisection/teardown.h calls after <facade>_init and before
+# its M1 checkpoint: options, one instance and the first candidate. Code they
+# reach before M1 is startup code too; left out of the ordered block, it is
+# faulted in 64 KiB fault-around windows scattered over .text (#1032).
+FIRST_CANDIDATE = ("set_options", "alloc_instance", "parse_more_full_pinyins",
+                   "get_parsed_input_length", "guess_candidates",
+                   "guess_candidates_after_cursor", "get_n_candidate",
+                   "get_candidate", "get_candidate_type", "get_candidate_string",
+                   "get_candidate_nbest_index")
+
+
+def first_candidate_toggles(facade, exports):
+    """The FIRST_CANDIDATE exports this facade has; each one toggles alone."""
+    available = set(exports.split(","))
+    toggles = [f"{facade}_{name}" for name in FIRST_CANDIDATE
+               if f"{facade}_{name}" in available]
+    if f"{facade}_get_candidate" not in toggles:
+        raise ValueError(f"{facade} lacks the first-candidate exports")
+    return toggles
+
+
 def collect_startup(args, facade, library, work, environment):
-    """Load constructors plus each profile's init subtree, from the worker."""
+    """Load constructors plus each profile's init-to-M1 path, from the worker."""
     functions = set()
     first = work / f"{facade}-load"
     shutil.copytree(args.profiles_dir / PROFILES[0] / "user", first)
@@ -422,7 +444,9 @@ def collect_startup(args, facade, library, work, environment):
         user = work / f"{facade}-{profile}"
         shutil.copytree(args.profiles_dir / profile / "user", user)
         try:
-            functions |= collect_toggle(args, facade, library, user, f"{facade}_init", environment)
+            for toggle in (f"{facade}_init", *first_candidate_toggles(
+                    facade, environment["OXPINYIN_TEARDOWN_EXPORTS"])):
+                functions |= collect_toggle(args, facade, library, user, toggle, environment)
         finally:
             shutil.rmtree(user)
     return functions
