@@ -6,6 +6,8 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "oxpinyin internal crate — no stability promise; use oxpinyin-engine."
+# The integration tests build as one binary; see [[test]] below.
+autotests = false
 
 [lints]
 workspace = true
@@ -29,6 +31,13 @@ oxpinyin-testsupport = { path = "../oxpinyin-testsupport" }
 proptest = { version = "=1.12.0", default-features = false, features = ["std"] }
 # Micro-benches (benches/); workspace lock pins 0.8.
 criterion = "0.8"
+
+# tests/integration.rs declares each tests/*.rs suite as a module, so the
+# dependency closure links once instead of once per suite (#1005). With
+# autotests off, a new file under tests/ runs only once it is declared there.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [[bench]]
 name = "parse_and_graph"
