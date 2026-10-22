@@ -407,29 +407,55 @@ int main(int argc, char **argv) {
 }
 ```
 
-Select the pin's BDB installation through `PKG_CONFIG_PATH` if it is
-not the default installation. `PINYIN_SYSTEM_DIR` must contain the
+Run the block below as a `sh` script from the directory where
+`repro.c` was saved; `SRC` records that directory. Set `PREFIX` to the
+installation prefix of the pin built with `--with-dbm=BerkeleyDB`; its
+`.pc` files must name that same prefix. The block exports
+`PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"` and
+`LD_LIBRARY_PATH="$PREFIX/lib"`, then builds the pinyin and zhuyin
+programs as separate steps. After each `cc` command, check the
+`ldd ./repro` output: `libpinyin.so.15` (or `libzhuyin.so.15`) must
+resolve under `$PREFIX/lib`, and `libdb` must be the Berkeley DB that
+the prefix was built against. `PINYIN_SYSTEM_DIR` must contain the
 matching BDB system data (`table.conf`, indexes and phrase/model files).
 The pin's libpinyin `.pc` file puts these under `pkgdatadir/data`;
-both facades use that same data directory. Run in a private temporary
-working directory with EXIT/INT/TERM cleanup so an interrupted process
-also loses its temporary user directory. Each successful process
-removes its own `user.conf` marker and directory. The marker can
-survive between loop iterations; the three user databases remain
-absent because this program does not save.
+both facades use that same data directory. The block creates a private
+temporary working directory, enters it, and removes it on exit,
+interrupt or termination, so an interrupted process also loses its
+temporary user directory. Each successful process removes its own
+`user.conf` marker and directory. The marker can survive between loop
+iterations; the three user databases remain absent because this
+program does not save.
 
 ```sh
+PREFIX=/path/to/libpinyin-prefix # the pin, built with --with-dbm=BerkeleyDB
+SRC="$PWD"                       # the directory that holds repro.c
+workdir="$(mktemp -d)" || exit 1
+cleanup() { rm -rf -- "$workdir"; }
+trap cleanup 0
+trap 'exit 130' INT
+trap 'exit 143' TERM
+cd "$workdir" || exit 1
+
+export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+export LD_LIBRARY_PATH="$PREFIX/lib"
 export PINYIN_SYSTEM_DIR="$(pkg-config --variable=pkgdatadir libpinyin)/data"
-export LD_LIBRARY_PATH="$(pkg-config --variable=libdir libpinyin)"
-cc -std=c11 -g -O0 -Wall -Wextra repro.c -o repro $(pkg-config --cflags --libs libpinyin)
+
+# pinyin
+cc -std=c11 -g -O0 -Wall -Wextra "$SRC/repro.c" -o repro $(pkg-config --cflags --libs libpinyin)
+ldd ./repro
 valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 1
 valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 10
-cc -std=c11 -g -O0 -Wall -Wextra -DZHUYIN repro.c -o repro $(pkg-config --cflags --libs libzhuyin)
+
+# zhuyin
+cc -std=c11 -g -O0 -Wall -Wextra -DZHUYIN "$SRC/repro.c" -o repro $(pkg-config --cflags --libs libzhuyin)
+ldd ./repro
 valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 1
 valgrind --leak-check=full --show-leak-kinds=definite,indirect ./repro 10
 ```
 
-**Standalone evidence** (Memcheck 3.27.1, Linux amd64): all four
+**Standalone evidence** (Memcheck 3.27.1, Linux amd64; the table is
+from a rerun of the block above on 2026-10-22 UTC): all four
 init/fini-only runs completed against the reference pin prefix. Each
 process used a fresh empty user directory. The reference libraries were
 the pin-built `libpinyin.so.15.0.0` (SHA-256
@@ -446,7 +472,7 @@ host the pin prefix was a relocated copy of `/opt/pinyin-oracle/bdb`;
 | pinyin | 1 | 4,368 B / 3 blocks | 11,462 B / 30 blocks | 15,830 B / 33 blocks |
 | pinyin | 10 | 43,680 B / 30 blocks | 114,620 B / 300 blocks | 158,300 B / 330 blocks |
 | zhuyin | 1 | 4,368 B / 3 blocks | 11,462 B / 30 blocks | 15,830 B / 33 blocks |
-| zhuyin | 10 | 43,680 B / 30 blocks | 113,884 B / 298 blocks | 157,564 B / 328 blocks |
+| zhuyin | 10 | 43,680 B / 30 blocks | 114,620 B / 300 blocks | 158,300 B / 330 blocks |
 
 The three definitely-lost roots are the temporary handles, and the
 indirect blocks hang from them. In the N=1 runs the roots are:
@@ -469,9 +495,12 @@ The standalone N=1 total is 15,830 B / 33 blocks per facade. #993's
 count. The difference is the first-candidate work in #993's cycle:
 this loop only calls init/fini and never prepares an instance or a
 candidate. The three `load_db` roots are identical. At N=10 the direct
-root count is ten times; pinyin's indirect total is exactly ten times,
-while zhuyin's is 736 bytes / 2 blocks below ten times. The direct
-30-block count and every `load_db` root remain.
+root count and both facades' indirect totals are exactly ten times the
+N=1 figures. An earlier run of the previous command block recorded the
+zhuyin N=10 indirect loss as 113,884 B / 298 blocks (total 157,564 B /
+328 blocks), 736 bytes / 2 blocks below ten times; the rerun did not
+reproduce that shortfall, and its cause was not investigated. The
+direct 30-block count and every `load_db` root remain.
 
 **Patched-pin check:** applying the suggested diff below to the same
 pinned source and rebuilding it in a separate prefix removes the loss.
