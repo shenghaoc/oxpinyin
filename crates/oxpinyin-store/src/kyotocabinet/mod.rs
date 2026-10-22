@@ -78,7 +78,7 @@ mod ffi;
 use std::ops::Bound;
 use std::path::Path;
 
-use crate::common::{Row, frame, in_bounds, prefix, unframe};
+use crate::common::{frame, in_bounds, prefix, unframe};
 use crate::{Flow, ReadStore, StoreError, WriteStore, WriteTxn, validate_table_name};
 
 use ffi::{Db, DbType};
@@ -138,8 +138,8 @@ impl KcStore {
         if !cursor.jump_to(&[])? {
             return Ok(());
         }
-        while let Some(record) = cursor.next()? {
-            visit(record.key())?;
+        while cursor.next_key()? {
+            visit(cursor.key())?;
         }
         Ok(())
     }
@@ -170,7 +170,7 @@ impl KcStore {
     /// Walks `table`'s rows in ascending key order within `[lo, hi]`.
     ///
     /// One cursor, positioned once with `kccurjumpkey` and advanced by
-    /// `kccurget`'s own step, stopping at the first key outside the
+    /// `kccuraccept`'s own step, stopping at the first key outside the
     /// table's framed prefix — so a scan costs the rows it returns and one
     /// more.
     fn walk(
@@ -184,7 +184,7 @@ impl KcStore {
         // call site; each visitor's instantiation is only this loop.
         let mut rows = self.table_rows(table, lo, hi)?;
         while let Some(row) = rows.next()? {
-            if visit(row.key(), row.value())?.is_break() {
+            if visit(row.key, row.value)?.is_break() {
                 break;
             }
         }
@@ -215,18 +215,11 @@ impl KcStore {
     }
 
     /// Every row of the file, sorted by key. Not generic, so the many
-    /// visitors share one copy of the cursor loop and the sort.
+    /// visitors share one copy of the iteration and the sort.
     #[inline(never)]
-    fn sorted_rows(&self) -> Result<Vec<Row>, StoreError> {
-        let mut cursor = self.db.cursor()?;
-        let mut rows: Vec<Row> = Vec::new();
-        if !cursor.jump_first()? {
-            return Ok(rows);
-        }
-        while let Some(record) = cursor.next()? {
-            rows.push((record.key().to_vec(), record.value().to_vec()));
-        }
-        rows.sort_by(|a, b| a.0.cmp(&b.0));
+    fn sorted_rows(&self) -> Result<Vec<ffi::Record>, StoreError> {
+        let mut rows = self.db.records()?;
+        rows.sort_unstable_by(|a, b| a.key().cmp(b.key()));
         Ok(rows)
     }
 
@@ -236,18 +229,18 @@ impl KcStore {
         table: &str,
         lo: Bound<&[u8]>,
         hi: Bound<&[u8]>,
-    ) -> Result<Vec<Row>, StoreError> {
-        let mut out = Vec::new();
+    ) -> Result<ffi::Rows, StoreError> {
+        let mut out = ffi::Rows::new();
         let mut rows = self.table_rows(table, lo, hi)?;
         while let Some(row) = rows.next()? {
-            out.push((row.key().to_vec(), row.value().to_vec()));
+            out.push(row.key, row.value);
         }
         Ok(out)
     }
 }
 
 /// A table's rows in ascending key order within `[lo, hi]`: one cursor,
-/// positioned once with `kccurjumpkey` and advanced by `kccurget`'s own
+/// positioned once with `kccurjumpkey` and advanced by `kccuraccept`'s own
 /// step, ending at the first key outside the table's framed prefix — so a
 /// walk costs the rows it returns and one more.
 ///
@@ -263,36 +256,29 @@ struct TableRows<'db, 'b> {
     hi: Bound<&'b [u8]>,
 }
 
-/// One row of a [`TableRows`] walk: the record the cursor read, whose key
-/// still carries the table's framing prefix.
-struct TableRow {
-    record: ffi::Record,
-    key_at: usize,
-}
-
-impl TableRow {
-    fn key(&self) -> &[u8] {
-        self.record.key().get(self.key_at..).unwrap_or(&[])
-    }
-
-    fn value(&self) -> &[u8] {
-        self.record.value()
-    }
+/// One row of a [`TableRows`] walk, borrowed from the cursor's buffer
+/// until the next step: the key without the table's framing prefix.
+struct TableRow<'r> {
+    key: &'r [u8],
+    value: &'r [u8],
 }
 
 impl TableRows<'_, '_> {
     /// The next row inside the table and bounds, or `None` at the end of
     /// the walk.
     #[inline(never)]
-    fn next(&mut self) -> Result<Option<TableRow>, StoreError> {
+    fn next(&mut self) -> Result<Option<TableRow<'_>>, StoreError> {
         if !self.positioned {
             self.positioned = true;
             if !self.cursor.jump_to(&self.start)? {
                 return Ok(None);
             }
         }
-        while let Some(record) = self.cursor.next()? {
-            let Some(key) = unframe(&self.table_prefix, record.key()) else {
+        loop {
+            if !self.cursor.next()? {
+                return Ok(None);
+            }
+            let Some(key) = unframe(&self.table_prefix, self.cursor.key()) else {
                 // Past the last row of this table.
                 return Ok(None);
             };
@@ -302,10 +288,16 @@ impl TableRows<'_, '_> {
             if !in_bounds(key, Bound::Unbounded, self.hi) {
                 return Ok(None);
             }
-            let key_at = self.table_prefix.len();
-            return Ok(Some(TableRow { record, key_at }));
+            break;
         }
-        Ok(None)
+        Ok(Some(TableRow {
+            key: self
+                .cursor
+                .key()
+                .get(self.table_prefix.len()..)
+                .unwrap_or(&[]),
+            value: self.cursor.value(),
+        }))
     }
 }
 
@@ -318,7 +310,7 @@ impl ReadStore for KcStore {
 
     fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
         validate_table_name(table)?;
-        Ok(self.db.get(&frame(table, key))?.map(|buf| buf.to_vec()))
+        self.db.get(&frame(table, key))
     }
 
     fn scan(
@@ -338,17 +330,14 @@ impl ReadStore for KcStore {
         if !cursor.jump_to(&table_prefix)? {
             return Ok(true);
         }
-        // Stops at the first record rather than scanning the table.
-        Ok(match cursor.next()? {
-            None => true,
-            Some(record) => unframe(&table_prefix, record.key()).is_none(),
-        })
+        // Reads the first key at or after the prefix, and nothing else.
+        Ok(!cursor.peek_key()? || unframe(&table_prefix, cursor.key()).is_none())
     }
 }
 
 impl crate::RawReadStore for KcStore {
     fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, crate::StoreError> {
-        Ok(self.db.get(key)?.map(|buf| buf.to_vec()))
+        self.db.get(key)
     }
 
     fn scan_raw(
@@ -363,18 +352,21 @@ impl crate::RawReadStore for KcStore {
         // slot, not at the first key at or above a lower bound. Collect
         // every row, sort by key, and apply the bounds here: the only
         // walk that is correct on all three container classes. TreeDB
-        // rows arrive sorted, so the sort is a no-op re-sort there.
-        for (key, value) in self.sorted_rows()? {
-            if matches!(lo, Bound::Excluded(bound) if key == *bound) {
+        // rows arrive sorted, so the sort is a no-op re-sort there. Each
+        // row is dropped once visited, so a visitor that copies rows out
+        // never holds two copies of the file.
+        for record in self.sorted_rows()? {
+            let (key, value) = (record.key(), record.value());
+            if matches!(lo, Bound::Excluded(bound) if key == bound) {
                 continue;
             }
-            if matches!(lo, Bound::Included(bound) if key[..] < *bound) {
+            if matches!(lo, Bound::Included(bound) if key < bound) {
                 continue;
             }
-            if !in_bounds(&key, Bound::Unbounded, hi) {
+            if !in_bounds(key, Bound::Unbounded, hi) {
                 return Ok(());
             }
-            if visit(&key, &value)?.is_break() {
+            if visit(key, value)?.is_break() {
                 return Ok(());
             }
         }
@@ -591,7 +583,8 @@ impl WriteTxn for KcTxn<'_> {
         // store, and holding a cursor across that is what the borrow of
         // `self.store.db` would otherwise allow.
         let rows = self.store.collect_rows(table, lo, hi)?;
-        for (key, value) in &rows {
+        for index in 0..rows.len() {
+            let (key, value) = rows.get(index);
             if visit(key, value)?.is_break() {
                 break;
             }
@@ -631,7 +624,7 @@ impl crate::UserBigramDb for KcUserBigramDb {
     }
 
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        Ok(self.db.get(key)?.map(|value| value.to_vec()))
+        self.db.get(key)
     }
 
     fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
@@ -643,17 +636,9 @@ impl crate::UserBigramDb for KcUserBigramDb {
     }
 
     fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        // `get_all_items`' visitor walk: the stash's bucket order, which
-        // its cursor steps through the same way.
-        let mut cursor = self.db.cursor()?;
-        let mut keys = Vec::new();
-        if !cursor.jump_first()? {
-            return Ok(keys);
-        }
-        while let Some(record) = cursor.next()? {
-            keys.push(record.key().to_vec());
-        }
-        Ok(keys)
+        // `get_all_items`' own call: `iterate` with a key-collecting
+        // visitor (`ngram_kyotodb.cpp:163-196`), the stash's bucket order.
+        self.db.keys()
     }
 
     fn save_db(&self, path: &Path) -> Result<(), StoreError> {
@@ -661,5 +646,51 @@ impl crate::UserBigramDb for KcUserBigramDb {
         // `dump_snapshot`.
         crate::remove_if_present(path)?;
         self.db.dump_snapshot(path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KcStore, KcUserBigramDb};
+    use crate::{RawReadStore, UserBigramDb, WriteStore, WriteTxn};
+
+    #[test]
+    fn keys_walk_the_stash_in_its_cursor_order() {
+        // `keys()` is one `iterate`, the pin's `get_all_items` call; the
+        // stash's cursor visits its buckets in the same order.
+        let db = KcUserBigramDb::empty().unwrap();
+        for token in 0_u32..3000 {
+            db.store(&token.wrapping_mul(2_654_435_761).to_le_bytes(), &[1, 2, 3])
+                .unwrap();
+        }
+        let mut cursor = db.db.cursor().unwrap();
+        let mut walked = Vec::new();
+        if cursor.jump_first().unwrap() {
+            while cursor.next_key().unwrap() {
+                walked.push(cursor.key().to_vec());
+            }
+        }
+        assert_eq!(walked.len(), 3000);
+        assert_eq!(db.keys().unwrap(), walked);
+    }
+
+    #[test]
+    fn point_reads_tell_empty_values_from_misses() {
+        let db = KcUserBigramDb::empty().unwrap();
+        db.store(b"empty", b"").unwrap();
+        db.store(b"full", &[7; 300]).unwrap();
+        assert_eq!(db.get(b"empty").unwrap(), Some(Vec::new()));
+        assert_eq!(db.get(b"full").unwrap(), Some(vec![7; 300]));
+        assert_eq!(db.get(b"absent").unwrap(), None);
+        let store = KcStore::create_in_memory().unwrap();
+        store
+            .write(|txn| {
+                txn.put_raw(b"empty", b"")?;
+                txn.put_raw(b"full", &[9; 5])
+            })
+            .unwrap();
+        assert_eq!(store.get_raw(b"empty").unwrap(), Some(Vec::new()));
+        assert_eq!(store.get_raw(b"full").unwrap(), Some(vec![9; 5]));
+        assert_eq!(store.get_raw(b"absent").unwrap(), None);
     }
 }
