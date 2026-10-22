@@ -13,13 +13,14 @@ name: verify-nightly
 # were retired on 2026-09-01 (docs/findings/verify-nightly.md). There are
 # no continue-on-error lanes; every job in this workflow must be green.
 # Surviving lanes: fuzz-soak, differentials, overflow-lane, coverage (via
-# coverage.yml, also an advisory path-filtered PR check), perf-snapshot.
+# coverage.yml, also an advisory path-filtered PR check), perf-snapshot,
+# test-windows (moved from ci.yml on 2026-10-22).
 # A separate nextest lane over the Kyoto Cabinet workspace was removed on
 # 2026-10-22: overflow-lane runs the same workspace test inventory under
 # Kyoto Cabinet, and ci.yml's Linux and macOS test jobs already run nextest.
 #
-# All jobs run in debian:testing containers in the store-backends.yml
-# style: the nightly lanes exist to surface drift early, and the rolling
+# Every Linux job runs in a debian:testing container in the
+# store-backends.yml style (test-windows runs on windows-latest): the nightly lanes exist to surface drift early, and the rolling
 # distro toolchain is part of what they exercise. The image is
 # deliberately unpinned — do not "stabilise" it.
 
@@ -27,12 +28,20 @@ on:
   schedule:
     - cron: '0 3 * * *'
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Run only the full Windows workspace job
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# One group per ref: the schedule always runs on main, so scheduled runs
+# still queue behind each other, and a dispatch on a branch does not
+# displace them.
 concurrency:
-  group: verify-nightly
+  group: verify-nightly-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -46,6 +55,8 @@ jobs:
   # added on 2026-09-08. The dict-loader corpus is seeded from the
   # committed w3 tables so the decoder starts from valid headers.
   fuzz-soak:
+    # Skipped by a windows_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only }}
     runs-on: ubuntu-latest
       # Same ASan leeway as the tkrzw sanitizer job in store-backends.yml:
       # Docker's default seccomp profile blocks personality(2), which the
@@ -155,6 +166,8 @@ jobs:
   # phrase table), KMM prune (the pin SIGSEGVs on that gate's fixture
   # input), and eval (no interpolation2.text consistent with w3).
   differentials:
+    # Skipped by a windows_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only }}
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -183,6 +196,8 @@ jobs:
   # tooling-evaluation.md §8) — the "NDEBUG question" as CI, not as
   # shipped configuration.
   overflow-lane:
+    # Skipped by a windows_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only }}
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -211,6 +226,8 @@ jobs:
   # number is measured nightly whatever a PR touched. The floor and its
   # history live in that file.
   coverage:
+    # Skipped by a windows_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only }}
     uses: ./.github/workflows/coverage.yml
 
   # Perf-and-size snapshot series. NOT a gate: it measures the tree once a
@@ -236,6 +253,8 @@ jobs:
   # other lane here: a size series that steps when the toolchain moves is
   # reporting something true, and that is what this workflow is for.
   perf-snapshot:
+    # Skipped by a windows_only dispatch; runs on the schedule.
+    if: ${{ !inputs.windows_only }}
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -383,3 +402,70 @@ jobs:
           # The step is always() so a failed measurement still uploads what it
           # got; when it got nothing, say so quietly instead of warning.
           if-no-files-found: ignore
+
+  # The full Windows workspace: the portable workspace (all but capi,
+  # zhuyin-capi, and the backend-independent corpus, KMM, punctuation, and
+  # word tools) linked against vcpkg's Berkeley DB 4.8. Moved here from
+  # ci.yml on 2026-10-22: it runs every night and on manual dispatch, not on
+  # every PR. Dispatch it on the branch (windows_only: true) before merging
+  # changes to Windows-sensitive storage, filesystem or native-build code,
+  # toolchain or relevant dependency updates, and releases
+  # (docs/runbooks/setup.md, "Native Windows"). Not skipped by windows_only.
+  test-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    # windows-latest defaults every `run:` to pwsh. The provisioning step
+    # is bash (`$VCPKG_INSTALLATION_ROOT`, `>> "$GITHUB_ENV"`); under pwsh
+    # those names are unset and the redirections write nowhere, so the
+    # lane never reaches a build.
+    defaults:
+      run:
+        shell: bash
+    # ci.yml set these at workflow level; this workflow sets none.
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          rust-cache: 'true'
+      - run: rustup show active-toolchain
+      # vcpkg's berkeleydb port: 4.8.30, the Sleepycat line, the same
+      # family as the 5.3 the Linux lanes link. The port installs
+      # libdb48.lib / libdb48.dll and the build_windows headers. The
+      # store build script is pointed at that tree; the import library
+      # is named explicitly because the bare `-ldb` fallback does not
+      # match libdb48.lib; the DLL directory joins PATH for the test
+      # binaries; bindgen gets the runner's preinstalled LLVM.
+      - name: Install the store backend (vcpkg Berkeley DB)
+        run: |
+          vcpkg install berkeleydb:x64-windows
+          # `vcpkg list` prints "<port>:<triplet>  <version>#<port-version>  <description>".
+          # The port name is followed by ":x64-windows", not whitespace, and
+          # the version carries a "#<n>" suffix, so a pattern expecting
+          # "berkeleydb" then spaces then "4.8" matches nothing and the
+          # lane dies before the build. Pin the 4.8 line; a bump off it
+          # fails here.
+          vcpkg list berkeleydb:x64-windows | grep -Eq 'berkeleydb:x64-windows[[:space:]]+4[.]8[.]' \
+            || { echo "::error::vcpkg berkeleydb is not the documented 4.8 line: $(vcpkg list berkeleydb:x64-windows)"; exit 1; }
+          echo "OXPINYIN_BDB_INCLUDE_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\include" >> "$GITHUB_ENV"
+          echo "OXPINYIN_BDB_LIB_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\lib" >> "$GITHUB_ENV"
+          echo "OXPINYIN_BDB_LIB_NAME=libdb48" >> "$GITHUB_ENV"
+          # vcpkg's berkeleydb port is 4.8.30. The store refuses any libdb
+          # other than the surveyed 5.3 unless this is set, and it is set
+          # only here: it covers that one comparison, and the process
+          # prints a warning naming both versions. No other lane sets it.
+          echo "OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION=1" >> "$GITHUB_ENV"
+          echo 'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> "$GITHUB_ENV"
+          echo "$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\bin" >> "$GITHUB_PATH"
+      # The workspace default is Berkeley DB, so this lane no longer
+      # passes `--features bdb`. The vcpkg provisioning above is what
+      # makes that default link. Same exclusions as the macOS job.
+      - run: >
+          cargo test --locked --workspace
+          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
+          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
+          --exclude oxpinyin-word

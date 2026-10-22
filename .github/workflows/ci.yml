@@ -92,8 +92,10 @@ concurrency:
 #   test — cargo test for the whole workspace (the ONE full sweep per
 #          PR), and the portable workspace (all but capi, zhuyin-capi, and
 #          the backend-independent corpus, KMM, punctuation, and word
-#          tools) on macOS and Windows. The combined training package stays
-#          in these lanes because segment/eval/train use the selected backend.
+#          tools) on macOS. The combined training package stays
+#          in that lane because segment/eval/train use the selected backend.
+# The full Windows workspace job runs in verify-nightly.yml (nightly and on
+# manual dispatch), not on every PR.
 #   deny — supply-chain gate: RustSec advisories, licenses, sources,
 #          duplicate-version drift (docs/safety/oxpinyin-safety-profile.md
 #          layer 6)
@@ -180,8 +182,7 @@ jobs:
         # Berkeley DB is the default store backend (the analogue of a
         # bare libpinyin ./configure); bindgen (libclang) reads the
         # system db.h at build time. test-macos installs Homebrew
-        # berkeley-db@5 and test-windows links vcpkg Berkeley DB, so
-        # neither of those jobs uses this apt line.
+        # berkeley-db@5, so that job does not use this apt line.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
       - run: cargo fmt --all --check
       - run: cargo fmt --manifest-path fuzz/Cargo.toml --all --check
@@ -190,8 +191,8 @@ jobs:
       # one placed above a `//!` block takes the docs with it and
       # `missing_docs` fires — on the excluded platform only, which no job
       # here can see: this container makes every `target_os = "linux"`
-      # gate true, and test-macos/test-windows build the portable crates
-      # only, so the breakage surfaced on a contributor's macOS checkout
+      # gate true, and test-macos and the nightly Windows job build the
+      # portable crates only, so the breakage surfaced on a contributor's macOS checkout
       # instead. The checker reads placement, not cfg outcomes, so it holds
       # for every host from here. Harness first: a regression in the
       # checker itself must not pass quietly.
@@ -248,8 +249,7 @@ jobs:
         # Berkeley DB is the default store backend (the analogue of a
         # bare libpinyin ./configure); bindgen (libclang) reads the
         # system db.h at build time. test-macos installs Homebrew
-        # berkeley-db@5 and test-windows links vcpkg Berkeley DB, so
-        # neither of those jobs uses this apt line.
+        # berkeley-db@5, so that job does not use this apt line.
         run: apt-get install -y --no-install-recommends gcc g++ make pkg-config libclang-dev libdb-dev libglib2.0-dev
       - name: Set up pinned repository Python
         run: |
@@ -380,22 +380,18 @@ jobs:
       - name: ABI export gate (shipped build)
         run: tools/abi/check-exports.sh --shipped
 
-  # macOS and Windows each link a C store backend. #501 removed redb.
-  # macOS links Homebrew tkrzw — the path README.md documents — and pins
-  # it explicitly, because the workspace default is Berkeley DB. Windows
-  # links vcpkg's Berkeley DB 4.8 and rides that default. Both jobs keep
-  # the exclude set these jobs already have on main: the two C-ABI crates
-  # (glib and cargo-c, Linux-only) and the backend-independent corpus,
-  # KMM, punctuation, and word tools. The combined training package remains
-  # in these lanes because its segment/eval/train modules use the backend.
-  # oxpinyin-dictool stays
+  # macOS links a C store backend: Homebrew's keg-only berkeley-db@5 (the
+  # path README.md documents), selected explicitly. #501 removed redb. The
+  # job excludes the two C-ABI crates (glib and cargo-c, Linux-only) and the
+  # backend-independent corpus, KMM, punctuation, and word tools. The
+  # combined training package remains in the lane because its
+  # segment/eval/train modules use the backend. oxpinyin-dictool stays
   # in the set: its C-ABI dependency was cut, and it drives the facade's
   # import/export machinery directly.
   #
-  # Two jobs rather than a matrix: containers run on Linux runners only, so
-  # a containerized matrix cannot cover these operating systems. macOS
-  # runners already default `run:` to bash, so only the Windows job sets
-  # `defaults.run.shell`.
+  # The Windows job with the same exclude set runs in verify-nightly.yml.
+  # Containers run on Linux runners only, so these operating systems get
+  # their own jobs rather than a containerized matrix.
   test-macos:
     needs: changes
     if: needs.changes.outputs.run == 'true'
@@ -537,63 +533,6 @@ jobs:
           --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
           --exclude oxpinyin-word
 
-  test-windows:
-    needs: changes
-    if: needs.changes.outputs.run == 'true'
-    runs-on: windows-latest
-    timeout-minutes: 45
-    # windows-latest defaults every `run:` to pwsh. The provisioning step
-    # is bash (`$VCPKG_INSTALLATION_ROOT`, `>> "$GITHUB_ENV"`); under pwsh
-    # those names are unset and the redirections write nowhere, so the
-    # lane never reaches a build.
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/bootstrap
-        with:
-          rust-cache: 'true'
-      - run: rustup show active-toolchain
-      # vcpkg's berkeleydb port: 4.8.30, the Sleepycat line, the same
-      # family as the 5.3 the Linux lanes link. The port installs
-      # libdb48.lib / libdb48.dll and the build_windows headers. The
-      # store build script is pointed at that tree; the import library
-      # is named explicitly because the bare `-ldb` fallback does not
-      # match libdb48.lib; the DLL directory joins PATH for the test
-      # binaries; bindgen gets the runner's preinstalled LLVM.
-      - name: Install the store backend (vcpkg Berkeley DB)
-        run: |
-          vcpkg install berkeleydb:x64-windows
-          # `vcpkg list` prints "<port>:<triplet>  <version>#<port-version>  <description>".
-          # The port name is followed by ":x64-windows", not whitespace, and
-          # the version carries a "#<n>" suffix, so a pattern expecting
-          # "berkeleydb" then spaces then "4.8" matches nothing and the
-          # lane dies before the build. Pin the 4.8 line; a bump off it
-          # fails here.
-          vcpkg list berkeleydb:x64-windows | grep -Eq 'berkeleydb:x64-windows[[:space:]]+4[.]8[.]' \
-            || { echo "::error::vcpkg berkeleydb is not the documented 4.8 line: $(vcpkg list berkeleydb:x64-windows)"; exit 1; }
-          echo "OXPINYIN_BDB_INCLUDE_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\include" >> "$GITHUB_ENV"
-          echo "OXPINYIN_BDB_LIB_DIR=$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\lib" >> "$GITHUB_ENV"
-          echo "OXPINYIN_BDB_LIB_NAME=libdb48" >> "$GITHUB_ENV"
-          # vcpkg's berkeleydb port is 4.8.30. The store refuses any libdb
-          # other than the surveyed 5.3 unless this is set, and it is set
-          # only here: it covers that one comparison, and the process
-          # prints a warning naming both versions. No other lane sets it.
-          echo "OXPINYIN_BDB_ALLOW_UNSURVEYED_VERSION=1" >> "$GITHUB_ENV"
-          echo 'LIBCLANG_PATH=C:\Program Files\LLVM\bin' >> "$GITHUB_ENV"
-          echo "$VCPKG_INSTALLATION_ROOT\\installed\\x64-windows\\bin" >> "$GITHUB_PATH"
-      # The workspace default is Berkeley DB, so this lane no longer
-      # passes `--features bdb`. The vcpkg provisioning above is what
-      # makes that default link. Same exclusions as the macOS job.
-      - run: >
-          cargo test --locked --workspace
-          --exclude oxpinyin-capi --exclude oxpinyin-zhuyin-capi
-          --exclude oxpinyin-corpus --exclude oxpinyin-kmm --exclude oxpinyin-punct
-          --exclude oxpinyin-word
-
   # Supply-chain gate. cargo-deny's advisories check consumes the same
   # RustSec DB cargo-audit uses, so this one job replaces both tools; the
   # policy (allow-lists, deviation registry with review-by dates) lives in
@@ -669,7 +608,7 @@ jobs:
   # and remain non-required lanes beside this one.
   ci-aggregate:
     needs:
-      [changes, lint, test, test-macos, test-windows, deny]
+      [changes, lint, test, test-macos, deny]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -680,7 +619,6 @@ jobs:
           LINT: ${{ needs.lint.result }}
           TEST: ${{ needs.test.result }}
           TEST_MACOS: ${{ needs.test-macos.result }}
-          TEST_WINDOWS: ${{ needs.test-windows.result }}
           DENY: ${{ needs.deny.result }}
         run: |
           set -euo pipefail
@@ -708,7 +646,6 @@ jobs:
           lane lint "$LINT"
           lane test "$TEST"
           lane test-macos "$TEST_MACOS"
-          lane test-windows "$TEST_WINDOWS"
           lane deny "$DENY"
           if [ "$status" -eq 0 ]; then
             echo "all lanes green (gated=$GATED)"

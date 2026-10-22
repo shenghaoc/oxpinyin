@@ -102,7 +102,7 @@ libchewing convention), they do not auto-block unless a ratchet exists
 |---|---|---|---|---|
 | fmt / clippy (curated) | ✔ | | | planned (T4 not built) |
 | nextest/cargo test + doctests | ✔ | | | planned (T4 not built) |
-| portable tests | ✔ (mac/win) | | | planned (T4 not built) |
+| portable tests | ✔ (mac) | | ✔ (win; also on manual dispatch) | planned (T4 not built) |
 | C++ smoke + differential | ✔ | | | planned (T4 not built) |
 | cargo-deny | ✔ | | | planned (T4 not built) |
 | fuzz smoke | moved to T3 2026-09-23 | | | |
