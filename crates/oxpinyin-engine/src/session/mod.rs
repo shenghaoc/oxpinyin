@@ -715,14 +715,16 @@ fn resplit_step(columns: &mut [Vec<ScanKey>]) {
             let Some(next_keys) = columns.get(key.to).cloned() else {
                 continue;
             };
+            // Resolve each key's text once, not once per table row.
+            let key_text = key.key.text();
             for next_key in next_keys {
                 if next_key.crosses_separator || key.tone != 0 || next_key.tone != 0 {
                     continue;
                 }
-                let Some((_, _, left, right)) =
-                    RESPLIT_TABLE.iter().find(|(first, second, _, _)| {
-                        *first == key.key.text() && *second == next_key.key.text()
-                    })
+                let next_text = next_key.key.text();
+                let Some((_, _, left, right)) = RESPLIT_TABLE
+                    .iter()
+                    .find(|(first, second, _, _)| *first == key_text && *second == next_text)
                 else {
                     continue;
                 };
@@ -741,9 +743,10 @@ fn inner_split_step(columns: &mut [Vec<ScanKey>]) {
             if key.tone != 0 {
                 continue;
             }
+            let text = key.key.text();
             let Some((_, left, right)) = DIVIDED_TABLE
                 .iter()
-                .find(|(syllable, _, _)| *syllable == key.key.text())
+                .find(|(syllable, _, _)| *syllable == text)
             else {
                 continue;
             };
