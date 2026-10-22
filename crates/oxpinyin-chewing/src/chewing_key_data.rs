@@ -16,6 +16,30 @@ pub const NUM_MIDDLES: usize = 4;
 /// `CHEWING_NUMBER_OF_FINALS` (`chewing_enum.h:83`).
 pub const NUM_FINALS: usize = 18;
 
+/// One generated content row's integer columns: the spelling as an
+/// inline key (see [`spelling_key`]) and the key's three components.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ContentKey {
+    pub(crate) spelling: u64,
+    pub(crate) initial: u8,
+    pub(crate) middle: u8,
+    pub(crate) final_: u8,
+}
+
+/// The inline integer key of a spelling: its bytes zero-padded to eight,
+/// read big-endian. `None` for a spelling no content row can hold (longer
+/// than eight bytes, or containing NUL), which therefore matches no row.
+#[must_use]
+pub(crate) fn spelling_key(text: &str) -> Option<u64> {
+    let bytes = text.as_bytes();
+    if bytes.len() > 8 || bytes.contains(&0) {
+        return None;
+    }
+    let mut padded = [0_u8; 8];
+    padded.get_mut(..bytes.len())?.copy_from_slice(bytes);
+    Some(u64::from_be_bytes(padded))
+}
+
 include!(concat!(env!("OUT_DIR"), "/content_table.rs"));
 
 /// `chewing_key_table` (`pinyin_parser_table.h:4420`):
