@@ -1481,7 +1481,7 @@ where
         // straight into `m_candidates` (`pinyin.cpp:1769-1791`).
         let unreadable = self
             .dictionary
-            .lookup_each_flagged(sequence, &mut |entry| {
+            .lookup_each_flagged(sequence, |entry| {
                 push_scan_entry(entry, keys, end, CandidateKind::Phrase, system);
             })
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
@@ -1501,7 +1501,7 @@ where
             });
         }
         self.dictionary
-            .lookup_addon_each(sequence, &mut |entry| {
+            .lookup_addon_each(sequence, |entry| {
                 push_scan_entry(entry, keys, end, CandidateKind::Addon, addon);
             })
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;

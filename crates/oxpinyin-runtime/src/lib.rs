@@ -248,7 +248,7 @@ impl AddonSet {
     fn lookup_each(
         &self,
         syllables: &[SyllableKey],
-        each: &mut dyn FnMut(PhraseEntry),
+        each: impl FnMut(PhraseEntry),
     ) -> Result<(), DictError> {
         self.dict.lookup_each(syllables, each)
     }
@@ -1426,14 +1426,14 @@ impl Dictionary for RuntimeDict {
         out: &mut Vec<Self::Entry>,
     ) -> Result<(), Self::Error> {
         out.clear();
-        self.lookup_each_flagged(syllables, &mut |entry| out.push(entry))
+        self.lookup_each_flagged(syllables, |entry| out.push(entry))
             .map(|_| ())
     }
 
     fn lookup_each_flagged(
         &self,
         syllables: &[Self::Syllable],
-        each: &mut dyn FnMut(Self::Entry),
+        mut each: impl FnMut(Self::Entry),
     ) -> Result<bool, Self::Error> {
         // Each entry is finished before it is handed on: the pronunciation
         // read and the visibility filter look at that entry alone, so doing
@@ -1551,14 +1551,14 @@ impl Dictionary for RuntimeDict {
 
     fn lookup_addon(&self, syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
         let mut entries = Vec::new();
-        self.lookup_addon_each(syllables, &mut |entry| entries.push(entry))?;
+        self.lookup_addon_each(syllables, |entry| entries.push(entry))?;
         Ok(entries)
     }
 
     fn lookup_addon_each(
         &self,
         syllables: &[Self::Syllable],
-        each: &mut dyn FnMut(Self::Entry),
+        each: impl FnMut(Self::Entry),
     ) -> Result<(), Self::Error> {
         let addons = self
             .addons
@@ -1938,8 +1938,7 @@ const _: () = {
 /// clones sharing the table handles, and sessions built through
 /// [`Runtime::new_session`] share them too.
 pub struct Runtime {
-    /// Shared by every session [`Runtime::new_session`] builds.
-    paths: Arc<StoragePaths>,
+    paths: StoragePaths,
     dict: RuntimeDict,
     lm: RuntimeLm,
     user: Option<UserStore>,
@@ -2261,10 +2260,8 @@ impl Runtime {
         };
 
         Ok(Self {
-            paths: Arc::new(
-                StoragePaths::new(user_dir.unwrap_or_else(|| Path::new("")))
-                    .with_system_dirs([system_dir]),
-            ),
+            paths: StoragePaths::new(user_dir.unwrap_or_else(|| Path::new("")))
+                .with_system_dirs([system_dir]),
             dict,
             lm,
             user,
@@ -2318,9 +2315,12 @@ impl Runtime {
         } else {
             self.cached_key_costs()?.to_vec()
         };
+        // The session reads no storage path (the runtime owns every store
+        // it decodes over), so it gets the empty set, which allocates
+        // nothing, instead of a copy of the runtime's.
         Session::new_with_key_costs(
             config,
-            Arc::clone(&self.paths),
+            StoragePaths::default(),
             self.dict.clone(),
             self.lm.clone(),
             key_costs,

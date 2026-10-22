@@ -325,7 +325,7 @@ pub trait Dictionary {
     fn lookup_each_flagged(
         &self,
         syllables: &[Self::Syllable],
-        each: &mut dyn FnMut(Self::Entry),
+        each: impl FnMut(Self::Entry),
     ) -> Result<bool, Self::Error> {
         let mut out = Vec::new();
         self.lookup_into(syllables, &mut out)?;
@@ -397,7 +397,7 @@ pub trait Dictionary {
     fn lookup_addon_each(
         &self,
         syllables: &[Self::Syllable],
-        each: &mut dyn FnMut(Self::Entry),
+        each: impl FnMut(Self::Entry),
     ) -> Result<(), Self::Error> {
         self.lookup_addon(syllables)?.into_iter().for_each(each);
         Ok(())
@@ -661,7 +661,7 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
     fn lookup_each_flagged(
         &self,
         syllables: &[Self::Syllable],
-        each: &mut dyn FnMut(Self::Entry),
+        each: impl FnMut(Self::Entry),
     ) -> Result<bool, Self::Error> {
         (**self).lookup_each_flagged(syllables, each)
     }
@@ -681,7 +681,7 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
     fn lookup_addon_each(
         &self,
         syllables: &[Self::Syllable],
-        each: &mut dyn FnMut(Self::Entry),
+        each: impl FnMut(Self::Entry),
     ) -> Result<(), Self::Error> {
         (**self).lookup_addon_each(syllables, each)
     }

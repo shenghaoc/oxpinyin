@@ -29,7 +29,7 @@ where
     /// for it and construction currently always succeeds.
     pub fn new(
         config: &impl ConfigSource,
-        paths: impl Into<Arc<StoragePaths>>,
+        paths: StoragePaths,
         dictionary: D,
         model: L,
     ) -> Result<Self, EngineError> {
@@ -45,7 +45,7 @@ where
         };
         Ok(Self::init(
             Settings::read(config),
-            paths.into(),
+            paths,
             dictionary,
             model,
             key_costs,
@@ -76,14 +76,14 @@ where
     /// aligned with [`Self::new`], whose fallback walk can fail.
     pub fn new_with_key_costs(
         config: &impl ConfigSource,
-        paths: impl Into<Arc<StoragePaths>>,
+        paths: StoragePaths,
         dictionary: D,
         model: L,
         key_costs: Vec<Cost>,
     ) -> Result<Self, EngineError> {
         Ok(Self::init(
             Settings::read(config),
-            paths.into(),
+            paths,
             dictionary,
             model,
             key_costs,
@@ -92,7 +92,7 @@ where
 
     pub(super) fn init(
         settings: Settings,
-        paths: Arc<StoragePaths>,
+        paths: StoragePaths,
         dictionary: D,
         model: L,
         key_costs: Vec<Cost>,
@@ -647,7 +647,7 @@ where
 
     /// The storage locations the session was opened with.
     #[must_use]
-    pub fn paths(&self) -> &StoragePaths {
+    pub const fn paths(&self) -> &StoragePaths {
         &self.paths
     }
 

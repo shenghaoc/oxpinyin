@@ -11,7 +11,6 @@
 use core::fmt::Display;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use smallvec::SmallVec;
 
@@ -149,9 +148,7 @@ pub struct Session<D, L> {
     // options, remasked live); never composition state.
     dictionary: D,
     model: L,
-    /// Shared with the runtime that opened the session, so a session costs
-    /// no path copies of its own.
-    paths: Arc<StoragePaths>,
+    paths: StoragePaths,
     settings: Settings,
     scoring: ScoringConfig,
     /// Per-key costs for the pre-frequency fallback scorer, and **empty

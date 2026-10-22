@@ -116,7 +116,7 @@ fn resolve_items(
     libraries: &PhraseLibraries,
     keys: &[ChewingKey],
     items: &[PinyinIndexItem],
-    each: &mut dyn FnMut(PhraseEntry),
+    mut each: impl FnMut(PhraseEntry),
     user_nibbles: u32,
 ) -> bool {
     let mut unreadable = false;
@@ -602,7 +602,7 @@ impl SystemDictionary {
     fn fill_lookup(
         &self,
         syllables: &[SyllableKey],
-        each: &mut dyn FnMut(PhraseEntry),
+        each: impl FnMut(PhraseEntry),
     ) -> Result<bool, DictError> {
         if syllables.is_empty() {
             return Ok(false);
@@ -629,7 +629,7 @@ impl Dictionary for SystemDictionary {
 
     fn lookup(&self, syllables: &[SyllableKey]) -> Result<Vec<PhraseEntry>, DictError> {
         let mut entries = Vec::new();
-        self.fill_lookup(syllables, &mut |entry| entries.push(entry))?;
+        self.fill_lookup(syllables, |entry| entries.push(entry))?;
         Ok(entries)
     }
 
@@ -697,14 +697,14 @@ impl Dictionary for SystemDictionary {
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), DictError> {
         out.clear();
-        self.fill_lookup(syllables, &mut |entry| out.push(entry))
+        self.fill_lookup(syllables, |entry| out.push(entry))
             .map(|_| ())
     }
 
     fn lookup_each_flagged(
         &self,
         syllables: &[SyllableKey],
-        each: &mut dyn FnMut(PhraseEntry),
+        each: impl FnMut(PhraseEntry),
     ) -> Result<bool, DictError> {
         self.fill_lookup(syllables, each)
     }
@@ -1046,7 +1046,7 @@ impl AddonDictionary {
         out: &mut Vec<PhraseEntry>,
     ) -> Result<(), DictError> {
         out.clear();
-        self.lookup_each(syllables, &mut |entry| out.push(entry))
+        self.lookup_each(syllables, |entry| out.push(entry))
     }
 
     /// [`Self::lookup_into`]'s records handed to `each` in order.
@@ -1057,7 +1057,7 @@ impl AddonDictionary {
     pub fn lookup_each(
         &self,
         syllables: &[SyllableKey],
-        each: &mut dyn FnMut(PhraseEntry),
+        each: impl FnMut(PhraseEntry),
     ) -> Result<(), DictError> {
         let Some(pinyin) = self.pinyin.as_ref() else {
             return Ok(());
