@@ -431,6 +431,8 @@ fn edge_cases() -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::any::Any;
+    use std::panic::catch_unwind;
     use std::sync::OnceLock;
 
     use super::{CORPUS_DIR, DOMAIN_HIGH, DOMAIN_LOW, Stratum, generate};
@@ -449,13 +451,64 @@ mod tests {
         assert_eq!(corpus(), generate().as_slice());
     }
 
+    /// Pairs each check with its own name, so the report cannot misname one.
+    macro_rules! named_checks {
+        ($($check:ident),+ $(,)?) => {
+            [$((stringify!($check), $check as fn())),+]
+        };
+    }
+
+    /// The message of a caught panic: a `String` when `assert!` formats one,
+    /// a `&str` when it is a literal.
+    fn panic_message(payload: &(dyn Any + Send)) -> &str {
+        payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or("non-string panic payload")
+    }
+
+    /// Runs the eight read-only checks below over one generated corpus.
+    ///
+    /// nextest runs each test in its own process, where [`corpus`]'s
+    /// `OnceLock` cannot share a generation with another test, so the checks
+    /// share one test instead of generating the corpus once each. Each check
+    /// still runs when an earlier one fails; the failure names every failing
+    /// check with its message.
     #[test]
+    fn generated_corpus_passes_every_check() {
+        let checks = named_checks!(
+            corpus_meets_the_ten_thousand_input_floor,
+            every_input_is_in_the_frozen_byte_domain,
+            every_input_is_within_the_parser_result_bound,
+            first_stratum_is_exhaustive_over_the_inventory,
+            strata_have_no_internal_duplicates,
+            strata_reach_their_documented_counts,
+            empty_input_is_the_first_edge_case,
+            file_bytes_round_trip_including_the_empty_input,
+        );
+        let failures: Vec<String> = checks
+            .iter()
+            .filter_map(|&(name, check)| {
+                catch_unwind(check)
+                    .err()
+                    .map(|payload| format!("{name}: {}", panic_message(payload.as_ref())))
+            })
+            .collect();
+        assert!(
+            failures.is_empty(),
+            "{} of {} corpus checks failed:\n{}",
+            failures.len(),
+            checks.len(),
+            failures.join("\n")
+        );
+    }
+
     fn corpus_meets_the_ten_thousand_input_floor() {
         let total: usize = corpus().iter().map(|s| s.inputs.len()).sum();
         assert!(total >= 10_000, "corpus has only {total} inputs");
     }
 
-    #[test]
     fn every_input_is_in_the_frozen_byte_domain() {
         for stratum in corpus() {
             for input in &stratum.inputs {
@@ -470,7 +523,6 @@ mod tests {
         }
     }
 
-    #[test]
     fn every_input_is_within_the_parser_result_bound() {
         let parser = FullPinyinParser;
         for stratum in corpus() {
@@ -484,7 +536,6 @@ mod tests {
         }
     }
 
-    #[test]
     fn first_stratum_is_exhaustive_over_the_inventory() {
         let first = &corpus()[0];
         assert_eq!(first.file_name, "01-single-syllable.txt");
@@ -498,7 +549,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn strata_have_no_internal_duplicates() {
         for stratum in corpus() {
             let mut seen = stratum.inputs.clone();
@@ -509,7 +559,6 @@ mod tests {
         }
     }
 
-    #[test]
     fn strata_reach_their_documented_counts() {
         let counts: Vec<(&str, usize)> = corpus()
             .iter()
@@ -531,7 +580,6 @@ mod tests {
         );
     }
 
-    #[test]
     fn empty_input_is_the_first_edge_case() {
         let edge = corpus()
             .iter()
@@ -540,7 +588,6 @@ mod tests {
         assert_eq!(edge.inputs.first().map(String::as_str), Some(""));
     }
 
-    #[test]
     fn file_bytes_round_trip_including_the_empty_input() {
         for stratum in corpus() {
             let bytes = stratum.to_file_bytes();
