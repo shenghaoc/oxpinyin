@@ -163,15 +163,19 @@ def verify_prefix(prefix, provenance=None, cell='bdb'):
     actual = fields(prefix / 'oracle-pin.txt')
     expected = fields(REPO / 'tools/oracle/oracle-pin.txt')
     ref = f"libpinyin-{expected['libpinyin_tag']}-{PIN}+model20-{expected['model_archive_sha256']}+dbm-{cell}"
-    assert actual['pin_ref'] == ref and actual['dbm'] == CELLS[cell]['dbm']
+    if actual['pin_ref'] != ref or actual['dbm'] != CELLS[cell]['dbm']:
+        raise RuntimeError(f'oracle prefix requires pin_ref {ref!r} and DBM {CELLS[cell]["dbm"]!r}; '
+                           f'found {actual["pin_ref"]!r} and {actual["dbm"]!r}')
     oracle_hashes(prefix, provenance, cell)
     count = 0
     for name, field in [('oracle-data.sha256', 'data_manifest_sha256'), ('oracle-data-unstable.sha256', 'data_unstable_manifest_sha256')]:
         raw = (prefix / name).read_bytes()
-        assert hashlib.sha256(raw).hexdigest() == actual[field]
+        if hashlib.sha256(raw).hexdigest() != actual[field]:
+            raise RuntimeError(f'oracle data manifest SHA-256 differs from recorded provenance: {name}')
         for line in raw.decode().splitlines():
             digest, path = line.split('  ', 1)
-            assert hashlib.sha256((prefix / path).read_bytes()).hexdigest() == digest, path
+            if hashlib.sha256((prefix / path).read_bytes()).hexdigest() != digest:
+                raise RuntimeError(f'oracle data SHA-256 differs from manifest: {path}')
             count += 1
     return count
 
@@ -184,18 +188,25 @@ def build(pin, config, out, oracle, cell='bdb', provenance=None):
     conditional TU lists; the installed config.status guards the other
     original configure flags and supplies the configured DBM link input.
     """
-    assert command(["git", "-C", pin, "rev-parse", "HEAD"]).strip() == PIN
-    assert not command(["git", "-C", pin, "status", "--porcelain", "--untracked-files=no"]).strip()
+    revision = command(["git", "-C", pin, "rev-parse", "HEAD"]).strip()
+    if revision != PIN:
+        raise RuntimeError(f'measurement requires pin checkout {PIN}; found {revision}')
+    if command(["git", "-C", pin, "status", "--porcelain", "--untracked-files=no"]).strip():
+        raise RuntimeError('measurement requires a pin checkout with no tracked changes')
     verify_prefix(oracle, provenance, cell)
     configuration = command([config.parent / "config.status", "--config"]).strip()
     required = ["--disable-static", CELLS[cell]['configure'], "--enable-libzhuyin"]
-    assert all(flag in shlex.split(configuration) for flag in required), configuration
-    assert "#define " + CELLS[cell]['macro'] in config.read_text()
+    if not all(flag in shlex.split(configuration) for flag in required):
+        raise RuntimeError(f'measurement requires configure flags {required!r}; found {configuration!r}')
+    if "#define " + CELLS[cell]['macro'] not in config.read_text():
+        raise RuntimeError(f'measurement config.h requires {CELLS[cell]["macro"]}')
     for other in CELLS.values():
-        assert other['macro'] == CELLS[cell]['macro'] or "#define " + other['macro'] not in config.read_text()
+        if other['macro'] != CELLS[cell]['macro'] and "#define " + other['macro'] in config.read_text():
+            raise RuntimeError(f'measurement config.h for {cell} must not define {other["macro"]}')
     libraries = configured_libraries(config.parent / "config.status", cell)
     out.mkdir(parents=True, exist_ok=True)
-    assert not out.is_relative_to(oracle) and not out.is_relative_to(pin), 'measurement output must be lane-owned outside the pin/oracle'
+    if out.is_relative_to(oracle) or out.is_relative_to(pin):
+        raise RuntimeError('measurement output must be lane-owned outside the pin/oracle')
     clear(out)  # old stamps must not pollute a newly compiled measurement
     (out / "config.h").write_bytes(config.read_bytes())
     common = cell_sources(pin, cell)
@@ -245,7 +256,11 @@ def counters(out, pin):
             break
         document, end = decoder.raw_decode(raw[start:])
         position = start + end
-        assert document["format_version"] == "2"
+        version = document.get("format_version")
+        if version != "2":
+            gcov_version = command(["gcov", "--version"]).splitlines()[0]
+            raise RuntimeError('gcov 14 or later is required (JSON format_version 2); '
+                               f'found format_version {version!r}; gcov --version: {gcov_version}')
         tu = Path(document["data_file"]).name.removesuffix(".gcda")
         for source in document["files"]:
             try:
@@ -671,7 +686,8 @@ def gates(target, export, model, receipt=None):
     tests = target / 'j-tests' if (target / 'j-tests').exists() else target
     binaries = list((tests / 'debug/deps').glob('sentence_surface_parity-*'))
     binaries = [path for path in binaries if path.is_file() and os.access(path, os.X_OK)]
-    assert len(binaries) == 1, 'build the bdb sentence_surface_parity test once in an isolated target'
+    if len(binaries) != 1:
+        raise RuntimeError(f'exactly one sentence_surface_parity test binary is required; found {len(binaries)} in {tests}')
     env = dict(os.environ, PINYIN_EXPORT_DIR=str(export), PINYIN_MODEL_DIR=str(model))
     passed = 0
     observations = []
@@ -699,7 +715,8 @@ def preserved_gate(receipt, target):
     """
     tests = target / 'j-tests' if (target / 'j-tests').exists() else target
     binaries = [path for path in (tests / 'debug/deps').glob('sentence_surface_parity-*') if path.is_file() and os.access(path, os.X_OK)]
-    assert len(binaries) == 1
+    if len(binaries) != 1:
+        raise RuntimeError(f'exactly one sentence_surface_parity test binary is required; found {len(binaries)} in {tests}')
     observations = receipt.get('observations', [])
     if [item[0] for item in observations] != list(GATE_TESTS):
         raise RuntimeError('preserved gate lacks the four exact fresh test summaries')
@@ -716,7 +733,8 @@ def user_store(prefix, target, out, pin, cell='bdb', provenance=None, libraries=
     verify_prefix(prefix, provenance, cell)
     tests = target / 'j-tests' if (target / 'j-tests').exists() else target
     binaries = [path for path in (tests / 'debug/deps').glob('user_dir_round_trip-*') if path.is_file() and os.access(path, os.X_OK)]
-    assert len(binaries) == 1
+    if len(binaries) != 1:
+        raise RuntimeError(f'exactly one user_dir_round_trip test binary is required; found {len(binaries)} in {tests}')
     headers = next((prefix / 'include').glob('libpinyin-*'))
     data = prefix / 'lib/libpinyin/data'
     attributed, nonmatch, incomplete, results = defaultdict(set), set(), set(), []
