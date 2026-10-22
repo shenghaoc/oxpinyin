@@ -73,6 +73,15 @@ runner:
 PINYIN_ORACLE_DBM=kc . ~/.oxpinyin-oracle.env  # another cell
 ```
 
+A subset run, such as `--cells bdb`, keeps the other cells named by the
+existing file when their saved prefixes still pass the library hashes in
+`oracle-pin.txt` and the pinned data-manifest checks. A cell that fails
+either check is removed with one diagnostic naming the cell and check.
+The file contains the verified retained cells plus this run's cells, even
+when they use different cache directories. A retained tkrzw cell also
+keeps its local runtime paths. Setup publishes the complete file with an
+atomic rename.
+
 It exports, for each provisioned cell `<C>` in `BDB`, `KC`, `TKRZW`:
 `OXPINYIN_ORACLE_PREFIX_<C>` (the oracle prefix) and
 `OXPINYIN_ORACLE_DATA_<C>` (its `lib/libpinyin/data`); `PINYIN_MODEL_DIR`
