@@ -59,7 +59,7 @@ init	<oxpinyin_facade::context::ContextCore>::take_layout_faults
 init	<oxpinyin_runtime::FacadeBumps as core::default::Default>::default
 init	<oxpinyin_runtime::Runtime>::open_with_law
 init	<oxpinyin_store::bdb::ffi::Cursor as core::ops::drop::Drop>::drop
-init	<oxpinyin_store::bdb::ffi::Cursor>::get
+init	<oxpinyin_store::bdb::ffi::Cursor>::read
 init	<oxpinyin_store::bdb::ffi::Db>::open_at
 init	<oxpinyin_store::bdb::ffi::SharedDb>::cursor
 init	<oxpinyin_store::bdb::ffi::SharedDb>::open
