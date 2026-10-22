@@ -101,7 +101,7 @@ echo "pkg-config oxpinyin libs:   $CAPI_LIBS"
 echo "installed capi .so:         $CAPI_SO"
 [ -f "$CAPI_SO" ] || { echo "fatal: $CAPI_SO not found" >&2; exit 1; }
 function_order_measurement --library "ox/pinyin=$CAPI_SO" \
-    --reference-arm pin --library "pin/pinyin=$ORACLE_SO" "${FUNCTION_ORDER_ARGS[@]}"
+    --reference-arm pin --library "pin/pinyin=$ORACLE_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 
 # ── Installed data tree (cargo-c ships no data; packager must add it) ────
 

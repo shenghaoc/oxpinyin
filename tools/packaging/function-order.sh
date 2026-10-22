@@ -48,12 +48,14 @@ function_order_measurement() {
 
 # Legacy runners have no other command-line options. Keep their opt-outs
 # explicit arguments, never an inherited environment variable.
+# Callers use ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}: Bash 3.2
+# treats an empty array as unset under `set -u`.
 function_order_arguments() {
   FUNCTION_ORDER_ARGS=()
   while (( $# )); do
     case "$1" in
       --function-order|--unordered-arm)
-        [[ $# -ge 2 && -n "$2" ]] || return 2
+        [[ $# -ge 2 && -n "${2:-}" ]] || return 2
         FUNCTION_ORDER_ARGS+=("$1" "$2"); shift 2 ;;
       *) echo "unknown function-order argument: $1" >&2; return 2 ;;
     esac

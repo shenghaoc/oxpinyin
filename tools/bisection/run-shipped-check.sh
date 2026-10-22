@@ -53,7 +53,7 @@ S_SO=/tmp/S-shipped.so
 build_cinstall "$Z_SO" tkrzw
 build_cinstall "$S_SO" tkrzw,shipped
 function_order_measurement --library "Z/pinyin=$Z_SO" --library "S/pinyin=$S_SO" \
-    --reference-arm L --library "L/pinyin=$L_SO" "${FUNCTION_ORDER_ARGS[@]}"
+    --reference-arm L --library "L/pinyin=$L_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 
 {
     echo "=== identity (shipped check) ==="

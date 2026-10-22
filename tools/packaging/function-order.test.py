@@ -349,7 +349,7 @@ source "$0"
                              'L_SO', 'X_SO', 'Y_SO', 'Z_SO', 'S_SO'):
                 environment[variable] = str(LIBRARY)
             environment.update(OXPINYIN_TKRZW_SO=str(LIBRARY), OXPINYIN_KC_SO=str(LIBRARY))
-            shell = 'source "$1"; FUNCTION_ORDER_ARGS=(); function_order_measurement() { printf "%s\\n" "$@"; }; ' + guard
+            shell = 'set -euo pipefail; source "$1"; FUNCTION_ORDER_ARGS=(); function_order_measurement() { printf "%s\\n" "$@"; }; ' + guard
             result = subprocess.run(['bash', '-c', shell, 'guard-test', str(HERE / 'function-order.sh')],
                                     capture_output=True, text=True, env=environment)
             with self.subTest(script=script):

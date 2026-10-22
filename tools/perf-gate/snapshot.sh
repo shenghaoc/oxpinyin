@@ -73,7 +73,7 @@ tools/packaging/install.sh libpinyin --prefix=/usr --destdir="$STAGE" \
 	--target-dir "$WORK/target-shipped" >&2
 SHIPPED=$(find "$STAGE" -name 'libpinyin.so.15.0.0' -print -quit)
 [ -n "$SHIPPED" ] || { echo "fatal: cinstall produced no libpinyin.so.15.0.0" >&2; exit 2; }
-function_order_measurement --arm shipped --library "pinyin=$SHIPPED" "${FUNCTION_ORDER_ARGS[@]}"
+function_order_measurement --arm shipped --library "pinyin=$SHIPPED" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 strip --strip-all "$SHIPPED"
 
 # The runbook's rule, enforced rather than trusted: the alloc-count readers are
