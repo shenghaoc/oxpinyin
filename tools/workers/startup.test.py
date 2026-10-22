@@ -23,13 +23,21 @@ CHEWING_INPUTS = ('su3cl3', 'ji3', '5j/ ')
 HOSTILE_INPUTS = ('', "'", "''", "'ni", "ni'", "nihao'", 'zzzz', '12345', 'ni hao', 'NIHAO', '你好',
                   'nihao' * 15)
 TIMES = ('lib_load', 'init', 'config', 'alloc', 'first_candidate_phase', 'ttfc',
-         'setup_plus_first_candidate', 'drop_instance', 'fini', 'worker')
+         'setup_plus_first_candidate', 'drop_instance', 'fini')
+PRELOAD = 'DYLD_INSERT_LIBRARIES' if sys.platform == 'darwin' else 'LD_PRELOAD'
 
 # A deterministic stand-in for both facades. Every call appends one line to
 # STUB_LOG, naming the context or instance it reached, so tests can check
 # order and which instance saw which input. STUB_FAIL selects one failure.
+# Preloaded (PRELOAD), the stub also logs every dlsym name the worker asks
+# for: an interposed wrapper on macOS, a definition that shadows libc's on
+# Linux. Loaded only by dlopen, that wrapper is never reached.
 STUB = r'''
+#if !defined(__APPLE__)
+#define _GNU_SOURCE
+#endif
 #define _POSIX_C_SOURCE 200809L
+#include <dlfcn.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -121,6 +129,21 @@ void fake_end(void *p) { (void)p; }
 bool fake_sentence(void *p, uint8_t rank, char **text) { struct instance *i = p; *text = strdup(rank ? "尼好" : "你好"); return i->length > 0; }
 bool fake_zhuyin_sentence(void *p, char **text) { *text = strdup("你好"); return p != NULL; }
 void g_free(void *p) { free(p); }
+#if defined(__APPLE__)
+static void *counted_dlsym(void *handle, const char *name) { note("dlsym %s", name); return dlsym(handle, name); }
+__attribute__((used)) static const struct { const void *replacement, *replacee; } interpose_dlsym
+    __attribute__((section("__DATA,__interpose"))) = {(const void *)counted_dlsym, (const void *)dlsym};
+#else
+void *dlsym(void *handle, const char *name) {
+    static void *(*real)(void *, const char *);
+    static const char *const versions[] = {"GLIBC_2.34", "GLIBC_2.2.5", "GLIBC_2.17"};
+    for (size_t i = 0; !real && i < sizeof versions / sizeof versions[0]; i++)
+        *(void **)&real = dlvsym(RTLD_NEXT, "dlsym", versions[i]);
+    if (!real) abort();
+    note("dlsym %s", name);
+    return real(handle, name);
+}
+#endif
 '''
 
 SIGNATURES = {
@@ -166,8 +189,9 @@ def shared(root, name, source):
     cfile.write_text(source)
     library = root / (name + '.so')
     link = ['-dynamiclib'] if sys.platform == 'darwin' else ['-shared']
-    subprocess.run(['cc', *link, '-fPIC', '-Wall', '-Wextra', '-Werror', '-O2', '-o', str(library), str(cfile)],
-                   check=True)
+    libraries = [] if sys.platform == 'darwin' else ['-ldl']
+    subprocess.run(['cc', *link, '-fPIC', '-Wall', '-Wextra', '-Werror', '-O2', '-o', str(library), str(cfile),
+                    *libraries], check=True)
     return library
 
 
@@ -270,6 +294,7 @@ class WorkerTests(unittest.TestCase):
             ['measure', 'pinyin', 'x', 'd', 'u', 'now', 'init,init'],
             ['measure', 'pinyin', 'x', 'd', 'u', 'now', 'init,'],
             ['measure', 'pinyin', 'x', 'd', 'u', 'now', 'init'],
+            ['measure', 'pinyin', 'x', 'd', 'u', 'now', ''],
         ]
         for argv in cases:
             with self.subTest(argv=argv):
@@ -277,6 +302,8 @@ class WorkerTests(unittest.TestCase):
                 self.refused(result, 2)
         env = self.env()
         del env['OXPINYIN_STARTUP_EXPORTS']
+        self.refused(self.run_worker('measure', env=env), 2)
+        env['OXPINYIN_STARTUP_EXPORTS'] = 'pinyin_init,pinyin_fini,pinyin_init'
         self.refused(self.run_worker('measure', env=env), 2)
 
     def test_failed_unit_is_refused(self):
@@ -295,6 +322,19 @@ class WorkerTests(unittest.TestCase):
             'init ctx=1', 'set_options ctx=1 0x18a', 'alloc ctx=1 inst=1', 'parse inst=1 [nihao]',
             'parsed_length inst=1', 'guess inst=1 0 0x1e', 'count inst=1', 'candidate inst=1 0', 'type', 'string',
             'free inst=1', 'fini ctx=1'])
+
+    def test_u1_resolves_each_name_exactly_once(self):
+        for facade in ('pinyin', 'zhuyin'):
+            for dropped in (None, facade + '_reset'):
+                with self.subTest(facade=facade, dropped=dropped):
+                    exports = [name for name in stub_exports(facade) if name != dropped]
+                    env = self.env(facade, **{PRELOAD: str(self.stub)})
+                    env['OXPINYIN_STARTUP_EXPORTS'] = ','.join(exports)
+                    self.log.unlink(missing_ok=True)
+                    self.ok('measure', facade=facade, env=env)
+                    looked_up = [line.removeprefix('dlsym ') for line in self.calls() if line.startswith('dlsym ')]
+                    expected = [*exports, *([dropped] if dropped else []), 'g_free']
+                    self.assertEqual(sorted(looked_up), sorted(expected))
 
     def test_zhuyin_units_use_its_own_guess_and_no_parsed_length(self):
         rows = self.ok('measure', facade='zhuyin')
@@ -449,6 +489,18 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, stderr)
         self.assertEqual(seen, list(POINTS))
         self.assertEqual(records(stdout)[1]['stopped_at'], 'end')
+
+    def test_empty_handshake_argument_is_refused_even_with_a_handshake_pipe(self):
+        to_parent, from_worker = os.pipe()
+        to_worker, from_parent = os.pipe()
+        try:
+            env = self.env(OXPINYIN_STARTUP_HANDSHAKE=f'{from_worker},{to_worker}')
+            result = self.run_worker('measure', '', env=env, pass_fds=(from_worker, to_worker))
+        finally:
+            for fd in (to_parent, from_worker, to_worker, from_parent):
+                os.close(fd)
+        self.refused(result, 2)
+        self.assertIn(b'empty handshake argument', result.stderr)
 
     def test_lost_acknowledgement_fails_with_empty_stdout(self):
         to_parent, from_worker = os.pipe()
