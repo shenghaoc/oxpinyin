@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use oxpinyin_core::{DoublePinyinScheme, FullPinyinScheme, OptionBits, ZhuyinScheme};
 use oxpinyin_engine::{Config, ConfigValue};
-use oxpinyin_runtime::{FileType, OpenError, RowFault, Runtime, TableConf, TableConfError};
+use oxpinyin_runtime::{
+    FileType, OpenError, RowFault, Runtime, TableConf, TableConfError, directory_reads_as_a_chunk,
+};
 use oxpinyin_user::SystemVersions;
 use oxpinyin_user::pin_stderr;
 use oxpinyin_user::{ChunkHeaderField, UserConfLaw, UserStore, UserStoreError};
@@ -244,6 +246,29 @@ pub enum LibraryLoadFault {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StoreWriteFailed;
 
+/// The line the pin writes for a row that names no chunk, when it writes
+/// one. `g_build_filename(dir, NULL, NULL)` is `dir`, so `MemoryChunk::mmap`
+/// opens the directory itself (`pinyin.cpp:252-256`, `:286-290`,
+/// `zhuyin.cpp:196-200` at 074a2219). Where the directory reads as a chunk,
+/// the `read` of its length word fails and the pin asserts
+/// (`memory_chunk.h:493`) before writing anything. Where `lseek(SEEK_END)`
+/// fails or answers under the header (tmpfs), `mmap` refuses it
+/// (`memory_chunk.h:486-489`), the pin writes `mmap %s failed!` and then
+/// dies of SIGSEGV on the empty chunk (`phrase_index.cpp:354`). The answer
+/// and warning stay the abort site's either way. Unix only, as
+/// `phrase_library::directory_chunk_fault` is.
+fn null_chunk_line(dir: &Path, reads_as_a_chunk: impl FnOnce(&Path) -> bool) -> Option<Vec<u8>> {
+    (cfg!(unix) && !reads_as_a_chunk(dir)).then(|| pin_stderr::mmap_failed_line(dir))
+}
+
+/// Writes [`null_chunk_line`] for `dir`, if the pin writes it on this file
+/// system.
+fn null_chunk_refused(dir: &Path) {
+    if let Some(line) = null_chunk_line(dir, directory_reads_as_a_chunk) {
+        pin_stderr::emit(&[&line]);
+    }
+}
+
 /// Runs a library transition store-first: `write` replaces the library in
 /// the user store, and `commit` changes the runtime only when it succeeded.
 fn store_first(
@@ -399,6 +424,8 @@ impl ContextCore {
             // `zhuyin.cpp:200`); this open answers NULL as it did.
             if let Some(path) = error.unmappable_library() {
                 pin_stderr::mmap_failed(path);
+            } else if error.null_system_chunk() {
+                null_chunk_refused(system_dir);
             }
             OpenFailure::Runtime(error)
         })?;
@@ -814,7 +841,12 @@ impl ContextCore {
             Ok(loaded) => Ok(loaded),
             Err(oxpinyin_runtime::LibraryError::Row(fault)) => Err(match fault {
                 RowFault::NotDictionary => LibraryRowAssert::NotDictionary,
-                RowFault::NullChunkName => LibraryRowAssert::NullChunkName,
+                RowFault::NullChunkName => {
+                    if let Some(dir) = runtime.system_dir() {
+                        null_chunk_refused(dir);
+                    }
+                    LibraryRowAssert::NullChunkName
+                }
                 RowFault::ChunkHeaderRead => LibraryRowAssert::ChunkHeaderRead,
             }),
             Err(error) => {
@@ -863,6 +895,43 @@ impl ContextCore {
     #[must_use]
     pub fn user_store(&self) -> Option<UserStore> {
         self.user.clone()
+    }
+}
+
+#[cfg(test)]
+mod null_chunk_tests {
+    use super::null_chunk_line;
+    use std::path::Path;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_does_not_read_as_a_chunk_gets_the_pin_line_once() {
+        let mut asked = 0;
+        let line = null_chunk_line(Path::new("/scratch/sys-1"), |dir| {
+            asked += 1;
+            assert_eq!(dir, Path::new("/scratch/sys-1"));
+            false
+        });
+        assert_eq!(asked, 1);
+        assert_eq!(line.as_deref(), Some(&b"mmap /scratch/sys-1 failed!\n"[..]));
+    }
+
+    #[test]
+    fn a_directory_that_reads_as_a_chunk_gets_no_line() {
+        assert_eq!(null_chunk_line(Path::new("/scratch/sys-1"), |_| true), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_line_follows_the_file_system_of_a_real_directory() {
+        let dir = tempfile::Builder::new()
+            .prefix("oxpinyin-facade-null-chunk-")
+            .tempdir()
+            .expect("temp dir");
+        std::fs::write(dir.path().join("table.conf"), b"x").expect("fill the directory");
+        let reads = oxpinyin_runtime::directory_reads_as_a_chunk(dir.path());
+        let line = null_chunk_line(dir.path(), oxpinyin_runtime::directory_reads_as_a_chunk);
+        assert_eq!(line.is_none(), reads);
     }
 }
 

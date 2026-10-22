@@ -76,7 +76,13 @@ pub fn report_rejected_table_conf(system_dir: &Path) {
 /// `:800`). The pin carries on with an empty chunk and dies reading it; the
 /// line is all of its output.
 pub fn mmap_failed(path: &Path) {
-    emit(&[b"mmap ", path_bytes(path), b" failed!\n"]);
+    emit(&[&mmap_failed_line(path)]);
+}
+
+/// The bytes [`mmap_failed`] writes for `path`.
+#[must_use]
+pub fn mmap_failed_line(path: &Path) -> Vec<u8> {
+    [b"mmap ", path_bytes(path), b" failed!\n"].concat()
 }
 
 #[cfg(test)]

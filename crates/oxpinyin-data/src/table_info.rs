@@ -44,6 +44,7 @@
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
+use crate::phrase_library::directory_reads_as_a_chunk;
 use crate::table_conf::{Lambda, PINNED_LAMBDA};
 
 /// `PHRASE_INDEX_LIBRARY_COUNT` (`novel_types.h:43`).
@@ -579,7 +580,10 @@ impl TableConf {
     /// `lseek(SEEK_END)` gave it a size of at least the 8-byte header
     /// (`memory_chunk.h:424-434`), which depends on the file system and on
     /// what the directory holds: this asks the file system the same
-    /// question. The system directory is never that small.
+    /// question. A row without a system chunk is [`TableConfSite::NullSystemFile`]
+    /// on any file system: the pin dies on that row either way, of the
+    /// assert or of the empty chunk it goes on with (the facade writes the
+    /// pin's `mmap %s failed!` line for the second).
     ///
     /// # Errors
     ///
@@ -621,16 +625,6 @@ impl TableConf {
             .zip(&self.addon)
             .filter(|(_, row)| row.file_type != FileType::NotUsed)
     }
-}
-
-/// Whether `MemoryChunk::load` on `dir` gets past `file_size < header` and
-/// asserts on the `read` of a directory: `lseek(fd, 0, SEEK_END)` answers at
-/// least the 8-byte chunk header (`memory_chunk.h:424-434`).
-fn directory_reads_as_a_chunk(dir: &Path) -> bool {
-    use std::io::Seek as _;
-    std::fs::File::open(dir)
-        .and_then(|mut file| file.seek(std::io::SeekFrom::End(0)))
-        .is_ok_and(|size| size >= 8)
 }
 
 /// The bytes of a word up to its first NUL: what the C string sees.

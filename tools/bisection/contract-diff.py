@@ -166,10 +166,10 @@ def case(name, mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash
     subject, which asks the same question: the case is compared as an
     ordinary one, with the stderr and the user directory. For `'system'`
     the pin writes `mmap <dir> failed!` and dies of SIGSEGV in
-    `SubPhraseIndex::load` on the empty chunk, which the subject does not
-    reproduce: only that difference
-    (`pin_segv_after_unmappable_system_dir`) prints `HOST-DEPENDENT`;
-    any other difference stays a DIFFER.
+    `SubPhraseIndex::load` on the empty chunk, a class (b) site: the
+    subject writes the same line and gives the abort site's answer, so the
+    pin must die of SIGSEGV after the stderr the subject wrote, byte for
+    byte, and the subject must answer as `abort=` registers.
     `issues=<tags>` names the issues, register rows or lane tags the case
     guards (`'640'`, `'row:54'`, `'W11'`), the selectors of `--issue`; a
     case's family for `--family` is the text before the first `/` of its
@@ -316,21 +316,6 @@ def directory_reads_as_a_chunk():
             return False
         finally:
             os.close(fd)
-
-
-def pin_segv_after_unmappable_system_dir(spec, pin, subject):
-    """The one difference a short system directory explains (`dir_chunk=
-    'system'` where `directory_reads_as_a_chunk` is false):
-    `MemoryChunk::mmap` refuses the directory (`memory_chunk.h:483-489`),
-    the pin writes `mmap <system dir> failed!` (`pinyin.cpp:255-256` and
-    `:289-290`, `zhuyin.cpp:199-200`) and hands the empty chunk to
-    `SubPhraseIndex::load`, which reads `*(NULL + 16)`
-    (`phrase_index.cpp:354`) and dies of SIGSEGV. The subject gives its
-    class (c) answer for the assert, so its stderr is the pin's without
-    that one line."""
-    return (pin['exit'] == -signal.SIGSEGV
-            and pin['stderr'] == subject['stderr'] + 'mmap SCRATCH/sys-X failed!\n'
-            and abort_answered(spec, pin, subject))
 
 
 class Kit:
@@ -6907,9 +6892,11 @@ conf_abort('default-dictionary-gbk', ('gbk_char.dbin SYSTEM_FILE', 'gbk_char.dbi
 # directory in an overlay answer more, tmpfs refuses `SEEK_END` on a
 # directory. `dir_chunk` holds each case to the side of that condition the
 # host is on (`case`, `directory_reads_as_a_chunk`). Without a system chunk
-# the pin reads the system directory: on tmpfs it writes `mmap <dir>
-# failed!` and dies of SIGSEGV in `SubPhraseIndex::load`
-# (`phrase_index.cpp:354`), which prints HOST-DEPENDENT.
+# the pin reads the system directory: on tmpfs `mmap` refuses it
+# (`memory_chunk.h:486-489`), the pin writes `mmap <dir> failed!`
+# (`pinyin.cpp:255-256`, `:289-290`, `zhuyin.cpp:199-200`) and dies of
+# SIGSEGV on the empty chunk in `SubPhraseIndex::load` (`phrase_index.cpp:354`);
+# the subject writes the same line and gives the abort site's answer.
 conf_abort('system-file-without-chunk', ('opengram.table opengram.bin opengram.dbin SYSTEM_FILE',
                                          'opengram.table NULL opengram.dbin SYSTEM_FILE'), dir_chunk='system')
 # Without a user file the pin reads the user directory, which holds the
@@ -11936,6 +11923,11 @@ def matches(spec, pin, subject):
             all(shown.get(key) == value for key, value in spec['crash'].items())
     elif as_abort:
         same = pin['exit'] == -6 and abort_answered(spec, pin, subject)
+    elif short_dir and spec['dir_chunk'] == 'system':
+        # Class (b): the pin dies of SIGSEGV after the stderr the subject
+        # writes in full; the subject answers as the abort site registers.
+        same = pin['exit'] == -signal.SIGSEGV and pin['stderr'] == subject['stderr'] and \
+            abort_answered(spec, pin, subject)
     else:
         # A side that died or printed nothing observed nothing: two
         # identical failures must not read as a match (nor satisfy
@@ -11945,6 +11937,7 @@ def matches(spec, pin, subject):
         if spec['stderr'] or short_dir:
             same = same and pin['stderr'] == subject['stderr']
         if short_dir:
+            # `dir_chunk='user'`: both sides carry on past an ordinary false.
             same = same and pin['userfiles'] == subject['userfiles']
     return same
 
@@ -12529,11 +12522,9 @@ def run_main():
             else:
                 verdict, expected, same = verdict_for(spec, pin, subject, args.expect_parent)
             compare_seconds += time.monotonic() - compared
-            host_dependent = verdict == 'DIFFER' and not args.expect_parent and (
-                any(map(host_scanf_accepts, spec['host_scanf']))
-                and pin_loaded_subject_refused_table_conf(pin, subject)
-                or spec['dir_chunk'] == 'system' and short_dir_chunk(spec)
-                and pin_segv_after_unmappable_system_dir(spec, pin, subject))
+            host_dependent = (verdict == 'DIFFER' and not args.expect_parent
+                              and any(map(host_scanf_accepts, spec['host_scanf']))
+                              and pin_loaded_subject_refused_table_conf(pin, subject))
             if host_dependent:
                 verdict = 'HOST-DEPENDENT'
                 expected = True
