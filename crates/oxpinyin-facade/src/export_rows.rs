@@ -173,7 +173,7 @@ enum RowSource<'a> {
     /// points, the pronunciation as packed `ChewingKey` bytes.
     Mapped {
         item: PhraseItemView<'a>,
-        keys: &'a [u8],
+        keys: std::borrow::Cow<'a, [u8]>,
         count: u32,
     },
     /// The session's replacement for a system item.

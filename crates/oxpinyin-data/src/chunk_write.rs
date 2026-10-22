@@ -538,7 +538,7 @@ mod tests {
         assert_eq!(item.phrase_text().as_deref(), Some("你好"));
         assert_eq!(item.unigram(), 9);
         let pron = item.pronunciation(0).expect("pronunciation");
-        assert_eq!(pron.keys, &[0x11_u8, 0x00, 0x22, 0x00]);
+        assert_eq!(&*pron.keys, &[0x11_u8, 0x00, 0x22, 0x00]);
         assert_eq!(pron.freq, 9);
         dir.close().expect("cleanup");
     }

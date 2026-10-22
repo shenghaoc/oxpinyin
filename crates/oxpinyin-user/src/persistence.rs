@@ -251,7 +251,7 @@ impl SystemLibrary {
             return Some(std::borrow::Cow::Owned(journal_item_bytes(item)));
         }
         let view = self.mapped.as_ref()?.item(slot)?;
-        Some(std::borrow::Cow::Borrowed(view.as_bytes()))
+        Some(view.to_bytes())
     }
 }
 
@@ -262,13 +262,48 @@ impl SystemLibrary {
 pub struct SystemOriginals {
     libraries: BTreeMap<u8, SystemLibrary>,
     layout: UserFileLayout,
+    /// The facade the mapped libraries were taken from ([`system_originals`]):
+    /// a session open replays each library's `.dbin` in that library's own
+    /// mapping, lent from the facade ([`Self::lend`]).
+    source: Option<std::sync::Arc<PhraseLibraries>>,
 }
 
 impl SystemOriginals {
     /// `libraries` under `layout`.
     #[must_use]
     pub const fn new(libraries: BTreeMap<u8, SystemLibrary>, layout: UserFileLayout) -> Self {
-        Self { libraries, layout }
+        Self {
+            libraries,
+            layout,
+            source: None,
+        }
+    }
+
+    /// Runs an in-place `replay` of library `nibble` with the only handles
+    /// to its mapping: this set's own and its facade's slot, lent under the
+    /// slot's write lock ([`PhraseLibraries::lend`]). Both get back the
+    /// library `replay` returns. `None`, with `replay` not called, when the
+    /// library is not mapped from a facade.
+    pub(crate) fn lend<R>(
+        &mut self,
+        nibble: u8,
+        replay: impl FnOnce(
+            oxpinyin_data::phrase_library::PhraseLibrary,
+        ) -> (Option<oxpinyin_data::phrase_library::PhraseLibrary>, R),
+    ) -> Option<R> {
+        let source = self.source.clone()?;
+        let original = self.libraries.get_mut(&nibble)?;
+        let held = original.mapped.take()?;
+        match source.lend(nibble, held, replay) {
+            Ok((kept, result)) => {
+                original.mapped = Some(kept);
+                Some(result)
+            }
+            Err(held) => {
+                original.mapped = Some(held);
+                None
+            }
+        }
     }
 
     /// The user dir's file layout.
@@ -309,7 +344,10 @@ impl From<BTreeMap<u8, SystemLibrary>> for SystemOriginals {
 /// phrases and pronunciations is deferred to a touched slot's [`SystemLibrary`].
 /// A fresh profile therefore pays no full-item pass (#588).
 #[must_use]
-pub fn system_originals(libraries: &PhraseLibraries, layout: UserFileLayout) -> SystemOriginals {
+pub fn system_originals(
+    libraries: &std::sync::Arc<PhraseLibraries>,
+    layout: UserFileLayout,
+) -> SystemOriginals {
     let mut out = BTreeMap::new();
     for &(nibble, _) in layout.system_logs() {
         let Some(library) = libraries.library((u32::from(nibble) << 24) | 1) else {
@@ -325,7 +363,10 @@ pub fn system_originals(libraries: &PhraseLibraries, layout: UserFileLayout) -> 
             },
         );
     }
-    SystemOriginals::new(out, layout)
+    SystemOriginals {
+        source: Some(std::sync::Arc::clone(libraries)),
+        ..SystemOriginals::new(out, layout)
+    }
 }
 
 /// The user state, in the value shapes the file set carries.
@@ -749,7 +790,7 @@ pub fn load(
 /// As [`load`].
 pub(crate) fn load_profile(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &mut SystemOriginals,
     versions: &SystemVersions,
     law: UserConfLaw,
 ) -> Result<LoadedProfile, PersistenceError> {
@@ -832,22 +873,41 @@ pub(crate) fn load_checked(
     originals: &SystemOriginals,
     check: &ProfileCheck,
 ) -> LoadedProfile {
-    load_checked_impl(dir, originals, check, false)
+    load_checked_impl(dir, Originals::Shared(originals), check)
 }
 
+/// [`load_checked`] for a session open: each system library's `.dbin` is
+/// replayed in place where its facade can lend it, and the replayed views
+/// are kept for the session.
 pub(crate) fn load_session_checked(
     dir: &Path,
-    originals: &SystemOriginals,
+    originals: &mut SystemOriginals,
     check: &ProfileCheck,
 ) -> LoadedProfile {
-    load_checked_impl(dir, originals, check, true)
+    load_checked_impl(dir, Originals::Session(originals), check)
+}
+
+/// The originals a profile read replays its logs over.
+enum Originals<'a> {
+    /// Read only: each replay keeps its writes private.
+    Shared(&'a SystemOriginals),
+    /// A session open's: each replay may write the library's own mapping.
+    Session(&'a mut SystemOriginals),
+}
+
+impl Originals<'_> {
+    fn get(&self) -> &SystemOriginals {
+        match self {
+            Self::Shared(originals) => originals,
+            Self::Session(originals) => originals,
+        }
+    }
 }
 
 fn load_checked_impl(
     dir: &Path,
-    originals: &SystemOriginals,
+    mut originals: Originals<'_>,
     check: &ProfileCheck,
-    lazy: bool,
 ) -> LoadedProfile {
     let mut profile = LoadedProfile {
         loaded: Loaded {
@@ -861,7 +921,7 @@ fn load_checked_impl(
         index_file_keys: IndexKeys::default(),
     };
     if check.conform {
-        load_libraries(dir, originals.layout(), &mut profile.loaded, None);
+        load_libraries(dir, originals.get().layout(), &mut profile.loaded, None);
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]
         let mut records = Vec::new();
         load_user_pinyin_index(
@@ -878,17 +938,11 @@ fn load_checked_impl(
             &mut profile.loaded.skipped,
             &mut profile.loaded.state.phrase_table,
         );
-        if lazy {
-            load_logs_with_mask(
-                SystemLogSource::Directory(dir),
-                originals,
-                &mut profile.loaded,
-                None,
-                false,
-                Some(&mut profile.replayed),
-            );
-        } else {
-            load_logs(dir, originals, &mut profile.loaded);
+        match &mut originals {
+            Originals::Session(originals) => {
+                load_session_logs(dir, originals, &mut profile.loaded, &mut profile.replayed);
+            }
+            Originals::Shared(originals) => load_logs(dir, originals, &mut profile.loaded),
         }
         // The file's records are the table's: one that the readings do not
         // derive keeps its bytes (#785).
@@ -896,7 +950,7 @@ fn load_checked_impl(
         {
             profile.index_file_keys.tails = crate::pinyin_chain::file_tails(
                 &profile.loaded.state,
-                originals,
+                originals.get(),
                 &profile.index_file_keys.pinyin,
                 records,
             );
@@ -1244,7 +1298,6 @@ fn load_logs(dir: &Path, originals: &SystemOriginals, loaded: &mut Loaded) {
         loaded,
         None,
         false,
-        None,
     );
 }
 
@@ -1264,7 +1317,6 @@ pub(crate) fn load_library_logs(
         &mut loaded,
         None,
         true,
-        None,
     );
     (loaded.state, loaded.library_totals)
 }
@@ -1310,7 +1362,6 @@ pub(crate) fn load_masked_logs(
         &mut loaded,
         Some((mask, value)),
         false,
-        None,
     );
     (loaded.state, loaded.library_totals)
 }
@@ -1340,7 +1391,6 @@ fn load_logs_with_mask(
     loaded: &mut Loaded,
     mask: Option<(u32, u32)>,
     only_originals: bool,
-    mut replayed: Option<&mut BTreeMap<u8, ReplayedLibrary>>,
 ) {
     for (nibble, file) in originals.layout().system_logs() {
         let nibble = *nibble;
@@ -1355,54 +1405,8 @@ fn load_logs_with_mask(
             continue;
         }
         let name = file.display();
-        let mut journal = match &mut source {
-            SystemLogSource::Snapshot(snapshot) => {
-                let Some(records) = snapshot.records.remove(&nibble) else {
-                    continue;
-                };
-                Journal::Owned(records)
-            }
-            SystemLogSource::Directory(dir) => {
-                let path = file.under(dir);
-                let mut bytes = match std::fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        continue;
-                    }
-                    Err(e) => {
-                        loaded.skipped.push(format!("{name}: {e}"));
-                        continue;
-                    }
-                };
-                let payload = match read_chunk_payload(&bytes) {
-                    Ok(payload) => payload,
-                    Err(error) => {
-                        loaded.skipped.push(format!("{name}: {error}"));
-                        continue;
-                    }
-                };
-                let end = 8 + payload.len();
-                let validation = validate_log_records(payload);
-                match validation {
-                    Ok(()) => {
-                        bytes.truncate(end);
-                        Journal::Bytes(bytes)
-                    }
-                    Err(error) => {
-                        // A non-null-`MODIFY_HEADER` token is the pin's
-                        // `assert(token == null_token)` (`phrase_index_logger.h:202`):
-                        // a class (c) abort site, recorded for the session open to
-                        // fail on. Every other malformed stream is the pin's
-                        // graceful `next_record` false and stays a skip.
-                        if let Some(token) = error.non_null_header_token() {
-                            loaded.strict_log_fault = Some((name.to_string(), token));
-                        } else {
-                            loaded.skipped.push(format!("{name}: {error}"));
-                        }
-                        continue;
-                    }
-                }
-            }
+        let Some(mut journal) = read_log(&mut source, nibble, file, loaded) else {
+            continue;
         };
         if let Some((mask, value)) = mask {
             let mut records = match journal {
@@ -1456,46 +1460,184 @@ fn load_logs_with_mask(
             journal = Journal::Owned(records);
         }
 
-        // The pin emits local slots, but its reader masks high bits even
-        // in hand-written records (074a2219 phrase_index.cpp:180-215, 219-232).
-        // `SubPhraseIndex::merge` over the records, in the pin's own terms:
-        // bytes compared as bytes, payloads kept whole, the first failure the
-        // end (`phrase_index.cpp:439-517`). Session opens retain the byte
-        // views; value-only callers decode the final touched slots.
+        // `SubPhraseIndex::merge` over the records, its writes kept private:
+        // the library is mapped for the session that asks.
         let mut merge = Merge::new(originals.get(&nibble));
-        for record in journal.records() {
-            if let Err(stop) = merge.apply(record) {
-                loaded.skipped.push(match stop {
-                    Stop::ShortAdd(token) => {
-                        loaded.short_add_payload = true;
-                        format!("{name}: an ADD payload shorter than its unigram for {token:#010x}")
-                    }
-                    Stop::Mismatch("header", _) => {
-                        format!("{name}: replay stopped at a mismatched header")
-                    }
-                    Stop::Mismatch(kind, token) => {
-                        format!("{name}: replay stopped at a mismatched {kind} for {token:#010x}")
-                    }
-                });
-                break;
-            }
-        }
-        let (total, overrides) = if let Some(replayed) = replayed.as_deref_mut() {
-            let (total, overrides, retained) = merge.finish_lazy(&mut loaded.skipped, &name);
-            if let Some(retained) = retained {
-                replayed.insert(nibble, retained);
-            }
-            (total, overrides)
-        } else {
-            merge.finish(&mut loaded.skipped, &name)
+        replay_log(&mut merge, &journal, loaded, &name);
+        let (total, overrides) = merge.finish(&mut loaded.skipped, &name);
+        keep_replay(loaded, nibble, total, overrides);
+    }
+}
+
+/// A session open's `.dbin` replays: `_load_phrase_library` merging each
+/// system library's log into the chunk it just loaded (074a2219
+/// `pinyin.cpp:255-276`). The replay writes the library's own mapping when
+/// its facade can lend it, and the completed views are kept in `replayed`.
+fn load_session_logs(
+    dir: &Path,
+    originals: &mut SystemOriginals,
+    loaded: &mut Loaded,
+    replayed: &mut BTreeMap<u8, ReplayedLibrary>,
+) {
+    let logs = originals.layout().system_logs().to_vec();
+    let mut source = SystemLogSource::Directory(dir);
+    for (nibble, file) in &logs {
+        let nibble = *nibble;
+        let name = file.display();
+        let Some(journal) = read_log(&mut source, nibble, file, loaded) else {
+            continue;
         };
-        if let Some(total) = total {
-            loaded.library_totals.insert(nibble, total);
+        let lent = originals.get(&nibble).map(|original| original.total);
+        let in_place = lent.and_then(|total| {
+            originals.lend(nibble, |library| {
+                replay_in_place(total, library, &journal, loaded, &name)
+            })
+        });
+        let (total, overrides, retained) = in_place.unwrap_or_else(|| {
+            let mut merge = Merge::new(originals.get(&nibble));
+            replay_log(&mut merge, &journal, loaded, &name);
+            merge.finish_lazy(&mut loaded.skipped, &name)
+        });
+        if let Some(retained) = retained {
+            replayed.insert(nibble, retained);
         }
-        // An empty override set and an absent one are the same state.
-        if !overrides.is_empty() {
-            loaded.state.system_overrides.insert(nibble, overrides);
+        keep_replay(loaded, nibble, total, overrides);
+    }
+    // The facade has lent what it had to: the session keeps no hold on it.
+    originals.source = None;
+}
+
+/// `SubPhraseIndex::merge` into `library`'s own mapping, finished while
+/// the original items still read from the chunk as loaded, then sealed
+/// read-only before the library is shared. When the mapping cannot be
+/// sealed it comes back as loaded, and the same records replay again with
+/// private writes. Returns the library for its facade and the finished
+/// replay.
+fn replay_in_place(
+    total: u32,
+    library: oxpinyin_data::phrase_library::PhraseLibrary,
+    journal: &Journal,
+    loaded: &mut Loaded,
+    name: &impl std::fmt::Display,
+) -> (
+    Option<oxpinyin_data::phrase_library::PhraseLibrary>,
+    crate::replay::Finished,
+) {
+    let (skipped, short_add) = (loaded.skipped.len(), loaded.short_add_payload);
+    let mut merge = Merge::in_place(total, library);
+    replay_log(&mut merge, journal, loaded, name);
+    let typed = merge.validate(&mut loaded.skipped, name);
+    if merge.seal().is_ok() {
+        return (merge.library().cloned(), merge.into_finished(typed));
+    }
+    loaded.skipped.truncate(skipped);
+    loaded.short_add_payload = short_add;
+    let mut merge = match merge.into_library() {
+        Some(library) => Merge::overlay(total, library),
+        None => Merge::new(None),
+    };
+    replay_log(&mut merge, journal, loaded, name);
+    (
+        merge.library().cloned(),
+        merge.finish_lazy(&mut loaded.skipped, name),
+    )
+}
+
+/// One library's `.dbin` records, read and validated: `None` when there is
+/// nothing to replay, with the reason in `loaded`.
+fn read_log(
+    source: &mut SystemLogSource<'_>,
+    nibble: u8,
+    file: &FileName,
+    loaded: &mut Loaded,
+) -> Option<Journal> {
+    let name = file.display();
+    match source {
+        SystemLogSource::Snapshot(snapshot) => snapshot.records.remove(&nibble).map(Journal::Owned),
+        SystemLogSource::Directory(dir) => {
+            let path = file.under(dir);
+            let mut bytes = match std::fs::read(&path) {
+                Ok(bytes) => bytes,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+                Err(e) => {
+                    loaded.skipped.push(format!("{name}: {e}"));
+                    return None;
+                }
+            };
+            let payload = match read_chunk_payload(&bytes) {
+                Ok(payload) => payload,
+                Err(error) => {
+                    loaded.skipped.push(format!("{name}: {error}"));
+                    return None;
+                }
+            };
+            let end = 8 + payload.len();
+            match validate_log_records(payload) {
+                Ok(()) => {
+                    bytes.truncate(end);
+                    Some(Journal::Bytes(bytes))
+                }
+                Err(error) => {
+                    // A non-null-`MODIFY_HEADER` token is the pin's
+                    // `assert(token == null_token)` (`phrase_index_logger.h:202`):
+                    // a class (c) abort site, recorded for the session open to
+                    // fail on. Every other malformed stream is the pin's
+                    // graceful `next_record` false and stays a skip.
+                    if let Some(token) = error.non_null_header_token() {
+                        loaded.strict_log_fault = Some((name.to_string(), token));
+                    } else {
+                        loaded.skipped.push(format!("{name}: {error}"));
+                    }
+                    None
+                }
+            }
         }
+    }
+}
+
+/// `SubPhraseIndex::merge` over a journal's records, in the pin's own terms:
+/// bytes compared as bytes, payloads kept whole, the first failure the end
+/// (`phrase_index.cpp:439-517`). The pin emits local slots, but its reader
+/// masks high bits even in hand-written records (074a2219
+/// phrase_index.cpp:180-215, 219-232).
+fn replay_log(
+    merge: &mut Merge,
+    journal: &Journal,
+    loaded: &mut Loaded,
+    name: &impl std::fmt::Display,
+) {
+    for record in journal.records() {
+        if let Err(stop) = merge.apply(record) {
+            loaded.skipped.push(match stop {
+                Stop::ShortAdd(token) => {
+                    loaded.short_add_payload = true;
+                    format!("{name}: an ADD payload shorter than its unigram for {token:#010x}")
+                }
+                Stop::Mismatch("header", _) => {
+                    format!("{name}: replay stopped at a mismatched header")
+                }
+                Stop::Mismatch(kind, token) => {
+                    format!("{name}: replay stopped at a mismatched {kind} for {token:#010x}")
+                }
+            });
+            break;
+        }
+    }
+}
+
+/// Keeps a finished replay's total and overrides in `loaded`.
+fn keep_replay(
+    loaded: &mut Loaded,
+    nibble: u8,
+    total: Option<u32>,
+    overrides: BTreeMap<u32, Option<ChunkItem>>,
+) {
+    if let Some(total) = total {
+        loaded.library_totals.insert(nibble, total);
+    }
+    // An empty override set and an absent one are the same state.
+    if !overrides.is_empty() {
+        loaded.state.system_overrides.insert(nibble, overrides);
     }
 }
 
@@ -2424,8 +2566,13 @@ mod tests {
             Some(&Vec::new())
         );
 
-        let loaded =
-            load_profile(&dir, &originals, &versions(), UserConfLaw::Pinyin).expect("load");
+        let loaded = load_profile(
+            &dir,
+            &mut originals.clone(),
+            &versions(),
+            UserConfLaw::Pinyin,
+        )
+        .expect("load");
         assert!(loaded.loaded.state.phrase_table.contains_key(&gone));
         assert!(loaded.index_file_keys.pinyin.contains(&gone_reading));
         // The session's profile read leaves the user bigram to its
@@ -2540,6 +2687,7 @@ mod tests {
         std::fs::write(&chunk, build_chunk(&pairs).expect("fixture chunk")).expect("write fixture");
         let mut libraries = PhraseLibraries::empty();
         assert!(libraries.load(1, &chunk).expect("map fixture"));
+        let libraries = std::sync::Arc::new(libraries);
         let mapped = system_originals(&libraries, inline.layout().clone());
         drop(libraries); // Originals must keep their own shared mapping alive.
 

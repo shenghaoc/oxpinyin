@@ -41,6 +41,7 @@ pub mod pin_stderr;
 pub mod punct;
 pub mod row_format;
 pub mod single_gram;
+pub mod sparse_bytes;
 pub mod system_files;
 pub mod table;
 pub mod table_conf;
