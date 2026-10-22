@@ -408,14 +408,10 @@ pub fn snapshot_candidates(
         inst.candidates.push(CapiCandidate {
             text,
             text_ptr: std::ptr::null(),
-            kind: cand.kind(),
             candidate_type: match cand.kind() {
                 CandidateKind::Sentence => lookup_candidate_type_t::BEST_MATCH_CANDIDATE,
                 _ => normal_type,
             },
-            nbest_index: cand.nbest_index(),
-            consumed_bytes: u32::try_from(consumed_bytes).unwrap_or(u32::MAX),
-            token: cand.token(),
             source_index: u32::try_from(window_index).unwrap_or(u32::MAX),
             span_begin: u32::try_from(span_begin).unwrap_or(u32::MAX),
         });
