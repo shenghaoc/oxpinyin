@@ -258,11 +258,15 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(result[0]['status'], 'FAIL')
         self.assertEqual(result[0]['reason'], 'resource-blocked: 600 MiB needed, 0 MiB available')
-        # The recorded memory wait leaves out each attempt's slot acquisition
-        # and resource read, which the 0.12 s limit includes, so no fixed share
-        # of the limit is a floor: on a stalled host the first attempt alone
-        # took 70 ms and the row read 0.05 (CI test on ae5f4d13). What holds is
-        # that a memory wait was recorded and fits inside the admission.
+        # The admission ran until its limit: elapsed is measured from before
+        # the first attempt, which starts the limit, so this bound does not
+        # depend on scheduling. The recorded memory wait leaves out each
+        # attempt's slot acquisition and resource read, which the limit
+        # includes, so no fixed share of the limit is a floor for it: on a
+        # stalled host the first attempt alone took 70 ms and the row read
+        # 0.05 (CI test on ae5f4d13). What holds is that a memory wait was
+        # recorded and fits inside the admission.
+        self.assertGreaterEqual(elapsed, admission.limit)
         self.assertGreater(result[0]['memory_wait_seconds'], 0)
         self.assertLessEqual(result[0]['memory_wait_seconds'], elapsed)
         self.assertIn('no process started', self.out.getvalue())
@@ -285,8 +289,9 @@ class AdmissionTests(unittest.TestCase):
                 self.assertEqual(calls, [])
                 self.assertEqual(result[0]['status'], 'FAIL')
                 self.assertEqual(result[0]['reason'], 'resource-blocked: available memory unknown')
-                # Same accounting as the zero-room test: a positive memory wait
-                # inside the admission, not a share of the limit.
+                # Same bounds as the zero-room test: the admission ran until its
+                # limit, and a positive memory wait fits inside it.
+                self.assertGreaterEqual(elapsed, admission.limit)
                 self.assertGreater(result[0]['memory_wait_seconds'], 0)
                 self.assertLessEqual(result[0]['memory_wait_seconds'], elapsed)
                 self.assertIn('no process started', self.out.getvalue())

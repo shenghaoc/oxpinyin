@@ -660,19 +660,26 @@ elif action=='rm':
             json.dumps(dict(name='test', memory_mib=512, token='test')))
         subprocess.run([str(runtime), 'create', '--name', 'test', '--memory', '512M', 'image'],
                        check=True, env=self.env)
-        finished = self.directory / 'reader-finished'
+        ready, finished = self.directory / 'reader-ready', self.directory / 'reader-finished'
         reader = subprocess.Popen([sys.executable, '-c', (
             'import json, sys\nfrom pathlib import Path\n'
-            'state, finished = Path(sys.argv[1]), Path(sys.argv[2])\n'
+            'state, ready, finished = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])\n'
             'reads = errors = 0\n'
+            'ready.touch()\n'
             'while not finished.exists():\n'
             '    reads += 1\n'
             '    try: json.loads(state.read_text())\n'
             '    except ValueError: errors += 1\n'
-            'print(reads, errors)'), str(self.directory / 'runtime-state'), str(finished)],
+            'print(reads, errors)'), str(self.directory / 'runtime-state'), str(ready), str(finished)],
             stdout=subprocess.PIPE, text=True)
         self.addCleanup(self.reap, reader)
         try:
+            # The writes start only once the reader is in its loop; a loaded host
+            # could otherwise run all forty before the reader is scheduled.
+            deadline = time.monotonic() + 10
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(ready.exists(), 'the state reader did not start within 10 s')
             for _ in range(40):
                 subprocess.run([str(runtime), 'stop', 'test'], check=True, env=self.env)
         finally:
