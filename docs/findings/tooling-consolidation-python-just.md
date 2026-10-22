@@ -5,6 +5,7 @@
 > PRs since `75038e9`. Original split: PR #895,
 > 2026-10-19 UTC. Original amendment: 2026-10-18 UTC.
 > Preserve the original Phase 1 records and the later d8539e96 corrections.
+> Amended 2026-10-22 UTC: §7.8 records the native startup ruling.
 > This reconciliation changes no code, tool config, workflow or AGENTS.md rule.
 
 ## 0. Purpose and layer ownership
@@ -330,8 +331,8 @@ compare libraries.
 
 ### 7.1 Scope and acceptance
 
-Layer 4 owns all pin-dependent execution. The optional native macOS path
-below stays separate and uses no pin.
+Layer 4 owns all pin-dependent execution. The native Linux and macOS path
+(§7.8) measures oxpinyin subjects only and uses no pin.
 
 The capability measures **where initialization time and memory go**, for a
 pin-built and an oxpinyin-built `libpinyin`/`libzhuyin`: library load and
@@ -412,7 +413,11 @@ observation; a library answer of false/NULL is a value.
 A fixture is a directory with `user/` exactly as the library left it,
 `profile.manifest` (schema `oxpinyin-startup-profile-v1`, one line per file:
 size, SHA-256, relative path) and optional `witness.txt`. Every sample gets a
-private copy; the manifest is checked before and after. Recovered profiles:
+private copy; the manifest is checked before and after. The one reader and
+writer is `tools/bisection/startup_profile.py`. #842 wrote a four-field form
+(`file`, size, SHA-256, path) under the same schema name
+(`crates/oxpinyin-initbench/src/profile.rs` at `a204f9c0`). That form is a
+historical deviation and is not read (§7.8). Recovered profiles:
 
 | Profile | Import calls | Distinct phrases | Frequency per row | Libraries | User directory (baseline) |
 | --- | ---: | ---: | ---: | --- | ---: |
@@ -558,13 +563,14 @@ current claims about `main`:
 ### 7.7 Python + native implementation of the recovered capability
 
 - Use only libc and the subject's own libraries for the new startup worker.
-  Read Linux process memory through `/proc` inside the container.
-  Keep the optional native macOS `ps` memory path.
+  Read Linux process memory through `/proc`, in the container and on the
+  native Linux path. Keep the native macOS `ps` memory path.
 - Python `measure` owns profiles, verification orchestration, comparability,
   statistics, report and the same-run base/PR/pin interleaving.
 - The native C worker (proposed path `tools/workers/startup.c`) has untimed
   verify and timed measure modes. Both use the same native U1–U6 routine
-  and record its digest. The native verify path also records the full §7.3
+  and emit its canonical record; Python records the record's SHA-256 as
+  the digest. The native verify path also records the full §7.3
   transcript. It observes all 18 workload inputs, profile witnesses,
   sentences, ordered candidates, stderr, directory state and save/reopen
   persistence. These additional native observations remain outside timed
@@ -577,8 +583,10 @@ current claims about `main`:
   Python orchestrates both modes, checks digest equality and comparability,
   and calculates statistics and reports. A Python `ctypes` observation may
   cross-check the result but never replaces native verification. Python
-  remains outside the timed process. The worker reads memory at the
-  requested points and emits a line-oriented record. Python serialises the
+  remains outside the timed process. At each requested point the worker
+  stops and waits on a handshake. The parent reads the child's memory
+  there (`/proc` on Linux, `ps` on macOS), as #993's teardown worker
+  does. The worker emits a line-oriented record. Python serialises the
   existing `oxpinyin-initbench-sample-v1` /
   `oxpinyin-initbench-observation-v1` schemas. Historical records remain
   interpretable.
@@ -591,9 +599,9 @@ current claims about `main`:
   Use Layer 4's separate base and PR source snapshots and identity checks.
   Build both inside the same container run as the pin comparison.
   Require non-emulated Linux amd64 for pin timing and gates.
-  Keep optional native macOS oxpinyin-only base-versus-PR timing.
-  It supplies information only. Never gate on it, compare it across operating
-  systems or run it under emulation. Native macOS pin rows are unsupported:
+  Keep native oxpinyin-only base-versus-PR timing on Linux and macOS
+  (§7.8). It supplies information only. Never gate on it, compare it across
+  operating systems or run it under emulation. Native pin rows are unsupported:
   return a nonzero status naming the container requirement. Do not skip them.
   Keep Windows startup measurement unclaimed until its loader and memory
   probe are implemented and tested. A Windows host may launch a supported
@@ -626,6 +634,57 @@ current claims about `main`:
   Check same-run interleaving order across all four subjects and the expected
   base/pin, PR/pin, PR/base and control/PR ratios. Real pin rows remain
   limited to non-emulated Linux amd64 under Layer 4 and §7.7.
+
+### 7.8 Native startup measurement (maintainer ruling 2026-10-22 UTC)
+
+Tooling stage T2N delivers the native startup controller and worker, so that
+`just measure startup` and its alias `just initbench` work on native Linux and
+macOS. This takes T11N's native scope and the native controller and worker
+from T11C into T2N. T11C keeps the pin rows. The ruling decides:
+
+1. **Scope.** Native measurement covers oxpinyin subjects only: base, PR and
+   the same-bytes control. A requested pin row is refused with status 1 and a
+   message that names the container path. #993's teardown tool stays under
+   T11C.
+2. **Memory.** The parent reads the child's memory at the worker's
+   handshake, as in §7.7.
+3. **Digest.** Python computes the U1–U6 digest as the SHA-256 of the
+   worker's canonical U1–U6 record.
+4. **Manifest.** Readers accept only §7.4's three-field form. #842's
+   four-field form at `a204f9c0` is a historical deviation.
+5. **Profiles.** Profiles are provisioned once against the pin with the
+   documented command (`docs/packaging.md`, "Regeneration"). The native path
+   only verifies them against their `profile.manifest`. It does not provision.
+6. **User files.** The native path compares user files through reopen
+   observations plus the raw bytes of files that are not databases. It has no
+   database row reader.
+7. **Cold cache.** Before each cold sample, evict the measured library and
+   every system-data file with `posix_fadvise(POSIX_FADV_DONTNEED)`, then
+   check residency with `mincore`. If a page is still resident, evict and
+   check once more. Reject the sample if any subject or data page is still
+   resident. Report the rejected and accepted counts. A metric with too many
+   rejected samples is INCONCLUSIVE. The rejection limit is not yet fixed;
+   the PR that adds cold sampling proposes it for approval, and it is fixed
+   before the first sample, never tuned from campaign output. macOS has no
+   cold mode: status 1.
+8. **File systems.** On Linux, every measured library, the system data, the
+   profiles and the work directory are on ext4; tmpfs is refused. On macOS,
+   they are on one APFS volume.
+9. **Exit statuses.** 0: completed (INCONCLUSIVE is a reported verdict).
+   1: failure or refusal, including a missing input, a pin row, Windows
+   (#950) and an unsupported mode. 2: usage error. 3: not a result
+   (NOT COMPARABLE, or an INVALID exact-count control). 130: cancelled.
+   #993's equivalence-blocked status moves from 2 to 3 in the first
+   controller PR.
+10. **Order.** First the hash-determinism PR. Then the §7.5 residency and
+    exact-count follow-up (branch `tooling/t11-residency-exact-counts`).
+    Then the native controller, which builds on that follow-up's helpers.
+    This record and the native worker may start before them.
+
+Recipes: `just measure <recipe> [args]` calls `tools.dev measure`;
+`just initbench [args]` calls `tools.dev measure startup`. Run, provision and
+instrument stages hold the heavy slot through `tools.dev.slot`. Windows stays
+deferred (#950).
 
 ---
 
@@ -719,7 +778,7 @@ do not restore an older supported interpreter while another scope waits.
 | T1C | Container | Improve expect-parent validity, exact issue/family selection, phase timing, worker registration and consumed-artifact builds. Check staged-artifact identity before execution. Prove #896 INVALID with old-driver failure/new-driver success. Preserve selected IDs, envelopes, valid verdicts and statuses. | Proposed remaining feedback scope under T1 authorization; the #896 INVALID proof remains outstanding. |
 | T1aN | Native | Deliver Layer 1's exact interpreter cutover, setup and identity acceptance. | Implemented interpreter cutover, #939 (merge `1c6652ed`). Bounded macOS identity passed at `b034e834` (the #943 merge); full setup acceptance remains partial. |
 | T1aC | Container | Deliver Layer 4's separate interpreter in the same atomic PR. Keep frozen oracle artifacts. Workflow edits need separate approval. | Implemented interpreter cutover, #939 (merge `1c6652ed`). Full environment provisioning is proposed; #955 (merge `21be16aa`) adds a Python-only provisioning mode. |
-| T2N | Native | Deliver Layers 1–2: package, CLI, registry reader, bootstrap doctor, thin recipes and slot. Extract the slot and admission core from run-all.py into tools.dev.slot, the one implementation; run-all.py imports it through an adapter and keeps its CLI, rows, environment variables and cancellation semantics unchanged. Migrate check.sh with matching selection/status. Run native shell, inheritance, resource and argument acceptance. | Partial: #941 (merge `4d03b8b3`) core/adapter, #942 (merge `2cee8d35`) native recipes/check, and #948 (merge `219f4205`) build, fmt, clippy, list and plan are implemented; #1013 adds the entry-point `sys.get_lazy_imports()` guard. [#1033](https://github.com/shenghaoc/oxpinyin/pull/1033) implements the registry `implementation` field (maintainer ruling 2026-10-22 UTC), validated by `registry.load` and printed by `list` and `plan`. Open: the seven missing recipes (bench, measure, initbench, fuzz, coverage, sanitize, ci); Linux recipe-level argument and status acceptance; one end-to-end nested call through `just heavy`; fresh-install and offline cases. Covered: `tools/bisection/heavy-slot.test.py` has `test_nested_wrapper_inherits_the_slot_without_waiting` and `test_nested_call_in_another_directory_inherits_resolved_default`, and `run-all.py` imports `tools.dev.slot`, so both exercise the shared core. `tools/bisection/memory-defaults.test.py` has `test_zero_room_releases_slot_and_expires_without_a_child` (`OXPINYIN_RESOURCE_WAIT_SECONDS`) and the unknown-memory fail-closed cases. Windows: deferred (#950), not a T2N blocker (maintainer ruling 2026-10-21 UTC: no near-term work). |
+| T2N | Native | Deliver Layers 1–2: package, CLI, registry reader, bootstrap doctor, thin recipes and slot. Extract the slot and admission core from run-all.py into tools.dev.slot, the one implementation; run-all.py imports it through an adapter and keeps its CLI, rows, environment variables and cancellation semantics unchanged. Migrate check.sh with matching selection/status. Run native shell, inheritance, resource and argument acceptance. Deliver the native oxpinyin-only startup controller and worker (§7.8). | Partial: #941 (merge `4d03b8b3`) core/adapter, #942 (merge `2cee8d35`) native recipes/check, and #948 (merge `219f4205`) build, fmt, clippy, list and plan are implemented; #1013 adds the entry-point `sys.get_lazy_imports()` guard. [#1033](https://github.com/shenghaoc/oxpinyin/pull/1033) implements the registry `implementation` field (maintainer ruling 2026-10-22 UTC), validated by `registry.load` and printed by `list` and `plan`. Open: the seven missing recipes (bench, measure, initbench, fuzz, coverage, sanitize, ci); Linux recipe-level argument and status acceptance; one end-to-end nested call through `just heavy`; fresh-install and offline cases. Covered: `tools/bisection/heavy-slot.test.py` has `test_nested_wrapper_inherits_the_slot_without_waiting` and `test_nested_call_in_another_directory_inherits_resolved_default`, and `run-all.py` imports `tools.dev.slot`, so both exercise the shared core. `tools/bisection/memory-defaults.test.py` has `test_zero_room_releases_slot_and_expires_without_a_child` (`OXPINYIN_RESOURCE_WAIT_SECONDS`) and the unknown-memory fail-closed cases. Windows: deferred (#950), not a T2N blocker (maintainer ruling 2026-10-21 UTC: no near-term work). The native startup controller and worker move here by the 2026-10-22 UTC maintainer ruling (§7.8); none is merged. |
 | T2C | Container | Keep legacy scripts authoritative. Apply Layer 4's separate namespaces and host budget contract before any pin handoff. Do not share native slot/cache state. | Implemented: #957 (merge `af9df745`) first slice; #969 (merge `bdb520f4`) state isolation and content identities; #978 (merge `e219d33d`) container budget; #996 (merge `572b3cdb`) toolchain guard; #998 (merge `3e280c8c`) cache-aware admission; #966 (merge `35d93249`) relocation; #991 (merge `2ce6cb7d`) macOS source identity parity. Legacy scripts remain authoritative; Windows adapters and emulation stay unverified. |
 | T2T | Native | Deliver Layer 3 nextest after the native interface. Compare every current CI crate/feature scope, doctests and selected ignored tests. No workflow changes without approval. | Partial: #943 (merge `b034e834`) native profiles/recipes are implemented. Linux equivalence and macOS tkrzw equivalence are historical at their named heads; the macOS CI BDB scope passed at `219f420` on 2026-10-20 UTC with matching identities and verdicts. #968 (merge `c017ebee`) switched `ci.yml` test and test-macos to pinned nextest and matched every Linux (1,531) and macOS (1,246) identity and verdict against cargo test. Other macOS scopes, Windows and sanitizer equivalence remain unverified. |
 | T3N | Native | Add conservative native verification records and invalidation. Keep original provenance on reused results. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
@@ -733,8 +792,8 @@ do not restore an older supported interpreter while another scope waits.
 | T9 | Container | Move contract families, Axis C and tie regeneration. Keep observation JSONL bytes, verdict rows, difference signatures/counts/stability and byte-identical regenerated fixtures. Retain unported families and old Axis-C/tie implementations until equal. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
 | T10N | Native | Finish any native Rust-test family handoff under Layer 3 parity. Keep its crate/feature/ignore scope. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
 | T10C | Container | Migrate option sweep and Rust differential tier. Require per-scheme counts/JSON, identical selected ignored tests/pass-fail and the drop-in bdb arm. Use Layer 4's test profile. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
-| T11N | Native macOS | Deliver only §7's optional oxpinyin base/PR information. Keep unavailable metrics explicit; no pin or cross-OS gate. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
-| T11C | Container | Deliver measurement/report and startup controller/worker. Use Layer 4's base/PR source input contract. Keep parser output on retained Callgrind/Massif/smaps/JSONL inputs and the same dry-run commands. Apply all §7 units, profiles, refusals, mutations, digests and four-subject interleaving/ratio tests. Retain old parsers until equal. | Partial: #993 (merge `5b8cfddf`) delivered the native teardown workload — in-tree lifecycle worker, M0–M3 checkpoints, separate ABI timings, equivalence, committed `--perf` baseline and attribution; Delivery 3 is not approved. Remaining: the startup controller/worker under Layer 4's base/PR contract, §7 units and profiles, refusals, mutations, digests, measurement/report and four-subject interleaving. #1000 (commits `4a4bf4e`, `0e1fbe3`, `fb78703`) added the measured function-order policies; #1002 (commits `b497482`, `933dcb8`) added their in-tree regeneration. #1018 makes that regeneration read the §7.4 `profile.manifest` the provisioner writes, through one shared implementation (`tools/bisection/startup_profile.py`), and documents the provisioning and `--print-identity` commands. The §7.5 same-bytes threshold is decided by the 2026-10-21 UTC maintainer ruling; its residency and exact-count items are the focused follow-up. |
+| T11N | Native macOS | Absorbed into T2N by the 2026-10-22 UTC maintainer ruling (§7.8). | Superseded; no work remains here. |
+| T11C | Container | Deliver pin measurement/report and the startup pin rows, reusing T2N's native controller and worker (§7.8). Use Layer 4's base/PR source input contract. Keep parser output on retained Callgrind/Massif/smaps/JSONL inputs and the same dry-run commands. Apply all §7 units, profiles, refusals, mutations, digests and four-subject interleaving/ratio tests. Retain old parsers until equal. | Partial: #993 (merge `5b8cfddf`) delivered the native teardown workload — in-tree lifecycle worker, M0–M3 checkpoints, separate ABI timings, equivalence, committed `--perf` baseline and attribution; Delivery 3 is not approved. Remaining: the startup pin rows under Layer 4's base/PR contract (the native controller and worker are T2N, §7.8), §7 units and profiles, refusals, mutations, digests, measurement/report and four-subject interleaving. #1000 (commits `4a4bf4e`, `0e1fbe3`, `fb78703`) added the measured function-order policies; #1002 (commits `b497482`, `933dcb8`) added their in-tree regeneration. #1018 makes that regeneration read the §7.4 `profile.manifest` the provisioner writes, through one shared implementation (`tools/bisection/startup_profile.py`), and documents the provisioning and `--print-identity` commands. The §7.5 same-bytes threshold is decided by the 2026-10-21 UTC maintainer ruling; its residency and exact-count items are the focused follow-up. |
 | T12N | Native | Migrate source/subject-only ABI probes. Require identical symbol verdicts. Retain wrappers until §5.4 is met. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
 | T12C | Container | Migrate pin ABI and packaging seams. Require identical symbol verdicts and staged installation trees. Retain wrappers until §5.4 is met. | Proposed; no merged PR since `75038e9` delivers it at `5b8cfddf`. |
 | T13N | Native | Switch one approved workflow step at a time to Layers 2–3. Pin uv setup/version, provision managed CPython and verify identity. Keep old/new conclusions equal for one cycle. No permanent Python-version matrix. | Partial: #968 (merge `c017ebee`) switched `ci.yml` test and test-macos to pinned nextest 0.9.143 with the ci profile and separate doctests, preserving selections with a one-cycle identity/verdict comparison. #988 (merge `96ca8c8e`) runs the `tools/**/*.test.py` harnesses on Linux and macOS, excluding `internal-ledger.test.py`, with pinned uv 0.13.1 and managed CPython 3.15.0. Windows stays on cargo test (#950); other workflow steps remain proposed. |
@@ -749,9 +808,11 @@ One §5.4 retirement landed in this interval: #952 (merge `8458f657`) retired
 four W11 dispatch wrappers after moving their registry rows to
 `run-w11-diff.sh`; T14's final reconciliation remains proposed.
 
-Next proposed work, in order: T2N completion, then T11C, then the §7.5
-residency and exact-count enforcement follow-up. These are proposals only;
-each needs its own approval.
+Next work, in the order the 2026-10-22 UTC maintainer ruling sets (§7.8):
+the hash-determinism PR, then the §7.5 residency and exact-count
+enforcement follow-up, then T2N completion including the native startup
+controller, then T11C. §7.8's record and native worker may start first.
+Each PR still needs its own approval.
 
 Tooling stages T8 and T9 retain `non-utf8-directory-system`, `non-utf8-directory-user`,
 `non-utf8-directory-both` and `non-utf8-directory-zhuyin-both`.
@@ -814,7 +875,8 @@ An abort remains a child observation, not a controller crash.
 Layers 1–4 own interpreter, shell, nextest and runtime risks. Do not claim
 Windows startup support or adapter/emulation support without acceptance.
 Apply §7.5's maintainer ruling: timing is implemented; residency and
-exact-count enforcement are the focused follow-up. Keep tooling stage T3's
+exact-count enforcement are the focused follow-up, which precedes §7.8's
+native controller. Keep tooling stage T3's
 backstop host and timing policy open. Keep one old/new owner per migration
 family to prevent permanent duplication. Historical initbench numbers stay
 tied to a204f9c0.

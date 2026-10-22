@@ -180,7 +180,7 @@ No root recipe contains orchestration logic.
 | `just container oracle build\|pull\|verify\|regen-data` | Provision or verify frozen-reference inputs. | Existing oracle provisioning scripts |
 | `just container test --differential` | Run pin-dependent Rust tests. | `run-differentials.sh`, `nightly-fixture-differentials.sh` |
 | `just container ci <job>` | Run a separately approved pin-dependent CI task. | Pin workflow-specific commands |
-| `just container measure <recipe>` / `initbench` | Run pin-dependent instruments and measurement. | Existing perf recipes and recovered #842 controller |
+| `just container measure <recipe>` / `initbench` | Run pin-dependent instruments and measurement. | Existing perf recipes; the startup pin rows reuse T2N's native controller and worker (layer 5 §7.8) |
 | `just container abi` / `packaging` | Run pinned ABI and staged-install comparisons. | ABI and packaging differential wrappers |
 | `just container compat-smoke` | Check image/runtime/argument/status integration. | `compat.sh`, `compat-inside.sh` |
 

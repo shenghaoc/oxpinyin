@@ -80,7 +80,7 @@ Layer 5 schedules the old-to-new handoffs.
 | `just fmt [args ...]` | Run formatting. | `cargo fmt` | Implemented, #948. |
 | `just clippy [args ...]` | Run lints through the heavy wrapper. | `cargo clippy` | Implemented, #948. |
 | `just bench <recipe>` | Enter a native benchmark without pin inputs. | Native Criterion/perf entry points | Proposed. |
-| `just measure <recipe>` / `just initbench` | Enter optional native measurement. | Native oxpinyin-only measurement | Proposed. |
+| `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Proposed for T2N (maintainer ruling 2026-10-22 UTC). |
 | `just fuzz` / `just coverage` / `just sanitize` | Call native tools for native inputs. | Existing fuzz/coverage/sanitizer commands | Proposed. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
