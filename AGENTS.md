@@ -503,7 +503,9 @@ always".
    Inherit only when the slot record names that pid, the pid is alive,
    and the pid is an ancestor. Report a stale marker and acquire normally
    if this check fails. Valid nested work does not acquire another slot.
-   One slot is the default. `OXPINYIN_HEAVY_SLOTS` sets the slot count.
+   Two slots are the default when total memory is at least 15 GiB; one
+   below that or when total memory is unknown. `OXPINYIN_HEAVY_SLOTS` sets
+   the slot count.
    `OXPINYIN_LOCK_DIR` must name an absolute directory. Reject a relative
    value with a clear message. Resolve the default directory once. Pass
    the resolved path in each heavy child's environment. Nested calls use
@@ -523,10 +525,14 @@ always".
    The plan before admission is provisional. Take the slot and read
    resources again. Print the effective settings and any change. Take the short host-wide
    `heavy-admission` lock before the final resource read and decision.
-   Subtract the estimates of live holders in other locked slots.
+   Charge each live holder in another locked slot its estimate less the
+   current use of its process tree (summed Pss on Linux, physical
+   footprint on macOS, working sets on Windows), at least zero; charge the
+   full estimate when any process's use cannot be read.
    Record this holder's estimate in its slot file before releasing the
    admission lock. Ignore records whose pid is dead. The cell build
-   requires its build estimate plus the 2,048 MiB headroom. Heavy runners
+   requires its build estimate plus the headroom: 10% of total memory, at
+   most 2,048 MiB, and 2,048 MiB when total memory is unknown. Heavy runners
    require the larger of `RUNNER_PEAK_MIB` and their build estimate.
    The minimum build estimate is one rustc.
    Explicit settings require room for their full process counts.

@@ -1,6 +1,8 @@
 #!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
 """Unit tests for tools.dev.host."""
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -11,6 +13,26 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.dev import host
+
+
+def write_linux_process(proc, pid, parent, rollup):
+    """Write /proc/PID/stat, and smaps_rollup from (Rss MiB, Pss MiB) unless ROLLUP is None."""
+    (proc / str(pid)).mkdir()
+    (proc / str(pid) / 'stat').write_text(f'{pid} (rustc (a) b) S {parent} {pid} {pid} 0 -1\n')
+    if rollup is not None:
+        rss, pss = rollup
+        (proc / str(pid) / 'smaps_rollup').write_text(
+            '55c2b9a6a000-7ffd5e1f9000 ---p 00000000 00:00 0  [rollup]\n'
+            f'Rss: {rss * 1024} kB\nPss: {pss * 1024} kB\nPss_Dirty: {pss * 512} kB\n'
+            f'Shared_Clean: {(rss - pss) * 1024} kB\n')
+
+
+def slot_setting(value):
+    """Set OXPINYIN_HEAVY_SLOTS to VALUE, or leave it unset for None."""
+    environ = {key: item for key, item in os.environ.items() if key != 'OXPINYIN_HEAVY_SLOTS'}
+    if value is not None:
+        environ['OXPINYIN_HEAVY_SLOTS'] = value
+    return mock.patch.dict(os.environ, environ, clear=True)
 
 
 class HostTests(unittest.TestCase):
@@ -73,6 +95,132 @@ class HostTests(unittest.TestCase):
                     finite = maximum == str(4096 * 1024**2)
                     self.assertEqual(snapshot['memory_limit_mib'], 4096 if finite else None)
                     self.assertEqual(host.memory_headroom(env, snapshot), 0 if finite else host.HEADROOM_MIB)
+
+    def test_headroom_is_ten_percent_of_total_memory_at_most_2048_mib(self):
+        for total, expected in ((8192, 819), (16384, 1638), (32768, 2048), (None, 2048)):
+            with self.subTest(total=total):
+                self.assertEqual(host.desktop_headroom_mib(total), expected)
+                resources = dict(available_mib=4096, memory_limit_mib=None, total_mib=total)
+                self.assertEqual(host.memory_headroom({}, resources), expected)
+                guest = dict(resources, memory_limit_mib=2560)
+                self.assertEqual(host.memory_headroom({'OXPINYIN_COMPAT_CONTAINER': '1'}, guest), 0)
+
+    def test_slot_count_follows_total_memory_unless_set(self):
+        for setting, total, expected in ((None, 8192, 1), (None, 16384, 2), (None, 15359, 1),
+                                         (None, 15360, 2), (None, None, 1), ('3', 8192, 3),
+                                         ('1', 32768, 1), ('0', 16384, 1), ('invalid', 16384, 1)):
+            with self.subTest(setting=setting, total=total), slot_setting(setting):
+                self.assertEqual(host.heavy_slot_count(total), expected)
+                with mock.patch.object(host, 'total_memory_mib', return_value=total):
+                    self.assertEqual(host.heavy_slot_count(), expected)
+        reader = host.total_memory_mib
+        with tempfile.TemporaryDirectory() as temporary, slot_setting(None), \
+                mock.patch.object(sys, 'platform', 'linux'):
+            # 16 GiB of RAM: Linux reports MemTotal after the kernel's own reservations.
+            proc = Path(temporary)
+            (proc / 'meminfo').write_text('MemTotal: 16064780 kB\nMemAvailable: 12582912 kB\n')
+            self.assertEqual(reader(proc), 15688)
+            with mock.patch.object(host, 'total_memory_mib', lambda: reader(proc)):
+                self.assertEqual(host.heavy_slot_count(), 2)
+
+    def test_snapshot_reports_the_linux_total_memory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            proc = Path(temporary) / 'proc'
+            (proc / 'self').mkdir(parents=True)
+            for meminfo, total in (('MemTotal: 16777216 kB\nMemAvailable: 8388608 kB\n', 16384),
+                                   ('MemAvailable: 8388608 kB\n', None)):
+                with self.subTest(total=total), mock.patch.object(sys, 'platform', 'linux'):
+                    (proc / 'meminfo').write_text(meminfo)
+                    snapshot = host.resource_snapshot(proc, Path(temporary) / 'cgroup')
+                    self.assertEqual(snapshot['total_mib'], total)
+                    self.assertIn(f'MemTotal={total} MiB' if total else 'MemTotal=unknown', snapshot['notes'])
+
+    def test_default_jobs_take_one_slot_share_of_the_room(self):
+        # 16 GiB: 1638 MiB headroom; 8000 - 1638 = 6362 MiB of room.
+        resources = dict(available_mib=8000, memory_limit_mib=None, total_mib=16384,
+                         cpus=10, cargo_cpus=10)
+        for setting, jobs, runners in (('1', 10, 2), ('2', 5, 2)):
+            with self.subTest(slots=setting), slot_setting(setting):
+                chosen = host.memory_defaults({}, None, cpus=10, available_mib=8000, total_mib=16384)
+                self.assertEqual(chosen['CARGO_BUILD_JOBS'][0], jobs)
+                self.assertEqual(chosen['--jobs'][0], runners)
+                self.assertIn(f'8000 MiB available - 1638 MiB headroom, a 1/{setting} share',
+                              chosen['CARGO_BUILD_JOBS'][1])
+                child, _, estimate = host.prepare_heavy_env({}, resources)
+                self.assertEqual(child['CARGO_BUILD_JOBS'], str(jobs))
+                self.assertEqual(estimate, jobs * host.RUSTC_PEAK_MIB)
+        with slot_setting(None):
+            # The total alone selects two slots.
+            self.assertEqual(host.prepare_heavy_env({}, resources)[0]['CARGO_BUILD_JOBS'], '5')
+            explicit = host.prepare_heavy_env({'CARGO_BUILD_JOBS': '8'}, resources)
+            self.assertEqual(explicit[0]['CARGO_BUILD_JOBS'], '8')
+            self.assertEqual(explicit[2], 8 * host.RUSTC_PEAK_MIB)
+
+    def test_one_rustc_is_the_minimum_while_it_fits_the_whole_room(self):
+        with slot_setting('2'):
+            # 1000 MiB of room: a half share fits no rustc, the whole room fits one.
+            child, chosen, estimate = host.prepare_heavy_env(
+                {}, dict(available_mib=2638, total_mib=16384, cpus=10, cargo_cpus=10))
+            self.assertEqual(child['CARGO_BUILD_JOBS'], '1')
+            self.assertEqual(estimate, host.RUSTC_PEAK_MIB)
+            self.assertIn('one rustc, which fits the whole room', chosen['CARGO_BUILD_JOBS'][1])
+            child, _, estimate = host.prepare_heavy_env(
+                {}, dict(available_mib=2237, total_mib=16384, cpus=10, cargo_cpus=10))
+            self.assertEqual(child['CARGO_BUILD_JOBS'], '0')
+            self.assertEqual(estimate, host.RUSTC_PEAK_MIB)
+
+    def test_linux_tree_use_sums_pss_so_shared_pages_count_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            proc = Path(temporary)
+            # pid: (parent, (Rss MiB, Pss MiB)). The rustc children 101 and 102
+            # share 300 MiB of library pages; 103 is a grandchild, 200 unrelated.
+            for pid, (parent, rollup) in {100: (1, (60, 50)), 101: (100, (400, 250)),
+                                          102: (100, (400, 250)), 103: (101, (30, 30)),
+                                          200: (1, (900, 900))}.items():
+                write_linux_process(proc, pid, parent, rollup)
+            (proc / '104').mkdir()  # exited during the walk: no stat
+            (proc / 'self').mkdir()
+            with mock.patch.object(sys, 'platform', 'linux'):
+                # The sum of Pss, 50 + 250 + 250 + 30; the sum of Rss is 890.
+                self.assertEqual(host.process_tree_use_mib(100, proc), 580)
+                self.assertEqual(host.process_tree_use_mib(101, proc), 280)
+                self.assertIsNone(host.process_tree_use_mib(104, proc))
+                self.assertIsNone(host.process_tree_use_mib(999, proc))
+
+    def test_linux_tree_use_is_unknown_when_a_pss_cannot_be_read(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            proc = Path(temporary)
+            for pid, (parent, rollup) in {100: (1, (60, 50)), 101: (100, (400, 250)),
+                                          102: (100, None)}.items():
+                write_linux_process(proc, pid, parent, rollup)
+            rollup = proc / '102' / 'smaps_rollup'
+            with mock.patch.object(sys, 'platform', 'linux'):
+                # Missing, without a Pss row, or with an unreadable value.
+                for content in (None, 'Rss: 409600 kB\n', 'Pss: many kB\n'):
+                    with self.subTest(content=content):
+                        if content is not None:
+                            rollup.write_text(content)
+                        self.assertIsNone(host.process_tree_use_mib(100, proc))
+                self.assertEqual(host.process_tree_use_mib(101, proc), 250)
+
+    def test_tree_use_of_a_live_process_includes_its_children(self):
+        grandchild = ('import os, sys; data = os.urandom(64 * 1024 * 1024); '
+                      'print("ready", flush=True); sys.stdin.readline()')
+        child = ('import subprocess, sys; '
+                 f'process = subprocess.Popen([sys.executable, "-c", {grandchild!r}], '
+                 'stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True); '
+                 'print(process.stdout.readline().strip(), flush=True); sys.stdin.readline(); '
+                 'process.stdin.close(); process.wait()')
+        process = subprocess.Popen([sys.executable, '-c', child], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, text=True)
+        try:
+            self.assertEqual(process.stdout.readline().strip(), 'ready')
+            self.assertGreaterEqual(host.process_tree_use_mib(process.pid), 64)
+        finally:
+            process.stdin.close()
+            process.wait(timeout=10)
+            process.stdout.close()
+        self.assertIsNone(host.process_tree_use_mib(process.pid))
 
     def test_relative_lock_directory_is_rejected(self):
         old = host.os.environ.get('OXPINYIN_LOCK_DIR')

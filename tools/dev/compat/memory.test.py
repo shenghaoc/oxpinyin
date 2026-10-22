@@ -98,7 +98,9 @@ class MemoryTests(unittest.TestCase):
 
     def test_container_admission_subtracts_native_holders(self):
         self.resources['available_mib'] = 4096 + host.HEADROOM_MIB + 599
-        with slot.HeavyAdmission('native', self.env, out=self.out):
+        # The holder's tree has used nothing yet, so its whole estimate counts.
+        with mock.patch.object(host, 'process_tree_use_mib', return_value=0), \
+                slot.HeavyAdmission('native', self.env, out=self.out):
             with self.assertRaises(host.ResourceBlocked):
                 self.reservation()
             self.assertFalse(list(self.directory.glob('container-memory-*.json')))
@@ -107,6 +109,7 @@ class MemoryTests(unittest.TestCase):
         code = ("from unittest import mock\n"
                 "from tools.dev import host, slot\n"
                 "host.resource_snapshot=lambda: dict(available_mib=6144, cpus=2, cargo_cpus=2, notes=[])\n"
+                "host.process_tree_use_mib=lambda pid: 0\n"
                 "reservation=slot.ContainerReservation('/usr/bin/podman', 'podman', 'nested', 4096)\n"
                 "try:\n"
                 "    reservation.acquire()\n"

@@ -422,10 +422,15 @@ class HeavySlot:
         return False
 
 
-def other_reservations(directory, own_slot):
-    """Count live holders in other locked slots. Ignore dead records."""
+def other_reservations(directory, own_slot, notes=None):
+    """Charge live holders in other locked slots. Ignore dead records.
+
+    Live memory already excludes what a holder's process tree uses, so a
+    holder is charged only the rest of its estimate: max(0, estimate - use).
+    A use that cannot be read is charged the full estimate.
+    """
     reserved = 0
-    for path in directory.glob(f'{HEAVY_SLOT}-*'):
+    for path in sorted(directory.glob(f'{HEAVY_SLOT}-*')):
         suffix = path.name.removeprefix(HEAVY_SLOT + '-')
         if not suffix.isdigit() or int(suffix) == own_slot:
             continue
@@ -441,7 +446,12 @@ def other_reservations(directory, own_slot):
             try:
                 lock_file(probe, LOCK_EX | LOCK_NB)
             except BlockingIOError:
-                reserved += estimate
+                use = host.process_tree_use_mib(pid)
+                charge = estimate if use is None else max(0, estimate - use)
+                reserved += charge
+                if notes is not None:
+                    notes.append(f'slot {suffix} pid {pid}: estimate {estimate} MiB, process tree use '
+                                 f'{"unknown" if use is None else f"{use} MiB"}, charge {charge} MiB')
             # Close only this probe. Never unlock a shared description.
     return reserved
 
@@ -521,9 +531,12 @@ def container_reservations(directory, out=sys.stderr):
 
 def budget_resources(directory, own_slot=None, *, read=None, out=sys.stderr):
     """One budget calculation for native heavy work and container transport."""
+    # Read the holders' use before live memory: growth between the two reads
+    # is then counted in both, never credited.
+    holders = []
+    reserved = other_reservations(directory, own_slot, holders)
     resources = (read or host.resource_snapshot)()
-    reserved = other_reservations(directory, own_slot)
-    resources['notes'] = [*resources['notes'], f'other slot reservations={reserved} MiB']
+    resources['notes'] = [*resources['notes'], *holders, f'other slot reservations={reserved} MiB']
     containers = container_reservations(directory, out=out)
     resources['notes'].append(f'container reservations={containers if containers is not None else "unknown"} MiB')
     if containers is None:
@@ -560,13 +573,14 @@ class ContainerReservation:
                     resources = budget_resources(self.directory, own_slot, out=self.out)
                     available = resources['available_mib']
                     estimate = self.record['memory_mib']
-                    if available is not None and available - host.HEADROOM_MIB >= estimate:
+                    headroom = host.desktop_headroom_mib(resources.get('total_mib'))
+                    if available is not None and available - headroom >= estimate:
                         write_container_record(self.path, self.record)
                         print(f'container reservation: {self.path}; {estimate} MiB; '
                               + '; '.join(resources['notes']), file=self.out, flush=True)
                         return self
                 now = time.monotonic()
-                room = 'unknown' if available is None else max(0, available - host.HEADROOM_MIB)
+                room = 'unknown' if available is None else max(0, available - headroom)
                 if announced is None or now - announced >= 30:
                     print(f'waiting for memory: estimate {estimate} MiB, {room} MiB available '
                           'after headroom; no process started: container', file=self.out, flush=True)

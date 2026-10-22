@@ -54,11 +54,11 @@ class HeavySlotTests(unittest.TestCase):
         self.environment = mock.patch.dict(os.environ)
         self.environment.start()
         os.environ.pop('OXPINYIN_HEAVY_SLOT_HELD', None)
-        os.environ.pop('OXPINYIN_HEAVY_SLOTS', None)
+        # One slot whatever the host's total memory: these tests serialise on it.
+        os.environ['OXPINYIN_HEAVY_SLOTS'] = '1'
         self.lock_dir = tempfile.TemporaryDirectory()
         self.env = dict(os.environ, OXPINYIN_LOCK_DIR=self.lock_dir.name)
         os.environ['OXPINYIN_LOCK_DIR'] = self.lock_dir.name
-        os.environ.pop('OXPINYIN_HEAVY_SLOTS', None)
 
     def tearDown(self):
         os.environ.pop('OXPINYIN_LOCK_DIR', None)
@@ -563,7 +563,7 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
             self.assertEqual(out.getvalue(), '')
         finally:
             os.environ.pop('OXPINYIN_HEAVY_SLOTS', None)
-        self.assertEqual(run_all['heavy_slot_count'](), 1)
+        self.assertEqual(run_all['heavy_slot_count'](8192), 1)
 
 
 if __name__ == '__main__':

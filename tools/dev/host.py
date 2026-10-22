@@ -25,7 +25,11 @@ if not hasattr(os, 'sched_getaffinity'):
 RUSTC_PEAK_MIB = 600        # rustc 555 MiB (test build), 492 (cold cell build), 470 (incremental)
 TEST_THREAD_PEAK_MIB = 64   # the crates' test binaries peak at 6-11 MiB; rustdoc beside them 91 MiB
 RUNNER_PEAK_MIB = 1024      # one gate-set runner job (contract-diff worker pairs and their fixtures)
-HEADROOM_MIB = 2048         # left to the desktop: the browser, the editor, the page cache
+HEADROOM_MIB = 2048         # at most left to the desktop: the browser, the editor, the page cache
+HEADROOM_PERCENT = 10       # of total memory, capped at HEADROOM_MIB
+# Total memory from which the host offers a second heavy slot: 15 GiB, because
+# a 16 GiB machine's Linux MemTotal is below 16 GiB.
+TWO_SLOT_TOTAL_MIB = 15 * 1024
 # BDB cpp-smoke, two jobs, rootless Podman, 2026-10-21 UTC: cold-build peak
 # 2,232,991,744 bytes (ceil 2130 MiB). Add 20% (426 MiB), round up to 256 MiB;
 # also covers two RUNNER_PEAK_MIB (2048 MiB) and two RUSTC_PEAK_MIB (1200 MiB).
@@ -232,11 +236,11 @@ def _macos_total_mib():
     return None
 
 
-def total_memory_mib():
-    """Total physical memory in MiB, or None."""
+def total_memory_mib(proc=Path('/proc')):
+    """Total physical memory in MiB, or None. Linux: MemTotal from /proc/meminfo."""
     try:
         if sys.platform.startswith('linux'):
-            for line in Path('/proc/meminfo').read_text().splitlines():
+            for line in (proc / 'meminfo').read_text().splitlines():
                 if line.startswith('MemTotal:'):
                     return int(line.split()[1]) // 1024
         elif sys.platform == 'darwin':
@@ -379,6 +383,8 @@ def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
             notes.append(f'MemAvailable={memory} MiB')
         except (OSError, ValueError, IndexError, StopIteration):
             notes.append('MemAvailable=unknown')
+        total = total_memory_mib(proc)
+        notes.append(f'MemTotal={total} MiB' if total is not None else 'MemTotal=unknown')
         try:
             affinity = len(os.sched_getaffinity(0))
             if not affinity:
@@ -458,23 +464,30 @@ def resource_snapshot(proc=Path('/proc'), cgroup_root=Path('/sys/fs/cgroup')):
             memories.append(memory)
         notes.append(f'available memory={memory if memory is not None else "unknown"} MiB')
         total = total_memory_mib()
-        if total is not None:
-            notes.append(f'total memory={total} MiB')
+        notes.append(f'total memory={total if total is not None else "unknown"} MiB')
     if not cpus:
         count = os.cpu_count()
         notes.append(f'CPU count={count if count is not None else "unknown; fallback 1"}')
         cpus.append(count or 1)
     return dict(available_mib=min(memories) if memories else None,
                 memory_limit_mib=min(limits) // (1024 * 1024) if limits else None,
+                total_mib=total,
                 cpus=max(1, math.floor(min(cpus))),
                 cargo_cpus=max(1, math.ceil(min(cpus))), notes=notes)
+
+
+def desktop_headroom_mib(total_mib):
+    """10% of total memory, at most HEADROOM_MIB; HEADROOM_MIB when the total is unknown."""
+    if total_mib is None:
+        return HEADROOM_MIB
+    return min(HEADROOM_MIB, total_mib * HEADROOM_PERCENT // 100)
 
 
 def memory_headroom(env, resources):
     """The host keeps desktop room; a hard-limited compatibility guest does not."""
     if env.get('OXPINYIN_COMPAT_CONTAINER') == '1' and resources.get('memory_limit_mib') is not None:
         return 0
-    return HEADROOM_MIB
+    return desktop_headroom_mib(resources.get('total_mib'))
 
 
 def fit(available_mib, per_process_mib, ceiling, headroom_mib=HEADROOM_MIB):
@@ -495,16 +508,23 @@ def validate_settings(env):
         raise ValueError('Invalid RUST_TEST_THREADS: use a positive integer')
 
 
-def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST, *, memory_limit_mib=None):
-    """Keep caller values. Choose only unset values from current resources."""
+def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST, *, memory_limit_mib=None,
+                    total_mib=None):
+    """Keep caller values. Choose only unset values from current resources.
+
+    Each heavy slot gets an equal share of the room after the headroom. One
+    process is the minimum while it fits the whole room; admission decides.
+    """
     validate_settings(env)
     if available_mib is READ_HOST:
         resources = resource_snapshot()
         available_mib = resources['available_mib']
         memory_limit_mib = resources.get('memory_limit_mib')
+        total_mib = resources.get('total_mib')
         cpus = cpus or resources['cpus']
     cpus = cpus or os.cpu_count() or 1
-    headroom = memory_headroom(env, dict(memory_limit_mib=memory_limit_mib))
+    headroom = memory_headroom(env, dict(memory_limit_mib=memory_limit_mib, total_mib=total_mib))
+    slots = heavy_slot_count(total_mib)
     chosen = {}
     def choose(name, explicit, per_process, ceiling, unit):
         if explicit is not None:
@@ -512,9 +532,14 @@ def memory_defaults(env, explicit_jobs, cpus=None, available_mib=READ_HOST, *, m
         elif available_mib is None:
             chosen[name] = (0, 'available memory unknown; no capacity admitted', False)
         else:
-            value = fit(available_mib, per_process, ceiling, headroom)
-            chosen[name] = (value, f'{available_mib} MiB available - {headroom} MiB headroom, '
-                                   f'{per_process} MiB per {unit}, at most {ceiling}', False)
+            share = max(0, available_mib - headroom) // slots
+            value = min(ceiling, share // per_process)
+            reason = (f'{available_mib} MiB available - {headroom} MiB headroom, a 1/{slots} share, '
+                      f'{per_process} MiB per {unit}, at most {ceiling}')
+            if not value and fit(available_mib, per_process, ceiling, headroom):
+                value = 1
+                reason += f'; one {unit}, which fits the whole room'
+            chosen[name] = (value, reason, False)
     choose('CARGO_BUILD_JOBS', env.get('CARGO_BUILD_JOBS'), RUSTC_PEAK_MIB,
            cpus, 'rustc')
     choose('RUST_TEST_THREADS', env.get('RUST_TEST_THREADS'), TEST_THREAD_PEAK_MIB,
@@ -531,7 +556,8 @@ def plan_defaults(chosen, out=sys.stderr, phase='defaults'):
 def prepare_heavy_env(env, resources, *, runner=False):
     """Prepare one child environment and its admission estimate."""
     chosen = memory_defaults(env, None, cpus=resources['cpus'], available_mib=resources['available_mib'],
-                             memory_limit_mib=resources.get('memory_limit_mib'))
+                             memory_limit_mib=resources.get('memory_limit_mib'),
+                             total_mib=resources.get('total_mib'))
     chosen.pop('--jobs')
     child = dict(env, **{name: str(value[0]) for name, value in chosen.items()})
     build = child['CARGO_BUILD_JOBS']
@@ -576,12 +602,18 @@ def host_lock_dir():
     return path
 
 
-def heavy_slot_count():
-    """How many heavy slots the host offers: $OXPINYIN_HEAVY_SLOTS, default 1."""
-    try:
-        return max(1, int(os.environ.get('OXPINYIN_HEAVY_SLOTS', '1')))
-    except ValueError:
-        return 1
+def heavy_slot_count(total_mib=READ_HOST):
+    """How many heavy slots the host offers: $OXPINYIN_HEAVY_SLOTS, else two
+    with at least 15 GiB of total memory; a 16 GiB machine's Linux MemTotal is
+    below 16 GiB. One below that or when the total is unknown."""
+    if 'OXPINYIN_HEAVY_SLOTS' in os.environ:
+        try:
+            return max(1, int(os.environ['OXPINYIN_HEAVY_SLOTS']))
+        except ValueError:
+            return 1
+    if total_mib is READ_HOST:
+        total_mib = total_memory_mib()
+    return 2 if total_mib is not None and total_mib >= TWO_SLOT_TOTAL_MIB else 1
 
 
 def pid_alive(pid):
@@ -630,7 +662,8 @@ def write_holder(file, holder):
     file.flush()
 
 
-def _windows_parent(pid):
+def _windows_processes():
+    """(pid, parent pid) for every process in one Toolhelp snapshot."""
     import ctypes
     from ctypes import wintypes
 
@@ -649,18 +682,22 @@ def _windows_parent(pid):
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)
     if snapshot in (None, wintypes.HANDLE(-1).value):
-        return None
+        raise OSError(ctypes.get_last_error(), 'CreateToolhelp32Snapshot failed')
     entry = ENTRY()
     entry.dwSize = ctypes.sizeof(ENTRY)
+    processes = []
     try:
         more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
         while more:
-            if entry.th32ProcessID == pid:
-                return int(entry.th32ParentProcessID)
+            processes.append((int(entry.th32ProcessID), int(entry.th32ParentProcessID)))
             more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
     finally:
         kernel32.CloseHandle(snapshot)
-    return None
+    return processes
+
+
+def _windows_parent(pid):
+    return next((parent for child, parent in _windows_processes() if child == pid), None)
 
 
 def process_parent(pid):
@@ -684,3 +721,169 @@ def is_ancestor(pid):
         seen.add(current)
         current = process_parent(current)
     return False
+
+
+def _linux_tree_pss(pid, proc):
+    """Pss bytes of PID and its descendants, from each /proc/<pid>/smaps_rollup.
+
+    Pss divides a shared page among the processes that map it, so pages that
+    several processes share (rustc's libraries) count once. A process whose
+    Pss cannot be read raises, which makes the use unknown.
+    """
+    children, listed = {}, set()
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+        except OSError:
+            continue  # exited during the walk, or another user's process
+        children.setdefault(int(fields[1]), []).append(int(entry.name))
+        listed.add(int(entry.name))
+    if pid not in listed:
+        return None
+    total, pending, seen = 0, [pid], set()
+    while pending:
+        current = pending.pop()
+        if current not in seen:
+            seen.add(current)
+            rows = [line.split() for line in (proc / str(current) / 'smaps_rollup').read_text().splitlines()
+                    if line.startswith('Pss:')]
+            if len(rows) != 1 or len(rows[0]) != 3 or rows[0][2] != 'kB':
+                raise ValueError(f'no Pss row in /proc/{current}/smaps_rollup')
+            total += int(rows[0][1]) * 1024
+            pending.extend(children.get(current, ()))
+    return total
+
+
+def _macos_tree_footprint(pid):
+    """Physical footprint bytes of PID and its descendants, from libproc.
+
+    proc_pid_rusage's ri_phys_footprint leaves out shared file-backed pages,
+    so pages that several processes map (rustc's libraries) are not counted
+    in each. A zombie reports zero. A process whose footprint cannot be read
+    raises, which makes the use unknown.
+    """
+    libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)
+    libc.proc_listchildpids.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_int]
+    libc.proc_listchildpids.restype = ctypes.c_int
+    libc.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+    libc.proc_pid_rusage.restype = ctypes.c_int
+
+    class RusageInfo(ctypes.Structure):
+        # struct rusage_info_v0, <sys/resource.h>
+        _fields_ = [('ri_uuid', ctypes.c_uint8 * 16),
+                    *[(name, ctypes.c_uint64) for name in (
+                        'ri_user_time', 'ri_system_time', 'ri_pkg_idle_wkups',
+                        'ri_interrupt_wkups', 'ri_pageins', 'ri_wired_size',
+                        'ri_resident_size', 'ri_phys_footprint',
+                        'ri_proc_start_abstime', 'ri_proc_exit_abstime')]]
+
+    def footprint(target):
+        info = RusageInfo()
+        if libc.proc_pid_rusage(target, 0, ctypes.byref(info)) != 0:  # RUSAGE_INFO_V0
+            raise OSError(ctypes.get_errno(), f'proc_pid_rusage failed for pid {target}')
+        return info.ri_phys_footprint
+
+    def children(target):
+        capacity = libc.proc_listchildpids(target, None, 0)
+        if capacity < 0:
+            raise OSError(ctypes.get_errno(), 'proc_listchildpids failed')
+        buffer = (ctypes.c_int * max(1, capacity))()
+        count = libc.proc_listchildpids(target, buffer, ctypes.sizeof(buffer))
+        if count < 0:
+            raise OSError(ctypes.get_errno(), 'proc_listchildpids failed')
+        return buffer[:count]
+
+    total, pending, seen = 0, [pid], set()
+    while pending:
+        current = pending.pop()
+        if current not in seen:
+            seen.add(current)
+            total += footprint(current)
+            pending.extend(children(current))
+    return total
+
+
+def _windows_tree_working_set(pid):
+    """Working sets of PID and its descendants, from the Toolhelp process walk.
+
+    A working set counts a shared page in each process that maps it. A
+    process whose working set cannot be read makes the use unknown.
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class COUNTERS(ctypes.Structure):
+        _fields_ = [('cb', wintypes.DWORD), ('PageFaultCount', wintypes.DWORD),
+                    *[(name, ctypes.c_size_t) for name in (
+                        'PeakWorkingSetSize', 'WorkingSetSize', 'QuotaPeakPagedPoolUsage',
+                        'QuotaPagedPoolUsage', 'QuotaPeakNonPagedPoolUsage',
+                        'QuotaNonPagedPoolUsage', 'PagefileUsage', 'PeakPagefileUsage')]]
+
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE, *[ctypes.POINTER(wintypes.FILETIME)] * 4]
+    kernel32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.POINTER(COUNTERS), wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    def read(target):
+        """(creation time, working set bytes), or None when they cannot be read."""
+        handle = kernel32.OpenProcess(0x1000, False, target)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return None
+        try:
+            times = [wintypes.FILETIME() for _ in range(4)]
+            counters = COUNTERS(cb=ctypes.sizeof(COUNTERS))
+            if (not kernel32.GetProcessTimes(handle, *[ctypes.byref(value) for value in times])
+                    or not kernel32.K32GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)):
+                return None
+            return times[0].dwHighDateTime << 32 | times[0].dwLowDateTime, counters.WorkingSetSize
+        finally:
+            kernel32.CloseHandle(handle)
+
+    children = {}
+    for child, parent in _windows_processes():
+        children.setdefault(parent, []).append(child)
+    root = read(pid)
+    if root is None:
+        return None
+    total, pending, seen = 0, [(pid, root)], {pid}
+    while pending:
+        current, (created, size) = pending.pop()
+        total += size
+        for child in children.get(current, ()):
+            if child in seen:
+                continue
+            info = read(child)
+            if info is None:
+                return None
+            # A reused parent PID can name a process older than its "child".
+            if info[0] >= created:
+                seen.add(child)
+                pending.append((child, info))
+    return total
+
+
+def process_tree_use_mib(pid, proc=Path('/proc')):
+    """Memory use of PID and its descendants in MiB, or None when unknown.
+
+    Linux sums Pss from /proc and macOS the physical footprint from libproc,
+    so pages shared within the tree count once. Windows sums the working
+    sets from the Toolhelp walk, which count a shared page in each process.
+    None means the use cannot be read: PID or any process in its tree cannot
+    be read, or the walk failed.
+    """
+    try:
+        if sys.platform.startswith('linux'):
+            total = _linux_tree_pss(pid, proc)
+        elif sys.platform == 'darwin':
+            total = _macos_tree_footprint(pid)
+        elif sys.platform == 'win32':
+            total = _windows_tree_working_set(pid)
+        else:
+            return None
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+    return None if total is None else total // (1024 * 1024)
