@@ -11,8 +11,15 @@
 //! index, corpus), the native `correction_rate` must print the same
 //! `correction rate:%f` the pin prints.
 //!
-//! The gate is env-driven and skips cleanly where the pin and its model data
-//! are absent (as in CI here). The operator supplies a model the pin binary
+//! Ordinary `cargo test` leaves this test ignored; explicitly selecting
+//! it fails on a missing input (`docs/testing/README.md`). With the
+//! environment below configured, run from the repository root:
+//!
+//! ```text
+//! just heavy -- cargo test --locked -p oxpinyin-training --no-default-features --features tkrzw --test eval-differential -- --include-ignored
+//! ```
+//!
+//! The operator supplies a model the pin binary
 //! has baked into its `SYSTEM_*` paths, plus the matching inputs for the
 //! native side:
 //!

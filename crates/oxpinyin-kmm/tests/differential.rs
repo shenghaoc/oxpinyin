@@ -1,5 +1,5 @@
 //! KMM semantic parity: a committed canonical golden over a non-trivial
-//! fixture, plus an env-gated oracle differential against the pin binaries.
+//! fixture, plus ignored oracle differentials against the pin binaries.
 //!
 //! The canonical semantic representation is the **export text** — it carries
 //! every stored field (magic `count`/`N`/`total_freq`; per-row `count`/`freq`;
@@ -25,9 +25,15 @@
 //!   is what carries meaning — the live gate compares sorted item sets, not
 //!   bytes.
 //!
-//! The `rust_kmm_matches_pin_*` gates run the actual pin tools where they and
-//! the built system data are present (`PINYIN_*` env), and skip cleanly
-//! otherwise.
+//! The `rust_kmm_matches_pin_*` gates require the actual pin tools and
+//! matching system data (`PINYIN_*` env, configured by
+//! `tools/oracle/run-differentials.sh`). Ordinary `cargo test` leaves them
+//! ignored; explicitly selecting them fails on a missing input
+//! (`docs/testing/README.md`). With those inputs loaded, run from the root:
+//!
+//! ```text
+//! just heavy -- cargo test --locked -p oxpinyin-kmm --test differential -- --include-ignored
+//! ```
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};

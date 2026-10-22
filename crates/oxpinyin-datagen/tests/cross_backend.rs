@@ -5,12 +5,19 @@
 //! build selects (exactly one per build — the store refuses two), reads
 //! every DBM back row by row through the store, and opens the directory
 //! with `oxpinyin_data::SystemDictionary` — the production reader — for
-//! point lookups. CI runs this once per peer build; together the
-//! runs are the backend matrix's data-level row.
+//! point lookups. The compiled backend is selected by Cargo features.
 //!
-//! Requires the model cache, so the test is `#[ignore]`d: run it with
-//! `--include-ignored` (the backend matrix's local recipe does), and a
-//! missing cache is then a failure, never a skip.
+//! Requires model20 (`PINYIN_MODEL_DIR` or the model cache). Ordinary
+//! `cargo test` leaves this test ignored; explicitly selecting it fails
+//! on a missing input, as `docs/testing/README.md` requires. From the
+//! repository root, run the BDB reference cell with:
+//!
+//! ```text
+//! just heavy -- cargo test --locked -p oxpinyin-datagen --no-default-features --features bdb --test cross_backend -- --include-ignored
+//! ```
+//!
+//! For a backend sweep, select `kyotocabinet` or `tkrzw` instead and use
+//! a separate target directory for each cell. CI does not supply model20.
 
 use std::path::PathBuf;
 
