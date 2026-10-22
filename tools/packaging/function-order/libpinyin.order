@@ -65,7 +65,7 @@ init	<oxpinyin_facade::context::ContextCore>::take_layout_faults
 init	<oxpinyin_runtime::FacadeBumps as core::default::Default>::default
 init	<oxpinyin_runtime::Runtime>::open_with_law
 init	<oxpinyin_store::bdb::ffi::Cursor as core::ops::drop::Drop>::drop
-init	<oxpinyin_store::bdb::ffi::Cursor>::get
+init	<oxpinyin_store::bdb::ffi::Cursor>::read
 init	<oxpinyin_store::bdb::ffi::Db>::open_at
 init	<oxpinyin_store::bdb::ffi::SharedDb>::cursor
 init	<oxpinyin_store::bdb::ffi::SharedDb>::open
@@ -151,7 +151,6 @@ steady	<alloc::vec::Vec<(oxpinyin_engine::session::RankKey, u32)> as alloc::vec:
 steady	<alloc::vec::Vec<oxpinyin_engine::session::RankKey> as alloc::vec::spec_from_iter::SpecFromIter<oxpinyin_engine::session::RankKey, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<(oxpinyin_engine::session::RankKey, u32)>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#3}>>>::from_iter [instantiating crate: pinyin]
 steady	<alloc::vec::Vec<oxpinyin_engine::session::ScanKey> as alloc::vec::spec_from_elem::SpecFromElem>::from_elem::<alloc::alloc::Global>
 steady	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: oxpinyin_engine]
-steady	<core::option::Option<&oxpinyin_core::scheme::ZhuyinParse>>::map_or_else::<usize, pinyin::sentence::pinyin_guess_candidates::{closure#5}, pinyin::sentence::pinyin_guess_candidates::{closure#6}>
 steady	<hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
 steady	<oxpinyin_chewing::chewing_key::ChewingKey>::from_pinyin
 steady	<oxpinyin_core::graph::SegmentGraph>::build_with_options
@@ -206,7 +205,6 @@ steady	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&
 steady	<std::sync::once::Once>::call_once_force::<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !>::{closure#0}>::{closure#0} [instantiating crate: pinyin]
 steady	<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize::<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !> [instantiating crate: oxpinyin_facade]
 steady	<std::sys::sync::once::futex::Once>::call
-steady	core::ptr::drop_glue::<core::option::Option<oxpinyin_core::scheme::ZhuyinParse>> [instantiating crate: pinyin]
 steady	core::ptr::drop_glue::<core::result::Result<core::option::Option<usize>, oxpinyin_engine::error::EngineError>> [instantiating crate: pinyin]
 steady	core::ptr::drop_glue::<oxpinyin_engine::session::Scratch> [instantiating crate: pinyin]
 steady	core::slice::sort::shared::pivot::median3_rec::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
