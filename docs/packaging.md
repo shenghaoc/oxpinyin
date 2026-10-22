@@ -369,10 +369,18 @@ require them.
 
 The two checked-in policies are generated from the shipping BDB release inputs
 by `tools/generate-function-order.py`. The generator uses the in-tree
-`tools/bisection/bisect.c` worker in its teardown mode: the load constructors
-and the `<facade>_init` subtree supply the startup set, and the existing
-`bisect --perf` workload supplies the steady set. No external workload or
-profiler coordinator is required.
+`tools/bisection/bisect.c` worker in its teardown mode: the load constructors,
+the `<facade>_init` subtree and the exports the worker calls from there to its
+`M1` checkpoint (options, one instance and the first candidate) supply the
+startup set, and the existing `bisect --perf` workload supplies the steady
+set. No external workload or profiler coordinator is required.
+
+The startup set covers the whole path to `M1` because the kernel maps a
+library's text in 64 KiB fault-around windows: one function executed outside
+the ordered block makes its whole window resident. With only `<facade>_init`
+in the startup set, the code that options, the instance and the first
+candidate reach lay in eight (libzhuyin) or nine (libpinyin) scattered
+windows: 512 or 576 KiB of resident text (#1032).
 
 Build both libraries with ordering explicitly disabled, and build the worker:
 
@@ -439,8 +447,8 @@ same worker for native timing, parent-observed `smaps` at the load and
 lifecycle checkpoints, Callgrind instruction positions, and the steady
 workload. The memory checkpoints are `M0` (after load) and `M1` (after the
 first-candidate phase); they are lifecycle readings, not the init-stop figures
-from #1000. Policy regeneration is separate and uses the exact load-constructor
-and `<facade>_init` Callgrind toggles above.
+from #1000. Policy regeneration is separate and uses the exact load-constructor,
+`<facade>_init` and first-candidate export Callgrind toggles above.
 
 ```sh
 just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil \
