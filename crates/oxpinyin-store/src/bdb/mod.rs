@@ -72,10 +72,11 @@
 //!
 //! [`BdbStore`] is `Send` and `Sync` through a Rust `Mutex` around the
 //! standalone handle, opened with the pin's flags. Every database and
-//! cursor call has exclusive access. Reads land in caller-owned
+//! cursor call has exclusive access. Cursor reads land in caller-owned
 //! (`DB_DBT_USERMEM`) buffers, so the lock can be released before a
-//! visitor reads a row or calls the store again. The user store also
-//! retains its own `Mutex` for whole write batches.
+//! visitor reads a row or calls the store again; a point read is copied
+//! out of the handle's own return buffer while the lock is held. The user
+//! store also retains its own `Mutex` for whole write batches.
 //!
 //! # Unsafe waiver
 //!
