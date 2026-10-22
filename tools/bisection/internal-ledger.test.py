@@ -26,6 +26,20 @@ ledger = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ledger)
 
 
+class GcovInputTests(unittest.TestCase):
+    def test_counters_reject_unsupported_format_with_gcov_requirement(self):
+        out = SimpleNamespace(glob=lambda pattern: [Path('probe.gcda')])
+        document = json.dumps(dict(format_version='1', data_file='probe.gcda', files=[]))
+        version = 'gcov (test toolchain) 13.3.0'
+        with patch.object(gcov_measure, 'command', side_effect=[document, version + '\nCopyright test\n']) as command:
+            with self.assertRaises(RuntimeError) as error:
+                gcov_measure.counters(out, Path('/unused'))
+        self.assertEqual(str(error.exception),
+                         'gcov 14 or later is required (JSON format_version 2); '
+                         "found format_version '1'; gcov --version: " + version)
+        self.assertEqual(command.call_args_list[1].args[0], ['gcov', '--version'])
+
+
 class IdentityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -549,9 +563,9 @@ libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
                 (prefix / name).write_bytes(b''); manifests[field] = hashlib.sha256(b'').hexdigest()
             (prefix / 'oracle-pin.txt').write_text(f"pin_ref={ref}\ndbm=KyotoCabinet\nshared_object_sha256={provenance['libpinyin']}\n" + ''.join(f'{k}={v}\n' for k, v in manifests.items()))
             self.assertEqual(gcov_measure.verify_prefix(prefix, provenance, 'kc'), 0)
-            with self.assertRaises(AssertionError):
+            with self.assertRaisesRegex(RuntimeError, 'oracle prefix requires pin_ref'):
                 gcov_measure.verify_prefix(prefix, provenance, 'bdb')
-            with self.assertRaises(AssertionError):
+            with self.assertRaisesRegex(RuntimeError, 'oracle prefix requires pin_ref'):
                 gcov_measure.verify_prefix(prefix, provenance, 'tkrzw')
 
     def test_measurement_worker_requires_an_explicit_cell(self):
