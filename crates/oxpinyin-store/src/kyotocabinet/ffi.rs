@@ -17,11 +17,22 @@
 //!
 //! # The four hazards
 //!
-//! **Unwinding.** Kyoto Cabinet is C++ internally, but this backend calls
-//! it only through `kclangc.h`'s C entry points, and Rust is always the
-//! caller. No Rust panic unwinds through a foreign frame. [`Db`],
-//! [`Db`] and [`Cursor`] release their resources on an unwind exactly as
-//! on a normal return.
+//! **Unwinding.** Kyoto Cabinet is C++ internally. This backend calls it
+//! only through the C entry points of its own shim (`shim.h`, `shim.cc`),
+//! which construct the four classes libpinyin uses directly, as libpinyin
+//! does, instead of through `kclangc.h`'s `PolyDB`. Every entry point is
+//! `noexcept` and always contains a C++ exception: it returns its failure
+//! value, which this module maps to a [`StoreError`] like any other failure.
+//! Recording the exception as a `SYSTEM` error on the database, which the
+//! error-code accessors then report, is best effort. Rust is always the
+//! caller. No Rust panic unwinds through a foreign frame. [`Db`] and
+//! [`Cursor`] release their resources on an unwind exactly as on a normal
+//! return.
+//!
+//! The shim's entry points mirror the `kclangc.h` calls this binding used
+//! to make (`oxkc_db_accept` is `kcdbaccept`, `oxkc_cur_jump_key` is
+//! `kccurjumpkey`, and so on), so the comments below cite those calls'
+//! documented contracts.
 //!
 //! **`Send`/`Sync`.** [`Db`] holds a raw pointer, so the compiler derives
 //! neither — this module supplies both explicitly with `unsafe impl`s,
@@ -76,7 +87,7 @@ use crate::StoreError;
 
 /// The generated Kyoto Cabinet declarations.
 ///
-/// Written by `build.rs` from the system `kclangc.h` on every build; see
+/// Written by `build.rs` from the shim's `shim.h` on every build; see
 /// there for why they are not checked in.
 #[allow(
     non_camel_case_types,
@@ -95,9 +106,9 @@ const SUPPORTED: &str = "1.2";
 
 /// The linked library's version string (`KCVERSION`).
 pub(crate) fn runtime_version() -> String {
-    // SAFETY: `KCVERSION` is a `const char* const` pointing at a static
-    // NUL-terminated string in the library.
-    unsafe { CStr::from_ptr(sys::KCVERSION) }
+    // SAFETY: `oxkc_version` returns the library's `kyotocabinet::VERSION`,
+    // a static NUL-terminated string.
+    unsafe { CStr::from_ptr(sys::oxkc_version()) }
         .to_string_lossy()
         .into_owned()
 }
@@ -129,16 +140,15 @@ pub(crate) fn check_runtime_version() -> Result<(), StoreError> {
 /// bindgen types the `enum` constant as `u32` and the accessors as `i32`;
 /// the value is small and positive, so the conversion is exact.
 fn no_record_code() -> i32 {
-    i32::try_from(sys::KCENOREC).unwrap_or(i32::MAX)
+    // SAFETY: takes no arguments and returns a constant.
+    unsafe { sys::oxkc_enorec() }
 }
 
 /// Which Kyoto Cabinet class a path opens as.
 ///
-/// The C API is `PolyDB`, which picks the class from the path — see
-/// [`Db::open`] for why that matters so much here. The store's peer
-/// backend opens `TreeDB` for ordered, ranged access; the enum is kept
-/// as an enum so a caller could not open the wrong class by handing a
-/// bare suffix string.
+/// The shim constructs the class itself, as libpinyin does, so the file
+/// name plays no part in the choice (see [`Db::open`]). The store's peer
+/// backend opens `TreeDB` for ordered, ranged access.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DbType {
     /// `TreeDB`, ordered by the record comparator.
@@ -154,22 +164,22 @@ pub(crate) enum DbType {
 }
 
 impl DbType {
-    /// The `#type=` value `PolyDB` recognises for this class.
-    const fn tuning(self) -> &'static str {
+    /// The shim's class code (`shim.h`), which `oxkc_db_new` constructs
+    /// directly as libpinyin does.
+    const fn code(self) -> i32 {
+        // The shim's codes are 0..=3, so the conversions are exact.
         match self {
-            Self::Tree => "kct",
-            Self::Hash => "kch",
-            Self::Stash => "kcs",
-            Self::ProtoTree => "kcpt",
+            Self::Tree => sys::OXKC_TREE as i32,
+            Self::Hash => sys::OXKC_HASH as i32,
+            Self::Stash => sys::OXKC_STASH as i32,
+            Self::ProtoTree => sys::OXKC_PROTO_TREE as i32,
         }
     }
 }
 
-/// A path as a NUL-terminated C string. Unlike [`Db::open`]'s spec this
-/// is the bare path — the snapshot calls take a literal filename, not a
-/// PolyDB open spec, so `#` needs no rejection here (it would only be
-/// tuning-parameter syntax where a spec is parsed). Interior NUL bytes
-/// remain the one thing a C filename cannot carry.
+/// A path as a NUL-terminated C string: the snapshot calls take a literal
+/// filename. Interior NUL bytes are the one thing a C filename cannot
+/// carry.
 fn cstring_path(path: &Path) -> Result<CString, StoreError> {
     let bytes = path.as_os_str().as_bytes();
     CString::new(bytes).map_err(|_| StoreError::InvalidInput("store path contains NUL"))
@@ -238,8 +248,9 @@ unsafe extern "C" fn visit_full<V: Visit>(
     unsafe {
         let visitor = &mut *opq.cast::<V>();
         visitor.full(visited(kbuf, ksiz), visited(vbuf, vsiz));
-        sys::KCVISNOP
     }
+    // A null return is the shim's "no operation".
+    ptr::null()
 }
 
 /// `KCVISITEMPTY`: a miss leaves the visitor untouched.
@@ -253,8 +264,8 @@ unsafe extern "C" fn visit_empty(
     _sp: *mut usize,
     _opq: *mut c_void,
 ) -> *const c_char {
-    // SAFETY: `KCVISNOP` is a library constant, read-only.
-    unsafe { sys::KCVISNOP }
+    // A null return is the shim's "no operation".
+    ptr::null()
 }
 
 /// A point read into the caller's buffer, which arrives cleared: the
@@ -368,7 +379,7 @@ impl Visit for Vec<Option<[u8; 4]>> {
 
 /// An owned Kyoto Cabinet database handle.
 pub(crate) struct Db {
-    handle: *mut sys::KCDB,
+    handle: *mut sys::oxkc_db,
     db_type: DbType,
     read_only: bool,
 }
@@ -393,17 +404,17 @@ pub(crate) struct Db {
 //   readers exclude with the whole transaction window.
 // * The error accessors are NOT shared state: HashDB holds its error as
 //   thread-specific data (`TSD<Error> error_`, `kchashdb.h`; `TSD` in
-//   `kcthread.h` gives each thread its own instance), and TreeDB and
-//   PolyDB forward to that inner database (`Error error() const { return
-//   db_.error(); }` in `kcplantdb.h`; PolyDB's `set_error` delegates when
-//   open). A thread reading `kcdbecode`/`kcdbemsg` therefore observes its
-//   own thread's last failure — no cross-thread race. This wrapper reads
+//   `kcthread.h` gives each thread its own instance), and TreeDB forwards
+//   to that inner database (`Error error() const { return db_.error(); }`
+//   in `kcplantdb.h`). A thread reading `oxkc_db_ecode`/`oxkc_db_emsg`
+//   therefore observes its own thread's last failure — no cross-thread
+//   race. This wrapper reads
 //   them immediately after the failing call on the same thread, before
 //   any other call could overwrite the slot.
-// * PolyDB's own plain `Error error_` member is touched only in the
-//   TYPEVOID (unopened) state; a handle exists here only after `open`
-//   succeeded, and `kcdbclose`/`kcdbdel` run in `Drop`, which holds the
-//   handle exclusively. Open completes before the handle exists to share.
+// * The shim constructs the class directly, so there is no PolyDB state;
+//   a handle exists here only after `open` succeeded, and the close and
+//   delete run in `Drop`, which holds the handle exclusively. Open
+//   completes before the handle exists to share.
 // * The class-level contract (`kcdb.h`, `BasicDB`'s @note) forbids two
 //   database objects in one process opening the same file, and sharing a
 //   database object with child processes — cross-thread sharing of one
@@ -423,25 +434,16 @@ unsafe impl Sync for Db {}
 impl Db {
     /// Opens `path` as `db_type`.
     ///
-    /// # The `#type=` suffix, and why it is not optional
-    ///
-    /// The C API is `PolyDB`, which chooses the database class from the
-    /// **path suffix**: `.kch` is a file hash database, `.kct` a file
-    /// tree database, "otherwise, this function fails"
-    /// (`kclangc.h:312-320`).
+    /// # The class comes from the caller, not the file name
     ///
     /// libpinyin's files are named `bigram.db` and `user_bigram.db`
-    /// (`src/pinyin_internal.h:56-58`) — compile-time constants that do
-    /// not vary with the DBM backend it was built against, so a
-    /// Kyoto-Cabinet-built libpinyin ships **no `.kch` or `.kct` file at
-    /// all**. Measured: `kcdbopen(db, "bigram.db", …)` fails with
-    /// `invalid operation`.
-    ///
-    /// `PolyDB` also accepts tuning parameters after a `#`, among them
-    /// `type=` (`kcpolydb.h:496-515`), so `bigram.db#type=kch` opens
-    /// libpinyin's actual file as a hash database. That override is the
-    /// only way the C API can read these files, which is why every open
-    /// here goes through it rather than trusting a name.
+    /// (`src/pinyin_internal.h:56-58`) whatever DBM backend it was built
+    /// against, and it constructs the class itself before opening the
+    /// path (`ngram_kyotodb.cpp:58,117` at 074a2219). The shim does the
+    /// same: `oxkc_db_new` constructs `db_type`'s class and `oxkc_db_open`
+    /// opens the plain path. `kclangc.h`'s `kcdbopen` would pick the class
+    /// from a `.kch` or `.kct` suffix and fail on `bigram.db`
+    /// (`kclangc.h:312-320`).
     pub(crate) fn open(
         path: &Path,
         db_type: DbType,
@@ -451,14 +453,13 @@ impl Db {
         Self::open_with_tuning(path, db_type, read_only, create, "")
     }
 
-    /// Opens `path` as `db_type`, appending `extra_tuning` after the
-    /// mandatory `#type=` parameter.
+    /// Opens `path` as `db_type`, applying `extra_tuning` before the open.
     ///
-    /// `extra_tuning` is the concatenation of zero or more `#key=value`
-    /// tuning parameters — each starts with `#`, exactly the form that
-    /// follows `#type=` in the Kyoto Cabinet PolyDB open spec
-    /// (`kcpolydb.h:496-515`). An empty string reproduces [`Db::open`]
-    /// byte-for-byte, which is what [`Db::open`] itself passes.
+    /// `extra_tuning` is zero or more `#key=value` parameters, in the
+    /// form Kyoto Cabinet's `PolyDB` open spec uses
+    /// (`kcpolydb.h:496-515`). The only key the shim takes is `bnum`,
+    /// which it applies as `tune_buckets` before the open, as `PolyDB`
+    /// does (`kcpolydb.h:747`). An empty string is [`Db::open`].
     ///
     /// # Only reached in bench builds
     ///
@@ -466,10 +467,9 @@ impl Db {
     /// tuning knob it opens up is what shenghaoc/oxpinyin#402's time-side
     /// measurement bench uses to characterise the cost of a Kyoto Cabinet
     /// default for an upstream report. Nothing in the shipping path calls
-    /// this with a non-empty `extra_tuning` — the mandatory `#type=`
-    /// alone is what libpinyin's C++ construction produces, and matching
-    /// upstream on external-library handling is the standing policy
-    /// (see the module docstring).
+    /// this with a non-empty `extra_tuning`: libpinyin tunes nothing, and
+    /// matching upstream on external-library handling is the standing
+    /// policy (see the module docstring).
     pub(crate) fn open_with_tuning(
         path: &Path,
         db_type: DbType,
@@ -479,10 +479,11 @@ impl Db {
     ) -> Result<Self, StoreError> {
         check_runtime_version()?;
 
-        // The path is handed to Kyoto Cabinet as bytes, with the tuning
-        // parameter appended. A `#` in the path itself would be read as
-        // the start of tuning parameters, so it is refused rather than
-        // silently changing which database is opened.
+        // The `kclangc.h` binding appended `#type=` to the path, so a `#`
+        // in the path itself would have been read as the start of tuning
+        // parameters; it refused one. The shim opens the plain path, but
+        // the refusal is kept unchanged here: accepting `#`, as the pin
+        // does, is an observable change with its own differential.
         let bytes = path.as_os_str().as_bytes();
         if bytes.contains(&b'#') {
             return Err(StoreError::InvalidInput(
@@ -495,16 +496,28 @@ impl Db {
                 "extra_tuning must start with '#' or be empty",
             ));
         }
-        let mut spec = bytes.to_vec();
-        spec.extend_from_slice(b"#type=");
-        spec.extend_from_slice(db_type.tuning().as_bytes());
-        spec.extend_from_slice(extra_tuning.as_bytes());
-        let spec =
-            CString::new(spec).map_err(|_| StoreError::InvalidInput("store path contains NUL"))?;
+        // The shim opens the class directly, so the only tuning it takes
+        // is `#bnum=`, the one the bench-internal measurement uses.
+        let mut buckets = None;
+        for parameter in extra_tuning.split('#').skip(1) {
+            match parameter
+                .strip_prefix("bnum=")
+                .and_then(|value| value.parse::<i64>().ok())
+            {
+                Some(value) => buckets = Some(value),
+                None => {
+                    return Err(StoreError::InvalidInput(
+                        "the Kyoto Cabinet shim supports only #bnum= tuning",
+                    ));
+                }
+            }
+        }
+        let spec = CString::new(bytes.to_vec())
+            .map_err(|_| StoreError::InvalidInput("store path contains NUL"))?;
 
-        // SAFETY: takes no arguments and returns either a fresh handle or
+        // SAFETY: takes a class code and returns either a fresh handle or
         // null.
-        let handle = unsafe { sys::kcdbnew() };
+        let handle = unsafe { sys::oxkc_db_new(db_type.code()) };
         if handle.is_null() {
             return Err(StoreError::Backend(
                 "kcdbnew returned null (allocation failure)".into(),
@@ -518,15 +531,21 @@ impl Db {
             read_only,
         };
 
+        if let Some(bnum) = buckets {
+            // SAFETY: the handle is live and not yet open.
+            if unsafe { sys::oxkc_db_tune_buckets(this.handle, bnum) } == 0 {
+                return Err(this.error("kcdbopen"));
+            }
+        }
         let mode = if read_only {
-            sys::KCOREADER
+            sys::OXKC_OREADER
         } else if create {
-            sys::KCOWRITER | sys::KCOCREATE
+            sys::OXKC_OWRITER | sys::OXKC_OCREATE
         } else {
-            sys::KCOWRITER
+            sys::OXKC_OWRITER
         };
         // SAFETY: the handle is live and `spec` outlives the call.
-        if unsafe { sys::kcdbopen(this.handle, spec.as_ptr(), mode) } == 0 {
+        if unsafe { sys::oxkc_db_open(this.handle, spec.as_ptr(), mode) } == 0 {
             return Err(this.error("kcdbopen"));
         }
         Ok(this)
@@ -537,11 +556,11 @@ impl Db {
         // SAFETY: the handle is live; both calls are defined for a handle
         // in any state, including one that failed to open.
         let (code, message) = unsafe {
-            let code = sys::kcdbecode(self.handle);
-            let name = CStr::from_ptr(sys::kcecodename(code))
+            let code = sys::oxkc_db_ecode(self.handle);
+            let name = CStr::from_ptr(sys::oxkc_ecodename(code))
                 .to_string_lossy()
                 .into_owned();
-            let message = CStr::from_ptr(sys::kcdbemsg(self.handle))
+            let message = CStr::from_ptr(sys::oxkc_db_emsg(self.handle))
                 .to_string_lossy()
                 .into_owned();
             (name, message)
@@ -561,7 +580,7 @@ impl Db {
     fn last_was_no_record(&self) -> bool {
         // SAFETY: the handle is live and `kcdbecode` is defined for any
         // state.
-        unsafe { sys::kcdbecode(self.handle) == no_record_code() }
+        unsafe { sys::oxkc_db_ecode(self.handle) == no_record_code() }
     }
 
     /// Whether this handle was opened read-only.
@@ -593,7 +612,7 @@ impl Db {
         // is `fill`, exclusive for the call, which is what `visit_full`
         // casts it back to.
         let ok = unsafe {
-            sys::kcdbaccept(
+            sys::oxkc_db_accept(
                 self.handle,
                 c_ptr(key),
                 key.len(),
@@ -618,7 +637,7 @@ impl Db {
     pub(crate) fn check(&self, key: &[u8]) -> Result<bool, StoreError> {
         // SAFETY: the handle is live and `key` outlives the call; the
         // call copies nothing out.
-        let size = unsafe { sys::kcdbcheck(self.handle, c_ptr(key), key.len()) };
+        let size = unsafe { sys::oxkc_db_check(self.handle, c_ptr(key), key.len()) };
         if size >= 0 {
             return Ok(true);
         }
@@ -656,7 +675,7 @@ impl Db {
         // SAFETY: the handle is live; `opq` is `visitor`, exclusive for
         // the call, which is what `visit_full::<V>` casts it back to.
         let ok = unsafe {
-            sys::kcdbiterate(
+            sys::oxkc_db_iterate(
                 self.handle,
                 Some(visit_full::<V>),
                 std::ptr::from_mut(visitor).cast::<c_void>(),
@@ -678,7 +697,7 @@ impl Db {
         // Kyoto Cabinet copies out of them before returning. `c_ptr`
         // keeps an empty value off the `REMOVE` sentinel address.
         let ok = unsafe {
-            sys::kcdbset(
+            sys::oxkc_db_set(
                 self.handle,
                 c_ptr(key),
                 key.len(),
@@ -698,7 +717,7 @@ impl Db {
             return Err(StoreError::ReadOnly);
         }
         // SAFETY: the handle is live and `key` outlives the call.
-        let ok = unsafe { sys::kcdbremove(self.handle, c_ptr(key), key.len()) };
+        let ok = unsafe { sys::oxkc_db_remove(self.handle, c_ptr(key), key.len()) };
         if ok == 0 && !self.last_was_no_record() {
             return Err(self.error("kcdbremove"));
         }
@@ -713,7 +732,7 @@ impl Db {
         // SAFETY: the handle is live; the post-processor callback and its
         // opaque argument are both null, which the API documents as "no
         // callback".
-        let ok = unsafe { sys::kcdbsync(self.handle, i32::from(hard), None, ptr::null_mut()) };
+        let ok = unsafe { sys::oxkc_db_sync(self.handle, i32::from(hard)) };
         if ok == 0 {
             return Err(self.error("kcdbsync"));
         }
@@ -734,7 +753,7 @@ impl Db {
     pub(crate) fn load_snapshot(&self, path: &Path) -> Result<(), StoreError> {
         let spec = cstring_path(path)?;
         // SAFETY: the handle is live and `spec` outlives the call.
-        if unsafe { sys::kcdbloadsnap(self.handle, spec.as_ptr()) } == 0 {
+        if unsafe { sys::oxkc_db_load_snapshot(self.handle, spec.as_ptr()) } == 0 {
             return Err(self.error("kcdbloadsnap"));
         }
         Ok(())
@@ -747,7 +766,7 @@ impl Db {
     pub(crate) fn dump_snapshot(&self, path: &Path) -> Result<(), StoreError> {
         let spec = cstring_path(path)?;
         // SAFETY: the handle is live and `spec` outlives the call.
-        if unsafe { sys::kcdbdumpsnap(self.handle, spec.as_ptr()) } == 0 {
+        if unsafe { sys::oxkc_db_dump_snapshot(self.handle, spec.as_ptr()) } == 0 {
             return Err(self.error("kcdbdumpsnap"));
         }
         Ok(())
@@ -776,8 +795,7 @@ impl Db {
         Self::open(Path::new("-"), DbType::Stash, false, true)
     }
 
-    /// The pin constructs ProtoTreeDB for both user indexes; PolyDB's
-    /// `kcpt` selector names the same class (kcpolydb.h's type parser).
+    /// The pin constructs ProtoTreeDB for both user indexes.
     pub(crate) fn open_proto_tree() -> Result<Self, StoreError> {
         Self::open(Path::new("+"), DbType::ProtoTree, false, true)
     }
@@ -793,7 +811,7 @@ impl Db {
         // in any state and is one of the record operations the thread
         // safety audit above covers (it takes the database's own
         // reader-writer lock).
-        let count = unsafe { sys::kcdbcount(self.handle) };
+        let count = unsafe { sys::oxkc_db_count(self.handle) };
         u64::try_from(count).map_err(|_| self.error("kcdbcount"))
     }
 
@@ -807,7 +825,7 @@ impl Db {
         // SAFETY: the handle is live. `hard = 0` asks for a transaction
         // durable against process crash but not against power loss, which
         // matches what the commit's `sync(false)` then provides.
-        if unsafe { sys::kcdbbegintran(self.handle, 0) } == 0 {
+        if unsafe { sys::oxkc_db_begin_transaction(self.handle, 0) } == 0 {
             return Err(self.error("kcdbbegintran"));
         }
         Ok(())
@@ -817,7 +835,7 @@ impl Db {
     pub(crate) fn end_transaction(&self, commit: bool) -> Result<(), StoreError> {
         // SAFETY: the handle is live and inside a transaction begun by
         // `begin_transaction`.
-        if unsafe { sys::kcdbendtran(self.handle, i32::from(commit)) } == 0 {
+        if unsafe { sys::oxkc_db_end_transaction(self.handle, i32::from(commit)) } == 0 {
             return Err(self.error("kcdbendtran"));
         }
         Ok(())
@@ -826,7 +844,7 @@ impl Db {
     /// Opens a cursor, which borrows this database.
     pub(crate) fn cursor(&self) -> Result<Cursor<'_>, StoreError> {
         // SAFETY: the handle is live.
-        let handle = unsafe { sys::kcdbcursor(self.handle) };
+        let handle = unsafe { sys::oxkc_db_cursor(self.handle) };
         if handle.is_null() {
             return Err(self.error("kcdbcursor"));
         }
@@ -848,8 +866,8 @@ impl Drop for Db {
         // SAFETY: the handle is live and owned; `kcdbdel` is its last use,
         // and Kyoto Cabinet requires the close before the delete.
         unsafe {
-            sys::kcdbclose(self.handle);
-            sys::kcdbdel(self.handle);
+            sys::oxkc_db_close(self.handle);
+            sys::oxkc_db_del(self.handle);
         }
     }
 }
@@ -858,7 +876,7 @@ impl Drop for Db {
 ///
 /// Holds the last record it read, in a buffer it reuses from step to step.
 pub(crate) struct Cursor<'db> {
-    handle: *mut sys::KCCUR,
+    handle: *mut sys::oxkc_cur,
     bytes: Vec<u8>,
     key_len: usize,
     _db: PhantomData<&'db Db>,
@@ -869,7 +887,7 @@ impl Cursor<'_> {
     /// there is none.
     pub(crate) fn jump_to(&mut self, key: &[u8]) -> Result<bool, StoreError> {
         // SAFETY: the cursor handle is live and `key` outlives the call.
-        let ok = unsafe { sys::kccurjumpkey(self.handle, c_ptr(key), key.len()) };
+        let ok = unsafe { sys::oxkc_cur_jump_key(self.handle, c_ptr(key), key.len()) };
         if ok != 0 {
             return Ok(true);
         }
@@ -884,7 +902,7 @@ impl Cursor<'_> {
     /// form. `Ok(false)` when the database is empty.
     pub(crate) fn jump_first(&mut self) -> Result<bool, StoreError> {
         // SAFETY: the cursor handle is live.
-        let ok = unsafe { sys::kccurjump(self.handle) };
+        let ok = unsafe { sys::oxkc_cur_jump(self.handle) };
         if ok != 0 {
             return Ok(true);
         }
@@ -898,13 +916,13 @@ impl Cursor<'_> {
     /// failure is never silently reported as an empty range.
     fn positioning_outcome(&self, call: &str) -> Result<bool, StoreError> {
         // SAFETY: the cursor handle is live.
-        let code = unsafe { sys::kccurecode(self.handle) };
+        let code = unsafe { sys::oxkc_cur_ecode(self.handle) };
         if code == no_record_code() {
             return Ok(false);
         }
         // SAFETY: `kcecodename` returns a static NUL-terminated string for
         // any code.
-        let name = unsafe { CStr::from_ptr(sys::kcecodename(code)) }
+        let name = unsafe { CStr::from_ptr(sys::oxkc_ecodename(code)) }
             .to_string_lossy()
             .into_owned();
         Err(StoreError::Backend(format!("{call}: {name}").into()))
@@ -951,7 +969,7 @@ impl Cursor<'_> {
         // for the call, which is what `visit_full::<RecordBuf>` casts it
         // back to. Read-only (`writable = 0`).
         let ok = unsafe {
-            sys::kccuraccept(
+            sys::oxkc_cur_accept(
                 self.handle,
                 Some(visit_full::<RecordBuf<'_>>),
                 (&raw mut record).cast::<c_void>(),
@@ -973,6 +991,6 @@ impl Drop for Cursor<'_> {
     fn drop(&mut self) {
         // SAFETY: the cursor handle is live and owned, its database
         // outlives it by the `'db` bound, and this is its last use.
-        unsafe { sys::kccurdel(self.handle) }
+        unsafe { sys::oxkc_cur_del(self.handle) }
     }
 }
