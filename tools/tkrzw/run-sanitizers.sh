@@ -61,8 +61,8 @@ inherited_library_path=$(
 )
 cd "$REPO_ROOT"
 
-# Exact on purpose (#1074): a nightly is identified only by its date.
-NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-nightly-2026-09-07}
+# Named once, in tools/sanitize.sh.
+NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)}
 
 if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
 	printf '%s is not installed.\n' "$NIGHTLY" >&2

@@ -172,8 +172,10 @@ remain unverified (#950).
 These recipes do not change either workflow.
 
 `just sanitize` selects only. `tools/sanitize.sh <bdb|kc|tkrzw|all>` runs the
-backend's own script, which keeps its instrumentation, flags, nightly and pass
-criteria; `all` runs the three in turn and exits 1 if any gate failed. The
+backend's own script, which keeps its instrumentation, flags and pass
+criteria; the three share the nightly that the `NIGHTLY` line in
+`tools/sanitize.sh` names. `all` runs the three in turn and exits 1 if any
+gate failed. The
 tkrzw script runs `tkrzw-sanitizers`' inline command with its flags, sanitizer
 options and ASLR wrapper unchanged, and adds one precondition, checked by
 `tools/tkrzw/runtime.sh`: every test binary must load the verified libtkrzw,

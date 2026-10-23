@@ -23,8 +23,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-# Exact on purpose (#1074): a nightly is identified only by its date.
-NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-nightly-2026-08-01}
+# Named once, in tools/sanitize.sh.
+NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)}
 TARGET=${OXPINYIN_SANITIZER_TARGET:-x86_64-unknown-linux-gnu}
 
 if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
