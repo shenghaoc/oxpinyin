@@ -29,6 +29,7 @@ init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::a
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_user]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: std]
 init	<alloc::raw_vec::RawVecInner>::finish_grow
+init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_core]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_data]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_engine]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_facade]
@@ -133,7 +134,6 @@ init	<oxpinyin_user::replay::Content>::write
 init	<oxpinyin_user::replay::Merge>::slot_offset
 init	<oxpinyin_user::session_values::SessionTxn as oxpinyin_store::WriteTxn>::is_empty
 init	<oxpinyin_user::session_values::SessionTxn as oxpinyin_store::WriteTxn>::put
-init	<oxpinyin_user::session_values::SessionValues<oxpinyin_store::bdb::BdbStore> as oxpinyin_store::ReadStore>::get
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore> as core::clone::Clone>::clone [instantiating crate: oxpinyin_facade]
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::open_session::<oxpinyin_user::persistence::SystemOriginals> [instantiating crate: oxpinyin_runtime]
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::bdb::BdbStore>>::open_session::<oxpinyin_user::persistence::SystemOriginals>::{closure#0} [instantiating crate: oxpinyin_runtime]
@@ -213,6 +213,7 @@ init	oxpinyin_user::persistence::load_logs_with_mask
 init	oxpinyin_user::persistence::load_user_bigram_db
 init	oxpinyin_user::persistence::remove_dbm_sidecars
 init	oxpinyin_user::persistence::system_originals
+init	oxpinyin_user::store::get_u64::<oxpinyin_user::session_values::SessionValues<oxpinyin_store::bdb::BdbStore>> [instantiating crate: oxpinyin_runtime]
 init	oxpinyin_user::store_libpinyin::backed_readings
 init	oxpinyin_user::store_libpinyin::loaded_pronunciation_counts
 init	oxpinyin_user::store_libpinyin::seed_txn_with_replay::<oxpinyin_user::session_values::SessionTxn> [instantiating crate: oxpinyin_runtime]
