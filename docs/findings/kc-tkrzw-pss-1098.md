@@ -9,7 +9,9 @@ has run for this issue. No historical figure is a current-run baseline.
 
 The maintainer approved extending KC/tkrzw comparison stages on the new
 `wip/1091-cold-cloud` parent. Its verified committed tip was `fd28e96e`, based
-on main `294f14eb`; the old unfinished `wip/1091-cold-cache` was not adopted.
+on main `294f14eb`. Before publication, the parent advanced to `4165e0a3`
+(libgcc_s kept warm); the layer rebased cleanly and the 35 pure teardown/cold
+tests passed again. The old unfinished `wip/1091-cold-cache` was not adopted.
 `gh stack` registers and rebases this layer on the cloud parent. The extension
 does not change the parent's cold-file enumeration, eviction policy, major
 fault instrumentation or native lifecycle worker. #1090's init instrumentation
@@ -63,7 +65,7 @@ cargo fmt --all --check
 git diff --check
 ```
 
-AST comparison against parent `fd28e96e` confirmed unchanged
+AST comparison against parent `4165e0a3` confirmed unchanged
 `library_dependencies`, `cold_files`, `resident_pages`, `evict_files` and
 `report_times`; `git diff --exit-code wip/1091-cold-cloud --
 tools/bisection/teardown.h` also passed. Native teardown/stub and real-ELF
