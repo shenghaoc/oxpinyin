@@ -642,6 +642,35 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
                 wrapper.kill()
             wrapper.communicate(timeout=10)
 
+    def test_a_release_leaves_the_record_of_a_holder_that_took_the_slot_meanwhile(self):
+        dead = subprocess.Popen([sys.executable, '-c', 'pass'])
+        dead.wait()
+        path = Path(self.lock_dir.name) / 'heavy-slot-0'
+        first = run_all['HeavySlot']('first holder', out=io.StringIO())
+        first.__enter__()
+        first.handoff()
+        probe = first._try
+
+        def second_holder_takes_the_slot_and_dies(index):
+            # The window between the close of the first holder's descriptor and its probe.
+            second = run_all['HeavySlot']('second holder', out=io.StringIO())
+            second.__enter__()
+            run_all['write_holder'](second._file, dict(json.loads(path.read_text()), pid=dead.pid))
+            second._file.close()
+            second._file = None
+            return probe(index)
+
+        first._try = second_holder_takes_the_slot_and_dies
+        first.__exit__()
+        record = run_all['read_holder'](path)
+        self.assertEqual((record or {}).get('pid'), dead.pid)
+        self.assertEqual((record or {}).get('command'), 'second holder')
+        out = io.StringIO()
+        with run_all['HeavySlot']('next holder', out=out):
+            pass
+        self.assertIn(f'reclaimed stale heavy slot 0: pid {dead.pid} in', out.getvalue())
+        self.assertIn(': second holder (pid dead)', out.getvalue())
+
     def test_slot_count_comes_from_the_environment(self):
         os.environ['OXPINYIN_HEAVY_SLOTS'] = '2'
         try:
