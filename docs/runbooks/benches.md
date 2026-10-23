@@ -87,11 +87,21 @@ Python provisions private profiles, interleaves subjects and reads the paused
 native child's memory. ABI calls are bracketed in C. Other bisect and contract
 modes keep their existing output.
 
-Run inside the pinned Linux amd64 BDB environment, after installing both
-shipping libraries with `tools/packaging/install.sh`. Use the existing
-container reservation and heavy admission paths. Keep one campaign active.
-The work directory and measured library copies must be on ext4; tmpfs gives
-misleading private-dirty attribution for clean library pages.
+Only the `provision` stage runs on every cell. `contract-diff.py kc|tkrzw
+PIN_PREFIX … --teardown --teardown-stage provision` writes the startup
+profiles through that cell's own pin, so a kc or tkrzw build's function-order
+policy is generated from profiles its backend opens (`docs/packaging.md`,
+"Regeneration"; #1076). `verify`, `pilot`, `confirm`, `repeat`, `multi` and
+`attribute` are BDB workloads: they compare the final user files through
+`profile_contents`, which reads Berkeley DB containers only, and `--teardown`
+refuses them on `kc` and `tkrzw`.
+
+Run inside the pinned Linux amd64 BDB environment (the cell's own for
+`provision`), after installing both shipping libraries with
+`tools/packaging/install.sh`. Use the existing container reservation and heavy
+admission paths. Keep one campaign active. The work directory and measured
+library copies must be on ext4; tmpfs gives misleading private-dirty
+attribution for clean library pages.
 
 ```bash
 teardown_work=$(mktemp -d "$PWD/target/teardown.XXXXXX")

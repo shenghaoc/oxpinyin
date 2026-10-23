@@ -428,7 +428,10 @@ Provision the profiles with the in-tree teardown provisioner against the
 reference oracle: `$PIN` is the prefix that `tools/cloud/setup.sh --cells bdb`
 verified (`$OXPINYIN_ORACLE_PREFIX_BDB` in its environment file), and
 `$TEARDOWN` is an empty directory on ext4. The provisioner populates the
-profiles through the pin and writes each `profile.manifest`. Then compute the
+profiles through the pin and writes each `profile.manifest`. The `provision`
+stage also runs on the `kc` and `tkrzw` cells, with that cell's name and pin in
+place of `bdb` below; every later teardown stage stays BDB-only
+(`docs/runbooks/benches.md`, "Native teardown workload"). Then compute the
 system-data identity:
 
 ```sh

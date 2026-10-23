@@ -35,6 +35,48 @@ class PureTests(unittest.TestCase):
                     td.run(args, None, None)
                 worker.assert_not_called()
 
+    def refusal(self, **overrides):
+        """What `run` refuses with. The defaults pass every scope check, so the
+        refusal is then the missing work directory."""
+        values = dict(cell='bdb', teardown_stage='provision', per_call=None, cases='', issue=[], family=[],
+                      expect_parent=False, observations=None, plan_only=False, axis_c_replacement=None,
+                      axis_c_mutation=None, axis_c_snapshot_check=False, regenerate_sentence_ties=None,
+                      teardown_work_dir=None)
+        values.update(overrides)
+
+        class Refused(Exception):
+            pass
+
+        def error(message):
+            raise Refused(message)
+        with self.assertRaises(Refused) as raised:
+            td.run(SimpleNamespace(**values), None, SimpleNamespace(error=error))
+        return str(raised.exception)
+
+    def test_provision_stage_runs_on_every_cell(self):
+        for cell in ('bdb', 'kc', 'tkrzw'):
+            with self.subTest(cell=cell):
+                self.assertIn('--teardown-work-dir', self.refusal(cell=cell))
+
+    def test_later_stages_stay_bdb_only(self):
+        for stage in ('verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute'):
+            with self.subTest(stage=stage):
+                self.assertIn('--teardown-work-dir', self.refusal(teardown_stage=stage))
+                for cell in ('kc', 'tkrzw'):
+                    message = self.refusal(cell=cell, teardown_stage=stage)
+                    self.assertIn(f'--teardown-stage {stage} is a BDB workload', message)
+                    self.assertIn(f'the {cell} cell supports only --teardown-stage provision', message)
+
+    def test_contract_and_profiler_modes_are_refused_on_every_cell(self):
+        modes = dict(per_call='wrap', cases='default-option-parse', issue=['1'], family=['f'],
+                     expect_parent=True, observations=Path('observations'), plan_only=True,
+                     axis_c_replacement='r', axis_c_mutation='m', axis_c_snapshot_check=True,
+                     regenerate_sentence_ties='t')
+        for cell in ('bdb', 'kc', 'tkrzw'):
+            for mode, value in modes.items():
+                with self.subTest(cell=cell, mode=mode):
+                    self.assertIn('cannot be combined', self.refusal(cell=cell, **{mode: value}))
+
     def test_existing_smaps_schema_and_requested_pss(self):
         text = '1000-2000 r--p 0000 00:00 0 /data/gb_char.bin\nRss: 8 kB\nPss: 4 kB\nAnonymous: 0 kB\n'
         old = td.SMAPS.parse_lines(text.splitlines())
