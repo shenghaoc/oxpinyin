@@ -218,7 +218,7 @@ One probe runs per sample, in the rotating order:
 - `sample` and `sample-coarse`: `cpu-clock` samples every 20 µs and every
   200 µs, with kernel call chains. Kernel samples are named by their
   innermost syscall or page-fault frame from `/proc/kallsyms`; user samples
-  by the object mapped at I1. The kernel charges each sample's handler to
+  by the object mapped at I1 and its function (`nm`, symbol table first). The kernel charges each sample's handler to
   the task, so the fine period inflates CPU time; compare shares, not
   sampled durations, and check them against the coarse period.
 - `faults`: every minor and major fault's IP and address, with every mmap,

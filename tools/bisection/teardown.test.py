@@ -561,6 +561,29 @@ class InitAttributionTests(unittest.TestCase):
         self.assertEqual([fault['region'] for fault in td.init_faults(records, before, library, data, user)],
                          ['SUBJECT:text', 'DATA:gb_char.bin:readonly', 'ANON:writable', 'USER:user.conf:readonly', 'unmapped'])
 
+    def test_sample_report_names_categories_objects_and_functions(self):
+        library = Path('/w/libraries/subject/libzhuyin.so')
+        maps = [(0x1000, 0x2000, 'r--p', str(library)), (0x2000, 0x3000, 'r-xp', str(library)),
+                (0x5000, 0x6000, 'r-xp', '/usr/lib/libc.so.6'), (0x7000, 0x8000, 'r-xp', '[vdso]')]
+        symbols = ([0xff00], ['clear_page_erms'])
+        report = dict(errno=0, lost=0, throttled=0, valid=True, user_only=False, samples=[
+            dict(kernel=False, ip=0x2100, chain=[]), dict(kernel=False, ip=0x2900, chain=[]),
+            dict(kernel=False, ip=0x5010, chain=[]), dict(kernel=False, ip=0x7010, chain=[]),
+            dict(kernel=True, ip=0xff10, chain=[0xff10])])
+        row = dict(init=dict(probe=report), checkpoints={1: dict(I1=dict(maps=maps))},
+                   samples=[dict(times=dict(init_ns=dict(cpu_ns=1000)))])
+        tables = {str(library): ([0x1100, 0x1800], ['init_tables', 'replay']), '/usr/lib/libc.so.6': ([0], ['memcpy'])}
+        with patch.object(td, 'print_record') as record, patch.object(td, 'elf_symbols', side_effect=tables.get):
+            td.report_init_samples('zhuyin', 'phrases', {side: [row] for side in ('ox', 'control', 'pin')}, symbols,
+                                   {side: {'zhuyin': library} for side in ('ox', 'control', 'pin')},
+                                   Path('/w/worker'), 'warm', 'sample-coarse')
+        shown = record.call_args_list[0].kwargs
+        self.assertEqual((shown['probe'], shown['period_ns'], shown['samples']), ('sample-coarse', 200000, 5))
+        self.assertEqual(shown['user'], {'SUBJECT': 2, 'libc.so.6': 1, '[vdso]': 1})
+        self.assertEqual(shown['kernel'], {'other': 1})
+        self.assertEqual(shown['user_functions']['SUBJECT'], {'init_tables': 1, 'replay': 1})
+        self.assertEqual(shown['user_functions']['[vdso]'], {'[vdso]': 1})
+
     CALLGRIND = '\n'.join(('events: Ir Bc', 'positions: line', 'ob=(1) /w/libraries/subject/libzhuyin.so',
                             'fn=(1) zhuyin_init', '3 10 2', 'cob=(2) /usr/lib/libc.so.6', 'cfn=(2) memcpy',
                             'calls=1 5', '5 100 20', '4 1', 'ob=(2)', 'fn=(2)', '5 100 20', 'totals: 111 22'))

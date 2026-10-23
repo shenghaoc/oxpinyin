@@ -616,6 +616,43 @@ def user_object(address, maps, library, worker):
     return 'unmapped'
 
 
+ELF_SYMBOLS = {}
+
+
+def elf_symbols(path):
+    """Sorted (address, name) function symbols of one object, from nm: the
+    symbol table when present, else the dynamic one. Cached per path."""
+    if path not in ELF_SYMBOLS:
+        rows = []
+        for dynamic in ([], ['--dynamic']):
+            try:
+                output = subprocess.run(['nm', '--defined-only', '--demangle', *dynamic, path],
+                                        capture_output=True, text=True, check=True).stdout
+            except (OSError, subprocess.CalledProcessError):
+                continue
+            rows = sorted((int(fields[0], 16), fields[2]) for fields in
+                          (line.split(' ', 2) for line in output.splitlines())
+                          if len(fields) == 3 and fields[1] in ('t', 'T', 'w', 'W', 'i'))
+            if rows:
+                break
+        ELF_SYMBOLS[path] = ([row[0] for row in rows], [row[1] for row in rows])
+    return ELF_SYMBOLS[path]
+
+
+def user_function(address, maps):
+    """The function holding a user IP. A shared object's lowest mapping is
+    its load base: its segments map in address order from file offset 0."""
+    for start, end, perms, path in maps:
+        if 'x' in perms and start <= address < end:
+            if not path.startswith('/'):
+                return path
+            base = min(row[0] for row in maps if row[3] == path)
+            addresses, names = elf_symbols(path)
+            index = bisect.bisect_right(addresses, address - base) - 1
+            return names[index] if index >= 0 else hex(address - base)
+    return 'unmapped'
+
+
 def region_label(path, access, library, data, user):
     """A faulted mapping by role and access class, as mapping_group names it."""
     path = path.removesuffix(' (deleted)')
@@ -1324,27 +1361,29 @@ def report_init_counts(facade, case, rows, cache):
 def report_init_samples(facade, case, rows, symbols, subjects, worker, cache, probe='sample'):
     for side, samples in rows.items():
         library = subjects[side][facade].resolve()
-        user, kernel, leaves = collections.Counter(), collections.Counter(), {}
+        user, kernel, leaves, functions = collections.Counter(), collections.Counter(), {}, {}
         status = dict(lost=0, throttled=0, valid=True, user_only=False, errno=[])
         count = 0
         for row in samples:
-            probe = row['init']['probe']
-            if probe['errno']:
-                status['errno'].append(probe['errno'])
+            report = row['init']['probe']
+            if report['errno']:
+                status['errno'].append(report['errno'])
                 continue
-            status['lost'] += probe['lost']
-            status['throttled'] += probe['throttled']
-            status['valid'] &= probe['valid']
-            status['user_only'] |= probe['user_only']
+            status['lost'] += report['lost']
+            status['throttled'] += report['throttled']
+            status['valid'] &= report['valid']
+            status['user_only'] |= report['user_only']
             maps = row['checkpoints'][1]['I1']['maps']
-            for sample in probe['samples']:
+            for sample in report['samples']:
                 count += 1
                 if sample['kernel']:
                     category, leaf = kernel_category(sample, symbols)
                     kernel[category] += 1
                     leaves.setdefault(category, collections.Counter())[leaf] += 1
                 else:
-                    user[user_object(sample['ip'], maps, library, worker)] += 1
+                    owner = user_object(sample['ip'], maps, library, worker)
+                    user[owner] += 1
+                    functions.setdefault(owner, collections.Counter())[user_function(sample['ip'], maps)] += 1
         if status['errno']:
             print_record('init-samples', facade=facade, case=case, side=side, cache=cache, probe=probe, status='NOT RUN',
                          errno=sorted(set(status['errno'])))
@@ -1353,6 +1392,7 @@ def report_init_samples(facade, case, rows, symbols, subjects, worker, cache, pr
                      period_ns=INIT_SAMPLE_PERIOD_NS[probe], samples=count, user_samples=sum(user.values()),
                      kernel_samples=sum(kernel.values()), user=dict(user.most_common()), kernel=dict(kernel.most_common()),
                      kernel_leaves={category: dict(value.most_common(8)) for category, value in sorted(leaves.items())},
+                     user_functions={owner: dict(value.most_common(15)) for owner, value in sorted(functions.items())},
                      symbolized=symbols is not None,
                      cpu_ns=summary([row['samples'][0]['times']['init_ns']['cpu_ns'] for row in samples]), **status)
 
