@@ -479,18 +479,10 @@ impl Db {
     ) -> Result<Self, StoreError> {
         check_runtime_version()?;
 
-        // The `kclangc.h` binding appended `#type=` to the path, so a `#`
-        // in the path itself would have been read as the start of tuning
-        // parameters; it refused one. The shim opens the plain path, but
-        // the refusal is kept unchanged here: accepting `#`, as the pin
-        // does, is an observable change with its own differential.
+        // The shim opens the concrete class with the literal path, as
+        // the pin does (ngram_kyotodb.cpp:117-119 at 074a2219). `#` in
+        // this path is a filename byte, independent of `extra_tuning`.
         let bytes = path.as_os_str().as_bytes();
-        if bytes.contains(&b'#') {
-            return Err(StoreError::InvalidInput(
-                "store path contains '#', which Kyoto Cabinet reads as the start of \
-                 tuning parameters",
-            ));
-        }
         if !extra_tuning.is_empty() && !extra_tuning.starts_with('#') {
             return Err(StoreError::InvalidInput(
                 "extra_tuning must start with '#' or be empty",

@@ -6822,6 +6822,83 @@ def conf_session(k, system):
     return out
 
 
+# #1119: direct KC classes open literal paths (074a2219
+# ngram_kyotodb.cpp:117-119; chewing_large_table2_kyotodb.cpp:87-89).
+# table_info.cpp:255-284 preserves '#' in filename fields; pinyin.cpp:
+# 250-276, 303-319, 939-988, 1042-1084 loads/saves those literal names.
+# The DBM filenames are fixed by the facade; table.conf can rename the
+# system chunks, user chunks and journals. The store trait laws also
+# exercise '#' in actual TreeDB/HashDB filenames, without a symlink.
+def hash_path_fixture(k, placement):
+    system = private_system(k)
+    system_name, journal_name, user_name = 'gb_char.bin', 'gb_char.dbin', 'user.bin'
+    if placement == 'system-directory':
+        renamed = system + '#type=kct'
+        os.rename(system, renamed)
+        system = renamed
+    elif placement == 'user-directory':
+        renamed = k.user + '#type=kct'
+        os.rename(k.user, renamed)
+        k.user = renamed
+    elif placement in ('system-filename', 'user-filename'):
+        conf = Path(system, 'table.conf')
+        text = conf.read_text()
+        if placement == 'system-filename':
+            system_name = 'gb#type=kct.bin'
+            Path(system, 'gb_char.bin').rename(Path(system, system_name))
+            text = text.replace('gb_char.bin', system_name)
+        else:
+            journal_name, user_name = 'gb#type=kct.dbin', 'user#type=kct.bin'
+            text = text.replace('gb_char.dbin', journal_name).replace('user.bin', user_name)
+        conf.unlink()  # private_system linked this file to the immutable pin data
+        conf.write_text(text)
+    else:
+        raise ValueError('unknown hash path placement: ' + placement)
+    k.data = system
+    return system_name, journal_name, user_name
+
+
+def hash_path_session(placement):
+    def probe(k):
+        system_name, journal_name, user_name = hash_path_fixture(k, placement)
+        out = {'training': token_unigram_trained(k), 'import': token_unigram_user(k)}
+        before = d18_export_phrases(k)
+        assert before, 'the user phrase must be exported before save'
+        out['export-before'] = before
+        out['save'] = k.fn('save', B, P)(k.ctx)
+        assert out['save'], 'the trained profile must save'
+        out['files'] = user_listing(k)
+        assert Path(k.data, system_name).is_file(), 'the configured system file must exist'
+        assert Path(k.user, journal_name).is_file(), 'the trained journal must be written'
+        assert Path(k.user, user_name).is_file(), 'the imported library must be written'
+        if placement == 'system-filename':
+            assert not Path(k.data, 'gb_char.bin').exists()
+        if placement == 'user-filename':
+            assert not Path(k.user, 'gb_char.dbin').exists()
+            assert not Path(k.user, 'user.bin').exists()
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        out['reopen'] = bool(k.ctx)
+        out['trained-after-reopen'] = unigram_of(k, int(out['training']['token'], 16))
+        assert out['trained-after-reopen'] == out['training']['after']
+        out['import-after-reopen'] = unigram_of(k, int(out['import']['token'], 16))
+        assert out['import-after-reopen'] == out['import']['after']
+        out['export-after'] = d18_export_phrases(k)
+        assert out['export-after'] == before, 'reopen must preserve the exported phrase'
+        k.fn('free_instance', None, P)(k.inst)
+        k.fn('fini', None, P)(k.ctx)
+        k._ctx = k._inst = None
+        return out
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _placement in ('system-directory', 'user-directory', 'system-filename', 'user-filename'):
+        case('hash-path/' + _placement + '-' + _mode, mode=_mode, stderr=True,
+             issues=('1119',))(hash_path_session(_placement))
+
+
 def addon_session(k, system, indexes=(0, 3, 4, 5, 15)):
     """The addon libraries a row set loads, and the candidates they add."""
     ctx = k.init(system=system)
