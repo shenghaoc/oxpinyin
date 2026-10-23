@@ -109,7 +109,7 @@ fn split_shell_words(line: &str) -> Vec<String> {
 /// entry point's failure return, and recording it as a `SYSTEM` error on
 /// the database is best effort. `kclangc.h` reached every class through
 /// `PolyDB`, whose dispatch and unopened classes kept libkyotocabinet text
-/// resident (`docs/findings/kc-shim-1098.md`). The system libkyotocabinet
+/// resident (`docs/findings/kc-shim-1118.md`). The system libkyotocabinet
 /// still supplies the out-of-line code, as it does for libpinyin.
 ///
 /// The shim is compiled with `cc` at `-O2`, the pin's autoconf default,

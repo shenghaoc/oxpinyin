@@ -1,4 +1,4 @@
-/* C entry points of the Kyoto Cabinet shim (shim.cc, #1098).
+/* C entry points of the Kyoto Cabinet shim (shim.cc, #1118).
  *
  * The subset of kclangc.h this backend calls, with the database class
  * chosen at construction instead of through PolyDB's "#type=" open

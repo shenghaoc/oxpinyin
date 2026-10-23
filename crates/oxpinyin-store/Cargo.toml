@@ -28,7 +28,7 @@ criterion = "0.8"
 
 [build-dependencies]
 bindgen = { workspace = true, optional = true }
-# Compiles the Kyoto Cabinet C++ shim (#1098).
+# Compiles the Kyoto Cabinet C++ shim (#1118).
 cc = { version = "1.4.3", optional = true }
 
 [features]

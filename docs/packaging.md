@@ -186,6 +186,22 @@ override_dh_auto_install:
 	  --libdir=/usr/lib/$(DEB_HOST_MULTIARCH)
 ```
 
+## Kyoto Cabinet: build headers must match the installed library
+
+The Kyoto Cabinet backend compiles Kyoto Cabinet's header code into the
+facade, as libpinyin's Kyoto Cabinet build does. A C++ shim
+(`crates/oxpinyin-store/src/kyotocabinet/shim.cc`) constructs `TreeDB`,
+`HashDB`, `ProtoTreeDB` and `StashDB` from the installed headers. That
+compiled code calls the system libkyotocabinet's out-of-line functions and
+shares its object layouts, so the headers a package builds against must be
+the same Kyoto Cabinet version as the libkyotocabinet it runs with. Build
+against the distribution's `libkyotocabinet-dev` or `kyotocabinet-devel`
+for the `libkyotocabinet` it ships, and rebuild the facade whenever that
+library's version changes, as libpinyin's package must be rebuilt.
+The backend checks only that the running library is 1.2.x
+(`check_runtime_version` in `crates/oxpinyin-store/src/kyotocabinet/ffi.rs`);
+it does not detect a header/library mismatch.
+
 ## Locating the model data (`pkgdatadir`)
 
 libpinyin's own `.pc` exports `pkgdatadir` (plus `database_format`,

@@ -1,4 +1,4 @@
-# Kyoto Cabinet through a C++ shim (#1098)
+# Kyoto Cabinet through a C++ shim (#1118)
 
 Recorded 2026-10-23 (UTC). The maintainer approved the shim as a PR on
 2026-10-23, including `cc` as a build-dependency of `oxpinyin-store` under

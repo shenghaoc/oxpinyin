@@ -50,8 +50,8 @@ library's C++ ABI: the facades import 68 `kyotocabinet::` names, 67 of
 them among the pin's 77. Nothing else vendors or compiles C or C++ into
 oxpinyin.
 
-Kyoto Cabinet left `kclangc.h` on measurement (#1098, results:
-`docs/findings/kc-shim-1098.md`). `kclangc.h` reaches every class through
+Kyoto Cabinet left `kclangc.h` on measurement (#1118, results:
+`docs/findings/kc-shim-1118.md`). `kclangc.h` reaches every class through
 `PolyDB`, and that dispatch, together with the classes the library links
 but oxpinyin never opens, kept about 580 KiB more libkyotocabinet text
 resident than the pin; the shim leaves the pin's own libkyotocabinet

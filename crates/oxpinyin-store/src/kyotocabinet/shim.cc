@@ -1,4 +1,4 @@
-// Kyoto Cabinet shim (#1098): the four classes libpinyin uses, constructed
+// Kyoto Cabinet shim (#1118): the four classes libpinyin uses, constructed
 // directly, behind the C entry points of shim.h.
 //
 // kclangc.h reaches every class through PolyDB, whose open() parses a
