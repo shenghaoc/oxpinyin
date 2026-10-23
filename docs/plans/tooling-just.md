@@ -1,6 +1,6 @@
 # Tooling layer 2: native just interface
 
-Status: partial implementation. Reconciled: 2026-10-22 UTC (`date -u`).
+Status: partial implementation. Reconciled: 2026-10-23 UTC (`date -u`).
 This layer builds on [native Python](tooling-python.md).
 PR [#942](https://github.com/shenghaoc/oxpinyin/pull/942) added the native
 `justfile`, doctor, check and heavy recipes. PR
@@ -84,7 +84,9 @@ Layer 5 schedules the old-to-new handoffs.
 | `just bench [args ...]` | Run the workspace benches through the heavy wrapper: `cargo bench --workspace --benches <args>`. | `cargo bench` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). `--benches` skips the four `required-features` targets: `backend_matrix_kyotocabinet`, `backend_matrix_tkrzw` and `kyotocabinet_bnum` (oxpinyin-store), and `dbm_bench` (pinyin-oracle). |
 | `just bench-smoke` | Build every selected bench harness without running it: `just bench --no-run`. | `cargo bench --no-run` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). On a host with model20, `just bench -- --test` is the full start-up check. |
 | `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Proposed for T2N (maintainer ruling 2026-10-22 UTC). |
-| `just fuzz` / `just coverage` / `just sanitize` | Call native tools for native inputs. | Existing fuzz/coverage/sanitizer commands | Proposed. |
+| `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch <arch> -R cargo +nightly-2026-08-01 fuzz run <args>` from `verify-nightly.yml`'s `fuzz-soak` job. | Implemented (maintainer ruling 2026-10-23 UTC). Linux execution; macOS exits 1 because the fuzz workspace links the Linux-only C ABI. Windows transport unverified (#950). |
+| `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job. | Implemented (maintainer ruling 2026-10-23 UTC). Supply the existing workflow options explicitly to reproduce its scope and report. macOS execution unverified; Windows transport unverified (#950). |
+| `just sanitize` | Call an existing native sanitizer tool. | BDB script and inline tkrzw ASan workflow command. | Proposed; deferred by maintainer ruling 2026-10-23 UTC. No shared selector or argument-forwarding entry point exists. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
 `just check` keeps `check.sh`'s backend selection and selected crate sets.
@@ -106,6 +108,42 @@ Print each native command's resolved inputs, selected crate/backend, native
 target path and relevant environment overrides before execution.
 Layer 5 owns registry selection by issue, row, runner, cell and family.
 Native recipes do not acquire pin or cell semantics from that vocabulary.
+
+The fuzz and coverage wrappers forward raw arguments, including `--`, without
+adding target, crate, backend or report selection. Their `not-a-gate` registry
+rows name `legacy:justfile` and call that exact justfile; compatibility
+aggregate gates do not execute them. Fuzz uses the pinned nightly and Linux
+ASLR wrapper from [verify-nightly.yml](../../.github/workflows/verify-nightly.yml),
+job `fuzz-soak`, step `Soak each target`. The targets and Linux-only C ABI
+dependency are in [fuzz/Cargo.toml](../../fuzz/Cargo.toml).
+Coverage delegates to the existing tool from
+[coverage.yml](../../.github/workflows/coverage.yml), job `coverage`:
+
+```sh
+just fuzz parser -- -max_total_time=5 -timeout=2 -max_len=4096 -print_final_stats=1
+just coverage --locked -p oxpinyin-chewing -- --test-threads=1
+```
+
+To reproduce the coverage job's scope and reports, pass its options unchanged:
+
+```sh
+just coverage --locked --workspace --no-default-features --features kyotocabinet --lcov --output-path lcov.info
+just coverage report --summary-only --fail-under-lines 77
+```
+
+Linux argument transport (including empty arguments, spaced paths and `--`)
+and statuses 0, 1 and 77 passed through the real heavy slot with a temporary
+Cargo substitute. Real workload verification remains incomplete on that
+host: the small fuzz run failed because nightly-2026-08-01 is absent; the
+one-crate coverage run failed because cargo-llvm-cov is absent. No tools
+were installed. The macOS refusal body returned 1 when exercised on Linux;
+native macOS execution was not run.
+
+These recipes do not change either workflow. The sanitizer recipe remains
+proposed: `store-backends.yml`'s `bdb-sanitizers` job calls
+`bash tools/bdb/run-sanitizers.sh`, which accepts no selection arguments;
+`tkrzw-sanitizers` inlines a separate ASan command and environment.
+The maintainer's 2026-10-23 UTC ruling leaves both routes unchanged.
 
 ## 3. Cross-platform command transport
 
@@ -140,7 +178,7 @@ The #905/#906/#903 stack is merged. `run-all.py --heavy-slot --` remains
 available through #941's adapter to the shared core. PR #942 changed
 AGENTS.md to use `just heavy --` for direct heavy commands and runner builds.
 Layer 1 limits the native slot to its environment. The recipe migrations above
-that remain open are bench, measure/initbench, fuzz, coverage, sanitize and ci;
+that remain open are measure/initbench, sanitize and ci;
 the `ci.yml` Linux and macOS test cutover landed in #968 (merge `c017ebee`).
 This reconciliation changes no production rule.
 

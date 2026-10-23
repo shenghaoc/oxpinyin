@@ -90,6 +90,32 @@ bench-smoke:
 bench-smoke:
     @just bench --no-run; exit $LASTEXITCODE
 
+# Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
+[linux]
+fuzz *args:
+    @just heavy -- setarch {{arch()}} -R cargo +nightly-2026-08-01 fuzz run "$@"
+
+# The fuzz workspace links the Linux-only C ABI, even for portable targets.
+[macos]
+fuzz *args:
+    @echo "fuzz is unsupported on macOS: the fuzz workspace requires the Linux-only C ABI."
+    @exit 1
+
+# Windows transport is unverified (#950); setarch is Linux-only.
+[windows]
+fuzz *args:
+    @just heavy -- cargo +nightly-2026-08-01 fuzz run @args; exit $LASTEXITCODE
+
+# Run the native coverage tool; crate, backend and report selection stay in it.
+[unix]
+coverage *args:
+    @just heavy -- cargo llvm-cov "$@"
+
+# Windows transport is unverified (#950).
+[windows]
+coverage *args:
+    @just heavy -- cargo llvm-cov @args; exit $LASTEXITCODE
+
 # Read registry metadata, optionally filtered by issue or kind.
 [unix]
 list *args:
