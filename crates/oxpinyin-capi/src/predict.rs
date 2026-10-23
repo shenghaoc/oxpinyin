@@ -5,9 +5,9 @@
 //! and the punctuation prefix of
 //! `pinyin_guess_predicted_candidates_with_punctuations` (`:2454-2498`).
 
-use std::collections::HashSet;
 use std::os::raw::c_char;
 
+use oxpinyin_core::hash::{FixedHashMap, FixedHashSet};
 use oxpinyin_core::single_gram;
 use oxpinyin_engine::CandidateKind;
 use oxpinyin_user::UserStore;
@@ -151,7 +151,7 @@ fn guess_predicted_result(inst: &mut CapiInstance, prefix: &str) -> Result<bool,
     // Dedup retains the numerically higher score even if the pin's signed
     // comparator put it later (`pinyin.cpp:2128-2136`). Equal scores keep
     // the first row. The winner remains at its original sorted position.
-    let mut winners = std::collections::HashMap::new();
+    let mut winners = FixedHashMap::default();
     for (index, item) in items.iter().enumerate() {
         let winner = winners.entry(item.text.clone()).or_insert(index);
         if item.frequency > items[*winner].frequency {
@@ -306,7 +306,7 @@ pub fn guess_predicted_with_punctuations(inst: &mut CapiInstance, prefix: &str) 
 
 fn prepend_punctuations(inst: &mut CapiInstance, prefixes: &[u32]) {
     let mut puncts: Vec<String> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut seen: FixedHashSet<String> = FixedHashSet::default();
     for token in prefixes {
         for punct in inst.core.dict.punctuations(*token) {
             if seen.insert(punct.clone()) {

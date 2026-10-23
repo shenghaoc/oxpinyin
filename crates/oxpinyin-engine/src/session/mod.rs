@@ -10,11 +10,11 @@
 
 use core::fmt::Display;
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
 
 use smallvec::SmallVec;
 
 use oxpinyin_core::graph::{Edge, EdgeKind, ExactSegment, SegmentGraph};
+use oxpinyin_core::hash::{FixedHashMap, FixedHashSet};
 use oxpinyin_core::kbest::{DecodedPath, k_best};
 use oxpinyin_core::scoring::{Scorer, ScoringConfig, ScoringError, expand_keys, key_cost_table};
 use oxpinyin_core::{
@@ -382,8 +382,8 @@ fn order_window_tail(into: &mut Vec<Candidate>, start: usize) {
     });
     // Membership only: the retained candidates keep the batch's order, so
     // the set's own (unspecified) iteration order is never observed.
-    let mut seen: std::collections::HashSet<u32> =
-        std::collections::HashSet::with_capacity(into.len() - start);
+    let mut seen: FixedHashSet<u32> =
+        FixedHashSet::with_capacity_and_hasher(into.len() - start, Default::default());
     let mut write = start;
     for read in start..into.len() {
         if let Some(token) = into[read].token().map(oxpinyin_core::PhraseToken::value)
@@ -1067,7 +1067,8 @@ impl RankKey {
 fn dedup_by_text_keep_first(candidates: &mut Vec<Candidate>) {
     let mut keep = Vec::with_capacity(candidates.len());
     {
-        let mut seen: HashSet<&str> = HashSet::with_capacity(candidates.len());
+        let mut seen: FixedHashSet<&str> =
+            FixedHashSet::with_capacity_and_hasher(candidates.len(), Default::default());
         keep.extend(
             candidates
                 .iter()
@@ -1099,7 +1100,8 @@ fn dedup_ranked_by_text(ranked: &mut Vec<Candidate>, keys: &[RankKey]) {
     debug_assert_eq!(ranked.len(), keys.len());
     let mut keep = vec![true; ranked.len()];
     {
-        let mut survivor: HashMap<&str, usize> = HashMap::with_capacity(ranked.len());
+        let mut survivor: FixedHashMap<&str, usize> =
+            FixedHashMap::with_capacity_and_hasher(ranked.len(), Default::default());
         for (index, (key, candidate)) in keys.iter().zip(ranked.iter()).enumerate() {
             match survivor.entry(candidate.text()) {
                 Entry::Vacant(slot) => {

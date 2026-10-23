@@ -25,13 +25,12 @@
 //! (polyphone discounting, float accumulation).
 
 use std::cell::{OnceCell, RefCell};
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::hash::{BuildHasherDefault, Hasher};
 
 use compact_str::CompactString;
 use oxpinyin_core::cost::{NAN_COST, NEG_INF_COST, POS_INF_COST, cost_add, cost_gt};
 use oxpinyin_core::graph::{GraphError, MAX_GRAPH_INPUT};
+use oxpinyin_core::hash::FixedHashMap;
 use oxpinyin_core::scoring::{ScoringError, expand_keys};
 use oxpinyin_core::{
     ChewingKey, Completeness, Cost, Dictionary, LanguageModel, NbestSuccessors, PhraseEntry,
@@ -340,35 +339,9 @@ fn tail_merge(values: &mut [Value]) {
     glib_merge_sort(values, &tail_compare);
 }
 
-/// A multiplicative hasher for the trellis's `u32` token keys.
-///
-/// These maps are only probed (`get`, `entry`), never iterated: the order of
-/// a position's nodes is its [`Step`]'s node vector, so the hash function
-/// cannot reach the output. SipHash's per-lookup cost dominated the step expansion.
-#[derive(Default, Clone, Copy)]
-struct TokenHasher(u64);
-
-impl Hasher for TokenHasher {
-    fn write(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.write_u64(u64::from(byte));
-        }
-    }
-
-    fn write_u32(&mut self, value: u32) {
-        self.write_u64(u64::from(value));
-    }
-
-    fn write_u64(&mut self, value: u64) {
-        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x517c_c1b7_2722_0a95);
-    }
-
-    fn finish(&self) -> u64 {
-        self.0
-    }
-}
-
-type TokenMap<V> = HashMap<u32, V, BuildHasherDefault<TokenHasher>>;
+/// Lookup only: each step's node vector determines candidate order. The
+/// shared fixed hasher retains the trellis's existing `u32` hash law.
+type TokenMap<V> = FixedHashMap<u32, V>;
 
 /// One `(position, token)` node: the pin's `trellis_node<nstore>`
 /// (074a2219 phonetic_lookup_heap.h:31-82), a fixed array whose first

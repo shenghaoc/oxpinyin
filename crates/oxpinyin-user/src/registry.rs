@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Mutex, MutexGuard, OnceLock, Weak};
 
+use oxpinyin_core::hash::FixedHashMap;
 use oxpinyin_store::{DefaultStore, WriteStore};
 
 use crate::store::Token;
@@ -43,21 +44,21 @@ pub struct CountCache {
     /// retires it wholesale.
     pub(crate) generation: u64,
     /// `UNIGRAM[token]`.
-    pub(crate) unigram: HashMap<Token, u64>,
+    pub(crate) unigram: FixedHashMap<Token, u64>,
     /// `UNIGRAM_TOTAL`'s single row.
     pub(crate) unigram_total: Option<u64>,
     /// The raw gram under each predecessor scored since the last write
     /// that has one. Counts and totals are read from the bytes as the pin
     /// reads them (`get_freq`, `get_total_freq`).
-    pub(crate) bigram_rows: HashMap<Token, Vec<u8>>,
+    pub(crate) bigram_rows: FixedHashMap<Token, Vec<u8>>,
 }
 
 /// Accepted exported increments since the last operation that writes counts.
 /// The library totals are cached only while these live item deltas exist.
 #[derive(Default)]
 pub(crate) struct SystemUnigramBumps {
-    pub(crate) tokens: HashMap<Token, u64>,
-    pub(crate) libraries: HashMap<u8, u32>,
+    pub(crate) tokens: FixedHashMap<Token, u64>,
+    pub(crate) libraries: FixedHashMap<u8, u32>,
     pub(crate) total: u64,
 }
 
