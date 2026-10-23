@@ -415,6 +415,15 @@ def worker(mode, so, data, name):
     spawned = os.environ.pop('CONTRACT_DIFF_SPAWNED', None)
     entered = time.monotonic()
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    if mode == 'profile-rows':
+        # Untimed teardown comparison in this existing isolated worker. Do not
+        # retain a backend CDLL in the measurement controller between samples.
+        runtime = check_tkrzw(CELL, 'contract-diff.py/profile-rows', 'reader', so)
+        if CELL == 'tkrzw' and runtime is None:
+            raise ValueError('tkrzw profile reader anchor has no certified libtkrzw dependency')
+        rows = index_file_rows(data, kind=name, allow_empty=True, library=runtime)
+        print(json.dumps(dict(rows=rows)), flush=True)
+        return
     if name.startswith('axis-c-'):
         # Fedora's pipe core_pattern can invoke systemd-coredump even when
         # RLIMIT_CORE is zero. This guard prevents routing these deliberate
@@ -2763,16 +2772,18 @@ def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
 USER_INDEX_FILES = ('user_phrase_index.bin', 'user_pinyin_index.bin')
 
 
-def index_file_rows(path):
-    """Every record of a user index container, key by key, in the running
-    cell's own format: `[key hex, value hex]` in ascending key order, so a
-    key whose value is empty is a row of its own. A Berkeley DB btree is read
-    through `db_dump` (its page headers carry a random file id and an LSN),
-    a Kyoto Cabinet snapshot (`chewing_large_table2_kyotodb.cpp:106`,
-    `phrase_large_table3_kyotodb.cpp:109`) is loaded into an on-memory tree
-    and walked with a cursor, and a tkrzw `TreeDBM`
-    (`chewing_large_table2_tkrzwdb.cpp:83`, `phrase_large_table3_tkrzwdb.cpp:83`)
-    is opened read-only and walked with an iterator."""
+def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
+    """Every key/value of a user container, sorted, including empty values.
+
+    The default remains the user-index reader. Teardown also selects `hash`
+    for user_bigram.db: KC stores all three files as snapshots; tkrzw saves
+    indexes as TreeDBM and the bigram as HashDBM (ngram_tkrzwdb.cpp:48-81 at
+    074a2219). BDB keeps db_dump's type detection and historical output.
+    `library` is the exact tkrzw path certified against the worker's anchor
+    object, avoiding a second, possibly different bare-name resolution.
+    """
+    if kind not in ('tree', 'hash'):
+        raise ValueError('unknown profile container kind: ' + kind)
     rows = []
     if CELL == 'kc':
         kc = C.CDLL('libkyotocabinet.so.16')
@@ -2784,26 +2795,47 @@ def index_file_rows(path):
         kc.kccurjump.argtypes = [P]
         kc.kccurget.restype = P
         kc.kccurget.argtypes = [P, C.POINTER(Z), C.POINTER(P), C.POINTER(Z), I]
+        kc.kccurecode.argtypes, kc.kccurecode.restype = [P], I
         kc.kccurdel.argtypes = [P]
         kc.kcfree.argtypes = [P]
         kc.kcdbclose.argtypes = [P]
         db = kc.kcdbnew()
-        assert db and kc.kcdbopen(db, b'+', (1 << 1) | (1 << 2))  # KCOWRITER | KCOCREATE
-        assert kc.kcdbloadsnap(db, str(path).encode())
-        cur = kc.kcdbcursor(db)
-        if kc.kccurjump(cur):
-            while True:
-                ksiz, vbuf, vsiz = Z(), P(), Z()
-                kbuf = kc.kccurget(cur, C.byref(ksiz), C.byref(vbuf), C.byref(vsiz), 1)
-                if not kbuf:
-                    break
-                rows.append([C.string_at(kbuf, ksiz.value).hex(), C.string_at(vbuf, vsiz.value).hex()])
-                kc.kcfree(kbuf)
-        kc.kccurdel(cur)
-        assert kc.kcdbclose(db)
-        kc.kcdbdel(db)
+        if not db:
+            raise ValueError('KC profile allocation failed: ' + str(path))
+        opened, cur = False, None
+        try:
+            if not kc.kcdbopen(db, b'+', (1 << 1) | (1 << 2)):
+                raise ValueError('KC profile memory open failed: ' + str(path))
+            opened = True
+            if not kc.kcdbloadsnap(db, str(path).encode()):
+                raise ValueError('KC profile snapshot load failed: ' + str(path))
+            cur = kc.kcdbcursor(db)
+            if not cur:
+                raise ValueError('KC profile cursor allocation failed: ' + str(path))
+            if kc.kccurjump(cur):
+                while True:
+                    ksiz, vbuf, vsiz = Z(), P(), Z()
+                    kbuf = kc.kccurget(cur, C.byref(ksiz), C.byref(vbuf), C.byref(vsiz), 1)
+                    if not kbuf:
+                        if kc.kccurecode(cur) != 7:  # KCENOREC, not a partial walk.
+                            raise ValueError('KC profile cursor read failed: ' + str(path))
+                        break
+                    try:
+                        rows.append([C.string_at(kbuf, ksiz.value).hex(), C.string_at(vbuf, vsiz.value).hex()])
+                    finally:
+                        kc.kcfree(kbuf)
+            elif kc.kccurecode(cur) != 7:
+                raise ValueError('KC profile cursor first failed: ' + str(path))
+        finally:
+            if cur:
+                kc.kccurdel(cur)
+            try:
+                if opened and not kc.kcdbclose(db):
+                    raise ValueError('KC profile close failed: ' + str(path))
+            finally:
+                kc.kcdbdel(db)
     elif CELL == 'tkrzw':
-        tk = C.CDLL('libtkrzw.so.1')
+        tk = C.CDLL(str(library) if library is not None else 'libtkrzw.so.1')
         libc = C.CDLL(None)
         libc.free.argtypes = [P]
         tk.tkrzw_dbm_open.restype, tk.tkrzw_dbm_open.argtypes = P, [S, B, S]
@@ -2814,20 +2846,41 @@ def index_file_rows(path):
         tk.tkrzw_dbm_iter_next.restype, tk.tkrzw_dbm_iter_next.argtypes = B, [P]
         tk.tkrzw_dbm_iter_free.argtypes = [P]
         tk.tkrzw_dbm_close.restype, tk.tkrzw_dbm_close.argtypes = B, [P]
-        db = tk.tkrzw_dbm_open(str(path).encode(), False, b'dbm=TreeDBM')
-        assert db
-        it = tk.tkrzw_dbm_make_iterator(db)
-        assert tk.tkrzw_dbm_iter_first(it)
-        while True:
-            kptr, ksiz, vptr, vsiz = P(), C.c_int32(), P(), C.c_int32()
-            if not tk.tkrzw_dbm_iter_get(it, C.byref(kptr), C.byref(ksiz), C.byref(vptr), C.byref(vsiz)):
-                break
-            rows.append([C.string_at(kptr, ksiz.value).hex(), C.string_at(vptr, vsiz.value).hex()])
-            libc.free(kptr)
-            libc.free(vptr)
-            tk.tkrzw_dbm_iter_next(it)
-        tk.tkrzw_dbm_iter_free(it)
-        assert tk.tkrzw_dbm_close(db)
+        tk.tkrzw_get_last_status_code.restype = I
+        tk.tkrzw_get_last_status_code.argtypes = []
+        params = b'dbm=HashDBM' if kind == 'hash' else b'dbm=TreeDBM'
+        db = tk.tkrzw_dbm_open(str(path).encode(), False, params)
+        if not db:
+            raise ValueError('tkrzw profile read-only open failed: ' + str(path))
+        it = None
+        try:
+            it = tk.tkrzw_dbm_make_iterator(db)
+            if not it:
+                raise ValueError('tkrzw profile iterator allocation failed: ' + str(path))
+            if not tk.tkrzw_dbm_iter_first(it):
+                if not allow_empty or tk.tkrzw_get_last_status_code() != 7:
+                    raise ValueError('tkrzw profile iterator first failed: ' + str(path))
+                return []
+            while True:
+                kptr, ksiz, vptr, vsiz = P(), C.c_int32(), P(), C.c_int32()
+                if not tk.tkrzw_dbm_iter_get(it, C.byref(kptr), C.byref(ksiz), C.byref(vptr), C.byref(vsiz)):
+                    if tk.tkrzw_get_last_status_code() != 7:
+                        raise ValueError('tkrzw profile iterator read failed: ' + str(path))
+                    break
+                try:
+                    rows.append([C.string_at(kptr, ksiz.value).hex(), C.string_at(vptr, vsiz.value).hex()])
+                finally:
+                    libc.free(kptr)
+                    libc.free(vptr)
+                if not tk.tkrzw_dbm_iter_next(it):
+                    if tk.tkrzw_get_last_status_code() != 7:
+                        raise ValueError('tkrzw profile iterator next failed: ' + str(path))
+                    break
+        finally:
+            if it:
+                tk.tkrzw_dbm_iter_free(it)
+            if not tk.tkrzw_dbm_close(db):
+                raise ValueError('tkrzw profile close failed: ' + str(path))
     else:
         dump = subprocess.run(['db5.3_dump', str(path)], check=True, capture_output=True).stdout.decode()
         body = dump.split('DATA=END')[0].split('HEADER=END\n')[1].split('\n')[:-1]
