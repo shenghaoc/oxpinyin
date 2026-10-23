@@ -2078,7 +2078,7 @@
     "oracle": false,
     "required_inputs": [
       "Linux native toolchain and the selected backend's headers and library",
-      "nightly-2026-09-07 (bdb, tkrzw) and nightly-2026-08-01 (kc)",
+      "the nightly named in tools/sanitize.sh (nightly-2026-09-07)",
       "setarch with permission to disable ASLR (tkrzw)",
       "a verified libtkrzw: the one setup.sh's environment file names, or a host library that passes tools/tkrzw/distro-probe.sh (tkrzw)",
       "caller-selected backend: bdb, kc, tkrzw or all"

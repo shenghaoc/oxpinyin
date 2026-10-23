@@ -41,13 +41,19 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
-# Exact on purpose (#1074): a nightly is identified only by its date.
-NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-nightly-2026-09-07}
+# Named once, in tools/sanitize.sh.
+NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)}
 TARGET=${OXPINYIN_SANITIZER_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}
 
 if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
-	printf 'ERROR: %s is not installed; sanitizer gate did NOT run.\n' "$NIGHTLY" >&2
+	printf '%s is not installed.\n' "$NIGHTLY" >&2
 	printf '  install it with: rustup toolchain install %s --profile minimal\n' "$NIGHTLY" >&2
+	if [ -n "${OXPINYIN_SANITIZER_ALLOW_SKIP:-}" ]; then
+		printf '%s\n' "  SKIP: OXPINYIN_SANITIZER_ALLOW_SKIP is set; the gate did NOT run." >&2
+		exit 0
+	fi
+	printf '%s\n' "  ERROR: the sanitizer gate cannot run. Install the toolchain, or set" \
+		"  OXPINYIN_SANITIZER_ALLOW_SKIP=1 to allow skipping it." >&2
 	exit 1
 fi
 
