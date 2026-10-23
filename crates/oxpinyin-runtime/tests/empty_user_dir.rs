@@ -109,11 +109,13 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
     assert_eq!(open_counter(&second), 0);
     assert_eq!(open_counter(&first), 1);
 
-    // The profile reads back from the working directory, and a stale DBM
-    // sidecar beside one of its files is removed on the way, as it is in
-    // a named directory.
-    for sidecar in ["user_bigram.db-lock", "user_bigram.db-shm"] {
-        std::fs::write(sidecar, b"stale").expect("plant a sidecar");
+    // The profile reads back from the working directory. A file beside
+    // one of its DBM files is not the profile's, so the reopen leaves it:
+    // the pin's init unlinks only the profile's own files, and only when
+    // `check_format` finds an old format (`pinyin.cpp:200-215`).
+    let strays = ["user_bigram.db-lock", "user_bigram.db-shm"];
+    for stray in strays {
+        std::fs::write(stray, b"stale").expect("plant a stray file");
     }
     let runtime = Runtime::open(&w3_dir(), Some(Path::new(""))).expect("reopen");
     let store = runtime.user_store().expect("the profile reopens");
@@ -124,7 +126,14 @@ fn empty_user_path_is_the_working_directory_at_each_use() {
             .is_some(),
         "the saved phrase is read back"
     );
-    assert_eq!(names(&second), saved, "exactly the saved names remain");
+    let mut expected = saved.clone();
+    expected.extend(strays.map(String::from));
+    expected.sort();
+    assert_eq!(
+        names(&second),
+        expected,
+        "the saved names and the stray files remain"
+    );
     drop(store);
     drop(runtime);
 

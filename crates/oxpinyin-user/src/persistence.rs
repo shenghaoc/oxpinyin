@@ -989,20 +989,12 @@ fn load_bigram_rows(dir: &Path, loaded: &mut Loaded) {
     if !path.exists() {
         return;
     }
-    // A backend that locks can leave a lock sidecar beside the *final*
-    // file even on a read-only open; it is stale once the handle drops,
-    // and the user dir must hold exactly the pin's names. Removed at the
-    // end of this function, after the walk.
     let store = match DefaultStore::open_user_bigram(&path) {
         Ok(store) => store,
         Err(error) => {
             loaded
                 .skipped
                 .push(format!("{}: {error}", UserDbm::Bigram.file_name()));
-            // The failed open can have created a lock sidecar (a
-            // locking backend writes one even when it then rejects the
-            // file): the inventory rule applies on this path too.
-            remove_dbm_sidecars(dir, &path);
             return;
         }
     };
@@ -1020,8 +1012,6 @@ fn load_bigram_rows(dir: &Path, loaded: &mut Loaded) {
             .skipped
             .push(format!("{}: {error}", UserDbm::Bigram.file_name()));
     }
-    drop(store);
-    remove_dbm_sidecars(dir, &path);
 }
 
 /// The user pinyin index's `(token, keys)` records — which `USER_FILE`
@@ -1047,7 +1037,6 @@ fn load_user_pinyin_index(
             loaded
                 .skipped
                 .push(format!("{}: {error}", UserDbm::PinyinIndex.file_name()));
-            remove_dbm_sidecars(dir, &path);
             return;
         }
     };
@@ -1128,8 +1117,6 @@ fn load_user_pinyin_index(
             .skipped
             .push(format!("{}: {error}", UserDbm::PinyinIndex.file_name()));
     }
-    drop(store);
-    remove_dbm_sidecars(dir, &path);
 }
 
 /// Copy `user_phrase_index.bin` records without interpreting either key or value,
@@ -1148,7 +1135,6 @@ fn load_user_phrase_index(
         Ok(store) => store,
         Err(error) => {
             skipped.push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
-            remove_dbm_sidecars(dir, &path);
             return;
         }
     };
@@ -1163,8 +1149,6 @@ fn load_user_phrase_index(
     ) {
         skipped.push(format!("{}: {error}", UserDbm::PhraseIndex.file_name()));
     }
-    drop(store);
-    remove_dbm_sidecars(dir, &path);
 }
 
 /// `pinyin_init`'s `m_user_bigram->load_db(user_bigram.db)`
@@ -1177,12 +1161,9 @@ fn load_user_phrase_index(
 /// Returns [`PersistenceError`] when the in-memory container cannot be
 /// created.
 pub(crate) fn load_user_bigram_db(dir: &Path) -> Result<DefaultUserBigramDb, PersistenceError> {
-    let path = dir.join(UserDbm::Bigram.file_name());
-    let db = DefaultUserBigramDb::load_db(&path)?;
-    // As in `load_bigram`: a locking backend's sidecar beside the final
-    // file is stale once the read handle is gone.
-    remove_dbm_sidecars(dir, &path);
-    Ok(db)
+    Ok(DefaultUserBigramDb::load_db(
+        &dir.join(UserDbm::Bigram.file_name()),
+    )?)
 }
 
 /// The `USER_FILE` chunk stores, or only library `only`'s.
@@ -1858,11 +1839,7 @@ fn stage_all<B: FnMut(u8) -> SaveBaseline>(
     if let Some(db) = reporting.bigram_db {
         let final_path = dir.join(UserDbm::Bigram.file_name());
         let tmp = dir.join(format!("{}.tmp", UserDbm::Bigram.file_name()));
-        remove_dbm_sidecars(dir, &tmp);
         let written = db.save_db(&tmp).map_err(PersistenceError::from);
-        if written.is_ok() {
-            remove_dbm_sidecars(dir, &tmp);
-        }
         tolerate(reporting.lenient, staged.finish((tmp, final_path), written))?;
         return Ok(());
     }
@@ -2152,9 +2129,8 @@ fn diff_records_against(
 /// write a container at the path.
 fn stage_user_bigram(dir: &Path, rows: &[(Vec<u8>, Vec<u8>)]) -> Result<(), PersistenceError> {
     // The seam stages its own sibling temporary and renames atomically
-    // (S2's review fix), so this is a direct call on the final path —
-    // no outer `.tmp`, and any lock sidecar of the *previous* file is
-    // the seam's to handle.
+    // (S2's review fix), so this is a direct call on the final path, with
+    // no outer `.tmp`.
     DefaultStore::write_user_bigram(&dir.join(UserDbm::Bigram.file_name()), rows)?;
     Ok(())
 }
@@ -2181,37 +2157,12 @@ fn stage_dbm(
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => return Err(e.into()),
         }
-        remove_dbm_sidecars(dir, &tmp);
         // A user table, created with the mode the backend's own `save_db`
         // uses for one (Berkeley DB's 0600, not `attach`'s 0644).
         DefaultStore::write_user_index(&tmp, rows)?;
-        // Remove a backend's stale lock sidecar before the data-file rename.
-        remove_dbm_sidecars(dir, &tmp);
         Ok(())
     })();
     staged.finish((tmp, final_path), written)
-}
-
-/// The sidecar suffixes a DBM backend may keep beside a data file.
-/// An explicit allowlist, not a prefix match: a prefix match would
-/// delete any future or unrelated profile file that happens to share
-/// the data file's stem.
-const DBM_SIDECAR_SUFFIXES: [&str; 2] = ["-lock", "-shm"];
-
-/// Removes the sidecar files a DBM backend created beside `dbm_path`.
-/// Absence is not an error: most backends create no sidecar at all.
-///
-/// The allowlisted names are unlinked where they would be, not looked
-/// for: `dir` may be empty — the pin's `""` user dir, the working
-/// directory (#619) — and an empty path joins to the bare names, where
-/// a walk of it has nothing to open.
-fn remove_dbm_sidecars(dir: &Path, dbm_path: &Path) {
-    let Some(file_name) = dbm_path.file_name().and_then(|s| s.to_str()) else {
-        return;
-    };
-    for suffix in DBM_SIDECAR_SUFFIXES {
-        let _ = std::fs::remove_file(dir.join(format!("{file_name}{suffix}")));
-    }
 }
 
 /// Writes one chunk file to its `.tmp` sibling and registers the rename.
@@ -2458,10 +2409,8 @@ mod tests {
         // The user dir holds exactly the pin's eleven names — the three
         // DBMs under the backend's own names, the three USER_FILE chunks,
         // the four `.dbin` logs, and `user.conf` — and nothing else. This
-        // is the assertion that catches an orphaned backend sidecar (a
-        // locking backend writes a `-lock` file beside each DBM; the
-        // rename pass moves
-        // only the data file), which a literal `.tmp`-suffix check misses.
+        // is the assertion that catches any file a backend leaves beside a
+        // DBM, which a literal `.tmp`-suffix check misses.
         let mut names: Vec<String> = std::fs::read_dir(&dir)
             .expect("readdir")
             .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())

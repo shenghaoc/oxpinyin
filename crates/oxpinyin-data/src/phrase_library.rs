@@ -547,19 +547,22 @@ fn map_chunk(path: &Path) -> Result<map::MappedFile, LibraryError> {
         cause: Box::new(cause),
     };
     let bad = |message: &str| unmappable(LibraryError::Format(message.to_owned()));
+    use std::io::{Read as _, Seek as _, SeekFrom};
+
+    // Opened first, then one `fstat` answers both questions below. A
+    // directory that does not open fails here with the same `Io` error
+    // `directory_chunk_fault`'s own open would report.
+    let file = std::fs::File::open(path).map_err(|error| unmappable(LibraryError::Io(error)))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| unmappable(LibraryError::Io(error)))?;
     // The size probe is POSIX `lseek` behaviour; elsewhere a directory keeps
     // failing in `MappedFile::open` as before.
     #[cfg(unix)]
-    if path.is_dir() {
+    if metadata.is_dir() {
         return Err(directory_chunk_fault(path));
     }
-    use std::io::{Read as _, Seek as _, SeekFrom};
-
-    let file = std::fs::File::open(path).map_err(|error| unmappable(LibraryError::Io(error)))?;
-    let file_size = file
-        .metadata()
-        .map_err(|error| unmappable(LibraryError::Io(error)))?
-        .len();
+    let file_size = metadata.len();
     if file_size < CHUNK_HEADER_SIZE as u64 {
         return Err(bad("chunk shorter than its header"));
     }

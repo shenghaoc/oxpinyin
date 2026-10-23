@@ -23,10 +23,10 @@
 //! - **transaction semantics**: read-your-writes inside `write`, and a
 //!   closure returning `Err` rolls the whole transaction back.
 //!
-//! The `-lock` sidecar note from the crate's own unit tests applies
-//! here too: a writable tkrzw session leaves a `<file>-lock` sidecar,
-//! so the guard below removes both shapes on drop and the test never
-//! asserts on sidecars.
+//! No backend leaves a file beside the store: tkrzw locks the data file
+//! itself with `fcntl` (`tkrzw_file_mmap.cc:124-133` at 1.0.34), Berkeley
+//! DB opens without an environment, and Kyoto Cabinet's only companion is
+//! its `<file>.wal`. The guard below removes the store's own path on drop.
 
 use std::ops::Bound;
 
@@ -35,8 +35,8 @@ use oxpinyin_store::{
 };
 
 /// Owns a temporary store path and removes the data file or directory
-/// and the `-lock` sidecar (either shape) when it drops — including on
-/// panic, so a failed law leaves nothing behind in the temp dir.
+/// when it drops — including on panic, so a failed law leaves nothing
+/// behind in the temp dir.
 struct TempPath(std::path::PathBuf);
 
 impl std::ops::Deref for TempPath {
@@ -61,9 +61,6 @@ fn read(store: &DefaultStore, table: &str, key: &[u8]) -> Option<Vec<u8>> {
 fn cleanup(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_dir_all(path);
-    let lock = format!("{}-lock", path.display());
-    let _ = std::fs::remove_file(&lock);
-    let _ = std::fs::remove_dir_all(&lock);
 }
 
 fn temp_path(tag: &str) -> TempPath {
