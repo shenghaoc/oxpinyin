@@ -2588,7 +2588,10 @@ def predicted_bigram_row_context(k, phrase, successor, count=20):
 
 # `pinyin_choose_candidate` takes no predicted row of either kind
 # (`pinyin.cpp:2507`); the prefix arm is `abort-choose-candidate-predicted-prefix-row`.
-# The user bigram is a Berkeley DB hash here, so only the bdb cell opens it.
+# BDB-only coverage inherited from e7ad3ab9: the predicted-bigram row and
+# pinyin.cpp:2507 abort were verified there. _craft_hash now supports kc and
+# tkrzw too, but this case's row selection has not been verified on them;
+# their exclusion is a coverage limit, not an unreadable fixture format.
 @case('abort-choose-candidate-predicted-bigram-row', abort=0, cells=('bdb',))
 def _(k):
     ctx = predicted_bigram_row_context(k, '我', '你好')
@@ -2970,8 +2973,13 @@ for _mode in ('pinyin', 'zhuyin'):
     for _name, (_control, _steps) in TOKEN_REUSE_SEQUENCES.items():
         case('issue762-token-reuse-%s-%s' % (_name, _mode), mode=_mode, control=_control, issues=('762',))(
             lambda k, steps=_steps: token_reuse_sequence(k, steps))
+    # BDB only: token_reuse_files compares the saved bigram's non-empty rows
+    # through db_dump; kc/tkrzw report only its presence, which cannot check
+    # that the seeded stale successor was removed.
     case('issue762-token-reuse-stale-bigram-%s' % _mode, mode=_mode, cells=('bdb',), issues=('762',))(
         lambda k: token_reuse_sequence(k, TOKEN_REUSE_SEQUENCES['mask-all'][1], TOKEN_REUSE_BIGRAM_ROWS))
+    # The no-mask control needs the same BDB row comparison to establish
+    # that the seeded bigram survives; kc/tkrzw presence alone cannot do so.
     case('issue762-token-reuse-stale-bigram-no-mask-%s' % _mode, mode=_mode, control=True, cells=('bdb',), issues=('762',))(
         lambda k: token_reuse_sequence(k, TOKEN_REUSE_SEQUENCES['no-mask'][1], TOKEN_REUSE_BIGRAM_ROWS))
 
@@ -3413,8 +3421,13 @@ for _mode in ('pinyin', 'zhuyin'):
 # 7 unload and reload; the item that takes the first token again sits among
 # them in the `da da` record (two items, a tail in the mask walk), and the
 # mask removes an entry no item reading backs. The zhuyin facade only: the
-# pinyin facade never unloads library 7.
-case('issue785-pinyin-tails-kept-entry-zhuyin', mode='zhuyin', cells=('kc', 'tkrzw'), issues=('785', '814'))(
+# pinyin facade never unloads library 7. BDB replaces each mask entry's chunk
+# (chewing_large_table2_bdb.cpp:498-500 at 074a2219), so it carries no #785
+# tail. It is not a parent control: at 7fa8ce3^, unload/reload retains the
+# unsaved items and the new phrase takes token 6, while the pin recreates an
+# empty user library and reuses token 1 (zhuyin.cpp:247-260, :379-388 at
+# 074a2219). The case also covers that #814 defect on BDB.
+case('issue785-pinyin-tails-kept-entry-zhuyin', mode='zhuyin', issues=('785', '814'))(
     lambda k: index_key_sequence(
         k, SHARED + [DD, ('unload',), ('load',), ('add', 5), MASK_DA2, ('save',)],
         TAIL_PHRASES, TAIL_READINGS))
@@ -8684,6 +8697,9 @@ def _add_pinyin_phrase_after_index(k, value):
     return {'ret': k.fn('iterator_add_phrase', B, P, S, S, I)(it, '你好'.encode(), b"ni'hao", 1)}
 
 
+# BDB-only coverage from 432a83d7: this malformed phrase-table fixture was
+# verified at pinyin.cpp:554 on bdb. _craft_db now supports kc/tkrzw,
+# but this pinyin import case has not been verified on those cells.
 @case('abort-add-phrase-duplicate-library-token', abort=False, userdir=True, cells=('bdb',), issues=('525',))
 def _(k):
     ctx = k.init()
@@ -8693,12 +8709,18 @@ def _(k):
     return _add_pinyin_phrase_after_index(k, value)
 
 
+# BDB-only coverage from 432a83d7: this malformed phrase-table fixture was
+# verified at pinyin.cpp:568 on bdb. _craft_db now supports kc/tkrzw,
+# but this pinyin import case has not been verified on those cells.
 @case('abort-add-phrase-index-length-mismatch', abort=False, userdir=True, cells=('bdb',), issues=('525',))
 def _(k):
     token = _persist_pinyin_phrase(k, '你好嗷', "ni'hao'ao")
     return _add_pinyin_phrase_after_index(k, token.to_bytes(4, 'little'))
 
 
+# BDB-only coverage from 432a83d7: this malformed phrase-table fixture was
+# verified at pinyin.cpp:568 on bdb. _craft_db now supports kc/tkrzw,
+# but this pinyin import case has not been verified on those cells.
 @case('abort-add-phrase-index-item-missing', abort=False, userdir=True, cells=('bdb',), issues=('525',))
 def _(k):
     # The phrase table names library 7's token, but user.bin has no item:
@@ -8709,6 +8731,9 @@ def _(k):
     return _add_pinyin_phrase_after_index(k, (0x07000001).to_bytes(4, 'little'))
 
 
+# BDB-only coverage from 432a83d7: this malformed phrase-table fixture was
+# verified at pinyin.cpp:571 on bdb. _craft_db now supports kc/tkrzw,
+# but this pinyin import case has not been verified on those cells.
 @case('abort-add-phrase-index-text-mismatch', abort=False, userdir=True, cells=('bdb',), issues=('525',))
 def _(k):
     token = _persist_pinyin_phrase(k, '你們', "ni'men")
@@ -9266,6 +9291,11 @@ def stale_index_tmp(k, index):
     return out
 
 
+# BDB-only verification scope: #739 checked the save_db directory failure
+# and exact stderr on bdb (the sites above). KC also unlinks before its
+# snapshot write; tkrzw uses RemoveFile before opening a TreeDBM. Those
+# paths' diagnostics and retained-directory results are not verified here,
+# so their exclusion records a coverage limit, not a BDB-only input format.
 for _mode in ('pinyin', 'zhuyin'):
     for _index in ('user_pinyin_index.bin', 'user_phrase_index.bin'):
         case(f'issue542-stale-{_index}-{_mode}', mode=_mode, stderr=True,
