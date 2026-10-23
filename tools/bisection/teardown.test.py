@@ -1,7 +1,8 @@
 #!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
-"""Teardown instrumentation controls. Run through the existing heavy slot: cc is used."""
+"""Teardown instrumentation controls using private native stubs and mocked inputs."""
 import importlib.util
 import json
+import mmap
 import os
 from pathlib import Path
 import subprocess
@@ -316,6 +317,121 @@ class PureTests(unittest.TestCase):
             self.assertNotEqual(a, td.profile_contents(driver, root))
 
 
+class ColdTests(unittest.TestCase):
+    def test_dependency_closure_includes_non_c_runtimes_and_transitive_libraries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {name: root / name for name in ('facade.so', 'libstdc++.so.6', 'libdb.so.5',
+                                                    'libglib-2.0.so.0', 'libpcre2.so.0', 'libgcc_s.so.1')}
+            for path in paths.values():
+                path.touch()
+            needed = {'facade.so': ['libstdc++.so.6', 'libdb.so.5', 'libglib-2.0.so.0', 'libc.so.6'],
+                      'libstdc++.so.6': ['libm.so.6', 'libgcc_s.so.1', 'libc.so.6'],
+                      'libdb.so.5': ['libc.so.6'], 'libglib-2.0.so.0': ['libpcre2.so.0'],
+                      'libpcre2.so.0': ['libc.so.6'], 'libgcc_s.so.1': ['libc.so.6']}
+            def output(command, **kwargs):
+                if command[0] == 'ldd':
+                    return '\n'.join(f'{name} => {path} (0x1234)' for name, path in paths.items())
+                return '\n'.join(f'0x1 (NEEDED) Shared library: [{name}]'
+                                 for name in needed[Path(command[-1]).name])
+            with patch.object(td.subprocess, 'check_output', side_effect=output):
+                result = td.library_dependencies(paths['facade.so'])
+            self.assertEqual(set(result), set(paths.values()) - {paths['facade.so']})
+            with patch.object(td.subprocess, 'check_output', return_value='libdb.so.5 => not found'):
+                with self.assertRaisesRegex(ValueError, 'unresolved cold dependency.*libdb'):
+                    td.library_dependencies(paths['facade.so'])
+            with patch.object(td.subprocess, 'check_output', side_effect=['', '(NEEDED) [libdb.so.5]']):
+                with self.assertRaisesRegex(ValueError, 'unresolved cold DT_NEEDED.*libdb'):
+                    td.library_dependencies(paths['facade.so'])
+
+    def test_file_set_includes_facade_dependencies_data_and_private_user_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('data/table.conf', 'data/sub/custom.bin', 'user/user.conf', 'user/user.bin'):
+                path = root / name
+                path.parent.mkdir(exist_ok=True, parents=True)
+                path.touch()
+            with patch.object(td, 'library_dependencies', return_value=[root / 'libdb.so']):
+                files = td.cold_files(root / 'facade.so', root / 'data', root / 'user')
+            self.assertEqual(set(files), {root / name for name in ('facade.so', 'libdb.so', 'data/table.conf',
+                                                                 'data/sub/custom.bin', 'user/user.conf', 'user/user.bin')})
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux per-file eviction')
+    def test_eviction_checks_each_file_before_after_and_before_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ('facade.so', 'user.conf')]
+            for path in paths:
+                path.write_bytes(b'fixture')
+            readings = [dict(pages=1, resident=n) for n in (1, 0, 1, 0, 0, 0)]
+            with patch.object(td, 'filesystem', return_value='ext4'), \
+                    patch.object(td, 'resident_pages', side_effect=readings) as residency, \
+                    patch.object(td.os, 'posix_fadvise') as advise, patch.object(td, 'print_record') as report:
+                records = td.evict_files(paths + paths)
+            self.assertEqual(len(records), 2)
+            self.assertEqual(residency.call_count, 6)
+            self.assertEqual(advise.call_count, 2)
+            self.assertTrue(all(call.args[1:] == (0, 0, os.POSIX_FADV_DONTNEED) for call in advise.call_args_list))
+            self.assertEqual([row['before']['resident'] for row in records], [1, 1])
+            self.assertTrue(all(row['after']['resident'] == row['verified']['resident'] == 0 for row in records))
+            report.assert_called_once_with('cache-eviction', cache='cold', files=records)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux per-file eviction')
+    def test_still_resident_and_refaulted_files_are_named_and_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'mapped-library.so'
+            path.write_bytes(b'fixture')
+            for readings in ((1, 1, 1), (1, 0, 1)):
+                with self.subTest(readings=readings), patch.object(td, 'filesystem', return_value='ext4'), \
+                        patch.object(td, 'resident_pages', side_effect=[dict(pages=1, resident=n) for n in readings]), \
+                        patch.object(td.os, 'posix_fadvise'), patch.object(td, 'print_record') as report:
+                    with self.assertRaisesRegex(ValueError, 'file stays resident: ' + str(path)):
+                        td.evict_files([path])
+                    self.assertEqual(report.call_args.kwargs['files'][0]['verified']['resident'], 1)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux per-file eviction')
+    def test_non_ext4_file_refuses_entire_set_before_any_eviction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ('facade.so', 'tmpfs-profile')]
+            for path in paths:
+                path.touch()
+            with patch.object(td, 'filesystem', side_effect=['ext4', 'tmpfs']), \
+                    patch.object(td.os, 'posix_fadvise') as advise:
+                with self.assertRaisesRegex(ValueError, 'not on ext4: ' + str(paths[1]) + '.*tmpfs'):
+                    td.evict_files(paths)
+                advise.assert_not_called()
+
+    def test_cold_rejects_non_native_and_repeated_stages(self):
+        pure = PureTests()
+        with patch.object(td.sys, 'platform', 'darwin'):
+            self.assertIn('native Linux', pure.refusal(teardown_cache='cold'))
+        with patch.object(td.sys, 'platform', 'linux'):
+            for stage in ('provision', 'repeat', 'multi', 'attribute'):
+                self.assertIn('only verify, pilot and confirm', pure.refusal(teardown_cache='cold', teardown_stage=stage))
+
+    def test_cold_and_warm_execute_use_identical_rotating_sample_order(self):
+        sequences = []
+        for cache in ('warm', 'cold'):
+            with tempfile.TemporaryDirectory() as directory:
+                calls = []
+                def sample(facade, library, **options):
+                    calls.append((options['mode'], library))
+                    return dict(observation=dict(samples=[], stderr='', userfiles={}, documents=[]), raw_profile_identity='stub')
+                campaign = SimpleNamespace(work=Path(directory), cache=cache, run=sample)
+                args = SimpleNamespace(teardown_stage='pilot')
+                subjects = {side: {'pinyin': side} for side in ('ox', 'control', 'pin')}
+                with patch.object(td, 'prepare_witnesses', return_value={'empty': None}), \
+                        patch.object(td, 'print_record'), patch.object(td, 'report_times'), patch.object(td, 'report_memory'):
+                    self.assertEqual(td.execute(campaign, args, subjects, {'empty': Path('/fixture')},
+                                                ('empty',), ('pinyin',), None), 0)
+                timed = [call for call in calls if call[0] in ('time', 'memory')]
+                sequences.append(timed)
+                for mode, rounds in (('time', 6), ('memory', 4)):
+                    order = [side for kind, side in timed if kind == mode]
+                    expected = [('ox', 'control', 'pin'), ('control', 'pin', 'ox'), ('pin', 'ox', 'control')]
+                    self.assertEqual(order, [side for index in range(rounds) for side in expected[index % 3]])
+        self.assertEqual(*sequences)
+
+
 STUB = r'''
 #define _POSIX_C_SOURCE 200809L
 #include <stdbool.h>
@@ -512,6 +628,92 @@ class NativeTests(unittest.TestCase):
         affinity = getattr(os, 'sched_getaffinity', None)
         cpu = min(affinity(0)) if affinity else None
         return td.Campaign(worker or self.worker, self.root, self.root, cpu, driver)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux mincore and fadvise')
+    def test_native_private_file_eviction_and_mapped_file_refusal(self):
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            path = Path(directory) / 'private-cold-input'
+            path.write_bytes(b'x' * (os.sysconf('SC_PAGE_SIZE') + 1))
+            self.assertEqual(td.filesystem(path), 'ext4')
+            with path.open('rb') as handle:
+                self.assertEqual(td.resident_pages(handle.fileno()), dict(pages=2, resident=2))
+            with patch.object(td, 'print_record'):
+                records = td.evict_files([path])
+            self.assertEqual(records[0]['after'], dict(pages=2, resident=0))
+            with path.open('rb') as handle, mmap.mmap(handle.fileno(), 0, access=mmap.ACCESS_READ) as mapping:
+                self.assertEqual(mapping[0], ord('x'))
+                with patch.object(td, 'print_record'), self.assertRaisesRegex(ValueError, 'file stays resident: ' + str(path)):
+                    td.evict_files([path])
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux cold native stub samples')
+    def test_cold_native_samples_evict_only_private_inputs_for_both_facades_and_all_arms(self):
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            root = Path(directory)
+            data, profile = root / 'data', root / 'profile'
+            data.mkdir()
+            profile.mkdir()
+            (data / 'table.conf').write_bytes(b'private-system-fixture')
+            (profile / 'user.conf').write_bytes(b'private-profile-fixture')
+            for side in ('subject', 'control', 'pinlibs'):
+                library = root / (side + '.so')
+                library.write_bytes(self.library.read_bytes())
+                # The native stub needs only libc. Inspect it for real, without
+                # advising any host library or another lane's measurement input.
+                self.assertEqual(td.library_dependencies(library), [])
+                for facade in ('pinyin', 'zhuyin'):
+                    campaign = self.campaign()
+                    campaign.data, campaign.work, campaign.cache = data, root, 'cold'
+                    with patch.object(td, 'exports', return_value=[facade + '_init']), \
+                            patch.object(td, 'print_record') as report:
+                        row = campaign.run(facade, library, profile)
+                    self.assertEqual(row['samples'][0]['observations'][0]['candidates'][0]['text'], '你好')
+                    records = report.call_args.kwargs['files']
+                    paths = {Path(record['path']) for record in records}
+                    self.assertEqual(len(paths), 3)
+                    self.assertIn(library, paths)
+                    self.assertIn(data / 'table.conf', paths)
+                    self.assertTrue(any(path.name == 'user.conf' and path.parent.name == 'user' for path in paths))
+                    self.assertNotIn(profile / 'user.conf', paths)
+                    self.assertTrue(all(record['verified']['resident'] == 0 for record in records))
+                    self.assertFalse(list(root.glob('sample-*')))
+
+    def test_cold_prepares_every_arm_after_copy_and_before_child_and_cleans_refusal(self):
+        for side in ('subject', 'control', 'pinlibs'):
+            with self.subTest(side=side):
+                campaign = self.campaign()
+                campaign.cache = 'cold'
+                library = self.root / side / 'facade.so'
+                paths = []
+                def files(measured, data, user):
+                    self.assertEqual(measured, library)
+                    self.assertTrue(user.is_dir())
+                    self.assertNotEqual(user, self.profile)
+                    paths.extend([measured, data / 'system.bin', user / 'user.conf'])
+                    return paths
+                with patch.object(td, 'cold_files', side_effect=files), \
+                        patch.object(td, 'evict_files', side_effect=ValueError('file stays resident: private-stub')) as eviction, \
+                        patch.object(td.subprocess, 'Popen') as child:
+                    with self.assertRaisesRegex(ValueError, 'file stays resident: private-stub'):
+                        campaign.run('pinyin', library, self.profile)
+                    eviction.assert_called_once_with(paths)
+                    child.assert_not_called()
+                self.assertFalse(list(self.root.glob('sample-*')))
+
+    def test_cold_eviction_precedes_successful_stub_launch_and_warm_does_not_evict(self):
+        campaign = self.campaign()
+        for cache in ('warm', 'cold'):
+            campaign.cache = cache
+            events = []
+            popen = td.subprocess.Popen
+            def launch(*args, **kwargs):
+                events.append('launch')
+                return popen(*args, **kwargs)
+            with patch.object(td, 'exports', return_value=['pinyin_init']), \
+                    patch.object(td, 'cold_files', return_value=[self.library]), \
+                    patch.object(td, 'evict_files', side_effect=lambda _: events.append('evict')), \
+                    patch.object(td.subprocess, 'Popen', side_effect=launch):
+                campaign.run('pinyin', self.library, self.profile)
+            self.assertEqual(events, ['evict', 'launch'] if cache == 'cold' else ['launch'])
 
     def test_both_facades_and_teardown_order(self):
         for facade in ('pinyin', 'zhuyin'):
