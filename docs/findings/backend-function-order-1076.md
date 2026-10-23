@@ -8,13 +8,15 @@ Kyoto Cabinet and tkrzw shipping builds previously had no measured function-orde
 
 ## Changes
 
-- Store policies under `tools/packaging/function-order/{bdb,kc,tkrzw}/`. Move the BDB policy bytes unchanged. Retain the two old paths as BDB symlinks for #1082's existing nightly check; that workflow still checks BDB only.
+- Store policies under `tools/packaging/function-order/{bdb,kc,tkrzw}/`. Move the BDB policy bytes unchanged. Retain the two old paths as BDB compatibility symlinks. Extend the nightly check to all six backend/facade policies, each against its own backend's shipping staticlib.
 - Reject missing registered policies, stale paths and named policies belonging to another backend, including symlink aliases. Preserve explicit opt-out and unsupported-linker fallback from #1075.
-- Allow only teardown profile provisioning on KC/tkrzw. Later teardown stages remain BDB-only. Document all three regeneration recipes, same-cell profiles, one target directory per backend, tkrzw dependency/runtime selection and invalid instruction controls. No new driver or workflow change.
+- Allow only teardown profile provisioning on KC/tkrzw. Later teardown stages remain BDB-only. Document all three regeneration recipes, same-cell profiles, one target directory per backend, tkrzw dependency/runtime selection and invalid instruction controls. The workflow change extends only `function-order-policy`; no new driver is added.
 
 The policies are in their own commit. No production algorithm, C ABI, persistent data format, dependency or frozen input changes.
 
 ## Verification
+
+The nightly `function-order-policy` job builds both facades for BDB, KC and tkrzw using the shipping release recipe, with a separate target directory per backend and one cargo-c installation. It resolves each of the six policies against that backend's own shipping staticlib. The job passed in [dispatched run 39926376913](https://github.com/shenghaoc/oxpinyin/actions/runs/39926376913/job/120323674348) on `1d9056c86ee93af2375ca3d867dc0d9c7e25eadf`; all six resolutions and the tkrzw health/runtime checks passed. This static-policy verification is separate from the runtime measurements below.
 
 Verified shipping source: BDB `7778c966` on main `1cdb810c`; KC/tkrzw `e9fd97e1` on main `13347dbf`. The latter integrates #1068's runtime preflight; it changes no BDB shipping/link input, and retained BDB artifact and policy hashes were verified unchanged. Publication integrates main `e58d2e26`. Commit organization and the unrelated documentation/admission-test rebase preserve the measured implementation and all six policy files. The tkrzw gate completed on the same implementation bytes; the older measurement-head identifiers record provenance, not final commit ancestry. Results below belong to those named source revisions, not to historical builds.
 
