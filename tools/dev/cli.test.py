@@ -65,6 +65,13 @@ class CliTests(unittest.TestCase):
                     run.assert_called_once_with(selection)
         self.launch.assert_not_called()
 
+    def test_coverage_forwards_raw_arguments_before_argparse(self):
+        args = ['--locked', '-p', 'oxpinyin-chewing', '--', '', '/path with spaces', 'literal;$value']
+        with mock.patch.object(cli.coverage, 'run', return_value=77) as run:
+            self.assertEqual(cli.main(['coverage', *args]), 77)
+            run.assert_called_once_with(args)
+        self.launch.assert_not_called()
+
     def test_test_options_reach_the_slot_without_a_separator(self):
         for selection in (['-p', 'oxpinyin-core'], ['--workspace'],
                           ['--test-threads=2'], ['-P', 'ci']):

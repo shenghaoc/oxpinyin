@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 
-from . import check, doctor, host, registry, slot, test_runner
+from . import check, coverage, doctor, host, registry, slot, test_runner
 
 
 def _selected(args, *, required=False):
@@ -33,6 +33,10 @@ def test_command(args):
 
 def test_doc_command(args):
     return test_runner.run_doc(args.args)
+
+
+def coverage_command(args):
+    return coverage.run(args.args)
 
 
 def list_command(args):
@@ -109,6 +113,10 @@ def build_parser():
     p.add_argument('args', nargs=argparse.REMAINDER)
     p.set_defaults(func=test_doc_command)
 
+    p = sub.add_parser('coverage', help='run cargo llvm-cov with temporary per-invocation state')
+    p.add_argument('args', nargs=argparse.REMAINDER)
+    p.set_defaults(func=coverage_command)
+
     p = sub.add_parser('list', help='list the registry, read-only')
     p.add_argument('--heavy', action='store_true', help='only rows marked heavy')
     _selection_arguments(p)
@@ -136,6 +144,8 @@ def _selection_arguments(parser):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ['coverage']:
+        return coverage.run(argv[1:])
     if argv[:1] == ['test'] and argv[1:2] not in (['-h'], ['--help']):
         return test_runner.run(argv[1:])
     if argv[:1] == ['test-doc'] and argv[1:2] not in (['-h'], ['--help']):
