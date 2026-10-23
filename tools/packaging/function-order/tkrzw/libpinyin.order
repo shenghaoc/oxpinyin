@@ -44,7 +44,7 @@ init	<alloc::string::String>::from_utf8_lossy
 init	<alloc::sync::Arc<oxpinyin_data::phrase_library::map::MappedFile>>::drop_slow
 init	<alloc::sync::Arc<std::sync::once_lock::OnceLock<u32>> as core::default::Default>::default [instantiating crate: oxpinyin_data]
 init	<alloc::sync::Arc<std::sync::once_lock::OnceLock<u32>>>::drop_slow [instantiating crate: oxpinyin_data]
-init	<alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<(u64, alloc::sync::Arc<std::collections::hash::map::HashMap<alloc::vec::Vec<u8>, alloc::vec::Vec<(alloc::vec::Vec<oxpinyin_chewing::chewing_key::ChewingKey>, oxpinyin_core::vocab::PhraseEntry)>>>)>>> as core::default::Default>::default [instantiating crate: oxpinyin_runtime]
+init	<alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<(u64, alloc::sync::Arc<std::collections::hash::map::HashMap<alloc::vec::Vec<u8>, alloc::vec::Vec<(alloc::vec::Vec<oxpinyin_chewing::chewing_key::ChewingKey>, oxpinyin_core::vocab::PhraseEntry)>, core::hash::BuildHasherDefault<oxpinyin_core::hash::FixedHasher>>>)>>> as core::default::Default>::default [instantiating crate: oxpinyin_runtime]
 init	<alloc::sync::Arc<std::sync::poison::mutex::Mutex<core::option::Option<oxpinyin_runtime::TextTokens>>> as core::default::Default>::default
 init	<alloc::vec::Vec<(oxpinyin_engine::session::RankKey, u32)> as alloc::vec::spec_from_iter::SpecFromIter<(oxpinyin_engine::session::RankKey, u32), core::iter::adapters::map::Map<core::iter::adapters::enumerate::Enumerate<core::iter::adapters::zip::Zip<core::slice::iter::Iter<oxpinyin_engine::candidate::Candidate>, alloc::vec::into_iter::IntoIter<u64>>>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#2}>>>::from_iter [instantiating crate: pinyin]
 init	<alloc::vec::Vec<(u8, oxpinyin_data::table_info::FileName)> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<(u8, oxpinyin_data::table_info::FileName), core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}>>>::from_iter
@@ -57,7 +57,6 @@ init	<alloc::vec::Vec<u32>>::retain::<<oxpinyin_user::replay::Merge>::finish_laz
 init	<core::fmt::Formatter>::pad
 init	<core::fmt::Formatter>::pad_integral
 init	<core::fmt::Formatter>::pad_integral::write_prefix
-init	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: pinyin]
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}> as core::iter::traits::iterator::Iterator>::next
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::sources::from_fn::FromFn<oxpinyin_data::user_files::log_records::{closure#0}>, <core::result::Result<oxpinyin_data::user_files::LogRecord<&[u8]>, oxpinyin_data::user_files::LogDecodeError>>::ok> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
 init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
@@ -114,7 +113,6 @@ init	<oxpinyin_facade::instance::InstanceCore>::validate_abi_lookup_offset_over
 init	<oxpinyin_facade::snapshot::CandidateSnapshot<pinyin::state::CapiCandidate>>::intern
 init	<oxpinyin_facade::snapshot::CandidateSnapshot<pinyin::state::CapiCandidate>>::push
 init	<oxpinyin_facade::snapshot::CandidateSnapshot<pinyin::state::CapiCandidate>>::reserve
-init	<oxpinyin_runtime::FacadeBumps as core::default::Default>::default
 init	<oxpinyin_runtime::FacadeBumps>::token
 init	<oxpinyin_runtime::Runtime>::dict
 init	<oxpinyin_runtime::Runtime>::open_with_law
@@ -138,7 +136,6 @@ init	<oxpinyin_user::replay::Content>::write
 init	<oxpinyin_user::replay::Merge>::slot_offset
 init	<oxpinyin_user::session_values::SessionTxn as oxpinyin_store::WriteTxn>::is_empty
 init	<oxpinyin_user::session_values::SessionTxn as oxpinyin_store::WriteTxn>::put
-init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::tkrzw::TkrzwStore> as core::clone::Clone>::clone [instantiating crate: oxpinyin_facade]
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::tkrzw::TkrzwStore>>::open_session::<oxpinyin_user::persistence::SystemOriginals> [instantiating crate: oxpinyin_runtime]
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::tkrzw::TkrzwStore>>::open_session::<oxpinyin_user::persistence::SystemOriginals>::{closure#0} [instantiating crate: oxpinyin_runtime]
 init	<oxpinyin_user::store::GenericUserStore<oxpinyin_store::tkrzw::TkrzwStore>>::unigram_delta [instantiating crate: oxpinyin_runtime]
@@ -147,8 +144,6 @@ init	<oxpinyin_user::system_items::SystemItems>::get
 init	<phf::map::Map<&str, u16>>::get_entry::<str> [instantiating crate: oxpinyin_core]
 init	<pinyin::aux_matrix::SharedMatrix>::of_keys
 init	<std::fs::OpenOptions>::_open
-init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&alloc::string::String> [instantiating crate: pinyin]
-init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32> [instantiating crate: pinyin]
 init	<std::path::Components as core::iter::traits::double_ended::DoubleEndedIterator>::next_back
 init	<std::path::Components>::parse_next_component_back
 init	<std::path::Path>::_join
