@@ -715,6 +715,19 @@ class NativeTests(unittest.TestCase):
                 campaign.run('pinyin', self.library, self.profile)
             self.assertEqual(events, ['evict', 'launch'] if cache == 'cold' else ['launch'])
 
+    def test_report_times_records_major_faults_per_phase_without_ratio(self):
+        def row(load, init):
+            times = {'load_ns': dict(wall_ns=10, cpu_ns=5, majflt=load),
+                     'init_ns': dict(wall_ns=20, cpu_ns=9, majflt=init)}
+            return {'samples': [{'times': times}]}
+        samples = {side: [row(index, 2 * index) for index in range(1, 6)] for side in ('ox', 'control', 'pin')}
+        with patch.object(td, 'print_record') as record:
+            td.report_times('pinyin', 'phrases', samples, True)
+        faults = [call.kwargs for call in record.call_args_list if call.args[0] == 'faults']
+        self.assertEqual([value['metric'] for value in faults], ['load_ns', 'init_ns'])
+        self.assertEqual(faults[1]['summaries']['pin']['median'], 6)
+        self.assertTrue(all('ox_pin_ratio' not in value for value in faults))
+
     def test_both_facades_and_teardown_order(self):
         for facade in ('pinyin', 'zhuyin'):
             with self.subTest(facade=facade), patch.object(td, 'exports', return_value=[facade + '_init']):
@@ -760,6 +773,13 @@ class NativeTests(unittest.TestCase):
                 self.assertTrue(row['samples'][0]['saved'])
                 self.assertIn('save_ns', row['samples'][0]['times'])
                 self.assertIn('full_lifecycle_ns', row['samples'][0]['times'])
+                times = row['samples'][0]['times']
+                self.assertTrue(all(isinstance(value['majflt'], int) and value['majflt'] >= 0
+                                    for value in times.values()))
+                self.assertEqual(times['full_lifecycle_ns']['majflt'],
+                                 sum(times[name]['majflt'] for name in ('load_ns', 'lifecycle_ns', 'dlclose_ns')))
+                self.assertEqual(times['teardown_total_ns']['majflt'],
+                                 times['free_all_instances_ns']['majflt'] + times['fini_ns']['majflt'])
 
     def test_missing_export_is_invalid_and_cleans_private_sample(self):
         campaign = self.campaign()

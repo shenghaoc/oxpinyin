@@ -576,7 +576,7 @@ class Campaign:
                 if cycles == 1:
                     samples[0]['times']['full_lifecycle_ns'] = {
                         clock: sum(samples[0]['times'][name][clock] for name in ('load_ns', 'lifecycle_ns', 'dlclose_ns'))
-                        for clock in ('wall_ns', 'cpu_ns')}
+                        for clock in ('wall_ns', 'cpu_ns', 'majflt')}
             if reopen:
                 observation['reopen'] = self.run(facade, library, user, mode='observe', inputs=inputs)['observation']
             return dict(observation=observation, samples=samples, checkpoints=checkpoints, command=command,
@@ -974,6 +974,12 @@ def report_times(facade, case, samples, pilot):
                          verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
                          ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
                          control_pin_ratio=paired_ratio(values['control'], values['pin']) if control['stable'] else None)
+        # Major faults are event counts, not durations: no control rule and
+        # no ratio, which a zero count could not carry. Reported as observed.
+        counts = {side: [row['samples'][0]['times'][metric]['majflt'] for row in rows]
+                  for side, rows in samples.items()}
+        print_record('faults', facade=facade, case=case, metric=metric, counter='majflt', pilot=pilot,
+                     summaries={side: summary(value) for side, value in counts.items()})
 
 
 def report_memory(facade, case, samples, pilot):
