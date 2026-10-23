@@ -11,6 +11,7 @@ the facade init function and the exports the worker calls from there to M1.
 
 import argparse
 from collections import defaultdict
+import contextlib
 import ctypes
 import hashlib
 import io
@@ -33,6 +34,60 @@ ARMS = ("base", "pr", "control", "pin")
 FACADES = ("pinyin", "zhuyin")
 PROFILES = ("phrases", "journals")
 PAGE = os.sysconf("SC_PAGE_SIZE")
+
+
+def new_sample(root):
+    """One fixed path for serial samples; refuse an existing, possibly live sample."""
+    work = Path(root) / "sample"
+    work.mkdir()
+    return work
+
+
+@contextlib.contextmanager
+def owned_sample(root):
+    """Clean only the fixed sample this call created, including on failure."""
+    work = new_sample(root)
+    try:
+        yield work
+    finally:
+        shutil.rmtree(work)
+
+
+def kc_strrchr_ir(profile):
+    """Exclusive libc AVX2 strrchr Ir proven to originate only in kcdbopen.
+
+    The #1031 maintainer ruling permits this one contribution to be reported
+    separately after fixed-path diagnostics. No other libc function, PLT
+    instruction or caller is included. Mixed or unresolved origins fail closed.
+    Calling this helper does not itself establish the fixed-path precondition.
+    """
+    parents = defaultdict(list)
+    for (caller, callee), (cost, calls) in profile['edges'].items():
+        if cost:
+            parents[callee].append((caller, cost, calls))
+
+    def from_kcdbopen(node, visiting):
+        obj, function = node
+        backend = Path(obj).name.startswith('libkyotocabinet.so')
+        if backend and function == 'kcdbopen':
+            return True
+        if node in visiting or not (backend or obj == '???'):
+            return False
+        incoming = parents[node]
+        return bool(incoming) and all(from_kcdbopen(caller, visiting | {node})
+                                      for caller, _, _ in incoming)
+
+    contribution = 0
+    for node, cost in profile['exclusive'].items():
+        if not cost or Path(node[0]).name != 'libc.so.6' or node[1] != '__strrchr_avx2':
+            continue
+        incoming = parents[node]
+        if (not incoming or sum(value for _, value, _ in incoming) != cost
+                or any(calls <= 0 or not from_kcdbopen(caller, {node})
+                       for caller, _, calls in incoming)):
+            raise ValueError('strrchr contribution has a mixed or unresolved kcdbopen origin')
+        contribution += cost
+    return contribution
 
 
 def run(command, env=None):
@@ -328,12 +383,10 @@ def main():
     print("cold proof: private copy + fsync + POSIX_FADV_DONTNEED + zero-resident mincore; libraries only", flush=True)
     with GEN["collection_scratch"](args.work_dir) as root:
         env["TMPDIR"] = str(root)
-        serial = 0
         def fresh(arm, facade, profile):
-            nonlocal serial
-            serial += 1
-            work = root / f"s{serial:06d}"
-            work.mkdir()
+            # Keep all pathname bytes fixed across arms and rounds. Each
+            # caller reaps its child and removes this sample before the next.
+            work = new_sample(root)
             library = work / "lib.so"
             shutil.copyfile(libraries[arm, facade], library)
             user = work / "user"

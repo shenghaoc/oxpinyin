@@ -36,6 +36,56 @@ def profile(body, total):
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_kc_exclusion_is_only_the_proven_strrchr_leaf_not_plt_or_other_libc(self):
+        libc = '/usr/lib/libc.so.6'
+        kc = '/usr/lib/libkyotocabinet.so.16'
+        root, method, plt = (kc, 'kcdbopen'), (kc, 'PolyDB::open'), ('???', '0x1234')
+        leaf = (libc, '__strrchr_avx2')
+        sample = dict(exclusive={leaf: 10, plt: 4, (libc, 'memcpy'): 30,
+                                 (libc, 'srandom_r'): 20},
+            edges={(root, method): (18, 2), (method, plt): (14, 2), (plt, leaf): (10, 2)})
+        self.assertEqual(MEASUREMENT['kc_strrchr_ir'](sample), 10)
+        self.assertEqual(MEASUREMENT['kc_strrchr_ir'](dict(exclusive={}, edges={})), 0)
+
+    def test_kc_exclusion_rejects_mixed_unresolved_or_unreconciled_origins(self):
+        leaf = ('/usr/lib/libc.so.6', '__strrchr_avx2')
+        root = ('/usr/lib/libkyotocabinet.so.16', 'kcdbopen')
+        outside = ('/subject/libpinyin.so', 'other')
+        for edges in ({(root, leaf): (9, 1)}, {(outside, leaf): (10, 1)},
+                      {(root, leaf): (5, 1), (outside, leaf): (5, 1)},
+                      {(root, leaf): (10, 0)}, {}):
+            with self.subTest(edges=edges), self.assertRaisesRegex(ValueError, 'unresolved'):
+                MEASUREMENT['kc_strrchr_ir'](dict(exclusive={leaf: 10}, edges=edges))
+
+    def test_serial_samples_reuse_identical_path_and_discard_prior_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = []
+            for _ in range(3):
+                with MEASUREMENT['owned_sample'](Path(directory)) as work:
+                    paths.append(str(work))
+                    self.assertEqual(list(work.iterdir()), [])
+                    (work / 'user-state').write_bytes(b'changed by the preceding child')
+                self.assertFalse(work.exists())
+            self.assertEqual(len(set(paths)), 1)
+
+    def test_fixed_sample_refuses_existing_state_and_cleans_its_own_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = root / 'sample'
+            existing.mkdir()
+            marker = existing / 'not-owned'
+            marker.write_bytes(b'preserve')
+            with self.assertRaises(FileExistsError):
+                with MEASUREMENT['owned_sample'](root):
+                    self.fail('must not enter an existing sample')
+            self.assertEqual(marker.read_bytes(), b'preserve')
+            marker.unlink()
+            existing.rmdir()
+            with self.assertRaisesRegex(RuntimeError, 'child failed'):
+                with MEASUREMENT['owned_sample'](root):
+                    raise RuntimeError('child failed')
+            self.assertFalse(existing.exists())
+
     def steady_campaign(self, guard):
         tree = ast.parse((HERE / 'measure-function-order.py').read_text())
         loops = [node for node in ast.walk(tree)
