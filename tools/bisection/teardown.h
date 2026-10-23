@@ -183,6 +183,27 @@ static bool td_first(const struct td_api *api, void *instance, const char *input
         (!out->count || td_read_candidate(api, instance, 0, &out->candidates[0]));
 }
 
+/* Identical ABI work on the same instance, with distinct collection roots.
+ * The second call retains the first call's caches and reparses the same
+ * input, so their scoped instruction counts have the same boundaries. */
+__attribute__((noinline))
+bool bisect_teardown_first_candidate_unit(const struct td_api *api, void *instance,
+                                         const char *input, struct td_observation *out) {
+    bool valid = td_first(api, instance, input, out);
+    __asm__ volatile ("" ::: "memory");
+    return valid;
+}
+
+__attribute__((noinline))
+bool bisect_teardown_second_candidate_unit(const struct td_api *api, void *instance,
+                                          const char *input, struct td_observation *out) {
+    bool valid = td_first(api, instance, input, out);
+    /* A distinct empty assembler string keeps compiler folding from merging
+     * these collection roots; neither barrier emits an instruction. */
+    __asm__ volatile ("\n" ::: "memory");
+    return valid;
+}
+
 static void td_print_observation(const struct td_api *api, const struct td_observation *out) {
     printf("{\"consumed\":%zu,\"parsed\":", out->consumed);
     if (api->zhuyin) printf("null"); else printf("%zu", out->parsed);
@@ -397,7 +418,7 @@ static int run_teardown_mode(int argc, char **argv) {
     if (argc != 12 || (strcmp(argv[2], "pinyin") && strcmp(argv[2], "zhuyin"))) {
         fputs("usage: bisect --teardown pinyin|zhuyin SO DATA USER "
               "time|memory|export|populate|observe SAVE INSTANCES CYCLES "
-              "first-candidate|dirty|multi ROWS_OR_DASH\n", stderr);
+              "first-candidate|second-candidate|dirty|multi ROWS_OR_DASH\n", stderr);
         return 2;
     }
     const char *mode = argv[6];
@@ -413,10 +434,11 @@ static int run_teardown_mode(int argc, char **argv) {
     if (*end || instances < 1 || instances > TD_MAX_INSTANCES) return 2;
     long cycles = strtol(argv[9], &end, 10);
     if (*end || cycles < 1 || cycles > 100 || (!wait && cycles != 1)) return 2;
-    /* argv[10] is a named scenario: first-candidate, dirty, or multi. */
+    /* argv[10] is a named scenario. */
     bool dirty = strcmp(argv[10], "dirty") == 0;
     bool multi = strcmp(argv[10], "multi") == 0;
-    if (!dirty && !multi && strcmp(argv[10], "first-candidate")) return 2;
+    bool second = strcmp(argv[10], "second-candidate") == 0;
+    if (!dirty && !multi && !second && strcmp(argv[10], "first-candidate")) return 2;
     if (multi && instances != 2) return 2;
     if (save && !dirty && !populate) return 2;
     setvbuf(stdout, NULL, _IONBF, 0);
@@ -463,7 +485,7 @@ static int run_teardown_mode(int argc, char **argv) {
         bool options = api.common.set_options(context, DEFAULT_FLAGS);
         struct td_clock config = td_elapsed(start);
         if (!options) { fputs("teardown set_options returned false\n", stderr); return 1; }
-        struct td_clock alloc = {0}, first = {0}, frees[TD_MAX_INSTANCES], all_frees = {0};
+        struct td_clock alloc = {0}, first = {0}, repeated = {0}, frees[TD_MAX_INSTANCES], all_frees = {0};
         for (int i = 0; i < instances; i++) {
             start = td_now();
             allocated[i] = api.common.alloc_instance(context);
@@ -471,7 +493,7 @@ static int run_teardown_mode(int argc, char **argv) {
             alloc.wall += duration.wall; alloc.cpu += duration.cpu; alloc.majflt += duration.majflt;
             if (!allocated[i]) { fputs("teardown alloc returned NULL\n", stderr); return 1; }
             start = td_now();
-            bool valid = td_first(&api, allocated[i], "nihao", &observations[i]);
+            bool valid = bisect_teardown_first_candidate_unit(&api, allocated[i], "nihao", &observations[i]);
             duration = td_elapsed(start);
             first.wall += duration.wall; first.cpu += duration.cpu; first.majflt += duration.majflt;
             if (!valid || (!observing && (observations[i].consumed != 5 || observations[i].parsed != 5 ||
@@ -480,6 +502,20 @@ static int run_teardown_mode(int argc, char **argv) {
             }
             for (unsigned j = 1; j < observations[i].count; j++) {
                 if (!td_read_candidate(&api, allocated[i], j, &observations[i].candidates[j])) return 1;
+            }
+            if (second) {
+                struct td_observation again;
+                memset(&again, 0, sizeof again);
+                start = td_now();
+                valid = bisect_teardown_second_candidate_unit(&api, allocated[i], "nihao", &again);
+                duration = td_elapsed(start);
+                repeated.wall += duration.wall; repeated.cpu += duration.cpu; repeated.majflt += duration.majflt;
+                for (unsigned j = 1; valid && j < again.count; j++) {
+                    valid = td_read_candidate(&api, allocated[i], j, &again.candidates[j]);
+                }
+                if (!valid || memcmp(&observations[i], &again, sizeof again)) {
+                    fputs("teardown second candidate contract changed\n", stderr); return 1;
+                }
             }
         }
         if (observing && !td_observe_script(&api, allocated[0])) return 1;
@@ -526,6 +562,7 @@ static int run_teardown_mode(int argc, char **argv) {
         td_print_time("config_ns", config, true);
         td_print_time("alloc_ns", alloc, true);
         td_print_time("first_candidate_ns", first, true);
+        if (second) td_print_time("second_candidate_ns", repeated, true);
         td_print_time("lifecycle_ns", lifecycle, true);
         if (save) td_print_time("save_ns", saving, true);
         td_print_time("free_all_instances_ns", all_frees, true);
