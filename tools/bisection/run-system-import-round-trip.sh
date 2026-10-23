@@ -5,6 +5,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=tools/bisection/oracle-cell.sh
 source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
+inherited_library_path=$(oracle_cell_library_path)
 facade=${1:?pinyin or zhuyin}
 pin=$(realpath "${2:?pin-so}")
 ox=$(realpath "${3:?ox-so}")
@@ -21,7 +22,7 @@ esac
 run() {
   local profile=$1 so=$2 library=$3
   shift 3
-  (cd "$profile" && LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$work/driver" "$so" "$data" "$library" "$@")
+  (cd "$profile" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" "$work/driver" "$so" "$data" "$library" "$@")
 }
 for library in 1 2 3 4; do
   mkdir "$work/pin-$library" "$work/ox-$library"

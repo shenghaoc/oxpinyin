@@ -24,10 +24,11 @@
 # backend mismatch); 2 = divergence.
 
 set -euo pipefail
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
+inherited_library_path=$(oracle_cell_library_path)
 cd "$(dirname "$0")"
-REPO_ROOT="$(cd ../.. && pwd)"
-# shellcheck source=oracle-cell.sh
-source ./oracle-cell.sh
 # shellcheck source=system-dir.sh
 source ./system-dir.sh
 
@@ -213,7 +214,7 @@ run_frontend() {
     local input=$1 output=$2 cache=$3
     rm -rf "$cache"
     mkdir -p "$cache"
-    if ! LD_LIBRARY_PATH="$IBUS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"         XDG_CACHE_HOME="$cache"         GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR"         ./frontend-import "$input" "$output" > /dev/null 2> "$cache/stderr"; then
+    if ! LD_LIBRARY_PATH="$IBUS_PREFIX/lib${inherited_library_path:+:$inherited_library_path}"         XDG_CACHE_HOME="$cache"         GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR"         ./frontend-import "$input" "$output" > /dev/null 2> "$cache/stderr"; then
         echo "FAIL: pinned frontend import/export failed for $input"
         cat "$cache/stderr"
         exit 1
