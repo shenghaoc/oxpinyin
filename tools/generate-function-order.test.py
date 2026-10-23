@@ -34,6 +34,14 @@ def profile(body, total):
 
 
 class MeasurementTests(unittest.TestCase):
+    def test_time_sample_takes_the_cycle_row_before_the_closed_row(self):
+        sample = MEASUREMENT["time_sample"](
+            '{"teardown":"sample","cycle":1,"observations":[],"times":{"init_ns":{"wall_ns":5}}}\n'
+            '{"teardown":"closed","status":0,"times":{"dlclose_ns":{"wall_ns":1}}}\n')
+        self.assertEqual(sample["times"]["init_ns"]["wall_ns"], 5)
+        with self.assertRaisesRegex(ValueError, "one teardown sample row, got 0"):
+            MEASUREMENT["time_sample"]('{"teardown":"closed","status":0,"times":{}}\n')
+
     def test_unordered_arm_is_refused_before_any_measurement(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -78,6 +86,11 @@ class MeasurementTests(unittest.TestCase):
             "0x1001 2 999\n+1 * 3\nob=(2)\nfn=(3) foreign\n0x80 4 5\n", 10)
         row = MEASUREMENT["executed_profile"](text.encode(), LIBRARY, {0xfff: 2, 0x1002: 1})
         self.assertEqual(row, {"ir": 10, "pages": {0, 1}, "bytes": 3})
+
+    def test_a_toggle_outside_the_library_body_profiles_as_empty(self):
+        text = profile("ob=(1) /foreign.so\nfn=(1) frame_dummy\n0x80 1 4\n", 4)
+        row = MEASUREMENT["executed_profile"](text.encode(), LIBRARY, {0x80: 1})
+        self.assertEqual(row, {"ir": 4, "pages": set(), "bytes": 0})
 
     def test_executed_addresses_must_match_original_elf(self):
         text = profile("ob=/synthetic/libpinyin.so\nfn=f\n0x123 1 2\n", 2)
@@ -252,6 +265,30 @@ class GeneratorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "lacks the first-candidate exports "
                                                 "zhuyin_guess_candidates_after_cursor$"):
             toggles("zhuyin", exports.replace(",zhuyin_guess_candidates_after_cursor", ""))
+
+    def test_generator_and_measurement_use_the_same_startup_toggles(self):
+        exports = ",".join(f"pinyin_{name}" for name in ("init", *GENERATOR["FIRST_CANDIDATE"]["pinyin"]))
+        constructors = ["ctor_a", "ctor_b"]
+        collected = []
+
+        def collect(args, facade, library, user, toggle, environment):
+            collected.append(toggle)
+            return set()
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in GENERATOR["PROFILES"]:
+                (root / "profiles" / name / "user").mkdir(parents=True)
+            (root / "work").mkdir()
+            with mock.patch.dict(GENERATOR["collect_startup"].__globals__, collect_toggle=collect,
+                                 init_array_symbols=lambda library: constructors), \
+                    mock.patch.dict(MEASUREMENT["GEN"], init_array_symbols=lambda library: constructors):
+                GENERATOR["collect_startup"](SimpleNamespace(profiles_dir=root / "profiles"), "pinyin",
+                                             LIBRARY, root / "work",
+                                             {"OXPINYIN_TEARDOWN_EXPORTS": exports})
+                measured = MEASUREMENT["startup_toggles"](LIBRARY, "pinyin", exports)
+        self.assertEqual(list(dict.fromkeys(collected)), list(measured))
+        self.assertIn("pinyin_get_candidate_nbest_index", measured)
 
     def test_first_candidate_matches_the_worker_path_to_m1(self):
         """set_options, alloc_instance, td_first and td_read_candidate in teardown.h."""

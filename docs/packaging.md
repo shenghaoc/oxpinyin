@@ -447,8 +447,10 @@ same worker for native timing, parent-observed `smaps` at the load and
 lifecycle checkpoints, Callgrind instruction positions, and the steady
 workload. The memory checkpoints are `M0` (after load) and `M1` (after the
 first-candidate phase); they are lifecycle readings, not the init-stop figures
-from #1000. Policy regeneration is separate and uses the exact load-constructor,
-`<facade>_init` and first-candidate export Callgrind toggles above.
+from #1000. Its Callgrind startup counters use the generator's own startup
+toggles (load constructors, `<facade>_init` and the first-candidate exports),
+so they cover every function the policy promotes. Policy regeneration is
+separate.
 
 ```sh
 just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil \
