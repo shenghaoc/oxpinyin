@@ -48,7 +48,7 @@ CLOCK_FIELDS = ('wall_ns', 'cpu_ns', 'user_ns', 'sys_ns', 'minflt', 'majflt', 'n
 # init-attribute (#1090): diagnostic samples per probe as (rounds, warm-ups),
 # in the rotating order. None of them is a primary timing sample.
 INIT_PROBE_ROUNDS = {'count': (30, 1), 'sample': (30, 1), 'sample-coarse': (60, 1), 'faults': (10, 0),
-                     'trace': (6, 0)}
+                     'trace': (6, 0), 'pages': (1, 0)}
 INIT_IR_ROUNDS = 3
 # cpu-clock periods. 50 kHz stays below the kernel's default 100 kHz sampling
 # limit; each sample's handler is charged to the task, so the coarse period
@@ -337,8 +337,9 @@ def cold_files(library, data, user):
             *(path for root in (data, user) for path in sorted(root.rglob('*')) if path.is_file())]
 
 
-def resident_pages(fd):
+def resident_pages(fd, ranges=False):
     """Linux mincore over an unfaulted PROT_NONE mapping; no file bytes read.
+    With `ranges`, also the resident page indices as [start, end) runs.
 
     Linux can conservatively report all pages resident when the caller lacks
     mincore permissions. That must refuse a sample, never count as eviction.
@@ -363,10 +364,28 @@ def resident_pages(fd):
         vector = (ctypes.c_ubyte * pages)()
         if libc.mincore(address, size, vector):
             raise OSError(ctypes.get_errno(), 'cold mincore failed')
-        return dict(pages=pages, resident=sum(value & 1 for value in vector))
+        result = dict(pages=pages, resident=sum(value & 1 for value in vector))
+        if ranges:
+            result['ranges'] = page_ranges(index for index, value in enumerate(vector) if value & 1)
+        return result
     finally:
         if libc.munmap(address, size):
             raise OSError(ctypes.get_errno(), 'cold mincore munmap failed')
+
+
+def page_ranges(indices):
+    """Sorted page indices as [start, end) runs."""
+    runs = []
+    for index in sorted(indices):
+        if runs and runs[-1][1] == index:
+            runs[-1][1] = index + 1
+        else:
+            runs.append([index, index + 1])
+    return runs
+
+
+def range_pages(runs):
+    return {index for start, end in runs for index in range(start, end)}
 
 
 def evict_files(files):
@@ -475,18 +494,20 @@ def residency(files, library, data, user):
     result = {}
     for path in files:
         with Path(path).open('rb') as handle:
-            result[file_role(path, library, data, user)] = resident_pages(handle.fileno())
+            role = file_role(path, library, data, user)
+            # The facade's own page bitmap names which of its pages init reads.
+            result[role] = resident_pages(handle.fileno(), ranges=role == 'SUBJECT')
     return result
 
 
 def process_maps(pid, *, proc_root=Path('/proc')):
-    """Mappings of a paused child: (start, end, perms, path)."""
+    """Mappings of a paused child: (start, end, perms, path, file offset)."""
     rows = []
     for line in (proc_root / str(pid) / 'maps').read_text().splitlines():
         fields = line.split(maxsplit=5)
         if len(fields) >= 5:
             start, end = (int(value, 16) for value in fields[0].split('-'))
-            rows.append((start, end, fields[1], fields[5] if len(fields) > 5 else ''))
+            rows.append((start, end, fields[1], fields[5] if len(fields) > 5 else '', int(fields[2], 16)))
     return rows
 
 
@@ -606,7 +627,7 @@ def kernel_category(sample, symbols):
 
 
 def user_object(address, maps, library, worker):
-    for start, end, perms, path in maps:
+    for start, end, perms, path, *_ in maps:
         if 'x' in perms and start <= address < end:
             if path == str(library):
                 return 'SUBJECT'
@@ -642,7 +663,7 @@ def elf_symbols(path):
 def user_function(address, maps):
     """The function holding a user IP. A shared object's lowest mapping is
     its load base: its segments map in address order from file offset 0."""
-    for start, end, perms, path in maps:
+    for start, end, perms, path, *_ in maps:
         if 'x' in perms and start <= address < end:
             if not path.startswith('/'):
                 return path
@@ -675,7 +696,7 @@ def init_faults(records, before, library, data, user):
         executable, writable = ('x' in text, 'w' in text) if text is not None else (prot & 4, prot & 2)
         return 'text' if executable else 'writable' if writable else 'readonly'
     regions = [(start, end, region_label(path, access(perms), library, data, user))
-               for start, end, perms, path in reversed(before)]
+               for start, end, perms, path, *_ in reversed(before)]
     faults = []
     for record in records:
         if 'mmap' in record:
@@ -685,6 +706,121 @@ def init_faults(records, before, library, data, user):
         label = next((name for start, end, name in regions if start <= record['addr'] < end), 'unmapped')
         faults.append(dict(record, region=label))
     return faults
+
+
+LACKEY_LINE = re.compile(rb'^(I | [LSM]) +([0-9a-f]+),([0-9]+)$', re.M)
+
+
+class LackeyAccesses:
+    """Lackey `--trace-mem=yes` output, read from a pipe as it streams.
+
+    The worker's marker bytes `B` and `E` land at line starts of the same pipe
+    (each Lackey line is one write). Only accesses between them are kept:
+    distinct instruction addresses and distinct 64-byte data lines."""
+
+    def __init__(self):
+        self.state, self.rest, self.lines = 'before', b'', 0
+        self.code, self.data = set(), set()
+
+    def feed(self, block):
+        text = self.rest + block
+        cut = text.rfind(b'\n') + 1
+        self.rest, text = text[cut:], text[:cut]
+        if self.state == 'before':
+            begin = re.search(rb'(?m)^B', text)
+            if not begin:
+                return
+            self.state, text = 'inside', text[begin.end():]
+        if self.state != 'inside':
+            return
+        end = re.search(rb'(?m)^E', text)
+        for kind, address, size in LACKEY_LINE.findall(text[:end.start()] if end else text):
+            start = int(address, 16)
+            if kind == b'I ':
+                self.code.add(start)
+            else:
+                self.data.update(range(start >> 6, ((start + int(size) - 1) >> 6) + 1))
+            self.lines += 1
+        if end:
+            self.state = 'after'
+
+    def result(self):
+        return dict(window=self.state == 'after', lines=self.lines, code=sorted(self.code), data_lines=sorted(self.data))
+
+
+ELF_LAYOUTS = {}
+
+
+def library_layout(path):
+    """Allocated file-backed sections and sized symbols of one ELF object."""
+    path = str(path)
+    if path not in ELF_LAYOUTS:
+        sections = []
+        for line in subprocess.check_output(['readelf', '-SW', path], text=True).splitlines():
+            match = re.match(r'\s*\[\s*\d+\]\s+(\S+)\s+(\S+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+\S+\s+([A-Z]*)\s', line)
+            if match and 'A' in match[6] and match[2] != 'NOBITS':
+                sections.append(dict(name=match[1], address=int(match[3], 16), offset=int(match[4], 16),
+                                     size=int(match[5], 16)))
+        symbols = []
+        output = subprocess.check_output(['nm', '-S', '--defined-only', '--demangle', path], text=True)
+        for line in output.splitlines():
+            fields = line.split(' ', 3)
+            if len(fields) == 4 and re.fullmatch('[0-9a-f]+', fields[1]) and int(fields[1], 16):
+                symbols.append((int(fields[0], 16), int(fields[1], 16), fields[2], fields[3]))
+        ELF_LAYOUTS[path] = dict(sections=sections, symbols=sorted(symbols))
+    return ELF_LAYOUTS[path]
+
+
+def section_at(layout, offset):
+    return next((section['name'] for section in layout['sections']
+                 if section['offset'] <= offset < section['offset'] + section['size']), None)
+
+
+def page_section(layout, page):
+    """The section holding most bytes of a file page; page headers and
+    padding outside every section are 'none'."""
+    overlap = {section['name']: min(section['offset'] + section['size'], (page + 1) * 4096) -
+               max(section['offset'], page * 4096) for section in layout['sections']}
+    name, size = max(overlap.items(), key=lambda item: item[1], default=('none', 0))
+    return name if size > 0 else 'none'
+
+
+def symbol_at(layout, address):
+    """The sized symbol holding a virtual address, if any."""
+    symbols = layout['symbols']
+    index = bisect.bisect_right(symbols, (address, float('inf')))
+    for start, size, _, name in reversed(symbols[max(0, index - 8):index]):
+        if start <= address < start + size:
+            return name
+    return None
+
+
+def policy_prefix(library, facade):
+    """[start, end) of the ordered startup prefix of .text, from the policy the
+    packaging check verifies; None when the object has no applicable policy."""
+    try:
+        backend = FUNCTION_ORDER['library_backend'](library)
+        policy = ROOT / 'tools/packaging/function-order' / backend / f'lib{facade}.order'
+        FUNCTION_ORDER['verify'](library, policy, facade)
+    except (OSError, ValueError):
+        return None
+    names = set(FUNCTION_ORDER['command'](['bash', ROOT / 'tools/packaging/function-order.sh', 'policy', policy,
+                                          f'lib{facade}.so.15']).splitlines())
+    generator = FUNCTION_ORDER['GEN']
+    nm = ['nm', '--format=sysv', '--defined-only', '--no-sort']
+    raw = generator['symbols'](FUNCTION_ORDER['command']([*nm, '--no-demangle', library]))
+    decoded = generator['symbols'](FUNCTION_ORDER['command']([*nm, '--demangle=rust', library]))
+    spans = [(int(original[1], 16), int(original[1], 16) + int(original[4] or '0', 16))
+             for original, symbol in zip(raw, decoded, strict=True)
+             if symbol[6] == '.text' and generator['stable_identity'](symbol[0], original[0]) in names]
+    return (min(start for start, _ in spans), max(end for _, end in spans)) if spans else None
+
+
+def file_offset(address, maps, library):
+    for start, end, perms, path, offset in maps:
+        if path == str(library) and start <= address < end:
+            return address - start + offset
+    return None
 
 
 def callgrind_costs(text, library):
@@ -765,7 +901,8 @@ class Campaign:
         cold = self.cache == 'cold' and mode in ('time', 'memory', 'init')
         if cold and (cycles != 1 or profiler):
             raise ValueError('cold samples require one native lifecycle without a profiler')
-        if probe not in (None, 'none', 'count', 'faults', 'trace', *INIT_SAMPLE_PERIOD_NS) or (probe == 'trace' and profiler):
+        if probe not in (None, 'none', 'count', 'faults', 'trace', 'pages', *INIT_SAMPLE_PERIOD_NS) or \
+                (probe in ('trace', 'pages') and profiler):
             raise ValueError('unknown init probe or a traced profiler')
         if probe not in (None, 'none') and mode != 'init':
             raise ValueError('init probes require init mode')
@@ -786,6 +923,13 @@ class Campaign:
             marker_number = marker
             command = ['strace', '-f', '-qq', '-y', '-T', '-s', '256', '-e', 'signal=none',
                        '-o', '/dev/fd/%d' % trace_write, *command]
+        if probe == 'pages':
+            # Lackey logs every access to its own pipe; the worker's marker is
+            # a second descriptor on that pipe, so the bytes keep their order.
+            trace_read, trace_write = os.pipe()
+            marker = marker_number = os.dup(trace_write)
+            command += ['valgrind', '--tool=lackey', '--trace-mem=yes', '--log-fd=%d' % trace_write,
+                        '--vgdb-prefix=' + str(scratch / 'vgdb')]
         if profiler:
             command += ['valgrind', '--tool=' + profiler.removesuffix('-init'), '--vgdb-prefix=' + str(scratch / 'vgdb')]
             if profiler == 'callgrind':
@@ -816,10 +960,12 @@ class Campaign:
             env['OXPINYIN_TEARDOWN_INPUTS'] = str(inputs)
         if probe not in (None, 'none'):
             env['OXPINYIN_TEARDOWN_INIT_PROBE'] = ('sample:%d' % INIT_SAMPLE_PERIOD_NS[probe]
-                                                   if probe in INIT_SAMPLE_PERIOD_NS else probe)
+                                                   if probe in INIT_SAMPLE_PERIOD_NS else
+                                                   'trace' if probe == 'pages' else probe)
         if marker is not None:
             env['OXPINYIN_TEARDOWN_MARKER_FD'] = str(marker)
         errors, documents, boundaries, trace = bytearray(), [], [], bytearray()
+        accesses = LackeyAccesses() if probe == 'pages' else None
         files = None
         self.driver.check_cancelled()
         try:
@@ -846,14 +992,17 @@ class Campaign:
                 tracer = None
                 if trace_read is not None:
                     def drain_trace():
-                        while block := os.read(trace_read, 65536):
-                            trace.extend(block)
+                        while block := os.read(trace_read, 1 << 20):
+                            if accesses is not None:
+                                accesses.feed(block)
+                            else:
+                                trace.extend(block)
                     tracer = threading.Thread(target=drain_trace)
                     tracer.start()
                 selector = selectors.DefaultSelector()
                 selector.register(process.stdout, selectors.EVENT_READ)
                 buffered = bytearray()
-                deadline = time.monotonic() + (1800 if profiler else 120)
+                deadline = time.monotonic() + (1800 if profiler or probe == 'pages' else 120)
                 try:
                     while True:
                         self.driver.check_cancelled()
@@ -980,7 +1129,8 @@ class Campaign:
                 # The private user path names the sample's profile mappings.
                 result['init'] = dict(probe=probes[0] if probes else None, user=str(user),
                                       trace=init_trace(trace.decode('utf-8', 'surrogateescape'), marker_number, names)
-                                      if probe == 'trace' else None)
+                                      if probe == 'trace' else None,
+                                      accesses=accesses.result() if accesses is not None else None)
             return result
         finally:
             for value in (trace_read, trace_write, marker):
@@ -1272,7 +1422,8 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
     on the facade's init export: exact on KC and tkrzw (an INVALID control
     fails the stage), diagnostic on BDB, where libdb seeds srandom_r from
     PID, time and address. Cold mode skips Ir, which the page cache cannot
-    change.
+    change. The `pages` probe (Lackey) maps the facade pages init reads, runs
+    and touches onto the object's layout and ordered startup prefix.
     """
     cell = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
     if shutil.which('strace') is None:
@@ -1282,6 +1433,7 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
     for facade in facades:
         for case in cases:
             options = case_options(case, profiles, dirty_rows[facade])
+            bitmaps = None
             for probe, (rounds, warmups) in INIT_PROBE_ROUNDS.items():
                 rows = {side: [] for side in subjects}
                 for index in range(rounds + warmups):
@@ -1293,6 +1445,9 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
                             rows[side].append(row)
                 if probe == 'count':
                     report_init_counts(facade, case, rows, campaign.cache)
+                    bitmaps = rows
+                elif probe == 'pages':
+                    report_init_pages(facade, case, rows, bitmaps, subjects, campaign.cache)
                 elif probe in INIT_SAMPLE_PERIOD_NS:
                     report_init_samples(facade, case, rows, symbols, subjects, campaign.worker, campaign.cache, probe)
                 elif probe == 'faults':
@@ -1426,6 +1581,98 @@ def report_init_faults(facade, case, rows, subjects, campaign, cache):
                     for kind, values in sorted(table.items())}
         print_record('init-faults', facade=facade, case=case, side=side, cache=cache, rounds=len(samples),
                      by_region=shown(regions), by_code=shown(code), **status)
+
+
+def report_init_pages(facade, case, rows, bitmaps, subjects, cache):
+    """Which facade pages init reads into the page cache (count samples' M0
+    and I1 bitmaps), against what init executes and the data it touches
+    (Lackey), the object's section and symbol layout and its ordered prefix."""
+    for side in subjects:
+        library = subjects[side][facade].resolve()
+        layout = library_layout(library)
+        prefix = policy_prefix(library, facade) if side != 'pin' else None
+        def address_offset(address):
+            section = next((value for value in layout['sections']
+                            if value['address'] <= address < value['address'] + value['size']), None)
+            return address - section['address'] + section['offset'] if section else None
+        prefix_pages = [address_offset(prefix[0]) // 4096, address_offset(prefix[1] - 1) // 4096 + 1] if prefix else None
+        record = dict(facade=facade, case=case, side=side, cache=cache,
+                      sections={section['name']: [section['offset'] // 4096,
+                                                  (section['offset'] + section['size'] - 1) // 4096 + 1]
+                                for section in layout['sections']},
+                      prefix=dict(start=hex(prefix[0]), end=hex(prefix[1]), pages=prefix_pages) if prefix else None)
+        read_in = None
+        if bitmaps:
+            sets = []
+            for row in bitmaps[side]:
+                before = row['checkpoints'][0]['M0']['residency']['SUBJECT']
+                after = row['checkpoints'][1]['I1']['residency']['SUBJECT']
+                sets.append(frozenset(range_pages(after['ranges']) - range_pages(before['ranges'])))
+            modal = collections.Counter(sets).most_common(1)[0]
+            read_in = set(modal[0])
+            record['read_in'] = dict(pages=len(read_in), rounds=len(sets), rounds_with_this_set=modal[1],
+                                     sizes=summary([len(value) for value in sets]), ranges=page_ranges(read_in))
+        executed, touched, functions = set(), collections.Counter(), {}
+        if rows:
+            row = rows[side][0]
+            accesses = row['init']['accesses']
+            if not accesses['window']:
+                raise ValueError('Lackey init markers were not found')
+            maps = row['checkpoints'][1]['I1']['maps']
+            base = min(start for start, _, _, path, _ in maps if path == str(library))
+            for address in accesses['code']:
+                offset = file_offset(address, maps, library)
+                if offset is None:
+                    continue
+                executed.add(offset // 4096)
+                name = symbol_at(layout, address - base) or section_at(layout, offset) or 'unknown'
+                entry = functions.setdefault(name, dict(instructions=0, pages=set(), in_prefix=None))
+                entry['instructions'] += 1
+                entry['pages'].add(offset // 4096)
+                if prefix:
+                    entry['in_prefix'] = prefix[0] <= address - base < prefix[1]
+            data_pages = {}
+            for line in accesses['data_lines']:
+                offset = file_offset(line << 6, maps, library)
+                if offset is not None:
+                    data_pages.setdefault(offset // 4096, set()).add(symbol_at(layout, (line << 6) - base) or '-')
+                    touched[section_at(layout, offset) or 'unknown'] += 1
+            record['executed'] = dict(
+                pages=len(executed), functions=len(functions), instructions=len(accesses['code']),
+                largest=[dict(function=name, instructions=entry['instructions'], pages=page_ranges(entry['pages']),
+                              in_prefix=entry['in_prefix'])
+                         for name, entry in sorted(functions.items(), key=lambda item: -item[1]['instructions'])[:40]],
+                outside_prefix=None if not prefix else sorted(
+                    (dict(function=name, pages=sorted(entry['pages']), instructions=entry['instructions'])
+                     for name, entry in functions.items() if entry['in_prefix'] is False),
+                    key=lambda value: -value['instructions']),
+                pages_in_prefix=None if not prefix else len({page for entry in functions.values() if entry['in_prefix']
+                                                             for page in entry['pages']}))
+            record['data_touched'] = dict(pages=len(data_pages), lines_by_section=dict(touched.most_common()),
+                                          pages_by_section=dict(collections.Counter(
+                                              page_section(layout, page) for page in data_pages).most_common()))
+            if read_in is not None:
+                record['read_in']['executed'] = len(read_in & executed)
+                record['read_in']['data_touched'] = len(read_in & set(data_pages))
+                record['read_in']['neither'] = len(read_in - executed - set(data_pages))
+        if read_in is not None or rows:
+            pages = set(read_in or ()) | (executed | set(data_pages) if rows else set())
+            # Bytes of each named symbol on each listed page, largest first.
+            held = {page: collections.Counter() for page in pages}
+            for start, size, _, name in layout['symbols']:
+                offset = address_offset(start)
+                if offset is None:
+                    continue
+                for page in range(offset // 4096, (offset + size - 1) // 4096 + 1):
+                    if page in held:
+                        held[page][name] += min(offset + size, (page + 1) * 4096) - max(offset, page * 4096)
+            record['pages'] = [dict(page=page, section=page_section(layout, page),
+                                    read_in=None if read_in is None else page in read_in,
+                                    executed=page in executed, data=bool(rows) and page in data_pages,
+                                    in_prefix=bool(prefix_pages) and prefix_pages[0] <= page < prefix_pages[1],
+                                    symbols=[name for name, _ in held[page].most_common(3)])
+                               for page in sorted(pages)]
+        print_record('init-pages', **record)
 
 
 def report_init_trace(facade, case, rows, cache):

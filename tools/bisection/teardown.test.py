@@ -584,6 +584,23 @@ class InitAttributionTests(unittest.TestCase):
         self.assertEqual(shown['user_functions']['SUBJECT'], {'init_tables': 1, 'replay': 1})
         self.assertEqual(shown['user_functions']['[vdso]'], {'[vdso]': 1})
 
+    def test_lackey_stream_keeps_only_accesses_between_markers(self):
+        stream = (b'==1== Lackey\nI  00001000,3\n L 00002000,8\nBI  00003000,4\n S 00004030,8\n'
+                  b' M 0000407e,4\nI  00003004,2\nEI  00005000,3\n L 00006000,8\n')
+        for cut in range(1, len(stream)):
+            accesses = td.LackeyAccesses()
+            accesses.feed(stream[:cut])
+            accesses.feed(stream[cut:])
+            self.assertEqual(accesses.result(), dict(window=True, lines=4, code=[0x3000, 0x3004],
+                                                     data_lines=[0x4030 >> 6, 0x407e >> 6, (0x4081 >> 6)]))
+        accesses = td.LackeyAccesses()
+        accesses.feed(stream[:stream.index(b'E')])
+        self.assertFalse(accesses.result()['window'])
+
+    def test_page_runs_round_trip(self):
+        self.assertEqual(td.page_ranges([7, 3, 4, 5, 9]), [[3, 6], [7, 8], [9, 10]])
+        self.assertEqual(td.range_pages([[3, 6], [9, 10]]), {3, 4, 5, 9})
+
     CALLGRIND = '\n'.join(('events: Ir Bc', 'positions: line', 'ob=(1) /w/libraries/subject/libzhuyin.so',
                             'fn=(1) zhuyin_init', '3 10 2', 'cob=(2) /usr/lib/libc.so.6', 'cfn=(2) memcpy',
                             'calls=1 5', '5 100 20', '4 1', 'ob=(2)', 'fn=(2)', '5 100 20', 'totals: 111 22'))
@@ -912,7 +929,9 @@ class NativeTests(unittest.TestCase):
                 self.assertEqual((set(row['checkpoints'][0]), set(row['checkpoints'][1])), ({'M0'}, {'I1'}))
                 after = row['checkpoints'][1]['I1']
                 self.assertEqual(after['residency']['SUBJECT']['pages'], after['residency']['SUBJECT']['resident'])
-                self.assertTrue(any(path == str(self.library) and 'x' in perms for _, _, perms, path in after['maps']))
+                self.assertTrue(any(path == str(self.library) and 'x' in perms for _, _, perms, path, _ in after['maps']))
+                # Warm: the run covers every page of the stub library.
+                self.assertEqual(after['residency']['SUBJECT']['ranges'], [[0, after['residency']['SUBJECT']['pages']]])
                 self.assertEqual(set(row['samples'][0]['times']['init_ns']), set(td.CLOCK_FIELDS))
                 self.assertEqual(row['observation']['stderr'].splitlines(), ['INIT', 'ALLOC', 'FREE', 'FINI'])
                 self.assertEqual(row['observation']['documents'], [])
