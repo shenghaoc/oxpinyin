@@ -1,4 +1,5 @@
 schema=oracle-provisioning-pin-v4
+# Exact on purpose (#1074): every pin below identifies the reference libpinyin and its inputs, not a tool version a newer one could replace.
 # Composite pin identity for the locally built oracle. Every field mirrors
 # a constant in tools/oracle/build-oracle.sh; tools/bisection runners and
 # developers verify the two sides agree before trusting a prefix. When a

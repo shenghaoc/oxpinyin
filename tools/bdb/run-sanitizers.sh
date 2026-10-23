@@ -41,6 +41,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
+# Exact on purpose (#1074): a nightly is identified only by its date.
 NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-nightly-2026-09-07}
 TARGET=${OXPINYIN_SANITIZER_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}
 

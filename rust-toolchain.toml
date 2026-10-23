@@ -1,3 +1,4 @@
 [toolchain]
+# Exact on purpose (#1074): this file cannot express a minimum, and the output depends on the Rust version (inlining changes the function-order policies; clippy and rustfmt change too). Bump it deliberately, with the policies regenerated in the same PR.
 channel = "1.97.1"
 components = ["clippy", "rustfmt"]
