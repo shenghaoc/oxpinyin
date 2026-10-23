@@ -373,7 +373,11 @@ class ColdTests(unittest.TestCase):
             self.assertTrue(all(call.args[1:] == (0, 0, os.POSIX_FADV_DONTNEED) for call in advise.call_args_list))
             self.assertEqual([row['before']['resident'] for row in records], [1, 1])
             self.assertTrue(all(row['after']['resident'] == row['verified']['resident'] == 0 for row in records))
-            report.assert_called_once_with('cache-eviction', cache='cold', files=records)
+            self.assertEqual(report.call_args.args, ('cache-eviction',))
+            self.assertEqual(report.call_args.kwargs['cache'], 'cold')
+            self.assertEqual(report.call_args.kwargs['measurement'], 'desktop cold start')
+            self.assertEqual(report.call_args.kwargs['files'], records)
+            self.assertIn('complete', report.call_args.kwargs['process_scan'])
 
     @unittest.skipUnless(sys.platform == 'linux', 'Linux per-file eviction')
     def test_still_resident_and_refaulted_files_are_named_and_refused(self):
@@ -399,6 +403,147 @@ class ColdTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'not on ext4: ' + str(paths[1]) + '.*tmpfs'):
                     td.evict_files(paths)
                 advise.assert_not_called()
+
+    def scan(self, path, pids=(111,), complete=True):
+        info = path.stat()
+        return {(info.st_dev, info.st_ino): set(pids)}, dict(
+            scope='visible /proc processes excluding controller', pid_namespace='test',
+            readable_processes=len(pids), inaccessible_processes=[] if complete else [dict(pid=222, error='Permission denied')],
+            exited_processes=[], complete=complete)
+
+    def test_mapping_counts_are_by_inode_and_distinct_other_processes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            library = root / 'library with spaces.so'
+            library.touch()
+            info = library.stat()
+            inode = (info.st_dev, info.st_ino)
+            device = f'{os.major(info.st_dev):x}:{os.minor(info.st_dev):x}'
+            for pid in (111, 222, os.getpid()):
+                (root / str(pid)).mkdir()
+                # Multiple segments and path aliases still count one process.
+                (root / str(pid) / 'maps').write_text(
+                    f'1000-2000 r--p 0000 {device} {info.st_ino} /alias\\040name.so\n'
+                    f'2000-3000 r-xp 0000 {device} {info.st_ino} /deleted-alias.so (deleted)\n'
+                    f'3000-4000 r--p 0000 {device} {info.st_ino + 1} {library}\n')
+            counts, scan = td.mapping_processes([inode], proc_root=root)
+            self.assertEqual(counts[inode], {111, 222})
+            self.assertTrue(scan['complete'])
+            self.assertEqual(scan['readable_processes'], 2)
+
+    def test_unreadable_or_disappeared_maps_are_not_complete_counts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for pid in (111, 222):
+                (root / str(pid)).mkdir()
+                (root / str(pid) / 'maps').touch()
+            read = Path.read_text
+            def maps(path, *args, **kwargs):
+                if path == root / '222/maps':
+                    raise PermissionError('test maps permission denied')
+                return read(path, *args, **kwargs)
+            with patch.object(Path, 'read_text', maps):
+                _, scan = td.mapping_processes([], proc_root=root)
+            self.assertFalse(scan['complete'])
+            self.assertEqual(scan['inaccessible_processes'], [dict(pid=222, error='test maps permission denied')])
+            (root / '222/maps').unlink()
+            _, scan = td.mapping_processes([], proc_root=root)
+            self.assertFalse(scan['complete'])
+            self.assertEqual(scan['exited_processes'], [222])
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux per-file eviction')
+    def test_shared_file_skips_all_eviction_and_residency_calls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'shared-dependency.so'
+            path.write_bytes(b'private test fixture')
+            with patch.object(td, 'filesystem', return_value='ext4'), \
+                    patch.object(td, 'mapping_processes', return_value=self.scan(path, (111, 222))), \
+                    patch.object(td.os, 'posix_fadvise') as advise, patch.object(td.os, 'fsync') as sync, \
+                    patch.object(td, 'resident_pages') as residency, patch.object(td, 'print_record'):
+                records = td.evict_files([path], dependencies=[path])
+            advise.assert_not_called()
+            sync.assert_not_called()
+            residency.assert_not_called()
+            self.assertEqual(records[0]['status'], 'resident: shared with 2 processes')
+            self.assertEqual(records[0]['shared_process_count'], 2)
+            self.assertEqual(records[0]['shared_pids'], [111, 222])
+            self.assertEqual(records[0]['role'], 'dependency')
+            self.assertIsNone(records[0]['verified'])
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux per-file eviction')
+    def test_partial_shared_count_is_reported_as_lower_bound_not_exact(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'shared.so'
+            path.touch()
+            with patch.object(td, 'filesystem', return_value='ext4'), \
+                    patch.object(td, 'mapping_processes', return_value=self.scan(path, complete=False)), \
+                    patch.object(td.os, 'posix_fadvise') as advise, patch.object(td, 'print_record') as report:
+                records = td.evict_files([path])
+            advise.assert_not_called()
+            self.assertEqual(records[0]['status'], 'resident: shared with at least 1 processes')
+            self.assertEqual(records[0]['observed_shared_processes'], 1)
+            self.assertIsNone(records[0]['shared_process_count'])
+            self.assertFalse(records[0]['process_count_complete'])
+            self.assertEqual(report.call_args.kwargs['process_scan']['inaccessible_processes'][0]['pid'], 222)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux per-file eviction')
+    def test_no_observed_sharing_still_requires_eviction_with_incomplete_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'nonshared-input'
+            path.touch()
+            with patch.object(td, 'filesystem', return_value='ext4'), \
+                    patch.object(td, 'mapping_processes', return_value=self.scan(path, (), complete=False)), \
+                    patch.object(td.os, 'posix_fadvise') as advise, \
+                    patch.object(td, 'resident_pages', return_value=dict(pages=1, resident=1)), \
+                    patch.object(td, 'print_record') as report:
+                with self.assertRaisesRegex(ValueError, 'file stays resident: ' + str(path)):
+                    td.evict_files([path])
+            advise.assert_called_once()
+            record = report.call_args.kwargs['files'][0]
+            self.assertEqual(record['observed_shared_processes'], 0)
+            self.assertIsNone(record['shared_process_count'])
+            self.assertEqual(record['status'], 'refused: file stays resident')
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux per-file eviction')
+    def test_shared_dependency_does_not_exempt_nonshared_input_or_non_ext4(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ('shared.so', 'user.bin')]
+            for path in paths:
+                path.touch()
+            counts, scan = self.scan(paths[0])
+            info = paths[1].stat()
+            counts[info.st_dev, info.st_ino] = set()
+            with patch.object(td, 'filesystem', return_value='ext4'), \
+                    patch.object(td, 'mapping_processes', return_value=(counts, scan)), \
+                    patch.object(td.os, 'posix_fadvise') as advise, \
+                    patch.object(td, 'resident_pages', return_value=dict(pages=1, resident=1)), \
+                    patch.object(td, 'print_record') as report:
+                with self.assertRaisesRegex(ValueError, 'file stays resident: ' + str(paths[1])):
+                    td.evict_files(paths, dependencies=[paths[0]])
+            self.assertEqual(advise.call_count, 1)
+            self.assertEqual(report.call_args.kwargs['files'][0]['eviction'], 'skipped-shared')
+            with patch.object(td, 'filesystem', return_value='tmpfs'), \
+                    patch.object(td, 'mapping_processes') as mappings, patch.object(td.os, 'posix_fadvise') as advise:
+                with self.assertRaisesRegex(ValueError, 'not on ext4'):
+                    td.evict_files([paths[0]])
+            mappings.assert_not_called()
+            advise.assert_not_called()
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux per-file eviction')
+    def test_shared_counts_are_refreshed_per_sample_and_dependency_roles_are_side_specific(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'libstdc++.so'
+            path.touch()
+            with patch.object(td, 'filesystem', return_value='ext4'), \
+                    patch.object(td, 'mapping_processes', side_effect=[self.scan(path, (111,)), self.scan(path, (111, 222))]) as mappings, \
+                    patch.object(td.os, 'posix_fadvise') as advise, patch.object(td, 'print_record'):
+                first = td.evict_files([path], dependencies=[path])
+                second = td.evict_files([path])
+            self.assertEqual(mappings.call_count, 2)
+            advise.assert_not_called()
+            self.assertEqual(first[0]['shared_process_count'], 1)
+            self.assertEqual(second[0]['shared_process_count'], 2)
+            self.assertEqual((first[0]['role'], second[0]['role']), ('dependency', 'input'))
 
     def test_cold_rejects_non_native_and_repeated_stages(self):
         pure = PureTests()
@@ -684,18 +829,19 @@ class NativeTests(unittest.TestCase):
                 campaign.cache = 'cold'
                 library = self.root / side / 'facade.so'
                 paths = []
-                def files(measured, data, user):
+                def files(measured, data, user, *, dependencies=None):
                     self.assertEqual(measured, library)
                     self.assertTrue(user.is_dir())
                     self.assertNotEqual(user, self.profile)
                     paths.extend([measured, data / 'system.bin', user / 'user.conf'])
                     return paths
-                with patch.object(td, 'cold_files', side_effect=files), \
+                with patch.object(td, 'library_dependencies', return_value=[]), \
+                        patch.object(td, 'cold_files', side_effect=files), \
                         patch.object(td, 'evict_files', side_effect=ValueError('file stays resident: private-stub')) as eviction, \
                         patch.object(td.subprocess, 'Popen') as child:
                     with self.assertRaisesRegex(ValueError, 'file stays resident: private-stub'):
                         campaign.run('pinyin', library, self.profile)
-                    eviction.assert_called_once_with(paths)
+                    eviction.assert_called_once_with(paths, dependencies=[])
                     child.assert_not_called()
                 self.assertFalse(list(self.root.glob('sample-*')))
 
@@ -710,7 +856,7 @@ class NativeTests(unittest.TestCase):
                 return popen(*args, **kwargs)
             with patch.object(td, 'exports', return_value=['pinyin_init']), \
                     patch.object(td, 'cold_files', return_value=[self.library]), \
-                    patch.object(td, 'evict_files', side_effect=lambda _: events.append('evict')), \
+                    patch.object(td, 'evict_files', side_effect=lambda _, **kwargs: events.append('evict')), \
                     patch.object(td.subprocess, 'Popen', side_effect=launch):
                 campaign.run('pinyin', self.library, self.profile)
             self.assertEqual(events, ['evict', 'launch'] if cache == 'cold' else ['launch'])

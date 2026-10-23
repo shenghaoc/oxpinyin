@@ -42,6 +42,7 @@ RESIDENCY_FRACTION = 0.01
 LIBRARY_DIRECTORIES = dict(ox='subject', control='control', pin='pinlibs')
 TIMING_ROUNDS, TIMING_WARMUPS = 60, 3
 MEMORY_ROUNDS, MEMORY_WARMUPS = 30, 2
+DESKTOP_COLD = 'desktop cold start'
 
 
 def sibling(name):
@@ -287,11 +288,13 @@ def library_dependencies(library):
     return sorted(set(files))
 
 
-def cold_files(library, data, user):
+def cold_files(library, data, user, *, dependencies=None):
     # Use the worker's private, restored user tree, never its source profile.
     # Include every regular data/profile file, not a hard-coded stock filename
     # list: table.conf and non-stock library layouts are valid inputs too.
-    return [Path(library), *library_dependencies(library),
+    if dependencies is None:
+        dependencies = library_dependencies(library)
+    return [Path(library), *dependencies,
             *(path for root in (data, user) for path in sorted(root.rglob('*')) if path.is_file())]
 
 
@@ -327,16 +330,65 @@ def resident_pages(fd):
             raise OSError(ctypes.get_errno(), 'cold mincore munmap failed')
 
 
-def evict_files(files):
-    """Evict only named ext4 files, then verify the complete set before launch.
 
-    Keep descriptors open so every check and fadvise refers to the same inode.
-    Flush only these files: newly copied private profiles can have dirty pages,
-    which DONTNEED would otherwise leave resident. No global cache operation.
+
+def mapping_processes(inodes, *, proc_root=Path('/proc')):
+    """Count other visible processes mapping each opened device/inode once.
+
+    Permission failures and disappearing processes make counts lower bounds,
+    not exact totals. Match inode identity rather than pathname: hard links
+    alias one file, while a replaced/deleted object is a different file.
+    """
+    pids = {inode: set() for inode in inodes}
+    unreadable, exited = [], []
+    processes = sorted((path for path in proc_root.iterdir() if path.name.isdigit()),
+                       key=lambda path: int(path.name))
+    read = 0
+    for process in processes:
+        pid = int(process.name)
+        if pid == os.getpid():
+            continue
+        try:
+            lines = (process / 'maps').read_text().splitlines()
+        except FileNotFoundError:
+            exited.append(pid)
+            continue
+        except OSError as error:
+            unreadable.append(dict(pid=pid, error=str(error)))
+            continue
+        read += 1
+        try:
+            for line in lines:
+                fields = line.split(None, 5)
+                device = tuple(int(value, 16) for value in fields[3].split(':'))
+                inode = (os.makedev(*device), int(fields[4]))
+                if inode in pids:
+                    pids[inode].add(pid)
+        except (IndexError, TypeError, ValueError) as error:
+            unreadable.append(dict(pid=pid, error='malformed maps: ' + str(error)))
+    complete = not unreadable and not exited
+    try:
+        namespace = os.readlink(proc_root / 'self/ns/pid')
+    except OSError:
+        namespace = 'unknown'
+    scan = dict(scope='visible /proc processes excluding controller', pid_namespace=namespace,
+                readable_processes=read, inaccessible_processes=unreadable,
+                exited_processes=exited, complete=complete)
+    return pids, scan
+
+
+def evict_files(files, *, dependencies=()):
+    """Prepare a desktop cold start, preserving files mapped by other processes.
+
+    Keep descriptors open so maps matching, checks and advice use one inode.
+    Only known shared mappings exempt a file; all other files still require
+    verified eviction, including when enumeration has inaccessible processes.
+    Flush only the unshared named files: newly copied profiles can be dirty.
     """
     if sys.platform != 'linux':
         raise ValueError('cold teardown requires native Linux and ext4')
     records, opened, seen = [], [], set()
+    dependency_paths = {Path(path).resolve(strict=True) for path in dependencies}
     with contextlib.ExitStack() as stack:
         for original in files:
             path = Path(original).resolve(strict=True)
@@ -352,31 +404,54 @@ def evict_files(files):
                 continue
             seen.add(inode)
             opened.append((path, handle))
-        # Validate the whole file set before evicting any of it.
+        # Validate the whole set and observe sharing anew for every sample,
+        # before any advice. Never touch another process or evict a known shared
+        # file, even if it is the facade or a data/profile file.
+        mappings, scan = mapping_processes(seen)
         for path, handle in opened:
             fd = handle.fileno()
-            try:
-                before = resident_pages(fd)
-                os.fsync(fd)
-                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
-                after = resident_pages(fd)
-            except OSError as error:
-                raise ValueError(f'cold eviction failed: {path}: {error}') from error
-            records.append(dict(path=str(path), filesystem='ext4', before=before, after=after))
+            info = os.fstat(fd)
+            processes = sorted(mappings[info.st_dev, info.st_ino])
+            count = len(processes)
+            record = dict(path=str(path), filesystem='ext4',
+                          role='dependency' if path in dependency_paths else 'input',
+                          observed_shared_processes=count, shared_process_count=count if scan['complete'] else None,
+                          process_count_complete=scan['complete'], shared_pids=processes,
+                          eviction='skipped-shared' if count else 'required')
+            if count:
+                quantity = str(count) if scan['complete'] else 'at least ' + str(count)
+                record['status'] = 'resident: shared with ' + quantity + ' processes'
+                # Do not fsync, advise or require zero residency for shared files.
+                record.update(before=None, after=None, verified=None)
+            else:
+                try:
+                    record['before'] = resident_pages(fd)
+                    os.fsync(fd)
+                    os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                    record['after'] = resident_pages(fd)
+                except OSError as error:
+                    raise ValueError(f'cold eviction failed: {path}: {error}') from error
+            records.append(record)
         # A later eviction/check must not conceal refaulting of an earlier file.
         for record, (path, handle) in zip(records, opened):
+            if record['eviction'] == 'skipped-shared':
+                continue
             try:
                 record['verified'] = resident_pages(handle.fileno())
             except OSError as error:
                 raise ValueError(f'cold residency verification failed: {path}: {error}') from error
-        print_record('cache-eviction', cache='cold', files=records)
-        resident = [record for record in records if record['after']['resident'] or record['verified']['resident']]
+            if record['after']['resident'] or record['verified']['resident']:
+                record['status'] = 'refused: file stays resident'
+            else:
+                record.update(status='verified evicted', eviction='verified')
+        print_record('cache-eviction', cache='cold', measurement=DESKTOP_COLD, files=records, process_scan=scan)
+        resident = [record for record in records if record['status'] == 'refused: file stays resident']
         if resident:
             details = '; '.join(f"{row['path']} (after={row['after']['resident']}, "
                                 f"verified={row['verified']['resident']}/{row['verified']['pages']} pages)"
                                 for row in resident)
             raise ValueError('cold sample refused: file stays resident: ' + details +
-                             '; another process may map it, or mincore access may be restricted')
+                             '; no shared mapping was observed, or mincore access may be restricted')
     return records
 
 
@@ -459,10 +534,13 @@ class Campaign:
         if inputs is not None:
             env['OXPINYIN_TEARDOWN_INPUTS'] = str(inputs)
         errors, documents, boundaries = bytearray(), [], []
+        cache_preparation = None
         self.driver.check_cancelled()
         try:
             if cold:
-                evict_files(cold_files(library, self.data, user))
+                dependencies = library_dependencies(library)
+                cache_preparation = evict_files(cold_files(library, self.data, user, dependencies=dependencies),
+                                                dependencies=dependencies)
             self.driver.check_cancelled()
             with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   env=env, start_new_session=True) as process:
@@ -580,7 +658,7 @@ class Campaign:
             if reopen:
                 observation['reopen'] = self.run(facade, library, user, mode='observe', inputs=inputs)['observation']
             return dict(observation=observation, samples=samples, checkpoints=checkpoints, command=command,
-                        raw_profile_identity=identity(file_set(user)))
+                        raw_profile_identity=identity(file_set(user)), cache_preparation=cache_preparation)
         finally:
             shutil.rmtree(scratch)
 
@@ -715,7 +793,8 @@ def run(args, driver, parser):
     worker, worker_identity = build_worker(work)
     data = args.prefix / 'lib/libpinyin/data'
     campaign = Campaign(worker, data, work, cpu, driver, cache=cache)
-    print_record('start', stage=args.teardown_stage, cache=cache, cpu=cpu, filesystem=fs, libraries=provenance,
+    print_record('start', stage=args.teardown_stage, cache=cache,
+                 measurement=DESKTOP_COLD if cache == 'cold' else 'warm start', cpu=cpu, filesystem=fs, libraries=provenance,
                  worker=worker_identity, model_identity=identity(file_set(data)),
                  model_filesystem=filesystem(data), control_noise_rule=list(CONTROL_INTERVAL))
     profiles = provision(campaign, subjects['pin']['pinyin'], work / 'profiles')
@@ -964,12 +1043,13 @@ def prepare_witnesses(campaign, pin, profiles):
 
 
 def report_times(facade, case, samples, pilot):
+    measurement = DESKTOP_COLD if samples['ox'][0].get('cache_preparation') is not None else 'warm start'
     for metric in samples['ox'][0]['samples'][0]['times']:
         for clock in ('wall_ns', 'cpu_ns'):
             values = {side: [row['samples'][0]['times'][metric][clock] for row in rows]
                       for side, rows in samples.items()}
             control = stable_control(values['ox'], values['control'])
-            print_record('time', facade=facade, case=case, metric=metric, clock=clock, pilot=pilot,
+            print_record('time', facade=facade, case=case, metric=metric, clock=clock, pilot=pilot, measurement=measurement,
                          summaries={side: summary(value) for side, value in values.items()}, control=control,
                          verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
                          ox_pin_ratio=paired_ratio(values['ox'], values['pin']) if control['stable'] else None,
@@ -977,6 +1057,7 @@ def report_times(facade, case, samples, pilot):
 
 
 def report_memory(facade, case, samples, pilot):
+    measurement = DESKTOP_COLD if samples['ox'][0].get('cache_preparation') is not None else 'warm start'
     # Absolute checkpoint levels have meaningful positive-denominator ratios.
     # Signed release/residual deltas are reported in KiB, never divided by a
     # negative/zero baseline. No VmHWM observation enters this path.
@@ -986,7 +1067,7 @@ def report_memory(facade, case, samples, pilot):
                       for side, rows in samples.items()}
             control_differences = [b - a for a, b in zip(values['ox'], values['control'])]
             control = stable_residency(values['ox'], values['control'])
-            print_record('memory', facade=facade, case=case, point=point, metric=metric, unit='KiB', pilot=pilot,
+            print_record('memory', facade=facade, case=case, point=point, metric=metric, unit='KiB', pilot=pilot, measurement=measurement,
                          summaries={side: summary(value) for side, value in values.items()},
                          control_paired_difference=summary(control_differences),
                          control=control, verdict='STABLE' if control['stable'] else 'INCONCLUSIVE',
@@ -1008,7 +1089,7 @@ def report_memory(facade, case, samples, pilot):
                            for key in observations[0]['allocator']} if all(observation['allocator'] is not None for observation in observations) else None,
                 rollup_minus_smaps={key: summary([observation['rollup_minus_smaps'][key] for observation in observations])
                                     for key in FIELDS})
-        print_record('memory-deltas', facade=facade, case=case, side=side, pilot=pilot, signed_kib=shown,
+        print_record('memory-deltas', facade=facade, case=case, side=side, pilot=pilot, measurement=measurement, signed_kib=shown,
                      checkpoints=checkpoints)
 
 

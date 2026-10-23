@@ -12447,7 +12447,7 @@ def run_main():
     parser.add_argument('--teardown', action='store_true', help='native teardown measurement workload')
     parser.add_argument('--teardown-stage', choices=('provision', 'verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute'), default='verify')
     parser.add_argument('--teardown-cache', choices=('warm', 'cold'), default='warm',
-                        help='cold: verified per-file eviction before each native time/memory sample (Linux ext4)')
+                        help='cold: desktop cold start; leave shared mappings warm, verify all other files evicted (Linux ext4)')
     parser.add_argument('--teardown-work-dir', type=Path, help='owned temporary ext4 directory; caller cleans it')
     parser.add_argument('--teardown-cases', default='empty,modest,phrases,journals,modest-unsaved,modest-saved')
     parser.add_argument('--teardown-facades', choices=('both', 'pinyin', 'zhuyin'), default='both')
