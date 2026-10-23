@@ -52,6 +52,7 @@ Until uv and the interpreter exist, `just doctor` cannot run. Install uv only
 when it is missing or older than 0.13.1 (`uv --version` shows the version):
 
 ```bash
+# Exact on purpose (#1074): a checksum is only known for a known version.
 installer="$(mktemp)"
 curl --fail --location --retry 3 \
   https://github.com/astral-sh/uv/releases/download/0.13.1/uv-installer.sh -o "$installer"
