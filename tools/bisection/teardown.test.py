@@ -60,7 +60,7 @@ class PureTests(unittest.TestCase):
                 self.assertIn('--teardown-work-dir', self.refusal(cell=cell))
 
     def test_comparison_stages_accept_all_three_cells(self):
-        for stage in ('verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute'):
+        for stage in ('verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute', 'init-attribute'):
             for cell in ('bdb', 'kc', 'tkrzw'):
                 with self.subTest(cell=cell, stage=stage):
                     self.assertIn('--teardown-work-dir', self.refusal(cell=cell, teardown_stage=stage))
@@ -475,7 +475,8 @@ class ColdTests(unittest.TestCase):
             self.assertIn('native Linux', pure.refusal(teardown_cache='cold'))
         with patch.object(td.sys, 'platform', 'linux'):
             for stage in ('provision', 'repeat', 'multi', 'attribute'):
-                self.assertIn('only verify, pilot and confirm', pure.refusal(teardown_cache='cold', teardown_stage=stage))
+                self.assertIn('only verify, pilot, confirm and init-attribute',
+                              pure.refusal(teardown_cache='cold', teardown_stage=stage))
 
     def test_cold_and_warm_execute_use_identical_rotating_sample_order(self):
         sequences = []
@@ -499,6 +500,100 @@ class ColdTests(unittest.TestCase):
                     expected = [('ox', 'control', 'pin'), ('control', 'pin', 'ox'), ('pin', 'ox', 'control')]
                     self.assertEqual(order, [side for index in range(rounds) for side in expected[index % 3]])
         self.assertEqual(*sequences)
+
+
+class InitAttributionTests(unittest.TestCase):
+    TRACE = '\n'.join((
+        '41 openat(AT_FDCWD</w>, "/data/table.conf", O_RDONLY) = 3</data/table.conf> <0.000010>',
+        '41 write(7</dev/null>, "B", 1) = 1 <0.000004>',
+        '41 openat(AT_FDCWD</w>, "/data/gb_char.bin", O_RDONLY|O_CLOEXEC) = 3</data/gb_char.bin> <0.000020>',
+        '41 read(3</data/gb_char.bin>, "\\x01 = \\x02"..., 4096) = 4096 <0.000005>',
+        '41 mmap(NULL, 8192, PROT_READ, MAP_PRIVATE, 3</data/gb_char.bin>, 0) = 0x7f0000000000 <0.000006>',
+        '41 mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f0000002000 <0.000003>',
+        '41 openat(AT_FDCWD</w>, "/user/user.conf", O_RDONLY) = -1 ENOENT (No such file or directory) <0.000007>',
+        '41 read(3</data/gb_char.bin>,  <unfinished ...>',
+        '41 <... read resumed>"", 4096) = 0 <0.000002>',
+        '41 write(7</dev/null>, "E", 1) = 1 <0.000004>',
+        '41 close(3</data/gb_char.bin>) = 0 <0.000002>'))
+
+    def test_trace_window_excludes_markers_and_outside_calls(self):
+        trace = td.init_trace(self.TRACE, 7, {'/data': '$DATA', '/user': '$USER'})
+        self.assertTrue(trace['window'])
+        self.assertEqual({name: value['count'] for name, value in trace['calls'].items()},
+                         dict(openat=2, read=2, mmap=2))
+        self.assertEqual(trace['calls']['openat']['errors'], 1)
+        self.assertAlmostEqual(trace['total']['seconds'], 0.000043)
+        self.assertEqual(trace['targets']['$DATA/gb_char.bin'],
+                         dict(openat=dict(count=1, bytes=0), read=dict(count=2, bytes=4096),
+                              mmap=dict(count=1, bytes=8192)))
+        self.assertEqual(trace['targets']['anonymous'], dict(mmap=dict(count=1, bytes=4096)))
+        self.assertIn('$USER/user.conf', trace['targets'])
+        self.assertNotIn('close', trace['calls'])
+        self.assertEqual((trace['unfinished'], trace['unparsed'], trace['threads']), (1, 0, 1))
+
+    def test_trace_without_both_markers_is_not_a_window(self):
+        self.assertFalse(td.init_trace(self.TRACE.split('\n41 write(7</dev/null>, "E"')[0], 7, {})['window'])
+
+    def test_kernel_samples_take_the_innermost_decisive_frame(self):
+        symbols = ([0x1000, 0x2000, 0x3000, 0x4000], ['clear_page_erms', 'exc_page_fault', '__x64_sys_read', 'do_syscall_64'])
+        fault = dict(ip=0x1010, chain=[0x1010, 0x2010, 0x3010, 0x4010])
+        self.assertEqual(td.kernel_category(fault, symbols), ('page-fault', 'clear_page_erms'))
+        self.assertEqual(td.kernel_category(dict(ip=0x3010, chain=[0x4010]), symbols), ('syscall:read', '__x64_sys_read'))
+        self.assertEqual(td.kernel_category(dict(ip=0x4010, chain=[]), symbols), ('syscall:entry-exit', 'do_syscall_64'))
+        self.assertEqual(td.kernel_category(fault, None), ('unsymbolized', '0x1010'))
+        maps = [(0x100, 0x200, 'r-xp', '/w/libraries/subject/libzhuyin.so'), (0x300, 0x400, 'r-xp', '/usr/lib/libc.so.6'),
+                (0x500, 0x600, 'rw-p', '/w/libraries/subject/libzhuyin.so')]
+        library = Path('/w/libraries/subject/libzhuyin.so')
+        self.assertEqual([td.user_object(address, maps, library, Path('/w/worker')) for address in (0x150, 0x350, 0x500)],
+                         ['SUBJECT', 'libc.so.6', 'unmapped'])
+
+    def test_faults_take_the_mapping_that_held_the_address_at_the_time(self):
+        library, data, user = Path('/w/lib/libzhuyin.so'), Path('/d'), Path('/w/sample-000001/user')
+        before = [(0x1000, 0x2000, 'r-xp', str(library)), (0x3000, 0x4000, 'rw-p', '[heap]')]
+        records = [dict(fault='minor', kernel=False, ip=0x1100, addr=0x1100),
+                   dict(mmap=0x5000, len=0x2000, pgoff=0, prot=1, flags=2, file='/d/gb_char.bin'),
+                   dict(fault='major', kernel=False, ip=0x1100, addr=0x5800),
+                   dict(mmap=0x5000, len=0x1000, pgoff=0, prot=3, flags=0x22, file='//anon'),
+                   dict(fault='minor', kernel=True, ip=0xffff0000, addr=0x5800),
+                   dict(mmap=0x8000, len=0x1000, pgoff=0, prot=1, flags=2, file=str(user / 'user.conf')),
+                   dict(fault='minor', kernel=False, ip=0x1100, addr=0x8000),
+                   dict(fault='minor', kernel=False, ip=0x1100, addr=0x9000)]
+        self.assertEqual([fault['region'] for fault in td.init_faults(records, before, library, data, user)],
+                         ['SUBJECT:text', 'DATA:gb_char.bin:readonly', 'ANON:writable', 'USER:user.conf:readonly', 'unmapped'])
+
+    CALLGRIND = '\n'.join(('events: Ir Bc', 'positions: line', 'ob=(1) /w/libraries/subject/libzhuyin.so',
+                            'fn=(1) zhuyin_init', '3 10 2', 'cob=(2) /usr/lib/libc.so.6', 'cfn=(2) memcpy',
+                            'calls=1 5', '5 100 20', '4 1', 'ob=(2)', 'fn=(2)', '5 100 20', 'totals: 111 22'))
+
+    def test_callgrind_costs_skip_inclusive_calls_and_reconcile(self):
+        costs = td.callgrind_costs(self.CALLGRIND, Path('/w/libraries/subject/libzhuyin.so'))
+        self.assertEqual(costs['totals'], dict(Ir=111, Bc=22))
+        self.assertEqual(costs['objects'], {'SUBJECT': dict(Ir=11, Bc=2), 'libc.so.6': dict(Ir=100, Bc=20)})
+        self.assertEqual(costs['functions'][0], dict(object='libc.so.6', function='memcpy', Ir=100))
+        with self.assertRaisesRegex(ValueError, 'do not reconcile'):
+            td.callgrind_costs(self.CALLGRIND.replace('totals: 111', 'totals: 112'), Path('/x'))
+
+    def test_init_ir_is_exact_off_bdb_and_diagnostic_on_bdb(self):
+        def costs(*values):
+            return [dict(totals=dict(Ir=value), objects={}, functions=[]) for value in values]
+        drifting = dict(ox=costs(10, 10, 11), control=costs(10, 10, 10), pin=costs(20, 20, 20))
+        for cell, invalid, sides in (('kc', True, ['control']), ('bdb', False, ['ox', 'control', 'pin'])):
+            with self.subTest(cell=cell), patch.object(td, 'print_record') as record:
+                self.assertEqual(td.report_init_ir(cell, 'zhuyin', 'phrases', drifting), invalid)
+                verdicts = [call.kwargs['verdict'] for call in record.call_args_list if call.args[0] == 'init-ir-control']
+                self.assertEqual(verdicts, ['INVALID' if invalid else 'DIAGNOSTIC'])
+                self.assertEqual([call.kwargs['side'] for call in record.call_args_list if call.args[0] == 'init-ir'], sides)
+        with patch.object(td, 'print_record'):
+            self.assertFalse(td.report_init_ir('kc', 'zhuyin', 'phrases',
+                                               dict(ox=costs(10, 10, 10), control=costs(10, 10, 10), pin=costs(20, 21, 20))))
+
+    def test_probes_are_refused_outside_init_mode(self):
+        campaign = td.Campaign(Path('/worker'), Path('/'), Path('/'), None, None)
+        for mode in ('time', 'memory', 'observe'):
+            with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, 'require init mode'):
+                campaign.run('pinyin', Path('/lib.so'), Path('/profile'), mode=mode, probe='count')
+        with self.assertRaisesRegex(ValueError, 'unknown init probe'):
+            campaign.run('pinyin', Path('/lib.so'), Path('/profile'), mode='init', probe='ebpf')
 
 
 STUB = r'''
@@ -785,6 +880,59 @@ class NativeTests(unittest.TestCase):
                     patch.object(td.subprocess, 'Popen', side_effect=launch):
                 campaign.run('pinyin', self.library, self.profile)
             self.assertEqual(events, ['evict', 'launch'] if cache == 'cold' else ['launch'])
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux mincore and perf_event_open')
+    def test_init_mode_pauses_after_load_and_init_and_reports_each_probe(self):
+        for probe in (None, 'count', 'sample', 'faults'):
+            with self.subTest(probe=probe), patch.object(td, 'exports', return_value=['pinyin_init']):
+                row = self.campaign().run('pinyin', self.library, self.profile, mode='init', probe=probe)
+                self.assertEqual((set(row['checkpoints'][0]), set(row['checkpoints'][1])), ({'M0'}, {'I1'}))
+                after = row['checkpoints'][1]['I1']
+                self.assertEqual(after['residency']['SUBJECT']['pages'], after['residency']['SUBJECT']['resident'])
+                self.assertTrue(any(path == str(self.library) and 'x' in perms for _, _, perms, path in after['maps']))
+                self.assertEqual(set(row['samples'][0]['times']['init_ns']), set(td.CLOCK_FIELDS))
+                self.assertEqual(row['observation']['stderr'].splitlines(), ['INIT', 'ALLOC', 'FREE', 'FINI'])
+                self.assertEqual(row['observation']['documents'], [])
+                report = row['init']['probe']
+                if probe is None:
+                    self.assertIsNone(report)
+                elif probe == 'count':
+                    self.assertEqual([event['name'] for event in report['events']][:4],
+                                     ['task-clock', 'page-faults', 'minor-faults', 'major-faults'])
+                    for event in report['events']:
+                        # A refused event names its errno and carries no value.
+                        self.assertEqual('value' in event, not event['errno'])
+                elif probe == 'sample':
+                    self.assertEqual(report['period_ns'], td.INIT_SAMPLE_PERIOD_NS)
+                    self.assertTrue(report['errno'] or report['valid'])
+                else:
+                    self.assertTrue(report['errno'] or report['valid'])
+                    if not report['errno']:
+                        # fake_init's calloc and stderr write fault at least once.
+                        self.assertTrue(any(value.get('fault') == 'minor' for value in report['samples']))
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux worker probes')
+    def test_trace_probe_writes_begin_and_end_markers_around_init_only(self):
+        read, write = os.pipe()
+        env = dict(os.environ, OXPINYIN_TEARDOWN_EXPORTS='pinyin_init', OXPINYIN_TEARDOWN_INIT_PROBE='trace',
+                   OXPINYIN_TEARDOWN_MARKER_FD=str(write))
+        command = [str(self.worker), '--teardown', 'pinyin', str(self.library), str(self.root), str(self.profile),
+                   'init', '0', '1', '1', 'first-candidate', '-']
+        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              env=env, pass_fds=(write,)) as process:
+            os.close(write)
+            stdout, stderr = process.communicate(b'\n\n\n', timeout=60)
+        with os.fdopen(read, 'rb') as markers:
+            self.assertEqual(markers.read(), b'BE')
+        self.assertEqual(process.returncode, 0, stderr)
+        points = [json.loads(line).get('checkpoint') for line in stdout.splitlines()]
+        self.assertEqual([point for point in points if point], ['M0', 'I1'])
+        for mode in ('time', 'memory'):
+            with self.subTest(mode=mode):
+                refused = subprocess.run([*command[:6], mode, *command[7:]], env=env, stdin=subprocess.DEVNULL,
+                                         capture_output=True, text=True, timeout=60)
+                self.assertEqual(refused.returncode, 2)
+                self.assertIn('require init mode', refused.stderr)
 
     def test_report_times_records_major_faults_per_phase_without_ratio(self):
         def row(load, init):

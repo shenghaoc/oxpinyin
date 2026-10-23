@@ -90,7 +90,7 @@ native child's memory. ABI calls are bracketed in C. Other bisect and contract
 modes keep their existing output.
 
 All stages (`provision`, `verify`, `pilot`, `confirm`, `repeat`, `multi`,
-`attribute`) support the selected cell, BDB, KC or tkrzw. Provisioning writes
+`attribute`, `init-attribute`) support the selected cell, BDB, KC or tkrzw. Provisioning writes
 startup profiles through that cell's own pin. Comparison stages retain
 backend-aware final-file and reopen equivalence before any ratios. KC user
 indexes and user bigram are snapshot streams; tkrzw indexes are TreeDBM
@@ -203,6 +203,35 @@ selected populated profile. Compare those live counts with native glibc arena
 statistics before calling growth a leak or an allocator plateau. Callgrind
 collects only the free/fini wrappers, with exclusive costs and overlapping
 inclusive edges reported separately. All profiler documents are parsed in RAM.
+
+`init-attribute` (#1090) attributes the init interval only, after the same
+equivalence check. Its samples run the worker's `init` mode: `time` with
+pauses after load (M0) and after init (I1), where the controller reads smaps
+and the `mincore` residency of every measured file. Every phase record also
+carries `getrusage` user/sys time, minor/major faults and context switches;
+under tick CPU accounting the user/sys split of a 2 ms interval is quantized.
+One probe runs per sample, in the rotating order:
+
+- `count`: perf counters around init, minus an empty calibration bracket
+  that the record reports too. An event the kernel refuses (for example a
+  hardware event on a host without a PMU) is NOT RUN with its errno, never 0.
+- `sample`: `cpu-clock` samples every 20 µs with kernel call chains. Kernel
+  samples are named by their innermost syscall or page-fault frame from
+  `/proc/kallsyms`; user samples by the object mapped at I1.
+- `faults`: every minor and major fault's IP and address, with every mmap,
+  in one ring in order; each fault is assigned to the mapping that held its
+  address at the time.
+- `trace`: `strace -f -y -T` between two marker writes the worker makes
+  immediately around the init call. Counts are exact; per-call times include
+  ptrace stops and only bound kernel time. Requires `strace` on PATH.
+
+Then, warm only, three rounds of Callgrind collected on the facade's init
+export, with simulated caches (`--I1`/`--D1`/`--LL` fixed) and branches.
+Init Ir must be equal for ox and control on KC and tkrzw; an INVALID control
+withholds ox and pin and fails the stage. On BDB, init Ir is diagnostic only,
+because libdb seeds `srandom_r` from the process. With `--teardown-cache cold`,
+each sample evicts as above and Callgrind is NOT RUN. None of these samples is
+a primary timing sample; report primary timings from `confirm`.
 
 ## Criterion benches
 
