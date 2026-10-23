@@ -56,9 +56,11 @@ impl<D: ChewingDbm> PhraseTable<D> {
             return Ok(Vec::new());
         }
         let key = encode_ucs4_key(text);
-        self.dbm
-            .get(&key)?
-            .map_or_else(|| Ok(Vec::new()), |value| decode_tokens(&value))
+        let mut value = Vec::new();
+        if !self.dbm.get(&key, &mut value)? {
+            return Ok(Vec::new());
+        }
+        decode_tokens(&value)
     }
 
     /// Tokens of every stored phrase that starts with `prefix` and is
@@ -87,7 +89,7 @@ impl<D: ChewingDbm> PhraseTable<D> {
             return Ok(Vec::new());
         }
         let key = encode_ucs4_key(prefix);
-        if self.dbm.get(&key)?.is_none() {
+        if !self.dbm.contains(&key)? {
             return Ok(Vec::new());
         }
         let upper = prefix_upper_bound(&key);
@@ -111,7 +113,7 @@ impl<D: ChewingDbm> PhraseTable<D> {
             return Ok(false);
         }
         let key = encode_ucs4_key(text);
-        Ok(self.dbm.get(&key)?.is_some())
+        self.dbm.contains(&key)
     }
 }
 
@@ -139,8 +141,18 @@ mod tests {
     }
 
     impl ChewingDbm for MemoryDbm {
-        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
-            Ok(self.data.lock().unwrap().get(key).cloned())
+        fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+            value.clear();
+            let data = self.data.lock().unwrap();
+            let stored = data.get(key);
+            if let Some(stored) = stored {
+                value.extend_from_slice(stored);
+            }
+            Ok(stored.is_some())
+        }
+
+        fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
+            Ok(self.data.lock().unwrap().contains_key(key))
         }
 
         fn walk(

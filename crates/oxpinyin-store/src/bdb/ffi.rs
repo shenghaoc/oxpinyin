@@ -264,8 +264,12 @@ impl SharedDb {
         self.hash
     }
 
-    pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        self.lock().get(key)
+    pub(crate) fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        self.lock().get(key, value)
+    }
+
+    pub(crate) fn exists(&self, key: &[u8]) -> Result<bool, StoreError> {
+        self.lock().exists(key)
     }
 
     pub(crate) fn put(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
@@ -443,7 +447,8 @@ impl Db {
         self.hash
     }
 
-    /// Point read. `None` when the key is absent.
+    /// Point read into `buf`, which is cleared first. `false` when the
+    /// key is absent.
     ///
     /// The value DBT is zeroed, as in every libpinyin point read
     /// (074a2219 `ngram_bdb.cpp:138-140`, `phrase_large_table3_bdb.cpp:194-196`,
@@ -452,9 +457,12 @@ impl Db {
     /// record is larger than any read before (`src/db/db_ret.c:144-158`,
     /// owned by the handle through `SET_RET_MEM`, `src/db/db_iface.c:800`).
     /// That buffer is valid until the next call on the handle, so the value
-    /// is copied out at its exact size before this returns. One lookup
-    /// serves every record size: there is no `DB_BUFFER_SMALL` retry.
-    pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    /// is copied into `buf` before this returns, growing `buf` only past its
+    /// capacity: a fresh buffer gets the value's exact size, and a buffer
+    /// passed back for the next read allocates nothing. One lookup serves
+    /// every record size: there is no `DB_BUFFER_SMALL` retry.
+    pub(crate) fn get(&self, key: &[u8], buf: &mut Vec<u8>) -> Result<bool, StoreError> {
+        buf.clear();
         let get = method!(self.handle, get, "DB->get")?;
         let mut key_dbt = dbt_from(key)?;
         let mut value_dbt = empty_dbt();
@@ -472,14 +480,14 @@ impl Db {
             )
         };
         if code == sys::DB_NOTFOUND {
-            return Ok(None);
+            return Ok(false);
         }
         check(code, "DB->get")?;
         let size = value_dbt.size as usize;
         // An empty record copies nothing, and libdb then leaves `data` at
         // the handle's buffer, which is null until a non-empty read.
         if size == 0 {
-            return Ok(Some(Vec::new()));
+            return Ok(true);
         }
         if value_dbt.data.is_null() {
             return Err(StoreError::Backend(
@@ -491,7 +499,28 @@ impl Db {
         // else can use the handle before the copy: `Db` is not `Sync`, and
         // `SharedDb::get` holds the owner lock across this whole call.
         let value = unsafe { std::slice::from_raw_parts(value_dbt.data.cast::<u8>(), size) };
-        Ok(Some(value.to_vec()))
+        buf.reserve_exact(size);
+        buf.extend_from_slice(value);
+        Ok(true)
+    }
+
+    /// Whether `key` exists, an empty value included, copying nothing:
+    /// `DB->exists`, which is `DB->get` with a `DB_DBT_PARTIAL |
+    /// DB_DBT_USERMEM` data `DBT` of length 0 ("returns no bytes so
+    /// there's no copy of the data", `src/db/db_iface.c:578-607`, Berkeley
+    /// DB 5.3.28).
+    pub(crate) fn exists(&self, key: &[u8]) -> Result<bool, StoreError> {
+        let exists = method!(self.handle, exists, "DB->exists")?;
+        let mut key_dbt = dbt_from(key)?;
+        // SAFETY: the `DBT` is a live local over `key`, which outlives the
+        // call; libdb only reads it. The transaction is null, as in every
+        // libpinyin call, and the flags are the documented zero.
+        let code = unsafe { exists(self.handle, ptr::null_mut(), &raw mut key_dbt, 0) };
+        if code == sys::DB_NOTFOUND {
+            return Ok(false);
+        }
+        check(code, "DB->exists")?;
+        Ok(true)
     }
 
     /// Insert or overwrite.
@@ -885,18 +914,37 @@ mod tests {
             std::env::temp_dir().join(format!("oxpinyin-point-read-{}.db", std::process::id())),
         );
         let db = SharedDb::open(&path.0, DB_BTREE, false, true, USER_FILE_MODE).unwrap();
+        // One buffer for every read, as a decode loop passes it.
+        let mut value = Vec::new();
         for len in [0, 1, INITIAL_BUFFER, INITIAL_BUFFER + 1, 397_899] {
             let expected: Vec<u8> = (0..len).map(|index| (index % 251) as u8).collect();
             db.put(b"key", &expected).unwrap();
-            let retained = db.get(b"key").unwrap().unwrap();
+            let mut retained = Vec::new();
+            assert!(db.get(b"key", &mut retained).unwrap());
             assert_eq!(retained, expected);
-            // Exact size: a retained value holds no spare capacity.
+            // Exact size: a fresh buffer holds no spare capacity.
             assert_eq!(retained.capacity(), len);
-            assert!(db.get(b"absent").unwrap().is_none());
+            assert!(db.get(b"key", &mut value).unwrap());
+            assert_eq!(value, expected);
+            assert!(!db.get(b"absent", &mut value).unwrap());
+            assert!(value.is_empty());
             db.put(b"key", b"replacement").unwrap();
-            assert_eq!(db.get(b"key").unwrap().unwrap(), b"replacement");
+            assert!(db.get(b"key", &mut value).unwrap());
+            assert_eq!(value, b"replacement");
             assert_eq!(retained, expected);
         }
+    }
+
+    #[test]
+    fn existence_checks_count_empty_values_and_miss_absent_keys() {
+        let db = SharedDb::open_in_memory_hash().unwrap();
+        db.put(b"empty", b"").unwrap();
+        db.put(b"full", b"value").unwrap();
+        assert!(db.exists(b"empty").unwrap());
+        assert!(db.exists(b"full").unwrap());
+        assert!(!db.exists(b"absent").unwrap());
+        db.del(b"full").unwrap();
+        assert!(!db.exists(b"full").unwrap());
     }
 
     #[test]
@@ -1157,7 +1205,9 @@ mod tests {
                 Err(std::sync::TryLockError::WouldBlock)
             ));
             started_tx.send(()).unwrap();
-            finished_tx.send(reader.get(b"key").unwrap()).unwrap();
+            let mut value = Vec::new();
+            let found = reader.get(b"key", &mut value).unwrap();
+            finished_tx.send(found.then_some(value)).unwrap();
         });
         started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(matches!(

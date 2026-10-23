@@ -16,6 +16,12 @@ use oxpinyin_data::row_format::pinyin_index::{
 use oxpinyin_store::{DefaultStore, RawReadStore, ReadStore, WriteStore, WriteTxn};
 use tempfile::TempDir;
 
+/// A raw point read as an owned value: `None` on a miss.
+fn read_raw(store: &DefaultStore, key: &[u8]) -> Option<Vec<u8>> {
+    let mut value = Vec::new();
+    store.get_raw(key, &mut value).unwrap().then_some(value)
+}
+
 fn key_no_tone(spelling: &str) -> ChewingKey {
     ChewingKey::from_pinyin(spelling).expect("valid spelling")
 }
@@ -146,7 +152,7 @@ fn single_syllable_lookup_finds_ba() {
     let fix = Fixture::new();
     let store = fix.store();
     let key = encode_complete(&[key_no_tone("ba")]);
-    let data = store.get_raw(&key).unwrap().expect("ba must exist");
+    let data = read_raw(&store, &key).expect("ba must exist");
     let stride = item2_stride(1);
     assert_eq!(data.len() % stride, 0);
     assert_eq!(data.len() / stride, 2, "two items for ba");
@@ -161,7 +167,7 @@ fn multi_syllable_lookup_finds_nihao() {
     let fix = Fixture::new();
     let store = fix.store();
     let key = encode_complete(&[key_no_tone("ni"), key_no_tone("hao")]);
-    let data = store.get_raw(&key).unwrap().expect("ni+hao must exist");
+    let data = read_raw(&store, &key).expect("ni+hao must exist");
     let stride = item2_stride(2);
     assert_eq!(data.len(), stride, "one item for ni hao");
     let token = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
@@ -173,13 +179,10 @@ fn prefix_entry_has_data_and_longer_keys_exist() {
     let fix = Fixture::new();
     let store = fix.store();
     let ni_key = encode_complete(&[key_no_tone("ni")]);
-    let ni_data = store.get_raw(&ni_key).unwrap().expect("ni must exist");
+    let ni_data = read_raw(&store, &ni_key).expect("ni must exist");
     assert!(!ni_data.is_empty(), "ni has real data");
     let nihao_key = encode_complete(&[key_no_tone("ni"), key_no_tone("hao")]);
-    assert!(
-        store.get_raw(&nihao_key).unwrap().is_some(),
-        "ni+hao exists"
-    );
+    assert!(store.contains_raw(&nihao_key).unwrap(), "ni+hao exists");
 }
 
 #[test]
@@ -187,7 +190,8 @@ fn missing_key_returns_none() {
     let fix = Fixture::new();
     let store = fix.store();
     let key = encode_complete(&[key_no_tone("xian")]);
-    assert!(store.get_raw(&key).unwrap().is_none());
+    assert!(read_raw(&store, &key).is_none());
+    assert!(!store.contains_raw(&key).unwrap());
 }
 
 #[test]
@@ -195,7 +199,7 @@ fn incomplete_index_uses_initial_only_keys() {
     let fix = Fixture::new();
     let store = fix.store();
     let ikey = encode_incomplete(&[key_no_tone("ba")]);
-    let data = store.get_raw(&ikey).unwrap().expect("b-initial must exist");
+    let data = read_raw(&store, &ikey).expect("b-initial must exist");
     let stride = item2_stride(1);
     assert_eq!(data.len() / stride, 2, "two items under b-initial");
 }
@@ -205,7 +209,7 @@ fn stride_padding_is_zero_filled() {
     let fix = Fixture::new();
     let store = fix.store();
     let key = encode_complete(&[key_no_tone("ba")]);
-    let data = store.get_raw(&key).unwrap().unwrap();
+    let data = read_raw(&store, &key).unwrap();
     let stride = item2_stride(1);
     for idx in 0..data.len() / stride {
         let base = idx * stride;
@@ -220,5 +224,5 @@ fn open_does_not_scan_the_entire_index() {
     let fix = Fixture::new();
     let store = fix.store();
     let key = encode_complete(&[key_no_tone("ba")]);
-    assert!(store.get_raw(&key).unwrap().is_some());
+    assert!(read_raw(&store, &key).is_some());
 }

@@ -92,7 +92,7 @@ use std::collections::BTreeMap;
 use std::ops::Bound;
 use std::path::Path;
 
-use crate::common::{Row, frame, in_bounds, prefix, unframe};
+use crate::common::{Row, fill_buffered, frame, in_bounds, prefix, unframe};
 use crate::{Flow, RawReadStore, ReadStore, StoreError, WriteStore, WriteTxn, validate_table_name};
 
 use ffi::{Seek, SharedDb as Db};
@@ -348,9 +348,9 @@ impl ReadStore for BdbStore {
         })
     }
 
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         validate_table_name(table)?;
-        self.db.get(&frame(table, key))
+        self.db.get(&frame(table, key), value)
     }
 
     fn scan(
@@ -369,8 +369,12 @@ impl ReadStore for BdbStore {
 }
 
 impl RawReadStore for BdbStore {
-    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        self.db.get(key)
+    fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        self.db.get(key, value)
+    }
+
+    fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError> {
+        self.db.exists(key)
     }
 
     fn scan_raw(
@@ -480,25 +484,19 @@ pub struct BdbTxn<'store> {
     buffer: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
 }
 
-impl BdbTxn<'_> {
-    /// Read-your-writes: the buffer wins over the database.
-    fn buffered(&self, key: &[u8]) -> Option<Option<Vec<u8>>> {
-        self.buffer.get(key).cloned()
-    }
-}
-
 impl WriteTxn for BdbTxn<'_> {
     // The point operations stay out of line: the user store calls them from
     // hundreds of sites, and inlining each one's validation, framing and
     // buffer insert (or FFI call) into every caller costs far more code
     // than a direct call. Dispatch is static either way.
     #[inline(never)]
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         validate_table_name(table)?;
         let framed = frame(table, key);
-        match self.buffered(&framed) {
-            Some(buffered) => Ok(buffered),
-            None => self.store.db.get(&framed),
+        // Read-your-writes: the buffer wins over the database.
+        match self.buffer.get(&framed) {
+            Some(slot) => Ok(fill_buffered(slot.as_deref(), value)),
+            None => self.store.db.get(&framed, value),
         }
     }
 
@@ -762,8 +760,8 @@ impl crate::UserBigramDb for BdbUserBigramDb {
         Ok(this)
     }
 
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        self.db.get(key)
+    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        self.db.get(key, value)
     }
 
     fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
@@ -774,13 +772,16 @@ impl crate::UserBigramDb for BdbUserBigramDb {
         self.db.del(key)
     }
 
-    fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        // `visit_db`'s walk without the values: the same cursor order.
+    fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
+        // `visit_db`'s walk without the values: the same cursor order, into
+        // one vector of four-byte tokens, as `get_all_items` appends them
+        // to one `GArray` (`ngram_bdb.cpp:178-215` at 074a2219). Berkeley
+        // DB keeps no record count to reserve by, so it grows as it goes.
         let mut keys = Vec::new();
         let mut cursor = self.db.cursor()?;
         let mut seek = ffi::Seek::First;
         while let Some(key) = cursor.key(seek)? {
-            keys.push(key.to_vec());
+            keys.push(<[u8; 4]>::try_from(key).ok());
             seek = ffi::Seek::Next;
         }
         Ok(keys)

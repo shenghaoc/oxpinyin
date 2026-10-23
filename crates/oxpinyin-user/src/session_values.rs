@@ -71,6 +71,17 @@ fn scan_rows(
     Ok(())
 }
 
+/// A point read's answer from an in-memory row, with the store's buffer
+/// contract: `value` is cleared, then filled on a hit.
+fn fill(stored: Option<&[u8]>, value: &mut Vec<u8>) -> bool {
+    value.clear();
+    stored.is_some_and(|bytes| {
+        value.reserve_exact(bytes.len());
+        value.extend_from_slice(bytes);
+        true
+    })
+}
+
 impl<S: WriteStore> ReadStore for SessionValues<S> {
     fn open_read_only(path: &Path) -> Result<Self, StoreError> {
         S::open_read_only(path).map(Self::Native)
@@ -78,17 +89,19 @@ impl<S: WriteStore> ReadStore for SessionValues<S> {
 
     // Shared by the many user-store callers, as native point operations are.
     #[inline(never)]
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         match self {
-            Self::Native(store) => store.get(table, key),
+            Self::Native(store) => store.get(table, key, value),
             Self::Memory(tables) => {
                 valid_table(table)?;
-                Ok(tables
-                    .try_borrow()
-                    .map_err(|_| borrowed())?
-                    .get(table)
-                    .and_then(|rows| rows.get(key))
-                    .cloned())
+                let tables = tables.try_borrow().map_err(|_| borrowed())?;
+                Ok(fill(
+                    tables
+                        .get(table)
+                        .and_then(|rows| rows.get(key))
+                        .map(Vec::as_slice),
+                    value,
+                ))
             }
         }
     }
@@ -128,7 +141,7 @@ impl<S: WriteStore> ReadStore for SessionValues<S> {
 // Erase only the native transaction's lifetime-bearing type. Native
 // transactions retain their own staging and commit/error behavior.
 pub(crate) trait NativeTransaction {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
     fn remove(&mut self, table: &str, key: &[u8]) -> Result<(), StoreError>;
     fn is_empty(&self, table: &str) -> Result<bool, StoreError>;
@@ -142,8 +155,8 @@ pub(crate) trait NativeTransaction {
 }
 
 impl<T: WriteTxn> NativeTransaction for T {
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        WriteTxn::get(self, table, key)
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        WriteTxn::get(self, table, key, value)
     }
     fn put(&mut self, table: &str, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
         WriteTxn::put(self, table, key, value)
@@ -175,15 +188,19 @@ pub(crate) enum SessionTxn<'a> {
 
 impl WriteTxn for SessionTxn<'_> {
     #[inline(never)]
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         match self {
-            Self::Native(txn) => txn.get(table, key),
+            Self::Native(txn) => txn.get(table, key, value),
             Self::Memory { tables, changes } => {
                 valid_table(table)?;
-                Ok(match changes.get(table).and_then(|rows| rows.get(key)) {
-                    Some(value) => value.clone(),
-                    None => tables.get(table).and_then(|rows| rows.get(key)).cloned(),
-                })
+                let stored = match changes.get(table).and_then(|rows| rows.get(key)) {
+                    Some(pending) => pending.as_deref(),
+                    None => tables
+                        .get(table)
+                        .and_then(|rows| rows.get(key))
+                        .map(Vec::as_slice),
+                };
+                Ok(fill(stored, value))
             }
         }
     }
@@ -392,7 +409,9 @@ mod tests {
                 WriteTxn::put(txn, "rows", b"c", b"C")?;
                 WriteTxn::remove(txn, "rows", b"e")?;
                 WriteTxn::put(txn, "rows", b"f", b"F")?;
-                assert_eq!(WriteTxn::get(txn, "rows", b"c")?, Some(b"C".to_vec()));
+                let mut value = Vec::new();
+                assert!(WriteTxn::get(txn, "rows", b"c", &mut value)?);
+                assert_eq!(value, b"C");
                 let mut values = Vec::new();
                 WriteTxn::scan(
                     txn,
@@ -427,7 +446,9 @@ mod tests {
             Err(StoreError::InvalidInput("rollback"))
         });
         assert!(failure.is_err());
-        assert_eq!(store.get("rows", b"c").unwrap(), Some(b"C".to_vec()));
+        let mut value = Vec::new();
+        assert!(store.get("rows", b"c", &mut value).unwrap());
+        assert_eq!(value, b"C");
         assert!(store.is_empty("other").unwrap());
         for (lo, hi) in [
             (
@@ -446,11 +467,11 @@ mod tests {
                 .unwrap();
         }
         assert!(matches!(
-            store.get("", b""),
+            store.get("", b"", &mut Vec::new()),
             Err(StoreError::InvalidInput("empty table name"))
         ));
         assert!(matches!(
-            store.get("a\0b", b""),
+            store.get("a\0b", b"", &mut Vec::new()),
             Err(StoreError::InvalidInput("table name contains NUL"))
         ));
     }

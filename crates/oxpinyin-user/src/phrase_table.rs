@@ -9,6 +9,8 @@ use std::ops::Bound;
 
 use oxpinyin_store::{ReadStore, StoreError, WriteTxn};
 
+use crate::store::{get_bytes, txn_get_bytes};
+
 /// Internal table containing the pin's phrase records.
 pub const TABLE: &str = "user_phrase_table3";
 /// No matching enabled token or existing key.
@@ -159,7 +161,7 @@ fn decode(bytes: &[u8]) -> u32 {
 /// Returns an incomplete-token error. Backend read failure is `SEARCH_NONE`,
 /// as at `phrase_large_table3_bdb.cpp:196-198` (pin 074a2219).
 pub fn search(db: &impl ReadStore, text: &str) -> Result<SearchResult, StoreError> {
-    let Ok(Some(bytes)) = db.get(TABLE, &key(text)) else {
+    let Ok(Some(bytes)) = get_bytes(db, TABLE, &key(text)) else {
         return Ok(SearchResult::default());
     };
     let entry = PhraseTableEntry::from_bytes(bytes)?;
@@ -176,7 +178,7 @@ pub fn search(db: &impl ReadStore, text: &str) -> Result<SearchResult, StoreErro
 pub fn search_suggestion(db: &impl ReadStore, text: &str) -> Result<SearchResult, StoreError> {
     let prefix = key(text);
     let mut result = SearchResult::default();
-    if !matches!(db.get(TABLE, &prefix), Ok(Some(_))) {
+    if !matches!(get_bytes(db, TABLE, &prefix), Ok(Some(_))) {
         return Ok(result);
     }
     let mut upper = prefix.clone();
@@ -223,7 +225,7 @@ pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32,
     if key.is_empty() {
         return Err(StoreError::InvalidInput("phrase table text is empty"));
     }
-    if let Ok(Some(bytes)) = txn.get(TABLE, &key) {
+    if let Ok(Some(bytes)) = txn_get_bytes(txn, TABLE, &key) {
         let mut entry = PhraseTableEntry::from_bytes(bytes)?;
         let result = entry.add_index(token);
         if txn.put(TABLE, &key, entry.as_bytes()).is_err() {
@@ -238,7 +240,7 @@ pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32,
     }
     for length in (1..key.len() / 4).rev() {
         let prefix = &key[..length * 4];
-        if matches!(txn.get(TABLE, prefix), Ok(Some(_))) {
+        if matches!(txn_get_bytes(txn, TABLE, prefix), Ok(Some(_))) {
             return Ok(ERROR_OK);
         }
         if txn.put(TABLE, prefix, &[]).is_err() {
@@ -258,7 +260,7 @@ pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32,
 /// `phrase_large_table3_tkrzwdb.cpp:253-272`, pin 074a2219).
 pub fn remove_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32, StoreError> {
     let key = key(text);
-    let Ok(Some(bytes)) = txn.get(TABLE, &key) else {
+    let Ok(Some(bytes)) = txn_get_bytes(txn, TABLE, &key) else {
         return Ok(ERROR_REMOVE_ITEM_DONOT_EXISTS);
     };
     let mut entry = PhraseTableEntry::from_bytes(bytes)?;

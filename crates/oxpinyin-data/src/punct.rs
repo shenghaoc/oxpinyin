@@ -64,12 +64,15 @@ impl<D: ChewingDbm> PunctTable<D> {
             return Ok(Vec::new());
         };
         let key = encode_token_key(token);
-        match dbm.get(&key)? {
-            // Upstream's load_entry conflates absent and empty (0 == value.size());
-            // remove_punctuation can leave a stored chunk at size 0.
-            Some(value) if !value.is_empty() => decode_puncts(&value),
-            _ => Ok(Vec::new()),
+        let mut value = Vec::new();
+        // Upstream's load_entry conflates absent and empty (0 == value.size());
+        // remove_punctuation can leave a stored chunk at size 0. A miss
+        // leaves the buffer empty, so one test covers both.
+        dbm.get(&key, &mut value)?;
+        if value.is_empty() {
+            return Ok(Vec::new());
         }
+        decode_puncts(&value)
     }
 }
 
@@ -120,8 +123,18 @@ mod tests {
     }
 
     impl ChewingDbm for MemoryDbm {
-        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
-            Ok(self.data.lock().unwrap().get(key).cloned())
+        fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+            value.clear();
+            let data = self.data.lock().unwrap();
+            let stored = data.get(key);
+            if let Some(stored) = stored {
+                value.extend_from_slice(stored);
+            }
+            Ok(stored.is_some())
+        }
+
+        fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
+            Ok(self.data.lock().unwrap().contains_key(key))
         }
 
         fn walk(

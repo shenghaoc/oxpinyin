@@ -3760,9 +3760,14 @@ mod tests {
         // "missing magic data of the file".
         let path = dir.join(UserDbm::Bigram.file_name());
         let store = DefaultStore::open_user_bigram(&path).expect("open");
-        let value = store.get_raw(&1_u32.to_le_bytes()).expect("get");
+        let mut value = Vec::new();
+        assert!(
+            store
+                .get_raw(&1_u32.to_le_bytes(), &mut value)
+                .expect("get")
+        );
         let (total, records) =
-            oxpinyin_data::single_gram::decode_single_gram(&value.expect("gram")).expect("decode");
+            oxpinyin_data::single_gram::decode_single_gram(&value).expect("decode");
         assert_eq!(total, 207);
         assert_eq!(
             records,
@@ -3812,7 +3817,9 @@ mod tests {
                 assert_eq!(loaded.state.bigram, [(key.to_vec(), value.clone())]);
 
                 let raw = DefaultStore::open_user_bigram(&path).expect("open raw");
-                assert_eq!(raw.get_raw(&key).expect("raw get"), Some(value));
+                let mut read = Vec::new();
+                assert!(raw.get_raw(&key, &mut read).expect("raw get"));
+                assert_eq!(read, value);
             }
         }
         std::fs::remove_dir_all(&dir).expect("cleanup");

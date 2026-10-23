@@ -367,8 +367,29 @@ fn index_projection(syllables: &[SyllableKey]) -> Option<Vec<u16>> {
 
 // ── codec helpers ─────────────────────────────────────────────────
 
+/// One point read as an owned value, for a caller that keeps or decodes
+/// it: the store fills a fresh buffer, which allocates only on a hit.
+pub(crate) fn get_bytes(
+    store: &impl ReadStore,
+    table: &str,
+    key: &[u8],
+) -> Result<Option<Vec<u8>>, StoreError> {
+    let mut value = Vec::new();
+    Ok(store.get(table, key, &mut value)?.then_some(value))
+}
+
+/// [`get_bytes`] inside a write transaction, its own writes included.
+pub(crate) fn txn_get_bytes(
+    txn: &impl WriteTxn,
+    table: &str,
+    key: &[u8],
+) -> Result<Option<Vec<u8>>, StoreError> {
+    let mut value = Vec::new();
+    Ok(txn.get(table, key, &mut value)?.then_some(value))
+}
+
 fn get_u64(store: &impl ReadStore, table: &str, key: &[u8]) -> Result<Option<u64>, UserStoreError> {
-    store.get(table, key)?.map_or_else(
+    get_bytes(store, table, key)?.map_or_else(
         || Ok(None),
         |bytes| {
             codec::decode_u64(&bytes)
@@ -388,7 +409,7 @@ fn get_u64_or(
 }
 
 fn txn_get_u64(txn: &impl WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64>, StoreError> {
-    txn.get(table, key)?.map_or_else(
+    txn_get_bytes(txn, table, key)?.map_or_else(
         || Ok(None),
         |bytes| {
             codec::decode_u64(&bytes)
@@ -534,7 +555,7 @@ fn append_system_token<S: WriteStore>(
 ) -> Result<Token, StoreError> {
     let lib_key = codec::encode_u8_str(library, text);
     db.write(|txn| {
-        let token = match txn.get(ALLOC, &codec::encode_u8(library))? {
+        let token = match txn_get_bytes(txn, ALLOC, &codec::encode_u8(library))? {
             Some(bytes) => codec::decode_token(&bytes)
                 .map_err(|_| StoreError::Backend("corrupt system cursor".into()))?,
             None => (u32::from(library) << 24) | range_end.max(1),
@@ -694,7 +715,7 @@ fn sync_system_rows<S: WriteStore>(
     };
     let key_bytes = phrase::encode_keys(row_keys);
     let row_key = codec::encode_token_bytes(token, &key_bytes);
-    if let Some(bytes) = db.get(PRONUNCIATION, &row_key)? {
+    if let Some(bytes) = get_bytes(db, PRONUNCIATION, &row_key)? {
         let mut value = PronValue::decode(&bytes)?;
         let base = original
             .item(token & PHRASE_MASK)
@@ -1151,16 +1172,12 @@ impl GramOps for ContainerGrams<'_> {
             .0
             .keys()?
             .into_iter()
-            .map(|key| {
-                <[u8; 4]>::try_from(key.as_slice())
-                    .ok()
-                    .map(Token::from_le_bytes)
-            })
+            .map(|key| key.map(Token::from_le_bytes))
             .collect())
     }
 
     fn get(&mut self, prev: Token) -> Result<Option<Vec<u8>>, StoreError> {
-        self.0.get(&prev.to_le_bytes())
+        container_gram(self.0, prev)
     }
 
     fn store(&mut self, prev: Token, gram: &[u8]) -> Result<(), StoreError> {
@@ -1170,6 +1187,17 @@ impl GramOps for ContainerGrams<'_> {
     fn remove(&mut self, prev: Token) -> Result<(), StoreError> {
         self.0.remove(&prev.to_le_bytes())
     }
+}
+
+/// `Bigram::load` on the pin's container: the gram under `prev`, owned.
+fn container_gram(
+    container: &oxpinyin_store::DefaultUserBigramDb,
+    prev: Token,
+) -> Result<Option<Vec<u8>>, StoreError> {
+    let mut gram = Vec::new();
+    Ok(container
+        .get(&prev.to_le_bytes(), &mut gram)?
+        .then_some(gram))
 }
 
 /// A plain store's [`BIGRAM_GRAM`] rows inside one write transaction.
@@ -1186,7 +1214,7 @@ impl<T: WriteTxn> GramOps for TableGrams<'_, T> {
     }
 
     fn get(&mut self, prev: Token) -> Result<Option<Vec<u8>>, StoreError> {
-        self.0.get(BIGRAM_GRAM, &prev.to_be_bytes())
+        txn_get_bytes(&*self.0, BIGRAM_GRAM, &prev.to_be_bytes())
     }
 
     fn store(&mut self, prev: Token, gram: &[u8]) -> Result<(), StoreError> {
@@ -1782,10 +1810,10 @@ impl<S: WriteStore> GenericUserStore<S> {
             return Ok(None);
         }
         if let Some(container) = self.container() {
-            return Ok(container.get(&prev.to_le_bytes())?);
+            return Ok(container_gram(&container, prev)?);
         }
         let db = self.database();
-        Ok(db.get(BIGRAM_GRAM, &prev.to_be_bytes())?)
+        Ok(get_bytes(&*db, BIGRAM_GRAM, &prev.to_be_bytes())?)
     }
 
     /// [`Self::bigram_row`] with the database guard already held.
@@ -1795,9 +1823,9 @@ impl<S: WriteStore> GenericUserStore<S> {
         prev: Token,
     ) -> Result<Option<Vec<u8>>, UserStoreError> {
         if let Some(container) = self.container() {
-            return Ok(container.get(&prev.to_le_bytes())?);
+            return Ok(container_gram(&container, prev)?);
         }
-        Ok(db.get(BIGRAM_GRAM, &prev.to_be_bytes())?)
+        Ok(get_bytes(db, BIGRAM_GRAM, &prev.to_be_bytes())?)
     }
 
     /// `Bigram::get_all_items`: every key in the user bigram's walk order —
@@ -2211,7 +2239,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     fn init_and_wrap(db: S) -> Result<Arc<StoreInner<S>>, UserStoreError> {
         let has_user_data = db.write(|txn| {
             let total_key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
-            if txn.get(UNIGRAM_TOTAL, &total_key)?.is_none() {
+            if txn_get_bytes(txn, UNIGRAM_TOTAL, &total_key)?.is_none() {
                 let mut sum = 0_u64;
                 txn.for_each(UNIGRAM, |_k, v| {
                     let delta = codec::decode_u64(v)
@@ -2223,7 +2251,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
 
             let alloc_key = codec::encode_u8(ALLOC_CURSOR);
-            if txn.get(ALLOC, &alloc_key)?.is_none() {
+            if txn_get_bytes(txn, ALLOC, &alloc_key)?.is_none() {
                 txn.put(ALLOC, &alloc_key, &codec::encode_token(FIRST_USER_TOKEN))?;
             }
 
@@ -2708,8 +2736,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                     });
                     // The entry's count is the live one. A row that is there
                     // only gives the sequence and the index flag.
-                    let mut stored = txn
-                        .get(PRONUNCIATION, &key)?
+                    let mut stored = txn_get_bytes(txn, PRONUNCIATION, &key)?
                         .map(|bytes| PronValue::decode(&bytes))
                         .transpose()?
                         .unwrap_or(PronValue {
@@ -3015,7 +3042,9 @@ impl<S: WriteStore> GenericUserStore<S> {
             // _add_phrase selects existing items from the phrase table,
             // not the live item's reverse index (074a2219 pinyin.cpp:533-562).
             let mut tokens = Vec::new();
-            if let Some(bytes) = txn.get(phrase_table::TABLE, &phrase_table::key(phrase))? {
+            if let Some(bytes) =
+                txn_get_bytes(txn, phrase_table::TABLE, &phrase_table::key(phrase))?
+            {
                 phrase_table::PhraseTableEntry::from_bytes(bytes)?.search(&mut tokens, |token| {
                     phrase_index_library_index(token) == library
                 });
@@ -3025,7 +3054,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
             let existing = tokens.first().copied();
             if let Some(token) = existing
-                && txn.get(PHRASE, &codec::encode_token(token))?.as_deref()
+                && txn_get_bytes(txn, PHRASE, &codec::encode_token(token))?.as_deref()
                     != Some(codec::encode_str(phrase))
             {
                 return Ok(Err(UserStoreError::InvalidPhrase));
@@ -3053,17 +3082,17 @@ impl<S: WriteStore> GenericUserStore<S> {
                 let alloc_key = codec::encode_u8(ALLOC_CURSOR);
                 let lib_alloc_key = codec::encode_u8(library);
                 let raw = if library == USER_DICTIONARY {
-                    match txn.get(ALLOC, &lib_alloc_key)? {
+                    match txn_get_bytes(txn, ALLOC, &lib_alloc_key)? {
                         Some(bytes) => codec::decode_token(&bytes)
                             .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
-                        None => match txn.get(ALLOC, &alloc_key)? {
+                        None => match txn_get_bytes(txn, ALLOC, &alloc_key)? {
                             Some(bytes) => codec::decode_token(&bytes)
                                 .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
                             None => FIRST_USER_TOKEN,
                         },
                     }
                 } else {
-                    match txn.get(ALLOC, &lib_alloc_key)? {
+                    match txn_get_bytes(txn, ALLOC, &lib_alloc_key)? {
                         Some(bytes) => codec::decode_token(&bytes)
                             .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
                         None => first_library_token(library),
@@ -3157,7 +3186,7 @@ impl<S: WriteStore> GenericUserStore<S> {
         let inserted = std::cell::Cell::new(false);
         let (token, count) = db.write(|txn| {
             let lib_key = codec::encode_u8_str(ADDON_DICTIONARY, phrase);
-            let existing = match txn.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
+            let existing = match txn_get_bytes(txn, PHRASE_BY_LIB_TEXT, &lib_key)? {
                 Some(bytes) => Some(
                     codec::decode_token(&bytes)
                         .map_err(|_| StoreError::Backend("corrupt lib-text token".into()))?,
@@ -3168,7 +3197,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 token
             } else {
                 let lib_alloc_key = codec::encode_u8(ADDON_DICTIONARY);
-                let raw = match txn.get(ALLOC, &lib_alloc_key)? {
+                let raw = match txn_get_bytes(txn, ALLOC, &lib_alloc_key)? {
                     Some(bytes) => codec::decode_token(&bytes)
                         .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
                     None => first_library_token(ADDON_DICTIONARY),
@@ -3274,8 +3303,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// # Errors
     /// Returns a backend error or [`UserStoreError::Decode`] for non-UTF-8 text.
     pub fn phrase_text(&self, token: Token) -> Result<Option<String>, UserStoreError> {
-        self.database()
-            .get(PHRASE, &codec::encode_token(token))?
+        get_bytes(&*self.database(), PHRASE, &codec::encode_token(token))?
             .map(|bytes| String::from_utf8(bytes).map_err(|_| UserStoreError::Decode))
             .transpose()
     }
@@ -3292,7 +3320,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn phrase(&self, token: Token) -> Result<Option<UserPhrase>, UserStoreError> {
         let db = self.database();
         let token_key = codec::encode_token(token);
-        let Some(text_bytes) = db.get(PHRASE, &token_key)? else {
+        let Some(text_bytes) = get_bytes(&*db, PHRASE, &token_key)? else {
             return Ok(None);
         };
         // The get already handed over an owned buffer: validate it as UTF-8
@@ -3323,14 +3351,14 @@ impl<S: WriteStore> GenericUserStore<S> {
     ) -> Result<Option<Token>, UserStoreError> {
         let db = self.database();
         let lib_key = codec::encode_u8_str(library, phrase);
-        if let Some(bytes) = db.get(PHRASE_BY_LIB_TEXT, &lib_key)? {
+        if let Some(bytes) = get_bytes(&*db, PHRASE_BY_LIB_TEXT, &lib_key)? {
             return codec::decode_token(&bytes)
                 .map(Some)
                 .map_err(|_| UserStoreError::Decode);
         }
         if library == USER_DICTIONARY {
             let text_key = codec::encode_str(phrase);
-            if let Some(bytes) = db.get(PHRASE_BY_TEXT, text_key)? {
+            if let Some(bytes) = get_bytes(&*db, PHRASE_BY_TEXT, text_key)? {
                 return codec::decode_token(&bytes)
                     .map(Some)
                     .map_err(|_| UserStoreError::Decode);
@@ -3389,7 +3417,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
         let db = self.database();
         let alloc_key = codec::encode_u8(ALLOC_CURSOR);
-        db.get(ALLOC, &alloc_key)?.map_or_else(
+        get_bytes(&*db, ALLOC, &alloc_key)?.map_or_else(
             || Ok(FIRST_USER_TOKEN),
             |bytes| codec::decode_token(&bytes).map_err(|_| UserStoreError::Decode),
         )
@@ -4182,7 +4210,7 @@ impl<S: WriteStore> GenericUserStore<S> {
                 let token_key = codec::encode_token(token);
                 // `phrase_index->remove_phrase_item` (`pinyin.cpp:3743`):
                 // no item under the token, so the pin asserts.
-                let Some(text_bytes) = txn.get(PHRASE, &token_key)? else {
+                let Some(text_bytes) = txn_get_bytes(txn, PHRASE, &token_key)? else {
                     return Ok(None);
                 };
                 // As in `phrase`: the get hands over an owned buffer, so
@@ -4623,7 +4651,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             vec![codec::encode_u8(library)]
         };
         for key in keys {
-            if let Some(bytes) = db.get(ALLOC, &key)? {
+            if let Some(bytes) = get_bytes(&*db, ALLOC, &key)? {
                 return codec::decode_token(&bytes).map_err(|_| UserStoreError::Decode);
             }
         }
@@ -5373,11 +5401,13 @@ mod tests {
                     assert!(store.remove_user_phrase(token).unwrap());
                     assert!(store.phrase(token).unwrap().is_none());
                     assert!(
-                        store
-                            .database()
-                            .get(phrase_table::TABLE, &phrase_table::key("乙"))
-                            .unwrap()
-                            .is_some(),
+                        get_bytes(
+                            &*store.database(),
+                            phrase_table::TABLE,
+                            &phrase_table::key("乙")
+                        )
+                        .unwrap()
+                        .is_some(),
                         "removing the phrase drops only its own pair"
                     );
                     cleanup(&path);
@@ -5399,11 +5429,13 @@ mod tests {
                             })
                             .unwrap();
                         assert!(
-                            store
-                                .database()
-                                .get(phrase_table::TABLE, &phrase_table::key("你好"))
-                                .unwrap()
-                                .is_none()
+                            get_bytes(
+                                &*store.database(),
+                                phrase_table::TABLE,
+                                &phrase_table::key("你好")
+                            )
+                            .unwrap()
+                            .is_none()
                         );
                         token
                     };
@@ -5456,14 +5488,13 @@ mod tests {
                             vec![vec![20], vec![10], vec![15]]
                         );
 
-                        let encoded = store
-                            .database()
-                            .get(
-                                PRONUNCIATION,
-                                &codec::encode_token_bytes(token, &phrase::encode_keys(&[20])),
-                            )
-                            .unwrap()
-                            .unwrap();
+                        let encoded = get_bytes(
+                            &*store.database(),
+                            PRONUNCIATION,
+                            &codec::encode_token_bytes(token, &phrase::encode_keys(&[20])),
+                        )
+                        .unwrap()
+                        .unwrap();
                         assert_eq!(PronValue::decode(&encoded).unwrap().indexed, legacy);
                         drop(store);
                         let reopened = Store::create_standalone(&path).unwrap();
@@ -6385,11 +6416,13 @@ mod tests {
             Err(StoreError::Backend("stub opens nothing".into()))
         }
 
-        fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-            if table != UNIGRAM {
-                return Ok(None);
-            }
-            Ok(self.0.get(key).map(|v| codec::encode_u64(*v).to_vec()))
+        fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+            value.clear();
+            let Some(count) = self.0.get(key).filter(|_| table == UNIGRAM) else {
+                return Ok(false);
+            };
+            value.extend_from_slice(&codec::encode_u64(*count));
+            Ok(true)
         }
 
         fn scan(

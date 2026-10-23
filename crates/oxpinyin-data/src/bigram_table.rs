@@ -82,19 +82,25 @@ impl<D: ChewingDbm> BigramTable<D> {
     /// including a present empty value.
     pub fn load_raw_successors(&self, prev_token: u32) -> Result<Option<Vec<u8>>, DictError> {
         let key = encode_token_key(prev_token);
-        match self.dbm.get(&key)? {
-            None => Ok(None),
+        let mut value = Vec::new();
+        if !self.dbm.get(&key, &mut value)? {
+            return Ok(None);
+        }
+        if value.is_empty() {
             // A present but empty value is malformed: a stored bigram
             // always carries at least its header. Report the corruption
             // rather than masking it as a clean miss.
-            Some(value) if value.is_empty() => Err(DictError::Parse(format!(
+            return Err(DictError::Parse(format!(
                 "bigram entry for token {prev_token:#010x} has an empty value"
-            ))),
-            Some(value) if value.len() < 4 || !(value.len() - 4).is_multiple_of(8) => Err(
-                DictError::Parse(format!("bigram value length {} is not 4 + 8n", value.len())),
-            ),
-            Some(value) => Ok(Some(value)),
+            )));
         }
+        if value.len() < 4 || !(value.len() - 4).is_multiple_of(8) {
+            return Err(DictError::Parse(format!(
+                "bigram value length {} is not 4 + 8n",
+                value.len()
+            )));
+        }
+        Ok(Some(value))
     }
 
     /// Returns `(count, total)` for the `prev → next` transition.
@@ -139,8 +145,18 @@ mod tests {
     }
 
     impl ChewingDbm for MemoryDbm {
-        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
-            Ok(self.data.lock().unwrap().get(key).cloned())
+        fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+            value.clear();
+            let data = self.data.lock().unwrap();
+            let stored = data.get(key);
+            if let Some(stored) = stored {
+                value.extend_from_slice(stored);
+            }
+            Ok(stored.is_some())
+        }
+
+        fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
+            Ok(self.data.lock().unwrap().contains_key(key))
         }
 
         fn walk(

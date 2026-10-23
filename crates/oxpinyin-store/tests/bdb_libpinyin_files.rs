@@ -117,11 +117,9 @@ fn the_real_system_bigram_carries_libpinyins_key_and_value_shapes() {
     let dir = system_data_dir();
     let store = BdbStore::open_hash_read_only(&dir.join("bigram.db")).expect("open");
     let (key, value) = &rows[0];
-    assert_eq!(
-        store.get_raw(key).expect("point read"),
-        Some(value.clone()),
-        "get_raw must return the bytes the walk saw"
-    );
+    let mut read = Vec::new();
+    assert!(store.get_raw(key, &mut read).expect("point read"));
+    assert_eq!(&read, value, "get_raw must return the bytes the walk saw");
 }
 
 #[test]

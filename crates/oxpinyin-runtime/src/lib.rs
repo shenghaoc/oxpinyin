@@ -1360,6 +1360,7 @@ impl Dictionary for RuntimeDict {
         syllables: &[Self::Syllable],
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
+        scratch: &mut Vec<u8>,
     ) -> Result<bool, Self::Error> {
         let query = Self::trellis_query(syllables, tones);
         let (Some(query), 0) = (query, self.library_mask.load(Ordering::SeqCst)) else {
@@ -1369,7 +1370,7 @@ impl Dictionary for RuntimeDict {
         let loaded = |token: u32| self.token_ranged(token);
         let system_extends = self
             .system
-            .trellis_ranges_continued_with(syllables, tones, ranges, loaded)?;
+            .trellis_ranges_continued_with(syllables, tones, ranges, loaded, scratch)?;
         self.user_trellis_ranges(&query, ranges)?;
         let user = self.user_lookup()?;
         #[cfg(any(feature = "kyotocabinet", feature = "tkrzw"))]

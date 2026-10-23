@@ -170,7 +170,7 @@ use std::ops::Bound;
 use std::path::Path;
 use std::ptr::NonNull;
 
-use crate::common::{framed, in_bounds, table_prefix, validate_path};
+use crate::common::{fill_buffered, framed, in_bounds, table_prefix, validate_path};
 use crate::{Flow, ReadStore, StoreError, WriteStore, WriteTxn};
 
 /// `TKRZW_STATUS_SUCCESS` — pinned by number so an upstream renumbering
@@ -250,12 +250,17 @@ fn check(ok: bool) -> Result<(), StoreError> {
 }
 
 /// Like [`check`], but `TKRZW_STATUS_NOT_FOUND_ERROR` means "the walk
-/// ended", so it comes back as `Ok(true)` instead of an error.
+/// ended" (or, for an existence check, "no such record"), so it comes
+/// back as `Ok(true)` instead of an error. The code alone decides; the
+/// message is copied only when the status is a failure.
 fn check_end(ok: bool) -> Result<bool, StoreError> {
     if ok {
         return Ok(false);
     }
-    if last_status().0 == STATUS_NOT_FOUND_ERROR {
+    // SAFETY: `tkrzw_get_last_status_code` only reads thread-local state
+    // this thread owns; it leaves the message region untouched, so
+    // `status_error` below still reads this call's message.
+    if unsafe { ffi::tkrzw_get_last_status_code() } == STATUS_NOT_FOUND_ERROR {
         return Ok(true);
     }
     Err(status_error())
@@ -532,13 +537,19 @@ where
     rec_proc_noop()
 }
 
+/// Where a point read lands: the caller's buffer, cleared before the
+/// call, and whether a record was found.
+struct Fill<'a> {
+    value: &'a mut Vec<u8>,
+    found: bool,
+}
+
 /// The `tkrzw_dbm_process` record callback for a point read: assembles
-/// the borrowed value slice and copies it into the caller's slot. This
-/// is the single owned copy a point read whose result outlives the call
-/// needs. A missing record invokes the callback with a null value
-/// pointer (the header's documented absent marker — `ProcessEmpty` in
-/// the C++ underneath), so leaving the slot `None` is the "not found"
-/// answer.
+/// the borrowed value slice and copies it into the caller's buffer. This
+/// is the single copy a point read whose result outlives the call needs.
+/// A missing record invokes the callback with a null value pointer (the
+/// header's documented absent marker — `ProcessEmpty` in the C++
+/// underneath), so leaving `found` false is the "not found" answer.
 ///
 /// The pointer contract is libtkrzw's, as in [`walk_row`].
 unsafe extern "C" fn get_value(
@@ -559,12 +570,15 @@ unsafe extern "C" fn get_value(
                 usize::try_from(value_len).unwrap_or(0),
             )
         };
-        // SAFETY: `arg` is the address of the `Option<Vec<u8>>` local
-        // in the calling `get`, passed as the callback argument. Only
-        // this callback receives it, only the one `tkrzw_dbm_process`
-        // call that took the argument can invoke the callback, and that
-        // call returns before the local is read or dropped.
-        unsafe { *(arg.cast::<Option<Vec<u8>>>()) = Some(value.to_vec()) };
+        // SAFETY: `arg` is the address of the `Fill` local in the
+        // calling `db_get`, passed as the callback argument. Only this
+        // callback receives it, only the one `tkrzw_dbm_process` call that
+        // took the argument can invoke the callback, and that call returns
+        // before the local is read or dropped.
+        let fill = unsafe { &mut *(arg.cast::<Fill<'_>>()) };
+        fill.value.reserve_exact(value.len());
+        fill.value.extend_from_slice(value);
+        fill.found = true;
     }
     rec_proc_noop()
 }
@@ -632,12 +646,17 @@ fn db_count(db: &Db) -> Result<u64, StoreError> {
     Err(status_error())
 }
 
-/// Reads one record, handing the borrowed value to `get_value` exactly
-/// once, or not at all when the key is absent.
-fn db_get(db: &Db, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-    let mut slot = None;
+/// Reads one record into `value`, which is cleared first, handing the
+/// borrowed value to `get_value` exactly once, or not at all when the key
+/// is absent.
+fn db_get(db: &Db, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+    value.clear();
+    let mut fill = Fill {
+        value,
+        found: false,
+    };
     // SAFETY: the handle is open; `key` outlives the call with a true
-    // length; the callback argument is `&mut slot`, which outlives the
+    // length; the callback argument is `&mut fill`, which outlives the
     // call; writable=false makes this a pure read.
     let ok = unsafe {
         ffi::tkrzw_dbm_process(
@@ -645,12 +664,26 @@ fn db_get(db: &Db, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
             key.as_ptr().cast::<c_char>(),
             c_len(key)?,
             Some(get_value),
-            (&raw mut slot).cast::<c_void>(),
+            (&raw mut fill).cast::<c_void>(),
             false,
         )
     };
     check(ok)?;
-    Ok(slot)
+    Ok(fill.found)
+}
+
+/// Whether `key` exists, an empty value included, copying nothing:
+/// `tkrzw_dbm_check`, which is `Get(key)` with no value string
+/// (`tkrzw_langc.cc:608-620` at tkrzw 9ee8416) — the call libpinyin's
+/// suggestion walk opens with, `m_db->Get(query_key, nullptr)`
+/// (`phrase_large_table3_tkrzwdb.cpp:166` at 074a2219). A miss leaves
+/// `NOT_FOUND_ERROR` in the last status; any other status is a failure.
+fn db_check(db: &Db, key: &[u8]) -> Result<bool, StoreError> {
+    // SAFETY: the handle is open; `key` outlives the call with a true
+    // length; nothing is copied out.
+    let ok =
+        unsafe { ffi::tkrzw_dbm_check(db.0.as_ptr(), key.as_ptr().cast::<c_char>(), c_len(key)?) };
+    check_end(ok).map(|missing| !missing)
 }
 
 /// Walks `table`'s records whose key lies in `(lo, hi)`, ascending,
@@ -838,8 +871,12 @@ fn db_rebuild(db: &Db) -> Result<(), StoreError> {
 }
 
 impl crate::RawReadStore for TkrzwStore {
-    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, crate::StoreError> {
-        db_get(&self.db, key)
+    fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, crate::StoreError> {
+        db_get(&self.db, key, value)
+    }
+
+    fn contains_raw(&self, key: &[u8]) -> Result<bool, crate::StoreError> {
+        db_check(&self.db, key)
     }
 
     fn scan_raw(
@@ -870,9 +907,9 @@ impl ReadStore for TkrzwStore {
         open(path, false)
     }
 
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         let prefix = table_prefix(table)?;
-        db_get(&self.db, &framed(&prefix, key))
+        db_get(&self.db, &framed(&prefix, key), value)
     }
 
     fn scan(
@@ -1071,13 +1108,13 @@ impl WriteTxn for TkrzwTxn<'_> {
     // buffer insert (or FFI call) into every caller costs far more code
     // than a direct call. Dispatch is static either way.
     #[inline(never)]
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         let prefix = table_prefix(table)?;
         let framed_key = framed(&prefix, key);
         if let Some(slot) = self.buffer.get(&framed_key) {
-            return Ok(slot.clone());
+            return Ok(fill_buffered(slot.as_deref(), value));
         }
-        db_get(self.db, &framed_key)
+        db_get(self.db, &framed_key, value)
     }
 
     #[inline(never)]
@@ -1212,8 +1249,8 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
         Ok(this)
     }
 
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        db_get(&self.db, key)
+    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        db_get(&self.db, key, value)
     }
 
     fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
@@ -1224,10 +1261,14 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
         db_set_one(&self.db, key, None)
     }
 
-    fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+    fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
+        // One vector of four-byte tokens reserved for the record count, as
+        // `get_all_items` appends them to one `GArray`
+        // (`ngram_tkrzwdb.cpp:143-172` at 074a2219).
         let mut keys = Vec::new();
+        keys.reserve_exact(usize::try_from(db_count(&self.db)?).unwrap_or(0));
         visit_db(&self.db, |key, _| {
-            keys.push(key.to_vec());
+            keys.push(<[u8; 4]>::try_from(key).ok());
             Ok(())
         })?;
         Ok(keys)

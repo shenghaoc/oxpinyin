@@ -471,6 +471,8 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     let fix = convert_fixture();
     let dict = fix.dict();
     let mut seen = (0_u32, 0_u32, 0_u32);
+    // One value buffer for every fused search, as the decode loop passes it.
+    let mut scratch = Vec::new();
     for path in ["ni", "ni,ni", "ni,hao", "n", "n,n", "hao"] {
         for tones in [&[][..], &[3], &[2], &[3, 3], &[4, 0]] {
             let path = syls(path);
@@ -479,7 +481,7 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
             let continued = dict.phrase_prefix_exists(&path).unwrap();
             let mut fused = PhraseIndexRanges::new();
             let fused_continued = dict
-                .trellis_ranges_continued(&path, tones, &mut fused)
+                .trellis_ranges_continued(&path, tones, &mut fused, &mut scratch)
                 .unwrap();
             assert_eq!(
                 format!("{pair:?}"),

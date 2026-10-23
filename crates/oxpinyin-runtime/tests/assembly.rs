@@ -619,6 +619,9 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
     assert!(paths.len() >= 8, "the key paths parse: {}", paths.len());
     let seen = std::cell::Cell::new((0_u32, 0_u32, 0_u32));
     let compare = |phase: &str| {
+        // One value buffer for every fused search, as the decode loop
+        // passes it.
+        let mut scratch = Vec::new();
         for path in &paths {
             for tones in tones {
                 let mut pair = oxpinyin_core::PhraseIndexRanges::new();
@@ -626,7 +629,7 @@ fn trellis_ranges_continued_matches_the_ranges_and_prefix_pair() {
                 let continued = dict.phrase_prefix_exists(path).unwrap();
                 let mut fused = oxpinyin_core::PhraseIndexRanges::new();
                 let fused_continued = dict
-                    .trellis_ranges_continued(path, tones, &mut fused)
+                    .trellis_ranges_continued(path, tones, &mut fused, &mut scratch)
                     .unwrap();
                 assert_eq!(
                     format!("{pair:?}"),

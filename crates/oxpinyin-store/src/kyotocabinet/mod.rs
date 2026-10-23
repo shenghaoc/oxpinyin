@@ -353,9 +353,9 @@ impl ReadStore for KcStore {
         })
     }
 
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
         validate_table_name(table)?;
-        self.db.get(&frame(table, key))
+        self.db.get(&frame(table, key), value)
     }
 
     fn scan(
@@ -381,8 +381,12 @@ impl ReadStore for KcStore {
 }
 
 impl crate::RawReadStore for KcStore {
-    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, crate::StoreError> {
-        self.db.get(key)
+    fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, crate::StoreError> {
+        self.db.get(key, value)
+    }
+
+    fn contains_raw(&self, key: &[u8]) -> Result<bool, crate::StoreError> {
+        self.db.check(key)
     }
 
     fn scan_raw(
@@ -592,8 +596,8 @@ impl WriteTxn for KcTxn<'_> {
     // buffer insert (or FFI call) into every caller costs far more code
     // than a direct call. Dispatch is static either way.
     #[inline(never)]
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        self.store.get(table, key)
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        self.store.get(table, key, value)
     }
 
     #[inline(never)]
@@ -668,8 +672,8 @@ impl crate::UserBigramDb for KcUserBigramDb {
         Ok(this)
     }
 
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        self.db.get(key)
+    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        self.db.get(key, value)
     }
 
     fn store(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
@@ -680,7 +684,7 @@ impl crate::UserBigramDb for KcUserBigramDb {
         self.db.remove(key)
     }
 
-    fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+    fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
         // `get_all_items`' own call: `iterate` with a key-collecting
         // visitor (`ngram_kyotodb.cpp:163-196`), the stash's bucket order.
         self.db.keys()
@@ -701,7 +705,9 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{KcStore, KcUserBigramDb};
-    use crate::{RawReadStore, ReadStore, UserBigramDb, WriteStore, WriteTxn};
+    use crate::{
+        GramReadOwned, RawReadOwned, RawReadStore, ReadStore, UserBigramDb, WriteStore, WriteTxn,
+    };
 
     /// A file under the temp directory, removed on drop.
     struct Temp(PathBuf);
@@ -736,7 +742,7 @@ mod tests {
         let mut walked = Vec::new();
         if cursor.jump_first().unwrap() {
             while cursor.next_key().unwrap() {
-                walked.push(cursor.key().to_vec());
+                walked.push(<[u8; 4]>::try_from(cursor.key()).ok());
             }
         }
         assert_eq!(walked.len(), 3000);
@@ -748,9 +754,9 @@ mod tests {
         let db = KcUserBigramDb::empty().unwrap();
         db.store(b"empty", b"").unwrap();
         db.store(b"full", &[7; 300]).unwrap();
-        assert_eq!(db.get(b"empty").unwrap(), Some(Vec::new()));
-        assert_eq!(db.get(b"full").unwrap(), Some(vec![7; 300]));
-        assert_eq!(db.get(b"absent").unwrap(), None);
+        assert_eq!(db.read_gram(b"empty").unwrap(), Some(Vec::new()));
+        assert_eq!(db.read_gram(b"full").unwrap(), Some(vec![7; 300]));
+        assert_eq!(db.read_gram(b"absent").unwrap(), None);
         let store = KcStore::create_in_memory().unwrap();
         store
             .write(|txn| {
@@ -758,9 +764,12 @@ mod tests {
                 txn.put_raw(b"full", &[9; 5])
             })
             .unwrap();
-        assert_eq!(store.get_raw(b"empty").unwrap(), Some(Vec::new()));
-        assert_eq!(store.get_raw(b"full").unwrap(), Some(vec![9; 5]));
-        assert_eq!(store.get_raw(b"absent").unwrap(), None);
+        assert_eq!(store.read_raw(b"empty").unwrap(), Some(Vec::new()));
+        assert_eq!(store.read_raw(b"full").unwrap(), Some(vec![9; 5]));
+        assert_eq!(store.read_raw(b"absent").unwrap(), None);
+        assert!(store.contains_raw(b"empty").unwrap());
+        assert!(store.contains_raw(b"full").unwrap());
+        assert!(!store.contains_raw(b"absent").unwrap());
     }
 
     /// Keys that share prefixes, cross 0x00/0xFF and include the empty
