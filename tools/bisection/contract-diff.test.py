@@ -681,7 +681,8 @@ class SelectionTests(DriverFixtureCase):
     def test_unknown_or_empty_selection_is_an_error_naming_what_exists(self):
         with self.assertRaises(contract['SelectionError']) as caught:
             contract['select_cases'](issues=['9999'])
-        self.assertIn('registered tags: 525', str(caught.exception))
+        self.assertIn('registered tags: ', str(caught.exception))
+        self.assertIn('525', str(caught.exception).split('registered tags: ', 1)[1].split(', '))
         self.assertNotIn('family/', str(caught.exception))
         with self.assertRaises(contract['SelectionError']) as caught:
             contract['select_cases'](families=['nope'])
