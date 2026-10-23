@@ -6,6 +6,7 @@ every gate. This container procedure is a second supported route. First
 change requires comparison with the pinned upstream implementation. It
 executes **subject** (oxpinyin), **reference** (the oracle) and the existing
 comparison **harness** together in the existing canonical pinned **Debian Linux amd64** environment.
+This is the reference platform for the pin's results, not a support limit.
 Its base digest, dated package snapshot and reference hashes remain defined
 by [oracle-pin.txt](../../tools/oracle/oracle-pin.txt) and the existing
 [oracle recipe](../../tools/oracle/Dockerfile.oracle). Every host uses this

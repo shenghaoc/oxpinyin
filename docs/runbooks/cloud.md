@@ -18,7 +18,8 @@ it neither installs nor requires Valgrind.
 
 ## Host requirements
 
-Full setup requires Linux x86_64 and:
+Full setup requires Linux x86_64. This is a limit of `tools/cloud/setup.sh`.
+The script also requires:
 
 - Cargo on `PATH`, rustup and the installed toolchain/components selected by
   `rust-toolchain.toml`. Setup checks these before provisioning; it does not

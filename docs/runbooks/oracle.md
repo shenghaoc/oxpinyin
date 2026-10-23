@@ -71,7 +71,8 @@ recorded once in `tools/oracle/oracle-pin.txt`
 (`libpinyin_sha256_<dbm>`, `libzhuyin_sha256_<dbm>`) rather than per
 machine of the same architecture: the recorded hashes are for
 **linux/amd64** only (`platform=` in `oracle-pin.txt`; the Dockerfile,
-the workflow and the checks pin `--platform=linux/amd64`). CI
+the workflow and the checks pin `--platform=linux/amd64`). This is the
+reference platform for the pin's results, not a support limit. CI
 (`oracle-image.yml`) builds the bdb, kc and tkrzw cells and publishes them
 as
 

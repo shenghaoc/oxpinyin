@@ -28,6 +28,11 @@ tracker (#870), then a third bug-for-bug sweep (`ROADMAP.md`). Performance
 work that keeps compatibility continues in Stage 2 (`docs/perf/`). Stage 3
 (opt-in departures) follows.
 
+## Platforms
+
+The portable crates support Linux, macOS and Windows. They build and test
+on x86_64 and arm64.
+
 ## Quickstart
 
 Start at [CONTRIBUTING.md](CONTRIBUTING.md). It walks through prerequisites,
