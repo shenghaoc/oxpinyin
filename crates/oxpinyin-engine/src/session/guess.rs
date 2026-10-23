@@ -262,7 +262,7 @@ where
                 sentences.extend(self.collect_sentences_with_tokens(&graph, &scorer, path)?);
             }
             sentences.sort_by_key(|(candidate, _)| candidate.cost());
-            let mut seen: HashSet<compact_str::CompactString> = HashSet::new();
+            let mut seen: FixedHashSet<compact_str::CompactString> = FixedHashSet::default();
             sentences
                 .into_iter()
                 .filter(|(candidate, _)| seen.insert(candidate.text().into()))

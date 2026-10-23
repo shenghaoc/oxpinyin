@@ -30,7 +30,7 @@
 #![cfg_attr(not(test), deny(clippy::panic_in_result_fn))]
 #![warn(missing_docs)]
 
-use std::collections::HashMap;
+use oxpinyin_core::hash::FixedHashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
@@ -369,13 +369,13 @@ type TextLookupCache = Arc<Mutex<Option<TextTokens>>>;
 // Only the trellis consumes this unreduced index. Ordinary UserLookup stays
 // unchanged. The initial projection bounds partial and complete queries alike.
 type TrellisBucket = Vec<(Vec<oxpinyin_core::ChewingKey>, PhraseEntry)>;
-type TrellisIndex = HashMap<Vec<u8>, TrellisBucket>;
+type TrellisIndex = FixedHashMap<Vec<u8>, TrellisBucket>;
 type TrellisCache = Arc<Mutex<Option<(u64, Arc<TrellisIndex>)>>>;
 
 #[derive(Default)]
 struct UnigramOverlay {
-    tokens: HashMap<u32, u64>,
-    libraries: HashMap<u32, u32>,
+    tokens: FixedHashMap<u32, u64>,
+    libraries: FixedHashMap<u32, u32>,
 }
 
 /// What `add_unigram_frequency` did to the default facade
@@ -671,7 +671,7 @@ impl RuntimeDict {
 
     fn user_trellis_index(&self) -> Result<Arc<TrellisIndex>, DictError> {
         let Some(store) = self.user.as_ref() else {
-            return Ok(Arc::new(HashMap::new()));
+            return Ok(Arc::new(FixedHashMap::default()));
         };
         let mut cache = self
             .trellis_cache
@@ -683,7 +683,7 @@ impl RuntimeDict {
         {
             return Ok(Arc::clone(index));
         }
-        let mut index: TrellisIndex = HashMap::new();
+        let mut index = TrellisIndex::default();
         for phrase in store
             .index_phrases()
             .map_err(|error| DictError::Parse(error.to_string()))?
