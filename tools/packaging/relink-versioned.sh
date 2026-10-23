@@ -32,9 +32,9 @@
 #   --function-order  name a policy instead of the checked-in one, or give an
 #               empty value to disable ordering. Also read from
 #               OXPINYIN_FUNCTION_ORDER_POLICY (forwarded by install.sh).
-#               The checked-in policies are the default for the bdb backend
-#               only; the other backends have no checked-in policy and link
-#               in the original layout unless one is named. A policy that is
+#               Checked-in policies live in function-order/<backend>/.
+#               A backend without a registered policy keeps the original
+#               layout. A policy that is
 #               selected (checked-in or named) must resolve against the
 #               staticlib, or the relink fails before linking; only a linker
 #               without --section-ordering-file keeps the original layout.
@@ -125,6 +125,9 @@ backend_libs() {
 GLIB_LIBS="$(pkg-config --libs glib-2.0 gobject-2.0 2>/dev/null || echo '-lglib-2.0 -lgobject-2.0')"
 
 BACKEND_LIBS="$(backend_libs "$BACKEND")"
+POLICY_BACKEND="$BACKEND"
+[ "$POLICY_BACKEND" != kyotocabinet ] || POLICY_BACKEND=kc
+POLICY_DIR="$(dirname -- "${BASH_SOURCE[0]}")/function-order/$POLICY_BACKEND"
 
 TMP_DEST=""
 VER_SYMBOLS=""
@@ -142,11 +145,8 @@ TMP_DEST="$(mktemp "${DEST%.so*}.relink.XXXXXX")"
 # Policy selection, one of four states, each reported on stderr:
 #   opt-out     --function-order '' (or the empty environment variable):
 #               the original layout, by request;
-#   none        no checked-in policy for this backend: the checked-in
-#               policies were generated from the shipping BDB build
-#               (docs/packaging.md, "Regeneration") and name BDB-only
-#               paths, so the bdb backend is the only one they default to;
-#   checked-in  the bdb backend's policy for this SONAME;
+#   none        no registered checked-in policy for this backend;
+#   checked-in  this backend's policy for this SONAME;
 #   named       a policy given on the command line or in the environment.
 # A selected policy must resolve against THIS staticlib. That is checked
 # with nm alone, before the linker is probed, so a stale policy fails the
@@ -156,8 +156,10 @@ ORDER_ARGS=()
 ORDER_SOURCE=""
 if [ -n "$FUNCTION_ORDER_SET" ]; then
   if [ -n "$FUNCTION_ORDER" ]; then ORDER_SOURCE="named"; else ORDER_SOURCE="opt-out"; fi
-elif [ "$BACKEND" = bdb ]; then
-  FUNCTION_ORDER="$(dirname -- "${BASH_SOURCE[0]}")/function-order/${SONAME%%.so*}.order"
+elif [[ " bdb kc tkrzw " = *" $POLICY_BACKEND "* ]]; then
+  # Registration is independent of file presence: a missing file or whole
+  # directory must not silently turn a supported shipping backend unordered.
+  FUNCTION_ORDER="$POLICY_DIR/${SONAME%%.so*}.order"
   ORDER_SOURCE="checked-in"
 else
   ORDER_SOURCE="none"
@@ -174,6 +176,20 @@ case "$ORDER_SOURCE" in
       echo "error: function ordering: policy not found: $FUNCTION_ORDER ($ORDER_SOURCE)" >&2
       exit 1
     }
+    # A named policy in the backend layout must belong to this build.
+    # Resolve directory aliases before checking, including symlinked files.
+    POLICY_PATH="$(readlink -f -- "$FUNCTION_ORDER")"
+    NAMED_DIR="$(dirname -- "$POLICY_PATH")"
+    if [ "$(basename -- "$(dirname -- "$NAMED_DIR")")" = function-order ]; then
+      case "$(basename -- "$NAMED_DIR")" in
+        bdb|kc|tkrzw)
+          [ "$(basename -- "$NAMED_DIR")" = "$POLICY_BACKEND" ] || {
+            echo "error: function ordering: policy backend $(basename -- "$NAMED_DIR") does not match $POLICY_BACKEND" >&2
+            exit 1
+          }
+          ;;
+      esac
+    fi
     ORDER_DIR="$(mktemp -d "${TMP_DEST}.order.XXXXXX")"
     # shellcheck source=tools/packaging/function-order.sh
     source "$(dirname -- "${BASH_SOURCE[0]}")/function-order.sh"
