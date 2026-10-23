@@ -1,5 +1,6 @@
 oxpinyin-function-order-v1	libzhuyin.so.15
 init	<&[u8] as <alloc::ffi::c_str::CString>::new::SpecNewImpl>::spec_new_impl
+init	<&str as core::fmt::Display>::fmt [instantiating crate: oxpinyin_store]
 init	<alloc::collections::btree::map::BTreeMap<alloc::string::String, oxpinyin_engine::config::ConfigValue>>::insert [instantiating crate: oxpinyin_facade]
 init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, alloc::vec::Vec<u8>> as core::iter::traits::collect::FromIterator<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>>::from_iter::<alloc::vec::into_iter::IntoIter<(alloc::vec::Vec<u8>, alloc::vec::Vec<u8>)>> [instantiating crate: oxpinyin_user]
 init	<alloc::collections::btree::map::BTreeMap<alloc::vec::Vec<u8>, core::option::Option<alloc::vec::Vec<u8>>>>::insert [instantiating crate: oxpinyin_user]
@@ -19,15 +20,16 @@ init	<alloc::collections::btree::set::Difference<(u32, alloc::vec::Vec<u16>)> as
 init	<alloc::ffi::c_str::CString>::_from_vec_unchecked
 init	<alloc::raw_vec::RawVec<alloc::vec::Vec<u8>>>::grow_one [instantiating crate: std]
 init	<alloc::raw_vec::RawVec<oxpinyin_core::graph::Edge>>::grow_one
-init	<alloc::raw_vec::RawVec<oxpinyin_data::user_files::LogRecord>>::grow_one
+init	<alloc::raw_vec::RawVec<oxpinyin_core::vocab::PhraseEntry>>::grow_one [instantiating crate: oxpinyin_data]
 init	<alloc::raw_vec::RawVec<oxpinyin_engine::candidate::Candidate>>::grow_one [instantiating crate: oxpinyin_facade]
 init	<alloc::raw_vec::RawVec<oxpinyin_engine::cursor::MatrixKey>>::grow_one
 init	<alloc::raw_vec::RawVec<oxpinyin_engine::session::ScanKey>>::grow_one
 init	<alloc::raw_vec::RawVec<u32>>::grow_one [instantiating crate: oxpinyin_core]
+init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global>
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
-init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_store]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_user]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: std]
+init	<alloc::raw_vec::RawVecInner>::finish_grow
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_core]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_data]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_engine]
@@ -37,6 +39,7 @@ init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_u
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: std]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: zhuyin]
 init	<alloc::raw_vec::RawVecInner>::try_allocate_in [instantiating crate: oxpinyin_runtime]
+init	<alloc::string::String as core::fmt::Write>::write_str
 init	<alloc::string::String>::from_utf8_lossy
 init	<alloc::sync::Arc<oxpinyin_data::phrase_library::map::MappedFile>>::drop_slow
 init	<alloc::sync::Arc<std::sync::once_lock::OnceLock<u32>> as core::default::Default>::default [instantiating crate: oxpinyin_data]
@@ -51,10 +54,11 @@ init	<alloc::vec::Vec<oxpinyin_data::table_info::TableRow> as core::clone::Clone
 init	<alloc::vec::Vec<oxpinyin_engine::session::RankKey> as alloc::vec::spec_from_iter::SpecFromIter<oxpinyin_engine::session::RankKey, core::iter::adapters::map::Map<alloc::vec::into_iter::IntoIter<(oxpinyin_engine::session::RankKey, u32)>, <oxpinyin_engine::session::Session<oxpinyin_runtime::RuntimeDict, oxpinyin_runtime::RuntimeLm>>::scan_window::{closure#3}>>>::from_iter [instantiating crate: oxpinyin_facade]
 init	<alloc::vec::Vec<oxpinyin_engine::session::ScanKey> as alloc::vec::spec_from_elem::SpecFromElem>::from_elem::<alloc::alloc::Global>
 init	<alloc::vec::Vec<u32>>::retain::<<oxpinyin_user::replay::Merge>::finish_lazy<alloc::borrow::Cow<str>>::{closure#0}>::{closure#0}
+init	<core::fmt::Formatter>::pad
 init	<core::hash::sip::Hasher<core::hash::sip::Sip13Rounds> as core::hash::Hasher>::write [instantiating crate: oxpinyin_engine]
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::adapters::filter::Filter<core::iter::adapters::zip::Zip<core::ops::range::RangeFrom<u8>, core::slice::iter::Iter<oxpinyin_data::table_info::TableRow>>, <oxpinyin_data::table_info::TableConf>::rows_of::{closure#0}>, <oxpinyin_data::user_files::UserFileLayout>::from_conf::{closure#0}> as core::iter::traits::iterator::Iterator>::next
 init	<core::iter::adapters::filter_map::FilterMap<core::iter::sources::from_fn::FromFn<oxpinyin_data::user_files::log_records::{closure#0}>, <core::result::Result<oxpinyin_data::user_files::LogRecord<&[u8]>, oxpinyin_data::user_files::LogDecodeError>>::ok> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_user]
-init	<core::iter::adapters::take::Take<core::str::iter::Split<char>> as core::iter::traits::iterator::Iterator>::next [instantiating crate: oxpinyin_store]
+init	<core::str::iter::SplitInternal<char>>::next [instantiating crate: oxpinyin_store]
 init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
 init	<core::str::pattern::CharSearcher as core::str::pattern::Searcher>::next_match
 init	<f32 as core::str::traits::FromStr>::from_str
@@ -141,16 +145,67 @@ init	<phf::map::Map<&str, u16>>::get_entry::<str> [instantiating crate: oxpinyin
 init	<std::fs::OpenOptions>::_open
 init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&&str> [instantiating crate: oxpinyin_engine]
 init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32> [instantiating crate: oxpinyin_engine]
+init	<std::path::Components as core::iter::traits::double_ended::DoubleEndedIterator>::next_back
+init	<std::path::Components>::parse_next_component_back
 init	<std::path::Path>::_join
 init	<std::sync::once::Once>::call_once_force::<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !>::{closure#0}>::{closure#0} [instantiating crate: oxpinyin_facade]
 init	<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::initialize::<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::get_or_init<<std::sync::once_lock::OnceLock<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>>::try_insert::{closure#0}>::{closure#0}, !> [instantiating crate: oxpinyin_facade]
 init	<std::sys::fs::unix::File>::open_c
 init	<std::sys::sync::once::futex::Once>::call
+init	_ZN12_GLOBAL__N_17Visitor10visit_fullEPKcmS2_mPm
+init	_ZN12kyotocabinet10hashmurmurEPKvm
+init	_ZN12kyotocabinet13LinkedHashMapIlPNS_7PlantDBINS_6HashDBELh49EE8LeafNodeESt4hashIlESt8equal_toIlEE7migrateERKlPSA_NSA_8MoveModeE
+init	_ZN12kyotocabinet6HashDB10get_bucketEl
+init	_ZN12kyotocabinet6HashDB11accept_implEPKcmPNS_2DB7VisitorEljb
+init	_ZN12kyotocabinet6HashDB11read_recordEPNS0_6RecordEPc
+init	_ZN12kyotocabinet6HashDB12tune_bucketsEl
+init	_ZN12kyotocabinet6HashDB16read_record_bodyEPNS0_6RecordE
+init	_ZN12kyotocabinet6HashDB4openERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEj
+init	_ZN12kyotocabinet6HashDB6acceptEPKcmPNS_2DB7VisitorEb
+init	_ZN12kyotocabinet6HashDB6reportEPKciS2_NS_7BasicDB6Logger4KindES2_z
+init	_ZN12kyotocabinet6HashDB9calc_metaEv
+init	_ZN12kyotocabinet6HashDB9load_metaEv
+init	_ZN12kyotocabinet6HashDBC1Ev
+init	_ZN12kyotocabinet6hton64Em.part.0
+init	_ZN12kyotocabinet7BasicDB13load_snapshotEPSiPNS0_15ProgressCheckerE
+init	_ZN12kyotocabinet7BasicDB13load_snapshotERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPNS0_15ProgressCheckerE
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE11accept_implEPNS2_8LeafNodeEPNS2_6RecordEPNS_2DB7VisitorE
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE11search_treeEPNS2_4LinkEbPlPi
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE14load_leaf_nodeElb
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE15load_inner_nodeEl
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE17create_leaf_cacheEv
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE18create_inner_cacheEv
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE4openERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEj
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE6acceptEPKcmPNS_2DB7VisitorEb
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE6reportEPKciS4_NS_7BasicDB6Logger4KindES4_z
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE9load_metaEv
+init	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EEC1Ev
+init	_ZN12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EE4openERSB_j
+init	_ZN12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EE5closeEv
+init	_ZN12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EE6Cursor2dbEv
+init	_ZN12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EE6Cursor4jumpEv
+init	_ZN12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EE6CursorD0Ev
+init	_ZN12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EE6cursorEv
+init	_ZN12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EE6reportEPKciSH_NS_7BasicDB6Logger4KindESH_z
+init	_ZN12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EE9set_errorEPKciSH_NS_7BasicDB5Error4CodeESH_
+init	_ZN12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EED0Ev
+init	_ZN12kyotocabinet7StashDB4openERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEj
+init	_ZN12kyotocabinet7StashDB6reportEPKciS2_NS_7BasicDB6Logger4KindES2_z
+init	_ZNK12kyotocabinet7ProtoDBISt3mapINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES7_St4lessIS7_ESaISt4pairIKS7_S7_EEELh17EE5errorEv
+init	_ZNSt6vectorIPN12kyotocabinet7PlantDBINS0_6HashDBELh49EE6RecordESaIS5_EE17_M_realloc_appendIJRKS5_EEEvDpOT_
+init	_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC2IS3_EEPKcRKS3_.constprop.0
+init	_ZSt13__lower_boundIN9__gnu_cxx17__normal_iteratorIPPN12kyotocabinet7PlantDBINS2_6HashDBELh49EE6RecordESt6vectorIS7_SaIS7_EEEES7_NS0_5__ops14_Iter_comp_valINS5_16RecordComparatorEEEET_SH_SH_RKT0_T1_
+init	_ZZN12kyotocabinet7BasicDB3getEPKcmPcmEN11VisitorImpl10visit_fullES2_mS2_mPm
+init	_ZZN12kyotocabinet7BasicDB5checkEPKcmEN11VisitorImpl10visit_fullES2_mS2_mPm
+init	_ZZN12kyotocabinet7PlantDBINS_6HashDBELh49EE14load_leaf_nodeElbEN11VisitorImpl10visit_fullEPKcmS5_mPm
+init	_ZZN12kyotocabinet7PlantDBINS_6HashDBELh49EE15load_inner_nodeElEN11VisitorImpl10visit_fullEPKcmS5_mPm
 init	__rustc::__rust_alloc
 init	__rustc::__rust_realloc
 init	__udivti3
 init	__umodti3
 init	alloc::boxed::box_new_uninit
+init	alloc::fmt::format::format_inner
+init	core::fmt::write
 init	core::ptr::drop_glue::<alloc::collections::btree::dedup_sorted_iter::DedupSortedIter<alloc::string::String, oxpinyin_engine::config::ConfigValue, alloc::vec::into_iter::IntoIter<(alloc::string::String, oxpinyin_engine::config::ConfigValue)>>>
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, alloc::vec::Vec<oxpinyin_user::phrase::UserPronunciation>>>
 init	core::ptr::drop_glue::<alloc::collections::btree::map::BTreeMap<u32, core::option::Option<oxpinyin_data::chunk_write::ChunkItem>>> [instantiating crate: oxpinyin_user]
@@ -167,12 +222,26 @@ init	core::ptr::drop_glue::<oxpinyin_runtime::ConfFile>
 init	core::ptr::drop_glue::<oxpinyin_user::persistence::Loaded> [instantiating crate: oxpinyin_runtime]
 init	core::ptr::drop_glue::<oxpinyin_user::replay::Merge>
 init	core::ptr::drop_glue::<oxpinyin_user::replay::Origin>
+init	core::slice::memchr::memchr_aligned
 init	core::slice::sort::stable::drift::sort::<(alloc::string::String, oxpinyin_engine::config::ConfigValue), <[(alloc::string::String, oxpinyin_engine::config::ConfigValue)]>::sort_by<<alloc::collections::btree::map::BTreeMap<alloc::string::String, oxpinyin_engine::config::ConfigValue> as core::iter::traits::collect::FromIterator<(alloc::string::String, oxpinyin_engine::config::ConfigValue)>>::from_iter<core::iter::adapters::map::Map<core::slice::iter::Iter<(&str, oxpinyin_engine::config::Seed)>, oxpinyin_engine::config::default_values::{closure#0}>>::{closure#0}>::{closure#0}>
 init	core::slice::sort::stable::drift::sort::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
 init	core::slice::sort::stable::driftsort_main::<(alloc::string::String, oxpinyin_engine::config::ConfigValue), <[(alloc::string::String, oxpinyin_engine::config::ConfigValue)]>::sort_by<<alloc::collections::btree::map::BTreeMap<alloc::string::String, oxpinyin_engine::config::ConfigValue> as core::iter::traits::collect::FromIterator<(alloc::string::String, oxpinyin_engine::config::ConfigValue)>>::from_iter<core::iter::adapters::map::Map<core::slice::iter::Iter<(&str, oxpinyin_engine::config::Seed)>, oxpinyin_engine::config::default_values::{closure#0}>>::{closure#0}>::{closure#0}, alloc::vec::Vec<(alloc::string::String, oxpinyin_engine::config::ConfigValue)>>
 init	core::slice::sort::stable::driftsort_main::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}, alloc::vec::Vec<oxpinyin_engine::candidate::Candidate>>
 init	core::slice::sort::unstable::ipnsort::<u32, <u32 as core::cmp::PartialOrd>::lt> [instantiating crate: oxpinyin_user]
 init	core::str::converts::from_utf8
+init	oxkc_cur_del
+init	oxkc_cur_ecode
+init	oxkc_cur_jump
+init	oxkc_db_accept
+init	oxkc_db_check
+init	oxkc_db_close
+init	oxkc_db_cursor
+init	oxkc_db_del
+init	oxkc_db_load_snapshot
+init	oxkc_db_new
+init	oxkc_db_open
+init	oxkc_enorec
+init	oxkc_version
 init	oxpinyin_data::chunk_format::chunk_checksum
 init	oxpinyin_data::chunk_write::decode_phrase_item
 init	oxpinyin_data::dict::resolve_items
@@ -206,6 +275,7 @@ init	oxpinyin_user::persistence::load_checked_impl
 init	oxpinyin_user::persistence::load_libraries
 init	oxpinyin_user::persistence::load_logs_with_mask
 init	oxpinyin_user::persistence::load_user_bigram_db
+init	oxpinyin_user::persistence::remove_dbm_sidecars
 init	oxpinyin_user::persistence::system_originals
 init	oxpinyin_user::persistence::with_kept_keys
 init	oxpinyin_user::store::get_u64::<oxpinyin_user::session_values::SessionValues<oxpinyin_store::kyotocabinet::KcStore>> [instantiating crate: oxpinyin_runtime]
@@ -216,6 +286,7 @@ init	std::fs::read::inner
 init	std::io::default_read_to_end::small_probe_read::<std::fs::File>
 init	std::sys::args::unix::imp::ARGV_INIT_ARRAY::init_wrapper
 init	std::sys::fs::metadata
+init	std::sys::fs::remove_file
 init	std::sys::fs::unix::try_statx
 init	std::sys::random::linux::hashmap_random_keys
 init	zhuyin::candidates::snapshot_candidates
@@ -234,9 +305,14 @@ init	zhuyin_set_options
 steady	<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>::drop_slow [instantiating crate: oxpinyin_engine]
 steady	<oxpinyin_engine::session::buffer::InputBuffer>::clear
 steady	<oxpinyin_user::lookup::UserLookup>::phrase_prefix_exists
+steady	_ZN12_GLOBAL__N_17Visitor11visit_emptyEPKcmPm
+steady	_ZN12kyotocabinet2DB7Visitor11visit_emptyEPKcmPm
+steady	_ZN12kyotocabinet7PlantDBINS_6HashDBELh49EE9set_errorEPKciS4_NS_7BasicDB5Error4CodeES4_
+steady	_ZNK12kyotocabinet7PlantDBINS_6HashDBELh49EE5errorEv
 steady	core::slice::sort::shared::pivot::median3_rec::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
 steady	core::slice::sort::shared::smallsort::insertion_sort_shift_left::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
 steady	core::slice::sort::stable::quicksort::quicksort::<oxpinyin_engine::candidate::Candidate, <[oxpinyin_engine::candidate::Candidate]>::sort_by_key<u32, oxpinyin_engine::session::order_window_tail::{closure#0}>::{closure#0}>
+steady	oxkc_db_ecode
 steady	oxpinyin_core::syllables::syllable_initial
 steady	oxpinyin_data::row_format::pinyin_index::encode_incomplete_key
 steady	oxpinyin_store::kyotocabinet::ffi::visit_empty
