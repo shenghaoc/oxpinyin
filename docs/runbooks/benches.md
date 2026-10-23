@@ -150,7 +150,10 @@ whole-set check immediately before launching the worker. Any resident page
 refuses the sample and names the file, including libraries mapped by another
 process. Linux may also conservatively report residency when mincore access
 is restricted; that refuses the sample too. Do not treat a refusal as cold
-measurement evidence. Equivalence/provisioning observations stay warm;
+measurement evidence. Cold memory samples also read every cold file's
+resident pages with the same `mincore` at each checkpoint, and a `residency`
+record gives their per-file summaries at M0 (after load, before init) through
+M3; this reads no file bytes. Equivalence/provisioning observations stay warm;
 `verify` performs no cold samples. Cold mode refuses profiling and repeated
 in-process lifecycles. Run cold campaigns only when other measurement lanes
 are idle and the heavy slot is available: dependency and system-data cache

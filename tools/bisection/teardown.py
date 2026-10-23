@@ -301,6 +301,27 @@ def cold_files(library, data, user, rows=None):
             *([Path(rows)] if rows else [])]
 
 
+def file_residency(files, library, data, user):
+    """Resident pages of each cold file, keyed by a sample-independent label.
+
+    Read at a paused checkpoint of a cold memory sample; resident_pages reads
+    no file bytes, so the reading does not fault the pages it counts.
+    """
+    rows = {}
+    for path in map(Path, files):
+        if path == Path(library):
+            label = 'facade'
+        elif path.is_relative_to(data):
+            label = 'data/' + path.relative_to(data).as_posix()
+        elif path.is_relative_to(user):
+            label = 'user/' + path.relative_to(user).as_posix()
+        else:
+            label = path.name
+        with path.open('rb') as handle:
+            rows[label] = resident_pages(handle.fileno())
+    return rows
+
+
 def resident_pages(fd):
     """Linux mincore over an unfaulted PROT_NONE mapping; no file bytes read.
 
@@ -467,8 +488,10 @@ class Campaign:
         errors, documents, boundaries = bytearray(), [], []
         self.driver.check_cancelled()
         try:
+            cold_set = None
             if cold:
-                evict_files(cold_files(library, self.data, user, rows))
+                cold_set = cold_files(library, self.data, user, rows)
+                evict_files(cold_set)
             self.driver.check_cancelled()
             with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   env=env, start_new_session=True) as process:
@@ -520,6 +543,8 @@ class Campaign:
                                 elif cycles == 1 or cycle in (0, 1, 10, 50, 100):
                                     memory = read_memory(process.pid, library.resolve(), self.data)
                                     memory['allocator'] = document['allocator']
+                                    if cold_set is not None and mode == 'memory':
+                                        memory['residency'] = file_residency(cold_set, library, self.data, user)
                                     checkpoints.setdefault(cycle, {})[point] = memory
                                 process.stdin.write(b'\n')
                                 process.stdin.flush()
@@ -1022,6 +1047,15 @@ def report_memory(facade, case, samples, pilot):
                                     for key in FIELDS})
         print_record('memory-deltas', facade=facade, case=case, side=side, pilot=pilot, signed_kib=shown,
                      checkpoints=checkpoints)
+        # Cold samples only: which files' pages each phase brought in. M0 is
+        # after load and before init; M1 after the workload.
+        points = [dict(row['checkpoints'][1], M0=row['checkpoints'][0]['M0']) for row in rows]
+        if all('residency' in observation[point] for observation in points for point in ('M0', 'M1', 'M2', 'M3')):
+            files = {label: dict(pages=summary([observation['M1']['residency'][label]['pages'] for observation in points]),
+                                 **{point: summary([observation[point]['residency'][label]['resident'] for observation in points])
+                                    for point in ('M0', 'M1', 'M2', 'M3')})
+                     for label in points[0]['M0']['residency']}
+            print_record('residency', facade=facade, case=case, side=side, pilot=pilot, unit='pages', files=files)
 
 
 def callgrind_counts(shown):

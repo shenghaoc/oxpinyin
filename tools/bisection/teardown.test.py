@@ -318,6 +318,18 @@ class PureTests(unittest.TestCase):
 
 
 class ColdTests(unittest.TestCase):
+    def test_residency_labels_are_independent_of_the_sample_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            names = ('facade.so', 'libdb.so.5', 'data/table.conf', 'sample-000001/user/sub/user.bin')
+            for name in names:
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_bytes(b'x')
+            with patch.object(td, 'resident_pages', return_value=dict(pages=1, resident=0)):
+                rows = td.file_residency([root / name for name in names], root / 'facade.so',
+                                         root / 'data', root / 'sample-000001/user')
+            self.assertEqual(set(rows), {'facade', 'libdb.so.5', 'data/table.conf', 'user/sub/user.bin'})
+
     def test_dependency_closure_includes_non_c_runtimes_and_transitive_libraries(self):
         with tempfile.TemporaryDirectory() as directory:
             # The resolver returns resolved paths; macOS's /var is a symlink.
@@ -688,6 +700,40 @@ class NativeTests(unittest.TestCase):
                     self.assertNotIn(profile / 'user.conf', paths)
                     self.assertTrue(all(record['verified']['resident'] == 0 for record in records))
                     self.assertFalse(list(root.glob('sample-*')))
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux cold native stub samples')
+    def test_cold_memory_samples_report_per_file_residency_at_each_checkpoint(self):
+        with tempfile.TemporaryDirectory(dir=self.root) as directory:
+            root = Path(directory)
+            data, profile = root / 'data', root / 'profile'
+            data.mkdir()
+            profile.mkdir()
+            (data / 'table.conf').write_bytes(b'private-system-fixture')
+            (profile / 'user.conf').write_bytes(b'private-profile-fixture')
+            library = root / 'subject.so'
+            library.write_bytes(self.library.read_bytes())
+            campaign = self.campaign()
+            campaign.data, campaign.work, campaign.cache = data, root, 'cold'
+            # The ext4 refusal is tested on its own.
+            with patch.object(td, 'exports', return_value=['pinyin_init']), \
+                    patch.object(td, 'filesystem', return_value='ext4'), patch.object(td, 'print_record'):
+                rows = [campaign.run('pinyin', library, profile, mode='memory') for _ in range(2)]
+            for row in rows:
+                points = dict(row['checkpoints'][1], M0=row['checkpoints'][0]['M0'])
+                for point in ('M0', 'M1', 'M2', 'M3'):
+                    self.assertEqual(set(points[point]['residency']), {'facade', 'data/table.conf', 'user/user.conf'})
+                # Loading faults the facade in before M0; nothing evicts it after.
+                self.assertGreater(points['M0']['residency']['facade']['resident'], 0)
+            with patch.object(td, 'print_record') as record:
+                td.report_memory('pinyin', 'empty', {side: rows for side in ('ox', 'control', 'pin')}, True)
+            residency = [call.kwargs for call in record.call_args_list if call.args[0] == 'residency']
+            self.assertEqual([value['side'] for value in residency], ['ox', 'control', 'pin'])
+            self.assertEqual(residency[0]['files']['data/table.conf']['pages']['median'], 1)
+            self.assertEqual(set(residency[0]['files']['facade']), {'pages', 'M0', 'M1', 'M2', 'M3'})
+        # Warm samples carry no residency and print no residency record.
+        with patch.object(td, 'exports', return_value=['pinyin_init']):
+            warm = self.campaign().run('pinyin', self.library, self.profile, mode='memory')
+        self.assertNotIn('residency', warm['checkpoints'][0]['M0'])
 
     def test_cold_prepares_every_arm_after_copy_and_before_child_and_cleans_refusal(self):
         for side in ('subject', 'control', 'pinlibs'):
