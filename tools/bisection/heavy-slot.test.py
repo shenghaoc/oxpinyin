@@ -91,6 +91,32 @@ class HeavySlotTests(unittest.TestCase):
             else:
                 return
 
+    def end_holder(self, pid):
+        """Wait up to 5 s for a holder to end, then kill its process group.
+
+        A holder that ignores EOF would outlive the test. Its group holds the
+        supervisor that started it, so the kill reaches both. This runs in a
+        finally, so it neither raises nor asserts: an error there would replace
+        the failure being reported."""
+        if not isinstance(pid, int) or pid <= 1:
+            return
+        deadline = time.monotonic() + 5
+        while run_all['pid_alive'](pid) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if not run_all['pid_alive'](pid):
+            return
+        try:
+            group = os.getpgid(pid)
+            if group == os.getpgrp():  # never the test's own group
+                os.kill(pid, signal.SIGKILL)
+            else:
+                os.killpg(group, signal.SIGKILL)
+        except OSError:
+            pass
+        deadline = time.monotonic() + 2
+        while run_all['pid_alive'](pid) and time.monotonic() < deadline:
+            time.sleep(0.01)
+
     def test_two_concurrent_heavy_requests_serialise_and_report_the_wait(self):
         started = time.monotonic()
         first = self.heavy(1.2)
@@ -392,6 +418,7 @@ finally:
         wrapper = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
                                     sys.executable, '-c', code], env=self.env, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        child_pid = None
         try:
             self.assertTrue(select.select([wrapper.stdout], [], [], 3)[0])
             child_pid = int(wrapper.stdout.readline())
@@ -412,10 +439,13 @@ finally:
                     contender.kill()
                 contender.communicate(timeout=5)
         finally:
-            if wrapper.poll() is None:
-                wrapper.kill()
-            wrapper.stdin.close()  # EOF: the child that outlived the wrapper exits
-            wrapper.communicate(timeout=5)
+            try:
+                if wrapper.poll() is None:
+                    wrapper.kill()
+                wrapper.stdin.close()  # EOF: the child that outlived the wrapper exits
+                wrapper.communicate(timeout=5)
+            finally:
+                self.end_holder(child_pid)
 
     def test_child_keeps_slot_after_aggregate_death(self):
         code = synthetic(r'''import json, runpy, sys
@@ -461,13 +491,13 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
                     contender.kill()
                 contender.communicate(timeout=5)
         finally:
-            if parent.poll() is None:
-                parent.kill()
-            parent.stdin.close()  # EOF: the child that outlived the parent exits
-            parent.communicate(timeout=5)
-            deadline = time.monotonic() + 5
-            while holder and run_all['pid_alive'](holder['pid']) and time.monotonic() < deadline:
-                time.sleep(0.01)
+            try:
+                if parent.poll() is None:
+                    parent.kill()
+                parent.stdin.close()  # EOF: the child that outlived the parent exits
+                parent.communicate(timeout=5)
+            finally:
+                self.end_holder(holder['pid'] if holder else None)
 
     def test_normal_parent_exit_does_not_unlock_a_descendant(self):
         # The descendant holds the slot until the test closes its stdin. The parent
@@ -477,9 +507,11 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
         parent = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
                                    sys.executable, '-c', code], env=self.env, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        descendant = None
         try:
             self.assertTrue(select.select([parent.stdout], [], [], 3)[0])
-            self.assertGreater(int(parent.stdout.readline()), 0)
+            descendant = int(parent.stdout.readline())
+            self.assertGreater(descendant, 0)
             self.assertEqual(parent.wait(timeout=3), 0)
             contender = self.heavy(0)
             try:
@@ -495,10 +527,13 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
                     contender.kill()
                 contender.communicate(timeout=5)
         finally:
-            if parent.poll() is None:
-                parent.kill()
-            parent.stdin.close()  # EOF: the descendant exits
-            parent.communicate(timeout=5)
+            try:
+                if parent.poll() is None:
+                    parent.kill()
+                parent.stdin.close()  # EOF: the descendant exits
+                parent.communicate(timeout=5)
+            finally:
+                self.end_holder(descendant)
 
     def test_dead_unrelated_and_replaced_markers_do_not_bypass_the_slot(self):
         dead = subprocess.Popen([sys.executable, '-c', 'pass'])
