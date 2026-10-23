@@ -67,8 +67,18 @@ AST comparison against parent `fd28e96e` confirmed unchanged
 `library_dependencies`, `cold_files`, `resident_pages`, `evict_files` and
 `report_times`; `git diff --exit-code wip/1091-cold-cloud --
 tools/bisection/teardown.h` also passed. Native teardown/stub and real-ELF
-runtime harness gates remain pending heavy admission after #1031 priority;
-this is a WIP checkpoint, not a completed code-change gate. No backend
+runtime harness gates remain pending heavy admission after #1031 priority.
+The native teardown gate was attempted through normal admission with no
+queue wait:
+
+```sh
+OXPINYIN_RESOURCE_WAIT_SECONDS=0 TMPDIR=/home/sheng/tmp/oxpinyin-1098 PYTHONDONTWRITEBYTECODE=1 just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil python -B -X lazy_imports=normal tools/bisection/teardown.test.py
+```
+
+Admission reported `slot-wait-expired` and `no process started`: slot 0 was
+held by #1031, PID 2978775 in its `oxpinyin-hasher` worktree. No slot or
+test process is held by this lane. This is a WIP checkpoint, not a completed
+code-change gate. No backend
 campaign or shipping measurement has run.
 
 The three verification-rule-2 checks are empty for this layer: no store path,
