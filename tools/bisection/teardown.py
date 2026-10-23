@@ -515,9 +515,16 @@ def populate_user(campaign, pin, user, rows):
 
 
 def run(args, driver, parser):
-    # BDB-only: this explicit selector excludes tkrzw; no runtime guard here.
-    if args.cell != 'bdb' or args.per_call or args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties:
-        parser.error('--teardown is a separate BDB workload; contract/profiler modes cannot be combined')
+    if args.per_call or args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties:
+        parser.error('--teardown is a separate workload; contract/profiler modes cannot be combined')
+    # contract-diff checks the runtime before dispatching this workload.
+    # The provision stage only drives the cell's own pin through the worker, so
+    # every cell can write its startup profiles (#1076). The later stages
+    # compare final user files through profile_contents, which reads Berkeley
+    # DB containers only.
+    if args.cell != 'bdb' and args.teardown_stage != 'provision':
+        parser.error(f'--teardown-stage {args.teardown_stage} is a BDB workload; '
+                     f'the {args.cell} cell supports only --teardown-stage provision')
     if not args.teardown_work_dir or not args.teardown_work_dir.is_dir():
         parser.error('--teardown-work-dir must name an owned temporary directory')
     cases = tuple(args.teardown_cases.split(','))
