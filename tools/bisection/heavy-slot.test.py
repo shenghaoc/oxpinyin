@@ -119,22 +119,45 @@ class HeavySlotTests(unittest.TestCase):
 
     def test_two_concurrent_heavy_requests_serialise_and_report_the_wait(self):
         started = time.monotonic()
-        first = self.heavy(1.2)
-        time.sleep(0.3)
-        second = self.heavy(0.1)
-        outputs = [p.communicate()[1] for p in (first, second)]
-        elapsed = time.monotonic() - started
-        self.assertEqual([first.returncode, second.returncode], [0, 0])
-        self.assertGreaterEqual(elapsed, 1.3)
-        waits = [float(line.split('slot_wait_seconds ')[1].split(',')[0]) for out in outputs
-                 for line in out.splitlines() if 'heavy slot 0: slot_wait_seconds' in line]
-        self.assertEqual(len(waits), 2)
-        self.assertLess(min(waits), 0.5)
-        self.assertGreaterEqual(max(waits), 0.8)
-        waiting = [line for out in outputs for line in out.splitlines() if line.startswith('waiting for a heavy slot')]
-        self.assertEqual(len(waiting), 1)
-        self.assertIn('pid ', waiting[0])
-        self.assertIn('time.sleep(1.2)', waiting[0])
+        code = 'import os,sys; print(os.getpid(), flush=True); sys.stdin.read()'
+        first = subprocess.Popen([*ENTRY, '--heavy-slot', '--', sys.executable, '-c', code],
+                                 env=self.env, stdin=subprocess.PIPE,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        second = None
+        child_pid = None
+        try:
+            self.assertTrue(select.select([first.stdout], [], [], 3)[0])
+            child_pid = int(first.stdout.readline())
+            second = self.heavy(0.1)
+            self.until_waiting(second)
+            # Hold for the original 1.2 s only after the contender is waiting.
+            # A stall can lengthen this measured wait, but cannot free the slot.
+            with self.assertRaises(subprocess.TimeoutExpired):
+                second.communicate(timeout=1.2)
+            first.stdin.close()
+            outputs = [p.communicate()[1] for p in (first, second)]
+            elapsed = time.monotonic() - started
+            self.assertEqual([first.returncode, second.returncode], [0, 0])
+            self.assertGreaterEqual(elapsed, 1.3)
+            waits = [float(line.split('slot_wait_seconds ')[1].split(',')[0]) for out in outputs
+                     for line in out.splitlines() if 'heavy slot 0: slot_wait_seconds' in line]
+            self.assertEqual(len(waits), 2)
+            self.assertLess(min(waits), 0.5)
+            self.assertGreaterEqual(max(waits), 0.8)
+            waiting = [line for out in outputs for line in out.splitlines() if line.startswith('waiting for a heavy slot')]
+            self.assertEqual(len(waiting), 1)
+            self.assertIn('pid ', waiting[0])
+            self.assertIn(code, waiting[0])
+        finally:
+            try:
+                first.stdin.close()
+                for process in (first, second):
+                    if process is not None:
+                        if process.poll() is None:
+                            process.kill()
+                        process.communicate(timeout=5)
+            finally:
+                self.end_holder(child_pid)
 
     def test_nested_wrapper_inherits_the_slot_without_waiting(self):
         code = synthetic(f"import runpy, sys; m = runpy.run_path({str(RUN_ALL)!r}); "
@@ -208,18 +231,21 @@ with mock.patch.object(Path, 'read_text', read), mock.patch.object(sys, 'argv',
                 ready = Path(directory) / 'ready'
                 stopping = Path(directory) / 'stopping'
                 resource = f'cancellation-{os.getpid()}-{signum}'
-                command = ("import os, signal, sys, time; from pathlib import Path\n"
+                command = ("import os, signal, sys; from pathlib import Path\n"
                            "def stop(*args):\n"
                            f" Path({str(stopping)!r}).touch()\n"
-                           " time.sleep(0.7)\n sys.exit(0)\n"
+                           " sys.stdin.read()\n sys.exit(0)\n"
                            "signal.signal(signal.SIGTERM, stop)\n"
                            "signal.signal(signal.SIGINT, stop)\n"
                            "signal.signal(signal.SIGHUP, stop)\n"
                            f"Path({str(ready)!r}).write_text(str(os.getpid()))\n"
-                           "time.sleep(30)\n")
+                           # The handler reads sys.stdin, so avoid its buffered-reader lock here.
+                           "while os.read(sys.stdin.fileno(), 4096): pass\n")
                 parent = subprocess.Popen([sys.executable, '-c', aggregate, str(RUN_ALL), command, resource],
-                                          env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                          env=self.env, stdin=subprocess.PIPE,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 contender = None
+                child_pid = None
                 try:
                     deadline = time.monotonic() + 5
                     while (not ready.exists() or not ready.read_text()) and time.monotonic() < deadline:
@@ -233,6 +259,7 @@ with mock.patch.object(Path, 'read_text', read), mock.patch.object(sys, 'argv',
                     contender = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
                                                   sys.executable, '-c', check], env=self.env,
                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    self.until_waiting(contender)
                     parent.send_signal(signum)
                     deadline = time.monotonic() + 3
                     while not stopping.exists() and time.monotonic() < deadline:
@@ -244,6 +271,7 @@ with mock.patch.object(Path, 'read_text', read), mock.patch.object(sys, 'argv',
                             fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     with self.assertRaises(subprocess.TimeoutExpired):
                         contender.communicate(timeout=0.2)
+                    parent.stdin.close()  # release the stopping child after both lock checks
                     _, error = parent.communicate(timeout=8)
                     self.assertNotEqual(parent.returncode, 0, error)
                     self.assertFalse(run_all['pid_alive'](child_pid))
@@ -253,13 +281,17 @@ with mock.patch.object(Path, 'read_text', read), mock.patch.object(sys, 'argv',
                     with lock_path.open('a') as probe:
                         fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 finally:
-                    for process in (parent, contender):
-                        if process is not None:
-                            if process.poll() is None:
-                                process.kill()
-                            process.communicate(timeout=8)
-                    lock_path = HERE.parent.parent / 'target/runner-locks' / resource
-                    lock_path.unlink(missing_ok=True)
+                    try:
+                        parent.stdin.close()
+                        for process in (parent, contender):
+                            if process is not None:
+                                if process.poll() is None:
+                                    process.kill()
+                                process.communicate(timeout=8)
+                    finally:
+                        self.end_holder(child_pid)
+                        lock_path = HERE.parent.parent / 'target/runner-locks' / resource
+                        lock_path.unlink(missing_ok=True)
 
     def test_marker_for_another_directory_does_not_bypass_the_slot(self):
         with tempfile.TemporaryDirectory() as other:
@@ -392,11 +424,16 @@ finally:
         self.assertIn('waiting for a heavy slot', result.stderr)
 
     def test_wrapper_cancellation_reaps_child_that_ignores_sigterm(self):
-        code = ('import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
-                'print(os.getpid(), flush=True); time.sleep(30)')
+        code = ('import os, signal, sys; signal.signal(signal.SIGTERM, signal.SIG_IGN); '
+                'print(os.getpid(), flush=True); sys.stdin.read()')
         parent = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
-                                   sys.executable, '-c', code], env=self.env,
+                                   sys.executable, '-c', code], env=self.env, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        # communicate must not release this child through EOF: cancellation
+        # itself has to reap the SIGTERM-ignoring holder before the assertion.
+        holder_stdin = parent.stdin
+        parent.stdin = None
+        child_pid = None
         try:
             self.assertTrue(select.select([parent.stdout], [], [], 5)[0])
             child_pid = int(parent.stdout.readline())
@@ -407,9 +444,13 @@ finally:
             with run_all['HeavySlot']('probe', out=io.StringIO()):
                 pass
         finally:
-            if parent.poll() is None:
-                parent.kill()
-            parent.communicate(timeout=6)
+            try:
+                if parent.poll() is None:
+                    parent.kill()
+                holder_stdin.close()
+                parent.communicate(timeout=6)
+            finally:
+                self.end_holder(child_pid)
 
     def test_child_keeps_slot_after_wrapper_death(self):
         # The child holds its slot until the test closes its stdin, so a stall on
