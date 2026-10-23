@@ -412,11 +412,13 @@ additive. `docker builder prune -af` after the setup drops the cache copy.
 
 ### tkrzw step and the CI child
 
-CI's tkrzw child uses Debian's `libtkrzw` 1.0.32, built without LTO; the
-cloud setup builds upstream 1.0.34 (`9ee8416`) when the host's library fails
-the probe. The two differ in version, and both pass
-`tools/tkrzw/distro-probe.sh` (`RESULT : healthy`), which is the criterion
-the setup enforces.
+CI's tkrzw jobs use the `libtkrzw` that `debian:testing` ships, built
+without LTO: 1.0.34-1 on 2026-10-23 UTC (`apt-cache policy libtkrzw-dev` in
+that image; it is unpinned, so the version moves). The cloud setup builds
+upstream 1.0.34 (`9ee8416`) when the host's library fails the probe. Both
+pass `tools/tkrzw/distro-probe.sh` (`RESULT : healthy`), which is the
+criterion the setup enforces. With no setup environment in CI, the
+`tkrzw-sanitizers` job runs that probe through `probe_host` before its gate.
 
 ### Rootless podman on a workstation
 

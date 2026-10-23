@@ -11,7 +11,7 @@ name: Store backends
 # — so cross-peer equivalence is proven by running the SAME test
 # suite through separate builds, one per peer.
 #
-# Five jobs:
+# Six jobs:
 #   - store-features is a matrix over the non-default peer backends
 #     (Kyoto Cabinet and tkrzw). Each child
 #     runs the workspace's backend-relevant crates (everything but the
@@ -36,21 +36,24 @@ name: Store backends
 #     architecturally impossible under exactly-one-backend.
 #   - store-backends-gate is this workflow's aggregate status check. It runs
 #     no tests; it only fails unless every backend child, the backend-matrix
-#     job AND both sanitizer jobs succeeded. Its display name tracks the
+#     job AND all three sanitizer jobs succeeded. Its display name tracks the
 #     peer set. Berkeley DB is the workspace default, and the pure-Rust
 #     peer left on 2026-09-20. The name is free to track the set because
 #     main's only required status check is `ci-aggregate`; before
 #     2026-09-08 the name was
 #     held fixed because branch protection named this job directly.
-#   - tkrzw-sanitizers runs the tkrzw feature's suite under ASan on a
-#     date-pinned nightly. It feeds store-backends-gate, so a finding on
-#     the FFI boundary turns that check red.
-#   - bdb-sanitizers runs the Berkeley DB feature's suite under ASan and
-#     the C call-pattern harnesses under ASan+UBSan
-#     (`tools/bdb/run-sanitizers.sh`), and feeds store-backends-gate like
-#     the tkrzw lane: on a BerkeleyDB distro the system bigram.db is BDB
-#     and every session opens it through this FFI, so the instrumentation
-#     is load-bearing, not precautionary.
+#   - tkrzw-sanitizers, bdb-sanitizers and kc-sanitizers each run one
+#     backend's gate through `tools/sanitize.sh <backend>`, the command
+#     `just sanitize` runs locally, on the date-pinned nightly that
+#     tools/sanitize.sh names: the tkrzw suite under ASan
+#     (`tools/tkrzw/run-sanitizers.sh`), the Berkeley DB suite under ASan
+#     plus the C call-pattern harnesses under ASan+UBSan
+#     (`tools/bdb/run-sanitizers.sh`), and the Kyoto Cabinet suite under
+#     ASan + LeakSanitizer (`tools/kc/run-sanitizers.sh`). Each feeds
+#     store-backends-gate, so a finding turns that check red. On a
+#     BerkeleyDB distro the system bigram.db is BDB and every session
+#     opens it through that FFI, so the instrumentation is load-bearing,
+#     not precautionary.
 #
 # Every check in this workflow is advisory: branch protection requires only
 # ci.yml's `ci-aggregate`, which does not depend on any job here. A red
@@ -83,15 +86,20 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - .github/workflows/store-backends.yml
-      # Direct inputs added 2026-09-06: every child decodes the fixture
-      # tables; backend-matrix runs tools/store/backend-matrix.sh; the
-      # sanitizer jobs run tools/kc/run-sanitizers.sh and
-      # tools/bdb/run-sanitizers.sh; every job runs the bootstrap
-      # composite action.
+      # Direct inputs: every child decodes the fixture tables;
+      # backend-matrix runs tools/store/backend-matrix.sh; the sanitizer
+      # jobs run tools/sanitize.sh, which runs
+      # tools/{bdb,kc,tkrzw}/run-sanitizers.sh (the tkrzw script also
+      # sources tools/cloud/env.sh and tools/bisection/oracle-cell.sh);
+      # every job runs the bootstrap composite action.
       - fixtures/**
       - tools/store/**
       - tools/kc/**
       - tools/bdb/**
+      - tools/tkrzw/**
+      - tools/sanitize.sh
+      - tools/cloud/env.sh
+      - tools/bisection/oracle-cell.sh
       - .github/actions/**
   pull_request:
     branches: [main]
@@ -101,15 +109,20 @@ on:
       - Cargo.lock
       - rust-toolchain.toml
       - .github/workflows/store-backends.yml
-      # Direct inputs added 2026-09-06: every child decodes the fixture
-      # tables; backend-matrix runs tools/store/backend-matrix.sh; the
-      # sanitizer jobs run tools/kc/run-sanitizers.sh and
-      # tools/bdb/run-sanitizers.sh; every job runs the bootstrap
-      # composite action.
+      # Direct inputs: every child decodes the fixture tables;
+      # backend-matrix runs tools/store/backend-matrix.sh; the sanitizer
+      # jobs run tools/sanitize.sh, which runs
+      # tools/{bdb,kc,tkrzw}/run-sanitizers.sh (the tkrzw script also
+      # sources tools/cloud/env.sh and tools/bisection/oracle-cell.sh);
+      # every job runs the bootstrap composite action.
       - fixtures/**
       - tools/store/**
       - tools/kc/**
       - tools/bdb/**
+      - tools/tkrzw/**
+      - tools/sanitize.sh
+      - tools/cloud/env.sh
+      - tools/bisection/oracle-cell.sh
       - .github/actions/**
 
 permissions:
@@ -364,7 +377,7 @@ jobs:
     # documented `needs.<job>.result` semantics. For a matrix upstream,
     # that result is success only when EVERY matrix child succeeded, and
     # failure if any child failed — so this gate is red unless every
-    # non-default peer build, the exactly-one-backend gate and both
+    # non-default peer build, the exactly-one-backend gate and all three
     # sanitizer jobs are green.
     name: store backends (kyotocabinet / tkrzw / bdb)
     runs-on: ubuntu-latest
@@ -374,6 +387,7 @@ jobs:
       - backend-matrix
       - tkrzw-sanitizers
       - bdb-sanitizers
+      - kc-sanitizers
     defaults:
       run:
         shell: bash
@@ -387,18 +401,20 @@ jobs:
           MATRIX_RESULT: ${{ needs.backend-matrix.result }}
           SANITIZER_RESULT: ${{ needs.tkrzw-sanitizers.result }}
           BDB_SANITIZER_RESULT: ${{ needs.bdb-sanitizers.result }}
+          KC_SANITIZER_RESULT: ${{ needs.kc-sanitizers.result }}
         run: |
           set -euo pipefail
           echo "store-features (matrix): ${FEATURES_RESULT}"
           echo "backend-matrix:          ${MATRIX_RESULT}"
           echo "tkrzw-sanitizers:        ${SANITIZER_RESULT}"
           echo "bdb-sanitizers:          ${BDB_SANITIZER_RESULT}"
+          echo "kc-sanitizers:           ${KC_SANITIZER_RESULT}"
           {
             echo "## store backends (aggregate gate)"
             echo ""
             echo "This job runs no tests. It is this workflow's advisory"
             echo "aggregate check: it fails unless every peer matrix child, the"
-            echo "exactly-one-backend gate AND both sanitizer jobs succeeded."
+            echo "exactly-one-backend gate AND all three sanitizer jobs succeeded."
             echo ""
             echo "| Upstream job | Result |"
             echo "|---|---|"
@@ -406,9 +422,10 @@ jobs:
             echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
             echo "| tkrzw-sanitizers (ASan) | ${SANITIZER_RESULT} |"
             echo "| bdb-sanitizers (ASan + UBSan) | ${BDB_SANITIZER_RESULT} |"
+            echo "| kc-sanitizers (ASan + LSan) | ${KC_SANITIZER_RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ] || [ "${BDB_SANITIZER_RESULT}" != "success" ]; then
-            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}, tkrzw-sanitizers=${SANITIZER_RESULT}, bdb-sanitizers=${BDB_SANITIZER_RESULT}" >&2
+          if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ] || [ "${BDB_SANITIZER_RESULT}" != "success" ] || [ "${KC_SANITIZER_RESULT}" != "success" ]; then
+            echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}, tkrzw-sanitizers=${SANITIZER_RESULT}, bdb-sanitizers=${BDB_SANITIZER_RESULT}, kc-sanitizers=${KC_SANITIZER_RESULT}" >&2
             exit 1
           fi
           echo "store-backends gate: all upstream jobs succeeded"
@@ -443,14 +460,6 @@ jobs:
     # continue-on-error and outside that gate). Like every check in this
     # workflow it is advisory: only ci.yml's `ci-aggregate` is required.
 
-    env:
-      # Beats rust-toolchain.toml's channel pin for this job only: sanitizer
-      # builds require nightly rustc. Everything else keeps the pinned file.
-      # Date-pinned so a nightly regression cannot red the gate on its own;
-      # bump the date deliberately, in its own commit, when a newer nightly
-      # is needed or the pinned one stops installing.
-      # Exact on purpose (#1074): a nightly is identified only by its date.
-      RUSTUP_TOOLCHAIN: nightly-2026-09-07
     steps:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
@@ -463,16 +472,25 @@ jobs:
       # Same root-owned-checkout caveat as the store-features job. The
       # nightly toolchain below stays bespoke (sanitizer builds need
       # nightly, not the pinned channel), and rust-cache stays off on
-      # purpose — see the note above the test step.
+      # purpose — see the note above the gate step.
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
+
+      # The sanitizer nightly lives in tools/sanitize.sh (NIGHTLY=), which
+      # every backend script reads. RUSTUP_TOOLCHAIN beats
+      # rust-toolchain.toml's channel pin for this job only.
+      - name: Select the sanitizer nightly
+        run: echo "RUSTUP_TOOLCHAIN=$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
         # On Debian, libasan ships with gcc and is not a separate package.
         # libtkrzw-dev provides the distro library the backend links
         # against; libclang-dev is bindgen's runtime dependency.
-        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libtkrzw-dev liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
+        # tkrzw-utils: with no setup.sh environment here, the gate trusts
+        # the distro libtkrzw only after tools/tkrzw/distro-probe.sh, which
+        # runs tkrzw_dbm_util, passes it (Ubuntu's build fails that probe).
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libtkrzw-dev tkrzw-utils liblzma-dev liblz4-dev libzstd-dev zlib1g-dev
 
       - name: Install nightly Rust (sanitizer support)
         run: |
@@ -488,42 +506,13 @@ jobs:
       # a separate sanitizer-flavored cache entry would be pure book-keeping.
       # (Rust-cache hashes RUSTFLAGS into its key anyway, so even a future
       # enablement cannot cross-contaminate the unsanitized dep store.)
-      #
-      # -Zsanitizer=address instruments the whole target graph (rustc
-      # manages the runtime, so ordering and abort semantics are its
-      # problem, not ours). The step builds tkrzw EXPLICITLY, so the
-      # instrumented binary exercises exactly the FFI surface under test,
-      # rather than riding the workspace default, which moved to Berkeley DB
-      # on 2026-09-20.
-      #
-      # The EXPLICIT --target is on purpose: without it, cargo applies
-      # RUSTFLAGS to HOST build scripts and proc macros too, which is how
-      # -Zsanitizer=address produced unloadable proc-macro dylibs (E0463 on
-      # cxxbridge_macro) in earlier iterations of this step. With --target,
-      # host artifacts compile clean and only the target graph is sanitized.
-      # The PREBUILT STANDARD LIBRARY stays uninstrumented: -Zbuild-std +
-      # rust-src is heavier than this job warrants; recorded here and in
-      # docs/findings/upstream-divergences.md.
-      - name: Run the tkrzw feature tests under ASan
+      # tools/tkrzw/run-sanitizers.sh carries the flags and their reasons.
+      - name: Run the tkrzw sanitizer gate
         id: sanitize-tests
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          triple=$(rustc -vV | sed -n 's/^host: //p')
-          export RUSTFLAGS="-D warnings -Zsanitizer=address -Cdebuginfo=1"
-          # LeakSanitizer is tuned off by documented choice, not laziness:
-          # the Rust harness holds deliberate process-lifetime allocations
-          # whose ownership crosses the cxx boundary, which LSan
-          # misclassifies, and the hazards under test are misuse of BORROWED
-          # records and unwinding, both of which stay fatal.
-          # abort_on_error=1 closes the last loophole where a report could
-          # print yet the step still go green. setarch -R disables ASLR for
-          # the process tree: GitHub runner kernels' mmap entropy exceeds
-          # what ASan's shadow mapping assumes, and an unprivileged
-          # container cannot lower vm.mmap_rnd_bits itself.
-          export ASAN_OPTIONS=detect_leaks=0:abort_on_error=1
-          setarch "$(uname -m)" -R \
-            cargo test --locked --target "$triple" -p oxpinyin-store --no-default-features --features tkrzw
+          bash tools/sanitize.sh tkrzw
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -565,12 +554,6 @@ jobs:
       run:
         shell: bash
 
-    env:
-      # Beats rust-toolchain.toml's channel pin for this job only, same
-      # date pin and rationale as the tkrzw lane above.
-      # Exact on purpose (#1074): a nightly is identified only by its date.
-      RUSTUP_TOOLCHAIN: nightly-2026-09-07
-
     steps:
       - name: Bootstrap the bare runner essentials (apt)
         run: |
@@ -583,6 +566,10 @@ jobs:
       - uses: ./.github/actions/bootstrap
         with:
           safe-directory: 'true'
+
+      # Same nightly source as the tkrzw lane above.
+      - name: Select the sanitizer nightly
+        run: echo "RUSTUP_TOOLCHAIN=$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)" >> "$GITHUB_ENV"
 
       - name: Install build dependencies (apt)
         # libdb-dev resolves to libdb5.3-dev — the system libdb this
@@ -604,7 +591,7 @@ jobs:
         run: |
           set -euo pipefail
           start=$EPOCHSECONDS
-          bash tools/bdb/run-sanitizers.sh
+          bash tools/sanitize.sh bdb
           echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
 
       - name: Report
@@ -618,4 +605,75 @@ jobs:
             echo "| Phase | Wall clock |"
             echo "|---|---:|"
             echo "| instrumented suite + C harnesses | ${{ steps.sanitize-tests.outputs.elapsed || '—' }}s |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  kc-sanitizers:
+    # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer, via
+    # tools/sanitize.sh kc. The backend's hazard is ownership: kcdbget,
+    # kccurgetkey, kccurgetvalue and kccurget return caller-owned regions
+    # released with kcfree, so a leak, a double free or a free through the
+    # wrong allocator is what ASan and LSan see. Fedora and Arch ship this
+    # backend. Feeds store-backends-gate (advisory, like every check here).
+    name: kc backend sanitizers
+    runs-on: ubuntu-latest
+    container:
+      image: debian:testing # deliberately unpinned; see the header comment
+      # ASan requires the same seccomp leeway as the tkrzw lane above.
+      options: --security-opt seccomp=unconfined
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Bootstrap the bare runner essentials (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends bash python3 tar gzip zstd git ca-certificates curl
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/bootstrap
+        with:
+          safe-directory: 'true'
+
+      # Same nightly source as the tkrzw lane above.
+      - name: Select the sanitizer nightly
+        run: echo "RUSTUP_TOOLCHAIN=$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)" >> "$GITHUB_ENV"
+
+      - name: Install build dependencies (apt)
+        # libkyotocabinet-dev: the library this backend links and whose
+        # kclangc.h bindgen reads; libclang-dev is bindgen's runtime
+        # dependency.
+        run: apt-get install -y --no-install-recommends gcc g++ make pkg-config util-linux libclang-dev libkyotocabinet-dev
+
+      - name: Install nightly Rust (sanitizer support)
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --show-error https://sh.rustup.rs \
+            | sh -s -- -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
+          printf '%s/.cargo/bin\n' "$HOME" >> "$GITHUB_PATH"
+          . "$HOME/.cargo/env"
+          rustc --version
+
+      - name: Run the kc sanitizer gate
+        id: sanitize-tests
+        run: |
+          set -euo pipefail
+          start=$EPOCHSECONDS
+          bash tools/sanitize.sh kc
+          echo "elapsed=$((EPOCHSECONDS - start))" >> "$GITHUB_OUTPUT"
+
+      - name: Report
+        if: always()
+        run: |
+          {
+            echo "## kc-sanitizers"
+            echo ""
+            echo "Result: **$([ '${{ steps.sanitize-tests.outcome }}' = 'success' ] && echo 'clean — zero findings' || echo 'FINDINGS PRESENT — STOP')**"
+            echo ""
+            echo "| Phase | Wall clock |"
+            echo "|---|---:|"
+            echo "| instrumented suite | ${{ steps.sanitize-tests.outputs.elapsed || '—' }}s |"
           } >> "$GITHUB_STEP_SUMMARY"
