@@ -61,7 +61,9 @@ init	<core::iter::adapters::filter_map::FilterMap<core::iter::sources::from_fn::
 init	<core::str::lossy::Utf8Chunks as core::iter::traits::iterator::Iterator>::next
 init	<core::str::pattern::CharSearcher as core::str::pattern::Searcher>::next_match
 init	<f32 as core::str::traits::FromStr>::from_str
+init	<hashbrown::raw::RawTable<(u32, u64)>>::reserve_rehash::<hashbrown::map::make_hasher<u32, u64, core::hash::BuildHasherDefault<oxpinyin_core::hash::FixedHasher>>::{closure#0}> [instantiating crate: oxpinyin_user]
 init	<hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
+init	<hashbrown::raw::RawTableInner>::fallible_with_capacity::<alloc::alloc::Global> [instantiating crate: oxpinyin_user]
 init	<i32 as core::fmt::Display>::fmt
 init	<memmap2::os::MmapInner>::map_copy_read_only
 init	<oxpinyin_chewing::chewing_key::ChewingKey>::from_pinyin
@@ -224,7 +226,7 @@ init	oxpinyin_user::persistence::load_user_bigram_db
 init	oxpinyin_user::persistence::remove_dbm_sidecars
 init	oxpinyin_user::persistence::system_originals
 init	oxpinyin_user::persistence::write_marker
-init	oxpinyin_user::store::get_u64::<oxpinyin_user::session_values::SessionValues<oxpinyin_store::bdb::BdbStore>> [instantiating crate: oxpinyin_runtime]
+init	oxpinyin_user::store::get_u64_or::<oxpinyin_user::session_values::SessionValues<oxpinyin_store::bdb::BdbStore>> [instantiating crate: oxpinyin_runtime]
 init	oxpinyin_user::store_libpinyin::backed_readings
 init	oxpinyin_user::store_libpinyin::loaded_pronunciation_counts
 init	oxpinyin_user::store_libpinyin::seed_txn_with_replay::<oxpinyin_user::session_values::SessionTxn> [instantiating crate: oxpinyin_runtime]
