@@ -59,6 +59,9 @@ RUN apt-get -o Acquire::Check-Valid-Until=false update \
 # rustup-init is per-arch: take the build host's own binary and verify it
 # against the pinned checksum for that arch
 # (static.rust-lang.org/rustup/archive/1.29.0/<arch>/rustup-init.sha256).
+# Exact on purpose (#1074): rustup-init installs from a checksum, and a checksum
+# is only known for a known version; the stable toolchain's output depends on its
+# version (keep it equal to the channel in rust-toolchain.toml).
 RUN set -eu; \
     case "$(uname -m)" in \
         x86_64)  rustup_arch=x86_64-unknown-linux-gnu; \
@@ -78,6 +81,11 @@ RUN set -eu; \
     && rm /tmp/rustup-init
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+# Exact on purpose (#1074): a fresh image, and cargo-c's rust-version rises with
+# each release (0.10.24 needs Rust 1.95, 0.10.26 needs 1.97), so an unpinned
+# install would break once it passes the pinned Rust. Any cargo-c at or above
+# the minimum that `just doctor` reports builds the same objects
+# (docs/packaging.md, "Regeneration").
 RUN cargo install cargo-c@0.10.25 --locked
 
 COPY . /repo

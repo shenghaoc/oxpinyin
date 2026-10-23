@@ -91,6 +91,7 @@ bench-smoke:
     @just bench --no-run; exit $LASTEXITCODE
 
 # Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
+# Exact on purpose (#1074): a nightly is identified only by its date.
 [linux]
 fuzz *args:
     @just heavy -- setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$@"

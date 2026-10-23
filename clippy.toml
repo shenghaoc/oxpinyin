@@ -1,4 +1,5 @@
 # Keep Clippy's suggestion engine (manual-let-else, redundant-field-names,
 # etc.) aligned with the pinned toolchain so local hints never disagree
 # with what CI enforces.
+# Exact on purpose (#1074): the MSRV is the pinned stable toolchain in rust-toolchain.toml.
 msrv = "1.97.1"
