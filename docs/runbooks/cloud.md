@@ -1,6 +1,7 @@
 # Cloud sessions — provisioning an agent-platform cloud host
 
-Cloud sessions meeting the host requirements below can run every gate.
+Cloud sessions meeting the general host requirements below can run
+non-measurement gates. Measurement gates also require the ext4 paths below.
 Provision one with `tools/cloud/setup.sh`; this route includes Valgrind for
 measurement tasks. A cloud session is not automatically provisionable just
 because it is supplied by an agent platform. Ordinary native development
@@ -50,6 +51,17 @@ The script also requires:
   before image pulls or library builds when a requested cell needs data;
   verified cached data/model inputs avoid that download.
 
+Measurement tasks (teardown, startup controller and cold mode) additionally
+need an accessible, writable ext4 path for libraries, data, profiles, the
+work directory and `TMPDIR`. Check each actual path with `findmnt -T <path>`;
+the reported `FSTYPE` must be `ext4`. An ext4 mount elsewhere does not prove
+that the measured files are on ext4. Some cloud sessions have only overlay
+and tmpfs paths. Without an ext4 path, measurement gates cannot run; move
+measurement work to a suitable host. Non-measurement setup remains supported.
+Setup reports accessible ext4 candidates, or explicitly none/unknown, without
+failing setup or creating a filesystem. Verify all measurement paths yourself
+even when it reports a candidate.
+
 On a host lacking these capabilities, stop at the named prerequisite and
 ask the environment owner to provide it, or move to a suitable cloud host.
 Do not route around network policy. The canonical compatibility container
@@ -75,7 +87,7 @@ so a second run only re-verifies (under a second here). Options:
 default `~/.cache/oxpinyin`), `--cells`, `--jobs`, `--no-pull` (build the
 libraries even if the published image exists). `OXPINYIN_CONTAINER`
 names the container command (see step 1). Progress goes to stderr;
-stdout is one line per cell:
+stdout includes an informational ext4 path report and one line per cell:
 
 ```
 bdb prefix=<dir> libpinyin=<sha256> libzhuyin=<sha256> data manifest OK
@@ -96,8 +108,8 @@ This mode runs the existing argument and Linux x86_64 checks, then the
 same uv and managed CPython (3.15 series, GIL build) provisioning and
 interpreter verification as full setup. Neither is installed when it is
 already present at or above its minimum; `just doctor` reports both. It
-prints the verified-interpreter line, logs that it stops after Python
-provisioning and exits successfully. It does
+prints the verified-interpreter line and the informational ext4 path report,
+logs that it stops after Python provisioning and exits successfully. It does
 not select, start or pull a container runtime, install Valgrind or backend
 utilities, provision oracle libraries or model data, or write the oracle
 environment file. See [native setup](setup.md) for the interpreter policy.
