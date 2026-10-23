@@ -230,6 +230,13 @@ One probe runs per sample, in the rotating order:
 - `trace`: `strace -f -y -T` between two marker writes the worker makes
   immediately around the init call. Counts are exact; per-call times include
   ptrace stops and only bound kernel time. Requires `strace` on PATH.
+- `pages`: one Lackey run (`--trace-mem=yes`), streamed from a pipe and
+  kept only between the same markers: each distinct instruction address and
+  64-byte data line init touches in the facade. The `init-pages` record maps
+  them, and the facade pages that the `count` samples' M0 and I1 `mincore`
+  bitmaps show init reading into the page cache (cold), onto the object's
+  sections, sized symbols (`readelf`, `nm`) and the ordered `.text` prefix
+  that the packaging check verifies.
 
 Then, warm only, three rounds of Callgrind collected on the facade's init
 export, with simulated caches (`--I1`/`--D1`/`--LL` fixed) and branches.
