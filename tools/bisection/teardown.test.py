@@ -883,7 +883,7 @@ class NativeTests(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform == 'linux', 'Linux mincore and perf_event_open')
     def test_init_mode_pauses_after_load_and_init_and_reports_each_probe(self):
-        for probe in (None, 'count', 'sample', 'faults'):
+        for probe in (None, 'count', 'sample', 'sample-coarse', 'faults'):
             with self.subTest(probe=probe), patch.object(td, 'exports', return_value=['pinyin_init']):
                 row = self.campaign().run('pinyin', self.library, self.profile, mode='init', probe=probe)
                 self.assertEqual((set(row['checkpoints'][0]), set(row['checkpoints'][1])), ({'M0'}, {'I1'}))
@@ -902,8 +902,8 @@ class NativeTests(unittest.TestCase):
                     for event in report['events']:
                         # A refused event names its errno and carries no value.
                         self.assertEqual('value' in event, not event['errno'])
-                elif probe == 'sample':
-                    self.assertEqual(report['period_ns'], td.INIT_SAMPLE_PERIOD_NS)
+                elif probe.startswith('sample'):
+                    self.assertEqual(report['period_ns'], td.INIT_SAMPLE_PERIOD_NS[probe])
                     self.assertTrue(report['errno'] or report['valid'])
                 else:
                     self.assertTrue(report['errno'] or report['valid'])

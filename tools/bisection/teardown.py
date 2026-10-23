@@ -47,10 +47,13 @@ MEMORY_ROUNDS, MEMORY_WARMUPS = 30, 2
 CLOCK_FIELDS = ('wall_ns', 'cpu_ns', 'user_ns', 'sys_ns', 'minflt', 'majflt', 'nvcsw', 'nivcsw')
 # init-attribute (#1090): diagnostic samples per probe as (rounds, warm-ups),
 # in the rotating order. None of them is a primary timing sample.
-INIT_PROBE_ROUNDS = dict(count=(30, 1), sample=(30, 1), faults=(10, 0), trace=(6, 0))
+INIT_PROBE_ROUNDS = {'count': (30, 1), 'sample': (30, 1), 'sample-coarse': (60, 1), 'faults': (10, 0),
+                     'trace': (6, 0)}
 INIT_IR_ROUNDS = 3
-# 50 kHz stays below the kernel's default 100 kHz sampling limit.
-INIT_SAMPLE_PERIOD_NS = 20000
+# cpu-clock periods. 50 kHz stays below the kernel's default 100 kHz sampling
+# limit; each sample's handler is charged to the task, so the coarse period
+# checks that the fine one's perturbation does not change the shares.
+INIT_SAMPLE_PERIOD_NS = {'sample': 20000, 'sample-coarse': 200000}
 # Fixed simulated caches, so the diagnostic does not depend on the host CPUID.
 INIT_CACHE_SIM = ('--I1=32768,8,64', '--D1=32768,8,64', '--LL=8388608,16,64')
 
@@ -725,7 +728,7 @@ class Campaign:
         cold = self.cache == 'cold' and mode in ('time', 'memory', 'init')
         if cold and (cycles != 1 or profiler):
             raise ValueError('cold samples require one native lifecycle without a profiler')
-        if probe not in (None, 'none', 'count', 'sample', 'faults', 'trace') or (probe == 'trace' and profiler):
+        if probe not in (None, 'none', 'count', 'faults', 'trace', *INIT_SAMPLE_PERIOD_NS) or (probe == 'trace' and profiler):
             raise ValueError('unknown init probe or a traced profiler')
         if probe not in (None, 'none') and mode != 'init':
             raise ValueError('init probes require init mode')
@@ -775,7 +778,8 @@ class Campaign:
         if inputs is not None:
             env['OXPINYIN_TEARDOWN_INPUTS'] = str(inputs)
         if probe not in (None, 'none'):
-            env['OXPINYIN_TEARDOWN_INIT_PROBE'] = 'sample:%d' % INIT_SAMPLE_PERIOD_NS if probe == 'sample' else probe
+            env['OXPINYIN_TEARDOWN_INIT_PROBE'] = ('sample:%d' % INIT_SAMPLE_PERIOD_NS[probe]
+                                                   if probe in INIT_SAMPLE_PERIOD_NS else probe)
         if marker is not None:
             env['OXPINYIN_TEARDOWN_MARKER_FD'] = str(marker)
         errors, documents, boundaries, trace = bytearray(), [], [], bytearray()
@@ -931,7 +935,7 @@ class Campaign:
                           raw_profile_identity=identity(file_set(user)))
             if mode == 'init':
                 probes = [value for value in documents if isinstance(value, dict) and 'init_probe' in value]
-                if len(probes) != (probe in ('count', 'sample', 'faults')):
+                if len(probes) != (probe in ('count', 'faults', *INIT_SAMPLE_PERIOD_NS)):
                     raise ValueError('native init probe report is missing or repeated')
                 observation['documents'] = [value for value in documents if value not in probes]
                 names = {str(user): '$USER', str(self.data): '$DATA', str(library.resolve()): '$LIB',
@@ -1252,8 +1256,8 @@ def init_attribute(campaign, subjects, profiles, cases, facades, references, dir
                             rows[side].append(row)
                 if probe == 'count':
                     report_init_counts(facade, case, rows, campaign.cache)
-                elif probe == 'sample':
-                    report_init_samples(facade, case, rows, symbols, subjects, campaign.worker, campaign.cache)
+                elif probe in INIT_SAMPLE_PERIOD_NS:
+                    report_init_samples(facade, case, rows, symbols, subjects, campaign.worker, campaign.cache, probe)
                 elif probe == 'faults':
                     report_init_faults(facade, case, rows, subjects, campaign, campaign.cache)
                 else:
@@ -1317,7 +1321,7 @@ def report_init_counts(facade, case, rows, cache):
                                        for role, value in sorted(cached.items())})
 
 
-def report_init_samples(facade, case, rows, symbols, subjects, worker, cache):
+def report_init_samples(facade, case, rows, symbols, subjects, worker, cache, probe='sample'):
     for side, samples in rows.items():
         library = subjects[side][facade].resolve()
         user, kernel, leaves = collections.Counter(), collections.Counter(), {}
@@ -1342,11 +1346,11 @@ def report_init_samples(facade, case, rows, symbols, subjects, worker, cache):
                 else:
                     user[user_object(sample['ip'], maps, library, worker)] += 1
         if status['errno']:
-            print_record('init-samples', facade=facade, case=case, side=side, cache=cache, status='NOT RUN',
+            print_record('init-samples', facade=facade, case=case, side=side, cache=cache, probe=probe, status='NOT RUN',
                          errno=sorted(set(status['errno'])))
             continue
-        print_record('init-samples', facade=facade, case=case, side=side, cache=cache, rounds=len(samples),
-                     period_ns=INIT_SAMPLE_PERIOD_NS, samples=count, user_samples=sum(user.values()),
+        print_record('init-samples', facade=facade, case=case, side=side, cache=cache, probe=probe, rounds=len(samples),
+                     period_ns=INIT_SAMPLE_PERIOD_NS[probe], samples=count, user_samples=sum(user.values()),
                      kernel_samples=sum(kernel.values()), user=dict(user.most_common()), kernel=dict(kernel.most_common()),
                      kernel_leaves={category: dict(value.most_common(8)) for category, value in sorted(leaves.items())},
                      symbolized=symbols is not None,

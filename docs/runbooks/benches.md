@@ -215,9 +215,12 @@ One probe runs per sample, in the rotating order:
 - `count`: perf counters around init, minus an empty calibration bracket
   that the record reports too. An event the kernel refuses (for example a
   hardware event on a host without a PMU) is NOT RUN with its errno, never 0.
-- `sample`: `cpu-clock` samples every 20 µs with kernel call chains. Kernel
-  samples are named by their innermost syscall or page-fault frame from
-  `/proc/kallsyms`; user samples by the object mapped at I1.
+- `sample` and `sample-coarse`: `cpu-clock` samples every 20 µs and every
+  200 µs, with kernel call chains. Kernel samples are named by their
+  innermost syscall or page-fault frame from `/proc/kallsyms`; user samples
+  by the object mapped at I1. The kernel charges each sample's handler to
+  the task, so the fine period inflates CPU time; compare shares, not
+  sampled durations, and check them against the coarse period.
 - `faults`: every minor and major fault's IP and address, with every mmap,
   in one ring in order; each fault is assigned to the mapping that held its
   address at the time.
