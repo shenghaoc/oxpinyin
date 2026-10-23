@@ -532,6 +532,28 @@ class AdmissionTests(unittest.TestCase):
                 self.assertIn(f'resource-blocked: {600 if build else 1024} MiB needed, 0 MiB available', output)
                 execute.assert_not_called()
 
+    def failed_build_reason(self):
+        """The reason column of the one FAIL row when the cell build's admission refuses."""
+        execute = mock.Mock(side_effect=AssertionError('A blocked build started.'))
+        rc, output = self.aggregate(build=True, executed=execute)
+        rows = [line.split(' | ') for line in output.splitlines() if ' | ' in line][2:]
+        self.assertEqual(rc, 1)
+        self.assertEqual({(fields[0], fields[1], fields[2]) for fields in rows}, {('tiny', 'bdb', 'FAIL')})
+        execute.assert_not_called()
+        return rows[0][-1]
+
+    def test_a_cell_build_refused_on_memory_keeps_its_resource_blocked_reason(self):
+        with mock.patch.dict(self.globals, resource_snapshot=lambda: resources(0)):
+            reason = self.failed_build_reason()
+        self.assertEqual(reason, 'resource-blocked: 600 MiB needed, 0 MiB available')
+
+    def test_a_cell_build_behind_a_held_slot_keeps_its_slot_wait_reason(self):
+        with M['HeavySlot']('other lane', out=self.out):
+            reason = self.failed_build_reason()
+        self.assertTrue(reason.startswith('slot-wait-expired: '), reason)
+        self.assertNotIn('cell build:', reason)
+        self.assertNotIn('MiB', reason)
+
     def test_an_oom_killed_child_is_fail_even_when_skips_are_allowed(self):
         child = [sys.executable, '-c', 'import os,signal; os.kill(os.getpid(), signal.SIGKILL)']
         rc, output = self.aggregate(child=child)
