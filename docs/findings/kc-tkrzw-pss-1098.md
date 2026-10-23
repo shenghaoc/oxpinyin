@@ -2,33 +2,44 @@
 
 ## Scope and release condition
 
-Source-only preparation, recorded 2026-10-23 UTC. No provisioning, build,
-profiling or measurement has run for this issue. The parent has released
-the Ubuntu queue for #1098 despite #1031's unresolved exact-Ir STOP. This
-issue stops at the unsupported controller stages described below; it owns
-no heavy process or slot. #1031 has priority after this terminal outcome.
-#1100 has a separate analysis owner on this host. #1099 remains parked and
-must not start automatically. No historical figure is a current-run baseline.
+Tooling preparation, recorded 2026-10-23 UTC. Findings measurements remain
+paused; #1031 retains heavy-work priority. #1099 remains parked and must not
+start automatically. No provisioning, shipping build, profiling or measurement
+has run for this issue. No historical figure is a current-run baseline.
 
-The deliverable is findings only: both shipping ordered facades on KC and
-tkrzw, subject, byte-identical control and pin together on one host. No
-production change is authorized. A residency/time trade requires a STOP.
+The maintainer approved extending KC/tkrzw comparison stages on the new
+`wip/1091-cold-cloud` parent. Its verified committed tip was `fd28e96e`, based
+on main `294f14eb`; the old unfinished `wip/1091-cold-cache` was not adopted.
+`gh stack` registers and rebases this layer on the cloud parent. The extension
+does not change the parent's cold-file enumeration, eviction policy, major
+fault instrumentation or native lifecycle worker. #1090's init instrumentation
+follows this shared-tooling checkpoint and is not implemented here.
 
-## Source-derived tooling limitation
+## Comparison-stage extension
 
-At source `747b00cd`, `tools/bisection/teardown.py::run` rejects all stages
-other than `provision` for KC and tkrzw. `profile_contents` recognizes BDB
-containers and otherwise compares file bytes; it does not supply the
-backend-aware final-profile comparison these stages require. The
-[measurement runbook](../runbooks/benches.md#native-teardown-workload)
-explicitly documents the restriction. #1076 enabled profile provisioning,
-not confirmation or attribution, on the two peer backends.
+At source `747b00cd`, only KC/tkrzw profile provisioning was supported.
+Confirmation and attribution were refused because final-profile comparison
+handled BDB containers only. This extension resolves that source limitation
+before measurements: each peer backend's user indexes and user bigram are
+compared by all logical records, including empty values. KC loads snapshots;
+tkrzw opens TreeDBM indexes and HashDBM bigrams read-only. Unknown files
+remain byte comparisons. Existing pinyin-index padding and chunk-header
+timestamp rules remain the only normalization. BDB behavior is preserved.
 
-Consequently the requested KC/tkrzw `confirm` and `attribute` commands are
-not executable through the supported controller as it stands. Do not remove
-the guard, label another backend BDB, omit equivalence checks or substitute
-raw DB-file equality. A supported controller extension needs resolution
-before those stages. This checkpoint changes documentation only.
+Peer readers run as a mode of the existing isolated contract worker, so
+backend native libraries do not remain mapped in the controller between
+samples. Runtime checks cover each actual copied object before native,
+fixture-population and comparison launches. The tkrzw reader loads the exact
+certified runtime path; errors refuse a comparison rather than producing
+an empty or partial database result. No new driver or dependency is added.
+
+The source basis was read with
+`git -C /home/sheng/repos/libpinyin show 074a2219:PATH`:
+`src/storage/ngram_kyotodb.cpp:54-64,82-91` loads/saves the user bigram as
+a snapshot; `src/storage/ngram_tkrzwdb.cpp:48-81` uses a HashDBM temporary;
+`src/storage/phrase_large_table3_tkrzwdb.cpp:83-118` uses TreeDBM;
+`src/storage/chewing_large_table2_tkrzwdb.cpp:92-106` loads TreeDBM records.
+These are source-derived storage requirements, not performance results.
 
 The existing worker and readers already provide the relevant primitives:
 `teardown.py::mapping_group` and `read_memory` read mapping classes and
@@ -39,11 +50,38 @@ uses the earlier smaps read. These are different sampling definitions;
 report any rollup-versus-mapping-sum difference explicitly rather than
 silently substituting one for the other.
 
-## Continuation after tooling resolution
+## Tooling verification checkpoint
+
+Light gates passed on Ubuntu with the repository-managed CPython 3.15:
+
+```sh
+uv run --no-project --managed-python --python cpython@3.15+gil python -B -X lazy_imports=normal tools/bisection/contract-diff.test.py
+# 93 tests passed, including seven peer-reader/runtime tests.
+uv run --no-project --managed-python --python cpython@3.15+gil python -B -X lazy_imports=normal tools/bisection/teardown.test.py PureTests ColdTests
+# 35 tests passed.
+cargo fmt --all --check
+git diff --check
+```
+
+AST comparison against parent `fd28e96e` confirmed unchanged
+`library_dependencies`, `cold_files`, `resident_pages`, `evict_files` and
+`report_times`; `git diff --exit-code wip/1091-cold-cloud --
+tools/bisection/teardown.h` also passed. Native teardown/stub and real-ELF
+runtime harness gates remain pending heavy admission after #1031 priority;
+this is a WIP checkpoint, not a completed code-change gate. No backend
+campaign or shipping measurement has run.
+
+The three verification-rule-2 checks are empty for this layer: no store path,
+no backend feature pattern in changed non-Markdown files, and no changed
+backend-naming Cargo.toml line. No Rust crate is modified; crate tests and
+clippy do not apply. The authorized scope is tooling plus harness tests,
+with measurement separately queued. Raw test output is not retained in files.
+
+## Measurement continuation after release
 
 Use `/home/sheng/wt/1098` on `wip/1098-kc-tkrzw-pss` and
 `TMPDIR=/home/sheng/tmp/oxpinyin-1098`. Fetch and rebase before publication.
-Re-read current instructions and resolve the tooling limitation above.
+Re-read current instructions and complete the tooling gates before release.
 
 Run `tools/cloud/setup.sh --cells "kc tkrzw"` with task-owned
 `OXPINYIN_ORACLE_ENV` and `--cache-dir` under the home disk. Only documented
@@ -75,7 +113,7 @@ reported as invalid under the task instruction; residency acceptance also
 requires the section 7.5 paired difference median and entire bootstrap
 interval inside the specified band. Do not tune the band after sampling.
 
-Once supported, collect M0/M1 Rss, Pss and Private_Dirty per mapping for
+After release, collect M0/M1 Rss, Pss and Private_Dirty per mapping for
 both facades and `phrases`/`journals`, subject/control/pin in the same run.
 Add Massif peak heap per side with exact deterministic controls; distinguish
 sampled lifecycle peaks from checkpoint heap. Rank positive M1 Pss

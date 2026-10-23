@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import teardown as td
@@ -59,14 +59,11 @@ class PureTests(unittest.TestCase):
             with self.subTest(cell=cell):
                 self.assertIn('--teardown-work-dir', self.refusal(cell=cell))
 
-    def test_later_stages_stay_bdb_only(self):
+    def test_comparison_stages_accept_all_three_cells(self):
         for stage in ('verify', 'pilot', 'confirm', 'repeat', 'multi', 'attribute'):
-            with self.subTest(stage=stage):
-                self.assertIn('--teardown-work-dir', self.refusal(teardown_stage=stage))
-                for cell in ('kc', 'tkrzw'):
-                    message = self.refusal(cell=cell, teardown_stage=stage)
-                    self.assertIn(f'--teardown-stage {stage} is a BDB workload', message)
-                    self.assertIn(f'the {cell} cell supports only --teardown-stage provision', message)
+            for cell in ('bdb', 'kc', 'tkrzw'):
+                with self.subTest(cell=cell, stage=stage):
+                    self.assertIn('--teardown-work-dir', self.refusal(cell=cell, teardown_stage=stage))
 
     def test_contract_and_profiler_modes_are_refused_on_every_cell(self):
         modes = dict(per_call='wrap', cases='default-option-parse', issue=['1'], family=['f'],
@@ -315,6 +312,77 @@ class PureTests(unittest.TestCase):
             self.assertIn('unexpected.tmp', a)
             driver.index_file_rows = lambda _: [['01', ''], ['02', '04']]
             self.assertNotEqual(a, td.profile_contents(driver, root))
+
+
+    def peer_driver(self, rows):
+        return SimpleNamespace(USER_INDEX_FILES=('user_phrase_index.bin', 'user_pinyin_index.bin'),
+                               zero_item_padding=lambda key, value: value,
+                               run_worker=MagicMock(return_value=dict(exit=0, stderr_lines=0, result=dict(rows=rows))))
+
+    def test_peer_profiles_compare_records_keep_empty_values_and_unknown_files(self):
+        for cell in ('kc', 'tkrzw'):
+            with self.subTest(cell=cell), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                names = ('user_phrase_index.bin', 'user_pinyin_index.bin', 'user_bigram.db')
+                for name in (*names, 'unexpected.tmp'):
+                    (root / name).write_bytes(b'first container bytes')
+                driver = self.peer_driver([['01', ''], ['02', '03']])
+                first = td.profile_contents(driver, root, library=Path('/subject.so'), cell=cell)
+                self.assertEqual(first['user_bigram.db']['rows'], [['01', ''], ['02', '03']])
+                self.assertEqual(first['user_bigram.db']['format'], cell + '-rows')
+                self.assertIn('unexpected.tmp', first)
+                for call in driver.run_worker.call_args_list:
+                    mode, anchor, path, kind, scratch = call.args
+                    self.assertEqual((mode, anchor, scratch), ('profile-rows', Path('/subject.so'), root.parent))
+                    self.assertEqual(kind, 'hash' if path.name == 'user_bigram.db' else 'tree')
+                    self.assertEqual(call.kwargs, dict(extra_env=dict(CONTRACT_DIFF_CELL=cell), timeout=120))
+                for name in names:
+                    (root / name).write_bytes(b'different layout and metadata')
+                self.assertEqual(first, td.profile_contents(driver, root, library=Path('/subject.so'), cell=cell))
+                driver.run_worker.return_value['result']['rows'] = [['01', ''], ['02', '04']]
+                self.assertNotEqual(first, td.profile_contents(driver, root, library=Path('/subject.so'), cell=cell))
+
+    def test_peer_profiles_reject_failed_reader_partial_or_malformed_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'user_bigram.db').write_bytes(b'container')
+            for cell in ('kc', 'tkrzw'):
+                driver = self.peer_driver([])
+                with self.assertRaisesRegex(ValueError, 'runtime certification'):
+                    td.profile_contents(driver, root, cell=cell)
+                driver.run_worker.assert_not_called()
+                # Empty database is distinct from an absent database.
+                result = td.profile_contents(driver, root, library=Path('/subject.so'), cell=cell)
+                self.assertIn('user_bigram.db', result)
+                self.assertEqual(result['user_bigram.db']['rows'], [])
+                for observation in (dict(exit=1, stderr_lines=0, result=dict(rows=[])),
+                                    dict(exit=0, stderr_lines=1, result=dict(rows=[])),
+                                    dict(exit=0, stderr_lines=0, result=None),
+                                    dict(exit=0, stderr_lines=0, result=dict(rows=[], extra=True))):
+                    with self.subTest(cell=cell, observation=observation):
+                        driver.run_worker.return_value = observation
+                        with self.assertRaisesRegex(ValueError, 'reader failed'):
+                            td.profile_contents(driver, root, library=Path('/subject.so'), cell=cell)
+                for rows in (None, [['01']], [['01', None]], [['01', '0']], [['01', 'zz']]):
+                    driver.run_worker.return_value = dict(exit=0, stderr_lines=0, result=dict(rows=rows))
+                    with self.subTest(cell=cell, rows=rows), self.assertRaisesRegex(ValueError, 'invalid profile row'):
+                        td.profile_contents(driver, root, library=Path('/subject.so'), cell=cell)
+
+    def test_peer_index_padding_and_only_registered_timestamp_bytes_are_normalized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'user_pinyin_index.bin').write_bytes(b'container')
+            (root / 'user.bin').write_bytes(b'headTIMEpayload')
+            (root / 'custom.bin').write_bytes(b'headTIMEpayload')
+            driver = self.peer_driver([['01', 'aabb']])
+            driver.zero_item_padding = MagicMock(return_value='aa00')
+            first = td.profile_contents(driver, root, library=Path('/subject.so'), cell='kc')
+            self.assertEqual(first['user_pinyin_index.bin']['rows'], [['01', 'aa00']])
+            driver.zero_item_padding.assert_called_once_with('01', 'aabb')
+            (root / 'user.bin').write_bytes(b'headNEW!payload')
+            self.assertEqual(first, td.profile_contents(driver, root, library=Path('/subject.so'), cell='kc'))
+            (root / 'custom.bin').write_bytes(b'headNEW!payload')
+            self.assertNotEqual(first, td.profile_contents(driver, root, library=Path('/subject.so'), cell='kc'))
 
 
 class ColdTests(unittest.TestCase):
@@ -691,7 +759,8 @@ class NativeTests(unittest.TestCase):
                     self.assertNotEqual(user, self.profile)
                     paths.extend([measured, data / 'system.bin', user / 'user.conf'])
                     return paths
-                with patch.object(td, 'cold_files', side_effect=files), \
+                with patch.object(campaign.driver, 'check_tkrzw'), \
+                        patch.object(td, 'cold_files', side_effect=files), \
                         patch.object(td, 'evict_files', side_effect=ValueError('file stays resident: private-stub')) as eviction, \
                         patch.object(td.subprocess, 'Popen') as child:
                     with self.assertRaisesRegex(ValueError, 'file stays resident: private-stub'):
@@ -709,7 +778,8 @@ class NativeTests(unittest.TestCase):
             def launch(*args, **kwargs):
                 events.append('launch')
                 return popen(*args, **kwargs)
-            with patch.object(td, 'exports', return_value=['pinyin_init']), \
+            with patch.object(campaign.driver, 'check_tkrzw'), \
+                    patch.object(td, 'exports', return_value=['pinyin_init']), \
                     patch.object(td, 'cold_files', return_value=[self.library]), \
                     patch.object(td, 'evict_files', side_effect=lambda _: events.append('evict')), \
                     patch.object(td.subprocess, 'Popen', side_effect=launch):
@@ -781,6 +851,30 @@ class NativeTests(unittest.TestCase):
                                  sum(times[name]['majflt'] for name in ('load_ns', 'lifecycle_ns', 'dlclose_ns')))
                 self.assertEqual(times['teardown_total_ns']['majflt'],
                                  times['free_all_instances_ns']['majflt'] + times['fini_ns']['majflt'])
+
+    def test_each_native_launch_certifies_copied_object_and_stops_before_eviction_on_refusal(self):
+        campaign = self.campaign()
+        for facade in ('pinyin', 'zhuyin'):
+            for cache in ('warm', 'cold'):
+                campaign.cache = cache
+                with self.subTest(facade=facade, cache=cache), \
+                        patch.object(campaign.driver, 'check_tkrzw', side_effect=RuntimeError('runtime refused')) as guard, \
+                        patch.object(td, 'evict_files') as evict, patch.object(td.subprocess, 'Popen') as child:
+                    with self.assertRaisesRegex(RuntimeError, 'runtime refused'):
+                        campaign.run(facade, self.library, self.profile)
+                    self.assertEqual(guard.call_args.args[1:4], ('teardown.py', facade, self.library))
+                    evict.assert_not_called()
+                    child.assert_not_called()
+                self.assertFalse(list(self.root.glob('sample-*')))
+
+    def test_profile_population_certifies_pin_before_launch(self):
+        campaign = self.campaign()
+        with patch.object(campaign.driver, 'check_tkrzw', side_effect=RuntimeError('runtime refused')) as guard, \
+                patch.object(td.subprocess, 'Popen') as child:
+            with self.assertRaisesRegex(RuntimeError, 'runtime refused'):
+                td.populate_user(campaign, self.library, self.profile, self.root / 'rows')
+            self.assertEqual(guard.call_args.args[1:4], ('teardown.py/populate', 'pin', self.library))
+            child.assert_not_called()
 
     def test_missing_export_is_invalid_and_cleans_private_sample(self):
         campaign = self.campaign()

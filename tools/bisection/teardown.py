@@ -69,25 +69,49 @@ def identity(files):
     return digest_bytes(json.dumps(files, sort_keys=True, separators=(',', ':')).encode())
 
 
-def profile_contents(driver, directory):
+def profile_contents(driver, directory, *, library=None, cell=None):
     """Reuse contract-diff's DB row/padding rules, retaining every file/row.
 
     BDB page headers include random file identities and LSNs; Bigram::save_db
     recreates the container (src/storage/ngram_bdb.cpp:81-105 at 074a2219).
-    Raw input identities are recorded separately, never used as semantic DB
-    equality. The existing registered padding/timestamp rules also apply.
+    KC user containers are snapshots, tkrzw indexes are TreeDBM and the
+    user bigram is HashDBM. Read peer records in the existing isolated worker
+    so backend CDLLs do not stay mapped in the controller. Raw input identities
+    stay separate. The registered padding/timestamp rules still apply.
     """
+    cell = cell or os.environ.get('CONTRACT_DIFF_CELL', getattr(driver, 'CELL', 'bdb'))
+    if cell not in ('bdb', 'kc', 'tkrzw'):
+        raise ValueError('unknown profile cell: ' + cell)
     result = {}
     for path in sorted(Path(directory).rglob('*')):
         if not path.is_file():
             continue
         raw = path.read_bytes()
         name = str(path.relative_to(directory))
-        if raw[12:16] in (b'\x62\x31\x05\x00', b'\x61\x15\x06\x00'):
-            rows = driver.index_file_rows(path)
+        peer_db = cell != 'bdb' and name in (*driver.USER_INDEX_FILES, 'user_bigram.db')
+        bdb_db = cell == 'bdb' and raw[12:16] in (b'\x62\x31\x05\x00', b'\x61\x15\x06\x00')
+        if peer_db or bdb_db:
+            if peer_db:
+                if library is None:
+                    raise ValueError('profile reader requires the measured library for runtime certification')
+                kind = 'hash' if name == 'user_bigram.db' else 'tree'
+                # Reuse the driver's cancellation-safe worker. Native readers
+                # exit before the next measured launch (also in cold mode).
+                row = driver.run_worker('profile-rows', library, path, kind, Path(directory).parent,
+                                        extra_env=dict(CONTRACT_DIFF_CELL=cell), timeout=120)
+                if row['exit'] or row['stderr_lines'] or not isinstance(row['result'], dict) or set(row['result']) != {'rows'}:
+                    raise ValueError(f'{cell} profile reader failed: {path}: exit={row["exit"]}, '
+                                     f'stderr={row.get("stderr", "")[-500:]}')
+                rows = row['result']['rows']
+                if not isinstance(rows, list) or any(not isinstance(pair, list) or len(pair) != 2 or
+                        any(not isinstance(value, str) or len(value) % 2 or
+                            re.fullmatch('[0-9a-f]*', value) is None for value in pair) for pair in rows):
+                    raise ValueError('invalid profile row document: ' + str(path))
+            else:
+                rows = driver.index_file_rows(path)
             if path.name == 'user_pinyin_index.bin':
                 rows = [[key, driver.zero_item_padding(key, value)] for key, value in rows]
-            result[name] = dict(format='bdb-rows', rows=rows)
+            result[name] = dict(format=cell + '-rows', rows=rows)
         else:
             if path.name in ('user.bin', 'addon.bin', 'network.bin'):
                 raw = raw[:4] + b'\0\0\0\0' + raw[8:]
@@ -465,6 +489,8 @@ class Campaign:
         errors, documents, boundaries = bytearray(), [], []
         self.driver.check_cancelled()
         try:
+            self.driver.check_tkrzw(os.environ.get('CONTRACT_DIFF_CELL', 'bdb'),
+                                    'teardown.py', facade, library, env=env)
             if cold:
                 evict_files(cold_files(library, self.data, user))
             self.driver.check_cancelled()
@@ -547,7 +573,7 @@ class Campaign:
                 raise ValueError('source profile was changed')
             stderr = errors.decode('utf-8', 'surrogateescape').replace(str(user), '$USER')
             observation = dict(samples=[{key: row[key] for key in ('options', 'saved', 'observations')} for row in samples],
-                               stderr=stderr, userfiles=profile_contents(self.driver, user), documents=documents)
+                               stderr=stderr, userfiles=profile_contents(self.driver, user, library=library), documents=documents)
             if mode not in ('export', 'populate'):
                 if len(samples) != cycles or closed is None or closed['status'] != 0:
                     raise ValueError('native lifecycle did not complete')
@@ -637,6 +663,8 @@ def populate_user(campaign, pin, user, rows):
                'populate', '1', '1', '1', 'first-candidate', str(rows)]
     env = dict(os.environ, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports('pinyin')))
     campaign.driver.check_cancelled()
+    campaign.driver.check_tkrzw(os.environ.get('CONTRACT_DIFF_CELL', 'bdb'),
+                               'teardown.py/populate', 'pin', pin, env=env)
     with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           text=True, start_new_session=True) as process:
         deadline = time.monotonic() + 300
@@ -667,14 +695,9 @@ def run(args, driver, parser):
             parser.error('--teardown-cache cold requires native Linux and ext4')
         if args.teardown_stage not in ('verify', 'pilot', 'confirm'):
             parser.error('--teardown-cache cold supports only verify, pilot and confirm stages')
-    # contract-diff checks the runtime before dispatching this workload.
-    # The provision stage only drives the cell's own pin through the worker, so
-    # every cell can write its startup profiles (#1076). The later stages
-    # compare final user files through profile_contents, which reads Berkeley
-    # DB containers only.
-    if args.cell != 'bdb' and args.teardown_stage != 'provision':
-        parser.error(f'--teardown-stage {args.teardown_stage} is a BDB workload; '
-                     f'the {args.cell} cell supports only --teardown-stage provision')
+    # All cells use backend-aware logical records for final-profile
+    # equivalence, including empty rows. Runtime checks also run on each
+    # copied object immediately before every native or comparison worker.
     if not args.teardown_work_dir or not args.teardown_work_dir.is_dir():
         parser.error('--teardown-work-dir must name an owned temporary directory')
     cases = tuple(args.teardown_cases.split(','))
