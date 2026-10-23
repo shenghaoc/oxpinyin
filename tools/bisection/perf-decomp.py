@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """perf-decomp.py — within-session tree/recipe decomposition of a ratio shift.
 
 The control (run-tree-recipe-control.sh) times four cells round-robin in one

@@ -1,5 +1,5 @@
 {
-  "_comment": "Generated once from tools/bisection/bisect.c at main 2ce6cb7d (pre-teardown) using the NativeTests stub. Regenerate with: uv run --no-project --managed-python --python cpython@3.15.0+gil python tools/bisection/teardown.test.py --write-perf-baseline",
+  "_comment": "Generated once from tools/bisection/bisect.c at main 2ce6cb7d (pre-teardown) using the NativeTests stub. Regenerate with: uv run --no-project --managed-python --python cpython@3.15+gil python tools/bisection/teardown.test.py --write-perf-baseline",
   "checksum": "65155381b19ef1a8421728555196be78f80b5571126bc21b0bd270b8249961ea",
   "input_sha256": "b0f24f3bc7249ede48b82d8f9dd777cbdee1c4a9959309a3491ed023b1bbb95a",
   "schema": {

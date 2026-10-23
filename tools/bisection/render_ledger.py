@@ -309,7 +309,7 @@ Regenerate with the clean pin, unchanged read-only bdb prefix/configuration,
 and lane-owned debug bdb Rust build/test artifacts (two build jobs maximum):
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/bisection/internal-ledger.py --pin "$LIBPINYIN_PIN" \\
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal tools/bisection/internal-ledger.py --pin "$LIBPINYIN_PIN" \\
   --config "$BDB_CONFIG_H" --oracle "$BDB_ORACLE_PREFIX" \\
   --build "$J_BDB_IR" --measurement-build "$J_BDB_GCOV" \\
   --measurement-config "$BDB_CONFIG_H" \\

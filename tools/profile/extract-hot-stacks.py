@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """Print the hottest stacks from a samply / Firefox-profiler JSON dump.
 
 Reads `target/profile/w8-cycle.profile.json.gz` (or a path argument) and

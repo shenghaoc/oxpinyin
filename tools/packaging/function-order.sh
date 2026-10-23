@@ -42,7 +42,7 @@ function_order_supported() {
 function_order_measurement() {
   local here
   here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-  uv run --no-project --managed-python --python cpython@3.15.0+gil \
+  uv run --no-project --managed-python --python cpython@3.15+gil \
     python -X lazy_imports=normal "$here/function_order.py" "$@"
 }
 

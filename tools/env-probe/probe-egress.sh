@@ -64,7 +64,7 @@ done
 if [ -n "${HTTPS_PROXY:-}" ]; then
     echo
     echo "--- proxy-recorded denials (deduplicated) ---"
-    curl -sS "${HTTPS_PROXY}/__agentproxy/status" 2>/dev/null | uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c '
+    curl -sS "${HTTPS_PROXY}/__agentproxy/status" 2>/dev/null | uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -c '
 import json, sys
 try:
     d = json.load(sys.stdin)

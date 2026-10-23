@@ -77,17 +77,17 @@ verify_pinned_model() {
             exit 1
         fi
     done
-    cache_root=$(uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$dir")
+    cache_root=$(uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -c 'import os, sys; print(os.path.dirname(os.path.realpath(sys.argv[1])))' "$dir")
     marker="$cache_root/verified"
     if [ -f "$marker" ] && grep -qx "sha256=$MODEL20_SHA256" "$marker"; then
-        MODEL_DIR=$(uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dir")
+        MODEL_DIR=$(uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dir")
         return 0
     fi
     archive="$cache_root/downloads/model20.text.tar.gz"
     if [ -f "$archive" ]; then
         digest=$(file_sha256 "$archive")
         if [ "$digest" = "$MODEL20_SHA256" ]; then
-            MODEL_DIR=$(uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dir")
+            MODEL_DIR=$(uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dir")
             return 0
         fi
         echo "fatal: archive $archive is not the pinned model20" >&2

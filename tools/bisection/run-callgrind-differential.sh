@@ -247,7 +247,7 @@ for _ in $(seq 1 "$HW_RUNS"); do
             "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" >> "$HW" 2>>"$OUT/hw.err"
     done
 done
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$HW" <<'PY' | tee "$OUT/hw-instructions.md"
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$HW" <<'PY' | tee "$OUT/hw-instructions.md"
 import json, statistics, sys
 
 runs = {}
@@ -322,7 +322,7 @@ for _ in $(seq 1 "$T_RUNS"); do
             "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" >> "$SPEED" 2>>"$OUT/speed.err"
     done
 done
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-ci.py" "$SPEED" --metric steady --metric cold --format md \
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-ci.py" "$SPEED" --metric steady --metric cold --format md \
     | tee "$OUT/timing.md"
 
 echo

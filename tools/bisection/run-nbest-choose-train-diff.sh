@@ -45,7 +45,7 @@ for mode in pinyin zhuyin; do
             > "$dest/driver.log" 2> "$dest/driver.err"
     done
     diff -u "$out/$mode-pin/driver.log" "$out/$mode-ox/driver.log" || status=2
-    uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$script_dir/compare-nbest-training-state.py" "$cell" \
+    uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$script_dir/compare-nbest-training-state.py" "$cell" \
         "$out/$mode-pin" "$out/$mode-ox" --pin-so "$prefix/lib/libpinyin.so" \
         --ox-so "$pinyin_so" --data "$prefix/lib/libpinyin/data" \
         --facade "$mode" || status=$?

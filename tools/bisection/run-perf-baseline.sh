@@ -169,7 +169,7 @@ for _ in $(seq 1 "$RUNS"); do
     run_speed_side oracle "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_PREFIX/lib"
     run_speed_side oxpinyin "$CAPI_SO" "$CAPI_DATA" "$CAPI_LIBDIR"
 done
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-baseline.py" summarize-speed "$SPEED_JSONL" \
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-baseline.py" summarize-speed "$SPEED_JSONL" \
     > "$WORK/speed-report.md"
 cat "$WORK/speed-report.md"
 echo "captures: $SPEED_JSONL"
@@ -203,14 +203,14 @@ for _ in $(seq 1 "$RAM_RUNS"); do
     run_ram_side oracle ram-cycle "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_PREFIX/lib"
     run_ram_side oxpinyin ram-cycle "$CAPI_SO" "$CAPI_DATA" "$CAPI_LIBDIR"
 done
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-baseline.py" summarize-ram "$RAM_INIT_JSONL" "$RAM_CYCLE_JSONL" \
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-baseline.py" summarize-ram "$RAM_INIT_JSONL" "$RAM_CYCLE_JSONL" \
     > "$WORK/ram-report.md"
 cat "$WORK/ram-report.md"
 echo "captures: $RAM_INIT_JSONL $RAM_CYCLE_JSONL"
 
 # ── Axis 2: installed size ───────────────────────────────────────────────
 
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-baseline.py" size "$ORACLE_PREFIX" "$STAGE/usr" \
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-baseline.py" size "$ORACLE_PREFIX" "$STAGE/usr" \
     > "$WORK/size-report.md"
 cat "$WORK/size-report.md"
 echo "reports: $WORK/{speed,ram,size}-report.md"
