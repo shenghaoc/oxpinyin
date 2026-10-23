@@ -38,7 +38,7 @@ select zero desktop headroom. Native work, an unlimited guest and an unknown
 cgroup limit retain the normal desktop headroom. Admission uses the
 native resource measurements and `OXPINYIN_RESOURCE_WAIT_SECONDS` (default
 1800); unknown or inadequate memory waits, then fails without launching.
-The host needs uv 0.13.1 or newer and managed CPython 3.15.0+gil for this shared code.
+The host needs uv and its managed CPython for this shared code; `just doctor` checks both against their minimums.
 
 `tools.dev.slot` serializes native admission and container budget changes with
 `heavy-admission` in the native lock directory (`OXPINYIN_LOCK_DIR`, otherwise
@@ -162,8 +162,8 @@ source (including uncommitted edits), not the host `.git` pointer. It never
 mounts another worktree or your whole home. Ignored files, model data and
 native `target/` outputs do not enter the source snapshot.
 
-Discover existing check names on Linux/macOS/WSL (uv 0.13.1 or newer and its managed
-CPython 3.15.0+gil are needed only for this local listing):
+Discover existing check names on Linux/macOS/WSL (uv and its managed CPython,
+which `just doctor` checks, are needed only for this local listing):
 
 ```bash
 bash tools/oracle/compat.sh --list

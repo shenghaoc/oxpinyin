@@ -20,7 +20,10 @@ def doctor_command(args):
 def host_command(args):
     for line in doctor.host_lines():
         print(line)
-    return 0
+    lines, failures = doctor.tool_lines()
+    for line in lines:
+        print(line)
+    return 1 if failures else 0
 
 
 def check_command(args):

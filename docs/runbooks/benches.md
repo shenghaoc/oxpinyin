@@ -25,8 +25,9 @@ Each arm/facade prints a JSON result: `ordered`, `refused`,
 `intentional-unordered`, or `reference` for the pinned upstream library. A
 refusal names the arm, policy and current compiler driver's linker probe.
 That probe is diagnostic; it does not identify a prebuilt object's linker or
-substitute for inspecting the object. GNU BFD ld >=2.43 and an applicable
-policy are needed to build the ordered shipping path. A successful install
+substitute for inspecting the object. GNU BFD ld at or above its minimum
+(`just doctor` checks it on Linux) and an applicable policy are needed to
+build the ordered shipping path. A successful install
 and its stderr do not establish that ordering applied.
 
 The measurement inventory (arm names are command-line names):
@@ -64,7 +65,7 @@ or unordered experiment too. Unknown/repeated names or conflicting
 declarations fail. A check can run alone without starting a campaign:
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15.0+gil \
+uv run --no-project --managed-python --python cpython@3.15+gil \
   python -X lazy_imports=normal tools/packaging/function_order.py \
   --arm subject --library "pinyin=$SUBJECT_PREFIX/lib/libpinyin.so.15.0.0"
 ```
@@ -97,7 +98,7 @@ teardown_work=$(mktemp -d "$PWD/target/teardown.XXXXXX")
 trap 'rm -rf "$teardown_work"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil \
+just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
   python -B -X lazy_imports=normal tools/bisection/contract-diff.py \
   bdb "$pin_prefix" "$shipping_prefix/lib/libpinyin.so" \
   --zhuyin-so "$shipping_prefix/lib/libzhuyin.so" \
@@ -305,6 +306,7 @@ tar -cf - --exclude=target --exclude=.git . | docker run --rm -i \
         kyotocabinet kyotocabinet-devel \
         libpinyin libpinyin-data \
         curl ca-certificates
+    # Exact on purpose (#1074): output depends on the Rust version. Keep it equal to the channel in rust-toolchain.toml.
     curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.97.1 --profile minimal
     . "$HOME/.cargo/env"
     mkdir -p /src && tar -xf - -C /src && cd /src
@@ -409,7 +411,7 @@ It is a disposable workload input, not a committed fixture or profile
 capture:
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$HARNESS" "$PIN_SO" "$DATA" "$PHRASE_FILE" <<'PY'
 import hashlib
 import subprocess
 import sys
@@ -785,7 +787,7 @@ Run this command under the shared host admission wrapper:
 
 ```sh
 tools/bisection/run-all.py --heavy-slot -- \
-  uv run --no-project --managed-python --python cpython@3.15.0+gil \
+  uv run --no-project --managed-python --python cpython@3.15+gil \
   python -X lazy_imports=normal tools/bisection/contract-diff.py \
   bdb "$PINYIN_ORACLE_PREFIX" "$SUBJECT_PREFIX/lib/libpinyin.so" \
   --zhuyin-so "$SUBJECT_PREFIX/lib/libzhuyin.so" \

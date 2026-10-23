@@ -23,19 +23,21 @@ Full setup requires Linux x86_64 and:
 - Cargo on `PATH`, rustup and the installed toolchain/components selected by
   `rust-toolchain.toml`. Setup checks these before provisioning; it does not
   install Rust. Follow [native setup](setup.md) when they are missing.
-- Working `valgrind --version`, or root/sudo access plus `apt-get` to install
-  it. Root uses apt directly; a non-root account with sudo retains the sudo
-  install path. Without either privilege route, setup prints
-  `run as root: apt-get install -y valgrind` and a specific missing-Valgrind
-  failure before Python downloads. Ask the environment owner to install it
-  or choose a host with Valgrind already available.
+- A Valgrind at or above its minimum (`just doctor` shows it), or root/sudo
+  access plus `apt-get` to install or upgrade it. Root uses apt directly; a
+  non-root account with sudo retains the sudo install path. Without either
+  privilege route, setup prints `run as root: apt-get install -y valgrind` and
+  a specific missing- or outdated-Valgrind failure before Python downloads.
+  Ask the environment owner to install it or choose a host with a suitable
+  Valgrind already available.
 - A writable uv installation directory when uv needs installing or replacing
   (default `$HOME/.local/bin`), plus writable managed-Python/cache locations.
   Setup probes the uv destination before downloading. If a cloud image mounts
   it read-only, set `UV_INSTALL_DIR`, `UV_PYTHON_INSTALL_DIR` and `UV_CACHE_DIR`
   to task-owned writable paths; put `UV_INSTALL_DIR` on `PATH` afterward.
   An existing suitable uv can be reused without writing its installation
-  directory. uv 0.13.1 is the pinned fallback; newer versions are retained.
+  directory. Setup installs the checksummed uv 0.13.1 only when uv is missing
+  or older than its minimum; a newer uv is kept.
 - A usable Podman or Docker runtime, the backend dump utilities described
   below, and the native build prerequisites in [native setup](setup.md).
   Non-root accounts must arrange missing backend utilities with the owner;
@@ -86,13 +88,15 @@ without the oracle setup:
 ```sh
 tools/cloud/setup.sh --python-only
 export PATH="${UV_INSTALL_DIR:-$HOME/.local/bin}:$PATH"
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev doctor
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev doctor
 ```
 
 This mode runs the existing argument and Linux x86_64 checks, then the
-same uv (0.13.1 or newer) and managed CPython 3.15.0 GIL provisioning and interpreter
-verification as full setup. It prints the verified-interpreter line, logs
-that it stops after Python provisioning and exits successfully. It does
+same uv and managed CPython (3.15 series, GIL build) provisioning and
+interpreter verification as full setup. Neither is installed when it is
+already present at or above its minimum; `just doctor` reports both. It
+prints the verified-interpreter line, logs that it stops after Python
+provisioning and exits successfully. It does
 not select, start or pull a container runtime, install Valgrind or backend
 utilities, provision oracle libraries or model data, or write the oracle
 environment file. See [native setup](setup.md) for the interpreter policy.

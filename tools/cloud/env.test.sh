@@ -36,7 +36,7 @@ rustup)
 	;;
 valgrind)
 	[[ ${SYNTHETIC_VALGRIND_MISSING:-0} == 0 ]] || exit 1
-	printf 'valgrind-3.25.1\n'
+	printf 'valgrind-%s\n' "${SYNTHETIC_VALGRIND_VERSION:-3.25.1}"
 	;;
 podman)
 	if [[ $1 == --version ]]; then printf 'podman (synthetic)\n'
@@ -44,6 +44,10 @@ podman)
 	;;
 uv)
 	if [[ $1 == --version ]]; then printf 'uv %s (synthetic)\n' "${SYNTHETIC_UV_VERSION:-0.13.1}"
+	elif [[ $1 == python && $2 == find ]]; then
+		# A read-only probe, so it records no ACTION.
+		[[ ${SYNTHETIC_PYTHON_PRESENT:-0} == 1 ]] || exit 1
+		printf '/synthetic/managed/python\n'
 	else
 		printf 'ACTION uv %s\n' "$*" >&3
 		[[ ${SYNTHETIC_PYTHON_FAILURE:-0} == 0 ]] || exit 97
@@ -104,6 +108,20 @@ STUB
 	unset SYNTHETIC_VALGRIND_MISSING
 	printf 'PASS: Valgrind keeps the %s install/retry path\n' "$installer"
 
+	# Below its minimum, Valgrind is replaced like a missing one.
+	export SYNTHETIC_VALGRIND_VERSION=3.21.0
+	if ((EUID != 0)); then
+		check_setup 1 $'outdated: valgrind-3.21.0 (minimum 3.22.0)\nrun as root: apt-get install -y valgrind\nFAIL: valgrind-3.21.0 is older than 3.22.0 and neither root nor sudo is available'
+	fi
+	installer=apt-get
+	if ((EUID != 0)); then ln -s stub "$stub_bin/sudo"; installer='sudo apt-get'; fi
+	run_setup
+	[[ $status == 1 && $message == *"ACTION $installer install -y valgrind"* && \
+		$message == *'FAIL: could not install valgrind with apt-get'* ]] || fail "$message"
+	if ((EUID != 0)); then rm "$stub_bin/sudo"; fi
+	unset SYNTHETIC_VALGRIND_VERSION
+	printf 'PASS: a Valgrind older than its minimum is installed again\n'
+
 	# Force uv installation into a genuinely unwritable destination. Root
 	# bypasses mode bits, so give it a regular file instead of a directory.
 	chmod a-w "$work/readonly-uv"
@@ -124,15 +142,37 @@ STUB
 
 	export SYNTHETIC_PYTHON_FAILURE=1
 	run_setup --python-only
-	[[ $status == 1 && $message == *'FAIL: managed CPython 3.15.0 provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com'* ]] || fail "$message"
+	[[ $status == 1 && $message == *'FAIL: managed CPython 3.15 provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com'* ]] || fail "$message"
 	unset SYNTHETIC_PYTHON_FAILURE
 	printf 'PASS: Python provisioning failure names writable paths and release hosts\n'
+
+	# uv at or above its minimum is used as it is; an older one is replaced.
+	for version in 0.13.1 0.14.2; do
+		export SYNTHETIC_UV_VERSION=$version
+		run_setup --python-only
+		[[ $status == 0 && $message == *"using uv $version (synthetic)"* && $message != *'ACTION curl '* ]] || fail "uv $version: $message"
+	done
+	export SYNTHETIC_UV_VERSION=0.13.0
+	run_setup --python-only
+	[[ $status == 1 && $message == *'ACTION curl '* && $message == *'FAIL: uv download failed'* ]] || fail "$message"
+	unset SYNTHETIC_UV_VERSION
+	printf 'PASS: uv at or above 0.13.1 is kept and an older uv is replaced\n'
 
 	run_setup --cells bdb
 	[[ $status == 1 && $message == *'ACTION curl '* && $message == *'downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz'* && \
 		$message == *'FAIL: model20 is unavailable; allow downloads.sourceforge.net and its *.dl.sourceforge.net redirect target'* && \
 		$message != *'ACTION podman '* ]] || fail "$message"
 	printf 'PASS: model20 access failure precedes container pulls and library builds\n'
+
+	# A Valgrind at or above its minimum is kept: setup goes on to the model fetch.
+	for version in 3.22.0 3.27.1; do
+		export SYNTHETIC_VALGRIND_VERSION=$version
+		run_setup --cells bdb
+		[[ $status == 1 && $message == *'FAIL: model20 is unavailable'* && $message != *'ACTION apt-get '* && \
+			$message != *'ACTION sudo '* ]] || fail "valgrind $version: $message"
+	done
+	unset SYNTHETIC_VALGRIND_VERSION
+	printf 'PASS: a Valgrind at or above its minimum is not reinstalled\n'
 
 	# Match the fetcher's existing synthetic cache contract. It must not
 	# require a network probe when a verified model extraction is present.
@@ -151,9 +191,16 @@ STUB
 	rm "$stub_bin/cargo" "$stub_bin/rustup" "$stub_bin/valgrind"
 	run_setup --python-only
 	[[ $status == 0 && $message == *'stopping after Python provisioning (--python-only)'* && \
-		$message == *'ACTION uv python install cpython@3.15.0'* && $message != *'ACTION curl '* && \
+		$message == *'ACTION uv python install cpython@3.15'* && $message != *'ACTION curl '* && \
 		$message != *'ACTION apt-get '* && $message != *'ACTION podman '* ]] || fail "$message"
 	printf 'PASS: Python-only keeps its Python-only prerequisite scope\n'
+
+	# A managed 3.15-series interpreter that is already installed is kept.
+	export SYNTHETIC_PYTHON_PRESENT=1
+	run_setup --python-only
+	[[ $status == 0 && $message == *'ACTION uv run '* && $message != *'ACTION uv python install'* ]] || fail "$message"
+	unset SYNTHETIC_PYTHON_PRESENT
+	printf 'PASS: an installed managed interpreter is not installed again\n'
 )
 
 fixture() {

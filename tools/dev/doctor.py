@@ -1,8 +1,11 @@
-"""Native capability report and interpreter acceptance. Standard library only.
+"""Native capability report, interpreter acceptance and the one check of tool minimums.
 
-Doctor reads capabilities; it does not provision, install or enter a
-container. It rejects interpreter-selection overrides and a free-threaded
-build, and it names the installation step for optional tools it cannot find.
+Standard library only. Doctor reads capabilities; it does not provision,
+install or enter a container. It rejects interpreter-selection overrides and a
+free-threaded build, and it checks every tool against its minimum version: a
+newer tool passes, an older one fails with the minimum and the version found,
+and an absent one is reported with its installation step. Runbooks and
+setup.sh point here instead of repeating version lists.
 """
 import os
 import platform
@@ -12,6 +15,7 @@ import subprocess
 import sys
 import sysconfig
 from pathlib import Path
+from typing import NamedTuple
 
 OVERRIDES = (
     'UV_PYTHON',
@@ -24,13 +28,60 @@ OVERRIDES = (
     'PYTHONHOME',
     'PYTHONPATH',
 )
-MANAGED_REQUEST = 'cpython@3.15.0+gil'
-NEXTEST_MINIMUM = '0.9.115'
+# The managed 3.15 series, GIL build. 3.16 stays a deliberate step: the
+# -X lazy_imports modes this tooling relies on are new in 3.15.
+MANAGED_REQUEST = 'cpython@3.15+gil'
+PYTHON_MINIMUM = '3.15.0'
+PYTHON_BELOW = '3.16'
 UV_MINIMUM = (0, 13, 1)
 
 
 class DoctorError(RuntimeError):
     pass
+
+
+class Tool(NamedTuple):
+    """An external tool and the oldest version the repository accepts."""
+    name: str
+    executable: str
+    arguments: tuple
+    pattern: str        # applied to the first line of the version output
+    minimum: str
+    install: str
+    platform: str = ''  # sys.platform prefix this check is for; empty means every platform
+    identity: str = ''  # when set, any other program under this name is reported as absent
+
+
+# One row per tool. A minimum is the oldest version the repository has run
+# or documents. Where the tool has its own configuration for it (the
+# justfile, .config/nextest.toml, uv.toml, setup.sh) doctor.test.py keeps the
+# two in step.
+TOOLS = (
+    Tool('just', 'just', ('--version',),
+         r'^just (\d+)\.(\d+)\.(\d+)', '1.59.0',
+         'brew install just, your distribution package, or cargo install just --locked'),
+    Tool('cargo-nextest', 'cargo-nextest', ('--version',),
+         r'^cargo-nextest (\d+)\.(\d+)\.(\d+)', '0.9.115',
+         'cargo install cargo-nextest --locked'),
+    Tool('cargo-c', 'cargo-cinstall', ('--version',),
+         r'^cargo-c (\d+)\.(\d+)\.(\d+)', '0.10.24',
+         'cargo install cargo-c --locked, or your distribution package'),
+    Tool('cargo-fuzz', 'cargo-fuzz', ('--version',),
+         r'^cargo-fuzz (\d+)\.(\d+)\.(\d+)', '0.13.2',
+         'cargo install cargo-fuzz --locked'),
+    Tool('cargo-llvm-cov', 'cargo-llvm-cov', ('llvm-cov', '--version'),
+         r'^cargo-llvm-cov (\d+)\.(\d+)\.(\d+)', '0.9.0',
+         'cargo install cargo-llvm-cov --locked'),
+    Tool('GNU ld', 'ld', ('--version',),
+         r'^GNU ld .*?(\d+)\.(\d+)(?:\.(\d+))?', '2.43',
+         'apt-get install binutils', platform='linux', identity=r'^GNU ld\b'),
+    Tool('gcov', 'gcov', ('--version',),
+         r'^gcov \(.*?\) (\d+)\.(\d+)\.(\d+)', '14',
+         'apt-get install gcc', platform='linux'),
+    Tool('valgrind', 'valgrind', ('--version',),
+         r'^valgrind-(\d+)\.(\d+)(?:\.(\d+))?', '3.22.0',
+         'apt-get install valgrind', platform='linux'),
+)
 
 
 def reject_overrides(environ=None):
@@ -49,6 +100,17 @@ def _run(command, environ):
         return None
 
 
+def _numbers(text):
+    return tuple(int(part) for part in text.split('.'))
+
+
+def _at_least(found, minimum):
+    """Compare dotted versions of any length; missing components count as zero."""
+    width = max(len(found), len(minimum))
+    pad = lambda numbers: numbers + (0,) * (width - len(numbers))
+    return pad(found) >= pad(minimum)
+
+
 def uv_version(environ=None):
     environ = os.environ if environ is None else environ
     result = _run(['uv', '--version'], environ)
@@ -64,6 +126,17 @@ def uv_version(environ=None):
     return text
 
 
+def check_python(numbers=None, releaselevel=None):
+    """Accept a final CPython release of the managed series: 3.15.0 or newer, below 3.16."""
+    numbers = tuple(sys.version_info[:3]) if numbers is None else tuple(numbers)
+    releaselevel = sys.version_info.releaselevel if releaselevel is None else releaselevel
+    if (releaselevel != 'final' or not _at_least(numbers, _numbers(PYTHON_MINIMUM))
+            or _at_least(numbers, _numbers(PYTHON_BELOW))):
+        found = '.'.join(map(str, numbers)) + ('' if releaselevel == 'final' else f' ({releaselevel})')
+        raise DoctorError(f'CPython {PYTHON_MINIMUM} or newer, below {PYTHON_BELOW}, required; '
+                          f'found {found}')
+
+
 def identity(environ=None):
     """Check the running interpreter and return its identity record."""
     environ = os.environ if environ is None else environ
@@ -73,8 +146,7 @@ def identity(environ=None):
     version = platform.python_version()
     if implementation != 'cpython':
         raise DoctorError(f'CPython required; found implementation {implementation}')
-    if version != '3.15.0':
-        raise DoctorError(f'CPython 3.15.0 required; found {version}')
+    check_python()
     gil_disabled = sysconfig.get_config_var('Py_GIL_DISABLED')
     if gil_disabled:
         raise DoctorError('free-threaded CPython is not accepted; use the GIL-enabled build')
@@ -83,7 +155,7 @@ def identity(environ=None):
         raise DoctorError('the running CPython has the GIL disabled')
     result = _run(['uv', 'python', 'find', '--managed-python', MANAGED_REQUEST], environ)
     if result is None or result.returncode != 0 or not result.stdout.strip():
-        raise DoctorError('the running interpreter is not a uv-managed CPython 3.15.0+gil build')
+        raise DoctorError(f'the running interpreter is not a uv-managed {MANAGED_REQUEST} build')
     managed = Path(result.stdout.strip()).resolve()
     executable = Path(sys.executable).resolve()
     if managed != executable:
@@ -101,21 +173,44 @@ def _first_line(result):
     return text.splitlines()[0] if text else None
 
 
-def nextest_version(environ=None):
-    """Check an installed nextest; keep a missing optional tool report-only."""
+def check_tool(tool, environ=None):
+    """Return the report line for TOOL, or raise DoctorError if it is older than its minimum.
+
+    A tool that is not installed, or that is another program under the same
+    name, is reported with its installation step and does not fail the check.
+    """
     environ = os.environ if environ is None else environ
-    executable = shutil.which('cargo-nextest', path=environ.get('PATH'))
+    executable = shutil.which(tool.executable, path=environ.get('PATH'))
     if executable is None:
-        return None
-    result = _run([executable, '--version'], environ)
+        return (f'{tool.name}: missing (requires {tool.minimum} or later; '
+                f'install: {tool.install})')
+    result = _run([executable, *tool.arguments], environ)
     text = _first_line(result)
-    version = re.match(r'^cargo-nextest (\d+)\.(\d+)\.(\d+)(?:\s|$)', text or '')
-    minimum = tuple(map(int, NEXTEST_MINIMUM.split('.')))
-    if (result is None or result.returncode != 0 or version is None
-            or tuple(map(int, version.groups())) < minimum):
-        raise DoctorError(f'cargo-nextest {NEXTEST_MINIMUM} or later required; '
+    if tool.identity and not re.search(tool.identity, text or ''):
+        return (f'{tool.name}: not found, {tool.executable} is {text or "unidentified"} '
+                f'(requires {tool.minimum} or later; install: {tool.install})')
+    version = re.search(tool.pattern, text or '')
+    found = None if version is None else tuple(int(part) for part in version.groups() if part is not None)
+    if (result is None or result.returncode != 0 or found is None
+            or not _at_least(found, _numbers(tool.minimum))):
+        raise DoctorError(f'{tool.name} {tool.minimum} or later required; '
                           f'found {text or "unreadable version"}')
-    return text
+    return f'{tool.name}: {".".join(map(str, found))} (minimum {tool.minimum})'
+
+
+def tool_lines(environ=None):
+    """Return (lines, failures): every tool that applies here, against its minimum."""
+    lines = []
+    failures = []
+    for tool in TOOLS:
+        if tool.platform and not sys.platform.startswith(tool.platform):
+            continue
+        try:
+            lines.append(check_tool(tool, environ))
+        except DoctorError as exc:
+            failures.append(str(exc))
+            lines.append(f'FAIL: {exc}')
+    return lines, failures
 
 
 def host_lines(environ=None):
@@ -136,16 +231,8 @@ def host_lines(environ=None):
     backends = ['pkg-config', 'db5.3_dump', 'kchashmgr', 'tkrzw_dbm_util']
     found = [f'{name}={"yes" if shutil.which(name) else "no"}' for name in backends]
     lines.append('native backend utilities: ' + ', '.join(found))
-    just = shutil.which('just')
-    lines.append('just: ' + (just if just else 'missing (install: cargo install just --locked)'))
-    nextest = shutil.which('cargo-nextest', path=environ.get('PATH'))
-    lines.append('cargo-nextest: ' + (nextest if nextest else
-                 f'missing (requires {NEXTEST_MINIMUM} or later; install: cargo install cargo-nextest --locked)'))
     runtimes = [name for name in ('container', 'podman', 'docker', 'wslc') if shutil.which(name)]
     lines.append('container runtime: ' + (', '.join(runtimes) if runtimes else 'none present'))
-    if sys.platform.startswith('linux'):
-        valgrind = shutil.which('valgrind')
-        lines.append('valgrind: ' + (valgrind if valgrind else 'missing (install: apt-get install valgrind)'))
     return lines
 
 
@@ -156,9 +243,11 @@ def collect(environ=None):
     status = 0
     try:
         info = identity(environ)
+        uv = re.match(r'^uv (\d+\.\d+\.\d+)', info['uv'])
         lines.extend([
-            f'uv: {info["uv"]}',
-            f'interpreter: {info["implementation"]} {info["version"]}',
+            f'uv: {uv.group(1) if uv else info["uv"]} (minimum {".".join(map(str, UV_MINIMUM))})',
+            f'interpreter: {info["implementation"]} {info["version"]} '
+            f'(minimum {PYTHON_MINIMUM}, below {PYTHON_BELOW})',
             f'managed: {"yes" if info["managed"] else "no"}',
             f'gil: {"enabled" if info["gil_enabled"] else "disabled"}',
             f'executable: {info["executable"]}',
@@ -166,12 +255,9 @@ def collect(environ=None):
     except DoctorError as exc:
         lines.append(f'FAIL: {exc}')
         status = 1
-    try:
-        version = nextest_version(environ)
-        if version is not None:
-            lines.append(f'cargo-nextest version: {version}')
-    except DoctorError as exc:
-        lines.append(f'FAIL: {exc}')
+    tools, failures = tool_lines(environ)
+    lines.extend(tools)
+    if failures:
         status = 1
     return lines, status
 

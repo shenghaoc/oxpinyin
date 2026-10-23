@@ -45,12 +45,12 @@ Each remaining implementation PR needs its own approval.
 
 ## 2. Interpreter contract
 
-Use uv-managed CPython 3.15.0 only. Use the standard library only.
+Use uv-managed CPython of the 3.15 series only: 3.15.0 or newer, below 3.16
+(maintainer ruling 2026-10-23 UTC, #1074). Use the standard library only.
 Require uv 0.13.1 or newer (maintainer ruling 2026-10-22 UTC). This floor
 replaces the earlier exact uv 0.13.1 pin. CI installs exactly uv 0.13.1 from
-the checksummed release. Hosts may use any later uv. The interpreter pin is
-unchanged.
-Use the GIL-enabled CPython request `cpython@3.15.0+gil`.
+the checksummed release. Hosts may use any later uv.
+Use the GIL-enabled CPython request `cpython@3.15+gil`.
 uv 0.13.1 documents the implementation/version and `+gil` request forms in
 its [versioned Python guide](https://github.com/astral-sh/uv/blob/0.13.1/docs/concepts/python-versions.md).
 Support no older version, system-Python fallback or transition implementation.
@@ -60,26 +60,29 @@ PR #939 added these root files:
 
 | Implemented file | Required content |
 | --- | --- |
-| `.python-version` | exactly `cpython@3.15.0+gil` |
+| `.python-version` | exactly `cpython@3.15+gil` |
 | `uv.toml` | `python-preference = "only-managed"` and `required-version = ">=0.13.1"` on separate lines |
 
-Keep the interpreter pin and the uv floor. Do not vendor Python. Do not add `pyproject.toml`,
+Keep the interpreter series and the uv floor. Do not vendor Python. Do not add `pyproject.toml`,
 a virtual environment or `uv.lock` for interpreter provisioning alone.
 Every repository-owned uv call passes the exact interpreter request explicitly.
-Use `uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal ...`
+Use `uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal ...`
 for execution. An installed system Python 3.15 does not satisfy this rule.
-Reject another implementation or patch version. An interpreter patch upgrade
-needs a separate verified change.
+Reject another implementation or series. A later 3.15 patch release is
+accepted without a change; 3.16 needs a separate verified change, because the
+tooling relies on 3.15's `-X lazy_imports` modes.
 
 On Linux and macOS, install uv through its documented host route.
 On Windows, use a native uv executable from PowerShell or the native installer.
 Neither route needs an older Python first.
-Then run `uv python install cpython@3.15.0`.
-uv 0.13.1 has no separate `+gil` download. Installation uses the plain
-3.15.0 distribution. Execution keeps `cpython@3.15.0+gil`.
+Then run `uv python install cpython@3.15`, only when
+`uv python find --managed-python cpython@3.15+gil` finds no interpreter.
+uv 0.13.1 has no separate `+gil` download and rejects `cpython@3.15+gil` for
+installation. Installation uses the plain 3.15 distribution. Execution keeps
+`cpython@3.15+gil`.
 Check `Py_GIL_DISABLED == 0` and the enabled runtime GIL. Check CPython
-3.15.0 and the resolved executable against
-`uv python find --managed-python cpython@3.15.0+gil`.
+3.15.0 or newer, below 3.16, and the resolved executable against
+`uv python find --managed-python cpython@3.15+gil`.
 These checks enforce the managed GIL build after installation.
 Keep the managed interpreter and uv cache on persistent native storage.
 The setup enforces the uv 0.13.1 floor and records the interpreter provisioning route.
@@ -107,17 +110,24 @@ Use one implementation of each service. A later stage may reuse code inside
 another environment; it must not reuse that environment's state.
 
 Bootstrap in this order: check uv, provision managed CPython, then run
-`uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev doctor`.
+`uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev doctor`.
 This command works before `just` installation. It reports missing `just`
 and its installation steps. Normal `just doctor` calls the same code.
 
 Doctor reports native capabilities only. Include OS, architecture, the selected
 Rust toolchain, compiler and native backend utilities. Report uv, interpreter
-version, implementation, executable and build identity. Report `just` and
-cargo-nextest when present. Report whether a container runtime is present;
-do not provision, enter or validate a container from native doctor.
-Report Valgrind only on Linux. Presence does not establish a supported runtime
-adapter or a passing compatibility gate.
+version, implementation, executable and build identity. Report whether a
+container runtime is present; do not provision, enter or validate a container
+from native doctor. Presence of Valgrind does not establish a supported
+runtime adapter or a passing compatibility gate.
+
+Doctor is also the one check of tool minimums (maintainer ruling 2026-10-23
+UTC, #1074). It checks just, cargo-nextest, cargo-c, cargo-fuzz and
+cargo-llvm-cov everywhere, and GNU ld, gcov and Valgrind on Linux. Each line
+names the minimum and the version found: a newer tool passes, an older one
+fails, and a missing one is reported with its installation step. Runbooks and
+`tools/cloud/setup.sh` point to doctor instead of repeating version lists, and
+setup installs uv or Valgrind only when it is missing or older than its minimum.
 
 Doctor rejects `UV_PYTHON` and other external interpreter-selection overrides.
 Include version, implementation, variant, architecture and executable-path
@@ -134,7 +144,7 @@ Implemented in #1013: `tools/dev/__main__.py` checks `sys.get_lazy_imports()`
 before any application import. Unless the mode is `normal`, it writes one
 line to stderr naming the mode and `-X lazy_imports=normal` (or
 `PYTHON_LAZY_IMPORTS=normal`) and exits with status 2. When
-`sys.get_lazy_imports` is missing, it names `cpython@3.15.0+gil` and exits
+`sys.get_lazy_imports` is missing, it names `cpython@3.15+gil` and exits
 with status 2. The guard also protects direct entry-point use. CPython 3.15.0
 accepts only `normal` and `all` at startup and stops on `none` before any
 code runs. See
