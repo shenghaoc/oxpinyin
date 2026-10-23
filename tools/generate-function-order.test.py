@@ -243,14 +243,52 @@ class GeneratorTests(unittest.TestCase):
             with mock.patch.dict(reader.__globals__, run=lambda _: "00000001 T g_free\n"):
                 reader(LIBRARY, "pinyin")
 
-    def test_first_candidate_toggles_follow_the_facade_exports(self):
+    def test_first_candidate_toggles_list_every_facade_export(self):
         toggles = GENERATOR["first_candidate_toggles"]
-        self.assertEqual(
-            toggles("zhuyin", "zhuyin_init,zhuyin_set_options,zhuyin_get_candidate,"
-                              "zhuyin_guess_candidates_after_cursor,pinyin_guess_candidates"),
-            ["zhuyin_set_options", "zhuyin_guess_candidates_after_cursor", "zhuyin_get_candidate"])
-        with self.assertRaisesRegex(ValueError, "lacks the first-candidate exports"):
-            toggles("pinyin", "pinyin_init,pinyin_set_options")
+        names = GENERATOR["FIRST_CANDIDATE"]["zhuyin"]
+        exports = ",".join(["zhuyin_init", "pinyin_guess_candidates",
+                            *(f"zhuyin_{name}" for name in names)])
+        self.assertEqual(toggles("zhuyin", exports), [f"zhuyin_{name}" for name in names])
+        with self.assertRaisesRegex(ValueError, "lacks the first-candidate exports "
+                                                "zhuyin_guess_candidates_after_cursor$"):
+            toggles("zhuyin", exports.replace(",zhuyin_guess_candidates_after_cursor", ""))
+
+    def test_first_candidate_matches_the_worker_path_to_m1(self):
+        """set_options, alloc_instance, td_first and td_read_candidate in teardown.h."""
+        source = (HERE / "bisection/teardown.h").read_text()
+
+        def body(signature):
+            start = source.index("{", source.index(signature))
+            depth = 0
+            for end in range(start, len(source)):
+                depth += {"{": 1, "}": -1}.get(source[end], 0)
+                if not depth:
+                    return source[start:end]
+            raise AssertionError(signature)
+
+        resolve = body("static void td_resolve(")
+        common, branches = resolve.split("if (api->zhuyin) {")
+        zhuyin, pinyin = branches.split("} else {")
+        pattern = re.compile(r'TD_RESOLVE\((\w+), "(\w+)"\)|api->(\w+)\) = td_symbol'
+                             r'\(library, facade, "(\w+)"\)')
+
+        def resolved(text):
+            return {(field or other): (suffix or suffix2)
+                    for field, suffix, other, suffix2 in pattern.findall(text)}
+
+        scope = {"pinyin": resolved(common) | resolved(pinyin),
+                 "zhuyin": resolved(common) | resolved(zhuyin)}
+        calls = set(re.findall(r"api->(?:common\.)?(\w+)\(",
+                               body("static bool td_first(") + body("static bool td_read_candidate(")))
+        run = body("static int run_teardown_mode(")
+        path = run[run.index("api.common.init("):run.index('td_checkpoint("M1"')]
+        for field in ("set_options", "alloc_instance"):
+            self.assertIn(f"api.common.{field}(", path)
+        for facade, fields in scope.items():
+            expected = {"set_options", "alloc_instance"} | {
+                fields[field] for field in calls if field in fields}
+            self.assertEqual(set(GENERATOR["FIRST_CANDIDATE"][facade]), expected, facade)
+            self.assertEqual(len(GENERATOR["FIRST_CANDIDATE"][facade]), len(expected), facade)
 
     def test_teardown_command_has_the_worker_boundary_arguments(self):
         args = SimpleNamespace(bisect=Path("/bin/bisect"), system_dir=Path("/data"))

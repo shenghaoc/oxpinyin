@@ -413,20 +413,25 @@ def collect_toggle(args, facade, library, user, toggle, environment):
 # its M1 checkpoint: options, one instance and the first candidate. Code they
 # reach before M1 is startup code too; left out of the ordered block, it is
 # faulted in 64 KiB fault-around windows scattered over .text (#1032).
-FIRST_CANDIDATE = ("set_options", "alloc_instance", "parse_more_full_pinyins",
-                   "get_parsed_input_length", "guess_candidates",
-                   "guess_candidates_after_cursor", "get_n_candidate",
-                   "get_candidate", "get_candidate_type", "get_candidate_string",
-                   "get_candidate_nbest_index")
+FIRST_CANDIDATE_COMMON = ("set_options", "alloc_instance", "parse_more_full_pinyins",
+                          "get_n_candidate", "get_candidate", "get_candidate_type",
+                          "get_candidate_string")
+# The exports teardown.h calls from <facade>_init to M1: set_options,
+# alloc_instance, td_first and td_read_candidate.
+FIRST_CANDIDATE = {
+    "pinyin": (*FIRST_CANDIDATE_COMMON, "get_parsed_input_length", "guess_candidates",
+               "get_candidate_nbest_index"),
+    "zhuyin": (*FIRST_CANDIDATE_COMMON, "guess_candidates_after_cursor"),
+}
 
 
 def first_candidate_toggles(facade, exports):
-    """The FIRST_CANDIDATE exports this facade has; each one toggles alone."""
+    """The facade's FIRST_CANDIDATE exports; each one toggles alone."""
     available = set(exports.split(","))
-    toggles = [f"{facade}_{name}" for name in FIRST_CANDIDATE
-               if f"{facade}_{name}" in available]
-    if f"{facade}_get_candidate" not in toggles:
-        raise ValueError(f"{facade} lacks the first-candidate exports")
+    toggles = [f"{facade}_{name}" for name in FIRST_CANDIDATE[facade]]
+    missing = [toggle for toggle in toggles if toggle not in available]
+    if missing:
+        raise ValueError(f"{facade} lacks the first-candidate exports {', '.join(missing)}")
     return toggles
 
 
