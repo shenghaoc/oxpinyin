@@ -905,6 +905,9 @@ static int perf_remove_entry(const char *path, const struct stat *st,
 }
 
 static void perf_remove_user_dir(char *user_dir) {
+    const char *supplied = getenv("PERF_USER_DIR");
+    if (supplied && *supplied)
+        return; /* The caller owns its private starting-profile copy. */
     /* Best-effort cleanup of our own mkdtemp directory. */
     (void)nftw(user_dir, perf_remove_entry, 16, FTW_DEPTH | FTW_PHYS);
 }
@@ -967,13 +970,24 @@ static int run_perf_mode(int argc, char **argv) {
     if (temp_root == NULL || *temp_root == '\0')
         temp_root = "/tmp";
     char user_dir[4096];
-    int user_path_length = snprintf(user_dir, sizeof user_dir,
-                                    "%s/bisect-perf-XXXXXX", temp_root);
+    /* An optional populated starting profile lets the same steady workload
+     * exercise count-cache reads. The controller supplies a fresh private
+     * copy for each process and owns cleanup. Default runs stay empty. */
+    const char *supplied_user = getenv("PERF_USER_DIR");
+    bool supplied_profile = supplied_user && *supplied_user;
+    int user_path_length = supplied_profile
+        ? snprintf(user_dir, sizeof user_dir, "%s", supplied_user)
+        : snprintf(user_dir, sizeof user_dir, "%s/bisect-perf-XXXXXX", temp_root);
     if (user_path_length < 0 || (size_t)user_path_length >= sizeof user_dir) {
         fprintf(stderr, "fatal: TMPDIR path is too long\n");
         return 1;
     }
-    if (!mkdtemp(user_dir)) {
+    struct stat user_status;
+    if (supplied_profile && (stat(user_dir, &user_status) || !S_ISDIR(user_status.st_mode))) {
+        fprintf(stderr, "fatal: PERF_USER_DIR must name an existing private profile directory\n");
+        return 1;
+    }
+    if (!supplied_profile && !mkdtemp(user_dir)) {
         perror("mkdtemp");
         return 1;
     }

@@ -625,9 +625,11 @@ def build_stub(root):
     return library
 
 
-def perf_output(worker, library, systemdir):
+def perf_output(worker, library, systemdir, profile=None):
     env = {key: value for key, value in os.environ.items() if not key.startswith('PERF_')}
     env.update(PERF_BACKEND='stub', PERF_MODE='speed', PERF_CYCLES=str(PERF_CYCLES), PERF_REPEATS='1')
+    if profile is not None:
+        env['PERF_USER_DIR'] = str(profile)
     result = subprocess.run([str(worker), '--perf', str(library), str(systemdir)],
                             env=env, capture_output=True, text=True, check=True)
     return json.loads(result.stdout)
@@ -877,6 +879,37 @@ class NativeTests(unittest.TestCase):
                 documents = row['observation']['documents']
                 self.assertEqual(len(documents), 21 if facade == 'zhuyin' else 18)
                 self.assertTrue(all(value['sentence_read'] and value['sentence'] == '你好' for value in documents))
+
+    def test_second_candidate_reuses_one_instance_and_preserves_the_observation(self):
+        for facade in ('pinyin', 'zhuyin'):
+            with self.subTest(facade=facade), patch.object(td, 'exports', return_value=[facade + '_init']):
+                first = self.campaign().run(facade, self.library, self.profile)
+                second = self.campaign().run(facade, self.library, self.profile, scenario='second-candidate')
+                self.assertEqual(first['samples'][0]['observations'], second['samples'][0]['observations'])
+                self.assertEqual(second['observation']['stderr'].splitlines(), ['INIT', 'ALLOC', 'FREE', 'FINI'])
+                self.assertNotIn('second_candidate_ns', first['samples'][0]['times'])
+                self.assertIn('second_candidate_ns', second['samples'][0]['times'])
+        names = subprocess.check_output(['nm', str(self.worker)], text=True)
+        prefix = '_' if sys.platform == 'darwin' else ''
+        first_symbol = prefix + 'bisect_teardown_first_candidate_unit'
+        second_symbol = prefix + 'bisect_teardown_second_candidate_unit'
+        self.assertIn(' ' + first_symbol + '\n', names)
+        self.assertIn(' ' + second_symbol + '\n', names)
+        addresses = {line.split()[-1]: line.split()[0] for line in names.splitlines() if line.split()}
+        self.assertNotEqual(addresses[first_symbol], addresses[second_symbol])
+
+    def test_steady_workload_preserves_a_caller_owned_profile(self):
+        profile = self.root / 'steady-profile'
+        profile.mkdir()
+        marker = profile / 'caller-owned'
+        marker.write_bytes(b'unchanged')
+        first = perf_output(self.worker, self.library, self.root)
+        populated = perf_output(self.worker, self.library, self.root, profile)
+        self.assertEqual(perf_values(first, self.library, self.root),
+                         perf_values(populated, self.library, self.root))
+        self.assertEqual(marker.read_bytes(), b'unchanged')
+        marker.unlink()
+        profile.rmdir()
 
     @unittest.skipUnless(sys.platform.startswith('linux'), '/proc memory readers and glibc allocator counters')
     def test_parent_checkpoints_and_surviving_instance(self):
