@@ -42,6 +42,12 @@ except (OSError,ValueError) as exc:
     sys.exit(1)
 """
 ENTRY = [sys.executable, '-c', SYNTHETIC_MAIN, str(RUN_ALL)]
+# `just heavy` runs tools.dev's slot command; this entry gives it the same
+# synthetic resources. WRAPPER is run-all.py's own `--heavy-slot` wrapper.
+TOOLS_DEV = [sys.executable, '-c',
+             SYNTHETIC_SETUP + 'from tools.dev.cli import main\nraise SystemExit(main(sys.argv[1:]))']
+JUST_HEAVY = [*TOOLS_DEV, 'slot', 'run', '--']
+WRAPPER = [*ENTRY, '--heavy-slot', '--']
 
 
 def synthetic(code):
@@ -553,6 +559,88 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
             self.assertEqual(json.loads(slot.read_text())['command'], 'new work')
         self.assertIn(f'reclaimed stale heavy slot 0: pid {dead.pid} in /elsewhere', out.getvalue())
         self.assertEqual(slot.read_text(), '')
+
+    def step(self, entry, env):
+        return subprocess.run([*entry, sys.executable, '-c', 'pass'], env=env,
+                              capture_output=True, text=True, timeout=30)
+
+    def test_two_steps_in_a_row_report_no_stale_reclaim(self):
+        for label, entry in (('tools.dev slot run', JUST_HEAVY), ('run-all.py --heavy-slot', WRAPPER)):
+            # One lock directory per entry: each is judged on its own steps.
+            with tempfile.TemporaryDirectory() as directory:
+                env = dict(self.env, OXPINYIN_LOCK_DIR=directory)
+                for number in (1, 2):
+                    with self.subTest(entry=label, step=number):
+                        result = self.step(entry, env)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertNotIn('reclaimed stale', result.stderr)
+                with self.subTest(entry=label, check='a finished step leaves no record'):
+                    self.assertEqual((Path(directory) / 'heavy-slot-0').read_text(), '')
+
+    def test_a_killed_step_is_still_reported_as_a_stale_reclaim(self):
+        code = ("import os, sys\n"
+                "print('workload-ready:' + str(os.getpid()), flush=True)\n"
+                "sys.stdin.readline()\n")
+        wrapper = subprocess.Popen([*JUST_HEAVY, sys.executable, '-c', code], env=self.env,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        contender = None
+        try:
+            self.assertTrue(select.select([wrapper.stdout], [], [], 10)[0], 'the workload did not start')
+            self.assertTrue(wrapper.stdout.readline().startswith('workload-ready:'))
+            wrapper.kill()
+            wrapper.wait(timeout=5)
+            contender = subprocess.Popen([*JUST_HEAVY, sys.executable, '-c', 'pass'], env=self.env,
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                contender.communicate(timeout=0.5)
+            # The workload reads end of file and exits; the dead wrapper never released.
+            wrapper.stdin.close()
+            wrapper.stdin = None
+            _, stderr = contender.communicate(timeout=10)
+            self.assertEqual(contender.returncode, 0, stderr)
+            self.assertIn(f'reclaimed stale heavy slot 0: pid {wrapper.pid} in {ROOT}', stderr)
+            self.assertIn('(pid dead)', stderr)
+        finally:
+            if wrapper.stdin is not None:
+                wrapper.stdin.close()
+                wrapper.stdin = None
+            for process in (wrapper, contender):
+                if process is not None:
+                    if process.poll() is None:
+                        process.kill()
+                    process.communicate(timeout=10)
+
+    def test_a_descendant_that_outlives_its_step_keeps_the_holder_record(self):
+        code = ("import os, sys\n"
+                "pid = os.fork()\n"
+                "if pid:\n"
+                "    print(pid, flush=True)\n"
+                "else:\n"
+                "    sys.stdin.read()\n")
+        wrapper = subprocess.Popen([*JUST_HEAVY, sys.executable, '-c', code], env=self.env,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True)
+        path = Path(self.lock_dir.name) / 'heavy-slot-0'
+        try:
+            self.assertTrue(select.select([wrapper.stdout], [], [], 10)[0], 'the workload did not start')
+            descendant = int(wrapper.stdout.readline())
+            self.assertEqual(wrapper.wait(timeout=10), 0)
+            # The step is over but its descendant holds the slot: the record still names the step.
+            with path.open('a+') as probe:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            record = json.loads(path.read_text())
+            self.assertEqual(record['pid'], wrapper.pid)
+            self.assertIn('os.fork()', record['command'])
+            os.kill(descendant, 0)
+        finally:
+            if wrapper.stdin is not None:
+                wrapper.stdin.close()
+                wrapper.stdin = None
+            if wrapper.poll() is None:
+                wrapper.kill()
+            wrapper.communicate(timeout=10)
 
     def test_slot_count_comes_from_the_environment(self):
         os.environ['OXPINYIN_HEAVY_SLOTS'] = '2'

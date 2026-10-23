@@ -302,7 +302,10 @@ class HeavySlot:
     prints who holds the slots once at the start of the wait and every 30 s;
     the wait never fails or skips the work. `waited` is the seconds spent
     waiting, for the caller's timing row. `reclaimed` names a dead holder
-    whose record this acquisition replaced, if any."""
+    whose record this acquisition replaced, if any. A step that ends with
+    nothing holding the slot clears its record, handed off or not, so a record
+    that outlives its holder's process means the holder was killed or left a
+    descendant holding the slot."""
 
     def __init__(self, command, out=sys.stderr, poll=0.5):
         self.command, self.out, self.poll = command, out, poll
@@ -407,11 +410,35 @@ class HeavySlot:
         # Keep our copy until the child is reaped. Descendants keep theirs.
         self._handed_off = True
 
+    def holders(self):
+        """Each slot's recorded holder as (index, record), for the slots this host offers."""
+        return [(index, host.read_holder(self.lock_dir / f'{HEAVY_SLOT}-{index}'))
+                for index in range(host.heavy_slot_count())]
+
+    def _clear_unheld(self, index):
+        """After a hand-off, clear the record if nothing holds the slot any more.
+
+        The workload and its descendants share the open file description, so the
+        lock outlives this process while any of them runs, and the record keeps
+        naming the holder then. When this probe takes the lock none is left: the
+        step ended normally, and its record must not read as a crashed holder's
+        to the next acquisition. A holder killed before it got here never runs
+        this, so its record is still reclaimed and reported. A failed probe
+        leaves the record, as a hand-off always did."""
+        with contextlib.suppress(OSError):
+            probe = self._try(index)
+            if probe is not None:
+                with probe:
+                    probe.seek(0)
+                    probe.truncate()
+                    probe.flush()
+
     def __exit__(self, *exc):
         if self._file is None:
             return False
+        handed_off, index = self._handed_off, self.slot
         try:
-            if not self._handed_off:
+            if not handed_off:
                 self._file.seek(0)
                 self._file.truncate()
                 self._file.flush()
@@ -419,6 +446,8 @@ class HeavySlot:
             self._file.close()
             self._file = None
             self._handed_off = False
+        if handed_off:
+            self._clear_unheld(index)
         return False
 
 
@@ -539,6 +568,8 @@ def budget_resources(directory, own_slot=None, *, read=None, out=sys.stderr):
     resources['notes'] = [*resources['notes'], *holders, f'other slot reservations={reserved} MiB']
     containers = container_reservations(directory, out=out)
     resources['notes'].append(f'container reservations={containers if containers is not None else "unknown"} MiB')
+    # Kept beside the net figure so a refusal can print what the decision subtracted.
+    resources.update(slot_reserved_mib=reserved, container_reserved_mib=containers)
     if containers is None:
         resources['available_mib'] = None
     elif resources['available_mib'] is not None:
@@ -651,8 +682,20 @@ def reserve_heavy_env(slot, env, *, runner=False, resource_snapshot=None, prepar
         return resources, child, chosen, estimate, admitted
 
 
+class SlotWaitExpired(host.ResourceBlocked):
+    """The wait limit passed with every heavy slot held: a slot wait, not a memory refusal."""
+
+
+def _mib(value):
+    return 'unknown' if value is None else f'{value} MiB'
+
+
 class HeavyAdmission:
-    """Take the slot, then read resources before starting heavy work."""
+    """Take the slot, then read resources before starting heavy work.
+
+    One wait limit covers both waits. When it passes, the error names what
+    blocked the last attempt: a held slot (SlotWaitExpired), or the memory
+    decision that attempt made (ResourceBlocked, with that decision's figures)."""
 
     def __init__(self, command, env, out=sys.stderr, poll=0.5, *, runner=False,
                  resource_snapshot=None, prepare_heavy_env=None):
@@ -669,6 +712,10 @@ class HeavyAdmission:
         self.memory_since = None
         self.retry_at = 0.0
         self.announced = None
+        # What the last attempt met: 'slot' (held) or 'memory' (refused). The
+        # figures below describe the last memory decision, and only that.
+        self.blocked_by = None
+        self.reservations = (None, None)
         resources = self.resource_snapshot()
         _, self.provisional, self.estimate = self.prepare_heavy_env(
             self.base_env, resources, runner=self.runner)
@@ -678,11 +725,31 @@ class HeavyAdmission:
         host.plan_defaults(self.provisional, out, 'provisional defaults')
 
     def _blocked(self):
+        """The memory refusal, from the figures of the decision that refused."""
+        slots, containers = self.reservations
+        print(f'memory refused: available {_mib(self.available)} after {_mib(slots)} for other slots '
+              f'and {_mib(containers)} for containers; headroom {self.headroom} MiB; '
+              f'estimate {self.estimate} MiB; no process started: {self.command}',
+              file=self.out, flush=True)
         if self.available is None:
             return host.ResourceBlocked('resource-blocked: available memory unknown')
         available = max(0, self.available - self.headroom)
         inherited = 'inherited slot; ' if self.slot.inherited else ''
         return host.ResourceBlocked(f'resource-blocked: {inherited}{self.estimate} MiB needed, {available} MiB available')
+
+    def _slot_wait_expired(self, now):
+        """The slot wait that ran out the limit: who holds the slots, no memory figure."""
+        held = '; '.join(f'slot {index}: {host.describe_holder(record)}'
+                         for index, record in self.slot.holders())
+        return SlotWaitExpired(f'slot-wait-expired: waited {now - self.started:.1f}s for a heavy slot '
+                               f'(limit {self.limit:g}s); no process started; held by: {held}')
+
+    def _expired(self, now):
+        # Before the first memory decision the figures are the provisional reading,
+        # which no decision used: a held slot must not be reported as a memory refusal.
+        if self.blocked_by == 'slot':
+            return self._slot_wait_expired(now)
+        return self._blocked()
 
     def _finish_memory_wait(self, now):
         if self.memory_since is not None:
@@ -697,11 +764,12 @@ class HeavyAdmission:
         elif now - self.started >= self.limit:
             self._finish_memory_wait(now)
             self.close()
-            raise self._blocked()
+            raise self._expired(now)
         if now < self.retry_at:
             return False
         self._finish_memory_wait(now)
         if not self.slot.try_acquire():
+            self.blocked_by = 'slot'
             return False
         self.slot_wait += self.slot.waited
         try:
@@ -711,7 +779,9 @@ class HeavyAdmission:
                 prepare_heavy_env=self.prepare_heavy_env)
             self.available = resources['available_mib']
             self.headroom = host.memory_headroom(self.base_env, resources)
+            self.reservations = (resources.get('slot_reserved_mib'), resources.get('container_reserved_mib'))
             if not admitted:
+                self.blocked_by = 'memory'
                 if self.slot.inherited:
                     raise self._blocked()
                 self.slot.__exit__()

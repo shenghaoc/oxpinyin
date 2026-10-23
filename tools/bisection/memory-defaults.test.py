@@ -305,6 +305,115 @@ class AdmissionTests(unittest.TestCase):
         self.assertEqual(admission.env['CARGO_BUILD_JOBS'], '4')
         self.assertIn('defaults changed after admission', self.out.getvalue())
 
+    def test_an_expired_slot_wait_names_the_slot_and_its_holder_without_memory_figures(self):
+        reads = []
+        def snapshot():
+            reads.append(1)
+            return resources()
+        with mock.patch.dict(self.globals, resource_snapshot=snapshot):
+            with M['HeavySlot']('other lane', out=self.out):
+                record = json.loads((Path(self.temp.name) / 'heavy-slot-0').read_text())
+                with self.assertRaises(M['ResourceBlocked']) as raised:
+                    with self.admission():
+                        self.fail('the slot was taken from its holder')
+        message = str(raised.exception)
+        # The holder kept the slot, so no attempt reached a memory decision: the
+        # only reading is the provisional one. No memory figure can be the cause.
+        self.assertEqual(len(reads), 1)
+        self.assertTrue(message.startswith('slot-wait-expired: '), message)
+        self.assertIn(f"slot 0: pid {record['pid']} in {record['worktree']} since {record['since']}: other lane",
+                      message)
+        self.assertRegex(message, r'waited [0-9.]+s for a heavy slot \(limit 0\.12s\)')
+        self.assertNotIn('MiB', message)
+        self.assertNotIn('resource-blocked', message)
+        self.assertNotIn('memory refused', self.out.getvalue())
+        with M['HeavySlot']('probe', out=self.out) as slot:
+            self.assertLess(slot.waited, 0.01)
+
+    def test_an_expired_slot_wait_names_every_held_slot(self):
+        os.environ['OXPINYIN_HEAVY_SLOTS'] = '2'
+        with M['HeavySlot']('lane a', out=self.out), M['HeavySlot']('lane b', out=self.out):
+            with self.assertRaises(M['ResourceBlocked']) as raised:
+                with self.admission():
+                    self.fail('a held slot was taken')
+        self.assertRegex(str(raised.exception),
+                         r'held by: slot 0: pid [0-9]+ in .+ since [0-9TZ:-]+: lane a; '
+                         r'slot 1: pid [0-9]+ in .+ since [0-9TZ:-]+: lane b$')
+
+    def test_the_last_attempt_decides_what_blocked_an_expired_wait(self):
+        with mock.patch.dict(self.globals, resource_snapshot=lambda: resources(M['HEADROOM_MIB'])):
+            admission = self.admission(dict(os.environ, OXPINYIN_RESOURCE_WAIT_SECONDS='30'))
+            # No room: the first attempt is refused on memory and gives the slot back.
+            self.assertFalse(admission.try_acquire())
+            with M['HeavySlot']('other lane', out=self.out):
+                # Another lane takes it: the next attempt is blocked on the slot.
+                admission.retry_at = 0
+                self.assertFalse(admission.try_acquire())
+                admission.limit = 0
+                with self.assertRaises(M['ResourceBlocked']) as raised:
+                    admission.try_acquire()
+        self.assertTrue(str(raised.exception).startswith('slot-wait-expired: '), raised.exception)
+        self.assertNotIn('MiB', str(raised.exception))
+
+    def refused_on_memory(self):
+        """Run out the wait limit on a memory decision made beside a neighbour's slot.
+
+        The provisional reading shows room; the decision's does not. 3300 MiB read,
+        less the neighbour's 1500 MiB estimate over its 500 MiB use, leaves 2300 MiB;
+        the 2048 MiB headroom leaves 252 MiB for a 600 MiB estimate."""
+        os.environ['OXPINYIN_HEAVY_SLOTS'] = '2'
+        reads = []
+        def snapshot():
+            reads.append(1)
+            return resources(16000 if len(reads) == 1 else 3300)
+        with M['HeavySlot']('neighbour', out=self.out) as neighbour:
+            record = json.loads(Path(neighbour._file.name).read_text())
+            M['write_holder'](neighbour._file, dict(record, estimate_mib=1500))
+            with mock.patch.dict(self.globals, resource_snapshot=snapshot), \
+                    mock.patch.object(M['_host'], 'process_tree_use_mib', return_value=500):
+                admission = self.admission(dict(os.environ, OXPINYIN_RESOURCE_WAIT_SECONDS='0'))
+                with self.assertRaises(M['ResourceBlocked']) as raised:
+                    admission.try_acquire()
+        return raised.exception
+
+    def test_a_memory_refusal_at_expiry_is_resource_blocked_with_its_decisions_figures(self):
+        self.assertEqual(str(self.refused_on_memory()),
+                         'resource-blocked: 600 MiB needed, 252 MiB available')
+
+    def test_a_memory_refusal_prints_the_available_headroom_reservations_and_estimate_it_used(self):
+        self.refused_on_memory()
+        self.assertIn('memory refused: available 2300 MiB after 1000 MiB for other slots and 0 MiB for '
+                      'containers; headroom 2048 MiB; estimate 600 MiB; no process started: tiny child',
+                      self.out.getvalue())
+
+    def test_heavy_rows_behind_a_held_slot_fail_as_slot_waits(self):
+        original_read = Path.read_text
+        row = next(r for r in json.loads(original_read(RUN_ALL.with_name('runners.json')))
+                   if r['name'] == 'pc-version')
+        rows = [dict(row, name=name, heavy=heavy, command=[name])
+                for name, heavy in [('heavy-a', True), ('heavy-b', True), ('light', False)]]
+        finished = []
+        def read(path, *args, **kwargs):
+            return json.dumps(rows) if path.name == 'runners.json' else original_read(path, *args, **kwargs)
+        def execute(command, env, cwd, timeout, output, slot=None):
+            finished.append(command[0])
+            return 0, 0.0, '', False
+        stdout = io.StringIO()
+        with M['HeavySlot']('other lane', out=self.out), \
+                mock.patch.dict(self.globals, execute=execute), \
+                mock.patch.object(Path, 'read_text', read), mock.patch.object(sys, 'argv',
+                [str(RUN_ALL), '--runners', 'heavy-a,heavy-b,light', '--cells', 'bdb',
+                 '--no-build', '--jobs', '2']), contextlib.redirect_stdout(stdout):
+            self.assertEqual(M['main'](), 1)
+        table = [line.split(' | ') for line in stdout.getvalue().splitlines() if ' | ' in line][2:]
+        self.assertEqual({(fields[0], fields[1], fields[2]) for fields in table},
+                         {('heavy-a', 'bdb', 'FAIL'), ('heavy-b', 'bdb', 'FAIL'), ('light', 'bdb', 'PASS')})
+        self.assertEqual(finished, ['light'])
+        for fields in table:
+            if fields[0] != 'light':
+                self.assertTrue(fields[-1].startswith('slot-wait-expired: '), fields[-1])
+                self.assertNotIn('MiB', fields[-1])
+
     def test_explicit_parallelism_waits_without_reduction(self):
         for settings, needed in [({'CARGO_BUILD_JOBS': '3'}, 1800),
                                  ({'RUST_TEST_THREADS': '20'}, 1280),
