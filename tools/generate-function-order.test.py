@@ -5,6 +5,8 @@ Synthetic nm, Callgrind, smaps and linker records exercise parsing, scoping,
 normalization and reconciliation. They need no compiler, profiler or worker.
 """
 
+import ast
+import contextlib
 import hashlib
 import io
 from pathlib import Path
@@ -34,6 +36,44 @@ def profile(body, total):
 
 
 class MeasurementTests(unittest.TestCase):
+    def steady_campaign(self, guard):
+        tree = ast.parse((HERE / 'measure-function-order.py').read_text())
+        loops = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.For) and isinstance(node.target, ast.Name)
+                 and node.target.id == 'facade' and isinstance(node.body[0], ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id == 'measurements'
+                         for target in node.body[0].targets)]
+        self.assertEqual(len(loops), 1)
+        libraries = {(arm, facade): Path(f'/original/{arm}/lib{facade}.so')
+                     for arm in MEASUREMENT['ARMS'] for facade in MEASUREMENT['FACADES']}
+        def launch(command, environment):
+            guard.assert_called_with('auto', 'measure-function-order.py',
+                                     command[-2].parent.name, command[-2], env=environment)
+            self.assertIs(guard.call_args.kwargs['env'], environment)
+            self.assertEqual(environment['LD_LIBRARY_PATH'], '/verified/runtime')
+            self.assertEqual(environment['PERF_FACADE'], command[-2].stem.removeprefix('lib'))
+            return b'{"cycles_ns":[1,1,1,1,1,1,1,1],"workload_checksum":"same"}', b''
+        run = mock.Mock(side_effect=launch)
+        scope = {**MEASUREMENT, 'libraries': libraries, 'check_tkrzw': guard, 'run': run,
+                 'env': {'LD_LIBRARY_PATH': '/verified/runtime'},
+                 'args': SimpleNamespace(cpu=2, bisect='/fixture/bisect',
+                                         system_dir=Path('/tables'), rounds=1)}
+        code = compile(ast.Module(body=loops, type_ignores=[]), str(HERE / 'measure-function-order.py'), 'exec')
+        with contextlib.redirect_stdout(io.StringIO()):
+            exec(code, scope)
+        return run
+
+    def test_final_steady_launch_checks_original_library_and_exact_environment(self):
+        guard = mock.Mock()
+        run = self.steady_campaign(guard)
+        self.assertEqual(run.call_count, 24)
+        self.assertEqual(guard.call_count, run.call_count)
+
+    def test_final_steady_refusal_prevents_launch(self):
+        guard = mock.Mock(side_effect=RuntimeError('wrong tkrzw runtime'))
+        with self.assertRaisesRegex(RuntimeError, 'wrong tkrzw runtime'):
+            self.steady_campaign(guard)
+
     def test_time_sample_takes_the_cycle_row_before_the_closed_row(self):
         sample = MEASUREMENT["time_sample"](
             '{"teardown":"sample","cycle":1,"observations":[],"times":{"init_ns":{"wall_ns":5}}}\n'

@@ -464,6 +464,8 @@ def main():
                     e = {**env, "PERF_FACADE": facade, "PERF_MODE": "speed",
                          "PERF_CYCLES": "8", "PERF_REPEATS": "1",
                          "PERF_WORKLOAD_CHECKSUM": "1"}
+                    check_tkrzw("auto", "measure-function-order.py", arm,
+                                libraries[arm, facade], env=e)
                     output, _ = run(["taskset", "-c", str(args.cpu), args.bisect, "--perf",
                                      libraries[arm, facade], args.system_dir], e)
                     row = json.loads(output)
