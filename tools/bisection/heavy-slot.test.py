@@ -463,7 +463,10 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
 ''')
         # The child holds its slot until the test closes its stdin. Its output goes
         # to the runner's log, so the test waits for the holder's pid to end.
-        parent = subprocess.Popen([sys.executable, '-c', code, str(RUN_ALL)], env=self.env, stdin=subprocess.PIPE,
+        # SIGKILL prevents the parent from cleaning its scratch directory; keep
+        # that scratch under the test's lock directory for tearDown to remove.
+        parent = subprocess.Popen([sys.executable, '-c', code, str(RUN_ALL)],
+                                  env=dict(self.env, TMPDIR=self.lock_dir.name), stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         path = Path(self.lock_dir.name) / 'heavy-slot-0'
         holder = None
