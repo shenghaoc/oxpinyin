@@ -76,6 +76,21 @@ class HeavySlotTests(unittest.TestCase):
                                  f'import time; time.sleep({seconds})'], env=self.env,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
+    def until_waiting(self, contender):
+        """Read the contender until it says it waits for the slot, or has ended.
+
+        A holder is released only after this, so a contender that starts late
+        still finds the slot held."""
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                contender.communicate(timeout=0.05)
+            except subprocess.TimeoutExpired as expired:
+                if b'waiting for a heavy slot' in (expired.stderr or b''):
+                    return
+            else:
+                return
+
     def test_two_concurrent_heavy_requests_serialise_and_report_the_wait(self):
         started = time.monotonic()
         first = self.heavy(1.2)
@@ -371,9 +386,11 @@ finally:
             parent.communicate(timeout=6)
 
     def test_child_keeps_slot_after_wrapper_death(self):
-        code = 'import os,time; print(os.getpid(), flush=True); time.sleep(1.4)'
+        # The child holds its slot until the test closes its stdin, so a stall on
+        # the test side cannot end the hold being checked.
+        code = 'import os,sys; print(os.getpid(), flush=True); sys.stdin.read()'
         wrapper = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
-                                    sys.executable, '-c', code], env=self.env,
+                                    sys.executable, '-c', code], env=self.env, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertTrue(select.select([wrapper.stdout], [], [], 3)[0])
@@ -384,7 +401,9 @@ finally:
             try:
                 with self.assertRaises(subprocess.TimeoutExpired):
                     contender.communicate(timeout=0.3)
+                self.until_waiting(contender)
                 os.kill(child_pid, 0)
+                wrapper.stdin.close()
                 _, stderr = contender.communicate(timeout=5)
                 self.assertEqual(contender.returncode, 0, stderr)
                 self.assertIn('waiting for a heavy slot', stderr)
@@ -395,6 +414,7 @@ finally:
         finally:
             if wrapper.poll() is None:
                 wrapper.kill()
+            wrapper.stdin.close()  # EOF: the child that outlived the wrapper exits
             wrapper.communicate(timeout=5)
 
     def test_child_keeps_slot_after_aggregate_death(self):
@@ -405,18 +425,20 @@ script=sys.argv[1]
 m=runpy.run_path(script)
 original=Path.read_text
 row=next(r for r in json.loads(original(Path(script).with_name('runners.json'))) if r['name']=='pc-version')
-row=dict(row, name='tiny-heavy', heavy=True, command=[sys.executable, '-c', 'import time; time.sleep(1.4)'])
+row=dict(row, name='tiny-heavy', heavy=True, command=[sys.executable, '-c', 'import sys; sys.stdin.read()'])
 def read(path,*args,**kwargs):
     return json.dumps([row]) if path.name=='runners.json' else original(path,*args,**kwargs)
 with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[script,'--runners','tiny-heavy','--no-build','--cells','bdb']):
     sys.exit(m['main']())
 ''')
-        parent = subprocess.Popen([sys.executable, '-c', code, str(RUN_ALL)], env=self.env,
+        # The child holds its slot until the test closes its stdin. Its output goes
+        # to the runner's log, so the test waits for the holder's pid to end.
+        parent = subprocess.Popen([sys.executable, '-c', code, str(RUN_ALL)], env=self.env, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         path = Path(self.lock_dir.name) / 'heavy-slot-0'
+        holder = None
         try:
             deadline = time.monotonic() + 3
-            holder = None
             while time.monotonic() < deadline:
                 holder = run_all['read_holder'](path)
                 if holder and holder['pid'] != parent.pid:
@@ -429,6 +451,8 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
             try:
                 with self.assertRaises(subprocess.TimeoutExpired):
                     contender.communicate(timeout=0.3)
+                self.until_waiting(contender)
+                parent.stdin.close()
                 _, stderr = contender.communicate(timeout=5)
                 self.assertEqual(contender.returncode, 0, stderr)
                 self.assertIn('waiting for a heavy slot', stderr)
@@ -439,13 +463,19 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
         finally:
             if parent.poll() is None:
                 parent.kill()
+            parent.stdin.close()  # EOF: the child that outlived the parent exits
             parent.communicate(timeout=5)
+            deadline = time.monotonic() + 5
+            while holder and run_all['pid_alive'](holder['pid']) and time.monotonic() < deadline:
+                time.sleep(0.01)
 
     def test_normal_parent_exit_does_not_unlock_a_descendant(self):
-        code = ('import os,time; pid=os.fork(); '
-                'print(pid,flush=True) if pid else time.sleep(1.2)')
+        # The descendant holds the slot until the test closes its stdin. The parent
+        # exits at once, so the descendant alone keeps the pipe's read end.
+        code = ('import os,sys; pid=os.fork(); '
+                'print(pid,flush=True) if pid else sys.stdin.read()')
         parent = subprocess.Popen([*ENTRY, '--heavy-slot', '--',
-                                   sys.executable, '-c', code], env=self.env,
+                                   sys.executable, '-c', code], env=self.env, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertTrue(select.select([parent.stdout], [], [], 3)[0])
@@ -455,6 +485,8 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
             try:
                 with self.assertRaises(subprocess.TimeoutExpired):
                     contender.communicate(timeout=0.3)
+                self.until_waiting(contender)
+                parent.stdin.close()
                 _, stderr = contender.communicate(timeout=5)
                 self.assertEqual(contender.returncode, 0, stderr)
                 self.assertIn('waiting for a heavy slot', stderr)
@@ -465,6 +497,7 @@ with mock.patch.object(Path,'read_text',read), mock.patch.object(sys,'argv',[scr
         finally:
             if parent.poll() is None:
                 parent.kill()
+            parent.stdin.close()  # EOF: the descendant exits
             parent.communicate(timeout=5)
 
     def test_dead_unrelated_and_replaced_markers_do_not_bypass_the_slot(self):
