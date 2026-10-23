@@ -321,6 +321,20 @@ bytes as the original relink for the same inputs. An ordinary link or
 export-verification failure still fails; fallback does not retry a failed
 shipping link.
 
+A policy that went stale and merged is reported by the nightly
+`function-order-policy` job in `.github/workflows/verify-nightly.yml`
+(#1071). The job builds both facades' BDB staticlibs with the release recipe
+(`tools/packaging/install.sh`, the build whose archive the relink reads) and
+runs `tools/packaging/function-order.sh resolve ARCHIVE POLICY SONAME` for
+each checked-in policy. It switches the relink's own ordering off, as
+"Regeneration" below does, so that a stale policy fails this check, with its
+message, and not the relink. On an unresolved path the job prints the
+resolver's `unresolved policy path` line and points to "Regeneration". It
+runs on the schedule and on a manual dispatch of that workflow
+(`gh workflow run verify-nightly.yml --ref <branch>`, which also runs every
+other nightly job; `windows_only` skips it) and blocks no merge. Only the BDB
+backend has checked-in policies, so only its archives are checked.
+
 The relink passes `-Wl,-z,defs` on that one link command, so the ordered and
 the unordered link both carry it, on every backend. A reference in the
 staticlib that `$GLIB_LIBS`, the backend libraries, `-lpthread`, `-ldl` and
