@@ -332,6 +332,23 @@ bytes as the original relink for the same inputs. An ordinary link or
 export-verification failure still fails; fallback does not retry a failed
 shipping link.
 
+C++ paths are the one exception to failing on a missing path. The Kyoto
+Cabinet backend compiles a C++ shim
+(`crates/oxpinyin-store/src/kyotocabinet/shim.cc`) with the system C++
+compiler, so its policies name C++ functions: the shim's own, and the Kyoto
+Cabinet header code it instantiates. A C++ path is the raw Itanium-mangled
+name, which carries no hash. A raw Rust symbol (`_R…`, or legacy
+`_ZN…17h<hash>E`) is never a path. Which C++ functions a build contains is the
+compiler's choice: another GCC can inline a function, or clone it under a
+different name (`.isra.0`). The release packages build the KC backend with
+Fedora's and Arch's own compilers. So a C++ path that the staticlib lacks is
+skipped, and the rest of the policy still orders the link. Every resolve
+prints the count, `function ordering: N of M C++ policy paths are not in
+this build; skipped`, with 0 of 0 for a policy without C++ paths, so every
+relink log shows whether the compiler dropped one. A missing
+Rust or C path still fails; the shim's `extern "C"` entry points (`oxkc_*`)
+are C paths.
+
 A policy that went stale and merged is reported by the nightly
 `function-order-policy` job in `.github/workflows/verify-nightly.yml`
 (#1071). The job builds both facades' staticlibs for BDB, KC and tkrzw with
@@ -364,7 +381,8 @@ resolves every reference.
 Measurement tools have a stricter boundary: before reporting a shipping arm,
 `tools/packaging/function_order.py` verifies the actual unstripped linked
 object's policy prefix at the start of `.text`. It refuses fallback,
-inapplicable/missing policy functions, wrong order and stripped objects, with
+inapplicable policies, missing Rust or C policy functions (it skips a missing
+C++ path, as the relink does), wrong order and stripped objects, with
 the arm and a linker diagnostic. A successful install or a stderr message
 cannot replace this check. Each arm prints its own result. Use
 `--function-order ARM/FACADE=POLICY` to name a historical policy, or an explicit
@@ -514,7 +532,8 @@ keeps profiler output in memory. It requires both facades and both startup
 profiles, unions the two startup sets, subtracts that union from the steady
 set, and writes either policy only after every stream resolves. A missing
 orderable Rust path is an error; fixed loader/CRT paths are counted and
-excluded.
+excluded. C++ functions in the staticlib are ordered under their mangled
+names (see "Final-link mechanism and fallback").
 
 Repeat the campaign with `tools/measure-function-order.py`, which drives the
 same worker for native timing, parent-observed `smaps` at the load and

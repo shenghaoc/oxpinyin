@@ -217,6 +217,26 @@ class GeneratorTests(unittest.TestCase):
                 with self.subTest(available=available), self.assertRaises(ValueError):
                     measured(Path("-"), LIBRARY, table, available)
 
+    def test_rust_and_cxx_mangling_are_told_apart(self):
+        legacy = "_ZN4core3ptr13drop_in_place17h0123456789abcdefE"
+        for name in (legacy, legacy + ".llvm.42", "_RNvCs1234_5crate4open"):
+            with self.subTest(name=name):
+                self.assertTrue(GENERATOR["rust_mangled"](name))
+                self.assertFalse(GENERATOR["cxx_mangled"](name))
+        for name in ("_ZN12kyotocabinet6HashDB3getEv", "_ZNK12kyotocabinet6HashDB5countEv",
+                     "_ZN12_GLOBAL__N_1L4failEP7oxkc_db.isra.0"):
+            with self.subTest(name=name):
+                self.assertTrue(GENERATOR["cxx_mangled"](name))
+        self.assertFalse(GENERATOR["cxx_mangled"]("oxkc_db_new"))
+
+    def test_cxx_functions_are_orderable_and_unlisted_ones_stay_fixed(self):
+        measured = GENERATOR["measured_paths"]
+        cxx, unlisted = "_ZN12kyotocabinet6HashDB3getEv", "_ZN12_GLOBAL__N_1L4failEv.isra.0"
+        table = {"_Rraw": ("crate::open", ".text"), cxx: (cxx, ".text"), unlisted: (unlisted, ".text")}
+        available = {"crate::open": {".text.one"}, cxx: {".text." + cxx}}
+        with mock.patch.dict(measured.__globals__, callgrind_functions=lambda *_: set(table)):
+            self.assertEqual(measured(Path("-"), LIBRARY, table, available), {"crate::open", cxx})
+
     def init_array_fixture(self, values, relocations=(), symbols=()):
         size = 8 * len(values)
         section = ("  [20] .init_array       INIT_ARRAY      "

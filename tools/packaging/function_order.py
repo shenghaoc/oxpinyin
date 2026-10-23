@@ -66,15 +66,16 @@ def verify(library, policy, facade):
 
     Multiple bodies for one path must form one contiguous group. Aliases at
     the same address may satisfy adjacent policy paths. Unselected CRT/code
-    before or between policy groups, missing paths and ambiguous order fail.
-    A stripped object cannot prove this property and fails closed.
+    before or between policy groups, missing Rust or C paths and ambiguous
+    order fail. A C++ path the object lacks is skipped, as the relink skips
+    it (generate-function-order.py, cxx_mangled). A stripped object cannot
+    prove this property and fails closed.
     """
     soname = f'lib{facade}.so.15'
     dynamic = command(['readelf', '-dW', library])
     if re.findall(r'\(SONAME\).*\[([^]]+)\]', dynamic) != [soname]:
         raise ValueError(f'expected SONAME {soname}')
     names = command(['bash', HERE / 'function-order.sh', 'policy', policy, soname]).splitlines()
-    positions = {name: index for index, name in enumerate(names)}
     sections = command(['readelf', '-SW', library])
     starts = re.findall(r'\[\s*\d+\]\s+\.text\s+PROGBITS\s+([0-9a-fA-F]+)\s', sections)
     if len(starts) != 1:
@@ -88,15 +89,19 @@ def verify(library, policy, facade):
     decoded = GEN['symbols'](command([*nm, '--demangle=rust', library]))
     if len(raw) != len(decoded):
         raise ValueError('raw/demangled symbol-table lengths differ')
-    groups = defaultdict(set)
-    families = defaultdict(set)
-    found = set()
+    entries = []
     for original, symbol in zip(raw, decoded, strict=True):
         if original[1:] != symbol[1:]:
             raise ValueError('raw/demangled symbol-table records disagree')
-        if symbol[6] != '.text':
-            continue
-        name = GEN['stable_identity'](symbol[0], original[0])
+        if symbol[6] == '.text':
+            entries.append((GEN['stable_identity'](symbol[0], original[0]), original))
+    present = {name for name, _ in entries}
+    names = [name for name in names if name in present or not GEN['cxx_mangled'](name)]
+    positions = {name: index for index, name in enumerate(names)}
+    groups = defaultdict(set)
+    families = defaultdict(set)
+    found = set()
+    for name, original in entries:
         index = positions.get(name)
         address = int(original[1], 16)
         groups[address]  # retain unselected functions to detect interleaving
