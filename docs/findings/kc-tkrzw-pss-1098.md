@@ -1,21 +1,6 @@
 # KC and tkrzw Pss attribution (#1098)
 
-## Scope and release condition
-
-Tooling preparation, recorded 2026-10-23 UTC. Findings measurements remain
-paused; #1031 retains heavy-work priority. #1099 remains parked and must not
-start automatically. No provisioning, shipping build, profiling or measurement
-has run for this issue. No historical figure is a current-run baseline.
-
-The maintainer approved extending KC/tkrzw comparison stages on the new
-`wip/1091-cold-cloud` parent. Its verified committed tip was `fd28e96e`, based
-on main `294f14eb`. Before publication, the parent advanced to `4165e0a3`
-(libgcc_s kept warm); the layer rebased cleanly and the 35 pure teardown/cold
-tests passed again. The old unfinished `wip/1091-cold-cache` was not adopted.
-`gh stack` registers and rebases this layer on the cloud parent. The extension
-does not change the parent's cold-file enumeration, eviction policy, major
-fault instrumentation or native lifecycle worker. #1090's init instrumentation
-follows this shared-tooling checkpoint and is not implemented here.
+No current Pss, heap or performance result is available.
 
 ## Comparison-stage extension
 
@@ -52,101 +37,9 @@ uses the earlier smaps read. These are different sampling definitions;
 report any rollup-versus-mapping-sum difference explicitly rather than
 silently substituting one for the other.
 
-## Tooling verification checkpoint
-
-Light gates passed on Ubuntu with the repository-managed CPython 3.15:
-
-```sh
-uv run --no-project --managed-python --python cpython@3.15+gil python -B -X lazy_imports=normal tools/bisection/contract-diff.test.py
-# 93 tests passed, including seven peer-reader/runtime tests.
-uv run --no-project --managed-python --python cpython@3.15+gil python -B -X lazy_imports=normal tools/bisection/teardown.test.py PureTests ColdTests
-# 35 tests passed.
-cargo fmt --all --check
-git diff --check
-```
-
-AST comparison against parent `4165e0a3` confirmed unchanged
-`library_dependencies`, `cold_files`, `resident_pages`, `evict_files` and
-`report_times`; `git diff --exit-code wip/1091-cold-cloud --
-tools/bisection/teardown.h` also passed. Native teardown/stub and real-ELF
-runtime harness gates remain pending heavy admission after #1031 priority.
-The native teardown gate was attempted through normal admission with no
-queue wait:
-
-```sh
-OXPINYIN_RESOURCE_WAIT_SECONDS=0 TMPDIR=/home/sheng/tmp/oxpinyin-1098 PYTHONDONTWRITEBYTECODE=1 just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil python -B -X lazy_imports=normal tools/bisection/teardown.test.py
-```
-
-Admission reported `slot-wait-expired` and `no process started`: slot 0 was
-held by #1031, PID 2978775 in its `oxpinyin-hasher` worktree. No slot or
-test process is held by this lane. This is a WIP checkpoint, not a completed
-code-change gate. No backend
-campaign or shipping measurement has run.
-
-The three verification-rule-2 checks are empty for this layer: no store path,
-no backend feature pattern in changed non-Markdown files, and no changed
-backend-naming Cargo.toml line. No Rust crate is modified; crate tests and
-clippy do not apply. The authorized scope is tooling plus harness tests,
-with measurement separately queued. Raw test output is not retained in files.
-
-## Measurement continuation after release
-
-Use `/home/sheng/wt/1098` on `wip/1098-kc-tkrzw-pss` and
-`TMPDIR=/home/sheng/tmp/oxpinyin-1098`. Fetch and rebase before publication.
-Re-read current instructions and complete the tooling gates before release.
-
-Run `tools/cloud/setup.sh --cells "kc tkrzw"` with task-owned
-`OXPINYIN_ORACLE_ENV` and `--cache-dir` under the home disk. Only documented
-Rust prerequisites may be installed; setup failure is a STOP. Setup,
-compilation and profiling remain subject to serialized heavy admission.
-
-Before measuring, record actual CPU, affinity, memory, kernel, OS, page
-size, tool versions and artifact identities. Run `findmnt -T` on every
-resolved subject/control/pin library, backend and shared library, data file,
-profile file, work directory and TMPDIR; all measured paths must be ext4.
-The source-preparation filesystem check does not certify future artifacts.
-Use `tools/tkrzw/runtime.sh` for every tkrzw launch and certify the actual
-copied objects as well as original installed objects.
-
-Install both shipping facades separately for each backend with its own
-`CARGO_TARGET_DIR`. Use `tools/packaging/install.sh`, release and locked
-inputs, `kyotocabinet,shipped` or `tkrzw,shipped` for libpinyin and the
-matching backend for libzhuyin. Inspect both facades with
-`tools/packaging/function_order.py`; successful installation alone does not
-prove ordering. Never use an unordered opt-out for a shipping claim.
-
-Diagnose KC pinyin's same-bytes total-Pss control before pin comparison.
-Use equal-length arm paths, fresh profile copies, interleaving and one
-fresh process per sample. Investigate changing sharing of resolved native
-libraries and distinguish clean shared residency from private dirty and
-anonymous memory. No cause is established by source inspection alone.
-Do not stop unrelated processes. A nonexact/unexplained control must be
-reported as invalid under the task instruction; residency acceptance also
-requires the section 7.5 paired difference median and entire bootstrap
-interval inside the specified band. Do not tune the band after sampling.
-
-After release, collect M0/M1 Rss, Pss and Private_Dirty per mapping for
-both facades and `phrases`/`journals`, subject/control/pin in the same run.
-Add Massif peak heap per side with exact deterministic controls; distinguish
-sampled lifecycle peaks from checkpoint heap. Rank positive M1 Pss
-contributors by oxpinyin mapping, backend/shared library or anonymous
-owner. Explain different use of the same shared library from source and
-valid attribution, and give each contributor a next step without
-implementing it.
-
-Each reported figure must carry its exact command and current-run inputs.
-All raw observations and profiler streams stay in memory; no archive, log,
-capture or evidence file may be created, attached or uploaded. State raw
-capture unavailability at the point of use. Publish a findings-only draft
-PR after fmt and the documentation gate, without review requests, mentions,
-checkboxes, merging or draft-state changes. Author and committer are
-Shenghao Chen <shenghaoc@outlook.com>.
-
 ## References
 
 - [Issue #1098](https://github.com/shenghaoc/oxpinyin/issues/1098).
 - [BDB attribution method](init-attribution-2026-10-22.md).
 - [Backend shipping policies and historical controls](backend-function-order-1076.md).
 - [Section 7.5](tooling-consolidation-python-just.md#75-metrics-and-statistics).
-
-No current Pss, heap or performance result is available.
