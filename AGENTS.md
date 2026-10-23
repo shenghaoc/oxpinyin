@@ -354,6 +354,7 @@ into the future (PR #363).
 
 `rust-toolchain.toml` is the only supported toolchain. Portable crates:
 Linux/macOS/Windows. Oracle, capi: Linux-first.
+Portable crates are architecture-neutral (x86_64 and arm64). linux/amd64 is only the reference for pin comparisons. Do not use emulation for work that does not compare against the pin.
 
 Cloud sessions are a supported host for every gate: provision one with
 `tools/cloud/setup.sh` (`docs/runbooks/cloud.md`).
