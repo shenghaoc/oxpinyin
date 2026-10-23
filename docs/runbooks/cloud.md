@@ -227,7 +227,8 @@ by the inherited value. The remaining overwrites were classified as follows:
 | `tools/dev/compat/boundary.py`: removal of host loader variables | Intentional host/container boundary; the container supplies its own runtime. |
 
 No listed remaining measurement overwrite is exempt as never-tkrzw.
-`teardown.py` is explicitly BDB-only in `run`; it needs no tkrzw guard.
+`teardown.py` checks each copied object before every native, fixture-population
+and profile-reader launch.
 The shell surface runners, same-data/import/round-trip runners, profiling and
 packaging launches, and Python contract/gcov/training/ordering tools share
 the same implementation. A refusal is a failed run, never MATCH or SKIP.
