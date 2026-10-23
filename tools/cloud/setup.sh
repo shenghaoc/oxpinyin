@@ -156,8 +156,11 @@ die() {
 pinval() { sed -n "s/^$1=//p" "$pin"; }
 
 # version_at_least TEXT MINIMUM: the first dotted version in TEXT (major.minor
-# or major.minor.patch) is MINIMUM or newer. Plain Bash, because nothing it
-# checks has been installed yet when it first runs.
+# or major.minor.patch) is MINIMUM or newer. Numbers only, for tools whose
+# versions are not semantic (Valgrind: valgrind-3.22.0, and valgrind-3.22.0.GIT
+# for a git build): a development build counts as its number, as it does in
+# tools/dev/doctor.py. Plain Bash, because nothing it checks has been installed
+# yet when it first runs.
 version_at_least() {
 	local text=$1 minimum=$2 i
 	local -a found needed
@@ -170,6 +173,27 @@ version_at_least() {
 		return 1
 	done
 	return 0
+}
+
+# semver_at_least TEXT MINIMUM: the semantic version after the program name in
+# TEXT (`uv 0.13.1 (...)`: MAJOR.MINOR.PATCH[-PRERELEASE][+BUILD]) is MINIMUM, a
+# plain MAJOR.MINOR.PATCH, or newer. A pre-release is older than the release it
+# precedes (0.13.1-beta.1 is below 0.13.1) and newer than every lower release
+# (0.14.0-beta.1 is above 0.13.1); build metadata does not count. Text that is
+# not a semantic version is not at the minimum.
+semver_at_least() {
+	local text=$1 minimum=$2 prerelease i
+	local -a found needed
+	[[ $text =~ ^[^[:space:]]+[[:space:]]+([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?([[:space:]]|$) ]] || return 1
+	found=("$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))")
+	prerelease=${BASH_REMATCH[4]}
+	IFS=. read -r -a needed <<<"$minimum"
+	for i in 0 1 2; do
+		((found[i] == needed[i])) && continue
+		((found[i] > needed[i])) && return 0
+		return 1
+	done
+	[[ -z $prerelease ]]
 }
 
 # ---- 0a. uv and the managed interpreter ---------------------------------
@@ -233,10 +257,11 @@ fi
 
 # uv.toml sets the floor (required-version = ">=0.13.1"). Keep a uv at or
 # above it; install the checksummed 0.13.1 only when uv is missing or older.
+# uv prints a semantic version, so a pre-release of the floor (0.13.1-beta.1) is older.
 uv_at_least_floor() {
 	local version
 	version=$(uv --version 2>/dev/null) || return 1
-	[[ $version == uv\ * ]] && version_at_least "$version" "$uv_minimum"
+	[[ $version == uv\ * ]] && semver_at_least "$version" "$uv_minimum"
 }
 
 uv_install_dir=${UV_INSTALL_DIR:-$HOME/.local/bin}

@@ -125,7 +125,10 @@ Doctor is also the one check of tool minimums (maintainer ruling 2026-10-23
 UTC, #1074). It checks just, cargo-nextest, cargo-c, cargo-fuzz and
 cargo-llvm-cov everywhere, and GNU ld, gcov and Valgrind on Linux. Each line
 names the minimum and the version found: a newer tool passes, an older one
-fails, and a missing one is reported with its installation step. Runbooks and
+fails, and a missing one is reported with its installation step. Semantic
+versions compare as semver does (a pre-release of the minimum is older than it,
+build metadata does not count); GNU ld, gcov and Valgrind compare by number,
+and a development build counts as its number. Runbooks and
 `tools/cloud/setup.sh` point to doctor instead of repeating version lists, and
 setup installs uv or Valgrind only when it is missing or older than its minimum.
 
