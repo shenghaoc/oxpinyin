@@ -646,6 +646,71 @@ fn db_count(db: &Db) -> Result<u64, StoreError> {
     Err(status_error())
 }
 
+/// Whether the hash file open as `db` at `path` holds no record, so that
+/// the pin's iterator over it finds none: it is healthy, its header
+/// counts no records, and the file on disk ends at or before its record
+/// section. The last condition does not rely on the header's count, so
+/// a file with record bytes is walked even when its header reads healthy
+/// with 0 records. Anything that cannot be read answers no.
+fn holds_no_record(db: &Db, path: &Path) -> bool {
+    is_healthy(db) && matches!(db_count(db), Ok(0)) && ends_before_records(path)
+}
+
+/// `tkrzw_dbm_is_healthy`: whether the open file was closed cleanly and
+/// its size agrees with its metadata (`HashDBMImpl::OpenImpl`).
+fn is_healthy(db: &Db) -> bool {
+    // SAFETY: the handle is open; the call only reads the database's
+    // health flag and touches no borrowed buffers.
+    unsafe { ffi::tkrzw_dbm_is_healthy(db.0.as_ptr()) }
+}
+
+/// The size of a HashDBM file's metadata, its first bytes
+/// (`METADATA_SIZE`, `tkrzw_dbm_hash.cc:33` at tkrzw 9ee8416).
+const HASH_METADATA_SIZE: usize = 128;
+
+/// Whether the file at `path`, by `fstat` of its open descriptor, ends at
+/// or before the record section its own header places.
+fn ends_before_records(path: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let Ok(metadata) = file.metadata() else {
+        return false;
+    };
+    let mut header = [0_u8; HASH_METADATA_SIZE];
+    if file.read_exact(&mut header).is_err() {
+        return false;
+    }
+    record_base(&header).is_some_and(|base| metadata.len() <= base)
+}
+
+/// The offset of a HashDBM file's record section, computed from the
+/// three header fields that place it as `HashDBMImpl::SetRecordBase`
+/// computes it (`tkrzw_dbm_hash.cc:1351-1356` at tkrzw 9ee8416): the
+/// metadata, one `offset_width`-byte slot per bucket, the 1,008-byte free
+/// block pool and the 16-byte record-base header, rounded up to a
+/// multiple of `max(4096, 1 << align_pow)` (`:50-57`, `AlignNumber`).
+/// `HashDBM::ReadMetadata` reads the fields as big-endian numbers:
+/// `offset_width` and `align_pow` one byte each at 13 and 14, and
+/// `num_buckets` eight bytes at 16 (`:39-42`, `:2676-2679`). `None` when
+/// the result does not fit in 64 bits.
+fn record_base(header: &[u8; HASH_METADATA_SIZE]) -> Option<u64> {
+    const FBP_SECTION_SIZE: u64 = 1008;
+    const RECORD_BASE_HEADER_SIZE: u64 = 16;
+    const RECORD_BASE_ALIGN: u64 = 4096;
+    let offset_width = u64::from(header[13]);
+    let align_pow = u32::from(header[14]);
+    let mut num_buckets = [0_u8; 8];
+    num_buckets.copy_from_slice(&header[16..24]);
+    let num_buckets = u64::from_be_bytes(num_buckets);
+    let align = RECORD_BASE_ALIGN.max(1_u64.checked_shl(align_pow)?);
+    num_buckets
+        .checked_mul(offset_width)?
+        .checked_add(HASH_METADATA_SIZE as u64 + FBP_SECTION_SIZE + RECORD_BASE_HEADER_SIZE)?
+        .checked_next_multiple_of(align)
+}
+
 /// Reads one record into `value`, which is cleared first, handing the
 /// borrowed value to `get_value` exactly once, or not at all when the key
 /// is absent.
@@ -1239,6 +1304,16 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
         // then `copy_tkrzwdb(&tmp_db, m_db)`; a file that does not open
         // leaves the container empty, as the pin's does.
         if let Ok(file) = open_hash(path) {
+            // `copy_tkrzwdb` copies nothing from a file with no live
+            // record, but its HashDBM iterator still reads every bucket
+            // slot, and `save_db` writes 1,048,583 of them whatever the
+            // rows: about 329M instructions per init
+            // (`docs/findings/tkrzw-init-1099.md`). A file that holds no
+            // record leaves the container exactly as that copy would, so
+            // it is not walked; every other file is.
+            if holds_no_record(&file.db, path) {
+                return Ok(this);
+            }
             // A failed source walk must not discard unrelated learned data.
             if let Err(error) = visit_db(&file.db, |key, value| {
                 db_set_one(&this.db, key, Some(value))
@@ -1284,5 +1359,144 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
             db_set_one(&file.db, key, Some(value))
         })?;
         db_synchronize(&file.db, false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::{
+        HASH_METADATA_SIZE, TkrzwUserBigramDb, db_count, db_set_one, holds_no_record, is_healthy,
+        open_hash, open_hash_create, record_base,
+    };
+    use crate::UserBigramDb;
+
+    /// A directory under the temp directory, removed on drop.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = std::env::temp_dir()
+                .join(format!("oxpinyin-store-tkrzw-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn sorted_keys(db: &TkrzwUserBigramDb) -> Vec<Option<[u8; 4]>> {
+        let mut keys = db.keys().unwrap();
+        keys.sort();
+        keys
+    }
+
+    /// The record-section offset the header of the file at `path` places.
+    fn file_record_base(path: &std::path::Path) -> Option<u64> {
+        let bytes = std::fs::read(path).unwrap();
+        record_base(bytes[..HASH_METADATA_SIZE].try_into().unwrap())
+    }
+
+    #[test]
+    fn a_file_saved_with_no_rows_holds_no_record_and_loads_empty() {
+        // What every profile the pin saves before learning a bigram holds:
+        // 1,048,583 buckets and nothing after them, 4,198,400 bytes
+        // (`docs/findings/tkrzw-init-1099.md`).
+        let dir = TempDir::new("no-rows");
+        let path = dir.0.join("user_bigram.db");
+        TkrzwUserBigramDb::empty().unwrap().save_db(&path).unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 4_198_400);
+        assert_eq!(file_record_base(&path), Some(4_198_400));
+        assert!(holds_no_record(&open_hash(&path).unwrap().db, &path));
+        assert!(
+            TkrzwUserBigramDb::load_db(&path)
+                .unwrap()
+                .keys()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_file_saved_with_rows_is_walked() {
+        let dir = TempDir::new("rows");
+        let path = dir.0.join("user_bigram.db");
+        let db = TkrzwUserBigramDb::empty().unwrap();
+        for token in 1_u32..=3 {
+            db.store(&token.to_le_bytes(), b"gram").unwrap();
+        }
+        db.save_db(&path).unwrap();
+        assert!(!holds_no_record(&open_hash(&path).unwrap().db, &path));
+        let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
+        assert_eq!(
+            sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
+            expected
+        );
+    }
+
+    #[test]
+    fn a_healthy_zero_count_header_over_live_records_is_walked() {
+        // A cleanly saved file with three records whose header count alone
+        // is rewritten to 0: the closure flag is still set and the size
+        // still agrees with the metadata, so the file opens healthy with
+        // no records counted, while its record section holds all three.
+        // The pin's `copy_tkrzwdb` walks the buckets and copies them; so
+        // must `load_db`.
+        let dir = TempDir::new("stale-count");
+        let path = dir.0.join("user_bigram.db");
+        let db = TkrzwUserBigramDb::empty().unwrap();
+        for token in 1_u32..=3 {
+            db.store(&token.to_le_bytes(), b"gram").unwrap();
+        }
+        db.save_db(&path).unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
+        // `num_records`, eight big-endian bytes at 24 (`META_OFFSET_NUM_RECORDS`).
+        bytes[24..32].copy_from_slice(&0_u64.to_be_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        let file = open_hash(&path).unwrap();
+        assert!(is_healthy(&file.db));
+        assert_eq!(db_count(&file.db).unwrap(), 0);
+        assert!(std::fs::metadata(&path).unwrap().len() > file_record_base(&path).unwrap());
+        assert!(!holds_no_record(&file.db, &path));
+        drop(file);
+        let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
+        assert_eq!(
+            sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
+            expected
+        );
+    }
+
+    #[test]
+    fn an_unhealthy_file_is_walked_even_when_its_metadata_counts_no_rows() {
+        // A copy taken while the writer still has the file open: its
+        // metadata is the one the writer's open wrote (not closed, no
+        // records), while its buckets already reach three records. The
+        // pin's `copy_tkrzwdb` walks the buckets and copies them; so must
+        // `load_db`.
+        let dir = TempDir::new("unhealthy");
+        let live = dir.0.join("live.db");
+        let path = dir.0.join("user_bigram.db");
+        let writer = open_hash_create(&live).unwrap();
+        for token in 1_u32..=3 {
+            db_set_one(&writer.db, &token.to_le_bytes(), Some(b"gram")).unwrap();
+        }
+        std::fs::copy(&live, &path).unwrap();
+        drop(writer);
+        let file = open_hash(&path).unwrap();
+        assert_eq!(db_count(&file.db).unwrap(), 0);
+        assert!(!is_healthy(&file.db));
+        assert!(!holds_no_record(&file.db, &path));
+        drop(file);
+        let expected: Vec<_> = (1_u32..=3).map(|token| Some(token.to_le_bytes())).collect();
+        assert_eq!(
+            sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
+            expected
+        );
     }
 }
