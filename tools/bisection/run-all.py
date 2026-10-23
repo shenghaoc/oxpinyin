@@ -628,8 +628,9 @@ def run_main():
                     result['slot_wait_seconds'] = 0.0
                 if rc or expired:
                     for _, result, _ in build_candidates:
+                        # An admission refusal is already a whole reason; only a build failure takes the prefix.
                         result.update(status='FAIL', seconds=round(seconds, 3), build_seconds=build_seconds[cell],
-                                      reason=output if output.startswith('resource-blocked:') else
+                                      reason=output if output.startswith(('resource-blocked:', 'slot-wait-expired:')) else
                                       'cell build: ' + reason_for(rc, output, args.build_timeout, expired))
                         results.append(result)
                     continue
