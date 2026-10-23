@@ -25,7 +25,7 @@ cd "$(dirname "$0")/../.."
 
 # Named once, in tools/sanitize.sh.
 NIGHTLY=${OXPINYIN_SANITIZER_TOOLCHAIN:-$(sed -n 's/^NIGHTLY=//p' tools/sanitize.sh)}
-TARGET=${OXPINYIN_SANITIZER_TARGET:-x86_64-unknown-linux-gnu}
+TARGET=${OXPINYIN_SANITIZER_TARGET:-$(rustc -vV | sed -n 's/^host: //p')}
 
 if ! rustup toolchain list | grep -q "^$NIGHTLY"; then
 	echo "$NIGHTLY is not installed."
