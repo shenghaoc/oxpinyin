@@ -314,6 +314,7 @@ class HeavySlot:
         self.inherited = False
         self._handed_off = False
         self.holder_pid, self.inherited_fd = None, None
+        self.token = None
 
     def _try(self, index):
         file = (self.lock_dir / f'{HEAVY_SLOT}-{index}').open('a+')
@@ -377,8 +378,9 @@ class HeavySlot:
             print(f'reclaimed stale heavy slot {self.slot}: {host.describe_holder(previous)} (pid dead)',
                   file=self.out, flush=True)
         self.holder_pid = os.getpid()
+        self.token = uuid.uuid4().hex
         holder = dict(pid=self.holder_pid, worktree=str(ROOT), command=self.command,
-                      since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
+                      since=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), token=self.token)
         host.write_holder(self._file, holder)
         if self.waited >= self.poll:
             print(f'heavy slot {self.slot} acquired after {self.waited:.1f}s wait: {self.command}',
@@ -415,28 +417,35 @@ class HeavySlot:
         return [(index, host.read_holder(self.lock_dir / f'{HEAVY_SLOT}-{index}'))
                 for index in range(host.heavy_slot_count())]
 
-    def _clear_unheld(self, index):
-        """After a hand-off, clear the record if nothing holds the slot any more.
+    def _clear_unheld(self, index, token):
+        """After a hand-off, clear this holder's record if nothing holds the slot any more.
 
         The workload and its descendants share the open file description, so the
         lock outlives this process while any of them runs, and the record keeps
         naming the holder then. When this probe takes the lock none is left: the
         step ended normally, and its record must not read as a crashed holder's
-        to the next acquisition. A holder killed before it got here never runs
-        this, so its record is still reclaimed and reported. A failed probe
-        leaves the record, as a hand-off always did."""
+        to the next acquisition. Another holder can take the slot after our
+        descriptor closed and before the probe, write its record and die without
+        releasing; the probe then holds a free lock over that holder's record. It
+        clears a record only if it carries the token this holder wrote at
+        acquire, which every rewrite of the record keeps. Any other record is
+        left, so that holder is still reclaimed and reported. A holder killed
+        before it got here never runs this, and a failed probe leaves the
+        record, as a hand-off always did."""
         with contextlib.suppress(OSError):
             probe = self._try(index)
             if probe is not None:
                 with probe:
-                    probe.seek(0)
-                    probe.truncate()
-                    probe.flush()
+                    record = host.read_holder(Path(probe.name))
+                    if token is not None and isinstance(record, dict) and record.get('token') == token:
+                        probe.seek(0)
+                        probe.truncate()
+                        probe.flush()
 
     def __exit__(self, *exc):
         if self._file is None:
             return False
-        handed_off, index = self._handed_off, self.slot
+        handed_off, index, token = self._handed_off, self.slot, self.token
         try:
             if not handed_off:
                 self._file.seek(0)
@@ -447,7 +456,7 @@ class HeavySlot:
             self._file = None
             self._handed_off = False
         if handed_off:
-            self._clear_unheld(index)
+            self._clear_unheld(index, token)
         return False
 
 
