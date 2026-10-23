@@ -67,6 +67,7 @@ jobs:
       # cargo-deny in ci.yml.
       - name: Install pinned cargo-llvm-cov
         run: |
+          # Exact on purpose (#1074): a checksum is only known for a known version.
           ver=0.9.0
           sum=bc2122fd7bd9b6d3eb371690ed085f82e5a8bf1851f4645ef521d12ed04b2616
           curl -sSfL -o cargo-llvm-cov.tar.gz "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v${ver}/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
