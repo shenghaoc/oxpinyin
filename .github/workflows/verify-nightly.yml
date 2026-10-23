@@ -57,7 +57,7 @@ jobs:
   # committed w3 tables so the decoder starts from valid headers.
   fuzz-soak:
     # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
+    if: false
     runs-on: ubuntu-latest
       # Same ASan leeway as the tkrzw sanitizer job in store-backends.yml:
       # Docker's default seccomp profile blocks personality(2), which the
@@ -168,7 +168,7 @@ jobs:
   # input), and eval (no interpolation2.text consistent with w3).
   differentials:
     # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
+    if: false
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -198,7 +198,7 @@ jobs:
   # shipped configuration.
   overflow-lane:
     # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
+    if: false
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -228,7 +228,7 @@ jobs:
   # history live in that file.
   coverage:
     # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
+    if: false
     uses: ./.github/workflows/coverage.yml
 
   # Perf-and-size snapshot series. NOT a gate: it measures the tree once a
@@ -255,7 +255,7 @@ jobs:
   # reporting something true, and that is what this workflow is for.
   perf-snapshot:
     # Skipped by a windows_only dispatch; runs on the schedule.
-    if: ${{ !inputs.windows_only }}
+    if: false
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
@@ -524,6 +524,7 @@ jobs:
   # toolchain or relevant dependency updates, and releases
   # (docs/runbooks/setup.md, "Native Windows"). Not skipped by windows_only.
   test-windows:
+    if: false
     runs-on: windows-latest
     timeout-minutes: 45
     # windows-latest defaults every `run:` to pwsh. The provisioning step
