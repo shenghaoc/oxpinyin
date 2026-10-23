@@ -3,10 +3,12 @@
 ## Scope and release condition
 
 Source-only preparation, recorded 2026-10-23 UTC. No provisioning, build,
-profiling or measurement has run for this issue. The Ubuntu campaign waits
-for the parent to release the heavy-work queue behind #1031's exact-Ir
-STOP. #1100 has a separate analysis owner on this host. #1099 follows this
-issue sequentially. No historical figure is a current-run baseline.
+profiling or measurement has run for this issue. The parent has released
+the Ubuntu queue for #1098 despite #1031's unresolved exact-Ir STOP. This
+issue stops at the unsupported controller stages described below; it owns
+no heavy process or slot. #1031 has priority after this terminal outcome.
+#1100 has a separate analysis owner on this host. #1099 remains parked and
+must not start automatically. No historical figure is a current-run baseline.
 
 The deliverable is findings only: both shipping ordered facades on KC and
 tkrzw, subject, byte-identical control and pin together on one host. No
@@ -37,7 +39,7 @@ uses the earlier smaps read. These are different sampling definitions;
 report any rollup-versus-mapping-sum difference explicitly rather than
 silently substituting one for the other.
 
-## Continuation after release
+## Continuation after tooling resolution
 
 Use `/home/sheng/wt/1098` on `wip/1098-kc-tkrzw-pss` and
 `TMPDIR=/home/sheng/tmp/oxpinyin-1098`. Fetch and rebase before publication.
