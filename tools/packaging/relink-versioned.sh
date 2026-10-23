@@ -29,10 +29,15 @@
 #               staticlib, for the store-backend link flags (same precedence
 #               as the crates: tkrzw > kyotocabinet > bdb;
 #               default bdb, the workspace default)
-#   --function-order  override the checked-in measured policy, or an empty
-#               value to disable ordering. Also read from
+#   --function-order  name a policy instead of the checked-in one, or give an
+#               empty value to disable ordering. Also read from
 #               OXPINYIN_FUNCTION_ORDER_POLICY (forwarded by install.sh).
-#               Unsupported linkers/policies retain the original layout.
+#               The checked-in policies are the default for the bdb backend
+#               only; the other backends have no checked-in policy and link
+#               in the original layout unless one is named. A policy that is
+#               selected (checked-in or named) must resolve against the
+#               staticlib, or the relink fails before linking; only a linker
+#               without --section-ordering-file keeps the original layout.
 #
 # Linux + GNU ld only: the ELF versioning this implements has no macOS
 # counterpart (the cdylib as built is correct there). Exits 0 on success,
@@ -134,26 +139,60 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 TMP_DEST="$(mktemp "${DEST%.so*}.relink.XXXXXX")"
 
-# The measured policy is selected by SONAME unless explicitly overridden.
-# Unsupported capabilities never reach the shipping command as arguments.
-if [ -z "$FUNCTION_ORDER_SET" ]; then
-  FUNCTION_ORDER="$(dirname -- "${BASH_SOURCE[0]}")/function-order/${SONAME%%.so*}.order"
-fi
+# Policy selection, one of four states, each reported on stderr:
+#   opt-out     --function-order '' (or the empty environment variable):
+#               the original layout, by request;
+#   none        no checked-in policy for this backend: the checked-in
+#               policies were generated from the shipping BDB build
+#               (docs/packaging.md, "Regeneration") and name BDB-only
+#               paths, so the bdb backend is the only one they default to;
+#   checked-in  the bdb backend's policy for this SONAME;
+#   named       a policy given on the command line or in the environment.
+# A selected policy must resolve against THIS staticlib. That is checked
+# with nm alone, before the linker is probed, so a stale policy fails the
+# relink on every linker instead of silently shipping the original layout
+# (#1071). Only a linker without --section-ordering-file falls back.
 ORDER_ARGS=()
-if [ -n "$FUNCTION_ORDER" ]; then
-  ORDER_DIR="$(mktemp -d "${TMP_DEST}.order.XXXXXX")"
-  # shellcheck source=tools/packaging/function-order.sh
-  source "$(dirname -- "${BASH_SOURCE[0]}")/function-order.sh"
-  if [ -f "$FUNCTION_ORDER" ] \
-      && function_order_supported "$CC_CMD" "$STATICLIB" "$ORDER_DIR" \
-      && function_order_resolve "$STATICLIB" "$FUNCTION_ORDER" "$SONAME" > "$ORDER_DIR/order.ld"; then
-    # Separate arguments preserve commas and spaces in staging paths.
-    ORDER_ARGS=(-Xlinker --section-ordering-file -Xlinker "$ORDER_DIR/order.ld")
-    echo "function ordering: using measured policy $FUNCTION_ORDER" >&2
-  else
-    echo "function ordering: unavailable or inapplicable; using the original layout" >&2
-  fi
+ORDER_SOURCE=""
+if [ -n "$FUNCTION_ORDER_SET" ]; then
+  if [ -n "$FUNCTION_ORDER" ]; then ORDER_SOURCE="named"; else ORDER_SOURCE="opt-out"; fi
+elif [ "$BACKEND" = bdb ]; then
+  FUNCTION_ORDER="$(dirname -- "${BASH_SOURCE[0]}")/function-order/${SONAME%%.so*}.order"
+  ORDER_SOURCE="checked-in"
+else
+  ORDER_SOURCE="none"
 fi
+case "$ORDER_SOURCE" in
+  opt-out)
+    echo "function ordering: disabled by explicit opt-out; using the original layout" >&2
+    ;;
+  none)
+    echo "function ordering: no checked-in policy for the $BACKEND backend; using the original layout" >&2
+    ;;
+  *)
+    [ -f "$FUNCTION_ORDER" ] || {
+      echo "error: function ordering: policy not found: $FUNCTION_ORDER ($ORDER_SOURCE)" >&2
+      exit 1
+    }
+    ORDER_DIR="$(mktemp -d "${TMP_DEST}.order.XXXXXX")"
+    # shellcheck source=tools/packaging/function-order.sh
+    source "$(dirname -- "${BASH_SOURCE[0]}")/function-order.sh"
+    # The resolver names each unresolved or ambiguous path on stderr.
+    if ! function_order_resolve "$STATICLIB" "$FUNCTION_ORDER" "$SONAME" > "$ORDER_DIR/order.ld"; then
+      echo "error: function ordering: policy $FUNCTION_ORDER does not resolve against $STATICLIB;" \
+        "regenerate it (docs/packaging.md, \"Regeneration\") or disable ordering explicitly" \
+        "with --function-order ''" >&2
+      exit 1
+    fi
+    if function_order_supported "$CC_CMD" "$STATICLIB" "$ORDER_DIR"; then
+      # Separate arguments preserve commas and spaces in staging paths.
+      ORDER_ARGS=(-Xlinker --section-ordering-file -Xlinker "$ORDER_DIR/order.ld")
+      echo "function ordering: using measured policy $FUNCTION_ORDER" >&2
+    else
+      echo "function ordering: the linker does not support --section-ordering-file; using the original layout" >&2
+    fi
+    ;;
+esac
 
 # --whole-archive includes every member of the staticlib, all of
 # compiler_builtins among them, and GNU ld keeps every section of an

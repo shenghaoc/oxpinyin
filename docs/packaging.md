@@ -263,9 +263,24 @@ artifact the relink then supersedes on install.
 
 ## Measured function ordering (#986 Phase 2A)
 
-Linux package builds select the checked-in measured policy matching the
-library's SONAME. The release profile remains fat LTO with one codegen unit.
-Unsupported linkers or inapplicable policies keep the original layout.
+Linux package builds of the BDB backend select the checked-in measured policy
+matching the library's SONAME. The release profile remains fat LTO with one
+codegen unit. A selected policy must resolve against the staticlib or the
+relink fails; only a linker without `--section-ordering-file` keeps the
+original layout.
+
+### Policy selection by backend
+
+The two checked-in policies are generated from the shipping BDB build
+("Regeneration" below) and name BDB-only paths, such as
+`oxpinyin_store::bdb::ffi` functions, so no Kyoto Cabinet or tkrzw archive can
+resolve them. `relink-versioned.sh` therefore selects a checked-in policy only
+when the staticlib's feature list names the `bdb` backend. The other two
+backends, which the release lanes build (`release-packages.yml`), have no
+checked-in policy: their relink links in the original layout and says so
+(`no checked-in policy for the <backend> backend`). This is their documented
+configuration, not a fallback. A policy named with `--function-order` or
+`OXPINYIN_FUNCTION_ORDER_POLICY` applies on every backend and must resolve.
 
 ### Final-link mechanism and fallback
 
@@ -283,12 +298,28 @@ It does not require `KEEP`, new roots, a version-script change, or a change to
 `tools/packaging/function-order.sh` checks support through the compiler driver
 used by the relink, rather than assuming that `ld` on PATH is the selected
 linker. It requires GNU BFD: gold uses the same option name with different
-syntax. An unsupported option, an unavailable Rust demangler, or an
-inapplicable policy selects the existing link command without ordering
-arguments. Probe output stays in self-cleaning scratch. Verify that the
-unsupported-feature route has the same bytes as the original relink for the
-same inputs. An ordinary link or export-verification failure still fails;
-fallback does not retry a failed shipping link.
+syntax. The relink distinguishes four states and reports each on stderr:
+
+| state | outcome |
+|---|---|
+| a selected policy resolves and the linker supports ordering | ordered link (`using measured policy`) |
+| a selected policy does not resolve against the staticlib | the relink fails before linking |
+| the linker lacks `--section-ordering-file` | original layout (`the linker does not support`) |
+| ordering disabled with an empty `--function-order` | original layout (`disabled by explicit opt-out`) |
+
+The policy is resolved first, with `nm` alone, before the linker is probed.
+A stale path, a malformed or ambiguous policy, a missing named or checked-in
+policy file, or a failing `nm` or demangler is an error: the resolver prints
+`function ordering: unresolved policy path: <name>` for each path, the relink
+adds a pointer to "Regeneration" below, exits nonzero and leaves the
+installed object untouched (#1071: before this, the same inputs linked the
+original layout behind one stderr line, and `main` shipped unordered
+libraries after a rename). Only a linker without the option selects the
+existing link command without ordering arguments. Probe output stays in
+self-cleaning scratch. Verify that the unsupported-feature route has the same
+bytes as the original relink for the same inputs. An ordinary link or
+export-verification failure still fails; fallback does not retry a failed
+shipping link.
 
 The relink passes `-Wl,-z,defs` on that one link command, so the ordered and
 the unordered link both carry it, on every backend. A reference in the
@@ -309,7 +340,8 @@ cannot replace this check. Each arm prints its own result. Use
 `--function-order ARM/FACADE=POLICY` to name a historical policy, or an explicit
 `--unordered-arm ARM` for an intentional non-shipping experiment. See
 [the measurement inventory and refusal rules](runbooks/benches.md#verify-function-ordering-before-shipping-measurements).
-Package installation still falls back normally and gains no Python dependency.
+Package installation gains no Python dependency: its own refusal of a policy
+that does not resolve uses the Bash and `nm` resolver above.
 
 Use `--function-order POLICY` to override the relinker's measured default.
 For the full shipping path, set `OXPINYIN_FUNCTION_ORDER_POLICY` for one install invocation;
