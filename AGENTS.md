@@ -565,10 +565,15 @@ always".
    estimate, available memory after headroom, and `no process started`.
    Retry slot acquisition and resource checks until admission or expiry.
    `OXPINYIN_RESOURCE_WAIT_SECONDS` limits admission waits; its default
-   is 1800 seconds. Expiry gives FAIL with reason
-   `resource-blocked: <estimate> MiB needed, <available> MiB available`.
-   If memory stays unknown, expiry gives FAIL with reason
-   `resource-blocked: available memory unknown`. The wrapper exits nonzero.
+   is 1800 seconds. One limit covers the slot wait and the memory wait.
+   Expiry gives FAIL with the cause of the last attempt. When memory was
+   the cause, the reason is
+   `resource-blocked: <estimate> MiB needed, <available> MiB available`,
+   from the figures of that memory decision. If memory stays unknown, the
+   reason is `resource-blocked: available memory unknown`. When the slot
+   was still held, the reason starts `slot-wait-expired:` and names the
+   holder of each slot (pid and checkout, from the slot record), the time
+   waited and the limit, with no memory figures. The wrapper exits nonzero.
    Cancellation, expiry, and an OOM-killed child never count as PASS or SKIP. The runner timeout starts after
    admission. Heavy rows wait before entering the worker pool. Light rows
    can start while heavy rows wait; the pool keeps the requested size.

@@ -221,7 +221,9 @@ Hold no checkout lock while waiting for resources.
 Apply the 2026-10-19 fail-closed ruling. If available memory cannot be measured,
 treat it as no room. Start no heavy process. Release the acquired slot while
 waiting, then retry slot acquisition and admission. At the wait limit, emit
-the existing `resource-blocked` FAIL reason and a nonzero status.
+the existing `resource-blocked` FAIL reason when memory was the cause of the
+last attempt, or the slot-wait reason (the holder, the time waited and the
+limit) when the slot was still held, and a nonzero status either way.
 Keep the inherited-slot immediate resource-blocked FAIL. Never wait for memory
 while the ancestor holds the slot. Cancellation, expiry or a killed child
 cannot pass or skip. Start the workload timeout only after admission.
