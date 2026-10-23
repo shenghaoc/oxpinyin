@@ -22,7 +22,8 @@
 #define TD_MAX_CANDIDATES 512
 #define TD_TEXT_BYTES 512
 
-struct td_clock { uint64_t wall, cpu; };
+/* majflt is getrusage(RUSAGE_SELF) ru_majflt: page faults that needed I/O. */
+struct td_clock { uint64_t wall, cpu, majflt; };
 struct td_candidate { int type, nbest; char text[TD_TEXT_BYTES]; };
 struct td_observation {
     size_t consumed, parsed;
@@ -46,14 +47,17 @@ static struct td_clock td_now(void) {
         perror("teardown clock");
         exit(1);
     }
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage)) { perror("teardown rusage"); exit(1); }
     return (struct td_clock){
         (uint64_t)wall.tv_sec * 1000000000ULL + (uint64_t)wall.tv_nsec,
-        (uint64_t)cpu.tv_sec * 1000000000ULL + (uint64_t)cpu.tv_nsec};
+        (uint64_t)cpu.tv_sec * 1000000000ULL + (uint64_t)cpu.tv_nsec,
+        (uint64_t)usage.ru_majflt};
 }
 
 static struct td_clock td_elapsed(struct td_clock start) {
     struct td_clock end = td_now();
-    return (struct td_clock){end.wall - start.wall, end.cpu - start.cpu};
+    return (struct td_clock){end.wall - start.wall, end.cpu - start.cpu, end.majflt - start.majflt};
 }
 
 /* Stable, separately selectable Callgrind collection boundaries. All native
@@ -382,8 +386,9 @@ static int td_export(const struct td_api *api, void *context) {
 }
 
 static void td_print_time(const char *name, struct td_clock value, bool comma) {
-    printf("%s\"%s\":{\"wall_ns\":%llu,\"cpu_ns\":%llu}", comma ? "," : "",
-           name, (unsigned long long)value.wall, (unsigned long long)value.cpu);
+    printf("%s\"%s\":{\"wall_ns\":%llu,\"cpu_ns\":%llu,\"majflt\":%llu}", comma ? "," : "",
+           name, (unsigned long long)value.wall, (unsigned long long)value.cpu,
+           (unsigned long long)value.majflt);
 }
 
 static int run_teardown_mode(int argc, char **argv) {
@@ -463,12 +468,12 @@ static int run_teardown_mode(int argc, char **argv) {
             start = td_now();
             allocated[i] = api.common.alloc_instance(context);
             struct td_clock duration = td_elapsed(start);
-            alloc.wall += duration.wall; alloc.cpu += duration.cpu;
+            alloc.wall += duration.wall; alloc.cpu += duration.cpu; alloc.majflt += duration.majflt;
             if (!allocated[i]) { fputs("teardown alloc returned NULL\n", stderr); return 1; }
             start = td_now();
             bool valid = td_first(&api, allocated[i], "nihao", &observations[i]);
             duration = td_elapsed(start);
-            first.wall += duration.wall; first.cpu += duration.cpu;
+            first.wall += duration.wall; first.cpu += duration.cpu; first.majflt += duration.majflt;
             if (!valid || (!observing && (observations[i].consumed != 5 || observations[i].parsed != 5 ||
                 !observations[i].guessed || !observations[i].count || !observations[i].candidates[0].text[0]))) {
                 fputs("teardown first candidate contract failed\n", stderr); return 1;
@@ -490,7 +495,7 @@ static int run_teardown_mode(int argc, char **argv) {
             start = td_now();
             bisect_teardown_free_unit(api.common.free_instance, allocated[i]);
             frees[i] = td_elapsed(start);
-            all_frees.wall += frees[i].wall; all_frees.cpu += frees[i].cpu;
+            all_frees.wall += frees[i].wall; all_frees.cpu += frees[i].cpu; all_frees.majflt += frees[i].majflt;
             allocated[i] = NULL;
             if (multi && i == 0) {
                 struct td_observation remaining;
@@ -525,7 +530,8 @@ static int run_teardown_mode(int argc, char **argv) {
         if (save) td_print_time("save_ns", saving, true);
         td_print_time("free_all_instances_ns", all_frees, true);
         td_print_time("fini_ns", fini, true);
-        struct td_clock teardown = {all_frees.wall + fini.wall, all_frees.cpu + fini.cpu};
+        struct td_clock teardown = {all_frees.wall + fini.wall, all_frees.cpu + fini.cpu,
+                                    all_frees.majflt + fini.majflt};
         td_print_time("teardown_total_ns", teardown, true);
         printf("},\"free_instance_ns\":[");
         for (int i = 0; i < instances; i++) {
