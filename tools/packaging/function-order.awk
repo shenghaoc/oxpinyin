@@ -13,6 +13,19 @@ function canonical(s) {
         s = substr(s, 1, RSTART - 1)
     return s
 }
+function rust_mangled(s) {
+    # A raw Rust symbol is never a stable path: v0 (_R) carries crate
+    # disambiguators and legacy (_ZN...17h<hash>E) a hash.
+    sub(/\.llvm\.[[:xdigit:]]+$/, "", s)
+    if (s ~ /^_R/)
+        return 1
+    return s ~ /^_ZN/ && match(s, /17h[0-9a-f]+E$/) && RLENGTH == 20
+}
+function cxx_mangled(s) {
+    # An Itanium C++ name is its own stable path. The system C++ compiler
+    # decides which C++ functions a build contains (inlining, GCC clones).
+    return s ~ /^_Z/ && !rust_mangled(s)
+}
 function section_family(section, raw) {
     raw = section
     sub(/^\.text\.((unlikely|hot|startup|exit)\.)?/, "", raw)
@@ -63,7 +76,7 @@ mode != "inventory" && FILENAME == policy {
     name = fields[2]
     if (n != 2 || (tier != "init" && tier != "steady") || name == "" ||
         name != trim(name) || name != canonical(name) || name ~ /[[:cntrl:]]/ ||
-        name ~ /^(_R|_ZN[0-9])/ || (name in wanted)) {
+        rust_mangled(name) || (name in wanted)) {
         fail("invalid or duplicate policy row " FNR)
         next
     }
@@ -71,6 +84,8 @@ mode != "inventory" && FILENAME == policy {
         fail("init entries must precede steady entries")
     if (tier == "steady")
         steady_seen = 1
+    if (cxx_mangled(name))
+        cxx_rows++
     wanted[name] = ++count
     names[count] = name
     next
@@ -93,7 +108,7 @@ mode != "inventory" && FILENAME == policy {
         bundled[section] = 1
         next
     }
-    if (name == "" || name ~ /[[:cntrl:]]/ || name ~ /^(_R|_ZN[0-9])/)
+    if (name == "" || name ~ /[[:cntrl:]]/ || rust_mangled(name))
         next
     identity = name SUBSEP section
     if (!(identity in seen)) {
@@ -132,13 +147,24 @@ END {
     }
     for (i = 1; i <= count; i++) {
         name = names[i]
-        if (!(name in resolved))
+        if (!(name in resolved)) {
+            # A stale Rust or C path fails (#1071). A C++ path this build's
+            # compiler did not emit is skipped; function_order.py agrees.
+            if (cxx_mangled(name)) {
+                absent++
+                continue
+            }
             fail("unresolved policy path: " name)
+        }
         if (name in ambiguous)
             fail("ambiguous policy path: " name)
     }
     if (bad)
         exit 1
+    # Every resolve reports the count, 0 of 0 included, so a relink log
+    # always shows whether the build's compiler dropped any C++ path.
+    print "function ordering: " (absent + 0) " of " (cxx_rows + 0) \
+        " C++ policy paths are not in this build; skipped" > "/dev/stderr"
     # This file contains output-section descriptions, WITHOUT a SECTIONS
     # wrapper: --section-ordering-file augments the default script.
     print ".text : {"
