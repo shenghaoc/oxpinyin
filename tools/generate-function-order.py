@@ -44,6 +44,22 @@ def canonical(name):
     return re.sub(r"::h[0-9a-fA-F]{16}$", "", name)
 
 
+def rust_mangled(name):
+    """A raw Rust symbol is never a stable path: v0 (_R) carries crate
+    disambiguators and legacy (_ZN...17h<hash>E) a hash. nm demangles both."""
+    name = re.sub(r"\.llvm\.[0-9a-fA-F]+$", "", name)
+    return name.startswith("_R") or re.fullmatch(r"_ZN.*17h[0-9a-f]{16}E", name) is not None
+
+
+def cxx_mangled(name):
+    """An Itanium C++ name (the Kyoto Cabinet shim) is its own stable path:
+    the mangling carries no hash. Which C++ functions a build contains is the
+    system C++ compiler's choice (inlining, GCC clones), so the resolver and
+    the verifier skip a C++ path that a build lacks; Rust and C paths stay
+    exact (packaging/function-order.awk)."""
+    return name.startswith("_Z") and not rust_mangled(name)
+
+
 def section_family(section):
     """Opaque proof of a compiler-clone family, never a policy sort key."""
     raw = re.sub(r"^\.text\.(?:(?:unlikely|hot|startup|exit)\.)?", "", section)
@@ -242,7 +258,7 @@ def resolved_paths(functions, library, symbol_table, available):
         if name not in available:
             # The loader's .init/.fini and CRT .text functions are not
             # individually orderable staticlib sections. Rust must resolve.
-            if function.startswith(("_R", "_ZN")):
+            if rust_mangled(function):
                 raise ValueError(f"Rust function has no orderable archive section: {name}")
             fixed.add(name)
             continue
@@ -250,7 +266,7 @@ def resolved_paths(functions, library, symbol_table, available):
             raise ValueError(f"ambiguous stable path: {name}")
         if section != ".text":
             raise ValueError(f"archive function resolved outside library .text: {name}")
-        if (name != canonical(name) or re.match(r"^(_R|_ZN[0-9])", name)
+        if (name != canonical(name) or rust_mangled(name)
                 or any(ord(c) < 32 or ord(c) == 127 for c in name)):
             raise ValueError(f"invalid stable path: {name!r}")
         result.add(name)

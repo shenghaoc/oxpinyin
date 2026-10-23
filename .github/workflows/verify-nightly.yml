@@ -525,6 +525,9 @@ jobs:
               fi
               if errors=$(tools/packaging/function-order.sh resolve "$archive" "$policy" "$facade.so.15" 2>&1 >/dev/null); then
                 echo "$policy resolves against $archive"
+                # The resolver's C++ skip count ("N of M C++ policy paths
+                # are not in this build; skipped"), printed on every resolve.
+                printf '%s\n' "$errors"
               else
                 printf '%s\n' "$errors"
                 echo "::error file=$policy::$(grep -m1 'unresolved policy path' <<< "$errors" || echo 'policy does not resolve'). $policy is stale: regenerate it (docs/packaging.md, \"Regeneration\")."

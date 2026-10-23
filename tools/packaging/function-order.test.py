@@ -71,6 +71,9 @@ class ResolverTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout,
                          '.text : {\n  *(".text.unlikely.hash_init")\n  *(".text.hash_steady")\n}\n')
+        # The skip count is printed on every resolve, even with no C++ path.
+        self.assertIn("function ordering: 0 of 0 C++ policy paths are not in this build; skipped",
+                      result.stderr)
 
     def test_inventory_normalization_matches_generator(self):
         name = "<crate::Store<T>>::open::{closure#1}"
@@ -141,6 +144,35 @@ class ResolverTests(unittest.TestCase):
         self.assertIn(f'*("{base}")', result.stdout)
         self.assertIn(f'*("{base}.1923")', result.stdout)
         self.assertEqual(result.stdout.count('*("'), 2)
+
+    def test_cxx_paths_resolve_and_one_this_build_lacks_is_skipped(self):
+        cxx = "_ZN12kyotocabinet6HashDB11accept_implEPKcm"
+        clone = "_ZN12_GLOBAL__N_1L4failEP7oxkc_db.isra.0"
+        data = row("crate::open", ".text.one") + row(cxx, ".text." + cxx)
+        result = self.invoke("resolve", data, HEADER + f"init\tcrate::open\ninit\t{cxx}\ninit\t{clone}\n")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, f'.text : {{\n  *(".text.one")\n  *(".text.{cxx}")\n}}\n')
+        self.assertIn("1 of 2 C++ policy paths are not in this build; skipped", result.stderr)
+        self.assertIn(f"{cxx}\t.text.{cxx}\n", self.invoke("inventory", data).stdout)
+
+    def test_absent_rust_or_c_path_still_fails(self):
+        for name in ("crate::gone", "oxkc_db_new"):
+            with self.subTest(name=name):
+                result = self.invoke("resolve", row("crate::open", ".text.one"),
+                                     HEADER + f"init\tcrate::open\ninit\t{name}\n")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("unresolved policy path: " + name, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_raw_rust_symbols_are_neither_policy_rows_nor_inventory(self):
+        legacy = "_ZN4core3ptr13drop_in_place17h0123456789abcdefE"
+        for name in (legacy, legacy + ".llvm.1234", "_RNvCs1234_5crate4open"):
+            with self.subTest(name=name):
+                result = self.invoke("resolve", row("crate::open", ".text.one"),
+                                     HEADER + f"init\tcrate::open\ninit\t{name}\n")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(self.invoke("inventory", row(name, ".text.raw")).stdout, "")
 
 
 class CapabilityTests(unittest.TestCase):
@@ -233,6 +265,15 @@ class LinkedObjectTests(unittest.TestCase):
         self.check([('crate::f', 0x100), ('crate::f', 0x120)], names,
                    raw=[('_RfakeCsOLD_14oxpinyin_store', 0x100),
                         ('_RfakeCsNEW_16oxpinyin_runtime', 0x120)])
+
+    def test_cxx_path_the_object_lacks_is_skipped_but_rust_and_c_are_required(self):
+        cxx = '_ZN12kyotocabinet6HashDB3getEv'
+        self.assertEqual(self.check([('a', 0x100), ('b', 0x120)], ('a', cxx, 'b'))['paths'], 2)
+        self.assertEqual(self.check([('a', 0x100), (cxx, 0x110), ('b', 0x120)], ('a', cxx, 'b'))['paths'], 3)
+        with self.assertRaisesRegex(ValueError, 'out of order'):
+            self.check([('a', 0x100), ('b', 0x110), (cxx, 0x120)], ('a', cxx, 'b'))
+        with self.assertRaisesRegex(ValueError, 'missing.*oxkc_db_new'):
+            self.check([('a', 0x100), ('b', 0x120)], ('a', 'oxkc_db_new', 'b'))
 
     def test_two_unrelated_bodies_cannot_masquerade_as_clones(self):
         with self.assertRaisesRegex(ValueError, 'ambiguous policy path'):
