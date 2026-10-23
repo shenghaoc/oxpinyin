@@ -117,6 +117,23 @@ coverage *args:
 coverage *args:
     @just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
 
+# Run one store backend's sanitizer gate (bdb, kc or tkrzw), or all three.
+[linux]
+sanitize backend="bdb":
+    @just heavy -- bash tools/sanitize.sh "$1"
+
+# The gates need Linux: libdb 5.3, a loadable Kyoto Cabinet and setarch.
+[macos]
+sanitize backend="bdb":
+    @echo "sanitize is unsupported on macOS: the sanitizer gates need Linux (libdb 5.3, Kyoto Cabinet, setarch)."
+    @exit 1
+
+# The gates are Linux bash scripts; Windows transport is unverified (#950).
+[windows]
+sanitize backend="bdb":
+    @echo "sanitize is unsupported on Windows: the sanitizer gates are Linux bash scripts."
+    @exit 1
+
 # Read registry metadata, optionally filtered by issue or kind.
 [unix]
 list *args:
