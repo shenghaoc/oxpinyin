@@ -214,6 +214,22 @@ pub trait WriteTxn {
     /// Returns [`StoreError`] when the backend read fails.
     fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
 
+    /// [`ReadStore::read_with`] inside the transaction, its own writes
+    /// included.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
+    fn read_with<R>(
+        &self,
+        table: &str,
+        key: &[u8],
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Result<Option<R>, StoreError> {
+        let mut value = Vec::new();
+        Ok(self.get(table, key, &mut value)?.then(|| read(&value)))
+    }
+
     /// Insert or overwrite `key` → `value` in `table`.
     ///
     /// # Errors
@@ -335,6 +351,24 @@ pub trait ReadStore {
     ///
     /// Returns [`StoreError`] when the backend read fails.
     fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
+
+    /// A point read lent to a decoder: `read` receives the stored bytes and
+    /// its answer comes back, `None` when the key is absent. The default
+    /// reads into one local buffer; a store that holds its rows in memory
+    /// lends them in place instead. `read` must not reach the store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
+    fn read_with<R>(
+        &self,
+        table: &str,
+        key: &[u8],
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Result<Option<R>, StoreError> {
+        let mut value = Vec::new();
+        Ok(self.get(table, key, &mut value)?.then(|| read(&value)))
+    }
 
     /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
     /// ascending, borrowing each row, until `visit` answers
@@ -1557,6 +1591,11 @@ mod tests {
                     assert!(value.is_empty());
                     assert!(store.get_raw(b"raw", &mut value).unwrap());
                     assert_eq!(value, b"xyz");
+                    assert_eq!(
+                        store.read_with("t", b"short", <[u8]>::to_vec).unwrap(),
+                        Some(b"ab".to_vec())
+                    );
+                    assert_eq!(store.read_with("t", b"none", <[u8]>::len).unwrap(), None);
                     value.extend_from_slice(b"stale");
                     assert!(!store.get_raw(b"none", &mut value).unwrap());
                     assert!(value.is_empty());
@@ -1570,6 +1609,7 @@ mod tests {
                             assert_eq!(value, [7; 5000]);
                             assert!(!txn.get("t", b"none", &mut value)?);
                             assert!(value.is_empty());
+                            assert_eq!(txn.read_with("t", b"pending", <[u8]>::len)?, Some(3));
                             txn.remove("t", b"short")?;
                             value.extend_from_slice(b"stale");
                             assert!(!txn.get("t", b"short", &mut value)?);
