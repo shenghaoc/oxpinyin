@@ -119,7 +119,7 @@ init	<oxpinyin_runtime::RuntimeLm as oxpinyin_core::LanguageModel>::unigram_freq
 init	<oxpinyin_runtime::RuntimeLm as oxpinyin_core::LanguageModel>::unigram_total
 init	<oxpinyin_runtime::RuntimeLm>::amplified_total
 init	<oxpinyin_store::bdb::ffi::Cursor as core::ops::drop::Drop>::drop
-init	<oxpinyin_store::bdb::ffi::Cursor>::read
+init	<oxpinyin_store::bdb::ffi::Cursor>::get
 init	<oxpinyin_store::bdb::ffi::Db>::open_at
 init	<oxpinyin_store::bdb::ffi::SharedDb>::cursor
 init	<oxpinyin_store::bdb::ffi::SharedDb>::get
