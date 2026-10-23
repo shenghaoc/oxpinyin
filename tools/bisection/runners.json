@@ -2060,5 +2060,46 @@
       "{root}/Cargo.lock"
     ],
     "reason": "native coverage recipe; caller supplies scope and report options; excluded from compatibility aggregate gates"
+  },
+  {
+    "name": "sanitize",
+    "kind": "not-a-gate",
+    "implementation": "legacy:justfile",
+    "issues": [
+      "T2N",
+      "1085"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "artifacts": [],
+    "oracle": false,
+    "required_inputs": [
+      "Linux native toolchain and the selected backend's headers and library",
+      "nightly-2026-09-07 (bdb, tkrzw) and nightly-2026-08-01 (kc)",
+      "setarch with permission to disable ASLR (tkrzw)",
+      "a verified libtkrzw: the one setup.sh's environment file names, or a host library that passes tools/tkrzw/distro-probe.sh (tkrzw)",
+      "caller-selected backend: bdb, kc, tkrzw or all"
+    ],
+    "timeout": 2700,
+    "heavy": true,
+    "exclusive_resources": [],
+    "command": [
+      "just",
+      "--justfile",
+      "{root}/justfile",
+      "sanitize"
+    ],
+    "env": {},
+    "input_paths": [
+      "{root}/justfile",
+      "{root}/tools/sanitize.sh",
+      "{root}/tools/bdb/run-sanitizers.sh",
+      "{root}/tools/kc/run-sanitizers.sh",
+      "{root}/tools/tkrzw/run-sanitizers.sh"
+    ],
+    "reason": "native sanitizer recipe; caller selects the backend; excluded from compatibility aggregate gates"
   }
 ]

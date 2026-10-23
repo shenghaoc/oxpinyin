@@ -86,7 +86,7 @@ Layer 5 schedules the old-to-new handoffs.
 | `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Proposed for T2N (maintainer ruling 2026-10-22 UTC). |
 | `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run <args>` from `verify-nightly.yml`'s `fuzz-soak` job. | Implemented (maintainer ruling 2026-10-23 UTC). Linux execution; macOS exits 1 because the fuzz workspace links the Linux-only C ABI. Windows transport unverified (#950). |
 | `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport unverified (#950). |
-| `just sanitize` | Call an existing native sanitizer tool. | BDB script and inline tkrzw ASan workflow command. | Proposed; deferred by maintainer ruling 2026-10-23 UTC. No shared selector or argument-forwarding entry point exists. |
+| `just sanitize [bdb\|kc\|tkrzw\|all]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `tools/sanitize.sh <backend>`, default `bdb`. | `tools/bdb/run-sanitizers.sh`, `tools/kc/run-sanitizers.sh`, and `tools/tkrzw/run-sanitizers.sh` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command). | Implemented (maintainer approval 2026-10-23 UTC, #1085). Linux execution; macOS and Windows exit 1. The workflows do not call the dispatcher yet. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
 `just check` keeps `check.sh`'s backend selection and selected crate sets.
@@ -167,13 +167,22 @@ other recipes' acceptance nor T2N's fresh-install/offline checks.
 The macOS fuzz refusal body returned 1 when exercised on Linux. Native macOS
 fuzz/coverage recipe execution was not run; fuzz remains unsupported there
 because the workspace links the Linux-only C ABI. Windows transport and runtime
-remain unverified (#950). Sanitize remains deferred.
+remain unverified (#950).
 
-These recipes do not change either workflow. The sanitizer recipe remains
-proposed: `store-backends.yml`'s `bdb-sanitizers` job calls
-`bash tools/bdb/run-sanitizers.sh`, which accepts no selection arguments;
-`tkrzw-sanitizers` inlines a separate ASan command and environment.
-The maintainer's 2026-10-23 UTC ruling leaves both routes unchanged.
+These recipes do not change either workflow.
+
+`just sanitize` selects only. `tools/sanitize.sh <bdb|kc|tkrzw|all>` runs the
+backend's own script, which keeps its instrumentation, flags, nightly and pass
+criteria; `all` runs the three in turn and exits 1 if any gate failed. The
+tkrzw script runs `tkrzw-sanitizers`' inline command with its flags, sanitizer
+options and ASLR wrapper unchanged, and adds one precondition, checked by
+`tools/tkrzw/runtime.sh`: every test binary must load the verified libtkrzw,
+the one `tools/cloud/setup.sh`'s environment file names or a host library
+that passes `tools/tkrzw/distro-probe.sh`. Ubuntu's packaged libtkrzw fails
+that probe. The workflows
+are unchanged: `bdb-sanitizers` still calls the bdb script, `tkrzw-sanitizers`
+still runs its inline command, and no job runs the kc gate. Moving them onto
+the dispatcher is a workflow change and needs its own approval (#1085).
 
 ## 3. Cross-platform command transport
 
@@ -208,7 +217,7 @@ The #905/#906/#903 stack is merged. `run-all.py --heavy-slot --` remains
 available through #941's adapter to the shared core. PR #942 changed
 AGENTS.md to use `just heavy --` for direct heavy commands and runner builds.
 Layer 1 limits the native slot to its environment. The recipe migrations above
-that remain open are measure/initbench, sanitize and ci;
+that remain open are measure/initbench and ci;
 the `ci.yml` Linux and macOS test cutover landed in #968 (merge `c017ebee`).
 This reconciliation changes no production rule.
 
