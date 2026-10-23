@@ -36,6 +36,44 @@ class DriverFixtureCase(unittest.TestCase):
         self.addCleanup(guard.stop)
 
 
+class HashPathFixtureTests(DriverFixtureCase):
+    def test_hash_is_in_the_actual_directory_or_configured_filename(self):
+        placements = ('system-directory', 'user-directory', 'system-filename', 'user-filename')
+        for placement in placements:
+            with self.subTest(placement=placement), tempfile.TemporaryDirectory() as scratch:
+                original = Path(scratch, 'original')
+                original.mkdir()
+                text = ('default GB_DICTIONARY gb_char.table gb_char.bin gb_char.dbin SYSTEM_FILE\n'
+                        'default USER_DICTIONARY NULL NULL user.bin USER_FILE\n')
+                Path(original, 'table.conf').write_text(text)
+                Path(original, 'gb_char.bin').write_bytes(b'system chunk')
+                user = Path(scratch, 'user')
+                user.mkdir()
+                kit = MagicMock(data=str(original), scratch=scratch, user=str(user))
+                system_name, journal_name, user_name = driver.hash_path_fixture(kit, placement)
+                conf = Path(kit.data, 'table.conf').read_text()
+                self.assertEqual(Path(original, 'table.conf').read_text(), text)
+                self.assertEqual(Path(kit.data, system_name).read_bytes(), b'system chunk')
+                self.assertEqual('#' in Path(kit.data).name, placement == 'system-directory')
+                self.assertEqual('#' in Path(kit.user).name, placement == 'user-directory')
+                self.assertEqual('#' in system_name, placement == 'system-filename')
+                self.assertEqual('#' in journal_name, placement == 'user-filename')
+                self.assertEqual('#' in user_name, placement == 'user-filename')
+                self.assertIn(system_name, conf)
+                self.assertIn(journal_name, conf)
+                self.assertIn(user_name, conf)
+                if placement == 'system-filename':
+                    self.assertFalse(Path(kit.data, 'gb_char.bin').exists())
+
+    def test_both_facades_and_all_cells_are_selected_by_issue(self):
+        names, _ = driver.select_cases(issues=('1119',))
+        self.assertEqual(len(names), 8)
+        self.assertEqual({driver.CASES[name]['mode'] for name in names}, {'pinyin', 'zhuyin'})
+        for name in names:
+            self.assertEqual(driver.CASES[name]['cells'], ('bdb', 'kc', 'tkrzw'))
+            self.assertTrue(driver.CASES[name]['stderr'])
+
+
 class ProfileRowsTests(DriverFixtureCase):
     def test_profile_worker_certifies_then_loads_exact_runtime_and_accepts_empty_db(self):
         events = []
