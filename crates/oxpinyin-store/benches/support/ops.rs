@@ -308,9 +308,11 @@ where
             };
             assert!(!keys.is_empty(), "no keys in class {op}");
             drop(rows);
+            let mut value = Vec::new();
             run(&mut |i| {
                 let key = &keys[(i as usize) % keys.len()];
-                pack(get_digest(store.get_raw(key).expect("get_raw")), 1)
+                let found = store.get_raw(key, &mut value).expect("get_raw");
+                pack(get_digest(found, &value), 1)
             })
         }
         "get_raw.tree.retain" => {
@@ -343,13 +345,18 @@ where
             assert!(keys.len() >= RETAINED, "too few keys for {op}");
             run(&mut |i| {
                 let start = (i as usize * RETAINED) % (keys.len() - RETAINED + 1);
-                let held: Vec<Option<Vec<u8>>> = keys[start..start + RETAINED]
+                // Each held result is its own buffer, as a retained row is.
+                let held: Vec<(bool, Vec<u8>)> = keys[start..start + RETAINED]
                     .iter()
-                    .map(|key| store.get_raw(key).expect("get_raw"))
+                    .map(|key| {
+                        let mut value = Vec::new();
+                        let found = store.get_raw(key, &mut value).expect("get_raw");
+                        (found, value)
+                    })
                     .collect();
-                let sum = held
-                    .into_iter()
-                    .fold(0, |acc, value| fold(acc, get_digest(value)));
+                let sum = held.into_iter().fold(0, |acc, (found, value)| {
+                    fold(acc, get_digest(found, &value))
+                });
                 pack(sum, RETAINED as u64)
             })
         }
@@ -488,7 +495,8 @@ where
                     assert!(!keys.is_empty(), "no keys in class {op}");
                     run(&mut |i| {
                         let key = &keys[(i as usize) % keys.len()];
-                        pack(get_digest(db.get(key).expect("get")), 1)
+                        let found = db.get(key, &mut value).expect("get");
+                        pack(get_digest(found, &value), 1)
                     })
                 }
                 "user_bigram.store" => run(&mut |i| {

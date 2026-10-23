@@ -9,7 +9,7 @@ use std::ops::Bound;
 
 use oxpinyin_store::{ReadStore, StoreError, WriteTxn};
 
-use crate::store::{get_bytes, txn_get_bytes};
+use crate::store::txn_get_bytes;
 
 /// Internal table containing the pin's phrase records.
 pub const TABLE: &str = "user_phrase_table3";
@@ -77,15 +77,8 @@ impl PhraseTableEntry {
     ///
     /// `enabled` receives each token, allowing the caller to implement pin's
     /// disabled-library filtering (`phrase_large_table3.cpp:29-51`).
-    pub fn search(&self, tokens: &mut Vec<u32>, mut enabled: impl FnMut(u32) -> bool) -> i32 {
-        let mut result = SEARCH_NONE;
-        for token in self.bytes.chunks_exact(4).map(decode) {
-            if enabled(token) {
-                tokens.push(token);
-                result |= SEARCH_OK;
-            }
-        }
-        result
+    pub fn search(&self, tokens: &mut Vec<u32>, enabled: impl FnMut(u32) -> bool) -> i32 {
+        search_tokens(&self.bytes, tokens, enabled)
     }
 
     /// Insert before the first greater token; detect equality only before it.
@@ -142,6 +135,31 @@ impl PhraseTableEntry {
     }
 }
 
+/// [`PhraseTableEntry::search`] over a stored record read in place, after
+/// [`PhraseTableEntry::from_bytes`]'s check, with no entry built.
+///
+/// # Errors
+/// Rejects incomplete tokens, as [`PhraseTableEntry::from_bytes`] does.
+pub fn search_bytes(
+    bytes: &[u8],
+    tokens: &mut Vec<u32>,
+    enabled: impl FnMut(u32) -> bool,
+) -> Result<i32, StoreError> {
+    validate(bytes)?;
+    Ok(search_tokens(bytes, tokens, enabled))
+}
+
+fn search_tokens(bytes: &[u8], tokens: &mut Vec<u32>, mut enabled: impl FnMut(u32) -> bool) -> i32 {
+    let mut result = SEARCH_NONE;
+    for token in bytes.chunks_exact(4).map(decode) {
+        if enabled(token) {
+            tokens.push(token);
+            result |= SEARCH_OK;
+        }
+    }
+    result
+}
+
 fn validate(bytes: &[u8]) -> Result<(), StoreError> {
     if !bytes.len().is_multiple_of(4) {
         return Err(StoreError::InvalidInput(
@@ -161,12 +179,13 @@ fn decode(bytes: &[u8]) -> u32 {
 /// Returns an incomplete-token error. Backend read failure is `SEARCH_NONE`,
 /// as at `phrase_large_table3_bdb.cpp:196-198` (pin 074a2219).
 pub fn search(db: &impl ReadStore, text: &str) -> Result<SearchResult, StoreError> {
-    let Ok(Some(bytes)) = get_bytes(db, TABLE, &key(text)) else {
+    let mut result = SearchResult::default();
+    let Ok(Some(searched)) = db.read_with(TABLE, &key(text), |bytes| {
+        search_bytes(bytes, &mut result.tokens, |_| true)
+    }) else {
         return Ok(SearchResult::default());
     };
-    let entry = PhraseTableEntry::from_bytes(bytes)?;
-    let mut result = SearchResult::default();
-    result.flags = SEARCH_CONTINUED | entry.search(&mut result.tokens, |_| true);
+    result.flags = SEARCH_CONTINUED | searched?;
     Ok(result)
 }
 
@@ -178,7 +197,7 @@ pub fn search(db: &impl ReadStore, text: &str) -> Result<SearchResult, StoreErro
 pub fn search_suggestion(db: &impl ReadStore, text: &str) -> Result<SearchResult, StoreError> {
     let prefix = key(text);
     let mut result = SearchResult::default();
-    if !matches!(get_bytes(db, TABLE, &prefix), Ok(Some(_))) {
+    if !matches!(db.read_with(TABLE, &prefix, |_| ()), Ok(Some(()))) {
         return Ok(result);
     }
     let mut upper = prefix.clone();
@@ -193,14 +212,13 @@ pub fn search_suggestion(db: &impl ReadStore, text: &str) -> Result<SearchResult
     };
     let mut malformed = None;
     let _ = db.range(TABLE, Bound::Excluded(&prefix), hi, |_, bytes| {
-        let entry = match PhraseTableEntry::from_bytes(bytes.to_vec()) {
-            Ok(entry) => entry,
+        match search_bytes(bytes, &mut result.tokens, |_| true) {
+            Ok(flags) => result.flags |= flags,
             Err(error) => {
                 malformed = Some(error);
                 return Err(StoreError::InvalidInput("incomplete phrase table token"));
             }
-        };
-        result.flags |= entry.search(&mut result.tokens, |_| true);
+        }
         Ok(())
     });
     if let Some(error) = malformed {
@@ -240,7 +258,7 @@ pub fn add_index(txn: &mut impl WriteTxn, text: &str, token: u32) -> Result<i32,
     }
     for length in (1..key.len() / 4).rev() {
         let prefix = &key[..length * 4];
-        if matches!(txn_get_bytes(txn, TABLE, prefix), Ok(Some(_))) {
+        if matches!(txn.read_with(TABLE, prefix, |_| ()), Ok(Some(()))) {
             return Ok(ERROR_OK);
         }
         if txn.put(TABLE, prefix, &[]).is_err() {

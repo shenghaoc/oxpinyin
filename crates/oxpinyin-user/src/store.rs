@@ -389,14 +389,10 @@ pub(crate) fn txn_get_bytes(
 }
 
 fn get_u64(store: &impl ReadStore, table: &str, key: &[u8]) -> Result<Option<u64>, UserStoreError> {
-    get_bytes(store, table, key)?.map_or_else(
-        || Ok(None),
-        |bytes| {
-            codec::decode_u64(&bytes)
-                .map(Some)
-                .map_err(|_| UserStoreError::Decode)
-        },
-    )
+    store
+        .read_with(table, key, codec::decode_u64)?
+        .transpose()
+        .map_err(|_| UserStoreError::Decode)
 }
 
 fn get_u64_or(
@@ -409,14 +405,9 @@ fn get_u64_or(
 }
 
 fn txn_get_u64(txn: &impl WriteTxn, table: &str, key: &[u8]) -> Result<Option<u64>, StoreError> {
-    txn_get_bytes(txn, table, key)?.map_or_else(
-        || Ok(None),
-        |bytes| {
-            codec::decode_u64(&bytes)
-                .map(Some)
-                .map_err(|_| StoreError::Backend("corrupt u64 value".into()))
-        },
-    )
+    txn.read_with(table, key, codec::decode_u64)?
+        .transpose()
+        .map_err(|_| StoreError::Backend("corrupt u64 value".into()))
 }
 
 pub fn txn_get_u64_or(
@@ -555,9 +546,10 @@ fn append_system_token<S: WriteStore>(
 ) -> Result<Token, StoreError> {
     let lib_key = codec::encode_u8_str(library, text);
     db.write(|txn| {
-        let token = match txn_get_bytes(txn, ALLOC, &codec::encode_u8(library))? {
-            Some(bytes) => codec::decode_token(&bytes)
-                .map_err(|_| StoreError::Backend("corrupt system cursor".into()))?,
+        let token = match txn.read_with(ALLOC, &codec::encode_u8(library), codec::decode_token)? {
+            Some(token) => {
+                token.map_err(|_| StoreError::Backend("corrupt system cursor".into()))?
+            }
             None => (u32::from(library) << 24) | range_end.max(1),
         };
         let next = phrase::next_library_token_after(library, token)
@@ -715,8 +707,8 @@ fn sync_system_rows<S: WriteStore>(
     };
     let key_bytes = phrase::encode_keys(row_keys);
     let row_key = codec::encode_token_bytes(token, &key_bytes);
-    if let Some(bytes) = get_bytes(db, PRONUNCIATION, &row_key)? {
-        let mut value = PronValue::decode(&bytes)?;
+    if let Some(value) = db.read_with(PRONUNCIATION, &row_key, PronValue::decode)? {
+        let mut value = value?;
         let base = original
             .item(token & PHRASE_MASK)
             .and_then(|item| {
@@ -2239,7 +2231,7 @@ impl<S: WriteStore> GenericUserStore<S> {
     fn init_and_wrap(db: S) -> Result<Arc<StoreInner<S>>, UserStoreError> {
         let has_user_data = db.write(|txn| {
             let total_key = codec::encode_u8(UNIGRAM_TOTAL_KEY);
-            if txn_get_bytes(txn, UNIGRAM_TOTAL, &total_key)?.is_none() {
+            if txn.read_with(UNIGRAM_TOTAL, &total_key, |_| ())?.is_none() {
                 let mut sum = 0_u64;
                 txn.for_each(UNIGRAM, |_k, v| {
                     let delta = codec::decode_u64(v)
@@ -2251,7 +2243,7 @@ impl<S: WriteStore> GenericUserStore<S> {
             }
 
             let alloc_key = codec::encode_u8(ALLOC_CURSOR);
-            if txn_get_bytes(txn, ALLOC, &alloc_key)?.is_none() {
+            if txn.read_with(ALLOC, &alloc_key, |_| ())?.is_none() {
                 txn.put(ALLOC, &alloc_key, &codec::encode_token(FIRST_USER_TOKEN))?;
             }
 
@@ -2736,8 +2728,8 @@ impl<S: WriteStore> GenericUserStore<S> {
                     });
                     // The entry's count is the live one. A row that is there
                     // only gives the sequence and the index flag.
-                    let mut stored = txn_get_bytes(txn, PRONUNCIATION, &key)?
-                        .map(|bytes| PronValue::decode(&bytes))
+                    let mut stored = txn
+                        .read_with(PRONUNCIATION, &key, PronValue::decode)?
                         .transpose()?
                         .unwrap_or(PronValue {
                             count: 0,
@@ -3042,20 +3034,23 @@ impl<S: WriteStore> GenericUserStore<S> {
             // _add_phrase selects existing items from the phrase table,
             // not the live item's reverse index (074a2219 pinyin.cpp:533-562).
             let mut tokens = Vec::new();
-            if let Some(bytes) =
-                txn_get_bytes(txn, phrase_table::TABLE, &phrase_table::key(phrase))?
+            if let Some(searched) =
+                txn.read_with(phrase_table::TABLE, &phrase_table::key(phrase), |bytes| {
+                    phrase_table::search_bytes(bytes, &mut tokens, |token| {
+                        phrase_index_library_index(token) == library
+                    })
+                })?
             {
-                phrase_table::PhraseTableEntry::from_bytes(bytes)?.search(&mut tokens, |token| {
-                    phrase_index_library_index(token) == library
-                });
+                searched?;
             }
             if tokens.len() > 1 {
                 return Ok(Err(UserStoreError::InvalidPhrase));
             }
             let existing = tokens.first().copied();
             if let Some(token) = existing
-                && txn_get_bytes(txn, PHRASE, &codec::encode_token(token))?.as_deref()
-                    != Some(codec::encode_str(phrase))
+                && txn.read_with(PHRASE, &codec::encode_token(token), |text| {
+                    text == codec::encode_str(phrase)
+                })? != Some(true)
             {
                 return Ok(Err(UserStoreError::InvalidPhrase));
             }
@@ -3082,19 +3077,21 @@ impl<S: WriteStore> GenericUserStore<S> {
                 let alloc_key = codec::encode_u8(ALLOC_CURSOR);
                 let lib_alloc_key = codec::encode_u8(library);
                 let raw = if library == USER_DICTIONARY {
-                    match txn_get_bytes(txn, ALLOC, &lib_alloc_key)? {
-                        Some(bytes) => codec::decode_token(&bytes)
-                            .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
-                        None => match txn_get_bytes(txn, ALLOC, &alloc_key)? {
-                            Some(bytes) => codec::decode_token(&bytes)
+                    match txn.read_with(ALLOC, &lib_alloc_key, codec::decode_token)? {
+                        Some(token) => {
+                            token.map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?
+                        }
+                        None => match txn.read_with(ALLOC, &alloc_key, codec::decode_token)? {
+                            Some(token) => token
                                 .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
                             None => FIRST_USER_TOKEN,
                         },
                     }
                 } else {
-                    match txn_get_bytes(txn, ALLOC, &lib_alloc_key)? {
-                        Some(bytes) => codec::decode_token(&bytes)
-                            .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
+                    match txn.read_with(ALLOC, &lib_alloc_key, codec::decode_token)? {
+                        Some(token) => {
+                            token.map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?
+                        }
                         None => first_library_token(library),
                     }
                 };
@@ -3186,20 +3183,20 @@ impl<S: WriteStore> GenericUserStore<S> {
         let inserted = std::cell::Cell::new(false);
         let (token, count) = db.write(|txn| {
             let lib_key = codec::encode_u8_str(ADDON_DICTIONARY, phrase);
-            let existing = match txn_get_bytes(txn, PHRASE_BY_LIB_TEXT, &lib_key)? {
-                Some(bytes) => Some(
-                    codec::decode_token(&bytes)
-                        .map_err(|_| StoreError::Backend("corrupt lib-text token".into()))?,
-                ),
+            let existing = match txn.read_with(PHRASE_BY_LIB_TEXT, &lib_key, codec::decode_token)? {
+                Some(token) => {
+                    Some(token.map_err(|_| StoreError::Backend("corrupt lib-text token".into()))?)
+                }
                 None => None,
             };
             let token = if let Some(token) = existing {
                 token
             } else {
                 let lib_alloc_key = codec::encode_u8(ADDON_DICTIONARY);
-                let raw = match txn_get_bytes(txn, ALLOC, &lib_alloc_key)? {
-                    Some(bytes) => codec::decode_token(&bytes)
-                        .map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?,
+                let raw = match txn.read_with(ALLOC, &lib_alloc_key, codec::decode_token)? {
+                    Some(token) => {
+                        token.map_err(|_| StoreError::Backend("corrupt alloc cursor".into()))?
+                    }
                     None => first_library_token(ADDON_DICTIONARY),
                 };
                 // `pinyin.cpp:2541-2544` takes `range.m_range_end` as is: unlike
@@ -3351,17 +3348,13 @@ impl<S: WriteStore> GenericUserStore<S> {
     ) -> Result<Option<Token>, UserStoreError> {
         let db = self.database();
         let lib_key = codec::encode_u8_str(library, phrase);
-        if let Some(bytes) = get_bytes(&*db, PHRASE_BY_LIB_TEXT, &lib_key)? {
-            return codec::decode_token(&bytes)
-                .map(Some)
-                .map_err(|_| UserStoreError::Decode);
+        if let Some(token) = db.read_with(PHRASE_BY_LIB_TEXT, &lib_key, codec::decode_token)? {
+            return token.map(Some).map_err(|_| UserStoreError::Decode);
         }
         if library == USER_DICTIONARY {
             let text_key = codec::encode_str(phrase);
-            if let Some(bytes) = get_bytes(&*db, PHRASE_BY_TEXT, text_key)? {
-                return codec::decode_token(&bytes)
-                    .map(Some)
-                    .map_err(|_| UserStoreError::Decode);
+            if let Some(token) = db.read_with(PHRASE_BY_TEXT, text_key, codec::decode_token)? {
+                return token.map(Some).map_err(|_| UserStoreError::Decode);
             }
         }
         Ok(None)
@@ -3417,10 +3410,10 @@ impl<S: WriteStore> GenericUserStore<S> {
     pub fn next_user_token(&self) -> Result<Token, UserStoreError> {
         let db = self.database();
         let alloc_key = codec::encode_u8(ALLOC_CURSOR);
-        get_bytes(&*db, ALLOC, &alloc_key)?.map_or_else(
-            || Ok(FIRST_USER_TOKEN),
-            |bytes| codec::decode_token(&bytes).map_err(|_| UserStoreError::Decode),
-        )
+        db.read_with(ALLOC, &alloc_key, codec::decode_token)?
+            .map_or(Ok(FIRST_USER_TOKEN), |token| {
+                token.map_err(|_| UserStoreError::Decode)
+            })
     }
 
     /// `m_modified` (§4).
@@ -4651,8 +4644,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             vec![codec::encode_u8(library)]
         };
         for key in keys {
-            if let Some(bytes) = get_bytes(&*db, ALLOC, &key)? {
-                return codec::decode_token(&bytes).map_err(|_| UserStoreError::Decode);
+            if let Some(token) = db.read_with(ALLOC, &key, codec::decode_token)? {
+                return token.map_err(|_| UserStoreError::Decode);
             }
         }
         Ok(first_library_token(library))

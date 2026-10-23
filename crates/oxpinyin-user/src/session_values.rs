@@ -71,6 +71,23 @@ fn scan_rows(
     Ok(())
 }
 
+/// A transaction's view of one row: its pending change when it has one
+/// (`None` for a pending removal), else the committed row.
+fn pending_or_stored<'a>(
+    tables: &'a Tables,
+    changes: &'a Changes,
+    table: &str,
+    key: &[u8],
+) -> Option<&'a [u8]> {
+    match changes.get(table).and_then(|rows| rows.get(key)) {
+        Some(pending) => pending.as_deref(),
+        None => tables
+            .get(table)
+            .and_then(|rows| rows.get(key))
+            .map(Vec::as_slice),
+    }
+}
+
 /// A point read's answer from an in-memory row, with the store's buffer
 /// contract: `value` is cleared, then filled on a hit.
 fn fill(stored: Option<&[u8]>, value: &mut Vec<u8>) -> bool {
@@ -102,6 +119,26 @@ impl<S: WriteStore> ReadStore for SessionValues<S> {
                         .map(Vec::as_slice),
                     value,
                 ))
+            }
+        }
+    }
+
+    /// The in-memory tables lend their own bytes, with no copy.
+    fn read_with<R>(
+        &self,
+        table: &str,
+        key: &[u8],
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Result<Option<R>, StoreError> {
+        match self {
+            Self::Native(store) => store.read_with(table, key, read),
+            Self::Memory(tables) => {
+                valid_table(table)?;
+                let tables = tables.try_borrow().map_err(|_| borrowed())?;
+                Ok(tables
+                    .get(table)
+                    .and_then(|rows| rows.get(key))
+                    .map(|value| read(value)))
             }
         }
     }
@@ -193,14 +230,27 @@ impl WriteTxn for SessionTxn<'_> {
             Self::Native(txn) => txn.get(table, key, value),
             Self::Memory { tables, changes } => {
                 valid_table(table)?;
-                let stored = match changes.get(table).and_then(|rows| rows.get(key)) {
-                    Some(pending) => pending.as_deref(),
-                    None => tables
-                        .get(table)
-                        .and_then(|rows| rows.get(key))
-                        .map(Vec::as_slice),
-                };
-                Ok(fill(stored, value))
+                Ok(fill(pending_or_stored(tables, changes, table, key), value))
+            }
+        }
+    }
+
+    /// The in-memory tables and pending changes lend their own bytes,
+    /// with no copy.
+    fn read_with<R>(
+        &self,
+        table: &str,
+        key: &[u8],
+        read: impl FnOnce(&[u8]) -> R,
+    ) -> Result<Option<R>, StoreError> {
+        match self {
+            Self::Native(txn) => {
+                let mut value = Vec::new();
+                Ok(txn.get(table, key, &mut value)?.then(|| read(&value)))
+            }
+            Self::Memory { tables, changes } => {
+                valid_table(table)?;
+                Ok(pending_or_stored(tables, changes, table, key).map(read))
             }
         }
     }
@@ -391,6 +441,43 @@ impl<S: WriteStore> SessionValues<S> {
 mod tests {
     use super::*;
     use oxpinyin_store::DefaultStore;
+
+    /// `read_with` lends the in-memory rows and a transaction's pending
+    /// changes as they stand, and answers `None` for an absent or removed
+    /// key, as `get` does.
+    #[test]
+    fn reads_in_place_see_rows_and_pending_changes() {
+        let store = SessionValues::<DefaultStore>::transient();
+        store
+            .write(|txn| {
+                WriteTxn::put(txn, "rows", b"a", b"A")?;
+                WriteTxn::put(txn, "rows", b"e", b"")
+            })
+            .unwrap();
+        assert_eq!(
+            store.read_with("rows", b"a", <[u8]>::to_vec).unwrap(),
+            Some(b"A".to_vec())
+        );
+        assert_eq!(store.read_with("rows", b"e", <[u8]>::len).unwrap(), Some(0));
+        assert_eq!(store.read_with("rows", b"z", <[u8]>::len).unwrap(), None);
+        assert_eq!(store.read_with("absent", b"a", <[u8]>::len).unwrap(), None);
+        store
+            .write(|txn| {
+                WriteTxn::put(txn, "rows", b"a", b"AA")?;
+                WriteTxn::remove(txn, "rows", b"e")?;
+                assert_eq!(
+                    txn.read_with("rows", b"a", <[u8]>::to_vec)?,
+                    Some(b"AA".to_vec())
+                );
+                assert_eq!(txn.read_with("rows", b"e", <[u8]>::len)?, None);
+                Ok(())
+            })
+            .unwrap();
+        assert!(matches!(
+            store.read_with("", b"a", <[u8]>::len),
+            Err(StoreError::InvalidInput("empty table name"))
+        ));
+    }
 
     #[test]
     fn transient_transactions_merge_ordered_rows_and_roll_back() {
