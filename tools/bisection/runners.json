@@ -1990,5 +1990,75 @@
       "{capi}",
       "{env[OXPINYIN_USER_RT_TEST]}"
     ]
+  },
+  {
+    "name": "fuzz",
+    "kind": "not-a-gate",
+    "implementation": "legacy:justfile",
+    "issues": [
+      "T2N"
+    ],
+    "cells": [
+      "bdb"
+    ],
+    "artifacts": [],
+    "oracle": false,
+    "required_inputs": [
+      "Linux native toolchain and Berkeley DB headers/library",
+      "cargo-fuzz 0.13.2 and nightly-2026-08-01 with rust-src",
+      "setarch with permission to disable ASLR",
+      "caller-selected fuzz target and libFuzzer arguments"
+    ],
+    "timeout": 900,
+    "heavy": true,
+    "exclusive_resources": [],
+    "command": [
+      "just",
+      "--justfile",
+      "{root}/justfile",
+      "fuzz"
+    ],
+    "env": {},
+    "input_paths": [
+      "{root}/justfile",
+      "{root}/fuzz/Cargo.toml",
+      "{root}/fuzz/fuzz_targets"
+    ],
+    "reason": "native fuzz recipe; caller supplies the target and duration; excluded from compatibility aggregate gates"
+  },
+  {
+    "name": "coverage",
+    "kind": "not-a-gate",
+    "implementation": "legacy:justfile",
+    "issues": [
+      "T2N"
+    ],
+    "cells": [
+      "bdb",
+      "kc",
+      "tkrzw"
+    ],
+    "artifacts": [],
+    "oracle": false,
+    "required_inputs": [
+      "cargo-llvm-cov 0.9.0 and matching llvm-tools-preview",
+      "caller-selected native crate, backend and report arguments"
+    ],
+    "timeout": 900,
+    "heavy": true,
+    "exclusive_resources": [],
+    "command": [
+      "just",
+      "--justfile",
+      "{root}/justfile",
+      "coverage"
+    ],
+    "env": {},
+    "input_paths": [
+      "{root}/justfile",
+      "{root}/Cargo.toml",
+      "{root}/Cargo.lock"
+    ],
+    "reason": "native coverage recipe; caller supplies scope and report options; excluded from compatibility aggregate gates"
   }
 ]
