@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # Provision a Claude Code cloud session (a root container behind a
-# TLS-intercepting egress proxy) so every verification gate can run in it
+# TLS-intercepting egress proxy) for verification gates; measurement also
+# requires ext4 paths (reported, not provisioned, by this script)
 # (issue #818). Idempotent: each step checks
 # its result and skips when it already holds. A tool already at or above its
 # minimum is never reinstalled: tools.dev doctor (`just doctor`) is the one
@@ -154,6 +155,49 @@ die() {
 	exit 1
 }
 pinval() { sed -n "s/^$1=//p" "$pin"; }
+
+# Report candidates, not measurement readiness: a writable ext4 directory
+# does not establish where a runner's libraries, data or profiles will live.
+# Raw findmnt mount targets use hex escapes. Check each target with -T too:
+# another filesystem may be mounted over an ext4 target.
+report_ext4() {
+	local mounts path fs found=0 unknown=0
+	local -a candidates=("$repo" "$HOME" "${TMPDIR:-/tmp}" "$cache")
+	local -A seen=()
+	if ! command -v findmnt >/dev/null 2>&1; then
+		printf 'ext4 paths: unknown (findmnt unavailable); measurement gates require a verified ext4 path.\n'
+		return 0
+	fi
+	if mounts=$(findmnt --raw --noheadings --output TARGET,FSTYPE 2>/dev/null); then
+		while read -r path fs; do
+			[[ $fs == ext4 ]] || continue
+			printf -v path '%b' "$path"
+			candidates+=("$path")
+		done <<<"$mounts"
+	else
+		unknown=1
+	fi
+	for path in "${candidates[@]}"; do
+		[[ -d $path && -r $path && -w $path && -x $path ]] || continue
+		[[ ! ${seen[$path]+yes} ]] || continue
+		seen[$path]=1
+		if ! fs=$(findmnt --noheadings --output FSTYPE --target "$path" 2>/dev/null); then
+			unknown=1
+			continue
+		fi
+		[[ $fs == ext4 ]] || continue
+		printf 'ext4 path (readable, writable, searchable): %s\n' "$path"
+		found=1
+	done
+	if ((found)); then
+		printf 'Measurement paths still need individual checks with findmnt -T <path>: libraries, data, profiles, work directory and TMPDIR.\n'
+	elif ((unknown)); then
+		printf 'ext4 paths: unknown (mount detection failed); measurement gates require a verified ext4 path.\n'
+	else
+		printf 'ext4 paths: none accessible among mount targets, checkout, HOME, TMPDIR and cache; measurement gates cannot run without an ext4 path.\n'
+	fi
+	printf 'This report does not verify all measured files are on ext4; non-measurement setup may continue.\n'
+}
 
 # version_at_least TEXT MINIMUM: the first dotted version in TEXT (major.minor
 # or major.minor.patch) is MINIMUM or newer. Numbers only, for tools whose
@@ -328,6 +372,7 @@ print("Verified managed CPython", sys.version.split()[0], "GIL build:", Path(man
 PYTHON
 
 if ((python_only)); then
+	report_ext4
 	log 'stopping after Python provisioning (--python-only)'
 	exit 0
 fi
@@ -709,6 +754,7 @@ done
 
 # ---- 5. report ----------------------------------------------------------
 
+report_ext4
 if ((!inside)); then printf 'Valgrind: %s\n' "$valgrind_version"; fi
 
 for dbm in "${cells[@]}"; do

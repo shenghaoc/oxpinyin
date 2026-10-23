@@ -38,6 +38,24 @@ valgrind)
 	[[ ${SYNTHETIC_VALGRIND_MISSING:-0} == 0 ]] || exit 1
 	printf 'valgrind-%s\n' "${SYNTHETIC_VALGRIND_VERSION:-3.25.1}"
 	;;
+findmnt)
+	[[ ${SYNTHETIC_EXT4_MODE:-absent} != unknown ]] || exit 1
+	if [[ $* == '--raw --noheadings --output TARGET,FSTYPE' ]]; then
+		printf '/ overlay\n'
+		if [[ ${SYNTHETIC_EXT4_MODE:-absent} != absent ]]; then
+			printf '%s ext4\n' "${SYNTHETIC_EXT4_PATH// /\\x20}"
+		fi
+	elif [[ $# == 5 && $1 == --noheadings && $2 == --output && $3 == FSTYPE && $4 == --target ]]; then
+		if [[ ${SYNTHETIC_EXT4_MODE:-absent} == available && $5 == "$SYNTHETIC_EXT4_PATH" ]]; then
+			printf 'ext4\n'
+		else
+			printf 'overlay\n'
+		fi
+	else
+		printf 'ACTION unexpected findmnt %s\n' "$*" >&3
+		exit 97
+	fi
+	;;
 podman)
 	if [[ $1 == --version ]]; then printf 'podman (synthetic)\n'
 	else printf 'ACTION podman %s\n' "$*" >&3; exit 97; fi
@@ -58,7 +76,7 @@ uv)
 esac
 STUB
 	chmod +x "$stub_bin/stub"
-	for tool in cargo rustup valgrind uv curl apt-get podman db5.3_dump; do
+	for tool in cargo rustup valgrind uv curl apt-get podman db5.3_dump findmnt; do
 		ln -s stub "$stub_bin/$tool"
 	done
 	run_setup() {
@@ -205,6 +223,40 @@ STUB
 	[[ $status == 0 && $message == *'ACTION uv run '* && $message != *'ACTION uv python install'* ]] || fail "$message"
 	unset SYNTHETIC_PYTHON_PRESENT
 	printf 'PASS: an installed managed interpreter is not installed again\n'
+
+	# The measurement report must not gate a successful non-measurement setup.
+	# A mount outside HOME/checkout/TMPDIR/cache is discovered, including spaces.
+	export SYNTHETIC_EXT4_PATH="$work/ext4 mount" SYNTHETIC_EXT4_MODE=available
+	mkdir -p "$SYNTHETIC_EXT4_PATH"
+	run_setup --python-only
+	[[ $status == 0 && $message == *"ext4 path (readable, writable, searchable): $SYNTHETIC_EXT4_PATH"* && \
+		$message == *'Measurement paths still need individual checks with findmnt -T <path>: libraries, data, profiles, work directory and TMPDIR.'* && \
+		$message == *'does not verify all measured files are on ext4'* ]] || fail "$message"
+	printf 'PASS: accessible ext4 mount reported without promising measurement readiness\n'
+
+	for mode in absent overmounted; do
+		export SYNTHETIC_EXT4_MODE=$mode
+		run_setup --python-only
+		[[ $status == 0 && $message == *'ext4 paths: none accessible'* && \
+			$message == *'measurement gates cannot run without an ext4 path.'* && \
+			$message != *'ext4 path (readable, writable, searchable):'* ]] || fail "$mode: $message"
+	done
+	printf 'PASS: absent and overmounted ext4 keep non-measurement setup successful\n'
+
+	export SYNTHETIC_EXT4_MODE=available
+	rm -r "$SYNTHETIC_EXT4_PATH"
+	run_setup --python-only
+	[[ $status == 0 && $message == *'ext4 paths: none accessible'* ]] || fail "$message"
+	printf 'PASS: inaccessible mount target is not reported as an available path\n'
+
+	export SYNTHETIC_EXT4_MODE=unknown
+	run_setup --python-only
+	[[ $status == 0 && $message == *'ext4 paths: unknown (mount detection failed)'* ]] || fail "$message"
+	rm "$stub_bin/findmnt"
+	run_setup --python-only
+	[[ $status == 0 && $message == *'ext4 paths: unknown (findmnt unavailable)'* ]] || fail "$message"
+	unset SYNTHETIC_EXT4_MODE SYNTHETIC_EXT4_PATH
+	printf 'PASS: failed or unavailable findmnt reports unknown without failing setup\n'
 )
 
 fixture() {
