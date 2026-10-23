@@ -431,12 +431,11 @@ jobs:
   # is the same either way. The resolver reads the archive with nm and needs
   # no linker that can order sections.
   #
-  # Only the Berkeley DB backend has checked-in policies. They name BDB-only
-  # paths that no Kyoto Cabinet or tkrzw archive defines (docs/packaging.md,
-  # "Policy selection by backend"). A backend that gains a policy needs its
-  # own build and check here (#1076).
+  # Each backend's policies name paths from its own shipping build (#1076).
+  # Keep one target and staging directory per backend, and resolve only the
+  # matching function-order/<backend>/ policies against those archives.
   #
-  # The two builds log wall time, user CPU and the largest process's
+  # The six builds log wall time, user CPU and the largest process's
   # resident set, the columns of the cost estimate in #1071, and the last
   # step logs the container's peak memory; timeout-minutes is the separate
   # job figure of that proposal. The image stays unpinned, as in every other
@@ -447,7 +446,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: debian:testing # deliberately unpinned; see the header comment
-    timeout-minutes: 20
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -455,13 +454,15 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
     steps:
       # libssl-dev and pkg-config: cargo-c pulls openssl-sys through the
-      # cargo crate (see perf-snapshot). libdb-dev, libclang-dev and
-      # libglib2.0-dev: the BDB store backend and the glib the C ABI links.
-      # time: the cost lines of the build step.
+      # cargo crate (see perf-snapshot). The three backend -dev packages
+      # supply each backend's headers/libraries; libclang-dev is for bindgen.
+      # Debian's tkrzw.pc also links the compression libraries. tkrzw-utils
+      # lets the existing distro probe verify the runtime before using it.
+      # libglib2.0-dev: the C ABI's glib. time: the build cost lines.
       - name: Bootstrap the runner essentials and build dependencies (apt)
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libdb-dev libglib2.0-dev libssl-dev zlib1g-dev binutils time
+          apt-get install -y --no-install-recommends bash tar gzip zstd git ca-certificates curl gcc g++ make libc6-dev pkg-config libclang-dev libdb-dev libkyotocabinet-dev libtkrzw-dev tkrzw-utils liblzma-dev liblz4-dev libzstd-dev libglib2.0-dev libssl-dev zlib1g-dev binutils time
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -470,42 +471,66 @@ jobs:
           safe-directory: 'true'
           rustup: 'true'
       - run: cargo install cargo-c --version 0.10.25 --locked
+      - name: Verify the distro tkrzw runtime
+        run: |
+          tools/tkrzw/distro-probe.sh
+          library="$(pkg-config --variable=libdir tkrzw)/libtkrzw.so"
+          test -f "$library"
+          export OXPINYIN_TKRZW_LIBRARY="$(readlink -f -- "$library")"
+          bash tools/tkrzw/runtime.sh --print-path tkrzw function-order-policy distro "$(command -v tkrzw_dbm_util)"
+          printf 'OXPINYIN_TKRZW_LIBRARY=%s\n' "$OXPINYIN_TKRZW_LIBRARY" >> "$GITHUB_ENV"
       # The release recipe of docs/packaging.md, "Regeneration": both
-      # facades, the BDB backend, one shared target directory.
-      - name: Build the shipping staticlibs (BDB, release recipe)
+      # facades on every backend. cargo-c is installed once above; each
+      # backend reuses its own target directory for its two facades.
+      - name: Build the shipping staticlibs (all backends, release recipe)
         run: |
           export OXPINYIN_FUNCTION_ORDER_POLICY=
-          stage="$RUNNER_TEMP/stage"
+          target_root="${CARGO_TARGET_DIR:-$PWD/target}/function-order"
           cost='%e s wall, %U s user, %M KiB largest process RSS'
-          echo "install.sh libpinyin (bdb,shipped)"
-          /usr/bin/time -f "$cost" tools/packaging/install.sh libpinyin --prefix="$stage" \
-            -- --locked --release --no-default-features --features bdb,shipped
-          echo "install.sh libzhuyin (bdb)"
-          /usr/bin/time -f "$cost" tools/packaging/install.sh libzhuyin --prefix="$stage" \
-            -- --locked --release --no-default-features --features bdb
-      # Both facades are checked even if the first is stale, so one run
+          for backend in bdb kc tkrzw; do
+            feature=$backend
+            [ "$backend" != kc ] || feature=kyotocabinet
+            export CARGO_TARGET_DIR="$target_root/$backend"
+            stage="$RUNNER_TEMP/function-order-$backend"
+            echo "install.sh libpinyin ($backend: $feature,shipped)"
+            /usr/bin/time -f "$cost" tools/packaging/install.sh libpinyin --prefix="$stage" \
+              -- --locked --release --no-default-features --features "$feature,shipped"
+            echo "install.sh libzhuyin ($backend: $feature)"
+            /usr/bin/time -f "$cost" tools/packaging/install.sh libzhuyin --prefix="$stage" \
+              -- --locked --release --no-default-features --features "$feature"
+            if [ "$backend" = tkrzw ]; then
+              for facade in libpinyin libzhuyin; do
+                bash tools/tkrzw/runtime.sh --print-path tkrzw function-order-policy "$facade" "$stage/lib/$facade.so.15.0.0"
+              done
+            fi
+          done
+      # All six policies are checked even if one is stale, so one run
       # names every stale policy. The resolver names each unresolved path on
       # stderr. The archive is <target>/<host>/release/lib<facade>.a, the file
       # install.sh passes to the relink as --staticlib.
       - name: Resolve every checked-in policy against its staticlib
         run: |
           host=$(rustc -vV | sed -n 's/^host: //p')
-          release="${CARGO_TARGET_DIR:-$PWD/target}/$host/release"
+          target_root="${CARGO_TARGET_DIR:-$PWD/target}/function-order"
           failed=0
-          for facade in libpinyin libzhuyin; do
-            archive="$release/$facade.a"
-            policy="tools/packaging/function-order/$facade.order"
-            if [ ! -f "$archive" ]; then
-              echo "::error::staticlib not found: $archive"
-              exit 1
-            fi
-            if errors=$(tools/packaging/function-order.sh resolve "$archive" "$policy" "$facade.so.15" 2>&1 >/dev/null); then
-              echo "$policy resolves against $archive"
-            else
-              printf '%s\n' "$errors"
-              echo "::error file=$policy::$(grep -m1 'unresolved policy path' <<< "$errors" || echo 'policy does not resolve'). $policy is stale: regenerate it (docs/packaging.md, \"Regeneration\")."
-              failed=1
-            fi
+          for backend in bdb kc tkrzw; do
+            release="$target_root/$backend/$host/release"
+            for facade in libpinyin libzhuyin; do
+              archive="$release/$facade.a"
+              policy="tools/packaging/function-order/$backend/$facade.order"
+              if [ ! -f "$archive" ]; then
+                echo "::error::staticlib not found: $archive"
+                failed=1
+                continue
+              fi
+              if errors=$(tools/packaging/function-order.sh resolve "$archive" "$policy" "$facade.so.15" 2>&1 >/dev/null); then
+                echo "$policy resolves against $archive"
+              else
+                printf '%s\n' "$errors"
+                echo "::error file=$policy::$(grep -m1 'unresolved policy path' <<< "$errors" || echo 'policy does not resolve'). $policy is stale: regenerate it (docs/packaging.md, \"Regeneration\")."
+                failed=1
+              fi
+            done
           done
           exit "$failed"
       # cgroup v2 high-water mark of the job container. It counts page

@@ -334,18 +334,22 @@ shipping link.
 
 A policy that went stale and merged is reported by the nightly
 `function-order-policy` job in `.github/workflows/verify-nightly.yml`
-(#1071). The job builds both facades' BDB staticlibs with the release recipe
+(#1071). The job builds both facades' staticlibs for BDB, KC and tkrzw with
+the release recipe
 (`tools/packaging/install.sh`, the build whose archive the relink reads) and
 runs `tools/packaging/function-order.sh resolve ARCHIVE POLICY SONAME` for
-each checked-in policy. It switches the relink's own ordering off, as
+all six backend/facade policies. Each policy is checked against its own
+backend's shipping staticlib, with separate target directories per backend
+and one cargo-c installation for the job. It switches the relink's own
+ordering off, as
 "Regeneration" below does, so that a stale policy fails this check, with its
 message, and not the relink. On an unresolved path the job prints the
 resolver's `unresolved policy path` line and points to "Regeneration". It
 runs on the schedule and on a manual dispatch of that workflow
 (`gh workflow run verify-nightly.yml --ref <branch>`, which also runs every
-other nightly job; `windows_only` skips it) and blocks no merge. Only the BDB
-backend's archives are currently checked. The legacy policy paths above keep
-that existing job working; extending it to KC and tkrzw is separate work.
+other nightly job; `windows_only` skips it) and blocks no merge. The check uses
+the backend-specific policy paths for all three backends; the legacy BDB
+aliases remain available for compatibility.
 
 The relink passes `-Wl,-z,defs` on that one link command, so the ordered and
 the unordered link both carry it, on every backend. A reference in the
