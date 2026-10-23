@@ -515,7 +515,7 @@ lane-owned debug {cell} Rust build/test artifacts (two build jobs maximum) and
 the authorized bdb ledger it inherits from:
 
 ```sh
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/bisection/internal-ledger.py --cell {cell} \\
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal tools/bisection/internal-ledger.py --cell {cell} \\
   --delta-from docs/findings/axis-j-bdb-ledger.md --pin "$LIBPINYIN_PIN" \\
   --config "${env}_CONFIG_H" --oracle "${env}_ORACLE_PREFIX" \\
   --build "$J_{env}_IR" --measurement-build "$J_{env}_GCOV" \\

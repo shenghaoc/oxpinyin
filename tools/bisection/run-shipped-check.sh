@@ -88,7 +88,7 @@ for n in $SIZES; do
     {
         echo "## n=$n"
         for num in "$Z_LABEL" "$S_LABEL"; do
-            uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-ratio.py" "$SPEED" \
+            uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$CTLTOOLS/bisection/perf-ratio.py" "$SPEED" \
                 --numerator "$num" --denominator "$L_LABEL" \
                 --repeats "$n" --format md
         done

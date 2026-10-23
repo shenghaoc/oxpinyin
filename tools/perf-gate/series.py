@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """series.py — append a nightly snapshot to the series and read it back.
 
 The other half of tools/perf-gate/snapshot.sh. Design and rationale:

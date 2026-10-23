@@ -93,7 +93,7 @@ TABLE
 )
 
 set +e
-DECLARED="$declared" uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - "$out" <<'PY'
+DECLARED="$declared" uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$out" <<'PY'
 import os, re, sys
 out = sys.argv[1]
 table = [line.split("\t") for line in os.environ["DECLARED"].splitlines() if line]

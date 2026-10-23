@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """Generate the axis-J source coverage ledgers without saving captures.
 
 The bdb cell is the full ledger. The kc and tkrzw cells are delta ledgers

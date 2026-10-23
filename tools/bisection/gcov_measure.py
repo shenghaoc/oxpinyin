@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """Private -O0 gcov measurement; counters are build intermediates, JSON is not saved.
 
 The installed oracle remains the differential reference. Measurement execution

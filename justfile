@@ -12,38 +12,38 @@ default: doctor
 
 # Report native capabilities and the managed interpreter identity.
 doctor:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev doctor
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev doctor
 
 # Run one native setup check: bdb, tkrzw or kyotocabinet.
 check backend="bdb":
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev check {{backend}}
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev check {{backend}}
 
 # Run a command inside the native heavy slot and memory admission.
 [unix]
 heavy *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev slot run "$@"
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev slot run "$@"
 
 [windows]
 heavy *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev slot run @args; exit $LASTEXITCODE
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev slot run @args; exit $LASTEXITCODE
 
 # Run the native Rust tests through nextest and the heavy slot.
 [unix]
 test *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev test "$@"
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test "$@"
 
 [windows]
 test *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev test @args; exit $LASTEXITCODE
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test @args; exit $LASTEXITCODE
 
 # Run doctests separately; nextest does not run them.
 [unix]
 test-doc *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev test-doc "$@"
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test-doc "$@"
 
 [windows]
 test-doc *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev test-doc @args; exit $LASTEXITCODE
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev test-doc @args; exit $LASTEXITCODE
 
 # Build with the native heavy slot and memory admission.
 [unix]
@@ -109,27 +109,27 @@ fuzz *args:
 # Run native coverage with temporary state; run and report in one invocation.
 [unix]
 coverage *args:
-    @just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev coverage "$@"
+    @just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev coverage "$@"
 
 # Windows transport is unverified (#950).
 [windows]
 coverage *args:
-    @just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
+    @just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
 
 # Read registry metadata, optionally filtered by issue or kind.
 [unix]
 list *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev list "$@"
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev list "$@"
 
 [windows]
 list *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev list @args; exit $LASTEXITCODE
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev list @args; exit $LASTEXITCODE
 
 # Describe an explicit registry selection without executing it.
 [unix]
 plan *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev plan "$@"
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev plan "$@"
 
 [windows]
 plan *args:
-    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev plan @args; exit $LASTEXITCODE
+    @uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal -m tools.dev plan @args; exit $LASTEXITCODE

@@ -21,9 +21,9 @@ export XDG_CACHE_HOME=/state/container/$identity/cache
 export PATH=/opt/uv/bin:/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export OXPINYIN_COMPAT_INPUT_SHA256=$input_identity
 export OXPINYIN_COMPAT_IMAGE_ID=$identity OXPINYIN_COMPAT_REFERENCE_ID=$reference_id
-source_identity=$(uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+source_identity=$(uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
 	/input/identity.py verify-inputs /input "$input_identity" "$identity" "$reference_id")
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
 	/input/identity.py verify-state "$identity" "$source_identity" "$cell" "$run_id"
 result=/state/results/container/$source_identity/$run_id
 mkdir -p "$HOME" "$CARGO_HOME" "$UV_CACHE_DIR" "$OXPINYIN_LOCK_DIR" /state/work "$result"
@@ -58,7 +58,7 @@ bash tools/bisection/run-all.sh --cells "$cell" --oracle "$cell=$PINYIN_ORACLE_P
 	--target-root "$OXPINYIN_TARGET_ROOT" --json "$result/results.json" --log-dir "$result/logs" "$@" 2>&1 | tee "$result/comparison.log"
 status=${PIPESTATUS[0]}
 set -e
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
 	-m tools.dev.compat.identity seal-results "$result" "$OXPINYIN_TARGET_ROOT" "$cell"
 printf 'Compatibility command exit: %s (missing/skipped inputs are not passes)\n' "$status"
 exit "$status"

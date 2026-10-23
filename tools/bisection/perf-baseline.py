@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """Summarize oxpinyin-vs-oracle performance-baseline captures and sizes.
 
 The capture JSONL is produced by `bisect --perf` (see run-perf-baseline.sh).

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal
+#!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """Subprocess tests for the `python -m tools.dev` import-mode guard."""
 import json
 import os
@@ -129,7 +129,7 @@ class EntryGuardTests(unittest.TestCase):
         self.assertEqual(result.stdout, '')
         self.assertEqual(len(diagnostic), 1)
         self.assertIn('sys.get_lazy_imports is missing', diagnostic[0])
-        self.assertIn('cpython@3.15.0+gil', diagnostic[0])
+        self.assertIn('cpython@3.15+gil', diagnostic[0])
         self.assertEqual(list(self.lock_dir.iterdir()), [])
 
 
