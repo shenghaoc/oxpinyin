@@ -40,6 +40,27 @@ def linker_description(library):
     return f'current driver {compiler}: {version}; artifact linker not recorded'
 
 
+def library_backend(library):
+    """Select the policy from the linked object's backend, not its caller's env."""
+    needed = re.findall(r'\(NEEDED\).*\[([^]]+)\]', command(['readelf', '-dW', library]))
+    patterns = {'bdb': r'libdb(?:-[0-9.]+)?\.so(?:\.[0-9.]+)?',
+                'kc': r'libkyotocabinet\.so(?:\.[0-9.]+)?',
+                'tkrzw': r'libtkrzw\.so(?:\.[0-9.]+)?'}
+    backends = [backend for name in needed for backend, pattern in patterns.items()
+                if re.fullmatch(pattern, name)]
+    if len(backends) != 1:
+        raise ValueError('expected exactly one backend in DT_NEEDED: ' + ', '.join(needed))
+    return backends[0]
+
+
+def check_policy_backend(policy, backend):
+    """Reject a foreign backend's layout entry, including through a symlink."""
+    directory = policy.resolve().parent
+    if (directory.parent.name == 'function-order' and directory.name in ('bdb', 'kc', 'tkrzw')
+            and directory.name != backend):
+        raise ValueError(f'policy backend {directory.name} does not match {backend}')
+
+
 def verify(library, policy, facade):
     """Require every live policy family, in policy order, at the start of .text.
 
@@ -112,7 +133,7 @@ def verify(library, policy, facade):
 
 def add_arguments(parser):
     parser.add_argument('--function-order', action='append', default=[], metavar='ARM/FACADE=POLICY',
-                        help='expected policy override; default is the checked-in facade policy')
+                        help="expected policy override; default follows the object's DT_NEEDED backend")
     parser.add_argument('--unordered-arm', action='append', default=[], metavar='ARM',
                         help='explicit non-shipping original-layout experiment (never a shipping result)')
 
@@ -146,9 +167,13 @@ def check_arms(args, arms, references=()):
                 if arm in unordered:
                     row['function_order'] = 'intentional-unordered'
                 else:
-                    policy = policies.get(f'{arm}/{facade}', HERE / 'function-order' / f'lib{facade}.order')
-                    row['policy'] = str(policy)
                     try:
+                        backend = library_backend(library)
+                        row['backend'] = backend
+                        policy = policies.get(f'{arm}/{facade}',
+                                              HERE / 'function-order' / backend / f'lib{facade}.order')
+                        row['policy'] = str(policy)
+                        check_policy_backend(policy, backend)
                         row.update(verify(library, policy, facade), function_order='ordered')
                     except (OSError, ValueError) as error:
                         row.update(function_order='refused', reason=str(error))

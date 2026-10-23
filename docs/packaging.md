@@ -263,7 +263,7 @@ artifact the relink then supersedes on install.
 
 ## Measured function ordering (#986 Phase 2A)
 
-Linux package builds of the BDB backend select the checked-in measured policy
+Linux package builds select the checked-in measured policy for their backend,
 matching the library's SONAME. The release profile remains fat LTO with one
 codegen unit. A selected policy must resolve against the staticlib or the
 relink fails; only a linker without `--section-ordering-file` keeps the
@@ -271,16 +271,27 @@ original layout.
 
 ### Policy selection by backend
 
-The two checked-in policies are generated from the shipping BDB build
-("Regeneration" below) and name BDB-only paths, such as
-`oxpinyin_store::bdb::ffi` functions, so no Kyoto Cabinet or tkrzw archive can
-resolve them. `relink-versioned.sh` therefore selects a checked-in policy only
-when the staticlib's feature list names the `bdb` backend. The other two
-backends, which the release lanes build (`release-packages.yml`), have no
-checked-in policy: their relink links in the original layout and says so
-(`no checked-in policy for the <backend> backend`). This is their documented
-configuration, not a fallback. A policy named with `--function-order` or
-`OXPINYIN_FUNCTION_ORDER_POLICY` applies on every backend and must resolve.
+Each backend has its own `tools/packaging/function-order/<backend>/` directory:
+`bdb`, `kc` (Cargo feature `kyotocabinet`) or `tkrzw`. Each contains
+`libpinyin.order` and `libzhuyin.order`, generated from that backend's shipping
+build and same-cell profiles. The BDB files retain their previous contents.
+`relink-versioned.sh` selects the directory from the build's feature list.
+Measurement verification derives the backend independently from the linked
+object's `DT_NEEDED`; the caller's environment cannot select another backend's
+default. Both paths reject a named policy in a different backend's directory,
+including a symlink to it. Experimental or historical policies outside this
+layout still must resolve and pass the linked prefix check.
+
+The former `function-order/libpinyin.order` and `libzhuyin.order` paths are
+compatibility symlinks to the BDB files, for the existing nightly check.
+They cannot select BDB policies for another backend: both selectors resolve
+the symlink before checking the backend.
+
+A backend with no registered policy links in the original layout and says
+`no checked-in policy for the <backend> backend`. If the directory exists but
+its facade policy is missing or stale, the relink fails. All three supported
+backends are registered; a missing directory also fails. An explicit opt-out
+and the unsupported-linker fallback keep their existing behavior.
 
 ### Final-link mechanism and fallback
 
@@ -333,7 +344,8 @@ resolver's `unresolved policy path` line and points to "Regeneration". It
 runs on the schedule and on a manual dispatch of that workflow
 (`gh workflow run verify-nightly.yml --ref <branch>`, which also runs every
 other nightly job; `windows_only` skips it) and blocks no merge. Only the BDB
-backend has checked-in policies, so only its archives are checked.
+backend's archives are currently checked. The legacy policy paths above keep
+that existing job working; extending it to KC and tkrzw is separate work.
 
 The relink passes `-Wl,-z,defs` on that one link command, so the ordered and
 the unordered link both carry it, on every backend. A reference in the
@@ -371,7 +383,7 @@ OXPINYIN_FUNCTION_ORDER_POLICY="$POLICIES/libpinyin.order" \
 Install libzhuyin separately with its own policy and normal feature selection.
 An explicitly empty `OXPINYIN_FUNCTION_ORDER_POLICY=` (or `--function-order ''`
 on the relinker) restores the original command with no inventory or capability
-query. An unset variable selects `tools/packaging/function-order/libpinyin.order`
+query. An unset variable selects `tools/packaging/function-order/<backend>/libpinyin.order`
 or `libzhuyin.order`. A package build does not profile or infer a policy.
 
 Ordering adds no linker replacement or packaging dependency. The relinker
@@ -381,7 +393,7 @@ require them.
 
 ### Regeneration
 
-The two checked-in policies are generated from the shipping BDB release inputs
+The policies are generated separately from each backend's shipping release inputs
 by `tools/generate-function-order.py`. The generator uses the in-tree
 `tools/bisection/bisect.c` worker in its teardown mode: the load constructors,
 the `<facade>_init` subtree and the exports the worker calls from there to its
@@ -406,38 +418,65 @@ them too, so their `nm --demangle=rust` symbol sets are equal. On the tree of
 the 0.10.25 outputs were identical to each other and to the checked-in
 `libpinyin.order` and `libzhuyin.order`.
 
-Build both libraries with ordering explicitly disabled, and build the worker:
+Run one backend campaign at a time on ext4, with worktree and `TMPDIR` on the
+home disk. Verify all three cells with `tools/cloud/setup.sh --cells 'bdb kc tkrzw'`
+and source its environment file in every shell that launches a tool. Set
+`CELL=bdb`, `kc` or `tkrzw`; map `kc` to Cargo feature `kyotocabinet` below.
+Use one `$BUILD` target directory per backend, and separate `$STAGE`,
+`$TEARDOWN` and `$WORK` directories. The #1076 campaign uses cargo-c 0.10.24
+and GNU ld 2.47.
+
+For tkrzw, the environment must name the sound libtkrzw supplied by setup
+(normally `<cache>/tkrzw/lib/libtkrzw.so.1` on Ubuntu). Its `PKG_CONFIG_PATH`
+selects the build dependency and its `LD_LIBRARY_PATH` selects the runtime.
+Ubuntu's packaged library is defective; a result using it is invalid (rule 9).
+Before each provisioning, generation and measurement campaign, check with
+`ldd` that both pin facades, both installed subject facades and every measured
+copy resolve exactly one `libtkrzw.so.1` to that cache library. A missing,
+duplicate or system-library resolution is a STOP. The runtime guard from
+#1068 checks the selected objects against the verified library named by the
+environment. A discarded `LD_DEBUG=libs` trace per side using `bisect --perf`
+can also confirm that its `calling init` line names the same cache library.
+
+Select the matching verified oracle and build both libraries with ordering
+explicitly disabled, then build the worker:
 
 ```sh
+source "${OXPINYIN_ORACLE_ENV:-$HOME/.oxpinyin-oracle.env}"
+FEATURE=$CELL
+[ "$CELL" != kc ] || FEATURE=kyotocabinet
+PREFIX_VAR=OXPINYIN_ORACLE_PREFIX_${CELL^^}
+DATA_VAR=OXPINYIN_ORACLE_DATA_${CELL^^}
+PIN=${!PREFIX_VAR}
+DATA=${!DATA_VAR}
 CARGO_TARGET_DIR="$BUILD" OXPINYIN_FUNCTION_ORDER_POLICY= \
   just heavy -- tools/packaging/install.sh libpinyin --prefix="$STAGE" \
-  -- --locked --release --no-default-features --features bdb,shipped
+  -- --locked --release --no-default-features --features "$FEATURE,shipped"
 CARGO_TARGET_DIR="$BUILD" OXPINYIN_FUNCTION_ORDER_POLICY= \
   just heavy -- tools/packaging/install.sh libzhuyin --prefix="$STAGE" \
-  -- --locked --release --no-default-features --features bdb
+  -- --locked --release --no-default-features --features "$FEATURE"
 cc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$BISECT" \
   tools/bisection/bisect.c -ldl
 ```
 
-`$DATA` is the BDB system directory, `$DATA_ID` its SHA-256 under the profile
+`$DATA` is that cell's system directory, `$DATA_ID` its SHA-256 under the profile
 manifest schema, and `$PROFILES` holds the `phrases` and `journals` fixture
 trees with their `user/` directories and `profile.manifest` files. The library
 and staticlib for a facade must be the same build.
 
 Provision the profiles with the in-tree teardown provisioner against the
-reference oracle: `$PIN` is the prefix that `tools/cloud/setup.sh --cells bdb`
-verified (`$OXPINYIN_ORACLE_PREFIX_BDB` in its environment file), and
+same-cell oracle: `$PIN` is the prefix that `tools/cloud/setup.sh` verified
+(`$OXPINYIN_ORACLE_PREFIX_<CELL>` in its environment file), and
 `$TEARDOWN` is an empty directory on ext4. The provisioner populates the
 profiles through the pin and writes each `profile.manifest`. The `provision`
-stage also runs on the `kc` and `tkrzw` cells, with that cell's name and pin in
-place of `bdb` below; every later teardown stage stays BDB-only
+stage runs on `bdb`, `kc` and `tkrzw`; every later teardown stage stays BDB-only
 (`docs/runbooks/benches.md`, "Native teardown workload"). Then compute the
 system-data identity:
 
 ```sh
 just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
   python -B -X lazy_imports=normal tools/bisection/contract-diff.py \
-  bdb "$PIN" "$STAGE/lib/libpinyin.so.15.0.0" \
+  "$CELL" "$PIN" "$STAGE/lib/libpinyin.so.15.0.0" \
   --zhuyin-so "$STAGE/lib/libzhuyin.so.15.0.0" \
   --unordered-arm ox --unordered-arm control \
   --teardown --teardown-stage provision --teardown-work-dir "$TEARDOWN"
@@ -456,11 +495,16 @@ just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
   --staticlib "zhuyin=$BUILD/x86_64-unknown-linux-gnu/release/libzhuyin.a" \
   --bisect "$BISECT" --system-dir "$DATA" --system-identity "$DATA_ID" \
   --profiles-dir "$PROFILES" --work-dir "$WORK" --cpu "$CPU" \
-  --output-dir tools/packaging/function-order
+  --output-dir "tools/packaging/function-order/$CELL"
 git diff --exit-code -- \
-  tools/packaging/function-order/libpinyin.order \
-  tools/packaging/function-order/libzhuyin.order
+  "tools/packaging/function-order/$CELL/libpinyin.order" \
+  "tools/packaging/function-order/$CELL/libzhuyin.order"
 ```
+
+Run generation twice into separate temporary output directories and use `cmp`
+on both facade files before replacing the checked-in policies. Keep policy
+files in their own commit. Compare backend path sets before proposing a shared
+prefix; implementing one requires a separate maintainer ruling.
 
 The generator stops each measured child at the worker's teardown boundary and
 keeps profiler output in memory. It requires both facades and both startup
@@ -492,6 +536,12 @@ just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
 Here `base` is the intentionally unordered baseline; `pr` and its same-bytes
 `control` must pass their policies. A different comparison can retain the
 default ordered base expectation or name its own policy explicitly.
+
+Check scoped Ir against the same-bytes control before interpreting it. A
+nonexact control makes that comparison INVALID under the runbook's exact-count
+rule, even when a diagnostic PR-minus-base difference is inside a pooled
+control range. Do not describe it as a regression or gain. Steady Ir remains
+limited by the nonexact `RandomState` control until #1031's hasher lands.
 
 ## Release artifacts (`release-packages.yml`)
 

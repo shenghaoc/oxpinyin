@@ -244,6 +244,7 @@ class LinkedObjectTests(unittest.TestCase):
                 for arm in ('base', 'pr', 'control', 'pin')}
         args = argparse.Namespace(function_order=['base/pinyin=/old-policy'], unordered_arm=[])
         with mock.patch.dict(ORDER['check_arms'].__globals__, verify=mock.Mock(return_value={}),
+                             library_backend=lambda *_: 'bdb',
                              linker_description=lambda *_: 'GNU ld 2.47'), \
                 mock.patch('sys.stdout', new_callable=io.StringIO) as output:
             result = ORDER['check_arms'](args, arms, references=('pin',))
@@ -256,6 +257,7 @@ class LinkedObjectTests(unittest.TestCase):
 
     def test_refusal_names_arm_and_linker_without_trusting_linker_support(self):
         with mock.patch.dict(ORDER['check_arms'].__globals__, verify=mock.Mock(side_effect=ValueError('unordered')),
+                             library_backend=lambda *_: 'bdb',
                              linker_description=lambda *_: 'GNU ld 2.47'), \
                 mock.patch('sys.stdout', new_callable=io.StringIO) as output:
             with self.assertRaisesRegex(ValueError, 'arm pr/pinyin refused.*GNU ld 2.47'):
@@ -266,6 +268,7 @@ class LinkedObjectTests(unittest.TestCase):
         arms = {arm: {'pinyin': LIBRARY} for arm in ('base', 'pr', 'control', 'pin')}
         verify = mock.Mock(side_effect=[ValueError('unordered'), {}, ValueError('fallback')])
         with mock.patch.dict(ORDER['check_arms'].__globals__, verify=verify,
+                             library_backend=lambda *_: 'bdb',
                              linker_description=lambda *_: 'GNU ld 2.42'), \
                 mock.patch('sys.stdout', new_callable=io.StringIO) as output:
             with self.assertRaisesRegex(ValueError, 'arm base/pinyin refused') as failure:
@@ -290,6 +293,59 @@ class LinkedObjectTests(unittest.TestCase):
         args = argparse.Namespace(unordered_arm=['typo'], function_order=[])
         with self.assertRaisesRegex(ValueError, 'unique non-reference'):
             ORDER['check_arms'](args, {'base': {'pinyin': LIBRARY}})
+
+
+class BackendPolicyTests(unittest.TestCase):
+    def test_legacy_nightly_aliases_select_bdb_and_refuse_foreign_backends(self):
+        for facade in ('pinyin', 'zhuyin'):
+            alias = HERE / 'function-order' / f'lib{facade}.order'
+            self.assertTrue(alias.is_symlink())
+            self.assertEqual(alias.resolve(), HERE / 'function-order/bdb' / f'lib{facade}.order')
+            ORDER['check_policy_backend'](alias, 'bdb')
+            for backend in ('kc', 'tkrzw'):
+                with self.assertRaisesRegex(ValueError, 'policy backend bdb does not match'):
+                    ORDER['check_policy_backend'](alias, backend)
+
+    def test_backend_requires_one_recognized_needed_library(self):
+        for backend, library in (('bdb', 'libdb-5.3.so'), ('kc', 'libkyotocabinet.so.16'),
+                                 ('tkrzw', 'libtkrzw.so.1')):
+            with self.subTest(backend=backend), mock.patch.dict(
+                    ORDER['library_backend'].__globals__,
+                    command=lambda *_: f'(NEEDED) Shared library: [{library}]\n'):
+                self.assertEqual(ORDER['library_backend'](LIBRARY), backend)
+        for needed in ('libc.so.6', 'libdb-5.3.so]\n(NEEDED) [libtkrzw.so.1',
+                       'libtkrzw.so.1]\n(NEEDED) [libtkrzw.so.2'):
+            with self.subTest(needed=needed), mock.patch.dict(
+                    ORDER['library_backend'].__globals__,
+                    command=lambda *_: f'(NEEDED) [{needed}]\n'):
+                with self.assertRaisesRegex(ValueError, 'exactly one backend'):
+                    ORDER['library_backend'](LIBRARY)
+
+    def test_defaults_follow_each_objects_backend_and_foreign_overrides_fail(self):
+        for backend in ('bdb', 'kc', 'tkrzw'):
+            with self.subTest(backend=backend), mock.patch.dict(
+                    ORDER['check_arms'].__globals__, library_backend=lambda *_: backend,
+                    verify=mock.Mock(return_value={}), linker_description=lambda *_: 'GNU ld 2.47'), \
+                    mock.patch('sys.stdout', new_callable=io.StringIO):
+                result = ORDER['check_arms'](argparse.Namespace(), {'pr': {'pinyin': LIBRARY}})
+                self.assertEqual(result['pr']['pinyin']['backend'], backend)
+                self.assertEqual(result['pr']['pinyin']['policy'],
+                                 str(HERE / 'function-order' / backend / 'libpinyin.order'))
+                foreign = 'kc' if backend == 'bdb' else 'bdb'
+                args = argparse.Namespace(function_order=[
+                    f'pr/pinyin={HERE}/function-order/{foreign}/libpinyin.order'])
+                with self.assertRaisesRegex(ValueError, 'policy backend .* does not match'):
+                    ORDER['check_arms'](args, {'pr': {'pinyin': LIBRARY}})
+
+    def test_foreign_policy_symlink_is_rejected(self):
+        with scratch() as work:
+            target = work / 'function-order/bdb/libpinyin.order'
+            target.parent.mkdir(parents=True)
+            target.write_text(HEADER + 'init\ta\n')
+            link = work / 'alias.order'
+            link.symlink_to(target)
+            with self.assertRaisesRegex(ValueError, 'policy backend bdb does not match kc'):
+                ORDER['check_policy_backend'](link, 'kc')
 
 
 class MeasurementCallerTests(unittest.TestCase):
@@ -460,10 +516,10 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
             environment = self.prepare(work)
             _, base_args, base_bytes = self.relink(work, environment)
             scripts = work / "packaging"
-            (scripts / "function-order").mkdir(parents=True)
+            (scripts / "function-order/bdb").mkdir(parents=True)
             for filename in ("relink-versioned.sh", "function-order.sh", "function-order.awk"):
                 shutil.copyfile(HERE / filename, scripts / filename)
-            shutil.copyfile(work / "policy", scripts / "function-order/libpinyin.order")
+            shutil.copyfile(work / "policy", scripts / "function-order/bdb/libpinyin.order")
             environment.pop("OXPINYIN_FUNCTION_ORDER_POLICY")
             ordered, args, _ = self.relink(work, environment, script=scripts / "relink-versioned.sh")
             self.assertEqual(ordered.returncode, 0, ordered.stderr)
@@ -507,19 +563,16 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
             self.assertIn("policy not found", result.stderr)
             self.assertNotIn("original layout", result.stderr)
 
-    def test_other_backends_have_no_checked_in_policy_and_say_so(self):
-        # The checked-in policies come from the shipping BDB build and name
-        # BDB-only paths. The other backends select no policy by default:
-        # an explicit, reported unordered link, not a resolution failure.
+    def test_missing_backend_directory_fails_without_consulting_bdb(self):
         with scratch() as work:
             environment = self.prepare(work)
             scripts = work / "packaging"
-            (scripts / "function-order").mkdir(parents=True)
+            (scripts / "function-order/bdb").mkdir(parents=True)
             for filename in ("relink-versioned.sh", "function-order.sh", "function-order.awk"):
                 shutil.copyfile(HERE / filename, scripts / filename)
             # A policy no backend's archive satisfies: the BDB default must
             # not be consulted for the other backends at all.
-            (scripts / "function-order/libpinyin.order").write_text(HEADER + "init\tbdb_only\n")
+            (scripts / "function-order/bdb/libpinyin.order").write_text(HEADER + "init\tbdb_only\n")
             environment.pop("OXPINYIN_FUNCTION_ORDER_POLICY")
             for backend in ("kyotocabinet", "tkrzw"):
                 with self.subTest(backend=backend):
@@ -529,11 +582,12 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
                     self.assertEqual(opted_out.returncode, 0, opted_out.stderr)
                     result, arguments, data = self.relink(
                         work, environment, script=scripts / "relink-versioned.sh", features=backend)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(arguments, base_args)
-                    self.assertEqual(data, base_bytes)
-                    self.assertIn(f"no checked-in policy for the {backend} backend", result.stderr)
-                    self.assertIn("original layout", result.stderr)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIsNone(arguments)
+                    self.assertEqual(data, b'original installed bytes')
+                    self.assertIn('policy not found', result.stderr)
+                    self.assertNotIn('unresolved policy path: bdb_only', result.stderr)
+                    self.assertNotIn('original layout', result.stderr)
                     self.assertFalse((work / "queries").exists())
             # The BDB default is still consulted, and still strict.
             result, arguments, _ = self.relink(work, environment, script=scripts / "relink-versioned.sh",
@@ -551,6 +605,45 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
                     self.assertEqual(ordered.returncode, 0, ordered.stderr)
                     self.assertIn(b"--section-ordering-file", arguments)
                     self.assertIn("using measured policy", ordered.stderr)
+
+    def test_default_policy_for_each_backend_is_strict_and_foreign_named_policy_fails(self):
+        with scratch() as work:
+            environment = self.prepare(work)
+            environment.pop('OXPINYIN_FUNCTION_ORDER_POLICY')
+            scripts = work / 'packaging'
+            scripts.mkdir()
+            for filename in ('relink-versioned.sh', 'function-order.sh', 'function-order.awk'):
+                shutil.copyfile(HERE / filename, scripts / filename)
+            for feature, backend in (('bdb', 'bdb'), ('kyotocabinet', 'kc'), ('tkrzw', 'tkrzw')):
+                policy = scripts / 'function-order' / backend / 'libpinyin.order'
+                policy.parent.mkdir(parents=True)
+                shutil.copyfile(work / 'policy', policy)
+                ordered, arguments, _ = self.relink(work, environment,
+                    script=scripts / 'relink-versioned.sh', features=feature)
+                self.assertEqual(ordered.returncode, 0, ordered.stderr)
+                self.assertIn(b'--section-ordering-file', arguments)
+                policy.write_text(HEADER + 'init\tstale\n')
+                stale, arguments, _ = self.relink(work, environment,
+                    script=scripts / 'relink-versioned.sh', features=feature)
+                self.assertEqual(stale.returncode, 1, stale.stderr)
+                self.assertIsNone(arguments)
+                self.assertIn('unresolved policy path: stale', stale.stderr)
+                policy.unlink()
+                missing, arguments, _ = self.relink(work, environment,
+                    script=scripts / 'relink-versioned.sh', features=feature)
+                self.assertEqual(missing.returncode, 1, missing.stderr)
+                self.assertIsNone(arguments)
+                self.assertIn('policy not found', missing.stderr)
+                shutil.copyfile(work / 'policy', policy)
+            foreign = scripts / 'function-order/bdb/libpinyin.order'
+            alias = work / 'alias.order'
+            alias.symlink_to(foreign)
+            for policy in (foreign, alias):
+                refused, arguments, _ = self.relink(work, environment, policy,
+                    script=scripts / 'relink-versioned.sh', features='kyotocabinet')
+                self.assertEqual(refused.returncode, 1, refused.stderr)
+                self.assertIsNone(arguments)
+                self.assertIn('policy backend bdb does not match kc', refused.stderr)
 
     def test_install_environment_opt_in_uses_the_facade_policy(self):
         with scratch() as work:

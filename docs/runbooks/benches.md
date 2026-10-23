@@ -10,8 +10,8 @@ comparable within one container on one host; every published snapshot
 ## Verify function ordering before shipping measurements
 
 Packaging links the original layout on a linker without
-`--section-ordering-file`, on an explicit opt-out, and for the Kyoto Cabinet
-and tkrzw backends, which have no checked-in policy; a policy that does not
+`--section-ordering-file`, on an explicit opt-out, or for a backend without a
+registered checked-in policy; a selected policy that does not
 resolve fails the relink (`docs/packaging.md`, "Policy selection by
 backend"). Every shipping arm below runs the shared
 `tools/packaging/function_order.py` check before measurements. It reads the
@@ -57,8 +57,10 @@ swallowed build warnings are not opt-outs.
 All these tools accept repeated `--function-order ARM/FACADE=POLICY` overrides
 for matched historical or experimental policies, for example
 `--function-order base/pinyin=/path/to/base/libpinyin.order`. Defaults are the
-current checked-in facade policies, independently of build environment
-overrides. Name `base` explicitly with `--unordered-arm base` when the
+current checked-in policies in `function-order/<backend>/`, with the backend
+derived from each object's `DT_NEEDED`, independently of build environment
+overrides. A named policy in another backend's directory is refused, including
+through a symlink. Name `base` explicitly with `--unordered-arm base` when the
 function-order campaign compares an intentionally unordered baseline. Its
 same-bytes control is still checked as its own arm; specify that arm's policy
 or unordered experiment too. Unknown/repeated names or conflicting
