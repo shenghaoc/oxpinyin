@@ -618,6 +618,64 @@ class InitAttributionTests(unittest.TestCase):
         self.assertEqual(shown['user_functions']['SUBJECT'], {'init_tables': 1, 'replay': 1})
         self.assertEqual(shown['user_functions']['[vdso]'], {'[vdso]': 1})
 
+    def test_lackey_stream_keeps_only_accesses_between_markers(self):
+        stream = (b'==1== Lackey\nI  00001000,3\n L 00002000,8\nBI  00003000,4\n S 00004030,8\n'
+                  b' M 0000407e,4\nI  00003004,2\nEI  00005000,3\n L 00006000,8\n')
+        for cut in range(1, len(stream)):
+            accesses = td.LackeyAccesses()
+            accesses.feed(stream[:cut])
+            accesses.feed(stream[cut:])
+            self.assertEqual(accesses.result(), dict(window=True, lines=4, code=[0x3000, 0x3004],
+                                                     data_lines=[0x4030 >> 6, 0x407e >> 6, (0x4081 >> 6)]))
+        accesses = td.LackeyAccesses()
+        accesses.feed(stream[:stream.index(b'E')])
+        self.assertFalse(accesses.result()['window'])
+
+    def test_page_runs_round_trip(self):
+        self.assertEqual(td.page_ranges([7, 3, 4, 5, 9]), [[3, 6], [7, 8], [9, 10]])
+        self.assertEqual(td.range_pages([[3, 6], [9, 10]]), {3, 4, 5, 9})
+
+    def init_pages(self, page_size, read_in):
+        # Two local functions share a demangled name; a table lives in .rodata.
+        library, base = Path('/w/libraries/subject/libzhuyin.so'), 0x7f0000000000
+        layout = dict(sections=[dict(name='.text', address=0x10000, offset=0x10000, size=0x30000),
+                                dict(name='.rodata', address=0x40000, offset=0x40000, size=0x10000)],
+                      symbols=[(0x10000, 0x100, 't', 'helper'), (0x2f000, 0x2000, 't', 'helper'),
+                               (0x40000, 0x40, 'r', 'TABLE')])
+        maps = [(base, base + 0x50000, 'r-xp', str(library), 0)]
+        accesses = dict(window=True, code=[base + 0x10010, base + 0x10020, base + 0x2f000],
+                        data_lines=[(base + 0x40000) >> 6])
+        rows = {'ox': [dict(init=dict(accesses=accesses), checkpoints=[dict(M0={}), dict(I1=dict(maps=maps))])]}
+        bitmaps = {'ox': [dict(checkpoints=[dict(M0=dict(residency=dict(SUBJECT=dict(ranges=[])))),
+                                            dict(I1=dict(residency=dict(SUBJECT=dict(ranges=read_in))))])]}
+        with patch.object(td, 'library_layout', return_value=layout), \
+                patch.object(td, 'policy_prefix', return_value=(0x10000, 0x30000)), \
+                patch.object(td.os, 'sysconf', return_value=page_size), patch.object(td, 'print_record') as record:
+            td.report_init_pages('zhuyin', 'phrases', rows, bitmaps, {'ox': {'zhuyin': library}}, 'cold')
+        return record.call_args.kwargs
+
+    def test_init_pages_count_host_pages(self):
+        # 64 KiB pages: mincore indices and file offsets must use one size.
+        shown = self.init_pages(0x10000, [[1, 3]])
+        self.assertEqual(shown['page_size'], 0x10000)
+        self.assertEqual(shown['sections'], {'.text': [1, 4], '.rodata': [4, 5]})
+        self.assertEqual(shown['prefix']['pages'], [1, 3])
+        self.assertEqual(shown['executed']['pages'], 2)
+        self.assertEqual((shown['executed']['function_bytes'], shown['executed']['contiguous_pages']), (0x2100, 1))
+        self.assertEqual((shown['read_in']['executed'], shown['read_in']['neither']), (2, 0))
+        self.assertEqual([(page['page'], page['section'], page['executed'], page['symbols']) for page in shown['pages']],
+                         [(1, '.text', True, ['helper']), (2, '.text', True, ['helper']),
+                          (4, '.rodata', False, ['TABLE'])])
+
+    def test_init_pages_keep_executed_functions_apart_by_address(self):
+        shown = self.init_pages(0x1000, [[16, 17], [47, 48]])
+        self.assertEqual(shown['executed']['functions'], 2)
+        self.assertEqual((shown['executed']['function_bytes'], shown['executed']['contiguous_pages']), (0x2100, 3))
+        self.assertEqual([(entry['function'], entry['instructions'], entry['pages'])
+                          for entry in shown['executed']['largest']],
+                         [('helper', 2, [[16, 17]]), ('helper', 1, [[47, 48]])])
+        self.assertEqual(shown['read_in']['executed'], 2)
+
     CALLGRIND = '\n'.join(('events: Ir Bc', 'positions: line', 'ob=(1) /w/libraries/subject/libzhuyin.so',
                             'fn=(1) zhuyin_init', '3 10 2', 'cob=(2) /usr/lib/libc.so.6', 'cfn=(2) memcpy',
                             'calls=1 5', '5 100 20', '4 1', 'ob=(2)', 'fn=(2)', '5 100 20', 'totals: 111 22'))
@@ -990,7 +1048,9 @@ class NativeTests(unittest.TestCase):
                 self.assertEqual((set(row['checkpoints'][0]), set(row['checkpoints'][1])), ({'M0'}, {'I1'}))
                 after = row['checkpoints'][1]['I1']
                 self.assertEqual(after['residency']['SUBJECT']['pages'], after['residency']['SUBJECT']['resident'])
-                self.assertTrue(any(path == str(self.library) and 'x' in perms for _, _, perms, path in after['maps']))
+                self.assertTrue(any(path == str(self.library) and 'x' in perms for _, _, perms, path, _ in after['maps']))
+                # Warm: the run covers every page of the stub library.
+                self.assertEqual(after['residency']['SUBJECT']['ranges'], [[0, after['residency']['SUBJECT']['pages']]])
                 self.assertEqual(set(row['samples'][0]['times']['init_ns']), set(td.CLOCK_FIELDS))
                 self.assertEqual(row['observation']['stderr'].splitlines(), ['INIT', 'ALLOC', 'FREE', 'FINI'])
                 self.assertEqual(row['observation']['documents'], [])
