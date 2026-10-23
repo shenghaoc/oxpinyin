@@ -257,13 +257,18 @@ unsafe extern "C" fn visit_empty(
     unsafe { sys::KCVISNOP }
 }
 
-/// A point read's result: the value, copied into its final allocation.
-impl Visit for Option<Vec<u8>> {
+/// A point read into the caller's buffer, which arrives cleared: the
+/// value is copied in, growing the buffer only past its capacity.
+struct Fill<'a> {
+    value: &'a mut Vec<u8>,
+    found: bool,
+}
+
+impl Visit for Fill<'_> {
     fn full(&mut self, _key: &[u8], value: &[u8]) {
-        let mut out = Vec::new();
-        out.reserve_exact(value.len());
-        out.extend_from_slice(value);
-        *self = Some(out);
+        self.value.reserve_exact(value.len());
+        self.value.extend_from_slice(value);
+        self.found = true;
     }
 }
 
@@ -353,10 +358,11 @@ impl Rows {
     }
 }
 
-/// Every key of a database, in its walk order.
-impl Visit for Vec<Vec<u8>> {
+/// Every key of a database, in its walk order, as the four-byte tokens
+/// the user bigram keys by; `None` for a key of any other length.
+impl Visit for Vec<Option<[u8; 4]>> {
     fn full(&mut self, key: &[u8], _value: &[u8]) {
-        self.push(key.to_vec());
+        self.push(<[u8; 4]>::try_from(key).ok());
     }
 }
 
@@ -569,26 +575,31 @@ impl Db {
         matches!(self.db_type, DbType::Tree | DbType::ProtoTree)
     }
 
-    /// Point read. `None` when the key is absent.
+    /// Point read into `value`, which is cleared first. `false` when the
+    /// key is absent.
     ///
     /// One `kcdbaccept`, read-only: the visitor copies the value straight
-    /// into the returned `Vec`. libpinyin reads the same record with
-    /// `check` and then `get(kbuf, ksiz, vbuf, vsiz)` into its chunk
-    /// (`ngram_kyotodb.cpp:131-139` at 074a2219), two `accept`s whose
-    /// results agree for a caller that does not write in between.
-    pub(crate) fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
-        let mut found: Option<Vec<u8>> = None;
+    /// into the caller's buffer. libpinyin reads the same record with
+    /// `check` and then `get(kbuf, ksiz, vbuf, vsiz)` into the chunk it
+    /// reuses (`ngram_kyotodb.cpp:131-139` at 074a2219), two `accept`s
+    /// whose results agree for a caller that does not write in between.
+    pub(crate) fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
+        value.clear();
+        let mut fill = Fill {
+            value,
+            found: false,
+        };
         // SAFETY: the handle is live and `key` outlives the call; `opq`
-        // is `found`, exclusive for the call, which is what `visit_full`
+        // is `fill`, exclusive for the call, which is what `visit_full`
         // casts it back to.
         let ok = unsafe {
             sys::kcdbaccept(
                 self.handle,
                 c_ptr(key),
                 key.len(),
-                Some(visit_full::<Option<Vec<u8>>>),
+                Some(visit_full::<Fill<'_>>),
                 Some(visit_empty),
-                (&raw mut found).cast::<c_void>(),
+                (&raw mut fill).cast::<c_void>(),
                 0,
             )
         };
@@ -596,7 +607,25 @@ impl Db {
             // The text `kcdbget` reported, so a failure reads as before.
             return Err(self.error("kcdbget"));
         }
-        Ok(found)
+        Ok(fill.found)
+    }
+
+    /// Whether `key` exists, an empty value included, copying nothing:
+    /// `kcdbcheck`, the C API's `BasicDB::check`, whose read-only visitor
+    /// records the value's size and sets `NOREC` on a miss (`kcdb.h:2020-2043`,
+    /// Kyoto Cabinet 1.2.80). libpinyin's suggestion walk opens with the
+    /// same call (`phrase_large_table3_kyotodb.cpp:206` at 074a2219).
+    pub(crate) fn check(&self, key: &[u8]) -> Result<bool, StoreError> {
+        // SAFETY: the handle is live and `key` outlives the call; the
+        // call copies nothing out.
+        let size = unsafe { sys::kcdbcheck(self.handle, c_ptr(key), key.len()) };
+        if size >= 0 {
+            return Ok(true);
+        }
+        if self.last_was_no_record() {
+            return Ok(false);
+        }
+        Err(self.error("kcdbcheck"))
     }
 
     /// Every record, copied out by one read-only `kcdbiterate`, in the
@@ -613,9 +642,12 @@ impl Db {
     }
 
     /// Every key, in the class's walk order — `Bigram::get_all_items`'
-    /// `iterate(&visitor, false)` (`ngram_kyotodb.cpp:186-196`).
-    pub(crate) fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError> {
-        let mut keys: Vec<Vec<u8>> = Vec::new();
+    /// `iterate(&visitor, false)` (`ngram_kyotodb.cpp:186-196`) — in one
+    /// vector reserved for `kcdbcount` keys, as the pin appends them to
+    /// one `GArray`.
+    pub(crate) fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError> {
+        let mut keys = Vec::new();
+        keys.reserve_exact(usize::try_from(self.count()?).unwrap_or(0));
         self.iterate(&mut keys)?;
         Ok(keys)
     }

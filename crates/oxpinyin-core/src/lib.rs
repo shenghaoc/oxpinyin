@@ -191,6 +191,10 @@ pub trait Dictionary {
     /// The default is the two calls; a dictionary that can serve both from
     /// one read overrides it and must answer exactly as the pair does.
     ///
+    /// `scratch` is the caller's buffer for the read's value bytes, which
+    /// the decode loop passes to every search of a guess, as the pin's
+    /// table reuses its own chunk. Its contents on return are unspecified.
+    ///
     /// # Errors
     ///
     /// Returns [`Self::Error`] when the dictionary backend cannot serve the lookup.
@@ -199,6 +203,7 @@ pub trait Dictionary {
         syllables: &[Self::Syllable],
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
+        _scratch: &mut Vec<u8>,
     ) -> Result<bool, Self::Error>
     where
         Self::Entry: PhraseIndexToken,
@@ -600,11 +605,12 @@ impl<D: Dictionary + ?Sized> Dictionary for &D {
         syllables: &[Self::Syllable],
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
+        scratch: &mut Vec<u8>,
     ) -> Result<bool, Self::Error>
     where
         Self::Entry: PhraseIndexToken,
     {
-        (**self).trellis_ranges_continued(syllables, tones, ranges)
+        (**self).trellis_ranges_continued(syllables, tones, ranges, scratch)
     }
 
     fn trellis_item(

@@ -543,6 +543,7 @@ impl SystemDictionary {
     /// [`Self::trellis_ranges_with`] and the prefix probe from one DBM get:
     /// the ranges, and whether the query's index key exists
     /// (`SEARCH_CONTINUED`, set from the same get that serves the search).
+    /// The get reads into `scratch`, the caller's buffer.
     ///
     /// # Errors
     ///
@@ -553,6 +554,7 @@ impl SystemDictionary {
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
         visible: impl Fn(u32) -> bool,
+        scratch: &mut Vec<u8>,
     ) -> Result<bool, DictError> {
         if syllables.is_empty() {
             return Ok(true);
@@ -565,7 +567,7 @@ impl SystemDictionary {
             .enumerate()
             .map(|(index, key)| key.with_tone(tones.get(index).copied().unwrap_or(0)))
             .collect();
-        let (continued, items) = self.pinyin.search_continued(&query)?;
+        let (continued, items) = self.pinyin.search_continued(&query, scratch)?;
         ranges.convert(
             items
                 .iter()
@@ -667,8 +669,9 @@ impl Dictionary for SystemDictionary {
         syllables: &[SyllableKey],
         tones: &[u8],
         ranges: &mut PhraseIndexRanges<()>,
+        scratch: &mut Vec<u8>,
     ) -> Result<bool, DictError> {
-        self.trellis_ranges_continued_with(syllables, tones, ranges, |_| true)
+        self.trellis_ranges_continued_with(syllables, tones, ranges, |_| true, scratch)
     }
 
     fn trellis_item(

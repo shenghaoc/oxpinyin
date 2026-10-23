@@ -115,8 +115,9 @@ fn digest(bytes: &[u8]) -> u64 {
         })
 }
 
-fn get_digest(value: Option<Vec<u8>>) -> u64 {
-    value.map_or(1, |bytes| digest(&bytes))
+/// A point read's digest: the value's when `found`, else a miss's.
+fn get_digest(found: bool, value: &[u8]) -> u64 {
+    if found { digest(value) } else { 1 }
 }
 
 /// Every row of a raw store, in key order.
@@ -237,9 +238,12 @@ where
             );
             assert!(!keys.is_empty(), "no keys in class {op}");
             drop(rows);
+            // One buffer for every read, as the decode loop passes it.
+            let mut value = Vec::new();
             run(&mut |i| {
                 let key = &keys[(i as usize) % keys.len()];
-                pack(get_digest(store.get_raw(key).expect("get_raw")), 1)
+                let found = store.get_raw(key, &mut value).expect("get_raw");
+                pack(get_digest(found, &value), 1)
             })
         }
         "contains_raw.tree" => {
@@ -258,21 +262,22 @@ where
             run(&mut |i| {
                 let at = (i / 2) as usize;
                 let found = if i % 2 == 0 {
-                    store.get_raw(&hits[at % hits.len()])
+                    store.contains_raw(&hits[at % hits.len()])
                 } else {
-                    store.get_raw(&misses[at % misses.len()])
+                    store.contains_raw(&misses[at % misses.len()])
                 }
-                .expect("get_raw")
-                .is_some();
+                .expect("contains_raw");
                 pack(u64::from(found), 1)
             })
         }
         "get_raw.tree.miss" => {
             let store = S::open_read_only(&inputs.tree).expect("open phrase index");
             let keys = miss_keys();
+            let mut value = Vec::new();
             run(&mut |i| {
                 let key = &keys[(i as usize) % keys.len()];
-                pack(get_digest(store.get_raw(key).expect("get_raw")), 1)
+                let found = store.get_raw(key, &mut value).expect("get_raw");
+                pack(get_digest(found, &value), 1)
             })
         }
         "get_raw.hash" => {
@@ -283,9 +288,11 @@ where
                     .map(|(key, _)| key)
                     .collect::<Vec<_>>(),
             );
+            let mut value = Vec::new();
             run(&mut |i| {
                 let key = &keys[(i as usize) % keys.len()];
-                pack(get_digest(store.get_raw(key).expect("get_raw")), 1)
+                let found = store.get_raw(key, &mut value).expect("get_raw");
+                pack(get_digest(found, &value), 1)
             })
         }
         "get_raw.hash.small"
@@ -400,10 +407,12 @@ where
                     .map(|i| super::bigram_row(super::SEED, i).0.to_vec())
                     .collect::<Vec<_>>(),
             );
+            let mut value = Vec::new();
             match op {
                 "framed.get" => run(&mut |i| {
                     let key = &keys[(i as usize) % keys.len()];
-                    pack(get_digest(store.get(BIGRAM, key).expect("get")), 1)
+                    let found = store.get(BIGRAM, key, &mut value).expect("get");
+                    pack(get_digest(found, &value), 1)
                 }),
                 "framed.scan" => run(&mut |i| {
                     let key = &keys[(i as usize) % keys.len()];
@@ -437,7 +446,8 @@ where
                                     ControlFlow::Continue(())
                                 })
                             })?;
-                            sum = fold(sum, get_digest(txn.get(BIGRAM, key)?));
+                            let found = txn.get(BIGRAM, key, &mut value)?;
+                            sum = fold(sum, get_digest(found, &value));
                             Ok(())
                         })
                         .expect("txn scan");
@@ -462,10 +472,12 @@ where
                 db.store(key, value).expect("fill user bigram");
             }
             let sample = stride(&rows);
+            let mut value = Vec::new();
             match op {
                 "user_bigram.get" => run(&mut |i| {
                     let (key, _) = &sample[(i as usize) % sample.len()];
-                    pack(get_digest(db.get(key).expect("get")), 1)
+                    let found = db.get(key, &mut value).expect("get");
+                    pack(get_digest(found, &value), 1)
                 }),
                 "user_bigram.get.small" | "user_bigram.get.large" | "user_bigram.miss" => {
                     let keys = if op.ends_with("miss") {
@@ -492,7 +504,9 @@ where
                 }),
                 _ => run(&mut |_| {
                     let keys = db.keys().expect("keys");
-                    let sum = keys.iter().fold(0, |acc, key| fold(acc, digest(key)));
+                    let sum = keys.iter().fold(0, |acc, key| {
+                        fold(acc, digest(key.as_ref().map_or(&[], |key| key)))
+                    });
                     pack(sum, 1)
                 }),
             }
@@ -516,13 +530,14 @@ where
             S::write_user_index(&index, &index_rows).expect("write user index");
             if op == "lifecycle.user_load" {
                 drop(db);
+                let mut value = Vec::new();
                 run(&mut |_| {
                     let loaded = DefaultUserBigramDb::load_db(&bigram).expect("load user bigram");
                     let opened = S::open_user_index(&index).expect("open user index");
-                    let sum = fold(
-                        get_digest(loaded.get(&rows[0].0).expect("get")),
-                        get_digest(opened.get_raw(&index_rows[0].0).expect("get")),
-                    );
+                    let found = loaded.get(&rows[0].0, &mut value).expect("get");
+                    let bigram_digest = get_digest(found, &value);
+                    let found = opened.get_raw(&index_rows[0].0, &mut value).expect("get");
+                    let sum = fold(bigram_digest, get_digest(found, &value));
                     drop(black_box((loaded, opened)));
                     pack(sum, 2)
                 })
@@ -631,19 +646,19 @@ where
         let session = S::create_in_memory().expect("session store");
         let mut sum = 0_u64;
         let mut calls = 0_u64;
+        // One buffer for the round's point reads.
+        let mut value = Vec::new();
         for sentence in 0..8_u64 {
             // Eight keystrokes per sentence.
             for key in 0..8_u64 {
                 let at = ((round * 64 + sentence * 8 + key) as usize) % pinyin.len();
-                sum = fold(
-                    sum,
-                    get_digest(pinyin_index.get_raw(&pinyin[at]).expect("pinyin")),
-                );
+                let found = pinyin_index
+                    .get_raw(&pinyin[at], &mut value)
+                    .expect("pinyin");
+                sum = fold(sum, get_digest(found, &value));
                 let prefix = &phrases[at % phrases.len()];
-                sum = fold(
-                    sum,
-                    get_digest(phrase_index.get_raw(prefix).expect("phrase")),
-                );
+                let found = phrase_index.get_raw(prefix, &mut value).expect("phrase");
+                sum = fold(sum, get_digest(found, &value));
                 let upper = prefix_upper(prefix);
                 let mut walked = 0;
                 phrase_index
@@ -664,12 +679,13 @@ where
                 calls += 3;
             }
             // Training: the user bigram's load/store, then one commit.
-            let (key, value) = &rows[((round * 8 + sentence) as usize) % 512];
-            let current = user
-                .get(key)
-                .expect("user get")
-                .unwrap_or_else(|| value.clone());
-            user.store(key, &current).expect("user store");
+            let (key, gram) = &rows[((round * 8 + sentence) as usize) % 512];
+            let current = if user.get(key, &mut value).expect("user get") {
+                &value
+            } else {
+                gram
+            };
+            user.store(key, current).expect("user store");
             super::run_observe_commit(&session, round * 8 + sentence);
             calls += 3;
         }

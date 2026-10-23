@@ -293,10 +293,14 @@ fn save_compact<S: WriteStore>() {
     // back with the replacement value and the removed pron slice must be
     // gone; the survivor checksum is compared across backends.
     let mut churn_sum = 0_u64;
+    let mut value = Vec::new();
     for i in 0..(cfg.n / 10) as u64 {
         let (key, _) = bigram_row(cfg.seed, i);
-        match store.get(BIGRAM, &key).expect("get after compact") {
-            Some(value) if value == 997_u64.to_be_bytes() => {
+        let found = store
+            .get(BIGRAM, &key, &mut value)
+            .expect("get after compact");
+        match found {
+            true if value == 997_u64.to_be_bytes() => {
                 churn_sum = fold_bytes(churn_sum, &value);
             }
             _ => {
@@ -307,7 +311,10 @@ fn save_compact<S: WriteStore>() {
     }
     for i in 0..(cfg.n / 20) as u64 {
         let (key, _) = pron_row(cfg.seed, i);
-        if store.get(PRON, &key).expect("get after compact").is_some() {
+        if store
+            .get(PRON, &key, &mut value)
+            .expect("get after compact")
+        {
             eprintln!("pron row {i} still present after removal + compact");
             std::process::exit(1);
         }
@@ -376,10 +383,11 @@ fn measure_point_gets<S: ReadStore>(store: &S, cfg: &Config) -> (u64, u64, u64) 
     let mut hits = 0_u64;
     let mut bytes = 0_u64;
     let mut value_sum = 0_u64;
+    let mut value = Vec::new();
     for i in 0..cfg.gets as u64 {
         let idx = row_hash(cfg.seed ^ 0xDEAD_BEEF, i) % cfg.n as u64;
         let (key, _) = bigram_row(cfg.seed, idx);
-        if let Some(value) = store.get(BIGRAM, &key).expect("get") {
+        if store.get(BIGRAM, &key, &mut value).expect("get") {
             hits += 1;
             bytes += value.len() as u64;
             value_sum = fold_bytes(value_sum, &value);

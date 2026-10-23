@@ -125,10 +125,12 @@ fn bump_counter(
     key: &[u8],
     delta: u64,
 ) -> Result<(), oxpinyin_store::StoreError> {
-    let prev = txn
-        .get(table, key)?
-        .and_then(|bytes| <[u8; 8]>::try_from(bytes.as_slice()).ok())
-        .map_or(0, u64::from_be_bytes);
+    let mut bytes = Vec::new();
+    let prev = if txn.get(table, key, &mut bytes)? {
+        <[u8; 8]>::try_from(bytes.as_slice()).map_or(0, u64::from_be_bytes)
+    } else {
+        0
+    };
     txn.put(table, key, &prev.saturating_add(delta).to_be_bytes())?;
     Ok(())
 }

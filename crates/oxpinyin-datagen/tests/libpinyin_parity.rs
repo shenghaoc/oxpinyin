@@ -144,10 +144,11 @@ fn assert_rows_equal_ignoring_padding(name: &str, generated: &[(Vec<u8>, Vec<u8>
 /// present, so equal counts mean the real file holds nothing else.
 fn assert_hash_equal(name: &str, generated: &[(Vec<u8>, Vec<u8>)], real: &Path) {
     let store = DropInStore::open_hash_read_only(real).expect("open hash");
+    let mut got = Vec::new();
     for (index, (key, value)) in generated.iter().enumerate() {
-        let got = store.get_raw(key).expect("get_raw");
+        let found = store.get_raw(key, &mut got).expect("get_raw");
         assert_eq!(
-            got.as_deref(),
+            found.then_some(got.as_slice()),
             Some(value.as_slice()),
             "{name}: row {index}: key {key:02x?} value mismatch"
         );

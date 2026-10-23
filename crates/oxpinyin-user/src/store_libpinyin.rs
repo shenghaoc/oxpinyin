@@ -1048,6 +1048,12 @@ pub(crate) fn pinyin_keys_to_packed(ids: &[crate::phrase::PinyinKey]) -> Option<
 mod tests {
     use super::*;
     use crate::persistence::SystemLibrary;
+
+    /// The container's gram under `key`, owned: `None` on a miss.
+    fn gram(raw: &DefaultUserBigramDb, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let mut value = Vec::new();
+        Ok(raw.get(key, &mut value)?.then_some(value))
+    }
     use crate::store::UserStore;
     use oxpinyin_core::ChewingKey;
 
@@ -1224,7 +1230,7 @@ mod tests {
         assert_eq!(store.bigram_total(1).expect("unchanged total"), 7);
         assert_eq!(store.bigram_count(1, 9).expect("unchanged item"), 7);
         let raw = persistence::load_user_bigram_db(&dir).expect("raw container");
-        assert_eq!(raw.get(&key).expect("raw get"), Some(value));
+        assert_eq!(gram(&raw, &key).expect("raw get"), Some(value));
 
         drop(raw);
         // Deleting the predecessor wholesale never loads its value.
@@ -1241,7 +1247,7 @@ mod tests {
         assert!(report.renames_failed.is_empty());
         assert!(report.user_conf_write_failed.is_none());
         let raw = persistence::load_user_bigram_db(&dir).expect("raw masked container");
-        let persisted_after_mask = raw.get(&key).expect("raw masked get");
+        let persisted_after_mask = gram(&raw, &key).expect("raw masked get");
         assert_eq!(
             live_after_mask,
             persisted_after_mask
@@ -1263,7 +1269,7 @@ mod tests {
         assert!(store.has_empty_bigram_gram_for(1));
         assert!(store.has_oob_bigram_value_for(1));
         let raw = persistence::load_user_bigram_db(&dir).expect("raw itemless container");
-        assert_eq!(raw.get(&key).expect("raw itemless get"), Some(itemless));
+        assert_eq!(gram(&raw, &key).expect("raw itemless get"), Some(itemless));
         drop(raw);
         drop(store);
         std::fs::remove_dir_all(&dir).expect("cleanup");
@@ -1313,7 +1319,7 @@ mod tests {
         drop(store);
 
         let raw = persistence::load_user_bigram_db(&dir).expect("raw container");
-        assert_eq!(raw.get(&key).expect("raw get"), Some(value.clone()));
+        assert_eq!(gram(&raw, &key).expect("raw get"), Some(value.clone()));
         drop(raw);
         let store = UserStore::open_libpinyin(&dir, originals(), versions(), UserConfLaw::Pinyin)
             .expect("reopen");
@@ -1582,7 +1588,7 @@ mod tests {
         assert!(report.renames_failed.is_empty());
         assert!(report.user_conf_write_failed.is_none());
         let raw = persistence::load_user_bigram_db(&dir).expect("raw masked container");
-        let persisted_after_mask = raw.get(&key).expect("raw masked get");
+        let persisted_after_mask = gram(&raw, &key).expect("raw masked get");
         match persisted_after_mask {
             Some(bytes) => {
                 assert!(bytes.len() >= 4 && !(bytes.len() - 4).is_multiple_of(8));
@@ -1644,7 +1650,7 @@ mod tests {
         ));
         let raw = persistence::load_user_bigram_db(&dir).expect("raw container");
         assert_eq!(
-            raw.get(&key).expect("raw get"),
+            gram(&raw, &key).expect("raw get"),
             Some(vec![0xa5, 0x5a, 0x01])
         );
         drop(raw);

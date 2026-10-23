@@ -319,15 +319,16 @@ fn bench_bnum(c: &mut Criterion) {
                         // into KC's page cache, so the timed pass measures
                         // hash-chain traversal (the `#bnum` effect) rather
                         // than disk I/O.
+                        let mut value = Vec::new();
                         for key in sample {
-                            let _ = store.get_raw_bench(key);
+                            let _ = store.get_raw_bench(key, &mut value);
                         }
 
                         let mut total = Duration::ZERO;
                         for _ in 0..iters {
                             let started = Instant::now();
                             for key in sample {
-                                std::hint::black_box(store.get_raw_bench(key));
+                                std::hint::black_box(store.get_raw_bench(key, &mut value));
                             }
                             total += started.elapsed();
                         }
@@ -346,13 +347,13 @@ fn bench_bnum(c: &mut Criterion) {
 /// to bring into scope in a bench file (it needs the trait imported). The
 /// wrapper's only purpose is to give the bench a straight method call.
 trait BenchGet {
-    fn get_raw_bench(&self, key: &[u8]) -> Option<Vec<u8>>;
+    fn get_raw_bench(&self, key: &[u8], value: &mut Vec<u8>) -> bool;
 }
 
 impl BenchGet for KcStore {
-    fn get_raw_bench(&self, key: &[u8]) -> Option<Vec<u8>> {
+    fn get_raw_bench(&self, key: &[u8], value: &mut Vec<u8>) -> bool {
         use oxpinyin_store::RawReadStore;
-        RawReadStore::get_raw(self, key).expect("get_raw")
+        RawReadStore::get_raw(self, key, value).expect("get_raw")
     }
 }
 

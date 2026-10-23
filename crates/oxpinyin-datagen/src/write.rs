@@ -261,7 +261,8 @@ impl Backend {
     pub fn get_hash(self, path: &Path, key: &[u8]) -> Result<Option<Vec<u8>>, DatagenError> {
         fn get<S: RawReadStore>(path: &Path, key: &[u8]) -> Result<Option<Vec<u8>>, DatagenError> {
             let store = S::open_hash_read_only(path)?;
-            Ok(store.get_raw(key)?)
+            let mut value = Vec::new();
+            Ok(store.get_raw(key, &mut value)?.then_some(value))
         }
         match self {
             #[cfg(feature = "kyotocabinet")]
@@ -406,13 +407,15 @@ pub fn write_hash_with<S: WriteStore + RawReadStore>(
 /// Store or verification failures.
 fn verify_hash<S: RawReadStore>(path: &Path, entries: &Entries) -> Result<(), DatagenError> {
     let read_only = S::open_hash_read_only(path)?;
+    // One buffer for every read-back.
+    let mut got = Vec::new();
     for (key, value) in entries {
-        let got = read_only.get_raw(key)?;
-        if got.as_deref() != Some(value.as_slice()) {
+        let found = read_only.get_raw(key, &mut got)?;
+        if !found || got != *value {
             return Err(DatagenError::Consistency(format!(
                 "{} verification failed: key {key:02x?} reads back {:?}",
                 path.display(),
-                got
+                found.then_some(&got)
             )));
         }
     }

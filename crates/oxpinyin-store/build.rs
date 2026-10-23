@@ -194,6 +194,7 @@ mod kyotocabinet {
             // Reads are visitors: the record is copied out by a callback
             // instead of into a region the caller frees.
             .allowlist_function("kcdbaccept")
+            .allowlist_function("kcdbcheck")
             .allowlist_function("kcdbiterate")
             .allowlist_function("kcdbset")
             .allowlist_function("kcdbremove")
@@ -339,6 +340,7 @@ mod tkrzw {
             .header(header.to_string_lossy())
             .allowlist_function("tkrzw_dbm_open")
             .allowlist_function("tkrzw_dbm_close")
+            .allowlist_function("tkrzw_dbm_check")
             .allowlist_function("tkrzw_dbm_process")
             .allowlist_function("tkrzw_dbm_process_multi")
             .allowlist_function("tkrzw_dbm_count")
@@ -351,6 +353,7 @@ mod tkrzw {
             .allowlist_function("tkrzw_dbm_iter_process")
             .allowlist_function("tkrzw_dbm_iter_next")
             .allowlist_function("tkrzw_get_last_status")
+            .allowlist_function("tkrzw_get_last_status_code")
             .allowlist_type("TkrzwDBM")
             .allowlist_type("TkrzwDBMIter")
             .allowlist_type("TkrzwStatus")

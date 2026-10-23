@@ -204,12 +204,15 @@ pub type Flow = ControlFlow<()>;
 /// [`WriteTxn::for_each`], [`WriteTxn::is_empty`]) never observe a
 /// missing-table condition: an untouched table reads as empty.
 pub trait WriteTxn {
-    /// Read a single key from `table`.  Returns `None` if absent.
+    /// Read a single key from `table` into `value`, the transaction's own
+    /// writes included. The read contract is [`ReadStore::get`]'s:
+    /// `value` is cleared, then filled on a hit; the answer is whether
+    /// the key was found.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend read fails.
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
 
     /// Insert or overwrite `key` → `value` in `table`.
     ///
@@ -319,13 +322,19 @@ pub trait ReadStore {
     where
         Self: Sized;
 
-    /// Read a single key from `table`.  Returns `None` if absent or the
-    /// table does not exist.
+    /// Read a single key from `table` into `value`, a buffer the caller
+    /// owns: `value` is cleared, then holds the stored bytes on a hit.
+    /// Answers whether the key was found; an absent table is a miss.
+    ///
+    /// The buffer keeps its capacity, so a caller that passes one buffer
+    /// to successive reads allocates only when a value outgrows it — the
+    /// chunk libpinyin's tables reuse across reads (`m_chunk.set_size`
+    /// then `get` into it, `ngram_kyotodb.cpp:136-139` at 074a2219).
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend read fails.
-    fn get(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+    fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
 
     /// Visit rows of `table` whose keys fall in the `[lo, hi]` range,
     /// ascending, borrowing each row, until `visit` answers
@@ -657,12 +666,25 @@ pub trait WriteStore: ReadStore {
 /// caller's key verbatim; a backend without a flat-keyspace concept
 /// would delegate to a well-known table name instead.
 pub trait RawReadStore: ReadStore {
-    /// Read a single raw key. Returns `None` if absent.
+    /// Read a single raw key into `value`, with [`ReadStore::get`]'s
+    /// buffer contract: `value` is cleared, then holds the stored bytes on
+    /// a hit; the answer is whether the key was found.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the backend read fails.
-    fn get_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+    fn get_raw(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
+
+    /// Whether a raw key exists, an empty value included, with no value
+    /// bytes copied — libpinyin's existence check before its suggestion
+    /// walk (`m_db->check`, `phrase_large_table3_kyotodb.cpp:206`;
+    /// `m_db->Get(key, nullptr)`, `phrase_large_table3_tkrzwdb.cpp:166`, at
+    /// 074a2219). Each backend answers with its own existence call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the backend read fails.
+    fn contains_raw(&self, key: &[u8]) -> Result<bool, StoreError>;
 
     /// Visit raw (unframed) rows whose keys fall in `[lo, hi]`, ascending
     /// key-byte order — the ordered-walk half of the raw keyspace that
@@ -818,12 +840,16 @@ pub trait UserBigramDb: Sized {
     /// cannot be created.
     fn load_db(path: &Path) -> Result<Self, StoreError>;
 
-    /// `Bigram::load`'s read: the stored value for `key`.
+    /// `Bigram::load`'s read: the stored value for `key`, into `value`
+    /// with [`ReadStore::get`]'s buffer contract — cleared, filled on a
+    /// hit, and the answer is whether `key` was found. The pin reads into
+    /// the chunk the `Bigram` owns and reuses (`ngram_kyotodb.cpp:136-139`
+    /// at 074a2219).
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the read fails.
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError>;
 
     /// `Bigram::store`: set `key` to `value`.
     ///
@@ -839,12 +865,16 @@ pub trait UserBigramDb: Sized {
     /// Returns [`StoreError`] when the delete fails.
     fn remove(&self, key: &[u8]) -> Result<(), StoreError>;
 
-    /// `Bigram::get_all_items`: every key in the container's walk order.
+    /// `Bigram::get_all_items`: every key in the container's walk order,
+    /// collected into one vector as the pin collects `phrase_token_t`s
+    /// into one `GArray` (`ngram_kyotodb.cpp:163-196` at 074a2219). A key
+    /// that is not four bytes, which the pin's visitor asserts against,
+    /// comes back as `None` in its place, for the caller to refuse.
     ///
     /// # Errors
     ///
     /// Returns [`StoreError`] when the walk fails.
-    fn keys(&self) -> Result<Vec<Vec<u8>>, StoreError>;
+    fn keys(&self) -> Result<Vec<Option<[u8; 4]>>, StoreError>;
 
     /// `Bigram::save_db`: remove `path`, then write the container to it
     /// the pin's way (a fresh file of the backend's user-bigram form,
@@ -1008,6 +1038,52 @@ pub use kyotocabinet::{KcStore, KcTxn, KcUserBigramDb};
 
 // ── tests ──────────────────────────────────────────────────────────
 
+/// Owned-result forms of the buffer-filling point reads, for the unit
+/// tests' assertions.
+#[cfg(test)]
+pub(crate) trait ReadOwned: ReadStore {
+    fn read(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let mut value = Vec::new();
+        Ok(self.get(table, key, &mut value)?.then_some(value))
+    }
+}
+
+#[cfg(test)]
+impl<S: ReadStore + ?Sized> ReadOwned for S {}
+
+#[cfg(test)]
+pub(crate) trait RawReadOwned: RawReadStore {
+    fn read_raw(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let mut value = Vec::new();
+        Ok(self.get_raw(key, &mut value)?.then_some(value))
+    }
+}
+
+#[cfg(test)]
+impl<S: RawReadStore + ?Sized> RawReadOwned for S {}
+
+#[cfg(test)]
+pub(crate) trait TxnReadOwned: WriteTxn {
+    fn txn_read(&self, table: &str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let mut value = Vec::new();
+        Ok(self.get(table, key, &mut value)?.then_some(value))
+    }
+}
+
+#[cfg(test)]
+impl<T: WriteTxn + ?Sized> TxnReadOwned for T {}
+
+#[cfg(test)]
+pub(crate) trait GramReadOwned: UserBigramDb {
+    fn read_gram(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError> {
+        let mut value = Vec::new();
+        Ok(self.get(key, &mut value)?.then_some(value))
+    }
+}
+
+#[cfg(test)]
+impl<D: UserBigramDb> GramReadOwned for D {}
+
 #[cfg(test)]
 mod tests {
     // Each peer backend can produce its own use-line tests
@@ -1017,6 +1093,8 @@ mod tests {
     #[cfg(feature = "tkrzw")]
     use std::ops::Bound;
 
+    #[cfg(feature = "tkrzw")]
+    use super::ReadOwned;
     #[cfg(feature = "tkrzw")]
     use super::ReadStore;
     #[cfg(feature = "tkrzw")]
@@ -1107,9 +1185,9 @@ mod tests {
                         txn.put("beta", b"k2", b"v2")?;
                         Ok(())
                     });
-                    assert_eq!(store.get("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
-                    assert_eq!(store.get("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
-                    assert_eq!(store.get("alpha", b"k2").unwrap(), None);
+                    assert_eq!(store.read("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
+                    assert_eq!(store.read("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
+                    assert_eq!(store.read("alpha", b"k2").unwrap(), None);
                     drop(store);
                     cleanup(&path);
                 }
@@ -1305,7 +1383,7 @@ mod tests {
                     let path = temp_path("invalid-table");
                     let store = seeded(&path, |_| Ok(()));
                     for table in ["", "bad\0name"] {
-                        assert_invalid(store.get(table, b"key"));
+                        assert_invalid(store.read(table, b"key"));
                         assert_invalid(store.for_each(table, |_, _| Ok(())));
                         assert_invalid(store.range(
                             table,
@@ -1342,9 +1420,9 @@ mod tests {
                             Ok(())
                         })
                         .unwrap();
-                    assert_eq!(store.get("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
-                    assert_eq!(store.get("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
-                    assert_eq!(store.get("alpha", b"k2").unwrap(), None);
+                    assert_eq!(store.read("alpha", b"k1").unwrap(), Some(b"v1".to_vec()));
+                    assert_eq!(store.read("beta", b"k2").unwrap(), Some(b"v2".to_vec()));
+                    assert_eq!(store.read("alpha", b"k2").unwrap(), None);
                     drop(store);
                     cleanup(&path);
                 }
@@ -1385,7 +1463,7 @@ mod tests {
                     let store = <$store>::open_user_bigram(&path).unwrap();
                     for (key, value) in &rows {
                         assert_eq!(
-                            store.get_raw(key).unwrap().as_deref(),
+                            store.read_raw(key).unwrap().as_deref(),
                             Some(&value[..]),
                             "gram {key:?} must read back through the user-bigram seam"
                         );
@@ -1422,9 +1500,9 @@ mod tests {
                         result,
                         Err(StoreError::Backend(ref e)) if e.to_string() == "deliberate rollback"
                     ));
-                    assert_eq!(store.get("t", b"a").unwrap(), None);
-                    assert_eq!(store.get("t", b"b").unwrap(), None);
-                    assert_eq!(store.get("u", b"c").unwrap(), None);
+                    assert_eq!(store.read("t", b"a").unwrap(), None);
+                    assert_eq!(store.read("t", b"b").unwrap(), None);
+                    assert_eq!(store.read("u", b"c").unwrap(), None);
                     drop(store);
                     cleanup(&path);
                 }
@@ -1436,7 +1514,7 @@ mod tests {
                     store
                         .write(|txn| {
                             txn.put("t", b"key", b"val")?;
-                            assert_eq!(txn.get("t", b"key")?, Some(b"val".to_vec()));
+                            assert_eq!(txn.txn_read("t", b"key")?, Some(b"val".to_vec()));
                             Ok(())
                         })
                         .unwrap();
@@ -1454,6 +1532,53 @@ mod tests {
                 /// Cabinet reads as its `Visitor::REMOVE` sentinel (see
                 /// `kyotocabinet::ffi::c_ptr`); a `b""` literal has a real
                 /// address and never trips it.
+                /// Every point read clears the caller's buffer and refills
+                /// it: a longer value than the buffer holds (past Berkeley
+                /// DB's first `DB_DBT_USERMEM` size), then a shorter one,
+                /// then a miss, through one buffer.
+                #[test]
+                fn point_reads_refill_one_buffer() {
+                    let path = temp_path("buffer-reuse");
+                    let store = <$store>::create(&path).unwrap();
+                    store
+                        .write(|txn| {
+                            txn.put("t", b"long", &[7; 5000])?;
+                            txn.put("t", b"short", b"ab")?;
+                            txn.put_raw(b"raw", b"xyz")?;
+                            Ok(())
+                        })
+                        .unwrap();
+                    let mut value = Vec::new();
+                    assert!(store.get("t", b"long", &mut value).unwrap());
+                    assert_eq!(value, [7; 5000]);
+                    assert!(store.get("t", b"short", &mut value).unwrap());
+                    assert_eq!(value, b"ab");
+                    assert!(!store.get("t", b"none", &mut value).unwrap());
+                    assert!(value.is_empty());
+                    assert!(store.get_raw(b"raw", &mut value).unwrap());
+                    assert_eq!(value, b"xyz");
+                    value.extend_from_slice(b"stale");
+                    assert!(!store.get_raw(b"none", &mut value).unwrap());
+                    assert!(value.is_empty());
+                    store
+                        .write(|txn| {
+                            let mut value = b"stale".to_vec();
+                            txn.put("t", b"pending", b"new")?;
+                            assert!(txn.get("t", b"pending", &mut value)?);
+                            assert_eq!(value, b"new");
+                            assert!(txn.get("t", b"long", &mut value)?);
+                            assert_eq!(value, [7; 5000]);
+                            assert!(!txn.get("t", b"none", &mut value)?);
+                            assert!(value.is_empty());
+                            txn.remove("t", b"short")?;
+                            value.extend_from_slice(b"stale");
+                            assert!(!txn.get("t", b"short", &mut value)?);
+                            assert!(value.is_empty());
+                            Ok(())
+                        })
+                        .unwrap();
+                }
+
                 #[test]
                 fn empty_value_is_a_record() {
                     let path = temp_path("empty-value");
@@ -1467,14 +1592,18 @@ mod tests {
                             Ok(())
                         })
                         .unwrap();
-                    assert_eq!(store.get("t", b"marker").unwrap(), Some(Vec::new()));
-                    assert_eq!(store.get_raw(b"raw-marker").unwrap(), Some(Vec::new()));
+                    assert_eq!(store.read("t", b"marker").unwrap(), Some(Vec::new()));
+                    assert_eq!(store.read_raw(b"raw-marker").unwrap(), Some(Vec::new()));
+                    // The existence query counts an empty value; a miss is
+                    // no key.
+                    assert!(store.contains_raw(b"raw-marker").unwrap());
+                    assert!(!store.contains_raw(b"raw-absent").unwrap());
                     // Overwriting a full record with an empty value keeps
                     // the record; only `remove` deletes.
                     store
                         .write(|txn| txn.put("t", b"full", &empty))
                         .unwrap();
-                    assert_eq!(store.get("t", b"full").unwrap(), Some(Vec::new()));
+                    assert_eq!(store.read("t", b"full").unwrap(), Some(Vec::new()));
                     let mut rows = Vec::new();
                     store
                         .for_each("t", |key, value| {
@@ -1658,7 +1787,7 @@ mod tests {
                             Ok(())
                         })
                         .unwrap();
-                    assert_eq!(store.get("t", b"k").unwrap(), None);
+                    assert_eq!(store.read("t", b"k").unwrap(), None);
                     drop(store);
                     cleanup(&path);
                 }
@@ -1706,7 +1835,7 @@ mod tests {
                     let path = temp_path("invalid-table");
                     let store = <$store>::create(&path).unwrap();
                     for table in ["", "bad\0name"] {
-                        assert_invalid(store.write(|txn| txn.get(table, b"key")));
+                        assert_invalid(store.write(|txn| txn.txn_read(table, b"key")));
                         assert_invalid(store.write(|txn| txn.put(table, b"key", b"value")));
                         assert_invalid(store.write(|txn| txn.remove(table, b"key")));
                         assert_invalid(store.write(|txn| {
@@ -1732,7 +1861,7 @@ mod tests {
                     drop(store);
 
                     let mut readonly = <$store>::open_read_only(&path).unwrap();
-                    assert_eq!(readonly.get("t", b"key").unwrap(), Some(b"value".to_vec()));
+                    assert_eq!(readonly.read("t", b"key").unwrap(), Some(b"value".to_vec()));
                     assert!(matches!(
                         readonly.write(|_| Ok(())),
                         Err(StoreError::ReadOnly)
@@ -1768,7 +1897,7 @@ mod tests {
                         })
                         .unwrap();
                     store.compact().unwrap();
-                    assert_eq!(store.get("t", b"k").unwrap(), Some(b"v".to_vec()));
+                    assert_eq!(store.read("t", b"k").unwrap(), Some(b"v".to_vec()));
                     drop(store);
                     cleanup(&path);
                 }
@@ -1790,8 +1919,8 @@ mod tests {
                             Ok(())
                         })
                         .unwrap();
-                    assert_eq!(store.get("t", b"a").unwrap(), Some(b"1".to_vec()));
-                    assert_eq!(store.get("u", b"a").unwrap(), Some(b"other".to_vec()));
+                    assert_eq!(store.read("t", b"a").unwrap(), Some(b"1".to_vec()));
+                    assert_eq!(store.read("u", b"a").unwrap(), Some(b"other".to_vec()));
                     let mut walked = Vec::new();
                     store
                         .for_each("t", |k, v| {
@@ -1827,12 +1956,12 @@ mod tests {
                         Err(StoreError::Backend("deliberate rollback".into()))
                     });
                     assert!(rolled.is_err());
-                    assert_eq!(store.get("t", b"d").unwrap(), None);
-                    assert_eq!(store.get("t", b"a").unwrap(), Some(b"1".to_vec()));
+                    assert_eq!(store.read("t", b"d").unwrap(), None);
+                    assert_eq!(store.read("t", b"a").unwrap(), Some(b"1".to_vec()));
                     store.compact().unwrap();
-                    assert_eq!(store.get("t", b"c").unwrap(), Some(b"3".to_vec()));
+                    assert_eq!(store.read("t", b"c").unwrap(), Some(b"3".to_vec()));
                     store.write(|txn| txn.remove("t", b"c")).unwrap();
-                    assert_eq!(store.get("t", b"c").unwrap(), None);
+                    assert_eq!(store.read("t", b"c").unwrap(), None);
                 }
             }
         };
@@ -2071,7 +2200,7 @@ mod tests {
 
         for (table, expected) in [("a", "in-a"), ("ab", "in-ab"), ("a\u{1}b", "in-a1b")] {
             assert_eq!(
-                store.get(table, b"k").unwrap(),
+                store.read(table, b"k").unwrap(),
                 Some(expected.as_bytes().to_vec())
             );
             let mut rows = 0_usize;
@@ -2218,7 +2347,7 @@ mod tests {
     #[cfg(feature = "tkrzw")]
     #[test]
     fn tkrzw_library_honours_its_sentinel_protocol() {
-        use super::{TkrzwUserBigramDb, UserBigramDb};
+        use super::{GramReadOwned, TkrzwUserBigramDb, UserBigramDb};
 
         type Create = fn(&std::path::Path) -> Result<TkrzwStore, StoreError>;
 
@@ -2237,7 +2366,7 @@ mod tests {
             // NOOP: the callback's answer for a record that is not there.
             store.write(|txn| txn.remove("t", b"absent")).unwrap();
             assert_eq!(
-                store.get("t", b"absent").unwrap(),
+                store.read("t", b"absent").unwrap(),
                 None,
                 "{class}: removing an absent record stored one: {CAUSE}"
             );
@@ -2247,7 +2376,7 @@ mod tests {
             // when the removal reaches the library.
             store.write(|txn| txn.remove("t", b"removed")).unwrap();
             assert_eq!(
-                store.get("t", b"removed").unwrap(),
+                store.read("t", b"removed").unwrap(),
                 None,
                 "{class}: a removed record is still stored: {CAUSE}"
             );
@@ -2258,7 +2387,7 @@ mod tests {
             if let Err(error) = store.compact() {
                 panic!("{class}: compact failed ({error}): {CAUSE}");
             }
-            assert_eq!(store.get("t", b"kept").unwrap(), Some(b"v".to_vec()));
+            assert_eq!(store.read("t", b"kept").unwrap(), Some(b"v".to_vec()));
         }
 
         let file_classes: [(&str, Create); 2] = [
@@ -2284,17 +2413,17 @@ mod tests {
         bigram.store(b"removed", b"v").unwrap();
         bigram.remove(b"absent").unwrap();
         assert_eq!(
-            bigram.get(b"absent").unwrap(),
+            bigram.read_gram(b"absent").unwrap(),
             None,
             "TinyDBM: removing an absent record stored one: {CAUSE}"
         );
         bigram.remove(b"removed").unwrap();
         assert_eq!(
-            bigram.get(b"removed").unwrap(),
+            bigram.read_gram(b"removed").unwrap(),
             None,
             "TinyDBM: a removed record is still stored: {CAUSE}"
         );
-        assert_eq!(bigram.get(b"kept").unwrap(), Some(b"v".to_vec()));
+        assert_eq!(bigram.read_gram(b"kept").unwrap(), Some(b"v".to_vec()));
     }
 
     // ── per-peer key-ordering conformance ─────────────────────────
@@ -2636,7 +2765,7 @@ mod tests {
     any(feature = "bdb", feature = "kyotocabinet", feature = "tkrzw")
 ))]
 mod user_bigram_db_tests {
-    use super::{DefaultUserBigramDb, UserBigramDb};
+    use super::{DefaultUserBigramDb, GramReadOwned, UserBigramDb};
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -2669,20 +2798,51 @@ mod user_bigram_db_tests {
         }
         db.remove(&key(7)).expect("remove");
         db.remove(&key(999)).expect("absent remove is not an error");
-        assert_eq!(db.get(&key(7)).expect("get"), None);
+        assert_eq!(db.read_gram(&key(7)).expect("get"), None);
         assert_eq!(
-            db.get(&key(8)).expect("get"),
+            db.read_gram(&key(8)).expect("get"),
             Some(8_u32.to_le_bytes().repeat(3))
         );
         let mut keys = db.keys().expect("keys");
         assert_eq!(keys.len(), 39);
         keys.sort();
-        let mut expected: Vec<Vec<u8>> = (1..=40_u32)
+        let mut expected: Vec<Option<[u8; 4]>> = (1..=40_u32)
             .filter(|&token| token != 7)
-            .map(|token| key(token).to_vec())
+            .map(|token| Some(key(token)))
             .collect();
         expected.sort();
         assert_eq!(keys, expected);
+    }
+
+    #[test]
+    fn keys_mark_a_key_that_is_not_four_bytes_in_its_place() {
+        let db = DefaultUserBigramDb::empty().expect("empty");
+        db.store(&key(3), b"gram").expect("store");
+        db.store(b"abc", b"gram").expect("store");
+        db.store(b"abcde", b"gram").expect("store");
+        let mut keys = db.keys().expect("keys");
+        keys.sort();
+        assert_eq!(keys, vec![None, None, Some(key(3))]);
+    }
+
+    #[test]
+    fn one_buffer_serves_successive_reads() {
+        let db = DefaultUserBigramDb::empty().expect("empty");
+        db.store(&key(1), &[1; 300]).expect("store");
+        db.store(&key(2), b"").expect("store");
+        db.store(&key(3), &[3; 2]).expect("store");
+        let mut value = Vec::new();
+        assert!(db.get(&key(1), &mut value).expect("get"));
+        assert_eq!(value, [1; 300]);
+        // A shorter value, an empty one and a miss each replace what the
+        // buffer held.
+        assert!(db.get(&key(3), &mut value).expect("get"));
+        assert_eq!(value, [3; 2]);
+        assert!(db.get(&key(2), &mut value).expect("get"));
+        assert!(value.is_empty());
+        value.extend_from_slice(b"stale");
+        assert!(!db.get(&key(9), &mut value).expect("get"));
+        assert!(value.is_empty());
     }
 
     #[test]
@@ -2703,8 +2863,8 @@ mod user_bigram_db_tests {
         assert_eq!(before, after);
         for token in [1_u32, 0x0100_0001, 0x0700_0001, 0x0100_05db] {
             assert_eq!(
-                reloaded.get(&key(token)).expect("get"),
-                db.get(&key(token)).expect("get")
+                reloaded.read_gram(&key(token)).expect("get"),
+                db.read_gram(&key(token)).expect("get")
             );
         }
         let _ = std::fs::remove_dir_all(&dir);

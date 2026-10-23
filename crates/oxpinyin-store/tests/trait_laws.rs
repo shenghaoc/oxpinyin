@@ -52,6 +52,12 @@ impl Drop for TempPath {
     }
 }
 
+/// A point read as an owned value: `None` on a miss.
+fn read(store: &DefaultStore, table: &str, key: &[u8]) -> Option<Vec<u8>> {
+    let mut value = Vec::new();
+    store.get(table, key, &mut value).unwrap().then_some(value)
+}
+
 fn cleanup(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_dir_all(path);
@@ -154,10 +160,10 @@ fn point_reads_round_trip_arbitrary_bytes() {
         })
         .unwrap();
     assert_eq!(
-        store.get("laws", b"k\x00\x01\xff").unwrap(),
+        read(&store, "laws", b"k\x00\x01\xff"),
         Some(vec![0u8, 255, 0, 1])
     );
-    assert_eq!(store.get("laws", b"absent").unwrap(), None);
+    assert_eq!(read(&store, "laws", b"absent"), None);
 }
 
 /// The empty key and the 511/512-byte boundary, at the documented
@@ -171,25 +177,19 @@ fn key_length_edges_follow_the_documented_contract() {
     // surfaces as `write`'s Err directly.
     let empty = store.write(|txn| txn.put("laws", b"", b"v"));
     assert!(empty.is_ok(), "the empty key must be storable");
-    assert_eq!(store.get("laws", b"").unwrap(), Some(b"v".to_vec()));
+    assert_eq!(read(&store, "laws", b""), Some(b"v".to_vec()));
 
     let key_511 = vec![b'k'; 511];
     store
         .write(|txn| txn.put("laws", &key_511, b"edge-511"))
         .expect("a 511-byte key is legal on every peer");
-    assert_eq!(
-        store.get("laws", &key_511).unwrap(),
-        Some(b"edge-511".to_vec())
-    );
+    assert_eq!(read(&store, "laws", &key_511), Some(b"edge-511".to_vec()));
 
     let key_512 = vec![b'k'; 512];
     store
         .write(|txn| txn.put("laws", &key_512, b"edge-512"))
         .expect("a 512-byte key is legal on every peer");
-    assert_eq!(
-        store.get("laws", &key_512).unwrap(),
-        Some(b"edge-512".to_vec())
-    );
+    assert_eq!(read(&store, "laws", &key_512), Some(b"edge-512".to_vec()));
 }
 
 /// Rows written through one handle read back identically through a
@@ -217,10 +217,7 @@ fn rows_survive_reopen_through_a_read_only_handle() {
         (b"b".to_vec(), b"v-b".to_vec()),
     ];
     assert_eq!(seen, expected);
-    assert_eq!(
-        reader.get("laws", b"a\xff").unwrap(),
-        Some(b"v-high".to_vec())
-    );
+    assert_eq!(read(&reader, "laws", b"a\xff"), Some(b"v-high".to_vec()));
 }
 
 /// A transaction sees its own writes, and an `Err` out of the closure
@@ -234,7 +231,9 @@ fn transactions_see_their_writes_and_roll_back_on_err() {
     store
         .write(|txn| {
             txn.put("laws", b"ryw", b"1")?;
-            assert_eq!(txn.get("laws", b"ryw")?, Some(b"1".to_vec()));
+            let mut value = Vec::new();
+            assert!(txn.get("laws", b"ryw", &mut value)?);
+            assert_eq!(value, b"1");
             Ok(())
         })
         .unwrap();
@@ -247,9 +246,9 @@ fn transactions_see_their_writes_and_roll_back_on_err() {
         Err(StoreError::InvalidInput("deliberate failure"))
     });
     assert!(blown.is_err());
-    assert_eq!(store.get("laws", b"ryw").unwrap(), Some(b"1".to_vec()));
-    assert_eq!(store.get("laws", b"doomed").unwrap(), None);
-    assert_eq!(store.get("laws", b"also-doomed").unwrap(), None);
+    assert_eq!(read(&store, "laws", b"ryw"), Some(b"1".to_vec()));
+    assert_eq!(read(&store, "laws", b"doomed"), None);
+    assert_eq!(read(&store, "laws", b"also-doomed"), None);
 
     // Removing an absent key is a no-op, not an error.
     store
@@ -263,7 +262,7 @@ fn transactions_see_their_writes_and_roll_back_on_err() {
 fn an_untouched_table_reads_empty() {
     let path = temp_path("absent-table");
     let store = DefaultStore::create(&path).unwrap();
-    assert_eq!(store.get("never-touched", b"k").unwrap(), None);
+    assert_eq!(read(&store, "never-touched", b"k"), None);
     assert!(store.is_empty("never-touched").unwrap());
     let mut rows = 0;
     store

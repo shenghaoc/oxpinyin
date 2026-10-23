@@ -31,6 +31,19 @@ pub const SEPARATOR: u8 = 0;
 #[cfg(feature = "bdb")]
 pub(crate) type Row = (Vec<u8>, Vec<u8>);
 
+/// A write transaction's buffered slot read into the caller's buffer, with
+/// the point-read contract: `value` is cleared, then filled when the slot
+/// is a pending write (`Some`); a pending removal (`None`) is a miss.
+#[cfg(any(feature = "tkrzw", feature = "bdb"))]
+pub(crate) fn fill_buffered(slot: Option<&[u8]>, value: &mut Vec<u8>) -> bool {
+    value.clear();
+    slot.is_some_and(|bytes| {
+        value.reserve_exact(bytes.len());
+        value.extend_from_slice(bytes);
+        true
+    })
+}
+
 /// `table || 0x00 || key`. The caller has validated `table`.
 #[cfg(any(feature = "kyotocabinet", feature = "bdb"))]
 pub(crate) fn frame(table: &str, key: &[u8]) -> Vec<u8> {

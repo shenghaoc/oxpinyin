@@ -36,7 +36,17 @@ pub use crate::row_format::pinyin_index::{
 /// logic runs over the production [`DefaultDbm`] and over the in-memory,
 /// counting and failing test doubles alike.
 pub trait ChewingDbm {
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError>;
+    /// Point read into `value`, a buffer the caller owns: `value` is
+    /// cleared, then holds the stored bytes on a hit. Answers whether the
+    /// key was found. A caller that passes one buffer to successive reads
+    /// allocates only when a value outgrows it.
+    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError>;
+
+    /// Whether `key` exists, an empty marker included, with no value bytes
+    /// copied — the `SEARCH_CONTINUED` probe and the suggestion walk's
+    /// opening check (`m_db->check`, `phrase_large_table3_kyotodb.cpp:206`
+    /// at 074a2219).
+    fn contains(&self, key: &[u8]) -> Result<bool, DictError>;
 
     /// Every row whose key lies in `[lo, hi)` (`hi = None` — to the end),
     /// in ascending key-byte order — the cursor walk upstream's
@@ -87,9 +97,15 @@ impl<S> RawChewingDbm<S> {
 pub type DefaultDbm = RawChewingDbm<oxpinyin_store::DefaultStore>;
 
 impl<S: oxpinyin_store::RawReadStore + Send + Sync> ChewingDbm for RawChewingDbm<S> {
-    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
+    fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
         self.store
-            .get_raw(key)
+            .get_raw(key, value)
+            .map_err(|e| DictError::Table(e.into()))
+    }
+
+    fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
+        self.store
+            .contains_raw(key)
             .map_err(|e| DictError::Table(e.into()))
     }
 
@@ -166,10 +182,8 @@ impl<D: ChewingDbm> ChewingTable<D> {
         if keys.is_empty() {
             return Ok(Vec::new());
         }
-        let Some(value) = self.dbm.get(&index_key(keys))? else {
-            return Ok(Vec::new());
-        };
-        if value.is_empty() {
+        let mut value = Vec::new();
+        if !self.dbm.get(&index_key(keys), &mut value)? || value.is_empty() {
             return Ok(Vec::new());
         }
         Ok(decode_items(&value, keys.len())?
@@ -182,20 +196,24 @@ impl<D: ChewingDbm> ChewingTable<D> {
     /// the query's index key exists (an empty marker counts), and the
     /// surviving records. The index key zeroes tones, so a toned query and
     /// its tone-less spelling name the same row.
+    ///
+    /// The value is read into `value`, the caller's buffer, which the
+    /// decode loop passes to every search of a guess.
     pub(crate) fn search_continued(
         &self,
         keys: &[ChewingKey],
+        value: &mut Vec<u8>,
     ) -> Result<(bool, Vec<PinyinIndexItem>), DictError> {
         if keys.is_empty() {
             return Ok((false, Vec::new()));
         }
-        let Some(value) = self.dbm.get(&index_key(keys))? else {
+        if !self.dbm.get(&index_key(keys), value)? {
             return Ok((false, Vec::new()));
-        };
+        }
         if value.is_empty() {
             return Ok((true, Vec::new()));
         }
-        let items = decode_items(&value, keys.len())?
+        let items = decode_items(value, keys.len())?
             .into_iter()
             .filter(|item| keys_match(keys, &item.keys))
             .collect();
@@ -203,12 +221,12 @@ impl<D: ChewingDbm> ChewingTable<D> {
     }
 
     /// Whether the query's index key exists at all — `SEARCH_CONTINUED`
-    /// without the record decode, for the widen probe.
+    /// without the record decode or a value copy, for the widen probe.
     pub(crate) fn key_exists(&self, keys: &[ChewingKey]) -> Result<bool, DictError> {
         if keys.is_empty() {
             return Ok(false);
         }
-        Ok(self.dbm.get(&index_key(keys))?.is_some())
+        self.dbm.contains(&index_key(keys))
     }
 
     /// Every row whose key extends the query's index key (the key itself
@@ -380,8 +398,18 @@ mod tests {
     }
 
     impl ChewingDbm for MemoryDbm {
-        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
-            Ok(self.data.lock().unwrap().get(key).cloned())
+        fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
+            value.clear();
+            let data = self.data.lock().unwrap();
+            let stored = data.get(key);
+            if let Some(stored) = stored {
+                value.extend_from_slice(stored);
+            }
+            Ok(stored.is_some())
+        }
+
+        fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
+            Ok(self.data.lock().unwrap().contains_key(key))
         }
 
         fn walk(
@@ -700,9 +728,13 @@ mod tests {
             walks: Arc<AtomicUsize>,
         }
         impl ChewingDbm for Counted {
-            fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, DictError> {
+            fn get(&self, key: &[u8], value: &mut Vec<u8>) -> Result<bool, DictError> {
                 self.gets.fetch_add(1, Ordering::Relaxed);
-                self.inner.get(key)
+                self.inner.get(key, value)
+            }
+            fn contains(&self, key: &[u8]) -> Result<bool, DictError> {
+                self.gets.fetch_add(1, Ordering::Relaxed);
+                self.inner.contains(key)
             }
             fn walk(
                 &self,
@@ -810,11 +842,15 @@ mod tests {
                     let barrier = Arc::clone(&barrier);
                     scope.spawn(move || {
                         barrier.wait();
+                        let mut read = Vec::new();
                         for _ in 0..20 {
-                            assert_eq!(dbm.get(&[3]).unwrap(), Some(vec![3; 9000]));
+                            assert!(dbm.get(&[3], &mut read).unwrap());
+                            assert_eq!(read, [3; 9000]);
+                            assert!(dbm.contains(&[3]).unwrap());
                             let mut keys = Vec::new();
                             dbm.walk(&[2], Some(&[6]), |key, value| {
-                                assert_eq!(dbm.get(key).unwrap().as_deref(), Some(value));
+                                assert!(dbm.get(key, &mut read).unwrap());
+                                assert_eq!(read, value);
                                 assert!(value.iter().all(|byte| *byte == key[0]));
                                 keys.push(key[0]);
                                 Ok(false)

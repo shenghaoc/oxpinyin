@@ -1025,6 +1025,10 @@ struct GenerationPath {
     tones: SmallVec<[u8; 16]>,
     /// One table search's ranges, drained into the span's arrays.
     ranges: PhraseIndexRanges<()>,
+    /// The table searches' value bytes: one buffer for every point read
+    /// of the guess, as the pin's table reads into the chunk it reuses
+    /// (`chewing_large_table2_kyotodb.cpp:170-174` at 074a2219).
+    value: Vec<u8>,
 }
 
 /// Additional trellis-only view of the unchanged ordinary scan matrix.
@@ -1095,7 +1099,12 @@ impl GenerationView<'_> {
                 return Ok(());
             }
             *continued |= dictionary
-                .trellis_ranges_continued(&path.keys, &path.tones, &mut path.ranges)
+                .trellis_ranges_continued(
+                    &path.keys,
+                    &path.tones,
+                    &mut path.ranges,
+                    &mut path.value,
+                )
                 .map_err(|error| {
                     EngineError::Scoring(ScoringError::Dictionary(error.to_string()))
                 })?;
