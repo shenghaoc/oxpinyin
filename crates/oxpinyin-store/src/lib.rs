@@ -590,15 +590,6 @@ pub trait WriteStore: ReadStore {
         store.compact()?;
         drop(store);
         std::fs::rename(&tmp, path).map_err(StoreError::Io)?;
-        // The backend may have left a lock sidecar beside the *temporary*
-        // (tkrzw creates `<file>-lock` for a writable session); it is
-        // stale once the handle drops and the rename moved
-        // only the data file.
-        if let (Some(name), Some(dir)) = (tmp.file_name().and_then(|n| n.to_str()), tmp.parent()) {
-            for suffix in ["-lock", "-shm"] {
-                let _ = std::fs::remove_file(dir.join(format!("{name}{suffix}")));
-            }
-        }
         Ok(())
     }
 
@@ -1146,11 +1137,12 @@ mod tests {
     /// groups do not have to triplicate it.
     macro_rules! store_test_paths {
         ($mod:ident, $ext:literal) => {
-            /// Owns a temporary store path and removes both the data
-            /// file and its `-lock` sidecar when it drops — including
-            /// when a test panics, so a failed assertion leaves no
-            /// state behind in `std::env::temp_dir()`. Derefs to
-            /// `Path`, so `&guard` passes anywhere a `&Path` is wanted.
+            /// Owns a temporary store path and removes the data file,
+            /// and any stale `<file>-lock` (no current backend creates
+            /// one), when it drops — including when a test panics, so a
+            /// failed assertion leaves no state behind in
+            /// `std::env::temp_dir()`. Derefs to `Path`, so `&guard`
+            /// passes anywhere a `&Path` is wanted.
             struct TempPath(std::path::PathBuf);
 
             impl std::ops::Deref for TempPath {
@@ -2140,8 +2132,10 @@ mod tests {
         assert_type_eq::<super::BdbStore>();
     }
 
-    /// Removes a tkrzw store file and its `-lock` sidecar on drop, so a
-    /// panicking test leaves nothing behind in `std::env::temp_dir()`.
+    /// Removes a tkrzw store file, and any stale `<file>-lock` (tkrzw
+    /// creates none: it locks the data file itself with `fcntl`), on
+    /// drop, so a panicking test leaves nothing behind in
+    /// `std::env::temp_dir()`.
     #[cfg(feature = "tkrzw")]
     struct RemoveTkrzw(std::path::PathBuf);
 
@@ -2506,8 +2500,8 @@ mod tests {
 
         type Rows = Vec<(Vec<u8>, Vec<u8>)>;
 
-        /// Owns a temp store path; removes the data file and any `-lock`
-        /// sidecar (tkrzw leaves one) on drop, so a
+        /// Owns a temp store path; removes the data file and any stale
+        /// `<file>-lock` (no current backend creates one) on drop, so a
         /// panicking test leaves nothing behind.
         struct TempPath(std::path::PathBuf);
 

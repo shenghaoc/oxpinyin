@@ -25,12 +25,10 @@ init	<alloc::raw_vec::RawVec<oxpinyin_engine::candidate::Candidate>>::grow_one [
 init	<alloc::raw_vec::RawVec<oxpinyin_engine::cursor::MatrixKey>>::grow_one
 init	<alloc::raw_vec::RawVec<oxpinyin_engine::session::ScanKey>>::grow_one
 init	<alloc::raw_vec::RawVec<u32>>::grow_one [instantiating crate: oxpinyin_core]
-init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global>
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_engine]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_store]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: oxpinyin_user]
 init	<alloc::raw_vec::RawVecInner<_>>::reserve::do_reserve_and_handle::<alloc::alloc::Global> [instantiating crate: std]
-init	<alloc::raw_vec::RawVecInner>::finish_grow
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_core]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_data]
 init	<alloc::raw_vec::RawVecInner>::finish_grow [instantiating crate: oxpinyin_engine]
@@ -155,8 +153,6 @@ init	<pinyin::aux_matrix::SharedMatrix>::of_keys
 init	<std::fs::OpenOptions>::_open
 init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&alloc::string::String> [instantiating crate: pinyin]
 init	<std::hash::random::RandomState as core::hash::BuildHasher>::hash_one::<&u32> [instantiating crate: oxpinyin_engine]
-init	<std::path::Components as core::iter::traits::double_ended::DoubleEndedIterator>::next_back
-init	<std::path::Components>::parse_next_component_back
 init	<std::path::Path>::_join
 init	<std::path::Path>::is_file
 init	<std::path::Path>::join::<alloc::string::String> [instantiating crate: oxpinyin_runtime]
@@ -229,7 +225,6 @@ init	oxpinyin_user::persistence::load_checked_impl
 init	oxpinyin_user::persistence::load_libraries
 init	oxpinyin_user::persistence::load_logs_with_mask
 init	oxpinyin_user::persistence::load_user_bigram_db
-init	oxpinyin_user::persistence::remove_dbm_sidecars
 init	oxpinyin_user::persistence::system_originals
 init	oxpinyin_user::persistence::with_kept_keys
 init	oxpinyin_user::persistence::write_marker
@@ -254,7 +249,6 @@ init	std::fs::read::inner
 init	std::io::default_read_to_end::small_probe_read::<std::fs::File>
 init	std::sys::args::unix::imp::ARGV_INIT_ARRAY::init_wrapper
 init	std::sys::fs::metadata
-init	std::sys::fs::remove_file
 init	std::sys::fs::unix::try_statx
 init	std::sys::random::linux::hashmap_random_keys
 steady	<alloc::sync::Arc<oxpinyin_core::graph::SegmentGraph>>::drop_slow [instantiating crate: oxpinyin_engine]
