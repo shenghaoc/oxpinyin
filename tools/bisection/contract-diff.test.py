@@ -36,6 +36,122 @@ class DriverFixtureCase(unittest.TestCase):
         self.addCleanup(guard.stop)
 
 
+class ProfileRowsTests(DriverFixtureCase):
+    def test_profile_worker_certifies_then_loads_exact_runtime_and_accepts_empty_db(self):
+        events = []
+        runtime = Path('/certified/libtkrzw.so.1')
+        self.runtime_guard.side_effect = lambda *a, **kw: events.append('certify') or runtime
+        with patch.object(driver, 'index_file_rows', side_effect=lambda *a, **kw: events.append(('read', a, kw)) or []), \
+                patch.object(driver, 'Kit') as kit, patch('builtins.print') as output:
+            driver.worker('profile-rows', '/copied/subject.so', '/profile/user_bigram.db', 'hash')
+        kit.assert_not_called()
+        self.assertEqual(events, ['certify', ('read', ('/profile/user_bigram.db',),
+                                            dict(kind='hash', allow_empty=True, library=runtime))])
+        self.assertEqual(json.loads(output.call_args.args[0]), dict(rows=[]))
+
+    def test_profile_worker_runtime_refusal_prevents_reader(self):
+        self.runtime_guard.side_effect = RuntimeError('wrong runtime')
+        with patch.object(driver, 'index_file_rows') as read:
+            with self.assertRaisesRegex(RuntimeError, 'wrong runtime'):
+                driver.worker('profile-rows', '/copied/subject.so', '/profile/user_bigram.db', 'hash')
+            read.assert_not_called()
+
+    def test_tkrzw_profile_worker_requires_an_actual_tkrzw_anchor(self):
+        self.runtime_guard.return_value = None
+        with patch.object(driver, 'CELL', 'tkrzw'), patch.object(driver, 'index_file_rows') as read:
+            with self.assertRaisesRegex(ValueError, 'no certified libtkrzw dependency'):
+                driver.worker('profile-rows', '/bdb/subject.so', '/profile/db', 'tree')
+        read.assert_not_called()
+
+    def tkrzw(self, *, first=True, get=False, next_ok=False, code=7):
+        library = MagicMock()
+        library.tkrzw_dbm_open.return_value = 123
+        library.tkrzw_dbm_make_iterator.return_value = 456
+        library.tkrzw_dbm_iter_first.return_value = first
+        library.tkrzw_dbm_iter_get.return_value = get
+        library.tkrzw_dbm_iter_next.return_value = next_ok
+        library.tkrzw_get_last_status_code.return_value = code
+        library.tkrzw_dbm_close.return_value = True
+        return library
+
+    def test_tkrzw_hash_tree_and_empty_status_are_distinct_from_read_error(self):
+        for kind, params in (('tree', b'dbm=TreeDBM'), ('hash', b'dbm=HashDBM')):
+            for first in (True, False):
+                tk = self.tkrzw(first=first)
+                with self.subTest(kind=kind, first=first), patch.object(driver, 'CELL', 'tkrzw'), \
+                        patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]) as load:
+                    self.assertEqual(driver.index_file_rows('/profile/db', kind=kind, allow_empty=True,
+                                                            library=Path('/verified/tkrzw.so')), [])
+                self.assertEqual(load.call_args_list[0].args, ('/verified/tkrzw.so',))
+                tk.tkrzw_dbm_open.assert_called_once_with(b'/profile/db', False, params)
+                tk.tkrzw_dbm_iter_free.assert_called_once_with(456)
+                tk.tkrzw_dbm_close.assert_called_once_with(123)
+        for first in (True, False):
+            tk = self.tkrzw(first=first, code=11)
+            with patch.object(driver, 'CELL', 'tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]):
+                with self.assertRaisesRegex(ValueError, 'iterator (first|read) failed'):
+                    driver.index_file_rows('/profile/db', allow_empty=True)
+            tk.tkrzw_dbm_iter_free.assert_called_once()
+            tk.tkrzw_dbm_close.assert_called_once()
+
+    def test_tkrzw_row_retains_empty_value_and_frees_both_allocations_on_next_error(self):
+        for code in (7, 11):
+            tk = self.tkrzw(get=True, code=code)
+            libc = MagicMock()
+            def row(iterator, key, key_size, value, value_size):
+                key._obj.value, key_size._obj.value = 1000, 1
+                value._obj.value, value_size._obj.value = 2000, 0
+                return True
+            tk.tkrzw_dbm_iter_get.side_effect = row
+            with patch.object(driver, 'CELL', 'tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, libc]), \
+                    patch.object(driver.C, 'string_at', side_effect=[b'k', b'']):
+                if code == 7:
+                    self.assertEqual(driver.index_file_rows('/profile/db', kind='hash', allow_empty=True), [['6b', '']])
+                else:
+                    with self.assertRaisesRegex(ValueError, 'iterator next failed'):
+                        driver.index_file_rows('/profile/db', kind='hash', allow_empty=True)
+            self.assertEqual([call.args[0].value for call in libc.free.call_args_list], [1000, 2000])
+            tk.tkrzw_dbm_iter_free.assert_called_once()
+            tk.tkrzw_dbm_close.assert_called_once()
+
+    def test_kc_empty_snapshot_and_cursor_errors_are_distinct_and_closed(self):
+        for jump, code, fails in ((False, 7, False), (True, 7, False), (False, 9, True), (True, 9, True)):
+            kc = MagicMock()
+            kc.kcdbnew.return_value, kc.kcdbcursor.return_value = 123, 456
+            kc.kcdbopen.return_value = kc.kcdbloadsnap.return_value = kc.kcdbclose.return_value = True
+            kc.kccurjump.return_value, kc.kccurget.return_value = jump, None
+            kc.kccurecode.return_value = code
+            with self.subTest(jump=jump, code=code), patch.object(driver, 'CELL', 'kc'), \
+                    patch.object(driver.C, 'CDLL', return_value=kc):
+                if fails:
+                    with self.assertRaisesRegex(ValueError, 'cursor (first|read) failed'):
+                        driver.index_file_rows('/profile/db', kind='hash', allow_empty=True)
+                else:
+                    self.assertEqual(driver.index_file_rows('/profile/db', kind='hash', allow_empty=True), [])
+            kc.kcdbloadsnap.assert_called_once_with(123, b'/profile/db')
+            kc.kccurdel.assert_called_once_with(456)
+            kc.kcdbclose.assert_called_once_with(123)
+            kc.kcdbdel.assert_called_once_with(123)
+
+    def test_corrupt_kc_snapshot_and_tkrzw_open_failure_are_not_empty_databases(self):
+        kc = MagicMock()
+        kc.kcdbloadsnap.return_value = False
+        with patch.object(driver, 'CELL', 'kc'), patch.object(driver.C, 'CDLL', return_value=kc):
+            with self.assertRaisesRegex(ValueError, 'snapshot load failed'):
+                driver.index_file_rows('/profile/broken', kind='hash', allow_empty=True)
+        kc.kcdbcursor.assert_not_called()
+        kc.kcdbclose.assert_called_once()
+        kc.kcdbdel.assert_called_once()
+        tk = self.tkrzw()
+        tk.tkrzw_dbm_open.return_value = None
+        with patch.object(driver, 'CELL', 'tkrzw'), patch.object(driver.C, 'CDLL', side_effect=[tk, MagicMock()]):
+            with self.assertRaisesRegex(ValueError, 'read-only open failed'):
+                driver.index_file_rows('/profile/broken', allow_empty=True)
+        tk.tkrzw_dbm_make_iterator.assert_not_called()
+        tk.tkrzw_dbm_close.assert_not_called()
+
+
+
 class FatalLogTests(DriverFixtureCase):
     def setUp(self):
         self.spec = contract['CASES']['save-fatal-valid-to-invalid']

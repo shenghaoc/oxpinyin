@@ -89,17 +89,26 @@ Python provisions private profiles, interleaves subjects and reads the paused
 native child's memory. ABI calls are bracketed in C. Other bisect and contract
 modes keep their existing output.
 
-Only the `provision` stage runs on every cell. `contract-diff.py kc|tkrzw
-PIN_PREFIX … --teardown --teardown-stage provision` writes the startup
-profiles through that cell's own pin, so a kc or tkrzw build's function-order
-policy is generated from profiles its backend opens (`docs/packaging.md`,
-"Regeneration"; #1076). `verify`, `pilot`, `confirm`, `repeat`, `multi` and
-`attribute` are BDB workloads: they compare the final user files through
-`profile_contents`, which reads Berkeley DB containers only, and `--teardown`
-refuses them on `kc` and `tkrzw`.
+All stages (`provision`, `verify`, `pilot`, `confirm`, `repeat`, `multi`,
+`attribute`) support the selected cell, BDB, KC or tkrzw. Provisioning writes
+startup profiles through that cell's own pin. Comparison stages retain
+backend-aware final-file and reopen equivalence before any ratios. KC user
+indexes and user bigram are snapshot streams; tkrzw indexes are TreeDBM
+and its user bigram is HashDBM. The existing contract worker reads every
+logical row (empty values included), sorts by key and applies only the
+registered index-padding normalization. Other files remain byte comparisons
+with the existing registered chunk-header timestamp normalization. BDB's
+container detection and db_dump comparison are unchanged.
 
-Run inside the pinned Linux amd64 BDB environment (the cell's own for
-`provision`), after installing both shipping libraries with
+Peer container reads use a short-lived mode of the existing contract worker,
+not a backend CDLL retained in the measurement controller. Every native
+teardown launch, fixture-population launch and peer comparison worker checks
+the actual copied library through `tools/tkrzw/runtime.sh`. The tkrzw reader
+loads the exact certified resolution. A load, iterator, read, close or runtime
+failure refuses the comparison; an unreadable DB is never an empty DB.
+
+Run inside the selected pinned Linux amd64 cell, after installing both
+shipping libraries with
 `tools/packaging/install.sh`. Use the existing container reservation and heavy
 admission paths. Keep one campaign active. The work directory and measured
 library copies must be on ext4; tmpfs gives misleading private-dirty
@@ -124,9 +133,10 @@ plus two warm-ups. `--teardown-cases` selects named scenarios; the defaults are
 `empty`, `modest`, `phrases`, `journals`, `modest-unsaved`, `modest-saved`.
 Every sample receives a private starting profile. A transcript, diagnostic,
 final-file or reopen mismatch is `NOT COMPARABLE` and stops before ratios.
-Final BDB containers use the existing contract driver's logical row and known
-padding rules; random file IDs/LSNs are not profile contents. Every file and
-empty row remains compared. Raw starting/final profile identities are recorded
+Final containers use the existing contract driver's logical row and known
+padding rules; random file IDs/LSNs and backend allocation layout are not
+profile contents. Every file and empty row remains compared. Raw starting/final
+profile identities are recorded
 separately. Dirty imports use romanized readings for pinyin and direct bopomofo
 for zhuyin, as their pinned importer contracts require.
 
