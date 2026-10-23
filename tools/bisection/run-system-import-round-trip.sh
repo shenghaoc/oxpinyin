@@ -20,9 +20,10 @@ case $facade in
   *) exit 2 ;;
 esac
 run() {
-  local profile=$1 so=$2 library=$3
+  local profile=$1 so=$2 library=$3 side=subject
+  [[ $so != "$pin" ]] || side=pin
   shift 3
-  (cd "$profile" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" "$work/driver" "$so" "$data" "$library" "$@")
+  (cd "$profile" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" tkrzw_run "$ORACLE_DBM" "$side" "$so" "$work/driver" "$so" "$data" "$library" "$@")
 }
 for library in 1 2 3 4; do
   mkdir "$work/pin-$library" "$work/ox-$library"

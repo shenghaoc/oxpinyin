@@ -15,6 +15,7 @@ prefix=$(realpath "$1")
 output_dir=$2
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../.." && pwd)
+source "$repo_root/tools/tkrzw/runtime.sh"
 build_dir=$repo_root/target/capture
 system_dir=$prefix/lib/libpinyin/data
 header=$prefix/include/libpinyin-2.11.92/pinyin.h
@@ -99,12 +100,12 @@ cc -std=c11 -Wall -Wextra -Werror \
 	-o "$build_dir/pinyin-capture" \
 	$(pkg-config --libs libpinyin)
 
-LD_LIBRARY_PATH=$prefix/lib \
-	"$build_dir/pinyin-capture" F-A "$system_dir" "$build_dir/user-f-a" \
+LD_LIBRARY_PATH=$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
+	tkrzw_run tkrzw pin "$build_dir/pinyin-capture" "$build_dir/pinyin-capture" F-A "$system_dir" "$build_dir/user-f-a" \
 	"$oracle_pin_ref" >"$output_dir/f-a.txt"
-LD_LIBRARY_PATH=$prefix/lib \
-	"$build_dir/pinyin-capture" F-C "$system_dir" "$build_dir/user-f-c" \
+LD_LIBRARY_PATH=$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
+	tkrzw_run tkrzw pin "$build_dir/pinyin-capture" "$build_dir/pinyin-capture" F-C "$system_dir" "$build_dir/user-f-c" \
 	"$oracle_pin_ref" >"$output_dir/f-c.txt"
-LD_LIBRARY_PATH=$prefix/lib \
-	"$build_dir/pinyin-capture" ZH "$system_dir" "$build_dir/user-zh" \
+LD_LIBRARY_PATH=$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} \
+	tkrzw_run tkrzw pin "$build_dir/pinyin-capture" "$build_dir/pinyin-capture" ZH "$system_dir" "$build_dir/user-zh" \
 	"$oracle_pin_ref" >"$output_dir/zhuyin-parse.txt"

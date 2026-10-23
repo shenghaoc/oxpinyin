@@ -13,6 +13,16 @@ tkrzw_so() {
 tkrzw_env_prefix() (
 	local env_file=${1:-${OXPINYIN_ORACLE_ENV:-$HOME/.oxpinyin-oracle.env}} lib
 	[[ -f $env_file ]] || return 0
+	if grep -q '^export OXPINYIN_TKRZW_PREFIX=' "$env_file"; then
+		local OXPINYIN_TKRZW_PREFIX=
+		source <(sed -n '/^export OXPINYIN_TKRZW_PREFIX=/p' "$env_file")
+		printf '%s' "$OXPINYIN_TKRZW_PREFIX"
+		return
+	fi
+	# An exact host identity is not a cache prefix, even when its directory
+	# is prepended to LD_LIBRARY_PATH by the generated environment.
+	grep -q '^export OXPINYIN_TKRZW_LIBRARY=' "$env_file" && return 0
+	# Intentional: parse only the generated path, without caller inheritance.
 	LD_LIBRARY_PATH=
 	source <(sed -n '/^export LD_LIBRARY_PATH=/p' "$env_file")
 	lib=${LD_LIBRARY_PATH%%:*}
@@ -40,13 +50,18 @@ without_prefix() {
 # that the probe's tkrzw_dbm_util resolved libtkrzw.so.1 outside the cache.
 probe_host() {
 	local host_path host_ld util so
+	tkrzw_host_library=
 	host_path=$(without_prefix "$PATH")
 	host_ld=$(without_prefix "${LD_LIBRARY_PATH:-}")
+	# Intentional: the host probe must exclude every inherited cache runtime.
 	env PATH="$host_path" LD_LIBRARY_PATH="$host_ld" sh "$probe" || return 1
 	util=$(PATH=$host_path command -v tkrzw_dbm_util) || return 1
 	so=$(LD_LIBRARY_PATH=$host_ld tkrzw_so "$util")
 	printf 'host check: %s resolves libtkrzw.so.1 to %s\n' "$util" "${so:-nothing}"
-	[[ -n $so && $(without_prefix "$so") == "$so" ]]
+	[[ -n $so && -f $so && $(without_prefix "$so") == "$so" ]] || return 1
+	so=$(readlink -f -- "$so") || return 1
+	[[ $(without_prefix "$so") == "$so" ]] || return 1
+	tkrzw_host_library=$so
 }
 
 # libs_ok DBM [PREFIX]: both libraries hash to the recorded recipe values.
@@ -90,6 +105,7 @@ write_oracle_env() (
 	declare -A prefixes=()
 	env_cells=("${cells[@]}")
 	kept_tkrzw_paths=
+	kept_tkrzw_library=
 	for dbm in "${cells[@]}"; do prefixes[$dbm]=$oracle_root/$dbm; done
 	if [[ -f $env_file ]]; then
 		# Read only the writer's membership and per-cell assignments. Do not run
@@ -115,6 +131,11 @@ write_oracle_env() (
 					# Preserve a retained cell's sound local tkrzw runtime, even
 					# when this run uses another cache or requests only bdb.
 					kept_tkrzw_paths=$(sed -n '/^export PKG_CONFIG_PATH=/,/^export PATH=/p' "$env_file")
+					kept_tkrzw_library=$(
+						OXPINYIN_TKRZW_LIBRARY=
+						source <(sed -n '/^export OXPINYIN_TKRZW_LIBRARY=/p' "$env_file")
+						printf '%s' "$OXPINYIN_TKRZW_LIBRARY"
+					)
 				fi
 			fi
 		done
@@ -122,10 +143,18 @@ write_oracle_env() (
 	default_cell=${env_cells[0]}
 	for dbm in "${env_cells[@]}"; do [[ $dbm == bdb ]] && default_cell=bdb; done
 	runtime_prefix=
+	runtime_library=
 	if ((tkrzw_local)); then
 		runtime_prefix=$tkrzw_prefix
+	elif [[ -n ${tkrzw_host_library:-} ]]; then
+		runtime_library=$tkrzw_host_library
 	elif [[ -n $kept_tkrzw_paths ]]; then
 		runtime_prefix=$(tkrzw_env_prefix "$env_file")
+	fi
+	if [[ -n $runtime_prefix ]]; then
+		runtime_library=$(readlink -f -- "$runtime_prefix/lib/libtkrzw.so.1" 2>/dev/null || true)
+	elif [[ -z $runtime_library ]]; then
+		runtime_library=$kept_tkrzw_library
 	fi
 	trap 'rm -f "$env_file.new"' EXIT
 	{
@@ -133,7 +162,11 @@ write_oracle_env() (
 		printf '_oxp_provisioned=%q\n' " ${env_cells[*]} "
 		printf 'export PINYIN_MODEL_DIR=%q\n' "$model_cache/extracted"
 		printf 'export PATH=%s\n' "$(printf '%q' "$uv_dir"):\$PATH"
+		if [[ -n $runtime_library ]]; then
+			printf 'export OXPINYIN_TKRZW_LIBRARY=%q\n' "$runtime_library"
+		fi
 		if [[ -n $runtime_prefix ]]; then
+			printf 'export OXPINYIN_TKRZW_PREFIX=%q\n' "$runtime_prefix"
 			# Accumulate at source time: a shell can load several environment
 			# files before setup probes a different cache's host library.
 			printf 'export OXPINYIN_TKRZW_PREFIXES=%s\n' "$(printf '%q' "$runtime_prefix")\${OXPINYIN_TKRZW_PREFIXES:+:\$OXPINYIN_TKRZW_PREFIXES}"
@@ -142,6 +175,8 @@ write_oracle_env() (
 			printf 'export PKG_CONFIG_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib/pkgconfig")\${PKG_CONFIG_PATH:+:\$PKG_CONFIG_PATH}"
 			printf 'export LD_LIBRARY_PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/lib")\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 			printf 'export PATH=%s\n' "$(printf '%q' "$tkrzw_prefix/bin"):\$PATH"
+		elif [[ -n $runtime_library && -z $runtime_prefix ]]; then
+			printf 'export LD_LIBRARY_PATH=%s\n' "$(printf '%q' "${runtime_library%/*}")\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 		elif [[ -n $kept_tkrzw_paths ]]; then
 			printf '%s\n' "$kept_tkrzw_paths"
 		fi

@@ -10,7 +10,9 @@
 # Run the full matrix — build on the measurement host itself, with no
 # --platform override, so the image is native silicon:
 #   docker build -f tools/bisection/Dockerfile.perf-matrix -t oxpinyin-matrix .
-#   docker run --rm -v /tmp/matrix-out:/out oxpinyin-matrix
+# Run with the verified-runtime mount and exact library environment in
+# docs/runbooks/cloud.md (Runtime enforcement); the shell guard needs no uv.
+# The packaged libtkrzw alone does not establish a trusted runtime.
 #
 # Never build or run this matrix emulated: a platform differing from the
 # host times the interpreter, not the implementations. This FROM line

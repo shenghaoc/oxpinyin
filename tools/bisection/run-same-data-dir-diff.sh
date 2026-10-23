@@ -110,7 +110,7 @@ for driver in "${drivers[@]}"; do
     # user state relative to the cwd, and both sides must start equal.
     local side=$1 so=$2
     rm -rf "${work:?}/$side"; mkdir -p "$work/$side"
-    ( cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" "$work/$driver" "$so" "$data" "${driver_args[@]}" )
+    ( cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" tkrzw_run "$ORACLE_DBM" "$side" "$so" "$work/$driver" "$so" "$data" "${driver_args[@]}" )
   }
   if [[ $driver == dynamic-adjust-diff ]]; then
     # This driver also needs a bit state and a fresh user profile. Preserve
@@ -124,8 +124,9 @@ for driver in "${drivers[@]}"; do
         rm -rf "$dest"
         mkdir -p "$dest/user"
         run_dynamic() {
+          local side=$engine
           ( cd "$dest" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" \
-              "$work/$driver" "$so" "$data" "$mode" "$dest/user" )
+              tkrzw_run "$ORACLE_DBM" "$side" "$so" "$work/$driver" "$so" "$data" "$mode" "$dest/user" )
         }
         output=$work/$engine-$mode.stdout
         if ! run_dynamic > "$output"; then

@@ -334,7 +334,7 @@ check_dynamic() {
 
 	local out rc=0
 	out=$(ASAN_OPTIONS=detect_leaks=1:abort_on_error=0 \
-		"$WORK/$abi-driver" "$WORK/sys" "$user" --coverage 2>&1) || rc=$?
+		tkrzw_run "$ORACLE_DBM" subject "$WORK/$abi-driver" "$WORK/$abi-driver" "$WORK/sys" "$user" --coverage 2>&1) || rc=$?
 	if ((rc != 0)); then
 		printf '%s\n' "$out" | sed 's/^/    /'
 		fail "the sanitized run exited $rc (0 expected)"

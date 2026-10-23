@@ -671,6 +671,7 @@ if [[ " ${cells[*]} " == *' tkrzw '* ]]; then
 			}
 			rm -rf "$cache/tkrzw-src"
 			if ! probe_built; then
+				# Intentional: diagnose the newly built cache in isolation.
 				PATH=$tkrzw_prefix/bin:$PATH LD_LIBRARY_PATH=$tkrzw_prefix/lib sh "$probe" >&2 || true
 				die "the built tkrzw does not print 'RESULT : healthy' (refusing to use it)"
 			fi
@@ -678,6 +679,7 @@ if [[ " ${cells[*]} " == *' tkrzw '* ]]; then
 		fi
 		# Both sides must resolve libtkrzw.so.1 to the cache: the oracle
 		# library here, an oxpinyin tkrzw binary in docs/runbooks/cloud.md.
+		# Intentional: verify this cache in isolation from inherited runtimes.
 		resolved=$(LD_LIBRARY_PATH=$tkrzw_prefix/lib tkrzw_so "$oracle_root/tkrzw/lib/libpinyin.so")
 		[[ $resolved == "$tkrzw_prefix/lib/libtkrzw.so.1" ]] ||
 			die "the tkrzw oracle libpinyin.so resolves libtkrzw.so.1 to '${resolved:-nothing}', not $tkrzw_prefix/lib"

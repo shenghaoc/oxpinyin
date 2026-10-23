@@ -15,11 +15,15 @@ import shutil
 import resource
 import subprocess
 import sys
+import runpy
 import tempfile
 
 
+check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tkrzw/runtime.py'))['check']
+
 def worker(mode, so, data, profile, case):
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    check_tkrzw("auto", "train-index-diff.py", "subject", so)
     lib = C.CDLL(so)
     ptr, uint, boolean = C.c_void_p, C.c_uint, C.c_bool
 
@@ -132,6 +136,8 @@ def main():
     manifest = (args.prefix / 'oracle-pin.txt').read_text()
     assert '074a2219c90feaf962d0d24f034514033ece5f99' in manifest
     assert '+dbm-' + args.cell + '\n' in manifest
+    for side, library in (("pin", pin / 'libpinyin.so'), ("subject", args.pinyin_so), ("pin", pin / 'libzhuyin.so'), ("subject", args.zhuyin_so)):
+        check_tkrzw(args.cell, "train-index-diff.py", side, library)
     assert '+patches-' not in manifest, 'training requires the unmodified pin'
     spec = importlib.util.spec_from_file_location('state', Path(__file__).with_name('compare-nbest-training-state.py'))
     state = importlib.util.module_from_spec(spec)

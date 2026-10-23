@@ -100,6 +100,7 @@ UNTOUCHED = 0xABCDEF  # out-param sentinel
 # The DBM cell the run is for (set by `main`, inherited by every worker):
 # fixtures that craft a user table write it in that backend's own format.
 CELL = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
+check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tkrzw/runtime.py'))['check']
 
 CASES = {}
 
@@ -339,6 +340,7 @@ class Kit:
 
     def __init__(self, mode, so, data, scratch):
         self.mode, self.data, self.scratch = mode, data, scratch
+        check_tkrzw(os.environ.get("CONTRACT_DIFF_CELL", CELL), "contract-diff.py", os.environ.get("OXPINYIN_RUNTIME_SIDE", "subject"), so)
         self.lib = C.CDLL(so, use_errno=True)
         self.glib = C.CDLL('libglib-2.0.so.0')
         self.glib.g_free.argtypes = [P]
@@ -5658,6 +5660,8 @@ def run_worker(mode, so, data, name, scratch, extra_env=None, timeout=None, entr
     # per call so a patched WORKER takes effect.
     command = [sys.executable, *map(str, entry or (WORKER,)), mode, str(so), str(data), name]
     check_cancelled()
+    check_tkrzw(env.get('CONTRACT_DIFF_CELL', CELL), 'contract-diff.py',
+                env.get('OXPINYIN_RUNTIME_SIDE', 'subject'), so, env=env)
     proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             env=env, start_new_session=True)
     stdout, stderr = b'', b''
@@ -5723,7 +5727,9 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(str(so), timeout)
             result = run_worker(spec['mode'], so.resolve(), data, name, scratch,
-                                extra_env=fatal_env, timeout=remaining)
+                                extra_env=(dict(fatal_env or {}, OXPINYIN_RUNTIME_SIDE=side)
+                                           if os.environ.get('CONTRACT_DIFF_CELL', CELL) == 'tkrzw' else fatal_env),
+                                timeout=remaining)
         except subprocess.TimeoutExpired as error:
             results.append(dict(exit='TIMEOUT', result=None, userfiles=[],
                                 stderr_lines=len((error.stderr or b'').splitlines()),
@@ -12285,6 +12291,9 @@ def per_call_run(mode, so, data, name, helper, metric, operations, scratch, cpu,
         command += [sys.executable, __file__, '--per-call-worker', mode, str(so), str(data), name,
                     str(helper), metric, operations]
         env = dict(os.environ, TMPDIR=sample)
+        if name != 'calibrate':
+            check_tkrzw(env.get('CONTRACT_DIFF_CELL', CELL), 'contract-diff.py/per_call',
+                        env.get('OXPINYIN_RUNTIME_SIDE', 'subject'), so, env=env)
         # Captures and profiler output never reach a file.
         check_cancelled()
         with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
@@ -12498,6 +12507,12 @@ def run_main():
     manifest = (args.prefix / 'oracle-pin.txt').read_text()
     assert 'libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' in manifest
     assert '+dbm-' + args.cell + '\n' in manifest
+    if not args.plan_only:
+        for side, library in (("pin", lib / 'libpinyin.so'), ("subject", args.pinyin_so),
+                              ("pin", lib / 'libzhuyin.so' if args.zhuyin_so else None),
+                              ("subject", args.zhuyin_so)):
+            if library is not None:
+                check_tkrzw(args.cell, 'contract-diff.py', side, library)
     if args.teardown:
         import teardown
         return teardown.run(args, sys.modules[__name__], parser)

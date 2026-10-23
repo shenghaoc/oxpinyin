@@ -64,7 +64,7 @@ if [[ -z "$PREFIX" || ! -d "$PREFIX" ]]; then
     exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
-    "$PREFIX/oracle-pin.txt" 2>/dev/null; then
+    "$PREFIX/oracle-pin.txt"; then
     echo "missing input: $PREFIX is not a prefix of the 074a2219 pin (oracle-pin.txt)" >&2
     exit 3
 fi
@@ -112,8 +112,9 @@ modes() {
 # One clean launch under umask $1. The driver must finish (a clean launch
 # saves), so any other exit fails the run.
 launch() {
-    local mask=$1 lib=$2 so=$3 user=$4 n=$5 log=$6 tmp=$7
-    if ! (umask "$mask" && TMPDIR="$tmp" "$DRIVER" "$lib" "$so" "$DATA" "$user" "$n" cycle \
+    local mask=$1 lib=$2 so=$3 user=$4 n=$5 log=$6 tmp=$7 side=subject
+    [[ $so != "${ORACLE_SO[$lib]}" ]] || side=pin
+    if ! (umask "$mask" && TMPDIR="$tmp" tkrzw_run "$ORACLE_DBM" "$side" "$so" "$DRIVER" "$lib" "$so" "$DATA" "$user" "$n" cycle \
         > "$log.launch" 2>> "$log.stderr"); then
         echo "FAIL: launch $n of $so under umask $mask" >&2
         cat "$log.stderr" >&2

@@ -66,7 +66,7 @@ if [[ -z "$PREFIX" || ! -d "$PREFIX" ]]; then
     exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
-    "$PREFIX/oracle-pin.txt" 2>/dev/null; then
+    "$PREFIX/oracle-pin.txt"; then
     echo "missing input: $PREFIX is not a prefix of the 074a2219 pin (oracle-pin.txt)" >&2
     exit 3
 fi
@@ -118,7 +118,7 @@ run_side() {
     # mode out of the runner's output. `-k 5` bounds the wait after the
     # TERM a timeout sends, so a driver that ignores it is still ended
     # (status 137).
-    ( TMPDIR="$tmp" timeout -k 5 "$TIMEOUT" "$DRIVER" "$so" "$DATA" "$user" "$mode" \
+    ( TMPDIR="$tmp" tkrzw_run "$ORACLE_DBM" "$side" "$so" timeout -k 5 "$TIMEOUT" "$DRIVER" "$so" "$DATA" "$user" "$mode" \
         > "$log" 2> "$log.stderr" ) 2> /dev/null || rc=$?
     if [[ $rc -eq 124 || ( $rc -eq 137 && $mode != crash ) ]]; then
         echo "FAIL: $side/$mode did not finish within ${TIMEOUT}s" >&2
@@ -129,6 +129,7 @@ run_side() {
     # (the SIGKILL the crash mode raises on itself).
     if [[ $mode == crash && $rc -ne 137 ]] || [[ $mode != crash && $rc -ne 0 ]]; then
         echo "FAIL: $side/$mode exited with unexpected status $rc" >&2
+        [[ $ORACLE_DBM != tkrzw ]] || cat "$log.stderr" >&2
         return 1
     fi
     {

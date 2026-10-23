@@ -127,6 +127,9 @@ run_side() {
     tmp="$WORK/tmp-$(basename "$log" .log)"
     rm -rf "$user" "$tmp"
     mkdir -p "$user" "$tmp"
+    for object in "$@"; do
+        TMPDIR="$tmp" tkrzw_run "$ORACLE_DBM" "$log" "$object" || return 1
+    done
     if ! TMPDIR="$tmp" "$DRIVER" "$lib" "$@" "$DATA" "$user" "$scenario" \
         > "$log" 2> "$log.stderr"; then
         echo "FAIL: $lib/$scenario on $*" >&2

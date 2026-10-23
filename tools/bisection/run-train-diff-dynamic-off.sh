@@ -47,7 +47,7 @@ CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
 
 if TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" \
-    ./train-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2> "$DRIVER_ERROR"; then
+    tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./train-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2> "$DRIVER_ERROR"; then
     :
 else
     driver_status=$?
@@ -57,7 +57,7 @@ else
     exit 1
 fi
 if TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" \
-    ./train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$DRIVER_ERROR"; then
+    tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$DRIVER_ERROR"; then
     :
 else
     driver_status=$?
@@ -117,7 +117,7 @@ CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
 if TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" TRAINDIFF_DUMP_CANDIDATES=1 \
     TRAINDIFF_REOPEN=1 \
-    ./train-diff "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2> "$DRIVER_ERROR"; then
+    tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./train-diff "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2> "$DRIVER_ERROR"; then
     :
 else
     driver_status=$?
@@ -128,7 +128,7 @@ else
 fi
 if TRAINDIFF_ROUNDS=1 TRAINDIFF_OPTIONS="$OPTIONS" TRAINDIFF_DUMP_CANDIDATES=1 \
     TRAINDIFF_REOPEN=1 \
-    ./train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$DRIVER_ERROR"; then
+    tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$DRIVER_ERROR"; then
     :
 else
     driver_status=$?

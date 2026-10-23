@@ -44,6 +44,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import runpy
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -82,6 +83,7 @@ def run(binary, op, iters, data, cpu, prefix=()):
     command = [*prefix, str(binary), '--op', op, '--iters', str(iters), '--data', str(data)]
     if cpu is not None:
         command = ['taskset', '-c', str(cpu), *command]
+    check_tkrzw('auto', 'store-ops.py', 'subject', binary)
     done = subprocess.run(command, capture_output=True, text=True, check=False)
     if done.returncode:
         raise RuntimeError(f'{op} failed under {binary}: {done.stderr[-2000:]}')
@@ -123,6 +125,8 @@ def compare_profiles(op, iters, units, values):
     record('profile', op=op, iters=iters, units=units, verdict='VALID' if valid else 'INVALID',
            control=control, **(shown if valid else {}))
 
+
+check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / "tkrzw/runtime.py"))["check"]
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)

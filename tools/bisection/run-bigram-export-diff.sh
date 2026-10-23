@@ -47,7 +47,7 @@ data=$(cd "$data" && pwd)
 cd "$(dirname "$0")"
 
 prefix=$(cd "$(dirname "$oracle_so")/.." && pwd)
-if ! grep -q 'pin-bigram-export-strjoinv.patch' "$prefix/oracle-patches.sha256" 2>/dev/null; then
+if ! grep -q 'pin-bigram-export-strjoinv.patch' "$prefix/oracle-patches.sha256"; then
   echo "FAIL: $prefix was not built with tools/bisection/patches/bigram-export-strjoinv"
   exit 1
 fi
@@ -62,7 +62,7 @@ run() {
   local side=$1 so=$2 scenario=$3
   mkdir -p "$work/$side-$scenario"
   (cd "$work/$side-$scenario" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" \
-    "$work/driver" "$so" "$data" "$scenario") >"$work/$side-$scenario.log" 2>/dev/null
+    tkrzw_run --quiet-stderr "$ORACLE_DBM" "$side" "$so" "$work/driver" "$so" "$data" "$scenario") >"$work/$side-$scenario.log"
 }
 
 # The row-36 law over one log: every get= but the last is true, the last

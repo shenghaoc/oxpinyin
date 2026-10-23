@@ -165,6 +165,78 @@ environment and run from the repository root:
 )
 ```
 
+### Runtime enforcement (verification rule 9)
+
+Any object that resolves `libtkrzw` must use the runtime verified by setup,
+even when `PINYIN_ORACLE_DBM` is unset, `bdb` or `kc`.
+`tools/tkrzw/runtime.sh` contains the single check, using bash, `ldd`, awk
+and readlink; `runtime.py` is only an adapter for Python tools. Native
+runners and the callgrind/perf-matrix images need no uv or Python to check
+the runtime. The environment writer exports `OXPINYIN_TKRZW_LIBRARY`, the
+exact canonical library verified by setup. A healthy host uses the existing
+`probe_host` result; an unhealthy host uses the provisioned cache. An older
+generated `OXPINYIN_TKRZW_PREFIX` or `OXPINYIN_TKRZW_PREFIXES` still selects
+its cache object. No implicit home cache or arbitrary system prefix is
+trusted. Select alternate caches through their generated environment files.
+
+The check runs `ldd` on the exact object the driver opens, in the driver's
+working directory and environment, before launching or comparing results.
+These drivers introduce no other libtkrzw into their loader namespace before
+`dlopen`, so the object's dependency search (including RPATH/RUNPATH and
+relative loader paths) is the same. Linked executables are checked directly.
+Resolved real paths must equal that exact verified object; a different path,
+missing dependency, unconfigured runtime or failed resolver refuses the run.
+The diagnostic names the runner, pin/subject side and path found. Every
+label uses the full resolved `ldd` dependency set, including transitive and
+preloaded libraries. Objects without tkrzw dependencies need no trusted
+tkrzw runtime. For a dlopen driver the subject library is checked, and a
+directly launched ELF executable is checked too.
+
+The measurement images use the same shell check. Their entrypoints require
+an explicitly supplied verified runtime; they do not infer trust from their
+packaged `libtkrzw`. For example, after setup verifies a cache, mount that
+runtime read-only and name its exact library in the container:
+
+```sh
+podman run --rm -v "$HOME/.cache/oxpinyin/tkrzw:/runtime:ro" \
+    -e OXPINYIN_TKRZW_LIBRARY=/runtime/lib/libtkrzw.so.1 \
+    -e LD_LIBRARY_PATH=/runtime/lib \
+    -v "$OUT:/out" oxpinyin-callgrind
+```
+
+The same runtime mount and two environment assignments apply to
+`oxpinyin-matrix` and its baseline/same-data runners. The mounted library
+must match the image's architecture and ABI. Without a separately verified
+runtime the image run refuses before measurement; installing uv does not
+establish trust.
+
+Keep the selected object's directory first in `LD_LIBRARY_PATH`, followed
+by the inherited value. The remaining overwrites were classified as follows:
+
+| Sites | Classification |
+| --- | --- |
+| `gcov_measure.py`: same-data and user-store environments | Defects; preserve inheritance and check the actual object/executable. |
+| `run-callgrind-differential.sh`: all five launch sites | Defects; use each selected object's directory, then inheritance. |
+| `run-perf-baseline.sh`, `run-perf-matrix.sh`, `run-perf-same-data.sh` | Defects, including reused stages and both taskset branches; preserve inheritance. |
+| `run-shipped-check.sh`, `run-tree-recipe-control.sh` | Defects; use the selected object's directory, then inheritance. |
+| `release-stage.sh` and `capture/run-capture.sh` | Additional defects; linked smoke/capture processes also need inheritance and the check. |
+| `run-cpp-smoke.sh`: cleared-path `ldd` assertion | Intentional SONAME/RPATH test; the subsequent executable launch is checked with its actual environment. |
+| `build-oracle.sh`: generation-prefix assignment | Intentional isolation in the pinned build recipe; not a differential launch. |
+| `cloud/env.sh`: generated-path parsing and host-probe filtering; setup's cache-probe assignments | Intentional parsing without caller inheritance, or isolation of the host or selected cache while provisioning. |
+| `tools/dev/compat/boundary.py`: removal of host loader variables | Intentional host/container boundary; the container supplies its own runtime. |
+
+No listed remaining measurement overwrite is exempt as never-tkrzw.
+`teardown.py` is explicitly BDB-only in `run`; it needs no tkrzw guard.
+The shell surface runners, same-data/import/round-trip runners, profiling and
+packaging launches, and Python contract/gcov/training/ordering tools share
+the same implementation. A refusal is a failed run, never MATCH or SKIP.
+
+Run loader fixtures with:
+
+```sh
+uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal tools/tkrzw/runtime.test.py
+```
+
 ## What it does
 
 0. Checks Cargo and the repository toolchain, and requires or installs

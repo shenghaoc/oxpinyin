@@ -117,7 +117,7 @@ echo "--- capi side (rounds=$ROUNDS) ---"
 CAPI_LOG="$(mktemp)"
 CAPI_ERR="$(mktemp)"
 if ! LIVETYPING_ROUNDS="$ROUNDS" \
-    ./live-typing-diff "$CAPI_SO" "$CAPI_SYSTEM" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
+    tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./live-typing-diff "$CAPI_SO" "$CAPI_SYSTEM" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: live-typing-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     echo "--- driver diagnostics (stderr) ---"
@@ -131,7 +131,7 @@ echo "--- oracle side ---"
 ORACLE_LOG="$(mktemp)"
 ORACLE_ERR="$(mktemp)"
 if ! LIVETYPING_ROUNDS="$ROUNDS" \
-    ./live-typing-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
+    tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./live-typing-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
     echo "FAIL: live-typing-diff crashed against oracle"
     cat "$ORACLE_LOG"
     echo "--- driver diagnostics (stderr) ---"

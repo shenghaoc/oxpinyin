@@ -178,7 +178,7 @@ else
     CAPI_DRIVER=./scheme-diff
     DRIVER_ARGS=("$CAPI_SO" "$CAPI_DATA" "${SCHEME_ARGS[@]}")
 fi
-if ! "$CAPI_DRIVER" "${DRIVER_ARGS[@]}" \
+if ! tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" "$CAPI_DRIVER" "${DRIVER_ARGS[@]}" \
     > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: scheme-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
@@ -201,7 +201,7 @@ else
     ORACLE_DRIVER=./scheme-diff
     DRIVER_ARGS=("$ORACLE_SO" "$ORACLE_DATA" "${SCHEME_ARGS[@]}")
 fi
-if ! "$ORACLE_DRIVER" "${DRIVER_ARGS[@]}" \
+if ! tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" "$ORACLE_DRIVER" "${DRIVER_ARGS[@]}" \
     > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
     echo "FAIL: scheme-diff crashed against oracle"
     cat "$ORACLE_LOG"

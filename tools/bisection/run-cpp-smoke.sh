@@ -105,6 +105,7 @@ if [ "$needed" != "libpinyin.so.15" ]; then
     echo "fatal: smoke binary needs '$needed', expected libpinyin.so.15"
     exit 1
 fi
+# Intentional: clear LD_LIBRARY_PATH only for the SONAME/RPATH resolution assertion.
 resolved=$(LD_LIBRARY_PATH="" ldd "$BUILD_DIR/cpp-smoke" | sed -n 's/.*libpinyin\.so\.15 => \([^ ]*\).*/\1/p')
 case "$resolved" in
     "$CAPI_DIR"/*) ;;
@@ -112,5 +113,5 @@ case "$resolved" in
 esac
 
 echo "--- running C++ smoke TU ---"
-"$BUILD_DIR/cpp-smoke" "$SYS_DIR" "$USER_DIR"
+tkrzw_run "$ORACLE_DBM" subject "$BUILD_DIR/cpp-smoke" "$BUILD_DIR/cpp-smoke" "$SYS_DIR" "$USER_DIR"
 echo "cpp-smoke: ok"

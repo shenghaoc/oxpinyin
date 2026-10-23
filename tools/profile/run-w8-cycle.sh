@@ -26,6 +26,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 REPO_ROOT="$(cd ../.. && pwd)"
+source "$REPO_ROOT/tools/tkrzw/runtime.sh"
 BISECT_SRC="$REPO_ROOT/tools/bisection/bisect.c"
 
 # The W8 cycle profiles against the tkrzw cell (its exports and records
@@ -174,6 +175,8 @@ run_pinned() {
     fi
 }
 
+# Check the dlopened subject before the profiler starts, then profile the worker.
+tkrzw_run auto subject "$CAPI_SO"
 CYCLE_CMD=("$PROFILE_DIR/bisect" --perf "$CAPI_SO" "$CAPI_DATA")
 
 # ── Record ──────────────────────────────────────────────────────────────

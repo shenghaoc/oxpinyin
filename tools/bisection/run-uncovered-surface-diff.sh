@@ -124,7 +124,7 @@ CAPI_ERR="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
 ORACLE_ERR="$(mktemp)"
 trap 'rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR"' EXIT
-if ! ./uncovered-surface-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
+if ! tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./uncovered-surface-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: uncovered-surface-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     echo "--- driver diagnostics (stderr) ---"
@@ -134,7 +134,7 @@ fi
 echo "oxpinyin-capi: ok"
 
 echo "--- oracle side ---"
-if ! ./uncovered-surface-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
+if ! tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./uncovered-surface-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
     echo "FAIL: uncovered-surface-diff crashed against oracle"
     cat "$ORACLE_LOG"
     echo "--- driver diagnostics (stderr) ---"

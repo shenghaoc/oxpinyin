@@ -75,13 +75,13 @@ trap 'rm -rf "$CAPI_EDGE_USER" "$ORACLE_EDGE_USER"' EXIT
 
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
-if ! ./union-diff "$CAPI_SO" "$CAPI_SYS" > "$CAPI_LOG" 2> /dev/null; then
+if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" subject "$CAPI_SO" ./union-diff "$CAPI_SO" "$CAPI_SYS" > "$CAPI_LOG"; then
     echo "FAIL: union-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     rm -f "$CAPI_LOG" "$ORACLE_LOG"
     exit 1
 fi
-if ! ./union-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> /dev/null; then
+if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" pin "$ORACLE_SO" ./union-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG"; then
     echo "FAIL: union-diff crashed against the oracle"
     cat "$ORACLE_LOG"
     rm -f "$CAPI_LOG" "$ORACLE_LOG"
@@ -107,11 +107,11 @@ echo "union-diff: IDENTICAL"
 # engine's user-bigram store after a shared three-phrase import.
 
 echo "--- filter-edge setup ---"
-if ! ./union-edge-diff "$CAPI_SO" "$CAPI_SYS" setup "$CAPI_EDGE_USER"; then
+if ! tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./union-edge-diff "$CAPI_SO" "$CAPI_SYS" setup "$CAPI_EDGE_USER"; then
     echo "FAIL: capi edge setup"
     exit 1
 fi
-if ! ./union-edge-diff "$ORACLE_SO" "$ORACLE_DATA" setup "$ORACLE_EDGE_USER"; then
+if ! tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./union-edge-diff "$ORACLE_SO" "$ORACLE_DATA" setup "$ORACLE_EDGE_USER"; then
     echo "FAIL: oracle edge setup"
     exit 1
 fi
@@ -129,13 +129,13 @@ fi
 
 CAPI_EDGE="$(mktemp)"
 ORACLE_EDGE="$(mktemp)"
-if ! ./union-edge-diff "$CAPI_SO" "$CAPI_SYS" predict "$CAPI_EDGE_USER" > "$CAPI_EDGE" 2> /dev/null; then
+if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" subject "$CAPI_SO" ./union-edge-diff "$CAPI_SO" "$CAPI_SYS" predict "$CAPI_EDGE_USER" > "$CAPI_EDGE"; then
     echo "FAIL: union-edge-diff predict crashed against oxpinyin-capi"
     cat "$CAPI_EDGE"
     rm -f "$CAPI_EDGE" "$ORACLE_EDGE"
     exit 1
 fi
-if ! ./union-edge-diff "$ORACLE_SO" "$ORACLE_DATA" predict "$ORACLE_EDGE_USER" > "$ORACLE_EDGE" 2> /dev/null; then
+if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" pin "$ORACLE_SO" ./union-edge-diff "$ORACLE_SO" "$ORACLE_DATA" predict "$ORACLE_EDGE_USER" > "$ORACLE_EDGE"; then
     echo "FAIL: union-edge-diff predict crashed against the oracle"
     cat "$ORACLE_EDGE"
     rm -f "$CAPI_EDGE" "$ORACLE_EDGE"

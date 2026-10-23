@@ -93,7 +93,7 @@ if [[ -z "$PREFIX" || ! -d "$PREFIX" ]]; then
     exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
-    "$PREFIX/oracle-pin.txt" 2>/dev/null; then
+    "$PREFIX/oracle-pin.txt"; then
     echo "missing input: $PREFIX is not a prefix of the 074a2219 pin (oracle-pin.txt)" >&2
     exit 3
 fi
@@ -189,10 +189,11 @@ for lib in "${LIBS[@]}"; do
             : > "$base.err"
             for process in 1 2; do
                 echo "== process $process ==" >> "$base.log"
-                if ! (cd "$base/cwd" && env LC_ALL="$LOCALE_NAME" \
-                    "$OUT/locale-diff" "$lib" "$so" "$DATA" "${args[@]}") \
+                if ! (cd "$base/cwd" && LC_ALL="$LOCALE_NAME" \
+                    tkrzw_run "$ORACLE_DBM" "$side" "$so" "$OUT/locale-diff" "$lib" "$so" "$DATA" "${args[@]}") \
                     >> "$base.log" 2>> "$base.err"; then
                     echo "run failure: $lib/$form/$side process $process (see $base.err)" >&2
+                    [[ $ORACLE_DBM != tkrzw ]] || tail -5 "$base.err" >&2
                     status=1
                 fi
             done

@@ -9,6 +9,7 @@
 # distribution would ship it.
 #
 # Runs inside the perf-matrix container with the tree mounted at /work,
+# plus the verified runtime mount/environment in docs/runbooks/cloud.md.
 # on the measurement host itself — no --platform override: an emulated
 # run times the interpreter, not the implementations.
 #
@@ -29,6 +30,7 @@
 #       Either way the artifact's backend linkage is verified before any
 #       cell is measured -- see verify_backend.
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
@@ -124,10 +126,13 @@ function_order_measurement --library "C/pinyin=$OXPINYIN_TKRZW_SO" \
     --library "D/pinyin=$OXPINYIN_KC_SO" --reference-arm A --library "A/pinyin=$A_SO" \
     --reference-arm B --library "B/pinyin=$B_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 
+LD_LIBRARY_PATH="$(dirname "$A_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw pin "$A_SO"
+LD_LIBRARY_PATH="$(dirname "$OXPINYIN_TKRZW_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw subject "$OXPINYIN_TKRZW_SO"
+
 LABELS=(libpinyin-tkrzw libpinyin-kc oxpinyin-tkrzw oxpinyin-kc)
 SOS=("$A_SO" "$B_SO" "$OXPINYIN_TKRZW_SO" "$OXPINYIN_KC_SO")
 DATAS=("$A_DATA" "$B_DATA" "$A_DATA" "$B_DATA")
-LIBS=("$(dirname "$A_SO")" "$(dirname "$B_SO")" "$(dirname "$A_SO")" "$(dirname "$B_SO")")
+LIBS=("$(dirname "$A_SO")" "$(dirname "$B_SO")" "$(dirname "$OXPINYIN_TKRZW_SO")" "$(dirname "$OXPINYIN_KC_SO")")
 
 echo "=== Same-data matrix configuration ==="
 for i in 0 1 2 3; do
@@ -138,15 +143,15 @@ done
 run_one() {
     local label=$1 so=$2 data=$3 libdir=$4 mode=$5 outfile=$6
     if command -v taskset >/dev/null 2>&1; then
-        taskset -c "$CPU" env LD_LIBRARY_PATH="$libdir" \
+        taskset -c "$CPU" env LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE="$mode" PERF_CYCLES="$CYCLES" \
             PERF_REPEATS="$REPEATS" \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$data" >>"$outfile" 2>>"$OUT/$label-$mode.err"
+            "${TKRZW_EXEC[@]}" auto "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$data" >>"$outfile" 2>>"$OUT/$label-$mode.err"
     else
-        env LD_LIBRARY_PATH="$libdir" \
+        env LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE="$mode" PERF_CYCLES="$CYCLES" \
             PERF_REPEATS="$REPEATS" \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$data" >>"$outfile" 2>>"$OUT/$label-$mode.err"
+            "${TKRZW_EXEC[@]}" auto "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$data" >>"$outfile" 2>>"$OUT/$label-$mode.err"
     fi
 }
 

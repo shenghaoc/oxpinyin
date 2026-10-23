@@ -275,15 +275,15 @@ run_case() {
     capi_log="$(mktemp)"
     oracle_log="$(mktemp)"
 
-    if ! ./option-sweep "$CAPI_SO" "$CAPI_DATA" "$name" "$(printf '%x' "$options")" \
-        > "$capi_log" 2> /dev/null; then
+    if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" subject "$CAPI_SO" ./option-sweep "$CAPI_SO" "$CAPI_DATA" "$name" "$(printf '%x' "$options")" \
+        > "$capi_log"; then
         echo "FAIL: option-sweep crashed against oxpinyin-capi ($name)"
         cat "$capi_log"
         rm -f "$capi_log" "$oracle_log"
         exit 1
     fi
-    if ! ./option-sweep "$ORACLE_SO" "$ORACLE_DATA" "$name" "$(printf '%x' "$options")" \
-        > "$oracle_log" 2> /dev/null; then
+    if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" pin "$ORACLE_SO" ./option-sweep "$ORACLE_SO" "$ORACLE_DATA" "$name" "$(printf '%x' "$options")" \
+        > "$oracle_log"; then
         echo "FAIL: option-sweep crashed against the oracle ($name)"
         cat "$oracle_log"
         rm -f "$capi_log" "$oracle_log"
@@ -324,14 +324,14 @@ run_pairs() {
     local capi_log oracle_log
     capi_log="$(mktemp)"
     oracle_log="$(mktemp)"
-    if ! ./option-sweep "$CAPI_SO" "$CAPI_DATA" "$name" "$(printf '%x' "$options")" pairs \
-        > "$capi_log" 2> /dev/null; then
+    if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" subject "$CAPI_SO" ./option-sweep "$CAPI_SO" "$CAPI_DATA" "$name" "$(printf '%x' "$options")" pairs \
+        > "$capi_log"; then
         echo "FAIL: option-sweep pairs crashed against oxpinyin-capi ($name)"
         rm -f "$capi_log" "$oracle_log"
         exit 1
     fi
-    if ! ./option-sweep "$ORACLE_SO" "$ORACLE_DATA" "$name" "$(printf '%x' "$options")" pairs \
-        > "$oracle_log" 2> /dev/null; then
+    if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" pin "$ORACLE_SO" ./option-sweep "$ORACLE_SO" "$ORACLE_DATA" "$name" "$(printf '%x' "$options")" pairs \
+        > "$oracle_log"; then
         echo "FAIL: option-sweep pairs crashed against the oracle ($name)"
         rm -f "$capi_log" "$oracle_log"
         exit 1

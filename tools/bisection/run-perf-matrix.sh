@@ -11,6 +11,8 @@
 # Speed/RAM runs alternate all four cells in round-robin to control drift.
 #
 # Environment:
+#   OXPINYIN_TKRZW_LIBRARY exact verified runtime; see docs/runbooks/cloud.md
+#       for the read-only runtime mount and LD_LIBRARY_PATH in this image
 #   MATRIX_OUT   output directory (default /out)
 #   PERF_CPU     CPU to pin (default 0)
 #   PERF_RUNS    speed processes per cell (default 20)
@@ -20,6 +22,7 @@
 #   PERF_RAM_RUNS  RAM processes per cell (default 10)
 
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
 source "$SCRIPT_DIR/../packaging/function-order.sh"
@@ -67,6 +70,9 @@ function_order_measurement --library "C/pinyin=$C_SO" --library "D/pinyin=$D_SO"
     --reference-arm A --library "A/pinyin=$A_SO" \
     --reference-arm B --library "B/pinyin=$B_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 
+LD_LIBRARY_PATH="$(dirname "$A_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw pin "$A_SO"
+LD_LIBRARY_PATH="$(dirname "$C_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw subject "$C_SO"
+
 LABELS=("$A_LABEL" "$B_LABEL" "$C_LABEL" "$D_LABEL")
 SOS=("$A_SO" "$B_SO" "$C_SO" "$D_SO")
 DATAS=("$A_DATA" "$B_DATA" "$C_DATA" "$D_DATA")
@@ -91,16 +97,16 @@ run_one() {
     local label=$1 so=$2 data=$3 libdir=$4 mode=$5 outfile=$6
     if command -v taskset >/dev/null 2>&1; then
         taskset -c "$CPU" env \
-            LD_LIBRARY_PATH="$libdir" \
+            LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE="$mode" PERF_CYCLES="$CYCLES" \
             PERF_REPEATS="$REPEATS" \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
+            "${TKRZW_EXEC[@]}" auto "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
             >>"$outfile" 2>>"$OUT/$label-$mode.err"
     else
-        env LD_LIBRARY_PATH="$libdir" \
+        env LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE="$mode" PERF_CYCLES="$CYCLES" \
             PERF_REPEATS="$REPEATS" \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
+            "${TKRZW_EXEC[@]}" auto "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
             >>"$outfile" 2>>"$OUT/$label-$mode.err"
     fi
 }

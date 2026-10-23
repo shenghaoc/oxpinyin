@@ -278,6 +278,7 @@ printf 'PASS: kc and tkrzw survive a bdb-only run\n'
 	LD_LIBRARY_PATH= PKG_CONFIG_PATH=
 	export PINYIN_ORACLE_DBM=tkrzw
 	source "$OXPINYIN_ORACLE_ENV"
+	[[ $OXPINYIN_TKRZW_PREFIX == "$tkrzw_prefix" ]] || fail "missing trusted runtime prefix"
 	[[ $LD_LIBRARY_PATH == "$tkrzw_prefix/lib" && $PKG_CONFIG_PATH == "$tkrzw_prefix/lib/pkgconfig" && $PATH == "$tkrzw_prefix/bin:"* ]]
 ) || fail 'retained tkrzw lost its local runtime paths'
 printf 'PASS: retained tkrzw keeps its local runtime paths\n'
@@ -358,6 +359,7 @@ printf 'PASS: failed rename leaves the old file intact and cleans staging\n'
 	host_prefix=$work/host-tkrzw
 	for prefix in "$cache_a" "$cache_b" "$host_prefix"; do
 		mkdir -p "$prefix/bin" "$prefix/lib"
+		: >"$prefix/lib/libtkrzw.so.1"
 		if [[ $prefix == "$host_prefix" ]]; then
 			printf '#!/bin/sh\n[ "$LD_LIBRARY_PATH" = "$SYNTHETIC_HOST_LIB" ] || exit 2\nexit "${SYNTHETIC_HOST_STATUS:-1}"\n' >"$prefix/bin/tkrzw_dbm_util"
 		else
@@ -417,6 +419,39 @@ printf 'PASS: failed rename leaves the old file intact and cleans staging\n'
 	message=$(probe_host) || fail 'healthy real host library was rejected'
 	[[ $message == "host check: $host_prefix/bin/tkrzw_dbm_util resolves libtkrzw.so.1 to $host_prefix/lib/libtkrzw.so.1" ]] || fail "$message"
 	printf 'PASS: all sourced caches excluded while a healthy host still passes\n'
+
+	(
+		# A healthy host needs no cache build, but must publish one exact
+		# verified library identity rather than trusting a whole system prefix.
+		probe_host >/dev/null || fail 'healthy host probe failed'
+		tkrzw_local=0
+		[[ ! -e $tkrzw_prefix ]] || fail 'host-only fixture unexpectedly has a cache'
+		OXPINYIN_ORACLE_ENV=$work/host-only.env
+		write_oracle_env
+		[[ -z $(tkrzw_env_prefix "$OXPINYIN_ORACLE_ENV") ]] || fail 'host identity became a cache prefix'
+		unset OXPINYIN_TKRZW_LIBRARY OXPINYIN_TKRZW_PREFIX
+		source "$OXPINYIN_ORACLE_ENV"
+		[[ $OXPINYIN_TKRZW_LIBRARY == "$host_prefix/lib/libtkrzw.so.1" ]] || fail 'verified host identity lost'
+		[[ -z ${OXPINYIN_TKRZW_PREFIX:-} ]] || fail 'host identity became a trusted system prefix'
+		resolver_bin=$work/host-resolver-bin
+		mkdir -p "$resolver_bin" "$host_prefix/lib/other"
+		: >"$host_prefix/lib/other/libtkrzw.so.1"
+		cat >"$resolver_bin/ldd" <<'RESOLVER'
+#!/bin/sh
+printf 'libtkrzw.so.1 => %s (0x1234)\n' "$SYNTHETIC_RESOLVED_LIBRARY"
+RESOLVER
+		chmod +x "$resolver_bin/ldd"
+		export PATH="$resolver_bin:$PATH" SYNTHETIC_RESOLVED_LIBRARY="$host_prefix/lib/libtkrzw.so.1"
+		runtime=$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh
+		bash "$runtime" bdb host-env-test subject "$host_prefix/bin/tkrzw_dbm_util" || fail 'verified host library refused'
+		printf 'PASS: healthy host without a cache exports an accepted exact runtime identity\n'
+		SYNTHETIC_RESOLVED_LIBRARY=$host_prefix/lib/other/libtkrzw.so.1
+		if message=$(bash "$runtime" bdb host-env-test subject "$host_prefix/bin/tkrzw_dbm_util" 2>&1); then
+			fail 'another library under the same system prefix was accepted'
+		fi
+		[[ $message == *"$SYNTHETIC_RESOLVED_LIBRARY"* ]] || fail "wrong host refusal diagnostic: $message"
+		printf 'PASS: host trust rejects another library under the same system prefix\n'
+	)
 
 	# Even a host executable can resolve a cached library through its RPATH.
 	SYNTHETIC_HOST_SO=$cache_a/lib/libtkrzw.so.1

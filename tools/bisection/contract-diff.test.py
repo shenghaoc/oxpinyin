@@ -26,7 +26,17 @@ def worker_process(stdout=b'{}\n', stderr=b''):
     return MagicMock(returncode=0, communicate=MagicMock(return_value=(stdout, stderr)))
 
 
-class FatalLogTests(unittest.TestCase):
+class DriverFixtureCase(unittest.TestCase):
+    # These worker/verdict fixtures deliberately use synthetic, non-ELF paths.
+    # Loader enforcement has its own real-ELF fixtures in tkrzw/runtime.test.py.
+    def setUp(self):
+        super().setUp()
+        guard = patch.object(driver, 'check_tkrzw')
+        self.runtime_guard = guard.start()
+        self.addCleanup(guard.stop)
+
+
+class FatalLogTests(DriverFixtureCase):
     def setUp(self):
         self.spec = contract['CASES']['save-fatal-valid-to-invalid']
         self.pin = {
@@ -75,7 +85,7 @@ class FatalLogTests(unittest.TestCase):
         self.assertFalse(self.matches())
 
 
-class DiagnosticPathTests(unittest.TestCase):
+class DiagnosticPathTests(DriverFixtureCase):
     def observations(self, second_message='failed'):
         values = []
         with tempfile.TemporaryDirectory(
@@ -126,7 +136,7 @@ def observation(exit=0, result=None, stderr='', userfiles=None):
                 userfiles=userfiles if userfiles is not None else {})
 
 
-class VerdictTests(unittest.TestCase):
+class VerdictTests(DriverFixtureCase):
     """verdict_for: a difference needs two valid observations; a registered
     termination keeps the matcher's own semantics."""
 
@@ -208,7 +218,7 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(self.decide(spec, pin, survivor, False), ('DIFFER', False, False))
 
 
-class DriverInvalidTests(unittest.TestCase):
+class DriverInvalidTests(DriverFixtureCase):
     """main(): two failed workers under --expect-parent exit 1 with INVALID."""
 
     def invoke(self, parent, workers, plan=False, host=False):
@@ -264,7 +274,7 @@ class DriverInvalidTests(unittest.TestCase):
         self.assertEqual((status, rows[0]['verdict']), (1, 'INVALID'))
 
 
-class DirChunkTests(unittest.TestCase):
+class DirChunkTests(DriverFixtureCase):
     """`dir_chunk`: the directory a NULL row makes the pin read is held to
     the side of `directory_reads_as_a_chunk` this host is on (#1011)."""
 
@@ -378,7 +388,7 @@ class DirChunkTests(unittest.TestCase):
             self.assertEqual(driver.verdict_for(spec, self.aborted(), self.answered(), False)[0], 'MATCH')
 
 
-class StrjoinvOverReadTests(unittest.TestCase):
+class StrjoinvOverReadTests(DriverFixtureCase):
     """`strjoinv_over_read`: register row 1's unterminated join is held to
     the class (b) fault, or compared exactly where the pin completes."""
 
@@ -451,7 +461,7 @@ class StrjoinvOverReadTests(unittest.TestCase):
                                         observation(result={'r': "ni'hao"})))
 
 
-class WorkerEntryTests(unittest.TestCase):
+class WorkerEntryTests(DriverFixtureCase):
     """Workers start from contract-worker.py, which loads the same driver."""
 
     def test_run_worker_starts_the_cached_entry(self):
@@ -463,6 +473,8 @@ class WorkerEntryTests(unittest.TestCase):
         self.assertEqual(command[1:], [str(contract['WORKER']), 'pinyin', '/so', '/data', 'case'])
         self.assertEqual(Path(command[1]).name, 'contract-worker.py')
         self.assertTrue(Path(command[1]).is_file())
+        self.assertEqual(self.runtime_guard.call_args.args[3], '/so')
+        self.assertEqual(self.runtime_guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
 
     def test_cached_entry_loads_the_same_registry(self):
         import importlib.util
@@ -481,7 +493,7 @@ class WorkerEntryTests(unittest.TestCase):
         self.assertIn("_module.worker(*sys.argv[1:])", source)
 
 
-class SelectionTests(unittest.TestCase):
+class SelectionTests(DriverFixtureCase):
     """--cases, --issue and --family resolve to exact case IDs; nothing falls
     back to the default suite."""
 
@@ -549,7 +561,7 @@ class SelectionTests(unittest.TestCase):
         self.assertFalse(any(line.startswith('  ') and ' pinyin ' in line for line in default_lines))
 
 
-class TimingTests(unittest.TestCase):
+class TimingTests(DriverFixtureCase):
     """The worker's `T` line feeds TIMINGS and never the observation."""
 
     def test_timing_line_is_kept_apart_from_the_observation(self):
@@ -592,7 +604,7 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(summary['seconds']['subject_execute'], 3)
 
 
-class DeadlineTests(unittest.TestCase):
+class DeadlineTests(DriverFixtureCase):
     def test_shared_budget_and_fatal_environment(self):
         spec = dict(mode='pinyin', fatal=True)
         with patch.object(driver.time, 'monotonic', side_effect=[10, 11, 17]), \
@@ -646,7 +658,7 @@ class DeadlineTests(unittest.TestCase):
             self.assertLess(time.monotonic() - start, 3)
 
 
-class DriverVerdictTests(unittest.TestCase):
+class DriverVerdictTests(DriverFixtureCase):
     def invoke(self, parent=False, timeout=None, timeout_side=0):
         with tempfile.TemporaryDirectory() as scratch:
             prefix = Path(scratch)
@@ -706,7 +718,7 @@ class DriverVerdictTests(unittest.TestCase):
             self.assertEqual(caught.exception.code, 2)
 
 
-class CancellationTests(unittest.TestCase):
+class CancellationTests(DriverFixtureCase):
     """Cancel a real driver while its worker and a descendant ignore TERM."""
 
     def children(self, pid):
@@ -773,7 +785,7 @@ class CancellationTests(unittest.TestCase):
             code = ("import importlib.util, pathlib, sys; "
                     "spec = importlib.util.spec_from_file_location('contract', sys.argv[1]); "
                     "module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module); "
-                    + setup + "sys.argv.pop(0); "
+                    + setup + "module.check_tkrzw = lambda *a, **kw: None; sys.argv.pop(0); "
                     "sys.exit(module.main())")
             command = [sys.executable, '-c', code, str(Path(driver.__file__).resolve()),
                        str(worker), 'bdb', str(prefix), str(prefix / 'lib/libpinyin.so'),
@@ -885,7 +897,7 @@ class CancellationTests(unittest.TestCase):
                 self.assertEqual(process.wait.call_count, 2)
 
 
-class ProcessObservationTests(unittest.TestCase):
+class ProcessObservationTests(DriverFixtureCase):
     def test_children_file_observes_direct_children(self):
         with patch.object(Path, 'read_text', return_value='11 12\n'), \
                 patch.object(Path, 'iterdir', side_effect=AssertionError('unexpected stat scan')):
@@ -960,7 +972,7 @@ class ProcessObservationTests(unittest.TestCase):
         spawn.assert_not_called()
 
 
-class PerCallTests(unittest.TestCase):
+class PerCallTests(DriverFixtureCase):
     @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux measurement controller')
     def test_unordered_subject_is_refused_before_helper_or_measurements(self):
         from argparse import Namespace

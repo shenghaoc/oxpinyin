@@ -48,7 +48,7 @@ run() {
   local side=$1 so=$2 library=$3
   mkdir -p "$work/$side-$library"
   (cd "$work/$side-$library" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" \
-    "$work/driver" "$so" "$data" "$library") >"$work/$side-$library.log" 2>/dev/null
+    tkrzw_run --quiet-stderr "$ORACLE_DBM" "$side" "$so" "$work/driver" "$so" "$data" "$library") >"$work/$side-$library.log"
 }
 
 status=0

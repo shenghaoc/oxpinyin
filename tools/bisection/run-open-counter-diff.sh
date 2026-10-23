@@ -87,7 +87,7 @@ if [[ -z "$PREFIX" || ! -d "$PREFIX" ]]; then
     exit 77
 fi
 if ! grep -q '^pin_ref=libpinyin-2.11.92-074a2219c90feaf962d0d24f034514033ece5f99' \
-    "$PREFIX/oracle-pin.txt" 2>/dev/null; then
+    "$PREFIX/oracle-pin.txt"; then
     echo "missing input: $PREFIX is not a prefix of the 074a2219 pin (oracle-pin.txt)" >&2
     exit 3
 fi
@@ -256,12 +256,13 @@ snapshot() {
 # scratch session cannot land in, or be counted against, the other side.
 launch() {
     local lib=$1 so=$2 user=$3 n=$4 mode=$5 log=$6 err=$7 tmp=$8
-    local rc=0
+    local rc=0 side=subject
+    [[ $so != "${ORACLE_SO[$lib]}" ]] || side=pin
     # A subshell of its own reaps the driver, so the job-status line the
     # shell prints for a SIGKILLed child lands in the stderr log; the
     # launch's fate is read from the exit status alone.
     (
-        TMPDIR="$tmp" "$DRIVER" "$lib" "$so" "$DATA" "$user" "$n" "$mode" >> "$log"
+        TMPDIR="$tmp" tkrzw_run "$ORACLE_DBM" "$side" "$so" "$DRIVER" "$lib" "$so" "$DATA" "$user" "$n" "$mode" >> "$log"
         exit $?
     ) 2>> "$err" || rc=$?
     case "$mode:$rc" in
@@ -324,7 +325,7 @@ run_abort_case() {
     local user="$seed/user-oracle" tmp="$seed/tmp-oracle" rc=0
     mkdir -p "$user" "$tmp"; cp -a "$seed/template/." "$user/"
     : > "$oracle_log"; : > "$oracle_err"
-    ( TMPDIR="$tmp" "$DRIVER" "$lib" "${ORACLE_SO[$lib]}" "$DATA" "$user" 2 look \
+    ( TMPDIR="$tmp" tkrzw_run "$ORACLE_DBM" pin "${ORACLE_SO[$lib]}" "$DRIVER" "$lib" "${ORACLE_SO[$lib]}" "$DATA" "$user" 2 look \
         >> "$oracle_log"; exit $? ) 2>> "$oracle_err" || rc=$?
     if [[ $rc == 134 ]]; then
         echo "  oracle: exit 134 (SIGABRT)"
@@ -341,7 +342,7 @@ run_abort_case() {
     user="$seed/user-oxpinyin"; tmp="$seed/tmp-oxpinyin"; rc=0
     mkdir -p "$user" "$tmp"; cp -a "$seed/template/." "$user/"
     : > "$ox_log"; : > "$ox_err"
-    ( TMPDIR="$tmp" "$DRIVER" "$lib" "${OX_SO[$lib]}" "$DATA" "$user" 2 look \
+    ( TMPDIR="$tmp" tkrzw_run "$ORACLE_DBM" subject "${OX_SO[$lib]}" "$DRIVER" "$lib" "${OX_SO[$lib]}" "$DATA" "$user" 2 look \
         >> "$ox_log"; exit $? ) 2>> "$ox_err" || rc=$?
     if grep -q '^init: NULL$' "$ox_log"; then
         echo "  oxpinyin: init answered NULL"
