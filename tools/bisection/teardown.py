@@ -6,6 +6,7 @@ native executable are materialized, under the caller's temporary work directory.
 """
 import collections
 import contextlib
+import ctypes
 import hashlib
 import importlib.util
 import json
@@ -17,6 +18,7 @@ import re
 import runpy
 import selectors
 import shutil
+import stat
 import statistics
 import subprocess
 import sys
@@ -247,6 +249,139 @@ def filesystem(path):
     return max(matches)[1]
 
 
+# glibc and its dynamic loader remain warm. C++/GCC runtimes and all other
+# DT_NEEDED dependencies (including transitive ones) belong to the cold set.
+C_RUNTIME = re.compile(r'^(?:lib(?:c|m|dl|pthread|rt|resolv|util|anl)\.so\.[0-9]+|ld-linux[^/]*\.so\.[0-9]+)$')
+
+
+def library_dependencies(library):
+    """Resolve the ELF DT_NEEDED closure without loading it in the controller.
+
+    ldd uses the native loader's search rules, including LD_LIBRARY_PATH and
+    RPATH/RUNPATH. readelf restricts the result to actual DT_NEEDED edges.
+    All inspection finishes before eviction; no library bytes are read after it.
+    """
+    output = subprocess.check_output(['ldd', str(library)], text=True)
+    resolved = {}
+    for line in output.splitlines():
+        if '=> not found' in line:
+            raise ValueError('unresolved cold dependency: ' + line.strip())
+        match = re.match(r'\s*(\S+)\s+=>\s+(/.*?)\s+\(0x[0-9a-fA-F]+\)\s*$', line)
+        if match:
+            resolved[match[1]] = Path(match[2]).resolve(strict=True)
+    pending, visited, files = [Path(library).resolve(strict=True)], set(), []
+    while pending:
+        path = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        dynamic = subprocess.check_output(['readelf', '-d', str(path)], text=True)
+        for name in re.findall(r'\(NEEDED\).*?\[([^\]]+)\]', dynamic):
+            if C_RUNTIME.fullmatch(name):
+                continue
+            if name not in resolved:
+                raise ValueError(f'unresolved cold DT_NEEDED dependency: {path}: {name}')
+            dependency = resolved[name]
+            files.append(dependency)
+            pending.append(dependency)
+    return sorted(set(files))
+
+
+def cold_files(library, data, user, rows=None):
+    # Use the worker's private, restored user tree, never its source profile.
+    # Include every regular data/profile file, not a hard-coded stock filename
+    # list: table.conf and non-stock library layouts are valid inputs too.
+    # Dirty scenarios also read their rows file inside the lifecycle.
+    return [Path(library), *library_dependencies(library),
+            *(path for root in (data, user) for path in sorted(root.rglob('*')) if path.is_file()),
+            *([Path(rows)] if rows else [])]
+
+
+def resident_pages(fd):
+    """Linux mincore over an unfaulted PROT_NONE mapping; no file bytes read.
+
+    Linux can conservatively report all pages resident when the caller lacks
+    mincore permissions. That must refuse a sample, never count as eviction.
+    """
+    size = os.fstat(fd).st_size
+    if not size:
+        return dict(pages=0, resident=0)
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.mmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int,
+                          ctypes.c_int, ctypes.c_int, ctypes.c_long)
+    libc.mmap.restype = ctypes.c_void_p
+    libc.mincore.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p)
+    libc.mincore.restype = ctypes.c_int
+    libc.munmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t)
+    libc.munmap.restype = ctypes.c_int
+    # PROT_NONE=0, MAP_SHARED=1 on Linux. This mapping never pins/faults pages.
+    address = libc.mmap(None, size, 0, 1, fd, 0)
+    if address == ctypes.c_void_p(-1).value:
+        raise OSError(ctypes.get_errno(), 'cold mincore mmap failed')
+    try:
+        pages = (size + os.sysconf('SC_PAGE_SIZE') - 1) // os.sysconf('SC_PAGE_SIZE')
+        vector = (ctypes.c_ubyte * pages)()
+        if libc.mincore(address, size, vector):
+            raise OSError(ctypes.get_errno(), 'cold mincore failed')
+        return dict(pages=pages, resident=sum(value & 1 for value in vector))
+    finally:
+        if libc.munmap(address, size):
+            raise OSError(ctypes.get_errno(), 'cold mincore munmap failed')
+
+
+def evict_files(files):
+    """Evict only named ext4 files, then verify the complete set before launch.
+
+    Keep descriptors open so every check and fadvise refers to the same inode.
+    Flush only these files: newly copied private profiles can have dirty pages,
+    which DONTNEED would otherwise leave resident. No global cache operation.
+    """
+    if sys.platform != 'linux':
+        raise ValueError('cold teardown requires native Linux and ext4')
+    records, opened, seen = [], [], set()
+    with contextlib.ExitStack() as stack:
+        for original in files:
+            path = Path(original).resolve(strict=True)
+            fs = filesystem(path)
+            if fs != 'ext4':
+                raise ValueError(f'cold file is not on ext4: {path} ({fs})')
+            handle = stack.enter_context(path.open('rb'))
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode):
+                raise ValueError('cold input is not a regular file: ' + str(path))
+            inode = (info.st_dev, info.st_ino)
+            if inode in seen:
+                continue
+            seen.add(inode)
+            opened.append((path, handle))
+        # Validate the whole file set before evicting any of it.
+        for path, handle in opened:
+            fd = handle.fileno()
+            try:
+                before = resident_pages(fd)
+                os.fsync(fd)
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+                after = resident_pages(fd)
+            except OSError as error:
+                raise ValueError(f'cold eviction failed: {path}: {error}') from error
+            records.append(dict(path=str(path), filesystem='ext4', before=before, after=after))
+        # A later eviction/check must not conceal refaulting of an earlier file.
+        for record, (path, handle) in zip(records, opened):
+            try:
+                record['verified'] = resident_pages(handle.fileno())
+            except OSError as error:
+                raise ValueError(f'cold residency verification failed: {path}: {error}') from error
+        print_record('cache-eviction', cache='cold', files=records)
+        resident = [record for record in records if record['after']['resident'] or record['verified']['resident']]
+        if resident:
+            details = '; '.join(f"{row['path']} (after={row['after']['resident']}, "
+                                f"verified={row['verified']['resident']}/{row['verified']['pages']} pages)"
+                                for row in resident)
+            raise ValueError('cold sample refused: file stays resident: ' + details +
+                             '; another process may map it, or mincore access may be restricted')
+    return records
+
+
 def select_rows(exported, balanced=False):
     seen, selected, counts = set(), [], [0, 0, 0, 0]
     quotas = (3000, 3000, 3000, 1000)
@@ -285,12 +420,16 @@ def witness_inputs(rows):
 
 
 class Campaign:
-    def __init__(self, worker, data, work, cpu, driver):
+    def __init__(self, worker, data, work, cpu, driver, cache='warm'):
         self.worker, self.data, self.work, self.cpu, self.driver = worker, data.resolve(), work, cpu, driver
         self.serial = 0
+        self.cache = cache
 
     def run(self, facade, library, profile, *, mode='time', save=False, scenario='first-candidate',
             rows=None, instances=1, cycles=1, inputs=None, reopen=False, profiler=None):
+        cold = self.cache == 'cold' and mode in ('time', 'memory')
+        if cold and (cycles != 1 or profiler):
+            raise ValueError('cold samples require one native lifecycle without a profiler')
         self.serial += 1
         scratch = self.work / ('sample-%06d' % self.serial)
         scratch.mkdir()
@@ -324,6 +463,9 @@ class Campaign:
         errors, documents, boundaries = bytearray(), [], []
         self.driver.check_cancelled()
         try:
+            if cold:
+                evict_files(cold_files(library, self.data, user, rows))
+            self.driver.check_cancelled()
             with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                   env=env, start_new_session=True) as process:
                 def drain():
@@ -517,6 +659,12 @@ def populate_user(campaign, pin, user, rows):
 def run(args, driver, parser):
     if args.per_call or args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties:
         parser.error('--teardown is a separate workload; contract/profiler modes cannot be combined')
+    cache = getattr(args, 'teardown_cache', 'warm')
+    if cache == 'cold':
+        if sys.platform != 'linux':
+            parser.error('--teardown-cache cold requires native Linux and ext4')
+        if args.teardown_stage not in ('verify', 'pilot', 'confirm'):
+            parser.error('--teardown-cache cold supports only verify, pilot and confirm stages')
     # contract-diff checks the runtime before dispatching this workload.
     # The provision stage only drives the cell's own pin through the worker, so
     # every cell can write its startup profiles (#1076). The later stages
@@ -568,8 +716,8 @@ def run(args, driver, parser):
                                       for side, paths in subjects.items()}, references=('pin',))
     worker, worker_identity = build_worker(work)
     data = args.prefix / 'lib/libpinyin/data'
-    campaign = Campaign(worker, data, work, cpu, driver)
-    print_record('start', stage=args.teardown_stage, cpu=cpu, filesystem=fs, libraries=provenance,
+    campaign = Campaign(worker, data, work, cpu, driver, cache=cache)
+    print_record('start', stage=args.teardown_stage, cache=cache, cpu=cpu, filesystem=fs, libraries=provenance,
                  worker=worker_identity, model_identity=identity(file_set(data)),
                  model_filesystem=filesystem(data), control_noise_rule=list(CONTROL_INTERVAL))
     profiles = provision(campaign, subjects['pin']['pinyin'], work / 'profiles')

@@ -130,6 +130,30 @@ empty row remains compared. Raw starting/final profile identities are recorded
 separately. Dirty imports use romanized readings for pinyin and direct bopomofo
 for zhuyin, as their pinned importer contracts require.
 
+`--teardown-cache warm` is the default. On native Linux,
+`--teardown-cache cold` uses the same `pilot`/`confirm` rounds and rotating
+subject/control/pin order, including the discarded initial rounds. Before
+each native timing or memory sample, the controller enumerates the facade's
+`DT_NEEDED` closure with `readelf` and `ldd`, then evicts the facade, all
+non-C-runtime dependencies, every system data file and the private restored
+user files. glibc and its loader stay warm; libstdc++, libgcc_s, libdb, GLib
+and their non-C-runtime dependencies are included when needed. Each file must
+be on ext4. Only these files are flushed and advised with
+`posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED)`; no root or kernel changes are
+used. The source profile is never evicted.
+
+Each `cache-eviction` record names every file and its filesystem, with
+`mincore` total/resident page counts before and after advice and a final
+whole-set check immediately before launching the worker. Any resident page
+refuses the sample and names the file, including libraries mapped by another
+process. Linux may also conservatively report residency when mincore access
+is restricted; that refuses the sample too. Do not treat a refusal as cold
+measurement evidence. Equivalence/provisioning observations stay warm;
+`verify` performs no cold samples. Cold mode refuses profiling and repeated
+in-process lifecycles. Run cold campaigns only when other measurement lanes
+are idle and the heavy slot is available: dependency and system-data cache
+pages can be shared across lanes.
+
 Save, each instance free, all frees, fini and dlclose have separate wall/CPU
 times. `teardown_total_ns` sums the free-call and fini durations. The full
 lifecycle guardrail sums native load, init-through-fini and dlclose intervals;
