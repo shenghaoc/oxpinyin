@@ -383,13 +383,14 @@ candidate reach lay in eight (libzhuyin) or nine (libpinyin) scattered
 windows: 512 or 576 KiB of resident text (#1032).
 
 Any cargo-c at or above the minimum that `just doctor` reports does the build,
-because it only drives rustc. On 2026-10-23 UTC one revision (`01549f2f`),
-built as below with cargo-c 0.10.24, 0.10.25 and 0.10.26 (Rust 1.97.1, GNU ld
-2.47, linux/amd64), gave byte-identical `libpinyin.a`, `libzhuyin.a` and
-relinked `libpinyin.so.15.0.0` and `libzhuyin.so.15.0.0`; a second 0.10.24
-build matched them too. Their `nm --demangle=rust` symbol sets are therefore
-equal, and the generator, which reads only those objects and the workload,
-has the same input whichever cargo-c built them.
+because it only drives rustc. On 2026-10-23 UTC, built as below (Rust 1.97.1,
+GNU ld 2.47, linux/amd64), cargo-c 0.10.24, 0.10.25 and 0.10.26 gave
+byte-identical `libpinyin.a`, `libzhuyin.a` and relinked `libpinyin.so.15.0.0`
+and `libzhuyin.so.15.0.0` at `01549f2f`, and a second 0.10.24 build matched
+them too, so their `nm --demangle=rust` symbol sets are equal. On the tree of
+`99c5af68` the policies regenerated as below from the 0.10.24 outputs and from
+the 0.10.25 outputs were identical to each other and to the checked-in
+`libpinyin.order` and `libzhuyin.order`.
 
 Build both libraries with ordering explicitly disabled, and build the worker:
 
