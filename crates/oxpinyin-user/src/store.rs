@@ -2042,6 +2042,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         *self.count_cache() = None;
     }
 
+    #[cfg(test)]
+    fn check_count_followup_for_test(&self) -> Result<(), UserStoreError> {
+        if self.inner.fail_count_followup.swap(false, Ordering::SeqCst) {
+            return Err(StoreError::Backend("injected post-commit failure".into()).into());
+        }
+        Ok(())
+    }
+
     /// Runs `read` against the count cache for the current write
     /// generation, discarding a cache built against an older one first.
     ///
@@ -2265,6 +2273,8 @@ impl<S: WriteStore> GenericUserStore<S> {
             phrase_table_generation: AtomicU64::new(0),
             #[cfg(test)]
             fail_replace: AtomicBool::new(false),
+            #[cfg(test)]
+            fail_count_followup: AtomicBool::new(false),
             has_user_data: AtomicBool::new(has_user_data),
             facade_offset: std::sync::atomic::AtomicU32::new(0),
             has_library_offsets: AtomicBool::new(false),
@@ -2371,6 +2381,8 @@ impl<S: WriteStore> GenericUserStore<S> {
         prev: Token,
         gram: &[u8],
     ) -> Result<(), UserStoreError> {
+        #[cfg(test)]
+        self.check_count_followup_for_test()?;
         if let Some(container) = self.container() {
             container.store(&prev.to_le_bytes(), gram)?;
             return Ok(());
@@ -2885,13 +2897,18 @@ impl<S: WriteStore> GenericUserStore<S> {
         // `m_user_bigram->store(last_token, user)` (`phonetic_lookup.h:904`,
         // `pinyin.cpp:2638`): one store of the predecessor's gram, skipped
         // by training's overflow guard.
-        if accepted
+        let stored = if accepted
             && session
             && let Some(gram) = &gram
         {
-            self.store_gram(&db, last, gram)?;
-        }
+            self.store_gram(&db, last, gram)
+        } else {
+            Ok(())
+        };
+        // The count transaction already committed. A failed native bigram
+        // write must not leave a memo of the preceding counts alive.
         self.mark_committed_write(db, true);
+        stored?;
         if !accepted {
             return Err(UserStoreError::UnigramTotalOverflow);
         }
@@ -3716,6 +3733,8 @@ impl<S: WriteStore> GenericUserStore<S> {
     /// ([`mask_grams`]); a plain store masks its [`BIGRAM_GRAM`] rows inside
     /// its own write transaction instead. Answers whether a gram remains.
     fn mask_container(&self, mask: Token, value: Token) -> Result<bool, UserStoreError> {
+        #[cfg(test)]
+        self.check_count_followup_for_test()?;
         let Some(container) = self.container() else {
             return Ok(false);
         };
@@ -4176,8 +4195,14 @@ impl<S: WriteStore> GenericUserStore<S> {
         }
         self.clear_masked_system_items(mask, value);
         self.clear_masked_kept_index(mask, value);
-        let grams_left = self.mask_container(mask, value)?;
-        self.mark_committed_phrase_write(db, has_user_data || grams_left);
+        let grams_left = self.mask_container(mask, value);
+        // Rows were removed before the container walk. On a walk failure,
+        // leave the read gate open conservatively and retire the old memo.
+        self.mark_committed_phrase_write(
+            db,
+            has_user_data || grams_left.as_ref().copied().unwrap_or(true),
+        );
+        grams_left?;
         Ok(())
     }
 
@@ -4291,8 +4316,12 @@ impl<S: WriteStore> GenericUserStore<S> {
                         .remove(&token);
                 }
                 let grams_left =
-                    self.mask_container(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token)?;
-                self.mark_committed_phrase_write(db, has_user_data || grams_left);
+                    self.mask_container(PHRASE_INDEX_LIBRARY_MASK | PHRASE_MASK, token);
+                self.mark_committed_phrase_write(
+                    db,
+                    has_user_data || grams_left.as_ref().copied().unwrap_or(true),
+                );
+                grams_left?;
                 Ok(true)
             },
         )
@@ -4369,20 +4398,15 @@ impl CountCache {
         }
     }
 
-    /// `UNIGRAM[token]`, memoised. A present row is memoised whatever its
-    /// value, including an explicit `0`; an absent row reads as `0`
-    /// without entering the memo.
+    /// `UNIGRAM[token]`, memoised. An absent row is the same zero as an
+    /// explicitly stored `0`; both use the bounded, generation-stamped memo.
     fn unigram(&mut self, db: &impl ReadStore, token: Token) -> Result<u64, UserStoreError> {
         if let Some(&hit) = self.unigram.get(&token) {
             return Ok(hit);
         }
-        match get_u64(db, UNIGRAM, &codec::encode_token(token))? {
-            Some(value) => {
-                memo_insert(&mut self.unigram, token, value);
-                Ok(value)
-            }
-            None => Ok(0),
-        }
+        let value = get_u64_or(db, UNIGRAM, &codec::encode_token(token), 0)?;
+        memo_insert(&mut self.unigram, token, value);
+        Ok(value)
     }
 
     /// `UNIGRAM_TOTAL`'s single row, memoised. Absent reads as `0`.
@@ -4767,7 +4791,9 @@ impl<S: WriteStore> GenericUserStore<S> {
                 false,
             )
         };
-        let (change, current) = {
+        let merged = (|| -> Result<_, UserStoreError> {
+            #[cfg(test)]
+            self.check_count_followup_for_test()?;
             let item = system_items
                 .get(&token)
                 .or(pending_item.as_ref())
@@ -4779,19 +4805,31 @@ impl<S: WriteStore> GenericUserStore<S> {
                 SystemMerge::Append => reading.delta,
                 SystemMerge::Wrap => 0,
             };
-            (change, current)
+            let wrapped = matches!(change, SystemMerge::Wrap);
+            let untouched = !was_live && existing.is_some();
+            sync_system_rows(
+                &*db,
+                original,
+                token,
+                current,
+                &reading,
+                (untouched, wrapped),
+                (generation, &mut import_readings),
+            )?;
+            Ok(change)
+        })();
+        let change = match merged {
+            Ok(change) => change,
+            Err(error) => {
+                drop(system_items);
+                // A new token's rows, including its unigram, committed in
+                // append_system_token before this fallible follow-up.
+                if existing.is_none() {
+                    self.mark_committed_phrase_write(db, true);
+                }
+                return Err(error);
+            }
         };
-        let wrapped = matches!(change, SystemMerge::Wrap);
-        let untouched = !was_live && existing.is_some();
-        sync_system_rows(
-            &*db,
-            original,
-            token,
-            current,
-            &reading,
-            (untouched, wrapped),
-            (generation, &mut import_readings),
-        )?;
         // No fallible work remains: publish only after the rows committed.
         if let Some(mut item) = pending_item {
             apply_system_reading(&mut item, &reading, change);
@@ -6402,7 +6440,21 @@ mod tests {
 
     /// An in-memory [`ReadStore`] over 8-byte-encoded counts, so memo
     /// policy is testable without a backend file.
-    struct MemoDb(BTreeMap<Vec<u8>, u64>);
+    struct MemoDb {
+        rows: BTreeMap<Vec<u8>, u64>,
+        reads: std::cell::Cell<usize>,
+        fail: std::cell::Cell<bool>,
+    }
+
+    impl MemoDb {
+        fn new(rows: BTreeMap<Vec<u8>, u64>) -> Self {
+            Self {
+                rows,
+                reads: std::cell::Cell::new(0),
+                fail: std::cell::Cell::new(false),
+            }
+        }
+    }
 
     impl ReadStore for MemoDb {
         fn open_read_only(_path: &Path) -> Result<Self, StoreError> {
@@ -6411,7 +6463,14 @@ mod tests {
 
         fn get(&self, table: &str, key: &[u8], value: &mut Vec<u8>) -> Result<bool, StoreError> {
             value.clear();
-            let Some(count) = self.0.get(key).filter(|_| table == UNIGRAM) else {
+            if table != UNIGRAM {
+                return Ok(false);
+            }
+            self.reads.set(self.reads.get() + 1);
+            if self.fail.get() {
+                return Err(StoreError::Backend("injected memo read failure".into()));
+            }
+            let Some(count) = self.rows.get(key) else {
                 return Ok(false);
             };
             value.extend_from_slice(&codec::encode_u64(*count));
@@ -6432,27 +6491,25 @@ mod tests {
             if table != UNIGRAM {
                 return Ok(true);
             }
-            Ok(self.0.is_empty())
+            Ok(self.rows.is_empty())
         }
     }
 
     #[test]
-    fn absent_rows_read_zero_without_being_memoised() {
-        let db = MemoDb(BTreeMap::from([(codec::encode_token(1).to_vec(), 5_u64)]));
+    fn absent_unigram_rows_are_fetched_once_per_memo() {
+        let db = MemoDb::new(BTreeMap::from([(codec::encode_token(1).to_vec(), 5_u64)]));
         let mut cache = CountCache::new(0);
         assert_eq!(cache.unigram(&db, 2).unwrap(), 0);
         assert_eq!(cache.unigram(&db, 2).unwrap(), 0);
-        assert!(
-            !cache.unigram.contains_key(&2),
-            "a zero miss must not occupy memo space"
-        );
+        assert_eq!(cache.unigram.get(&2), Some(&0));
+        assert_eq!(db.reads.get(), 1, "the second miss must not read the store");
         assert_eq!(cache.unigram(&db, 1).unwrap(), 5);
         assert_eq!(cache.unigram.get(&1), Some(&5), "present rows stay cached");
     }
 
     #[test]
     fn explicitly_stored_zero_rows_are_memoised() {
-        let db = MemoDb(BTreeMap::from([(codec::encode_token(3).to_vec(), 0_u64)]));
+        let db = MemoDb::new(BTreeMap::from([(codec::encode_token(3).to_vec(), 0_u64)]));
         let mut cache = CountCache::new(0);
         assert_eq!(cache.unigram(&db, 3).unwrap(), 0);
         assert_eq!(
@@ -6464,7 +6521,7 @@ mod tests {
 
     #[test]
     fn memo_maps_reset_at_the_capacity_bound() {
-        let db = MemoDb(
+        let db = MemoDb::new(
             (1..=u64::try_from(COUNT_MEMO_MAX_ENTRIES + 10).unwrap())
                 .map(|t| (codec::encode_token(u32::try_from(t).unwrap()).to_vec(), t))
                 .collect(),
@@ -6484,4 +6541,37 @@ mod tests {
         // Post-reset the map still answers correctly from the database.
         assert_eq!(cache.unigram(&db, 1).unwrap(), 1);
     }
+
+    #[test]
+    fn absent_unigrams_share_the_existing_capacity_bound() {
+        let db = MemoDb::new(BTreeMap::new());
+        let mut cache = CountCache::new(0);
+        for token in 1..=COUNT_MEMO_MAX_ENTRIES * 2 + 1 {
+            assert_eq!(
+                cache.unigram(&db, u32::try_from(token).unwrap()).unwrap(),
+                0
+            );
+            assert!(cache.unigram.len() <= COUNT_MEMO_MAX_ENTRIES);
+        }
+        assert_eq!(cache.unigram.len(), 1, "each full memo was evicted");
+        assert_eq!(db.reads.get(), COUNT_MEMO_MAX_ENTRIES * 2 + 1);
+        assert_eq!(cache.unigram(&db, 1).unwrap(), 0);
+        assert_eq!(cache.unigram.get(&1), Some(&0));
+    }
+
+    #[test]
+    fn a_failed_unigram_read_is_not_memoised_as_absent() {
+        let db = MemoDb::new(BTreeMap::new());
+        let mut cache = CountCache::new(0);
+        db.fail.set(true);
+        assert!(cache.unigram(&db, 1).is_err());
+        assert!(!cache.unigram.contains_key(&1));
+        db.fail.set(false);
+        assert_eq!(cache.unigram(&db, 1).unwrap(), 0);
+        assert_eq!(cache.unigram.get(&1), Some(&0));
+        assert_eq!(db.reads.get(), 2);
+    }
 }
+
+#[cfg(test)]
+mod count_memo_tests;

@@ -520,6 +520,8 @@ impl GenericUserStore<DefaultStore> {
             phrase_table_generation: std::sync::atomic::AtomicU64::new(0),
             #[cfg(test)]
             fail_replace: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            fail_count_followup: std::sync::atomic::AtomicBool::new(false),
             has_user_data: std::sync::atomic::AtomicBool::new(has_user_data),
             facade_offset: std::sync::atomic::AtomicU32::new(
                 library_offsets

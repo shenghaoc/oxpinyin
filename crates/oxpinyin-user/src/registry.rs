@@ -35,9 +35,10 @@ use crate::store::Token;
 /// already runs on — keyed by generation, rebuilt when it moves, no
 /// MVCC anywhere. The difference is that the count tables are the large
 /// ones, so rows are memoised on demand rather than slurped in bulk: a
-/// write costs no rebuild scan, and the cache never grows past the keys
-/// decode actually asked about between two writes. An absent row
-/// memoises as `0`, exactly what the store read it replaces returned.
+/// write costs no rebuild scan. Each map holds at most 8,192 entries;
+/// reaching that cap evicts its old entries before the next insertion.
+/// An absent unigram row memoises as `0`, exactly what the store read it
+/// replaces returned, under the same cap as present rows.
 #[derive(Debug)]
 pub struct CountCache {
     /// The `write_generation` this cache was built for; a mismatch
@@ -101,6 +102,10 @@ pub struct StoreInner<S: WriteStore> {
     /// has seeded, as a refused store write would.
     #[cfg(test)]
     pub(crate) fail_replace: AtomicBool,
+    /// Test only: fail the next bigram write/mask or system-import follow-up
+    /// after the count-table transaction can have committed.
+    #[cfg(test)]
+    pub(crate) fail_count_followup: AtomicBool,
     /// First gate on the decode read path: `false` answers `count_delta` and
     /// `unigram_delta` with zero from this one atomic, taking no mutex and
     /// opening no store transaction. Recomputed at `open` and maintained only
