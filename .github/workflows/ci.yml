@@ -259,6 +259,7 @@ jobs:
             [[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
             uv_target=x86_64-unknown-linux-gnu
             # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+            # Exact on purpose (#1074): a checksum is only known for a known version.
             uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
             # Keep the archive in memory. Write only its verified executables.
             uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64)
@@ -276,18 +277,18 @@ jobs:
           hash -r
           printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
           uv --version | grep -q '^uv 0\.13\.1 '
-          uv python install cpython@3.15.0
-          uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PYTHON'
+          uv python install cpython@3.15
+          uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
           import subprocess
           import sys
           import sysconfig
           assert sys.implementation.name == "cpython"
-          assert sys.version_info[:3] == (3, 15, 0)
+          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
           assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
           assert sys._is_gil_enabled()
           managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python", "cpython@3.15.0+gil"],
+              ["uv", "python", "find", "--managed-python", "cpython@3.15+gil"],
               text=True).strip()
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
@@ -322,7 +323,7 @@ jobs:
               continue
             fi
             printf 'tools harness: %s\n' "$test_file"
-            if ! uv run --no-project --managed-python --python cpython@3.15.0+gil \
+            if ! uv run --no-project --managed-python --python cpython@3.15+gil \
                 python -X lazy_imports=normal "$test_file"; then
               status=1
             fi
@@ -342,6 +343,7 @@ jobs:
         run: sha256sum -c fixtures/w3/fixtures.sha256
       - name: Install pinned cargo-nextest
         run: |
+          # Exact on purpose (#1074): a checksum is only known for a known version.
           ver=0.9.143
           sum=6d891c18105ec2d33f6e441a4f92b7ccab47ba263e22055c8bb66884243f3389
           curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-x86_64-unknown-linux-musl.tar.gz"
@@ -413,11 +415,13 @@ jobs:
             arm64)
               uv_target=aarch64-apple-darwin
               # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+              # Exact on purpose (#1074): a checksum is only known for a known version.
               uv_sha256=cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2
               ;;
             x86_64)
               uv_target=x86_64-apple-darwin
               # Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+              # Exact on purpose (#1074): a checksum is only known for a known version.
               uv_sha256=bb7b805bdcf3d0bc8c74ceb94569e6b3e8aa35bd492acdbb9d46bf46d9d4ff6b
               ;;
             *)
@@ -440,18 +444,18 @@ jobs:
           hash -r
           printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
           uv --version | grep -q '^uv 0\.13\.1 '
-          uv python install cpython@3.15.0
-          uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PYTHON'
+          uv python install cpython@3.15
+          uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - <<'PYTHON'
           from pathlib import Path
           import subprocess
           import sys
           import sysconfig
           assert sys.implementation.name == "cpython"
-          assert sys.version_info[:3] == (3, 15, 0)
+          assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
           assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
           assert sys._is_gil_enabled()
           managed = subprocess.check_output(
-              ["uv", "python", "find", "--managed-python", "cpython@3.15.0+gil"],
+              ["uv", "python", "find", "--managed-python", "cpython@3.15+gil"],
               text=True).strip()
           assert Path(sys.executable).resolve() == Path(managed).resolve()
           PYTHON
@@ -486,7 +490,7 @@ jobs:
               continue
             fi
             printf 'tools harness: %s\n' "$test_file"
-            if ! uv run --no-project --managed-python --python cpython@3.15.0+gil \
+            if ! uv run --no-project --managed-python --python cpython@3.15+gil \
                 python -X lazy_imports=normal "$test_file"; then
               status=1
             fi
@@ -513,6 +517,7 @@ jobs:
             || { echo "::error::Homebrew berkeley-db@5 is not the documented 5.3.x line: $(brew list --versions berkeley-db@5)"; exit 1; }
       - name: Install pinned cargo-nextest
         run: |
+          # Exact on purpose (#1074): a checksum is only known for a known version.
           ver=0.9.143
           sum=4830d430411148d17602a75cc880bfb4dc8dac153dea59a48a2ef4cc93577f07
           curl -sSfL -o cargo-nextest.tar.gz "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${ver}/cargo-nextest-${ver}-universal-apple-darwin.tar.gz"
@@ -570,6 +575,7 @@ jobs:
           rustup: 'true'
       - name: Install pinned cargo-deny
         run: |
+          # Exact on purpose (#1074): a checksum is only known for a known version.
           ver=0.20.2
           # Verify the release archive before executing anything from it:
           # pin the expected digest and fail the job on mismatch.

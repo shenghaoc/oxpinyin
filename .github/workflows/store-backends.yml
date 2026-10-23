@@ -449,6 +449,7 @@ jobs:
       # Date-pinned so a nightly regression cannot red the gate on its own;
       # bump the date deliberately, in its own commit, when a newer nightly
       # is needed or the pinned one stops installing.
+      # Exact on purpose (#1074): a nightly is identified only by its date.
       RUSTUP_TOOLCHAIN: nightly-2026-09-07
     steps:
       - name: Bootstrap the bare runner essentials (apt)
@@ -567,6 +568,7 @@ jobs:
     env:
       # Beats rust-toolchain.toml's channel pin for this job only, same
       # date pin and rationale as the tkrzw lane above.
+      # Exact on purpose (#1074): a nightly is identified only by its date.
       RUSTUP_TOOLCHAIN: nightly-2026-09-07
 
     steps:
