@@ -435,6 +435,11 @@ def first_candidate_toggles(facade, exports):
     return toggles
 
 
+def startup_toggles(facade, exports):
+    """Each profile's init-to-M1 toggles, after the load constructors."""
+    return (f"{facade}_init", *first_candidate_toggles(facade, exports))
+
+
 def collect_startup(args, facade, library, work, environment):
     """Load constructors plus each profile's init-to-M1 path, from the worker."""
     functions = set()
@@ -449,8 +454,7 @@ def collect_startup(args, facade, library, work, environment):
         user = work / f"{facade}-{profile}"
         shutil.copytree(args.profiles_dir / profile / "user", user)
         try:
-            for toggle in (f"{facade}_init", *first_candidate_toggles(
-                    facade, environment["OXPINYIN_TEARDOWN_EXPORTS"])):
+            for toggle in startup_toggles(facade, environment["OXPINYIN_TEARDOWN_EXPORTS"]):
                 functions |= collect_toggle(args, facade, library, user, toggle, environment)
         finally:
             shutil.rmtree(user)

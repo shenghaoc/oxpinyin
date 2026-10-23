@@ -5,7 +5,8 @@ Run through just heavy. No observations or profiler dumps are saved. The only
 scratch files are private library/profile copies, deleted on exit and signals.
 The worker is tools/bisection/bisect.c in its teardown mode: native timing uses
 its time stop, memory uses its parent-observed checkpoints, and Callgrind uses
-toggles around the facade init function and the load constructors.
+toggles around the load constructors and the generator's startup toggles:
+the facade init function and the exports the worker calls from there to M1.
 """
 
 import argparse
@@ -142,6 +143,10 @@ def teardown_memory(command, library, env):
                     snapshots[point] = {
                         **text_memory(smaps, library.stat().st_ino),
                         "total_pss_kib": fields(Path(f"/proc/{child.pid}/smaps_rollup").read_text())["Pss"],
+                        # minflt is field 10 of proc_pid_stat(5); the fields
+                        # after comm start past its closing parenthesis.
+                        "minor_faults": int(Path(f"/proc/{child.pid}/stat").read_text()
+                                            .rsplit(")", 1)[1].split()[7]),
                         "allocator": row.get("allocator"),
                     }
                     child.stdin.write(b"\n")
@@ -162,6 +167,8 @@ def teardown_memory(command, library, env):
         "load_text_pages": load["text_pages"], "load_text_pss_kib": load["text_pss_kib"],
         "init_text_pages": init["text_pages"], "init_text_pss_kib": init["text_pss_kib"],
         "init_total_pss_kib": init["total_pss_kib"],
+        "load_minor_faults": load["minor_faults"],
+        "init_minor_faults": init["minor_faults"] - load["minor_faults"],
         "init_heap_bytes": (init["allocator"] or {}).get("uordblks"),
     }
 
@@ -185,7 +192,13 @@ def executed_profile(stderr, library, sizes):
     Every executed address must therefore match objdump; no guessed load bias.
     """
     text = stderr.decode("utf-8", errors="strict")
-    GEN["callgrind_functions"](io.StringIO(text), library)  # reconciles all exclusive Ir
+    try:
+        GEN["callgrind_functions"](io.StringIO(text), library)  # reconciles all exclusive Ir
+    except ValueError as error:
+        # As in the generator's collect_toggle: a CRT stub such as
+        # frame_dummy may run without touching an orderable library body.
+        if "no executed functions" not in str(error):
+            raise
     tables = {"ob": {}}
     current = ""
     positions = []
@@ -253,6 +266,20 @@ def meets_residency_target(pr_kib, pin_kib, control_spread_kib):
 def teardown_command(args, facade, library, user, mode):
     return [args.bisect, "--teardown", facade, str(library), str(args.system_dir),
             str(user), mode, "0", "1", "1", "first-candidate", "-"]
+
+
+def startup_toggles(library, facade, exports):
+    """The policy's startup set: load constructors, then the init-to-M1 toggles."""
+    return (*GEN["init_array_symbols"](library), *GEN["startup_toggles"](facade, exports))
+
+
+def time_sample(output):
+    """The worker's one cycle row; a closed row with dlclose time follows it."""
+    rows = [json.loads(line) for line in output.splitlines() if line.strip()]
+    samples = [row for row in rows if row.get("teardown") == "sample"]
+    if len(samples) != 1:
+        raise ValueError(f"expected one teardown sample row, got {len(samples)}")
+    return samples[0]
 
 
 def toggle_profile(args, facade, library, user, toggle, env, sizes):
@@ -331,7 +358,7 @@ def main():
                             try:
                                 prepare_cache(library, cold)
                                 output, _ = run(timing_child(facade, library, user), env)
-                                sample = json.loads(output)
+                                sample = time_sample(output)
                                 traces.add(hashlib.sha256(json.dumps(
                                     sample["observations"], sort_keys=True).encode()).hexdigest())
                                 timing = sample["times"]
@@ -373,22 +400,29 @@ def main():
                       "PR-pin gap KiB", med["pr"] - med["pin"],
                       "gain established", med["base"] - med["pr"] >= effective,
                       "pin envelope met", meets_residency_target(med["pr"], med["pin"], spread), flush=True)
-                # Deterministic counters use the init/load toggles and the
-                # existing steady toggle, outside native timing samples.
+                # Deterministic counters use the startup toggles the policy
+                # was generated from and the existing steady toggle, outside
+                # native timing samples.
                 for arm in ARMS:
                     # These sizes are for libraries[arm, facade]; fresh()
                     # copies exactly those bytes to each private lib.so.
                     sizes = instruction_sizes(libraries[arm, facade])
                     startup = defaultdict(list)
-                    for toggle in (*GEN["init_array_symbols"](libraries[arm, facade]), f"{facade}_init"):
+                    for toggle in startup_toggles(libraries[arm, facade], facade,
+                                                  env["OXPINYIN_TEARDOWN_EXPORTS"]):
                         work, library, user = fresh(arm, facade, profile)
                         try:
                             startup[toggle].append(toggle_profile(args, facade, library, user, toggle, env, sizes))
                         finally:
                             shutil.rmtree(work)
-                    combined = {"ir": sum(p["ir"] for values in startup.values() for p in values),
-                                "pages": set().union(*(p["pages"] for values in startup.values() for p in values)),
-                                "bytes": sum(p["bytes"] for values in startup.values() for p in values)}
+                    first_candidate = GEN["first_candidate_toggles"](facade, env["OXPINYIN_TEARDOWN_EXPORTS"])
+                    def total(toggles):
+                        profiles = [p for toggle in toggles for p in startup[toggle]]
+                        return {"ir": sum(p["ir"] for p in profiles),
+                                "pages": set().union(*(p["pages"] for p in profiles))}
+                    combined = total(startup)
+                    init = total(toggle for toggle in startup if toggle not in first_candidate)
+                    first = total(first_candidate)
                     work, library, user = fresh(arm, facade, profile)
                     try:
                         _, error = run([*GEN["callgrind_prefix"](args.bisect, args.cpu, "bisect_perf_steady_unit"),
@@ -413,8 +447,11 @@ def main():
                     load_pages = set().union(*(p["pages"] for toggle in constructors
                                                for p in startup.get(toggle, []))) if constructors else set()
                     print("profile", facade, profile, arm, "load executed pages", len(load_pages),
-                          "through init pages", len(combined["pages"]),
-                          "init Ir", combined["ir"], "steady pages", len(steady["pages"]),
+                          "through init pages", len(init["pages"]),
+                          "through M1 pages", len(combined["pages"]),
+                          "init Ir", init["ir"], "first-candidate Ir", first["ir"],
+                          "startup Ir", combined["ir"], "steady Ir", steady["ir"],
+                          "steady pages", len(steady["pages"]),
                           "peak heap B", int(peaks[0][0].replace(b",", b"")), flush=True)
         for facade in FACADES:
             measurements = defaultdict(list)
