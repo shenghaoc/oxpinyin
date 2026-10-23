@@ -46,7 +46,11 @@ Repository Python uses uv and its managed CPython 3.15 series with the GIL.
 cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov and, on Linux, GNU ld, gcov
 and Valgrind. Each line names the minimum and the version found. A newer tool
 passes, an older one fails, and a missing one comes with its install command.
-Install or upgrade a tool only when `just doctor` says it is missing or too old.
+Semantic versions compare as semver does: a pre-release of the minimum
+(`1.59.0-beta.1`) is older than it and build metadata (`+build`) does not
+count. GNU ld, gcov and Valgrind compare by number, and a development build of
+one counts as its number. Install or upgrade a tool only when `just doctor`
+says it is missing or too old.
 
 Until uv and the interpreter exist, `just doctor` cannot run. Install uv only
 when it is missing or older than 0.13.1 (`uv --version` shows the version):

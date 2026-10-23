@@ -4,7 +4,10 @@ Standard library only. Doctor reads capabilities; it does not provision,
 install or enter a container. It rejects interpreter-selection overrides and a
 free-threaded build, and it checks every tool against its minimum version: a
 newer tool passes, an older one fails with the minimum and the version found,
-and an absent one is reported with its installation step. Runbooks and
+and an absent one is reported with its installation step. Each tool's version
+is read in the format that tool prints and compared by that format's rules:
+semantic versioning for most (a pre-release of the minimum is older than it),
+the projects' own numbering for GNU ld, gcov and Valgrind. Runbooks and
 setup.sh point here instead of repeating version lists.
 """
 import os
@@ -14,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -33,11 +37,126 @@ OVERRIDES = (
 MANAGED_REQUEST = 'cpython@3.15+gil'
 PYTHON_MINIMUM = '3.15.0'
 PYTHON_BELOW = '3.16'
-UV_MINIMUM = (0, 13, 1)
+UV_MINIMUM = '0.13.1'
 
 
 class DoctorError(RuntimeError):
     pass
+
+
+class Version(NamedTuple):
+    """A version as one tool prints it: KEY orders it, TEXT is what a report shows."""
+    key: tuple
+    text: str
+
+
+class Format(NamedTuple):
+    """How one tool writes its version. PARSE reads the first line of its output and returns a
+    Version, or None when the line is not in this format; KEY turns a minimum into the same ordering."""
+    parse: Callable
+    key: Callable
+
+
+_SEMVER = re.compile(r'(\d+)\.(\d+)\.(\d+)'
+                     r'(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?'
+                     r'(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?')
+
+
+def semver_key(text):
+    """Order a semantic version as semver.org 2.0.0 does (rule 11); ValueError when TEXT is not one.
+
+    A pre-release is older than the release it precedes (1.59.0-beta.1 < 1.59.0), so it does not
+    satisfy a minimum of that release, and newer than every lower release (1.60.0-beta.1 > 1.59.0).
+    Pre-release identifiers compare field by field: numbers numerically and below names, names in
+    ASCII order, a longer list above its own prefix. Build metadata (+...) does not take part.
+    """
+    match = _SEMVER.fullmatch(text)
+    if match is None:
+        raise ValueError(f'not a semantic version: {text!r}')
+    core = tuple(int(part) for part in match.groups()[:3])
+    prerelease = match.group(4)
+    if prerelease is None:
+        return core, 1, ()
+    return core, 0, tuple((0, int(part), '') if part.isdigit() else (1, 0, part)
+                          for part in prerelease.split('.'))
+
+
+def _semver_format(program):
+    """The format of a tool whose first line reads '<program> <semantic version> ...'."""
+    line = re.compile(rf'{re.escape(program)} (\S+)')
+
+    def parse(text):
+        match = line.match(text)
+        if match is None:
+            return None
+        try:
+            return Version(semver_key(match.group(1)), match.group(1))
+        except ValueError:
+            return None
+
+    return Format(parse, semver_key)
+
+
+def _dotted_key(text):
+    """Order a dotted version by every numeric component: 2.43 == 2.43.0 < 2.43.0.1 < 2.43.1."""
+    parts = [int(part) for part in text.split('.')]
+    while parts and parts[-1] == 0:
+        parts.pop()
+    return tuple(parts)
+
+
+# GNU ld, gcov and Valgrind do not use semantic versioning. Each is read in its own format, compared by
+# number, and a development build counts as its number: it is never "older" for being one, and the
+# hyphen of a distribution's package release is never a pre-release.
+#
+# GNU ld: "GNU ld (GNU Binutils for Debian) 2.47", "GNU ld version 2.43.1-15.fc42". Releases are 2.43
+# and point releases such as 2.43.1; a distribution appends its package release after a hyphen
+# (2.43.1-15.fc42, dropped here) or a snapshot date after a dot (2.45.1.20251027, kept as a component).
+# Binutils numbers its development branch X.Y.50 once X.Y has branched, so a snapshot such as
+# 2.43.50.20240101 is newer than 2.43 and counts as 2.43.50; 2.42.50.<date> is the road to 2.43 and
+# does not reach it. function-order.sh still probes the linker's --help for --section-ordering-file.
+_GNU_LD = re.compile(r'GNU ld (?:\(.*?\)|version)\s+(\d+(?:\.\d+)+)')
+
+
+def _parse_gnu_ld(text):
+    match = _GNU_LD.match(text)
+    return None if match is None else Version(_dotted_key(match.group(1)), match.group(1))
+
+
+# gcov: "gcov (Debian 16.2.0-3) 16.2.0", "gcov (GCC) 15.2.1 20260101 (Red Hat 15.2.1-7)". The package
+# string sits in parentheses, then come GCC's own version, a date and a development phase. The version
+# is the one after the package string; a hyphen release inside the parentheses is the package's. GCC
+# marks trunk snapshots "(experimental)" (N.0.0 and N.0.1, before N.1.0) and release-branch snapshots
+# "(prerelease)" (N.M.1, after N.M.0). A snapshot counts as its number: the minimum is a major version
+# (14), so a snapshot of 14 counts as 14 and one of 15 as 15. gcov_measure.py checks the JSON
+# format_version when it runs, which decides for a snapshot that predates the format. The phase is
+# shown in the report.
+_GCOV = re.compile(r'gcov \(.*?\)\s+(\d+(?:\.\d+)+)(.*)')
+
+
+def _parse_gcov(text):
+    match = _GCOV.match(text)
+    if match is None:
+        return None
+    version, rest = match.groups()
+    phase = re.search(r'\((experimental|prerelease)\)', rest)
+    return Version(_dotted_key(version), f'{version} {phase.group(1)}' if phase else version)
+
+
+# Valgrind: "valgrind-3.27.1". A build from the git repository adds ".GIT" to the number of the release
+# it is leading up to ("valgrind-3.22.0.GIT" is a snapshot on the way to 3.22.0); a distribution may
+# append its package release after a hyphen (dropped here). A development build counts as its number:
+# the minimum is the oldest release measured with, not a feature, and a git build of it is a fair
+# stand-in. 3.21.0.GIT is still below 3.22.0, and 3.23.0.GIT is above it.
+_VALGRIND = re.compile(r'valgrind-(\d+(?:\.\d+)*)(?:\.(GIT|SVN))?(?![\w.])')
+
+
+def _parse_valgrind(text):
+    match = _VALGRIND.match(text)
+    if match is None:
+        return None
+    version, development = match.groups()
+    return Version(_dotted_key(version), f'{version}.{development}' if development else version)
 
 
 class Tool(NamedTuple):
@@ -45,41 +164,35 @@ class Tool(NamedTuple):
     name: str
     executable: str
     arguments: tuple
-    pattern: str        # applied to the first line of the version output
+    format: Format      # how this tool writes its version
     minimum: str
     install: str
     platform: str = ''  # sys.platform prefix this check is for; empty means every platform
     identity: str = ''  # when set, any other program under this name is reported as absent
 
 
+UV = _semver_format('uv')
+
 # One row per tool. A minimum is the oldest version the repository has run
 # or documents. Where the tool has its own configuration for it (the
 # justfile, .config/nextest.toml, uv.toml, setup.sh) doctor.test.py keeps the
 # two in step.
 TOOLS = (
-    Tool('just', 'just', ('--version',),
-         r'^just (\d+)\.(\d+)\.(\d+)', '1.59.0',
+    Tool('just', 'just', ('--version',), _semver_format('just'), '1.59.0',
          'brew install just, your distribution package, or cargo install just --locked'),
-    Tool('cargo-nextest', 'cargo-nextest', ('--version',),
-         r'^cargo-nextest (\d+)\.(\d+)\.(\d+)', '0.9.115',
+    Tool('cargo-nextest', 'cargo-nextest', ('--version',), _semver_format('cargo-nextest'), '0.9.115',
          'cargo install cargo-nextest --locked'),
-    Tool('cargo-c', 'cargo-cinstall', ('--version',),
-         r'^cargo-c (\d+)\.(\d+)\.(\d+)', '0.10.24',
+    Tool('cargo-c', 'cargo-cinstall', ('--version',), _semver_format('cargo-c'), '0.10.24',
          'cargo install cargo-c --locked, or your distribution package'),
-    Tool('cargo-fuzz', 'cargo-fuzz', ('--version',),
-         r'^cargo-fuzz (\d+)\.(\d+)\.(\d+)', '0.13.2',
+    Tool('cargo-fuzz', 'cargo-fuzz', ('--version',), _semver_format('cargo-fuzz'), '0.13.2',
          'cargo install cargo-fuzz --locked'),
-    Tool('cargo-llvm-cov', 'cargo-llvm-cov', ('llvm-cov', '--version'),
-         r'^cargo-llvm-cov (\d+)\.(\d+)\.(\d+)', '0.9.0',
-         'cargo install cargo-llvm-cov --locked'),
-    Tool('GNU ld', 'ld', ('--version',),
-         r'^GNU ld .*?(\d+)\.(\d+)(?:\.(\d+))?', '2.43',
+    Tool('cargo-llvm-cov', 'cargo-llvm-cov', ('llvm-cov', '--version'), _semver_format('cargo-llvm-cov'),
+         '0.9.0', 'cargo install cargo-llvm-cov --locked'),
+    Tool('GNU ld', 'ld', ('--version',), Format(_parse_gnu_ld, _dotted_key), '2.43',
          'apt-get install binutils', platform='linux', identity=r'^GNU ld\b'),
-    Tool('gcov', 'gcov', ('--version',),
-         r'^gcov \(.*?\) (\d+)\.(\d+)\.(\d+)', '14',
+    Tool('gcov', 'gcov', ('--version',), Format(_parse_gcov, _dotted_key), '14',
          'apt-get install gcc', platform='linux'),
-    Tool('valgrind', 'valgrind', ('--version',),
-         r'^valgrind-(\d+)\.(\d+)(?:\.(\d+))?', '3.22.0',
+    Tool('valgrind', 'valgrind', ('--version',), Format(_parse_valgrind, _dotted_key), '3.22.0',
          'apt-get install valgrind', platform='linux'),
 )
 
@@ -115,14 +228,14 @@ def uv_version(environ=None):
     environ = os.environ if environ is None else environ
     result = _run(['uv', '--version'], environ)
     if result is None or result.returncode != 0:
-        raise DoctorError('missing uv 0.13.1 or newer; install it from its documented host route')
+        raise DoctorError(f'missing uv {UV_MINIMUM} or newer; install it from its documented host route')
     text = result.stdout.strip()
-    version = re.match(r'^uv (\d+)\.(\d+)\.(\d+)(?:\s|$)', text)
+    version = UV.parse(text)
     if version is None:
         raise DoctorError(f'unparseable uv version output: {text or "empty"}; '
-                          'uv 0.13.1 or newer required')
-    if tuple(map(int, version.groups())) < UV_MINIMUM:
-        raise DoctorError(f'uv 0.13.1 or newer required; found {text}')
+                          f'uv {UV_MINIMUM} or newer required')
+    if version.key < UV.key(UV_MINIMUM):
+        raise DoctorError(f'uv {UV_MINIMUM} or newer required; found {text}')
     return text
 
 
@@ -189,13 +302,12 @@ def check_tool(tool, environ=None):
     if tool.identity and not re.search(tool.identity, text or ''):
         return (f'{tool.name}: not found, {tool.executable} is {text or "unidentified"} '
                 f'(requires {tool.minimum} or later; install: {tool.install})')
-    version = re.search(tool.pattern, text or '')
-    found = None if version is None else tuple(int(part) for part in version.groups() if part is not None)
-    if (result is None or result.returncode != 0 or found is None
-            or not _at_least(found, _numbers(tool.minimum))):
+    version = tool.format.parse(text or '')
+    if (result is None or result.returncode != 0 or version is None
+            or version.key < tool.format.key(tool.minimum)):
         raise DoctorError(f'{tool.name} {tool.minimum} or later required; '
                           f'found {text or "unreadable version"}')
-    return f'{tool.name}: {".".join(map(str, found))} (minimum {tool.minimum})'
+    return f'{tool.name}: {version.text} (minimum {tool.minimum})'
 
 
 def tool_lines(environ=None):
@@ -243,9 +355,9 @@ def collect(environ=None):
     status = 0
     try:
         info = identity(environ)
-        uv = re.match(r'^uv (\d+\.\d+\.\d+)', info['uv'])
+        uv = UV.parse(info['uv'])
         lines.extend([
-            f'uv: {uv.group(1) if uv else info["uv"]} (minimum {".".join(map(str, UV_MINIMUM))})',
+            f'uv: {uv.text if uv else info["uv"]} (minimum {UV_MINIMUM})',
             f'interpreter: {info["implementation"]} {info["version"]} '
             f'(minimum {PYTHON_MINIMUM}, below {PYTHON_BELOW})',
             f'managed: {"yes" if info["managed"] else "no"}',

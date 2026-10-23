@@ -146,17 +146,20 @@ STUB
 	unset SYNTHETIC_PYTHON_FAILURE
 	printf 'PASS: Python provisioning failure names writable paths and release hosts\n'
 
-	# uv at or above its minimum is used as it is; an older one is replaced.
-	for version in 0.13.1 0.14.2; do
+	# uv at or above its minimum is used as it is, by semantic versioning: build metadata does not count,
+	# a pre-release of a newer release is newer, and a pre-release of 0.13.1 itself is older than 0.13.1.
+	for version in 0.13.1 0.14.2 0.13.1+build.7 0.14.0-beta.1 0.13.2-rc.1+build.7; do
 		export SYNTHETIC_UV_VERSION=$version
 		run_setup --python-only
 		[[ $status == 0 && $message == *"using uv $version (synthetic)"* && $message != *'ACTION curl '* ]] || fail "uv $version: $message"
 	done
-	export SYNTHETIC_UV_VERSION=0.13.0
-	run_setup --python-only
-	[[ $status == 1 && $message == *'ACTION curl '* && $message == *'FAIL: uv download failed'* ]] || fail "$message"
+	for version in 0.13.0 0.13.1-beta.1 0.13.1-rc.1+build.7 0.13.1-0 0.12.9-rc.1; do
+		export SYNTHETIC_UV_VERSION=$version
+		run_setup --python-only
+		[[ $status == 1 && $message == *'ACTION curl '* && $message == *'FAIL: uv download failed'* ]] || fail "uv $version: $message"
+	done
 	unset SYNTHETIC_UV_VERSION
-	printf 'PASS: uv at or above 0.13.1 is kept and an older uv is replaced\n'
+	printf 'PASS: uv at or above 0.13.1 is kept; an older uv, or a pre-release of 0.13.1, is replaced\n'
 
 	run_setup --cells bdb
 	[[ $status == 1 && $message == *'ACTION curl '* && $message == *'downloads.sourceforge.net/libpinyin/models/model20.text.tar.gz'* && \
@@ -164,8 +167,9 @@ STUB
 		$message != *'ACTION podman '* ]] || fail "$message"
 	printf 'PASS: model20 access failure precedes container pulls and library builds\n'
 
-	# A Valgrind at or above its minimum is kept: setup goes on to the model fetch.
-	for version in 3.22.0 3.27.1; do
+	# A Valgrind at or above its minimum is kept: setup goes on to the model fetch. A git build
+	# (valgrind-3.22.0.GIT) counts as its number, as it does in tools/dev/doctor.py.
+	for version in 3.22.0 3.27.1 3.22.0.GIT; do
 		export SYNTHETIC_VALGRIND_VERSION=$version
 		run_setup --cells bdb
 		[[ $status == 1 && $message == *'FAIL: model20 is unavailable'* && $message != *'ACTION apt-get '* && \
