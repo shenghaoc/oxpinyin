@@ -1,7 +1,7 @@
 /* bindgen entry point for the Kyoto Cabinet backend.
  *
- * The system kclangc.h and nothing else. Kyoto Cabinet is C++ internally,
- * but this is its complete C API, so bindgen reads a C header and no cxx
- * bridge is involved. See build.rs for why the declarations are generated
- * rather than checked in. */
-#include <kclangc.h>
+ * The C entry points of the C++ shim (shim.h), which constructs the four
+ * classes libpinyin uses directly instead of through kclangc.h's PolyDB.
+ * See build.rs for why the declarations are generated rather than checked
+ * in. */
+#include "shim.h"
