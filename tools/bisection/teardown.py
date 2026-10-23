@@ -4,6 +4,7 @@ The controller never runs in the measured native child. Observations, smaps and
 profiler output remain in memory. Only private fixture inputs/manifests and the
 native executable are materialized, under the caller's temporary work directory.
 """
+import bisect
 import collections
 import contextlib
 import ctypes
@@ -42,6 +43,19 @@ RESIDENCY_FRACTION = 0.01
 LIBRARY_DIRECTORIES = dict(ox='subject', control='control', pin='pinlibs')
 TIMING_ROUNDS, TIMING_WARMUPS = 60, 3
 MEMORY_ROUNDS, MEMORY_WARMUPS = 30, 2
+# The worker's per-phase getrusage/clock fields (teardown.h, td_print_time).
+CLOCK_FIELDS = ('wall_ns', 'cpu_ns', 'user_ns', 'sys_ns', 'minflt', 'majflt', 'nvcsw', 'nivcsw')
+# init-attribute (#1090): diagnostic samples per probe as (rounds, warm-ups),
+# in the rotating order. None of them is a primary timing sample.
+INIT_PROBE_ROUNDS = {'count': (30, 1), 'sample': (30, 1), 'sample-coarse': (60, 1), 'faults': (10, 0),
+                     'trace': (6, 0)}
+INIT_IR_ROUNDS = 3
+# cpu-clock periods. 50 kHz stays below the kernel's default 100 kHz sampling
+# limit; each sample's handler is charged to the task, so the coarse period
+# checks that the fine one's perturbation does not change the shares.
+INIT_SAMPLE_PERIOD_NS = {'sample': 20000, 'sample-coarse': 200000}
+# Fixed simulated caches, so the diagnostic does not depend on the host CPUID.
+INIT_CACHE_SIM = ('--I1=32768,8,64', '--D1=32768,8,64', '--LL=8388608,16,64')
 
 
 def sibling(name):
@@ -468,6 +482,305 @@ def witness_inputs(rows):
     return found
 
 
+def file_role(path, library, data, user):
+    """Name a measured file by its role, not its per-sample private path."""
+    path = Path(path)
+    if path == Path(library):
+        return 'SUBJECT'
+    for root, role in ((user, 'USER'), (data, 'DATA')):
+        if path.is_relative_to(root):
+            return role + ':' + str(path.relative_to(root))
+    return 'LIB:' + path.name
+
+
+def residency(files, library, data, user):
+    """Page-cache residency of each measured file (mincore); reads no bytes."""
+    result = {}
+    for path in files:
+        with Path(path).open('rb') as handle:
+            result[file_role(path, library, data, user)] = resident_pages(handle.fileno())
+    return result
+
+
+def process_maps(pid, *, proc_root=Path('/proc')):
+    """Mappings of a paused child: (start, end, perms, path)."""
+    rows = []
+    for line in (proc_root / str(pid) / 'maps').read_text().splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) >= 5:
+            start, end = (int(value, 16) for value in fields[0].split('-'))
+            rows.append((start, end, fields[1], fields[5] if len(fields) > 5 else ''))
+    return rows
+
+
+STRACE_TIME = re.compile(r'\s<(\d+\.\d+)>$')
+STRACE_CALL = re.compile(r'^(\d+)\s+(?:<\.\.\. (\w+) resumed>\s?|(\w+)\()(.*)$')
+# Calls whose first string argument is a path (after an optional dirfd).
+PATH_CALLS = frozenset(('open', 'openat', 'openat2', 'stat', 'lstat', 'newfstatat', 'statx', 'access',
+                        'faccessat', 'faccessat2', 'readlink', 'readlinkat', 'mkdir', 'mkdirat',
+                        'unlink', 'unlinkat', 'rename', 'renameat', 'renameat2', 'execve'))
+
+
+def init_trace(text, marker, names):
+    """Aggregate an in-memory `strace -f -y -T` trace between the two marker
+    writes. The markers themselves are excluded. Per-call times are the
+    tracer's (ptrace stops included), so they bound, not measure, kernel time.
+    """
+    def name_paths(value):
+        for original, role in sorted(names.items(), key=lambda item: -len(item[0])):
+            if value == original or value.startswith(original + '/'):
+                return role + value[len(original):]
+        return value
+    calls, targets, unparsed, unfinished, pids, pending = {}, {}, 0, 0, set(), {}
+    state = 'before'
+    for line in text.splitlines():
+        match = STRACE_CALL.match(line)
+        if not match:
+            unparsed += state == 'inside'
+            continue
+        name, rest = match[2] or match[3], match[4]
+        if rest.endswith('<unfinished ...>'):
+            unfinished += state == 'inside'
+            # A call belongs to the window it entered in, wherever another
+            # thread's markers fall before strace prints its result.
+            pending[match[1], name] = state, rest.removesuffix('<unfinished ...>').rstrip()
+            continue
+        entered = state
+        if match[2]:
+            entered, begun = pending.pop((match[1], name), (state, ''))
+            rest = begun + rest
+        is_marker = name == 'write' and not match[2] and re.match(str(marker) + r'[<,]', rest)
+        if is_marker:
+            state = {'before': 'inside', 'inside': 'after'}.get(state, 'extra')
+            continue
+        if entered != 'inside':
+            continue
+        timed = STRACE_TIME.search(rest)
+        arguments, separator, value = (rest[:timed.start()] if timed else rest).rpartition(' = ')
+        if not separator:
+            unparsed += 1
+            continue
+        pids.add(match[1])
+        error = re.match(r'-1 (E[A-Z0-9]+)', value)
+        call = calls.setdefault(name, dict(count=0, errors=0, seconds=0.0))
+        call['count'] += 1
+        call['errors'] += bool(error)
+        call['seconds'] += float(timed[1]) if timed else 0.0
+        # -y annotates descriptors with their paths: `3</path>`.
+        descriptor = re.match(r'-?\d+<([^>]*)>', arguments)
+        quoted = re.match(r'(?:AT_FDCWD(?:<[^>]*>)?, |-?\d+<[^>]*>, )?"([^"]*)"', arguments)
+        if name == 'mmap':
+            mapped = re.match(r'(?:NULL|0x[0-9a-f]+), \d+, [^,]+, [^,]+, -?\d+(?:<([^>]*)>)?', arguments)
+            target = name_paths(mapped[1]) if mapped and mapped[1] else 'anonymous'
+        elif name in ('munmap', 'mprotect', 'madvise', 'brk', 'mremap'):
+            target = 'address-range'
+        elif name in PATH_CALLS and quoted and quoted[1]:
+            target = name_paths(quoted[1])
+        elif descriptor:
+            target = name_paths(descriptor[1])
+        else:
+            target = '-'
+        entry = targets.setdefault(target, {}).setdefault(name, dict(count=0, bytes=0))
+        entry['count'] += 1
+        if name in ('read', 'pread64') and not error and value.split('<')[0].isdigit():
+            entry['bytes'] += int(value.split('<')[0])
+        elif name in ('mmap', 'munmap') and not error:
+            length = re.match(r'(?:NULL|0x[0-9a-f]+), (\d+)', arguments)
+            entry['bytes'] += int(length[1]) if length else 0
+    return dict(window=state == 'after', calls=calls, targets=targets, unparsed=unparsed,
+                unfinished=unfinished, threads=len(pids),
+                total=dict(count=sum(value['count'] for value in calls.values()),
+                           seconds=sum(value['seconds'] for value in calls.values())))
+
+
+def kernel_symbols(path=Path('/proc/kallsyms')):
+    """Text symbols, sorted; None when the kernel hides addresses (kptr_restrict)."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return None
+    rows = sorted((int(fields[0], 16), fields[2]) for fields in (line.split() for line in lines)
+                  if len(fields) >= 3 and fields[1] in ('t', 'T', 'w', 'W'))
+    if not rows or not rows[-1][0]:
+        return None
+    return [row[0] for row in rows], [row[1] for row in rows]
+
+
+def kernel_symbol(symbols, address):
+    index = bisect.bisect_right(symbols[0], address) - 1
+    return symbols[1][index] if index >= 0 else hex(address)
+
+
+PAGE_FAULT_FRAMES = frozenset(('asm_exc_page_fault', 'exc_page_fault', 'do_user_addr_fault', 'handle_mm_fault'))
+
+
+def kernel_category(sample, symbols):
+    """Innermost decisive frame: a fault inside a syscall counts as the fault."""
+    if symbols is None:
+        return 'unsymbolized', hex(sample['ip'])
+    frames = [kernel_symbol(symbols, address) for address in (sample['ip'], *sample['chain'])]
+    for frame in frames:
+        match = re.fullmatch(r'__(?:x64|ia32|do|se)_sys_(\w+)', frame)
+        if match:
+            return 'syscall:' + match[1], frames[0]
+        if frame in PAGE_FAULT_FRAMES:
+            return 'page-fault', frames[0]
+    if any(frame in ('do_syscall_64', 'entry_SYSCALL_64', 'entry_SYSCALL_64_after_hwframe') for frame in frames):
+        return 'syscall:entry-exit', frames[0]
+    if any(frame.startswith(('asm_sysvec_', 'sysvec_', 'asm_common_interrupt', 'common_interrupt')) for frame in frames):
+        return 'interrupt', frames[0]
+    return 'other', frames[0]
+
+
+def user_object(address, maps, library, worker):
+    for start, end, perms, path in maps:
+        if 'x' in perms and start <= address < end:
+            if path == str(library):
+                return 'SUBJECT'
+            if path == str(worker):
+                return 'WORKER'
+            return Path(path).name if path.startswith('/') else path
+    return 'unmapped'
+
+
+ELF_SYMBOLS = {}
+
+
+def elf_symbols(path):
+    """Sorted (address, name) function symbols of one object, from nm: the
+    symbol table when present, else the dynamic one. Cached per path."""
+    if path not in ELF_SYMBOLS:
+        rows = []
+        for dynamic in ([], ['--dynamic']):
+            try:
+                output = subprocess.run(['nm', '--defined-only', '--demangle', *dynamic, path],
+                                        capture_output=True, text=True, check=True).stdout
+            except (OSError, subprocess.CalledProcessError):
+                continue
+            rows = sorted((int(fields[0], 16), fields[2]) for fields in
+                          (line.split(' ', 2) for line in output.splitlines())
+                          if len(fields) == 3 and fields[1] in ('t', 'T', 'w', 'W', 'i'))
+            if rows:
+                break
+        ELF_SYMBOLS[path] = ([row[0] for row in rows], [row[1] for row in rows])
+    return ELF_SYMBOLS[path]
+
+
+def user_function(address, maps):
+    """The function holding a user IP. A shared object's lowest mapping is
+    its load base: its segments map in address order from file offset 0."""
+    for start, end, perms, path in maps:
+        if 'x' in perms and start <= address < end:
+            if not path.startswith('/'):
+                return path
+            base = min(row[0] for row in maps if row[3] == path)
+            addresses, names = elf_symbols(path)
+            index = bisect.bisect_right(addresses, address - base) - 1
+            return names[index] if index >= 0 else hex(address - base)
+    return 'unmapped'
+
+
+def region_label(path, access, library, data, user):
+    """A faulted mapping by role and access class, as mapping_group names it."""
+    path = path.removesuffix(' (deleted)')
+    if path == str(library):
+        return 'SUBJECT:' + access
+    for root, role in ((user, 'USER'), (data, 'DATA')):
+        if path.startswith(str(root) + '/'):
+            return role + ':' + path[len(str(root)) + 1:] + ':' + access
+    if not path or path == '//anon':
+        return 'ANON:' + access
+    if path.startswith('['):
+        return path
+    return Path(path).name + ':' + access
+
+
+def init_faults(records, before, library, data, user):
+    """Attribute each fault to the mapping that held its address when it
+    happened: M0's mappings, then the init's own mmaps, latest first."""
+    def access(text=None, prot=0):
+        executable, writable = ('x' in text, 'w' in text) if text is not None else (prot & 4, prot & 2)
+        return 'text' if executable else 'writable' if writable else 'readonly'
+    regions = [(start, end, region_label(path, access(perms), library, data, user))
+               for start, end, perms, path in reversed(before)]
+    faults = []
+    for record in records:
+        if 'mmap' in record:
+            regions.insert(0, (record['mmap'], record['mmap'] + record['len'],
+                               region_label(record['file'], access(prot=record['prot']), library, data, user)))
+            continue
+        label = next((name for start, end, name in regions if start <= record['addr'] < end), 'unmapped')
+        faults.append(dict(record, region=label))
+    return faults
+
+
+def callgrind_costs(text, library):
+    """Exclusive costs of every collected event, by object and function, from
+    one in-memory Callgrind profile. The cost line after `calls=` is the
+    callee's inclusive cost and is skipped; the exclusive sums must equal the
+    profile's totals.
+    """
+    events = re.findall(r'^events:\s*(.*?)\s*$', text, re.M)
+    totals = re.findall(r'^totals:\s*(.*?)\s*$', text, re.M)
+    if len(events) != 1 or len(totals) != 1:
+        raise ValueError('expected one Callgrind events/totals pair')
+    names = events[0].split()
+    total = [int(value) for value in totals[0].split()]
+    total += [0] * (len(names) - len(total))
+    positions = 1
+    ids = {'ob': {}, 'fn': {}}
+    obj = function = '???'
+    skip = False
+    exclusive = {}
+    for line in text.splitlines():
+        if line.startswith('positions:'):
+            positions = len(line.split(':', 1)[1].split())
+            continue
+        match = re.match(r'^(c?)(ob|fn)=(?:\((\d+)\))?\s*(.*)$', line)
+        if match:
+            table = ids[match[2]]
+            value = match[4]
+            if match[3] is not None:
+                if value:
+                    table[match[3]] = value
+                elif match[3] not in table:
+                    raise ValueError('unresolved Callgrind name ID')
+                value = table[match[3]]
+            if not match[1]:
+                if match[2] == 'ob':
+                    obj = value
+                else:
+                    function = value
+            continue
+        if line.startswith('calls='):
+            skip = True
+            continue
+        if not re.match(r'^(?:[+\-]?\d+|\*|0x[0-9a-fA-F]+)(?:\s|$)', line):
+            continue
+        if skip:
+            skip = False
+            continue
+        costs = exclusive.setdefault((obj, function), [0] * len(names))
+        for index, value in enumerate(line.split()[positions:]):
+            costs[index] += int(value)
+    sums = [sum(costs[index] for costs in exclusive.values()) for index in range(len(names))]
+    if sums != total or 'Ir' not in names or not total[names.index('Ir')]:
+        raise ValueError('Callgrind exclusive costs do not reconcile with totals')
+    def label(path):
+        return 'SUBJECT' if Path(path) == Path(library) else Path(path).name
+    objects = {}
+    for (path, _), costs in exclusive.items():
+        target = objects.setdefault(label(path), [0] * len(names))
+        for index, value in enumerate(costs):
+            target[index] += value
+    ir = names.index('Ir')
+    functions = sorted(((label(path), name, costs[ir]) for (path, name), costs in exclusive.items() if costs[ir]),
+                       key=lambda item: (-item[2], item[0], item[1]))
+    return dict(totals=dict(zip(names, total)),
+                objects={key: dict(zip(names, value)) for key, value in sorted(objects.items())},
+                functions=[dict(object=obj, function=name, Ir=value) for obj, name, value in functions])
+
+
 class Campaign:
     def __init__(self, worker, data, work, cpu, driver, cache='warm'):
         self.worker, self.data, self.work, self.cpu, self.driver = worker, data.resolve(), work, cpu, driver
@@ -475,10 +788,14 @@ class Campaign:
         self.cache = cache
 
     def run(self, facade, library, profile, *, mode='time', save=False, scenario='first-candidate',
-            rows=None, instances=1, cycles=1, inputs=None, reopen=False, profiler=None):
-        cold = self.cache == 'cold' and mode in ('time', 'memory')
+            rows=None, instances=1, cycles=1, inputs=None, reopen=False, profiler=None, probe=None):
+        cold = self.cache == 'cold' and mode in ('time', 'memory', 'init')
         if cold and (cycles != 1 or profiler):
             raise ValueError('cold samples require one native lifecycle without a profiler')
+        if probe not in (None, 'none', 'count', 'faults', 'trace', *INIT_SAMPLE_PERIOD_NS) or (probe == 'trace' and profiler):
+            raise ValueError('unknown init probe or a traced profiler')
+        if probe not in (None, 'none') and mode != 'init':
+            raise ValueError('init probes require init mode')
         self.serial += 1
         scratch = self.work / ('sample-%06d' % self.serial)
         scratch.mkdir()
@@ -487,13 +804,26 @@ class Campaign:
         expected_source = file_set(profile)
         checkpoints, samples, closed = {}, [], None
         command = ['taskset', '-c', str(self.cpu)] if self.cpu is not None else []
+        trace_read = trace_write = marker = marker_number = None
+        if probe == 'trace':
+            # strace runs unpinned; the traced worker keeps taskset's CPU. The
+            # trace goes to its own pipe so the worker's stderr stays comparable.
+            trace_read, trace_write = os.pipe()
+            marker = os.open(os.devnull, os.O_WRONLY)
+            marker_number = marker
+            command = ['strace', '-f', '-qq', '-y', '-T', '-s', '256', '-e', 'signal=none',
+                       '-o', '/dev/fd/%d' % trace_write, *command]
         if profiler:
-            command += ['valgrind', '--tool=' + profiler, '--vgdb-prefix=' + str(scratch / 'vgdb')]
+            command += ['valgrind', '--tool=' + profiler.removesuffix('-init'), '--vgdb-prefix=' + str(scratch / 'vgdb')]
             if profiler == 'callgrind':
                 command += ['--collect-atstart=no', '--cache-sim=no', '--branch-sim=no',
                             '--read-inline-info=yes', '--callgrind-out-file=/dev/stderr',
                             '--toggle-collect=bisect_teardown_free_unit',
                             '--toggle-collect=bisect_teardown_fini_unit']
+            elif profiler == 'callgrind-init':
+                # Diagnostic: exclusive costs inside the facade's init export only.
+                command += ['--collect-atstart=no', '--cache-sim=yes', '--branch-sim=yes', *INIT_CACHE_SIM,
+                            '--callgrind-out-file=/dev/stderr', '--toggle-collect=' + facade + '_init']
             elif profiler == 'dhat':
                 command += ['--dhat-out-file=/dev/stderr']
             elif profiler == 'massif':
@@ -507,25 +837,48 @@ class Campaign:
         command += [str(self.worker), '--teardown', facade, str(library), str(self.data), str(user),
                     mode, str(int(save)), str(instances), str(cycles), scenario, str(rows) if rows else '-']
         env = dict(os.environ, OXPINYIN_TEARDOWN_EXPORTS=','.join(exports(facade)))
+        env.pop('OXPINYIN_TEARDOWN_INIT_PROBE', None)
+        env.pop('OXPINYIN_TEARDOWN_MARKER_FD', None)
         if inputs is not None:
             env['OXPINYIN_TEARDOWN_INPUTS'] = str(inputs)
-        errors, documents, boundaries = bytearray(), [], []
+        if probe not in (None, 'none'):
+            env['OXPINYIN_TEARDOWN_INIT_PROBE'] = ('sample:%d' % INIT_SAMPLE_PERIOD_NS[probe]
+                                                   if probe in INIT_SAMPLE_PERIOD_NS else probe)
+        if marker is not None:
+            env['OXPINYIN_TEARDOWN_MARKER_FD'] = str(marker)
+        errors, documents, boundaries, trace = bytearray(), [], [], bytearray()
+        files = None
         self.driver.check_cancelled()
         try:
             self.driver.check_tkrzw(os.environ.get('CONTRACT_DIFF_CELL', 'bdb'),
                                     'teardown.py', facade, library, env=env)
             cold_set = None
+            if cold or mode == 'init':
+                # Resolve every measured file before eviction; init reads the
+                # same list's page-cache residency at M0 and I1.
+                files = cold_files(library, self.data, user, rows)
             if cold:
-                cold_set = cold_files(library, self.data, user, rows)
+                cold_set = files
                 evict_files(cold_set)
             self.driver.check_cancelled()
+            passed = tuple(value for value in (trace_write, marker) if value is not None)
             with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                  env=env, start_new_session=True) as process:
+                                  env=env, start_new_session=True, pass_fds=passed) as process:
+                for value in passed:
+                    os.close(value)
+                trace_write = marker = None
                 def drain():
                     while block := process.stderr.read(65536):
                         errors.extend(block)
                 reader = threading.Thread(target=drain)
                 reader.start()
+                tracer = None
+                if trace_read is not None:
+                    def drain_trace():
+                        while block := os.read(trace_read, 65536):
+                            trace.extend(block)
+                    tracer = threading.Thread(target=drain_trace)
+                    tracer.start()
                 selector = selectors.DefaultSelector()
                 selector.register(process.stdout, selectors.EVENT_READ)
                 buffered = bytearray()
@@ -571,6 +924,12 @@ class Campaign:
                                     memory['allocator'] = document['allocator']
                                     if cold_set is not None and mode == 'memory':
                                         memory['residency'] = file_residency(cold_set, library, self.data, user)
+                                    if mode == 'init':
+                                        # Private paths differ per sample; name them by role.
+                                        memory['groups'] = {key.replace(str(user), '$USER'): value
+                                                            for key, value in memory['groups'].items()}
+                                        memory['residency'] = residency(files, library, self.data, user)
+                                        memory['maps'] = process_maps(process.pid)
                                     checkpoints.setdefault(cycle, {})[point] = memory
                                 process.stdin.write(b'\n')
                                 process.stdin.flush()
@@ -593,6 +952,8 @@ class Campaign:
                     selector.close()
                     process.stdin.close()
                     reader.join()
+                    if tracer is not None:
+                        tracer.join()
             self.driver.check_cancelled()
             if status:
                 raise ValueError(f'native teardown failed ({status}): {bytes(errors)[-3000:]!r}')
@@ -604,6 +965,8 @@ class Campaign:
             if mode not in ('export', 'populate'):
                 if len(samples) != cycles or closed is None or closed['status'] != 0:
                     raise ValueError('native lifecycle did not complete')
+                if mode == 'init' and boundaries != [('M0', 0), ('I1', 1)]:
+                    raise ValueError('native init checkpoint boundaries are out of order')
                 if mode == 'memory':
                     expected = [('M0', 0)]
                     for cycle in range(1, cycles + 1):
@@ -633,12 +996,27 @@ class Campaign:
                 if cycles == 1:
                     samples[0]['times']['full_lifecycle_ns'] = {
                         clock: sum(samples[0]['times'][name][clock] for name in ('load_ns', 'lifecycle_ns', 'dlclose_ns'))
-                        for clock in ('wall_ns', 'cpu_ns', 'majflt')}
+                        for clock in CLOCK_FIELDS}
             if reopen:
                 observation['reopen'] = self.run(facade, library, user, mode='observe', inputs=inputs)['observation']
-            return dict(observation=observation, samples=samples, checkpoints=checkpoints, command=command,
-                        raw_profile_identity=identity(file_set(user)))
+            result = dict(observation=observation, samples=samples, checkpoints=checkpoints, command=command,
+                          raw_profile_identity=identity(file_set(user)))
+            if mode == 'init':
+                probes = [value for value in documents if isinstance(value, dict) and 'init_probe' in value]
+                if len(probes) != (probe in ('count', 'faults', *INIT_SAMPLE_PERIOD_NS)):
+                    raise ValueError('native init probe report is missing or repeated')
+                observation['documents'] = [value for value in documents if value not in probes]
+                names = {str(user): '$USER', str(self.data): '$DATA', str(library.resolve()): '$LIB',
+                         str(Path(library).parent.resolve()): '$LIBDIR', str(self.work): '$WORK'}
+                # The private user path names the sample's profile mappings.
+                result['init'] = dict(probe=probes[0] if probes else None, user=str(user),
+                                      trace=init_trace(trace.decode('utf-8', 'surrogateescape'), marker_number, names)
+                                      if probe == 'trace' else None)
+            return result
         finally:
+            for value in (trace_read, trace_write, marker):
+                if value is not None:
+                    os.close(value)
             shutil.rmtree(scratch)
 
 
@@ -720,8 +1098,8 @@ def run(args, driver, parser):
     if cache == 'cold':
         if sys.platform != 'linux':
             parser.error('--teardown-cache cold requires native Linux and ext4')
-        if args.teardown_stage not in ('verify', 'pilot', 'confirm'):
-            parser.error('--teardown-cache cold supports only verify, pilot and confirm stages')
+        if args.teardown_stage not in ('verify', 'pilot', 'confirm', 'init-attribute'):
+            parser.error('--teardown-cache cold supports only verify, pilot, confirm and init-attribute stages')
     # All cells use backend-aware logical records for final-profile
     # equivalence, including empty rows. Runtime checks also run on each
     # copied object immediately before every native or comparison worker.
@@ -772,7 +1150,13 @@ def run(args, driver, parser):
     print_record('start', stage=args.teardown_stage, cache=cache, cpu=cpu, filesystem=fs, libraries=provenance,
                  worker=worker_identity, model_identity=identity(file_set(data)),
                  model_filesystem=filesystem(data), control_noise_rule=list(CONTROL_INTERVAL))
-    profiles = provision(campaign, subjects['pin']['pinyin'], work / 'profiles')
+    # Profiles and witnesses come from the pin's pinyin facade, whichever
+    # facades are measured (`--teardown-facades zhuyin` included).
+    campaign.provisioner = subjects['pin'].get('pinyin')
+    if campaign.provisioner is None:
+        campaign.provisioner = libraries / LIBRARY_DIRECTORIES['pin'] / 'libpinyin.so'
+        shutil.copyfile(args.prefix / 'lib' / 'libpinyin.so', campaign.provisioner)
+    profiles = provision(campaign, campaign.provisioner, work / 'profiles')
     if args.teardown_stage == 'provision':
         return 0
     return execute(campaign, args, subjects, profiles, cases, facades, driver)
@@ -786,7 +1170,7 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
     for facade, reading in (('pinyin', "ce4'shi4"), ('zhuyin', 'ㄘㄜˋ ㄕˋ')):
         dirty_rows[facade] = campaign.work / ('dirty-' + facade + '.tsv')
         dirty_rows[facade].write_text(row_text([(1, '测试', reading, 20000)]))
-    witnesses = prepare_witnesses(campaign, subjects['pin']['pinyin'], profiles)
+    witnesses = prepare_witnesses(campaign, getattr(campaign, 'provisioner', None) or subjects['pin']['pinyin'], profiles)
     comparable, references = {}, {}
     for facade in facades:
         for case in cases:
@@ -850,6 +1234,8 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
                     print_record(args.teardown_stage, facade=facade, case=case, side=side, checkpoints=points,
                                  observations_equal=all(value == row['observation']['samples'][0] for value in row['observation']['samples']))
         return 0
+    if args.teardown_stage == 'init-attribute':
+        return init_attribute(campaign, subjects, profiles, cases, facades, references, dirty_rows)
     if args.teardown_stage == 'attribute':
         diagnostic_workers = {tool: build_worker(campaign.work, tool) for tool in ('massif', 'memcheck')}
         for tool, (_, worker_identity) in diagnostic_workers.items():
@@ -901,6 +1287,212 @@ def execute(campaign, args, subjects, profiles, cases, facades, driver):
         # Every record prints first; an INVALID exact control fails the stage.
         return 1 if invalid else 0
     raise ValueError('unknown teardown stage')
+
+
+def rotation(index):
+    order = ['ox', 'control', 'pin']
+    return order[index % 3:] + order[:index % 3]
+
+
+def init_attribute(campaign, subjects, profiles, cases, facades, references, dirty_rows):
+    """Diagnostic attribution of the init interval only (#1090).
+
+    Probe samples run in `init` mode, in the rotating order, after the stage's
+    equivalence check; each must keep its side's reference observation. None
+    is a primary timing sample. Init Ir uses Callgrind with collection toggled
+    on the facade's init export: exact on KC and tkrzw (an INVALID control
+    fails the stage), diagnostic on BDB, where libdb seeds srandom_r from
+    PID, time and address. Cold mode skips Ir, which the page cache cannot
+    change.
+    """
+    cell = os.environ.get('CONTRACT_DIFF_CELL', 'bdb')
+    if shutil.which('strace') is None:
+        raise ValueError('init-attribute traces syscalls with strace; none is on PATH')
+    symbols = kernel_symbols()
+    invalid = False
+    for facade in facades:
+        for case in cases:
+            options = case_options(case, profiles, dirty_rows[facade])
+            for probe, (rounds, warmups) in INIT_PROBE_ROUNDS.items():
+                rows = {side: [] for side in subjects}
+                for index in range(rounds + warmups):
+                    for side in rotation(index):
+                        row = campaign.run(facade, subjects[side][facade], mode='init', probe=probe, **options)
+                        if workload_observation(row) != references[facade, case][side]:
+                            raise ValueError(f'init workload observation changed: {facade} {case} {side} {probe}')
+                        if index >= warmups:
+                            rows[side].append(row)
+                if probe == 'count':
+                    report_init_counts(facade, case, rows, campaign.cache)
+                elif probe in INIT_SAMPLE_PERIOD_NS:
+                    report_init_samples(facade, case, rows, symbols, subjects, campaign.worker, campaign.cache, probe)
+                elif probe == 'faults':
+                    report_init_faults(facade, case, rows, subjects, campaign, campaign.cache)
+                else:
+                    report_init_trace(facade, case, rows, campaign.cache)
+            if campaign.cache == 'cold':
+                print_record('init-ir', cell=cell, facade=facade, case=case, status='NOT RUN',
+                             reason='instruction counts do not depend on the page cache; run the warm stage')
+                continue
+            costs = {side: [] for side in subjects}
+            for index in range(INIT_IR_ROUNDS):
+                for side in rotation(index):
+                    row = campaign.run(facade, subjects[side][facade], profiler='callgrind-init', **options)
+                    require_profile_controls(row, references[facade, case][side])
+                    costs[side].append(callgrind_costs(row['observation']['stderr'], subjects[side][facade]))
+            invalid |= report_init_ir(cell, facade, case, costs)
+    return 1 if invalid else 0
+
+
+def report_init_counts(facade, case, rows, cache):
+    values = {side: {field: [row['samples'][0]['times']['init_ns'][field] for row in samples]
+                     for field in CLOCK_FIELDS} for side, samples in rows.items()}
+    print_record('init-resources', facade=facade, case=case, cache=cache, rounds=len(rows['ox']),
+                 note='diagnostic init-mode samples; user_ns/sys_ns follow the kernel CPU accounting',
+                 summaries={side: {field: summary(value) for field, value in fields.items()}
+                            for side, fields in values.items()},
+                 paired={label: {field: paired_difference(values[a][field], values[b][field]) for field in CLOCK_FIELDS}
+                         for label, a, b in (('ox-pin', 'ox', 'pin'), ('control-ox', 'control', 'ox'))})
+    events = {}
+    for side, samples in rows.items():
+        named = {}
+        for row in samples:
+            for event in row['init']['probe']['events']:
+                named.setdefault(event['name'], []).append(event)
+        events[side] = {}
+        for name, readings in named.items():
+            refused = sorted({event['errno'] for event in readings if event['errno']})
+            if refused:
+                events[side][name] = dict(status='NOT RUN', errno=refused, error=[os.strerror(value) for value in refused])
+                continue
+            events[side][name] = dict(
+                status='counted', user_only=any(event['user_only'] for event in readings),
+                value=summary([event['value'] for event in readings]),
+                bracket=summary([event['bracket'] for event in readings]),
+                multiplexed=any(event['running_ns'] < event['enabled_ns'] for event in readings))
+    print_record('init-perf', facade=facade, case=case, cache=cache, rounds=len(rows['ox']), events=events,
+                 note='value is the init bracket minus an empty calibration bracket; NOT RUN is never zero')
+    for side, samples in rows.items():
+        growth, cached = {}, {}
+        for row in samples:
+            before, after = row['checkpoints'][0]['M0'], row['checkpoints'][1]['I1']
+            for group in set(before['groups']) | set(after['groups']):
+                growth.setdefault(group, []).append(after['groups'].get(group, {}).get('Rss', 0) -
+                                                    before['groups'].get(group, {}).get('Rss', 0))
+            for role, pages in after['residency'].items():
+                cached.setdefault(role, []).append((before['residency'][role]['resident'], pages['resident'], pages['pages']))
+        print_record('init-residency', facade=facade, case=case, side=side, cache=cache, rounds=len(samples),
+                     rss_kib_growth={group: summary(value) for group, value in sorted(growth.items()) if any(value)},
+                     page_cache_pages={role: dict(pages=value[0][2], m0=summary([item[0] for item in value]),
+                                                  i1=summary([item[1] for item in value]),
+                                                  growth=summary([item[1] - item[0] for item in value]))
+                                       for role, value in sorted(cached.items())})
+
+
+def report_init_samples(facade, case, rows, symbols, subjects, worker, cache, probe='sample'):
+    for side, samples in rows.items():
+        library = subjects[side][facade].resolve()
+        user, kernel, leaves, functions = collections.Counter(), collections.Counter(), {}, {}
+        status = dict(lost=0, throttled=0, valid=True, user_only=False, errno=[])
+        count = 0
+        for row in samples:
+            report = row['init']['probe']
+            if report['errno']:
+                status['errno'].append(report['errno'])
+                continue
+            status['lost'] += report['lost']
+            status['throttled'] += report['throttled']
+            status['valid'] &= report['valid']
+            status['user_only'] |= report['user_only']
+            maps = row['checkpoints'][1]['I1']['maps']
+            for sample in report['samples']:
+                count += 1
+                if sample['kernel']:
+                    category, leaf = kernel_category(sample, symbols)
+                    kernel[category] += 1
+                    leaves.setdefault(category, collections.Counter())[leaf] += 1
+                else:
+                    owner = user_object(sample['ip'], maps, library, worker)
+                    user[owner] += 1
+                    functions.setdefault(owner, collections.Counter())[user_function(sample['ip'], maps)] += 1
+        if status['errno']:
+            print_record('init-samples', facade=facade, case=case, side=side, cache=cache, probe=probe, status='NOT RUN',
+                         errno=sorted(set(status['errno'])))
+            continue
+        print_record('init-samples', facade=facade, case=case, side=side, cache=cache, probe=probe, rounds=len(samples),
+                     period_ns=INIT_SAMPLE_PERIOD_NS[probe], samples=count, user_samples=sum(user.values()),
+                     kernel_samples=sum(kernel.values()), user=dict(user.most_common()), kernel=dict(kernel.most_common()),
+                     kernel_leaves={category: dict(value.most_common(8)) for category, value in sorted(leaves.items())},
+                     user_functions={owner: dict(value.most_common(15)) for owner, value in sorted(functions.items())},
+                     symbolized=symbols is not None,
+                     cpu_ns=summary([row['samples'][0]['times']['init_ns']['cpu_ns'] for row in samples]), **status)
+
+
+def report_init_faults(facade, case, rows, subjects, campaign, cache):
+    for side, samples in rows.items():
+        library = subjects[side][facade].resolve()
+        regions, code, status = {}, {}, dict(lost=0, throttled=0, valid=True, errno=[])
+        for round_index, row in enumerate(samples):
+            probe = row['init']['probe']
+            if probe['errno']:
+                status['errno'].append(probe['errno'])
+                continue
+            status['lost'] += probe['lost']
+            status['throttled'] += probe['throttled']
+            status['valid'] &= probe['valid']
+            faults = init_faults(probe['samples'], row['checkpoints'][0]['M0']['maps'], library, campaign.data,
+                                 Path(row['init']['user']))
+            after = row['checkpoints'][1]['I1']['maps']
+            for fault in faults:
+                kind = fault['fault']
+                origin = 'kernel' if fault['kernel'] else user_object(fault['ip'], after, library, campaign.worker)
+                for table, key in ((regions, fault['region']), (code, origin)):
+                    table.setdefault(kind, {}).setdefault(key, [0] * len(samples))[round_index] += 1
+        if status['errno']:
+            print_record('init-faults', facade=facade, case=case, side=side, cache=cache, status='NOT RUN',
+                         errno=sorted(set(status['errno'])))
+            continue
+        def shown(table):
+            return {kind: {key: summary(counts) for key, counts in sorted(values.items(), key=lambda item: -sum(item[1]))}
+                    for kind, values in sorted(table.items())}
+        print_record('init-faults', facade=facade, case=case, side=side, cache=cache, rounds=len(samples),
+                     by_region=shown(regions), by_code=shown(code), **status)
+
+
+def report_init_trace(facade, case, rows, cache):
+    for side, samples in rows.items():
+        traces = [row['init']['trace'] for row in samples]
+        if not all(trace['window'] for trace in traces):
+            raise ValueError('init trace markers were not found exactly twice')
+        names = sorted(set().union(*(trace['calls'] for trace in traces)))
+        calls = {name: {key: summary([trace['calls'].get(name, {}).get(key, 0) for trace in traces])
+                        for key in ('count', 'errors', 'seconds')} for name in names}
+        print_record('init-syscalls', facade=facade, case=case, side=side, cache=cache, rounds=len(traces),
+                     note='strace -T times include ptrace stops; counts are exact',
+                     total_count=summary([trace['total']['count'] for trace in traces]),
+                     total_seconds=summary([trace['total']['seconds'] for trace in traces]),
+                     calls=calls, targets=traces[0]['targets'],
+                     targets_identical=all(trace['targets'] == traces[0]['targets'] for trace in traces),
+                     threads=max(trace['threads'] for trace in traces),
+                     unparsed=sum(trace['unparsed'] for trace in traces),
+                     unfinished=sum(trace['unfinished'] for trace in traces))
+
+
+def report_init_ir(cell, facade, case, costs):
+    readings = {side: [value['totals']['Ir'] for value in values] for side, values in costs.items()}
+    exact = cell != 'bdb'
+    equal = len(set(readings['ox'])) == 1 and set(readings['ox']) == set(readings['control'])
+    verdict = ('VALID' if equal else 'INVALID') if exact else 'DIAGNOSTIC'
+    print_record('init-ir-control', cell=cell, facade=facade, case=case, ox=readings['ox'], control=readings['control'],
+                 rule='exact' if exact else 'diagnostic: BDB init Ir is not reproducible (libdb seeds srandom_r)',
+                 verdict=verdict)
+    for side in ('control',) if verdict == 'INVALID' else ('ox', 'control', 'pin'):
+        first = costs[side][0]
+        print_record('init-ir', cell=cell, facade=facade, case=case, side=side, profiler_only=True,
+                     readings=readings[side], simulated=list(INIT_CACHE_SIM),
+                     events_identical=all(value['totals'] == first['totals'] for value in costs[side]),
+                     totals=first['totals'], objects=first['objects'], functions=first['functions'][:25])
+    return verdict == 'INVALID'
 
 
 def case_options(case, profiles, dirty_rows):
