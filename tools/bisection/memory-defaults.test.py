@@ -654,12 +654,14 @@ finally:
             self.assertEqual(admitted.env['CARGO_BUILD_JOBS'], '4')
 
     def test_reservation_follows_child_after_orchestrator_death(self):
+        # The child holds its slot until the test closes its stdin, so a stall
+        # on the test side cannot end the reservation being checked.
         code = (f"import os,runpy,sys; m=runpy.run_path({str(RUN_ALL.resolve())!r}); "
                 f"m['HeavyAdmission'].__init__.__globals__['resource_snapshot']=lambda: {resources(4096, 8)!r}; "
                 "sys.exit(m['run_in_heavy_slot']([sys.executable,'-c',"
-                "'import time; print(12345,flush=True); time.sleep(1.2)']))")
+                "'import sys; print(12345,flush=True); sys.stdin.read()']))")
         env = dict(os.environ, OXPINYIN_HEAVY_SLOTS='2', CARGO_BUILD_JOBS='3')
-        parent = subprocess.Popen([sys.executable, '-c', code], env=env,
+        parent = subprocess.Popen([sys.executable, '-c', code], env=env, stdin=subprocess.PIPE,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             self.assertTrue(select.select([parent.stdout], [], [], 3)[0])
@@ -668,7 +670,10 @@ finally:
             parent.wait(timeout=3)
             with mock.patch.dict(os.environ, OXPINYIN_HEAVY_SLOTS='2'), mock.patch.dict(
                     self.globals, resource_snapshot=lambda: resources(4096, 8)):
-                admitted = self.admission(dict(os.environ, CARGO_BUILD_JOBS='3'))
+                # A refusal raises once the first attempt has outlasted the wait
+                # limit; setUp's 0.12 s would expire on a host that stalls here.
+                admitted = self.admission(dict(os.environ, CARGO_BUILD_JOBS='3',
+                                               OXPINYIN_RESOURCE_WAIT_SECONDS='5'))
                 self.assertFalse(admitted.try_acquire())
                 self.assertIsNone(admitted.env)
                 # The record names the surviving child: its estimate less its use.
@@ -682,6 +687,7 @@ finally:
         finally:
             if parent.poll() is None:
                 parent.kill()
+            parent.stdin.close()  # EOF: the child that outlived the parent exits
             parent.communicate(timeout=5)
 
     def test_inherited_no_room_fails_without_waiting(self):
