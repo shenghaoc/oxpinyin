@@ -9,8 +9,11 @@ comparable within one container on one host; every published snapshot
 
 ## Verify function ordering before shipping measurements
 
-Packaging can fall back to the original layout on unsupported linkers or an
-inapplicable policy. Every shipping arm below runs the shared
+Packaging links the original layout on a linker without
+`--section-ordering-file`, on an explicit opt-out, and for the Kyoto Cabinet
+and tkrzw backends, which have no checked-in policy; a policy that does not
+resolve fails the relink (`docs/packaging.md`, "Policy selection by
+backend"). Every shipping arm below runs the shared
 `tools/packaging/function_order.py` check before measurements. It reads the
 linked ELF's SONAME, `.text` start and address-sorted function symbols. Every
 policy path must resolve to one clone family, its bodies must be contiguous,

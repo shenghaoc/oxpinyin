@@ -412,7 +412,7 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
                 "TEST_LINKER_HELP": "  --section-ordering-file FILE", "TEST_LINK_EXIT": "0",
                 "TEST_EXTRA_EXPORT": "0", "TEST_NM_EXIT": "0", "OXPINYIN_FUNCTION_ORDER_POLICY": ""}
 
-    def relink(self, work, environment, policy=None, script=None):
+    def relink(self, work, environment, policy=None, script=None, features=None):
         destination = work / "libpinyin.so.15.0.0"
         destination.write_bytes(b"original installed bytes")
         command = ["bash", str(script or HERE / "relink-versioned.sh"), "--staticlib", str(work / "library.a"),
@@ -420,9 +420,16 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
                    "--cc", str(work / "compiler")]
         if policy is not None:
             command += ["--function-order", str(policy)]
+        if features is not None:
+            command += ["--features", features]
+        # The link arguments are those of THIS run: a refusal that never
+        # reaches the link leaves none, and the caller sees None.
+        (work / "args").unlink(missing_ok=True)
         result = subprocess.run(command, capture_output=True, text=True, check=False, env=environment)
-        arguments = (work / "args").read_bytes().split(b"\0")[:-1]
-        arguments[arguments.index(b"-o") + 1] = b"OUTPUT"
+        arguments = None
+        if (work / "args").exists():
+            arguments = (work / "args").read_bytes().split(b"\0")[:-1]
+            arguments[arguments.index(b"-o") + 1] = b"OUTPUT"
         self.assertEqual(list(work.glob("*.relink.*")), [], "relink scratch leaked")
         return result, arguments, destination.read_bytes()
 
@@ -432,18 +439,21 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
             baseline, base_args, base_bytes = self.relink(work, environment)
             self.assertEqual(baseline.returncode, 0, baseline.stderr)
             self.assertFalse((work / "queries").exists())
+            self.assertIn("disabled by explicit opt-out", baseline.stderr)
             for version in ("GNU gold (GNU Binutils) 1.16", "LLD 20"):
                 fallback, arguments, data = self.relink(
                     work, {**environment, "TEST_LINKER_VERSION": version}, work / "policy")
                 self.assertEqual(fallback.returncode, 0, fallback.stderr)
                 self.assertEqual(arguments, base_args)
                 self.assertEqual(data, base_bytes)
+                self.assertIn("linker does not support", fallback.stderr)
                 self.assertIn("original layout", fallback.stderr)
             fallback, arguments, data = self.relink(
                 work, {**environment, "TEST_LINKER_HELP": "no ordering option"}, work / "policy")
             self.assertEqual(fallback.returncode, 0, fallback.stderr)
             self.assertEqual(arguments, base_args)
             self.assertEqual(data, base_bytes)
+            self.assertIn("linker does not support", fallback.stderr)
 
     def test_default_selects_its_soname_policy_and_unsupported_linker_falls_back(self):
         with scratch() as work:
@@ -465,25 +475,82 @@ printf ' 0x000000000000000e (SONAME) Library soname: [libpinyin.so.15]\n'
                 self.assertEqual(args, base_args)
                 self.assertEqual(data, base_bytes)
 
-    def test_inapplicable_policy_keeps_original_arguments(self):
+    def test_stale_policy_fails_before_the_link(self):
+        # A policy that does not describe the archive is an error on every
+        # linker, before any link command runs: the installed object is
+        # untouched, the resolver's own message names the path, and the
+        # error points at the regeneration procedure. Neither an unsupported
+        # linker nor a failing demangler turns that error into a fallback.
         with scratch() as work:
             environment = self.prepare(work)
-            _, base_args, base_bytes = self.relink(work, environment)
             (work / "policy").write_text(HEADER + "init\tmissing\n")
-            fallback, arguments, data = self.relink(work, environment, work / "policy")
-            self.assertEqual(fallback.returncode, 0, fallback.stderr)
-            self.assertEqual(arguments, base_args)
-            self.assertEqual(data, base_bytes)
+            cases = {"supported linker": environment,
+                     "unsupported linker": {**environment, "TEST_LINKER_VERSION": "LLD 20"},
+                     "demangler failure": {**environment, "TEST_NM_EXIT": "1"}}
+            for case, case_environment in cases.items():
+                with self.subTest(case=case):
+                    result, arguments, data = self.relink(work, case_environment, work / "policy")
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIsNone(arguments, "the link ran after a policy refusal")
+                    self.assertEqual(data, b"original installed bytes")
+                    self.assertIn("function ordering: unresolved policy path: missing", result.stderr)
+                    self.assertIn("Regeneration", result.stderr)
+                    self.assertNotIn("original layout", result.stderr)
 
-    def test_unavailable_demangler_keeps_original_arguments(self):
+    def test_missing_named_policy_is_an_error_not_a_fallback(self):
         with scratch() as work:
             environment = self.prepare(work)
-            _, base_args, base_bytes = self.relink(work, environment)
-            fallback, arguments, data = self.relink(
-                work, {**environment, "TEST_NM_EXIT": "1"}, work / "policy")
-            self.assertEqual(fallback.returncode, 0, fallback.stderr)
-            self.assertEqual(arguments, base_args)
-            self.assertEqual(data, base_bytes)
+            result, arguments, data = self.relink(work, environment, work / "absent.order")
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIsNone(arguments)
+            self.assertEqual(data, b"original installed bytes")
+            self.assertIn("policy not found", result.stderr)
+            self.assertNotIn("original layout", result.stderr)
+
+    def test_other_backends_have_no_checked_in_policy_and_say_so(self):
+        # The checked-in policies come from the shipping BDB build and name
+        # BDB-only paths. The other backends select no policy by default:
+        # an explicit, reported unordered link, not a resolution failure.
+        with scratch() as work:
+            environment = self.prepare(work)
+            scripts = work / "packaging"
+            (scripts / "function-order").mkdir(parents=True)
+            for filename in ("relink-versioned.sh", "function-order.sh", "function-order.awk"):
+                shutil.copyfile(HERE / filename, scripts / filename)
+            # A policy no backend's archive satisfies: the BDB default must
+            # not be consulted for the other backends at all.
+            (scripts / "function-order/libpinyin.order").write_text(HEADER + "init\tbdb_only\n")
+            environment.pop("OXPINYIN_FUNCTION_ORDER_POLICY")
+            for backend in ("kyotocabinet", "tkrzw"):
+                with self.subTest(backend=backend):
+                    opted_out, base_args, base_bytes = self.relink(
+                        work, {**environment, "OXPINYIN_FUNCTION_ORDER_POLICY": ""},
+                        script=scripts / "relink-versioned.sh", features=backend)
+                    self.assertEqual(opted_out.returncode, 0, opted_out.stderr)
+                    result, arguments, data = self.relink(
+                        work, environment, script=scripts / "relink-versioned.sh", features=backend)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(arguments, base_args)
+                    self.assertEqual(data, base_bytes)
+                    self.assertIn(f"no checked-in policy for the {backend} backend", result.stderr)
+                    self.assertIn("original layout", result.stderr)
+                    self.assertFalse((work / "queries").exists())
+            # The BDB default is still consulted, and still strict.
+            result, arguments, _ = self.relink(work, environment, script=scripts / "relink-versioned.sh",
+                                               features="bdb")
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIsNone(arguments)
+            self.assertIn("unresolved policy path: bdb_only", result.stderr)
+
+    def test_named_policy_applies_on_every_backend(self):
+        with scratch() as work:
+            environment = self.prepare(work)
+            for backend in ("kyotocabinet", "tkrzw"):
+                with self.subTest(backend=backend):
+                    ordered, arguments, _ = self.relink(work, environment, work / "policy", features=backend)
+                    self.assertEqual(ordered.returncode, 0, ordered.stderr)
+                    self.assertIn(b"--section-ordering-file", arguments)
+                    self.assertIn("using measured policy", ordered.stderr)
 
     def test_install_environment_opt_in_uses_the_facade_policy(self):
         with scratch() as work:
