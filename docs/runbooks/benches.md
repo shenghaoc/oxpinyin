@@ -136,8 +136,10 @@ subject/control/pin order, including the discarded initial rounds. Before
 each native timing or memory sample, the controller enumerates the facade's
 `DT_NEEDED` closure with `readelf` and `ldd`, then evicts the facade, all
 non-C-runtime dependencies, every system data file and the private restored
-user files. glibc and its loader stay warm; libstdc++, libgcc_s, libdb, GLib
-and their non-C-runtime dependencies are included when needed. Each file must
+user files. glibc, its loader and `libgcc_s` stay warm, for every side:
+the controller's own interpreter maps `libgcc_s`, so its pages cannot be
+evicted (#1091). libstdc++, libdb, GLib and their non-C-runtime
+dependencies are included when needed. Each file must
 be on ext4. Only these files are flushed and advised with
 `posix_fadvise(fd, 0, 0, POSIX_FADV_DONTNEED)`; no root or kernel changes are
 used. The source profile is never evicted.

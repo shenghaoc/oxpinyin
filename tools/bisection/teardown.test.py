@@ -336,7 +336,8 @@ class ColdTests(unittest.TestCase):
                                  for name in needed[Path(command[-1]).name])
             with patch.object(td.subprocess, 'check_output', side_effect=output):
                 result = td.library_dependencies(paths['facade.so'])
-            self.assertEqual(set(result), set(paths.values()) - {paths['facade.so']})
+            # libgcc_s is C runtime: the controller's interpreter maps it.
+            self.assertEqual(set(result), set(paths.values()) - {paths['facade.so'], paths['libgcc_s.so.1']})
             with patch.object(td.subprocess, 'check_output', return_value='libdb.so.5 => not found'):
                 with self.assertRaisesRegex(ValueError, 'unresolved cold dependency.*libdb'):
                     td.library_dependencies(paths['facade.so'])
