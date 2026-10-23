@@ -86,7 +86,7 @@ Layer 5 schedules the old-to-new handoffs.
 | `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Proposed for T2N (maintainer ruling 2026-10-22 UTC). |
 | `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run <args>` from `verify-nightly.yml`'s `fuzz-soak` job. | Implemented (maintainer ruling 2026-10-23 UTC). Linux execution; macOS exits 1 because the fuzz workspace links the Linux-only C ABI. Windows transport unverified (#950). |
 | `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport unverified (#950). |
-| `just sanitize [bdb\|kc\|tkrzw\|all]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `tools/sanitize.sh <backend>`, default `bdb`. | `tools/bdb/run-sanitizers.sh`, `tools/kc/run-sanitizers.sh`, and `tools/tkrzw/run-sanitizers.sh` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command). | Implemented (maintainer approval 2026-10-23 UTC, #1085). Linux execution; macOS and Windows exit 1. The workflows do not call the dispatcher yet. |
+| `just sanitize [bdb\|kc\|tkrzw\|all]` | Run one store backend's sanitizer gate, or all three, through the heavy wrapper: `tools/sanitize.sh <backend>`, default `bdb`. | `tools/bdb/run-sanitizers.sh`, `tools/kc/run-sanitizers.sh`, and `tools/tkrzw/run-sanitizers.sh` (moved from `store-backends.yml`'s inline `tkrzw-sanitizers` command). | Implemented (maintainer approval 2026-10-23 UTC, #1085). Linux execution; macOS and Windows exit 1. `store-backends.yml`'s three sanitizer jobs call the same dispatcher. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
 `just check` keeps `check.sh`'s backend selection and selected crate sets.
@@ -175,16 +175,17 @@ These recipes do not change either workflow.
 backend's own script, which keeps its instrumentation, flags and pass
 criteria; the three share the nightly that the `NIGHTLY` line in
 `tools/sanitize.sh` names. `all` runs the three in turn and exits 1 if any
-gate failed. The
-tkrzw script runs `tkrzw-sanitizers`' inline command with its flags, sanitizer
-options and ASLR wrapper unchanged, and adds one precondition, checked by
-`tools/tkrzw/runtime.sh`: every test binary must load the verified libtkrzw,
-the one `tools/cloud/setup.sh`'s environment file names or a host library
-that passes `tools/tkrzw/distro-probe.sh`. Ubuntu's packaged libtkrzw fails
-that probe. The workflows
-are unchanged: `bdb-sanitizers` still calls the bdb script, `tkrzw-sanitizers`
-still runs its inline command, and no job runs the kc gate. Moving them onto
-the dispatcher is a workflow change and needs its own approval (#1085).
+gate failed. The tkrzw script carries the command `tkrzw-sanitizers` used to
+inline, with its flags, sanitizer options and ASLR wrapper unchanged, and adds
+one precondition, checked by `tools/tkrzw/runtime.sh`: every test binary must
+load the verified libtkrzw, the one `tools/cloud/setup.sh`'s environment file
+names or a host library that passes `tools/tkrzw/distro-probe.sh`. Ubuntu's
+packaged libtkrzw fails that probe.
+
+`store-backends.yml` runs the same entry point (maintainer approval
+2026-10-23 UTC, #1085): `tkrzw-sanitizers`, `bdb-sanitizers` and
+`kc-sanitizers` each call `tools/sanitize.sh <backend>`, read the nightly from
+the `NIGHTLY` line, and feed `store-backends-gate`.
 
 ## 3. Cross-platform command transport
 
