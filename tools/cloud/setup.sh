@@ -4,12 +4,17 @@ set -euo pipefail
 # Provision a Claude Code cloud session (a root container behind a
 # TLS-intercepting egress proxy) so every verification gate can run in it
 # (issue #818). Idempotent: each step checks
-# its result and skips when it already holds.
+# its result and skips when it already holds. A tool already at or above its
+# minimum is never reinstalled: tools.dev doctor (`just doctor`) is the one
+# check of every tool's minimum, and this script repeats only the two it
+# provisions, uv and Valgrind (doctor.test.py fails if they drift from
+# doctor's table).
 #
 #   0. require Cargo and the repository toolchain; normal cloud setup
-#      requires Valgrind or installs it with apt-get as root/through sudo
-#   0a. install uv 0.13.1 unless uv 0.13.1 or newer is present, and its
-#       managed CPython 3.15.0 GIL build
+#      keeps a Valgrind at or above its minimum and otherwise installs one
+#      with apt-get as root/through sudo
+#   0a. install uv 0.13.1 only when uv 0.13.1 or newer is missing, and a
+#       managed CPython 3.15-series GIL build only when none is present
 #   0b. require the backend dump utilities the stateful differentials call:
 #      db5.3_dump (bdb) and kchashmgr (kc); install them with apt-get when
 #      root, otherwise print the apt-get line and exit 1 (never sudo)
@@ -66,8 +71,13 @@ python_only=0
 oracle_options=0
 proxy_ca=${OXPINYIN_PROXY_CA:-/root/.ccr/ca-bundle.crt}
 proxy_ca_single=/root/.ccr/agent-proxy-ca.crt
+# Minimums this script provisions to (see the header). Keep them equal to
+# tools/dev/doctor.py; doctor.test.py compares the two.
+uv_minimum=0.13.1
+valgrind_minimum=3.22.0
 # Upstream tkrzw 1.0.34 (9ee8416): its sentinel fix makes defect 1 immune to
 # LTO (docs/findings/tkrzw-distro-compat.md).
+# Exact on purpose (#1074): the oracle side is the reference itself, not a tool.
 tkrzw_url=https://github.com/estraier/tkrzw
 tkrzw_rev=9ee84164cf45e441aa8186418c03a02c9b89f08b
 
@@ -145,9 +155,28 @@ die() {
 }
 pinval() { sed -n "s/^$1=//p" "$pin"; }
 
+# version_at_least TEXT MINIMUM: the first dotted version in TEXT (major.minor
+# or major.minor.patch) is MINIMUM or newer. Plain Bash, because nothing it
+# checks has been installed yet when it first runs.
+version_at_least() {
+	local text=$1 minimum=$2 i
+	local -a found needed
+	[[ $text =~ ([0-9]+)\.([0-9]+)(\.([0-9]+))? ]] || return 1
+	found=("$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[4]:-0}))")
+	IFS=. read -r -a needed <<<"$minimum"
+	for i in 0 1 2; do
+		((found[i] == ${needed[i]:-0})) && continue
+		((found[i] > ${needed[i]:-0})) && return 0
+		return 1
+	done
+	return 0
+}
+
 # ---- 0a. uv and the managed interpreter ---------------------------------
-# Every repository-owned Python call uses this interpreter. The plain 3.15.0
-# build is the GIL-enabled one; uv 0.13.1 has no separate +gil archive.
+# Every repository-owned Python call uses this interpreter: the managed 3.15
+# series. Its plain build is the GIL-enabled one; uv 0.13.1 has no separate
+# +gil archive, so it is installed as cpython@3.15 and selected as
+# cpython@3.15+gil.
 for name in UV_PYTHON PYTHONHOME PYTHONPATH; do
 	if [[ -n ${!name:-} ]]; then
 		die "$name is not supported; unset it before running repository Python"
@@ -169,22 +198,34 @@ if ((!python_only)); then
 			die "Rust toolchain $toolchain is not installed; run: rustup toolchain install $toolchain --component clippy --component rustfmt"
 	done
 	if ((!inside)); then
-		if ! valgrind --version >/dev/null 2>&1; then
+		# Install (or upgrade through the distribution) only a Valgrind that is
+		# missing or older than its minimum.
+		valgrind_found() { valgrind --version 2>/dev/null; }
+		if ! version_at_least "$(valgrind_found)" "$valgrind_minimum"; then
+			if valgrind_found >/dev/null; then
+				valgrind_state="$(valgrind_found) is older than $valgrind_minimum"
+				valgrind_note="outdated: $(valgrind_found) (minimum $valgrind_minimum)"
+			else
+				valgrind_state='valgrind is missing'
+				valgrind_note='missing: valgrind'
+			fi
 			sudo_cmd=()
 			if ((EUID != 0)); then
 				if ! command -v sudo >/dev/null 2>&1; then
-					printf 'missing: valgrind\nrun as root: apt-get install -y valgrind\n' >&2
-					die 'valgrind is missing and neither root nor sudo is available'
+					printf '%s\nrun as root: apt-get install -y valgrind\n' "$valgrind_note" >&2
+					die "$valgrind_state and neither root nor sudo is available"
 				fi
 				sudo_cmd=(sudo)
 			fi
 			command -v apt-get >/dev/null 2>&1 ||
-				die 'valgrind is missing and apt-get is unavailable; ask the environment owner to install Valgrind'
+				die "$valgrind_state and apt-get is unavailable; ask the environment owner to install Valgrind $valgrind_minimum or newer"
 			log 'installing valgrind from the distribution archive'
 			"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null 2>&1 ||
 				{ "${sudo_cmd[@]}" apt-get update >/dev/null 2>&1 &&
 					"${sudo_cmd[@]}" apt-get install -y valgrind >/dev/null; } ||
 				die 'could not install valgrind with apt-get'
+			version_at_least "$(valgrind_found)" "$valgrind_minimum" ||
+				die "valgrind $valgrind_minimum or newer required; the distribution archive provides: $(valgrind_found || echo none)"
 		fi
 		valgrind_version=$(valgrind --version)
 	fi
@@ -195,9 +236,7 @@ fi
 uv_at_least_floor() {
 	local version
 	version=$(uv --version 2>/dev/null) || return 1
-	[[ $version =~ ^uv\ ([0-9]+)\.([0-9]+)\.([0-9]+)([[:space:]]|$) ]] || return 1
-	local major=$((10#${BASH_REMATCH[1]})) minor=$((10#${BASH_REMATCH[2]})) patch=$((10#${BASH_REMATCH[3]}))
-	((major > 0 || minor > 13 || (minor == 13 && patch >= 1)))
+	[[ $version == uv\ * ]] && version_at_least "$version" "$uv_minimum"
 }
 
 uv_install_dir=${UV_INSTALL_DIR:-$HOME/.local/bin}
@@ -218,6 +257,7 @@ if ! command -v uv >/dev/null 2>&1 || ! uv_at_least_floor ||
 		[[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
 		uv_target=x86_64-unknown-linux-gnu
 		# Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+		# Exact on purpose (#1074): a checksum is only known for a known version.
 		uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
 		# Keep the archive in memory. Write only its verified executables.
 		uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64) ||
@@ -238,24 +278,28 @@ else
 	log "using $(uv --version)"
 fi
 uv_at_least_floor ||
-	die "uv 0.13.1 or newer required; found: $(uv --version 2>/dev/null || echo missing)"
+	die "uv $uv_minimum or newer required; found: $(uv --version 2>/dev/null || echo missing)"
 uv_dir=$(dirname "$(command -v uv)")
-uv python install cpython@3.15.0 ||
-	die 'managed CPython 3.15.0 provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PYTHON'
+# Keep a managed 3.15-series interpreter that is already there; install one only
+# when none is.
+if ! uv python find --managed-python cpython@3.15+gil >/dev/null 2>&1; then
+	uv python install cpython@3.15 ||
+		die 'managed CPython 3.15 provisioning failed; check writable UV_PYTHON_INSTALL_DIR/UV_CACHE_DIR and access to github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
+fi
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - <<'PYTHON'
 from pathlib import Path
 import subprocess
 import sys
 import sysconfig
 assert sys.implementation.name == "cpython"
-assert sys.version_info[:3] == (3, 15, 0)
+assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
 assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
 assert sys._is_gil_enabled()
 managed = subprocess.check_output(
-    ["uv", "python", "find", "--managed-python", "cpython@3.15.0+gil"],
+    ["uv", "python", "find", "--managed-python", "cpython@3.15+gil"],
     text=True).strip()
 assert Path(sys.executable).resolve() == Path(managed).resolve()
-print("Verified managed CPython 3.15.0 GIL build:", Path(managed).resolve())
+print("Verified managed CPython", sys.version.split()[0], "GIL build:", Path(managed).resolve())
 PYTHON
 
 if ((python_only)); then

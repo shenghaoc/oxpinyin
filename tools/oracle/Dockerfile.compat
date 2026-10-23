@@ -15,9 +15,12 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     apt-get "$@" install -y --no-install-recommends \
       libclang-dev db5.3-util kyotocabinet-utils tkrzw-utils; \
     rm -rf /var/lib/apt/lists/*
-# uv 0.13.1 and its managed GIL-enabled CPython. The +gil request selects the
-# plain 3.15.0 build; uv 0.13.1 has no separate +gil archive.
+# uv 0.13.1 and its managed GIL-enabled CPython of the 3.15 series. uv 0.13.1
+# has no separate +gil archive: install the plain cpython@3.15 build, select it
+# as cpython@3.15+gil.
 # Archive digest: https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
+# Exact on purpose (#1074): this image installs from a checksum, and a checksum
+# is only known for a known version.
 ENV UV_INSTALL_DIR=/opt/uv/bin UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_CACHE_DIR=/opt/uv/cache
 # uv's bundled roots omit the optional proxy CA installed in this image.
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
@@ -42,9 +45,9 @@ RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     unset uv_payload; \
     export PATH="/opt/uv/bin:$PATH"; \
     /opt/uv/bin/uv --version | grep -q '^uv 0\.13\.1 '; \
-    /opt/uv/bin/uv python install cpython@3.15.0; \
-    /opt/uv/bin/uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
-      -c 'from pathlib import Path; import subprocess, sys, sysconfig; assert sys.implementation.name == "cpython"; assert sys.version_info[:3] == (3, 15, 0); assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0; assert sys._is_gil_enabled(); managed = subprocess.check_output(["uv", "python", "find", "--managed-python", "cpython@3.15.0+gil"], text=True).strip(); assert Path(sys.executable).resolve() == Path(managed).resolve()'
+    /opt/uv/bin/uv python install cpython@3.15; \
+    /opt/uv/bin/uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
+      -c 'from pathlib import Path; import subprocess, sys, sysconfig; assert sys.implementation.name == "cpython"; assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0); assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0; assert sys._is_gil_enabled(); managed = subprocess.check_output(["uv", "python", "find", "--managed-python", "cpython@3.15+gil"], text=True).strip(); assert Path(sys.executable).resolve() == Path(managed).resolve()'
 ENV PATH=/opt/uv/bin:$PATH
 COPY --from=reference /opt/pinyin-oracle /opt/reference
 COPY rust-toolchain.toml /tmp/toolchain/rust-toolchain.toml
@@ -53,6 +56,8 @@ ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 # `rustup toolchain install` with no name installs the rust-toolchain.toml
 # toolchain and components and fails on error (src/cli/rustup_mode.rs:644,
 # 902-903). The checks reject a partial install without downloading.
+# The rustup-init version and checksum below are exact on purpose (#1074): a
+# checksum is only known for a known version.
 RUN --mount=type=secret,id=cacert,required=false,mode=0444 \
     set -eu; printf 'Local CA identity: %s\n' "$CA_IDENTITY"; \
     if [ -s /run/secrets/cacert ]; then \

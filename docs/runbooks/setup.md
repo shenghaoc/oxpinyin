@@ -39,11 +39,17 @@ sudo apt-get install -y build-essential git curl ca-certificates pkg-config libc
 sudo dnf install gcc gcc-c++ make git curl ca-certificates pkgconf-pkg-config clang-devel libdb-devel glib2-devel
 ```
 
-Repository Python uses uv 0.13.1 or newer and its managed CPython 3.15.0 with
-the GIL. `uv.toml` sets the floor; CI installs exactly 0.13.1.
+Repository Python uses uv and its managed CPython 3.15 series with the GIL.
+`uv.toml` sets uv's floor, 0.13.1; CI installs exactly that version.
 
-Install uv only when it is missing or older than 0.13.1 (`uv --version` shows
-the version):
+`just doctor` is the one check of every tool's minimum: uv, CPython, just,
+cargo-nextest, cargo-c, cargo-fuzz, cargo-llvm-cov and, on Linux, GNU ld, gcov
+and Valgrind. Each line names the minimum and the version found. A newer tool
+passes, an older one fails, and a missing one comes with its install command.
+Install or upgrade a tool only when `just doctor` says it is missing or too old.
+
+Until uv and the interpreter exist, `just doctor` cannot run. Install uv only
+when it is missing or older than 0.13.1 (`uv --version` shows the version):
 
 ```bash
 installer="$(mktemp)"
@@ -58,21 +64,22 @@ export PATH="$HOME/.local/bin:$PATH"
 hash -r
 ```
 
-Provision the interpreter:
+Provision the interpreter, installing it only when no managed 3.15 GIL build
+is present:
 
 ```bash
-uv python install cpython@3.15.0
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal - <<'PYTHON'
+uv python find --managed-python cpython@3.15+gil || uv python install cpython@3.15
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - <<'PYTHON'
 from pathlib import Path
 import subprocess
 import sys
 import sysconfig
 assert sys.implementation.name == "cpython"
-assert sys.version_info[:3] == (3, 15, 0)
+assert sys.version_info.releaselevel == "final" and (3, 15, 0) <= sys.version_info[:3] < (3, 16, 0)
 assert sysconfig.get_config_var("Py_GIL_DISABLED") == 0
 assert sys._is_gil_enabled()
 managed = subprocess.check_output(
-    ["uv", "python", "find", "--managed-python", "cpython@3.15.0+gil"],
+    ["uv", "python", "find", "--managed-python", "cpython@3.15+gil"],
     text=True).strip()
 assert Path(sys.executable).resolve() == Path(managed).resolve()
 PYTHON
@@ -84,22 +91,23 @@ Automated Linux x86_64 setup verifies the release archive against the pinned
 [published checksum](https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum).
 
 The `+gil` request requires the GIL-enabled build. uv 0.13.1 has no separate
-`+gil` archive, so install the plain 3.15.0 build and verify that the request
-resolves to it. Do not use a system Python, a virtual environment,
-`pyproject.toml` or `uv.lock`; the checkout's `.python-version` and
-`uv.toml` pin the same interpreter and uv version.
+`+gil` archive, so install the plain 3.15 build (`cpython@3.15`) and verify that
+the request resolves to it. A later series is a deliberate change: the tooling
+relies on 3.15's `-X lazy_imports` modes. Do not use a system Python, a virtual
+environment, `pyproject.toml` or `uv.lock`; the checkout's `.python-version`
+and `uv.toml` name the same interpreter series and uv floor.
 
 To regenerate the W3 content fixtures, run this command from the checkout root:
 
 ```bash
-uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal \
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal \
   tools/generate_w3_fixtures.py
 ```
 
-The native command interface uses just 1.59.0 or newer. Install it through the
-host route: `brew install just` on macOS, the distribution package on Linux,
-or `cargo install just --version 1.59.0 --locked`. The root `justfile`
-enforces the minimum version.
+The native command interface needs just at or above the `minimum-version` in the
+root `justfile`, which `just` enforces itself and `just doctor` reports.
+Install it through the host route: `brew install just` on macOS, the
+distribution package on Linux, or `cargo install just --locked`.
 
 `just build` and `just clippy` pass Cargo arguments unchanged through
 `just heavy`, including the host-wide slot and memory admission. `just fmt`
@@ -125,10 +133,10 @@ they do not make the native interface execute a container or oracle check.
 The Windows recipes use PowerShell and preserve the child status explicitly.
 Their argument transport and slot behavior remain TODO (no Windows host).
 
-The native Rust test entry point uses cargo-nextest 0.9.115 or later. Install
-it with `cargo install cargo-nextest --locked` (or the prebuilt release) and
-check `cargo-nextest --version`. [Profile inheritance](https://nexte.st/docs/configuration/#profile-inheritance)
-requires this minimum. `just test` calls `slot.run_command` directly through
+The native Rust test entry point uses cargo-nextest at or above the
+`nextest-version` in `.config/nextest.toml` ([profile inheritance](https://nexte.st/docs/configuration/#profile-inheritance)
+needs it); `just doctor` reports it. Install it with
+`cargo install cargo-nextest --locked` (or the prebuilt release). `just test` calls `slot.run_command` directly through
 `tools.dev.test_runner` with the local profile. Pass the same crate and
 feature selection as cargo test (the default workspace feature is Berkeley
 DB). Set `NEXTEST_PROFILE=ci` for the CI limits. `just test-doc` runs

@@ -139,7 +139,7 @@ Native macOS oxpinyin-only information remains a separate Layer 5 measurement.
 
 ## 3. Container provisioning and identities
 
-Provision a separate uv-managed CPython 3.15.0 inside the container.
+Provision a separate uv-managed CPython of the 3.15 series inside the container.
 Use [Layer 1's interpreter contract](tooling-python.md#2-interpreter-contract)
 with container-owned managed storage and cache. Do not share the host executable.
 Provision failures name their cause and never select system Python.
