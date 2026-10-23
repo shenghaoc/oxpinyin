@@ -29,6 +29,10 @@ DRIVER
 chmod +x "$2"
 COMPILER
 chmod +x "$work/bin/gcc"
+# The isolated shell-driver fixture has no ELF dependencies. Keep its resolver
+# synthetic too; the launch-value assertions below still exercise the runner.
+printf '#!/bin/sh\nprintf "statically linked\\n"\n' >"$work/bin/ldd"
+chmod +x "$work/bin/ldd"
 
 selection=${1:-all}
 passed=0

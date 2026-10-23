@@ -89,7 +89,7 @@ echo "--- running against oxpinyin-capi ---"
 # 177), and a stderr-only line on one side is a spurious diff row.
 CAPI_LOG="$(mktemp)"
 CAPI_ERR="$(mktemp)"
-if ! ./bisect "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
+if ! tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./bisect "$CAPI_SO" "$CAPI_DATA" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: bisect crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     echo "--- driver diagnostics (stderr) ---"
@@ -106,7 +106,7 @@ echo ""
 if command -v valgrind > /dev/null 2>&1; then
     echo "--- valgrind ---"
     VALGRIND_LOG="$(mktemp)"
-    if ! valgrind --error-exitcode=1 \
+    if ! tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" valgrind --error-exitcode=1 \
                   --leak-check=full \
                   --errors-for-leak-kinds=definite \
                   ./bisect "$CAPI_SO" "$CAPI_DATA" > /dev/null 2> "$VALGRIND_LOG"; then
@@ -147,6 +147,7 @@ if [ "${BISECT_LD_PRELOAD:-0}" = "1" ] && [ -n "$IBUS_ENGINE" ]; then
 
     # Verify our symbols override the system libpinyin via LD_DEBUG.
     LDDEBUG_LOG="$(mktemp)"
+    LD_PRELOAD="$CAPI_SO" tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" || exit 4
     env LD_PRELOAD="$CAPI_SO" LD_DEBUG=bindings \
         "$IBUS_ENGINE" --ibus > /dev/null 2> "$LDDEBUG_LOG" &
     ENGINE_PID=$!
@@ -170,7 +171,7 @@ if [ "${BISECT_LD_PRELOAD:-0}" = "1" ] && [ -n "$IBUS_ENGINE" ]; then
     # Verify key symbols were bound from our .so, not the system one.
     MISSING_CRITICAL=0
     for sym in pinyin_init pinyin_fini pinyin_alloc_instance pinyin_set_options; do
-        if ! grep -q "to $CAPI_SO.*\`$sym'" "$LDDEBUG_LOG" 2>/dev/null; then
+        if ! grep -q "to $CAPI_SO.*\`$sym'" "$LDDEBUG_LOG"; then
             echo "  MISSING: $sym not bound from capi"
             MISSING_CRITICAL=1
         fi
@@ -211,7 +212,7 @@ if [ -n "$ORACLE_SO" ] && [ -n "$ORACLE_DATA" ]; then
     ORACLE_ERR="$(mktemp)"
     CASE_LOG="$(mktemp)"
     oracle_status=0
-    ./bisect "$ORACLE_SO" "$ORACLE_DATA" --right-tail-case > "$ORACLE_LOG" 2> "$ORACLE_ERR" || oracle_status=$?
+    tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./bisect "$ORACLE_SO" "$ORACLE_DATA" --right-tail-case > "$ORACLE_LOG" 2> "$ORACLE_ERR" || oracle_status=$?
     if [ "$oracle_status" -ne 134 ] ||
        ! grep -Fxq 'right-tail input=nihao offset=5 flags=0x0000018a' "$ORACLE_LOG" ||
        ! grep -Eq 'pinyin.cpp:3092:.*pinyin_get_right_pinyin_offset.*Assertion.*_check_offset\(matrix, right\).*failed' "$ORACLE_ERR"; then
@@ -220,7 +221,7 @@ if [ -n "$ORACLE_SO" ] && [ -n "$ORACLE_DATA" ]; then
         rm -f "$CAPI_LOG" "$CAPI_ERR" "$ORACLE_LOG" "$ORACLE_ERR" "$CASE_LOG"
         exit 1
     fi
-    if ! ./bisect "$CAPI_SO" "$ORACLE_DATA" --right-tail-case > "$CASE_LOG" 2>&1 ||
+    if ! tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./bisect "$CAPI_SO" "$ORACLE_DATA" --right-tail-case > "$CASE_LOG" 2>&1 ||
        ! grep -Fxq 'right-tail input=nihao offset=5 flags=0x0000018a' "$CASE_LOG" ||
        ! grep -Fxq 'right-tail: false; output untouched' "$CASE_LOG"; then
         echo "FAIL: unexpected C API right-tail observation"

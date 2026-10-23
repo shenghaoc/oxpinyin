@@ -13,6 +13,7 @@
 #   - the pinned model20 archive/cache, fetched by tools/model/fetch-model.sh
 #
 # Reproducible container: the perf-matrix image (Dockerfile.perf-matrix)
+# requires the verified runtime mount/environment in docs/runbooks/cloud.md.
 # carries the pin oracle at /opt/libpinyin-tkrzw plus the build deps the
 # tkrzw peer links (lz4, zstd). This runner stages oxpinyin with default
 # features — whatever the workspace default is, Berkeley DB since
@@ -34,6 +35,7 @@
 #   PERF_RAM_RUNS         ram-init/ram-cycle processes per backend (default 10)
 
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 cd "$(dirname "$0")"
 SCRIPT_DIR="$(pwd)"
@@ -103,6 +105,9 @@ echo "installed capi .so:         $CAPI_SO"
 function_order_measurement --library "ox/pinyin=$CAPI_SO" \
     --reference-arm pin --library "pin/pinyin=$ORACLE_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 
+LD_LIBRARY_PATH="$(dirname "$ORACLE_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run auto pin "$ORACLE_SO"
+LD_LIBRARY_PATH="$(dirname "$CAPI_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run auto subject "$CAPI_SO"
+
 # ── Installed data tree (cargo-c ships no data; packager must add it) ────
 
 if [ ! -f "$CAPI_DATA/pinyin_index.bin" ] || [ ! -f "$CAPI_DATA/phrase_index.bin" ] \
@@ -152,14 +157,14 @@ run_speed_side() {
     local label=$1 so=$2 data=$3 libdir=$4
     if command -v taskset >/dev/null 2>&1; then
         taskset -c "$CPU" env \
-            LD_LIBRARY_PATH="$libdir" \
+            LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE=speed PERF_CYCLES="$CYCLES" \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
+            "${TKRZW_EXEC[@]}" auto "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
             >>"$SPEED_JSONL" 2>>"$WORK/$label-speed.err"
     else
-        env LD_LIBRARY_PATH="$libdir" \
+        env LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE=speed PERF_CYCLES="$CYCLES" \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
+            "${TKRZW_EXEC[@]}" auto "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
             >>"$SPEED_JSONL" 2>>"$WORK/$label-speed.err"
     fi
 }
@@ -184,14 +189,14 @@ run_ram_side() {
     local label=$1 mode=$2 so=$3 data=$4 libdir=$5
     if command -v taskset >/dev/null 2>&1; then
         taskset -c "$CPU" env \
-            LD_LIBRARY_PATH="$libdir" \
+            LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE="$mode" PERF_CYCLES="$CYCLES" \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
+            "${TKRZW_EXEC[@]}" auto "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
             >>"$WORK/$mode.jsonl" 2>>"$WORK/$label-$mode.err"
     else
-        env LD_LIBRARY_PATH="$libdir" \
+        env LD_LIBRARY_PATH="$libdir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE="$mode" PERF_CYCLES="$CYCLES" \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
+            "${TKRZW_EXEC[@]}" auto "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$data" \
             >>"$WORK/$mode.jsonl" 2>>"$WORK/$label-$mode.err"
     fi
 }

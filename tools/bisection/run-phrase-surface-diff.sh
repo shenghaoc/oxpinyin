@@ -119,7 +119,7 @@ trap 'rm -rf "$DRIVER_DIR" "$CAPI_LOG" "$ORACLE_LOG" "$CAPI_CWD" "$ORACLE_CWD"' 
 SYSTEM="$(cd "$SYSTEM" && pwd)"
 ORACLE_DATA="$(cd "$ORACLE_DATA" && pwd)"
 ORACLE_SO="$(cd "$(dirname "$ORACLE_SO")" && pwd)/$(basename "$ORACLE_SO")"
-if ! (cd "$CAPI_CWD" && "$DRIVER" "$CAPI_SO" "$SYSTEM") > "$CAPI_LOG"; then
+if ! (cd "$CAPI_CWD" && tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" "$DRIVER" "$CAPI_SO" "$SYSTEM") > "$CAPI_LOG"; then
     echo "FAIL: phrase-surface-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     exit 1
@@ -127,7 +127,7 @@ fi
 echo "oxpinyin-capi: ok"
 
 echo "--- oracle side ---"
-if ! (cd "$ORACLE_CWD" && "$DRIVER" "$ORACLE_SO" "$ORACLE_DATA") > "$ORACLE_LOG"; then
+if ! (cd "$ORACLE_CWD" && tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" "$DRIVER" "$ORACLE_SO" "$ORACLE_DATA") > "$ORACLE_LOG"; then
     echo "FAIL: phrase-surface-diff crashed against oracle"
     cat "$ORACLE_LOG"
     exit 1

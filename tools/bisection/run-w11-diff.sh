@@ -69,12 +69,12 @@ capture_output() {
     printf -v "$output_name" '%s' "${captured%.}"
     return "$result"
 }
-if ! capture_output CAPI_LOG "$DRIVER" "$CAPI_SO" "$CAPI_SYS" "${DRIVER_ARGS[@]}" 2> /dev/null; then
+if ! capture_output CAPI_LOG tkrzw_run --quiet-stderr "$ORACLE_DBM" subject "$CAPI_SO" "$DRIVER" "$CAPI_SO" "$CAPI_SYS" "${DRIVER_ARGS[@]}"; then
     echo "FAIL: $STEM crashed against oxpinyin-capi"
     printf '%s' "$CAPI_LOG"
     exit 1
 fi
-if ! capture_output ORACLE_LOG "$DRIVER" "$ORACLE_SO" "$ORACLE_DATA" "${DRIVER_ARGS[@]}" 2> /dev/null; then
+if ! capture_output ORACLE_LOG tkrzw_run --quiet-stderr "$ORACLE_DBM" pin "$ORACLE_SO" "$DRIVER" "$ORACLE_SO" "$ORACLE_DATA" "${DRIVER_ARGS[@]}"; then
     echo "FAIL: $STEM crashed against the oracle"
     printf '%s' "$ORACLE_LOG"
     exit 1

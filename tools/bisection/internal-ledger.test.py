@@ -295,13 +295,15 @@ class ReviewGuardTests(unittest.TestCase):
     def test_rebased_worker_preserves_extra_environment_and_timeout(self):
         module = gcov_measure.contract_module()
         with tempfile.TemporaryDirectory() as scratch:
-            with patch.object(module.subprocess, 'Popen') as run:
+            with patch.object(module, 'check_tkrzw') as guard, patch.object(module.subprocess, 'Popen') as run:
                 process = run.return_value
                 process.returncode = 0
                 process.communicate.return_value = (b'{"ret": true}\n', b'')
                 observed = module.run_worker('pinyin', Path('/p'), Path('/data'), 'probe', scratch,
                                              extra_env={'J_TEST_ENV': 'retained'}, timeout=60)
             self.assertEqual(run.call_args.kwargs['env']['J_TEST_ENV'], 'retained')
+            self.assertEqual(guard.call_args.args[3], Path('/p'))
+            self.assertEqual(guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
             self.assertEqual(process.communicate.call_count, 1)
             self.assertGreater(process.communicate.call_args.kwargs['timeout'], 0)
             self.assertLessEqual(process.communicate.call_args.kwargs['timeout'], 0.1)
@@ -583,25 +585,30 @@ libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
     def test_measured_worker_passes_the_cell_to_its_subprocess(self):
         module = gcov_measure.contract_module('kc')
         with tempfile.TemporaryDirectory() as scratch:
-            with patch.object(module.subprocess, 'Popen') as run:
+            with patch.object(module, 'check_tkrzw') as guard, patch.object(module.subprocess, 'Popen') as run:
                 process = run.return_value
                 process.returncode = 0
                 process.communicate.return_value = (b'{"ret": true}\n', b'')
                 gcov_measure.measured_worker(module, 'pinyin', Path('/p'), Path('/data'), 'probe', scratch, 'kc')
             self.assertEqual(run.call_args.kwargs['env']['J_MEASUREMENT_CELL'], 'kc')
             self.assertEqual(run.call_args.kwargs['env']['CONTRACT_DIFF_CELL'], 'kc')
+            self.assertEqual(guard.call_args.args[0], 'kc')
+            self.assertEqual(guard.call_args.args[3], Path('/p'))
+            self.assertEqual(guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
             self.assertEqual(run.call_args.args[0][1:3], [str(Path(gcov_measure.__file__).resolve()), '--worker'])
 
     def test_ordinary_contract_worker_starts_the_cached_entry(self):
         module = gcov_measure.contract_module('kc')
         with tempfile.TemporaryDirectory() as scratch:
-            with patch.object(module.subprocess, 'Popen') as run:
+            with patch.object(module, 'check_tkrzw') as guard, patch.object(module.subprocess, 'Popen') as run:
                 process = run.return_value
                 process.returncode = 0
                 process.communicate.return_value = (b'{"ret": true}\n', b'')
                 gcov_measure.bounded_worker(module, 'pinyin', Path('/p'), Path('/data'), 'probe', scratch)
             self.assertEqual(run.call_args.args[0][1:], [str(module.WORKER), 'pinyin', '/p', '/data', 'probe'])
             self.assertEqual(Path(run.call_args.args[0][1]).name, 'contract-worker.py')
+            self.assertEqual(guard.call_args.args[3], Path('/p'))
+            self.assertEqual(guard.call_args.kwargs['env'], run.call_args.kwargs['env'])
 
     def test_contracts_skip_other_cells_fixtures_and_select_the_cell(self):
         good = dict(exit=0, result={}, stderr='', userfiles=[], measurement_abort_flush=False)
@@ -621,9 +628,12 @@ libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
         def run(argv, **kwargs):
             calls.append(argv); return SimpleNamespace(returncode=0, stdout=row, stderr=b'')
         with patch.object(gcov_measure, 'verify_prefix'), patch.object(gcov_measure, 'clear'), \
-             patch.object(gcov_measure, 'counters', return_value={('f',): 1}), patch.object(gcov_measure.subprocess, 'run', side_effect=run):
+             patch.object(gcov_measure, 'counters', return_value={('f',): 1}), patch.object(gcov_measure.subprocess, 'run', side_effect=run), \
+             patch.object(gcov_measure, 'check_tkrzw') as guard:
             attributed, nonmatch, incomplete, results = gcov_measure.surfaces(Path('/prefix'), Path('/p'), Path('/out'), Path('/pin'), 'tkrzw', {'x': 'y'})
         self.assertEqual(len(calls), 12)
+        self.assertEqual(guard.call_count, 9)
+        self.assertTrue(all(call.args[0] == 'tkrzw' for call in guard.call_args_list))
         self.assertTrue(all(argv[-1] == 'tkrzw' and argv[-5] == '--surface-worker' for argv in calls))
         self.assertEqual(results, [('sentence', 1, 1, 0), ('ties', 1, 1, 0), ('corpus', 1, 1, 0)])
 
@@ -759,7 +769,8 @@ libpinyin_la_SOURCES = $(pinyin_SOURCES) pinyin.cpp
             return run
         def surfaces(run, excused):
             with patch.object(gcov_measure, 'verify_prefix'), patch.object(gcov_measure, 'clear'), \
-                 patch.object(gcov_measure, 'counters', return_value={('f',): 1}), patch.object(gcov_measure.subprocess, 'run', side_effect=run):
+                 patch.object(gcov_measure, 'counters', return_value={('f',): 1}), \
+                 patch.object(gcov_measure, 'check_tkrzw'), patch.object(gcov_measure.subprocess, 'run', side_effect=run):
                 return gcov_measure.surfaces(Path('/prefix'), Path('/p'), Path('/out'), Path('/pin'), 'kc', None, excused=excused)
         excused = frozenset({'residual'})
         result = surfaces(run_with(subject_changed=('residual',)), excused)[3]

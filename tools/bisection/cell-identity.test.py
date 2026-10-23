@@ -120,7 +120,7 @@ if os.environ.get('STUB_FAIL') == '1':
         for name in ('first', 'second'):
             owner = self.root / name
             for relative in ('tools/bisection/cell-artifacts.sh', 'tools/bisection/oracle-cell.sh',
-                             'tools/oracle/build-oracle.sh'):
+                             'tools/oracle/build-oracle.sh', 'tools/tkrzw/runtime.sh'):
                 destination = owner / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(ROOT / relative, destination)

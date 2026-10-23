@@ -24,9 +24,11 @@ import tempfile
 import pickle
 import socket
 import re
+import runpy
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+check_tkrzw = runpy.run_path(str(REPO / "tools/tkrzw/runtime.py"))["check"]
 PIN = "074a2219c90feaf962d0d24f034514033ece5f99"
 WORKER_TIMEOUT = 60
 # The pin's three DBM cells (configure.ac:93-132 at the pin): the Makefile.am
@@ -293,6 +295,7 @@ def bounded_worker(module, mode, so, data, name, scratch, **options):
 
 def worker(mode, so, data, name):
     module = contract_module(os.environ['J_MEASUREMENT_CELL'])
+    check_tkrzw("auto", "gcov_measure.py", "subject", so)
     library = ctypes.CDLL(so)
     original_fn = module.Kit.fn
     def traced_fn(kit, function, result, *args):
@@ -483,7 +486,8 @@ def same_data(prefix, pinyin, out, pin, cell='bdb', provenance=None):
             for side, so in [('reference', prefix / 'lib/libpinyin.so'), ('subject', pinyin), ('measurement', out / 'libpinyin.so')]:
                 cwd = work / (name + '-' + side)
                 cwd.mkdir()
-                env = dict(os.environ, LD_LIBRARY_PATH=str(so.parent))
+                env = dict(os.environ, LD_LIBRARY_PATH=str(so.parent) + (":" + os.environ["LD_LIBRARY_PATH"] if os.environ.get("LD_LIBRARY_PATH") else ""))
+                check_tkrzw(cell, "gcov_measure.py/same_data", side, so, env=env, cwd=cwd)
                 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
                 run = subprocess.run([str(exe), str(so), str(data), *(['matched-tables'] if name == 'punct-diff' else [])], cwd=cwd, env=env, capture_output=True)
                 observations.append((run.returncode, run.stdout))
@@ -531,6 +535,7 @@ def surface_worker(so, data, group, cell='bdb'):
     """Replay the existing C-ABI sentence call order, output through stdout only."""
     module = contract_module(cell)
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    check_tkrzw("auto", "gcov_measure.py", "subject", so)
     library = ctypes.CDLL(so)
     dump = getattr(library, 'oxpinyin_j_gcov_dump', None)
     if dump:
@@ -630,6 +635,7 @@ def surfaces(prefix, pinyin, out, pin, cell='bdb', provenance=None, excused=None
         observations = []
         clear(out)
         for side, so in [('reference', prefix / 'lib/libpinyin.so'), ('subject', pinyin), ('measurement', out / 'libpinyin.so')]:
+            check_tkrzw(cell, 'gcov_measure.py/surfaces', side, so)
             result = subprocess.run([sys.executable, '-B', __file__, '--surface-worker', str(so), str(data), group, cell], capture_output=True)
             if result.returncode:
                 raise RuntimeError(f'{group}/{side} failed ({result.returncode}): ' + result.stderr.decode(errors='replace')[-1200:])
@@ -756,7 +762,9 @@ def user_store(prefix, target, out, pin, cell='bdb', provenance=None, libraries=
                 if not alias.exists(): alias.symlink_to('libpinyin.so')
             profile, owned = work / ('profile-' + side), work / ('owned-' + side)
             profile.mkdir(); owned.mkdir()
-            env = dict(os.environ, LD_LIBRARY_PATH=str(so_dir), OX_SYSTEM_DIR=str(data), OX_PIN_DIR=str(profile), OX_OWNED_DIR=str(owned), OX_INPUTS='nihao nisha')
+            env = dict(os.environ, LD_LIBRARY_PATH=str(so_dir) + (":" + os.environ["LD_LIBRARY_PATH"] if os.environ.get("LD_LIBRARY_PATH") else ""), OX_SYSTEM_DIR=str(data), OX_PIN_DIR=str(profile), OX_OWNED_DIR=str(owned), OX_INPUTS='nihao nisha')
+            check_tkrzw(cell, 'gcov_measure.py/user_store', side, exe, env=env)
+            check_tkrzw(cell, 'gcov_measure.py/user_store', 'subject', binaries[0], env=env)
             command([exe, 'train', data, profile, 'nihao', 'nisha'], env=env)
             original = sorted(command([exe, 'dump', data, profile], env=env).splitlines())
             assert original and any(line.startswith('B') for line in original)

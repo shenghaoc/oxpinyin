@@ -5,6 +5,8 @@
 # libpinyin on the keystroke path, or the SAME INSTRUCTIONS MORE SLOWLY?
 #
 # Runs inside the image built by Dockerfile.callgrind:
+# Include the verified runtime mount and exact library environment described
+# in docs/runbooks/cloud.md, Runtime enforcement, in the run command below.
 #   docker build -f tools/bisection/Dockerfile.callgrind -t oxpinyin-callgrind .
 #   docker run --rm --security-opt label=disable \
 #               --security-opt seccomp=unconfined \
@@ -48,6 +50,7 @@
 # accompanying findings document.
 
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 OUT=${CG_OUT:-/out}
@@ -97,14 +100,21 @@ for f in "$LP_SO" "$OX_SO" "$OX_NODEBUG_SO" "$OX_ALLOC_SO"; do
 done
 [ -d "$DATA" ] || { echo "fatal: data dir $DATA missing" >&2; exit 1; }
 
+for runtime_object in "$LP_SO" "$OX_SO" "$OX_NODEBUG_SO" "$OX_ALLOC_SO"; do
+    runtime_side=subject
+    [[ $runtime_object != "$LP_SO" ]] || runtime_side=pin
+    LD_LIBRARY_PATH="$(dirname "$runtime_object")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        tkrzw_run tkrzw "$runtime_side" "$runtime_object"
+done
+
 # Both cells open the SAME libpinyin-installed data directory: this is the
 # drop-in configuration, with no oxpinyin-generated data anywhere in it.
 run_cell() { # label so extra-valgrind-args...
     local label=$1 so=$2; shift 2
-    taskset -c "$CPU" env LD_LIBRARY_PATH="$LP_LIB" \
+    taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         PERF_BACKEND="$label" PERF_MODE=speed \
         PERF_CYCLES="$CG_CYCLES" PERF_REPEATS="$CG_REPEATS" \
-        valgrind --tool=callgrind \
+        "${TKRZW_EXEC[@]}" tkrzw "${0##*/}" "$label" "$so" -- valgrind --tool=callgrind \
                  --collect-atstart=no \
                  --toggle-collect=bisect_perf_steady_unit \
                  --cache-sim=yes \
@@ -180,9 +190,9 @@ run_cell() { # label so extra-valgrind-args...
 # redirection is actually in effect here before any Ir number is read.
 {
     echo "=== valgrind malloc interception ==="
-    taskset -c "$CPU" env LD_LIBRARY_PATH="$LP_LIB" \
+    taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$OX_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         PERF_BACKEND=probe PERF_MODE=speed PERF_CYCLES=2 PERF_REPEATS=1 \
-        valgrind --tool=callgrind --collect-atstart=no \
+        "${TKRZW_EXEC[@]}" tkrzw "${0##*/}" subject "$OX_SO" -- valgrind --tool=callgrind --collect-atstart=no \
                  --toggle-collect=bisect_perf_steady_unit \
                  --trace-redir=yes \
                  --callgrind-out-file="$OUT/callgrind.redir-probe.out" \
@@ -240,11 +250,11 @@ HW="$OUT/hw-instructions.jsonl"; : > "$HW"
 for _ in $(seq 1 "$HW_RUNS"); do
     for cell in "libpinyin-tkrzw:$LP_SO" "oxpinyin-tkrzw:$OX_SO"; do
         label=${cell%%:*}; so=${cell#*:}
-        taskset -c "$CPU" env LD_LIBRARY_PATH="$LP_LIB" \
+        taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE=speed \
             PERF_CYCLES="$T_CYCLES" PERF_REPEATS="$T_REPEATS" \
             PERF_HW=instructions \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" >> "$HW" 2>>"$OUT/hw.err"
+            "${TKRZW_EXEC[@]}" tkrzw "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" >> "$HW" 2>>"$OUT/hw.err"
     done
 done
 uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$HW" <<'PY' | tee "$OUT/hw-instructions.md"
@@ -296,10 +306,10 @@ PY
 # for, which is exactly what the intercepted profile cannot.
 {
     echo "=== allocations per steady cycle (oxpinyin, alloc-count build) ==="
-    taskset -c "$CPU" env LD_LIBRARY_PATH="$LP_LIB" \
+    taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$OX_ALLOC_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         PERF_BACKEND=oxpinyin-alloccount PERF_MODE=speed \
         PERF_CYCLES="$T_CYCLES" PERF_REPEATS="$T_REPEATS" \
-        "$SCRIPT_DIR/bisect" --perf "$OX_ALLOC_SO" "$DATA"
+        "${TKRZW_EXEC[@]}" tkrzw "${0##*/}" subject "$OX_ALLOC_SO" -- "$SCRIPT_DIR/bisect" --perf "$OX_ALLOC_SO" "$DATA"
     echo
     echo "steady_alloc_count / steady_alloc_cycles = allocating calls per cycle."
     echo "libpinyin has no counterpart symbol; its comparable figure is the"
@@ -316,10 +326,10 @@ echo "--- timing: $T_RUNS alternating runs x $T_CYCLES cycles x $T_REPEATS passe
 for _ in $(seq 1 "$T_RUNS"); do
     for cell in "libpinyin-tkrzw:$LP_SO" "oxpinyin-tkrzw:$OX_SO"; do
         label=${cell%%:*}; so=${cell#*:}
-        taskset -c "$CPU" env LD_LIBRARY_PATH="$LP_LIB" \
+        taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
             PERF_BACKEND="$label" PERF_MODE=speed \
             PERF_CYCLES="$T_CYCLES" PERF_REPEATS="$T_REPEATS" \
-            "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" >> "$SPEED" 2>>"$OUT/speed.err"
+            "${TKRZW_EXEC[@]}" tkrzw "${0##*/}" "$label" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" >> "$SPEED" 2>>"$OUT/speed.err"
     done
 done
 uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal "$SCRIPT_DIR/perf-ci.py" "$SPEED" --metric steady --metric cold --format md \

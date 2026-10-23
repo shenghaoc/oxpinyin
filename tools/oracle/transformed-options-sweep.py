@@ -15,6 +15,7 @@ import signal
 import pathlib
 import subprocess
 import sys
+import runpy
 import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -23,8 +24,11 @@ WORDS = [int(line, 16) for line in
          (HERE / "transformed-options-words.txt").read_text().splitlines()]
 
 
+check_tkrzw = runpy.run_path(str(pathlib.Path(__file__).resolve().parents[1] / 'tkrzw/runtime.py'))['check']
+
 def observe(library, data, word, cases):
     """Observe parse, sentence and every ordered (type, UTF-8, nbest) row."""
+    check_tkrzw("auto", "transformed-options-sweep.py", "subject", library)
     lib = c.CDLL(library)
     ptr, u32, size, boolean = c.c_void_p, c.c_uint32, c.c_size_t, c.c_bool
 
@@ -138,6 +142,7 @@ def isolated_cursor_call(fn):
 
 def observe_cursors(library, data, word, cases, family):
     """All original-input byte offsets, including the terminal position."""
+    check_tkrzw("auto", "transformed-options-sweep.py", "subject", library)
     lib = c.CDLL(library)
     ptr, size, boolean = c.c_void_p, c.c_size_t, c.c_bool
     key_name = "pinyin" if family == "pinyin" else "zhuyin"
@@ -237,6 +242,8 @@ def main():
     parser.add_argument("--lane-j-session", action="store_true",
                         help="check #585/#626 using existing transformed cases")
     args = parser.parse_args()
+    for side, library in (("pin", args.oracle), ("subject", args.subject)):
+        check_tkrzw("auto", "transformed-options-sweep.py", side, library)
     if args.cursor_family:
         cases = [case for case in CASES if case[0] in ("luoma", "secondary")]
         for word in (0x2, 0x20, 0x28):

@@ -54,7 +54,7 @@ PREFIX="${PINYIN_ORACLE_PREFIX:-$HOME/.local/opt/pinyin-oracle}"
 ORACLE_SO="$PREFIX/lib/libpinyin.so"
 ORACLE_DATA="$PREFIX/lib/libpinyin/data"
 
-if ! grep -q 'pin-bigram-export-strjoinv.patch' "$PREFIX/oracle-patches.sha256" 2>/dev/null; then
+if ! grep -q 'pin-bigram-export-strjoinv.patch' "$PREFIX/oracle-patches.sha256"; then
     echo "FAIL: $PREFIX was not built with tools/bisection/patches/bigram-export-strjoinv"
     exit 1
 fi
@@ -98,7 +98,7 @@ CAPI_LOG="$OUT_DIR/residue-a-capi.log"
 ORACLE_LOG="$OUT_DIR/residue-a-oracle.log"
 
 echo "--- capi side ---"
-if ! ./residue-a-tail-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2>"$OUT_DIR/capi.err"; then
+if ! tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./residue-a-tail-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2>"$OUT_DIR/capi.err"; then
     echo "FAIL: residue-a-tail-diff crashed against oxpinyin-capi"
     cat "$OUT_DIR/capi.err" || true
     [[ "$CLEAN_OUT" == 1 ]] && rm -rf "$OUT_DIR"
@@ -107,7 +107,7 @@ fi
 echo "oxpinyin-capi: ok ($(wc -l < "$CAPI_LOG") log lines)"
 
 echo "--- oracle side ---"
-if ! ./residue-a-tail-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>"$OUT_DIR/oracle.err"; then
+if ! tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./residue-a-tail-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>"$OUT_DIR/oracle.err"; then
     echo "FAIL: residue-a-tail-diff crashed against the oracle"
     cat "$OUT_DIR/oracle.err" || true
     [[ "$CLEAN_OUT" == 1 ]] && rm -rf "$OUT_DIR"
@@ -123,9 +123,10 @@ if [[ -n "${RESIDUE_A_DUMP_PREFIX:-}" ]]; then
         echo "FAIL: instrumented oracle not found at $DUMP_SO"
         exit 1
     fi
-    if ! OXPINYIN_DUMP_TAILS=1 ./residue-a-tail-diff "$DUMP_SO" "$DUMP_DATA" \
+    if ! OXPINYIN_DUMP_TAILS=1 tkrzw_run "$ORACLE_DBM" pin "$DUMP_SO" ./residue-a-tail-diff "$DUMP_SO" "$DUMP_DATA" \
         > "$OUT_DIR/residue-a-oracle-dump.log" 2>"$OUT_DIR/pin-tails.log"; then
         echo "FAIL: residue-a-tail-diff crashed against the instrumented oracle"
+        [[ $ORACLE_DBM != tkrzw ]] || cat "$OUT_DIR/pin-tails.log" >&2
         exit 1
     fi
     if ! diff -q "$ORACLE_LOG" "$OUT_DIR/residue-a-oracle-dump.log" >/dev/null; then

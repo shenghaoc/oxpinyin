@@ -26,6 +26,7 @@ import statistics
 import subprocess
 
 
+check_tkrzw = runpy.run_path(str(Path(__file__).parent / "tkrzw/runtime.py"))["check"]
 GEN = runpy.run_path(str(Path(__file__).with_name("generate-function-order.py")))
 ORDER = runpy.run_path(str(Path(__file__).parent / 'packaging/function_order.py'))
 ARMS = ("base", "pr", "control", "pin")
@@ -355,6 +356,7 @@ def main():
                     for arm in order:
                         for cold in (False, True):
                             work, library, user = fresh(arm, facade, profile)
+                            check_tkrzw("auto", "measure-function-order.py", arm, library, env=env)
                             try:
                                 prepare_cache(library, cold)
                                 output, _ = run(timing_child(facade, library, user), env)

@@ -67,12 +67,12 @@ fi
 
 # Capture stdout in memory. The oracle's unbuffered user.conf diagnostic
 # stays on stderr so it cannot corrupt a compared, buffered stdout row.
-if ! CAPI_LOG=$(./pred-order-diff "$CAPI_SO" "$SYSTEM"); then
+if ! CAPI_LOG=$(tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./pred-order-diff "$CAPI_SO" "$SYSTEM"); then
     echo "FAIL: pred-order-diff crashed against oxpinyin-capi"
     printf '%s\n' "$CAPI_LOG"
     exit 1
 fi
-if ! ORACLE_LOG=$(./pred-order-diff "$ORACLE_SO" "$ORACLE_DATA"); then
+if ! ORACLE_LOG=$(tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./pred-order-diff "$ORACLE_SO" "$ORACLE_DATA"); then
     echo "FAIL: pred-order-diff crashed against oracle"
     printf '%s\n' "$ORACLE_LOG"
     exit 1

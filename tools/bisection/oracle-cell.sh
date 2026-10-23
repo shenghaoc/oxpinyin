@@ -45,6 +45,8 @@ oracle_cell_library_path() {
     done
 }
 
+source "$REPO_ROOT/tools/tkrzw/runtime.sh"
+
 ORACLE_DBM=${PINYIN_ORACLE_DBM:-bdb}
 case $ORACLE_DBM in
 bdb)

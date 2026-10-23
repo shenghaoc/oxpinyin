@@ -68,7 +68,9 @@ run() { # $1 = so, $2 = datadir, $3 = on|off, $4 = out file
     local userdir="$OUT/user"
     rm -rf "$userdir"
     mkdir -p "$userdir"
-    "$DRIVER" "$1" "$2" "$3" "$userdir" > "$4"
+    local side=subject
+    [[ $1 != "$ORACLE_SO" ]] || side=pin
+    tkrzw_run "$ORACLE_DBM" "$side" "$1" "$DRIVER" "$1" "$2" "$3" "$userdir" > "$4"
 }
 
 echo "--- driving oxpinyin (bit on / off) ---"

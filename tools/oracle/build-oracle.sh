@@ -295,6 +295,7 @@ prefix=$(cd "$prefix" && pwd)
 # not every distro's pkg-config searches /usr/local by default, so dropping
 # an inherited entry would break exactly that consumer.
 export PKG_CONFIG_PATH="$prefix/lib/pkgconfig:$prefix/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+# Intentional: the pinned build recipe isolates its own generation prefix.
 export LD_LIBRARY_PATH="$prefix/lib:$prefix/lib64"
 
 fetch() {

@@ -66,7 +66,7 @@ fi
 run() {
     local mode=$1 side=$2 so=$3
     mkdir -p "$build/$mode-$side"
-    if ! (cd "$build/$mode-$side" && "$build/candidate-assembly-diff" "$mode" "$so" "$data") \
+    if ! (cd "$build/$mode-$side" && tkrzw_run "$ORACLE_DBM" "$side" "$so" "$build/candidate-assembly-diff" "$mode" "$so" "$data") \
         > "$out/$mode-$side.log" 2> "$out/$mode-$side.err"; then
         echo "FAIL: $mode driver crashed against $side ($so)" >&2
         tail -5 "$out/$mode-$side.err" >&2

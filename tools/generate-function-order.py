@@ -25,6 +25,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import runpy
 import tempfile
 
 
@@ -395,7 +396,10 @@ def teardown_command(args, facade, library, user):
             "first-candidate", "-"]
 
 
+check_tkrzw = runpy.run_path(str(Path(__file__).parent / "tkrzw/runtime.py"))["check"]
+
 def collect_toggle(args, facade, library, user, toggle, environment):
+    check_tkrzw("auto", "generate-function-order.py", "subject", library, env=environment)
     command = [*callgrind_prefix(args.bisect, args.cpu, toggle),
                *teardown_command(args, facade, library, user)[1:]]
     _, error = capture(command, environment)
@@ -467,6 +471,7 @@ def collect_steady(args, facade, library, work, environment):
     run_environment = {**environment, "PERF_FACADE": facade, "PERF_MODE": "speed",
                        "PERF_CYCLES": "4", "PERF_REPEATS": "1",
                        "PERF_WORKLOAD_CHECKSUM": "1"}
+    check_tkrzw("auto", "generate-function-order.py", "subject", library, env=run_environment)
     output, error = capture(command, run_environment)
     row = json.loads(output)
     if len(row.get("cycles_ns", [])) != 4 or "workload_checksum" not in row:

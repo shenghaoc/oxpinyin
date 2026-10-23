@@ -50,11 +50,28 @@ cc -O2 -o "$work/user_driver" "$script_dir/user_driver.c" \
 
 mkdir "$work/pin" "$work/ox"
 
+case $(sed -n 's/^dbm=//p' "$prefix/oracle-pin.txt" 2>/dev/null | head -n1) in
+BerkeleyDB) ox_default_feature=bdb ;;
+KyotoCabinet) ox_default_feature=kyotocabinet ;;
+Tkrzw) ox_default_feature=tkrzw ;;
+*)
+	echo "fatal: $prefix/oracle-pin.txt names no known dbm (BerkeleyDB, KyotoCabinet, Tkrzw)" >&2
+	exit 1
+	;;
+esac
+REPO_ROOT=$root
+case $ox_default_feature in
+    kyotocabinet) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-kc} ;;
+    *) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-$ox_default_feature} ;;
+esac
+# shellcheck source=tools/bisection/oracle-cell.sh
+source "$root/tools/bisection/oracle-cell.sh"
+
 printf '== Phase A: the pin trains a profile ==\n'
-"$work/user_driver" train "$data_dir" "$work/pin" "${inputs[@]}"
+tkrzw_run "$ORACLE_DBM" pin "$work/user_driver" "$work/user_driver" train "$data_dir" "$work/pin" "${inputs[@]}"
 # `pin.dump` is rendered before the in-place rewrite below, so the Phase C
 # diff compares the original against oxpinyin's load->save of it.
-"$work/user_driver" dump "$data_dir" "$work/pin" | sort > "$work/pin.dump"
+tkrzw_run "$ORACLE_DBM" pin "$work/user_driver" "$work/user_driver" dump "$data_dir" "$work/pin" | sort > "$work/pin.dump"
 [[ -s $work/pin.dump ]] || { printf 'the pin dump is empty\n' >&2; exit 1; }
 # The profile must carry grams, not just phrases. `pinyin_remember_user_input`
 # writes the phrase rows on its own, so a driver that selects a candidate
@@ -79,32 +96,23 @@ printf '== Phase B: oxpinyin loads the pin profile and saves it back in place ==
 # By default it is derived from the prefix's own oracle-pin.txt dbm=
 # field, so the pair cannot drift apart when build-oracle.sh's default
 # changes (Berkeley DB since 2026-09-27); OX_CARGO_FEATURES overrides it.
-case $(sed -n 's/^dbm=//p' "$prefix/oracle-pin.txt" 2>/dev/null | head -n1) in
-BerkeleyDB) ox_default_feature=bdb ;;
-KyotoCabinet) ox_default_feature=kyotocabinet ;;
-Tkrzw) ox_default_feature=tkrzw ;;
-*)
-	echo "fatal: $prefix/oracle-pin.txt names no known dbm (BerkeleyDB, KyotoCabinet, Tkrzw)" >&2
-	exit 1
-	;;
-esac
-REPO_ROOT=$root
-case $ox_default_feature in
-    kyotocabinet) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-kc} ;;
-    *) PINYIN_ORACLE_DBM=${PINYIN_ORACLE_DBM:-$ox_default_feature} ;;
-esac
-# shellcheck source=tools/bisection/oracle-cell.sh
-source "$root/tools/bisection/oracle-cell.sh"
 read -r -a feature_flags <<< "${OX_CARGO_FEATURES:---no-default-features --features $CAPI_FEATURE}"
 run_round_trip_test() {
     if [[ -n ${OXPINYIN_USER_RT_TEST:-} ]]; then
-        "$OXPINYIN_USER_RT_TEST" --ignored --nocapture "$1"
+        tkrzw_run "$ORACLE_DBM" subject "$OXPINYIN_USER_RT_TEST" "$OXPINYIN_USER_RT_TEST" --ignored --nocapture "$1"
     elif [[ -n ${OXPINYIN_CAPI_SO:-} ]]; then
         echo "FAIL: a supplied library requires OXPINYIN_USER_RT_TEST (prebuilt user_dir_round_trip test)" >&2
         return 1
-    else
+    elif [[ $ORACLE_DBM != tkrzw ]]; then
         cargo test --locked --profile dev --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \
             "${feature_flags[@]}" --test user_dir_round_trip -- --ignored --nocapture "$1"
+    else
+        local executable
+        executable=$(cargo test --locked --profile dev --manifest-path "$root/Cargo.toml" -p oxpinyin-runtime \
+            "${feature_flags[@]}" --test user_dir_round_trip --no-run --message-format=json | \
+            uv run --no-project --managed-python --python cpython@3.15.0+gil python -B -X lazy_imports=normal -c \
+            'import json, sys; paths = [row["executable"] for line in sys.stdin if (row := json.loads(line)).get("executable")]; assert len(paths) == 1, paths; print(paths[0])') || return 1
+        tkrzw_run "$ORACLE_DBM" subject "$executable" "$executable" --ignored --nocapture "$1"
     fi
 }
 OX_SYSTEM_DIR="$data_dir" \
@@ -116,7 +124,7 @@ printf '== Phase C: the pin renders the original and oxpinyin rewrite ==\n'
 # *pin* over the *same* profile data, so its class-(b) bigram-export
 # artefact is common to both sides and cancels. If oxpinyin's read+write
 # is faithful, the rewrite renders byte-identically to the original.
-"$work/user_driver" dump "$data_dir" "$work/pin" | sort > "$work/pin-reads-ox.dump"
+tkrzw_run "$ORACLE_DBM" pin "$work/user_driver" "$work/user_driver" dump "$data_dir" "$work/pin" | sort > "$work/pin-reads-ox.dump"
 
 if diff -u "$work/pin.dump" "$work/pin-reads-ox.dump" > "$work/diff.txt"; then
     printf 'IDENTICAL: the pin renders oxpinyin'\''s rewrite of its own profile byte-identically (%s rows)\n' \
@@ -143,7 +151,7 @@ OX_INPUTS="${inputs[*]}" \
 OX_EXPECTED_PHRASES="$work/expected-phrases" \
 run_round_trip_test oxpinyin_trains
 
-"$work/user_driver" phrases "$data_dir" "$work/ox" | sort > "$work/pin-reads-ox-owned.dump"
+tkrzw_run "$ORACLE_DBM" pin "$work/user_driver" "$work/user_driver" phrases "$data_dir" "$work/ox" | sort > "$work/pin-reads-ox-owned.dump"
 rows=$(wc -l < "$work/pin-reads-ox-owned.dump" | tr -d ' ')
 phrases=$(grep -c '^P' "$work/pin-reads-ox-owned.dump" || true)
 if [[ $rows -eq 0 || $phrases -eq 0 ]]; then

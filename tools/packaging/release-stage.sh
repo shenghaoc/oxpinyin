@@ -30,6 +30,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 REPO_ROOT="$(cd ../.. && pwd)"
+source "$REPO_ROOT/tools/tkrzw/runtime.sh"
 PINYIN_CRATE_DIR="$REPO_ROOT/crates/oxpinyin-capi"
 ZHUYIN_CRATE_DIR="$REPO_ROOT/crates/oxpinyin-zhuyin-capi"
 
@@ -236,8 +237,8 @@ cc "$SMOKE/smoke_pinyin.c" -o "$SMOKE/smoke_pinyin" \
 cc "$SMOKE/smoke_zhuyin.c" -o "$SMOKE/smoke_zhuyin" \
   -I"$STAGE_INC" -L"$STAGE_LIB" $(pkg-config --cflags --libs libzhuyin) \
   || fail "libzhuyin smoke compile/link against the staged tree failed"
-LD_LIBRARY_PATH="$STAGE_LIB" "$SMOKE/smoke_pinyin" || fail "libpinyin smoke run failed"
-LD_LIBRARY_PATH="$STAGE_LIB" "$SMOKE/smoke_zhuyin" || fail "libzhuyin smoke run failed"
+LD_LIBRARY_PATH="$STAGE_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run "$BACKEND" subject "$SMOKE/smoke_pinyin" "$SMOKE/smoke_pinyin" || fail "libpinyin smoke run failed"
+LD_LIBRARY_PATH="$STAGE_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run "$BACKEND" subject "$SMOKE/smoke_zhuyin" "$SMOKE/smoke_zhuyin" || fail "libzhuyin smoke run failed"
 
 echo "== staged tree under $DEST =="
 find "$DEST" -mindepth 1 -printf '%y %P\n' | sort

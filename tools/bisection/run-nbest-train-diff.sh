@@ -96,7 +96,7 @@ AUG_ROUNDS="${NBESTTRAINDIFF_ROUNDS:-3}"
 echo "--- capi side (user=$USER_ROUNDS augmented=$AUG_ROUNDS) ---"
 CAPI_LOG="$(mktemp)"
 if ! NBESTTRAINDIFF_USER_ROUNDS="$USER_ROUNDS" NBESTTRAINDIFF_ROUNDS="$AUG_ROUNDS" \
-    ./nbest-train-diff "$CAPI_SO" "$CAPI_SYSTEM" > "$CAPI_LOG" 2>/dev/null; then
+    tkrzw_run --quiet-stderr "$ORACLE_DBM" subject "$CAPI_SO" ./nbest-train-diff "$CAPI_SO" "$CAPI_SYSTEM" > "$CAPI_LOG"; then
     echo "FAIL: nbest-train-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     rm -f "$CAPI_LOG"
@@ -107,7 +107,7 @@ echo "oxpinyin-capi: ok"
 echo "--- oracle side ---"
 ORACLE_LOG="$(mktemp)"
 if ! NBESTTRAINDIFF_USER_ROUNDS="$USER_ROUNDS" NBESTTRAINDIFF_ROUNDS="$AUG_ROUNDS" \
-    ./nbest-train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>/dev/null; then
+    tkrzw_run --quiet-stderr "$ORACLE_DBM" pin "$ORACLE_SO" ./nbest-train-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG"; then
     echo "FAIL: nbest-train-diff crashed against oracle"
     cat "$ORACLE_LOG"
     rm -f "$CAPI_LOG" "$ORACLE_LOG"

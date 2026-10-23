@@ -77,7 +77,7 @@ CAPI_LOG="$(mktemp)"
 CAPI_ERR="$(mktemp)"
 SORT_WORD="${ABI_PROBE_SORT:-1e}"
 echo "sort word: 0x$SORT_WORD"
-if ! ./abi-probe-diff "$CAPI_SO" "$SYSTEM" "$SORT_WORD" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
+if ! tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./abi-probe-diff "$CAPI_SO" "$SYSTEM" "$SORT_WORD" > "$CAPI_LOG" 2> "$CAPI_ERR"; then
     echo "FAIL: abi-probe-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     echo "--- driver diagnostics (stderr) ---"
@@ -90,7 +90,7 @@ echo "oxpinyin-capi: ok ($(wc -l < "$CAPI_LOG") log lines)"
 echo "--- oracle side ---"
 ORACLE_LOG="$(mktemp)"
 ORACLE_ERR="$(mktemp)"
-if ! ./abi-probe-diff "$ORACLE_SO" "$ORACLE_DATA" "$SORT_WORD" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
+if ! tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./abi-probe-diff "$ORACLE_SO" "$ORACLE_DATA" "$SORT_WORD" > "$ORACLE_LOG" 2> "$ORACLE_ERR"; then
     echo "FAIL: abi-probe-diff crashed against the oracle"
     cat "$ORACLE_LOG"
     echo "--- driver diagnostics (stderr) ---"

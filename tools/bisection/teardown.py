@@ -515,6 +515,7 @@ def populate_user(campaign, pin, user, rows):
 
 
 def run(args, driver, parser):
+    # BDB-only: this explicit selector excludes tkrzw; no runtime guard here.
     if args.cell != 'bdb' or args.per_call or args.cases or args.issue or args.family or args.expect_parent or args.observations or args.plan_only or args.axis_c_replacement or args.axis_c_mutation or args.axis_c_snapshot_check or args.regenerate_sentence_ties:
         parser.error('--teardown is a separate BDB workload; contract/profiler modes cannot be combined')
     if not args.teardown_work_dir or not args.teardown_work_dir.is_dir():

@@ -23,6 +23,7 @@
 #   run-rss-diag.sh --lp <libpinyin.so> --ox <oxpinyin.so> --data <dir> \
 #                   [--out DIR] [--rounds N] [--cycles N]
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 # Resolve before the cd: usage() reads the script by path, and $0 is
 # relative to the caller's directory, not ours.
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
@@ -60,6 +61,8 @@ done
 function_order_measurement --library "S/pinyin=$OX" \
     --reference-arm L --library "L/pinyin=$LP" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 OUT="${OUT:-/tmp/rss-diag}"
+tkrzw_run auto pin "$LP"
+tkrzw_run auto subject "$OX"
 mkdir -p "$OUT" "$OUT/maps"
 
 # Rebuild when the binary is missing, not executable, or older than its
@@ -103,7 +106,7 @@ run_one() {
     load_before=$(cut -d' ' -f1-3 /proc/loadavg)
     local line
     line=$(PERF_BACKEND="$cell" PERF_MODE=rss-diag PERF_CYCLES="$CYCLES" \
-        taskset -c "$CPU" "$SCRIPT_DIR/bisect" --perf "$so" "$DATA")
+        taskset -c "$CPU" "${TKRZW_EXEC[@]}" auto "${0##*/}" "$cell" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$DATA")
     load_after=$(cut -d' ' -f1-3 /proc/loadavg)
     printf '{"cell":"%s","round":%d,"loadavg_before":"%s","loadavg_after":"%s","result":%s}\n' \
         "$cell" "$round" "$load_before" "$load_after" "$line"
@@ -121,7 +124,7 @@ for pair in "L:$LP" "S:$OX"; do
     cell=${pair%%:*}; so=${pair#*:}
     PERF_BACKEND="$cell" PERF_MODE=rss-diag PERF_CYCLES="$CYCLES" \
         RSS_DIAG_DIR="$OUT/maps" RSS_DIAG_TAG="$cell" \
-        taskset -c "$CPU" "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" \
+        taskset -c "$CPU" "${TKRZW_EXEC[@]}" auto "${0##*/}" "$cell" "$so" -- "$SCRIPT_DIR/bisect" --perf "$so" "$DATA" \
         > "$OUT/maps/$cell-round.json"
 done
 

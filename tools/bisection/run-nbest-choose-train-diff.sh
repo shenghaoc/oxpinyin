@@ -41,7 +41,7 @@ for mode in pinyin zhuyin; do
             so=$zhuyin_so
         fi
         TMPDIR="$dest" CAND_ASSEMBLY_TRAIN_DIR="$dest" \
-            "$out/driver" "$mode" "$so" "$prefix/lib/libpinyin/data" \
+            tkrzw_run "$ORACLE_DBM" "$side" "$so" "$out/driver" "$mode" "$so" "$prefix/lib/libpinyin/data" \
             > "$dest/driver.log" 2> "$dest/driver.err"
     done
     diff -u "$out/$mode-pin/driver.log" "$out/$mode-ox/driver.log" || status=2

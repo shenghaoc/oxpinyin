@@ -23,14 +23,16 @@ function_order_measurement --library "ox/pinyin=$ox" \
 mkdir "$out"
 out=$(realpath "$out")
 cc -std=gnu11 -Wall -Wextra -Werror -O2 "$root/system-import-profile.c" -ldl -o "$out/driver"
-uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$pin" "$ox" "$data" "$out" "$iterations" <<'PY'
+uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal - "$pin" "$ox" "$data" "$out" "$iterations" "$root/../tkrzw/runtime.py" <<'PY'
 from pathlib import Path
 import re
+import runpy
 import subprocess
 import sys
 import time
 
-pin, ox, data, work, workload = sys.argv[1:]
+pin, ox, data, work, workload, runtime = sys.argv[1:]
+check_tkrzw = runpy.run_path(runtime)["check"]
 root = Path(work)
 cold = workload == '--cold-open'
 
@@ -41,6 +43,7 @@ def suspend_offset():
 
 
 for side, so in (('pin', pin), ('ox', ox)):
+    check_tkrzw('auto', 'run-system-import-profile.sh', side, so)
     for mode in ('callgrind', 'heap', 'pages'):
         if mode == 'callgrind':
             # Combining dumps keeps import-mode client requests on the same

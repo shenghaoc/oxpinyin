@@ -18,6 +18,7 @@
 # soundness check, never a decision input.
 
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../tkrzw" && pwd)/runtime.sh"
 HEAVY_RUNNER="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/run-all.py"
 source "$(dirname "$HEAVY_RUNNER")/../packaging/function-order.sh"
 function_order_arguments "$@"
@@ -55,6 +56,10 @@ build_cinstall "$S_SO" tkrzw,shipped
 function_order_measurement --library "Z/pinyin=$Z_SO" --library "S/pinyin=$S_SO" \
     --reference-arm L --library "L/pinyin=$L_SO" ${FUNCTION_ORDER_ARGS[@]+"${FUNCTION_ORDER_ARGS[@]}"}
 
+LD_LIBRARY_PATH="$(dirname "$L_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw pin "$L_SO"
+LD_LIBRARY_PATH="$(dirname "$Z_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw subject "$Z_SO"
+LD_LIBRARY_PATH="$(dirname "$S_SO")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" tkrzw_run tkrzw subject "$S_SO"
+
 {
     echo "=== identity (shipped check) ==="
     echo "captured_utc: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -76,10 +81,10 @@ for n in $SIZES; do
     for _ in $(seq 1 "$RUNS"); do
         for cell in "$L_LABEL:$L_SO" "$Z_LABEL:$Z_SO" "$S_LABEL:$S_SO"; do
             label=${cell%%:*}; so=${cell#*:}
-            taskset -c "$CPU" env LD_LIBRARY_PATH="$LP_LIB" \
+            taskset -c "$CPU" env LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
                 PERF_BACKEND="$label" PERF_MODE=speed \
                 PERF_CYCLES="$CYCLES" PERF_REPEATS="$n" \
-                "$BISECT" --perf "$so" "$DATA" >> "$SPEED" 2>>"$OUT/shipped.err"
+                "${TKRZW_EXEC[@]}" tkrzw "${0##*/}" "$label" "$so" -- "$BISECT" --perf "$so" "$DATA" >> "$SPEED" 2>>"$OUT/shipped.err"
         done
     done
 done

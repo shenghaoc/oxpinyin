@@ -7,7 +7,9 @@
 # harness against each library gives directly comparable totals.
 #
 #   docker build -f tools/bisection/Dockerfile.callgrind -t oxpinyin-callgrind .
-#   docker run --rm -v /tmp/cg-out:/out oxpinyin-callgrind bash tools/bisection/run-callgrind-differential.sh
+# Run with the verified-runtime mount and exact library environment in
+# docs/runbooks/cloud.md (Runtime enforcement); the shell guard needs no uv.
+# The packaged libtkrzw alone does not establish a trusted runtime.
 #
 # Never build or run this emulated: a platform differing from the host
 # profiles the interpreter, not the implementations. No --platform here.

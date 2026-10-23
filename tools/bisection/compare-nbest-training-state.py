@@ -16,7 +16,10 @@ import re
 import subprocess
 import struct
 import sys
+import runpy
 
+
+check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tkrzw/runtime.py'))['check']
 
 def unigram_fields(path):
     # Pin 074a2219: storage/phrase_index_logger.h:158-213;
@@ -139,6 +142,8 @@ def bigrams(cell, profile):
     else:
         dump = profile / "bigram.tsv"
         dump.unlink(missing_ok=True)
+        import shutil
+        check_tkrzw("tkrzw", "compare-nbest-training-state.py", "subject", shutil.which("tkrzw_dbm_util") or "tkrzw_dbm_util")
         subprocess.run(["tkrzw_dbm_util", "export", "--dbm", "hash", "--tsv",
                         "--escape", str(path), str(dump)], check=True,
                        stdout=subprocess.DEVNULL)
@@ -160,6 +165,7 @@ def read_unigrams(so, data, profile, tokens):
     Both facade saves use the same storage format, so the pinyin accessor
     verifies zhuyin's saved data as well.
     """
+    check_tkrzw("auto", "compare-nbest-training-state.py", "subject", so)
     lib = ctypes.CDLL(so)
     ptr = ctypes.c_void_p
     lib.pinyin_init.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
@@ -241,7 +247,8 @@ def main():
                         if token:
                             tokens.add(token)
             exports = []
-            for so, folder in ((args.pin_so, left), (args.ox_so, right)):
+            for side, so, folder in (("pin", args.pin_so, left), ("subject", args.ox_so, right)):
+                check_tkrzw(args.cell, "compare-nbest-training-state.py", side, so)
                 exported = subprocess.check_output([
                     sys.executable, __file__, "--read-unigrams", so, args.data,
                     str(folder), *[str(t) for t in sorted(tokens)]])

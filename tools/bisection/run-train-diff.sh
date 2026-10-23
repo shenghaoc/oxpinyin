@@ -86,14 +86,14 @@ for rounds in 1 2 3 4 5 6 7 8; do
     echo "--- rounds=$rounds ---"
     CAPI_LOG="$(mktemp)"
     ORACLE_LOG="$(mktemp)"
-    if ! TRAINDIFF_ROUNDS=$rounds ./train-diff "$CAPI_SO" "$SYSTEM" \
-        > "$CAPI_LOG" 2>/dev/null; then
+    if ! TRAINDIFF_ROUNDS=$rounds tkrzw_run --quiet-stderr "$ORACLE_DBM" subject "$CAPI_SO" ./train-diff "$CAPI_SO" "$SYSTEM" \
+        > "$CAPI_LOG"; then
         echo "FAIL: train-diff crashed against oxpinyin-capi (rounds=$rounds)"
         cat "$CAPI_LOG"
         exit 1
     fi
-    if ! TRAINDIFF_ROUNDS=$rounds ./train-diff "$ORACLE_SO" "$ORACLE_DATA" \
-        > "$ORACLE_LOG" 2>/dev/null; then
+    if ! TRAINDIFF_ROUNDS=$rounds tkrzw_run --quiet-stderr "$ORACLE_DBM" pin "$ORACLE_SO" ./train-diff "$ORACLE_SO" "$ORACLE_DATA" \
+        > "$ORACLE_LOG"; then
         echo "FAIL: train-diff crashed against the oracle (rounds=$rounds)"
         cat "$ORACLE_LOG"
         exit 1
@@ -117,14 +117,14 @@ for mask in user all; do
     echo "--- mask=$mask (rounds=8) ---"
     CAPI_LOG="$(mktemp)"
     ORACLE_LOG="$(mktemp)"
-    if ! TRAINDIFF_ROUNDS=8 TRAINDIFF_MASK=$mask ./train-diff "$CAPI_SO" \
-        "$SYSTEM" > "$CAPI_LOG" 2>/dev/null; then
+    if ! TRAINDIFF_ROUNDS=8 TRAINDIFF_MASK=$mask tkrzw_run --quiet-stderr "$ORACLE_DBM" subject "$CAPI_SO" ./train-diff "$CAPI_SO" \
+        "$SYSTEM" > "$CAPI_LOG"; then
         echo "FAIL: train-diff crashed against oxpinyin-capi (mask=$mask)"
         cat "$CAPI_LOG"
         exit 1
     fi
-    if ! TRAINDIFF_ROUNDS=8 TRAINDIFF_MASK=$mask ./train-diff "$ORACLE_SO" "$ORACLE_DATA" \
-        > "$ORACLE_LOG" 2>/dev/null; then
+    if ! TRAINDIFF_ROUNDS=8 TRAINDIFF_MASK=$mask tkrzw_run --quiet-stderr "$ORACLE_DBM" pin "$ORACLE_SO" ./train-diff "$ORACLE_SO" "$ORACLE_DATA" \
+        > "$ORACLE_LOG"; then
         echo "FAIL: train-diff crashed against the oracle (mask=$mask)"
         cat "$ORACLE_LOG"
         exit 1

@@ -69,7 +69,7 @@ CAPI_LOG="$OUT_DIR/residue-mech-capi.log"
 ORACLE_LOG="$OUT_DIR/residue-mech-oracle.log"
 
 echo "--- capi side ---"
-if ! ./residue-mechanism-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2>"$OUT_DIR/capi.err"; then
+if ! tkrzw_run "$ORACLE_DBM" subject "$CAPI_SO" ./residue-mechanism-diff "$CAPI_SO" "$SYSTEM" > "$CAPI_LOG" 2>"$OUT_DIR/capi.err"; then
     echo "FAIL: residue-mechanism-diff crashed against oxpinyin-capi"
     cat "$OUT_DIR/capi.err" || true
     [[ "$CLEAN_OUT" == 1 ]] && rm -rf "$OUT_DIR"
@@ -78,7 +78,7 @@ fi
 echo "oxpinyin-capi: ok ($(wc -l < "$CAPI_LOG") log lines)"
 
 echo "--- oracle side ---"
-if ! ./residue-mechanism-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>"$OUT_DIR/oracle.err"; then
+if ! tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" ./residue-mechanism-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2>"$OUT_DIR/oracle.err"; then
     echo "FAIL: residue-mechanism-diff crashed against the oracle"
     cat "$OUT_DIR/oracle.err" || true
     [[ "$CLEAN_OUT" == 1 ]] && rm -rf "$OUT_DIR"

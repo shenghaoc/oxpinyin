@@ -105,13 +105,13 @@ echo ""
 
 CAPI_LOG="$(mktemp)"
 ORACLE_LOG="$(mktemp)"
-if ! ./import-diff "$CAPI_SO" "$CAPI_SYSTEM" > "$CAPI_LOG" 2> /dev/null; then
+if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" subject "$CAPI_SO" ./import-diff "$CAPI_SO" "$CAPI_SYSTEM" > "$CAPI_LOG"; then
     echo "FAIL: import-diff crashed against oxpinyin-capi"
     cat "$CAPI_LOG"
     rm -f "$CAPI_LOG" "$ORACLE_LOG"
     exit 1
 fi
-if ! ./import-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG" 2> /dev/null; then
+if ! tkrzw_run --quiet-stderr "$ORACLE_DBM" pin "$ORACLE_SO" ./import-diff "$ORACLE_SO" "$ORACLE_DATA" > "$ORACLE_LOG"; then
     echo "FAIL: import-diff crashed against the oracle"
     cat "$ORACLE_LOG"
     rm -f "$CAPI_LOG" "$ORACLE_LOG"
@@ -214,7 +214,7 @@ run_frontend() {
     local input=$1 output=$2 cache=$3
     rm -rf "$cache"
     mkdir -p "$cache"
-    if ! LD_LIBRARY_PATH="$IBUS_PREFIX/lib${inherited_library_path:+:$inherited_library_path}"         XDG_CACHE_HOME="$cache"         GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR"         ./frontend-import "$input" "$output" > /dev/null 2> "$cache/stderr"; then
+    if ! LD_LIBRARY_PATH="$IBUS_PREFIX/lib${inherited_library_path:+:$inherited_library_path}"         XDG_CACHE_HOME="$cache"         GSETTINGS_SCHEMA_DIR="$SCHEMA_DIR"         tkrzw_run "$ORACLE_DBM" pin "$PWD/frontend-import" ./frontend-import "$input" "$output" > /dev/null 2> "$cache/stderr"; then
         echo "FAIL: pinned frontend import/export failed for $input"
         cat "$cache/stderr"
         exit 1
@@ -225,8 +225,8 @@ oracle_cell_artifact OXPINYIN_DICTOOL oxpinyin-dictool oxpinyin-dictool
 DICTOOL=$OXPINYIN_DICTOOL
 
 run_frontend "$FIXTURE" "$WORK/frontend-a.txt" "$WORK/frontend-cache-a"
-"$DICTOOL" import --user-dir "$WORK/dictool-user" "$FIXTURE"
-"$DICTOOL" export --user-dir "$WORK/dictool-user" "$WORK/dictool-b.txt"
+tkrzw_run "$ORACLE_DBM" subject "$DICTOOL" "$DICTOOL" import --user-dir "$WORK/dictool-user" "$FIXTURE"
+tkrzw_run "$ORACLE_DBM" subject "$DICTOOL" "$DICTOOL" export --user-dir "$WORK/dictool-user" "$WORK/dictool-b.txt"
 
 echo "frontend(fixture):"
 sort "$WORK/frontend-a.txt"

@@ -102,7 +102,7 @@ echo "== running against oracle (data=$ORACLE_DATA) =="
 # merged into the compared stdout log — but it is NOT discarded: a failing
 # side emits its captured diagnostics (the driver's own failure reason)
 # before the script exits.
-if ! "$WORK/zhuyin-diff" "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_USER_DIR" \
+if ! tkrzw_run "$ORACLE_DBM" pin "$ORACLE_SO" "$WORK/zhuyin-diff" "$ORACLE_SO" "$ORACLE_DATA" "$ORACLE_USER_DIR" \
         > "$WORK/zhuyin-oracle.log" 2> "$WORK/zhuyin-oracle.stderr"; then
     echo "FAIL: the oracle driver exited nonzero" >&2
     cat "$WORK/zhuyin-oracle.stderr" >&2
@@ -112,7 +112,7 @@ rm -f "$WORK/zhuyin-oracle.stderr"
 echo "oracle log lines: $(wc -l < "$WORK/zhuyin-oracle.log")"
 
 echo "== running against rust facade (data=$RUST_DATA) =="
-if ! "$WORK/zhuyin-diff" "$RUST_SO" "$RUST_DATA" "$RUST_USER_DIR" \
+if ! tkrzw_run "$ORACLE_DBM" subject "$RUST_SO" "$WORK/zhuyin-diff" "$RUST_SO" "$RUST_DATA" "$RUST_USER_DIR" \
         > "$WORK/zhuyin-rust.log" 2> "$WORK/zhuyin-rust.stderr"; then
     echo "FAIL: the rust driver exited nonzero" >&2
     cat "$WORK/zhuyin-rust.stderr" >&2
