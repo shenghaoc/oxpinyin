@@ -30,8 +30,8 @@ work that keeps compatibility continues in Stage 2 (`docs/perf/`). Stage 3
 
 ## Platforms
 
-The portable crates support Linux, macOS and Windows. They build and test
-on x86_64 and arm64.
+The portable crates support Linux, macOS and Windows on x86_64 and arm64.
+CI tests Linux x86_64 and macOS arm64 on every PR, and Windows x64 nightly.
 
 ## Quickstart
 
