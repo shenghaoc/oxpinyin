@@ -28,6 +28,8 @@ criterion = "0.8"
 
 [build-dependencies]
 bindgen = { workspace = true, optional = true }
+# Compiles the Kyoto Cabinet C++ shim (#1118).
+cc = { version = "1.4.3", optional = true }
 
 [features]
 # The backends (kyotocabinet, tkrzw, bdb) are peer
@@ -46,7 +48,7 @@ tkrzw = ["dep:bindgen"]
 # Kyoto Cabinet backend. bindgen is build-time only (it needs libclang);
 # the runtime dependency is the system libkyotocabinet the distro already
 # ships.
-kyotocabinet = ["dep:bindgen"]
+kyotocabinet = ["dep:bindgen", "dep:cc"]
 # Berkeley DB backend — libpinyin's original DBM and the third drop-in
 # set. bindgen is build-time only; the runtime dependency is the system
 # libdb 5.3 the distro already ships (Debian libdb-dev, Fedora

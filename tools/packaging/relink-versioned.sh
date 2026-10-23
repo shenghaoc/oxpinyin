@@ -114,7 +114,9 @@ done
 backend_libs() {
   case "$1" in
     tkrzw)         pkg-config --libs tkrzw 2>/dev/null || echo -ltkrzw ;;
-    kyotocabinet)  pkg-config --libs kyotocabinet 2>/dev/null || echo -lkyotocabinet ;;
+    # The Kyoto Cabinet C++ shim in the staticlib needs libstdc++,
+    # which kyotocabinet.pc lists only under Libs.private.
+    kyotocabinet)  echo "$(pkg-config --libs kyotocabinet 2>/dev/null || echo -lkyotocabinet) -lstdc++" ;;
     bdb)           echo -ldb ;;
   esac
 }
