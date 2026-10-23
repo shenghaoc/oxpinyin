@@ -1,6 +1,6 @@
-# Backend function-order policies (#1076) — checkpoint draft
+# Backend function-order policies (#1076)
 
-Recorded 2026-10-23 07:57:49 UTC. Tkrzw contract/same-data gates are pending in existing session `17939`. This draft contains text summaries only; no captures or logs.
+Recorded 2026-10-23 08:22:01 UTC. All three contract and same-data gates completed. Results are text summaries; no captures or logs are retained.
 
 ## Summary
 
@@ -16,7 +16,7 @@ The policies are in their own commit. No production algorithm, C ABI, persistent
 
 ## Verification
 
-Verified shipping source: BDB `7778c966` on main `1cdb810c`; KC/tkrzw `e9fd97e1` on main `13347dbf`. The latter integrates #1068's runtime preflight; it changes no BDB shipping/link input, and retained BDB artifact and policy hashes were verified unchanged. Checkpoint draft: final publication head is pending; measured source revisions are named above. The running tkrzw gate remains on those source bytes. Results below belong to those named source revisions, not to historical builds.
+Verified shipping source: BDB `7778c966` on main `1cdb810c`; KC/tkrzw `e9fd97e1` on main `13347dbf`. The latter integrates #1068's runtime preflight; it changes no BDB shipping/link input, and retained BDB artifact and policy hashes were verified unchanged. Publication integrates main `e58d2e26`. Commit organization and the unrelated documentation/admission-test rebase preserve the measured implementation and all six policy files. The tkrzw gate completed on the same implementation bytes; the older measurement-head identifiers record provenance, not final commit ancestry. Results below belong to those named source revisions, not to historical builds.
 
 Native Ubuntu 26.10 x86-64, i7-9750H, 4-KiB pages, home-disk ext4 worktree and `TMPDIR`; GNU BFD ld 2.47, cc 15.3.0, Rust 1.97.1, cargo-c 0.10.24, Valgrind 3.27.1. All campaigns used normal serialized `just heavy` admission; no cache clearing. macOS/Windows/arm64: not run here.
 
@@ -44,7 +44,7 @@ cargo fmt --all --check
 git diff --check
 ```
 
-Checkpoint static checks passed after commit organization and a conflict-free rebase onto main `e58d2e26`: `bash -n`, `cargo fmt --all --check`, and `git diff --check`. All three rule 2 outputs remained empty. The implementation and test files match measured source `e9fd97e1`; no completed campaign was repeated for unrelated documentation/admission-test changes.
+Publication static checks passed after commit organization and a conflict-free rebase onto main `e58d2e26`: `bash -n`, `cargo fmt --all --check`, and `git diff --check`. All three rule 2 outputs remained empty. The implementation and test files match measured source `e9fd97e1`; no completed campaign was repeated for unrelated documentation/admission-test changes.
 
 All three rule 2 path checks produced empty output: no `crates/oxpinyin-store/` path; no changed non-Markdown file containing `feature = "bdb"|"tkrzw"|"kyotocabinet"`; no backend-naming changed Cargo.toml line. The checks did not trigger the three-cell rule. All three cells were explicitly requested for this backend-policy task.
 
@@ -56,11 +56,11 @@ Full `just heavy -- ... tools/bisection/contract-diff.py CELL PIN PR_PY --zhuyin
 |---|---|---|
 | BDB | 2888 / 1 / 0 | 15 IDENTICAL |
 | KC | 2876 / 13 / 0 | 15 IDENTICAL |
-| tkrzw | pending (session 17939) | pending (queued in session 17939) |
+| tkrzw | 2876 / 13 / 0 | 15 IDENTICAL |
 
 BDB's one SKIP is `issue785-pinyin-tails-kept-entry-zhuyin`, driver `tools/bisection/contract-diff.py`, registered only for KC/tkrzw. The emitted row has no reason field. The verbatim source explanation is: "The case crafts a fixture in another cell's storage format (e.g. a Berkeley DB btree); neither side can reach the site here, so there is nothing to compare." This exclusion occurs before worker/library selection. It is not a missing-input skip. Whether an observed base contract run skips this case is **Unknown**: no such retained run exists. Source exclusion of a BDB subject is not observed-base evidence.
 
-KC's 13 excluded BDB-fixture cases are `abort-add-phrase-duplicate-library-token`, `abort-add-phrase-index-item-missing`, `abort-add-phrase-index-length-mismatch`, `abort-add-phrase-index-text-mismatch`, `abort-choose-candidate-predicted-bigram-row`, `issue542-stale-user_phrase_index.bin-{pinyin,zhuyin}`, `issue542-stale-user_pinyin_index.bin-{pinyin,zhuyin}`, `issue762-token-reuse-stale-bigram-no-mask-{pinyin,zhuyin}`, and `issue762-token-reuse-stale-bigram-{pinyin,zhuyin}`. Tkrzw exclusions and terminal totals remain pending; no KC totals are inferred for it.
+KC and tkrzw each excluded the same 13 BDB-fixture cases: `abort-add-phrase-duplicate-library-token`, `abort-add-phrase-index-item-missing`, `abort-add-phrase-index-length-mismatch`, `abort-add-phrase-index-text-mismatch`, `abort-choose-candidate-predicted-bigram-row`, `issue542-stale-user_phrase_index.bin-{pinyin,zhuyin}`, `issue542-stale-user_pinyin_index.bin-{pinyin,zhuyin}`, `issue762-token-reuse-stale-bigram-no-mask-{pinyin,zhuyin}`, and `issue762-token-reuse-stale-bigram-{pinyin,zhuyin}`. The retained terminal reports were compared case by case: both cells name exactly this set. Tkrzw contract completed with 5752 workers in 1713.3743 seconds; its 15 same-data drivers and the serial sequence exited 0.
 
 For tkrzw, manual `ldd` checks required exactly one canonical resolution for both pins, installed subjects and every copied arm; discarded live `LD_DEBUG=libs` traces checked both sides. All 1310 measurement-copy checks resolved to `/home/sheng/Documents/Codex/2026-10-23/task-10/1076-op.wtX6BX/cache/tkrzw/lib/libtkrzw.so.1.77.0`, SHA-256 `36c6aa4d77edb3bd6a628f02fc456f0a67096bdd451c04999141d7144f144d0e`, built by setup from tkrzw 1.0.34. The pin and subject paths were identical to this cache path. The no-`LD_LIBRARY_PATH` contrast resolved `/usr/lib/x86_64-linux-gnu/libtkrzw.so.1.75.0`; no campaign used it. Both completed generation passes also passed their manual runtime checks. #1068's merged guard additionally checks actual gate workers.
 
@@ -89,16 +89,16 @@ M1 medians below use **base / PR / pin**. Pss is KiB; minor faults are counts. P
 
 Text same-bytes controls were exact. The required fall holds on KC (1192/1112 KiB pinyin/zhuyin) and tkrzw (1260/1056 KiB). The maintainer's requested pin band is **±64 KiB**. Measured PR-minus-pin text Pss is:
 
-| Backend/facade | Phrases difference, KiB | Inside ±64 KiB? | Journals difference, KiB | Inside ±64 KiB? |
-|---|---:|---|---:|---|
-| BDB pinyin | +60 | inside | +60 | inside |
-| BDB zhuyin | +84 | OUTSIDE | +84 | OUTSIDE |
-| KC pinyin | -208 | OUTSIDE | -208 | OUTSIDE |
-| KC zhuyin | -156 | OUTSIDE | -174 | OUTSIDE |
-| tkrzw pinyin | +44 | inside | +44 | inside |
-| tkrzw zhuyin | **+72** | **OUTSIDE** | **+72** | **OUTSIDE** |
+| Backend/facade | Phrases difference, KiB | Journals difference, KiB | Pin-band category |
+|---|---:|---:|---|
+| BDB pinyin | +60 | +60 | within ±64 KiB |
+| BDB zhuyin | +84 | +84 | above the pin |
+| KC pinyin | -208 | -208 | below the pin |
+| KC zhuyin | -156 | -174 | below the pin |
+| tkrzw pinyin | +44 | +44 | within ±64 KiB |
+| tkrzw zhuyin | **+72** | **+72** | **above the pin** |
 
-Negative differences mean PR uses less text Pss than the pin; their magnitude still places them outside a symmetric ±64 KiB band. These labels use the maintainer's band, not the measurement tool's earlier 48-KiB envelope. The required base-to-PR fall and the pin-band result are distinct. BDB policy bytes remain unchanged.
+Categories are below the pin for differences less than -64 KiB, within ±64 KiB for the inclusive band, and above the pin for differences greater than +64 KiB. The required base-to-PR fall and the pin-band category are distinct. BDB policy bytes are unchanged, so BDB zhuyin's +84 KiB predates #1076.
 
 For total Pss, conservative same-bytes difference bounds (control minimum minus PR maximum through control maximum minus PR minimum) are, in PP/PJ/ZP/ZJ order: BDB `[-9,12],[-9,8],[-10,12],[-12,11]`; KC `[-85,153],[-105,151],[-63,80],[-30,65]`; tkrzw `[-19,10],[-13,22],[-9,22],[-17,12]` KiB. Bounds entirely inside ±max(64 KiB, 1% of PR median) establish containment for any paired-bootstrap interval on those samples. The two KC pinyin bounds exceed that band, so their total-Pss control validity is **unestablished** and accepted total-Pss pin ratios are suppressed. No actual paired-bootstrap interval was computed or retained. Other total PR/base; PR/pin ratios: BDB PP `.8583;.9739`, PJ `.8590;.9776`, ZP `.8755;.9888`, ZJ `.8762;.9939`; KC ZP `.9038;1.0469`, ZJ `.9039;1.0529`; tkrzw PP `.8818;1.0289`, PJ `.8819;1.0325`, ZP `.8923;1.0369`, ZJ `.8929;1.0451`.
 
