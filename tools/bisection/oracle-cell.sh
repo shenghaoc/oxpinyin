@@ -26,6 +26,25 @@
 #
 # REPO_ROOT must be set before sourcing.
 
+# Snapshot inherited search directories before the caller changes directory.
+# Keep loader tokens literal: the loader, not this shell, interprets them.
+oracle_cell_library_path() {
+    local remaining=${LD_LIBRARY_PATH-} entry separator=
+    [[ -n $remaining ]] || return 0
+    while :; do
+        entry=${remaining%%:*}
+        case $entry in
+            *'$ORIGIN'* | *'${ORIGIN}'* | *'$LIB'* | *'${LIB}'* | *'$PLATFORM'* | *'${PLATFORM}'* | /*) ;;
+            '') entry=$PWD ;;
+            *) entry=$PWD/$entry ;;
+        esac
+        printf '%s%s' "$separator" "$entry"
+        [[ $remaining == *:* ]] || break
+        remaining=${remaining#*:}
+        separator=:
+    done
+}
+
 ORACLE_DBM=${PINYIN_ORACLE_DBM:-bdb}
 case $ORACLE_DBM in
 bdb)

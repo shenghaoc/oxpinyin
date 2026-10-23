@@ -29,6 +29,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=tools/bisection/oracle-cell.sh
 source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
+inherited_library_path=$(oracle_cell_library_path)
 oracle_so=${1:?path to the pin-built libpinyin.so}
 [[ -f $oracle_so ]] || { echo "SKIP: missing oracle: $oracle_so" >&2; exit 77; }
 capi_so=${2:-${OXPINYIN_CAPI_SO:?prebuilt libpinyin required}}
@@ -46,7 +47,7 @@ gcc -std=gnu11 -Wall -Wextra -Werror -O2 -o "$work/driver" import-semantics-diff
 run() {
   local side=$1 so=$2 library=$3
   mkdir -p "$work/$side-$library"
-  (cd "$work/$side-$library" && LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  (cd "$work/$side-$library" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" \
     "$work/driver" "$so" "$data" "$library") >"$work/$side-$library.log" 2>/dev/null
 }
 

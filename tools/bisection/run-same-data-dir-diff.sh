@@ -31,6 +31,7 @@ set -euo pipefail
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=tools/bisection/oracle-cell.sh
 source "$REPO_ROOT/tools/bisection/oracle-cell.sh"
+inherited_library_path=$(oracle_cell_library_path)
 
 oracle_so=${1:?path to the pin-built libpinyin.so}
 [[ -f $oracle_so ]] || { echo "SKIP: missing oracle: $oracle_so" >&2; exit 77; }
@@ -109,7 +110,7 @@ for driver in "${drivers[@]}"; do
     # user state relative to the cwd, and both sides must start equal.
     local side=$1 so=$2
     rm -rf "${work:?}/$side"; mkdir -p "$work/$side"
-    ( cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$work/$driver" "$so" "$data" "${driver_args[@]}" )
+    ( cd "$work/$side" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" "$work/$driver" "$so" "$data" "${driver_args[@]}" )
   }
   if [[ $driver == dynamic-adjust-diff ]]; then
     # This driver also needs a bit state and a fresh user profile. Preserve
@@ -123,7 +124,7 @@ for driver in "${drivers[@]}"; do
         rm -rf "$dest"
         mkdir -p "$dest/user"
         run_dynamic() {
-          ( cd "$dest" && LD_LIBRARY_PATH="$(dirname "$so")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+          ( cd "$dest" && LD_LIBRARY_PATH="$(dirname "$so")${inherited_library_path:+:$inherited_library_path}" \
               "$work/$driver" "$so" "$data" "$mode" "$dest/user" )
         }
         output=$work/$engine-$mode.stdout
