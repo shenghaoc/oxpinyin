@@ -785,14 +785,19 @@ def page_section(layout, page):
     return name if size > 0 else 'none'
 
 
-def symbol_at(layout, address):
-    """The sized symbol holding a virtual address, if any."""
+def symbol_span(layout, address):
+    """(start, size, name) of the sized symbol holding a virtual address."""
     symbols = layout['symbols']
     index = bisect.bisect_right(symbols, (address, float('inf')))
     for start, size, _, name in reversed(symbols[max(0, index - 8):index]):
         if start <= address < start + size:
-            return name
+            return start, size, name
     return None
+
+
+def symbol_at(layout, address):
+    span = symbol_span(layout, address)
+    return span[2] if span else None
 
 
 def policy_prefix(library, facade):
@@ -1625,8 +1630,10 @@ def report_init_pages(facade, case, rows, bitmaps, subjects, cache):
                 if offset is None:
                     continue
                 executed.add(offset // 4096)
-                name = symbol_at(layout, address - base) or section_at(layout, offset) or 'unknown'
-                entry = functions.setdefault(name, dict(instructions=0, pages=set(), in_prefix=None))
+                span = symbol_span(layout, address - base)
+                name = span[2] if span else section_at(layout, offset) or 'unknown'
+                entry = functions.setdefault(name, dict(instructions=0, pages=set(), in_prefix=None,
+                                                        bytes=span[1] if span else 0))
                 entry['instructions'] += 1
                 entry['pages'].add(offset // 4096)
                 if prefix:
@@ -1637,8 +1644,13 @@ def report_init_pages(facade, case, rows, bitmaps, subjects, cache):
                 if offset is not None:
                     data_pages.setdefault(offset // 4096, set()).add(symbol_at(layout, (line << 6) - base) or '-')
                     touched[section_at(layout, offset) or 'unknown'] += 1
+            # The whole bodies of the executed functions: what their pages
+            # would be if the layout placed init's functions contiguously.
+            function_bytes = sum(entry['bytes'] for entry in functions.values())
             record['executed'] = dict(
-                pages=len(executed), functions=len(functions), instructions=len(accesses['code']),
+                pages=len(executed), functions=len(functions), all_objects_instructions=len(accesses['code']),
+                instructions=sum(entry['instructions'] for entry in functions.values()),
+                function_bytes=function_bytes, contiguous_pages=-(-function_bytes // 4096),
                 largest=[dict(function=name, instructions=entry['instructions'], pages=page_ranges(entry['pages']),
                               in_prefix=entry['in_prefix'])
                          for name, entry in sorted(functions.items(), key=lambda item: -item[1]['instructions'])[:40]],
