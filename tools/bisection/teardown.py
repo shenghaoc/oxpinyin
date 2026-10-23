@@ -249,9 +249,13 @@ def filesystem(path):
     return max(matches)[1]
 
 
-# glibc and its dynamic loader remain warm. C++/GCC runtimes and all other
-# DT_NEEDED dependencies (including transitive ones) belong to the cold set.
-C_RUNTIME = re.compile(r'^(?:lib(?:c|m|dl|pthread|rt|resolv|util|anl)\.so\.[0-9]+|ld-linux[^/]*\.so\.[0-9]+)$')
+# glibc, its dynamic loader and libgcc_s remain warm. libgcc_s joins the C
+# runtime because the controller's own interpreter maps it (maintainer ruling
+# on #1091): it cannot leave the page cache, for either side. The C++ runtime
+# and all other DT_NEEDED dependencies (including transitive ones) belong to
+# the cold set.
+C_RUNTIME = re.compile(r'^(?:lib(?:c|m|dl|pthread|rt|resolv|util|anl)\.so\.[0-9]+|ld-linux[^/]*\.so\.[0-9]+'
+                       r'|libgcc_s\.so\.[0-9]+)$')
 
 
 def library_dependencies(library):
