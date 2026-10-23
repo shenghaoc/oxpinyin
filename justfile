@@ -93,7 +93,7 @@ bench-smoke:
 # Run one caller-selected fuzz target with the nightly workflow's ASLR wrapper.
 [linux]
 fuzz *args:
-    @just heavy -- setarch {{arch()}} -R cargo +nightly-2026-08-01 fuzz run "$@"
+    @just heavy -- setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run "$@"
 
 # The fuzz workspace links the Linux-only C ABI, even for portable targets.
 [macos]
@@ -106,15 +106,15 @@ fuzz *args:
 fuzz *args:
     @just heavy -- cargo +nightly-2026-08-01 fuzz run @args; exit $LASTEXITCODE
 
-# Run the native coverage tool; crate, backend and report selection stay in it.
+# Run native coverage with temporary state; run and report in one invocation.
 [unix]
 coverage *args:
-    @just heavy -- cargo llvm-cov "$@"
+    @just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev coverage "$@"
 
 # Windows transport is unverified (#950).
 [windows]
 coverage *args:
-    @just heavy -- cargo llvm-cov @args; exit $LASTEXITCODE
+    @just heavy -- uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal -m tools.dev coverage @args; exit $LASTEXITCODE
 
 # Read registry metadata, optionally filtered by issue or kind.
 [unix]

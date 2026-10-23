@@ -84,8 +84,8 @@ Layer 5 schedules the old-to-new handoffs.
 | `just bench [args ...]` | Run the workspace benches through the heavy wrapper: `cargo bench --workspace --benches <args>`. | `cargo bench` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). `--benches` skips the four `required-features` targets: `backend_matrix_kyotocabinet`, `backend_matrix_tkrzw` and `kyotocabinet_bnum` (oxpinyin-store), and `dbm_bench` (pinyin-oracle). |
 | `just bench-smoke` | Build every selected bench harness without running it: `just bench --no-run`. | `cargo bench --no-run` | Implemented, #1038 (maintainer ruling 2026-10-22 UTC). On a host with model20, `just bench -- --test` is the full start-up check. |
 | `just measure <recipe>` / `just initbench` | Enter native oxpinyin-only measurement; `initbench` is `measure startup`. Pin rows are refused. | Native startup controller and worker (layer 5 §7.8) | Proposed for T2N (maintainer ruling 2026-10-22 UTC). |
-| `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch <arch> -R cargo +nightly-2026-08-01 fuzz run <args>` from `verify-nightly.yml`'s `fuzz-soak` job. | Implemented (maintainer ruling 2026-10-23 UTC). Linux execution; macOS exits 1 because the fuzz workspace links the Linux-only C ABI. Windows transport unverified (#950). |
-| `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job. | Implemented (maintainer ruling 2026-10-23 UTC). Supply the existing workflow options explicitly to reproduce its scope and report. macOS execution unverified; Windows transport unverified (#950). |
+| `just fuzz <target> [args ...]` | Run one native fuzz target through the heavy wrapper. | `setarch "$(uname -m)" -R cargo +nightly-2026-08-01 fuzz run <args>` from `verify-nightly.yml`'s `fuzz-soak` job. | Implemented (maintainer ruling 2026-10-23 UTC). Linux execution; macOS exits 1 because the fuzz workspace links the Linux-only C ABI. Windows transport unverified (#950). |
+| `just coverage [args ...]` | Run native coverage through the heavy wrapper; the tool owns crate, backend and report selection. | `tools.dev coverage` runs `cargo llvm-cov <args>` from `coverage.yml`'s `coverage` job with temporary per-invocation state. | Implemented (maintainer ruling 2026-10-23 UTC). Run and report in one invocation; pass the desired workflow scope, report and floor options together. macOS execution unverified; Windows transport unverified (#950). |
 | `just sanitize` | Call an existing native sanitizer tool. | BDB script and inline tkrzw ASan workflow command. | Proposed; deferred by maintainer ruling 2026-10-23 UTC. No shared selector or argument-forwarding entry point exists. |
 | `just ci <job>` | Select an approved native job. | Workflow-specific commands | Proposed. |
 
@@ -124,20 +124,50 @@ just fuzz parser -- -max_total_time=5 -timeout=2 -max_len=4096 -print_final_stat
 just coverage --locked -p oxpinyin-chewing -- --test-threads=1
 ```
 
-To reproduce the coverage job's scope and reports, pass its options unchanged:
+Coverage state belongs to one invocation. `tools.dev.coverage.run` allocates a
+private target path beneath a fresh temporary parent for both
+`CARGO_LLVM_COV_TARGET_DIR` and `CARGO_LLVM_COV_BUILD_DIR`, preserving raw
+arguments and the child's status. Cargo creates its own tagged target directory.
+It uses the existing `slot.run_command` for process-group cleanup and inherited
+slot handling, and removes the directory after the child is reaped, including
+on failure or cancellation. Caller coverage directory overrides do not make
+these invocations share state. No checkout lock is added: `slot.run_command`
+uses `HeavyAdmission` and starts the child directly; it has no checkout lock.
+
+Run tests and produce their report in the **same invocation**. Profiles and
+instrumented artifacts are not retained for a later `just coverage report`,
+`--no-report` / `report`, or `--no-clean` sequence. A report output requested
+with `--output-path` is owned by the caller. Combine the workflow's scope,
+LCOV output and line floor in one call:
 
 ```sh
-just coverage --locked --workspace --no-default-features --features kyotocabinet --lcov --output-path lcov.info
-just coverage report --summary-only --fail-under-lines 77
+just coverage --locked --workspace --no-default-features --features kyotocabinet --lcov --output-path lcov.info --fail-under-lines 77
 ```
 
-Linux argument transport (including empty arguments, spaced paths and `--`)
-and statuses 0, 1 and 77 passed through the real heavy slot with a temporary
-Cargo substitute. Real workload verification remains incomplete on that
-host: the small fuzz run failed because nightly-2026-08-01 is absent; the
-one-crate coverage run failed because cargo-llvm-cov is absent. No tools
-were installed. The macOS refusal body returned 1 when exercised on Linux;
-native macOS execution was not run.
+Linux recipe acceptance is complete for **fuzz and coverage only**. At
+`220ba5142c9249d14b9a919a03626cca6661ade4` on Ubuntu Linux amd64, after
+installing the workflow-pinned tools, these exact smoke commands passed:
+
+| Historical command | Result |
+| --- | --- |
+| `just fuzz parser -- -max_total_time=5 -timeout=2 -max_len=4096 -print_final_stats=1` | Exit 0; 20,233 executions in 6 seconds, no finding. |
+| `just coverage --locked -p oxpinyin-chewing -- --test-threads=1` | Exit 0; 6 unit and 4 integration tests passed; selected-crate line coverage 91.16% (249 lines, 22 missed). |
+
+Those runs used nightly-2026-08-01 with rust-src (rustc
+`1.99.0-nightly (ad3d0bc14 2026-07-31)`), cargo-fuzz 0.13.2,
+cargo-llvm-cov 0.9.0, and llvm-tools-preview for Rust 1.97.1
+(LLVM `22.1.6-rust-1.97.1-stable`). This is historical evidence for that exact
+revision; it does not relabel the smoke as a run of later state-isolation
+changes. The earlier pre-provisioning attempts ran no workload and are
+superseded for Linux acceptance. Argument transport (empty arguments, spaced
+paths and `--`) and statuses 0, 1 and 77 also passed with a temporary Cargo
+substitute through the real heavy slot. These bounded results close neither
+other recipes' acceptance nor T2N's fresh-install/offline checks.
+
+The macOS fuzz refusal body returned 1 when exercised on Linux. Native macOS
+fuzz/coverage recipe execution was not run; fuzz remains unsupported there
+because the workspace links the Linux-only C ABI. Windows transport and runtime
+remain unverified (#950). Sanitize remains deferred.
 
 These recipes do not change either workflow. The sanitizer recipe remains
 proposed: `store-backends.yml`'s `bdb-sanitizers` job calls
