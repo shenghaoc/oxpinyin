@@ -5,6 +5,10 @@
  */
 #include <limits.h>
 #include <sys/resource.h>
+#if defined(__linux__)
+#include <sys/mman.h>
+#include <sys/prctl.h>
+#endif
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
@@ -22,8 +26,12 @@
 #define TD_MAX_CANDIDATES 512
 #define TD_TEXT_BYTES 512
 
-/* majflt is getrusage(RUSAGE_SELF) ru_majflt: page faults that needed I/O. */
-struct td_clock { uint64_t wall, cpu, majflt; };
+/* wall and cpu are clock reads. The rest is one getrusage(RUSAGE_SELF):
+ * majflt needed I/O, minflt did not; nvcsw/nivcsw are context switches.
+ * user/sys follow the kernel's CPU accounting. Under tick accounting
+ * (CONFIG_TICK_CPU_ACCOUNTING) their split is sampled at the tick, so a
+ * short interval's user/sys values are quantized; cpu is not. */
+struct td_clock { uint64_t wall, cpu, user, sys, minflt, majflt, nvcsw, nivcsw; };
 struct td_candidate { int type, nbest; char text[TD_TEXT_BYTES]; };
 struct td_observation {
     size_t consumed, parsed;
@@ -40,6 +48,10 @@ struct td_api {
     void (*free_memory)(void *);
 };
 
+static uint64_t td_timeval_ns(struct timeval value) {
+    return (uint64_t)value.tv_sec * 1000000000ULL + (uint64_t)value.tv_usec * 1000ULL;
+}
+
 static struct td_clock td_now(void) {
     struct timespec wall, cpu;
     if (clock_gettime(CLOCK_MONOTONIC_RAW, &wall) ||
@@ -50,14 +62,24 @@ static struct td_clock td_now(void) {
     struct rusage usage;
     if (getrusage(RUSAGE_SELF, &usage)) { perror("teardown rusage"); exit(1); }
     return (struct td_clock){
-        (uint64_t)wall.tv_sec * 1000000000ULL + (uint64_t)wall.tv_nsec,
-        (uint64_t)cpu.tv_sec * 1000000000ULL + (uint64_t)cpu.tv_nsec,
-        (uint64_t)usage.ru_majflt};
+        .wall = (uint64_t)wall.tv_sec * 1000000000ULL + (uint64_t)wall.tv_nsec,
+        .cpu = (uint64_t)cpu.tv_sec * 1000000000ULL + (uint64_t)cpu.tv_nsec,
+        .user = td_timeval_ns(usage.ru_utime), .sys = td_timeval_ns(usage.ru_stime),
+        .minflt = (uint64_t)usage.ru_minflt, .majflt = (uint64_t)usage.ru_majflt,
+        .nvcsw = (uint64_t)usage.ru_nvcsw, .nivcsw = (uint64_t)usage.ru_nivcsw};
 }
 
 static struct td_clock td_elapsed(struct td_clock start) {
     struct td_clock end = td_now();
-    return (struct td_clock){end.wall - start.wall, end.cpu - start.cpu, end.majflt - start.majflt};
+    return (struct td_clock){end.wall - start.wall, end.cpu - start.cpu, end.user - start.user,
+                             end.sys - start.sys, end.minflt - start.minflt, end.majflt - start.majflt,
+                             end.nvcsw - start.nvcsw, end.nivcsw - start.nivcsw};
+}
+
+static void td_add(struct td_clock *sum, struct td_clock value) {
+    sum->wall += value.wall; sum->cpu += value.cpu; sum->user += value.user; sum->sys += value.sys;
+    sum->minflt += value.minflt; sum->majflt += value.majflt;
+    sum->nvcsw += value.nvcsw; sum->nivcsw += value.nivcsw;
 }
 
 /* Stable, separately selectable Callgrind collection boundaries. All native
@@ -386,9 +408,325 @@ static int td_export(const struct td_api *api, void *context) {
 }
 
 static void td_print_time(const char *name, struct td_clock value, bool comma) {
-    printf("%s\"%s\":{\"wall_ns\":%llu,\"cpu_ns\":%llu,\"majflt\":%llu}", comma ? "," : "",
+    printf("%s\"%s\":{\"wall_ns\":%llu,\"cpu_ns\":%llu,\"user_ns\":%llu,\"sys_ns\":%llu,"
+           "\"minflt\":%llu,\"majflt\":%llu,\"nvcsw\":%llu,\"nivcsw\":%llu}", comma ? "," : "",
            name, (unsigned long long)value.wall, (unsigned long long)value.cpu,
-           (unsigned long long)value.majflt);
+           (unsigned long long)value.user, (unsigned long long)value.sys,
+           (unsigned long long)value.minflt, (unsigned long long)value.majflt,
+           (unsigned long long)value.nvcsw, (unsigned long long)value.nivcsw);
+}
+
+/* Diagnostic init probes (#1090), only in `init` mode, selected by
+ * OXPINYIN_TEARDOWN_INIT_PROBE: `count` (perf counters), `sample:<ns>`
+ * (cpu-clock IPs with kernel call chains), `faults` (the IP and address of
+ * every minor and major page fault, with every mmap, in order) or `trace`
+ * (begin/end writes on OXPINYIN_TEARDOWN_MARKER_FD for an external syscall
+ * tracer). Opening,
+ * mapping, reading and printing stay outside the init bracket. The enable and
+ * disable calls adjoin it; `count` reports their cost from an empty bracket.
+ * An event the kernel refuses is reported with its errno, never as zero. */
+enum td_probe_kind { TD_PROBE_NONE, TD_PROBE_COUNT, TD_PROBE_SAMPLE, TD_PROBE_FAULTS, TD_PROBE_TRACE };
+#define TD_PROBE_EVENTS 11
+#define TD_RING_PAGES 64
+#define TD_SAMPLE_STACK 48
+
+struct td_probe {
+    enum td_probe_kind kind;
+    int marker, fds[TD_PROBE_EVENTS], errors[TD_PROBE_EVENTS];
+    bool user_only[TD_PROBE_EVENTS];
+    uint64_t period, ids[2], bracket[TD_PROBE_EVENTS][3];
+    void *ring;
+    size_t ring_bytes;
+};
+
+#if defined(__linux__)
+static const struct { const char *name; uint32_t type; uint64_t config; } td_events[TD_PROBE_EVENTS] = {
+    {"task-clock", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_TASK_CLOCK},
+    {"page-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS},
+    {"minor-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS_MIN},
+    {"major-faults", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_PAGE_FAULTS_MAJ},
+    {"context-switches", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CONTEXT_SWITCHES},
+    {"cpu-migrations", PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_MIGRATIONS},
+    {"cycles", PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES},
+    {"instructions", PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS},
+    {"branch-misses", PERF_TYPE_HARDWARE, PERF_COUNT_HW_BRANCH_MISSES},
+    {"L1-icache-load-misses", PERF_TYPE_HW_CACHE, PERF_COUNT_HW_CACHE_L1I |
+        (PERF_COUNT_HW_CACHE_OP_READ << 8) | (PERF_COUNT_HW_CACHE_RESULT_MISS << 16)},
+    {"iTLB-load-misses", PERF_TYPE_HW_CACHE, PERF_COUNT_HW_CACHE_ITLB |
+        (PERF_COUNT_HW_CACHE_OP_READ << 8) | (PERF_COUNT_HW_CACHE_RESULT_MISS << 16)},
+};
+
+/* Kernel-inclusive first. A kernel that refuses that for this user
+ * (perf_event_paranoid) gets one user-only retry, reported as such. */
+static int td_perf_open(struct perf_event_attr *attr, bool *user_only, int *error) {
+    *user_only = false;
+    int fd = (int)syscall(SYS_perf_event_open, attr, 0, -1, -1, PERF_FLAG_FD_CLOEXEC);
+    if (fd < 0 && (errno == EACCES || errno == EPERM)) {
+        attr->exclude_kernel = 1;
+        *user_only = true;
+        fd = (int)syscall(SYS_perf_event_open, attr, 0, -1, -1, PERF_FLAG_FD_CLOEXEC);
+    }
+    *error = fd < 0 ? errno : 0;
+    return fd;
+}
+
+static void td_probe_toggle(const struct td_probe *probe, bool on) {
+    if ((probe->kind == TD_PROBE_COUNT || probe->kind == TD_PROBE_SAMPLE || probe->kind == TD_PROBE_FAULTS) &&
+        prctl(on ? PR_TASK_PERF_EVENTS_ENABLE : PR_TASK_PERF_EVENTS_DISABLE, 0, 0, 0, 0)) {
+        perror("teardown perf toggle");
+        exit(1);
+    }
+}
+
+static void td_probe_read(const struct td_probe *probe, uint64_t values[TD_PROBE_EVENTS][3]) {
+    for (unsigned i = 0; i < TD_PROBE_EVENTS; i++) {
+        memset(values[i], 0, sizeof values[i]);
+        if (probe->fds[i] >= 0 && read(probe->fds[i], values[i], sizeof values[i]) != (ssize_t)sizeof values[i]) {
+            perror("teardown perf read");
+            exit(1);
+        }
+    }
+}
+#else
+static void td_probe_toggle(const struct td_probe *probe, bool on) { (void)probe; (void)on; }
+#endif
+
+static void td_probe_open(struct td_probe *probe, bool init_mode) {
+    memset(probe, 0, sizeof *probe);
+    probe->marker = -1;
+    for (unsigned i = 0; i < TD_PROBE_EVENTS; i++) probe->fds[i] = -1;
+    const char *value = getenv("OXPINYIN_TEARDOWN_INIT_PROBE");
+    if (!value || !*value) return;
+    if (!init_mode) {
+        fputs("teardown init probes require init mode\n", stderr);
+        exit(2);
+    }
+    char *end;
+    if (!strcmp(value, "count")) probe->kind = TD_PROBE_COUNT;
+    else if (!strcmp(value, "trace")) probe->kind = TD_PROBE_TRACE;
+    else if (!strcmp(value, "faults")) probe->kind = TD_PROBE_FAULTS;
+    else if (!strncmp(value, "sample:", 7)) {
+        probe->kind = TD_PROBE_SAMPLE;
+        probe->period = strtoull(value + 7, &end, 10);
+        if (*end || probe->period < 10000) exit(2);
+    } else exit(2);
+    if (probe->kind == TD_PROBE_TRACE) {
+        const char *marker = getenv("OXPINYIN_TEARDOWN_MARKER_FD");
+        long fd = marker ? strtol(marker, &end, 10) : -1;
+        if (!marker || *end || fd < 3 || fd > INT_MAX) exit(2);
+        probe->marker = (int)fd;
+        return;
+    }
+#if defined(__linux__)
+    struct perf_event_attr attr;
+    if (probe->kind == TD_PROBE_COUNT) {
+        for (unsigned i = 0; i < TD_PROBE_EVENTS; i++) {
+            memset(&attr, 0, sizeof attr);
+            attr.size = (uint32_t)sizeof attr;
+            attr.type = td_events[i].type;
+            attr.config = td_events[i].config;
+            attr.disabled = 1;
+            attr.exclude_hv = 1;
+            attr.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+            probe->fds[i] = td_perf_open(&attr, &probe->user_only[i], &probe->errors[i]);
+        }
+        return;
+    }
+    if (probe->kind == TD_PROBE_FAULTS) {
+        /* Every fault is a sample. Both events write to one ring, so faults
+         * and the minor event's mmap records keep their order. */
+        static const uint64_t faults[2] = {PERF_COUNT_SW_PAGE_FAULTS_MIN, PERF_COUNT_SW_PAGE_FAULTS_MAJ};
+        for (unsigned i = 0; i < 2; i++) {
+            memset(&attr, 0, sizeof attr);
+            attr.size = (uint32_t)sizeof attr;
+            attr.type = PERF_TYPE_SOFTWARE;
+            attr.config = faults[i];
+            attr.sample_period = 1;
+            attr.sample_type = PERF_SAMPLE_IDENTIFIER | PERF_SAMPLE_IP | PERF_SAMPLE_ADDR;
+            attr.mmap = attr.mmap_data = attr.mmap2 = i == 0;
+            attr.disabled = 1;
+            attr.exclude_hv = 1;
+            probe->fds[i] = td_perf_open(&attr, &probe->user_only[i], &probe->errors[i]);
+            if (probe->fds[i] < 0) return;
+            if (ioctl(probe->fds[i], PERF_EVENT_IOC_ID, &probe->ids[i])) { perror("teardown perf id"); exit(1); }
+        }
+    } else {
+        memset(&attr, 0, sizeof attr);
+        attr.size = (uint32_t)sizeof attr;
+        attr.type = PERF_TYPE_SOFTWARE;
+        attr.config = PERF_COUNT_SW_CPU_CLOCK;
+        attr.sample_period = probe->period;
+        attr.sample_type = PERF_SAMPLE_IP | PERF_SAMPLE_CALLCHAIN;
+        attr.exclude_callchain_user = 1;
+        attr.sample_max_stack = TD_SAMPLE_STACK;
+        attr.disabled = 1;
+        attr.exclude_hv = 1;
+        probe->fds[0] = td_perf_open(&attr, &probe->user_only[0], &probe->errors[0]);
+        if (probe->fds[0] < 0) return;
+    }
+    long page = sysconf(_SC_PAGESIZE);
+    probe->ring_bytes = (size_t)page * (TD_RING_PAGES + 1);
+    probe->ring = mmap(NULL, probe->ring_bytes, PROT_READ | PROT_WRITE, MAP_SHARED, probe->fds[0], 0);
+    if (probe->ring == MAP_FAILED) { perror("teardown perf ring"); exit(1); }
+    if (probe->kind == TD_PROBE_FAULTS && ioctl(probe->fds[1], PERF_EVENT_IOC_SET_OUTPUT, probe->fds[0])) {
+        perror("teardown perf output");
+        exit(1);
+    }
+#else
+    if (probe->kind != TD_PROBE_TRACE) {
+        for (unsigned i = 0; i < TD_PROBE_EVENTS; i++) probe->errors[i] = ENOSYS;
+    }
+#endif
+}
+
+/* Measure the enable/clock/disable bracket around nothing, once per sample,
+ * immediately before the init bracket it calibrates. */
+static void td_probe_calibrate(struct td_probe *probe) {
+#if defined(__linux__)
+    if (probe->kind != TD_PROBE_COUNT) return;
+    td_probe_toggle(probe, true);
+    struct td_clock start = td_now();
+    (void)td_elapsed(start);
+    td_probe_toggle(probe, false);
+    td_probe_read(probe, probe->bracket);
+#else
+    (void)probe;
+#endif
+}
+
+static void td_probe_mark(const struct td_probe *probe, const char *marker) {
+    if (probe->kind == TD_PROBE_TRACE && write(probe->marker, marker, 1) != 1) {
+        perror("teardown trace marker");
+        exit(1);
+    }
+}
+
+#if defined(__linux__)
+static void td_ring_copy(void *out, const unsigned char *data, uint64_t size, uint64_t offset, size_t bytes) {
+    for (size_t copied = 0; copied < bytes;) {
+        uint64_t at = (offset + copied) % size;
+        size_t run = (size_t)(size - at) < bytes - copied ? (size_t)(size - at) : bytes - copied;
+        memcpy((unsigned char *)out + copied, data + at, run);
+        copied += run;
+    }
+}
+#endif
+
+/* One JSON line after the I1 checkpoint. Values are raw totals of the init
+ * bracket minus the empty calibration bracket; the latter is reported too. */
+static void td_probe_report(const struct td_probe *probe) {
+    if (probe->kind == TD_PROBE_NONE || probe->kind == TD_PROBE_TRACE) return;
+    if (probe->kind == TD_PROBE_COUNT) {
+        uint64_t total[TD_PROBE_EVENTS][3] = {{0}};
+#if defined(__linux__)
+        td_probe_read(probe, total);
+#endif
+        printf("{\"init_probe\":\"count\",\"events\":[");
+        for (unsigned i = 0; i < TD_PROBE_EVENTS; i++) {
+#if defined(__linux__)
+            printf("%s{\"name\":\"%s\",\"errno\":%d,\"user_only\":%s", i ? "," : "", td_events[i].name,
+                   probe->errors[i], probe->user_only[i] ? "true" : "false");
+#else
+            printf("%s{\"name\":null,\"errno\":%d,\"user_only\":false", i ? "," : "", probe->errors[i]);
+#endif
+            if (probe->fds[i] >= 0)
+                printf(",\"value\":%llu,\"enabled_ns\":%llu,\"running_ns\":%llu,\"bracket\":%llu,"
+                       "\"bracket_enabled_ns\":%llu,\"bracket_running_ns\":%llu}",
+                       (unsigned long long)(total[i][0] - probe->bracket[i][0]),
+                       (unsigned long long)(total[i][1] - probe->bracket[i][1]),
+                       (unsigned long long)(total[i][2] - probe->bracket[i][2]),
+                       (unsigned long long)probe->bracket[i][0],
+                       (unsigned long long)probe->bracket[i][1],
+                       (unsigned long long)probe->bracket[i][2]);
+            else putchar('}');
+        }
+        puts("]}");
+        return;
+    }
+    bool faults = probe->kind == TD_PROBE_FAULTS;
+    int error = probe->errors[0] ? probe->errors[0] : faults ? probe->errors[1] : 0;
+    printf("{\"init_probe\":\"%s\",\"period_ns\":%llu,\"errno\":%d,\"user_only\":%s",
+           faults ? "faults" : "sample", (unsigned long long)probe->period, error,
+           probe->user_only[0] || probe->user_only[1] ? "true" : "false");
+#if defined(__linux__)
+    if (!error) {
+        struct perf_event_mmap_page *meta = probe->ring;
+        long page = sysconf(_SC_PAGESIZE);
+        const unsigned char *data = (const unsigned char *)probe->ring + page;
+        uint64_t size = (uint64_t)probe->ring_bytes - (uint64_t)page;
+        uint64_t head = __atomic_load_n(&meta->data_head, __ATOMIC_ACQUIRE), tail = meta->data_tail;
+        /* An MMAP2 record carries a path of up to PATH_MAX bytes. */
+        uint64_t lost = 0, throttled = 0, record[(PATH_MAX + 128) / 8];
+        bool valid = head - tail <= size, first = true;
+        printf(",\"samples\":[");
+        while (valid && tail < head) {
+            struct perf_event_header header;
+            td_ring_copy(&header, data, size, tail, sizeof header);
+            if (header.size < sizeof header || header.size > sizeof record || header.size % 8 ||
+                tail + header.size > head) {
+                valid = false;
+                break;
+            }
+            td_ring_copy(record, data, size, tail, header.size);
+            tail += header.size;
+            uint64_t *words = record + 1, count = (header.size - sizeof header) / 8;
+            bool kernel = (header.misc & PERF_RECORD_MISC_CPUMODE_MASK) == PERF_RECORD_MISC_KERNEL;
+            if (faults && header.type == PERF_RECORD_SAMPLE) {
+                /* IDENTIFIER, IP, ADDR. */
+                if (count < 3 || (words[0] != probe->ids[0] && words[0] != probe->ids[1])) { valid = false; break; }
+                printf("%s{\"fault\":\"%s\",\"kernel\":%s,\"ip\":%llu,\"addr\":%llu}", first ? "" : ",",
+                       words[0] == probe->ids[0] ? "minor" : "major", kernel ? "true" : "false",
+                       (unsigned long long)words[1], (unsigned long long)words[2]);
+                first = false;
+            } else if (faults && header.type == PERF_RECORD_MMAP2) {
+                /* pid, tid; addr, len, pgoff; maj, min; ino, generation; prot, flags; path. */
+                const unsigned char *body = (const unsigned char *)words;
+                size_t bytes = header.size - sizeof header;
+                if (bytes <= 64 || !memchr(body + 64, '\0', bytes - 64)) { valid = false; break; }
+                uint32_t protection, flags;
+                memcpy(&protection, body + 56, 4);
+                memcpy(&flags, body + 60, 4);
+                printf("%s{\"mmap\":%llu,\"len\":%llu,\"pgoff\":%llu,\"prot\":%u,\"flags\":%u,\"file\":",
+                       first ? "" : ",", (unsigned long long)words[1], (unsigned long long)words[2],
+                       (unsigned long long)words[3], protection, flags);
+                perf_json_string((const char *)body + 64);
+                putchar('}');
+                first = false;
+            } else if (header.type == PERF_RECORD_SAMPLE) {
+                if (count < 2 || words[1] > count - 2) { valid = false; break; }
+                printf("%s{\"kernel\":%s,\"ip\":%llu,\"chain\":[", first ? "" : ",", kernel ? "true" : "false",
+                       (unsigned long long)words[0]);
+                bool comma = false;
+                for (uint64_t j = 0; j < words[1]; j++) {
+                    if (words[2 + j] >= (uint64_t)PERF_CONTEXT_MAX) continue;
+                    printf("%s%llu", comma ? "," : "", (unsigned long long)words[2 + j]);
+                    comma = true;
+                }
+                printf("]}");
+                first = false;
+            } else if (header.type == PERF_RECORD_LOST && count >= 2) {
+                lost += words[1];
+            } else if (header.type == PERF_RECORD_THROTTLE) {
+                throttled++;
+            }
+        }
+        printf("],\"lost\":%llu,\"throttled\":%llu,\"valid\":%s",
+               (unsigned long long)lost, (unsigned long long)throttled, valid ? "true" : "false");
+    }
+#endif
+    puts("}");
+}
+
+/* Leaves a closed probe of kind NONE, so a later cycle never reuses it. */
+static void td_probe_close(struct td_probe *probe) {
+#if defined(__linux__)
+    if (probe->ring && munmap(probe->ring, probe->ring_bytes)) { perror("teardown perf ring"); exit(1); }
+    for (unsigned i = 0; i < TD_PROBE_EVENTS; i++)
+        if (probe->fds[i] >= 0) close(probe->fds[i]);
+#endif
+    memset(probe, 0, sizeof *probe);
+    probe->marker = -1;
+    for (unsigned i = 0; i < TD_PROBE_EVENTS; i++) probe->fds[i] = -1;
 }
 
 static int run_teardown_mode(int argc, char **argv) {
@@ -396,17 +734,20 @@ static int run_teardown_mode(int argc, char **argv) {
     if (setrlimit(RLIMIT_CORE, &no_core)) { perror("teardown core limit"); return 1; }
     if (argc != 12 || (strcmp(argv[2], "pinyin") && strcmp(argv[2], "zhuyin"))) {
         fputs("usage: bisect --teardown pinyin|zhuyin SO DATA USER "
-              "time|memory|export|populate|observe SAVE INSTANCES CYCLES "
+              "time|memory|init|export|populate|observe SAVE INSTANCES CYCLES "
               "first-candidate|dirty|multi ROWS_OR_DASH\n", stderr);
         return 2;
     }
     const char *mode = argv[6];
     bool wait = strcmp(mode, "memory") == 0;
+    /* `init` is `time` with pauses after load (M0) and after init (I1) for the
+     * parent's memory and page-cache reads, plus the optional init probe. */
+    bool init_mode = strcmp(mode, "init") == 0;
     bool save = strcmp(argv[7], "1") == 0;
     bool populate = strcmp(mode, "populate") == 0;
     bool exporting = strcmp(mode, "export") == 0;
     bool observing = strcmp(mode, "observe") == 0;
-    if (!wait && !populate && !exporting && !observing && strcmp(mode, "time")) return 2;
+    if (!wait && !init_mode && !populate && !exporting && !observing && strcmp(mode, "time")) return 2;
     if (strcmp(argv[7], "0") && !save) return 2;
     char *end;
     long instances = strtol(argv[8], &end, 10);
@@ -421,7 +762,9 @@ static int run_teardown_mode(int argc, char **argv) {
     if (save && !dirty && !populate) return 2;
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stdin, NULL, _IONBF, 0);
-    if (wait) {
+    struct td_probe probe;
+    td_probe_open(&probe, init_mode);
+    if (wait || init_mode) {
         /* Fault the pipe/stdio wait path before load and M0, rather than
          * racing its first-use residency against the parent's smaps read. */
         puts("{\"teardown\":\"ready\"}");
@@ -437,14 +780,22 @@ static int run_teardown_mode(int argc, char **argv) {
     struct td_api api;
     td_resolve(handle, argv[2], &api);
     struct td_clock load = td_elapsed(start);
-    td_checkpoint("M0", 0, wait);
+    td_checkpoint("M0", 0, wait || init_mode);
     for (int cycle = 1; cycle <= cycles; cycle++) {
         void *allocated[TD_MAX_INSTANCES] = {0};
         struct td_clock beginning = td_now();
+        td_probe_calibrate(&probe);
+        td_probe_toggle(&probe, true);
         start = td_now();
+        td_probe_mark(&probe, "B");
         void *context = api.common.init(argv[4], argv[5]);
+        td_probe_mark(&probe, "E");
         struct td_clock init = td_elapsed(start);
+        td_probe_toggle(&probe, false);
         if (!context) { fputs("teardown init returned NULL\n", stderr); return 1; }
+        td_checkpoint("I1", cycle, init_mode);
+        td_probe_report(&probe);
+        td_probe_close(&probe);
         if (exporting) {
             int status = api.zhuyin ? 2 : td_export(&api, context);
             api.common.fini(context);
@@ -468,12 +819,12 @@ static int run_teardown_mode(int argc, char **argv) {
             start = td_now();
             allocated[i] = api.common.alloc_instance(context);
             struct td_clock duration = td_elapsed(start);
-            alloc.wall += duration.wall; alloc.cpu += duration.cpu; alloc.majflt += duration.majflt;
+            td_add(&alloc, duration);
             if (!allocated[i]) { fputs("teardown alloc returned NULL\n", stderr); return 1; }
             start = td_now();
             bool valid = td_first(&api, allocated[i], "nihao", &observations[i]);
             duration = td_elapsed(start);
-            first.wall += duration.wall; first.cpu += duration.cpu; first.majflt += duration.majflt;
+            td_add(&first, duration);
             if (!valid || (!observing && (observations[i].consumed != 5 || observations[i].parsed != 5 ||
                 !observations[i].guessed || !observations[i].count || !observations[i].candidates[0].text[0]))) {
                 fputs("teardown first candidate contract failed\n", stderr); return 1;
@@ -495,7 +846,7 @@ static int run_teardown_mode(int argc, char **argv) {
             start = td_now();
             bisect_teardown_free_unit(api.common.free_instance, allocated[i]);
             frees[i] = td_elapsed(start);
-            all_frees.wall += frees[i].wall; all_frees.cpu += frees[i].cpu; all_frees.majflt += frees[i].majflt;
+            td_add(&all_frees, frees[i]);
             allocated[i] = NULL;
             if (multi && i == 0) {
                 struct td_observation remaining;
@@ -530,8 +881,8 @@ static int run_teardown_mode(int argc, char **argv) {
         if (save) td_print_time("save_ns", saving, true);
         td_print_time("free_all_instances_ns", all_frees, true);
         td_print_time("fini_ns", fini, true);
-        struct td_clock teardown = {all_frees.wall + fini.wall, all_frees.cpu + fini.cpu,
-                                    all_frees.majflt + fini.majflt};
+        struct td_clock teardown = all_frees;
+        td_add(&teardown, fini);
         td_print_time("teardown_total_ns", teardown, true);
         printf("},\"free_instance_ns\":[");
         for (int i = 0; i < instances; i++) {
