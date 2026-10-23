@@ -41,7 +41,7 @@ fi
 
 echo "--- Rust under AddressSanitizer (+ LeakSanitizer) ---"
 RUSTFLAGS="-Zsanitizer=address" \
-	cargo "+$NIGHTLY" test -p oxpinyin-store --features kyotocabinet --target "$TARGET"
+	cargo "+$NIGHTLY" test -p oxpinyin-store --no-default-features --features kyotocabinet --target "$TARGET"
 
 echo
 echo "sanitizers: clean (libkyotocabinet's own internals are NOT instrumented)"
