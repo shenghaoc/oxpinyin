@@ -472,10 +472,9 @@ Provision the profiles with the in-tree teardown provisioner against the
 same-cell oracle: `$PIN` is the prefix that `tools/cloud/setup.sh` verified
 (`$OXPINYIN_ORACLE_PREFIX_<CELL>` in its environment file), and
 `$TEARDOWN` is an empty directory on ext4. The provisioner populates the
-profiles through the pin and writes each `profile.manifest`. The `provision`
-stage runs on `bdb`, `kc` and `tkrzw`; every later teardown stage stays BDB-only
-(`docs/runbooks/benches.md`, "Native teardown workload"). Then compute the
-system-data identity:
+profiles through the pin and writes each `profile.manifest`. Every teardown
+stage runs on `bdb`, `kc` and `tkrzw` (`docs/runbooks/benches.md`, "Native
+teardown workload"). Then compute the system-data identity:
 
 ```sh
 just heavy -- uv run --no-project --managed-python --python cpython@3.15+gil \
