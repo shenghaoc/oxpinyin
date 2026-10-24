@@ -1845,7 +1845,11 @@ def _(k):
 
 # batch2 group 12a: library-index, scheme and iterator refusals (PR 12a, #525)
 def ctx_call(name, res, *args):
+    """Build a context-call case from a return type and (ctypes type, value) pairs.
+
+    Capture the export name and arguments without loading a library or calling it."""
     def run(k):
+        """Call the captured export on the cached context and return its result as ret."""
         return {'ret': k.fn(name, res, P, *[t for t, _ in args])(k.ctx, *[v for _, v in args])}
     return run
 
@@ -1866,6 +1870,10 @@ for _name, _call in (
 
 @case('abort-iterator-get-next-phrase', abort=False, issues=('525',))
 def _(k):
+    """Request a phrase from an empty library-7 iterator and record both iterator flags.
+
+    Call get-next even when has-next is false; output pointers are not observed
+    or freed, and the iterator is left allocated for the isolated worker."""
     # An empty user dictionary: the begin probes no next token.
     it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 7)
     phrase, pinyin, count = P(), P(), I()
@@ -1880,6 +1888,10 @@ def _(k):
 # already answers this way; the case registers behaviour, it changes none.
 @case('abort-bigram-iterator-get-next-phrase', control=True, abort=False, issues=('681', 'row:62'))
 def _(k):
+    """Request a row from a fresh bigram iterator and check that all outputs stay untouched.
+
+    Record has-next, the get-next flag and separate sentinel checks for phrase,
+    reading and count, even when no next row is reported."""
     it = k.fn('begin_get_bigram_phrases', P, P)(k.ctx)
     phrase, pinyin, count = P(UNTOUCHED), P(UNTOUCHED), I(UNTOUCHED)
     has_next = k.fn('bigram_iterator_has_next_phrase', B, P)(it)
@@ -1894,6 +1906,9 @@ def _(k):
 # The in-range neighbours answer without a warning, as at the pin.
 @case('scheme-and-library-neighbours', control=True, issues=('525',))
 def _(k):
+    """Record scheme changes and library load/unload flags for the listed boundary neighbors.
+
+    Apply all operations in order to the same context, retaining its mutations."""
     out = {}
     for label, name, res, arg in (
             ('full 1', 'set_full_pinyin_scheme', B, (I, 1)), ('full 3', 'set_full_pinyin_scheme', B, (I, 3)),
@@ -1910,6 +1925,10 @@ def _(k):
 
 # batch2 group 12b: cursor, offset, sentence-index and aux-text refusals (PR 12b, #525)
 def full_inst(k, text):
+    """Allocate an instance, parse full-pinyin bytes and return the live instance.
+
+    Ignore the consumed-byte result; ownership of the new instance stays with
+    the caller."""
     inst = k.alloc()
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
     return inst
@@ -1917,6 +1936,7 @@ def full_inst(k, text):
 
 @case('abort-get-sentence-past-rows', abort=False, issues=('525',))
 def _(k):
+    """Guess nihao, then record only the sentence-accessor flag for index five."""
     inst = full_inst(k, b'nihao')
     k.fn('guess_sentence', B, P)(inst)
     return {'ret': sentence_out(k, inst, 5)[0]}
@@ -1924,6 +1944,7 @@ def _(k):
 
 @case('abort-get-left-pinyin-offset-after-separator', abort=False, issues=('525',))
 def _(k):
+    """Query the left offset at byte three after parsing ni'hao, recording only the flag."""
     inst = full_inst(k, b"ni'hao")
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_left_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 3, C.byref(out))}
@@ -1931,6 +1952,7 @@ def _(k):
 
 @case('abort-get-right-pinyin-offset-after-separator', abort=False, issues=('525',))
 def _(k):
+    """Query the right offset at byte three after parsing ni'hao, recording only the flag."""
     inst = full_inst(k, b"ni'hao")
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 3, C.byref(out))}
@@ -1938,6 +1960,7 @@ def _(k):
 
 @case('abort-get-right-pinyin-offset-nihao-5', abort=False, issues=('525',))
 def _(k):
+    """Query the right offset at byte five of nihao, discarding the seeded output offset."""
     inst = full_inst(k, b'nihao')
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(inst, 5, C.byref(out))}
@@ -1945,6 +1968,7 @@ def _(k):
 
 @case('abort-get-character-offset-past-matrix', abort=False, issues=('525',))
 def _(k):
+    """Query 你好's character offset at byte 99 of nihao and return only the native flag."""
     inst = full_inst(k, b'nihao')
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))(
@@ -1953,6 +1977,7 @@ def _(k):
 
 @case('abort-get-character-offset-after-separator', abort=False, issues=('525',))
 def _(k):
+    """Query 你好's character offset at byte three of ni'hao and return only the flag."""
     inst = full_inst(k, b"ni'hao")
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))(
@@ -1961,6 +1986,7 @@ def _(k):
 
 @case('abort-parse-full-pinyin-apostrophe', abort=False, issues=('525',))
 def _(k):
+    """Pass n'i to the single-key parser and record its flag without reading the output key."""
     key = C.c_uint16(UNTOUCHED & 0xFFFF)
     return {'ret': k.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_uint16))(
         k.inst, b"n'i", C.byref(key))}
@@ -1968,18 +1994,23 @@ def _(k):
 
 @case('abort-get-pinyin-key-empty-matrix', abort=False, issues=('525',))
 def _(k):
+    """Request key zero on an unparsed instance and record only the native flag."""
     out = P(UNTOUCHED)
     return {'ret': k.fn('get_pinyin_key', B, P, Z, C.POINTER(P))(k.alloc(), 0, C.byref(out))}
 
 
 @case('abort-get-pinyin-key-rest-empty-matrix', abort=False, issues=('525',))
 def _(k):
+    """Request key-rest zero on an unparsed instance and record only the native flag."""
     out = P(UNTOUCHED)
     return {'ret': k.fn('get_pinyin_key_rest', B, P, Z, C.POINTER(P))(k.alloc(), 0, C.byref(out))}
 
 
 @case('abort-double-auxiliary-text-cut-three-bytes-in', abort=False, issues=('525',))
 def _(k):
+    """Render double-pinyin auxiliary text three bytes into zhong and retain only the flag.
+
+    Seed the output pointer with UNTOUCHED but do not read or free its value."""
     inst = full_inst(k, b'zhong')
     aux = P(UNTOUCHED)
     return {'ret': k.fn('get_double_pinyin_auxiliary_text', B, P, Z, C.POINTER(P))(inst, 3, C.byref(aux))}
@@ -1988,7 +2019,12 @@ def _(k):
 # A leading `'` leaves column 0 empty at the pin and the aux walk asserts
 # `get_column_size(offset) >= 1` (`pinyin.cpp:3311`) on every cursor.
 def leading_apostrophe_aux(fname, text=b"'nihao"):
+    """Capture a renderer suffix and full-pinyin bytes for a cursor-two auxiliary case."""
     def run(k):
+        """Parse the captured bytes on a new instance and record the renderer's flag.
+
+        Call get_<suffix>_auxiliary_text at byte cursor two with a seeded pointer;
+        the pointer's value is neither compared nor freed."""
         inst = full_inst(k, text)
         aux = P(UNTOUCHED)
         return {'ret': k.fn('get_%s_auxiliary_text' % fname, B, P, Z, C.POINTER(P))(inst, 2, C.byref(aux))}
@@ -2005,6 +2041,10 @@ case('abort-full-pinyin-auxiliary-text-doubled-leading-apostrophe', abort=False,
 # The graceful neighbours of the sites above answer without a warning.
 @case('cursor-and-sentence-neighbours', control=True, issues=('525',))
 def _(k):
+    """Collect sentence, cursor, key and auxiliary outputs for neighboring valid calls.
+
+    Use guessed nihao and a separate unparsed instance. Preserve numeric-output
+    sentinels, report key-pointer nullness and decode/free returned auxiliary text."""
     out = {}
     inst = full_inst(k, b'nihao')
     k.fn('guess_sentence', B, P)(inst)
@@ -2031,7 +2071,10 @@ def _(k):
 
 # batch2 group 12c: candidate-type refusals (PR 12c, #525)
 def row_of(k, inst, want_kind):
-    """The first candidate of a type in the instance's list, or None."""
+    """Return the first borrowed candidate pointer of the requested kind, or None.
+
+    Scan the existing list without regenerating it or checking accessor flags;
+    the pointer's lifetime belongs to the instance's native candidate list."""
     count = U()
     k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
     for i in range(count.value):
@@ -2044,6 +2087,10 @@ def row_of(k, inst, want_kind):
 
 
 def guessed(k, text=b'nihao'):
+    """Return a new instance after a full-pinyin parse, sentence guess and candidate guess.
+
+    Guess candidates at byte zero with sort option zero; ignore call flags and
+    leave the instance allocated for the caller."""
     inst = k.alloc()
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
     k.fn('guess_sentence', B, P)(inst)
@@ -2052,6 +2099,9 @@ def guessed(k, text=b'nihao'):
 
 
 def predicted(k, prefix='我'):
+    """Return a new instance with predictions and punctuation for the UTF-8 prefix.
+
+    Ignore the generation flag and leave the instance allocated for the caller."""
     inst = k.alloc()
     k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(inst, prefix.encode())
     return inst
@@ -2059,6 +2109,7 @@ def predicted(k, prefix='我'):
 
 @case('abort-get-candidate-nbest-index-normal-row', abort=False, issues=('525',))
 def _(k):
+    """Request an n-best index from a normal candidate and record whether 0xAB survives."""
     inst = guessed(k)
     out = C.c_ubyte(0xAB)
     ret = k.fn('get_candidate_nbest_index', B, P, P, C.POINTER(C.c_ubyte))(
@@ -2069,12 +2120,14 @@ def _(k):
 
 @case('abort-remove-user-candidate-normal-system-token', abort=False, issues=('525',))
 def _(k):
+    """Attempt user-candidate removal on the first normal row from a system nihao guess."""
     inst = guessed(k)
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, row_of(k, inst, 2))}
 
 
 @case('abort-remove-user-candidate-sentence-row', abort=False, issues=('525',))
 def _(k):
+    """Attempt user-candidate removal on the sentence row from a nihao guess."""
     inst = guessed(k)
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, row_of(k, inst, 1))}
 
@@ -2083,6 +2136,11 @@ def _(k):
 # remove a user phrase (class (c): pinyin.cpp:3743/3750/3759). The subject
 # fails the call with false and one warning in the libpinyin domain.
 def _add_user_phrase(k, text, readings, count=5):
+    """Add UTF-8 phrase text with byte-string readings to library 7 and return add flags.
+
+    Assert iterator creation and every addition, using the supplied signed
+    count. Close the iterator before checking all add flags; mutations affect
+    the cached context and are not saved here."""
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
     assert it
     add = k.fn('iterator_add_phrase', B, P, S, S, I)
@@ -2093,7 +2151,10 @@ def _add_user_phrase(k, text, readings, count=5):
 
 
 def _user_candidate_rows(k, inst):
-    """The NORMAL user-dictionary candidates of the current guess list."""
+    """Return borrowed pointers to kind-2 rows marked as user candidates in list order.
+
+    Read the current list without regenerating it; pointers remain owned by
+    the instance. Native accessor flags are not checked."""
     rows = []
     n = U()
     k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(n))
@@ -2107,6 +2168,10 @@ def _user_candidate_rows(k, inst):
 
 
 def _guessed_user_phrase(k, text, readings, parse=b'dada'):
+    """Import a user phrase, parse its input on a new instance and return instance and rows.
+
+    Generate candidates at byte zero with sort zero and assert that at least
+    one normal user row exists; do not free the returned instance or its rows."""
     _add_user_phrase(k, text, readings)
     inst = k.alloc()
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, parse)
@@ -2118,6 +2183,10 @@ def _guessed_user_phrase(k, text, readings, parse=b'dada'):
 
 @case('abort-remove-user-candidate-twice', abort=False, issues=('525',))
 def _(k):
+    """Remove one imported candidate twice, asserting the first removal succeeds.
+
+    Reuse the same borrowed pointer and return the first flag and the second
+    call's flag if both calls return."""
     inst, rows = _guessed_user_phrase(k, '龘龘', [b"da2'da2"])
     first = k.fn('remove_user_candidate', B, P, P)(inst, rows[0])
     # The first removal must complete, or the second call would assert for
@@ -2129,6 +2198,11 @@ def _(k):
 
 @case('abort-remove-user-candidate-missing-phrase-table', abort=False, issues=('525',))
 def _(k):
+    """Remove a user candidate after saving and renaming its phrase-table file away.
+
+    Finalize the cached context, move user_phrase_index.bin to a .gone path,
+    and reopen independently. Assert reopening and a normal user row, then
+    record removal; the kit's cached context is not replaced."""
     _add_user_phrase(k, '龘龘', [b"da2'da2"])
     assert k.fn('save', B, P)(k.ctx)
     k.fn('fini', None, P)(k.ctx)
@@ -2148,6 +2222,7 @@ def _(k):
 
 @case('abort-remove-user-candidate-multi-pron', abort=False, issues=('525',))
 def _(k):
+    """Import two readings for one phrase and attempt to remove its first normal user row."""
     # Two readings for one phrase: the second is merged without a pinyin
     # index entry, so :3759 fires when the phrase is removed.
     inst, rows = _guessed_user_phrase(k, '龘龘', [b"da2'da2", b"da1'da1"])
@@ -2160,12 +2235,18 @@ def _(k):
 # are in memory only and die with the abort, so a failed call leaves the store
 # unchanged; the subject refuses before it removes anything.
 def _removable_user_bigram_context(k, rows_for):
-    """A context with one persisted user phrase and a crafted `user_bigram.db`
-    carrying `rows_for(token)`. The phrase makes the candidate row acceptable
-    (the batch-C checks pass), so the pin reaches `user_bigram->mask_out`
-    (`pinyin.cpp:3766`). `rows_for` gets the phrase's user token, which the
-    residual shape's item must equal — the pin's mask selects nothing
-    otherwise."""
+    """Return an instance and removable user row after replacing its persisted bigram file.
+
+    Import and save 龘龘, look up its token and call rows_for(token) for raw
+    records. Finalize the cached context, replace user_bigram.db, write the
+    profile marker and assert reopening and candidate generation. Return the
+    new instance and borrowed candidate without updating the kit's cached
+    context. The allocated lookup array is not freed here.
+
+    For residual-item fixtures, rows_for must encode the removed token as a
+    successor so the removal mask selects it. This fixture reaches
+    Bigram::mask_out through pinyin_remove_user_candidate
+    in src/pinyin.cpp at pin 074a2219 after its phrase-removal checks."""
     _add_user_phrase(k, '龘龘', [b"da2'da2"])
     assert k.fn('save', B, P)(k.ctx)
     probe = k.alloc()
@@ -2191,6 +2272,7 @@ def _removable_user_bigram_context(k, rows_for):
 
 @case('abort-remove-user-candidate-short-bigram-value', abort=False, issues=('525',))
 def _(k):
+    """Remove a persisted user phrase with a three-byte value planted in its bigram store."""
     inst, cand = _removable_user_bigram_context(
         k, lambda _token: [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
@@ -2198,6 +2280,7 @@ def _(k):
 
 @case('abort-remove-user-candidate-non-token-bigram-key', abort=False, issues=('525',))
 def _(k):
+    """Remove a persisted user phrase with a two-byte key planted in its bigram store."""
     inst, cand = _removable_user_bigram_context(
         k, lambda _token: [(b'\x00\x01', b'\x07\x00\x00\x00')])
     return {'ret': k.fn('remove_user_candidate', B, P, P)(inst, cand)}
@@ -2205,10 +2288,17 @@ def _(k):
 
 @case('abort-remove-user-candidate-residual-bigram-gram', abort=False, issues=('525',))
 def _(k):
+    """Remove a user phrase whose planted bigram total exceeds its sole item's count.
+
+    Replace and reopen the profile through _removable_user_bigram_context,
+    then return the removal flag if the native call completes."""
     # `total_freq` 7 with one item of the removed token and frequency 3:
     # `SingleGram::mask_out` drops the item and leaves 4, so the pin's
     # `get_length` assert dies (`ngram.cpp:70`, `ngram_bdb.cpp:243`).
     def rows(token):
+        """Encode a little-endian gram with total seven and one item of count three.
+
+        Use the removed token as the successor and token one as the container key."""
         value = b'\x07\x00\x00\x00' + token.to_bytes(4, 'little') + (3).to_bytes(4, 'little')
         return [(b'\x01\x00\x00\x00', value)]
 
@@ -2218,18 +2308,21 @@ def _(k):
 
 @case('abort-choose-candidate-predicted-prefix-row', abort=0, issues=('525',))
 def _(k):
+    """Pass a predicted-prefix row to ordinary candidate selection at byte zero."""
     inst = predicted(k)
     return {'ret': k.fn('choose_candidate', I, P, Z, P)(inst, 0, row_of(k, inst, 5))}
 
 
 @case('abort-choose-predicted-candidate-normal-row', abort=False, issues=('525',))
 def _(k):
+    """Pass a normal nihao candidate to the predicted-candidate selection API."""
     inst = guessed(k)
     return {'ret': k.fn('choose_predicted_candidate', B, P, P)(inst, row_of(k, inst, 2))}
 
 
 @case('abort-choose-predicted-candidate-sentence-row', abort=False, issues=('525',))
 def _(k):
+    """Pass a nihao sentence row to the predicted-candidate selection API."""
     inst = guessed(k)
     return {'ret': k.fn('choose_predicted_candidate', B, P, P)(inst, row_of(k, inst, 1))}
 
@@ -2237,6 +2330,10 @@ def _(k):
 # `pinyin_choose_candidate` under SORT_WITHOUT_SENTENCE_CANDIDATE asserts
 # `0 == offset` on the NORMAL leg (`pinyin.cpp:2566`, register row 45).
 def choose_without_sentence(k, offset):
+    """Choose a normal nihao row at the supplied offset with sentence candidates disabled.
+
+    Generate the list at zero with sort word 0x1, assert a normal row exists and
+    return the signed selection result. The supplied offset is not validated."""
     inst = full_inst(k, b'nihao')
     k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0x1)
     row = row_of(k, inst, 2)
@@ -2246,18 +2343,24 @@ def choose_without_sentence(k, offset):
 
 @case('abort-choose-candidate-without-sentence-offset-1', abort=0, issues=('525',))
 def _(k):
+    """Select at byte one from a list generated at zero with sentence rows disabled."""
     return choose_without_sentence(k, 1)
 
 
 # At offset 0 the leg trains the unigram and answers 1 on both sides.
 @case('choose-candidate-without-sentence-offset-0', control=True, issues=('525',))
 def _(k):
+    """Select at byte zero with sentence rows disabled and record the selection result."""
     return choose_without_sentence(k, 0)
 
 
 # The rows the guards leave alone answer without a warning.
 @case('candidate-type-neighbours', control=True, issues=('525',))
 def _(k):
+    """Record accepted candidate-type operations on guessed and predicted lists.
+
+    Read a sentence row's n-best index, query user status, choose a normal row,
+    and choose predicted-prefix and punctuation rows on a separate instance."""
     out = {}
     inst = guessed(k)
     nbest = C.c_ubyte(0xAB)
@@ -2273,6 +2376,9 @@ def _(k):
 
 # batch2 group 12d: training a stale forcing (PR 12d, #525, row 6)
 def row_with_text(k, inst, kind, text):
+    """Return the first borrowed candidate matching both kind and UTF-8 text, or None.
+
+    Scan the current list without checking accessor flags or changing it."""
     count = U()
     k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
     for i in range(count.value):
@@ -2286,7 +2392,10 @@ def row_with_text(k, inst, kind, text):
 
 
 def forced_sentence(k, relook):
-    """nihao decoded, 泥 forced over 'ni' afterwards; optionally looked up again."""
+    """Return a new nihao instance and the result of choosing 泥 after its sentence guess.
+
+    Generate candidates and choose a normal row at zero; when relook is true,
+    guess the sentence again after selection. Native flags are not asserted."""
     inst = k.alloc()
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
     k.fn('guess_sentence', B, P)(inst)
@@ -2299,6 +2408,10 @@ def forced_sentence(k, relook):
 
 @case('abort-zhuyin-train-stale-forcing', mode='zhuyin', abort=False, issues=('525', 'row:6'))
 def _(k):
+    """Choose 泥 after a zhuyin sentence guess and train without guessing again.
+
+    Parse su3cl3 on a new instance and use the first candidate with matching
+    text, without filtering kind or asserting a match; return the train flag."""
     # The same walk through libzhuyin: a forcing added after the last
     # sentence lookup (`phonetic_lookup.h:868`).
     inst = k.alloc()
@@ -2321,6 +2434,7 @@ def _(k):
 
 @case('abort-train-stale-forcing', abort=False, issues=('525', 'row:6'))
 def _(k):
+    """Train result zero immediately after forcing 泥 onto a previously guessed nihao."""
     inst, _chosen = forced_sentence(k, False)
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
 
@@ -2331,6 +2445,7 @@ def _(k):
 # at the earlier gate.
 @case('abort-train-index-past-results', abort=False, userdir=True, issues=('525', 'row:6'))
 def _(k):
+    """Assert a sentence guess exists, then attempt to train result index 255."""
     inst = full_inst(k, b'nihao')
     assert k.fn('guess_sentence', B, P)(inst), 'no sentence to train'
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 255)}
@@ -2338,6 +2453,7 @@ def _(k):
 
 @case('train-forcing-after-lookup', control=True, issues=('525', 'row:6'))
 def _(k):
+    """Force 泥, guess the sentence again and record two consecutive training flags."""
     inst, chosen = forced_sentence(k, True)
     return {'chosen': chosen, 'train': k.fn('train', B, P, C.c_ubyte)(inst, 0),
             'again': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
@@ -2357,7 +2473,10 @@ CONSTRAINT_OPTIONS, CONSTRAINT_SORT = 0x18A, 0x1E
 
 
 def constraint_phrases(k, phrases):
-    """Imports (text, reading, count) rows into USER_DICTIONARY; the returns."""
+    """Import (text, reading bytes, count) rows into library 7 and return each add flag.
+
+    UTF-8 encode text, assert iterator creation and close the iterator after
+    adding; individual add failures remain in the returned list."""
     it = k.fn('begin_add_phrases', P, P, U)(k.ctx, 7)
     assert it
     add = k.fn('iterator_add_phrase', B, P, S, S, I)
@@ -2367,7 +2486,10 @@ def constraint_phrases(k, phrases):
 
 
 def candidate_heads(k, inst, limit=6):
-    """(kind, text) of the first `limit` rows of the candidate list."""
+    """Return leading candidate [kind, text] rows from the existing list.
+
+    Limit to at most limit rows; map NULL or empty text to None and decode
+    other text as strict UTF-8. Ignore native accessor flags."""
     count = U()
     k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
     heads = []
@@ -2381,12 +2503,14 @@ def candidate_heads(k, inst, limit=6):
 
 
 def constraint_instance(k, phrases, parse, options=CONSTRAINT_OPTIONS):
-    """The shared head of the sequence: options, imports, parse, control guess,
-    candidate list, and the second phrase's candidate chosen. On the full data
-    the n-best usually holds the first phrase alone, so the second reaches the
-    list as its NORMAL row, else as an NBEST row; choosing either installs
-    the same OneStep forcing over the whole input (`pinyin.cpp:2515-2520` and
-    `:2566-2576`)."""
+    """Import competing phrases, choose the second phrase and return instance plus observations.
+
+    Require at least two (text, reading bytes, count) rows. Set options, parse,
+    guess and collect the candidate head. Prefer a normal row for phrases[1],
+    falling back to its n-best row, and assert the chosen row exists. Record
+    native flags and selection output without asserting them. Keep the new
+    instance allocated. The two constraint paths are pinyin_choose_candidate
+    in src/pinyin.cpp at pin 074a2219."""
     out = {'options': k.fn('set_options', B, P, U)(k.ctx, options),
            'import': constraint_phrases(k, phrases)}
     inst = k.alloc()
@@ -2404,6 +2528,10 @@ def constraint_instance(k, phrases, parse, options=CONSTRAINT_OPTIONS):
 
 
 def constraint_survives(k, phrases, parse):
+    """Observe a selected phrase after another guess and after reparsing identical bytes.
+
+    Extend constraint_instance's observations with both sentence-zero results
+    and flags, retaining the same instance and imported context."""
     inst, out = constraint_instance(k, phrases, parse)
     out['guess 5'] = k.fn('guess_sentence', B, P)(inst)
     out['row 0 at 5'] = sentence_out(k, inst, 0)
@@ -2444,7 +2572,12 @@ CONSTRAINT_PHRASES_V_U = [
 
 
 def constraint_survives_reconcile(parse, replacement):
+    """Build a case that reparses replacement bytes over a forced V/U-correction phrase."""
     def run(k):
+        """Import and select the V/U fixture, reparse, then record candidates and sentence zero.
+
+        Enable correction bit 27 along with CONSTRAINT_OPTIONS; retain the selected
+        instance through reparsing and the subsequent guess."""
         inst, out = constraint_instance(k, CONSTRAINT_PHRASES_V_U, parse, options=CONSTRAINT_OPTIONS | 1 << 27)
         out['reparse'] = k.fn('parse_more_full_pinyins', Z, P, S)(inst, replacement)
         out['candidates after'] = k.fn('guess_candidates', B, P, Z, U)(inst, 0, CONSTRAINT_SORT)
@@ -2470,7 +2603,12 @@ for _parse, _replacement, _product in (
 # when it spells the later span (`nini`: both read `ni`) and drops it when it
 # does not (`nihao`).
 def constraint_stale_item(first, second, parse):
+    """Capture two phrase selections and input bytes for a library-2 unload case."""
     def run(k):
+        """Choose both phrases, then observe sentence zero before and after unloading library 2.
+
+        Use the first selection result as the second byte offset without checking
+        it. Return token IDs, flags and sentences; leave the library unloaded."""
         out = {'options': k.fn('set_options', B, P, U)(k.ctx, CONSTRAINT_OPTIONS)}
         inst = k.alloc()
         out['parse'] = k.fn('parse_more_full_pinyins', Z, P, S)(inst, parse)
@@ -2500,7 +2638,10 @@ case('constraint-stale-item-drops-nihao', control=True, issues=('825',))(constra
 # the re-parse shrank; the pin aborts, the subject refuses before observing
 # anything and warns once in the `libpinyin` domain.
 def reparse_after_choose(k, shrink):
-    """nihao decoded, a phrase chosen past row 1, looked up again, re-parsed."""
+    """Return a new nihao instance after choosing row two, guessing and reparsing shrink.
+
+    Use the same instance throughout; do not validate call flags or reconcile
+    its sentence results by guessing after the reparse."""
     inst = k.alloc()
     k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
     k.fn('guess_sentence', B, P)(inst)
@@ -2515,6 +2656,7 @@ def reparse_after_choose(k, shrink):
 
 @case('abort-train-after-reparse-past-matrix-end', abort=False, issues=('525', 'row:82'))
 def _(k):
+    """Train the retained result after replacing the chosen nihao parse with ni."""
     inst = reparse_after_choose(k, b'ni')
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
 
@@ -2524,6 +2666,7 @@ def _(k):
 # `phonetic_key_matrix.cpp:663` under the `__assert_fail` wrapper.
 @case('abort-train-after-reparse-empty-start-column', abort=False, issues=('525', 'row:82'))
 def _(k):
+    """Train the retained result after reparsing a leading apostrophe followed by ni."""
     inst = reparse_after_choose(k, b"'ni")
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
 
@@ -2536,6 +2679,7 @@ def _(k):
 # column and the pin trains; the engine accepts the zero-key column too.
 @case('train-after-reparse-internal-zero-key', control=True, issues=('525', 'row:82'))
 def _(k):
+    """Train the retained result after reparsing ni'ha with an internal separator."""
     inst = reparse_after_choose(k, b"ni'ha")
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
 
@@ -2546,6 +2690,7 @@ def _(k):
 # the same fault.
 @case('abort-train-after-reparse-empty-end-column', abort=False, issues=('525', 'row:82'))
 def _(k):
+    """Train the retained result after reparsing ni'hao with its shifted key boundaries."""
     inst = reparse_after_choose(k, b"ni'hao")
     return {'ret': k.fn('train', B, P, C.c_ubyte)(inst, 0)}
 
@@ -2558,7 +2703,13 @@ def _(k):
 # with no shortening re-parse, and a re-parse that repeats the input.
 @case('train-after-choose-lookup-control', control=True, issues=('525', 'row:82'))
 def _(k):
+    """Compare training after selection/guessing with no reparse and an identical reparse.
+
+    Use separate new instances for the two paths and return their train flags."""
     def choose_and_relook(inst):
+        """Parse nihao, choose candidate index two and regenerate its sentence results.
+
+        Mutate the supplied instance without asserting any native return flag."""
         k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'nihao')
         k.fn('guess_sentence', B, P)(inst)
         k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
@@ -2593,21 +2744,20 @@ def _(k):
 # `chewing_large_table2_tkrzwdb.cpp:465`, `:251`), so each cell's pin dies at
 # its own line.
 def _craft_db(path, rows, dbtype, keep=False, *, system_index=False):
-    """A user-table container of raw `key -> value` records in the running
-    cell's own format: a Berkeley DB `dbtype` container on bdb, the Kyoto
-    Cabinet snapshot the pin's `load_db` reads on kc (every user table
-    there is loaded with `load_snapshot`, `chewing_large_table2_kyotodb.cpp:106`,
-    `ngram_kyotodb.cpp:54`, `phrase_large_table3_kyotodb.cpp:109`), or the
-    tkrzw `TreeDBM` file the pin's `load_db` opens on tkrzw
-    (`chewing_large_table2_tkrzwdb.cpp:83`, `ngram_tkrzwdb.cpp:48`,
-    `phrase_large_table3_tkrzwdb.cpp:83`); the bigram is a `HashDBM` there
-    (`ngram_tkrzwdb.cpp:50`). `dbtype` picks the container kind (1 btree/tree,
-    2 hash); the rows are the same records in every cell. `keep=True` is
-    the fixture that adds rows to the copied system index: a native attached
-    TreeDB on kc (`chewing_large_table2_kyotodb.cpp:87-89`), a TreeDBM on
-    tkrzw (`chewing_large_table2_tkrzwdb.cpp:87-88`), and a btree on bdb.
-    `system_index=True` also selects that native format for a fresh index;
-    with `keep=False` it replaces the file instead of writing a KC snapshot."""
+    """Write raw byte records using the selected cell's user or system container format.
+
+    For BDB, dbtype selects btree (1) or hash (2). KC user tables are snapshots;
+    keep or system_index selects a native TreeDB and requires dbtype 1.
+    tkrzw uses HashDBM for type 2 and TreeDBM otherwise. Without keep, replace
+    the target; keep updates existing rows. Delegate native failures to the
+    writer's assertions and return its result.
+
+    These formats follow ChewingLargeTable2::load_db and ::attach in
+    src/storage/chewing_large_table2_kyotodb.cpp and
+    src/storage/chewing_large_table2_tkrzwdb.cpp, Bigram::load_db in
+    src/storage/ngram_kyotodb.cpp and src/storage/ngram_tkrzwdb.cpp, and
+    PhraseLargeTable3::load_db in src/storage/phrase_large_table3_kyotodb.cpp
+    and src/storage/phrase_large_table3_tkrzwdb.cpp at pin 074a2219."""
     if CELL == 'kc':
         assert not (keep or system_index) or dbtype == 1, 'KC system indexes are btrees'
         if system_index:
@@ -2619,10 +2769,13 @@ def _craft_db(path, rows, dbtype, keep=False, *, system_index=False):
 
 
 def _craft_kc(path, rows, keep=False, *, system_index=False):
-    """A Kyoto Cabinet snapshot of the records (`BasicDB::dump_snapshot`),
-    written through the C API from an in-memory database. `keep=True`
-    instead adds to the native TreeDB the pin attaches as a system index.
-    `system_index=True` creates that native format even with `keep=False`."""
+    """Write byte records to a KC snapshot or native system TreeDB through the C API.
+
+    Unlink an existing path unless keep is true. keep opens an existing native
+    TreeDB for updates; system_index creates native format even without keep.
+    Otherwise populate an in-memory DB and dump a snapshot. Assert native
+    operations, then close/delete the handle on success; failures do not have
+    a finally-based cleanup path."""
     kc = C.CDLL('libkyotocabinet.so.16')
     kc.kcdbnew.restype = C.c_void_p
     kc.kcdbdel.argtypes = [C.c_void_p]
@@ -2649,10 +2802,14 @@ def _craft_kc(path, rows, keep=False, *, system_index=False):
 
 
 def _craft_tkrzw(path, rows, kind, keep=False):
-    """A tkrzw `kind` file (`TreeDBM` for the chewing and phrase tables,
-    `HashDBM` for the bigram, as each pin `load_db` opens it) of the records,
-    written through the C API with the default tuning the pin's `save_db`
-    uses. `keep=True` adds to an existing system index without unlinking it."""
+    """Write byte records to the named tkrzw DBM kind through its C API.
+
+    Unlink an existing file unless keep is true; overwrite matching records
+    and assert open, set and close success. No failure cleanup is installed.
+    TreeDBM index and HashDBM bigram files follow the load_db/save_db methods
+    in src/storage/chewing_large_table2_tkrzwdb.cpp,
+    src/storage/phrase_large_table3_tkrzwdb.cpp and src/storage/ngram_tkrzwdb.cpp
+    at pin 074a2219."""
     tk = C.CDLL('libtkrzw.so.1')
     tk.tkrzw_dbm_open.restype = C.c_void_p
     tk.tkrzw_dbm_open.argtypes = [C.c_char_p, C.c_bool, C.c_char_p]
@@ -2670,10 +2827,21 @@ def _craft_tkrzw(path, rows, kind, keep=False):
 
 
 def _craft_bdb(path, rows, dbtype, keep=False, read_keys=(), allow_missing=False):
-    """A Berkeley DB `dbtype` container; `keep=True` adds to existing rows."""
+    """Write or read a Berkeley DB container and return values for read_keys in order.
+
+    rows=None opens read-only; any other rows value enables creation and
+    unlinks an existing file unless keep is true. Store byte pairs, then copy
+    each requested value to Python bytes. With allow_missing, any nonzero get
+    status becomes None, not just a not-found status; otherwise assert success.
+    Assert create/open/put/close results. Handles close only on the success path,
+    and dynamically loaded libdb must expose the __db_*_pp entry points."""
     import ctypes.util
 
     class DBT(C.Structure):
+        """Mirror the native DBT record passed to Berkeley DB's get and put entry points.
+
+        Include app_data before flags so pointer alignment matches the C layout;
+        data points to buffers whose lifetime is managed separately by the caller."""
         # 40 bytes on x86_64: the `app_data` pointer between `doff` and
         # `flags` (omitting it misaligns `flags`, and `__db_put_pp` then
         # rejects the flag argument).
@@ -2732,25 +2900,27 @@ def _craft_bdb(path, rows, dbtype, keep=False, read_keys=(), allow_missing=False
 
 
 def _craft_btree(path, keys):
-    """A Berkeley DB btree of `key -> empty` records."""
+    """Replace an index container with byte keys mapped to empty values in the current cell.
+
+    Delegate format selection and native failures to _craft_db with tree type 1."""
     _craft_db(path, [(key, b'') for key in keys], 1)  # DB_BTREE == 1
 
 
 def _craft_hash(path, rows):
-    """A Berkeley DB hash of `key -> value` records (the pin's user bigram
-    layout, `ngram_bdb.cpp:56`)."""
+    """Replace the current cell's user-bigram container with raw byte key/value pairs.
+
+    Use hash type 2 through _craft_db: BDB hash, KC snapshot or tkrzw HashDBM."""
     _craft_db(path, rows, 2)  # DB_HASH == 2
 
 
 def _write_user_conf(k):
-    """A conforming `user.conf` for the cell's system tables.
+    """Overwrite user.conf with the system table's format fields and an open counter of zero.
 
-    The pin writes one at `pinyin_save` / `zhuyin_save` only, but
-    `check_format` (`pinyin.cpp:172`, `zhuyin.cpp:126`) wipes the user
-    tables when it is missing or stale. `pinyin_init`'s check_format
-    rewrites it on every open (so the pinyin cases survive without this);
-    `zhuyin_init`'s does not, so a crafted zhuyin index needs the marker
-    present before the reopen or it is unlinked."""
+    Read binary/model/database versions from table.conf; missing fields raise
+    KeyError after the output file has been opened. This prevents crafted
+    profiles being discarded by check_format in src/pinyin.cpp and
+    src/zhuyin.cpp at pin 074a2219. The pinyin check also rewrites the marker
+    on initialization; the zhuyin check does not."""
     keys = ('binary format version:', 'model data version:', 'database format:')
     values = {}
     with open(os.path.join(k.data, 'table.conf')) as table_conf:
@@ -2765,15 +2935,15 @@ def _write_user_conf(k):
 
 
 def overlong_index_context(k, parse=None, rows=None, options=None):
-    """A context whose user dir carries crafted `user_pinyin_index.bin` rows,
-    by default the packed first syllable of `parse` and a 17-syllable key that
-    extends it. The first init writes the conforming `user.conf`; the crafted
-    keys are then added and the profile reopened, so the longer-candidate walk
-    reaches them. `rows(first)` overrides the crafted key list — e.g. the exact
-    prefix row can be dropped, or the over-long row's trailing byte made odd.
-    `options` sets the option word of both the build context and the reopened
-    one (e.g. `PINYIN_INCOMPLETE = 8`, so a partial first syllable projects to
-    a zero-initial word)."""
+    """Replace the user pinyin index and return an independently reopened context.
+
+    Initialize/finalize once, extracting the first two-byte key from parse
+    when supplied, or using bytes 00 01 otherwise. Default rows are that key
+    and its 17-fold repetition; rows(first) can provide a different iterable
+    of byte keys. Rewrite the container and user.conf before reopening.
+    Apply options to both contexts when non-None, asserting initialization
+    and key extraction but not option-setting success. The returned context
+    is not cached on the kit and must be finalized separately."""
     ctx = k.init()
     assert ctx, 'the first init failed'
     if options is not None:
@@ -2803,12 +2973,14 @@ def overlong_index_context(k, parse=None, rows=None, options=None):
 
 @case('abort-mask-out-overlong-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
+    """Mask a reopened profile containing a 17-word user index key and record the flag."""
     ctx = overlong_index_context(k)
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
 @case('abort-zhuyin-mask-out-overlong-index-key', mode='zhuyin', abort=False, issues=('525', 'row:84'))
 def _(k):
+    """Run zhuyin mask_out against a reopened profile with a 17-word user index key."""
     # libzhuyin masks `m_pinyin_table` too (`zhuyin.cpp:763`), the same user
     # chewing table, so the same :529 walk aborts there.
     ctx = overlong_index_context(k)
@@ -2817,6 +2989,9 @@ def _(k):
 
 @case('abort-guess-candidates-overlong-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
+    """Guess ni candidates against a user index containing its key and a 17-word extension.
+
+    Assert a nonempty parse, then enable the longer-candidate walk with sort zero."""
     ctx = overlong_index_context(k, parse=b'ni')
     inst = k.fn('alloc_instance', P, P)(ctx)
     assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
@@ -2827,6 +3002,9 @@ def _(k):
 
 @case('abort-guess-candidates-overlong-odd-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
+    """Guess ni candidates with a 35-byte user index key extending its parsed syllable.
+
+    Plant the exact prefix as well, reopen and assert parsing before guessing."""
     # A 35-byte key is not one upstream writes, but `phrase_length =
     # db_key.size / sizeof(ChewingKey)` is integer division
     # (`chewing_large_table2_bdb.cpp:470`), so the pin reads it as 17 words
@@ -2841,6 +3019,7 @@ def _(k):
 
 @case('abort-mask-out-overlong-odd-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
+    """Mask a user index containing a normal key and a 17-word key with one trailing byte."""
     ctx = overlong_index_context(
         k, rows=lambda first: [first, first * 17 + b'\x07'])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
@@ -2851,18 +3030,21 @@ def _(k):
 # (`chewing_large_table2_bdb.cpp:529`, the KC twin :499, tkrzw :466).
 @case('abort-mask-out-empty-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
+    """Mask a reopened user index containing an empty key and one normal key."""
     ctx = overlong_index_context(k, rows=lambda first: [b'', first])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
 @case('abort-mask-out-one-byte-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
+    """Mask a reopened user index containing a normal key and a one-byte key."""
     ctx = overlong_index_context(k, rows=lambda first: [first, b'\x07'])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
 @case('abort-zhuyin-mask-out-empty-index-key', mode='zhuyin', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
+    """Run zhuyin mask_out against an empty-key user index after reopening the profile."""
     ctx = overlong_index_context(k, rows=lambda first: [b'', first])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
@@ -2874,6 +3056,12 @@ def _(k):
 # fixture is a private copy (never a link into the oracle) with one row added
 # in its native attached format (KC aborts at :269, tkrzw at :252).
 def system_overlong_index_context(k, trailing=b''):
+    """Return a context on a private system index extended with a 17-word ni key.
+
+    Extract ni's two-byte key, finalize its context and replace the private
+    index's oracle symlink with a file copy. Add the repeated key plus trailing
+    bytes without dropping existing records. Assert reopening against that
+    private system directory; leave the returned context uncached on the kit."""
     ctx = k.init()
     assert ctx, 'the first init failed'
     inst = k.fn('alloc_instance', P, P)(ctx)
@@ -2895,6 +3083,7 @@ def system_overlong_index_context(k, trailing=b''):
 
 @case('abort-guess-candidates-overlong-system-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
+    """Guess ni candidates after appending a 17-word key to a copied system index."""
     ctx = system_overlong_index_context(k)
     inst = k.fn('alloc_instance', P, P)(ctx)
     assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
@@ -2903,6 +3092,7 @@ def _(k):
 
 @case('abort-guess-candidates-overlong-odd-system-index-key', abort=False, userdir=True, issues=('525', 'row:84'))
 def _(k):
+    """Guess ni candidates after appending a 35-byte key to a copied system index."""
     ctx = system_overlong_index_context(k, trailing=b'\x07')
     inst = k.fn('alloc_instance', P, P)(ctx)
     assert k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'ni')
@@ -2911,6 +3101,9 @@ def _(k):
 
 @case('guess-after-overlong-index-key-without-prefix-answers-true', issues=('525', 'row:84'))
 def _(k):
+    """Guess ni with an overlong user key present but its exact prefix record absent.
+
+    Reopen the crafted profile and assert parsing, then record the guess flag."""
     # The pin's `search_suggestion` probes the exact query key first
     # (`cursorp->c_get(..., DB_SET)`, `chewing_large_table2_bdb.cpp:576`) and
     # answers SEARCH_NONE when it is absent, so an over-long key whose prefix
@@ -2923,6 +3116,10 @@ def _(k):
 
 @case('reparse-after-guess-ignores-overlong-index-key', issues=('525', 'row:84'))
 def _(k):
+    """Guess hao, then reparse ni in a profile carrying ni's overlong index extension.
+
+    Return the first guess flag and consumed bytes from reparsing; do not guess
+    candidates again after the replacement parse."""
     # `_prepend_longer_candidates` runs only from `pinyin_guess_candidates`
     # (`pinyin.cpp:2292-2293`); a parse refreshes the cached list without it,
     # so the pin cannot reach the abort from the re-parse.
@@ -2936,6 +3133,10 @@ def _(k):
 
 @case('abort-guess-candidates-overlong-incomplete-index-key', abort=False, issues=('525', 'row:84'))
 def _(k):
+    """Guess n'an against crafted incomplete-key prefixes with PINYIN_INCOMPLETE enabled.
+
+    Plant the two-word prefix and its 17-word extension, reopen with option
+    word eight and assert parsing before guessing at zero with sort zero."""
     # `compute_incomplete_chewing_index` sets only `m_initial`, so the partial
     # `n` projects to its initial and the vowel-initial `an` to the zero
     # initial. The 17-word key extends that two-word projection, so the pin's
@@ -2966,10 +3167,11 @@ def _(k):
 # and a tkrzw `HashDBM` file on tkrzw (`ngram_tkrzwdb.cpp:48`), each read by
 # that cell's pin through its own `Bigram` twin.
 def crafted_bigram_context(k, rows):
-    """A context whose user dir carries crafted `user_bigram.db` rows
-    (`(key_bytes, value_bytes)` records). The first init writes the
-    conforming `user.conf`; the rows are then written and the profile
-    reopened."""
+    """Replace user_bigram.db with raw records and return an independently reopened context.
+
+    Initialize and finalize once, write records in the current cell's format
+    and overwrite user.conf before reopening. Assert both initializations;
+    the returned native context is not cached or finalized here."""
     ctx = k.init()
     assert ctx, 'the first init failed'
     k.fn('fini', None, P)(ctx)
@@ -2981,10 +3183,12 @@ def crafted_bigram_context(k, rows):
 
 
 def predicted_bigram_context(k, phrase, value):
-    """A context whose user bigram carries `value` under every
-    phrase-table token of `phrase`, so `_compute_prefixes` reaches it. The
-    token is read from this side's own table, so the fixture matches the
-    pin and the subject alike."""
+    """Reopen a profile with value stored under every token found for phrase.
+
+    UTF-8 encode the phrase, assert token lookup and use four-byte little-endian
+    tokens as bigram keys. Finalize the initial context, replace user_bigram.db
+    and user.conf, then return a separately initialized context. Free the lookup
+    instance but leave its GArray allocated; no kit context cache is updated."""
     ctx = k.init()
     assert ctx, 'the first init failed'
     inst = k.fn('alloc_instance', P, P)(ctx)
@@ -3005,7 +3209,14 @@ def predicted_bigram_context(k, phrase, value):
 
 
 def issue1114_collision_saves(k):
-    """Pin-derived load/save witness with three keys in TinyDBM bucket 74121."""
+    """Save and reopen a three-row tkrzw collision profile twice, checking rows and saved bytes.
+
+    CONTRACT_1114_PROFILE replaces k.user when set. With CONTRACT_1114_RELOAD=1,
+    open that profile as-is and compare both saves against its original bytes;
+    otherwise create the fixed rows. Import one phrase before each save and
+    assert unchanged rows and, for reloads, bytes after the timestamp mask.
+    Return each file's byte length, masked SHA-256 and decoded rows. Finalize
+    and reopen after each save, then finalize the last context."""
     rows = []
     for token, degree in ((0x01000d46, 1), (0x01004404, 6), (0x01004dd8, 100)):
         value = (69 * degree).to_bytes(4, 'little') + b''.join(
@@ -3055,10 +3266,15 @@ for _issue1114_mode in ('pinyin', 'zhuyin'):
 
 
 def predicted_bigram_row_context(k, phrase, successor, count=20):
-    """A context whose user bigram lists `successor` after `phrase` with
-    `count` (the pin lists a predicted-bigram row from a count of 10 and a
-    one- or two-word successor, `pinyin.cpp:2331-2368`). Both tokens are read
-    from this side's own table."""
+    """Reopen with one counted successor stored under each token found for phrase.
+
+    Use the first token for successor and encode count as unsigned four-byte
+    little-endian total and item count. Assert lookups and reopening; replace
+    the user bigram and profile marker, freeing the lookup instance but not
+    its arrays. Return the uncached context. In src/pinyin.cpp at pin 074a2219,
+    _compute_predicted_bigram_candidates requires a count of at least 10 and
+    a successor length of one or two characters; this helper does not validate
+    eligibility itself."""
     ctx = k.init()
     assert ctx, 'the first init failed'
     inst = k.fn('alloc_instance', P, P)(ctx)
@@ -3088,6 +3304,9 @@ def predicted_bigram_row_context(k, phrase, successor, count=20):
 # their exclusion is a coverage limit, not an unreadable fixture format.
 @case('abort-choose-candidate-predicted-bigram-row', abort=0, cells=('bdb',))
 def _(k):
+    """Plant 我-to-你好 predictions and pass a kind-4 row to ordinary candidate selection.
+
+    Assert the predicted-bigram row exists; record the signed selection result."""
     ctx = predicted_bigram_row_context(k, '我', '你好')
     inst = k.fn('alloc_instance', P, P)(ctx)
     k.fn('guess_predicted_candidates_with_punctuations', B, P, S)(inst, '我'.encode())
@@ -3098,6 +3317,7 @@ def _(k):
 
 @case('abort-mask-out-short-bigram-value', abort=False)
 def _(k):
+    """Mask a profile whose token-one bigram value is three bytes long."""
     # The pin's `mask_out` loads the gram and `get_total_freq` asserts on
     # the three-byte value (`memory_chunk.h:390`, `ngram.cpp:80`).
     ctx = crafted_bigram_context(k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
@@ -3106,12 +3326,16 @@ def _(k):
 
 @case('abort-zhuyin-mask-out-short-bigram-value', mode='zhuyin', abort=False)
 def _(k):
+    """Run zhuyin mask_out with a three-byte bigram value under token one."""
     ctx = crafted_bigram_context(k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00')])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
 
 @case('mask-out-short-bigram-value-masked-key', control=True)
 def _(k):
+    """Mask token one itself in a profile carrying its three-byte bigram value.
+
+    Record the native flag for deleting the key rather than editing its items."""
     # A short value whose key the mask erases wholesale is never loaded, so
     # the pin erases it and completes (`ngram_bdb.cpp:231-238`); the
     # `get_total_freq` assert is reached only for a key the mask leaves
@@ -3123,6 +3347,7 @@ def _(k):
 
 @case('abort-mask-out-non-token-bigram-key', abort=False)
 def _(k):
+    """Mask a profile with a two-byte bigram key and a four-byte total value."""
     # The pin's `mask_out` walks the container with `get_all_items`, whose
     # `key.size == sizeof(phrase_token_t)` assert dies on the two-byte key
     # (`ngram_bdb.cpp:199`).
@@ -3132,6 +3357,7 @@ def _(k):
 
 @case('abort-zhuyin-mask-out-non-token-bigram-key', mode='zhuyin', abort=False)
 def _(k):
+    """Run zhuyin mask_out against a two-byte bigram key with a four-byte value."""
     ctx = crafted_bigram_context(k, [(b'\x00\x01', b'\x07\x00\x00\x00')])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
 
@@ -3143,6 +3369,7 @@ def _(k):
 # `ngram_bdb.cpp:243`).
 @case('abort-mask-out-residual-bigram-gram', abort=False)
 def _(k):
+    """Mask successor zero from a planted gram with total seven and a zero-count item."""
     ctx = crafted_bigram_context(
         k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00\x00' + b'\x00' * 8)])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
@@ -3150,6 +3377,7 @@ def _(k):
 
 @case('abort-zhuyin-mask-out-residual-bigram-gram', mode='zhuyin', abort=False)
 def _(k):
+    """Run the residual-total gram mask through zhuyin and record its return flag."""
     ctx = crafted_bigram_context(
         k, [(b'\x01\x00\x00\x00', b'\x07\x00\x00\x00' + b'\x00' * 8)])
     return {'ret': k.fn('mask_out', B, P, U, U)(ctx, 0xFFFFFFFF, 0)}
@@ -3157,6 +3385,9 @@ def _(k):
 
 @case('abort-begin-bigram-phrases-non-token-key', abort=False)
 def _(k):
+    """Begin bigram export after planting a two-byte key, returning iterator-pointer truthiness.
+
+    The iterator is not advanced or closed if creation returns."""
     # `pinyin_begin_get_bigram_phrases` walks the same container through
     # `get_all_items` (`pinyin.cpp:776-787`), so the two-byte key aborts at
     # `ngram_bdb.cpp:199` before any row is exported.
@@ -3165,11 +3396,20 @@ def _(k):
 
 
 def issue677_sequence(k):
-    """The #677 sequence over a valid bigram row that the mask removes."""
+    """Record imports, masks, repeated saves and raw persistence of a seeded bigram key.
+
+    Create a profile with one library-7 predecessor, import three phrases
+    across five saves and mask user-library tokens after the first save.
+    Return each flag, the file inventory and the key's raw value or absence
+    both after masking and at the end; backend get results remain observable.
+    The reopened context is retained for the worker."""
     ctx = crafted_bigram_context(
         k, [(b'\x01\x00\x00\x07', d18_gram(100, 0x01000001, 100))])
 
     def add(text, reading):
+        """Import a phrase with count 100 into the captured context's user library.
+
+        Encode text and reading as UTF-8, assert iterator/add success and close it."""
         it = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
         assert it, 'the import iterator'
         assert k.fn('iterator_add_phrase', B, P, S, S, I)(
@@ -3177,6 +3417,7 @@ def issue677_sequence(k):
         k.fn('end_add_phrases', None, P)(it)
 
     def save():
+        """Save the captured native context and return its boolean result."""
         return bool(k.fn('save', B, P)(ctx))
 
     reading = (lambda text: text) if k.mode == 'pinyin' else (lambda text: text)
@@ -3223,17 +3464,24 @@ TOKEN_REUSE_PHRASES = (
 
 
 def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
-    """Runs `steps` over the user library and reports what a caller can see:
-    each step's return, the user token of every phrase imported so far, and
-    the user files left behind. `('add', n)` imports phrase n, `('save',)`,
-    `('mask', mask, value)` and `('reopen',)` are the facade calls.
-    `bigram_rows` seeds `user_bigram.db` first, with rows that name the token
-    the first import will take."""
+    """Execute import, save, mask and reopen steps and snapshot all seen phrase tokens.
+
+    Steps are ('add', n), indexing TOKEN_REUSE_PHRASES, ('save',),
+    ('mask', mask, value) or ('reopen',). Use the chosen library and facade
+    reading column. A truthy bigram_rows
+    seeds a replaced profile first; otherwise use the cached context. Import
+    count is 100. Reopen finalizes the current context without implicitly
+    saving or replacing the kit's cache. Return action results, per-step token
+    mappings and normalized user-file contents. Unrecognized actions still
+    produce a token snapshot."""
     ctx = crafted_bigram_context(k, bigram_rows) if bigram_rows else k.ctx
     column = 1 if k.mode == 'pinyin' else 2
     out, seen = [], []
 
     def tokens():
+        """Look up every seen phrase with a temporary instance and return hexadecimal token lists.
+
+        Free that instance after lookup; the per-phrase GArrays remain allocated."""
         inst = k.fn('alloc_instance', P, P)(ctx)
         new = k.glib.g_array_new
         new.restype, new.argtypes = P, [I, I, U]
@@ -3278,11 +3526,11 @@ TKRZW_HASH_METADATA_SIZE = 128
 
 
 def tkrzw_saved_bigram_bytes(raw):
-    """Saved HashDBM bytes with only META_OFFSET_TIMESTAMP (48-55) masked.
+    """Return saved HashDBM bytes with only timestamp bytes 48 through 55 zeroed.
 
-    This is specific to #1114's user-bigram comparison; it changes no
-    existing contract's file comparison or other backend's rules.
-    """
+    Require at least the 128-byte metadata header or raise ValueError. Preserve
+    all other bytes, including byte 56. This mask belongs only to the #1114
+    user-bigram comparison."""
     if len(raw) < TKRZW_HASH_METADATA_SIZE:
         raise ValueError('saved HashDBM is shorter than its metadata')
     end = META_OFFSET_TIMESTAMP + TKRZW_TIMESTAMP_WIDTH
@@ -3300,15 +3548,18 @@ def tkrzw_saved_bigram_equal(left, right, left_bucket_chains, right_bucket_chain
 
 
 def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
-    """Every key/value of a user container, sorted, including empty values.
+    """Return sorted [key hex, value hex] rows from the current cell's user container.
 
-    The default remains the user-index reader. Teardown also selects `hash`
-    for user_bigram.db: KC stores all three files as snapshots; tkrzw saves
-    indexes as TreeDBM and the bigram as HashDBM (ngram_tkrzwdb.cpp:48-81 at
-    074a2219). BDB keeps db_dump's type detection and historical output.
-    `library` is the exact tkrzw path certified against the worker's anchor
-    object, avoiding a second, possibly different bare-name resolution.
-    """
+    kind must be tree or hash, otherwise raise ValueError. KC reads a snapshot
+    through an in-memory DB; tkrzw opens TreeDBM or HashDBM read-only, using
+    library as the exact shared-library path when supplied. Checked DB/cursor
+    failures raise ValueError; opened readers are closed in finally blocks.
+    Only tkrzw uses allow_empty: an initially empty iterator is an error unless
+    it is true; KC and BDB already permit empty containers. Empty values remain.
+
+    BDB launches db5.3_dump with type autodetection; process, decoding and dump
+    parsing failures propagate. tkrzw's bigram format follows Bigram::load_db
+    and ::save_db in src/storage/ngram_tkrzwdb.cpp at pin 074a2219."""
     if kind not in ('tree', 'hash'):
         raise ValueError('unknown profile container kind: ' + kind)
     rows = []
@@ -3416,11 +3667,14 @@ def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
 
 
 def zero_item_padding(key_hex, value_hex):
-    """A pinyin index value with the padding of every item zeroed. An odd key
-    length leaves two uninitialised bytes after the keys of each `4 + 2L` byte
-    item, which upstream copies off the stack (upstream-divergences.md, "The
-    pinyin index DBMs carry uninitialized struct padding", class (b)); the
-    tails a mask walk carries between records copy them along."""
+    """Zero two padding bytes per complete odd-length pinyin-index item in a hex value.
+
+    Derive key length L in two-byte words from len(key_hex)//4. For odd L,
+    process complete 4+2L+2-byte items and leave an incomplete tail untouched;
+    for even L or an empty value, return the original string without decoding.
+    Invalid value hex raises ValueError on the odd-length path. The masked
+    layout is PinyinIndexItem2 in src/storage/pinyin_phrase3.h at pin
+    074a2219; only its alignment padding is normalized."""
     length = len(key_hex) // 4
     if length % 2 == 0 or not value_hex:
         return value_hex
@@ -3432,13 +3686,13 @@ def zero_item_padding(key_hex, value_hex):
 
 
 def token_reuse_files(k):
-    """The user files a save leaves, by content. The two user index
-    containers are compared record by record, a key whose value is empty
-    included ([`index_file_rows`]); a Berkeley DB user bigram is read back
-    through `db_dump` and only its non-empty rows are compared (on the other
-    backends only that the bigram container exists), `user.bin` is compared
-    whole except for the 4 timestamp bytes of its header, and every other file
-    is compared as written."""
+    """Read normalized contents of regular user-profile files, excluding .tmp files.
+
+    Decode index containers record by record, including empty values, and zero
+    pinyin-item padding. For non-BDB bigram files report only whether bytes
+    exist. For BDB-magic containers launch db5.3_dump and retain nonempty rows.
+    Zero header bytes 4..7 in user.bin, addon.bin and network.bin; encode other
+    files in hex. File, reader and subprocess failures propagate."""
     files = {}
     for name in sorted(os.listdir(k.user)):
         path = Path(k.user, name)
@@ -3529,15 +3783,21 @@ ADDON_PROMOTE_INPUTS = (('shuxue', '书学'), ('wuji', '武技'), ('wusheng', '�
 
 
 def addon_promote_sequence(k, mask_value):
-    """Promotes the addon candidates in turn (`pinyin_choose_candidate`); with
-    `mask_value`, masks that token after the third and before the fourth, with
-    no reopen between."""
+    """Promote four addon candidates, optionally mask a token, and report tokens and saved files.
+
+    Load addon libraries 4 and 5. Promote the first three inputs, save, apply
+    mask_value if non-None, then promote the fourth and save again without
+    reopening. Assert library loads and candidate presence; record selection,
+    mask and save results. The cached context retains all changes."""
     ctx = k.ctx
     for index in (4, 5):
         assert k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, index)
     out, texts = [], []
 
     def promote(pinyin):
+        """Choose the first addon row for pinyin, append its result and free the temporary instance.
+
+        Assert a kind-6 candidate exists after parsing and guessing at byte zero."""
         inst = k.fn('alloc_instance', P, P)(ctx)
         k.fn('parse_more_full_pinyins', Z, P, S)(inst, pinyin.encode())
         k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)
@@ -3547,6 +3807,9 @@ def addon_promote_sequence(k, mask_value):
         k.fn('free_instance', None, P)(inst)
 
     def tokens():
+        """Return token IDs for all promoted texts using a temporary native instance.
+
+        Free the instance after lookup but retain the allocated GArrays."""
         inst = k.fn('alloc_instance', P, P)(ctx)
         new = k.glib.g_array_new
         new.restype, new.argtypes = P, [I, I, U]
@@ -3595,11 +3858,19 @@ def candidate_rows(k, inst):
 # ADDON row is scaled by the addon index total (`:1828-1842`) and the NORMAL row
 # by the whole index total (`:1855-1866`), so the ADDON row survives.
 def addon_promoted_listing(k, sort_option):
+    """Compare 书学 candidate rows before and after promoting its addon entry.
+
+    Load addon library 4 and generate fresh lists with sort_option. Assert a
+    matching kind-6 row, record its selection result, both counts and matching
+    rows, and the entire final list. Free the two instances on normal completion."""
     ctx = k.ctx
     assert k.fn('load_addon_phrase_library', B, P, C.c_ubyte)(ctx, 4)
     out = {}
 
     def listing(label):
+        """Parse shuxue on a new instance and store the list size and 书学 rows under label.
+
+        Return the live instance and complete rows for the caller to inspect and free."""
         inst = k.fn('alloc_instance', P, P)(ctx)
         k.fn('parse_more_full_pinyins', Z, P, S)(inst, b'shuxue')
         k.fn('guess_candidates', B, P, Z, U)(inst, 0, sort_option)
@@ -3647,6 +3918,12 @@ case('addon-promoted-listing-by-frequency', mode='pinyin', control=True, issues=
 # token (:1188-1197). Its bigram lets the later slice win. With the bit
 # clear the rows tie.
 def before_cursor_frequency_listing(k, dynamic):
+    """Observe before-cursor candidates after a guessed phrase is reparsed with separators.
+
+    Import 甲/乙, save and replace the user bigram with million-count rows.
+    Set USE_TONE and optional DYNAMIC_ADJUST, assert complete nianhao and
+    ni''hao parses, and choose the first 乙 row at the end cursor. Return rows,
+    flags, parsed byte length and selection offset; assert that row was found."""
     row58_import(k, [('甲', 'ㄋㄧㄢˊ', 1000000), ('乙', 'ㄏㄠˇ', 1000000)])
     first, second = (tokens_of(k, text)[-1] for text in ('甲', '乙'))
     assert k.fn('save', B, P)(k.ctx)
@@ -3685,6 +3962,13 @@ case('before-cursor-frequency-tie', mode='zhuyin', control=True, issues=('913',)
 # LONGER has only a unigram term (pinyin.cpp:1916-1927), while NORMAL gets
 # the planted bigram (:1845-1866). The final dedup sees both (:2292-2300).
 def longer_frequency_listing(k, dynamic, longer=True):
+    """Compare normal and longer rows for two imported readings of 甲乙.
+
+    Import into libraries 6 and 7, save and replace the user bigram to favor
+    the library-6 token. Enable divided/resplit parsing and optional dynamic
+    adjustment, assert a complete xian parse and, when requested, the longer
+    row at end. Return candidate lists before/after sentence guessing and with
+    sentence rows suppressed, retaining the cached context's mutations."""
     for library, reading in ((6, "xi1'an1"), (7, "xian1'ni1")):
         iterator = k.fn('begin_add_phrases', P, P, U)(k.ctx, library)
         assert iterator
@@ -3743,15 +4027,20 @@ INDEX_KEY_READINGS = {
 
 
 def index_key_sequence(k, steps, phrases=None, readings=None):
-    """Runs `steps` over the user library and records each save's index files.
-    `('add', n)`, `('save',)`, `('mask', mask, value)`, `('reopen',)` as in
-    `token_reuse_sequence`; `('remove', n)` removes phrase n through its user
-    candidate (`pinyin_remove_user_candidate`); `('lookup', n)` records what a
-    fresh instance shows for phrase n: the candidates of its reading, the
-    tokens of its text and of its first character, and (pinyin) the predicted
-    rows after its first character. `('guess', pinyin, zhuyin)` parses and
-    guesses that input. `phrases` and `readings` default to
-    `TOKEN_REUSE_PHRASES` and `INDEX_KEY_READINGS`."""
+    """Execute user-library mutations and collect saved-file or lookup observations.
+
+    Support ('add', n), ('save',), ('mask', mask, value), ('reopen',), ('unload',)
+    and ('load',); load/unload target library 7. ('remove', n) parses reading n
+    and removes the first normal user candidate, asserting one exists.
+    ('lookup', n) reports candidates, phrase and first-character tokens, plus
+    pinyin predictions. ('guess', pinyin, zhuyin) selects the facade's input and
+    records candidates, without a sentence guess. Unrecognized steps are ignored.
+
+    Default phrases/readings are TOKEN_REUSE_PHRASES and INDEX_KEY_READINGS.
+    Imports use count 100, saves snapshot normalized files, and reopening
+    finalizes the current context without implicitly saving or updating the
+    kit cache. Free temporary instances after each observation; lookup arrays
+    remain allocated. Return the ordered steps list."""
     ctx = k.ctx
     phrases = TOKEN_REUSE_PHRASES if phrases is None else phrases
     readings = INDEX_KEY_READINGS if readings is None else readings
@@ -3760,12 +4049,18 @@ def index_key_sequence(k, steps, phrases=None, readings=None):
     out = []
 
     def tokens(inst, text):
+        """Return lookup status and hexadecimal tokens for UTF-8 text in a newly allocated GArray.
+
+        Copy the values into Python lists without freeing the native array."""
         arr = k.glib.g_array_new(0, 0, 4)
         ret = k.fn('lookup_tokens', B, P, S, P)(inst, text.encode(), arr)
         view = C.cast(arr, C.POINTER(Arr)).contents
         return [ret, [hex(t) for t in C.cast(view.data, C.POINTER(U))[:view.len]]]
 
     def candidates(inst, limit=12):
+        """Return total candidate count and up to limit [kind, UTF-8 text] rows.
+
+        Use the current list, ignore accessor flags and decode text strictly."""
         count = U()
         k.fn('get_n_candidate', B, P, C.POINTER(U))(inst, C.byref(count))
         rows = []
@@ -3778,6 +4073,10 @@ def index_key_sequence(k, steps, phrases=None, readings=None):
         return [count.value, rows]
 
     def guess(inst, n):
+        """Parse an explicit string or indexed fixture reading and populate candidates at zero.
+
+        Choose the facade's parser and candidate API; do not guess a sentence or
+        assert native return flags."""
         reading = (n if isinstance(n, str) else readings[k.mode][n]).encode()
         k.fn(parse, Z, P, S)(inst, reading)
         if k.mode == 'pinyin':
@@ -3959,6 +4258,7 @@ case('issue785-pinyin-tails-kept-entry-zhuyin', mode='zhuyin', issues=('785', '8
 
 @case('abort-guess-predicted-short-bigram-value', abort=False)
 def _(k):
+    """Predict after 我 with a three-byte value planted under each of its prefix tokens."""
     # `_compute_predicted_bigram_candidates` merges the three-byte gram and
     # `get_total_freq` asserts (`memory_chunk.h:390`, `pinyin.cpp:2330`).
     ctx = predicted_bigram_context(k, '我', b'\x07\x00\x00')
@@ -3968,6 +4268,7 @@ def _(k):
 
 @case('abort-guess-predicted-empty-bigram-gram', abort=False)
 def _(k):
+    """Predict after 我 with a total-seven gram containing no items under its prefix tokens."""
     # An item-less gram with a residual total merges to `total_freq != 0`
     # and `SingleGram::get_length` asserts (`ngram.cpp:70`,
     # `pinyin.cpp:2332`).
@@ -3983,6 +4284,7 @@ def _(k):
 # two faults above — the prefix-scoped guard must not over-refuse.
 @case('guess-predicted-unrelated-short-bigram-value', control=True)
 def _(k):
+    """Predict after 我 while the three-byte bigram values are planted under 你's tokens."""
     ctx = predicted_bigram_context(k, '你', b'\x07\x00\x00')
     inst = k.fn('alloc_instance', P, P)(ctx)
     return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
@@ -3990,6 +4292,7 @@ def _(k):
 
 @case('guess-predicted-unrelated-empty-bigram-gram', control=True)
 def _(k):
+    """Predict after 我 while itemless total-seven grams are planted under 你's tokens."""
     ctx = predicted_bigram_context(k, '你', b'\x07\x00\x00\x00')
     inst = k.fn('alloc_instance', P, P)(ctx)
     return {'ret': k.fn('guess_predicted_candidates', B, P, S)(inst, '我'.encode())}
@@ -4000,6 +4303,10 @@ TONE_INCOMPLETE = (1 << 5) | (1 << 3)
 
 
 def toned_initial(k, text=b'n4'):
+    """Enable tone and incomplete-pinyin options and return a new instance plus consumed bytes.
+
+    Parse text as full pinyin, leaving the context's options set and the
+    instance allocated for the caller."""
     k.fn('set_options', B, P, U)(k.ctx, TONE_INCOMPLETE)
     inst = k.alloc()
     return inst, k.fn('parse_more_full_pinyins', Z, P, S)(inst, text)
@@ -4007,6 +4314,9 @@ def toned_initial(k, text=b'n4'):
 
 @case('abort-is-incomplete-toned-initial', abort=False, issues=('525', 'row:4'))
 def _(k):
+    """Parse n4 as one key and query its incomplete status with tone/incomplete options set.
+
+    Ignore the parse flag and record only the incomplete-query result."""
     k.fn('set_options', B, P, U)(k.ctx, TONE_INCOMPLETE)
     inst = k.alloc()
     key = C.c_uint16(0)
@@ -4016,6 +4326,7 @@ def _(k):
 
 @case('abort-guess-candidates-toned-initial-before-offset', abort=False, issues=('525', 'row:4', '662'))
 def _(k):
+    """Guess candidates at byte two of n4ni with a toned initial before the lookup offset."""
     # The toned key sits before the lookup offset, outside the window the
     # search walks: the pin dies all the same (review of #662 expected it not
     # to), so the guard looks at the whole matrix.
@@ -4025,18 +4336,21 @@ def _(k):
 
 @case('abort-guess-candidates-toned-initial', abort=False, issues=('525', 'row:4'))
 def _(k):
+    """Guess candidates at byte zero after parsing n4 with tone/incomplete options enabled."""
     inst, _ = toned_initial(k)
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(inst, 0, 0)}
 
 
 @case('abort-guess-sentence-toned-initial', abort=False, issues=('525', 'row:4'))
 def _(k):
+    """Guess a sentence from n4 with tone/incomplete options enabled and record its flag."""
     inst, _ = toned_initial(k)
     return {'ret': k.fn('guess_sentence', B, P)(inst)}
 
 
 @case('abort-guess-sentence-toned-initial-after-key', abort=False, issues=('525', 'row:4'))
 def _(k):
+    """Guess a sentence from nihaon4 with a toned initial following the complete keys."""
     inst, _ = toned_initial(k, b'nihaon4')
     return {'ret': k.fn('guess_sentence', B, P)(inst)}
 
@@ -4044,6 +4358,11 @@ def _(k):
 # The keys the guard leaves alone: a toned complete key, an untoned initial.
 @case('toned-initial-neighbours', control=True, issues=('525', 'row:4'))
 def _(k):
+    """Collect parsing, guessing and incomplete-key outputs for neighboring inputs.
+
+    Enable tone/incomplete options. Use fresh multi-key instances per input,
+    then a separate instance for single-key queries, returning consumed bytes,
+    flags and raw 16-bit keys."""
     out = {}
     k.fn('set_options', B, P, U)(k.ctx, TONE_INCOMPLETE)
     for text in (b'ni4', b'n', b'nin', b'ni4hao'):
@@ -4076,13 +4395,20 @@ for _name, _call in (
 
 
 def zhuyin_chewing(k, text=b'su3cl3'):
+    """Return a new instance after parsing chewing bytes, ignoring the consumed-byte result.
+
+    Leave the native instance allocated for the caller."""
     inst = k.alloc()
     k.fn('parse_more_chewings', Z, P, S)(inst, text)
     return inst
 
 
 def offset_call(name, fresh, offset):
+    """Capture an offset export, byte position and whether its case starts unparsed."""
     def run(k):
+        """Call the captured offset export on a fresh or su3cl3-parsed instance.
+
+        Seed a size_t output with UNTOUCHED but return only the native flag."""
         inst = k.alloc() if fresh else zhuyin_chewing(k)
         out = Z(UNTOUCHED)
         return {'ret': k.fn(name, B, P, Z, C.POINTER(Z))(inst, offset, C.byref(out))}
@@ -4090,13 +4416,20 @@ def offset_call(name, fresh, offset):
 
 
 def guess_call(name, offset):
+    """Build a candidate-guess case at the captured byte offset after chewing input."""
     def run(k):
+        """Parse su3cl3 on a new instance and return the captured candidate export's flag."""
         return {'ret': k.fn(name, B, P, Z)(zhuyin_chewing(k), offset)}
     return run
 
 
 def key_call(name, fresh, offset):
+    """Build a key-pointer case for an unparsed or chewing-parsed instance and byte offset."""
     def run(k):
+        """Call the captured key accessor with a seeded pointer and retain only its flag.
+
+        Allocate an unparsed instance when fresh is true, otherwise parse su3cl3;
+        the output pointer is neither dereferenced nor freed."""
         inst = k.alloc() if fresh else zhuyin_chewing(k)
         out = P(UNTOUCHED)
         return {'ret': k.fn(name, B, P, Z, C.POINTER(P))(inst, offset, C.byref(out))}
@@ -4104,7 +4437,9 @@ def key_call(name, fresh, offset):
 
 
 def char_offset_call(offset):
+    """Build a 你好 character-offset query for the captured byte position."""
     def run(k):
+        """Parse su3cl3, query 你好's character offset and return only the native flag."""
         out = Z(UNTOUCHED)
         return {'ret': k.fn('get_character_offset', B, P, S, Z, C.POINTER(Z))(
             zhuyin_chewing(k), '你好'.encode(), offset, C.byref(out))}
@@ -4137,7 +4472,13 @@ case('abort-zhuyin-get-zhuyin-key-rest-empty-matrix', mode='zhuyin', abort=False
 # it hold none, and the pin answers true with no warning.
 for _name, _offset in (('after_cursor', 6), ('before_cursor', 0)):
     def _no_rank_z(name, offset):
+        """Capture the before/after-cursor suffix and byte offset for a zero-total case."""
         def run(k):
+            """Apply the fixture-derived total-wrap delta and observe a zhuyin candidate window.
+
+            Parse su3cl3 on a new instance, ignore the add flag and return the guess
+            flag and row count. The delta assumes the context total is FACADE_TOTAL;
+            its update follows wrap_total_to_zero's pin-derived arithmetic."""
             inst = zhuyin_chewing(k)
             k.fn('token_add_unigram_frequency', B, P, U, U)(inst, (1 << 24) | 1, (2 ** 32 - FACADE_TOTAL) % 2 ** 32)
             count = U()
@@ -4151,6 +4492,7 @@ for _name, _offset in (('after_cursor', 6), ('before_cursor', 0)):
 
 @case('abort-zhuyin-parse-full-pinyin-apostrophe', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
+    """Pass n'i to zhuyin's full-pinyin parser and test whether its 16-bit key stays untouched."""
     key = C.c_uint16(UNTOUCHED & 0xFFFF)
     ret = k.fn('parse_full_pinyin', B, P, S, C.POINTER(C.c_uint16))(k.inst, b"n'i", C.byref(key))
     return {'ret': ret, 'untouched key': key.value == UNTOUCHED & 0xFFFF}
@@ -4158,6 +4500,9 @@ def _(k):
 
 @case('abort-zhuyin-guess-candidates-total-zero', mode='zhuyin', abort=False, issues=('525',))
 def _(k):
+    """Guess zhuyin candidates at zero after applying the fixture-derived total-wrap delta.
+
+    Parse su3cl3 first; record only the guess flag, without checking the add result."""
     inst = zhuyin_chewing(k)
     k.fn('token_add_unigram_frequency', B, P, U, U)(inst, (1 << 24) | 1, (2 ** 32 - FACADE_TOTAL) % 2 ** 32)
     return {'ret': k.fn('guess_candidates_after_cursor', B, P, Z)(inst, 0)}
@@ -4166,6 +4511,10 @@ def _(k):
 # The zhuyin sites' graceful neighbours answer without a warning.
 @case('zhuyin-cursor-neighbours', mode='zhuyin', control=True, issues=('525',))
 def _(k):
+    """Collect neighboring zhuyin offset, key and candidate calls on parsed and empty instances.
+
+    Preserve numeric-output sentinels, record key/rest accessor flags, and
+    compare candidate guesses at start and end of the six-byte chewing input."""
     out = {}
     inst = zhuyin_chewing(k)
     res = Z(UNTOUCHED)
@@ -4190,6 +4539,9 @@ def _(k):
 
 @case('zhuyin-scheme-and-library-neighbours', mode='zhuyin', control=True, issues=('525',))
 def _(k):
+    """Record zhuyin scheme changes and library boundary operations on one context.
+
+    Apply the listed setters and load/unload calls in order and return their flags."""
     out = {}
     for label, name, arg in (('chewing 1', 'set_chewing_scheme', 1), ('chewing 6', 'set_chewing_scheme', 6),
                              ('chewing 8', 'set_chewing_scheme', 8), ('chewing 9', 'set_chewing_scheme', 9),
@@ -4205,12 +4557,14 @@ def _(k):
 # The pinyin sites the offset probes of this group found still silent.
 @case('abort-get-right-pinyin-offset-empty-matrix', abort=False, issues=('525',))
 def _(k):
+    """Query the right pinyin offset at zero on an unparsed instance, recording only the flag."""
     out = Z(UNTOUCHED)
     return {'ret': k.fn('get_right_pinyin_offset', B, P, Z, C.POINTER(Z))(k.alloc(), 0, C.byref(out))}
 
 
 @case('abort-guess-candidates-past-matrix', abort=False, issues=('525',))
 def _(k):
+    """Guess nihao candidates at byte 99 with sort zero and record the native flag."""
     return {'ret': k.fn('guess_candidates', B, P, Z, U)(full_inst(k, b'nihao'), 99, 0)}
 
 
