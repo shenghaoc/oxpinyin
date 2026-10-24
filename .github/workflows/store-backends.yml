@@ -11,7 +11,12 @@ name: Store backends
 # — so cross-peer equivalence is proven by running the SAME test
 # suite through separate builds, one per peer.
 #
-# Six jobs:
+# Seven jobs:
+#   - changes is the path gate. It runs first on every push and PR to
+#     main, diffs the event's base against HEAD, and sets `run` when the
+#     diff touches any path in its list. A missing base runs everything.
+#     The other jobs need it and run only when `run` is true; when it is
+#     false they report `skipped`, which still reaches the aggregate.
 #   - store-features is a matrix over the non-default peer backends
 #     (Kyoto Cabinet and tkrzw). Each child
 #     runs the workspace's backend-relevant crates (everything but the
@@ -36,14 +41,15 @@ name: Store backends
 #     architecturally impossible under exactly-one-backend. It then runs
 #     `cargo doc --no-deps --workspace` once per peer, rustdoc warnings
 #     denied.
-#   - store-backends-gate is this workflow's aggregate status check. It runs
-#     no tests; it only fails unless every backend child, the backend-matrix
-#     job AND all three sanitizer jobs succeeded. Its display name tracks the
-#     peer set. Berkeley DB is the workspace default, and the pure-Rust
-#     peer left on 2026-09-20. The name is free to track the set because
-#     main's only required status check is `ci-aggregate`; before
-#     2026-09-08 the name was
-#     held fixed because branch protection named this job directly.
+#   - store-backends-gate is this workflow's aggregate status check and the
+#     context the ruleset names once it is required. It runs no tests; it
+#     fails when the changes job did not succeed, passes without running
+#     anything when the path gate says no relevant path changed, and
+#     otherwise fails unless every backend child, the backend-matrix job AND
+#     all three sanitizer jobs succeeded. Its display name tracks the peer
+#     set. Berkeley DB is the workspace default, and the pure-Rust peer left
+#     on 2026-09-20; the name is the ruleset context, so change both
+#     together.
 #   - tkrzw-sanitizers, bdb-sanitizers and kc-sanitizers each run one
 #     backend's gate through `tools/sanitize.sh <backend>`, the command
 #     `just sanitize` runs locally, on the date-pinned nightly that
@@ -57,9 +63,10 @@ name: Store backends
 #     opens it through that FFI, so the instrumentation is load-bearing,
 #     not precautionary.
 #
-# Every check in this workflow is advisory: branch protection requires only
-# ci.yml's `ci-aggregate`, which does not depend on any job here. A red
-# result here does not block a merge on its own; read it before merging.
+# store-backends-gate becomes a required status check once the maintainer
+# adds it to the repository ruleset; until then branch protection requires
+# only ci.yml's `ci-aggregate`. The backend, matrix and sanitizer jobs
+# still do the work; the gate only aggregates their results.
 #
 # ROLLING TOOLCHAIN, deliberately unpinned: the jobs run inside
 # debian:testing because oxpinyin aims to be a viable libpinyin
@@ -80,52 +87,13 @@ name: Store backends
 # differentials and the model cache live on developer machines only.
 
 on:
+  # No paths filter here: the gate must report on every push and PR to
+  # main. The path list lives in the changes job, which decides whether
+  # the jobs that do the work run.
   push:
     branches: [main]
-    paths:
-      - crates/**
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - .github/workflows/store-backends.yml
-      # Direct inputs: every child decodes the fixture tables;
-      # backend-matrix runs tools/store/backend-matrix.sh; the sanitizer
-      # jobs run tools/sanitize.sh, which runs
-      # tools/{bdb,kc,tkrzw}/run-sanitizers.sh (the tkrzw script also
-      # sources tools/cloud/env.sh and tools/bisection/oracle-cell.sh);
-      # every job runs the bootstrap composite action.
-      - fixtures/**
-      - tools/store/**
-      - tools/kc/**
-      - tools/bdb/**
-      - tools/tkrzw/**
-      - tools/sanitize.sh
-      - tools/cloud/env.sh
-      - tools/bisection/oracle-cell.sh
-      - .github/actions/**
   pull_request:
     branches: [main]
-    paths:
-      - crates/**
-      - Cargo.toml
-      - Cargo.lock
-      - rust-toolchain.toml
-      - .github/workflows/store-backends.yml
-      # Direct inputs: every child decodes the fixture tables;
-      # backend-matrix runs tools/store/backend-matrix.sh; the sanitizer
-      # jobs run tools/sanitize.sh, which runs
-      # tools/{bdb,kc,tkrzw}/run-sanitizers.sh (the tkrzw script also
-      # sources tools/cloud/env.sh and tools/bisection/oracle-cell.sh);
-      # every job runs the bootstrap composite action.
-      - fixtures/**
-      - tools/store/**
-      - tools/kc/**
-      - tools/bdb/**
-      - tools/tkrzw/**
-      - tools/sanitize.sh
-      - tools/cloud/env.sh
-      - tools/bisection/oracle-cell.sh
-      - .github/actions/**
 
 permissions:
   contents: read
@@ -135,12 +103,84 @@ env:
   RUSTFLAGS: -D warnings
   DEBIAN_FRONTEND: noninteractive
 
+# Each push to main gets its own group and cancels nothing: a docs-only
+# push compares against github.event.before and must not cancel a running
+# code-push validation before passing on its own. PR runs can safely cancel
+# the PR's older run because they compare against the PR base.
 concurrency:
-  group: store-backends-${{ github.ref }}
-  cancel-in-progress: true
+  group: store-backends-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The path gate as a job: one run flag for the whole workflow. Runs first
+  # on every push and PR; each job that does work carries
+  # if: needs.changes.outputs.run == 'true' so it reports skipped, a
+  # conclusion that still reaches required-check accounting (a
+  # workflow-level path filter would suppress the whole run). No
+  # third-party filter action: checkout with full history and diff against
+  # the event's base (the PR base sha; the previous pushed head on main). A
+  # missing base (first push, force-push rewrite, rebased base) falls back
+  # to running everything, the over-trigger direction, never the skip
+  # direction. Diffing the event base directly (not the merge-base) can only
+  # pick up extra files when the base moved under the event; that
+  # over-triggers too. The pathspec list is the one the triggers carried;
+  # keep it in lockstep with the inputs the jobs consume.
+  changes:
+    name: store-backends changes
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Compute the path-gate flag
+        id: gate
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            base='${{ github.event.pull_request.base.sha }}'
+          else
+            base='${{ github.event.before }}'
+          fi
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            echo "base $base unavailable; running every job"
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          paths=(
+            crates
+            Cargo.toml
+            Cargo.lock
+            rust-toolchain.toml
+            .github/workflows/store-backends.yml
+            # Direct inputs: every child decodes the fixture tables;
+            # backend-matrix runs tools/store/backend-matrix.sh; the sanitizer
+            # jobs run tools/sanitize.sh, which runs
+            # tools/{bdb,kc,tkrzw}/run-sanitizers.sh (the tkrzw script also
+            # sources tools/cloud/env.sh and tools/bisection/oracle-cell.sh);
+            # every job runs the bootstrap composite action.
+            fixtures
+            tools/store
+            tools/kc
+            tools/bdb
+            tools/tkrzw
+            tools/sanitize.sh
+            tools/cloud/env.sh
+            tools/bisection/oracle-cell.sh
+            .github/actions
+          )
+          changed=$(git diff --name-only "$base" HEAD -- "${paths[@]}")
+          if [ -n "$changed" ]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+          fi
+
   store-features:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # One matrix child per non-default backend, each on its own runner:
     # every such backend is
     # exercised through the backend-relevant workspace (the seven
@@ -289,6 +329,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   backend-matrix:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # Replaces the historical `store-conformance` job. Under
     # exactly-one-backend the "one binary with three backends compiled
     # in" build is architecturally impossible (a `compile_error!` in
@@ -388,21 +430,20 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   store-backends-gate:
-    # Aggregate status check (advisory; see the header). The display name lists the peers
-    # and is extended as peers land (bdb, 2026-09-12); it is no longer
-    # pinned to a historical string, because main's required context is
-    # `ci-aggregate` rather than this job. It
-    # builds and tests nothing; it only aggregates the results of the
-    # backend children and the backend-matrix job via the
-    # documented `needs.<job>.result` semantics. For a matrix upstream,
-    # that result is success only when EVERY matrix child succeeded, and
-    # failure if any child failed — so this gate is red unless every
-    # non-default peer build, the exactly-one-backend gate and all three
-    # sanitizer jobs are green.
+    # Aggregate status check and the context the ruleset names once it is
+    # required. It builds and tests nothing; it has three outcomes: red when
+    # the changes job did not succeed; green without running anything when
+    # the path gate says no relevant path changed; and otherwise green only
+    # when every upstream job succeeded. Via needs.<job>.result, a matrix
+    # upstream is success only when EVERY matrix child succeeded, and a
+    # skipped upstream is not success, so a skipped backend, matrix or
+    # sanitizer job fails the gate. The display name is the ruleset context;
+    # change it only together with the ruleset.
     name: store backends (kyotocabinet / tkrzw / bdb)
     runs-on: ubuntu-latest
     if: ${{ always() }}
     needs:
+      - changes
       - store-features
       - backend-matrix
       - tkrzw-sanitizers
@@ -417,6 +458,8 @@ jobs:
         # script body; the values are the closed set
         # success/failure/cancelled/skipped.
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          GATED: ${{ needs.changes.outputs.run }}
           FEATURES_RESULT: ${{ needs.store-features.result }}
           MATRIX_RESULT: ${{ needs.backend-matrix.result }}
           SANITIZER_RESULT: ${{ needs.tkrzw-sanitizers.result }}
@@ -424,6 +467,7 @@ jobs:
           KC_SANITIZER_RESULT: ${{ needs.kc-sanitizers.result }}
         run: |
           set -euo pipefail
+          echo "changes:                 ${CHANGES_RESULT} (run=${GATED})"
           echo "store-features (matrix): ${FEATURES_RESULT}"
           echo "backend-matrix:          ${MATRIX_RESULT}"
           echo "tkrzw-sanitizers:        ${SANITIZER_RESULT}"
@@ -432,18 +476,33 @@ jobs:
           {
             echo "## store backends (aggregate gate)"
             echo ""
-            echo "This job runs no tests. It is this workflow's advisory"
-            echo "aggregate check: it fails unless every peer matrix child, the"
-            echo "exactly-one-backend gate AND all three sanitizer jobs succeeded."
+            echo "This job runs no tests. It is the aggregate status check the"
+            echo "ruleset requires once the maintainer adds it. It passes when"
+            echo "the path gate says no relevant path changed; otherwise it fails"
+            echo "unless every peer matrix child, the exactly-one-backend gate"
+            echo "AND all three sanitizer jobs succeeded."
             echo ""
             echo "| Upstream job | Result |"
             echo "|---|---|"
+            echo "| changes (path gate) | ${CHANGES_RESULT} (run=${GATED}) |"
             echo "| store-features (matrix, every peer) | ${FEATURES_RESULT} |"
             echo "| backend-matrix (exactly-one-backend gate) | ${MATRIX_RESULT} |"
             echo "| tkrzw-sanitizers (ASan) | ${SANITIZER_RESULT} |"
             echo "| bdb-sanitizers (ASan + UBSan) | ${BDB_SANITIZER_RESULT} |"
             echo "| kc-sanitizers (ASan + LSan) | ${KC_SANITIZER_RESULT} |"
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${CHANGES_RESULT}" != "success" ]; then
+            echo "::error::the changes job ended as ${CHANGES_RESULT}" >&2
+            exit 1
+          fi
+          if [ "${GATED}" != "true" ]; then
+            echo "store-backends gate: no relevant paths changed; nothing to gate"
+            {
+              echo ""
+              echo "No relevant path changed, so no upstream job ran; the gate passes."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           if [ "${FEATURES_RESULT}" != "success" ] || [ "${MATRIX_RESULT}" != "success" ] || [ "${SANITIZER_RESULT}" != "success" ] || [ "${BDB_SANITIZER_RESULT}" != "success" ] || [ "${KC_SANITIZER_RESULT}" != "success" ]; then
             echo "::error::store-backends gate failed: store-features=${FEATURES_RESULT}, backend-matrix=${MATRIX_RESULT}, tkrzw-sanitizers=${SANITIZER_RESULT}, bdb-sanitizers=${BDB_SANITIZER_RESULT}, kc-sanitizers=${KC_SANITIZER_RESULT}" >&2
             exit 1
@@ -451,6 +510,8 @@ jobs:
           echo "store-backends gate: all upstream jobs succeeded"
 
   tkrzw-sanitizers:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # The tkrzw backend passes Rust callbacks into tkrzw's visitor dispatch
     # (db_get/db_scan install Process-full visitors handing borrowed key/value
     # records to Rust fn pointers valid only for the callback). Panic-unwinding
@@ -477,8 +538,9 @@ jobs:
         shell: bash
 
     # Feeds store-backends-gate since 2026-09-08 (it had been
-    # continue-on-error and outside that gate). Like every check in this
-    # workflow it is advisory: only ci.yml's `ci-aggregate` is required.
+    # continue-on-error and outside that gate). The gate becomes required
+    # when the ruleset names it; until then only ci.yml's `ci-aggregate`
+    # is required.
 
     steps:
       - name: Bootstrap the bare runner essentials (apt)
@@ -549,6 +611,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   bdb-sanitizers:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # The Berkeley DB feature's own suite under ASan, plus the C
     # call-pattern harnesses under ASan+UBSan, via the same
     # tools/bdb/run-sanitizers.sh developers run locally. The hazards
@@ -557,8 +621,7 @@ jobs:
     # rustc has no `undefined` sanitizer, so the C half is where UBSan
     # has something to instrument). On a BerkeleyDB distro the system
     # bigram.db is BDB and every session opens it through this FFI, so
-    # the lane feeds store-backends-gate like tkrzw-sanitizers does
-    # (advisory, like every check in this workflow).
+    # the lane feeds store-backends-gate like tkrzw-sanitizers does.
     #
     # debian:testing deliberately unpinned like every job here. The
     # harness half needs libdb-dev (the system libdb the backend links
@@ -628,12 +691,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   kc-sanitizers:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     # The Kyoto Cabinet feature's own suite under ASan + LeakSanitizer, via
     # tools/sanitize.sh kc. The backend's hazard is ownership: kcdbget,
     # kccurgetkey, kccurgetvalue and kccurget return caller-owned regions
     # released with kcfree, so a leak, a double free or a free through the
     # wrong allocator is what ASan and LSan see. Fedora and Arch ship this
-    # backend. Feeds store-backends-gate (advisory, like every check here).
+    # backend. Feeds store-backends-gate.
     name: kc backend sanitizers
     runs-on: ubuntu-latest
     container:
