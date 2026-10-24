@@ -9,6 +9,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -21,6 +22,118 @@ from tools.dev import host, slot
 
 
 class SlotTests(unittest.TestCase):
+    def mutex_admission(self, limit, poll=0.005):
+        read = mock.Mock(return_value=dict(available_mib=16000, total_mib=16384,
+                                          cpus=4, cargo_cpus=4, notes=[]))
+        admission = slot.HeavyAdmission(
+            'mutex contender', dict(self.env, OXPINYIN_RESOURCE_WAIT_SECONDS=str(limit)),
+            out=io.StringIO(), poll=poll, resource_snapshot=read)
+        return admission, read
+
+    def hold_mutex(self):
+        file = (Path(self.temp.name) / 'heavy-admission').open('a+')
+        self.addCleanup(file.close)
+        slot.lock_file(file, slot.LOCK_EX | slot.LOCK_NB)
+        return file
+
+    def test_admission_mutex_uses_the_shared_deadline(self):
+        admission, read = self.mutex_admission(0.02)
+        file = self.hold_mutex()
+        release = threading.Timer(0.25, file.close)
+        release.start()
+        try:
+            with self.assertRaisesRegex(slot.AdmissionWaitExpired, 'admission-wait-expired'):
+                with admission:
+                    self.fail('accepted admission after its deadline')
+            self.assertIsNone(admission.env)
+            self.assertEqual(read.call_count, 1)  # provisional only
+            self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
+        finally:
+            release.join()
+
+    def test_cancellation_interrupts_the_mutex_retry_wait(self):
+        admission, read = self.mutex_admission(10, poll=5)
+        self.hold_mutex()
+        slot.CANCELLED.clear()
+        self.addCleanup(slot.CANCELLED.clear)
+        # Cancellation is sent after the first busy attempt, during retry waiting.
+        original = admission.try_acquire
+        timers = []
+        def attempt():
+            acquired = original()
+            self.assertFalse(acquired)
+            timer = threading.Timer(0.02, slot.CANCELLED.set)
+            timers.append(timer)
+            timer.start()
+            return acquired
+        started = time.monotonic()
+        try:
+            with mock.patch.object(admission, 'try_acquire', side_effect=attempt), \
+                    self.assertRaises(slot.Cancelled):
+                with admission:
+                    self.fail('cancelled admission accepted')
+            self.assertLess(time.monotonic() - started, 0.25)
+            self.assertEqual(read.call_count, 1)
+            self.assertIsNone(admission.env)
+            self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
+        finally:
+            for timer in timers:
+                timer.join()
+
+    def test_deadline_is_rechecked_after_mutex_acquisition(self):
+        admission, read = self.mutex_admission(1)
+        original = slot.lock_file
+        clock = [10.0]
+        def acquire(file, operation):
+            original(file, operation)
+            if Path(file.name).name == 'heavy-admission':
+                self.assertTrue(operation & slot.LOCK_NB)
+                clock[0] = 12.0
+        with mock.patch.object(slot.time, 'monotonic', side_effect=lambda: clock[0]), \
+                mock.patch.object(slot, 'lock_file', side_effect=acquire), \
+                self.assertRaises(slot.AdmissionWaitExpired):
+            admission.try_acquire()
+        self.assertEqual(read.call_count, 1)
+        self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
+        # The acquired mutex descriptor was closed on expiry.
+        self.hold_mutex()
+
+    def test_busy_mutex_releases_slot_and_allows_a_later_attempt(self):
+        admission, read = self.mutex_admission(5)
+        file = self.hold_mutex()
+        self.assertFalse(admission.try_acquire())
+        self.assertEqual(read.call_count, 1)
+        self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
+        file.close()
+        try:
+            self.assertTrue(admission.try_acquire())
+            self.assertEqual(read.call_count, 2)
+        finally:
+            admission.close()
+
+    def test_uncontended_expired_retry_preserves_the_last_memory_refusal(self):
+        for available, reason in ((None, 'available memory unknown'),
+                                  (0, '600 MiB needed, 0 MiB available')):
+            with self.subTest(available=available):
+                admission, read = self.mutex_admission(1)
+                read.return_value = dict(available_mib=available, total_mib=16384,
+                                         cpus=4, cargo_cpus=4, notes=[])
+                clock = [10.0]
+                original = slot.lock_file
+                def acquire(file, operation):
+                    original(file, operation)
+                    if Path(file.name).name == 'heavy-admission':
+                        clock[0] = 12.0  # uncontended acquisition crossed the deadline
+                with mock.patch.object(slot.time, 'monotonic', side_effect=lambda: clock[0]):
+                    self.assertFalse(admission.try_acquire())
+                    clock[0] = 10.5
+                    with mock.patch.object(slot, 'lock_file', side_effect=acquire), \
+                            self.assertRaisesRegex(host.ResourceBlocked, '^resource-blocked: ' + reason + '$'):
+                        admission.try_acquire()
+                self.assertEqual(read.call_count, 2)  # provisional + first memory decision
+                self.assertIsNone(admission.env)
+                self.assertEqual((Path(self.temp.name) / 'heavy-slot-0').read_text(), '')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

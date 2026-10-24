@@ -663,6 +663,7 @@ always".
    was still held, the reason starts `slot-wait-expired:` and names the
    holder of each slot (pid and checkout, from the slot record), the time
    waited and the limit, with no memory figures. The wrapper exits nonzero.
+   `admission-wait-expired: heavy-admission mutex; no process started` applies when the shared wait limit passes while the heavy-admission mutex is held elsewhere.
    Cancellation, expiry, and an OOM-killed child never count as PASS or SKIP. The runner timeout starts after
    admission. Heavy rows wait before entering the worker pool. Light rows
    can start while heavy rows wait; the pool keeps the requested size.

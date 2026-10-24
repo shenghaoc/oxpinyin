@@ -274,8 +274,10 @@ class AdmissionTests(unittest.TestCase):
     def test_unknown_memory_releases_slot_and_fails_closed_with_explicit_settings(self):
         for settings in ({}, {'CARGO_BUILD_JOBS': '1', 'RUST_TEST_THREADS': '1'},
                          {'CARGO_BUILD_JOBS': 'default'}, {'CARGO_BUILD_JOBS': '-1'}):
+            clock = [10.0]
             with self.subTest(settings=settings), mock.patch.dict(
-                    self.globals, resource_snapshot=lambda: resources(None)):
+                    self.globals, resource_snapshot=lambda: resources(None)), \
+                    mock.patch.object(time, 'monotonic', side_effect=lambda: clock[0]):
                 started = time.monotonic()
                 admission = self.admission(dict(os.environ, **settings))
                 self.assertFalse(admission.try_acquire())
@@ -283,14 +285,16 @@ class AdmissionTests(unittest.TestCase):
                 with M['HeavySlot']('probe', out=self.out) as slot:
                     self.assertLess(slot.waited, 0.01)
                 calls = []
+                # Establish the unknown-memory decision before advancing past
+                # the deadline; scheduler stalls must not choose another obstacle.
+                clock[0] += 2 * admission.limit
                 result = M['run_admitted']([dict(result={}, admission=admission)], 2,
                                            lambda job: calls.append(job))
                 elapsed = time.monotonic() - started
                 self.assertEqual(calls, [])
                 self.assertEqual(result[0]['status'], 'FAIL')
                 self.assertEqual(result[0]['reason'], 'resource-blocked: available memory unknown')
-                # Same bounds as the zero-room test: the admission ran until its
-                # limit, and a positive memory wait fits inside it.
+                # Expiry still records a positive memory wait within the elapsed time.
                 self.assertGreaterEqual(elapsed, admission.limit)
                 self.assertGreater(result[0]['memory_wait_seconds'], 0)
                 self.assertLessEqual(result[0]['memory_wait_seconds'], elapsed)
