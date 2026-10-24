@@ -541,3 +541,36 @@ fn a_long_phrase_resolves_with_text_and_possibility() {
     assert_eq!(entries[0].token().value(), 0x0100_00B0);
     assert_eq!(entries[0].pronunciation_possibility(), Some((9, 9)));
 }
+
+#[test]
+fn candidate_lookup_preserves_rows_and_unreadable_flag_without_prices() {
+    let fix = convert_fixture();
+    let dict = fix.dict();
+    let mut priced = Vec::new();
+    let priced_flag = dict.lookup_into_flagged(&syls("ni"), &mut priced).unwrap();
+    assert!(priced_flag, "fixture includes a loaded but unreadable item");
+    assert!(
+        priced
+            .iter()
+            .all(|entry| entry.pronunciation_possibility().is_some())
+    );
+    let mut candidates = Vec::new();
+    assert_eq!(
+        dict.lookup_candidates_into(&syls("ni"), &mut candidates)
+            .unwrap(),
+        priced_flag
+    );
+    let rows = |entries: &[oxpinyin_core::PhraseEntry]| {
+        entries
+            .iter()
+            .map(|entry| (entry.token(), entry.text().to_owned()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rows(&candidates), rows(&priced));
+    assert!(
+        candidates
+            .iter()
+            .all(|entry| entry.pronunciation_possibility().is_none())
+    );
+    assert_eq!(dict.lookup(&syls("ni")).unwrap(), priced);
+}

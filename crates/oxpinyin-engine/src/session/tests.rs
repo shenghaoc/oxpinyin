@@ -4318,3 +4318,64 @@ fn a_fitting_forcing_whose_item_read_fails_surfaces_the_error() {
     session.dictionary.failing = true;
     assert!(session.guess_sentence().is_err());
 }
+
+#[test]
+fn candidate_collection_uses_unpriced_system_and_addon_operations() {
+    struct CandidateDict;
+    impl Dictionary for CandidateDict {
+        type Entry = PhraseEntry;
+        type Error = EngineError;
+        type PathMemo = ();
+        type Syllable = SyllableKey;
+        fn lookup(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
+            panic!("candidate collection must not request priced lookup");
+        }
+        fn lookup_candidates_into(
+            &self,
+            _: &[SyllableKey],
+            out: &mut Vec<PhraseEntry>,
+        ) -> Result<bool, EngineError> {
+            out.clear();
+            out.push(PhraseEntry::new(PhraseToken::new(0x0100_0001), "你"));
+            Ok(true)
+        }
+        fn lookup_addon(&self, _: &[SyllableKey]) -> Result<Vec<PhraseEntry>, EngineError> {
+            panic!("candidate collection must not request priced addon lookup");
+        }
+        fn lookup_addon_candidates_into(
+            &self,
+            _: &[SyllableKey],
+            out: &mut Vec<PhraseEntry>,
+        ) -> Result<(), EngineError> {
+            out.clear();
+            out.push(PhraseEntry::new(PhraseToken::new(0x0400_0001), "拟"));
+            Ok(())
+        }
+    }
+    let dictionary = CandidateDict;
+    let session = Session::new_with_key_costs(
+        &EmptyConfigSource,
+        StoragePaths::new("user"),
+        &dictionary,
+        Silent,
+        vec![oxpinyin_core::cost::UNKNOWN_COST; oxpinyin_core::SYLLABLE_KEY_COUNT],
+    )
+    .unwrap();
+    let (mut system, mut addon, mut entries) = (Vec::new(), Vec::new(), Vec::new());
+    assert!(
+        session
+            .lookup_and_append(
+                &[SyllableKey::from_text("ni").unwrap()],
+                &[0],
+                2,
+                &mut system,
+                &mut addon,
+                &mut entries
+            )
+            .unwrap()
+    );
+    assert_eq!(system.len(), 1);
+    assert_eq!(addon.len(), 1);
+    assert_eq!(system[0].token(), Some(PhraseToken::new(0x0100_0001)));
+    assert_eq!(addon[0].token(), Some(PhraseToken::new(0x0400_0001)));
+}

@@ -1498,7 +1498,7 @@ where
         // cannot be read, which the pin's candidate listing dies on.
         let unreadable = self
             .dictionary
-            .lookup_into_flagged(sequence, entries)
+            .lookup_candidates_into(sequence, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         if tones.iter().any(|tone| *tone != 0) {
             let mut toned: Vec<u32> = self
@@ -1519,7 +1519,7 @@ where
             system,
         );
         self.dictionary
-            .lookup_addon_into(sequence, entries)
+            .lookup_addon_candidates_into(sequence, entries)
             .map_err(|error| EngineError::Scoring(ScoringError::Dictionary(error.to_string())))?;
         append_scan_entries(
             entries.drain(..),
