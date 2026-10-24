@@ -237,16 +237,41 @@ mod tests {
     }
 
     #[test]
-    fn empty_value_is_reported_not_silently_missed() {
-        // A present key whose value is empty is corruption, not a miss:
-        // libpinyin never stores a zero-length SingleGram. Surface it.
-        let dbm = MemoryDbm::new();
-        dbm.put(0x0100_0010_u32.to_le_bytes().to_vec(), Vec::new());
-        let table = BigramTable::new(dbm);
-        assert!(table.load_successors(0x0100_0010).is_err());
+    fn checked_read_failure_is_not_a_miss() {
+        // Kyoto Cabinet's `check`/`get` schedule: a record that the size
+        // read finds and the body read then fails is the pin's assert, so
+        // it must surface as the checked-read error, never as absence.
+        struct CheckedDbm;
+        impl ChewingDbm for CheckedDbm {
+            fn get(&self, _key: &[u8], _value: &mut Vec<u8>) -> Result<bool, DictError> {
+                Ok(false)
+            }
+
+            fn get_bigram(&self, _key: &[u8], _value: &mut Vec<u8>) -> Result<bool, DictError> {
+                Err(DictError::Table(crate::TableError::Store(
+                    oxpinyin_store::StoreError::ReadAfterCheck,
+                )))
+            }
+
+            fn contains(&self, _key: &[u8]) -> Result<bool, DictError> {
+                Ok(false)
+            }
+
+            fn walk(
+                &self,
+                _lo: &[u8],
+                _hi: Option<&[u8]>,
+                _visit: impl FnMut(&[u8], &[u8]) -> Result<bool, DictError>,
+            ) -> Result<(), DictError> {
+                Ok(())
+            }
+        }
+        let table = BigramTable::new(CheckedDbm);
         assert!(matches!(
             table.load_raw_successors(0x0100_0010),
-            Err(DictError::Parse(message)) if message.contains("empty value")
+            Err(DictError::Table(crate::TableError::Store(
+                oxpinyin_store::StoreError::ReadAfterCheck
+            )))
         ));
     }
 }

@@ -304,7 +304,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::phrase_segment;
+    use super::{phrase_segment, phrase_segment_ucs4};
 
     use oxpinyin_core::{
         Dictionary, LanguageModel, NbestStepCosts, PhraseEntry, PhraseToken, SyllableKey,
@@ -348,11 +348,34 @@ mod tests {
         }
     }
 
+    /// A dictionary whose raw UCS-4 rows are the only lookup source.
+    struct RawDict {
+        entries: Vec<(Vec<u32>, PhraseToken)>,
+    }
+
+    impl Dictionary for RawDict {
+        type Syllable = SyllableKey;
+        type Entry = PhraseEntry;
+        type Error = core::convert::Infallible;
+        type PathMemo = ();
+
+        fn lookup(&self, _syllables: &[Self::Syllable]) -> Result<Vec<Self::Entry>, Self::Error> {
+            Ok(Vec::new())
+        }
+
+        fn tokens_for_ucs4(&self, ucs4: &[u32]) -> Vec<PhraseToken> {
+            self.entries
+                .iter()
+                .filter(|(stored, _)| stored == ucs4)
+                .map(|(_, token)| *token)
+                .collect()
+        }
+    }
+
     struct Model {
         unigrams: Vec<(u32, u64)>,
         total: u64,
     }
-
     impl Model {
         /// The unigram branch's cost depends on the token alone
         /// (`elem_poss = unigram_freq / total`, upstream
@@ -395,6 +418,36 @@ mod tests {
         }
     }
 
+    /// A model whose row read reports the checked-read failure the pin
+    /// asserts on.
+    struct CheckedModel;
+
+    impl LanguageModel for CheckedModel {
+        type Token = PhraseToken;
+        type Error = &'static str;
+
+        fn score(
+            &self,
+            _history: &[Self::Token],
+            _token: &Self::Token,
+            _edge_cost: i64,
+        ) -> Result<i64, Self::Error> {
+            Ok(0)
+        }
+
+        fn nbest_successors_in_row<'a>(
+            &self,
+            _prev: &Self::Token,
+            _row: &'a mut oxpinyin_core::NbestStepRow,
+        ) -> Result<Option<oxpinyin_core::NbestSuccessors<'a>>, Self::Error> {
+            Err("read after check")
+        }
+
+        fn is_read_after_check(&self, _error: &Self::Error) -> bool {
+            true
+        }
+    }
+
     #[test]
     fn empty_sentence_matches_with_an_empty_result() {
         // nstep = 1 with nothing to match: the pin's final_step answers
@@ -407,6 +460,134 @@ mod tests {
         let (matched, result) = phrase_segment(&dictionary, &model, "").expect("infallible model");
         assert!(matched);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn a_raw_surrogate_key_segments_to_its_token() {
+        // The pin searches the phrase table with the raw UCS-4 words the
+        // converter produced. A stored `[0xd800]` row must reach its token
+        // even though no `char` or `str` exists for that word.
+        let dictionary = RawDict {
+            entries: vec![(vec![0xd800], PhraseToken::new(3))],
+        };
+        let model = Model {
+            unigrams: vec![(3, 1)],
+            total: 1,
+        };
+        let (matched, result) =
+            phrase_segment_ucs4(&dictionary, &model, &[0xd800]).expect("infallible model");
+        assert!(matched);
+        assert_eq!(result[0].value(), 3);
+    }
+
+    #[test]
+    fn a_scalar_prefix_row_is_read_before_the_non_scalar() {
+        use crate::nbest::SENTENCE_START;
+        use oxpinyin_core::{NbestStepCosts, NbestStepRow, NbestSuccessors};
+
+        struct Recording(std::cell::RefCell<Vec<u32>>);
+        impl LanguageModel for Recording {
+            type Token = PhraseToken;
+            type Error = core::convert::Infallible;
+
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                _: i64,
+            ) -> Result<i64, Self::Error> {
+                Ok(0)
+            }
+
+            fn nbest_successors_in_row<'a>(
+                &self,
+                prev: &PhraseToken,
+                _: &'a mut NbestStepRow,
+            ) -> Result<Option<NbestSuccessors<'a>>, Self::Error> {
+                self.0.borrow_mut().push(prev.value());
+                Ok(Some(NbestSuccessors::Miss))
+            }
+
+            fn nbest_item_costs_in_row(
+                &self,
+                _: &PhraseToken,
+                _: &PhraseToken,
+                _: Option<(u32, u32)>,
+                _: &mut NbestStepRow,
+            ) -> Result<NbestStepCosts, Self::Error> {
+                Ok(NbestStepCosts {
+                    blended: None,
+                    unigram: Some(1),
+                })
+            }
+        }
+
+        let dictionary = RawDict {
+            entries: vec![(vec![0x4f60], PhraseToken::new(3))],
+        };
+        let model = Recording(std::cell::RefCell::default());
+        let (matched, result) =
+            phrase_segment_ucs4(&dictionary, &model, &[0x4f60, 0xd800]).unwrap();
+        assert!(!matched);
+        assert_eq!(result, [PhraseToken::new(0), PhraseToken::new(0)]);
+        assert!(model.0.borrow().contains(&SENTENCE_START));
+    }
+
+    #[test]
+    fn a_checked_read_failure_is_a_class_c_refusal() {
+        use crate::error::EngineError;
+        use crate::nbest::SENTENCE_START;
+        let dictionary = Dict::parse(&[("你", 3)]);
+        assert_eq!(
+            phrase_segment(&dictionary, &CheckedModel, "你").unwrap_err(),
+            EngineError::ReadAfterCheck {
+                token: SENTENCE_START
+            }
+        );
+    }
+
+    #[test]
+    fn prefix_faults_follow_spans_before_predecessors() {
+        struct Ordered(std::cell::RefCell<Vec<(u32, u32)>>);
+        impl LanguageModel for Ordered {
+            type Token = PhraseToken;
+            type Error = &'static str;
+
+            fn score(
+                &self,
+                _: &[PhraseToken],
+                _: &PhraseToken,
+                _: i64,
+            ) -> Result<i64, Self::Error> {
+                Ok(0)
+            }
+
+            fn nbest_step_costs(
+                &self,
+                prev: &PhraseToken,
+                token: &PhraseToken,
+            ) -> Result<NbestStepCosts, Self::Error> {
+                let pair = (prev.value(), token.value());
+                self.0.borrow_mut().push(pair);
+                match pair {
+                    (4, 5) => Err("first span's second predecessor"),
+                    (3, 6) => Err("later span's first predecessor"),
+                    _ => Ok(NbestStepCosts {
+                        blended: Some(1),
+                        unigram: Some(1),
+                    }),
+                }
+            }
+        }
+        let dictionary = Dict::parse(&[("a", 3), ("a", 4), ("b", 5), ("bc", 6)]);
+        let model = Ordered(std::cell::RefCell::default());
+        let error = phrase_segment(&dictionary, &model, "abc").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("first span's second predecessor")
+        );
+        assert_eq!(*model.0.borrow(), [(1, 3), (1, 4), (3, 5), (4, 5)]);
     }
 
     #[test]
@@ -529,6 +710,8 @@ mod tests {
                 token: SENTENCE_START
             }
         );
+        assert!(phrase_segment(&dictionary, &short_merge, "").is_ok());
+        assert!(phrase_segment(&dictionary, &short_merge, "无").is_ok());
         let short_alone = Rows {
             row: MergedGram::merge(None, Some(vec![0, 0])).unwrap(),
         };
