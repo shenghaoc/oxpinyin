@@ -149,7 +149,7 @@ mod kyotocabinet {
             clang_args.extend(cflags);
         }
         if let Ok(dir) = std::env::var("OXPINYIN_KC_INCLUDE_DIR") {
-            clang_args.push(format!("-I{dir}"));
+            clang_args.insert(0, format!("-I{dir}"));
         }
 
         // A `rustc-link-search` reaches every later link in the graph, but a
