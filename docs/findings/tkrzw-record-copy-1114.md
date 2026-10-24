@@ -3,8 +3,9 @@
 Source preparation, 2026-10-23 UTC (`date -u` on this host). Parent PR:
 #1110, `387070506ba33aea43e3a330d4bde7baa8a9d623`. No provisioning,
 build, oracle run, instruction collection, timing or memory measurement
-has run for this change. #1031 has stopped; heavy work remains queued
-behind #1103 until the parent releases it, through normal admission.
+has run for this change. Heavy work remains queued behind #1103 and
+#1031's bounded hasher diagnostic until the parent releases it, through
+normal admission.
 
 ## Source and ordering proof
 
@@ -67,12 +68,12 @@ owned key/value copies and batch allocations; it introduces no retained
 structure. Time and memory still require same-run measurements. Any
 time-for-memory trade is a STOP.
 
-## Saved-byte comparison: offset clarification pending
+## Saved-byte comparison
 
-The maintainer authorized only the four bytes described as metadata
-bytes 53-56, and requires every other byte and bucket-chain order to
-match. No comparator mask has been implemented pending clarification
-of the indexing convention.
+The maintainer's clarified ruling authorizes exactly zero-based bytes
+48-55: the eight-byte `META_OFFSET_TIMESTAMP` field. It supersedes the
+earlier wording about bytes 53-56. Every other byte and bucket-chain
+order must match.
 
 The source field is `HashDBMImpl::timestamp_`, located by
 `META_OFFSET_TIMESTAMP = 48` (`tkrzw_dbm_hash.cc:46`).
@@ -80,23 +81,34 @@ The source field is `HashDBMImpl::timestamp_`, located by
 field spans zero-based offsets 48-55. Creation, synchronization and close
 assign `GetWallTime() * 1000000` (`:749,1184,1241`).
 `META_OFFSET_DB_TYPE = 56` (`:47`), so zero-based offset 56 belongs to
-`db_type_`, not the timestamp. The #1110 findings note describes masking
-the whole timestamp field; that wider mask is not authorized here.
+`db_type_`, not the timestamp. It remains exact, as do cyclic-magic bytes,
+the rest of the header, bucket pointers, record links and payloads.
+This authorization masks no other field or file.
 
-`cmp -l` numbers bytes from one. Its positions 53-56 correspond to
-zero-based offsets 52-55, the final four timestamp bytes. This is a
-plausible interpretation of #1108's observed differences, but requires
-confirmation before implementing the comparator. No other timestamp
-bytes, magic bytes, headers, indexes or files may be masked by this
-approval. A timestamp difference outside the approved range must fail.
+`contract-diff.py::tkrzw_saved_bigram_bytes` masks only the named field;
+`tkrzw_saved_bigram_equal` additionally requires exact ordered bucket
+chains. Neither changes an existing contract's file-comparison rules.
+The chains must be supplied from native iteration, never sorted row
+sets. The Rust collision regression separately checks that native walk.
 
-The comparator regression must flip each byte outside the approved
-range, including both cyclic-magic bytes, the unmasked timestamp bytes,
-`db_type_`, bucket pointers, record links and payload bytes, and reject
-every such difference. It must reject length differences too. A
-separate comparison must require exact bucket-chain sequences. Pin to
-subject and subject to pin reload/save checks are pending admission;
-logical-row equality or file presence cannot substitute for either.
+The six `TkrzwSavedBigramTests` pass without builds or oracle calls.
+They flip every bit at every outside-field byte in a synthetic 512-byte
+buffer (4,032 rejected mutations), explicitly check offset 56 and both
+cyclic-magic bytes, require length identity, reject truncated metadata,
+accept changes confined to 48-55, and reject chain permutations even
+when they contain the same keys and the saved bytes match. Command:
+
+```sh
+UV_CACHE_DIR=/home/sheng/Documents/Codex/2026-10-23/task-19/uv-cache \
+TMPDIR=/home/sheng/Documents/Codex/2026-10-23/task-19/tmp \
+uv run --offline --no-project --managed-python --python cpython@3.15+gil \
+  python -B -X lazy_imports=normal tools/bisection/contract-diff.test.py \
+  TkrzwSavedBigramTests
+```
+
+Results were printed directly; no capture was created. Pin to subject
+and subject to pin reload/save checks are pending admission. Logical-row
+equality or file presence cannot substitute for either.
 
 ## Trained-size fixture and remaining gates
 

@@ -2776,6 +2776,36 @@ def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
 USER_INDEX_FILES = ('user_phrase_index.bin', 'user_pinyin_index.bin')
 
 
+# tkrzw 9ee8416, tkrzw_dbm_hash.cc:46,1296: timestamp_ is written as an
+# eight-byte microsecond wall clock. The maintainer's #1114 ruling permits
+# only this comparison mask. Offset 56 starts db_type_ and stays exact.
+META_OFFSET_TIMESTAMP = 48
+TKRZW_TIMESTAMP_WIDTH = 8
+TKRZW_HASH_METADATA_SIZE = 128
+
+
+def tkrzw_saved_bigram_bytes(raw):
+    """Saved HashDBM bytes with only META_OFFSET_TIMESTAMP (48-55) masked.
+
+    This is specific to #1114's user-bigram comparison; it changes no
+    existing contract's file comparison or other backend's rules.
+    """
+    if len(raw) < TKRZW_HASH_METADATA_SIZE:
+        raise ValueError('saved HashDBM is shorter than its metadata')
+    end = META_OFFSET_TIMESTAMP + TKRZW_TIMESTAMP_WIDTH
+    return raw[:META_OFFSET_TIMESTAMP] + bytes(TKRZW_TIMESTAMP_WIDTH) + raw[end:]
+
+
+def tkrzw_saved_bigram_equal(left, right, left_bucket_chains, right_bucket_chains):
+    """Require saved-byte identity and exact ordered bucket chains.
+
+    Chains must come from each side's native walk, grouped by bucket and
+    kept in chain order; callers must never sort keys to compare them.
+    """
+    return (tkrzw_saved_bigram_bytes(left) == tkrzw_saved_bigram_bytes(right)
+            and left_bucket_chains == right_bucket_chains)
+
+
 def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
     """Every key/value of a user container, sorted, including empty values.
 
