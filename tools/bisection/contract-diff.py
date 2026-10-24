@@ -2561,6 +2561,56 @@ def predicted_bigram_context(k, phrase, value):
     return ctx
 
 
+def issue1114_collision_saves(k):
+    """Pin-derived load/save witness with three keys in TinyDBM bucket 74121."""
+    rows = []
+    for token, degree in ((0x01000d46, 1), (0x01004404, 6), (0x01004dd8, 100)):
+        value = (69 * degree).to_bytes(4, 'little') + b''.join(
+            item.to_bytes(4, 'little') + (69).to_bytes(4, 'little')
+            for item in range(0x01000001, 0x01000001 + degree))
+        rows.append((token.to_bytes(4, 'little'), value))
+    # run_case supplies one donor directory per direction. The receiver
+    # must open that exact profile, without crafting a replacement file.
+    handoff = os.environ.get('CONTRACT_1114_PROFILE')
+    if handoff:
+        k.user = handoff
+    reloading = os.environ.get('CONTRACT_1114_RELOAD') == '1'
+    ctx = k.init() if reloading else crafted_bigram_context(k, rows)
+    assert ctx
+    path = Path(k.user, 'user_bigram.db')
+    original = path.read_bytes() if reloading else None
+    expected_rows = sorted([[key.hex(), value.hex()] for key, value in rows])
+    saved = []
+    for text, pinyin, zhuyin in (('达达', "da2'da2", 'ㄉㄚˊ ㄉㄚˊ'),
+                                ('你你', "ni3'ni3", 'ㄋㄧˇ ㄋㄧˇ')):
+        iterator = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+        assert iterator
+        reading = pinyin if k.mode == 'pinyin' else zhuyin
+        assert k.fn('iterator_add_phrase', B, P, S, S, I)(
+            iterator, text.encode(), reading.encode(), 100)
+        k.fn('end_add_phrases', None, P)(iterator)
+        assert k.fn('save', B, P)(ctx)
+        raw = path.read_bytes()
+        # HashDBM bytes include the bucket pointers and record links. Compare
+        # every byte except the authorized timestamp, including byte 56.
+        if original is not None:
+            assert tkrzw_saved_bigram_bytes(raw) == tkrzw_saved_bigram_bytes(original), 'cross-reload changed saved bytes'
+        actual_rows = index_file_rows(path, kind='hash')
+        assert actual_rows == expected_rows, 'cross-reload changed a key or value'
+        saved.append(dict(bytes=len(raw), sha256=hashlib.sha256(tkrzw_saved_bigram_bytes(raw)).hexdigest(),
+                          rows=actual_rows))
+        k.fn('fini', None, P)(ctx)
+        ctx = k.init()
+        assert ctx
+    k.fn('fini', None, P)(ctx)
+    return {'saved_bigram': saved}
+
+
+for _issue1114_mode in ('pinyin', 'zhuyin'):
+    case('issue1114-collision-load-save-' + _issue1114_mode, mode=_issue1114_mode,
+         cells=('tkrzw',), issues=('1114',))(issue1114_collision_saves)
+
+
 def predicted_bigram_row_context(k, phrase, successor, count=20):
     """A context whose user bigram lists `successor` after `phrase` with
     `count` (the pin lists a predicted-bigram row from a count of 10 and a
@@ -2774,6 +2824,36 @@ def token_reuse_sequence(k, steps, bigram_rows=None, library=7):
 
 
 USER_INDEX_FILES = ('user_phrase_index.bin', 'user_pinyin_index.bin')
+
+
+# tkrzw 9ee8416, tkrzw_dbm_hash.cc:46,1296: timestamp_ is written as an
+# eight-byte microsecond wall clock. The maintainer's #1114 ruling permits
+# only this comparison mask. Offset 56 starts db_type_ and stays exact.
+META_OFFSET_TIMESTAMP = 48
+TKRZW_TIMESTAMP_WIDTH = 8
+TKRZW_HASH_METADATA_SIZE = 128
+
+
+def tkrzw_saved_bigram_bytes(raw):
+    """Saved HashDBM bytes with only META_OFFSET_TIMESTAMP (48-55) masked.
+
+    This is specific to #1114's user-bigram comparison; it changes no
+    existing contract's file comparison or other backend's rules.
+    """
+    if len(raw) < TKRZW_HASH_METADATA_SIZE:
+        raise ValueError('saved HashDBM is shorter than its metadata')
+    end = META_OFFSET_TIMESTAMP + TKRZW_TIMESTAMP_WIDTH
+    return raw[:META_OFFSET_TIMESTAMP] + bytes(TKRZW_TIMESTAMP_WIDTH) + raw[end:]
+
+
+def tkrzw_saved_bigram_equal(left, right, left_bucket_chains, right_bucket_chains):
+    """Require saved-byte identity and exact ordered bucket chains.
+
+    Chains must come from each side's native walk, grouped by bucket and
+    kept in chain order; callers must never sort keys to compare them.
+    """
+    return (tkrzw_saved_bigram_bytes(left) == tkrzw_saved_bigram_bytes(right)
+            and left_bucket_chains == right_bucket_chains)
 
 
 def index_file_rows(path, *, kind='tree', allow_empty=False, library=None):
@@ -5787,16 +5867,23 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
     deadline = time.monotonic() + timeout
     results = []
     fatal_env = {'G_DEBUG': 'fatal-criticals'} if spec['fatal'] else None
+    handoff = name in ('issue1114-collision-load-save-pinyin', 'issue1114-collision-load-save-zhuyin')
+    profiles = {}
+    if handoff:
+        for side in ('pin', 'subject'):
+            profiles[side] = tempfile.mkdtemp(prefix='handoff-' + side + '-', dir=scratch)
     for side, so in (('pin', pin_so), ('subject', subject_so)):
         before = len(TIMINGS)
         remaining = deadline - time.monotonic()
         try:
             if remaining <= 0:
                 raise subprocess.TimeoutExpired(str(so), timeout)
+            extra_env = (dict(fatal_env or {}, OXPINYIN_RUNTIME_SIDE=side)
+                         if os.environ.get('CONTRACT_DIFF_CELL', CELL) == 'tkrzw' else fatal_env)
+            if handoff:
+                extra_env = dict(extra_env or {}, CONTRACT_1114_PROFILE=profiles[side])
             result = run_worker(spec['mode'], so.resolve(), data, name, scratch,
-                                extra_env=(dict(fatal_env or {}, OXPINYIN_RUNTIME_SIDE=side)
-                                           if os.environ.get('CONTRACT_DIFF_CELL', CELL) == 'tkrzw' else fatal_env),
-                                timeout=remaining)
+                                extra_env=extra_env, timeout=remaining)
         except subprocess.TimeoutExpired as error:
             results.append(dict(exit='TIMEOUT', result=None, userfiles=[],
                                 stderr_lines=len((error.stderr or b'').splitlines()),
@@ -5808,6 +5895,37 @@ def run_case(spec, pin_so, subject_so, data, name, scratch, timeout):
         results.append(result)
     if len(results) == 1:
         results.append(dict(exit='NOT-RUN', result=None, userfiles=[], stderr_lines=0, stderr=''))
+    if handoff and all(result['exit'] == 0 for result in results):
+        # Direct byte equality is the gate, not digest equality. Bucket
+        # pointers and record links stay exact along with every payload byte.
+        raw = [Path(profiles[side], 'user_bigram.db').read_bytes() for side in ('pin', 'subject')]
+        if tkrzw_saved_bigram_bytes(raw[0]) != tkrzw_saved_bigram_bytes(raw[1]):
+            results[0].update(exit=1, result={'error': 'saved bytes differ outside META_OFFSET_TIMESTAMP'})
+            return results
+        # Fresh workers isolate the two libraries. Run both donor -> receiver
+        # directions under the same case deadline, retaining donor files.
+        for index, (donor, receiver, so) in enumerate((('pin', 'subject', subject_so),
+                                                     ('subject', 'pin', pin_so))):
+            before = len(TIMINGS)
+            try:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(str(so), timeout)
+                reload = run_worker(spec['mode'], so.resolve(), data, name, scratch,
+                                    extra_env=dict(OXPINYIN_RUNTIME_SIDE=receiver,
+                                                   CONTRACT_1114_PROFILE=profiles[donor],
+                                                   CONTRACT_1114_RELOAD='1'), timeout=remaining)
+            except subprocess.TimeoutExpired:
+                results[index].update(exit='TIMEOUT', result=None)
+                break
+            finally:
+                for timing in TIMINGS[before:]:
+                    timing['side'] = receiver
+            if reload['exit'] != 0 or reload['result'] is None:
+                results[index].update(exit=reload['exit'] or 1, result=None,
+                                      stderr=reload['stderr'], stderr_lines=reload['stderr_lines'])
+            else:
+                results[index]['result']['cross_reload'] = observed(reload['result'])
     return results
 
 
