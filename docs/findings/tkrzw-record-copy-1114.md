@@ -1,11 +1,18 @@
 # tkrzw user-bigram record copy (#1114)
 
-Source preparation, 2026-10-23 UTC (`date -u` on this host). Parent PR:
-#1110, `387070506ba33aea43e3a330d4bde7baa8a9d623`. No provisioning,
+Source preparation, 2026-10-23 UTC; reconciliation 2026-10-24 UTC
+(`date -u` on this host). Parent PR #1110 merged with final head
+`d9227a32c55f7be5b24c24e8fbc463d164ad3986`; its branch was deleted.
+The two owned commits were rebased onto landing tip
+`2a0f5748646b9fdaa5bac22a350670794deb1319`, which contains that parent.
+No provisioning,
 build, oracle run, instruction collection, timing or memory measurement
-has run for this change. Heavy work remains queued behind #1103 and
-#1031's bounded hasher diagnostic until the parent releases it, through
-normal admission.
+has run for this change. The parent released the heavy-work queue after
+#1031 stopped. Setup remains unstarted: `tools/cloud/setup.sh` always
+redirects its tkrzw host probe to `tkrzw-host-probe.log`, and other build
+paths also write logs. It has no fileless-diagnostics option. Running it
+as written would violate the task's explicit no-log-file instruction;
+no recipe workaround or logging change has been applied.
 
 ## Source and ordering proof
 
@@ -20,7 +27,8 @@ default `TinyDBM` and copies a read-only `HashDBM` through
 `src/storage/tkrzwdb_utils.h:48-74`: `First`, then `Get`, `Set`, `Next`
 for every row. In oxpinyin, `persistence::load_user_bigram_db` delegates
 to `TkrzwUserBigramDb::load_db`. The latter retains its source iterator
-and #1110's healthy-empty check. Only its destination insertion changes.
+and #1110's final `holds_no_record` check, including the independent
+file-size guard. Only its destination insertion changes.
 
 The previous destination path builds owned key/value vectors and a
 single-element `ProcessMulti` batch. The new `db_set_record` lends the

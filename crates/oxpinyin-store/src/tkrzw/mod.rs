@@ -1389,8 +1389,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        HASH_METADATA_SIZE, TkrzwUserBigramDb, db_count, db_set_one, db_set_record, holds_no_record,
-        is_healthy, open_hash, open_hash_create, record_base, visit_db,
+        HASH_METADATA_SIZE, TkrzwUserBigramDb, db_count, db_set_one, db_set_record,
+        holds_no_record, is_healthy, open_hash, open_hash_create, record_base, visit_db,
     };
     use crate::UserBigramDb;
 
