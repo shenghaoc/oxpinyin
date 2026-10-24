@@ -1,6 +1,6 @@
 # 894-non-scalar-phrase-text — non-scalar stored phrase text
 
-- **Status:** accepted under the existing category; verification pending · 2026-10-24 UTC · issue #894.
+- **Status:** accepted under the existing category; verified on bdb · 2026-10-24 UTC · issue #894.
 - **Disposition:** POLICY-ACCEPTED (never MATCH).
 - **Policy limb:** language/runtime quirk, decision-order limb 3. This is
   not transcendental math (a), an invalid memory access (b), or a pin
@@ -54,9 +54,11 @@
    `PhraseLibraries::trellis_item` excludes the non-scalar token before
    pricing; `nbest.rs`, `token_text`/`text`, also refuses a missing text
    and never concatenates an undecodable row. With the isolated witness
-   path there is no complete sentence, so guess/get return false and get
-   leaves the caller's output untouched. With alternate valid paths the
-   best surviving sentence can change, still only on the malformed table.
+   path there is no complete sentence: guess still returns true (a lookup
+   ran; `session/guess.rs`, `guess_over_remaining`), while get returns
+   false and leaves the caller's output untouched. With alternate valid
+   paths the best surviving sentence can change, still only on the malformed
+   table.
 4. Export: `pinyin_begin_get_phrases` probes item/pronunciation presence
    (`pinyin.cpp:662-688`), then `pinyin_iterator_get_next_phrase`
    (`:698-768`) converts text and returns the reading/count, advancing the
@@ -78,7 +80,7 @@ Every text producer reaching those consumers is one of:
   journal can propagate corrupt text; it cannot make that input valid.
   Backend selection changes the KV reader, not these chunk words or
   conversion functions. The addon candidate path uses the same decoder;
-  promotion copies its item (`pinyin.cpp`'s addon selection path), so a
+  promotion copies its item (`pinyin.cpp:2534-2558`), so a
   malformed addon can contaminate a user item without losing its origin.
 - Import through `pinyin_iterator_add_phrase` (`pinyin.cpp:614-652`) or
   `zhuyin_iterator_add_phrase` (`zhuyin.cpp:500-537`), and pinyin remember
@@ -105,9 +107,16 @@ Every text producer reaching those consumers is one of:
   are a separate producer (#1144), not admitted by this record. Bigram
   export converts both items (`pinyin.cpp:822-830`) but also has the
   independent unterminated-vector class-(b) defect (register row 1);
-  this record does not accept that fault by analogy. Rust's materialized
-  `ContextCore::export_phrases` fails on an absent text rather than
-  producing a partial dictionary; its Rust-only result is not a C ABI.
+  this record does not accept that fault by analogy. In Rust,
+  `ExportSource::render` refuses the system text; `BigramExportWalk::load_row`
+  substitutes empty text/readings, leaving no pronunciation cross-product.
+  A reached above-threshold row can make `has_next` true, but `get_next`
+  is `BigramStep::Undefined`; the C bigram getter returns false without
+  writes or warning. `ContextCore::export_bigram_rows` stops materializing
+  at that non-row. Separately, `ContextCore::export_phrases` fails on an
+  absent text rather than producing a partial dictionary. These Rust-only
+  materializations are not C APIs. The existing bigram faults are not
+  deterministic phrase-text witnesses and keep their separate rulings.
 
 **Input partition:** valid supported tables have bounded, complete items,
 valid readings and nonzero Unicode scalar phrase text. A malformed table
@@ -128,7 +137,7 @@ explicitly recorded, not suppressed. No production behavior changes.
 
 ## Tests and methodology
 
-Existing driver: `tools/bisection/contract-diff.py --issue 894`. Cases
+Existing driver: `tools/bisection/contract-diff.py`, selected with `--issue 894`. Cases
 `phrase-text/{pinyin,zhuyin}-{surrogate,above-unicode}-{candidate,sentence,export}`
 use a private system chunk and native index; they retain raw byte hex,
 returns, output sentinels and logs. Pinyin paths and both-facade candidate/
@@ -141,11 +150,38 @@ cover missing/stale records and missing/wrong observations.
 Source was read before provisioning or executing any differential. Debian
 source came from `snapshot.debian.org/archive/debian/20260831T000000Z/pool/main/g/glib2.0/`;
 the `.dsc` SHA-256 values were checked for the orig and Debian tarballs.
-No runtime experiment supplied the derivation. Runtime results and the
-named subject mutation will be reported after the gate; captures remain
-ephemeral. **Prior rulings:** none reversed. **Conclusion:** retain normal
-Rust behavior under limb 3; source classification complete, verification
-pending (2026-10-24 UTC).
+No runtime experiment supplied the derivation. A subsequent source review
+of `guess_over_remaining` corrected the initial sentence expectation:
+lookup execution returns true even with no resulting sentence. The final
+gate checks that return separately from the failing getter.
+
+**Results (2026-10-24 UTC):** on the canonical Linux amd64 bdb reference
+cell, all 24 #894 cases passed: **15 POLICY-ACCEPTED, 9 MATCH**, zero skips
+or failures. The 10 non-scalar marked cases retained both exact expected
+observations. The six scalar controls and three malformed zhuyin export
+absence checks account for MATCH. The 135 driver tests passed, including
+negative marker tests. `cargo fmt --all --check` passed. No Rust crate is
+changed, so crate tests/clippy and shipping-size measurements do not apply.
+`tools/bisection/cells-for-diff.py origin/main` selected bdb only; none of
+its three backend-sensitive checks fired.
+
+Reproduce the differential from the repository root with
+`bash tools/oracle/compat.sh --runtime docker --cell bdb --runners contract-diff --issue 894`.
+Reproduce harness tests with
+`uv run python tools/bisection/contract-diff.test.py` (project managed
+CPython 3.15.0, GIL build). The container provisions its pinned oracle with
+the documented cloud setup; the host provided its existing proxy CA via
+`OXPINYIN_PROXY_CA`. No TLS verification was disabled. No measurements
+were run. The source base was `54b1c5d0`; production Rust remains identical.
+Captures remain local and ephemeral, and are not committed or uploaded.
+
+The shared named subject mutation **nul-as-replacement**, detailed in the
+[NUL record](894-nul-phrase-text.md), failed five cases and left all 10
+non-scalar accepted cases and nine MATCH controls unchanged. Both pin-side
+and subject-side incorrect observations also fail in the marker unit tests.
+**Prior rulings:** none reversed. **Conclusion:** retain normal Rust
+behavior under limb 3; source proof and reference-cell verification
+complete (2026-10-24 UTC).
 
 ## Binding observations
 
@@ -160,15 +196,15 @@ must match both complete result documents, normal exits and empty stderr.
   "disposition": "POLICY-ACCEPTED",
   "cases": {
     "phrase-text/pinyin-surrogate-candidate": {"pin": {"exit": 0, "result": {"parsed": 9, "ret": true, "rows": [[2, "e794b2eda080e4b999"]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 9, "ret": false, "rows": [], "logs": [["libpinyin", 16]]}, "stderr": ""}},
-    "phrase-text/pinyin-surrogate-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2eda080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": false, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}},
+    "phrase-text/pinyin-surrogate-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2eda080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}},
     "phrase-text/pinyin-surrogate-export": {"pin": {"exit": 0, "result": {"rows": [[true, "e794b2eda080e4b999", "6461312764613127646131", 10], [true, "e4b899", "626131", 10]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"rows": [[true, null, "6461312764613127646131", 10], [true, "e4b899", "626131", 10]], "logs": []}, "stderr": ""}},
     "phrase-text/pinyin-above-unicode-candidate": {"pin": {"exit": 0, "result": {"parsed": 9, "ret": true, "rows": [[2, "e794b2f4908080e4b999"]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 9, "ret": false, "rows": [], "logs": [["libpinyin", 16]]}, "stderr": ""}},
-    "phrase-text/pinyin-above-unicode-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2f4908080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": false, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}},
+    "phrase-text/pinyin-above-unicode-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2f4908080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}},
     "phrase-text/pinyin-above-unicode-export": {"pin": {"exit": 0, "result": {"rows": [[true, "e794b2f4908080e4b999", "6461312764613127646131", 10], [true, "e4b899", "626131", 10]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"rows": [[true, null, "6461312764613127646131", 10], [true, "e4b899", "626131", 10]], "logs": []}, "stderr": ""}},
     "phrase-text/zhuyin-surrogate-candidate": {"pin": {"exit": 0, "result": {"parsed": 9, "ret": true, "rows": [[2, "e794b2eda080e4b999"]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 9, "ret": false, "rows": [], "logs": [["libzhuyin", 16]]}, "stderr": ""}},
-    "phrase-text/zhuyin-surrogate-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2eda080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": false, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}},
+    "phrase-text/zhuyin-surrogate-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2eda080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}},
     "phrase-text/zhuyin-above-unicode-candidate": {"pin": {"exit": 0, "result": {"parsed": 9, "ret": true, "rows": [[2, "e794b2f4908080e4b999"]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 9, "ret": false, "rows": [], "logs": [["libzhuyin", 16]]}, "stderr": ""}},
-    "phrase-text/zhuyin-above-unicode-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2f4908080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": false, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}}
+    "phrase-text/zhuyin-above-unicode-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2f4908080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}}
   }
 }
 ```
