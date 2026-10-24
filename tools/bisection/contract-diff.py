@@ -2561,6 +2561,39 @@ def predicted_bigram_context(k, phrase, value):
     return ctx
 
 
+def issue1114_collision_saves(k):
+    """Pin-derived load/save witness with three keys in TinyDBM bucket 74121."""
+    rows = []
+    for token, degree in ((0x01000d46, 1), (0x01004404, 6), (0x01004dd8, 100)):
+        value = (69 * degree).to_bytes(4, 'little') + b''.join(
+            item.to_bytes(4, 'little') + (69).to_bytes(4, 'little')
+            for item in range(0x01000001, 0x01000001 + degree))
+        rows.append((token.to_bytes(4, 'little'), value))
+    ctx = crafted_bigram_context(k, rows)
+    saved = []
+    for text, pinyin, zhuyin in (('达达', "da2'da2", 'ㄉㄚˊ ㄉㄚˊ'),
+                                ('你你', "ni3'ni3", 'ㄋㄧˇ ㄋㄧˇ')):
+        iterator = k.fn('begin_add_phrases', P, P, U)(ctx, 7)
+        assert iterator
+        reading = pinyin if k.mode == 'pinyin' else zhuyin
+        assert k.fn('iterator_add_phrase', B, P, S, S, I)(
+            iterator, text.encode(), reading.encode(), 100)
+        k.fn('end_add_phrases', None, P)(iterator)
+        assert k.fn('save', B, P)(ctx)
+        raw = Path(k.user, 'user_bigram.db').read_bytes()
+        saved.append(dict(bytes=len(raw), sha256=hashlib.sha256(tkrzw_saved_bigram_bytes(raw)).hexdigest()))
+        k.fn('fini', None, P)(ctx)
+        ctx = k.init()
+        assert ctx
+    k.fn('fini', None, P)(ctx)
+    return {'saved_bigram': saved}
+
+
+for _issue1114_mode in ('pinyin', 'zhuyin'):
+    case('issue1114-collision-load-save-' + _issue1114_mode, mode=_issue1114_mode,
+         cells=('tkrzw',), issues=('1114',))(issue1114_collision_saves)
+
+
 def predicted_bigram_row_context(k, phrase, successor, count=20):
     """A context whose user bigram lists `successor` after `phrase` with
     `count` (the pin lists a predicted-bigram row from a count of 10 and a

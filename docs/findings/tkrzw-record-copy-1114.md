@@ -5,14 +5,30 @@ Source preparation, 2026-10-23 UTC; reconciliation 2026-10-24 UTC
 `d9227a32c55f7be5b24c24e8fbc463d164ad3986`; its branch was deleted.
 The two owned commits were rebased onto landing tip
 `2a0f5748646b9fdaa5bac22a350670794deb1319`, which contains that parent.
-No provisioning,
-build, oracle run, instruction collection, timing or memory measurement
-has run for this change. The parent released the heavy-work queue after
-#1031 stopped. Setup remains unstarted: `tools/cloud/setup.sh` always
-redirects its tkrzw host probe to `tkrzw-host-probe.log`, and other build
-paths also write logs. It has no fileless-diagnostics option. Running it
-as written would violate the task's explicit no-log-file instruction;
-no recipe workaround or logging change has been applied.
+The maintainer clarified that normal tool-created local files are allowed;
+only publication of logs, captures, archives and evidence files is forbidden.
+Setup ran unchanged for all three cells and passed their pinned library
+hashes and data manifests. Its cached tkrzw 9ee8416 passed the health probe
+and resolver check. No setup change was made.
+
+The native tkrzw store gate passes: 52 unit tests and 6 trait-law tests.
+The compatibility image `localhost/oxpinyin-compat:1b19799961bb6fbe`
+(image ID `b545b40c9106b256bf6e4d3ddaf1249d9a31a29cdd058c321e6e66f27afb13f1`)
+reports GNU ld 2.47 and Rust 1.97.1. Both shipping facades built for base
+and PR, but the installed PR artifacts equal base byte for byte and still
+call `ProcessMulti`. The builds shared a Cargo target directory; its
+dependency information uses relative source paths. The new Rust source
+and native tests do contain `db_set_record`. The putative PR libraries
+therefore do not certify this source, and their instruction results are
+invalid as PR measurements. No savings or performance ratios are claimed.
+Separate-target rebuilding and new source-identity checks are required.
+
+All six base/PR/control library copies passed the layout checker (260
+policy paths for pinyin, 240 for zhuyin), and the runtime checks passed.
+Layout and dependency identity do not establish source identity. Every
+library copy, resolved tkrzw runtime, system-data file, fixture-profile file,
+native worker, work directory and TMPDIR passed its `findmnt -T` ext4
+check. These checks do not rescue the invalid PR build.
 
 ## Source and ordering proof
 
@@ -69,7 +85,7 @@ and `0x01004dd8` hash to default bucket 74121. The expected chain is
 and all values against the previous insertion path, including an empty
 value, embedded NUL bytes and an 804-byte value. Those are opaque-copy
 test inputs, not a claimed realistic trained-profile distribution.
-The test is written but has not run.
+The test passes in the native tkrzw store gate.
 
 Both paths retain O(n) record storage. The new path removes temporary
 owned key/value copies and batch allocations; it introduces no retained
@@ -125,10 +141,26 @@ distinct successor (`src/storage/ngram.cpp:31-40` at 074a2219).
 Training creates or loads the user row and adds a successor on its
 first occurrence (`src/lookup/phonetic_lookup.h:876-909`). Thus trained
 value size is 4 + 8d for successor degree d, rather than always 12.
-Generate a deterministic profile from public text through the existing
-training path, then report its degree and byte-size distribution and
-recipe. Do not substitute repeated independent 12-byte rows, or access
-private user profiles. Fixture generation has not run.
+The prepared trained-size fixture uses the verified public model's first
+10,000 predecessor rows in file order, with every distinct successor of
+each selected row. Each successor receives the pin's first-event seed 69;
+the row total is 69d. This models the row shape after one training event
+per public-model pair, derived from source; it is not an observed private
+user profile or a claim that the facade trained these rows. The public
+`interpolation2.text` SHA-256 is
+`e1578307719431e1b8ef1006ae265bbc9a447250bfde4c1b6e15be80afd3a118`.
+Its 10,000 values total 2,442,984 bytes: minimum 12, median 52, p90 428,
+p99 3,468, maximum 65,108 bytes. The HashDBM file is 6,782,584 bytes.
+The 0/10,000/100,000 single-item synthetic fixtures are 4,198,400 /
+4,438,400 / 6,598,400 bytes. All were written through certified tkrzw.
+No private user profile was accessed. Local orchestration uses the
+existing native teardown worker, not a new differential driver.
+
+Two tkrzw-only contract cases now cover collision-key load/save/reopen
+for pinyin and zhuyin, comparing saved bytes with only the approved field
+masked. Their oracle execution is pending. The full harness unit suite
+passes 99 tests; a prior assertion that 525 was the lexically first tag
+was updated to require that both 525 and 1114 are advertised.
 
 After admission: run setup for bdb, kc and tkrzw; STOP on setup or GNU
 ld 2.47 compatibility-image failure. Build ordered subjects against the

@@ -738,7 +738,9 @@ class SelectionTests(DriverFixtureCase):
         with self.assertRaises(contract['SelectionError']) as caught:
             contract['select_cases'](issues=['9999'])
         self.assertIn('registered tags: ', str(caught.exception))
-        self.assertIn('525', str(caught.exception).split('registered tags: ', 1)[1].split(', '))
+        available = str(caught.exception).split('registered tags: ', 1)[1].split(', ')
+        self.assertIn('525', available)
+        self.assertIn('1114', available)
         self.assertNotIn('family/', str(caught.exception))
         with self.assertRaises(contract['SelectionError']) as caught:
             contract['select_cases'](families=['nope'])
