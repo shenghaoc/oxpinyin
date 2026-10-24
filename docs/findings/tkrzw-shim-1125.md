@@ -1,5 +1,181 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
+## Empty-message fast path dropped; retained counts and instruction paths; STOP
+
+Recorded 2026-10-24T08:22:48Z. This is the current status, superseding the earlier
+queued fast path and build/generation status below. The human requested
+retained-profile analysis only, dropping the empty-message optimization
+and stopping for a maintainer decision. No new runtime capture, build,
+policy regeneration or measurement was started under this ruling.
+
+### Source checkpoint and policy status
+
+In crates/oxpinyin-store/src/tkrzw/shim.cc, finish again unconditionally
+assigns status.GetMessage() to last_message after recording the code.
+The guarded exception boundary, standard/nonstandard catches, noexcept
+entry points and best-effort fail remain unchanged. No key copy was added.
+This is an unbuilt checkpoint on ef12b1134ef160b6085b7ea1c4f02e561a83565d;
+the approved comparison base remains d7788072. Only shim.cc and this
+findings document are changed in this checkpoint.
+
+After the restoration, git diff against the original measured findings
+checkpoint 92b7d61bb60a46c41cc85a0ffed70cf7c354e702 is empty outside this
+findings file. This is a static source/tree comparison, not a new build
+or a performance result for this restored checkpoint. The previous
+clippy/tests and twice-regenerated policy results below belong to the
+now-dropped fast-path source. The checked-in order files are left untouched;
+their latest regeneration used that fast path. They are **stale for this
+checkpoint and require authorized regeneration**. No claim of a newly
+ordered or measured restored binary is made, even though the order-file
+bytes also match the historical measured files. Original measurement
+provenance and retained originals below are preserved.
+
+### Collected memcmp calls and exclusive Ir per call
+
+These counts come only from the six original retained profiles at
+$R/campaign/store-work/callgrind/get_raw.tree.{miss,retain}.{base,control,candidate}.out.
+The profiles have positions: line and events: Ir, without operand addresses.
+Base and control match exactly, including every exclusive source-line row.
+The libc leaf has no outgoing call; exclusive leaf Ir reconciles with the
+previous caller report. Status/message contributes zero to this leaf.
+
+| operation | collected calls base/control | collected calls prototype | exclusive Ir base/control | exclusive Ir prototype | Ir/call base/control | Ir/call prototype | extra Ir/call |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| get_raw.tree.miss | 377,678 | 377,678 | 8,431,677 | 8,501,700 | 22.325041437 | 22.510445406 | +0.185403968 |
+| get_raw.tree.retain | 599,488 | 599,488 | 13,018,822 | 13,187,264 | 21.716568138 | 21.997544571 | +0.280976433 |
+
+Collected calls are counted by the single endbr64 at libc
+__memcmp_avx2_movbe+0x0 (ELF offset 0x19bf20, assembly source line 73).
+The next two single-instruction rows, cmp length and jb at +0x4/+0x8,
+have the same counts; so do all five instructions of the short-operand
+page guard at +0x2e5 through +0x2f3. All collected calls reach that guard:
+comparison lengths are 2 through 31 bytes. The benchmark's
+support::ops::measured is the collection toggle boundary; setup is outside
+that boundary, and memcmp contains no collection toggle. These entry
+instruction counts therefore supply the denominator for collected Ir.
+
+The raw calls= edges must be kept separate. As documented in
+[the benchmark runbook](../runbooks/benches.md), Callgrind call counters
+can include calls outside collection. They are not selected-call counts.
+
+| operation | raw stub-to-memcmp calls base/control | raw stub-to-memcmp calls prototype | raw LexicalKeyComparator-to-stub calls (all arms) | raw HashDBMImpl::ProcessImpl-to-stub calls (all arms) |
+| --- | ---: | ---: | ---: | ---: |
+| get_raw.tree.miss | 377,709 | 377,678 | 377,423 | 255 |
+| get_raw.tree.retain | 7,123,202 | 7,123,171 | 7,122,240 | 931 |
+
+The raw leaf counter differs by 31 in each operation, while the two named
+key-search caller counters and collected entry counts are equal. The
+retained output does not identify the uncollected provenance of those 31;
+it would be wrong to call them extra measured tree searches, or divide
+collected retain Ir by more than seven million setup-inclusive calls.
+There is no measured-call-count discrepancy requiring a different-search-
+path explanation. Equal counts alone do not establish identical operand
+addresses or an identical sequence of comparisons.
+
+### Executed path explaining the extra instructions
+
+The existing libc ELF and its matching split debug information were read,
+without executing it. libc build ID is
+5c6ef14e93d7793dc6b155982295fddfbc7f5eb9; the debug file is
+/usr/lib/debug/.build-id/5c/6ef14e93d7793dc6b155982295fddfbc7f5eb9.debug.
+The assembly line names embedded in that ELF refer to glibc-2.44-1ubuntu2,
+sysdeps/x86_64/multiarch/memcmp-avx2-movbe.S.
+
+At +0x2e5/+0x2e7 the code combines the two pointer low bits with OR;
++0x2e9 masks by 4095, +0x2ee compares with 4064, and +0x2f3 jumps to
++0x320 when ((uintptr_t(a) | uintptr_t(b)) & 4095) > 4064.
+Otherwise it uses a 32-byte AVX comparison at +0x2f5, masking the result
+by the actual length. The guard conservatively avoids a potentially
+page-crossing wide load. An OR of the low bits can exceed the threshold
+even when neither individual offset does; these counts must not be
+reported as the number of operands actually straddling a page.
+
+| retained branch entry (single instruction) | miss base/control | miss prototype | retain base/control | retain prototype |
+| --- | ---: | ---: | ---: | ---: |
+| usual short AVX path, line 414 / +0x2f5 | 339,321 | 269,240 | 568,671 | 536,561 |
+| page-boundary fallback, line 429 / +0x320 | 38,357 | 108,438 | 30,817 | 62,927 |
+| fallback 4-7 byte path, line 438 / +0x333 | 20,235 | 37,748 | 19,529 | 42,581 |
+| fallback 8-15 byte path, line 476 / +0x380 | 18,122 | 70,690 | 10,720 | 20,346 |
+| fallback 16-31 byte path, line 512 / +0x3a3 | 0 | 0 | 284 | 0 |
+| fallback 2-3 byte path, line 553 / +0x3e0 | 0 | 0 | 284 | 0 |
+
+Fallback entries increase by 70,081 for miss and 32,110 for retain;
+normal short AVX entries decrease by exactly those amounts. Below are
+**exclusive**, disjoint assembly-row deltas; they reconcile every changed
+leaf row, including return instructions. No inclusive edges are added.
+
+| exclusive assembly path / source rows | miss delta Ir | retain delta Ir |
+| --- | ---: | ---: |
+| vector mismatch return: 156,166-168,171 | -420,486 | -148,692 |
+| short AVX compare/equal return: 414-417,420-423 | -420,486 | -214,644 |
+| fallback length dispatch: 429-430,432-433,435-436 | +315,350 | +174,544 |
+| fallback 4-7 byte compare/return: 438-446,448,450 | +175,130 | +235,007 |
+| fallback nonzero return: 463-464,466 | +210,243 | +75,198 |
+| fallback 8-15 byte compare/return: 476-482,484,486 | +210,272 | +54,129 |
+| fallback 16-31 / 2-3 byte compare/return: 512-516,520-525,527,529,553-562,564,566 | 0 | -7,100 |
+| **sum** | **+70,023** | **+168,442** |
+
+Thus the retained instruction paths prove the immediate cost comes from
+libc's address-low-bit guard selecting different short-key comparison
+paths more often. They do not record which argument, allocation or tree
+record caused the different predicate outcomes. In particular, the PLT
+runtime addresses below identify code locations, not the key operands.
+Attributing this to the shim's query buffer alignment, a DBM-owned record
+buffer, or a specific allocation layout would exceed the retained evidence.
+The previous pin-construction comparison found no explicit flags, tuning,
+comparator or file-type discrepancy; that source result remains unchanged.
+
+### Key-copy proposal: premise and limits
+
+The actual base path is db_get in crates/oxpinyin-store/src/tkrzw/mod.rs
+at d7788072: it passes key.as_ptr() and a checked nonnegative length to
+ffi::tkrzw_dbm_process. In the certified upstream
+[tkrzw_langc.cc at 9ee84164](https://github.com/estraier/tkrzw/blob/9ee84164cf45e441aa8186418c03a02c9b89f08b/tkrzw_langc.cc),
+tkrzw_dbm_process constructs a borrowed string_view and forwards it to
+Process; it does not copy that input key. The shim's oxtkrzw_dbm_process
+also constructs a borrowed string_view. Other C APIs that copy keys are
+not this measured path. The installed tkrzw_dbm_process disassembly agrees:
++0x1a preserves the input pointer in rbx, +0x6b passes it in rcx to the
+virtual Process call at +0x85. There is no input-key allocation or copy.
+The optional strlen path is bypassed for the Rust caller's checked length.
+
+There is therefore no old C-API key copy to retain or restore. Adding a
+new copy could change a query operand's low bits, but an ordinary string
+copy guarantees no suitable address and cannot fix the unknown other
+operand. Even deliberately aligned scratch storage would only control
+the copied operand; neither the number of avoided fallback calls nor the
+net benefit follows from these profiles. A copy adds work linear in key
+length and temporary key storage, possibly allocation for an owning
+string; reusable scratch still needs copying and bounds/alignment handling.
+No implementation or measured Ir/wall/space cost for such a copy exists
+in the retained run, so a numerical cost or a claim that it removes the
+regression is unresolved. No speculative copy optimization was made.
+
+### Commands and stopping point
+
+The local analysis reads compressed function IDs, calls= associations and
+absolute/relative source positions, excludes inclusive association-cost
+rows, verifies base/control equality and partitions all changed exclusive
+leaf rows. Analysis scripts and raw outputs remain local, uncommitted.
+
+```sh
+$PY "$R/analysis/memcmp-callers.py"
+$PY "$R/analysis/count-summary.py"
+objdump -dl --no-show-raw-insn --start-address=0x19bf20 --stop-address=0x19c320 /usr/lib/x86_64-linux-gnu/libc.so.6
+objdump -d -C --no-show-raw-insn --start-address=0x194690 --stop-address=0x1947d0 "$TKRZW_PREFIX/lib/libtkrzw.so.1.77.0"
+git -C "$R/worktree" show d7788072:crates/oxpinyin-store/src/tkrzw/mod.rs
+git -C "$R/worktree" diff 92b7d61bb60a46c41cc85a0ffed70cf7c354e702 -- . ':!docs/findings/tkrzw-shim-1125.md'
+git -C "$R/worktree" diff --check
+```
+
+The first objdump command above is the combined range equivalent of the
+read-only 0x19bf20-0x19c300 and 0x19c300-0x19c345 reads actually used.
+Source retrieval used the GitHub read-only fetch action at the exact
+upstream URL above. STOP for the maintainer's decision; no PR or review.
+No new workload was launched. The remaining causal gap is operand-address
+and allocation provenance; no new capture is authorized by this ruling.
+
+
 ## Caller boundary: key-search memcmp contribution; STOP for ruling
 
 Recorded 2026-10-24T07:49:15Z. This section supersedes the queued follow-up status
