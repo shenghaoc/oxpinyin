@@ -124,7 +124,7 @@ check_tkrzw = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'tkrzw/ru
 
 
 def host_oracle_platform():
-    """The platform key used by oracle-pin.txt, or None off Linux."""
+    """Return the oracle-pin.txt key for Linux x86-64 or AArch64, else None."""
     if sys.platform != 'linux':
         return None
     return {'x86_64': 'linux/amd64', 'amd64': 'linux/amd64',
@@ -151,7 +151,11 @@ def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=
               cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
               abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(), *, fn=None,
               policy_record=None, case_id=None):
-    """Build a complete spec from the defaults shared by registration and tests."""
+    """Build the registration metadata with shared defaults, without validating it.
+
+    Store host scanner spellings and normalized issue tags as tuples. A
+    crash expectation enables stderr comparison even if stderr is false.
+    Registration checks option combinations separately."""
     return dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
                 crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
                 dir_chunk=dir_chunk, stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
@@ -161,7 +165,9 @@ def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=
 
 
 def case(name, *args, **kwargs):
-    """Registers a case. `stderr=True` also compares what the library wrote
+    """Return a decorator registering a unique case and its comparison rules.
+
+    `stderr=True` also compares what the library wrote
     to stderr (raw `fprintf`s of the pin; GLib logs are the `logs` field),
     with the scratch directory names normalised. `abort=<value>` marks a
     class (c) site: the pin
@@ -171,17 +177,16 @@ def case(name, *args, **kwargs):
     class (b) site: the pin must die of SIGSEGV (after the stderr it wrote
     up to then), and the subject must exit normally, write the same stderr
     bytes and answer `<fields>` (a dict of result fields). `userdir=True`
-    also holds the user directory a side leaves behind (file names, the
-    `user.conf` text, the size of each library chunk) to the pin's, for an
+    also compares the normalized user-directory listings, for an
     abort that comes after the pin has written some of its profile.
     `abort_logs=<list>` overrides the expected subject `logs` list when the
     operation already logged a common entry earlier (e.g. the init critical
     before the candidate warning). `fatal=True` runs both sides with
-    `G_DEBUG=fatal-criticals`; `both_abort=True` (implied fatal) expects both
-    sides to die of the same GLib fatal-log signal (SIGABRT or SIGTRAP) and
-    compares the raw stderr (GLib process id and
-    timestamp normalised) and the partial user directory instead of a
-    surviving subject result. `cells`
+    `G_DEBUG=fatal-criticals`; `both_abort=True` requires `fatal=True` and
+    expects both sides to die of the same GLib fatal-log signal (SIGABRT
+    or SIGTRAP). It compares stderr (GLib process id and timestamp
+    normalised) and the partial user directory when their respective
+    flags are set, instead of a surviving subject result. `cells`
     names the DBM cells whose storage format the case's fixture reproduces;
     a case skipped on the others prints `SKIP` instead of a verdict.
     `either=True` (with both `abort=` and `crash=`) is for a fixture whose
@@ -196,13 +201,14 @@ def case(name, *args, **kwargs):
     reads them with the host libc, so on a host whose scanner accepts one
     the pin loads what the subject refuses. Only that difference (the pin
     created its context; the subject refused `table.conf`) prints
-    `HOST-DEPENDENT` instead of `DIFFER` and is not a failure; any other
-    difference stays a DIFFER. A MATCH is reported as such on any host.
+    `HOST-DEPENDENT` instead of `DIFFER` outside `--expect-parent` and is
+    not a failure; any other difference stays a DIFFER. A MATCH is reported as such on any host.
     `dir_chunk='user'|'system'` (with `abort=`) is for a `table.conf` row
     without a file name, which makes the pin read that directory of the
     case as a chunk. `MemoryChunk` asserts on the `read` of a directory
     (the class (c) site) only where `lseek(SEEK_END)` on it answers the
-    8-byte header or more (`memory_chunk.h:424-434`, `:483-493`), and the
+    8-byte header or more (`MemoryChunk::load` and `MemoryChunk::mmap` in
+    `src/include/memory_chunk.h` at pin 074a2219), and the
     file system of the scratch directory decides that:
     `directory_reads_as_a_chunk` asks this host. Where it answers less
     (tmpfs refuses `SEEK_END` on a directory), the load is an ordinary
@@ -225,8 +231,18 @@ def case(name, *args, **kwargs):
     `issues=<tags>` names the issues, register rows or lane tags the case
     guards (`'640'`, `'row:54'`, `'W11'`), the selectors of `--issue`; a
     case's family for `--family` is the text before the first `/` of its
-    ID, when it has one."""
+    ID, when it has one.
+
+    `policy_record` links a discrepancy record whose evidence is checked at
+    verdict time. Accepted differences are reported as `POLICY-ACCEPTED`,
+    never `MATCH`; registration checks option compatibility, not the record's
+    contents."""
     def register(fn):
+        """Store the case specification and return the original function.
+
+        Reject duplicate IDs with ValueError and assert the required option
+        combinations before modifying CASES. Policy records cannot be combined
+        with the signal, host-dependent or profile-comparison exceptions."""
         if name in CASES:
             raise ValueError('duplicate case name: %s' % name)
         spec = case_spec(*args, fn=fn, case_id=name, **kwargs)
@@ -243,12 +259,16 @@ def case(name, *args, **kwargs):
 
 
 def normal_tag(tag):
-    """`#640`, `640`, `W11`, `row:54` and `Row 54` are the same selector."""
+    """Normalize an issue selector by stripping whitespace and leading hashes.
+
+    Lowercase the result and canonicalize a leading "Row 54" or "row:54"
+    to "row:54"; numeric issue IDs and lane tags remain distinct."""
     tag = str(tag).strip().lstrip('#').lower()
     return re.sub(r'^row[ :]*', 'row:', tag)
 
 
 def family_of(name):
+    """Return the prefix before the first slash, or None if there is no slash."""
     return name.split('/', 1)[0] if '/' in name else None
 
 
@@ -267,10 +287,14 @@ def tag_index():
 
 
 class SelectionError(ValueError):
+    """Report an unknown selector or a selection with no case IDs."""
     pass
 
 
 def case_names(value):
+    """Split comma-separated case IDs without trimming or deduplicating them.
+
+    Raise SelectionError if any component is empty or whitespace-only."""
     names = value.split(',')
     if any(not name.strip() for name in names):
         raise SelectionError('--cases must not contain an empty value')
@@ -278,9 +302,15 @@ def case_names(value):
 
 
 def select_cases(cases=None, issues=(), families=()):
-    """The selected case IDs in run order and, per ID, why it was selected.
-    Raises SelectionError, naming what is registered, for an unknown ID, an
-    unknown tag or a selection that matches nothing."""
+    """Return case IDs in selection order and the reasons accumulated per ID.
+
+    Process explicit IDs first, then issue selectors, then families; each
+    issue or family contributes sorted IDs. Keep the first occurrence's
+    position and append all reasons, including repeated selectors. With no
+    selectors, choose every non-axis-C case in sorted order. Axis C can be
+    selected explicitly but is absent from issue and family indexes.
+    Raise SelectionError for unknown selectors, empty comma components or
+    an empty selection; never fall back to the default suite on an error."""
     index = tag_index()
     chosen = {}
     for name in case_names(cases) if cases is not None else ():
@@ -336,20 +366,24 @@ def plan_lines(names, reasons, pinyin_so, zhuyin_so, prefix, cell):
 
 
 def host_scanf_accepts(spelling):
-    """Whether this host's libc converts `spelling` with `%f`, as the pin's
-    `fscanf` does. The pin's workers run on this libc."""
+    """Test whether the host libc converts one float from the spelling's prefix.
+
+    Call sscanf with %f in the current numeric locale, without requiring
+    the entire string to be consumed or changing the locale. This checks
+    the conversion used by SystemTableInfo2::load in src/storage/table_info.cpp
+    at pin 074a2219; that loader sets LC_NUMERIC to C before scanning."""
     scanned = C.c_float()
     return C.CDLL(None).sscanf(spelling.encode(), b'%f', C.byref(scanned)) == 1
 
 
 def pin_loaded_subject_refused_table_conf(pin, subject):
-    """The one difference a host-libc `%f` explains: the pin created its
-    context and the subject refused `table.conf` with its single message.
-    The pin's stderr must be exactly its fresh-profile line,
-    `open <user dir>/user.conf failed.` (`UserTableInfo::load` writes it
-    with no trailing newline when the empty user directory has no
-    `user.conf`: `table_info.cpp:330-333` at 074a2219), so any other pin
-    diagnostic, and an empty one, stays a DIFFER."""
+    """Recognize successful pin initialization paired with subject table refusal.
+
+    Require zero exits, ctx exactly True for the pin and False for the
+    subject, and only the expected user.conf-open and table.conf-load
+    diagnostics. Other result fields are not checked. The pin diagnostic
+    has no trailing newline, as emitted by UserTableInfo::load in
+    src/storage/table_info.cpp at pin 074a2219."""
     return (pin['exit'] == 0 and subject['exit'] == 0
             and (pin['result'] or {}).get('ctx') is True
             and (subject['result'] or {}).get('ctx') is False
@@ -359,17 +393,16 @@ def pin_loaded_subject_refused_table_conf(pin, subject):
 
 @functools.cache
 def directory_reads_as_a_chunk():
-    """Whether `MemoryChunk::load` and `::mmap` get past `file_size < header`
-    on a directory of this run's scratch file system: `lseek(fd, 0,
-    SEEK_END)` answers the 8-byte header or more, so the `read` after it
-    fails with `EISDIR` and the pin asserts (`memory_chunk.h:424-434`,
-    `:483-493` at 074a2219). `run_main` makes the scratch in the default
-    temporary directory, and so does this probe. ext4 answers the htree end
-    of file; tmpfs refuses `SEEK_END` on a directory (`EINVAL`), which is
-    the `-1` the pin compares. The probe directory holds one entry, as each
-    directory the `dir_chunk` cases read does by then (the system tables;
-    the `user.conf` that `check_format` saves, `pinyin.cpp:187`), for a
-    file system that sizes a directory by its entries."""
+    """Cache whether a temporary directory passes the pin's 8-byte size gate.
+
+    Create a directory containing user.conf in the default temporary
+    directory, seek to its end, and remove it on exit. Return False if the
+    seek raises OSError; creation and open failures propagate. The cached
+    result is reused even if the temporary-directory setting later changes.
+    This reproduces only the size check in MemoryChunk::load and
+    MemoryChunk::mmap in src/include/memory_chunk.h at pin 074a2219, not
+    their subsequent reads. The single entry models the user.conf saved by
+    check_format in src/pinyin.cpp before the directory-chunk cases run."""
     with tempfile.TemporaryDirectory(prefix='contract-dir-probe-') as probe:
         Path(probe, 'user.conf').touch()
         fd = os.open(probe, os.O_RDONLY)
@@ -382,9 +415,19 @@ def directory_reads_as_a_chunk():
 
 
 class Kit:
-    """One library, one fresh user dir; contexts and instances on demand."""
+    """Hold a worker's native libraries, fresh profile and lazy facade handles.
+
+    Capture GLib diagnostics through process-wide handlers. Context and
+    instance handles are cached on demand; the kit does not automatically
+    free them, remove its profile or unregister the handlers."""
 
     def __init__(self, mode, so, data, scratch):
+        """Load the facade and GLib, install log handlers and create a user directory.
+
+        Check the selected tkrzw runtime before loading the facade. Register
+        handlers for both facade domains and the default GLib domain, retaining
+        the callback on this object. Create the profile under scratch; native
+        context initialization is deferred until requested."""
         self.mode, self.data, self.scratch = mode, data, scratch
         check_tkrzw(os.environ.get("CONTRACT_DIFF_CELL", CELL), "contract-diff.py", os.environ.get("OXPINYIN_RUNTIME_SIDE", "subject"), so)
         self.lib = C.CDLL(so, use_errno=True)
@@ -396,6 +439,10 @@ class Kit:
         cb_type = C.CFUNCTYPE(None, S, U, S, P)
 
         def handler(domain, level, message, _unused):
+            """Append the domain, level and message to the kit's log lists.
+
+            Decode nonempty strings as UTF-8 strictly; record None for NULL
+            or empty domain and message values."""
             self.logs.append([domain.decode() if domain else None, level])
             self.log_messages.append(message.decode() if message else None)
         self._handler = cb_type(handler)
@@ -409,16 +456,27 @@ class Kit:
         self.init_seconds = 0.0  # the facade `init` calls: fixture, not case work
 
     def fn(self, name, res, *args):
+        """Set a facade symbol's ctypes return and argument types, then return it.
+
+        Prefix name with the kit's mode; missing symbols raise AttributeError.
+        This changes the loaded function's signature without calling it."""
         f = getattr(self.lib, self.mode + '_' + name)
         f.restype, f.argtypes = res, list(args)
         return f
 
     def per_call_step(self):
+        """Return a no-op context manager for per-call instrumentation hooks."""
         return contextlib.nullcontext()
 
     def init(self, system=None, user=None, *, literal=False):
-        """literal=True passes None/empty bytes unchanged instead of defaults."""
+        """Call the facade initializer and accumulate elapsed monotonic seconds.
+
+        Replace false system or user values with the kit defaults unless
+        literal is true. Pass None and bytes through; encode strings as UTF-8.
+        Return the native pointer, possibly NULL, without caching or asserting
+        success. Accumulate time even if argument conversion or the call raises."""
         def raw(value):
+            """Preserve None and byte strings; encode other values with their encode method."""
             return value if value is None or isinstance(value, bytes) else value.encode()
         if not literal:
             system, user = system or self.data, user or self.user
@@ -430,24 +488,35 @@ class Kit:
 
     @property
     def ctx(self):
+        """Initialize and cache the native context on first access, asserting success.
+
+        A NULL result raises AssertionError and leaves initialization eligible
+        for another attempt on the next access."""
         if self._ctx is None:
             self._ctx = self.init()
             assert self._ctx, 'init failed'
         return self._ctx
 
     def alloc(self):
+        """Allocate a fresh instance from the cached context and assert it is non-NULL.
+
+        Return the pointer without replacing the kit's cached instance."""
         inst = self.fn('alloc_instance', P, P)(self.ctx)
         assert inst
         return inst
 
     @property
     def inst(self):
+        """Allocate and cache one native instance on first access."""
         if self._inst is None:
             self._inst = self.alloc()
         return self._inst
 
     def text(self, ptr):
-        """Reads and frees a caller-owned string; None for NULL."""
+        """Decode and free a caller-owned GLib string, returning None for NULL.
+
+        Replace invalid UTF-8 bytes during decoding and release the non-NULL
+        pointer with g_free."""
         if not ptr:
             return None
         value = C.string_at(ptr).decode('utf-8', 'replace')
@@ -456,6 +525,19 @@ class Kit:
 
 
 def worker(mode, so, data, name):
+    """Run one isolated case, print its observation and exit without teardown.
+
+    Consume CONTRACT_DIFF_SPAWNED and disable core dumps. For ordinary cases,
+    create a kit under TMPDIR, run the registered function and attach its GLib
+    logs. Axis-C workers also disable process dumpability and include log
+    messages. If a spawn timestamp was supplied, print a separate timing line
+    in seconds, charging facade initialization to fixture time. Flush the JSON
+    result before os._exit(0); failures before that point can raise or terminate
+    the process, and the caller is responsible for scratch cleanup.
+
+    In profile-rows mode, instead read the container at data using name as its
+    kind, print JSON rows and return normally. Validate the tkrzw reader anchor
+    when applicable; an uncertified anchor raises ValueError."""
     # The driver's spawn time, popped so a nested worker (axis C's reopen)
     # neither inherits it nor prints a timing line into a parsed stdout.
     spawned = os.environ.pop('CONTRACT_DIFF_SPAWNED', None)
@@ -496,6 +578,7 @@ def worker(mode, so, data, name):
 
 
 def observed(result):
+    """Return a shallow copy omitting top-level keys that start with a tilde."""
     return {k: v for k, v in result.items() if not k.startswith('~')}
 
 
