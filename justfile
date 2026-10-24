@@ -63,6 +63,10 @@ fmt *args:
 fmt *args:
     @cargo fmt @args; exit $LASTEXITCODE
 
+# Regenerate the GLib/libc call-site TSV from a pinned libpinyin checkout.
+audit-glib-call-sites pin:
+    @uv run --no-project --managed-python --python cpython@3.15.0+gil python -X lazy_imports=normal tools/audit/glib_call_sites.py {{pin}}
+
 # Lint with the native heavy slot and memory admission.
 [unix]
 clippy *args:
