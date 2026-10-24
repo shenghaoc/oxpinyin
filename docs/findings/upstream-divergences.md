@@ -38,7 +38,8 @@ change.
   and producer/consumer proof in the record. Zhuyin has no export iterator.
 - **Disposition:** POLICY-ACCEPTED with both expected observations checked;
   ordinary scalar controls and export-symbol absence remain MATCH. No
-  production behavior change. Verification pending.
+  production behavior change. Verified 2026-10-24 UTC on bdb; the combined
+  #894 gate reports 15 POLICY-ACCEPTED and 9 MATCH.
 
 ### Embedded zero in stored phrase text — language/runtime quirk (#894)
 
@@ -51,7 +52,8 @@ change.
   row with NULL text. These are not prefix strings handed to C.
 - **Disposition:** POLICY-ACCEPTED, with the full forward/backward trace,
   valid-input proof and expected observations in the record. No valid-input
-  change and no prior ruling reversed. Verification pending.
+  change and no prior ruling reversed. Verified 2026-10-24 UTC on bdb;
+  the named subject mutation fails exactly the five NUL marked cases.
 
 ### Bigram export iterator's pinyin buffer
 

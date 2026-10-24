@@ -1,6 +1,6 @@
 # 894-nul-phrase-text — embedded zero in stored phrase text
 
-- **Status:** accepted under the existing category; verification pending · 2026-10-24 UTC · issue #894.
+- **Status:** accepted under the existing category; verified on bdb · 2026-10-24 UTC · issue #894.
 - **Disposition:** POLICY-ACCEPTED (never MATCH).
 - **Policy limb:** language/runtime quirk, limb 3. No transcendental math,
   invalid memory access or pin assertion makes this class (a), (b) or (c).
@@ -50,7 +50,8 @@ sentence path for NBEST. Prefix prediction can begin beyond a stored
 zero (`pinyin.cpp:2018-2022`); that slice may itself be NUL-free. A slice
 starting before zero is subject to this record. Punctuation is separate
 (#1144). Candidate choice keeps token/readings/constraints, not a repaired
-copy of the visible prefix; addon promotion can copy the malformed item.
+copy of the visible prefix; addon promotion copies the malformed item
+(`pinyin.cpp:2534-2558`).
 
 Sentence getters consume the stored n-best result only (`pinyin.cpp:1464-1481`,
 `zhuyin.cpp:983-998`). Parsing and prefix/phrase lookup select tokens;
@@ -65,8 +66,16 @@ common `PhraseExportCursor`/`ExportRow` covers these producers.
 dictionary tool is not a supported Rust library interface. Bigram export
 converts predecessor and successor separately (`pinyin.cpp:822-830`) and
 joins their prefixes; its independent vector-overread exception (row 1)
-is not admitted here. Native save preserves phrase words and count changes;
-this work does not rewrite data to prefix text.
+is not admitted here. Rust's `ExportSource::render` and
+`BigramExportWalk::load_row` in `export_rows.rs` keep the complete strings,
+concatenate them and retain the pronunciation cross-product.
+`ContextCore::export_bigram_rows` therefore retains the full Rust text.
+The C bigram getter's `owned_cstr` writes NULL for that text, preserves
+reading/count and returns the cursor's `more` result. There is no zhuyin
+bigram export API either. The independent pin fault prevents using this
+path as a deterministic phrase-text witness; it keeps its separate ruling.
+Native save preserves phrase words and count changes; this work does not
+rewrite data to prefix text.
 
 The text producers are system/addon chunks, user chunks and their journals;
 C import, pinyin remember, and table generation. The latter three all
@@ -103,20 +112,38 @@ false and omitted rows are explicit record contents, not hidden parity.
 
 ## Tests and methodology
 
-`tools/bisection/contract-diff.py --issue 894` selects
+`tools/bisection/contract-diff.py` with `--issue 894` selects
 `phrase-text/{pinyin,zhuyin}-nul-{candidate,sentence,export}` and the
 ordinary `*-valid-*` controls. The malformed candidate/sentence paths
 and pinyin export are POLICY-ACCEPTED; zhuyin export absence is MATCH.
 The sentence fixture includes a following token to expose per-phrase
 truncation versus whole-string refusal. Raw bytes, returns, NULL versus
 untouched outputs, readings/counts and logs are compared with the current
-record's exact observations on **both** sides. No result is learned by
-running the oracle. Marker negative tests require missing/stale records
-and unexpected observations to fail. The named subject mutation and
-reference-cell results are reported after verification; raw output stays
-ephemeral. **Prior rulings:** none reversed. **Conclusion:** retain normal
-Rust behavior under limb 3; source classification complete, verification
-pending (2026-10-24 UTC).
+record's exact observations on **both** sides. Expectations were derived
+from source. Marker negative tests require missing/stale records
+and unexpected observations to fail.
+
+**Results (2026-10-24 UTC):** the final bdb reference gate passed all 24
+#894 cases: **15 POLICY-ACCEPTED, 9 MATCH**, no skips/failures. All five
+NUL marked cases matched both prescribed observations. The 135 driver
+tests and Rust formatting passed; no production crate changed. Full
+environment and reproduction commands are in the
+[non-scalar record](894-non-scalar-phrase-text.md#tests-and-methodology).
+
+**Named subject mutation: nul-as-replacement.** Temporarily change the
+single expression `char::from_u32(code)` in
+`crates/oxpinyin-data/src/phrase_library.rs`, `PhraseItemView::phrase_chars`,
+to `char::from_u32(if code == 0 { 0xfffd } else { code })` and run the same
+`compat.sh --runtime docker --cell bdb --runners contract-diff --issue 894`
+gate. Keep the pin, fixtures and records unchanged. The gate exited 1:
+**5 DIFFER, 10 POLICY-ACCEPTED, 9 MATCH**. The five failures were exactly
+`phrase-text/{pinyin,zhuyin}-nul-{candidate,sentence}` and
+`phrase-text/pinyin-nul-export`; each unexpected subject observation failed
+instead of receiving an accepted disposition. The temporary mutation was
+removed, restoring the Rust source byte-for-byte to the successful gate.
+Raw output stays local and ephemeral. **Prior rulings:** none reversed.
+**Conclusion:** retain normal Rust behavior under limb 3; source proof and
+reference-cell verification complete (2026-10-24 UTC).
 
 ## Binding observations
 
