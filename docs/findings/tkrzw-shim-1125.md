@@ -8,7 +8,7 @@ No performance result exists for this prototype.
 The original local prototype `af357bdef8b993169f829a52583a7a7fe367db0e`
 is preserved under `local/1125-unvalidated-af357bde`.
 
-## Cloud status and policy STOP
+## Cloud status and deferred policies
 
 Recorded 2026-10-24T04:16:00Z in the fresh Codex Debian 13 x86-64 session.
 The source checkpoint was fetched from the authorized branch and checked
@@ -16,15 +16,17 @@ to have exactly `838dabc2` as parent, with Shenghao Chen as both author
 and committer. Work uses `/tmp/oxpinyin-1125`; the shared checkout stays
 on its original branch. No checkout `.agents/skills` directory exists.
 
-Function-order regeneration is **blocked, not passed**. The required
+Function-order regeneration is **deferred, not passed**. The required
 `docs/packaging.md` Regeneration workflow uses ext4, teardown-profile
 provisioning and startup/steady profiling through the teardown boundary.
-The current instruction holds those campaigns; this host also reports
+The maintainer clarified that regeneration moves to the first Ubuntu-slot
+step, before measurements, and cloud correctness continues on debug
+builds only. This host also reports
 tmpfs for the worktree/TMPDIR and overlay for `/workspace`. No generator,
 ordered shipping relink or layout-resolution claim has been made. No
 unordered shipping fallback was used. The existing tkrzw policies remain
 stale. Final regenerated policies must be folded into the prototype code
-commit once that required workflow is authorized and available.
+commit there. Stale policies are expected at the cloud checkpoint.
 
 Native completion checks at `58566b3c` passed:
 
@@ -100,9 +102,84 @@ git diff -U0 origin/main...HEAD -- '*Cargo.toml' | grep -E '^[+-][^+-].*(bdb|tkr
 ```
 
 Checks 1 and 2 select bdb, kc and tkrzw. Check 3 prints a comment;
-its existing regex does not match the tkrzw feature line itself.
-Contracts, same-data, cross-load saved bytes and revert/mutation gates
-are pending. No green completion gate or adoption conclusion is claimed.
+its existing regex does not match the tkrzw feature line itself (#1128).
+That separate issue is not changed here.
+
+### Completed cloud differential checks
+
+Recorded 2026-10-24T04:37:41Z. Subject artifacts were built in debug,
+opt-level 1 at `49ea0fc9`; source equals `58566b3c`. The supported
+cell-artifacts build records the worktree, cell, profile and artifact
+identities separately for each target. A first `--no-build` request on
+the manually built revert target was refused for having no identity;
+the supported build path then recorded and verified it. No identity was
+handwritten and no target was shared across worktrees.
+
+`tools/cloud/setup.sh --cells 'bdb kc tkrzw'` completed unchanged:
+both oracle facade hashes and both data manifests per cell verified.
+Both subject tkrzw facades, both pin facades and the named-mutant facades
+resolve through `runtime.sh` to the same certified library. `nm -D -C`
+on each subject shows the HashDBM, TreeDBM, TinyDBM and BabyDBM constructor
+imports, and no PolyDBM or `tkrzw_dbm_*` import. Thus these debug libraries
+contain the concrete-class prototype.
+
+The existing #1114 selection ran with:
+
+```sh
+just heavy -- tools/bisection/run-contract-diff.sh tkrzw "$PIN" \
+  "$TARGET/tkrzw/debug/libpinyin_capi.so" \
+  "$TARGET/tkrzw/debug/libzhuyin_capi.so" -- --issue 1114
+```
+
+Both `issue1114-collision-load-save-pinyin` and
+`issue1114-collision-load-save-zhuyin` MATCH. The existing runner compares
+saved bytes directly and executes pin-to-subject and subject-to-pin
+reload/save in fresh workers: eight successful workers total. Only the
+named timestamp field at bytes 48–55 is masked. Byte 56, lengths, all
+bucket pointers, links and payloads remain exact. The native collision
+regression checks bucket-chain order independently. Neither comparator
+nor mutation assertions changed from #1114.
+
+Full suites use:
+
+```sh
+uv run --no-project --managed-python --python cpython@3.15+gil \
+  python -X lazy_imports=normal tools/bisection/run-all.py \
+  --runners contract-diff,same-data-dir-diff --cells bdb,kc,tkrzw \
+  --oracle-root /workspace/oxpinyin-env/cloud-cache/oracle \
+  --target-root /workspace/oxpinyin-1125-targets \
+  --runner-timeout contract-diff=14400 \
+  --runner-timeout same-data-dir-diff=7200 \
+  --log-dir /tmp/oxpinyin-1125-gate-output
+```
+
+The first same-data runs failed to compile `tie-order-diff.c` because
+GLib's pkg-config paths name `/usr`, while its installed headers are in
+the pre-existing task-native prefix. Adding the two provisioned GLib
+include directories to task-local CPATH fixes that environment error.
+The full same-data runner then passed all 15 drivers on bdb, kc and
+tkrzw, including dynamic-adjust non-vacuity and both on/off comparisons.
+That rerun used the command above with `--runners same-data-dir-diff
+--no-build` and a separate local output directory. No subject source,
+driver, expectation or compiler warning setting changed.
+
+The full BDB contract result is 2,893 MATCH, 2 SKIP, 4 HOST-DEPENDENT,
+0 DIFFER: 2,899 total. Revert-and-check built the exact parent `838dabc2`
+in `/tmp/oxpinyin-1125-base`, using its own
+`/workspace/oxpinyin-1125-base-targets/bdb`. Its full BDB contract suite
+also passed with exactly those counts and verdicts, using the command
+above with `--runners contract-diff --cells bdb` and that target root.
+The prototype has no observable effect on BDB in these gates.
+
+A named tkrzw mutation, "force OPEN_NO_CREATE on HashDBM saves", was
+prepared in a third isolated worktree/target. It changes only the shim's
+open-option expression to select OPEN_NO_CREATE for every HashDBM.
+Source predicts failure when save_db removes and then tries to create
+the output file. The unchanged #1114 selection is queued with
+`--expect-parent`; restoration and its result are pending.
+
+KC and tkrzw full contracts remain active. No full green completion gate
+or adoption conclusion is claimed yet. No measurements have started.
 
 ## Source inspection
 
