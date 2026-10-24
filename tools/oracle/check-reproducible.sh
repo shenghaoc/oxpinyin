@@ -12,6 +12,7 @@ set -euo pipefail
 #   <dbm> <library> <sha256>
 #
 # Usage: check-reproducible.sh [--engine docker|podman] [--image IMAGE] [--jobs N]
+#                              [--platform linux/amd64|linux/arm64]
 #
 # Without --image the `deps` stage of tools/oracle/Dockerfile.oracle is built
 # first (the pinned debian:testing digest plus the pinned apt snapshot). The
@@ -19,9 +20,12 @@ set -euo pipefail
 # (--libs-only).
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=pin.sh
+source "$repo/tools/oracle/pin.sh"
 engine=
 image=
 jobs=$(nproc 2>/dev/null || echo 2)
+platform=linux/amd64
 
 while (($#)); do
 	case $1 in
@@ -37,8 +41,12 @@ while (($#)); do
 		jobs=$2
 		shift 2
 		;;
+	--platform)
+		platform=$2
+		shift 2
+		;;
 	-h | --help)
-		sed -n "4,21p" "${BASH_SOURCE[0]}"
+		sed -n "4,22p" "${BASH_SOURCE[0]}"
 		exit 0
 		;;
 	*)
@@ -48,6 +56,13 @@ while (($#)); do
 	esac
 done
 
+case $platform in
+linux/amd64 | linux/arm64) ;;
+*)
+	printf 'unsupported platform: %s (use linux/amd64 or linux/arm64)\n' "$platform" >&2
+	exit 2
+	;;
+esac
 if [[ -z $engine ]]; then
 	for e in docker podman; do
 		command -v "$e" >/dev/null 2>&1 && engine=$e && break
@@ -79,7 +94,9 @@ fi
 
 if [[ -z $image ]]; then
 	image=oxpinyin-oracle-deps:check
-	"$engine" build --platform linux/amd64 "${build_flags[@]}" --target deps -f "$repo/tools/oracle/Dockerfile.oracle" -t "$image" "$repo/tools/oracle" >&2
+	platform_build=()
+	[[ $platform == linux/amd64 ]] || platform_build=(--build-arg "ORACLE_PLATFORM=$platform")
+	"$engine" build --platform "$platform" "${platform_build[@]}" "${build_flags[@]}" --target deps -f "$repo/tools/oracle/Dockerfile.oracle" -t "$image" "$repo/tools/oracle" >&2
 fi
 
 scratch=$(mktemp -d)
@@ -88,7 +105,7 @@ trap 'rm -rf "$scratch"' EXIT
 # build_one TAG WORKDIR PREFIX DBM: one clean build, then the library hashes.
 build_one() {
 	local tag=$1 work=$2 prefix=$3 dbm=$4
-	"$engine" run -i --platform linux/amd64 "${run_flags[@]}" \
+	"$engine" run -i --platform "$platform" "${run_flags[@]}" \
 		-v "$repo/tools/oracle/build-oracle.sh:/usr/local/bin/build-oracle.sh:ro" \
 		"$image" bash -s -- "$dbm" "$work" "$prefix" "$jobs" <<'INCONTAINER' >"$scratch/$tag.out"
 set -eu
@@ -120,7 +137,7 @@ for dbm in bdb kc tkrzw; do
 	if cmp -s "$scratch/$dbm-a.out" "$scratch/$dbm-b.out"; then
 		while read -r lib sum; do
 			printf '%s %s %s\n' "$dbm" "$lib" "$sum"
-			recorded=$(sed -n "s/^${lib}_sha256_$dbm=//p" "$repo/tools/oracle/oracle-pin.txt")
+			recorded=$(pin_platform_field "$repo/tools/oracle/oracle-pin.txt" "$platform" "${lib}_sha256_$dbm")
 			if [[ $recorded != "$sum" ]]; then
 				printf 'FAIL: %s %s is %s, tools/oracle/oracle-pin.txt records %s\n' "$dbm" "$lib" "$sum" "${recorded:-nothing}" >&2
 				status=1

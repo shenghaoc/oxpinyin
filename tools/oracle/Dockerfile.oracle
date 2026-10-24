@@ -14,8 +14,10 @@
 # The build context is tools/oracle/ (the recipe needs nothing else):
 #   docker build -f tools/oracle/Dockerfile.oracle -t oxpinyin-oracle tools/oracle
 
-# The hashes in oracle-pin.txt are for linux/amd64 (platform=): every stage is
-# pinned to it, and the build and run commands pass --platform as well.
+# Every stage follows ORACLE_PLATFORM. It defaults to linux/amd64, so the
+# amd64 build command is unchanged; arm64 callers pass
+# --build-arg ORACLE_PLATFORM=linux/arm64. The frozen hashes are selected per
+# platform; the build and run commands pass --platform as well.
 ARG ORACLE_PLATFORM=linux/amd64
 
 FROM --platform=$ORACLE_PLATFORM debian:testing@sha256:dab11cdb0a9dcf4bbd68f671635b35f1f726b452b92396875b69bb2c7daa42a9 AS deps
@@ -58,6 +60,5 @@ RUN set -eu; \
         rm -rf "/build/$dbm"; \
     done
 
-ARG ORACLE_PLATFORM=linux/amd64
 FROM --platform=$ORACLE_PLATFORM scratch
 COPY --from=build /opt/pinyin-oracle /opt/pinyin-oracle
