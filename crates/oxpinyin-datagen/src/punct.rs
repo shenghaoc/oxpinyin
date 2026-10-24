@@ -102,7 +102,7 @@ fn group_rows(rows: &[PunctRow]) -> BTreeMap<u32, Vec<String>> {
 /// u32 zero terminator, successive punctuations concatenated.
 ///
 /// Entries are emitted in ascending key-byte order — the crate-wide
-/// [`Entries`](crate::Entries) contract. The keys stay little-endian
+/// [`Entries`] contract. The keys stay little-endian
 /// (libpinyin's `punct.bin` layout), under which the `BTreeMap`'s integer
 /// token order is *not* key-byte order (LE byte order diverges from
 /// integer order at every 256 boundary), so the final sort is by encoded
