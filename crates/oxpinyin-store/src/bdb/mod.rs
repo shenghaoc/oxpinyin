@@ -401,7 +401,7 @@ impl WriteStore for BdbStore {
     type Txn<'a> = BdbTxn<'a>;
 
     /// A system table, created as `attach` creates one: mode 0644
-    /// ([`ffi::SYSTEM_FILE_MODE`]).
+    /// (`ffi::SYSTEM_FILE_MODE`).
     fn create(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open(path, ffi::DB_BTREE, false, true, ffi::SYSTEM_FILE_MODE)?,
@@ -426,7 +426,7 @@ impl WriteStore for BdbStore {
     }
 
     /// A user index table, created as `save_db` creates one: mode 0600
-    /// ([`ffi::USER_FILE_MODE`]).
+    /// (`ffi::USER_FILE_MODE`).
     fn create_user(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open(path, ffi::DB_BTREE, false, true, ffi::USER_FILE_MODE)?,
@@ -434,7 +434,7 @@ impl WriteStore for BdbStore {
     }
 
     /// The user bigram, created as `Bigram::save_db` creates it: a
-    /// `DB_HASH` file, mode 0600 ([`ffi::USER_FILE_MODE`]).
+    /// `DB_HASH` file, mode 0600 (`ffi::USER_FILE_MODE`).
     fn create_user_hash(path: &Path) -> Result<Self, StoreError> {
         Ok(Self {
             db: Db::open(path, ffi::DB_HASH, false, true, ffi::USER_FILE_MODE)?,
