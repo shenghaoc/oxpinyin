@@ -75,7 +75,8 @@ on `main` at `d1f9d42` plus this change, against the pin at 074a2219:
 | kc | 2,872 MATCH, 0 DIFFER, 13 SKIP, 4 HOST-DEPENDENT | IDENTICAL on 15 drivers |
 | tkrzw | 2,872 MATCH, 0 DIFFER, 13 SKIP, 4 HOST-DEPENDENT | IDENTICAL on 15 drivers |
 
-- SKIP: fixtures in another backend's format.
+- SKIP: backend-scoped coverage exclusions at the recorded revision, including
+  behaviours covered only on BDB.
 - HOST-DEPENDENT: the four
   `table-conf-lambda{,-hex}-exponent-without-digits{,-zhuyin}` cases. They are
   registered `host_scanf` cases: this host's glibc scanner accepts a spelling
@@ -99,8 +100,9 @@ policies:
 `tools/packaging/function_order.py` verified both shim facades as ordered
 over all 330 / 310 paths. Both relinks printed `function ordering: 0 of 51
 C++ policy paths are not in this build; skipped`, then "using measured
-policy". The measured shim was built from a checkpoint whose crates,
-policies and tools are byte-identical to the PR's.
+policy". The measured shim was built from a checkpoint whose KC-relevant
+shipping inputs, policies and measurement tools are byte-identical to the
+PR's.
 
 The job ran in three parts:
 
@@ -133,6 +135,13 @@ These are the four-arm campaign's `stripped bytes` lines (Commands):
 | pinyin `journals` | 16,560 | 15,960 | 15,956 | 16,486 | −600 | −526 |
 | zhuyin `phrases` | 12,258 | 11,792 | 11,792 | 11,952 | −466 | −160 |
 | zhuyin `journals` | 12,299 | 11,824 | 11,802 | 11,966 | −475 | −142 |
+
+The observed reduction of 466–600 KiB is a difference of per-arm medians.
+`tools/measure-function-order.py` does not compute the paired total-Pss
+control difference and its 95% interval required by §7.5 of
+`docs/findings/tooling-consolidation-python-just.md`, so this table does not
+establish that qualification. The warm teardown M1 results below are
+separately validated evidence.
 
 ### Total Pss at M1, warm teardown `confirm` (KiB, median)
 
@@ -325,9 +334,11 @@ run in this campaign.
 - With its C++ functions in the ordering, the KC code compiled into the
   facade costs +40 KiB of text, +32 of read-only and +4 of writable. Facade
   text after init is 548 / 560 KiB, against the pin's 716 / 676.
-- Total Pss after init falls by 466–600 KiB and ends 142–562 KiB below the
-  pin in all four cells. At M1 it ends 140–636 KiB below the pin, with every
-  shim-run control inside its bound.
+- Total Pss after init has an observed difference of medians of −466 to
+  −600 KiB against base and −142 to −562 KiB against the pin in all four
+  cells, without paired-control qualification. Separately, warm teardown
+  M1 ends 140–636 KiB below the pin, with every shim-run control inside its
+  bound.
 - Instructions: init −0.23 to −0.30% against an exact control. Per store
   operation, 0.980–1.004× base, all with exact controls. No first-candidate
   or steady gain is claimed.
