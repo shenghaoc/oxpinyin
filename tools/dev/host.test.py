@@ -1,5 +1,6 @@
 #!/usr/bin/env -S uv run --no-project --managed-python --python cpython@3.15+gil python -X lazy_imports=normal
 """Unit tests for tools.dev.host."""
+import ctypes
 import os
 from pathlib import Path
 import subprocess
@@ -42,6 +43,32 @@ class HostTests(unittest.TestCase):
         value = host.memory_available_mib()
         self.assertIsInstance(value, int)
         self.assertGreater(value, 0)
+
+    def test_macos_available_counts_speculative_pages_once(self):
+        libc = mock.Mock()
+        libc.mach_host_self.return_value = 1
+
+        def host_statistics64(_host, _flavor, statistics, _count):
+            values = ctypes.cast(statistics, ctypes.POINTER(host._VMStatistics64)).contents
+            values.free_count = 1024
+            values.inactive_count = 512
+            values.speculative_count = 256
+            return 0
+
+        def host_page_size(_host, size):
+            ctypes.cast(size, ctypes.POINTER(ctypes.c_ulong)).contents.value = 4096
+            return 0
+
+        libc.host_statistics64.side_effect = host_statistics64
+        libc.host_page_size.side_effect = host_page_size
+        with mock.patch.object(host.ctypes, 'CDLL', return_value=libc):
+            # free_count already includes the 256 speculative pages; adding
+            # speculative_count again would report 7 MiB instead of 6 MiB.
+            self.assertEqual(host._macos_available_mib(), 6)
+
+        libc.host_statistics64.side_effect = lambda *_args: 1
+        with mock.patch.object(host.ctypes, 'CDLL', return_value=libc):
+            self.assertIsNone(host._macos_available_mib())
 
     def test_resource_snapshot_reports_available_memory_and_cpus(self):
         snapshot = host.resource_snapshot()
