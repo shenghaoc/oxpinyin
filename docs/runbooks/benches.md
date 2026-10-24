@@ -73,6 +73,16 @@ uv run --no-project --managed-python --python cpython@3.15+gil \
   --arm subject --library "pinyin=$SUBJECT_PREFIX/lib/libpinyin.so.15.0.0"
 ```
 
+For the four-arm Linux `tools/measure-function-order.py` campaign,
+`--emit-samples` additionally prints original timing, memory and steady
+readings as JSON on stdout. Each record retains its arm, round, warmup
+status, library hash and rotating arm order. Timing records include the
+worker's original clock/resource fields; memory records identify their
+warm cache state. This supports paired controls without reconstructing
+samples from independently sorted summaries. Redirect stdout to an owned
+local results file when retention is needed; the controller writes no
+capture files itself and changes no worker scope or cache preparation.
+
 `tools/generate-function-order.py` intentionally profiles unordered inputs to
 derive policies; its output is a policy, not shipping performance figures.
 `tools/profile/run-w8-cycle.sh` uses the thin-LTO `profiling` recipe and makes
