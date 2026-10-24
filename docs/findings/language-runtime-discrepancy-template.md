@@ -86,3 +86,38 @@ settle it).
 6. **No dependency for aesthetics.** Replacing a GLib helper with normal
    Rust is the point; adding a crate to avoid a documented difference is
    a dependency change and stops for approval.
+
+## Existing driver's case marker (#894)
+
+Register an ordinary surviving case with `policy_record="<record>.md"`
+in `tools/bisection/contract-diff.py`. The filename is relative to
+`docs/findings`; the register must link it. The record contains exactly
+one `contract-diff-policy` fenced JSON block:
+
+```json
+{
+  "schema": 1,
+  "record": "<record>",
+  "status": "current",
+  "disposition": "POLICY-ACCEPTED",
+  "cases": {
+    "<exact case ID>": {
+      "pin": {"exit": 0, "result": {"ret": true, "logs": []}, "stderr": ""},
+      "subject": {"exit": 0, "result": {"ret": false, "logs": []}, "stderr": ""}
+    }
+  }
+}
+```
+
+Derive the complete observations from source before executing the case;
+the block is part of the reviewed discrepancy record. Results use the
+case's full JSON shape, including logs; stderr uses the driver's existing
+scratch-path normalization. There are no wildcards or ignored `~` fields.
+Both sides must terminate normally and match their respective expected
+observations exactly. A missing, unregistered, superseded or malformed
+record is INVALID; an unexpected observation is DIFFER and fails even
+under `--expect-parent`. Equality cannot turn a marked case into MATCH.
+The accepted case reports its record and both observations, and contributes
+only to the separate POLICY-ACCEPTED count. Existing abort/crash and
+host-dependent markers cannot be combined with this marker; those cases
+keep their existing class-specific comparison rules.

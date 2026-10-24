@@ -40,7 +40,8 @@ unclassified DIFFER. A current discrepancy record
 (`docs/findings/language-runtime-discrepancy-template.md`) names the case and
 its expected non-MATCH; the disposition is POLICY-ACCEPTED. The case keeps
 its pin and subject observations, and it is never deleted or relabelled
-MATCH. The case marker is added by the child that first needs it.
+MATCH. `policy_record=` links a registered, current record whose
+`contract-diff-policy` JSON block specifies both complete observations.
 
 --expect-parent runs the same cases against a parent build: a case marked
 `control` must still match, every other case must differ.
@@ -142,13 +143,15 @@ WARNING_DOMAIN = {'pinyin': 'libpinyin', 'zhuyin': 'libzhuyin'}
 
 def case_spec(mode='pinyin', control=False, abort=NO_ABORT, stderr=False, crash=None, userdir=False,
               cells=('bdb', 'kc', 'tkrzw'), either=False, host_scanf=(), dir_chunk=None, stderr_varies=False,
-              abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(), *, fn=None):
+              abort_logs=None, fatal=False, both_abort=False, strjoinv_over_read=False, issues=(), *, fn=None,
+              policy_record=None, case_id=None):
     """Build a complete spec from the defaults shared by registration and tests."""
     return dict(fn=fn, mode=mode, control=control, abort=abort, stderr=stderr or crash is not None,
                 crash=crash, userdir=userdir, cells=cells, either=either, host_scanf=tuple(host_scanf),
                 dir_chunk=dir_chunk, stderr_varies=stderr_varies, abort_logs=abort_logs, fatal=fatal,
                 both_abort=both_abort, strjoinv_over_read=strjoinv_over_read,
-                issues=tuple(normal_tag(tag) for tag in issues))
+                issues=tuple(normal_tag(tag) for tag in issues),
+                policy_record=policy_record, case_id=case_id)
 
 
 def case(name, *args, **kwargs):
@@ -218,10 +221,14 @@ def case(name, *args, **kwargs):
     case's family for `--family` is the text before the first `/` of its
     ID, when it has one."""
     def register(fn):
-        spec = case_spec(*args, fn=fn, **kwargs)
+        spec = case_spec(*args, fn=fn, case_id=name, **kwargs)
         assert not spec['either'] or (spec['abort'] is not NO_ABORT and spec['crash'] is not None), name
         assert not spec['both_abort'] or spec['fatal'], name
         assert spec['dir_chunk'] in (None, 'user', 'system') and (spec['dir_chunk'] is None or spec['abort'] is not NO_ABORT), name
+        if spec['policy_record'] is not None:
+            assert not (spec['abort'] is not NO_ABORT or spec['crash'] is not None
+                        or spec['both_abort'] or spec['strjoinv_over_read']
+                        or spec['host_scanf'] or spec['dir_chunk'] or spec['userdir']), name
         CASES[name] = spec
         return fn
     return register
@@ -2179,7 +2186,7 @@ def _(k):
 # same switch (`chewing_large_table2_kyotodb.cpp:498`, `:268`;
 # `chewing_large_table2_tkrzwdb.cpp:465`, `:251`), so each cell's pin dies at
 # its own line.
-def _craft_db(path, rows, dbtype, keep=False):
+def _craft_db(path, rows, dbtype, keep=False, *, system_index=False):
     """A user-table container of raw `key -> value` records in the running
     cell's own format: a Berkeley DB `dbtype` container on bdb, the Kyoto
     Cabinet snapshot the pin's `load_db` reads on kc (every user table
@@ -2192,19 +2199,24 @@ def _craft_db(path, rows, dbtype, keep=False):
     2 hash); the rows are the same records in every cell. `keep=True` is
     the fixture that adds rows to the copied system index: a native attached
     TreeDB on kc (`chewing_large_table2_kyotodb.cpp:87-89`), a TreeDBM on
-    tkrzw (`chewing_large_table2_tkrzwdb.cpp:87-88`), and a btree on bdb."""
+    tkrzw (`chewing_large_table2_tkrzwdb.cpp:87-88`), and a btree on bdb.
+    `system_index=True` also selects that native format for a fresh index;
+    with `keep=False` it replaces the file instead of writing a KC snapshot."""
     if CELL == 'kc':
-        assert not keep or dbtype == 1, 'retained KC fixtures are system btrees'
+        assert not (keep or system_index) or dbtype == 1, 'KC system indexes are btrees'
+        if system_index:
+            return _craft_kc(path, rows, keep=keep, system_index=True)
         return _craft_kc(path, rows, keep=keep)
     if CELL == 'tkrzw':
         return _craft_tkrzw(path, rows, 'HashDBM' if dbtype == 2 else 'TreeDBM', keep=keep)
     return _craft_bdb(path, rows, dbtype, keep=keep)
 
 
-def _craft_kc(path, rows, keep=False):
+def _craft_kc(path, rows, keep=False, *, system_index=False):
     """A Kyoto Cabinet snapshot of the records (`BasicDB::dump_snapshot`),
     written through the C API from an in-memory database. `keep=True`
-    instead adds to the native TreeDB the pin attaches as a system index."""
+    instead adds to the native TreeDB the pin attaches as a system index.
+    `system_index=True` creates that native format even with `keep=False`."""
     kc = C.CDLL('libkyotocabinet.so.16')
     kc.kcdbnew.restype = C.c_void_p
     kc.kcdbdel.argtypes = [C.c_void_p]
@@ -2217,13 +2229,14 @@ def _craft_kc(path, rows, keep=False):
     db = kc.kcdbnew()
     assert db
     # Existing system TreeDB: KCOWRITER, explicit type because its suffix
-    # is .bin. User snapshot: KCOWRITER | KCOCREATE on the memory database.
-    target = (path + '#type=kct').encode() if keep else b'-'
+    # is .bin. Fresh system TreeDB and user memory DB: also KCOCREATE.
+    native = keep or system_index
+    target = (path + '#type=kct').encode() if native else b'-'
     mode = (1 << 1) if keep else (1 << 1) | (1 << 2)
     assert kc.kcdbopen(db, target, mode)
     for key, value in rows:
         assert kc.kcdbset(db, key, len(key), value, len(value))
-    if not keep:
+    if not native:
         assert kc.kcdbdumpsnap(db, path.encode())
     assert kc.kcdbclose(db)
     kc.kcdbdel(db)
@@ -11242,6 +11255,133 @@ def _(k):
     return out
 
 
+# #894: source-derived, isolated SYSTEM_FILE words. See the two discrepancy
+# records for the complete producer/consumer trace, GLib 2.89.4-2 citations,
+# and the binding observations. No pin output is used to generate expectations.
+PHRASE_TEXT_WORDS = dict(valid=0x4e01, surrogate=0xd800, **{'above-unicode': 0x110000}, nul=0)
+
+
+def phrase_text_system(k, variant):
+    """Two native items: 甲<word>乙 / da1'da1'da1, then 丙 / ba1.
+
+    Layout: phrase_index.cpp's SubPhraseIndex; PinyinIndexItem2<L> at
+    pinyin_phrase3.h:181-197 (four-byte aligned token then packed keys).
+    ChewingKey at chewing_key.h:41-47 has tone at bit 12; da = 4|1<<7,
+    ba = 1|1<<7 (chewing_enum.h:16,19,65). No API import repairs the words.
+    """
+    system = private_system(k)
+    word = PHRASE_TEXT_WORDS[variant]
+    texts = ((0x7532, word, 0x4e59), (0x4e19,))
+    keys = ((0x1084,) * 3, (0x1081,))
+    content, offsets = bytearray(8), [0]
+    phonetic, phrases = {}, {}
+    for slot, (text, reading) in enumerate(zip(texts, keys), 1):
+        token = 0x01000000 | slot
+        raw_text = b''.join(value.to_bytes(4, 'little') for value in text)
+        raw_keys = b''.join(value.to_bytes(2, 'little') for value in reading)
+        offsets.append(len(content))
+        content += bytes((len(text), 1)) + (100).to_bytes(4, 'little') + raw_text
+        content += raw_keys + (10).to_bytes(4, 'little')
+        index = b''.join((value & 0x0fff).to_bytes(2, 'little') for value in reading)
+        for end in range(2, len(index), 2):
+            phonetic.setdefault(index[:end], b'')
+        item = token.to_bytes(4, 'little') + raw_keys
+        phonetic[index] = item + bytes((-len(item)) % 4)
+        for end in range(4, len(raw_text), 4):
+            phrases.setdefault(raw_text[:end], b'')
+        phrases[raw_text] = token.to_bytes(4, 'little')
+    index_two = 17 + len(offsets) * 4 + 1
+    payload = b''.join(value.to_bytes(4, 'little') for value in
+                       (200, 17, index_two, index_two + len(content) + 1))
+    payload += b'#' + b''.join(value.to_bytes(4, 'little') for value in offsets)
+    payload += b'#' + content + b'#'
+    path = Path(system, 'gb_char.bin')
+    path.unlink()  # replace the private symlink, never the oracle's file
+    path.write_bytes(_chunk(payload))
+    for name, rows in (('pinyin_index.bin', phonetic), ('phrase_index.bin', phrases)):
+        path = Path(system, name)
+        path.unlink()
+        _craft_db(str(path), list(rows.items()), 1, system_index=True)
+    _write_user_conf(k)
+    k.data = system
+
+
+def phrase_text_bytes(k, ptr, *, owned=True):
+    """Lossless text observation: never replace malformed UTF-8 with U+FFFD."""
+    if ptr == UNTOUCHED:
+        return 'untouched'
+    if not ptr:
+        return None
+    value = C.string_at(ptr).hex()
+    if owned:
+        k.glib.g_free(ptr)
+    return value
+
+
+def phrase_text_probe(variant, surface):
+    def probe(k):
+        phrase_text_system(k, variant)
+        if surface == 'export' and k.mode == 'zhuyin':
+            # zhuyin.h/libzhuyin.ver export no iterator. Never borrow a
+            # pinyin context or invent an unsupported zhuyin C function.
+            return {'exports': {name: hasattr(k.lib, 'zhuyin_' + name) for name in
+                                ('begin_get_phrases', 'iterator_has_next_phrase',
+                                 'iterator_get_next_phrase', 'end_get_phrases')}}
+        assert k.fn('set_options', B, P, U)(k.ctx, 1 << 5)
+        if surface == 'export':
+            it = k.fn('begin_get_phrases', P, P, U)(k.ctx, 1)
+            rows = []
+            while k.fn('iterator_has_next_phrase', B, P)(it):
+                assert len(rows) < 2, 'fixture exported an unexpected extra row'
+                text, reading, count = P(UNTOUCHED), P(UNTOUCHED), I(UNTOUCHED)
+                ret = k.fn('iterator_get_next_phrase', B, P, C.POINTER(P), C.POINTER(P), C.POINTER(I))(
+                    it, C.byref(text), C.byref(reading), C.byref(count))
+                rows.append([ret, phrase_text_bytes(k, text.value),
+                             phrase_text_bytes(k, reading.value), count.value])
+            k.fn('end_get_phrases', None, P)(it)
+            return {'rows': rows}
+        spelling = b'da1da1da1' + (b'ba1' if surface == 'sentence' else b'')
+        parsed = k.fn('parse_more_full_pinyins', Z, P, S)(k.inst, spelling)
+        if surface == 'sentence':
+            guessed = k.fn('guess_sentence', B, P)(k.inst)
+            text = P(UNTOUCHED)
+            if k.mode == 'pinyin':
+                ret = k.fn('get_sentence', B, P, C.c_ubyte, C.POINTER(P))(k.inst, 0, C.byref(text))
+            else:
+                ret = k.fn('get_sentence', B, P, C.POINTER(P))(k.inst, C.byref(text))
+            return {'parsed': parsed, 'guessed': guessed, 'ret': ret,
+                    'text': phrase_text_bytes(k, text.value)}
+        if k.mode == 'pinyin':
+            ret = k.fn('guess_candidates', B, P, Z, U)(k.inst, 0, 0x1f)
+        else:
+            ret = k.fn('guess_candidates_after_cursor', B, P, Z)(k.inst, 0)
+        count = U(UNTOUCHED)
+        assert k.fn('get_n_candidate', B, P, C.POINTER(U))(k.inst, C.byref(count))
+        rows = []
+        for index in range(count.value):
+            candidate, text, kind = P(), P(UNTOUCHED), I(UNTOUCHED)
+            assert k.fn('get_candidate', B, P, U, C.POINTER(P))(k.inst, index, C.byref(candidate))
+            assert k.fn('get_candidate_string', B, P, P, C.POINTER(P))(
+                k.inst, candidate, C.byref(text))
+            assert k.fn('get_candidate_type', B, P, P, C.POINTER(I))(
+                k.inst, candidate, C.byref(kind))
+            rows.append([kind.value, phrase_text_bytes(k, text.value, owned=False)])
+        return {'parsed': parsed, 'ret': ret, 'rows': rows}
+    return probe
+
+
+for _mode in ('pinyin', 'zhuyin'):
+    for _variant in PHRASE_TEXT_WORDS:
+        for _surface in ('candidate', 'sentence', 'export'):
+            _record = None
+            if _variant != 'valid' and not (_mode == 'zhuyin' and _surface == 'export'):
+                _record = ('894-nul-phrase-text.md' if _variant == 'nul'
+                           else '894-non-scalar-phrase-text.md')
+            case(f'phrase-text/{_mode}-{_variant}-{_surface}', mode=_mode,
+                 control=True, issues=('894',), policy_record=_record)(
+                     phrase_text_probe(_variant, _surface))
+
+
 # #882: get_phrase_item checks the offset and two header bytes only
 # (074a2219 phrase_index.cpp:180-205). Neither getter decodes text or keys
 # (pinyin.cpp:2786-2798; zhuyin.cpp:1778-1790).
@@ -12311,6 +12451,53 @@ def valid_observation(spec, side):
     return registered_termination(spec) or (side['exit'] == 0 and side['result'] is not None)
 
 
+POLICY_ROOT = Path(__file__).resolve().parents[2] / 'docs/findings'
+
+
+def policy_expectations(spec):
+    """Read the current registered record, never a cached exemption.
+
+    Each case lists complete exit/result/stderr observations for both sides.
+    No wildcards, ignored result fields or partial-dict matching are allowed.
+    Rejected metadata is INVALID, including under --expect-parent.
+    """
+    name = spec['policy_record']
+    if not isinstance(name, str) or Path(name).name != name or not name.endswith('.md'):
+        raise ValueError('policy_record must name a findings Markdown record')
+    path = POLICY_ROOT / name
+    if path.resolve().parent != POLICY_ROOT.resolve():
+        raise ValueError('policy record escapes findings directory')
+    register = (POLICY_ROOT / 'upstream-divergences.md').read_text()
+    if f']({name})' not in register:
+        raise ValueError('policy record is not registered')
+    blocks = re.findall(r'^```contract-diff-policy\n(.*?)\n```$', path.read_text(), re.M | re.S)
+    if len(blocks) != 1:
+        raise ValueError('policy record needs exactly one observations block')
+    record = json.loads(blocks[0])
+    if (not isinstance(record, dict) or type(record.get('schema')) is not int or record.get('schema') != 1
+            or record.get('record') != path.stem or record.get('status') != 'current'
+            or record.get('disposition') != 'POLICY-ACCEPTED'):
+        raise ValueError('policy record is not current or has incompatible metadata')
+    pair = record['cases'][spec['case_id']]
+    if not isinstance(pair, dict) or set(pair) != {'pin', 'subject'}:
+        raise ValueError('policy case must specify both observations')
+    for side in pair.values():
+        if (not isinstance(side, dict) or set(side) != {'exit', 'result', 'stderr'}
+                or type(side['exit']) is not int or side['exit'] != 0
+                or not isinstance(side['result'], dict) or 'logs' not in side['result']
+                or any(key.startswith('~') for key in side['result'])
+                or not isinstance(side['stderr'], str)):
+            raise ValueError('policy observation must be complete and normally terminated')
+    if pair['pin'] == pair['subject']:
+        raise ValueError('policy case must record a difference, not parity')
+    return pair
+
+
+def policy_observation(side):
+    """The full stable observation, excluding worker timings only."""
+    return {key: side[key] for key in ('exit', 'result', 'stderr')}
+
+
 def verdict_for(spec, pin, subject, expect_parent):
     """The driver's decision for one case: (verdict, expected_ok, same).
 
@@ -12319,6 +12506,19 @@ def verdict_for(spec, pin, subject, expect_parent):
     case's held pin fault (`strjoinv_fault`) counts as valid. Otherwise MATCH or
     DIFFER by `matches`, and expected when it is what the mode asks for: a
     MATCH, or under --expect-parent a DIFFER from a non-control case."""
+    if spec['policy_record'] is not None:
+        try:
+            expected_pair = policy_expectations(spec)
+            actual = dict(pin=policy_observation(pin), subject=policy_observation(subject))
+        except (OSError, ValueError, KeyError, TypeError):
+            return 'INVALID', False, False
+        if not all(valid_observation(spec, side) for side in (pin, subject)):
+            return 'INVALID', False, False
+        if json.dumps(actual, sort_keys=True) == json.dumps(expected_pair, sort_keys=True):
+            # An existing accepted quirk is a control on its parent too.
+            return 'POLICY-ACCEPTED', True, False
+        # A bad record observation is never an expected parent difference.
+        return 'DIFFER', False, False
     same = matches(spec, pin, subject)
     held_fault = spec['strjoinv_over_read'] and strjoinv_fault(pin, subject)
     if not held_fault and not all(valid_observation(spec, side) for side in (pin, subject)):
@@ -12371,6 +12571,8 @@ def strjoinv_fault(pin, subject):
 
 def matches(spec, pin, subject):
     """The verdict predicate shared by the driver and gcov measurement tier."""
+    if spec['policy_record'] is not None:
+        return False  # accepted differences must never enter MATCH totals
     short_dir = short_dir_chunk(spec)
     as_abort = spec['abort'] is not NO_ABORT and not short_dir and (not spec['either'] or pin['exit'] == -6)
     if spec['both_abort']:
@@ -13030,6 +13232,7 @@ def run_main():
         started = time.monotonic()
         compare_seconds = 0.0
         failures = 0
+        verdict_counts = {}
         if args.observations:
             args.observations.write_text('')
         with tempfile.TemporaryDirectory(prefix='contract-diff-') as scratch, \
@@ -13043,12 +13246,14 @@ def run_main():
                                           note='not an ordinary gate'), sort_keys=True),
                           file=sys.stderr, flush=True)
                 if pair is PLATFORM_SKIP:
+                    verdict_counts['SKIP'] = verdict_counts.get('SKIP', 0) + 1
                     print(json.dumps(dict(cell=args.cell, case=n, verdict='SKIP',
                                           expected_ok=True, exit=[0, 0], stderr_lines=[0, 0],
                                           reason=spec['platform_skip_reason']), sort_keys=True),
                           flush=True)
                     continue
                 if pair is None:
+                    verdict_counts['SKIP'] = verdict_counts.get('SKIP', 0) + 1
                     print(json.dumps(dict(cell=args.cell, case=n, verdict='SKIP',
                                           expected_ok=True, exit=[0, 0], stderr_lines=[0, 0]),
                                      sort_keys=True), flush=True)
@@ -13070,13 +13275,17 @@ def run_main():
                 if host_dependent:
                     verdict = 'HOST-DEPENDENT'
                     expected = True
-                print(json.dumps(dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,
-                                      exit=[pin['exit'], subject['exit']],
-                                      stderr_lines=[pin['stderr_lines'], subject['stderr_lines']]),
+                verdict_counts[verdict] = verdict_counts.get(verdict, 0) + 1
+                row = dict(cell=args.cell, case=n, verdict=verdict, expected_ok=expected,
+                           exit=[pin['exit'], subject['exit']],
+                           stderr_lines=[pin['stderr_lines'], subject['stderr_lines']])
+                if spec['policy_record'] is not None:
+                    row.update(record=spec['policy_record'], pin=pin, subject=subject)
+                print(json.dumps(row,
                                  sort_keys=True), flush=True)
                 if host_dependent:
                     continue
-                if not expected or (not same and not args.expect_parent):
+                if not expected:
                     failures += 1
                     if not same:
                         for side, r in (('pin', pin), ('subject', subject)):
@@ -13086,6 +13295,7 @@ def run_main():
                                 print('  %s userfiles=%s' % (side, json.dumps(r['userfiles'], sort_keys=True)))
                             if spec['stderr']:
                                 print('  %s stderr=%r' % (side, r['stderr']))
+        print(json.dumps(dict(verdict_counts=verdict_counts), sort_keys=True), flush=True)
         print(json.dumps(dict(timing=dict(timing_summary(names, compare_seconds, time.monotonic() - started), jobs=jobs)),
                          sort_keys=True), flush=True)
         return 1 if failures else 0

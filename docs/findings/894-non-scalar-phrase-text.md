@@ -146,3 +146,29 @@ named subject mutation will be reported after the gate; captures remain
 ephemeral. **Prior rulings:** none reversed. **Conclusion:** retain normal
 Rust behavior under limb 3; source classification complete, verification
 pending (2026-10-24 UTC).
+
+## Binding observations
+
+These are source-derived expectations, not captured oracle output. Each case
+must match both complete result documents, normal exits and empty stderr.
+
+```contract-diff-policy
+{
+  "schema": 1,
+  "record": "894-non-scalar-phrase-text",
+  "status": "current",
+  "disposition": "POLICY-ACCEPTED",
+  "cases": {
+    "phrase-text/pinyin-surrogate-candidate": {"pin": {"exit": 0, "result": {"parsed": 9, "ret": true, "rows": [[2, "e794b2eda080e4b999"]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 9, "ret": false, "rows": [], "logs": [["libpinyin", 16]]}, "stderr": ""}},
+    "phrase-text/pinyin-surrogate-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2eda080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": false, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}},
+    "phrase-text/pinyin-surrogate-export": {"pin": {"exit": 0, "result": {"rows": [[true, "e794b2eda080e4b999", "6461312764613127646131", 10], [true, "e4b899", "626131", 10]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"rows": [[true, null, "6461312764613127646131", 10], [true, "e4b899", "626131", 10]], "logs": []}, "stderr": ""}},
+    "phrase-text/pinyin-above-unicode-candidate": {"pin": {"exit": 0, "result": {"parsed": 9, "ret": true, "rows": [[2, "e794b2f4908080e4b999"]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 9, "ret": false, "rows": [], "logs": [["libpinyin", 16]]}, "stderr": ""}},
+    "phrase-text/pinyin-above-unicode-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2f4908080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": false, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}},
+    "phrase-text/pinyin-above-unicode-export": {"pin": {"exit": 0, "result": {"rows": [[true, "e794b2f4908080e4b999", "6461312764613127646131", 10], [true, "e4b899", "626131", 10]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"rows": [[true, null, "6461312764613127646131", 10], [true, "e4b899", "626131", 10]], "logs": []}, "stderr": ""}},
+    "phrase-text/zhuyin-surrogate-candidate": {"pin": {"exit": 0, "result": {"parsed": 9, "ret": true, "rows": [[2, "e794b2eda080e4b999"]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 9, "ret": false, "rows": [], "logs": [["libzhuyin", 16]]}, "stderr": ""}},
+    "phrase-text/zhuyin-surrogate-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2eda080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": false, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}},
+    "phrase-text/zhuyin-above-unicode-candidate": {"pin": {"exit": 0, "result": {"parsed": 9, "ret": true, "rows": [[2, "e794b2f4908080e4b999"]], "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 9, "ret": false, "rows": [], "logs": [["libzhuyin", 16]]}, "stderr": ""}},
+    "phrase-text/zhuyin-above-unicode-sentence": {"pin": {"exit": 0, "result": {"parsed": 12, "guessed": true, "ret": true, "text": "e794b2f4908080e4b999e4b899", "logs": []}, "stderr": ""}, "subject": {"exit": 0, "result": {"parsed": 12, "guessed": false, "ret": false, "text": "untouched", "logs": []}, "stderr": ""}}
+  }
+}
+```
