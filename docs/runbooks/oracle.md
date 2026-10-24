@@ -353,6 +353,35 @@ whenever a case is registered, so report the count from the run. Add
 runs that report different counts ran different registries. For example,
 2,865 is the registry at `b587d599`, before `074f0b36` added cases.
 
+Ordinary cases remain serial by default. Add `-- --jobs N` to request
+at most N active cases in the existing contract driver. Each case has its
+own scratch directory, its pin and subject share the same deadline, and
+verdicts and `--observations` remain in selection order. Parallel calls
+use the existing heavy slot, including validated slot inheritance from
+`just heavy`. Admission charges 1,024 MiB per active case, or the larger
+build estimate, and reduces the requested case count when memory is short.
+If one case cannot fit, admission waits or fails before starting workers.
+Admission limits workers by memory, not CPU, so a `--jobs` well above the
+host's CPU count can make a case hit its wall-clock deadline and report
+TIMEOUT; keep `--jobs` at or below the CPU count.
+The deadline starts when the case starts, after admission and queueing.
+
+The aggregate runner already schedules cells independently, with private
+oracle environments and cell targets. Select `--contract-jobs N` for its
+per-cell case maximum. Its `--jobs` still counts concurrent runner rows;
+the host's heavy slots and memory reservations also limit concurrent cells.
+An explicit three-slot example, using already built cell artifacts, is:
+
+```sh
+OXPINYIN_HEAVY_SLOTS=3 tools/bisection/run-all.py \
+    --runners contract-diff --cells bdb,kc,tkrzw --no-build \
+    --jobs 3 --contract-jobs 4 --runner-timeout contract-diff=7200 \
+    --oracle-root "$OXPINYIN_CLOUD_CACHE/oracle"
+```
+
+Neither case concurrency nor the host's slot count changes by default.
+The final timing record reports the effective per-cell case count as `jobs`.
+
 Five `table-conf-abort-*` cases (`dir_chunk` in `contract-diff.py`, #1011)
 take a different pin path depending on the file system of `TMPDIR`, where
 the harness makes its scratch. On a file system whose directories answer
