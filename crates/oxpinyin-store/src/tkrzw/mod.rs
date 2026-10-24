@@ -1260,6 +1260,29 @@ pub struct TkrzwUserBigramDb {
     db: Db,
 }
 
+/// Copies a borrowed record without allocating a single-record batch.
+/// `DBM::Set` and `ProcessMulti` both reach `TinyDBMImpl::ProcessImpl`;
+/// with the same walk order, each bucket therefore has the same chain.
+fn db_set_record(db: &Db, key: &[u8], value: &[u8]) -> Result<(), StoreError> {
+    let key_size = c_len(key)?;
+    let value_size = c_len(value)?;
+    // SAFETY: the destination is open and writable. Both slices (including
+    // empty slices, whose pointers are non-null) outlive this synchronous
+    // call, with validated lengths. Set copies their bytes before returning;
+    // it retains neither pointer. overwrite=true matches the pin's Set.
+    let ok = unsafe {
+        ffi::tkrzw_dbm_set(
+            db.0.as_ptr(),
+            key.as_ptr().cast::<c_char>(),
+            key_size,
+            value.as_ptr().cast::<c_char>(),
+            value_size,
+            true,
+        )
+    };
+    check(ok)
+}
+
 /// One `Set` or `Remove` against `db`, through the same record-processor
 /// path every commit uses.
 fn db_set_one(db: &Db, key: &[u8], value: Option<&[u8]>) -> Result<(), StoreError> {
@@ -1315,9 +1338,8 @@ impl crate::UserBigramDb for TkrzwUserBigramDb {
                 return Ok(this);
             }
             // A failed source walk must not discard unrelated learned data.
-            if let Err(error) = visit_db(&file.db, |key, value| {
-                db_set_one(&this.db, key, Some(value))
-            }) {
+            if let Err(error) = visit_db(&file.db, |key, value| db_set_record(&this.db, key, value))
+            {
                 eprintln!("user-bigram load {}: {error}", path.display());
             }
         }
@@ -1367,8 +1389,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        HASH_METADATA_SIZE, TkrzwUserBigramDb, db_count, db_set_one, holds_no_record, is_healthy,
-        open_hash, open_hash_create, record_base,
+        HASH_METADATA_SIZE, TkrzwUserBigramDb, db_count, db_set_one, db_set_record, holds_no_record,
+        is_healthy, open_hash, open_hash_create, record_base, visit_db,
     };
     use crate::UserBigramDb;
 
@@ -1469,6 +1491,82 @@ mod tests {
         assert_eq!(
             sorted_keys(&TkrzwUserBigramDb::load_db(&path).unwrap()),
             expected
+        );
+    }
+
+    #[test]
+    fn loading_preserves_the_pins_colliding_bucket_chain_and_values() {
+        // PrimaryHash at tkrzw 9ee8416 puts these three little-endian
+        // tokens in default bucket 74121. Derived from HashMurmur's
+        // four-byte case and PrimaryHash's fold, not from an oracle run.
+        // The HashDBM iterator sorts their byte strings as b, a, c;
+        // TinyDBM prepends, so its chain (and save walk) must be c, a, b.
+        let a = 0x0100_0d46_u32.to_le_bytes();
+        let b = 0x0100_4404_u32.to_le_bytes();
+        let c = 0x0100_4dd8_u32.to_le_bytes();
+        let rows = [
+            (a.to_vec(), vec![0, 1, 0, 255]),
+            (b.to_vec(), Vec::new()),
+            (c.to_vec(), (0_u8..=255).cycle().take(804).collect()),
+        ];
+        let dir = TempDir::new("collision-order");
+        let path = dir.0.join("user_bigram.db");
+        let file = open_hash_create(&path).unwrap();
+        // Deliberately differs from the source's iterator order.
+        for (key, value) in &rows {
+            db_set_one(&file.db, key, Some(value)).unwrap();
+        }
+        drop(file);
+
+        let file = open_hash(&path).unwrap();
+        let reference = TkrzwUserBigramDb::empty().unwrap();
+        let mut source_keys = Vec::new();
+        visit_db(&file.db, |key, value| {
+            source_keys.push(key.to_vec());
+            // The previous path, retained as an independent reference.
+            db_set_one(&reference.db, key, Some(value))
+        })
+        .unwrap();
+        assert_eq!(source_keys, [b.to_vec(), a.to_vec(), c.to_vec()]);
+        drop(file);
+
+        let loaded = TkrzwUserBigramDb::load_db(&path).unwrap();
+        let expected = vec![rows[2].clone(), rows[0].clone(), rows[1].clone()];
+        for db in [&reference, &loaded] {
+            let mut actual = Vec::new();
+            visit_db(&db.db, |key, value| {
+                actual.push((key.to_vec(), value.to_vec()));
+                Ok(())
+            })
+            .unwrap();
+            assert_eq!(
+                actual, expected,
+                "native bucket-chain order, not sorted rows"
+            );
+        }
+    }
+
+    #[test]
+    fn single_record_set_copies_empty_binary_and_replacement_values() {
+        let db = TkrzwUserBigramDb::empty().unwrap();
+        db_set_record(&db.db, b"", b"").unwrap();
+        db_set_record(&db.db, b"\0k\xff!", b"\0value\xff").unwrap();
+        assert_eq!(db_count(&db.db).unwrap(), 2);
+        let mut value = Vec::new();
+        assert!(db.get(b"", &mut value).unwrap());
+        assert!(value.is_empty());
+        assert!(db.get(b"\0k\xff!", &mut value).unwrap());
+        assert_eq!(value, b"\0value\xff");
+
+        let before = db.keys().unwrap();
+        db_set_record(&db.db, b"\0k\xff!", b"").unwrap();
+        assert!(db.get(b"\0k\xff!", &mut value).unwrap());
+        assert!(value.is_empty());
+        assert_eq!(db_count(&db.db).unwrap(), 2);
+        assert_eq!(
+            db.keys().unwrap(),
+            before,
+            "overwrite preserves chain position"
         );
     }
 
