@@ -12,7 +12,10 @@ tkrzw_prefix=$work/tkrzw
 tkrzw_local=1
 pin=$work/oracle-pin.txt
 export OXPINYIN_ORACLE_ENV=$work/oracle.env
+source "$(dirname "${BASH_SOURCE[0]}")/../oracle/pin.sh"
+platform=$(oracle_platform)
 pinval() { sed -n "s/^$1=//p" "$pin"; }
+pinval_platform() { pin_platform_field "$pin" "$platform" "$1"; }
 log() { printf '%s\n' "$*" >&2; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -264,11 +267,13 @@ fixture() {
 	mkdir -p "$prefix/lib/libpinyin/data"
 	for lib in libpinyin libzhuyin; do
 		printf '%s %s\n' "$dbm" "$lib" >"$prefix/lib/$lib.so"
-		printf '%s_sha256_%s=%s\n' "$lib" "$dbm" "$(sha256sum "$prefix/lib/$lib.so" | cut -d' ' -f1)" >>"$pin"
+		printf '%s_sha256_%s%s=%s\n' "$lib" "$dbm" "$(oracle_platform_suffix "$platform")" \
+			"$(sha256sum "$prefix/lib/$lib.so" | cut -d' ' -f1)" >>"$pin"
 	done
 	printf '%s\n' "$dbm" >"$prefix/lib/libpinyin/data/table.conf"
 	(cd "$prefix" && sha256sum lib/libpinyin/data/table.conf >oracle-data.sha256)
-	printf 'data_manifest_sha256_%s=%s\n' "$dbm" "$(sha256sum "$prefix/oracle-data.sha256" | cut -d' ' -f1)" >>"$pin"
+	printf 'data_manifest_sha256_%s%s=%s\n' "$dbm" "$(oracle_platform_suffix "$platform")" \
+		"$(sha256sum "$prefix/oracle-data.sha256" | cut -d' ' -f1)" >>"$pin"
 	for file in bigram.db phrase_index.bin pinyin_index.bin punct.bin addon_phrase_index.bin addon_pinyin_index.bin; do
 		printf '%s %s\n' "$dbm" "$file" >"$prefix/lib/libpinyin/data/$file"
 	done

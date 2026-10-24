@@ -68,7 +68,7 @@ probe_host() {
 libs_ok() {
 	local dbm=$1 prefix=${2:-$oracle_root/$1} lib want
 	for lib in libpinyin libzhuyin; do
-		want=$(pinval "${lib}_sha256_$dbm")
+		want=$(pinval_platform "${lib}_sha256_$dbm")
 		[[ -f $prefix/lib/$lib.so ]] || return 1
 		[[ $(sha256sum "$prefix/lib/$lib.so" | cut -d' ' -f1) == "$want" ]] || return 1
 	done
@@ -78,7 +78,7 @@ libs_ok() {
 # the unstable manifest recorded by this prefix's own build.
 data_ok() {
 	local dbm=$1 prefix=${2:-$oracle_root/$1} want unstable_manifest
-	want=$(pinval "data_manifest_sha256_$dbm")
+	want=$(pinval_platform "data_manifest_sha256_$dbm")
 	[[ -f $prefix/oracle-data.sha256 ]] || return 1
 	[[ $(sha256sum "$prefix/oracle-data.sha256" | cut -d' ' -f1) == "$want" ]] || return 1
 	(cd "$prefix" && sha256sum --check --quiet oracle-data.sha256 >/dev/null 2>&1) || return 1

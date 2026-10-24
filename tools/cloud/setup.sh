@@ -63,6 +63,8 @@ set -euo pipefail
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 pin=$repo/tools/oracle/oracle-pin.txt
+# shellcheck source=../oracle/pin.sh
+source "$repo/tools/oracle/pin.sh"
 cache=${OXPINYIN_CLOUD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/oxpinyin}
 cells=(bdb kc tkrzw)
 jobs=$(nproc 2>/dev/null || echo 2)
@@ -129,8 +131,16 @@ if ((python_only && oracle_options)); then
 	exit 2
 fi
 
-[[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || {
-	printf 'Oracle provisioning requires Linux x86_64; run subject, reference and harness together in a Linux amd64 environment. See docs/runbooks/setup.md.\n' >&2
+[[ $(uname -s) == Linux ]] || {
+	printf 'Oracle provisioning requires Linux; run subject, reference and harness together in a Linux environment. See docs/runbooks/setup.md.\n' >&2
+	exit 2
+}
+platform=$(oracle_platform) || {
+	printf 'No frozen oracle hashes for architecture %s; supported platforms are linux/amd64 and linux/arm64. See docs/runbooks/setup.md.\n' "$(uname -m)" >&2
+	exit 2
+}
+[[ -n $(pin_platform_field "$pin" "$platform" libpinyin_sha256_bdb) ]] || {
+	printf 'No frozen oracle hashes for %s in %s. See docs/runbooks/setup.md.\n' "$platform" "$pin" >&2
 	exit 2
 }
 if ((inside)) && [[ ${OXPINYIN_COMPAT_CONTAINER:-} != 1 || ! -d /opt/reference ]]; then
@@ -155,6 +165,7 @@ die() {
 	exit 1
 }
 pinval() { sed -n "s/^$1=//p" "$pin"; }
+pinval_platform() { pin_platform_field "$pin" "$platform" "$1"; }
 
 # Report candidates, not measurement readiness: a writable ext4 directory
 # does not establish where a runner's libraries, data or profiles will live.
@@ -323,11 +334,22 @@ if ! command -v uv >/dev/null 2>&1 || ! uv_at_least_floor ||
 	command -v curl >/dev/null 2>&1 || die 'installing uv needs curl; ask the environment owner to install it'
 	log 'installing uv 0.13.1'
 	(
-		[[ $(uname -s)-$(uname -m) == Linux-x86_64 ]]
-		uv_target=x86_64-unknown-linux-gnu
 		# Published in https://github.com/astral-sh/uv/releases/download/0.13.1/sha256.sum.
 		# Exact on purpose (#1074): a checksum is only known for a known version.
-		uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
+		case $(uname -m) in
+		x86_64)
+			uv_target=x86_64-unknown-linux-gnu
+			uv_sha256=eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
+			;;
+		aarch64 | arm64)
+			uv_target=aarch64-unknown-linux-gnu
+			uv_sha256=9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14
+			;;
+		*)
+			printf 'no uv target for architecture %s\n' "$(uname -m)" >&2
+			exit 1
+			;;
+		esac
 		# Keep the archive in memory. Write only its verified executables.
 		uv_payload=$(curl --fail --location --retry 3 "https://github.com/astral-sh/uv/releases/download/0.13.1/uv-$uv_target.tar.gz" | base64) ||
 			die 'uv download failed; allow github.com and release-assets.githubusercontent.com (docs/runbooks/cloud.md)'
@@ -400,10 +422,22 @@ mkdir -p "$oracle_root"
 base_image=$(pinval base_image)
 [[ -n $base_image ]] || die "no base_image in $pin"
 # The published tag is derived from the whole recipe by one script, the same
-# one the workflow and docs/runbooks/oracle.md use.
-published=ghcr.io/shenghaoc/oxpinyin-oracle:$("$repo/tools/oracle/image-tag.sh")
-platform=$(pinval platform)
-[[ -n $platform ]] || die "no platform in $pin"
+# one the workflow and docs/runbooks/oracle.md use. The amd64 tags are the
+# historical names; arm64 publishes sibling -arm64 tags.
+published_base=ghcr.io/shenghaoc/oxpinyin-oracle:$("$repo/tools/oracle/image-tag.sh")
+case $platform in
+linux/amd64)
+	published=$published_base
+	published_deps=$published_base-deps
+	;;
+linux/arm64)
+	published=$published_base-arm64
+	published_deps=$published_base-deps-arm64
+	;;
+*)
+	die "no published oracle tag scheme for $platform"
+	;;
+esac
 deps_image=oxpinyin-oracle-deps:$(sha256sum "$repo/tools/oracle/Dockerfile.oracle" | cut -c1-12)
 
 proxy=${HTTPS_PROXY:-${https_proxy:-}}
@@ -533,7 +567,7 @@ if ((inside)); then
 		if ! libs_ok "$dbm"; then
 			for lib in libpinyin libzhuyin; do
 				printf 'MISMATCH %s %s\n  recorded: %s\n  reference: %s\n' "$dbm" "$lib" \
-					"$(pinval "${lib}_sha256_$dbm")" \
+					"$(pinval_platform "${lib}_sha256_$dbm")" \
 					"$(sha256sum "$oracle_root/$dbm/lib/$lib.so" | cut -d' ' -f1)" >&2
 			done
 			exit 3
@@ -593,8 +627,8 @@ build_deps_image() {
 	# Same deps stage as the oracle recipe, published by the normal image workflow.
 	# Pulling it avoids snapshot.debian.org on cold data regeneration.
 	if ((pull)); then
-		if "$ctr" pull --quiet --platform "$platform" "${published}-deps" > /dev/null 2>"$cache/pull-deps.err"; then
-			"$ctr" tag "${published}-deps" "$deps_image"
+		if "$ctr" pull --quiet --platform "$platform" "$published_deps" > /dev/null 2>"$cache/pull-deps.err"; then
+			"$ctr" tag "$published_deps" "$deps_image"
 			return 0
 		fi
 		log "pinned deps image unavailable; building locally (details: $cache/pull-deps.err)"
@@ -606,6 +640,7 @@ build_deps_image() {
 	fi
 	log "building $deps_image (the pinned toolchain)"
 	local flags=("${net_flags[@]}")
+	[[ $platform == linux/amd64 ]] || flags+=(--build-arg "ORACLE_PLATFORM=$platform")
 	if [[ -n $proxy ]]; then
 		flags+=(--build-arg "https_proxy=$proxy" --build-arg "HTTPS_PROXY=$proxy")
 		if ((custom_ca)); then flags+=(--secret "id=cacert,src=$proxy_ca"); fi
@@ -648,7 +683,7 @@ done
 status=0
 for dbm in "${cells[@]}"; do
 	for lib in libpinyin libzhuyin; do
-		want=$(pinval "${lib}_sha256_$dbm")
+		want=$(pinval_platform "${lib}_sha256_$dbm")
 		got=$(sha256sum "$oracle_root/$dbm/lib/$lib.so" | cut -d' ' -f1)
 		if [[ $got != "$want" ]]; then
 			printf 'MISMATCH %s %s\n  recorded: %s\n  built:    %s\n' "$dbm" "$lib" "$want" "$got" >&2
