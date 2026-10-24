@@ -966,6 +966,24 @@ class StrjoinvOverReadTests(DriverFixtureCase):
 class WorkerEntryTests(DriverFixtureCase):
     """Workers start from contract-worker.py, which loads the same driver."""
 
+    def test_optimised_entries_refuse_before_dispatch_or_library_inputs(self):
+        for entry, args in (('contract-diff.py', ['--list-tags']),
+                             ('contract-diff.py', ['--worker']),
+                             ('contract-diff.py', ['--per-call-worker']),
+                             ('contract-worker.py', [])):
+            for flags, value in (([], '1'), (['-O'], '0'), (['-OO'], '0')):
+                with self.subTest(entry=entry, args=args, flags=flags, value=value):
+                    result = subprocess.run(
+                        [sys.executable, '-X', 'lazy_imports=normal', *flags,
+                         str(Path(__file__).with_name(entry)), *args],
+                        env=dict(os.environ, PYTHONOPTIMIZE=value),
+                        capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, '')
+                    self.assertIn('optimised Python is unsupported', result.stderr)
+                    self.assertIn('unset PYTHONOPTIMIZE and remove -O/-OO', result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+
     def test_run_worker_starts_the_cached_entry(self):
         process = worker_process()
         with tempfile.TemporaryDirectory() as scratch, \

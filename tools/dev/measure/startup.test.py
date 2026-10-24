@@ -19,6 +19,21 @@ from tools.dev.measure import startup as st, worker, native, stats
 
 
 class ControllerTests(unittest.TestCase):
+    def test_optimised_controller_refuses_before_inputs_or_admission(self):
+        for flags, value in (([], '1'), (['-O'], '0'), (['-OO'], '0')):
+            with self.subTest(flags=flags, value=value), tempfile.TemporaryDirectory() as locks:
+                result = subprocess.run(
+                    [sys.executable, '-X', 'lazy_imports=normal', *flags,
+                     '-m', 'tools.dev', 'measure', 'startup'], cwd=ROOT,
+                    env=dict(os.environ, PYTHONOPTIMIZE=value, OXPINYIN_LOCK_DIR=locks),
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, '')
+                self.assertIn('startup: optimised Python is unsupported', result.stderr)
+                self.assertIn('unset PYTHONOPTIMIZE and remove -O/-OO', result.stderr)
+                self.assertNotIn('Traceback', result.stderr)
+                self.assertEqual(list(Path(locks).iterdir()), [])
+
     def setUp(self):
         self.temp = self.enterContext(tempfile.TemporaryDirectory())
         self.root = Path(self.temp)

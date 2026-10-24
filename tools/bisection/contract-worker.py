@@ -20,6 +20,11 @@ import importlib.util
 from pathlib import Path
 import sys
 
+if sys.flags.optimize != 0:
+    print('contract-worker: optimised Python is unsupported; unset PYTHONOPTIMIZE and remove -O/-OO',
+          file=sys.stderr)
+    raise SystemExit(2)
+
 _spec = importlib.util.spec_from_file_location('contract_diff', Path(__file__).with_name('contract-diff.py'))
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)

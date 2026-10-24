@@ -595,10 +595,15 @@ def run(args):
 def main(argv=None):
     """Run a native campaign or retained-instruction recheck and return CLI status.
 
+    Refuse optimised Python with status 2 before parsing or running work.
     Emit rechecked scopes without workers when requested. Return 130 for
     cancellation, 3 for invalid/incomparable results, or 1 for reported
     filesystem, value, and subprocess errors; argument errors exit separately.
     """
+    if sys.flags.optimize != 0:
+        print('startup: optimised Python is unsupported; unset PYTHONOPTIMIZE and remove -O/-OO',
+              file=sys.stderr)
+        return 2
     args = parser().parse_args(argv)
     try:
         if args.recheck_instructions:
