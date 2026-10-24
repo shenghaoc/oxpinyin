@@ -175,11 +175,52 @@ A named tkrzw mutation, "force OPEN_NO_CREATE on HashDBM saves", was
 prepared in a third isolated worktree/target. It changes only the shim's
 open-option expression to select OPEN_NO_CREATE for every HashDBM.
 Source predicts failure when save_db removes and then tries to create
-the output file. The unchanged #1114 selection is queued with
-`--expect-parent`; restoration and its result are pending.
+the output file. The unchanged #1114 selection detects changed saved
+bytes, but its first-byte-mismatch branch attributes the error to the
+pin result and reports two INVALID cases. That is not a successful
+DIFFER gate. No comparator or assertion was changed.
 
-KC and tkrzw full contracts remain active. No full green completion gate
-or adoption conclusion is claimed yet. No measurements have started.
+The same built mutation then ran the existing ordinary cases
+`issue677-mask-save-sequence-pinyin` and
+`issue677-mask-save-sequence-zhuyin`, with `--expect-parent`. Both workers
+on both sides exited 0, both cases reported DIFFER and expected_ok=true,
+and the runner exited 0. Their source reads the raw saved bigram row
+after mask/save: preventing creation leaves the old row observable.
+This is the source-derived effect of the named open-flag mutation.
+The mutation source was restored with `git restore --source=58566b3c`,
+and `git diff --exit-code` plus an empty status confirmed exact
+restoration. Its isolated worktree was removed. The unchanged normal
+prototype then reported MATCH for these two cases and both #1114 cases
+(four MATCH, twelve successful workers). Mutant artifacts never entered
+the normal targets or the authorized branch.
+
+Full cloud gates completed at 2026-10-24T04:59:55Z:
+
+| cell | MATCH | SKIP | HOST-DEPENDENT | DIFFER | total | same-data |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| bdb | 2,893 | 2 | 4 | 0 | 2,899 | IDENTICAL, 15 drivers |
+| kc | 2,888 | 7 | 4 | 0 | 2,899 | IDENTICAL, 15 drivers |
+| tkrzw | 2,890 | 5 | 4 | 0 | 2,899 | IDENTICAL, 15 drivers |
+
+Every full contract row has expected_ok=true; none is INVALID. The
+initial aggregate exits 1 because of its earlier same-data compiler
+failures; its three contract rows all PASS. The corrected three-cell
+same-data rerun exits 0. These component results, not the failed initial
+aggregate exit, establish the completed gates.
+
+The execution transport briefly disconnected. Reconnection inspection
+confirmed both active contracts survived and finished normally; no gate
+was canceled or replaced. The baseline worktree cleanup completed during
+that interruption, and its outcome was inspected before proceeding.
+
+The maintainer supplied replacement parent
+`1dfd3e52e6fb02155c014856075aaf3955c8ab29`, tree
+`9fddaf5f9cd754ac4a42eb83e6b8b9f96e00cae2`. The remote branch was checked.
+Its actual diff from `838dabc2` changes only KC's include override from
+push to insert(0) in build.rs, plus two findings documents. There is no
+tkrzw, BDB or differential change. Rebase and the consequent native
+checks remain the next checkpoint. No measurements have started and no
+adoption conclusion is made.
 
 ## Source inspection
 
@@ -221,7 +262,7 @@ on the pin's memory container. BabyDBM defaults to LexicalKeyComparator
 tuning on these paths. The shim can reproduce all four classes' flags
 and tuning. Its Set retains the C++ default overwrite=true
 (`tkrzw_dbm.h:1123-1132`). These are source conclusions, independent of
-the pending differential gates.
+the differential gates above.
 
 ## Local changes
 
@@ -268,17 +309,13 @@ At the original local prototype, the final three checks exited 0. An initial fmt
 differences; cargo fmt corrected them before the passing check. These are
 light checks, not a completion gate.
 
-## Pending execution
+## Pending Ubuntu work
 
-Provisioning, compilation, oracle cases, function-order regeneration and
-measurement were not started on Ubuntu. Ubuntu heavy admission remains
-held for #1114, then #1031, then #1073. The authorized next execution phase
-is correctness in a fresh cloud session; measurements remain held. No slot
-lock or slot-state polling was introduced.
 The checked-in tkrzw policies have not been regenerated for this prototype.
-
-Contracts and same-data on bdb, kc and tkrzw, saved-byte compatibility in
-both directions, and all base/prototype/pin measurements remain unrun.
+Regeneration is the first Ubuntu-slot step, before measurement; fold those
+policies into the code commit. No ordered shipping relink is claimed here.
+Ubuntu admission remains held for #1114, then #1031, then #1073.
+All base/prototype/pin measurements remain unrun.
 The saved-byte mask remains limited to HashDBM META_OFFSET_TIMESTAMP
 zero-based bytes 48–55 inclusive; byte 56 and every other byte must match.
 Strict bucket-chain and saved-file checks remain required.
