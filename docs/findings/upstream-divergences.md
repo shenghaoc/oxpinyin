@@ -28,6 +28,31 @@ change.
 
 ## Register
 
+### Non-scalar stored phrase text — language/runtime quirk (#894)
+
+- **Record:** [894-non-scalar-phrase-text](894-non-scalar-phrase-text.md).
+- **Classification:** decision-order limb 3, not class (b) merely because
+  Rust `str` cannot contain a non-scalar. GLib 2.89.4-2 emits extended
+  UTF-8 for surrogates and U+110000; Rust refuses the item. Both candidate
+  and sentence facades, and pinyin phrase export, have the exact effects
+  and producer/consumer proof in the record. Zhuyin has no export iterator.
+- **Disposition:** POLICY-ACCEPTED with both expected observations checked;
+  ordinary scalar controls and export-symbol absence remain MATCH. No
+  production behavior change. Verification pending.
+
+### Embedded zero in stored phrase text — language/runtime quirk (#894)
+
+- **Record:** [894-nul-phrase-text](894-nul-phrase-text.md).
+- **Classification:** decision-order limb 3. GLib truncates each phrase at
+  zero; Rust retains its full internal text. Length/ranking still see the
+  declared length, while full-text dedup, sentence assembly and C-string
+  refusal differ on malformed tables. The current C candidate snapshot
+  drops the row; sentence get returns false/NULL; pinyin export keeps the
+  row with NULL text. These are not prefix strings handed to C.
+- **Disposition:** POLICY-ACCEPTED, with the full forward/backward trace,
+  valid-input proof and expected observations in the record. No valid-input
+  change and no prior ruling reversed. Verification pending.
+
 ### Bigram export iterator's pinyin buffer
 
 - **Restated 2026-09-27 UTC (#530, audit D-20; policy row 1).** The
