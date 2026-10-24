@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _strip_separator(args):
+    """Copy arguments, removing one leading -- separator if present."""
     args = list(args)
     if args[:1] == ['--']:
         args = args[1:]
@@ -24,6 +25,7 @@ def _strip_separator(args):
 
 
 def _nextest_args(args):
+    """Translate libtest ignored-test switches before the first -- for nextest."""
     translated = []
     for arg in args:
         if arg == '--':
@@ -39,7 +41,12 @@ def _nextest_args(args):
 
 
 def _options(args):
-    """Read budget options before the nextest/libtest argument boundary."""
+    """Read budget options before the nextest/libtest argument boundary.
+
+    Return the normalized option map and whether a custom config/workspace
+    path was supplied. Raise ValueError for duplicate or missing budget
+    values and combined short options containing -j or -P.
+    """
     names = {'--test-threads': 'threads', '--jobs': 'threads',
              '--profile': 'profile', '--build-jobs': 'build_jobs'}
     found = {}
@@ -75,7 +82,10 @@ def _options(args):
 
 
 def _positive_threads(value):
-    """Do not guess Rust's available_parallelism for relative CPU requests."""
+    """Parse a positive nextest thread count bounded by sys.maxsize.
+
+    Raise ValueError for relative counts, num-cpus, or any unsupported value.
+    """
     if not re.fullmatch(r'\+?[0-9]+', value) or not 0 < int(value) <= sys.maxsize:
         raise ValueError('nextest thread overrides require a positive integer for memory admission; '
                          'relative counts and num-cpus are not supported as overrides')
@@ -83,6 +93,12 @@ def _positive_threads(value):
 
 
 def _profile_threads(profile):
+    """Resolve a profile thread count through .config/nextest.toml inheritance.
+
+    Return None for num-cpus or an inherited default without a count. Raise
+    ValueError for unknown/cyclic profiles or unsupported counts; file and
+    TOML errors propagate.
+    """
     with (ROOT / '.config/nextest.toml').open('rb') as source:
         profiles = tomllib.load(source)['profile']
     visited = set()
@@ -104,6 +120,12 @@ def _profile_threads(profile):
 
 
 def _thread_plan(args, environ, profile):
+    """Resolve nextest profile, budget options, thread count, and its source.
+
+    CLI counts override environment counts, then repository profiles apply.
+    No-capture forces one thread. Custom config/workspace paths require an
+    explicit count; ambiguous or unsupported settings raise ValueError.
+    """
     options, custom_config = _options(args)
     if profile is not None and 'profile' in options:
         raise ValueError('--profile was specified more than once')
@@ -124,8 +146,17 @@ def _thread_plan(args, environ, profile):
 
 
 def _prepare_nextest(count, source):
-    """Use the same resolved process count for admission and nextest."""
+    """Return an admission callback using the resolved nextest process count.
+
+    When count is None, use the admitted Rust test-thread default; otherwise
+    include the explicit count in the returned memory estimate.
+    """
     def prepare(environ, resources, *, runner=False):
+        """Copy the environment and estimate the resolved nextest thread budget.
+
+        Return child settings, their explanations, and the larger of the heavy
+        work estimate and nextest thread estimate, in MiB.
+        """
         budget = dict(environ)
         if count is not None:
             budget.setdefault('RUST_TEST_THREADS', str(count))
@@ -138,6 +169,10 @@ def _prepare_nextest(count, source):
 
 
 def _run(command, label):
+    """Print the step and command, execute it, and return its subprocess status.
+
+    Report a missing executable as missing just and return 127.
+    """
     print(label, file=sys.stderr, flush=True)
     print('command: ' + shlex.join(command), file=sys.stderr, flush=True)
     try:
@@ -148,7 +183,12 @@ def _run(command, label):
 
 
 def run(args=None, profile=None):
-    """Run nextest under the shared slot with its final process budget."""
+    """Run nextest under the shared slot with its final process budget.
+
+    Default to command-line arguments and the local profile unless overridden.
+    Return the raw child status, or print FAIL and return 2 for invalid plans
+    or OS/value errors during admission and execution.
+    """
     args = _strip_separator(sys.argv[1:] if args is None else args)
     try:
         selected, options, count, source = _thread_plan(args, os.environ, profile)
@@ -163,6 +203,7 @@ def run(args=None, profile=None):
     if 'build_jobs' in options:
         environ['CARGO_BUILD_JOBS'] = options['build_jobs']
     def report(admitted):
+        """Print the selected profile, admitted thread count, and nextest command."""
         print(f'nextest profile: {selected}', file=sys.stderr, flush=True)
         print(f'nextest test threads: {admitted["NEXTEST_TEST_THREADS"]} ({source})',
               file=sys.stderr, flush=True)

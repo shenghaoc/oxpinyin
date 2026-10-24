@@ -20,16 +20,24 @@ POINTS = ('start', 'lib_load', 'init', 'config', 'alloc', 'first_candidate', 'en
 
 
 def sha256(raw):
+    """Return the hexadecimal SHA-256 digest of a byte string."""
     return hashlib.sha256(raw).hexdigest()
 
 
 def exports(facade):
+    """Read facade-prefixed export names from the crate's version script in file order."""
     crate = 'oxpinyin-capi' if facade == 'pinyin' else 'oxpinyin-zhuyin-capi'
     return re.findall(r'\b' + facade + r'_\w+(?=\s*;)',
                       (ROOT / 'crates' / crate / ('lib' + facade + '.ver')).read_text())
 
 
 def build(work, env, pass_fds):
+    """Compile the C startup worker into work and return its path and identity.
+
+    Run cc with the supplied environment and inherited descriptors. Record
+    source/executable hashes, size in bytes, and command; raise ValueError
+    for a nonzero compiler status and propagate spawn or file errors.
+    """
     source, executable = ROOT / 'tools/workers/startup.c', work / 'startup'
     command = ['cc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-O2', '-g',
                '-o', str(executable), str(source)]
@@ -45,6 +53,11 @@ def build(work, env, pass_fds):
 
 
 def check_identity(executable, record):
+    """Require the executable and current worker source to match an identity record.
+
+    Check required fields, path, byte size, and hashes; the recorded command
+    must be present but is not replayed. Mismatches raise ValueError.
+    """
     required = ('path', 'sha256', 'bytes', 'command', 'source_sha256')
     if any(not record.get(key) for key in required):
         raise ValueError('worker executable identity field is missing')
@@ -55,7 +68,14 @@ def check_identity(executable, record):
 
 
 def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120):
-    """Drain both streams and a separate checkpoint pipe; reap before releasing resources."""
+    """Run a worker session, drain its pipes, and return status and observations.
+
+    Timeout is in seconds and process_wall is elapsed ns. With memory enabled,
+    read each ordered checkpoint while the child awaits acknowledgment.
+    An explicit CPU must already be inherited from the controller. On
+    cancellation, timeout, or protocol error, terminate and reap the group
+    before closing descriptors; stdout/stderr are returned as bytes.
+    """
     checkpoint_read, checkpoint_write = os.pipe()
     ack_read, ack_write = os.pipe()
     env = dict(env)
@@ -119,6 +139,12 @@ def execute(command, *, env, pass_fds=(), memory=False, cpu=None, timeout=120):
 
 
 def parse(stdout):
+    """Parse newline-terminated worker JSON records and hash the unique units record.
+
+    Require exactly one units row stopped at end. Return all documents and
+    the SHA-256 of that row's original bytes including its newline; malformed
+    JSON or incomplete output raises ValueError.
+    """
     if not stdout.endswith(b'\n'):
         raise ValueError('unterminated worker output')
     lines = stdout.splitlines()
@@ -131,7 +157,12 @@ def parse(stdout):
 
 
 def userfiles(directory):
-    """Compare raw non-database bytes and the complete filename set. No DB row reader."""
+    """Describe the complete regular user-file set for later equality comparisons.
+
+    Store raw hex for non-database files and a database marker for recognized
+    stores; database bytes are not compared here. Reject symlinks and special
+    files with ValueError.
+    """
     result = {}
     for path in sorted(directory.rglob('*')):
         if path.is_symlink() or (not path.is_dir() and not path.is_file()):
@@ -151,6 +182,12 @@ def userfiles(directory):
 
 @contextlib.contextmanager
 def checked_profile(profile, witness):
+    """Guard a source profile and optional witness against changes during a run.
+
+    Validate an existing manifest, or require an empty unmanifested profile.
+    Recheck the manifest and content identities on exit, including exceptional
+    exit; changed inputs raise ValueError.
+    """
     manifest = profile.parent / 'profile.manifest'
     if manifest.is_file():
         startup_profile.check(profile, manifest)
@@ -171,6 +208,10 @@ def checked_profile(profile, witness):
 
 @contextlib.contextmanager
 def sample_directory(work):
+    """Create and yield work/sample, then recursively remove it on context exit.
+
+    Refuse an existing pathname so sequential runs cannot reuse stale contents.
+    """
     # Sequential fresh copies at one pathname preserve raw stderr path bytes.
     # Never reuse directory contents or a live process. A stale directory refuses.
     path = work / 'sample'
@@ -182,11 +223,25 @@ def sample_directory(work):
 
 
 class Worker:
+    """Run fresh startup processes against private profile copies.
+
+    Retain the executable identity, inputs, admitted environment, descriptors,
+    CPU selection, and binding mode for verification and measurement calls.
+    """
     def __init__(self, executable, identity, data, work, env, pass_fds, cpu, bind):
+        """Store worker configuration without copying inputs, building, or spawning."""
         self.executable, self.identity, self.data, self.work = executable, identity, data, work
         self.env, self.pass_fds, self.cpu, self.bind = env, pass_fds, cpu, bind
 
     def run(self, library, facade, profile, *, mode='measure', witness=None, memory=False, probe=None, scope=None):
+        """Run one worker with a fresh user directory and verify its executable identity.
+
+        Copy the guarded profile under work/sample and remove it after completion.
+        Optionally wrap the worker in scoped Callgrind or gather memory checkpoints.
+        Probe calls return status and stream digests even on failure; other
+        nonzero statuses raise ValueError. Successful non-probes return raw
+        streams, documents, user-file observations, and wall time in ns.
+        """
         check_identity(self.executable, self.identity)
         with checked_profile(profile, witness), sample_directory(self.work) as temporary:
             user = temporary / 'user'

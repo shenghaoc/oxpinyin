@@ -19,6 +19,13 @@ from tools.dev import host, slot
 
 
 def call(runtime, args, *, pass_fds=(), console=None, cancellable=True):
+    """Run a runtime client in a new process session and return its raw status.
+
+    Pass reservation descriptors to the child. With console, overwrite that
+    file and mirror merged output to stdout; otherwise suppress stdout except
+    for start. Cancellable calls use slot cancellation; other calls time out
+    after 30 seconds and terminate the group.
+    """
     with contextlib.ExitStack() as stack:
         output = stack.enter_context(open(console, 'wb')) if console else None
         process = subprocess.Popen([runtime, *args], pass_fds=pass_fds,
@@ -27,6 +34,10 @@ def call(runtime, args, *, pass_fds=(), console=None, cancellable=True):
                                            None if args[0] == 'start' else subprocess.DEVNULL),
                                    stderr=subprocess.STDOUT if output else None)
         def copy():
+            """Drain merged client output to the console file and flush each block.
+
+            Stop mirroring after a broken stdout pipe but keep draining to the file.
+            """
             mirror_stdout = True
             while data := process.stdout.read1(65536):
                 output.write(data)
@@ -55,6 +66,11 @@ def call(runtime, args, *, pass_fds=(), console=None, cancellable=True):
 
 
 def verify_limit(record):
+    """Require runtime metadata to match the reservation token and memory cap.
+
+    Docker/Podman must report equal memory and memory-plus-swap byte limits.
+    Raise ValueError for missing metadata or a mismatched hard limit.
+    """
     row = host.inspect_container(record)
     try:
         if record['kind'] == 'container':
@@ -108,6 +124,14 @@ echo 'Memory smoke: over-limit allocation killed (137)'
 
 def run(runtime, kind, name, memory_mib, command, *, console=None, remove=False,
         exit_confirmed=None, out=sys.stderr):
+    """Reserve native memory, create a capped container, verify it, and attach.
+
+    Split runtime options from image/payload at -- and return the start
+    client status. Stop and confirm container exit before releasing the
+    reservation; an uncertain outcome retains it and may raise ValueError.
+    Optionally touch exit_confirmed and remove the container after release.
+    Always close this launcher's reservation guard.
+    """
     reservation = slot.ContainerReservation(runtime, kind, name, memory_mib, out=out)
     reservation.acquire()
     created = start_attempted = False
@@ -166,6 +190,11 @@ def run(runtime, kind, name, memory_mib, command, *, console=None, remove=False,
 
 
 def main(argv=None):
+    """Parse a hard-limited container launch and return its shell exit status.
+
+    Install cancellation handlers and optionally append the memory smoke
+    payload. Report OS/value errors as 1 and cancellation as 130.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--runtime', required=True)
     parser.add_argument('--name', required=True)

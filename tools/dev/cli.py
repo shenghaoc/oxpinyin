@@ -8,6 +8,11 @@ from .measure import startup
 
 
 def _selected(args, *, required=False):
+    """Load registry rows matching the CLI selectors.
+
+    Raise RegistryError for invalid or empty selections; required also rejects
+    an invocation without any selector.
+    """
     return registry.select(registry.load(),
                            names=None if args.runners is None else registry.names(args.runners),
                            cells=None if args.cells is None else registry.names(args.cells),
@@ -15,10 +20,12 @@ def _selected(args, *, required=False):
 
 
 def doctor_command(args):
+    """Print capability and interpreter checks and return the doctor status."""
     return doctor.main()
 
 
 def host_command(args):
+    """Print host and tool capabilities; return 1 if a tool version check fails."""
     for line in doctor.host_lines():
         print(line)
     lines, failures = doctor.tool_lines()
@@ -28,22 +35,31 @@ def host_command(args):
 
 
 def check_command(args):
+    """Run native setup tests for the parsed backend and return their status."""
     return check.run(args.backend)
 
 
 def test_command(args):
+    """Forward test arguments and profile to nextest under resource admission."""
     return test_runner.run(args.args, args.profile)
 
 
 def test_doc_command(args):
+    """Forward doctest arguments through just heavy and return the child status."""
     return test_runner.run_doc(args.args)
 
 
 def coverage_command(args):
+    """Run llvm-cov with disposable coverage state and return its shell status."""
     return coverage.run(args.args)
 
 
 def list_command(args):
+    """Print matching registry rows as tab-separated metadata.
+
+    Apply the optional heavy-only filter after selection and raise
+    RegistryError if it leaves no rows. Return zero after printing.
+    """
     rows = _selected(args)
     if args.heavy:
         rows = [row for row in rows if registry.is_heavy(row)]
@@ -57,6 +73,11 @@ def list_command(args):
 
 
 def plan_command(args):
+    """Print selected command and environment templates without executing them.
+
+    Require an explicit registry selection and show only requested cells;
+    return zero after printing.
+    """
     chosen = _selected(args, required=True)
     cells = None if args.cells is None else registry.names(args.cells)
     print('Registry description only; executes nothing. Cells and commands are compatibility metadata.')
@@ -75,6 +96,12 @@ def plan_command(args):
 
 
 def slot_command(args):
+    """Report slot configuration or execute a command under resource admission.
+
+    Strip one leading -- from the child arguments. Report OS or value errors
+    as status 1 and cancellation as 130; convert a negative child status to
+    the corresponding shell signal status. A missing command raises SystemExit.
+    """
     if args.action == 'status':
         print(f'lock_dir: {host.host_lock_dir()}')
         print(f'slots: {host.heavy_slot_count()}')
@@ -94,6 +121,7 @@ def slot_command(args):
 
 
 def build_parser():
+    """Build the native service CLI with dispatch callbacks on each subcommand."""
     parser = argparse.ArgumentParser(prog='python -m tools.dev',
                                      description='Native tooling services: capabilities, registry and heavy slot.')
     sub = parser.add_subparsers(dest='command', required=True)
@@ -145,6 +173,7 @@ def build_parser():
 
 
 def _selection_arguments(parser):
+    """Add runner, cell, issue, and kind filters to an existing parser."""
     parser.add_argument('--runners', help='comma-separated registry runner names')
     parser.add_argument('--cells', help='comma-separated registry cells (metadata only)')
     parser.add_argument('--issue', action='append', help='registry issue tag; repeat for alternatives')
@@ -152,6 +181,11 @@ def _selection_arguments(parser):
 
 
 def main(argv=None):
+    """Dispatch native tooling arguments and return the selected command status.
+
+    Default to sys.argv. Forward coverage and non-help test arguments directly
+    to their runners; report registry selection errors on stderr with status 2.
+    """
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ['coverage']:
         return coverage.run(argv[1:])
