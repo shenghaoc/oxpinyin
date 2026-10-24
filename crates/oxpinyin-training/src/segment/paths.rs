@@ -127,8 +127,8 @@ pub fn locate_model_dir() -> Option<PathBuf> {
 #[must_use]
 pub fn load_lambda(path: Option<&Path>) -> Option<f32> {
     let path = path?;
-    let text = std::fs::read_to_string(path).ok()?;
-    parse_table_conf_lambda(&text)
+    let bytes = std::fs::read(path).ok()?;
+    parse_table_conf_lambda(&bytes)
 }
 
 fn dir_has(dir: &Path, names: &[&str]) -> bool {

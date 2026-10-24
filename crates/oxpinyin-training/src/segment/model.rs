@@ -10,6 +10,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use oxpinyin_data::table_info::TableConf;
 use oxpinyin_data::{BigramRow, BigramTable, parse_interpolation2};
 
 use crate::segment::error::SegmentError;
@@ -131,19 +132,16 @@ impl SegmentModel {
     }
 }
 
-/// Reads `lambda parameter:` from a `table.conf` body.
+/// Reads the λ of a `table.conf` body the way `SystemTableInfo2::load` does.
 ///
-/// Matches `fscanf(input, "lambda parameter:%f\n", &lambda)` on the pin
-/// (`src/storage/table_info.cpp:220`).
+/// The pin parses the whole file as one `fscanf` stream
+/// (`src/storage/table_info.cpp:194-294`): the header directives, then the
+/// six-word rows. This reuses [`TableConf::parse`], so a valid file yields
+/// the same `gfloat` bits as the pin's `%f`, and a file the pin refuses
+/// yields `None` instead of a line-only approximation.
 #[must_use]
-pub fn parse_table_conf_lambda(text: &str) -> Option<f32> {
-    for line in text.lines() {
-        let Some(rest) = line.strip_prefix("lambda parameter:") else {
-            continue;
-        };
-        return rest.trim().parse().ok();
-    }
-    None
+pub fn parse_table_conf_lambda(bytes: &[u8]) -> Option<f32> {
+    TableConf::parse(bytes).ok().map(|conf| conf.lambda_f32())
 }
 
 #[cfg(test)]
@@ -153,13 +151,44 @@ mod tests {
     use crate::segment::model::SegmentModel;
     use std::collections::HashMap;
 
+    const CONF: &str = "binary format version:7\nmodel data version:14\n\
+        lambda parameter:0.312699\nsource table format:pinyin\n\
+        database format:BerkeleyDB\n";
+
     #[test]
     fn the_pinned_lambda_parses_the_table_conf_decimal() {
         assert_eq!(
-            parse_table_conf_lambda("lambda parameter:0.312699\n"),
+            parse_table_conf_lambda(CONF.as_bytes()),
             Some(PINNED_LAMBDA)
         );
-        assert_eq!(parse_table_conf_lambda("binary format version:7\n"), None);
+        assert_eq!(parse_table_conf_lambda(b"binary format version:7\n"), None);
+    }
+
+    #[test]
+    fn the_lambda_reader_follows_the_pin_stream() {
+        let with_lambda = |spelling: &str| {
+            CONF.replace(
+                "lambda parameter:0.312699",
+                &format!("lambda parameter:{spelling}"),
+            )
+        };
+        assert_eq!(
+            parse_table_conf_lambda(with_lambda("0x1p-1").as_bytes()),
+            Some(0.5)
+        );
+        assert_eq!(
+            parse_table_conf_lambda(with_lambda("5e-1").as_bytes()),
+            Some(0.5)
+        );
+        assert!(parse_table_conf_lambda(with_lambda("nan").as_bytes()).is_some_and(f32::is_nan));
+        // The preceding `\n` in the pin's directive matches any whitespace.
+        let spaced = CONF.replace("lambda parameter:", "   lambda parameter:");
+        assert_eq!(
+            parse_table_conf_lambda(spaced.as_bytes()),
+            Some(PINNED_LAMBDA)
+        );
+        // An incomplete exponent is not a `%f` conversion at glibc 2.43.
+        assert_eq!(parse_table_conf_lambda(with_lambda("1e").as_bytes()), None);
     }
 
     #[test]
