@@ -7,7 +7,7 @@
 //! same code path drives the real oracle on Linux.
 //!
 //! The module is pure and always compiled; only the producer behind
-//! [`crate::live`] is feature-gated.
+//! `crate::live` is feature-gated.
 
 use crate::OracleFlags;
 
