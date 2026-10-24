@@ -458,6 +458,51 @@ class ControllerTests(unittest.TestCase):
             st.report_values('memory', {'base': [None], 'pr': [None], 'control': [None]}, metric='pss')
         self.assertEqual(emit.call_args.kwargs['verdict'], 'unavailable')
 
+    def memory_line(self, platform, metric, level, change):
+        """The line printed for one memory metric: base and PR at `level` KiB, the control `change` KiB above."""
+        values = {'base': [level] * 4, 'pr': [level] * 4, 'control': [level + change] * 4}
+        out = io.StringIO()
+        with mock.patch.object(st.sys, 'platform', platform), contextlib.redirect_stdout(out):
+            st.report_values('memory', values, facade='pinyin', profile='empty', point='end', metric=metric, unit='KiB')
+        return out.getvalue()
+
+    def test_macos_virtual_size_is_not_informative_and_never_stable(self):
+        # macOS virtual size includes the shared region (about 488 GB), so the §7.5 residency band, 1% of
+        # the median (about 4.7 GiB), passes any change. Whatever the control does, the metric has no verdict.
+        level = 500_000_000
+        for change in (0, 65_536, 4_000_000, level):
+            with self.subTest(change=change):
+                line = self.memory_line('darwin', 'virtual_size', level, change)
+                record = json.loads(line)
+                self.assertEqual((record['verdict'], record['summaries'], record['pr_base_ratio']), ('unavailable', None, None))
+                self.assertIn('not informative', record['reason'])
+                self.assertNotIn('control', record)
+                self.assertNotIn('STABLE', line)
+                self.assertEqual(len(line.splitlines()), 1)
+
+    def test_macos_rss_verdicts_are_unchanged(self):
+        # RSS stays the macOS memory metric: STABLE with a PR/base ratio inside the band, INCONCLUSIVE
+        # without one outside it, and the record the controller prints on Linux for the same samples.
+        for metric in ('rss', 'rss_delta'):
+            for change, verdict, ratio in ((50, 'STABLE', {'ci95': [1.0, 1.0], 'median': 1.0}), (200, 'INCONCLUSIVE', None)):
+                with self.subTest(metric=metric, change=change):
+                    line = self.memory_line('darwin', metric, 10_000, change)
+                    record = json.loads(line)
+                    self.assertEqual((record['verdict'], record['pr_base_ratio']), (verdict, ratio))
+                    self.assertEqual(record['control']['stable'], verdict == 'STABLE')
+                    self.assertEqual(line, self.memory_line('linux', metric, 10_000, change))
+
+    def test_linux_virtual_size_output_is_byte_identical_to_before(self):
+        # Linux reads VmSize, so virtual size keeps its residency verdict. The digests are SHA-256 of the lines
+        # the controller printed for these samples before macOS virtual size lost its verdict.
+        before = {65_536: ('STABLE', 'de4d5a8f925771488af588a17ce751a78cc772e6cc2ef6dcb6dc180120ff26d7'),
+                  6_000_000: ('INCONCLUSIVE', 'ecacd1ac1b13a906d1a4086f75e6e1b44a5645e748a56109cf55c02c1e751106')}
+        for change, (verdict, digest) in before.items():
+            with self.subTest(change=change):
+                line = self.memory_line('linux', 'virtual_size', 500_000_000, change)
+                self.assertEqual(json.loads(line)['verdict'], verdict)
+                self.assertEqual(worker.sha256(line.encode()), digest, line)
+
     def test_tmpfs_and_multiple_apfs_volumes_are_refused(self):
         with mock.patch.object(native.sys, 'platform', 'linux'), \
                 mock.patch.object(native, 'filesystem', return_value=('tmpfs', '0:1')):

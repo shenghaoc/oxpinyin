@@ -196,6 +196,12 @@ def report_values(kind, values, **context):
         emit(kind, **context, verdict='diagnostic', summaries={a: describe(v) for a, v in values.items()},
              pr_base_ratio=None)
         return
+    elif sys.platform == 'darwin' and context['metric'] == 'virtual_size':
+        # macOS virtual size includes the shared region (about 488 GB), so the residency band, 1% of
+        # the median (about 4.7 GiB), passes any change. RSS is the macOS memory metric (§7.7).
+        emit(kind, **context, verdict='unavailable', summaries=None, pr_base_ratio=None,
+             reason='not informative on macOS: virtual size includes the shared region')
+        return
     else:
         control = stats.stable_residency(values['pr'], values['control'])
     emit(kind, **context, summaries={a: describe(v) for a, v in values.items()}, control=control,

@@ -111,7 +111,10 @@ save/reopen observations, stderr, the user filename set and raw non-database
 file bytes. It never reads database rows. Python hashes the worker's exact
 canonical U1–U6 record including the final newline. The parent reads stopped
 child memory at every checkpoint. macOS supplies RSS and virtual size only;
-other memory metrics stay unavailable. Memory-run timings are excluded.
+other memory metrics stay unavailable. macOS virtual size includes the shared
+region (about 488 GB), so the residency band would pass any change: it is
+reported `unavailable`, as not informative, and RSS is the macOS memory
+metric. Memory-run timings are excluded.
 
 `--stage verify` stops after verification and separate hostile probes.
 `--stage instrument` also checks Linux Callgrind Ir. Init uses two fresh
