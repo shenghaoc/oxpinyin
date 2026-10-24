@@ -221,6 +221,8 @@ def case(name, *args, **kwargs):
     case's family for `--family` is the text before the first `/` of its
     ID, when it has one."""
     def register(fn):
+        if name in CASES:
+            raise ValueError('duplicate case name: %s' % name)
         spec = case_spec(*args, fn=fn, case_id=name, **kwargs)
         assert not spec['either'] or (spec['abort'] is not NO_ABORT and spec['crash'] is not None), name
         assert not spec['both_abort'] or spec['fatal'], name
@@ -262,13 +264,20 @@ class SelectionError(ValueError):
     pass
 
 
-def select_cases(cases='', issues=(), families=()):
+def case_names(value):
+    names = value.split(',')
+    if any(not name.strip() for name in names):
+        raise SelectionError('--cases must not contain an empty value')
+    return names
+
+
+def select_cases(cases=None, issues=(), families=()):
     """The selected case IDs in run order and, per ID, why it was selected.
     Raises SelectionError, naming what is registered, for an unknown ID, an
     unknown tag or a selection that matches nothing."""
     index = tag_index()
     chosen = {}
-    for name in (n for n in cases.split(',') if n) if cases else ():
+    for name in case_names(cases) if cases is not None else ():
         if name not in CASES:
             raise SelectionError('unknown case: %s' % name)
         chosen.setdefault(name, []).append('--cases')
@@ -286,7 +295,7 @@ def select_cases(cases='', issues=(), families=()):
             raise SelectionError('unknown family %r; registered families: %s' % (family, known))
         for name in index[key]:
             chosen.setdefault(name, []).append('family ' + family)
-    if not (cases or issues or families):
+    if cases is None and not (issues or families):
         chosen = {n: ['default suite'] for n in sorted(n for n in CASES if not n.startswith('axis-c-'))}
     if not chosen:
         raise SelectionError('no cases selected')
@@ -13123,7 +13132,7 @@ def run_main():
     parser.add_argument('--per-call-attribution-limit', type=int, default=25, help='top functions and edges; 0 emits all')
     parser.add_argument('--base-pinyin-so', type=Path)
     parser.add_argument('--base-zhuyin-so', type=Path)
-    parser.add_argument('--cases', default='')
+    parser.add_argument('--cases')
     parser.add_argument('--issue', action='append', default=[], metavar='TAG',
                         help='select every case registered with this issue, row or lane tag')
     parser.add_argument('--family', action='append', default=[], metavar='F',
@@ -13150,6 +13159,11 @@ def run_main():
     parser.add_argument('--axis-c-mutant-pinyin-so', type=Path)
     parser.add_argument('--axis-c-mutant-zhuyin-so', type=Path)
     args = parser.parse_args()
+    if args.cases is not None:
+        try:
+            case_names(args.cases)
+        except SelectionError as error:
+            parser.error(str(error))
     if not 0 < args.case_timeout < float('inf'):
         parser.error('--case-timeout must be a positive finite number of seconds')
     if args.jobs not in (None, 1) and (args.teardown or args.per_call or args.axis_c_replacement or

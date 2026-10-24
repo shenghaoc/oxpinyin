@@ -1046,6 +1046,42 @@ class SelectionTests(DriverFixtureCase):
         names, reasons = contract['select_cases']()
         self.assertEqual(names, sorted(n for n in contract['CASES'] if not n.startswith('axis-c-')))
         self.assertEqual(set(map(tuple, reasons.values())), {('default suite',)})
+        self.assertEqual(contract['select_cases'](None), (names, reasons))
+
+    def test_empty_cases_are_rejected_even_with_other_selectors(self):
+        for cases in ('', ' ', ',', 'default-option-parse,', ',default-option-parse'):
+            for selectors in ({}, {'issues': ['532']}, {'families': ['zero-key']}):
+                with self.subTest(cases=cases, selectors=selectors), \
+                        self.assertRaisesRegex(driver.SelectionError, '--cases must not contain an empty value'):
+                    driver.select_cases(cases, **selectors)
+
+    def test_empty_cases_cli_exits_two_before_inputs_or_workers(self):
+        for value in ('', ' ', ',', 'default-option-parse,'):
+            for extra in ([], ['--issue', '532'], ['--family', 'zero-key'], ['--list-tags']):
+                with self.subTest(value=value, extra=extra):
+                    error = io.StringIO()
+                    with patch.object(sys, 'argv', ['driver', '--cases', value, *extra]), \
+                            patch.object(driver, 'case_results') as workers, \
+                            contextlib.redirect_stderr(error), self.assertRaises(SystemExit) as caught:
+                        driver.main()
+                    self.assertEqual(caught.exception.code, 2)
+                    self.assertIn('--cases must not contain an empty value', error.getvalue())
+                    workers.assert_not_called()
+
+    def test_duplicate_registration_preserves_original_case(self):
+        with patch.object(driver, 'CASES', {}):
+            first = lambda k: 'first'
+            second = lambda k: 'second'
+            register = driver.case('unique-case', issues=('532',))
+            self.assertIs(register(first), first)
+            original = driver.CASES['unique-case']
+            for duplicate in (register, driver.case('unique-case', mode='zhuyin')):
+                with self.assertRaisesRegex(ValueError, 'duplicate case name: unique-case'):
+                    duplicate(second)
+                self.assertIs(driver.CASES['unique-case'], original)
+                self.assertIs(original['fn'], first)
+            self.assertIs(driver.case('other-case')(second), second)
+            self.assertEqual(list(driver.CASES), ['unique-case', 'other-case'])
 
     def test_plan_lists_ids_reasons_facades_and_artifacts(self):
         names, reasons = contract['select_cases'](issues=['532'], families=['zero-key'])

@@ -446,9 +446,11 @@ def run_main():
             parser.error('--heavy-slot needs a command after --')
         return run_in_heavy_slot(command)
     args = parser.parse_args()
+    if args.runners is not None and any(not name.strip() for name in args.runners.split(',')):
+        parser.error('--runners must not contain an empty value')
     registry = json.loads((HERE / 'runners.json').read_text())
     names = {row['name'] for row in registry}
-    selected = set(args.runners.split(',')) if args.runners else names
+    selected = set(args.runners.split(',')) if args.runners is not None else names
     unknown = selected - names
     if unknown:
         parser.error('unknown runners: ' + ', '.join(sorted(unknown)))
@@ -461,7 +463,7 @@ def run_main():
                 normal_tag(tag) for tag in row['issues']))]
     reasons = {row['name']: ('--issue ' + ', '.join(sorted(requested_issues.intersection(
         normal_tag(tag) for tag in row['issues']))) if requested_issues else
-        '--runners' if args.runners else 'default gate set') for row in rows}
+        '--runners' if args.runners is not None else 'default gate set') for row in rows}
     # An issue tag also resolves to the exact contract cases registered under
     # it; those run through the contract-diff runner with --cases. Nothing
     # matching anywhere is an error that names what exists, never the suite.
@@ -492,7 +494,7 @@ def run_main():
             print(json.dumps(row, ensure_ascii=False))
         return 0
     measurements = [row['name'] for row in rows if row['kind'] != 'gate']
-    if args.runners and measurements:
+    if args.runners is not None and measurements:
         parser.error('not-a-gate (measurement recipes are never executed): ' + ', '.join(measurements))
     rows = [row for row in rows if row['kind'] == 'gate']
     if not rows:
