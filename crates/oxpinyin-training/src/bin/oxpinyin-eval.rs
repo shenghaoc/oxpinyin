@@ -3,8 +3,8 @@
 //! Usage:
 //!   oxpinyin-eval --interpolation2 interpolation2.text \
 //!                 --held-out held.seg --evals evals2.text \
-//!                 --pinyin-index `pinyin_index`.<ext> \
-//!                 --phrase-index `phrase_index`.<ext> [--skip-pi-gram]
+//!                 --pinyin-index `pinyin_index`.\<ext\> \
+//!                 --phrase-index `phrase_index`.\<ext\> \[--skip-pi-gram\]
 //!
 //! Reproduces evaluate.py with no Python, libpinyin, `make`, or external
 //! evaluator: parse interpolation2.text → estimate λ over the held-out

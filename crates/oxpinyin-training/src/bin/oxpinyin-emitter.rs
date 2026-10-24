@@ -1,6 +1,6 @@
 //! `export_interpolation`-compatible CLI over the Rust emitter.
 //!
-//! Usage: oxpinyin-emitter [--skip-pi-gram-training] [-o outputfile] [inputfile]
+//! Usage: oxpinyin-emitter \[--skip-pi-gram-training\] \[-o outputfile\] \[inputfile\]
 //!
 //! Reads the ngseg segmented-token stream (T1's output), counts it with
 //! T2's counter (freq-1 floor from the `phrase_index` table in the

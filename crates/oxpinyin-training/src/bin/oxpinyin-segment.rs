@@ -1,6 +1,6 @@
 //! `ngseg`-compatible CLI over the Rust segmenter.
 //!
-//! Usage: oxpinyin-segment [--generate-extra-enter] [-o outputfile] [inputfile]
+//! Usage: oxpinyin-segment \[--generate-extra-enter\] \[-o outputfile\] \[inputfile\]
 //!
 //! Paths default to the export directory (`PINYIN_EXPORT_DIR` /
 //! `/tmp/oxpinyin-export`) and the fetched model20 cache

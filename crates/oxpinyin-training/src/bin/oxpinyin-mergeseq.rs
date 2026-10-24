@@ -1,7 +1,7 @@
 //! `mergeseq`-compatible CLI: merge adjacent phrase runs into longer
 //! dictionary phrases.
 //!
-//! Usage: oxpinyin-mergeseq [-o outputfile] [inputfile]
+//! Usage: oxpinyin-mergeseq \[-o outputfile\] \[inputfile\]
 //!
 //! Consumes a segmented token stream (the `oxpinyin-segment`/`oxpinyin-spseg`
 //! grammar) and consults only the phrase table (`phrase_index`), so it needs

@@ -18,8 +18,8 @@
 //! [`Stage`]), the config knobs ([`TrainConfig`]), and the candidate scoring
 //! index ([`CandidateIndex`]) — and wires the existing native stage modules
 //! and KMM package ([`crate::segment`], [`oxpinyin_kmm`], [`crate::lambda`],
-//! [`crate::eval`]) into the full run. [`pipeline`] holds the stages as pure
-//! functions; [`workspace`] adds the on-disk `try<name>` layout, status
+//! [`crate::eval`]) into the full run. `pipeline` holds the stages as pure
+//! functions; `workspace` adds the on-disk `try<name>` layout, status
 //! files, intermediate cleanup, and resumability; [`Trainer`] is the one
 //! entry point that runs the whole thing. Never ships with the engine.
 #![forbid(unsafe_code)]
