@@ -1,5 +1,30 @@
 # tkrzw concrete-class shim: evaluation (#1125)
 
+## Full-finish campaign: restored-source policies regenerated
+
+The maintainer released the full evaluation from source checkpoint
+6e50b77ef9b380f36ca0cd6d3fb76732c094baaf, with the fast path removed and
+base fixed at d7788072. Fresh outputs are isolated in $R/campaign-finish;
+prior campaign and campaign-followup outputs remain intact. Normal heavy
+admission was used. All checked paths, including TMPDIR, are ext4; the
+probe-certified tkrzw runtime is used for both facades and the pin.
+
+Both complete policy-generation passes succeeded and are byte-identical.
+They also equal the policy bytes already folded into the code commit;
+there is no changed policy blob to fold and no history was rewritten.
+libpinyin.order SHA256: 419b2c2b130d2013267ed953deb01142370c5ef220dbaddb680bd2c069f92bec.
+libzhuyin.order SHA256: 4396b5ea496754d12c0440920d5a7ab74f736ea9a8f2b8401277cc4faedc9c5d.
+This regeneration supersedes the stale-policy warning below for this source.
+Ordered builds and the full measurement campaign are next; no result is
+claimed for them here. GNU ld 2.47 supports section ordering on this host.
+
+```sh
+just heavy -- bash "$R/prepare-policies-finish.sh"
+cmp "$R/campaign-finish/policy-a/libpinyin.order" "$R/campaign-finish/policy-b/libpinyin.order"
+cmp "$R/campaign-finish/policy-a/libzhuyin.order" "$R/campaign-finish/policy-b/libzhuyin.order"
+```
+
+
 ## Empty-message fast path dropped; retained counts and instruction paths; STOP
 
 Recorded 2026-10-24T08:22:48Z. This is the current status, superseding the earlier
