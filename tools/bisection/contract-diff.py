@@ -11105,8 +11105,13 @@ def phrase_prefix_gram(short, *, before=False, unrelated=False):
         ret = k.fn('phrase_segment', B, P, S)(inst, text)
         tokens = result()
         if short and not before and not unrelated:
+            assert k.log_messages == [
+                f'{k.mode}_phrase_segment: a user bigram value is shorter than a guint32 '
+                'total_freq (upstream aborts, memory_chunk.h:390)'
+            ]
             return dict(ret=ret, untouched_phrase_result=tokens == old)
         assert tokens == [0, 0]
+        assert not k.log_messages
         return dict(ret=ret, tokens=tokens)
     return probe
 
@@ -11115,11 +11120,11 @@ for _mode in ('pinyin', 'zhuyin'):
     case(f'abort-phrase-segment-prefix-short-user-gram-{_mode}', mode=_mode,
          abort=False, issues=('918',))(phrase_prefix_gram(True))
     case(f'phrase-segment-prefix-sound-user-gram-{_mode}', mode=_mode,
-         control=True, issues=('918',))(phrase_prefix_gram(False))
+         control=True, stderr=True, issues=('918',))(phrase_prefix_gram(False))
     case(f'phrase-segment-nonscalar-before-short-user-gram-{_mode}', mode=_mode,
-         control=True, issues=('918',))(phrase_prefix_gram(True, before=True))
+         control=True, stderr=True, issues=('918',))(phrase_prefix_gram(True, before=True))
     case(f'phrase-segment-prefix-unrelated-short-user-gram-{_mode}', mode=_mode,
-         control=True, issues=('918',))(phrase_prefix_gram(True, unrelated=True))
+         control=True, stderr=True, issues=('918',))(phrase_prefix_gram(True, unrelated=True))
 
 
 # Controls: a short gram the lookup never loads. 我 never precedes a phrase
