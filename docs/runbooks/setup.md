@@ -125,6 +125,23 @@ just clippy --locked -p oxpinyin-core --all-targets -- -D warnings
 just fmt --all --check
 ```
 
+On Linux, admission takes the smallest known memory room from `MemAvailable`
+and the current cgroup's visible ancestors. It reads v2 `memory.max` and
+`memory.current` with the existing clean-cache accounting. For v1 it finds
+the memory and CPU controller mounts through `/proc/self/mountinfo`, including
+mounts outside `/sys/fs/cgroup` and mounts exposing only a subtree.
+V1 room is `memory.limit_in_bytes` minus usage after subtracting reclaimable
+cache from `memory.usage_in_bytes`. The cache candidates are the smaller of
+`cache` minus `shmem` and `active_file` plus `inactive_file`; reserve `dirty`
+plus `writeback`, capped at those candidates. Use all six `total_*` counters
+from `memory.stat` when `total_cache` is present, otherwise all six local
+counters. Missing, duplicate, invalid or inconsistent fields make room unknown.
+Near-maximum v1 sentinel limits are unlimited. CPU affinity is
+combined with v2 `cpu.max` or v1 `cpu.cfs_quota_us` / `cpu.cfs_period_us`;
+a v1 quota of `-1` is unlimited. Hybrid hosts use the controllers present in
+each hierarchy. Unreadable values stay unknown in the admission notes; only
+known room participates in the minimum, and no known memory means no admission.
+
 `just list` reads `tools/bisection/runners.json`. Use `--issue 541`,
 `--kind gate` or `--heavy` to filter its static rows. `just plan` requires
 an explicit selection, for example `just plan --runners bisect --cells bdb`.

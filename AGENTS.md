@@ -616,8 +616,12 @@ always".
    Cargo job counts accept positive integers, negative integers, and
    `default`. Test thread counts must be positive integers. Invalid values
    cause a clear failure. On Linux, read MemAvailable and each visible
-   cgroup v2 ancestor's `memory.max` and `memory.current`. Use the smallest
-   known memory room. Read CPU affinity and each ancestor's `cpu.max`.
+   cgroup v2 ancestor's `memory.max` and `memory.current`, and each visible
+   cgroup v1 memory ancestor's `memory.limit_in_bytes`,
+   `memory.usage_in_bytes` and `memory.stat`.
+   Use the smallest known memory room. Read CPU affinity and each v2
+   ancestor's `cpu.max`, and each v1 CPU ancestor's `cpu.cfs_quota_us` and
+   `cpu.cfs_period_us`.
    Report unreadable limits as unknown. Use the limits that can be read.
    macOS and Windows keep their platform memory readers. If no memory
    reading is available, treat the capacity as zero. Use no fixed fallback
