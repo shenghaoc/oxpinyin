@@ -31,7 +31,7 @@
 use std::ops::Bound;
 
 use oxpinyin_store::{
-    DEFAULT_STORE_EXT, DefaultStore, ReadStore, StoreError, WriteStore, WriteTxn,
+    DEFAULT_STORE_EXT, DefaultStore, RawReadStore, ReadStore, StoreError, WriteStore, WriteTxn,
 };
 
 /// Owns a temporary store path and removes the data file or directory
@@ -70,6 +70,42 @@ fn temp_path(tag: &str) -> TempPath {
     ));
     cleanup(&path);
     TempPath(path)
+}
+
+/// A literal '#' belongs to either the parent directory or the DBM
+/// filename. In particular, `#type=` must never select a different class.
+/// This covers both persistent KC classes; the C facade fixes their
+/// basenames, so its contract cases cannot rename these DBM files.
+#[test]
+fn hash_paths_create_and_reopen_tree_and_hash_files() {
+    let root = temp_path("hash-path");
+    std::fs::create_dir(&*root).unwrap();
+    for (directory, filename) in [
+        ("parent#type=kch", "store.db"),
+        ("parent", "store#type=kch.db"),
+    ] {
+        let parent = root.join(directory);
+        std::fs::create_dir(&parent).unwrap();
+        for hash in [false, true] {
+            let path = parent.join(format!("{hash}-{filename}"));
+            let store = if hash {
+                DefaultStore::create_hash(&path).unwrap()
+            } else {
+                DefaultStore::create(&path).unwrap()
+            };
+            store.write(|txn| txn.put_raw(b"key", b"value")).unwrap();
+            drop(store);
+            assert!(path.is_file(), "the literal filename must be created");
+            let store = if hash {
+                DefaultStore::open_hash_read_only(&path).unwrap()
+            } else {
+                DefaultStore::open_read_only(&path).unwrap()
+            };
+            let mut value = Vec::new();
+            assert!(store.get_raw(b"key", &mut value).unwrap());
+            assert_eq!(value, b"value");
+        }
+    }
 }
 
 /// The assessment's example row set. The empty key is storable on
